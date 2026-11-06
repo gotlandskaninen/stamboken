@@ -1,0 +1,39 @@
+# Override for running pytest alongside the dev stack.
+# Usage: DOCKER_TARGET=test docker compose -f docker-compose.yml -f docker-compose.pytest.yml -p herdbook-pytest up -d database api
+#
+# Uses a separate test database (herdbook_test) and no host port mapping
+# so it can run alongside the dev stack without conflicts.
+
+services:
+  database:
+    env_file:
+      - ./.docker/database-variables.test.env
+    ports: !reset []
+    volumes:
+      - pytest-pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U herdbook -d herdbook_test"]
+
+  api:
+    env_file:
+      - ./.docker/database-variables.test.env
+      - ./.docker/api-variables.env
+    environment:
+      - FLASK_ENV=testing
+      - REDIS_URL=redis://redis:6379/1
+      - SECRET_KEY=dev-secret-do-not-use-in-prod
+      - SESSION_REDIS_URL=redis://redis:6379/2
+      # Same value CI passes via -e; makes bare `docker exec … pytest` deterministic
+      # (test_available_auth_methods otherwise depends on test-module import order)
+      - AUTHCONFIGFILE=/app/tests/auth.ini.test
+      # Match CI (memory://): don't inherit Redis db 3 from base compose —
+      # xdist worker gw1 owns db 3 and its flushdb would hit limiter keys
+      - RATELIMIT_STORAGE_URL=memory://
+    ports: !reset []
+    # Don't start the app server — just keep the container alive for docker exec pytest
+    command: ["sleep", "infinity"]
+    healthcheck:
+      disable: true
+
+volumes:
+  pytest-pgdata:

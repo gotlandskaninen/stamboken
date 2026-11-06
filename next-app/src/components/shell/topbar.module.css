@@ -1,0 +1,336 @@
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 50;
+  background: rgba(244, 241, 234, 0.94);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--sb-line);
+}
+
+.inner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 56px;
+  padding: 0 16px;
+  max-width: 1140px;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.right {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+}
+
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  text-decoration: none;
+  color: var(--sb-ink);
+}
+
+.emblem {
+  display: block;
+}
+
+.wordmarkText {
+  font-family: var(--sb-display);
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+}
+
+.nav {
+  display: none;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  margin-left: 20px;
+}
+
+.navItem {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--sb-ink-3);
+  text-decoration: none;
+  padding: 8px 12px;
+  border-radius: var(--sb-r-2);
+  transition: all var(--sb-dur-fast) var(--sb-ease);
+}
+
+.navItem:hover {
+  color: var(--sb-ink);
+  background: var(--sb-paper-2);
+}
+
+.navItemActive {
+  color: var(--sb-skog);
+  font-weight: 600;
+}
+
+.menuBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0 8px;
+  background: none;
+  border: 0;
+  border-radius: var(--sb-r-2);
+  color: var(--sb-ink-2);
+  cursor: pointer;
+}
+
+.menuBtn:hover {
+  background: var(--sb-paper-2);
+  color: var(--sb-ink);
+}
+
+.bellBtn {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  min-height: 40px;
+  padding: 0 8px;
+  background: none;
+  border: 0;
+  border-radius: var(--sb-r-2);
+  color: var(--sb-ink-2);
+  cursor: pointer;
+}
+
+.bellBtn:hover {
+  background: var(--sb-paper-2);
+  color: var(--sb-ink);
+}
+
+.langBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 8px;
+  background: none;
+  border: 0;
+  border-radius: var(--sb-r-2);
+  color: var(--sb-ink-2);
+  cursor: pointer;
+  font-family: var(--sb-mono);
+  font-size: 12px;
+}
+
+/* ADR-0010, 375-px-kravet: 44px tap targets on touch screens. */
+@media (pointer: coarse) {
+  .wordmark,
+  .menuBtn,
+  .bellBtn,
+  .langBtn {
+    min-height: 44px;
+  }
+
+  .menuBtn,
+  .bellBtn {
+    min-width: 44px;
+  }
+}
+
+.bellDot {
+  position: absolute;
+  top: 4px;
+  right: 2px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  background: var(--sb-lera);
+  color: #fff;
+  font-family: var(--sb-mono);
+  font-size: 10px;
+  line-height: 16px;
+  border-radius: 999px;
+  text-align: center;
+}
+
+.popper {
+  z-index: 80;
+}
+
+.popover {
+  width: min(340px, calc(100vw - 32px));
+  box-shadow: var(--sb-shadow-3);
+}
+
+.popoverHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 12px 16px 8px;
+}
+
+.markAllRow {
+  padding: 0 16px 8px;
+}
+
+.notifEmpty {
+  padding: 24px 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--sb-ink-3);
+}
+
+.notif {
+  display: block;
+  width: 100%;
+  padding: 12px 16px;
+  border: 0;
+  border-top: 1px solid var(--sb-line-faint);
+  border-left: 3px solid transparent;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  box-sizing: border-box;
+}
+
+.typeSuccess {
+  border-left-color: var(--sb-mossa);
+}
+
+.typeError {
+  border-left-color: #8a3f1f;
+}
+
+.typeWarning {
+  border-left-color: var(--sb-lera);
+}
+
+.typeInfo {
+  border-left-color: var(--sb-himmel);
+}
+
+.olderRow {
+  padding: 10px 16px;
+  border-top: 1px solid var(--sb-line-faint);
+  text-align: center;
+}
+
+.notif:hover {
+  background: var(--sb-paper-2);
+}
+
+.unread {
+  background: var(--sb-skog-soft);
+}
+
+.notifTitle {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.notifBody {
+  display: block;
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--sb-ink-2);
+}
+
+.mobileNav {
+  border-top: 1px solid var(--sb-line-faint);
+  padding: 8px 8px 10px;
+  display: flex;
+  flex-direction: column;
+}
+
+.mobileNavItem {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--sb-ink-2);
+  text-decoration: none;
+  padding: 12px;
+  min-height: 44px;
+  border-radius: var(--sb-r-2);
+}
+
+.mobileNavItem:hover {
+  background: var(--sb-paper-2);
+}
+
+.mobileNavItemActive {
+  color: var(--sb-skog);
+  background: var(--sb-skog-soft);
+}
+
+/* 375px viewports (ADR-0010, 375-px-kravet): the emblem + bell additions must not
+   push the topbar past the viewport — compress chrome below 480px. */
+@media (max-width: 480px) {
+  .inner {
+    padding: 0 12px;
+    gap: 8px;
+  }
+
+  .right {
+    gap: 4px;
+  }
+
+  .wordmark {
+    gap: 8px;
+  }
+
+  .wordmarkText {
+    font-size: 17px;
+  }
+
+  .emblem {
+    width: 28px;
+    height: 28px;
+  }
+}
+
+/* Below 480px the 44px targets leave no room, so the language toggle gives up
+   4px of padding on each side to keep 8px between the topbar buttons. */
+@media (pointer: coarse) and (max-width: 480px) {
+  .right {
+    gap: 8px;
+  }
+
+  .langBtn {
+    padding: 0 4px;
+  }
+}
+
+@media (min-width: 900px) {
+  .nav {
+    display: flex;
+  }
+
+  .menuBtn {
+    display: none;
+  }
+
+  .mobileNav {
+    display: none;
+  }
+}

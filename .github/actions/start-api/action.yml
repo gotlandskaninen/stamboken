@@ -1,0 +1,88 @@
+name: Start API
+description: Build, start, seed, and health-check the Flask API for e2e tests.
+
+inputs:
+  container-name:
+    description: Name for the API container
+    default: test-api
+
+runs:
+  using: composite
+  steps:
+    - name: Build API test image
+      shell: bash
+      run: docker build --target test --tag herdbook-api-test:latest -f .docker/api .
+
+    # Digitala intyg (e2e/manual/mutation-manual-flows.spec.ts) laddar upp PDF:en
+    # till S3; samma rustfs-image som dev-stackens s3backend, på host-nätet.
+    - name: Start S3 backend (rustfs)
+      shell: bash
+      run: |
+        docker build --tag herdbook-s3backend:latest -f .docker/rustfs .
+        docker run -d --name test-s3 --network host \
+          -e RUSTFS_ACCESS_KEY=accesskeytest -e RUSTFS_SECRET_KEY=secretkeytest \
+          -e RUSTFS_REGION=us-east-1 -e S3_BUCKET=test herdbook-s3backend:latest
+
+    - name: Initialize database schema
+      shell: bash
+      run: |
+        docker run --rm --network host \
+          -e POSTGRES_HOST=localhost \
+          -e POSTGRES_PORT=5432 \
+          -e POSTGRES_USER=herdbook \
+          -e POSTGRES_PASSWORD=testpass \
+          -e POSTGRES_DB=herdbook_test \
+          -e FLASK_ENV=testing \
+          -e REDIS_URL=redis://localhost:6379/1 \
+          -e SECRET_KEY=dev-secret-do-not-use-in-prod \
+          -e SESSION_REDIS_URL=redis://localhost:6379/2 \
+          -e AUTHCONFIGFILE=/app/tests/auth.ini.test \
+          herdbook-api-test:latest \
+          python3 -c "from utils.database import init, DATABASE; DATABASE.connect() if DATABASE.is_closed() else None; init(); print('DB initialized')"
+
+    - name: Start API container
+      shell: bash
+      env:
+        CONTAINER_NAME: ${{ inputs.container-name }}
+      run: |
+        docker run -d --name "$CONTAINER_NAME" --network host \
+          -e POSTGRES_HOST=localhost \
+          -e POSTGRES_PORT=5432 \
+          -e POSTGRES_USER=herdbook \
+          -e POSTGRES_PASSWORD=testpass \
+          -e POSTGRES_DB=herdbook_test \
+          -e FLASK_ENV=testing \
+          -e REDIS_URL=redis://localhost:6379/1 \
+          -e SECRET_KEY=dev-secret-do-not-use-in-prod \
+          -e SESSION_REDIS_URL=redis://localhost:6379/2 \
+          -e RATELIMIT_ENABLED=false \
+          -e AUTHCONFIGFILE=/app/tests/auth.ini.test \
+          -e S3_ENDPOINT=http://localhost:9000 \
+          -e S3_USESSL=false \
+          -e S3_VERIFY=false \
+          herdbook-api-test:latest \
+          gunicorn -b 0.0.0.0:9090 -w 1 herdbook:APP
+
+    - name: Wait for API health
+      shell: bash
+      env:
+        CONTAINER_NAME: ${{ inputs.container-name }}
+      run: |
+        if ! timeout 120 bash -c 'until curl -sf http://localhost:9090/api/health; do sleep 2; done'; then
+          echo "::error::API failed to become healthy within 120s"
+          docker logs "$CONTAINER_NAME" 2>&1 | tail -50
+          exit 1
+        fi
+        echo "API is healthy"
+
+    - name: Seed test data
+      shell: bash
+      env:
+        CONTAINER_NAME: ${{ inputs.container-name }}
+      run: docker exec "$CONTAINER_NAME" flask seed create --verbose
+
+    - name: Create test users
+      shell: bash
+      env:
+        CONTAINER_NAME: ${{ inputs.container-name }}
+      run: docker exec "$CONTAINER_NAME" python3 -m cli.create_test_users

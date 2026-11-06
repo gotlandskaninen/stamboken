@@ -1,0 +1,59 @@
+name: Security Scanning
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  trivy-fs:
+    name: Trivy (dependencies + IaC)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run Trivy (filesystem)
+        # SHA pin per advisory GHSA-69fq-xp46-6x23 — supply chain hardening.
+        # SHA resolves to v0.36.0 (verified via gh api repos/aquasecurity/trivy-action/git/ref/tags/v0.36.0)
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          format: table
+          severity: CRITICAL,HIGH
+          exit-code: 1
+          # The action pins its own Trivy default (v0.70.0 in v0.36.0); bump the
+          # scanner independently of the action release.
+          version: v0.75.0
+
+  semgrep:
+    name: Semgrep (SAST)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    container:
+      image: semgrep/semgrep
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Run Semgrep
+        # mutable-action-tag: SHA-pinning every action across 8 workflow files is
+        # a maintenance burden that needs its own decision; the truly high-risk
+        # trivy-action is already SHA-pinned per advisory (see trivy-fs above).
+        # npm-missing-minimum-release-age: a 7-day min would delay every
+        # Dependabot bump and conflicts with our current cadence.
+        run: >-
+          semgrep scan --config auto --text --error
+          --exclude-rule yaml.docker-compose.security.no-new-privileges.no-new-privileges
+          --exclude-rule yaml.docker-compose.security.writable-filesystem-service.writable-filesystem-service
+          --exclude-rule generic.secrets.security.detected-private-key.detected-private-key
+          --exclude-rule generic.nginx.security.header-redefinition.header-redefinition
+          --exclude-rule generic.nginx.security.possible-h2c-smuggling.possible-nginx-h2c-smuggling
+          --exclude-rule yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag
+          --exclude-rule package_managers.npm.npm-missing-minimum-release-age.npm-missing-minimum-release-age

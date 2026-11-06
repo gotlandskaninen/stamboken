@@ -1,0 +1,2 @@
+# Undantag för scripts/check-ui-terms.sh: en rad per undantag, "sökväg:regex"
+# (sökväg från repo-roten, ERE som träffraden ska matcha). Kommentera varje rad.

@@ -1,0 +1,95 @@
+# Flask API Dockerfile
+FROM python:3.13-slim AS base
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    TZ='Europe/Stockholm' \
+    FLASK_APP=herdbook
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libxml2 \
+    libssl3 \
+    libpq5 \
+    swig \
+    python3-pykcs11 \
+    openssl \
+    curl \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libcairo2 \
+    libgdk-pixbuf-2.0-0 \
+    libffi-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+
+# Development stage
+FROM base AS dev
+
+# Install dev dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libxml2-dev \
+    libssl-dev \
+    libpq-dev \
+    libpango1.0-dev \
+    libcairo2-dev \
+    libgdk-pixbuf-2.0-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install Python packages
+COPY app/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code
+COPY app/ .
+
+# Create mountpoint for backend (like old setup)
+RUN mkdir -p /api_src
+
+# Development command with hot reload
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "--workers", "1", "--threads", "4", "--reload", "herdbook:APP"]
+
+# Test stage
+FROM dev AS test
+
+# Install test dependencies
+COPY app/requirements-test.txt .
+RUN pip install --no-cache-dir -r requirements-test.txt
+
+# Inherit CMD from dev stage (gunicorn)
+# This keeps the API running so tests can be executed with docker exec
+
+# Production stage
+FROM base AS prod
+
+ARG APP_VERSION=dev
+ENV APP_VERSION=${APP_VERSION}
+
+# Copy requirements and install production packages only
+COPY app/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy application code only
+COPY app/ .
+
+# Create non-root user and required runtime directories
+RUN groupadd -r -g 1001 apiuser && useradd -r -u 1001 -g apiuser apiuser
+RUN mkdir -p /api_src /app/certs \
+    && chown -R apiuser:apiuser /app /api_src
+USER apiuser
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:9090/api/health || exit 1
+
+# Production command.
+# Replay migrations in a single process before gunicorn forks its workers:
+# prestart_migrations.py tolerates the database not being up yet (herdbook.py
+# has its own wait loop), while a failed replay against a reachable database
+# stops the container with a clear error.
+CMD ["sh", "-c", "python3 prestart_migrations.py && exec gunicorn -c gunicorn.conf.py herdbook:APP"]

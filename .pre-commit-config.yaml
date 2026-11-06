@@ -1,0 +1,43 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+        args: [--check]
+
+  - repo: local
+    hooks:
+      - id: markdownlint
+        name: markdownlint
+        entry: markdownlint-cli2
+        language: system
+        types: [markdown]
+
+      - id: shellcheck
+        name: shellcheck
+        entry: bash -c 'docker run --rm -v "$(pwd):/mnt" koalaman/shellcheck:stable "$@"' --
+        language: system
+        types: [shell]
+
+      - id: no-symlinks
+        name: no symlinks in git
+        entry: scripts/check-no-symlinks.sh
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: check-adr-refs
+        name: check-adr-refs (ADR code spans exist)
+        entry: python3 scripts/check-adr-refs.py
+        language: system
+        files: ^(docs/adr/.*\.md|app/.*\.py|next-app/src/.*|nginx/production/.*\.conf)$
+        pass_filenames: false
+
+      - id: next-lint
+        name: next-lint (eslint + prettier)
+        entry: bash -c 'cd next-app && pnpm exec eslint --fix src'
+        language: system
+        files: ^next-app/src/.*\.(ts|tsx|js|jsx)$
+        pass_filenames: false

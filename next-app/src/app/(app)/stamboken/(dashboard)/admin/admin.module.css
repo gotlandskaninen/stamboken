@@ -1,0 +1,506 @@
+/* Adminpanel-chrome, återskapat från stamboken-drift:docs/design/design_handoff_admin/
+   Adminpanel.html <style> (rad 14, 25-27, 29-35, 37-43, 142-145).
+   Skal-klasserna (.ad-shell, .ad-topbar*, .ad-topnav*, .ad-iconbtn,
+   .ad-menu-btn) är MEDVETET utelämnade — DashboardShell/Topbar äger det
+   globala skalet (dashboard-shell.tsx:14-24) och prototypens AdTopbar
+   simulerar bara det. Px-värdena kommer från handoffen, inte från MUI:s
+   sx-skala (theme/stamboken.ts:20 sätter spacing: 4). */
+
+.ad-container {
+  width: 100%;
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 0 24px;
+  box-sizing: border-box;
+}
+
+.ad-main {
+  padding: 24px 24px 64px;
+}
+
+/* Masthead (handoff rad 25-27) — kompaktare än besättningssidan */
+.ad-masthead {
+  padding: 24px 0 16px;
+  border-bottom: 1px solid var(--sb-line);
+}
+
+.ad-masthead-eyebrow {
+  margin-bottom: 6px;
+}
+
+.ad-masthead-title {
+  margin: 0 0 4px;
+}
+
+.ad-masthead-meta {
+  font-size: 13px;
+  color: var(--sb-ink-3);
+}
+
+/* Fliknav (handoff rad 29-34) — ersätter den gamla sidomenyn */
+.ad-tabs-wrap {
+  position: sticky;
+  top: 56px;
+  z-index: 40;
+  background: var(--sb-paper);
+  border-bottom: 1px solid var(--sb-line);
+}
+
+.ad-tabs {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.ad-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.ad-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--sb-body);
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--sb-ink-3);
+  text-decoration: none;
+  padding: 13px 14px 11px;
+  white-space: nowrap;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  min-height: 46px;
+  transition: color var(--sb-dur) var(--sb-ease);
+}
+
+.ad-tab:hover {
+  color: var(--sb-ink);
+}
+
+.ad-tab.is-active {
+  color: var(--sb-ink);
+  border-bottom-color: var(--sb-skog);
+  font-weight: 600;
+}
+
+/* Lägesprompt (demo → riktig stambok). Handoffen ritar ingen prompt —
+   sb-card + sb-btn, mått från tokens.css. */
+.ad-prompt {
+  max-width: 560px;
+  padding: 24px;
+}
+
+.ad-prompt-title {
+  margin: 0 0 8px;
+}
+
+.ad-prompt-actions {
+  display: flex;
+  gap: 12px;
+  margin-top: 20px;
+  flex-wrap: wrap;
+}
+
+/* Landing-kort (handoff Adminpanel.html:123-128) — delas av admin/page.tsx
+   och admin/system/page.tsx */
+.ad-landing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 16px;
+}
+
+.ad-landing-card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 20px;
+  text-align: left;
+  text-decoration: none;
+  font-family: var(--sb-body);
+  color: var(--sb-ink);
+  transition:
+    box-shadow var(--sb-dur) var(--sb-ease),
+    transform var(--sb-dur) var(--sb-ease);
+}
+
+.ad-landing-card:hover {
+  box-shadow: var(--sb-shadow-2);
+  transform: translateY(-1px);
+}
+
+.ad-landing-icon {
+  color: var(--sb-skog);
+  display: inline-flex;
+  padding: 8px;
+  background: var(--sb-skog-soft);
+  border-radius: var(--sb-r-2);
+  margin-bottom: 4px;
+}
+
+.ad-landing-title {
+  font-family: var(--sb-display);
+  font-size: 20px;
+  font-weight: 500;
+  margin: 0;
+}
+
+.ad-landing-desc {
+  font-size: 13px;
+  color: var(--sb-ink-2);
+  line-height: 1.5;
+}
+
+/* Adminspecifik badge-variant i DataGrid-korten — basreceptet .ad-badge-row
+   ligger i @/styles/ds-admin.module.css. */
+:global(.sb-badge).ad-badge-danger {
+  background: var(--sb-danger-soft);
+  color: var(--sb-danger);
+  border-color: #ddb5aa;
+}
+
+.ad-role-list {
+  display: flex;
+  flex-direction: column;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ad-role-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--sb-line-faint);
+}
+.ad-role-row:last-child {
+  border-bottom: 0;
+}
+.ad-role-target {
+  font-size: 14px;
+}
+.ad-role-remove {
+  margin-left: auto;
+}
+.ad-role-add {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+.ad-switch-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+/* 40px switch + 12px row-gap (Adminpanel.html:78-79) = hint indent */
+.ad-switch-hint {
+  font-size: 12px;
+  color: var(--sb-ink-3);
+  margin-top: 2px;
+  padding-left: 52px;
+}
+.ad-google-row {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  font-size: 14px;
+}
+.ad-activity {
+  display: flex;
+  flex-direction: column;
+}
+.ad-activity-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 20px;
+  border-top: 1px solid var(--sb-line-faint);
+}
+.ad-activity-body {
+  min-width: 0;
+}
+.ad-activity-title {
+  font-size: 13px;
+}
+
+/* ============ besättningar + genbanker ============ */
+
+/* Prefix framför .sb-input (genbankens bokstav i skapa-formuläret). Ingen
+   handoff-yta täcker skapa-formuläret — värdena speglar .sb-input självt
+   (tokens.css:235-244: --sb-line-strong ram, --sb-r-2 = 4px) med
+   --sb-paper-2 som fyllnad. */
+.ad-input-prefix {
+  display: flex;
+  align-items: stretch;
+}
+.ad-input-prefix > span {
+  display: inline-flex;
+  align-items: center;
+  padding: 0 12px;
+  font-family: var(--sb-mono);
+  font-size: 15px;
+  color: var(--sb-ink-3);
+  background: var(--sb-paper-2);
+  border: 1px solid var(--sb-line-strong);
+  border-right: 0;
+  border-radius: var(--sb-r-2) 0 0 var(--sb-r-2);
+}
+.ad-input-prefix > input {
+  border-radius: 0 var(--sb-r-2) var(--sb-r-2) 0;
+}
+
+/* Felbanner: ÅTERANVÄND .ad-banner + .ad-banner-danger ur
+   @/styles/ds-admin.module.css — lägg INTE till en egen definition här.
+   Temat har ingen MuiAlert-override och lägger inte till någon. */
+
+/* Genbankskort (admin-page.jsx:145 — ad-landing-grid med 300px-spår;
+   titeln är .ad-landing-title, Adminpanel.html:127; kortkroppen är
+   AdCard:s padding, admin-ui.jsx:41) */
+.ad-gb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+}
+.ad-gb-title {
+  font-family: var(--sb-display);
+  font-size: 20px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+.ad-gb-body {
+  padding: 4px 20px 20px;
+}
+
+/* Mobil (handoff rad 142-145) — 16px gutters < 640px, ADR-0010 läsbar reserv */
+@media (max-width: 639px) {
+  .ad-container,
+  .ad-main {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+}
+
+/* ============ system-undersidor ============ */
+
+/* .ad-page-head / .ad-page-title / .ad-count / .ad-hint ligger i
+   @/styles/ds-admin.module.css — återanvänds här utan egen definition. */
+
+/* ---- Pill-nav (Adminpanel.html:108-112). Handoffens .ad-pill är en
+   <button>; här är pillren <a>, så display/text-decoration läggs till för
+   att min-height 34px ska gälla. ---- */
+.ad-pill-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+.ad-pill {
+  display: inline-flex;
+  align-items: center;
+  font-family: var(--sb-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  padding: 7px 14px;
+  min-height: 34px;
+  background: transparent;
+  color: var(--sb-ink-2);
+  border: 1px solid var(--sb-line-strong);
+  border-radius: var(--sb-r-full);
+  text-decoration: none;
+  transition: all var(--sb-dur) var(--sb-ease);
+}
+.ad-pill:hover {
+  background: var(--sb-paper-2);
+}
+.ad-pill.is-active {
+  background: var(--sb-skog);
+  color: #fff;
+  border-color: var(--sb-skog);
+}
+.ad-pill-meta {
+  margin-left: auto;
+}
+.ad-online-dot {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--sb-mossa);
+  margin-right: 8px;
+}
+
+/* .ad-card-head / .ad-card-title / .ad-card-body samt kortets och knappens
+   danger-varianter ligger i @/styles/ds-admin.module.css; .ad-badge-danger
+   ovan — återanvänds utan egna definitioner. */
+
+/* .ad-kv och .ad-cell-mono ligger i @/styles/ds-admin.module.css. */
+
+/* .ad-grid, kort-tomläget .ad-empty-note och .ad-banner + modifierare ligger
+   i @/styles/ds-admin.module.css — återanvänds. */
+.ad-cell-sub {
+  margin-top: 2px; /* surfaces/admin-system.jsx:147 */
+}
+.ad-pre {
+  margin: 0;
+  background: var(--sb-paper-2);
+  border: 1px solid var(--sb-line-faint);
+  border-radius: var(--sb-r-2);
+  padding: 10px;
+  font-family: var(--sb-mono);
+  font-size: 11px;
+  overflow: auto;
+  white-space: pre-wrap; /* 375-px-kravet: bryt raden i stället för sidscroll */
+}
+
+/* ============ aktivitetslogg + diff-läge ============ */
+
+/* ---- Aktivitetslogg + diff-läge (Adminpanel.html:85-106).
+   .ad-grid / .ad-grid-toolbar / .ad-grid-foot / .ad-grid-spacer / .ad-hint /
+   .ad-empty-note ligger i @/styles/ds-admin.module.css och .ad-pre ovan —
+   kortet, verktygsraden och fotraden återanvänder dem. ---- */
+.ad-audit-row {
+  border-bottom: 1px solid var(--sb-line-faint);
+}
+.ad-audit-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 10px 14px;
+  font-family: var(--sb-body);
+  font-size: 14px;
+  color: var(--sb-ink);
+  min-height: 44px;
+}
+.ad-audit-row.is-open .ad-audit-summary,
+.ad-audit-summary:hover {
+  background: var(--sb-paper-2);
+}
+.ad-audit-summary:focus-visible {
+  outline: 2px solid var(--sb-skog);
+  outline-offset: -2px;
+}
+.ad-audit-title {
+  font-size: 14px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.ad-audit-fields {
+  display: flex;
+  gap: 5px;
+  flex-wrap: wrap;
+  flex: 1;
+  min-width: 0;
+}
+.ad-field-chip {
+  font-family: var(--sb-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.03em;
+  padding: 2px 7px;
+  border-radius: var(--sb-r-2);
+  background: var(--sb-paper-2);
+  border: 1px solid var(--sb-line);
+  color: var(--sb-ink-2);
+  white-space: nowrap;
+}
+.ad-audit-meta {
+  flex: 0 0 auto;
+}
+.ad-caret {
+  color: var(--sb-ink-4);
+  font-size: 18px;
+  transform: rotate(90deg);
+  transition: transform var(--sb-dur) var(--sb-ease);
+}
+.ad-caret.is-open {
+  transform: rotate(-90deg);
+}
+.ad-audit-detail {
+  padding: 4px 14px 16px;
+  border-top: 1px solid var(--sb-line-faint);
+  background: var(--sb-card);
+}
+/* 375-px-kravet: långa värden scrollar i tabellen, aldrig i sidan. */
+.ad-diff-scroll {
+  overflow-x: auto;
+}
+.ad-diff {
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-top: 10px;
+}
+.ad-diff th {
+  font-family: var(--sb-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sb-ink-3);
+  text-align: left;
+  font-weight: 500;
+  padding: 4px 16px 6px 0;
+}
+.ad-diff td {
+  padding: 5px 16px 5px 0;
+  vertical-align: top;
+}
+.ad-diff-field {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--sb-ink-2);
+  white-space: nowrap;
+}
+.ad-diff-old,
+.ad-diff-new {
+  font-family: var(--sb-mono);
+  font-size: 12px;
+  padding: 2px 7px;
+  border-radius: var(--sb-r-1);
+  display: inline-block;
+  max-width: 380px;
+  overflow-wrap: break-word;
+}
+.ad-diff-old {
+  background: var(--sb-lera-soft);
+  color: #8a3f1f;
+}
+.ad-diff-new {
+  background: var(--sb-mossa-soft);
+  color: #3c5527;
+}
+.ad-diff-arrow {
+  color: var(--sb-ink-4);
+}
+.ad-raw {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+  margin-top: 10px;
+}
+.ad-raw-toggle {
+  margin-top: 10px;
+}
+
+/* ---- Mobil (Adminpanel.html:138-140). Egen @media-block i stället för en
+   sammanslagning med systemsidornas: reglerna måste stå EFTER basreglerna ovan,
+   annars vinner .ad-raw:s 1fr 1fr på smala skärmar. ---- */
+@media (max-width: 979px) {
+  .ad-raw {
+    grid-template-columns: 1fr;
+  }
+  .ad-audit-summary {
+    flex-wrap: wrap;
+  }
+  .ad-audit-meta {
+    flex-basis: 100%;
+    order: 5;
+  }
+}

@@ -1,0 +1,9 @@
+# gitleaks config: the default rules plus one allowlisted file.
+# app/certs/key.pem is the throwaway dev/test signing key, public on purpose
+# (app/certs/README.md); a production instance refuses to start with it.
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Committed dev/test PDF signing key (public by design)"
+paths = ['''^app/certs/key\.pem$''']

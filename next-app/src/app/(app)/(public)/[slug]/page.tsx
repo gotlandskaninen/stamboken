@@ -1,0 +1,73 @@
+import { notFound } from "next/navigation";
+import { getPublishedPage } from "@/lib/payload-queries";
+import { Box } from "@mui/material";
+import { RenderBlocks } from "@/components/blocks/RenderBlocks";
+import { PageHeader } from "@/components/public/PageHeader";
+import type { Metadata } from "next";
+
+type Props = { params: Promise<{ slug: string }> };
+
+export async function generateMetadata({ params }: Props): Promise<Metadata> {
+  const { slug } = await params;
+  const page = await getPublishedPage(slug);
+  if (!page) return {};
+  return {
+    title: page.meta?.title || page.title,
+    description: page.meta?.description || undefined,
+    openGraph: {
+      title: page.meta?.title || page.title,
+      description: page.meta?.description || undefined,
+      ...(page.featuredImage &&
+      typeof page.featuredImage === "object" &&
+      page.featuredImage.url
+        ? { images: [{ url: page.featuredImage.url }] }
+        : {}),
+    },
+  };
+}
+
+export default async function CmsPage({ params }: Props) {
+  const { slug } = await params;
+  const page = await getPublishedPage(slug);
+  if (!page) notFound();
+
+  const hasImage =
+    page.featuredImage &&
+    typeof page.featuredImage === "object" &&
+    page.featuredImage.url;
+
+  // The Pages collection has a `layout` blocks field, but generated types
+  // may lag behind the schema. Cast to access it safely.
+  const pageAny = page as Record<string, any>;
+  const hasBlocks =
+    pageAny.layout &&
+    Array.isArray(pageAny.layout) &&
+    pageAny.layout.length > 0;
+
+  return (
+    <>
+      <PageHeader
+        section={page.title}
+        title={page.title}
+        lede={pageAny.subtitle || undefined}
+        image={
+          hasImage
+            ? {
+                src: (page.featuredImage as any).url,
+                alt: (page.featuredImage as any).alt || "",
+                // Crop around the focal point set in /admin (defaults to centre).
+                position: `${(page.featuredImage as any).focalX ?? 50}% ${(page.featuredImage as any).focalY ?? 50}%`,
+                caption: (page.featuredImage as any).caption || undefined,
+              }
+            : undefined
+        }
+      />
+
+      {hasBlocks && (
+        <Box sx={{ px: { xs: 6, md: 14 }, py: { xs: 10, md: 16 } }}>
+          <RenderBlocks blocks={pageAny.layout} />
+        </Box>
+      )}
+    </>
+  );
+}

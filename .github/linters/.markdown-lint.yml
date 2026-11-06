@@ -1,0 +1,14 @@
+# MD013: Line length - too strict for docs with tables/URLs
+MD013: false
+# MD024: Duplicate headings - intentional in structured docs (overview + detail sections)
+MD024: false
+# MD031: Blanks around fences - false positives with some markdownlint versions
+MD031: false
+# MD032: Blanks around lists - too strict in mixed content docs
+MD032: false
+# MD036: Emphasis as heading - bold step labels are intentional in plans
+MD036: false
+# MD052: Reference links - false positive on footnote syntax [^1]
+MD052: false
+# MD060: Table column style - cosmetic, conflicts with common formatting
+MD060: false

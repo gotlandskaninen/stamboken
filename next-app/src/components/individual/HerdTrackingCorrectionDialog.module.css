@@ -1,0 +1,39 @@
+/* ADR-0010: >=44px touch targets; event fields stack at 375px, wrap from 640px. */
+.btn {
+  min-height: 44px;
+}
+
+.check {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 44px;
+}
+
+.event {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.event label {
+  min-width: 0;
+}
+
+@media (min-width: 640px) {
+  .event {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}
+
+.fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+}
+
+.fieldsetSpaced {
+  margin-top: 16px;
+}

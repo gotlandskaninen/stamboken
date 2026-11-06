@@ -1,0 +1,295 @@
+/* Provparning — breeder-facing, mobile-first (ADR-0010): one column on phones,
+   form + results side by side from 900px. */
+.container {
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 20px 16px 64px;
+}
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  align-items: start;
+}
+@media (min-width: 900px) {
+  .layout {
+    grid-template-columns: minmax(320px, 400px) minmax(0, 1fr);
+  }
+}
+
+.form {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+.formTitle {
+  margin: 0;
+  font-size: 16px;
+}
+.picker {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-width: 0;
+}
+.pickerHead {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.pickerRow {
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+}
+.pickerRow > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.iconBtn {
+  flex: 0 0 auto;
+  width: 44px;
+  height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: none;
+  border: 1px solid var(--sb-line-strong);
+  border-radius: var(--sb-r-2);
+  color: var(--sb-ink-2);
+  cursor: pointer;
+}
+.iconBtn:hover {
+  background: var(--sb-paper-2);
+}
+.toggleLink {
+  align-self: flex-start;
+  min-height: 44px;
+  padding: 0 4px;
+  background: none;
+  border: 0;
+  color: var(--sb-ink-2);
+  font: inherit;
+  font-size: 14px;
+  text-decoration: underline;
+  text-decoration-color: var(--sb-line-strong);
+  text-underline-offset: 3px;
+  cursor: pointer;
+}
+.toggleLink:hover {
+  text-decoration-color: var(--sb-lera);
+}
+
+.results {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+}
+.resultsBusy {
+  opacity: 0.55;
+  transition: opacity var(--sb-dur) var(--sb-ease);
+}
+.empty,
+.errorBox {
+  padding: 20px;
+  font-size: 15px;
+  color: var(--sb-ink-2);
+}
+.errorBox {
+  border-color: var(--sb-danger);
+  background: var(--sb-danger-soft);
+  color: var(--sb-ink);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+}
+.femaleLine {
+  margin: 0;
+  font-size: 14px;
+  color: var(--sb-ink-2);
+}
+
+.card {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+.cardHead {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+.maleName {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.verdict {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--sb-mono);
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 6px 10px;
+  border-radius: var(--sb-r-2);
+  border: 1px solid;
+}
+.verdictGood {
+  background: var(--sb-skog-soft);
+  color: var(--sb-skog);
+  border-color: #c0ccb4;
+}
+.verdictCheck {
+  background: var(--sb-lera-soft);
+  color: #8a3f1f;
+  border-color: #e6c0ad;
+}
+.verdictHigh {
+  background: var(--sb-danger-soft);
+  color: var(--sb-danger);
+  border-color: var(--sb-danger);
+}
+.fRow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.fLabel {
+  font-family: var(--sb-mono);
+  font-size: 13px;
+  color: var(--sb-ink-3);
+}
+.fNum {
+  font-family: var(--sb-display);
+  font-size: 44px;
+  line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--sb-ink);
+}
+.sentence {
+  margin: 0;
+  font-size: 15px;
+  color: var(--sb-ink-2);
+}
+.warn {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 10px 12px;
+  border: 1px solid var(--sb-danger);
+  background: var(--sb-danger-soft);
+  border-radius: var(--sb-r-2);
+  font-size: 14px;
+  color: var(--sb-ink);
+}
+.warn svg {
+  color: var(--sb-danger);
+  margin-top: 2px;
+}
+.subhead {
+  margin: 0 0 6px;
+  font-family: var(--sb-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--sb-ink-3);
+  font-weight: 500;
+}
+.ancestors {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 14px;
+}
+.ancestors li {
+  overflow-wrap: anywhere;
+}
+.muted {
+  color: var(--sb-ink-3);
+}
+.facts {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+  color: var(--sb-ink-2);
+}
+.cardFoot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  align-items: center;
+}
+/* Standalone text link with a >= 44 px hit area (ADR-0010). */
+.linkTarget {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 4px;
+}
+.treeBox {
+  border-top: 1px solid var(--sb-line);
+  padding-top: 12px;
+  min-width: 0;
+}
+.treeNote {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: var(--sb-ink-3);
+}
+.thresholds {
+  margin: 0;
+  font-size: 13px;
+  color: var(--sb-ink-3);
+}
+
+.skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.skelLine {
+  height: 14px;
+  border-radius: var(--sb-r-2);
+  background: linear-gradient(
+    90deg,
+    var(--sb-paper-2) 25%,
+    var(--sb-paper-3) 50%,
+    var(--sb-paper-2) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+.skelBig {
+  height: 40px;
+  width: 45%;
+}
+@keyframes shimmer {
+  to {
+    background-position: -200% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skelLine {
+    animation: none;
+  }
+}

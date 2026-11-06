@@ -1,0 +1,280 @@
+name: Playwright Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: ['feature/**']
+
+jobs:
+  # ═══════════════════════════════════════════════════════════
+  # Next.js e2e tests — REQUIRED CHECK (blocks PR merge)
+  #
+  # After the RSC migration (ADR-0008), dashboard pages fetch data
+  # server-side via fetchApi. The Next.js dev server needs a reachable
+  # Flask API for server-side auth (requireUser) and data loading.
+  # ═══════════════════════════════════════════════════════════
+  playwright-nextjs:
+    name: Playwright — Next.js
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: herdbook
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: herdbook_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      cms-postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: herdbook_cms
+          POSTGRES_PASSWORD: herdbook_cms_insecure
+          POSTGRES_DB: herdbook_cms
+        ports:
+          - 5433:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: ./.github/actions/start-api
+
+      # Node 24 (Active LTS) — Node 22's stream/web has a TransformStream
+      # shutdown race (nodejs/node#62036) that 500:ar RSC-navigering
+      # intermittent efter next 16.2.11/undici 7.29-bumpen. Matchar
+      # prod-imagen (.docker/next-app).
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
+      - name: Enable pnpm via corepack
+        run: corepack enable pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: next-app
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('next-app/pnpm-lock.yaml') }}
+
+      - name: Install Playwright Chromium
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
+        run: npx playwright install chromium --with-deps
+        working-directory: next-app
+
+      - name: Install Playwright system deps
+        if: steps.playwright-cache.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+        working-directory: next-app
+
+      - name: Run Next.js e2e tests
+        run: pnpm exec playwright test --config=playwright.config.ts --reporter=github,html
+        working-directory: next-app
+        env:
+          API_INTERNAL_URL: http://localhost:9090
+          CMS_DATABASE_URL: postgres://herdbook_cms:herdbook_cms_insecure@localhost:5433/herdbook_cms
+
+      - name: Upload test report
+        uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-nextjs-report
+          path: next-app/playwright-report/
+          retention-days: 14
+
+      - name: Stop API
+        if: always()
+        run: docker rm -f test-api 2>/dev/null || true
+
+  # ═══════════════════════════════════════════════════════════
+  # Legacy regression tests — ADVISORY (does NOT block merge)
+  #
+  # Runs 20 Playwright tests against the full Docker Compose
+  # stack (nginx + Flask API + PostgreSQL + legacy frontend).
+  # Failures are posted as annotations but do not fail the PR.
+  # ═══════════════════════════════════════════════════════════
+  playwright-legacy:
+    name: Playwright — Legacy (advisory)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    continue-on-error: true
+
+    steps:
+      - uses: actions/checkout@v6
+
+      # --- Build legacy frontend from upstream repo ---
+      - name: Build legacy frontend
+        run: ./scripts/build-legacy.sh --prod
+
+      # --- Prepare environment files from defaults ---
+      - name: Setup environment
+        run: |
+          for f in database-variables api-variables api-test-variables next-app-variables cms-database-variables; do
+            if [ -f ".docker/${f}.env.default" ]; then
+              cp ".docker/${f}.env.default" ".docker/${f}.env"
+            fi
+          done
+          # Disable rate limiting for CI (legacy tests hit API rapidly)
+          echo "RATELIMIT_ENABLED=false" >> .docker/api-variables.env
+          echo "RATELIMIT_ENABLED=false" >> .docker/api-test-variables.env
+          mkdir -p config logs logs-test cache cache-test uppladdningar s3data letsencrypt local_ca
+          cp app/tests/auth.ini.test config/auth.ini
+
+      # --- Start Docker Compose stack ---
+      # Build images and start database first, then init schema, then start the rest
+      - name: Build images
+        run: |
+          # Export NEXT_PUBLIC_* into the shell so compose interpolation can
+          # pass them as build args (they're inlined by next build).
+          set -a
+          . .docker/next-app-variables.env
+          set +a
+          docker compose -f docker-compose.local-production.yml build
+        env:
+          DOCKER_BUILDKIT: 1
+          COMPOSE_DOCKER_CLI_BUILD: 1
+
+      - name: Pre-generate DH params and self-signed cert
+        run: |
+          mkdir -p letsencrypt/dhparams local_ca
+          openssl dhparam -out letsencrypt/dhparams/dhparam.pem 2048
+          openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
+            -keyout local_ca/localhost.key -out local_ca/localhost.crt \
+            -subj "/CN=localhost"
+          mkdir -p letsencrypt/live/localhost
+          cp local_ca/localhost.crt letsencrypt/live/localhost/fullchain.pem
+          cp local_ca/localhost.key letsencrypt/live/localhost/privkey.pem
+
+      - name: Start database and redis
+        run: |
+          docker compose -f docker-compose.local-production.yml up -d database redis cms-database
+          timeout 120 bash -c 'until docker compose -f docker-compose.local-production.yml exec -T database pg_isready -U herdbook -d herdbook; do sleep 2; done'
+          echo "Database is ready"
+
+      - name: Initialize database schema
+        run: |
+          # Bootstrap both databases (herdbook + herdbook_demo) at current schema version.
+          # This avoids the migration chain failing on a fresh empty database.
+          docker compose -f docker-compose.local-production.yml run --rm -T api python3 -c "
+          from utils.database import init, DATABASE
+          if DATABASE.is_closed():
+              DATABASE.connect()
+          init()
+          print('Database herdbook initialized')
+          "
+          docker compose -f docker-compose.local-production.yml run --rm -T api-test python3 -c "
+          from utils.database import init, DATABASE
+          if DATABASE.is_closed():
+              DATABASE.connect()
+          init()
+          print('Database herdbook_demo initialized')
+          "
+
+      - name: Start all services except nginx
+        run: |
+          docker compose -f docker-compose.local-production.yml up -d --no-deps api api-test next-app
+
+      - name: Wait for API and Next.js health
+        run: |
+          timeout 180 bash -c 'until curl -sf http://localhost:9090/api/health; do sleep 3; done'
+          echo "API is healthy"
+          timeout 180 bash -c 'until curl -sf http://localhost:3000; do sleep 3; done'
+          echo "Next.js is healthy"
+
+      - name: Start nginx
+        run: |
+          docker compose -f docker-compose.local-production.yml up -d nginx
+
+      - name: Wait for nginx
+        run: |
+          timeout 60 bash -c 'until curl -ksf https://localhost; do sleep 3; done'
+          echo "nginx is serving"
+
+      # --- Seed test data ---
+      - name: Seed test data
+        run: |
+          docker compose -f docker-compose.local-production.yml exec -T api flask seed create --verbose
+
+      - name: Create legacy test users
+        run: |
+          docker compose -f docker-compose.local-production.yml exec -T api python3 -m cli.create_test_users
+
+      # --- Install Playwright ---
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Enable pnpm via corepack
+        run: corepack enable pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+        working-directory: next-app
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        id: playwright-cache-legacy
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('next-app/pnpm-lock.yaml') }}
+
+      - name: Install Playwright Chromium
+        if: steps.playwright-cache-legacy.outputs.cache-hit != 'true'
+        run: npx playwright install chromium --with-deps
+        working-directory: next-app
+
+      - name: Install Playwright system deps
+        if: steps.playwright-cache-legacy.outputs.cache-hit == 'true'
+        run: npx playwright install-deps chromium
+        working-directory: next-app
+
+      # --- Run legacy tests ---
+      - name: Run legacy regression tests
+        run: pnpm exec playwright test --config=playwright.legacy.config.ts --reporter=github,html
+        working-directory: next-app
+
+      - name: Upload test report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-legacy-report
+          path: next-app/playwright-report/
+          retention-days: 14
+
+      - name: Show service logs on failure
+        if: failure()
+        run: |
+          echo "=== next-app logs ==="
+          docker compose -f docker-compose.local-production.yml logs --tail=80 next-app
+          echo "=== API logs ==="
+          docker compose -f docker-compose.local-production.yml logs --tail=50 api
+          echo "=== nginx logs ==="
+          docker compose -f docker-compose.local-production.yml logs --tail=50 nginx

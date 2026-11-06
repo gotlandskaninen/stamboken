@@ -1,0 +1,688 @@
+/* Recreated from stamboken-drift:docs/design/design_handoff_min_besattning/Min Besattning.html
+   <style> block (lines 12-296). Topbar/mobilenav/notification/masthead/tabs
+   classes are OWNED BY SLICE A (topbar.module.css etc.) and intentionally
+   omitted here. mb-herd-chip is duplicated locally because the prototype
+   reuses it for filter chips and privacy toggles. */
+
+.mb-container {
+  width: 100%;
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 0 16px;
+  box-sizing: border-box;
+}
+
+.mb-main {
+  padding: 24px 16px 64px;
+}
+
+/* Pill chip (prototype .mb-herd-chip, lines 81-89) — filter + privacy chips */
+.mb-herd-chip {
+  font-family: var(--sb-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  padding: 7px 12px;
+  min-height: 32px;
+  background: transparent;
+  color: var(--sb-ink-2);
+  border: 1px solid var(--sb-line-strong);
+  border-radius: var(--sb-r-full);
+  cursor: pointer;
+  transition: all var(--sb-dur) var(--sb-ease);
+}
+.mb-herd-chip:hover {
+  background: var(--sb-paper-2);
+}
+.mb-herd-chip.is-active {
+  background: var(--sb-skog);
+  color: #fff;
+  border-color: var(--sb-skog);
+}
+
+/* Stats (lines 110-114) */
+.mb-stats {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin-bottom: 24px;
+  overflow: hidden;
+}
+.mb-stat {
+  padding: 20px;
+  border-right: 1px solid var(--sb-line-faint);
+  border-bottom: 1px solid var(--sb-line-faint);
+}
+.mb-stat:nth-child(2n) {
+  border-right: 0;
+}
+.mb-stat:nth-child(n + 3) {
+  border-bottom: 0;
+}
+.mb-stat :global(.sb-stat-num) {
+  font-size: 36px;
+}
+
+/* Two-column layout (lines 117-118) */
+.mb-two-col {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+.mb-col-main,
+.mb-col-side {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+
+/* Section cards (lines 120-122) */
+.mb-section-card {
+  overflow: hidden;
+}
+.mb-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 12px;
+}
+.mb-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+/* Rabbit list rows (lines 125-143) */
+.mb-list {
+  display: flex;
+  flex-direction: column;
+}
+.mb-rabbit-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "id chevron" "meta chevron" "badges chevron";
+  gap: 4px 12px;
+  align-items: center;
+  padding: 14px 20px;
+  border-top: 1px solid var(--sb-line-faint);
+  cursor: pointer;
+  transition: background var(--sb-dur-fast) var(--sb-ease);
+  min-height: 44px;
+}
+.mb-rabbit-row:hover {
+  background: var(--sb-paper-2);
+}
+.mb-row-id {
+  grid-area: id;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.mb-row-name {
+  font-family: var(--sb-display);
+  font-size: 18px;
+}
+.mb-row-meta {
+  grid-area: meta;
+  display: flex;
+  gap: 12px;
+  font-size: 13px;
+  color: var(--sb-ink-3);
+}
+.mb-row-badges {
+  grid-area: badges;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 2px;
+}
+.mb-chevron {
+  grid-area: chevron;
+  color: var(--sb-ink-4);
+  font-size: 22px;
+}
+
+.mb-sex {
+  font-size: 13px;
+}
+.mb-sex[data-sex="female"] {
+  color: #8a3f1f;
+}
+.mb-sex[data-sex="male"] {
+  color: var(--sb-himmel);
+}
+.mb-age {
+  font-size: 13px;
+  color: var(--sb-ink-3);
+}
+
+/* Rabbit cards (lines 146-152) */
+.mb-grid-cards {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 16px;
+}
+.mb-rabbit-card {
+  cursor: pointer;
+  transition:
+    box-shadow var(--sb-dur) var(--sb-ease),
+    transform var(--sb-dur) var(--sb-ease);
+  overflow: hidden;
+}
+.mb-rabbit-card:hover {
+  box-shadow: var(--sb-shadow-2);
+  transform: translateY(-1px);
+}
+.mb-rabbit-card-body {
+  padding: 14px 16px 16px;
+}
+.mb-rabbit-name {
+  font-family: var(--sb-display);
+  font-size: 22px;
+  line-height: 1.15;
+  margin: 2px 0 8px;
+}
+.mb-chip-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.mb-parents {
+  margin-top: 10px;
+}
+
+/* Photo (adapted from surfaces/min-besattning-ui.jsx MbPhoto, lines 25-30) */
+.mb-photo {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  display: block;
+  border-bottom: 1px solid var(--sb-line);
+}
+.mb-photo-placeholder {
+  aspect-ratio: 4 / 3;
+  border: 0;
+  border-bottom: 1px solid var(--sb-line);
+}
+
+/* Toolbar / filters (lines 155-165) */
+.mb-toolbar {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 12px;
+  align-items: center;
+}
+.mb-search {
+  flex: 1;
+  min-width: 0;
+}
+.mb-view-toggle {
+  display: flex;
+  border: 1px solid var(--sb-line-strong);
+  border-radius: var(--sb-r-2);
+  overflow: hidden;
+  flex: 0 0 auto;
+}
+.mb-view-toggle button {
+  font-family: var(--sb-body);
+  font-size: 13px;
+  font-weight: 500;
+  padding: 10px 14px;
+  min-height: 44px;
+  border: 0;
+  background: transparent;
+  color: var(--sb-ink-2);
+  cursor: pointer;
+}
+.mb-view-toggle button.is-active {
+  background: var(--sb-skog);
+  color: #fff;
+}
+.mb-filter-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 20px;
+}
+.mb-empty {
+  padding: 48px 20px;
+  text-align: center;
+  color: var(--sb-ink-3);
+  font-size: 14px;
+}
+
+/* Gestation (lines 168-171) */
+.mb-gestation {
+  border: 1px solid var(--sb-line);
+  border-radius: var(--sb-r-2);
+  padding: 14px 16px;
+  background: var(--sb-paper);
+}
+.mb-gestation-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+  margin-bottom: 10px;
+}
+.mb-progress {
+  height: 6px;
+  background: var(--sb-paper-3);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.mb-progress-fill {
+  height: 100%;
+  background: var(--sb-mossa);
+  border-radius: 999px;
+}
+
+/* Breeding cards (lines 174-192) */
+.mb-year-group {
+  margin-bottom: 28px;
+}
+.mb-year-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin: 0 0 10px;
+}
+.mb-year {
+  font-family: var(--sb-display);
+  font-size: 24px;
+  color: var(--sb-ink-2);
+}
+.mb-year-sm {
+  font-size: 20px;
+}
+.mb-breeding-card {
+  overflow: visible;
+}
+.mb-breeding-card.is-mating {
+  border-left: 3px solid var(--sb-lera);
+}
+.mb-breeding-summary {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  grid-template-areas: "title chevron" "chips chevron";
+  gap: 6px 12px;
+  align-items: center;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  padding: 14px 16px;
+  font-family: var(--sb-body);
+  color: var(--sb-ink);
+}
+.mb-breeding-title {
+  grid-area: title;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.mb-breeding-chips {
+  grid-area: chips;
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.mb-caret {
+  grid-area: chevron;
+  transform: rotate(90deg);
+  transition: transform var(--sb-dur) var(--sb-ease);
+  background: none;
+  border: 0;
+  cursor: pointer;
+  color: var(--sb-ink-4);
+  font-size: 22px;
+  min-width: 44px;
+  min-height: 44px;
+}
+.mb-caret.is-open {
+  transform: rotate(-90deg);
+}
+.mb-breeding-gestation {
+  padding: 0 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.mb-breeding-detail {
+  border-top: 1px solid var(--sb-line-faint);
+  padding: 14px 16px 16px;
+}
+.mb-breeding-actions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--sb-line-faint);
+}
+.mb-offspring {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  margin-top: 6px;
+  font-size: 14px;
+}
+
+/* Kullista / litter roster (lines 195-219) */
+.mb-roster {
+  margin-top: 4px;
+  background: var(--sb-paper);
+  border: 1px solid var(--sb-line);
+  border-radius: var(--sb-r-2);
+  padding: 12px 14px;
+}
+.mb-roster-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.mb-kit-list {
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--sb-line-faint);
+}
+.mb-kit-row {
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  grid-template-areas: "drag pos id" "drag pos actions";
+  gap: 6px 10px;
+  align-items: center;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--sb-line-faint);
+}
+.mb-kit-drag {
+  grid-area: drag;
+  color: var(--sb-ink-4);
+  cursor: grab;
+  font-size: 13px;
+  letter-spacing: -2px;
+}
+.mb-kit-pos {
+  grid-area: pos;
+  font-family: var(--sb-display);
+  font-size: 18px;
+  color: var(--sb-ink-2);
+  min-width: 20px;
+  text-align: center;
+}
+.mb-kit-id {
+  grid-area: id;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-width: 0;
+}
+.mb-kit-number.is-registered {
+  color: var(--sb-skog);
+  font-weight: 500;
+}
+.mb-kit-number.is-provisional {
+  font-style: normal;
+}
+.mb-kit-number.is-provisional em {
+  color: var(--sb-ink-4);
+  font-style: italic;
+}
+.mb-kit-label {
+  font-size: 14px;
+  font-weight: 500;
+}
+.mb-kit-actions {
+  grid-area: actions;
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.mb-kit-actions :global(.sb-btn-sm) {
+  min-height: 32px;
+  padding: 5px 12px;
+}
+.mb-kit-actions :global(.sb-btn):disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.mb-fate-select {
+  font-family: var(--sb-mono);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 5px 8px;
+  min-height: 32px;
+  background: var(--sb-paper-2);
+  color: var(--sb-ink-2);
+  border: 1px solid var(--sb-line);
+  border-radius: var(--sb-r-2);
+  cursor: pointer;
+}
+.mb-roster-add {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-top: 10px;
+}
+
+/* Todo + quick actions (lines 222-223) */
+.mb-todo p {
+  margin: 8px 0 0;
+  font-size: 14px;
+  color: var(--sb-ink-2);
+  line-height: 1.5;
+}
+.mb-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+/* Contact card (lines 226-229) */
+.mb-contact {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.mb-contact-row dt {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--sb-ink-3);
+  margin-bottom: 2px;
+}
+.mb-contact-row dd {
+  margin: 0;
+  font-size: 15px;
+}
+.mb-privacy-toggle {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+}
+
+/* Pedigree (lines 232-249) */
+.mb-ped {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+.mb-ped-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  justify-content: center;
+}
+.mb-ped-node {
+  border: 1px dashed var(--sb-line-strong);
+  border-radius: var(--sb-r-2);
+  padding: 10px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: var(--sb-ink-3);
+  background: var(--sb-paper);
+}
+.mb-ped-node.is-known {
+  border-style: solid;
+  color: var(--sb-ink);
+  background: var(--sb-card);
+}
+.mb-ped-node.is-self {
+  border: 1px solid var(--sb-skog);
+  background: var(--sb-skog-soft);
+}
+.mb-ped-name {
+  font-family: var(--sb-display);
+  font-size: 16px;
+}
+.mb-ped-pick {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  text-align: left;
+  font-family: var(--sb-body);
+  font-size: 15px;
+  color: var(--sb-ink);
+  padding: 12px 20px;
+  min-height: 44px;
+  background: none;
+  border: 0;
+  border-top: 1px solid var(--sb-line-faint);
+  cursor: pointer;
+}
+.mb-ped-pick:hover {
+  background: var(--sb-paper-2);
+}
+.mb-ped-pick.is-active {
+  background: var(--sb-skog-soft);
+}
+
+.mb-hide-sm {
+  display: none;
+}
+
+/* ================= >=640px (lines 254-272) ================= */
+@media (min-width: 640px) {
+  .mb-container {
+    padding: 0 24px;
+  }
+  .mb-main {
+    padding: 28px 24px 72px;
+  }
+  .mb-grid-cards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .mb-hide-sm {
+    display: inline-flex;
+  }
+  .mb-rabbit-row {
+    grid-template-columns: minmax(220px, 1.4fr) 1fr auto auto;
+    grid-template-areas: "id meta badges chevron";
+    gap: 16px;
+  }
+  .mb-row-badges {
+    margin-top: 0;
+    justify-content: flex-end;
+  }
+  .mb-ped {
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 16px;
+  }
+  .mb-kit-row {
+    grid-template-columns: auto auto 1fr auto;
+    grid-template-areas: "drag pos id actions";
+  }
+  .mb-kit-actions {
+    justify-content: flex-end;
+  }
+}
+
+/* ================= >=980px (lines 275-288) ================= */
+@media (min-width: 980px) {
+  .mb-stats {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .mb-stat {
+    border-bottom: 0;
+    border-right: 1px solid var(--sb-line-faint);
+    padding: 24px;
+  }
+  .mb-stat:nth-child(2n) {
+    border-right: 1px solid var(--sb-line-faint);
+  }
+  .mb-stat:last-child {
+    border-right: 0;
+  }
+  .mb-stat :global(.sb-stat-num) {
+    font-size: 44px;
+  }
+  .mb-two-col {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 360px;
+    align-items: start;
+  }
+  .mb-two-col-rev {
+    grid-template-columns: 300px minmax(0, 1fr);
+  }
+  .mb-two-col-rev .mb-col-side {
+    order: -1;
+  }
+  .mb-grid-cards {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+/* ADR-0010, 375-px-kravet, on touch screens: 44px tap targets, and 16px text
+   in the fate select so iOS does not zoom in on focus. Last in the file so it
+   wins over the 32px rules above. */
+@media (pointer: coarse) {
+  .mb-herd-chip,
+  .mb-kit-actions :global(.sb-btn-sm) {
+    min-height: 44px;
+  }
+
+  /* 16px mono capitals shout; read like the other 16px fields instead. */
+  .mb-fate-select {
+    min-height: 44px;
+    font-family: var(--sb-body);
+    font-size: 16px;
+    text-transform: none;
+    letter-spacing: normal;
+  }
+
+  /* One offspring link per 44px row instead of 22px lines 6px apart. */
+  .mb-offspring {
+    row-gap: 0;
+  }
+  .mb-offspring > a {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+
+  /* The tap area reaches into the roster's 14px padding and the column gap,
+     so the row shifts 22px instead of 42px. */
+  .mb-kit-drag {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 44px;
+    min-height: 44px;
+    margin: 0 -6px 0 -14px;
+  }
+}

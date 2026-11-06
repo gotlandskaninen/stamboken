@@ -1,0 +1,284 @@
+/* /medlem — managerytorna på Stamboken-designsystemet (ADR-0009). Sidhuvud,
+   DataGrid-kort, detaljrutnät, formulärkort och banderoller delas med
+   adminpanelen via @/styles/ds-admin.module.css; här bor bara det som är
+   specifikt för matrikeln. Desktop-first med läsbar mobilreserv (ADR-0010). */
+
+.container {
+  max-width: 1140px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+}
+
+.mono {
+  font-family: var(--sb-mono);
+}
+
+/* Dubblerad/globalkvalificerad klass = specificitet 0,2,0: reglerna
+   kombineras med .sb-btn i tokens.css och måste vinna oavsett stilarkens
+   ordning (samma grepp som profil.module.css). white-space: en xs-knapp i en
+   trång tabellcell får aldrig brytas till två rader ("Koppla / konto…"). */
+:global(.sb-btn).btnXs {
+  padding: 4px 10px;
+  font-size: 12px;
+  min-height: 28px;
+  white-space: nowrap;
+}
+/* Ikonknappen ⋯ i Åtgärder — kvadratisk, samma höjd som övriga xs-knappar. */
+:global(.sb-btn).moreBtn {
+  padding: 4px;
+  min-width: 28px;
+  justify-content: center;
+}
+:global(.sb-btn).btnDanger {
+  --bg: transparent;
+  --fg: var(--sb-danger);
+  --bd: transparent;
+}
+:global(.sb-btn).btnDanger:hover:not(:disabled) {
+  /* :not(:disabled) — see ds-admin.module.css .ad-btn-danger:hover */
+  background: var(--sb-danger-soft);
+  border-color: transparent;
+}
+
+/* Statusbrickan "Väntar" — tokens.css saknar en varningsvariant, så samma
+   regel som profil.module.css:121 (skog Aktiv / default Inaktiv /
+   warning Väntar / himmel Friexemplar). */
+:global(.sb-badge).badgeWarning {
+  background: var(--sb-warning-soft);
+  color: var(--sb-ink-2);
+  border-color: var(--sb-warning);
+}
+
+/* Tabellrecept — samma som profil.module.css: en DOM som viks till staplade
+   rader under 640px, aldrig horisontell sidscroll (ADR-0010, 375-px-kravet). */
+
+/* Persontabellen har sex kolumner i ett kort som är 728px brett vid 1440px.
+   Blir tabellens min-content-bredd större än så växer <table> förbi kortet och
+   lägger sig över Översikt-kortet bredvid (table-layout: auto respekterar
+   width: 100% bara ned till min-content). Wrappern gör att den resten som
+   inte får plats scrollar INUTI kortet i stället — samma recept som
+   adminhandoffens .ad-grid-scroll (stamboken-drift:docs/design/design_handoff_admin/Adminpanel.html:51,
+   där .ad-table har min-width). Cellreglerna nedan håller min-content nere så
+   att scrollen först behövs under ~1100px. */
+.tblWrap {
+  overflow-x: auto;
+}
+.tbl {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.tbl th {
+  text-align: left;
+  font-family: var(--sb-mono);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  font-weight: 500;
+  color: var(--sb-ink-3);
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--sb-line);
+}
+.tbl td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--sb-line-faint);
+  vertical-align: middle;
+}
+/* 14px mellan kolumnerna (sex kolumner i ett 700px-kort — 20px åt varje
+   håll åt 240px), men kortets 20px-marginal behålls i ytterkanterna så att
+   Namn linjerar med kortrubriken. */
+.tbl th:first-child,
+.tbl td:first-child {
+  padding-left: 20px;
+}
+.tbl th:last-child,
+.tbl td:last-child {
+  padding-right: 20px;
+}
+.tbl .r {
+  text-align: right;
+}
+
+/* Cellinnehåll i persontabellen. Måtten ur artboardet
+   matrikel-koppla-konto.html: kontocellen är en rad med 6px mellan
+   användarnamnet och "Koppla bort" (rad 155), åtgärdsgruppen och brickraderna
+   är flex med 4px (rad 157/164-165). .badgeRow används både för åtkomsterna i
+   persontabellen och för besättningarna i Översikt-kortet (rad 206).
+   Åtgärdsgruppen är Redigera + ⋯ (radmenyn bär resten) och bryts aldrig —
+   fem staplade knappar per rad var det som gjorde kolumnen oläslig. */
+.userCell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.rowActions {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  white-space: nowrap;
+}
+/* Destruktiva radmenyval (Ta bort, Anonymisera) i lera — samma signal som
+   .btnDanger. Dubblerad klass vinner över MUI:s MenuItem-färg. */
+.menuDanger.menuDanger {
+  color: var(--sb-danger);
+}
+.badgeRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.grant {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Användarnamnet i Konto är mono utan brytpunkter och satte annars tabellens
+   min-content-bredd. Cellen målas via sitt data-label (samma attribut som den
+   staplade mobilvyn använder), så ingen extra klass behövs i TSX:en. Kontakt-
+   cellen behåller normal ordbrytning — dess brytpunkt är <wbr /> framför @
+   (PersonsCard.contactContent), inte ett ord-brytande overflow-wrap. */
+.tbl td[data-label="Konto"] .mono {
+  overflow-wrap: anywhere;
+}
+
+/* Träfflistan i "Koppla användarkonto" — artboardet
+   stamboken-drift:docs/design/design_handoff_profil/matrikel-koppla-konto.html:231-238:
+   inramad hairline-låda med rundade hörn och overflow: hidden, raderna
+   åtskilda av en svag linje. Listan är en <ul role="listbox">, därav
+   nollställd margin/padding och list-style. */
+.searchList {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--sb-line);
+  border-radius: var(--sb-r-2);
+  overflow: hidden;
+}
+/* Raden: artboardets ytterpadding 10px 14px runt den inre kolumnstapeln
+   (användarnamn över e-post, gap 1px). */
+.searchRow {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 10px 14px;
+  cursor: pointer;
+}
+.searchRow + .searchRow {
+  border-top: 1px solid var(--sb-line-faint);
+}
+/* :not(.searchRowActive) håller hovern borta från den valda raden. Enbart
+   källordning räcker inte: .searchRow:hover är 0,2,0 (klass + pseudoklass) och
+   skulle annars vinna över .searchRowActive (0,1,0) oavsett var den står. */
+.searchRow:not(.searchRowActive):hover {
+  background: var(--sb-paper-2);
+}
+.searchRowActive {
+  background: var(--sb-skog-soft);
+}
+
+/* Fältstapel i dialoger — ersätter MUI <Stack spacing={2}>; padding-top ger
+   den första TextFieldens flytande etikett luft mot DialogTitle. */
+.dialogBody {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-top: 8px;
+}
+
+/* Layoutvärden som tidigare låg i MUI-komponenternas sx (ADR-0009 tillåter
+   aldrig sx-layout i ny kod). Klassen dubbleras för specificitet 0,2,0 så att
+   den vinner över MUI:s egna emotion-klasser oavsett injektionsordning —
+   samma grepp som :global(.sb-btn).btnXs ovan. */
+.statusSelect.statusSelect {
+  width: 150px;
+}
+/* MUI:s sx mt: 1 = 1 × 8px spacing: luft mellan DialogTitle och den flytande
+   etiketten i avslagsdialogens textfält. */
+.dialogField.dialogField {
+  margin-top: 8px;
+}
+
+/* Översikt-remsan på medlemskapssidan: .ad-status-strip/.ad-status-cell ur
+   ds-admin, men värdena är text (notering, publiceringsval, brickor), inte
+   tal — därför 15px brödtext i bläck i stället för .ad-status-val:s
+   24px display i skog. Dubblerad klass slår .ad-status-cell:s padding. */
+.ovCell.ovCell {
+  padding: 14px 20px;
+}
+.ovVal {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--sb-ink);
+  line-height: 1.4;
+  min-height: 21px;
+  overflow-wrap: anywhere;
+}
+
+/* Medlemskapsformuläret (artboard matrikel-koppla-konto.html:182-188).
+   .ad-form är 440px; detta kort använder 640. Postnummerraden: .ad-form-row
+   bottenlinjerar sina barn (align-items: flex-end), vilket med hjälptexten
+   "5 siffror" under postnumret tryckte ned Postort så att etiketterna hamnade
+   på olika höjd — här topplinjeras raden i stället. Bredderna ur artboardet
+   (140px fast / resten) måste slå .ad-form-row > *:first/last-child (0,1,1),
+   därav dubblerade klasser. */
+.formWide.formWide {
+  max-width: 640px;
+}
+.postalRow.postalRow {
+  align-items: flex-start;
+}
+.postalCode.postalCode {
+  flex: 0 0 140px;
+}
+.postalCity.postalCity {
+  flex: 1 1 160px;
+  min-width: 0;
+}
+.notes.notes {
+  resize: vertical;
+}
+
+@media (max-width: 639px) {
+  .tbl thead {
+    display: none;
+  }
+  .tbl,
+  .tbl tbody,
+  .tbl tr,
+  .tbl td {
+    display: block;
+  }
+  .tbl tr {
+    padding: 12px 20px;
+    border-bottom: 1px solid var(--sb-line-faint);
+  }
+  .tbl td {
+    padding: 2px 0;
+    border: 0;
+  }
+  .tbl td:first-child,
+  .tbl td:last-child {
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .tbl td.r {
+    text-align: left;
+  }
+  .rowActions {
+    justify-content: flex-start;
+  }
+  .tbl td[data-label]::before {
+    content: attr(data-label);
+    display: block;
+    font-family: var(--sb-mono);
+    font-size: 11px;
+    letter-spacing: 0.04em;
+    color: var(--sb-ink-3);
+    margin: 6px 0 2px;
+  }
+}

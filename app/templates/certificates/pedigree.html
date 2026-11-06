@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<title>Genbanksintyg — {{ genebank_number }}-{{ genebank_aki }}</title>
+<style>
+/* =========================================================================
+   STAMBOKEN — Genbanksintyg v2
+   Design tokens from the Stamboken Design System (Föreningen Gotlandskaninen).
+   Target: WeasyPrint >= 65 (flexbox + tables only, no CSS grid).
+   Fonts fetched at render time; falls back to DejaVu (bundled with WeasyPrint).
+   ========================================================================= */
+@import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+
+@page { size: A4 portrait; margin: 0; }
+
+:root {
+  --paper: #F4F1EA; --paper-2: #EBE6D8; --card: #FBF9F3;
+  --ink: #1F1B16; --ink-2: #3D362C; --ink-3: #6F6A5F; --ink-4: #9D978A;
+  --skog: #2F4A32; --skog-deep: #1F3322; --mossa: #6B8E54; --lera: #B85C38;
+  --line: #D7CFBE; --line-strong: #B8AE99; --line-faint: #E5DECB;
+  --serif: "Source Serif 4", "Iowan Old Style", Georgia, serif;
+  --sans: "IBM Plex Sans", "DejaVu Sans", sans-serif;
+  --mono: "IBM Plex Mono", "DejaVu Sans Mono", monospace;
+}
+
+body {
+  margin: 0;
+  font-family: var(--sans);
+  font-size: 9.5pt;
+  line-height: 1.3;
+  color: var(--ink);
+  background: var(--paper);
+}
+/* Logo watermark — fixed layer repeats on the (single) page in WeasyPrint;
+   position: fixed centers it behind all content in browsers too. */
+.watermark {
+  position: fixed;
+  top: 148.5mm; left: 50%;
+  width: 195mm; height: 195mm;
+  margin-left: -97.5mm; margin-top: -97.5mm;
+  opacity: 0.045;
+  z-index: 0;
+}
+.sheet { position: relative; z-index: 1; }
+.sheet { padding: 11mm 16mm 8mm 16mm; }
+/* Demo stamp — rendered only when the issuing instance runs against the
+   demo database (CERT_DEMO_WATERMARK). Sits above all content (z 2 > sheet 1). */
+.demo-stamp {
+  position: fixed;
+  top: 128mm; left: 0;
+  width: 210mm;
+  transform: rotate(-30deg);
+  font-family: var(--sans);
+  font-size: 34pt; font-weight: 600;
+  line-height: 1.15;
+  text-align: center;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #C0392B;
+  opacity: 0.4;
+  z-index: 2;
+}
+
+/* === Header ============================================================ */
+.head { display: flex; align-items: center; }
+.head .logo {
+  width: 19mm; height: 19mm;
+  border: 0.5pt solid var(--line-strong);
+  border-radius: 50%;
+  margin-right: 5mm;
+  background: #fff;
+}
+.head-mid { flex: 1; }
+.eyebrow {
+  font-family: var(--mono);
+  font-size: 7pt; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.16em;
+  color: var(--ink-3);
+  margin: 0 0 1mm 0;
+}
+.head-mid h1 {
+  font-family: var(--serif);
+  font-size: 31pt; font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em; line-height: 1;
+  color: var(--ink);
+  margin: 0;
+}
+.head-mid .breed {
+  font-size: 9pt; color: var(--ink-2); margin: 1.2mm 0 0 0;
+}
+.cert-nr {
+  text-align: center;
+  border-top: 1.4pt solid var(--ink);
+  border-bottom: 1.4pt solid var(--ink);
+  padding: 2mm 5mm;
+}
+.cert-nr .lbl {
+  font-family: var(--mono);
+  font-size: 6.5pt; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.14em;
+  color: var(--ink-3);
+}
+.cert-nr .num {
+  font-family: var(--serif);
+  font-size: 17pt; font-weight: 600;
+  color: var(--lera);
+  line-height: 1.1;
+}
+
+/* double rule under header — classic ledger */
+.rule-thick { height: 0; border-top: 1.4pt solid var(--ink); margin-top: 3.5mm; }
+.rule-thin  { height: 0; border-top: 0.4pt solid var(--line-strong); margin-top: 0.8mm; }
+
+/* microtext security line — hard to reproduce with copier/scanner */
+.microline {
+  font-family: var(--mono);
+  font-size: 3.2pt; font-weight: 400;
+  letter-spacing: 0.08em;
+  color: var(--ink-3);
+  white-space: nowrap; overflow: hidden;
+  margin-top: 0.7mm;
+  text-transform: uppercase;
+}
+
+/* === Section heading =================================================== */
+.sec {
+  display: flex; align-items: center;
+  margin: 4mm 0 1.8mm 0;
+}
+.sec .no {
+  font-family: var(--mono);
+  font-size: 7pt; font-weight: 500;
+  color: var(--skog);
+  letter-spacing: 0.16em;
+  margin-right: 2.5mm;
+}
+.sec .t {
+  font-family: var(--mono);
+  font-size: 7pt; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.16em;
+  color: var(--ink-2);
+  margin-right: 3mm;
+}
+.sec .fill { flex: 1; border-top: 0.4pt solid var(--line); }
+
+/* === Field tables ====================================================== */
+.fields { width: 100%; border-collapse: collapse; }
+.fields td { border-bottom: 0.4pt solid var(--line-faint); vertical-align: bottom; }
+.fields .l {
+  font-family: var(--mono);
+  font-size: 6.5pt; font-weight: 400;
+  text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--ink-3);
+  width: 21%;
+  padding: 1.6mm 2mm 1mm 0;
+}
+.fields .v {
+  font-size: 9.5pt; font-weight: 600;
+  color: var(--ink);
+  width: 29%;
+  padding: 1.6mm 4mm 1mm 0;
+}
+
+/* === Pedigree ========================================================== */
+.ped { display: flex; margin-top: 0.5mm; }
+.ped-col { flex: 1; }
+.ped-col + .ped-col { margin-left: 5mm; }
+
+.p-card {
+  background: var(--card);
+  border: 0.5pt solid var(--line);
+  border-radius: 1.5mm;
+  padding: 2.2mm 3mm 2mm 3mm;
+  margin-bottom: 2mm;
+}
+.p-role {
+  font-family: var(--mono);
+  font-size: 6.5pt; font-weight: 500;
+  text-transform: uppercase; letter-spacing: 0.14em;
+  color: var(--skog);
+  margin-bottom: 0.8mm;
+}
+.p-num  { font-family: var(--mono); font-size: 9pt; font-weight: 500; color: var(--skog-deep); }
+.p-aki  { font-family: var(--mono); font-size: 8pt; color: var(--ink-3); }
+.p-name { font-family: var(--serif); font-size: 11pt; font-weight: 600; color: var(--ink); line-height: 1.15; }
+.p-color { font-size: 8pt; color: var(--ink-3); font-style: italic; }
+
+.g-card {
+  background: transparent;
+  border: 0.4pt solid var(--line);
+  border-radius: 1.5mm;
+  padding: 1.6mm 3mm 1.4mm 3mm;
+  margin: 0 0 1.5mm 4mm;
+}
+.g-card .p-role { color: var(--ink-3); }
+.g-card .p-num  { font-size: 8pt; }
+.g-card .p-name { font-family: var(--sans); font-size: 8.5pt; font-weight: 600; }
+.g-card .p-color { font-size: 7.5pt; }
+
+/* === Certification ===================================================== */
+.sign-wrap {
+  display: flex; align-items: center;
+  background: var(--card);
+  border: 0.5pt solid var(--line);
+  border-radius: 1.5mm;
+  padding: 3mm 4mm;
+  margin-top: 0.5mm;
+}
+.sign-wrap .cols { flex: 1; }
+.sign { border-collapse: collapse; width: 100%; }
+.sign .sl {
+  font-family: var(--mono);
+  font-size: 6.5pt; text-transform: uppercase; letter-spacing: 0.1em;
+  color: var(--ink-3);
+  padding: 1mm 4mm 1mm 0; vertical-align: bottom; width: 34mm;
+}
+.sign .sv {
+  font-size: 10pt; font-weight: 600; color: var(--ink);
+  border-bottom: 0.4pt solid var(--line-strong);
+  padding: 1mm 0; vertical-align: bottom;
+}
+.sign-note {
+  font-size: 7pt; color: var(--ink-3); margin-top: 1.8mm; padding-right: 6mm;
+}
+.qr { text-align: center; margin-left: 5mm; }
+.qr svg { width: 21mm; height: 21mm; }
+.qr .qt {
+  font-family: var(--mono);
+  font-size: 5.5pt; text-transform: uppercase; letter-spacing: 0.12em;
+  color: var(--ink-3); margin-top: 0.6mm;
+}
+
+/* === Extras ============================================================ */
+.chip {
+  font-family: var(--mono); font-size: 7.5pt; font-weight: 500;
+  color: var(--ink-2); background: var(--paper-2);
+  border: 0.4pt solid var(--line-strong); border-radius: 1mm;
+  padding: 0 1.2mm;
+}
+.perma { font-family: var(--mono); font-size: 7pt; color: var(--ink-2); margin: 1.5mm 0 0 0; }
+.perma .pl { font-size: 6pt; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-3); margin-right: 1.5mm; }
+.reissue { font-size: 7pt; font-style: italic; color: var(--lera); margin: 0.8mm 0 0 0; }
+
+/* === EU emblem ========================================================= */
+.eu-strip { text-align: center; margin-top: 5mm; }
+.eu-strip img { height: 10.5mm; }
+
+/* === Footer ============================================================ */
+.disc {
+  margin-top: 4mm; padding-top: 2mm;
+  border-top: 0.4pt solid var(--line);
+  font-size: 6.8pt; color: var(--ink-4);
+  line-height: 1.5; text-align: center;
+}
+.fingerprint { font-family: var(--mono); font-size: 6pt; letter-spacing: 0.04em; color: var(--ink-3); }
+</style>
+</head>
+<body>
+<img class="watermark" src="logo.svg" alt="">
+{% if demo_watermark %}<div class="demo-stamp">DEMO<br>EJ GILTIGT INTYG</div>{% endif %}
+<div class="sheet">
+
+  <div class="head">
+    <img class="logo" src="logo.svg" alt="Föreningen Gotlandskaninen">
+    <div class="head-mid">
+      <p class="eyebrow">Föreningen Gotlandskaninen</p>
+      <h1>Genbanksintyg</h1>
+      <p class="breed">{{ genebank }}</p>
+    </div>
+    <div class="cert-nr"><div class="lbl">Intyg nr</div><div class="num">{{ digital_certificate }}</div></div>
+  </div>
+  <div class="rule-thick"></div>
+  <div class="microline">{% for _ in range(14) %}Föreningen Gotlandskaninen · Genbanksintyg {{ digital_certificate }} · {{ genebank_number }}-{{ genebank_aki }} · Verifiera på gotlandskaninen.se · {% endfor %}</div>
+  <div class="rule-thin"></div>
+
+  <div class="sec"><span class="no">01</span><span class="t">Identitet</span><span class="fill"></span></div>
+  <table class="fields">
+    <tr><td class="l">Genbanksnr</td><td class="v">{{ genebank_number }}</td><td class="l">År · Kull · Individ</td><td class="v">{{ genebank_aki }}</td></tr>
+    <tr><td class="l">Namn</td><td class="v">{{ name or '—' }}</td><td class="l">Kön</td><td class="v">{{ sex }}</td></tr>
+    <tr><td class="l">Födelsedatum</td><td class="v">{{ birth_date }}</td><td class="l">Fotringsnr</td><td class="v">{{ foot_ring or '—' }}</td></tr>
+    <tr><td class="l">Färg / kännetecken</td><td class="v">{% if color_code %}<span class="chip">{{ color_code }}</span> {% endif %}{{ color }}</td><td class="l">Hårlag</td><td class="v">{{ hair_notes or '—' }}</td></tr>
+    <tr><td class="l">Ögonfärg</td><td class="v">{{ eye_color or '—' }}</td><td class="l">Klofärg</td><td class="v">{{ claw_color or '—' }}</td></tr>
+    <tr><td class="l">Färg på buken</td><td class="v">{{ belly_color or '—' }}</td><td class="l">Foto finns</td><td class="v">{{ photos or '—' }}</td></tr>
+    <tr><td class="l">Antal födda i kullen</td><td class="v">{{ litter_size }}</td><td class="l">Antal levande (6 v)</td><td class="v">{{ litter_size6w }}</td></tr>
+    <tr><td class="l">Färganteckning</td><td class="v" colspan="3">{{ color_note or '—' }}</td></tr>
+    <tr><td class="l">Övriga upplysningar</td><td class="v" colspan="3">{{ notes or '—' }}</td></tr>
+  </table>
+
+  <div class="sec"><span class="no">02</span><span class="t">Härstamning</span><span class="fill"></span></div>
+  <div class="ped">
+    <div class="ped-col">
+      <div class="p-card">
+        <div class="p-role">Far</div>
+        <span class="p-num">{{ F_genebank_number or '—' }}</span> <span class="p-aki">{{ F_genebank_aki or '—' }}</span>
+        <div class="p-name">{{ F_name or '—' }}</div>
+        <div class="p-color">{{ F_color or '—' }}</div>
+      </div>
+      <div class="g-card">
+        <div class="p-role">Farfar</div>
+        <span class="p-num">{{ FF_genebank_number or '—' }}</span> <span class="p-aki">{{ FF_genebank_aki or '—' }}</span>
+        <div class="p-name">{{ FF_name or '—' }}</div>
+        <div class="p-color">{{ FF_color or '—' }}</div>
+      </div>
+      <div class="g-card">
+        <div class="p-role">Farmor</div>
+        <span class="p-num">{{ FM_genebank_number or '—' }}</span> <span class="p-aki">{{ FM_genebank_aki or '—' }}</span>
+        <div class="p-name">{{ FM_name or '—' }}</div>
+        <div class="p-color">{{ FM_color or '—' }}</div>
+      </div>
+    </div>
+    <div class="ped-col">
+      <div class="p-card">
+        <div class="p-role">Mor</div>
+        <span class="p-num">{{ M_genebank_number or '—' }}</span> <span class="p-aki">{{ M_genebank_aki or '—' }}</span>
+        <div class="p-name">{{ M_name or '—' }}</div>
+        <div class="p-color">{{ M_color or '—' }}</div>
+      </div>
+      <div class="g-card">
+        <div class="p-role">Morfar</div>
+        <span class="p-num">{{ MF_genebank_number or '—' }}</span> <span class="p-aki">{{ MF_genebank_aki or '—' }}</span>
+        <div class="p-name">{{ MF_name or '—' }}</div>
+        <div class="p-color">{{ MF_color or '—' }}</div>
+      </div>
+      <div class="g-card">
+        <div class="p-role">Mormor</div>
+        <span class="p-num">{{ MM_genebank_number or '—' }}</span> <span class="p-aki">{{ MM_genebank_aki or '—' }}</span>
+        <div class="p-name">{{ MM_name or '—' }}</div>
+        <div class="p-color">{{ MM_color or '—' }}</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sec"><span class="no">03</span><span class="t">Intygas</span><span class="fill"></span></div>
+  <div class="sign-wrap">
+    <div class="cols">
+      <table class="sign">
+        <tr><td class="sl">Intygas elektroniskt av</td><td class="sv">{{ fullname }}</td></tr>
+        <tr><td class="sl">Medl. / Bes.-nr</td><td class="sv">{{ herd }}</td></tr>
+        <tr><td class="sl">Datum</td><td class="sv">{{ issue_date }}</td></tr>
+      </table>
+      <p class="sign-note">Intyget är digitalt signerat av Föreningen Gotlandskaninen. Skanna QR-koden för att verifiera äktheten.</p>
+      <p class="perma"><span class="pl">Permanent sida</span>{{ public_url }}</p>
+      {% if replaces_date %}<p class="reissue">Ersätter intyg utfärdat {{ replaces_date }}</p>{% endif %}
+    </div>
+    <div class="qr">{{ qr_svg|safe }}<div class="qt">Verifiera</div></div>
+  </div>
+
+  <div class="eu-strip">
+    <img src="medfinansieras-av-eu-horizontal.svg" alt="Medfinansieras av Europeiska unionen">
+  </div>
+
+  <div class="disc">
+    Genbanksintyget i original ska följa kaninen. Får ej editeras i efterhand.<br>
+    Får endast utfärdas av innehavare av godkänd besättning. Båda föräldradjuren ska vara registrerade.<br>
+    Blanketten är granskad av Jordbruksverket. Eftertryck förbjudet utan Föreningen Gotlandskaninens medgivande.<br>
+    <span class="fingerprint">Dokument-ID {{ digital_certificate }} · SHA-256 {{ doc_hash_stub }} · Äktheten avgörs alltid av verifieringen på gotlandskaninen.se — inte av papperet.</span>
+  </div>
+
+</div>
+</body>
+</html>

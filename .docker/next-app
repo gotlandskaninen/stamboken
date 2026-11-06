@@ -1,0 +1,109 @@
+FROM node:24.15-alpine AS base
+
+# Install dependencies only when needed
+FROM base AS deps
+# Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.
+RUN apk add --no-cache libc6-compat
+
+WORKDIR /app
+
+# Install dependencies based on the preferred package manager
+COPY /next-app/package.json ./
+COPY /next-app/pnpm-lock.yaml* ./
+RUN corepack enable pnpm
+# Reads pnpm version from package.json "packageManager" field
+RUN corepack prepare --activate
+RUN pnpm install --frozen-lockfile
+RUN pnpm rebuild sharp
+
+FROM base AS dev
+
+WORKDIR /app
+COPY --from=deps /app/package.json /app/pnpm-lock.yaml ./
+RUN corepack enable pnpm
+RUN corepack prepare --activate
+COPY --from=deps /app/node_modules ./node_modules
+#COPY /next-app/ /app/
+  
+# One-shot schema migration runner: deps + source, no `next build`. Run as a
+# job (docker compose run --rm cms-migrate) to apply Payload migrations against
+# the CMS database before the app serves — push does not run under
+# NODE_ENV=production, so production schema comes from migrations. The env is
+# set here, not only in the runner stage: anything else started from this
+# image (the CMS seed at release time) also boots Payload, and without it push
+# ran against the production CMS database and left a `dev` row in
+# payload_migrations that made the next `payload migrate` block on a y/N prompt
+# (v2.5.1 deploy, 2026-09-18).
+FROM base AS migrate
+ENV NODE_ENV=production
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY /next-app/ /app/
+RUN corepack enable pnpm && corepack prepare --activate
+CMD ["pnpm", "migrate"]
+
+FROM base AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY /next-app/ /app/
+
+ENV NEXT_TELEMETRY_DISABLED 1
+
+ARG APP_VERSION=dev
+ENV NEXT_PUBLIC_APP_VERSION=$APP_VERSION
+
+ARG NEXT_PUBLIC_GOOGLE_CLIENT_ID
+ENV NEXT_PUBLIC_GOOGLE_CLIENT_ID=$NEXT_PUBLIC_GOOGLE_CLIENT_ID
+
+# Browser demo/prod routing (999.2): NEXT_PUBLIC_* are inlined at build time, so
+# the api-test URL that the client RTK Query path uses to select the demo backend
+# MUST be baked here — setting it only in the runtime `environment:` leaves it
+# undefined in the client bundle, collapsing demo→prod on the browser path (a
+# two-path divergence, threat T-999.2-16). Unset in base dev keeps demo on prod.
+ARG NEXT_PUBLIC_API_TEST_URL
+ENV NEXT_PUBLIC_API_TEST_URL=$NEXT_PUBLIC_API_TEST_URL
+
+RUN corepack enable pnpm
+RUN corepack prepare --activate
+# Let `next build` evaluate payload.config.ts without a real PAYLOAD_SECRET
+# (next build also sets NEXT_PHASE=phase-production-build; this is belt-and-
+# suspenders). The runner stage does NOT set this, so runtime still enforces it.
+ENV PAYLOAD_BUILD=1
+RUN pnpm build
+
+FROM base AS runner
+WORKDIR /app
+
+ENV NODE_ENV production
+ENV NEXT_TELEMETRY_DISABLED 1
+
+RUN addgroup --system --gid 1001 nodejs
+RUN adduser --system --uid 1001 nextjs
+
+COPY --from=builder /app/public ./public
+
+# Set the correct permission for prerender cache
+RUN mkdir .next
+RUN chown nextjs:nodejs .next
+
+# Automatically leverage output traces to reduce image size
+# https://nextjs.org/docs/advanced-features/output-file-tracing
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+
+# Payload writes uploaded media to /app/uppladdningar/cms; create + own it so the
+# non-root runtime user can write (the host bind mount must also be uid 1001-writable).
+RUN mkdir -p /app/uppladdningar/cms && chown -R nextjs:nodejs /app/uppladdningar
+
+USER nextjs
+
+EXPOSE 3000
+
+ENV PORT 3000
+# set hostname to localhost
+ENV HOSTNAME "0.0.0.0"
+
+# server.js is created by next build from the standalone output
+# https://nextjs.org/docs/pages/api-reference/next-config-js/output
+CMD ["node", "server.js"]
+

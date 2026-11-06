@@ -1,0 +1,352 @@
+/* =========================================================================
+   STAMBOKEN DESIGN SYSTEM — Design Tokens
+   For Föreningen Gotlandskaninen — heritage rabbit breed conservation.
+   Open-source · MUI v7 compatible · WCAG 2.1 AA targeted
+
+   Adapted for next-app from docs/design/design_handoff_min_besattning/
+   tokens.css (ADR-0009 single source of truth — keep values in sync):
+   - Google Fonts stylesheet import removed; fonts load via next/font
+     variables set on <body> by src/app/(app)/layout.tsx
+   - handoff root-scoped base styles applied at body level
+   ========================================================================= */
+
+:root {
+  /* --- Color: Paper & Ink ------------------------------------------------ */
+  --sb-paper:        #F4F1EA;   /* primary canvas, warm off-white */
+  --sb-paper-2:      #EBE6D8;   /* recessed surfaces */
+  --sb-paper-3:      #E2DCC9;   /* darker recess / dividers */
+  --sb-card:         #FBF9F3;   /* cards lifted from paper */
+  --sb-ink:          #1F1B16;   /* primary text, warm near-black */
+  --sb-ink-2:        #3D362C;   /* secondary text */
+  --sb-ink-3:        #6F6A5F;   /* tertiary / metadata */
+  --sb-ink-4:        #9D978A;   /* placeholder / very faint */
+
+  /* --- Color: Brand ------------------------------------------------------ */
+  --sb-skog:         #2F4A32;   /* Skog (forest) — primary */
+  --sb-skog-deep:    #1F3322;   /* hover / depth */
+  --sb-skog-soft:    #D7DFCF;   /* tinted surface */
+  --sb-mossa:        #6B8E54;   /* Mossa (moss) — secondary */
+  --sb-mossa-soft:   #E2E8D5;
+  --sb-lera:         #B85C38;   /* Lera (clay) — single warm accent, sparing */
+  --sb-lera-soft:    #F3DDD0;
+  --sb-himmel:       #4A6B7A;   /* Himmel (sky) — informational */
+  --sb-himmel-soft:  #D8E1E5;
+
+  /* --- Color: Semantic --------------------------------------------------- */
+  --sb-success:      #4F7A3F;
+  --sb-success-soft: #DDE6D2;
+  --sb-warning:      #B98019;
+  --sb-warning-soft: #F2E4C2;
+  --sb-danger:       #A23A2A;
+  --sb-danger-soft:  #F0D4CC;
+  --sb-info:         #3E6878;
+  --sb-info-soft:    #D5E1E6;
+
+  /* --- Borders ----------------------------------------------------------- */
+  --sb-line:         #D7CFBE;   /* default rule */
+  --sb-line-strong:  #B8AE99;   /* stronger separator */
+  --sb-line-faint:   #E5DECB;   /* faint hairline */
+
+  /* --- Type families (resolve via next/font, same fallbacks as handoff) -- */
+  --sb-display: var(--font-source-serif, "Source Serif 4"), "Iowan Old Style", Georgia, serif;
+  --sb-body: var(--font-ibm-plex-sans, "IBM Plex Sans"), -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --sb-mono: var(--font-ibm-plex-mono, "IBM Plex Mono"), ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* --- Type scale (px). Body = 16px base ------------------------------- */
+  --sb-fs-xs:   12px;
+  --sb-fs-sm:   14px;
+  --sb-fs-base: 16px;
+  --sb-fs-md:   18px;
+  --sb-fs-lg:   20px;
+  --sb-fs-xl:   24px;
+  --sb-fs-2xl:  32px;
+  --sb-fs-3xl:  40px;
+  --sb-fs-4xl:  56px;
+  --sb-fs-5xl:  72px;
+  --sb-fs-6xl:  96px;
+
+  /* line-heights */
+  --sb-lh-tight:   1.08;
+  --sb-lh-snug:    1.22;
+  --sb-lh-body:    1.55;
+  --sb-lh-loose:   1.7;
+
+  /* tracking */
+  --sb-track-tight: -0.02em;
+  --sb-track-snug:  -0.01em;
+  --sb-track-wide:   0.04em;
+  --sb-track-eyebrow: 0.16em;
+
+  /* --- Spacing scale (4px base) ---------------------------------------- */
+  --sb-s-1:   4px;
+  --sb-s-2:   8px;
+  --sb-s-3:  12px;
+  --sb-s-4:  16px;
+  --sb-s-5:  24px;
+  --sb-s-6:  32px;
+  --sb-s-7:  48px;
+  --sb-s-8:  64px;
+  --sb-s-9:  96px;
+  --sb-s-10:128px;
+
+  /* --- Radii ------------------------------------------------------------ */
+  --sb-r-0: 0px;
+  --sb-r-1: 2px;
+  --sb-r-2: 4px;
+  --sb-r-3: 8px;
+  --sb-r-4: 14px;
+  --sb-r-full: 999px;
+
+  /* --- Elevation (soft, warm) ------------------------------------------ */
+  --sb-shadow-1: 0 1px 0 rgba(31,27,22,0.06), 0 1px 2px rgba(31,27,22,0.04);
+  --sb-shadow-2: 0 2px 4px rgba(31,27,22,0.05), 0 6px 14px rgba(31,27,22,0.06);
+  --sb-shadow-3: 0 10px 28px rgba(31,27,22,0.10), 0 2px 6px rgba(31,27,22,0.05);
+
+  /* --- Motion ---------------------------------------------------------- */
+  --sb-ease: cubic-bezier(0.2, 0.7, 0.2, 1);
+  --sb-dur-fast: 120ms;
+  --sb-dur:      200ms;
+  --sb-dur-slow: 360ms;
+}
+
+/* Testmiljön (demo mode, <html data-mode="demo"> set by ModeHtmlAttribute):
+   chockrosa canvas so nobody mistakes it for riktiga stamboken. Ink stays
+   #1F1B16 — contrast on #FFC2E0 is about 13:1, well above WCAG AA. */
+[data-mode="demo"] {
+  --sb-paper:        #FFC2E0;
+  --sb-paper-2:      #FF9FCF;
+  --sb-paper-3:      #F58CC0;
+  --sb-card:         #FFE3F0;
+  --sb-line:         #E58AB7;
+  --sb-line-strong:  #C9609A;
+  --sb-line-faint:   #F2B3D3;
+}
+
+/* =========================================================================
+   Base (root-scoped in the handoff; the app applies them globally)
+   ========================================================================= */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: var(--sb-body);
+  font-size: var(--sb-fs-base);
+  line-height: var(--sb-lh-body);
+  color: var(--sb-ink);
+  background: var(--sb-paper);
+  font-feature-settings: "ss01", "cv11";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Display / heading utilities */
+.sb-display { font-family: var(--sb-display); font-weight: 400; letter-spacing: var(--sb-track-tight); line-height: var(--sb-lh-tight); }
+.sb-display-italic { font-family: var(--sb-display); font-style: italic; font-weight: 400; }
+.sb-h1 { font-family: var(--sb-display); font-size: var(--sb-fs-5xl); line-height: 1.04; letter-spacing: -0.02em; font-weight: 400; }
+/* h2–h4 shrink fluidly below ~600px so one long word fits a 375px column (ADR-0010, 375-px-kravet); the token is the max. */
+.sb-h2 { font-family: var(--sb-display); font-size: clamp(36px, 9.6vw, var(--sb-fs-4xl)); line-height: 1.06; letter-spacing: -0.018em; font-weight: 400; }
+.sb-h3 { font-family: var(--sb-display); font-size: clamp(28px, 7.5vw, var(--sb-fs-3xl)); line-height: 1.1;  letter-spacing: -0.015em; font-weight: 400; }
+.sb-h4 { font-family: var(--sb-display); font-size: clamp(24px, 6.4vw, var(--sb-fs-2xl)); line-height: 1.15; letter-spacing: -0.01em;  font-weight: 500; }
+.sb-h5 { font-family: var(--sb-body);    font-size: var(--sb-fs-xl); line-height: 1.25; font-weight: 600; }
+.sb-h6 { font-family: var(--sb-body);    font-size: var(--sb-fs-lg); line-height: 1.3;  font-weight: 600; }
+.sb-eyebrow {
+  font-family: var(--sb-mono);
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: var(--sb-track-eyebrow);
+  color: var(--sb-ink-3);
+  font-weight: 500;
+}
+.sb-lede { font-size: var(--sb-fs-lg); line-height: 1.5; color: var(--sb-ink-2); }
+.sb-meta { font-family: var(--sb-mono); font-size: 12px; color: var(--sb-ink-3); letter-spacing: 0.02em; }
+
+/* Selection */
+::selection { background: var(--sb-skog); color: var(--sb-paper); }
+
+/* Scrollbar */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-thumb { background: var(--sb-line-strong); border-radius: 999px; }
+*::-webkit-scrollbar-track { background: transparent; }
+
+/* =========================================================================
+   Components — primitives used across surfaces
+   ========================================================================= */
+
+/* Button */
+.sb-btn {
+  --bg: var(--sb-skog); --fg: #fff; --bd: var(--sb-skog);
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--sb-body); font-weight: 500; font-size: 15px;
+  padding: 12px 20px;
+  border: 1px solid var(--bd);
+  background: var(--bg); color: var(--fg);
+  border-radius: var(--sb-r-2);
+  cursor: pointer; min-height: 44px;
+  transition: transform var(--sb-dur) var(--sb-ease), background var(--sb-dur) var(--sb-ease), box-shadow var(--sb-dur) var(--sb-ease);
+  text-decoration: none;
+  letter-spacing: -0.005em;
+}
+.sb-btn:hover  { background: var(--sb-skog-deep); border-color: var(--sb-skog-deep); }
+.sb-btn:active { transform: translateY(1px); }
+/* Avstängd knapp: hovern ovan sätter background/border-color och :active en
+   transform — bägge återställs här, annars ser en disabled sb-btn aktiv ut. */
+.sb-btn:disabled, .sb-btn:disabled:hover { opacity: .45; cursor: default; background: var(--bg); border-color: var(--bd); transform: none; }
+.sb-btn-secondary { --bg: transparent; --fg: var(--sb-ink); --bd: var(--sb-line-strong); }
+.sb-btn-secondary:hover { background: var(--sb-paper-2); border-color: var(--sb-ink); }
+.sb-btn-ghost { --bg: transparent; --fg: var(--sb-ink); --bd: transparent; }
+.sb-btn-ghost:hover { background: var(--sb-paper-2); }
+.sb-btn-accent { --bg: var(--sb-lera); --fg: #fff; --bd: var(--sb-lera); }
+.sb-btn-accent:hover { background: #a14d2c; border-color: #a14d2c; }
+.sb-btn-sm { padding: 8px 14px; font-size: 13px; min-height: 36px; }
+
+/* Card */
+.sb-card {
+  background: var(--sb-card);
+  border: 1px solid var(--sb-line);
+  border-radius: var(--sb-r-3);
+}
+.sb-card-flat {
+  background: var(--sb-card);
+  border-top: 1px solid var(--sb-line);
+  border-bottom: 1px solid var(--sb-line);
+  border-radius: 0;
+}
+
+/* Badge / chip */
+.sb-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--sb-mono);
+  font-size: 11px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 4px 8px;
+  border-radius: var(--sb-r-2);
+  background: var(--sb-paper-2);
+  color: var(--sb-ink-2);
+  border: 1px solid var(--sb-line);
+}
+.sb-badge-skog   { background: var(--sb-skog-soft);   color: var(--sb-skog);    border-color: #c0ccb4; }
+.sb-badge-lera   { background: var(--sb-lera-soft);   color: #8a3f1f;           border-color: #e6c0ad; }
+.sb-badge-himmel { background: var(--sb-himmel-soft); color: var(--sb-himmel);  border-color: #c0cdd2; }
+.sb-badge-mossa  { background: var(--sb-mossa-soft);  color: #44602f;           border-color: #c8d3b3; }
+
+/* Tag with dot */
+.sb-tag-dot {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-size: 13px; color: var(--sb-ink-2);
+}
+.sb-tag-dot::before {
+  content: ""; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--sb-mossa);
+}
+
+/* Divider */
+.sb-rule { height: 1px; background: var(--sb-line); border: 0; }
+.sb-rule-strong { height: 1px; background: var(--sb-ink); border: 0; }
+
+/* Input */
+.sb-input {
+  font-family: var(--sb-body); font-size: 15px;
+  padding: 11px 14px; min-height: 44px;
+  background: var(--sb-paper);
+  border: 1px solid var(--sb-line-strong);
+  border-radius: var(--sb-r-2);
+  color: var(--sb-ink);
+  width: 100%;
+}
+.sb-input:focus { outline: 2px solid var(--sb-skog); outline-offset: 1px; border-color: var(--sb-skog); }
+
+/* Field label */
+.sb-label {
+  display: block;
+  font-size: 13px; font-weight: 500;
+  color: var(--sb-ink-2); margin-bottom: 6px;
+}
+
+/* Placeholder image / illustration */
+.sb-placeholder {
+  position: relative;
+  background:
+    repeating-linear-gradient(135deg,
+      rgba(31,27,22,0.04) 0 8px,
+      transparent 8px 16px),
+    var(--sb-paper-2);
+  border: 1px solid var(--sb-line);
+  display: flex; align-items: center; justify-content: center;
+  color: var(--sb-ink-3);
+  font-family: var(--sb-mono); font-size: 11px;
+  letter-spacing: 0.08em; text-transform: uppercase;
+}
+
+/* Sketched divider (almanac vibe) */
+.sb-ornament {
+  text-align: center;
+  font-family: var(--sb-display);
+  color: var(--sb-ink-3);
+  font-size: 24px;
+  letter-spacing: 0.6em;
+  line-height: 1;
+  user-select: none;
+}
+
+/* EU strip */
+.sb-eu-strip {
+  display: inline-flex; align-items: center; gap: 12px;
+  padding: 10px 14px;
+  background: var(--sb-paper);
+  border: 1px solid var(--sb-line);
+  border-radius: var(--sb-r-2);
+  font-size: 12px; color: var(--sb-ink-2);
+  line-height: 1.35;
+}
+.sb-eu-flag {
+  width: 36px; height: 24px; flex: 0 0 36px;
+  background: #003399; position: relative;
+  border-radius: 2px;
+}
+.sb-eu-flag svg { position: absolute; inset: 0; }
+
+/* Stat block */
+.sb-stat-num {
+  font-family: var(--sb-display);
+  font-size: 48px; line-height: 1;
+  letter-spacing: -0.02em;
+  color: var(--sb-skog);
+  font-weight: 400;
+}
+.sb-stat-label {
+  font-family: var(--sb-mono); font-size: 11px;
+  text-transform: uppercase; letter-spacing: 0.12em;
+  color: var(--sb-ink-3); margin-top: 6px;
+}
+
+/* Link with underline */
+.sb-link {
+  color: var(--sb-ink); text-decoration: underline;
+  text-decoration-color: var(--sb-line-strong);
+  text-underline-offset: 3px;
+  text-decoration-thickness: 1px;
+  transition: text-decoration-color var(--sb-dur);
+}
+.sb-link:hover { text-decoration-color: var(--sb-lera); }
+
+/* ADR-0010, 375-px-kravet, on touch screens: field text at least 16px (iOS
+   zooms in on focus below that) and tap targets at least 44px. .sb-link-tap is
+   for standalone text links (e.g. breadcrumbs); the negative margin keeps the
+   line height. */
+@media (pointer: coarse) {
+  .sb-input { font-size: var(--sb-fs-base); }
+  .sb-btn-sm { min-height: 44px; }
+  .sb-link-tap { display: inline-block; padding-block: 11px; margin-block: -11px; }
+}
+
+/* Focus ring */
+:focus-visible {
+  outline: 2px solid var(--sb-skog);
+  outline-offset: 2px;
+  border-radius: 2px;
+}

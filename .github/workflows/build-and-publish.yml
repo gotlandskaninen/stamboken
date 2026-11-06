@@ -1,0 +1,403 @@
+name: Build and Publish Containers
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: ${{ github.repository_owner }}/herdbook
+
+jobs:
+  # ============================================
+  # Build API container
+  # ============================================
+  build-api:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}_api
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push API
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: .docker/api
+          target: prod
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ============================================
+  # Build Next.js container
+  # ============================================
+  build-next-app:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}_next-app
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push Next.js
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: .docker/next-app
+          target: runner
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.version }}
+            NEXT_PUBLIC_GOOGLE_CLIENT_ID=${{ vars.NEXT_PUBLIC_GOOGLE_CLIENT_ID }}
+            NEXT_PUBLIC_API_TEST_URL=/api-test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ============================================
+  # Build CMS migrate image (Payload `pnpm migrate`)
+  # Same Dockerfile, the `migrate` target (deps + source, no `next build`).
+  # ============================================
+  build-cms-migrate:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Login to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}_cms-migrate
+          tags: |
+            type=ref,event=branch
+            type=sha,prefix=
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Build and push CMS migrate image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: .docker/next-app
+          target: migrate
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            APP_VERSION=${{ steps.meta.outputs.version }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  # ============================================
+  # Build Legacy Frontend - PRODUCTION branch
+  # Bygger från gotlandskaninen/stamboken-legacy, låst på SHA (production v.1.1.6 + härdning, legacy-PR #5).
+  # Bumpa SHA:n i en PR när legacy ändras.
+  # ============================================
+  build-legacy-prod:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout this repo (for build scripts)
+        uses: actions/checkout@v6
+
+      - name: Checkout legacy frontend (production branch)
+        uses: actions/checkout@v6
+        with:
+          repository: gotlandskaninen/stamboken-legacy
+          path: legacy-src
+          ref: 51fc2b03b426e2f715fb9140cad639b5f2ada45a
+          fetch-depth: 0
+
+      - name: Get latest legacy release tag
+        id: legacy-version
+        run: |
+          cd legacy-src
+          TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "unknown")
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Update tags.json version
+        uses: jossef/action-set-json-field@v2.1
+        with:
+          file: legacy-src/frontend/src/tags.json
+          field: gitBranch
+          value: ${{ steps.legacy-version.outputs.version }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build legacy frontend in container
+        run: |
+          docker build \
+            -f scripts/build-legacy.dockerfile \
+            -t legacy-builder-prod \
+            legacy-src/frontend
+
+      - name: Extract built files
+        run: |
+          mkdir -p legacy-frontend-prod
+          docker create --name extract-prod legacy-builder-prod
+          docker cp extract-prod:/home/node/app/dist/. legacy-frontend-prod/
+          docker cp extract-prod:/home/node/app/public/images/. legacy-frontend-prod/images/ || true
+          docker rm extract-prod
+
+      - name: Upload legacy frontend artifact (prod)
+        uses: actions/upload-artifact@v7
+        with:
+          name: legacy-frontend-prod
+          path: legacy-frontend-prod/
+          retention-days: 90
+
+  # ============================================
+  # Build Legacy Frontend - TEST branch
+  # Bygger från gotlandskaninen/stamboken-legacy, låst på SHA (test-prod v.1.1.6 + härdning, legacy-PR #6).
+  # ============================================
+  build-legacy-test:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout this repo (for build scripts)
+        uses: actions/checkout@v6
+
+      - name: Checkout legacy frontend (test-prod branch)
+        uses: actions/checkout@v6
+        with:
+          repository: gotlandskaninen/stamboken-legacy
+          path: legacy-src
+          ref: 34a0daa7629cd5fe836d66b5662af164c154103d
+          fetch-depth: 0
+
+      - name: Get latest legacy release tag
+        id: legacy-version
+        run: |
+          cd legacy-src
+          TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "unknown")
+          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Update tags.json version
+        uses: jossef/action-set-json-field@v2.1
+        with:
+          file: legacy-src/frontend/src/tags.json
+          field: gitBranch
+          value: ${{ steps.legacy-version.outputs.version }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build legacy frontend in container
+        run: |
+          docker build \
+            -f scripts/build-legacy.dockerfile \
+            -t legacy-builder-test \
+            legacy-src/frontend
+
+      - name: Extract built files
+        run: |
+          mkdir -p legacy-frontend-test
+          docker create --name extract-test legacy-builder-test
+          docker cp extract-test:/home/node/app/dist/. legacy-frontend-test/
+          docker cp extract-test:/home/node/app/public/images/. legacy-frontend-test/images/ || true
+          docker rm extract-test
+
+      - name: Upload legacy frontend artifact (test)
+        uses: actions/upload-artifact@v7
+        with:
+          name: legacy-frontend-test
+          path: legacy-frontend-test/
+          retention-days: 90
+
+  # ============================================
+  # Create deployment bundle
+  # ============================================
+  create-deployment-bundle:
+    runs-on: ubuntu-latest
+    needs:
+      [
+        build-api,
+        build-next-app,
+        build-cms-migrate,
+        build-legacy-prod,
+        build-legacy-test,
+      ]
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Download legacy frontend (prod)
+        uses: actions/download-artifact@v8
+        with:
+          name: legacy-frontend-prod
+          path: nginx/legacy-frontend-prod/
+
+      - name: Download legacy frontend (test)
+        uses: actions/download-artifact@v8
+        with:
+          name: legacy-frontend-test
+          path: nginx/legacy-frontend-test/
+
+      - name: Create deployment bundle
+        run: |
+          mkdir -p release/.docker
+
+          # Kopiera nödvändiga filer
+          cp docker-compose.production.yml release/docker-compose.yml
+          cp -r nginx release/
+          cp -r scripts release/
+          cp .docker/*.default release/.docker/
+
+          # Skapa .env.example
+          cat > release/.env.example << 'EOF'
+          # Tags för container images
+          TAG_PROD=latest
+          TAG_TEST=latest
+
+          # SSL Certifikat
+          CERTBOT_EMAIL=admin@gotlandskaninen.se
+          CERTBOT_STAGING=0
+          EOF
+
+          # Skapa README
+          cat > release/README.md << 'EOF'
+          # Herdbook Deployment - Gotlandskanin
+
+          Domäner, schemalagd demosynk och övrig drift: föreningens driftrepo (ADR-0013).
+
+          ## Quick Start
+
+          1. Kopiera `.docker/*.default` till `.docker/*.env`:
+             ```bash
+             for f in .docker/*.default; do cp "$f" "${f%.default}.env"; done
+             ```
+
+          2. Skapa `.env` från `.env.example` och fyll i värden
+
+          3. Logga in på GHCR:
+             ```bash
+             echo $GITHUB_TOKEN | docker login ghcr.io -u USERNAME --password-stdin
+             ```
+
+          4. Starta:
+             ```bash
+             docker compose pull
+             # CMS-schema: skapa/uppdatera innan next-app startar
+             docker compose up -d cms-database
+             docker compose run --rm cms-migrate
+             docker compose up -d
+             ```
+          EOF
+
+          # Skapa tarball
+          tar -czvf herdbook-deployment-${{ github.sha }}.tar.gz release/
+
+      - name: Create legacy frontend tarballs
+        run: |
+          tar -czvf legacy-frontend-prod.tar.gz -C nginx legacy-frontend-prod/
+          tar -czvf legacy-frontend-test.tar.gz -C nginx legacy-frontend-test/
+
+      - name: Upload deployment bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: deployment-bundle
+          path: herdbook-deployment-*.tar.gz
+          retention-days: 90
+
+      - name: Upload legacy frontend tarballs
+        uses: actions/upload-artifact@v7
+        with:
+          name: legacy-frontend-tarballs
+          path: |
+            legacy-frontend-prod.tar.gz
+            legacy-frontend-test.tar.gz
+          retention-days: 90
+
+      - name: Attach assets to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            herdbook-deployment-${{ github.sha }}.tar.gz
+            legacy-frontend-prod.tar.gz
+            legacy-frontend-test.tar.gz

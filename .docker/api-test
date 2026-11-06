@@ -1,0 +1,40 @@
+# Test stage for running PostgreSQL integration tests
+FROM python:3.13-slim as test
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    postgresql-client \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Set working directory
+WORKDIR /app
+
+# Copy requirements
+COPY app/requirements-modern.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements-modern.txt
+
+# Install additional test dependencies
+RUN pip install --no-cache-dir coverage pytest
+
+# Copy application code
+COPY app/ .
+
+# Create necessary directories
+RUN mkdir -p /app/cache /app/uppladdningar
+
+# Set environment variables for testing
+ENV FLASK_ENV=testing
+ENV FLASK_DEBUG=0
+ENV POSTGRES_DB=herdbook_test
+ENV POSTGRES_HOST=database
+ENV POSTGRES_PORT=5432
+ENV POSTGRES_USER=herdbook
+ENV POSTGRES_PASSWORD=insecure
+
+# Default command (can be overridden)
+CMD ["python", "-m", "unittest", "tests.test_postgres_integration", "-v"]
+
+

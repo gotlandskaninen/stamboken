@@ -1,0 +1,11 @@
+# Dev-only self-signed certificates
+app/certs/
+
+# Legacy docker-compose files (dev environment)
+tmp/
+
+# Design handoffs — non-executable reference artifacts (prototype .jsx/.html
+# from the design web agent; never imported, served, or shipped). The
+# TweaksPanel's wildcard postMessage is the agent's own iframe review tooling,
+# explicitly excluded from implementation by the Phase 18 plan.
+docs/design/

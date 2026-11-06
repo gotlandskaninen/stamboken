@@ -1,0 +1,308 @@
+# Lokal produktionsliknande miljö
+#
+# Speglar produktions-topologin på localhost med standard-portar
+# så att Google OAuth fungerar korrekt.
+#
+# Användning:
+#   docker compose -f docker-compose.local-production.yml up -d
+#
+# Routing (https://localhost — speglar stamboken.gotlandskaninen.se):
+#   /           → Legacy frontend (prod)
+#   /stamboken/  → Next.js frontend (herdbook dashboard)
+#   /api/       → Flask API (herdbook DB)
+#   /api-test/  → Flask API (herdbook_demo DB)
+#
+# Routing (https://test.localhost — speglar test.gotlandskaninen.se):
+#   /           → Legacy frontend (test) — visar "OBS TESTSYSTEMET"-banner
+#   /api/       → Flask API (herdbook_demo DB)
+#
+# OBS: Kräver att port 80/443 är lediga (stäng andra compose-miljöer först)
+
+services:
+  # ============================================
+  # PostgreSQL - En container, två databaser
+  # (samma som produktion)
+  # ============================================
+  database:
+    image: postgres:18
+    env_file:
+      - ./.docker/database-variables.env
+    environment:
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - ./postgres-data:/var/lib/postgresql
+      - ./scripts/init-demo-db.sql:/docker-entrypoint-initdb.d/init-demo-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U herdbook -d herdbook"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ============================================
+  # CMS Database - Payload CMS content
+  # ============================================
+  cms-database:
+    image: postgres:18
+    env_file:
+      - .docker/cms-database-variables.env
+    volumes:
+      - ./cms-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U herdbook_cms"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # Redis - Cache backend
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ============================================
+  # API - Prod (mot herdbook databas)
+  # ============================================
+  api:
+    build:
+      context: ./
+      dockerfile: .docker/api
+      target: ${DOCKER_TARGET:-dev}
+    env_file:
+      - ./.docker/database-variables.env
+      - ./.docker/api-variables.env
+    environment:
+      - FLASK_ENV=${FLASK_ENV:-development}
+      - FLASK_DEBUG=${FLASK_DEBUG:-1}
+      - RATELIMIT_ENABLED=false
+      - POSTGRES_DB=herdbook
+      - REDIS_URL=redis://redis:6379/0
+      - SESSION_REDIS_URL=redis://redis:6379/2
+      - RATELIMIT_STORAGE_URL=redis://redis:6379/3
+      # The bootstrap (stamboken-drift) copies the prod api-variables.env here. `environment`
+      # overrides `env_file`, so pin S3 and signing to the local s3backend and the committed
+      # throwaway cert: a certificate issued locally must never reach the prod bucket or
+      # carry the association's real signature.
+      - S3_ENDPOINT=http://s3backend:9000
+      - S3_BUCKET=test
+      - S3_ACCESSKEY=accesskeytest
+      - S3_SECRETKEY=secretkeytest
+      - PDF_SIGNING_KEY=certs/key.pem
+      - PDF_SIGNING_CA=certs/ca.pem
+      - CERT_DEMO_WATERMARK=true
+    ports:
+      - "127.0.0.1:9090:9090"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "10"
+    volumes:
+      - type: bind
+        source: ./app
+        target: /app
+      - type: bind
+        source: ./config
+        target: /config
+      - type: bind
+        source: ./logs
+        target: /logs
+      - type: bind
+        source: ./uppladdningar
+        target: /app/uppladdningar
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # API - Test (mot herdbook_demo databas)
+  # ============================================
+  api-test:
+    build:
+      context: ./
+      dockerfile: .docker/api
+      target: ${DOCKER_TARGET:-dev}
+    env_file:
+      - ./.docker/database-variables.env
+      - ./.docker/api-variables.env
+    environment:
+      - FLASK_ENV=${FLASK_ENV:-development}
+      - FLASK_DEBUG=${FLASK_DEBUG:-1}
+      - RATELIMIT_ENABLED=false
+      - POSTGRES_DB=herdbook_demo
+      - REDIS_URL=redis://redis:6379/1
+      - SESSION_REDIS_URL=redis://redis:6379/2
+      # Own limiter counters (db 3 is `api`'s): demo attempts must not spend
+      # production's login budget.
+      - RATELIMIT_STORAGE_URL=redis://redis:6379/4
+      # Logins made here are marked; `api` refuses them (shared session store).
+      - DEMO_INSTANCE=true
+      # Demo instance: stamp v2 certificates "DEMO – EJ GILTIGT INTYG".
+      - CERT_DEMO_WATERMARK=true
+      # Pin signing to the throwaway committed dev cert. `environment` overrides
+      # `env_file`, so even if api-variables.env later gains a real PDF_SIGNING_KEY
+      # (shared with the prod `api`), the demo instance can never sign with it.
+      - PDF_SIGNING_KEY=certs/key.pem
+      - PDF_SIGNING_CA=certs/ca.pem
+      # Same S3 pin as `api`: never the bucket from the copied prod api-variables.env.
+      - S3_ENDPOINT=http://s3backend:9000
+      - S3_BUCKET=test
+      - S3_ACCESSKEY=accesskeytest
+      - S3_SECRETKEY=secretkeytest
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "10"
+    volumes:
+      - type: bind
+        source: ./app
+        target: /app
+      - type: bind
+        source: ./config
+        target: /config
+      - type: bind
+        # Own dir: the genebank CSV logs don't record the instance, so demo
+        # edits must not land in production's logs. Create it like ./logs.
+        source: ./logs-test
+        target: /logs
+      - type: bind
+        source: ./uppladdningar
+        target: /app/uppladdningar
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # Next.js frontend
+  # ============================================
+  next-app:
+    image: next-app
+    build:
+      context: ./
+      dockerfile: .docker/next-app
+      target: runner
+      args:
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${NEXT_PUBLIC_GOOGLE_CLIENT_ID:-}
+        # NEXT_PUBLIC_* are inlined at build time; the browser RTK Query path
+        # reads this to route demo→api-test. It must be a BUILD arg, not just a
+        # runtime env, or the client collapses demo→prod (threat T-999.2-16).
+        NEXT_PUBLIC_API_TEST_URL: ${NEXT_PUBLIC_API_TEST_URL:-/api-test}
+    env_file:
+      - ./.docker/next-app-variables.env
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=/api
+      - NEXT_PUBLIC_API_TEST_URL=/api-test
+      - API_INTERNAL_URL=http://api:9090
+      # Server-side URL so fetchApi() can route demo-mode RSC/Server-Action fetches to api-test
+      - API_TEST_INTERNAL_URL=http://api-test:9090
+      - CMS_DATABASE_URL=postgres://herdbook_cms:herdbook_cms_insecure@cms-database:5432/herdbook_cms
+    volumes:
+      # Persist Payload CMS media (Media.ts writes to /app/uppladdningar/cms).
+      - ./uppladdningar:/app/uppladdningar
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      cms-database:
+        condition: service_healthy
+
+  # One-shot Payload schema migration job. push does not run under
+  # NODE_ENV=production, so the CMS schema is created/updated by migrations.
+  # Not started by `up` (profile); run explicitly before the data seed:
+  #   docker compose -f docker-compose.local-production.yml run --rm cms-migrate
+  cms-migrate:
+    build:
+      context: ./
+      dockerfile: .docker/next-app
+      target: migrate
+    image: next-app-migrate
+    env_file:
+      - ./.docker/next-app-variables.env
+    environment:
+      - CMS_DATABASE_URL=postgres://herdbook_cms:herdbook_cms_insecure@cms-database:5432/herdbook_cms
+    depends_on:
+      cms-database:
+        condition: service_healthy
+    profiles:
+      - migrate
+    restart: "no"
+
+  # ============================================
+  # Nginx - Standard ports (80/443) med lokal CA
+  # ============================================
+  nginx:
+    image: jonasal/nginx-certbot:latest
+    environment:
+      - CERTBOT_EMAIL=your-email@example.com
+      - CERTBOT_DOMAIN=localhost
+      - USE_LOCAL_CA=1
+      - DHPARAM_SIZE=2048
+      - LOCAL_CA_ROOT_CERT_VALIDITY=730
+      - LOCAL_CA_CERT_VALIDITY=730
+    volumes:
+      - ./nginx/herdbook-local-production.conf:/etc/nginx/user_conf.d/herdbook.conf:ro
+      # Legacy frontends (build with: ./scripts/build-legacy.sh --all)
+      - ./nginx/legacy-frontend-prod:/etc/nginx/legacy-frontend-prod:ro
+      - ./nginx/legacy-frontend-test:/etc/nginx/legacy-frontend-test:ro
+      - ./letsencrypt:/etc/letsencrypt
+      - ./local_ca:/etc/local_ca
+      - type: bind
+        source: ./uppladdningar
+        target: /app/uppladdningar
+        read_only: true
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - next-app
+      - api
+      - api-test
+
+  # ============================================
+  # S3 Backend (RustFS)
+  # ============================================
+  s3backend:
+    build:
+      context: ./
+      dockerfile: .docker/rustfs
+    image: s3backend
+    environment:
+      - RUSTFS_ACCESS_KEY=accesskeytest
+      - RUSTFS_SECRET_KEY=secretkeytest
+      - RUSTFS_REGION=us-east-1
+    volumes:
+      - ./s3data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fkq", "http://localhost:9000/health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 30s
+
+volumes:
+  redis_data:

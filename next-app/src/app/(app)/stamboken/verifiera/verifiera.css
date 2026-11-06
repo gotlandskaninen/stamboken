@@ -1,0 +1,232 @@
+/* Verifiera-sidan — Stamboken designsystem (från design-handoff 2026-07). */
+
+.vf-page {
+  --paper: #f4f1ea;
+  --paper-2: #ebe6d8;
+  --card: #fbf9f3;
+  --ink: #1f1b16;
+  --ink-2: #3d362c;
+  --ink-3: #6f6a5f;
+  --ink-4: #9d978a;
+  --skog: #2f4a32;
+  --skog-soft: #d7dfcf;
+  --lera: #b85c38;
+  --warning: #b98019;
+  --warning-soft: #f2e4c2;
+  --danger: #a23a2a;
+  --danger-soft: #f0d4cc;
+  --line: #d7cfbe;
+  --line-strong: #b8ae99;
+  --line-faint: #e5decb;
+
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-plex-sans), "IBM Plex Sans", sans-serif;
+}
+
+.vf-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 22px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.vf-head img {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid var(--line-strong);
+}
+.vf-head .t {
+  font-family: var(--font-plex-mono), "IBM Plex Mono", monospace;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.14em;
+  color: var(--ink-3);
+  line-height: 1.5;
+}
+.vf-head .t strong {
+  display: block;
+  color: var(--ink-2);
+  font-weight: 500;
+}
+
+.vf-body {
+  flex: 1;
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 26px 22px 20px;
+  box-sizing: border-box;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-family: var(--font-plex-mono), "IBM Plex Mono", monospace;
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  padding: 6px 12px;
+  border-radius: 4px;
+  border: 1px solid;
+}
+.badge .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+.badge-ok {
+  background: var(--skog-soft);
+  color: var(--skog);
+  border-color: #c0ccb4;
+}
+.badge-ok .dot {
+  background: var(--skog);
+}
+.badge-warn {
+  background: var(--warning-soft);
+  color: #8a5f10;
+  border-color: #e0cd9a;
+}
+.badge-warn .dot {
+  background: var(--warning);
+}
+.badge-err {
+  background: var(--danger-soft);
+  color: var(--danger);
+  border-color: #ddb3a8;
+}
+.badge-err .dot {
+  background: var(--danger);
+}
+
+.vf-body h1 {
+  font-family: var(--font-source-serif), "Source Serif 4", Georgia, serif;
+  font-weight: 400;
+  font-size: 30px;
+  line-height: 1.1;
+  letter-spacing: -0.015em;
+  margin: 14px 0 4px;
+}
+.vf-body .sub {
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--ink-2);
+  margin: 0 0 22px;
+}
+
+.ind-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 18px 18px 6px;
+}
+.ind-card .num {
+  font-family: var(--font-plex-mono), "IBM Plex Mono", monospace;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--skog);
+}
+.ind-card .nm {
+  font-family: var(--font-source-serif), "Source Serif 4", Georgia, serif;
+  font-size: 24px;
+  font-weight: 600;
+  line-height: 1.15;
+  margin: 2px 0 12px;
+}
+.frow {
+  display: flex;
+  border-top: 1px solid var(--line-faint);
+  padding: 9px 0;
+}
+.frow .l {
+  flex: 0 0 128px;
+  font-family: var(--font-plex-mono), "IBM Plex Mono", monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--ink-3);
+  padding-top: 3px;
+}
+.frow .v {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 22px;
+}
+.btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 46px;
+  padding: 12px 20px;
+  font-size: 15px;
+  font-weight: 500;
+  border-radius: 4px;
+  text-decoration: none;
+  border: 1px solid;
+  box-sizing: border-box;
+}
+.btn-primary {
+  background: var(--skog);
+  color: #fff;
+  border-color: var(--skog);
+}
+.btn-secondary {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--line-strong);
+}
+
+.vf-foot {
+  width: 100%;
+  max-width: 480px;
+  margin: 0 auto;
+  padding: 16px 22px 20px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+  color: var(--ink-4);
+  line-height: 1.5;
+  box-sizing: border-box;
+}
+.vf-foot .tok {
+  font-family: var(--font-plex-mono), "IBM Plex Mono", monospace;
+  font-size: 10px;
+  color: var(--ink-4);
+  letter-spacing: 0.03em;
+  word-break: break-all;
+  display: block;
+  margin-top: 4px;
+}
+
+.hint {
+  background: var(--paper-2);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px 16px;
+  font-size: 14px;
+  line-height: 1.55;
+  color: var(--ink-2);
+  margin-top: 4px;
+}
+.hint ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+.hint li {
+  margin-bottom: 4px;
+}

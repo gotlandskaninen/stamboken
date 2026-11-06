@@ -1,0 +1,160 @@
+# Docker Compose för utveckling
+
+services:
+  database:
+    image: postgres:18
+    env_file:
+      - ./.docker/database-variables.env
+    environment:
+      - POSTGRES_HOST_AUTH_METHOD=trust
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      # PostgreSQL 18+ uses /var/lib/postgresql with data in subdirectory
+      - ./postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U herdbook -d herdbook"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  cms-database:
+    image: postgres:18
+    env_file:
+      - .docker/cms-database-variables.env
+    volumes:
+      - ./cms-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U herdbook_cms"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ./
+      dockerfile: .docker/api
+      target: ${DOCKER_TARGET:-dev} # Use dev by default, can be overridden
+    env_file:
+      - ./.docker/database-variables.env
+      - ./.docker/api-variables.env
+    environment:
+      - FLASK_ENV=${FLASK_ENV:-development}
+      - FLASK_DEBUG=${FLASK_DEBUG:-1}
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=dev-secret-do-not-use-in-prod
+      - SESSION_REDIS_URL=redis://redis:6379/2
+      - RATELIMIT_STORAGE_URL=redis://redis:6379/3
+    ports:
+      - "127.0.0.1:9090:9090"
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "10"
+    volumes:
+      - type: bind
+        source: ./app
+        target: /app
+      - type: bind
+        source: ./config
+        target: /config
+      - type: bind
+        source: ./logs
+        target: /logs
+      - type: bind
+        source: ./uppladdningar
+        target: /app/uppladdningar
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    # Use default CMD from Dockerfile for now
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  next-app:
+    image: next-app
+    build:
+      context: ./
+      dockerfile: .docker/next-app
+      target: dev
+    command: pnpm dev
+    env_file:
+      - ./.docker/next-app-variables.env
+    environment:
+      - NODE_ENV=development
+      - API_INTERNAL_URL=http://api:9090
+      - CMS_DATABASE_URL=postgres://herdbook_cms:herdbook_cms_insecure@cms-database:5432/herdbook_cms
+    volumes:
+      - ./next-app:/app
+      - /app/node_modules
+      - /app/.next
+      - type: bind
+        source: ./uppladdningar
+        target: /app/uppladdningar
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      cms-database:
+        condition: service_healthy
+
+  nginx:
+    image: jonasal/nginx-certbot:latest
+    environment:
+      - CERTBOT_EMAIL=your-email@example.com
+      - CERTBOT_DOMAIN=localhost
+      - USE_LOCAL_CA=1
+      - DHPARAM_SIZE=2048 # Optional: Set the size of DH parameters
+      - LOCAL_CA_ROOT_CERT_VALIDITY=730 # Set CA cert validity to 2 years
+      - LOCAL_CA_CERT_VALIDITY=730 # Set leaf cert validity to 2 years
+    volumes:
+      - ./nginx:/etc/nginx/user_conf.d:ro
+      - ./letsencrypt:/etc/letsencrypt # For certificate persistence
+      - ./local_ca:/etc/local_ca
+      - type: bind
+        source: ./uppladdningar
+        target: /app/uppladdningar
+        read_only: true
+    ports:
+      - 80:80
+      - 443:443
+    depends_on:
+      - next-app
+      - api
+
+  s3backend:
+    build:
+      context: ./
+      dockerfile: .docker/rustfs
+    image: s3backend
+    environment:
+      - RUSTFS_ACCESS_KEY=accesskeytest
+      - RUSTFS_SECRET_KEY=secretkeytest
+      - RUSTFS_REGION=us-east-1
+    volumes:
+      - ./s3data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-fkq", "http://localhost:9000/health"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+      start_period: 30s
+volumes:
+  # postgres-data:  # Using bind mount instead
+  redis_data:

@@ -1,0 +1,275 @@
+# Docker Compose för produktion - Gotlandskanin
+#
+# Användning:
+#   docker compose -f docker-compose.production.yml up -d
+#   docker compose -f docker-compose.production.yml pull  # Hämta senaste images
+
+services:
+  # ============================================
+  # PostgreSQL - En container, två databaser
+  # ============================================
+  database:
+    image: postgres:18
+    restart: always
+    env_file:
+      - ./.docker/database-variables.env
+    environment:
+      - POSTGRES_HOST_AUTH_METHOD=scram-sha-256
+    volumes:
+      - ./postgres-data:/var/lib/postgresql
+      - ./scripts/init-demo-db.sql:/docker-entrypoint-initdb.d/init-demo-db.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U herdbook -d herdbook"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ============================================
+  # CMS Database - Payload CMS content
+  # ============================================
+  cms-database:
+    image: postgres:18
+    restart: always
+    env_file:
+      - .docker/cms-database-variables.env
+    volumes:
+      - ./cms-postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U herdbook_cms"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # CMS migrate - one-shot Payload schema migration
+  # Runs `pnpm migrate` against herdbook_cms before next-app serves new code.
+  # Invoked by the deploy workflow: `docker compose run --rm cms-migrate`.
+  # profiles:[migrate] keeps it out of a plain `docker compose up`.
+  # CMS_DATABASE_URL comes from next-app-variables.env (NOT set here — see the
+  # next-app service comment on why a compose environment override breaks it).
+  # ============================================
+  cms-migrate:
+    image: ghcr.io/gotlandskaninen/herdbook_cms-migrate:${TAG_PROD:-latest}
+    env_file:
+      - ./.docker/next-app-variables.env
+    # Same upload dir as next-app: the CMS seed (run via this image) writes
+    # new Media files here. Without the mount a
+    # fresh upload lands in the container's own filesystem and the Media row
+    # keeps a dead URL once the one-shot container is gone. This container runs
+    # as root, so create the subdir as the next-app user first or /admin cannot
+    # replace/delete what the seed wrote: ./uppladdningar/cms owned by uid 1001.
+    volumes:
+      - type: bind
+        source: ./uppladdningar
+        target: /app/uppladdningar
+    depends_on:
+      cms-database:
+        condition: service_healthy
+    profiles:
+      - migrate
+    restart: "no"
+
+  # ============================================
+  # Redis - Cache backend
+  # ============================================
+  redis:
+    image: redis:7-alpine
+    restart: always
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+
+  # ============================================
+  # API - Produktion (mot herdbook databas)
+  # ============================================
+  api:
+    image: ghcr.io/gotlandskaninen/herdbook_api:${TAG_PROD:-latest}
+    restart: always
+    env_file:
+      - ./.docker/database-variables.env
+      - ./.docker/api-variables.env
+    environment:
+      - FLASK_APP=herdbook:APP
+      - FLASK_ENV=production
+      - FLASK_DEBUG=0
+      - POSTGRES_DB=herdbook
+      - REDIS_URL=redis://redis:6379/0
+      - SESSION_REDIS_URL=redis://redis:6379/2
+      - RATELIMIT_STORAGE_URL=redis://redis:6379/3
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "10"
+    volumes:
+      - type: bind
+        source: ./config
+        target: /config
+        read_only: true
+      - type: bind
+        source: ./logs
+        target: /logs
+      - type: bind
+        source: ./uppladdningar
+        target: /app/uppladdningar
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ============================================
+  # API - Test (mot herdbook_demo databas)
+  # ============================================
+  api-test:
+    image: ghcr.io/gotlandskaninen/herdbook_api:${TAG_TEST:-latest}
+    restart: always
+    env_file:
+      - ./.docker/database-variables.env
+      - ./.docker/api-test-variables.env
+    environment:
+      - FLASK_APP=herdbook:APP
+      # Keep FLASK_ENV=production so secure session cookies stay enabled
+      # (SameSite=None requires Secure on modern browsers).
+      - FLASK_ENV=production
+      # Sessions are shared with `api` (same Redis db 2, cookie and host), so a
+      # production login works here too. Logins made HERE are marked and
+      # production refuses them: demo account state is a stale or altered copy.
+      - DEMO_INSTANCE=true
+      # The legacy test site logs in here with a domain Google account and is
+      # validated at once, as the old test server did. Safe only because
+      # production refuses sessions minted here (DEMO_INSTANCE above).
+      - AUTO_VALIDATE_USERS=true
+      - FLASK_DEBUG=0
+      - POSTGRES_DB=herdbook_demo
+      - REDIS_URL=redis://redis:6379/1
+      - SESSION_REDIS_URL=redis://redis:6379/2
+      # Own limiter counters (db 3 is `api`'s): demo attempts must not spend
+      # production's login budget.
+      - RATELIMIT_STORAGE_URL=redis://redis:6379/4
+      # Demo instance: stamp v2 certificates "DEMO – EJ GILTIGT INTYG".
+      - CERT_DEMO_WATERMARK=true
+      # Pin signing to the throwaway committed dev cert (baked into the image).
+      # `environment` overrides `env_file`, so demo certificates can NEVER carry
+      # the association's real signature even if a key leaks into a shared env.
+      - PDF_SIGNING_KEY=certs/key.pem
+      - PDF_SIGNING_CA=certs/ca.pem
+      # NOTE (deploy): v2 certificate issuance uploads the PDF to S3 before the
+      # DB commit, so the demo instance needs its OWN demo S3 bucket/credentials
+      # (never the production bucket). Set S3_* for api-test in
+      # .docker/api-test-variables.env on the server; without it, digital
+      # registration on the demo returns a transient certificate_error instead
+      # of a stored PDF. Same S3 dependency the /v2/certificates/issue endpoint
+      # already had — enabling the promote-flow digital option only surfaces it.
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "10"
+    volumes:
+      - type: bind
+        source: ./config
+        target: /config
+        read_only: true
+      - type: bind
+        # Own dir: the genebank CSV logs don't record the instance, so demo
+        # edits must not land in production's logs. Create it like ./logs.
+        source: ./logs-test
+        target: /logs
+      # Read-only: the demo shares this host dir with the production api, and a
+      # photo upload writes the fixed path kaniner/<number>.jpg that nginx serves.
+      # So demo uploads (photos, profile pictures) and v2 certificate issuance
+      # (which writes a local PDF copy) fail here until the demo has its own dir.
+      - type: bind
+        source: ./uppladdningar
+        target: /app/uppladdningar
+        read_only: true
+    depends_on:
+      database:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9090/api/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
+
+  # ============================================
+  # Next.js - Ny frontend
+  # ============================================
+  next-app:
+    image: ghcr.io/gotlandskaninen/herdbook_next-app:${TAG_PROD:-latest}
+    restart: always
+    env_file:
+      - ./.docker/next-app-variables.env
+    environment:
+      - NODE_ENV=production
+      # Next.js kan prata med båda API:erna beroende på user toggle
+      - NEXT_PUBLIC_API_URL=/api
+      - NEXT_PUBLIC_API_TEST_URL=/api-test
+      - API_INTERNAL_URL=http://api:9090
+      # Server-side URL so fetchApi() can route demo-mode RSC/Server-Action fetches to api-test
+      - API_TEST_INTERNAL_URL=http://api-test:9090
+      # CMS_DATABASE_URL is provided via .docker/next-app-variables.env (full URL,
+      # with the SAME password as .docker/cms-database-variables.env / POSTGRES_PASSWORD).
+      # Do NOT set it here: a compose `environment:` value overrides the env_file, and
+      # ${CMS_DB_PASSWORD} has no source (there is no root .env), so it would resolve to
+      # an empty password and break Payload (i.e. /, /admin and the CMS-driven nav).
+    volumes:
+      - type: bind
+        source: ./uppladdningar
+        target: /app/uppladdningar
+    depends_on:
+      api:
+        condition: service_healthy
+      cms-database:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://127.0.0.1:3000/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # ============================================
+  # Nginx - Reverse proxy med SSL
+  # ============================================
+  nginx:
+    image: jonasal/nginx-certbot:latest
+    restart: always
+    environment:
+      - CERTBOT_EMAIL=${CERTBOT_EMAIL:?Set CERTBOT_EMAIL in .env}
+      # Certbot hanterar flera domäner
+      - STAGING=${CERTBOT_STAGING:-0}
+    volumes:
+      - ./nginx/production/herdbook-production.conf:/etc/nginx/user_conf.d/herdbook.conf:ro
+      - ./nginx/legacy-frontend-prod:/etc/nginx/legacy-frontend-prod:ro
+      - ./nginx/legacy-frontend-test:/etc/nginx/legacy-frontend-test:ro
+      - ./letsencrypt:/etc/letsencrypt
+      - type: bind
+        source: ./uppladdningar
+        target: /app/uppladdningar
+        read_only: true
+    ports:
+      - "80:80"
+      - "443:443"
+    depends_on:
+      - next-app
+      - api
+      - api-test
+  # S3: S3-kompatibel lagring, nycklar i .docker/api-variables.env
+
+volumes:
+  redis_data:

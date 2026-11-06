@@ -1,0 +1,92 @@
+{
+  "compilerOptions": {
+    "target": "es2020",
+    "lib": [
+      "dom",
+      "dom.iterable",
+      "esnext"
+    ],
+    "allowJs": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "typeRoots": [
+      "src/types",
+      "node_modules/@types"
+    ],
+    "noFallthroughCasesInSwitch": true,
+    "incremental": true,
+    "baseUrl": "src/",
+    "paths": {
+      // Folders
+      "@/app/*": [
+        "app/*"
+      ],
+      "@/lib/*": [
+        "lib/*"
+      ],
+      "@/components/*": [
+        "components/*"
+      ],
+      "@/contexts/*": [
+        "contexts/*"
+      ],
+      "@/collections/*": [
+        "collections/*"
+      ],
+      "@/access/*": [
+        "access/*"
+      ],
+      "@/hooks/*": [
+        "hooks/*"
+      ],
+      "@/redux/*": [
+        "redux/*"
+      ],
+      "@/styles/*": [
+        "styles/*"
+      ],
+      "@/theme/*": [
+        "theme/*"
+      ],
+      "@/types/*": [
+        "types/*"
+      ],
+      "@/utils/*": [
+        "utils/*"
+      ],
+      "@/auth/*": [
+        "auth/*"
+      ],
+      // Payload CMS
+      "@payload-config": [
+        "payload.config.ts"
+      ],
+      // Files
+      "@/i18n": [
+        "i18n"
+      ]
+    },
+    "plugins": [
+      {
+        "name": "next"
+      }
+    ]
+  },
+  "include": [
+    "src",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

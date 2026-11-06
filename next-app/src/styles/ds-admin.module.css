@@ -1,0 +1,391 @@
+/* Delade Stamboken-recept för list- och detaljsidor (sidhuvud, DataGrid-kort,
+   detaljrutnät, formulärkort, banderoller, statusremsa).
+
+   Reglerna är HOISTADE ORÖRDA ur admin/admin.module.css — samma
+   klassnamn, samma värden, samma inbördes ordning. Adminpanelen importerar dem
+   som `ds` och behåller sitt eget skal i admin.module.css (container/main/
+   masthead/tabs/prompt/landing/role/switch/google/activity/gb/pill/online/
+   cell-sub/pre/audit/diff/raw). Px-värdena kommer från
+   stamboken-drift:docs/design/design_handoff_admin/Adminpanel.html, inte från MUI:s sx-skala. */
+
+/* Sidhuvuden + tillbakalänk (handoff rad 37-43) */
+.ad-page-head {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin: 0 0 16px;
+  flex-wrap: wrap;
+}
+
+.ad-page-title {
+  font-family: var(--sb-display);
+  font-size: 26px;
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  margin: 0;
+}
+
+.ad-page-sub {
+  font-size: 14px;
+  color: var(--sb-ink-2);
+  margin-top: 4px;
+}
+
+.ad-count {
+  font-family: var(--sb-mono);
+  font-size: 14px;
+  color: var(--sb-ink-3);
+  font-weight: 400;
+  margin-left: 6px;
+}
+
+.ad-back {
+  display: inline-block;
+  font-size: 13px;
+  color: var(--sb-ink-3);
+  text-decoration: none;
+  margin-bottom: 10px;
+}
+
+.ad-back:hover {
+  color: var(--sb-ink);
+  text-decoration: underline;
+}
+
+.ad-hint {
+  font-size: 14px;
+  color: var(--sb-ink-3);
+  line-height: 1.5;
+  max-width: 72ch;
+  margin: 0 0 14px;
+}
+
+/* ---- DataGrid-kort (Adminpanel.html:44-67) ---- */
+.ad-grid {
+  overflow: hidden;
+}
+.ad-grid-toolbar {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--sb-line);
+  background: var(--sb-card);
+}
+.ad-search {
+  flex: 1 1 220px;
+  min-width: 180px;
+  max-width: 340px;
+  min-height: 36px;
+  padding: 7px 12px;
+  font-size: 14px;
+}
+.ad-filter {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ad-filter-label {
+  font-family: var(--sb-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sb-ink-3);
+}
+.ad-cell-mono {
+  font-family: var(--sb-mono);
+  font-size: 12.5px;
+}
+.ad-cell-dim {
+  color: var(--sb-ink-3);
+}
+.ad-cell-link {
+  color: var(--sb-skog);
+  font-weight: 500;
+  text-decoration: none;
+}
+.ad-cell-link:hover {
+  text-decoration: underline;
+}
+.ad-badge-row {
+  display: inline-flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.ad-badge-row :global(.sb-badge) {
+  padding: 2px 6px;
+  font-size: 10px;
+}
+
+.ad-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  font-size: 14px;
+  color: var(--sb-ink-3);
+}
+.ad-grid-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border-top: 1px solid var(--sb-line);
+  background: var(--sb-card);
+}
+.ad-grid-spacer {
+  flex: 1;
+}
+.ad-per-page {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ad-per-page a {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.ad-grid-foot :global(.sb-btn-sm) {
+  min-height: 32px;
+  padding: 5px 12px;
+}
+.ad-btn-disabled {
+  opacity: 0.45;
+  cursor: default;
+  pointer-events: none;
+}
+
+/* ---- Detaljsida (Adminpanel.html:68-84) ---- */
+.ad-detail-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  gap: 20px;
+  align-items: start;
+}
+.ad-col {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+.ad-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 16px 20px 10px;
+}
+.ad-card-title {
+  margin: 0;
+  font-size: 16px;
+}
+.ad-card-body {
+  padding: 4px 20px 20px;
+}
+.ad-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 440px;
+}
+
+/* Banderoller (handoff README:47 — danger-soft / warning-soft, 14px) */
+.ad-banner {
+  padding: 12px 16px;
+  margin-bottom: 16px;
+  border: 1px solid var(--sb-line);
+  border-radius: var(--sb-r-3);
+  font-size: 14px;
+}
+.ad-banner-danger {
+  background: var(--sb-danger-soft);
+  border-color: #ddb5aa;
+  color: var(--sb-danger);
+}
+.ad-banner-warning {
+  background: var(--sb-warning-soft);
+  border-color: var(--sb-warning);
+  color: var(--sb-ink-2);
+}
+
+/* Gridkropp. DataGrid kräver en avgränsad höjd (samma mönster som
+   components/explorer/RabbitExplorer.tsx:453).
+   640px ≈ 17 kompakta rader innan intern vertikal scroll; den horisontella
+   scrollen sker inuti gridet, aldrig på sidan (ADR-0010, 375-px-kravet). */
+.ad-grid-body {
+  height: 640px;
+}
+
+/* Formulärkort — ersätter <Paper sx={{ p: 3, maxWidth: 640 }}> i alla tre
+   formulären. 20px innerpadding (Adminpanel.html:124), 14px radavstånd
+   (Adminpanel.html:72 .ad-form). Maxbredden är 640px, inte handoffens 440px,
+   eftersom kontaktraderna är tvåkolumns. */
+.ad-form-card {
+  padding: 20px;
+  max-width: 640px;
+}
+.ad-form-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+/* Värdefält + synlighetsselect på samma rad (Adminpanel.html:76 .ad-role-add).
+   flex-wrap gör att paret bryter till två rader vid 375px (ADR-0010), och
+   align-items:flex-end linjerar botten på .sb-input mot MUI-selecten. */
+.ad-form-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+.ad-form-row > *:first-child {
+  flex: 1 1 240px;
+  min-width: 0;
+}
+.ad-form-row > *:last-child {
+  flex: 0 1 170px;
+}
+/* Knapprad — knappar i en kolumn-flex skulle annars sträckas till full bredd. */
+.ad-form-actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+/* Sektionsrubrik i formulärkort (admin-ui.jsx:40 — sb-h6 nedskalad till 16px) */
+.ad-section-title {
+  margin: 0;
+  font-size: 16px;
+}
+
+/* Fälthjälp och fältfel — ersätter MUI helperText/error */
+.ad-field-hint {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--sb-ink-3);
+}
+.ad-field-error {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--sb-danger);
+}
+.ad-input-error {
+  border-color: var(--sb-danger);
+}
+
+/* Förklarande brödtext under formulärfält (ersätter Typography body2 secondary) */
+.ad-note {
+  margin: 0;
+  font-size: 13px;
+  color: var(--sb-ink-3);
+  line-height: 1.5;
+}
+
+.ad-row-end {
+  margin-left: auto;
+}
+
+/* Nyckel-värde-lista (Adminpanel.html:113-115) — genbankskorten här,
+   och demosynk-korten. */
+.ad-kv {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.ad-kv dt {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--sb-ink-3);
+  margin-bottom: 1px;
+}
+.ad-kv dd {
+  margin: 0;
+  font-size: 14px;
+}
+
+/* Tomt läge i KORT (README:38 — centrerad 14px --sb-ink-3). OBS namnet:
+   .ad-empty ägs av DataGridens noRowsOverlay (flex/height:100%) —
+   kortvarianten heter .ad-empty-note och används av genbankslistan här,
+   online- och audit-tomlägena. */
+.ad-empty-note {
+  padding: 18px 20px;
+  margin: 0;
+  text-align: center;
+  font-size: 14px;
+  color: var(--sb-ink-3);
+}
+
+@media (max-width: 979px) {
+  .ad-detail-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Dubblerad klass = specificitet 0,2,0 så att den vinner över den globala
+   .sb-card/.sb-btn i tokens.css oavsett stilarkens ordning. */
+.ad-card-danger.ad-card-danger {
+  border-color: #d9b8b0; /* surfaces/admin-system.jsx:103 */
+}
+.ad-card-gap {
+  margin-top: 20px;
+}
+.ad-btn-danger.ad-btn-danger {
+  --bg: var(--sb-danger);
+  --bd: var(--sb-danger);
+  background: var(--sb-danger);
+  border-color: var(--sb-danger);
+  color: #fff;
+}
+/* :not(:disabled): same specificity as tokens.css `.sb-btn:disabled:hover`
+   and later in the cascade — without it a disabled danger button (a pending
+   action) would light up on hover. */
+.ad-btn-danger.ad-btn-danger:hover:not(:disabled) {
+  background: #8c3224; /* Adminpanel.html:121 */
+  border-color: #8c3224;
+}
+
+/* ---- Statusremsa (Adminpanel.html:116-119) ---- */
+.ad-status-strip {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+.ad-status-cell {
+  padding: 18px 20px;
+  border-right: 1px solid var(--sb-line-faint);
+}
+.ad-status-cell:last-child {
+  border-right: 0;
+}
+.ad-status-val {
+  font-family: var(--sb-display);
+  font-size: 24px;
+  color: var(--sb-skog);
+  display: flex;
+  align-items: center;
+}
+/* Måste stå EFTER .ad-status-val — samma specificitet, sist vinner. */
+.ad-status-val.is-danger {
+  color: var(--sb-danger);
+}
+
+.ad-banner p {
+  margin: 0 0 8px;
+}
+.ad-banner-inset {
+  margin: 14px 0 0;
+}
+
+/* ---- Mobil (Adminpanel.html:134-137) ---- */
+@media (max-width: 979px) {
+  .ad-status-strip {
+    grid-template-columns: 1fr 1fr;
+  }
+  .ad-status-cell {
+    border-bottom: 1px solid var(--sb-line-faint);
+  }
+}

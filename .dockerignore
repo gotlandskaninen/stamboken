@@ -1,0 +1,37 @@
+# Reserve a directory for personal stuff
+personal
+
+# OS X
+.DS_Store
+
+# database files
+postgres-data/
+postgres-test-data/
+cms-postgres-data/
+
+# frontend files
+frontend/node_modules
+frontend/.cache
+frontend/.parcel-cache
+
+# Next.js build output (rebuilt inside Docker)
+next-app/.next
+next-app/node_modules
+
+# Python cache
+__pycache__
+*.pyc
+.pytest_cache
+
+# Local data volumes
+s3data/
+cache/
+app-cache/
+logs/
+logs-test/
+uppladdningar/
+letsencrypt/
+local_ca/
+
+# Git
+.git
