@@ -60,8 +60,8 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # medlem/profil (29: structured postal address, member.user_id unique link) +
 # Phase 999.5 herd tracking kind/void (30) + Phase 999.8 genetics version (31) + genetics history (32) +
 # history algorithm version (33) + genetics epoch (34) + the individual command log (35) +
-# Individual.microchip (36).
-CURRENT_SCHEMA_VERSION = 36
+# Individual.microchip (36) + billing address on membership and member_application (37).
+CURRENT_SCHEMA_VERSION = 37
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -219,6 +219,19 @@ class Genebank(BaseModel):
         return herds
 
 
+# The optional billing address, the same columns on Membership and
+# MemberApplication (approval copies them over). All empty means the invoice
+# goes to the postal address.
+BILLING_FIELDS = (
+    "billing_name",
+    "billing_address",
+    "billing_postal_code",
+    "billing_city",
+    "billing_email",
+    "billing_reference",
+)
+
+
 class Membership(BaseModel):
     """
     Association-level membership (Member Model v2): the durable business
@@ -241,6 +254,15 @@ class Membership(BaseModel):
     payment_note = TextField(null=True)
     joined_date = DateField(default=date.today)
     notes = TextField(null=True)
+    # Where the membership fee invoice goes when it is not the postal address:
+    # a zoo, an association, a farm, a parent or a company. One per membership,
+    # because the household pays one fee. See BILLING_FIELDS and invoice_address.
+    billing_name = CharField(max_length=200, null=True)
+    billing_address = TextField(null=True)
+    billing_postal_code = CharField(max_length=10, null=True)
+    billing_city = CharField(max_length=100, null=True)
+    billing_email = CharField(max_length=255, null=True)
+    billing_reference = CharField(max_length=100, null=True)
     created_at = DateTimeField(default=datetime.now)
     updated_at = DateTimeField(default=datetime.now)
 
@@ -257,6 +279,27 @@ class Membership(BaseModel):
         The column was dropped by migrate_28_to_29; every serializer derives
         it from postal_code + city."""
         return format_postal_address(self.postal_code, self.city)
+
+    @property
+    def invoice_address(self) -> dict:
+        """Where the membership fee invoice goes. Export and invoicing read this,
+        never the billing columns one by one.
+
+        Street, postal code and city come from the billing address as soon as
+        one of them is set, otherwise all three from the postal address: an
+        invoice never gets a billing street with the postal city. Recipient,
+        e-mail and reference only exist for the invoice and are returned as
+        stored (None means the main member and their own e-mail).
+        """
+        billing = any((self.billing_address, self.billing_postal_code, self.billing_city))
+        return {
+            "name": self.billing_name,
+            "address": self.billing_address if billing else self.address,
+            "postal_code": self.billing_postal_code if billing else self.postal_code,
+            "city": self.billing_city if billing else self.city,
+            "email": self.billing_email,
+            "reference": self.billing_reference,
+        }
 
 
 class MemberNumberCounter(BaseModel):
@@ -1861,6 +1904,14 @@ class MemberApplication(BaseModel):
     # historic applications keep their free-text street line).
     postal_code = CharField(max_length=10, null=True)
     city = CharField(max_length=100, null=True)
+    # Optional billing address from the form; approval copies it to the
+    # membership. Same columns and meaning as on Membership.
+    billing_name = CharField(max_length=200, null=True)
+    billing_address = TextField(null=True)
+    billing_postal_code = CharField(max_length=10, null=True)
+    billing_city = CharField(max_length=100, null=True)
+    billing_email = CharField(max_length=255, null=True)
+    billing_reference = CharField(max_length=100, null=True)
     motivation = TextField(null=True)
     gdpr_consented_at = DateTimeField(null=False)
     status = CharField(max_length=20, default="pending")
@@ -3495,6 +3546,20 @@ def migrate_35_to_36():
         ).execute()
 
 
+def migrate_36_to_37():
+    """Optional billing address per membership, also collected by the application form."""
+    with DATABASE.atomic():
+        for model in (Membership, MemberApplication):
+            table = model._meta.table_name
+            existing = {c.name for c in DATABASE.get_columns(table)}
+            for name in BILLING_FIELDS:
+                if name not in existing:
+                    migrate(DATABASE_MIGRATOR.add_column(table, name, getattr(model, name)))
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=37, comment="membership/member_application billing address", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -3968,6 +4033,7 @@ MIGRATIONS = {
     (33, 34): migrate_33_to_34,  # genetics epoch
     (34, 35): migrate_34_to_35,  # ADR-0017 command log
     (35, 36): migrate_35_to_36,  # Individual.microchip
+    (36, 37): migrate_36_to_37,  # billing address
 }
 
 

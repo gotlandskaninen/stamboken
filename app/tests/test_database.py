@@ -14,7 +14,6 @@ import time
 from datetime import datetime
 
 import peewee
-
 import utils.data_access as da
 
 # pylint: disable=import-error
@@ -1049,8 +1048,39 @@ class TestDatabaseMigration(DatabaseTest):
             db.Individual.update(microchip=chip).where(db.Individual.id == ind.id).execute()
             self.assertEqual(db.Individual.get_by_id(ind.id).microchip, chip)
         for chip in ("", "75209810001234", "7520981000123456", "75209810001234x"):
-            with self.subTest(chip=chip), self.assertRaises((peewee.IntegrityError, peewee.DataError)), db.DATABASE.atomic():
+            with (
+                self.subTest(chip=chip),
+                self.assertRaises((peewee.IntegrityError, peewee.DataError)),
+                db.DATABASE.atomic(),
+            ):
                 db.Individual.update(microchip=chip).where(db.Individual.id == ind.id).execute()
+
+    def test_replay_36_to_37_adds_billing_address(self):
+        """A database stamped at 36 gets the six billing columns on membership and member_application."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 37).execute()
+        for table in ("membership", "member_application"):
+            for column in db.BILLING_FIELDS:
+                db.DATABASE.execute_sql(f'ALTER TABLE "{table}" DROP COLUMN IF EXISTS "{column}"')
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        for table in ("membership", "member_application"):
+            columns = {c.name: c for c in db.DATABASE.get_columns(table)}
+            for column in db.BILLING_FIELDS:
+                with self.subTest(table=table, column=column):
+                    self.assertIn(column, columns)
+                    self.assertTrue(columns[column].null)
+        ms = db.Membership.create(billing_name="Djurparken i Exempelby", billing_postal_code="123 45")
+        self.assertEqual(db.Membership.get_by_id(ms.id).billing_name, "Djurparken i Exempelby")
+
+        # Running it again on the migrated schema changes nothing.
+        db.SchemaHistory.delete().where(db.SchemaHistory.version == 37).execute()
+        db.check_migrations()
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
 
     def test_replay_32_to_33_adds_the_history_algorithm_version(self):
         """
