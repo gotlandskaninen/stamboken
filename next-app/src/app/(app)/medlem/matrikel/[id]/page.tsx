@@ -8,6 +8,8 @@ import styles from "../../medlem.module.css";
 import { MembershipFormCard } from "./MembershipFormCard";
 import { OversiktCard } from "./OversiktCard";
 import { PersonsCard } from "./PersonsCard";
+import { BillingAddressRows } from "../BillingAddressRows";
+import { hasBillingAddress } from "../types";
 import type { MembershipDetail } from "../types";
 
 export const dynamic = "force-dynamic";
@@ -80,6 +82,22 @@ export default async function MembershipDetailPage({
         <div className={ds["ad-col"]}>
           <PersonsCard membership={membership} canEdit={canEdit} />
           {canEdit ? <MembershipFormCard membership={membership} /> : null}
+          {/* Read-only managers never see MembershipFormCard, where the
+              billing address is edited. */}
+          {!canEdit && hasBillingAddress(membership) ? (
+            <section className="sb-card">
+              <div className={ds["ad-card-head"]}>
+                <h3 className={`sb-h6 ${ds["ad-card-title"]}`}>
+                  Annan fakturaadress
+                </h3>
+              </div>
+              <div className={ds["ad-card-body"]}>
+                <dl className={ds["ad-kv"]}>
+                  <BillingAddressRows billing={membership} />
+                </dl>
+              </div>
+            </section>
+          ) : null}
         </div>
       </div>
     </>

@@ -4,11 +4,14 @@ import { ApiError, fetchApi } from "@/lib/api";
 import { Masthead } from "@/components/shell/Masthead";
 import ds from "@/styles/ds-admin.module.css";
 import styles from "../../medlem.module.css";
+import { BillingAddressRows } from "../../matrikel/BillingAddressRows";
+import { hasBillingAddress } from "../../matrikel/types";
+import type { BillingAddress } from "../../matrikel/types";
 import { ApplicationDetailClient } from "./ApplicationDetailClient";
 
 export const dynamic = "force-dynamic";
 
-type Application = {
+type Application = BillingAddress & {
   id: number;
   first_name: string;
   last_name: string;
@@ -70,6 +73,12 @@ export default async function ApplicationDetailPage({
                 <Row label="Gatuadress" value={app.address || "–"} />
                 <Row label="Postnummer" value={app.postal_code || "–"} />
                 <Row label="Postort" value={app.city || "–"} />
+                {/* Approval copies the billing address to the membership. */}
+                {hasBillingAddress(app) ? (
+                  <BillingAddressRows billing={app} />
+                ) : (
+                  <Row label="Fakturaadress" value="Samma som postadressen" />
+                )}
                 <Row
                   label="Motivering"
                   value={app.motivation || "(ingen angiven)"}

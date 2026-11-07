@@ -16,8 +16,14 @@ from peewee import IntegrityError, fn
 # module-level DATABASE symbol directly will be None at call time.
 # Note: try_auto_link_member is NOT imported here. Auto-link only
 # happens in the OAuth callback (app/herdbook.py), never at approve time.
-from utils.database import DB_PROXY, Genebank, Member, MemberApplication, Membership
-from utils.matrikel import allocate_member_number, normalize_postal_code, write_matrikel_audit
+from utils.database import BILLING_FIELDS, DB_PROXY, Genebank, Member, MemberApplication, Membership
+from utils.matrikel import (
+    AddressValidationError,
+    allocate_member_number,
+    normalize_postal_code,
+    parse_billing_fields,
+    write_matrikel_audit,
+)
 
 from blueprints.common import (
     EMAIL_RE,
@@ -88,6 +94,14 @@ def create_application():
         postal_code = normalize_postal_code(body.get("postal_code"))
     except ValueError as err:
         return problem(400, "Ogiltigt postnummer", str(err), field="postal_code")
+    # Optional billing address ("Fakturan ska till en annan adress"): same
+    # rules as the postal address, with its own length caps and messages.
+    try:
+        billing = parse_billing_fields(body)
+    except AddressValidationError as err:
+        return problem(400, err.title, err.detail)
+    if billing.get("billing_email") and not EMAIL_RE.match(billing["billing_email"]):
+        return problem(400, "Ogiltig e-postadress", "E-post för faktura har ogiltigt format", field="billing_email")
 
     # Defend against resource-abuse via huge strings. DB would reject on
     # insert, but rejecting early keeps the request path cheap.
@@ -137,6 +151,7 @@ def create_application():
         address=(body.get("address") or "").strip() or None,
         postal_code=postal_code,
         city=city,
+        **billing,
         motivation=(body.get("motivation") or "").strip() or None,
         gdpr_consented_at=datetime.now(),
         status="pending",
@@ -158,6 +173,7 @@ def _application_to_dict(a: MemberApplication) -> dict:
         "address": a.address,
         "postal_code": a.postal_code,
         "city": a.city,
+        **{field: getattr(a, field) for field in BILLING_FIELDS},
         "motivation": a.motivation,
         "status": a.status,
         "reviewed_by_id": a.reviewed_by_id,
@@ -264,6 +280,7 @@ def approve_application(app_id: int):
                 address=a.address,
                 postal_code=a.postal_code,
                 city=a.city,
+                **{field: getattr(a, field) for field in BILLING_FIELDS},
                 publication_consent={},
                 joined_date=date.today(),
             )

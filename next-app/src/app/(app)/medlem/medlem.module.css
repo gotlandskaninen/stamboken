@@ -242,6 +242,15 @@
 .notes.notes {
   resize: vertical;
 }
+/* Utfälld "Annan fakturaadress": samma fältstapel som .ad-form, indragen
+   bakom en hårlinje så att den läses som en del av kryssrutan ovanför. */
+.billing {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding-left: 14px;
+  border-left: 2px solid var(--sb-line);
+}
 
 @media (max-width: 639px) {
   .tbl thead {

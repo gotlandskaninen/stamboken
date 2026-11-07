@@ -54,7 +54,30 @@ export type MembershipHerd = {
   herd_name: string | null;
 };
 
-export type MembershipDetail = {
+/** Optional invoice destination; all null means the postal address. */
+export type BillingAddress = {
+  billing_name: string | null;
+  billing_address: string | null;
+  billing_postal_code: string | null;
+  billing_city: string | null;
+  billing_email: string | null;
+  billing_reference: string | null;
+};
+
+export const BILLING_KEYS = [
+  "billing_name",
+  "billing_address",
+  "billing_postal_code",
+  "billing_city",
+  "billing_email",
+  "billing_reference",
+] as const satisfies readonly (keyof BillingAddress)[];
+
+export function hasBillingAddress(b: BillingAddress): boolean {
+  return BILLING_KEYS.some((key) => Boolean(b[key]));
+}
+
+export type MembershipDetail = BillingAddress & {
   id: number;
   member_number: number | null;
   membership_status: string;

@@ -11,7 +11,7 @@ from datetime import date
 from flask import Blueprint, jsonify, request
 from flask_login import current_user
 from peewee import IntegrityError, fn
-from utils.database import DB_PROXY, Herd, HerdAccessGrant, Member, Membership, User
+from utils.database import BILLING_FIELDS, DB_PROXY, Herd, HerdAccessGrant, Member, Membership, User
 from utils.matrikel import (
     VALID_PERSON_ROLES,
     AddressValidationError,
@@ -24,6 +24,7 @@ from utils.matrikel import (
     grant_is_active,
     is_anonymized,
     link_member_user,
+    parse_billing_fields,
     parse_postal_fields,
     raise_counter_to,
     renew_grant,
@@ -106,7 +107,8 @@ def _membership_to_dict(ms: Membership, *, account_details: bool = True) -> dict
     # NOT carry the flat main_* list fields or per-person grants; do not wire
     # a read view to this without switching to the members.py serializers.
     # account_details=False is the self-service view: the keeper's notes and
-    # payment note stay out, and consent is read via /v2/members/me.
+    # payment note stay out, and consent is read via /v2/members/me. The
+    # billing address stays out too: the profile does not show or edit it.
     data = {
         "id": ms.id,
         "member_number": ms.member_number,
@@ -115,6 +117,7 @@ def _membership_to_dict(ms: Membership, *, account_details: bool = True) -> dict
         "postal_code": ms.postal_code,
         "city": ms.city,
         "postal_address": ms.postal_address,
+        **{field: getattr(ms, field) for field in BILLING_FIELDS},
         "publication_consent": ms.publication_consent or {},
         "payment_note": ms.payment_note,
         "joined_date": ms.joined_date.isoformat() if ms.joined_date else None,
@@ -131,7 +134,7 @@ def _membership_to_dict(ms: Membership, *, account_details: bool = True) -> dict
         ],
     }
     if not account_details:
-        for key in ("notes", "payment_note", "publication_consent"):
+        for key in ("notes", "payment_note", "publication_consent", *BILLING_FIELDS):
             data.pop(key)
     return data
 
@@ -263,8 +266,11 @@ def patch_membership(membership_id: int):
 
     try:
         desired.update(parse_postal_fields(body))
+        desired.update(parse_billing_fields(body))
     except AddressValidationError as err:
         return problem(400, err.title, err.detail)
+    if desired.get("billing_email") and not EMAIL_RE.match(desired["billing_email"]):
+        return problem(400, "Ogiltig e-postadress", "E-post för faktura har ogiltigt format")
 
     if "member_number" in body:
         raw = body["member_number"]

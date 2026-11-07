@@ -44,6 +44,12 @@ const MEMBERSHIP: MembershipDetail = {
   postal_code: "623 55",
   city: "Klintehamn",
   postal_address: "623 55 Klintehamn",
+  billing_name: null,
+  billing_address: null,
+  billing_postal_code: null,
+  billing_city: null,
+  billing_email: null,
+  billing_reference: null,
   publication_consent: {},
   payment_note: null,
   joined_date: "2019-03-01",
@@ -135,6 +141,103 @@ describe("MembershipFormCard — retire re-bases the status select", () => {
     expect(updateMembershipMock).toHaveBeenCalledWith(
       1,
       expect.objectContaining({ membership_status: "inactive" }),
+    );
+  });
+});
+
+describe("MembershipFormCard — annan fakturaadress", () => {
+  const billingBox = () =>
+    screen.getByRole("checkbox", { name: "Annan fakturaadress" });
+
+  it("is folded away and saves an empty billing address by default", async () => {
+    render(<MembershipFormCard membership={MEMBERSHIP} />);
+
+    expect(billingBox()).not.toBeChecked();
+    expect(screen.queryByLabelText("Fakturamottagare")).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Fakturan går till postadressen."),
+    ).toBeInTheDocument();
+
+    fireEvent.click(spara());
+    await waitFor(() => expect(updateMembershipMock).toHaveBeenCalledTimes(1));
+    expect(updateMembershipMock).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({
+        billing_name: null,
+        billing_address: null,
+        billing_postal_code: null,
+        billing_city: null,
+        billing_email: null,
+        billing_reference: null,
+      }),
+    );
+  });
+
+  it("unfolds, validates the postnummer and sends the billing fields", async () => {
+    render(<MembershipFormCard membership={MEMBERSHIP} />);
+
+    fireEvent.click(billingBox());
+    fireEvent.change(screen.getByLabelText("Fakturamottagare"), {
+      target: { value: "Djurparken i Exempelby" },
+    });
+    fireEvent.change(screen.getByLabelText("Fakturaadress"), {
+      target: { value: "Box 99" },
+    });
+    const postal = screen.getByLabelText("Fakturapostnummer");
+    fireEvent.change(postal, { target: { value: "987" } });
+    expect(spara()).toBeDisabled();
+    fireEvent.change(postal, { target: { value: "98765" } });
+    fireEvent.blur(postal);
+    expect(postal).toHaveValue("987 65");
+    fireEvent.change(screen.getByLabelText("Fakturapostort"), {
+      target: { value: "Annanstad" },
+    });
+    fireEvent.change(screen.getByLabelText("Fakturareferens"), {
+      target: { value: "Kostnadsställe 4711" },
+    });
+    expect(spara()).toBeEnabled();
+
+    fireEvent.click(spara());
+    await waitFor(() => expect(updateMembershipMock).toHaveBeenCalledTimes(1));
+    expect(updateMembershipMock).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({
+        billing_name: "Djurparken i Exempelby",
+        billing_address: "Box 99",
+        billing_postal_code: "987 65",
+        billing_city: "Annanstad",
+        billing_email: null,
+        billing_reference: "Kostnadsställe 4711",
+        // The postal address is sent unchanged next to it.
+        postal_code: "623 55",
+        city: "Klintehamn",
+      }),
+    );
+  });
+
+  it("opens with a stored billing address and clears it when unticked", async () => {
+    render(
+      <MembershipFormCard
+        membership={{
+          ...MEMBERSHIP,
+          billing_name: "Gården",
+          billing_city: "Annanstad",
+        }}
+      />,
+    );
+
+    expect(billingBox()).toBeChecked();
+    expect(screen.getByLabelText("Fakturamottagare")).toHaveValue("Gården");
+
+    fireEvent.click(billingBox());
+    expect(
+      screen.getByText("Fakturaadressen tas bort när du sparar."),
+    ).toBeInTheDocument();
+    fireEvent.click(spara());
+    await waitFor(() => expect(updateMembershipMock).toHaveBeenCalledTimes(1));
+    expect(updateMembershipMock).toHaveBeenCalledWith(
+      1,
+      expect.objectContaining({ billing_name: null, billing_city: null }),
     );
   });
 });

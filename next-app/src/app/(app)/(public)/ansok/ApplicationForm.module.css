@@ -1,0 +1,10 @@
+/* Utfälld fakturaadress i medlemsansökan: samma fältstapel som formuläret
+   (16px mellan fälten), indragen bakom en hårlinje så att den läses som en
+   del av kryssrutan ovanför. Mobil först: en kolumn i alla bredder. */
+.billing {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding-left: 16px;
+  border-left: 2px solid var(--sb-line);
+}

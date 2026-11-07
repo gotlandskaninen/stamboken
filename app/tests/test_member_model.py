@@ -49,6 +49,62 @@ class TestMemberModel(DatabaseTest):
             )
 
 
+class TestInvoiceAddress(DatabaseTest):
+    POSTAL = {"address": "Hemvägen 1", "postal_code": "123 45", "city": "Exempelby"}
+
+    def test_without_billing_address_falls_back_to_postal_address(self):
+        ms = db.Membership.create(**self.POSTAL)
+        self.assertEqual(
+            db.Membership.get_by_id(ms.id).invoice_address,
+            {
+                "name": None,
+                "address": "Hemvägen 1",
+                "postal_code": "123 45",
+                "city": "Exempelby",
+                "email": None,
+                "reference": None,
+            },
+        )
+
+    def test_billing_address_replaces_postal_address(self):
+        ms = db.Membership.create(
+            **self.POSTAL,
+            billing_name="Djurparken i Exempelby",
+            billing_address="Box 99",
+            billing_postal_code="987 65",
+            billing_city="Annanstad",
+            billing_email="faktura@djurparken.example",
+            billing_reference="Kostnadsställe 4711",
+        )
+        self.assertEqual(
+            db.Membership.get_by_id(ms.id).invoice_address,
+            {
+                "name": "Djurparken i Exempelby",
+                "address": "Box 99",
+                "postal_code": "987 65",
+                "city": "Annanstad",
+                "email": "faktura@djurparken.example",
+                "reference": "Kostnadsställe 4711",
+            },
+        )
+
+    def test_partial_billing_address_never_mixes_with_postal_address(self):
+        """Only a billing city: the street and postal code are not borrowed from the postal address."""
+        ms = db.Membership.create(**self.POSTAL, billing_city="Annanstad")
+        invoice = db.Membership.get_by_id(ms.id).invoice_address
+        self.assertEqual((invoice["address"], invoice["postal_code"], invoice["city"]), (None, None, "Annanstad"))
+
+    def test_recipient_or_reference_alone_keeps_postal_address(self):
+        """A reference or recipient without a billing street goes to the postal address."""
+        ms = db.Membership.create(**self.POSTAL, billing_name="Gården", billing_reference="Er ref 12")
+        invoice = db.Membership.get_by_id(ms.id).invoice_address
+        self.assertEqual(invoice["name"], "Gården")
+        self.assertEqual(invoice["reference"], "Er ref 12")
+        self.assertEqual(
+            (invoice["address"], invoice["postal_code"], invoice["city"]), ("Hemvägen 1", "123 45", "Exempelby")
+        )
+
+
 class TestMemberApplicationModel(DatabaseTest):
     def test_create_application(self):
         application = db.MemberApplication.create(

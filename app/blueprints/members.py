@@ -15,7 +15,7 @@ from flask import Blueprint, Response, jsonify, request
 from flask_login import current_user
 from peewee import IntegrityError
 from utils.csv_safe import csv_safe
-from utils.database import DB_PROXY, Herd, HerdAccessGrant, Member, Membership
+from utils.database import BILLING_FIELDS, DB_PROXY, Herd, HerdAccessGrant, Member, Membership
 from utils.matrikel import AddressValidationError, is_anonymized, parse_postal_fields, write_matrikel_audit
 from utils.members import CONSENT_KEYS, consent_answered, effective_consent, stored_consent
 
@@ -66,6 +66,7 @@ def _membership_to_dict(ms: Membership, persons: list[Member] | None = None) -> 
         "postal_code": ms.postal_code,
         "city": ms.city,
         "postal_address": ms.postal_address,
+        **{field: getattr(ms, field) for field in BILLING_FIELDS},
         "publication_consent": effective_consent(ms),
         "payment_note": ms.payment_note,
         "joined_date": ms.joined_date.isoformat() if ms.joined_date else None,
@@ -521,6 +522,18 @@ def member_stats():
     )
 
 
+# Membership.invoice_address keys and their MATR export headers, in column order.
+INVOICE_KEYS = ("name", "address", "postal_code", "city", "email", "reference")
+INVOICE_HEADER = (
+    "Fakturamottagare",
+    "Fakturaadress",
+    "Fakturapostnummer",
+    "Fakturapostort",
+    "E-post för faktura",
+    "Fakturareferens",
+)
+
+
 @members_bp.route("/v2/members/export", methods=["GET"])
 @json_login_required
 @matrikel_admin_required
@@ -537,6 +550,10 @@ def export_members():
     # "Postnummer" + "Postort" pair — the documented ADR-0006 exception:
     # this CSV's only consumers are the matrikel keeper and our own
     # importer, which accepts both layouts.
+    #
+    # The Faktura* columns at the end are Membership.invoice_address: the
+    # address the fee invoice goes to, which is the postal address unless the
+    # membership has a billing address. The importer ignores them.
     q = Membership.select().where(Membership.membership_status.in_(("active", "friexemplar")))
 
     buf = io.StringIO()
@@ -555,6 +572,7 @@ def export_members():
             "e-postadress",
             "Bet senast",
             "Noteringar",
+            *INVOICE_HEADER,
         ]
     )
 
@@ -585,6 +603,9 @@ def export_members():
             # cell empty so it stands out instead of masquerading as Nr 0.
             nr = ""
 
+        invoice = ms.invoice_address
+        invoice_cells = [csv_safe(invoice[key]) for key in INVOICE_KEYS]
+
         for index, person in enumerate(persons):
             main_row = index == 0
             writer.writerow(
@@ -603,6 +624,7 @@ def export_members():
                     csv_safe(person.email),
                     csv_safe(ms.payment_note) if main_row else "",
                     csv_safe(ms.notes) if main_row else "",
+                    *(invoice_cells if main_row else [""] * len(INVOICE_KEYS)),
                 ]
             )
 
