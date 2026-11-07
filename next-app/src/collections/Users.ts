@@ -6,6 +6,7 @@ export const Users: CollectionConfig = {
   slug: "users",
   auth: {
     disableLocalStrategy: true,
+    useAPIKey: true,
     strategies: [flaskSessionStrategy],
   },
   admin: { useAsTitle: "email" },
