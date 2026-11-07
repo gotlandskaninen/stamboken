@@ -685,6 +685,12 @@ MATR_HEADER = [
     "e-postadress",
     "Bet senast",
     "Noteringar",
+    "Fakturamottagare",
+    "Fakturaadress",
+    "Fakturapostnummer",
+    "Fakturapostort",
+    "E-post för faktura",
+    "Fakturareferens",
 ]
 
 

@@ -24,6 +24,7 @@ from utils.cache_invalidation import trigger_invalidation
 # DB_PROXY is the runtime proxy that data_access.py uses; importing the
 # module-level DATABASE symbol directly would be None at call time.
 from utils.database import (
+    BILLING_FIELDS,
     DB_PROXY,
     Herd,
     HerdAccessGrant,
@@ -48,7 +49,7 @@ PII_PAYLOAD_KEYS = frozenset({"first_name", "last_name", "email", "phone", "work
 REDACTED_VALUE = "[borttagen]"
 # What clearing a household's address also removes from audit history.
 # postal_address is the pre-v29 spelling of the same data, still present in old payloads.
-HOUSEHOLD_PII_KEYS = frozenset({"address", "postal_code", "city", "postal_address", "notes"})
+HOUSEHOLD_PII_KEYS = frozenset({"address", "postal_code", "city", "postal_address", "notes", *BILLING_FIELDS})
 
 # The placeholder names anonymize_person() writes (the name columns are NOT
 # NULL, so erasure needs a value). They are also the only marker an anonymized
@@ -112,6 +113,44 @@ def parse_postal_fields(body: dict) -> dict:
     # varchar(100) column as a DataError.
     if out.get("city") is not None and len(out["city"]) > 100:
         raise AddressValidationError("Ogiltig adress", "Postort får vara högst 100 tecken")
+    return out
+
+
+# Column limits of the billing_* text fields and their names in error messages.
+_BILLING_TEXT_FIELDS = {
+    "billing_name": (200, "Fakturamottagare"),
+    "billing_address": (1000, "Fakturaadress"),
+    "billing_city": (100, "Fakturapostort"),
+    "billing_email": (255, "E-post för faktura"),
+    "billing_reference": (100, "Fakturareferens"),
+}
+
+
+def parse_billing_fields(body: dict) -> dict:
+    """Resolve the billing address keys from a request body.
+
+    Returns only the billing_* keys the body carried: trimmed, blank as None,
+    the postal code normalised like the postal address. The e-mail shape is
+    left to the caller, which has EMAIL_RE (utils never imports blueprints).
+    """
+    out: dict = {}
+    for key in BILLING_FIELDS:
+        if key not in body:
+            continue
+        raw = body[key]
+        if raw is not None and not isinstance(raw, str):
+            raise AddressValidationError("Ogiltigt fält", f"{key} måste vara en sträng eller null")
+        if key == "billing_postal_code":
+            try:
+                out[key] = normalize_postal_code(raw)
+            except ValueError as err:
+                raise AddressValidationError("Ogiltigt postnummer", "Fakturapostnummer ska vara fem siffror") from err
+            continue
+        value = (raw or "").strip() or None
+        limit, label = _BILLING_TEXT_FIELDS[key]
+        if value is not None and len(value) > limit:
+            raise AddressValidationError("Ogiltig fakturaadress", f"{label} får vara högst {limit} tecken")
+        out[key] = value
     return out
 
 
@@ -210,8 +249,8 @@ def redact_person_from_audits(member: Member) -> int:
 def redact_household_from_audits(membership: Membership) -> int:
     """Redact the household address and notes from `membership`'s audit payloads.
 
-    A membership PATCH audits before/after values of address, postal_code, city
-    and notes under "membership_updated" with no person_id, so
+    A membership PATCH audits before/after values of address, postal_code, city,
+    the billing address and notes under "membership_updated" with no person_id, so
     redact_person_from_audits() never reaches them. Idempotent.
     """
     touched = 0
@@ -393,7 +432,7 @@ def anonymize_person(member, actor):
     kept for the audit trail; a still pending one is closed as rejected);
     other submissions of the same applicant are scrubbed likewise
     (_applications_of). When no active person is left
-    on the membership, its address and notes are cleared too. Deliberately
+    on the membership, its postal and billing address and notes are cleared too. Deliberately
     allowed on an active main member — the right to erasure trumps the
     headless-membership invariant.
 
@@ -427,12 +466,12 @@ def anonymize_person(member, actor):
             person.end_date = date.today()
         person.save()
         if not Member.select().where(Member.membership == membership, Member.end_date.is_null(True)).exists():
-            # Last active person gone: the household address and the free-text
-            # notes were theirs, on the row and in the audit history. payment_note
-            # stays — accounting history survives.
-            Membership.update(address=None, postal_code=None, city=None, notes=None, updated_at=now).where(
-                Membership.id == membership.id
-            ).execute()
+            # Last active person gone: the household address, the billing
+            # address and the free-text notes were theirs, on the row and in the
+            # audit history. payment_note stays — accounting history survives.
+            Membership.update(
+                address=None, postal_code=None, city=None, notes=None, **dict.fromkeys(BILLING_FIELDS), updated_at=now
+            ).where(Membership.id == membership.id).execute()
             redact_household_from_audits(membership)
         applications_redacted = (
             MemberApplication.update(
@@ -443,6 +482,7 @@ def anonymize_person(member, actor):
                 address=None,
                 postal_code=None,
                 city=None,
+                **dict.fromkeys(BILLING_FIELDS),
                 motivation=None,
                 rejection_reason=None,  # reviewer free text can quote the applicant
                 updated_at=now,
