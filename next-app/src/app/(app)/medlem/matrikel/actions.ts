@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { fetchApi } from "@/lib/api";
+import type { BillingAddress } from "./types";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -9,7 +10,7 @@ export type AddPersonResult =
   | { ok: true; duplicateContactEmail: boolean }
   | { ok: false; error: string };
 
-export type MembershipPatch = {
+export type MembershipPatch = Partial<BillingAddress> & {
   membership_status?: string;
   member_number?: number;
   address?: string | null;

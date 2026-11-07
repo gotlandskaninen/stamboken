@@ -10,6 +10,13 @@ type SubmitBody = {
   address?: string;
   postal_code?: string;
   city?: string;
+  // Only when the applicant ticked "Fakturan ska till en annan adress".
+  billing_name?: string;
+  billing_address?: string;
+  billing_postal_code?: string;
+  billing_city?: string;
+  billing_email?: string;
+  billing_reference?: string;
   motivation?: string;
   gdpr_consent: boolean;
 };
