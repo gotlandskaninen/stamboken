@@ -48,8 +48,11 @@ export default function MedlemsforumPage() {
             .
           </Typography>
           <Box sx={{ mt: 8, display: "flex", gap: 3, flexWrap: "wrap" }}>
-            <LinkButton href="/stamboken/min-besattning" variant="contained">
-              Logga in
+            <LinkButton
+              href="https://forum.gotlandskaninen.se"
+              variant="contained"
+            >
+              Till forumet
             </LinkButton>
             <LinkButton href="/" variant="outlined">
               &larr; Till hem
