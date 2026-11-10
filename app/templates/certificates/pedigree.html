@@ -244,8 +244,8 @@ body {
 .reissue { font-size: 7pt; font-style: italic; color: var(--lera); margin: 0.8mm 0 0 0; }
 
 /* === EU emblem ========================================================= */
-.eu-strip { text-align: center; margin-top: 5mm; }
-.eu-strip img { height: 10.5mm; }
+.eu-strip { text-align: center; margin-top: 1.5mm; }
+.eu-strip img { height: 14mm; }
 
 /* === Footer ============================================================ */
 .disc {
@@ -267,7 +267,7 @@ body {
     <div class="head-mid">
       <p class="eyebrow">Föreningen Gotlandskaninen</p>
       <h1>Genbanksintyg</h1>
-      <p class="breed">{{ genebank }}</p>
+      <p class="breed">{{ breed }}</p>
     </div>
     <div class="cert-nr"><div class="lbl">Intyg nr</div><div class="num">{{ digital_certificate }}</div></div>
   </div>
@@ -277,14 +277,17 @@ body {
 
   <div class="sec"><span class="no">01</span><span class="t">Identitet</span><span class="fill"></span></div>
   <table class="fields">
-    <tr><td class="l">Genbanksnr</td><td class="v">{{ genebank_number }}</td><td class="l">År · Kull · Individ</td><td class="v">{{ genebank_aki }}</td></tr>
-    <tr><td class="l">Namn</td><td class="v">{{ name or '—' }}</td><td class="l">Kön</td><td class="v">{{ sex }}</td></tr>
-    <tr><td class="l">Födelsedatum</td><td class="v">{{ birth_date }}</td><td class="l">Fotringsnr</td><td class="v">{{ foot_ring or '—' }}</td></tr>
-    <tr><td class="l">Färg / kännetecken</td><td class="v">{% if color_code %}<span class="chip">{{ color_code }}</span> {% endif %}{{ color }}</td><td class="l">Hårlag</td><td class="v">{{ hair_notes or '—' }}</td></tr>
-    <tr><td class="l">Ögonfärg</td><td class="v">{{ eye_color or '—' }}</td><td class="l">Klofärg</td><td class="v">{{ claw_color or '—' }}</td></tr>
-    <tr><td class="l">Färg på buken</td><td class="v">{{ belly_color or '—' }}</td><td class="l">Foto finns</td><td class="v">{{ photos or '—' }}</td></tr>
+    <tr><td class="l">Individnummer</td><td class="v">{{ genebank_number }}-{{ genebank_aki }}</td><td class="l">Namn</td><td class="v">{{ name or '—' }}</td></tr>
+    <tr><td class="l">Kön</td><td class="v">{{ sex }}</td><td class="l">Födelsedatum</td><td class="v">{{ birth_date }}</td></tr>
     <tr><td class="l">Antal födda i kullen</td><td class="v">{{ litter_size }}</td><td class="l">Antal levande (6 v)</td><td class="v">{{ litter_size6w }}</td></tr>
-    <tr><td class="l">Färganteckning</td><td class="v" colspan="3">{{ color_note or '—' }}</td></tr>
+    <tr><td class="l">Färg / kännetecken</td><td class="v">{% if color_code %}<span class="chip">{{ color_code }}</span> {% endif %}{{ color }}</td><td class="l">Färganteckning</td><td class="v">{{ color_note or '—' }}</td></tr>
+    <tr><td class="l">Ögonfärg</td><td class="v">{{ eye_color or '—' }}</td><td class="l">Klofärg</td><td class="v">{{ claw_color or '—' }}</td></tr>
+    <tr><td class="l">Hårlag</td><td class="v">{{ hair_notes or '—' }}</td><td class="l">Färg på buken</td><td class="v">{{ belly_color or '—' }}</td></tr>
+    {% if foot_ring and microchip %}<tr><td class="l">Benring</td><td class="v">{{ foot_ring }}</td><td class="l">Chipnummer</td><td class="v">{{ microchip }}</td></tr>
+    <tr><td class="l">Foto finns</td><td class="v" colspan="3">{{ photos or '—' }}</td></tr>
+    {% elif foot_ring %}<tr><td class="l">Benring</td><td class="v">{{ foot_ring }}</td><td class="l">Foto finns</td><td class="v">{{ photos or '—' }}</td></tr>
+    {% elif microchip %}<tr><td class="l">Chipnummer</td><td class="v">{{ microchip }}</td><td class="l">Foto finns</td><td class="v">{{ photos or '—' }}</td></tr>
+    {% else %}<tr><td class="l">Foto finns</td><td class="v" colspan="3">{{ photos or '—' }}</td></tr>{% endif %}
     <tr><td class="l">Övriga upplysningar</td><td class="v" colspan="3">{{ notes or '—' }}</td></tr>
   </table>
 
@@ -293,19 +296,19 @@ body {
     <div class="ped-col">
       <div class="p-card">
         <div class="p-role">Far</div>
-        <span class="p-num">{{ F_genebank_number or '—' }}</span> <span class="p-aki">{{ F_genebank_aki or '—' }}</span>
+        <span class="p-num">{{ F_genebank_number or '—' }}</span><span class="p-aki">{% if F_genebank_aki %}-{{ F_genebank_aki }}{% endif %}</span>
         <div class="p-name">{{ F_name or '—' }}</div>
         <div class="p-color">{{ F_color or '—' }}</div>
       </div>
       <div class="g-card">
         <div class="p-role">Farfar</div>
-        <span class="p-num">{{ FF_genebank_number or '—' }}</span> <span class="p-aki">{{ FF_genebank_aki or '—' }}</span>
+        <span class="p-num">{{ FF_genebank_number or '—' }}</span><span class="p-aki">{% if FF_genebank_aki %}-{{ FF_genebank_aki }}{% endif %}</span>
         <div class="p-name">{{ FF_name or '—' }}</div>
         <div class="p-color">{{ FF_color or '—' }}</div>
       </div>
       <div class="g-card">
         <div class="p-role">Farmor</div>
-        <span class="p-num">{{ FM_genebank_number or '—' }}</span> <span class="p-aki">{{ FM_genebank_aki or '—' }}</span>
+        <span class="p-num">{{ FM_genebank_number or '—' }}</span><span class="p-aki">{% if FM_genebank_aki %}-{{ FM_genebank_aki }}{% endif %}</span>
         <div class="p-name">{{ FM_name or '—' }}</div>
         <div class="p-color">{{ FM_color or '—' }}</div>
       </div>
@@ -313,19 +316,19 @@ body {
     <div class="ped-col">
       <div class="p-card">
         <div class="p-role">Mor</div>
-        <span class="p-num">{{ M_genebank_number or '—' }}</span> <span class="p-aki">{{ M_genebank_aki or '—' }}</span>
+        <span class="p-num">{{ M_genebank_number or '—' }}</span><span class="p-aki">{% if M_genebank_aki %}-{{ M_genebank_aki }}{% endif %}</span>
         <div class="p-name">{{ M_name or '—' }}</div>
         <div class="p-color">{{ M_color or '—' }}</div>
       </div>
       <div class="g-card">
         <div class="p-role">Morfar</div>
-        <span class="p-num">{{ MF_genebank_number or '—' }}</span> <span class="p-aki">{{ MF_genebank_aki or '—' }}</span>
+        <span class="p-num">{{ MF_genebank_number or '—' }}</span><span class="p-aki">{% if MF_genebank_aki %}-{{ MF_genebank_aki }}{% endif %}</span>
         <div class="p-name">{{ MF_name or '—' }}</div>
         <div class="p-color">{{ MF_color or '—' }}</div>
       </div>
       <div class="g-card">
         <div class="p-role">Mormor</div>
-        <span class="p-num">{{ MM_genebank_number or '—' }}</span> <span class="p-aki">{{ MM_genebank_aki or '—' }}</span>
+        <span class="p-num">{{ MM_genebank_number or '—' }}</span><span class="p-aki">{% if MM_genebank_aki %}-{{ MM_genebank_aki }}{% endif %}</span>
         <div class="p-name">{{ MM_name or '—' }}</div>
         <div class="p-color">{{ MM_color or '—' }}</div>
       </div>
@@ -336,8 +339,8 @@ body {
   <div class="sign-wrap">
     <div class="cols">
       <table class="sign">
-        <tr><td class="sl">Intygas elektroniskt av</td><td class="sv">{{ fullname }}</td></tr>
-        <tr><td class="sl">Medl. / Bes.-nr</td><td class="sv">{{ herd }}</td></tr>
+        <tr><td class="sl">Intygas av</td><td class="sv">{{ fullname }}</td></tr>
+        <tr><td class="sl">Besättningsnummer</td><td class="sv">{{ herd }}</td></tr>
         <tr><td class="sl">Datum</td><td class="sv">{{ issue_date }}</td></tr>
       </table>
       <p class="sign-note">Intyget är digitalt signerat av Föreningen Gotlandskaninen. Skanna QR-koden för att verifiera äktheten.</p>
@@ -352,9 +355,9 @@ body {
   </div>
 
   <div class="disc">
-    Genbanksintyget i original ska följa kaninen. Får ej editeras i efterhand.<br>
+    Genbanksintyget följer kaninen. Ägarbyten skrivs på överlåtelsebeviset och i Stamboken.<br>
     Får endast utfärdas av innehavare av godkänd besättning. Båda föräldradjuren ska vara registrerade.<br>
-    Blanketten är granskad av Jordbruksverket. Eftertryck förbjudet utan Föreningen Gotlandskaninens medgivande.<br>
+    Eftertryck förbjudet utan Föreningen Gotlandskaninens medgivande.<br>
     <span class="fingerprint">Dokument-ID {{ digital_certificate }} · SHA-256 {{ doc_hash_stub }} · Äktheten avgörs alltid av verifieringen på gotlandskaninen.se — inte av papperet.</span>
   </div>
 

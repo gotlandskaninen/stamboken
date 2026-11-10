@@ -138,7 +138,7 @@ def get_certificate_data(ind, user_id):
         ]
     )
     sex_to_kon = {"female": "Hona", "male": "Hane"}
-    ind["sex"] = sex_to_kon.get(ind["sex"], None)
+    ind["sex"] = sex_to_kon.get(ind["sex"], "")
     cert_data_lst = []
     cert_data_lst.append(ind)
     cert_data_lst.append(extra_data)

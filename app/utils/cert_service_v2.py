@@ -42,6 +42,13 @@ _GENEBANK_TO_BREED = {
 }
 
 
+def _breed_for(individual):
+    genebank_name = ""
+    if individual.origin_herd and individual.origin_herd.genebank:
+        genebank_name = individual.origin_herd.genebank.name or ""
+    return _GENEBANK_TO_BREED.get(genebank_name, "genbankskanin")
+
+
 def _signature_metadata_for(individual):
     """Return (reason, contact_info) tuple for a certificate signature.
 
@@ -49,10 +56,7 @@ def _signature_metadata_for(individual):
     so contact_info is constant. The reason is parameterised with the breed
     name of the individual's origin genebank for traceability.
     """
-    genebank_name = ""
-    if individual.origin_herd and individual.origin_herd.genebank:
-        genebank_name = individual.origin_herd.genebank.name or ""
-    breed = _GENEBANK_TO_BREED.get(genebank_name, "genbankskanin")
+    breed = _breed_for(individual)
     reason = f"Signerat av Föreningen Gotlandskaninen för {breed}"
     if cert_settings.demo_watermark:
         reason = f"DEMO – EJ GILTIGT INTYG. {reason}"
@@ -73,6 +77,8 @@ def build_cert_data(individual, ind_data, user_id):
     cert_data["notes"] = raw_notes
     cert_data["color_note"] = raw_color_note
     cert_data["foot_ring"] = ind_data.get("foot_ring") or ""
+    cert_data["microchip"] = individual.microchip or ""
+    cert_data["breed"] = _breed_for(individual).capitalize()
     # Color-code system (herdbookcolors) is not in the DB yet — the template
     # skips the chip when empty.
     cert_data["color_code"] = ""
