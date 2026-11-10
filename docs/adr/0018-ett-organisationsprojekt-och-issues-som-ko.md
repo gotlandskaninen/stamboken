@@ -10,7 +10,7 @@ decision-makers: Jonas
 
 Arbetet syns i dag på tre ställen. Det första är PR:erna: 52 i
 stamboken-drift den senaste månaden, alla från samma konto. Det andra är 99
-todo-filer i `.planning/todos/pending` i driftrepot, och det tredje en
+todo-filer i driftrepots planeringskatalog, och det tredje en
 statusfil som bara finns på utvecklarens dator. Issues används nästan inte,
 och organisationen har inget GitHub-projekt. Styrelsen och volontärerna ser
 inte vad som pågår eller väntar på dem, och den som vill bidra hittar ingen
@@ -69,7 +69,7 @@ Regler:
    issues med "Closes #n".
 5. Agenten lägger till issues från stamboken med `gh project item-add`,
    eftersom gratisplanen bara har ett auto-add-flöde.
-6. `.planning/todos/` läggs ner. Levande poster blir issues och resten
+6. Todo-filerna i driftrepot läggs ner. Levande poster blir issues och resten
    stängs. Katalogen får en README som pekar på projektet. Statusfilen
    behåller bara sin daterade logg, och avsnitten om kö, ordning och
    parkerat tas bort.
@@ -105,7 +105,7 @@ Beslutet blir `accepted` först när detta har gått igenom:
    manuellt steg och flyttas till Klart när en PR med "Closes #n" mergas.
 3. **Riktig användare.** En styrelseledamot får länken och tre frågor om
    läget. Godkänt är att hen svarar rätt utan att fråga utvecklaren.
-4. **Efter två veckor.** `.planning/todos/pending` har inte fått några nya
+4. **Efter två veckor.** Driftrepots todo-katalog har inte fått några nya
    filer, och ingen sak finns både som issue och i statusfilens kö.
 
 ## Mer information
