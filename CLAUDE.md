@@ -44,7 +44,11 @@ publika: inga medlemsnamn, inga besättningsnummer kopplade till personer, ingen
 proddata, inga serverdetaljer. Design-specar, planer, datarättningar och drift
 ligger i föreningens privata driftrepo
 ([ADR-0013](docs/adr/0013-public-code-private-operations.md)); skriv inga specar
-eller planer här, inte heller i `docs/superpowers/`.
+eller planer här, inte heller i `docs/superpowers/`. Issues är den enda kön,
+och projektet "Stamboken" på organisationen samlar issues från båda repona.
+Säkerhetshål som inte är rättade blir issues i driftrepot. Issues härifrån
+läggs till med `gh project item-add`
+([ADR-0018](docs/adr/0018-ett-organisationsprojekt-och-issues-som-ko.md)).
 
 ## Konventioner
 
