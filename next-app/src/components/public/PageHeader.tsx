@@ -68,7 +68,8 @@ export function PageHeader({ section, title, lede, image }: PageHeaderProps) {
               inset: 0,
               background: {
                 xs: "linear-gradient(180deg, rgba(31,51,34,0) 75%, rgba(31,51,34,0.85) 100%)",
-                md: "linear-gradient(180deg, rgba(31,27,22,0.25) 0%, rgba(31,27,22,0.75) 100%)",
+                // Dark all the way up: the breadcrumb sits a third down and needs 4.5:1.
+                md: "linear-gradient(180deg, rgba(31,27,22,0.7) 0%, rgba(31,27,22,0.58) 45%, rgba(31,27,22,0.8) 100%)",
               },
             }}
           />
@@ -84,8 +85,8 @@ export function PageHeader({ section, title, lede, image }: PageHeaderProps) {
         <Typography
           variant="mono"
           sx={{
-            // 0.75, not lower: the "Hem" link must keep 4.5:1 on skog (axe).
-            color: "rgba(244,241,234,0.75)",
+            // Full strength: the "Hem" link must keep 4.5:1 over a bright photo.
+            color: "paper.main",
             mb: 4.5,
             display: "block",
           }}
