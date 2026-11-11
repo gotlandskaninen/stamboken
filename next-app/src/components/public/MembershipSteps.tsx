@@ -24,6 +24,13 @@ export function MembershipSteps() {
       component="aside"
       className="membership-steps"
       aria-labelledby="membership-steps-title"
+      sx={{
+        p: 7,
+        bgcolor: "paper.2",
+        border: 1,
+        borderColor: "line.strong",
+        borderRadius: "8px",
+      }}
     >
       <Typography
         id="membership-steps-title"
@@ -33,34 +40,64 @@ export function MembershipSteps() {
       >
         Så blir du medlem
       </Typography>
-      <Box component="ol" sx={{ m: 0, mt: 5, p: 0, listStyle: "none" }}>
-        {STEPS.map((step, i) => (
-          <Box
-            component="li"
-            key={step.title}
-            sx={{
-              display: "grid",
-              gridTemplateColumns: "28px 1fr",
-              columnGap: 3,
-              py: 4,
-              borderTop: 1,
-              borderColor: "line.main",
-            }}
-          >
-            <Typography
-              variant="mono"
-              sx={{ pt: 0.5, color: "ink.2", fontSize: "13px" }}
+      <Box component="ol" sx={{ m: 0, mt: 6, p: 0, listStyle: "none" }}>
+        {STEPS.map((step, i) => {
+          const last = i === STEPS.length - 1;
+          return (
+            <Box
+              component="li"
+              key={step.title}
+              sx={{ position: "relative", pl: 11, pb: last ? 0 : 6 }}
             >
-              {i + 1}
-            </Typography>
-            <Box>
-              <Typography sx={{ fontWeight: 600 }}>{step.title}</Typography>
-              <Typography sx={{ mt: 1, color: "ink.2", fontSize: "15px" }}>
+              <Typography
+                variant="mono"
+                aria-hidden="true"
+                sx={{
+                  position: "absolute",
+                  left: 0,
+                  top: 0,
+                  width: 28,
+                  height: 28,
+                  display: "grid",
+                  placeItems: "center",
+                  border: "1px solid var(--sb-skog)",
+                  borderRadius: "50%",
+                  bgcolor: "paper.main",
+                  fontSize: "13px",
+                  color: "var(--sb-skog-deep)",
+                }}
+              >
+                {i + 1}
+              </Typography>
+              {!last && (
+                <Box
+                  aria-hidden="true"
+                  sx={{
+                    position: "absolute",
+                    left: 14,
+                    top: 32,
+                    bottom: 4,
+                    width: "1px",
+                    bgcolor: "line.strong",
+                  }}
+                />
+              )}
+              <Typography sx={{ fontWeight: 600, lineHeight: "28px" }}>
+                {step.title}
+              </Typography>
+              <Typography
+                sx={{
+                  mt: 1,
+                  color: "ink.2",
+                  fontSize: "15px",
+                  lineHeight: 1.55,
+                }}
+              >
                 {step.text}
               </Typography>
             </Box>
-          </Box>
-        ))}
+          );
+        })}
       </Box>
     </Box>
   );
