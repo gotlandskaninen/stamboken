@@ -35,6 +35,7 @@ from utils.database import (
     Membership,
     User,
 )
+from utils.membership_lifecycle import Event, Status, next_state, state_of
 from utils.postal import (  # noqa: F401 — public helpers
     format_postal_address,
     normalize_postal_code,
@@ -507,6 +508,37 @@ def anonymize_person(member, actor):
     return person
 
 
+def new_membership(status, **fields):
+    """The only place a Membership row is created: `status` must be a Status the CREATE rows allow."""
+    status = Status(status).value
+    next_state(None, Event.CREATE, status)
+    return Membership.create(membership_status=status, **fields)
+
+
+def set_membership_status(membership, new_status, actor):
+    """Move `membership` to `new_status` if membership_lifecycle has a row for it, and audit the change.
+
+    Call inside the caller's transaction with the membership row locked FOR UPDATE. Raises
+    TransitionRefused (nothing written) when the table has none, e.g. for a retired membership.
+    Sets the attribute only: the caller saves it with the rest of its columns.
+    """
+    new_status = Status(new_status).value
+    has_main = (
+        Member.select()
+        .where(Member.membership == membership, Member.role == "huvudmedlem", Member.end_date.is_null(True))
+        .exists()
+    )
+    next_state(state_of(membership.membership_status, has_main), Event.SET_STATUS, new_status)
+    write_matrikel_audit(
+        actor,
+        "membership_status_changed",
+        membership,
+        # Nested {"before": {field: ...}, "after": {...}} shape, like the other membership mutations.
+        {"before": {"membership_status": membership.membership_status}, "after": {"membership_status": new_status}},
+    )
+    membership.membership_status = new_status
+
+
 def create_membership(data, actor):
     """Create a membership with its initial huvudmedlem in one transaction.
 
@@ -522,9 +554,9 @@ def create_membership(data, actor):
     status = data.get("membership_status") or "active"
     with DB_PROXY.atomic():
         number = allocate_member_number() if data.get("allocate") else None
-        membership = Membership.create(
+        membership = new_membership(
+            status,
             member_number=number,
-            membership_status=status,
             address=data.get("address") or None,
             postal_code=data.get("postal_code") or None,
             city=data.get("city") or None,

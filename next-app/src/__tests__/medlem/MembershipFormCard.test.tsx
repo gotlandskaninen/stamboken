@@ -76,7 +76,7 @@ const spara = () => screen.getByRole("button", { name: /Spara/ });
 
 describe("MembershipFormCard — medlemsnummer validation", () => {
   it("blocks a medlemsnummer that is not a positive integer", () => {
-    render(<MembershipFormCard membership={MEMBERSHIP} />);
+    render(<MembershipFormCard membership={MEMBERSHIP} hasActivePersons />);
 
     fireEvent.change(numberField(), { target: { value: "abc" } });
     expect(screen.getByText(NUMBER_ERROR)).toBeInTheDocument();
@@ -94,7 +94,7 @@ describe("MembershipFormCard — medlemsnummer validation", () => {
   });
 
   it("sends a valid medlemsnummer", async () => {
-    render(<MembershipFormCard membership={MEMBERSHIP} />);
+    render(<MembershipFormCard membership={MEMBERSHIP} hasActivePersons />);
 
     fireEvent.change(numberField(), { target: { value: "12" } });
     expect(screen.queryByText(NUMBER_ERROR)).not.toBeInTheDocument();
@@ -112,7 +112,7 @@ describe("MembershipFormCard — medlemsnummer validation", () => {
 
 describe("MembershipFormCard — retire re-bases the status select", () => {
   it("sends membership_status=inactive on the next Spara after a retire", async () => {
-    render(<MembershipFormCard membership={MEMBERSHIP} />);
+    render(<MembershipFormCard membership={MEMBERSHIP} hasActivePersons />);
 
     fireEvent.click(screen.getByRole("button", { name: "Avsluta medlemskap" }));
     fireEvent.click(screen.getByRole("button", { name: "Bekräfta" }));
@@ -145,12 +145,41 @@ describe("MembershipFormCard — retire re-bases the status select", () => {
   });
 });
 
+describe("MembershipFormCard — retired state", () => {
+  const INACTIVE = { ...MEMBERSHIP, membership_status: "inactive" as const };
+  const avsluta = () =>
+    screen.queryByRole("button", { name: "Avsluta medlemskap" });
+
+  it("locks the select and hides Avsluta when inactive with no active person", () => {
+    render(
+      <MembershipFormCard membership={INACTIVE} hasActivePersons={false} />,
+    );
+
+    expect(screen.getByRole("combobox")).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+    expect(screen.getByText(/kan inte återaktiveras/)).toBeInTheDocument();
+    expect(avsluta()).not.toBeInTheDocument();
+  });
+
+  it("still offers Avsluta when inactive but persons remain active", () => {
+    render(<MembershipFormCard membership={INACTIVE} hasActivePersons />);
+
+    expect(avsluta()).toBeInTheDocument();
+    expect(screen.getByRole("combobox")).not.toHaveAttribute(
+      "aria-disabled",
+      "true",
+    );
+  });
+});
+
 describe("MembershipFormCard — annan fakturaadress", () => {
   const billingBox = () =>
     screen.getByRole("checkbox", { name: "Annan fakturaadress" });
 
   it("is folded away and saves an empty billing address by default", async () => {
-    render(<MembershipFormCard membership={MEMBERSHIP} />);
+    render(<MembershipFormCard membership={MEMBERSHIP} hasActivePersons />);
 
     expect(billingBox()).not.toBeChecked();
     expect(screen.queryByLabelText("Fakturamottagare")).not.toBeInTheDocument();
@@ -174,7 +203,7 @@ describe("MembershipFormCard — annan fakturaadress", () => {
   });
 
   it("unfolds, validates the postnummer and sends the billing fields", async () => {
-    render(<MembershipFormCard membership={MEMBERSHIP} />);
+    render(<MembershipFormCard membership={MEMBERSHIP} hasActivePersons />);
 
     fireEvent.click(billingBox());
     fireEvent.change(screen.getByLabelText("Fakturamottagare"), {
@@ -223,6 +252,7 @@ describe("MembershipFormCard — annan fakturaadress", () => {
           billing_name: "Gården",
           billing_city: "Annanstad",
         }}
+        hasActivePersons
       />,
     );
 

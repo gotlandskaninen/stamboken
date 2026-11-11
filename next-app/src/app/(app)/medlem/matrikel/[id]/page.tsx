@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ApiError, fetchApi } from "@/lib/api";
 import { getUser } from "@/lib/auth";
+import { statusBadge } from "@/lib/membershipStatus";
 import { Masthead } from "@/components/shell/Masthead";
 import ds from "@/styles/ds-admin.module.css";
 import styles from "../../medlem.module.css";
@@ -13,15 +14,6 @@ import { hasBillingAddress } from "../types";
 import type { MembershipDetail } from "../types";
 
 export const dynamic = "force-dynamic";
-
-// Same mapping as the profil page's STATUS_BADGE: skog Aktiv /
-// default Inaktiv / warning Väntar / himmel Friexemplar.
-const STATUS_BADGE: Record<string, { label: string; className: string }> = {
-  active: { label: "Aktiv", className: "sb-badge sb-badge-skog" },
-  inactive: { label: "Inaktiv", className: "sb-badge" },
-  pending: { label: "Väntar", className: `sb-badge ${styles.badgeWarning}` },
-  friexemplar: { label: "Friexemplar", className: "sb-badge sb-badge-himmel" },
-};
 
 export default async function MembershipDetailPage({
   params,
@@ -46,10 +38,7 @@ export default async function MembershipDetailPage({
   const main = membership.persons.find(
     (p) => p.role === "huvudmedlem" && p.end_date === null,
   );
-  const badge = STATUS_BADGE[membership.membership_status] ?? {
-    label: membership.membership_status,
-    className: "sb-badge",
-  };
+  const badge = statusBadge(membership.membership_status, styles.badgeWarning);
 
   return (
     <>
@@ -81,7 +70,14 @@ export default async function MembershipDetailPage({
         <OversiktCard membership={membership} />
         <div className={ds["ad-col"]}>
           <PersonsCard membership={membership} canEdit={canEdit} />
-          {canEdit ? <MembershipFormCard membership={membership} /> : null}
+          {canEdit ? (
+            <MembershipFormCard
+              membership={membership}
+              hasActivePersons={membership.persons.some(
+                (p) => p.end_date === null,
+              )}
+            />
+          ) : null}
           {/* Read-only managers never see MembershipFormCard, where the
               billing address is edited. */}
           {!canEdit && hasBillingAddress(membership) ? (
