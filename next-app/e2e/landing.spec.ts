@@ -30,23 +30,6 @@ test.describe("Landing page sections", () => {
     ).toBeVisible();
   });
 
-  test("pillars section renders with 3 cards", async ({ page }) => {
-    await expect(
-      page.getByRole("heading", { level: 2, name: /Vad vi gör/ }),
-    ).toBeVisible();
-
-    // All 3 pillar cards (use .first() where text appears elsewhere on page)
-    await expect(
-      page.getByRole("heading", { name: "Bli medlem" }).first(),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("heading", { name: "Föreningen" }).first(),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("heading", { name: "Lantraskaninen", exact: true }),
-    ).toBeVisible();
-  });
-
   test("breeds section renders with both breeds", async ({ page }) => {
     await expect(
       page.getByRole("heading", { level: 2, name: /lantraskaninen\./ }),

@@ -3,7 +3,6 @@ import Link from "next/link";
 import { Box, Typography } from "@mui/material";
 import { LinkButton } from "@/components/public/LinkButton";
 import { Icon, ICONS } from "@/components/public/Icons";
-import { OrnamentDivider } from "@/components/public/OrnamentDivider";
 import { EUFundingBadge } from "@/components/public/EUFundingBadge";
 
 function HeroSection() {
@@ -268,132 +267,6 @@ function HeroSection() {
   );
 }
 
-const PILLARS = [
-  {
-    title: "Bli medlem",
-    desc: "Som medlem stödjer du bevarandet av två svenska lantraser. Du får tidskriften Koharen tre gånger om året och tillgång till medlemsforum.",
-    href: "/bli-medlem",
-    icon: ICONS.heart,
-    tint: "lera",
-  },
-  {
-    title: "Föreningen",
-    desc: "Om vår verksamhet sedan 1984. Drygt 400 medlemmar över hela landet och ett genbankssystem för två lantraser.",
-    href: "/foreningen",
-    icon: ICONS.shield,
-    tint: "skog",
-  },
-  {
-    title: "Lantraskaninen",
-    desc: "Vad är en lantraskanin? En översikt av begreppet, vad som skiljer dem från andra raser och varför de behöver bevaras.",
-    href: "/lantraskaninen",
-    icon: ICONS.leaf,
-    tint: "mossa",
-  },
-];
-
-function PillarsSection() {
-  return (
-    <Box component="section" sx={{ px: { xs: 6, md: 14 }, pt: 16, pb: 8 }}>
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: { xs: "1fr", md: "minmax(80px, 160px) 1fr" },
-          gap: 8,
-          mb: 9,
-        }}
-      >
-        <Typography variant="eyebrow">Föreningen</Typography>
-        <Typography variant="h2" sx={{ m: 0 }}>
-          Vad vi gör och hur du kan vara med i arbetet.
-        </Typography>
-      </Box>
-
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-          gap: 5,
-        }}
-      >
-        {PILLARS.map((c) => (
-          <Link
-            key={c.title}
-            href={c.href}
-            style={{ textDecoration: "none", color: "inherit" }}
-          >
-            <Box
-              sx={{
-                bgcolor: "background.paper",
-                border: 1,
-                borderColor: "line.main",
-                borderRadius: "8px",
-                p: 7,
-                height: "100%",
-                transition: "transform 200ms cubic-bezier(0.2, 0.7, 0.2, 1)",
-                "&:hover": { transform: "translateY(-2px)" },
-              }}
-            >
-              <Box
-                sx={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  mb: 6,
-                }}
-              >
-                <Box
-                  sx={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: "50%",
-                    bgcolor: `${c.tint}.soft`,
-                    color: c.tint === "lera" ? "lera.main" : "skog.main",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Icon d={c.icon} size={22} />
-                </Box>
-              </Box>
-              <Typography
-                variant="h4"
-                component="h3"
-                sx={{ m: 0, fontSize: "24px" }}
-              >
-                {c.title}
-              </Typography>
-              <Typography
-                sx={{
-                  mt: 3,
-                  color: "ink.2",
-                  fontSize: "15px",
-                  lineHeight: 1.55,
-                }}
-              >
-                {c.desc}
-              </Typography>
-              <Typography
-                sx={{
-                  mt: 4.5,
-                  fontSize: "14px",
-                  color: "ink.main",
-                  textDecoration: "underline",
-                  textDecorationColor: "line.strong",
-                  textUnderlineOffset: "3px",
-                }}
-              >
-                Läs mer &rarr;
-              </Typography>
-            </Box>
-          </Link>
-        ))}
-      </Box>
-    </Box>
-  );
-}
-
 // Card images are AI-generated illustrations chosen by the owner (2026-09-11);
 // the gotlandskanin one portrays Blomma, 107-014G.
 // `pos` keeps the rabbit in frame when the 320 px card crops the wide image
@@ -428,7 +301,7 @@ const BREEDS = [
 
 function BreedsSection() {
   return (
-    <Box component="section" sx={{ px: { xs: 6, md: 14 }, pt: 8, pb: 16 }}>
+    <Box component="section" sx={{ px: { xs: 6, md: 14 }, pt: 16, pb: 16 }}>
       <Box
         sx={{
           display: "grid",
@@ -947,8 +820,6 @@ export default function HomePage() {
   return (
     <>
       <HeroSection />
-      <PillarsSection />
-      <OrnamentDivider />
       <BreedsSection />
       <EUSection />
       <MemberSection />
