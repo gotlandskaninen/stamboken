@@ -87,11 +87,8 @@ test.describe("Landing page sections", () => {
   });
 });
 
-test.describe("Landing page nav CTA above fold", () => {
-  // Hero is tall on mobile (480px+), so "Bli medlem" nav button is above fold
-  // only on tablet/desktop where the nav bar is visible.
-  const aboveFoldViewports = VIEWPORTS.filter((v) => v.width >= 768);
-  for (const viewport of aboveFoldViewports) {
+test.describe("Landing page CTA above fold", () => {
+  for (const viewport of VIEWPORTS) {
     test(`Bli medlem visible above fold at ${viewport.name} (${viewport.width}px)`, async ({
       page,
     }) => {
@@ -101,7 +98,11 @@ test.describe("Landing page nav CTA above fold", () => {
       });
       await page.goto("/", { waitUntil: "networkidle" });
 
-      const cta = page.getByRole("link", { name: /bli medlem/i }).first();
+      // The hero's own button: the nav link is inside a closed drawer on phones.
+      const cta = page
+        .locator("main")
+        .getByRole("link", { name: /bli medlem/i })
+        .first();
       await expect(cta).toBeVisible();
 
       const box = await cta.boundingBox();
@@ -169,7 +170,7 @@ test.describe("Landing page accessibility", () => {
     const h1Elements = await page.getByRole("heading", { level: 1 }).all();
     expect(h1Elements).toHaveLength(1);
 
-    // Sections: Pillars, Breeds, EU, Members, CTA = at least 4 h2s
+    // Sections: Breeds, EU, Members, CTA
     const h2Elements = await page.getByRole("heading", { level: 2 }).all();
     expect(h2Elements.length).toBeGreaterThanOrEqual(4);
   });

@@ -13,9 +13,9 @@ function HeroSection() {
           position: "relative",
           borderRadius: "14px",
           overflow: "hidden",
-          minHeight: { sm: 480, md: 620 },
+          minHeight: { sm: 480 },
           // Phones: the tall stacked copy would crop the landscape photo down to
-          // an eye, so the photo becomes a 3:2 banner and the text sits on a
+          // an eye, so the photo becomes a 16:9 banner and the text sits on a
           // skog panel below it. From sm the photo is the backdrop again (the
           // Snabbgenvägar card must stay above the fold on tablets).
           bgcolor: { xs: "skog.main", sm: "transparent" },
@@ -25,7 +25,7 @@ function HeroSection() {
           sx={{
             position: { xs: "relative", sm: "absolute" },
             inset: { sm: 0 },
-            aspectRatio: { xs: "3 / 2", sm: "auto" },
+            aspectRatio: { xs: "16 / 9", sm: "auto" },
           }}
         >
           <Image
@@ -63,80 +63,21 @@ function HeroSection() {
             },
             gap: { xs: 6, md: "clamp(24px, 4vw, 48px)" },
             alignItems: "end",
-            minHeight: { sm: 480, md: 620 },
+            minHeight: { sm: 480 },
           }}
         >
-          {/* Left — headline */}
-          <Box>
-            <Box
-              sx={{
-                mb: { xs: 5, md: 8 },
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4.5,
-                flexWrap: "wrap",
-              }}
-            >
-              <Box
-                sx={{
-                  width: { xs: 64, md: 88 },
-                  height: { xs: 64, md: 88 },
-                  bgcolor: "paper.main",
-                  borderRadius: "50%",
-                  // The site header already shows the logo right above on phones.
-                  display: { xs: "none", sm: "inline-flex" },
-                  alignItems: "center",
-                  justifyContent: "center",
-                  boxShadow: "0 8px 24px rgba(0,0,0,0.3)",
-                  flexShrink: 0,
-                  "& img": {
-                    width: { xs: 54, md: 76 },
-                    height: { xs: 54, md: 76 },
-                  },
-                }}
-              >
-                <Image
-                  src="/stamboken/logo.png"
-                  alt=""
-                  width={76}
-                  height={76}
-                />
-              </Box>
-              <Box sx={{ color: "paper.main" }}>
-                <Typography
-                  variant="mono"
-                  sx={{
-                    color: "paper.main",
-                    fontSize: "11px",
-                    letterSpacing: "0.16em",
-                    textTransform: "uppercase",
-                    opacity: 0.9,
-                  }}
-                >
-                  Föreningen sedan 1984
-                </Typography>
-                <Typography
-                  sx={{
-                    fontFamily: "'Source Serif 4', Georgia, serif",
-                    fontStyle: "italic",
-                    fontSize: "22px",
-                    mt: 1,
-                    color: "paper.main",
-                  }}
-                >
-                  Bevarar svenska lantraskaniner
-                </Typography>
-              </Box>
-            </Box>
-
+          {/* Left — headline. On phones its children join the grid so the
+              shortcuts card can sit between the headline and the welcome text,
+              which keeps "Bli medlem" on the first screen. */}
+          <Box sx={{ display: { xs: "contents", sm: "block" } }}>
             <Typography
               variant="h1"
               component="h1"
               sx={{
                 m: 0,
                 color: "paper.main",
-                fontSize: "clamp(34px, 7vw, 84px)",
-                lineHeight: 1,
+                fontSize: "clamp(32px, 4vw, 56px)",
+                lineHeight: 1.05,
                 letterSpacing: "-0.025em",
               }}
             >
@@ -164,7 +105,8 @@ function HeroSection() {
             </Typography>
             <Typography
               sx={{
-                mt: { xs: 4, md: 6 },
+                mt: { xs: 0, sm: 4, md: 6 },
+                order: { xs: 2, sm: 0 },
                 color: "rgba(244,241,234,0.88)",
                 maxWidth: 620,
                 fontSize: "clamp(15px, 1.4vw, 19px)",
@@ -181,6 +123,7 @@ function HeroSection() {
           <Box
             component="aside"
             sx={{
+              order: { xs: 1, sm: 0 },
               bgcolor: "paper.main",
               borderRadius: "8px",
               p: 6.5,
@@ -215,50 +158,6 @@ function HeroSection() {
               >
                 Medlemsforum
               </LinkButton>
-            </Box>
-            <Box
-              sx={{
-                mt: 4.5,
-                pt: 4,
-                borderTop: 1,
-                borderColor: "line.main",
-                display: "flex",
-                gap: 3.5,
-                fontSize: "12px",
-                flexWrap: "wrap",
-              }}
-            >
-              <Box
-                component="a"
-                href="https://www.facebook.com/profile.php?id=100064726114664"
-                target="_blank"
-                rel="noopener noreferrer"
-                sx={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 1.5,
-                  textDecoration: "none",
-                  color: "ink.2",
-                  "&:hover": { color: "ink.main" },
-                }}
-              >
-                <Box
-                  sx={{
-                    width: 22,
-                    height: 22,
-                    borderRadius: "4px",
-                    bgcolor: "#1877F2",
-                    color: "#fff",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontWeight: 700,
-                  }}
-                >
-                  f
-                </Box>
-                Facebooksida
-              </Box>
             </Box>
           </Box>
         </Box>
@@ -315,7 +214,10 @@ function BreedsSection() {
           <Typography variant="h2" sx={{ m: 0 }}>
             Två kaninraser med ursprung i den svenska lantraskaninen.
           </Typography>
-          <Typography variant="lede" sx={{ mt: 3.5, maxWidth: 720 }}>
+          <Typography
+            variant="lede"
+            sx={{ mt: 3.5, maxWidth: 720, display: "block" }}
+          >
             Jordbruksverket klassar båda raserna som utrotningshotade svenska
             husdjursraser. Föreningen samordnar avelsarbetet i ett
             genbankssystem.
@@ -542,8 +444,8 @@ function EUSection() {
             sx={{
               mt: 4.5,
               mb: 0,
-              p: 0,
-              listStyle: "none",
+              pl: 5,
+              "& li::marker": { color: "#e8c8a8" },
               display: "grid",
               gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
               columnGap: 8,
@@ -552,13 +454,7 @@ function EUSection() {
             }}
           >
             {EU_ITEMS.map((item) => (
-              <Box
-                component="li"
-                key={item}
-                sx={{ pl: 3.5, borderLeft: "2px solid #e8c8a8" }}
-              >
-                {item}
-              </Box>
+              <li key={item}>{item}</li>
             ))}
           </Box>
         </Box>
