@@ -8,7 +8,8 @@ interface VerificationResponse {
   individual_name: string;
   individual_number: string;
   genebank: string;
-  digital_certificate: number;
+  // null once a paper certificate has replaced the digital one
+  digital_certificate: number | null;
   issued_by: string;
   issued_at: string;
   is_current: boolean;
@@ -103,10 +104,12 @@ export default async function VerifieraPage({
               <span className="l">Ras</span>
               <span className="v">{data.genebank}</span>
             </div>
-            <div className="frow">
-              <span className="l">Intygsnummer</span>
-              <span className="v">{data.digital_certificate}</span>
-            </div>
+            {data.digital_certificate !== null && (
+              <div className="frow">
+                <span className="l">Intygsnummer</span>
+                <span className="v">{data.digital_certificate}</span>
+              </div>
+            )}
             <div className="frow">
               <span className="l">Detta intyg</span>
               <span className="v">{svDate(data.issued_at)}</span>

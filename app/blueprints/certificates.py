@@ -14,7 +14,6 @@ from flask import Blueprint, jsonify, request, session
 from peewee import DoesNotExist
 from utils.cert_service_v2 import (
     CERTIFICATE_V2_FIELDS,
-    assign_certificate_number,
     certificate_form,
     certificate_update,
     check_first_certificate_quota,
@@ -28,6 +27,7 @@ from utils.certificates_v2 import (
     compute_checksum,
     verify_pdf_signature,
 )
+from utils.individual_commands import assign_certificate_number
 from utils.individual_number_v2 import RosterAliveExceeds6w
 
 from .common import json_login_required, problem
