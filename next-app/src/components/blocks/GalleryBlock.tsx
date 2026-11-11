@@ -1,10 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import useEmblaCarousel from "embla-carousel-react";
-import { Box, IconButton, Typography } from "@mui/material";
-import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
-import ChevronRightIcon from "@mui/icons-material/ChevronRight";
+import { useState } from "react";
+import { Box, Typography } from "@mui/material";
 
 interface GalleryImage {
   image: {
@@ -19,136 +16,106 @@ interface Props {
   images: GalleryImage[];
 }
 
+const imageSx = {
+  display: "block",
+  width: "100%",
+  aspectRatio: "3 / 2",
+  objectFit: "cover",
+  bgcolor: "paper.3",
+} as const;
+
+// One large image with a row of thumbnails to pick from, so a visitor sees at
+// a glance how many photos there are.
 export function GalleryBlockComponent({ images }: Props) {
-  const [emblaRef, emblaApi] = useEmblaCarousel({ loop: true });
   const [selectedIndex, setSelectedIndex] = useState(0);
 
-  const onSelect = useCallback(() => {
-    if (!emblaApi) return;
-    setSelectedIndex(emblaApi.selectedScrollSnap());
-  }, [emblaApi]);
+  const shown = (images ?? []).filter((item) => item.image?.url);
+  if (shown.length === 0) return null;
 
-  useEffect(() => {
-    if (!emblaApi) return;
-    onSelect();
-    emblaApi.on("select", onSelect);
-    return () => {
-      emblaApi.off("select", onSelect);
-    };
-  }, [emblaApi, onSelect]);
-
-  const scrollPrev = useCallback(() => emblaApi?.scrollPrev(), [emblaApi]);
-  const scrollNext = useCallback(() => emblaApi?.scrollNext(), [emblaApi]);
-  const scrollTo = useCallback(
-    (index: number) => emblaApi?.scrollTo(index),
-    [emblaApi],
-  );
-
-  if (!images || images.length === 0) return null;
+  const current = shown[Math.min(selectedIndex, shown.length - 1)];
+  const src = (item: GalleryImage) =>
+    item.image!.sizes?.card?.url || item.image!.url;
 
   return (
-    <Box sx={{ my: 4 }}>
-      {/* Carousel viewport */}
-      <Box sx={{ position: "relative" }}>
-        <Box ref={emblaRef} sx={{ overflow: "hidden", borderRadius: 2 }}>
-          <Box sx={{ display: "flex" }}>
-            {images.map((item, i) => (
-              <Box
-                key={i}
-                sx={{ flex: "0 0 100%", minWidth: 0, position: "relative" }}
-              >
-                {item.image?.url && (
-                  <Box
-                    component="img"
-                    src={item.image.sizes?.card?.url || item.image.url}
-                    alt={item.image.alt || item.caption || ""}
-                    loading="lazy"
-                    sx={{
-                      width: "100%",
-                      height: "auto",
-                      display: "block",
-                    }}
-                  />
-                )}
-              </Box>
-            ))}
-          </Box>
+    <Box className="gallery" sx={{ my: 8 }}>
+      <Box component="figure" sx={{ m: 0 }}>
+        <Box
+          component="img"
+          src={src(current)}
+          alt={current.image!.alt || current.caption || ""}
+          sx={{ ...imageSx, borderRadius: "8px" }}
+        />
+        <Box
+          component="figcaption"
+          sx={{
+            mt: 2.5,
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "baseline",
+            gap: 4,
+            fontSize: "14px",
+            lineHeight: 1.4,
+            color: "ink.2",
+          }}
+        >
+          <span>{current.caption}</span>
+          <Typography
+            variant="mono"
+            component="span"
+            sx={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}
+          >
+            {shown.indexOf(current) + 1} / {shown.length}
+          </Typography>
         </Box>
-
-        {/* Prev/Next buttons */}
-        <IconButton
-          onClick={scrollPrev}
-          aria-label="Föregående bild"
-          sx={{
-            position: "absolute",
-            left: 8,
-            top: "50%",
-            transform: "translateY(-50%)",
-            bgcolor: "rgba(0,0,0,0.5)",
-            color: "#fff",
-            "&:hover": { bgcolor: "rgba(0,0,0,0.7)" },
-            width: 40,
-            height: 40,
-          }}
-        >
-          <ChevronLeftIcon />
-        </IconButton>
-        <IconButton
-          onClick={scrollNext}
-          aria-label="Nästa bild"
-          sx={{
-            position: "absolute",
-            right: 8,
-            top: "50%",
-            transform: "translateY(-50%)",
-            bgcolor: "rgba(0,0,0,0.5)",
-            color: "#fff",
-            "&:hover": { bgcolor: "rgba(0,0,0,0.7)" },
-            width: 40,
-            height: 40,
-          }}
-        >
-          <ChevronRightIcon />
-        </IconButton>
       </Box>
 
-      {/* Caption for current slide */}
-      {images[selectedIndex]?.caption && (
-        <Typography
-          variant="caption"
-          sx={{
-            color: "text.secondary",
-            display: "block",
-            textAlign: "center",
-            mt: 1,
-          }}
-        >
-          {images[selectedIndex].caption}
-        </Typography>
-      )}
-
-      {/* Dot indicators */}
       <Box
+        role="group"
+        aria-label="Välj bild"
         sx={{
-          display: "flex",
-          justifyContent: "center",
-          gap: 1,
-          pt: 1.5,
+          mt: 3.5,
+          display: "grid",
+          gridTemplateColumns: {
+            xs: "repeat(4, minmax(0, 1fr))",
+            sm: "repeat(6, minmax(0, 1fr))",
+          },
+          gap: 2.5,
         }}
       >
-        {images.map((_, i) => (
+        {shown.map((item, i) => (
           <Box
+            component="button"
             key={i}
-            onClick={() => scrollTo(i)}
+            type="button"
+            aria-label={`Visa bild ${i + 1}${item.caption ? `: ${item.caption}` : ""}`}
+            aria-current={item === current ? "true" : undefined}
+            onClick={() => setSelectedIndex(i)}
             sx={{
-              width: 10,
-              height: 10,
-              borderRadius: "50%",
-              bgcolor: i === selectedIndex ? "primary.main" : "grey.300",
+              p: 0,
+              border: 0,
+              bgcolor: "transparent",
+              borderRadius: "6px",
               cursor: "pointer",
-              transition: "background-color 0.2s",
+              opacity: 0.7,
+              outline: "2px solid transparent",
+              outlineOffset: "2px",
+              transition:
+                "opacity 200ms cubic-bezier(0.2, 0.7, 0.2, 1), outline-color 200ms cubic-bezier(0.2, 0.7, 0.2, 1)",
+              "&:hover": { opacity: 1 },
+              '&[aria-current="true"], &:focus-visible': {
+                opacity: 1,
+                outlineColor: "var(--sb-skog)",
+              },
             }}
-          />
+          >
+            <Box
+              component="img"
+              src={src(item)}
+              alt=""
+              loading="lazy"
+              sx={{ ...imageSx, borderRadius: "6px" }}
+            />
+          </Box>
         ))}
       </Box>
     </Box>
