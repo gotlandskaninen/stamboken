@@ -181,7 +181,9 @@ function IntroSection() {
           genbanksintyg och härstammar från de kaniner som inventerades 1993
           (gotlandskanin) respektive köptes ut 2001–2002 (mellerudskanin).
         </Typography>
-        <Typography sx={{ mt: 5, color: "ink.2", lineHeight: 1.65 }}>
+        <Typography
+          sx={{ mt: 5, maxWidth: "38rem", color: "ink.2", lineHeight: 1.65 }}
+        >
           Genbanken är ett slutet system. Nya djur kommer in bara som avkommor
           till djur som redan finns där. En kanin utifrån går inte att föra in.
           Det är därför startdjuren måste komma från andra genbanksbesättningar
@@ -219,7 +221,13 @@ function IntroSection() {
           </Box>
         </Box>
         <Typography
-          sx={{ mt: 6, fontSize: "15px", lineHeight: 1.65, color: "ink.2" }}
+          sx={{
+            mt: 6,
+            maxWidth: "36rem",
+            fontSize: "15px",
+            lineHeight: 1.65,
+            color: "ink.2",
+          }}
         >
           Mer om hur bevarandet fungerar finns under{" "}
           <Link href="/lantraskaninen" style={inlineLinkStyle}>
