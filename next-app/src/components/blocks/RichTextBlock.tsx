@@ -13,6 +13,8 @@ export function RichTextBlockComponent({ content }: Props) {
     <Box
       sx={{
         mb: 3,
+        // About 80 characters a line; the full column gave 110-120.
+        maxWidth: "38rem",
         "& h2": {
           mt: 4,
           mb: 1.5,
