@@ -19,12 +19,14 @@ from typing import ClassVar, Protocol
 from peewee import DateField, fn
 
 from utils import number_assets
+from utils.certificate_lifecycle import Event, check
 from utils.database import DB_PROXY as DATABASE
 from utils.database import (
     OUTSIDE_GENEBANK_HERDS,
     Bodyfat,
     Breeding,
     Color,
+    DigitalCertificateV2,
     Herd,
     HerdTracking,
     Individual,
@@ -724,12 +726,17 @@ class AssignPaperCertificate(PolicyCommand):
         if self.certificate is None:
             return
         ind, user, value = ctx.individual, ctx.user.username, str(self.certificate)
-        if ind.certificate != value:
+        changed = ind.certificate != value
+        if changed:
+            before = ind.cert_state()
             if ind.digital_certificate is not None:
                 ctx.update_log.info(f"{user},{ind.number},digital_certificate,{ind.digital_certificate},'None',")
                 ind.digital_certificate = None
+            DigitalCertificateV2.retire_current(ind)  # else verify and download keep answering for the PDF
             ctx.update_log.info(f"{user},{ind.number},certificate,{ind.certificate},{value},")
         ind.certificate = value
+        if changed:
+            check(before, Event.ASSIGN_PAPER, ind.cert_state())
 
     def verify(self, ctx):
         if self.certificate:
@@ -891,6 +898,7 @@ class IssueDigitalCertificate(PolicyCommand):
 
     def apply(self, ctx):
         ind, user = ctx.individual, ctx.user.username
+        before = ind.cert_state()
         latest = Individual.select(fn.MAX(Individual.digital_certificate)).scalar()
         number = 100000 if latest is None else latest + 1
         if ind.certificate is not None:
@@ -898,6 +906,31 @@ class IssueDigitalCertificate(PolicyCommand):
             ind.certificate = None
         ctx.update_log.info(f"{user},{ind.number},digital_certificate,{ind.digital_certificate},{number},")
         ind.digital_certificate = number
+        check(before, Event.ISSUE_NUMBER, ind.cert_state())
+
+
+def assign_certificate_number(individual):
+    """Assign the next digital certificate number directly to the individual.
+
+    Scoped write for issuance by the breeder (origin herd) when the rabbit
+    has moved to another herd: can_issue_certificate() authorizes on
+    origin_herd, but update_individual() requires can_edit() on the current
+    herd and would reject the request. Mirrors IssueDigitalCertificate, which
+    update_individual() runs for issue_digital: the next number, and any paper certificate cleared.
+
+    Writes only the certificate columns: `individual` may have been read
+    before the caller's lock, and a full save would restore a death, origin
+    correction or renumber committed since.
+    """
+    before = individual.cert_state()
+    nextval = 100000
+    max_number = Individual.select(fn.MAX(Individual.digital_certificate)).scalar()
+    if max_number is not None:
+        nextval = max_number + 1
+    individual.digital_certificate = nextval
+    individual.certificate = None
+    individual.save(only=[Individual.digital_certificate, Individual.certificate, Individual.updated_at])
+    check(before, Event.ISSUE_NUMBER, individual.cert_state())
 
 
 UNDO_WINDOW = timedelta(days=7)  # as undoing a sale or an attestation in herd-tracking

@@ -31,11 +31,13 @@ from utils.matrikel import (
     resolve_own_membership,
     retire_membership,
     revoke_grant,
+    set_membership_status,
     soft_delete_person,
     swap_main_member,
     unlink_member_user,
     write_matrikel_audit,
 )
+from utils.membership_lifecycle import Status, TransitionRefused
 
 from blueprints.common import (
     EMAIL_RE,
@@ -46,7 +48,7 @@ from blueprints.common import (
 
 memberships_bp = Blueprint("memberships", __name__, url_prefix="/api")
 
-VALID_MEMBERSHIP_STATUSES = ("active", "inactive", "pending", "friexemplar")
+VALID_MEMBERSHIP_STATUSES = tuple(Status)
 
 
 class _MemberNumberClash(Exception):
@@ -339,10 +341,9 @@ def patch_membership(membership_id: int):
                 if taken:
                     raise _MemberNumberClash
             for field, new in after.items():
-                setattr(ms, field, new)
-            # ...and UPDATE only the changed columns: a full-row save would push
-            # every attribute the instance carries, changed or not.
-            ms.save(only=[getattr(Membership, field) for field in after] + [Membership.updated_at])
+                if field != "membership_status":
+                    setattr(ms, field, new)
+            # Audit order: member_number, status, other fields.
             if "member_number" in after:
                 write_matrikel_audit(
                     current_user,
@@ -354,15 +355,10 @@ def patch_membership(membership_id: int):
                     },
                 )
             if "membership_status" in after:
-                write_matrikel_audit(
-                    current_user,
-                    "membership_status_changed",
-                    ms,
-                    {
-                        "before": {"membership_status": before["membership_status"]},
-                        "after": {"membership_status": after["membership_status"]},
-                    },
-                )
+                set_membership_status(ms, after["membership_status"], current_user)
+            # ...and UPDATE only the changed columns: a full-row save would push
+            # every attribute the instance carries, changed or not.
+            ms.save(only=[getattr(Membership, field) for field in after] + [Membership.updated_at])
             other_before = {k: v for k, v in before.items() if k not in ("member_number", "membership_status")}
             other_after = {k: v for k, v in after.items() if k not in ("member_number", "membership_status")}
             if other_after:
@@ -378,6 +374,13 @@ def patch_membership(membership_id: int):
             409,
             "Medlemsnumret används redan",
             f"Medlemsnummer {after['member_number']} tillhör ett annat medlemskap",
+        )
+    except TransitionRefused:
+        # Rolled back, so nothing of this request is kept.
+        return problem(
+            409,
+            "Medlemskapet är avslutat",
+            "Ett avslutat medlemskap kan inte återaktiveras. Skapa ett nytt medlemskap.",
         )
     except IntegrityError:
         # The partial unique index on member_number is the backstop for the

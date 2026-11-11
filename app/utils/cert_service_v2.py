@@ -11,12 +11,11 @@ import os
 import uuid
 from datetime import date
 
-from peewee import fn
-
 import utils.data_access as da
 import utils.database as db
 from utils import number_assets
 from utils.cert_acess import get_certificate_data, upload_certificate, upload_certificate_v2
+from utils.certificate_lifecycle import Event, check
 from utils.certificates_v2 import (
     CertificateGeneratorV2,
     compute_checksum,
@@ -106,7 +105,7 @@ def generate_and_store(individual, user, ind_data, user_id):
        then the legacy v1 key ({ind_number}/certificate.pdf, overwritten
        per re-issue)
     4. In a DATABASE.atomic() transaction: create DigitalCertificateV2 row
-       + flip old rows is_current=False
+       + retire the old current row
 
     The blueprint wraps this call in an outer DATABASE.atomic() together with
     update_individual, so a signing/S3 failure also rolls back the
@@ -162,47 +161,18 @@ def generate_and_store(individual, user, ind_data, user_id):
 
     # Step 4: DB transaction — create row + flip old rows
     with db.DATABASE.atomic():
-        (
-            db.DigitalCertificateV2.update(is_current=False)
-            .where(
-                (db.DigitalCertificateV2.individual == individual) & (db.DigitalCertificateV2.is_current == True)  # noqa: E712
-            )
-            .execute()
-        )
-        cert_row = db.DigitalCertificateV2.create(
-            individual=individual,
+        before = individual.cert_state()
+        cert_row = db.DigitalCertificateV2.issue_current(
+            individual,
             verification_token=token,
             certificate_type="pedigree",
             issued_by=user,
             file_path=file_path,
             checksum=sha,
-            is_current=True,
         )
+        check(before, Event.ISSUE_PDF, individual.cert_state())
 
     return cert_row, signed_pdf
-
-
-def assign_certificate_number(individual):
-    """Assign the next digital certificate number directly to the individual.
-
-    Scoped write for issuance by the breeder (origin herd) when the rabbit
-    has moved to another herd: can_issue_certificate() authorizes on
-    origin_herd, but update_individual() requires can_edit() on the current
-    herd and would reject the request. Mirrors IssueDigitalCertificate
-    (utils/individual_commands.py), which update_individual() runs for
-    issue_digital: the next number, and any paper certificate cleared.
-
-    Writes only the certificate columns: `individual` may have been read
-    before the caller's lock, and a full save would restore a death, origin
-    correction or renumber committed since.
-    """
-    nextval = 100000
-    max_number = db.Individual.select(fn.MAX(db.Individual.digital_certificate)).scalar()
-    if max_number is not None:
-        nextval = max_number + 1
-    individual.digital_certificate = nextval
-    individual.certificate = None
-    individual.save(only=[db.Individual.digital_certificate, db.Individual.certificate, db.Individual.updated_at])
 
 
 def normalize_color(form, individual):

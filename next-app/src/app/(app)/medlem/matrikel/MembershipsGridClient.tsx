@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { DataGrid, GridColDef } from "@mui/x-data-grid";
 import ds from "@/styles/ds-admin.module.css";
-import { STATUS_LABELS } from "./types";
+import { statusLabel } from "@/lib/membershipStatus";
 import type { MembershipRow } from "./types";
 
 const LIST_PATH = "/medlem/matrikel";
@@ -36,8 +36,7 @@ const columns: GridColDef<MembershipRow>[] = [
     field: "membership_status",
     headerName: "Status",
     width: 120,
-    valueGetter: (_value, row) =>
-      STATUS_LABELS[row.membership_status] ?? row.membership_status,
+    valueGetter: (_value, row) => statusLabel(row.membership_status),
   },
   {
     field: "main_member",

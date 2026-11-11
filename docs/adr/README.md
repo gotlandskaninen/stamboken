@@ -24,3 +24,4 @@ rad här. Regler för dagligt arbete får också en rad med länk i `CLAUDE.md`.
 | [ADR-0015](0015-individual-write-commands.md) | Kommandon per avsikt för skrivningar på individ | förslag | 2026-11-06 |
 | [ADR-0016](0016-agarbyte-flytt-dag-0-och-berattigat-intresse.md) | Ägarbyte flyttas dag 0 med avvisa, och köparen sparas på berättigat intresse | förslag | 2026-11-06 |
 | [ADR-0017](0017-individual-command-log-and-undo.md) | Kommandologg och ångra för skrivningar på individ | förslag | 2026-11-06 |
+| [ADR-0019](0019-explicit-state-machines.md) | Explicita tillståndsmaskiner där en implicit har ett hål | förslag | 2026-11-11 |

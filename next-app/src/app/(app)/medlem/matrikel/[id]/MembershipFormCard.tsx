@@ -5,6 +5,11 @@ import { Checkbox, FormControlLabel, MenuItem, Select } from "@mui/material";
 import { ConfirmDialog } from "@/app/(app)/stamboken/(dashboard)/admin/_components/ConfirmDialog";
 import { useSnackbar } from "@/components/SnackbarProvider";
 import { useNotifications } from "@/contexts/NotificationContext";
+import {
+  MEMBERSHIP_STATUS,
+  MEMBERSHIP_STATUSES,
+  type MembershipStatus,
+} from "@/lib/membershipStatus";
 import { formatPostalCode, isValidPostalCode } from "@/lib/postal";
 import { retireMembership, updateMembership } from "../actions";
 import type { MembershipPatch } from "../actions";
@@ -20,8 +25,10 @@ const toBillingForm = (m: BillingAddress) =>
 
 export function MembershipFormCard({
   membership,
+  hasActivePersons,
 }: {
   membership: MembershipDetail;
+  hasActivePersons: boolean;
 }) {
   const [pending, startTransition] = useTransition();
   const { showSnackbar } = useSnackbar();
@@ -47,6 +54,12 @@ export function MembershipFormCard({
   // when the revalidated prop arrives — a second click in that window wrote
   // another membership_retired audit row.
   const [retired, setRetired] = useState(false);
+  // Inaktiv with no active person: the backend refuses any further status
+  // change (409), so the select is locked and Avsluta has nothing left to do.
+  // Inaktiv *with* active persons (set through the select) can still be ended.
+  const ended =
+    retired ||
+    (membership.membership_status === "inactive" && !hasActivePersons);
   const postalOk = isValidPostalCode(postalCode);
   const billingPostalOk =
     !billingOn || isValidPostalCode(billing.billing_postal_code);
@@ -117,16 +130,24 @@ export function MembershipFormCard({
               </span>
               <Select
                 value={status}
-                onChange={(e) => setStatus(e.target.value)}
+                onChange={(e) => setStatus(e.target.value as MembershipStatus)}
                 aria-labelledby="ms-status-label"
                 size="small"
                 fullWidth
+                disabled={ended}
               >
-                <MenuItem value="active">Aktiv</MenuItem>
-                <MenuItem value="inactive">Inaktiv</MenuItem>
-                <MenuItem value="pending">Väntar</MenuItem>
-                <MenuItem value="friexemplar">Friexemplar</MenuItem>
+                {MEMBERSHIP_STATUSES.map((s) => (
+                  <MenuItem key={s} value={s}>
+                    {MEMBERSHIP_STATUS[s].label}
+                  </MenuItem>
+                ))}
               </Select>
+              {ended ? (
+                <p className={ds["ad-field-hint"]}>
+                  Ett avslutat medlemskap kan inte återaktiveras. Skapa ett nytt
+                  medlemskap i stället.
+                </p>
+              ) : null}
             </div>
             <div>
               <label className="sb-label" htmlFor="ms-number">
@@ -367,7 +388,7 @@ export function MembershipFormCard({
             >
               {pending ? "Sparar..." : "Spara"}
             </button>
-            {membership.membership_status !== "inactive" && !retired ? (
+            {!ended ? (
               <button
                 type="button"
                 className={`sb-btn ${ds["ad-btn-danger"]}`}

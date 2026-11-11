@@ -44,6 +44,7 @@ from playhouse.postgres_ext import ArrayField, BinaryJSONField
 from playhouse.shortcuts import ReconnectMixin
 
 import utils.settings as settings
+from utils.certificate_lifecycle import state_of
 from utils.postal import format_postal_address, split_postal_address
 
 
@@ -794,6 +795,16 @@ class Individual(BaseModel):
         """
         is_alive = not self.death_date and not self.death_note
         return is_alive
+
+    def cert_state(self):
+        """The certificate state (utils/certificate_lifecycle.py) of this instance's columns and the stored rows."""
+        current = DigitalCertificateV2.select().where(
+            DigitalCertificateV2.individual == self.id, DigitalCertificateV2.is_current
+        )
+        try:
+            return state_of(self.certificate, self.digital_certificate, current.exists())
+        except ValueError:
+            return None  # a row written before the table existed: a writer may leave this, never enter it
 
     def as_dict(self):
         """
@@ -1809,6 +1820,17 @@ class DigitalCertificateV2(BaseModel):
 
     class Meta:
         table_name = "digitalcertificatev2"
+
+    @classmethod
+    def retire_current(cls, individual):
+        """The only place is_current is turned off: the individual no longer has a current digital certificate."""
+        cls.update(is_current=False).where(cls.individual == individual, cls.is_current).execute()
+
+    @classmethod
+    def issue_current(cls, individual, **fields):
+        """The only place a current row is created: the previous one is retired first (one current per individual)."""
+        cls.retire_current(individual)
+        return cls.create(individual=individual, is_current=True, **fields)
 
 
 # At most one current certificate per individual — a concurrent re-issue race

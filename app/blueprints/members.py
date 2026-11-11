@@ -16,8 +16,9 @@ from flask_login import current_user
 from peewee import IntegrityError
 from utils.csv_safe import csv_safe
 from utils.database import BILLING_FIELDS, DB_PROXY, Herd, HerdAccessGrant, Member, Membership
-from utils.matrikel import AddressValidationError, is_anonymized, parse_postal_fields, write_matrikel_audit
+from utils.matrikel import AddressValidationError, is_anonymized, parse_postal_fields, set_membership_status
 from utils.members import CONSENT_KEYS, consent_answered, effective_consent, stored_consent
+from utils.membership_lifecycle import Status, TransitionRefused
 
 from blueprints.common import (
     EMAIL_RE,
@@ -29,7 +30,7 @@ from blueprints.common import (
 
 members_bp = Blueprint("members", __name__, url_prefix="/api")
 
-VALID_MEMBERSHIP_STATUSES = ("active", "inactive", "pending", "friexemplar")
+VALID_MEMBERSHIP_STATUSES = tuple(Status)
 
 
 def _person_to_dict(p: Member) -> dict:
@@ -212,35 +213,31 @@ def patch_membership(membership_id: int):
         # A JSON list/number/object would 500 on .strip() below instead of 400.
         return problem(400, "Ogiltigt fält", "notes måste vara en sträng eller null")
 
-    with DB_PROXY.atomic():
-        # Decide from the row AS LOCKED, never from the request-start read
-        # Two admins both see `active`, one deactivates, and the
-        # other's stale `active` would otherwise look like "no change" — no
-        # audit row — while its UPDATE put the status back, and with it every
-        # linked huvudmedlem's herd access (same rule as memberships.py).
-        ms = Membership.select().where(Membership.id == ms.id).for_update().get()
-        changed = []
-        if new_status is not None and new_status != ms.membership_status:
-            write_matrikel_audit(
-                actor=current_user,
-                action="membership_status_changed",
-                membership=ms,
-                # Nested {"before": {field: ...}, "after": {...}} shape —
-                # same convention as the membership mutations, so the
-                # append-only matrikel_audit table carries one shape per action.
-                payload={
-                    "before": {"membership_status": ms.membership_status},
-                    "after": {"membership_status": new_status},
-                },
-            )
-            ms.membership_status = new_status
-            changed.append(Membership.membership_status)
-        if "notes" in body:
-            ms.notes = (body["notes"] or "").strip() or None
-            changed.append(Membership.notes)
-        # UPDATE only the changed columns — a full-row save would push every
-        # attribute the instance carries, changed or not.
-        ms.save(only=changed + [Membership.updated_at])
+    try:
+        with DB_PROXY.atomic():
+            # Decide from the row AS LOCKED, never from the request-start read
+            # Two admins both see `active`, one deactivates, and the
+            # other's stale `active` would otherwise look like "no change" — no
+            # audit row — while its UPDATE put the status back, and with it every
+            # linked huvudmedlem's herd access (same rule as memberships.py).
+            ms = Membership.select().where(Membership.id == ms.id).for_update().get()
+            changed = []
+            if new_status is not None and new_status != ms.membership_status:
+                set_membership_status(ms, new_status, current_user)
+                changed.append(Membership.membership_status)
+            if "notes" in body:
+                ms.notes = (body["notes"] or "").strip() or None
+                changed.append(Membership.notes)
+            # UPDATE only the changed columns — a full-row save would push every
+            # attribute the instance carries, changed or not.
+            ms.save(only=changed + [Membership.updated_at])
+    except TransitionRefused:
+        # Raised, not returned: a `return` inside atomic() would commit the rest of the request.
+        return problem(
+            409,
+            "Medlemskapet är avslutat",
+            "Ett avslutat medlemskap kan inte återaktiveras. Skapa ett nytt medlemskap.",
+        )
     return jsonify(_membership_to_dict(ms))
 
 

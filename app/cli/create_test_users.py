@@ -12,7 +12,9 @@ import os
 import sys
 
 from utils import data_access as da
-from utils.database import Genebank, Herd, Individual, Member, Membership, User, latest_ht_per_individual, not_voided
+from utils.database import Genebank, Herd, Individual, Member, User, latest_ht_per_individual, not_voided
+from utils.matrikel import new_membership
+from utils.membership_lifecycle import Status
 
 
 def _herd_has_individuals(herd):
@@ -239,7 +241,7 @@ def create_test_users():
             # Fallback: a row an older run created without a user link.
             existing = Member.select().where(Member.email == "test-member@test.local").first()
         if existing is None:
-            membership = Membership.create(membership_status="active")
+            membership = new_membership(Status.ACTIVE)
             if gk_herd is not None and gk_herd.membership_id is None:
                 gk_herd.membership = membership
                 gk_herd.save()

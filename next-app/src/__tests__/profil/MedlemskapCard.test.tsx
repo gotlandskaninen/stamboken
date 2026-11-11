@@ -2,9 +2,13 @@ import React from "react";
 import { describe, it, expect, afterEach } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import { MedlemskapCard } from "@/app/(app)/stamboken/(dashboard)/profil/MedlemskapCard";
+import type { MembershipStatus } from "@/lib/membershipStatus";
 import type { Me } from "@/app/(app)/stamboken/(dashboard)/profil/types";
 
-const me = (status: string, role: Me["role"] = "familjemedlem"): Me => ({
+const me = (
+  status: Me["membership"]["membership_status"],
+  role: Me["role"] = "familjemedlem",
+): Me => ({
   id: 2,
   first_name: "Erik",
   last_name: "Lindqvist",
@@ -33,7 +37,7 @@ const me = (status: string, role: Me["role"] = "familjemedlem"): Me => ({
 afterEach(cleanup);
 
 describe("MedlemskapCard", () => {
-  it.each([
+  it.each<[MembershipStatus, string]>([
     ["active", "Aktiv"],
     ["inactive", "Inaktiv"],
     ["pending", "Väntar"],

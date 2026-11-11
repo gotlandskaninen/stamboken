@@ -1,6 +1,12 @@
 "use client";
 
-import React, { useState, useEffect, useTransition, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useTransition,
+  useCallback,
+} from "react";
 import {
   Alert,
   Box,
@@ -163,7 +169,11 @@ export function RegisterRabbitDialog({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<SuccessData | null>(null);
 
+  // Monotonic request id: an older response must not overwrite a newer one.
+  const suggestionReq = useRef(0);
+
   const fetchSuggestion = useCallback(async () => {
+    const req = ++suggestionReq.current;
     const litter =
       breedingId ??
       (motherNumber && fatherNumber && birthDateIso
@@ -176,10 +186,21 @@ export function RegisterRabbitDialog({
     if (litter === null) {
       setSuggestion(null);
       setLitterOrder(false);
+      setIsLoadingSuggestion(false);
       return;
     }
     setIsLoadingSuggestion(true);
-    const result = await suggestIndividualNumber(litter);
+    let result;
+    try {
+      result = await suggestIndividualNumber(litter);
+    } catch {
+      result = {
+        success: false as const,
+        error: t("litterRoster.promoteError"),
+        errorTitle: undefined,
+      };
+    }
+    if (req !== suggestionReq.current) return;
     setIsLoadingSuggestion(false);
     if (result.success) {
       setSuggestion(result.data);
@@ -191,7 +212,7 @@ export function RegisterRabbitDialog({
       setLitterOrder(result.errorTitle === "litter_order_conflict");
       setError(result.error);
     }
-  }, [breedingId, motherNumber, fatherNumber, birthDateIso]);
+  }, [breedingId, motherNumber, fatherNumber, birthDateIso, t]);
 
   // Fetch suggestion when dialog opens
   useEffect(() => {

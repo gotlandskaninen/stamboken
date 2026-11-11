@@ -26,8 +26,8 @@ from blueprints.common import (  # noqa: E402
 from flask import Flask  # noqa: E402
 from flask_login import LoginManager, UserMixin  # noqa: E402
 from herdbook import APP, limiter  # noqa: E402
-from utils.cert_service_v2 import assign_certificate_number  # noqa: E402
 from utils.herd_tracking import BIRTH_HERD_CHANGED_REASON, replace_birth_row  # noqa: E402
+from utils.individual_commands import assign_certificate_number  # noqa: E402
 from utils.individual_number_v2 import renumber_litters  # noqa: E402
 
 from tests.database_test import DatabaseTest  # noqa: E402

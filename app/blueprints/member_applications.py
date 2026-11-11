@@ -16,14 +16,16 @@ from peewee import IntegrityError, fn
 # module-level DATABASE symbol directly will be None at call time.
 # Note: try_auto_link_member is NOT imported here. Auto-link only
 # happens in the OAuth callback (app/herdbook.py), never at approve time.
-from utils.database import BILLING_FIELDS, DB_PROXY, Genebank, Member, MemberApplication, Membership
+from utils.database import BILLING_FIELDS, DB_PROXY, Genebank, Member, MemberApplication
 from utils.matrikel import (
     AddressValidationError,
     allocate_member_number,
+    new_membership,
     normalize_postal_code,
     parse_billing_fields,
     write_matrikel_audit,
 )
+from utils.membership_lifecycle import Status
 
 from blueprints.common import (
     EMAIL_RE,
@@ -274,9 +276,9 @@ def approve_application(app_id: int):
                     created_member_id=a.created_member_id,
                 )
 
-            membership = Membership.create(
+            membership = new_membership(
+                Status.ACTIVE,
                 member_number=allocate_member_number(),
-                membership_status="active",
                 address=a.address,
                 postal_code=a.postal_code,
                 city=a.city,

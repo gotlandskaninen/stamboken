@@ -14,6 +14,11 @@ import {
 } from "@mui/material";
 import { useSnackbar } from "@/components/SnackbarProvider";
 import { useNotifications } from "@/contexts/NotificationContext";
+import {
+  CREATABLE_STATUSES,
+  MEMBERSHIP_STATUS,
+  type MembershipStatus,
+} from "@/lib/membershipStatus";
 import { formatPostalCode, isValidPostalCode } from "@/lib/postal";
 import { createMembership } from "./actions";
 import styles from "../medlem.module.css";
@@ -26,7 +31,7 @@ const EMPTY_CREATE_FORM = {
   address: "",
   postal_code: "",
   city: "",
-  membership_status: "active",
+  membership_status: "active" as MembershipStatus,
   allocate: true,
 };
 
@@ -166,12 +171,17 @@ export function NewMembershipDialog({
             label="Status"
             value={form.membership_status}
             onChange={(e) =>
-              setForm({ ...form, membership_status: e.target.value })
+              setForm({
+                ...form,
+                membership_status: e.target.value as MembershipStatus,
+              })
             }
           >
-            <MenuItem value="active">Aktiv</MenuItem>
-            <MenuItem value="pending">Väntar</MenuItem>
-            <MenuItem value="friexemplar">Friexemplar</MenuItem>
+            {CREATABLE_STATUSES.map((s) => (
+              <MenuItem key={s} value={s}>
+                {MEMBERSHIP_STATUS[s].label}
+              </MenuItem>
+            ))}
           </TextField>
           <FormControlLabel
             control={
