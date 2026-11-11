@@ -100,64 +100,79 @@ export function NextSteps({ slug }: { slug: string }) {
       className="next-steps"
       aria-label="Nästa steg"
       sx={{
-        mt: { xs: 8, md: 12 },
+        mt: 14,
         bgcolor: "paper.2",
         border: 1,
         borderColor: "line.strong",
         borderRadius: "8px",
-        p: { xs: 6, md: 9 },
         display: "grid",
-        gridTemplateColumns: { xs: "1fr", md: "1fr auto" },
-        gap: 6,
-        alignItems: "center",
+        gridTemplateColumns: {
+          xs: "1fr",
+          sm: "minmax(0, 1.15fr) minmax(0, 1fr)",
+        },
       }}
     >
-      <Box>
-        <Typography variant="h4" component="h2" sx={{ m: 0 }}>
+      <Box sx={{ p: { xs: 6, sm: 9 } }}>
+        <Typography variant="h4" component="h2" sx={{ m: 0, fontWeight: 400 }}>
           {content.title}
         </Typography>
-        <Typography sx={{ mt: 2, color: "ink.2", maxWidth: 520 }}>
+        <Typography sx={{ mt: 2.5, mb: 6, color: "ink.2", maxWidth: "40ch" }}>
           {content.text}
         </Typography>
+        <LinkButton
+          href={content.primary.href}
+          variant="contained"
+          endIcon={<Icon d={ICONS.arrow} size={14} />}
+        >
+          {content.primary.label}
+        </LinkButton>
       </Box>
-      <LinkButton
-        href={content.primary.href}
-        variant="contained"
-        endIcon={<Icon d={ICONS.arrow} size={14} />}
-      >
-        {content.primary.label}
-      </LinkButton>
       <Box
+        component="ul"
         sx={{
-          gridColumn: "1 / -1",
-          pt: 2,
-          borderTop: 1,
-          borderColor: "line.main",
+          m: 0,
+          px: { xs: 6, sm: 9 },
+          py: { xs: 2, sm: 5 },
+          listStyle: "none",
+          // Full shorthands: a responsive `borderLeft: 1` lands after
+          // `borderColor` in the CSS and resets the colour to the text colour.
+          borderLeft: { sm: "1px solid var(--sb-line-strong)" },
+          borderTop: { xs: "1px solid var(--sb-line-strong)", sm: "none" },
           display: "flex",
-          flexWrap: "wrap",
-          columnGap: 8,
+          flexDirection: "column",
+          justifyContent: "center",
         }}
       >
-        {content.more.map((step) => (
-          <Link
+        {content.more.map((step, i) => (
+          <Box
+            component="li"
             key={step.href}
-            href={step.href}
-            style={{ color: "inherit", textDecoration: "none" }}
+            sx={{ borderTop: i ? 1 : 0, borderColor: "line.main" }}
           >
-            <Typography
-              component="span"
-              sx={{
-                display: "inline-block",
-                py: 2,
-                color: "ink.main",
-                textDecoration: "underline",
-                textDecorationColor: "line.strong",
-                textUnderlineOffset: "3px",
-              }}
+            <Link
+              href={step.href}
+              style={{ color: "inherit", textDecoration: "none" }}
             >
-              {step.label} &rarr;
-            </Typography>
-          </Link>
+              <Typography
+                component="span"
+                sx={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "baseline",
+                  gap: 4,
+                  py: 3.5,
+                  fontWeight: 500,
+                  "&:hover": {
+                    textDecoration: "underline",
+                    textUnderlineOffset: "3px",
+                  },
+                }}
+              >
+                <span>{step.label}</span>
+                <span aria-hidden="true">&rarr;</span>
+              </Typography>
+            </Link>
+          </Box>
         ))}
       </Box>
     </Box>
