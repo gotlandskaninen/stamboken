@@ -312,6 +312,7 @@ function BreedsSection() {
                     borderTop: 1,
                     borderColor: "line.main",
                     display: "flex",
+                    flexWrap: "wrap",
                     justifyContent: "space-between",
                     alignItems: "center",
                     gap: 3,
@@ -341,6 +342,7 @@ function BreedsSection() {
                   <Typography
                     sx={{
                       fontSize: "14px",
+                      whiteSpace: "nowrap",
                       color: "ink.main",
                       textDecoration: "underline",
                       textDecorationColor: "line.strong",
