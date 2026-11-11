@@ -59,8 +59,8 @@ test.describe("Landing page sections", () => {
     ).toBeVisible();
 
     // Spot-check a few EU items
-    await expect(euSection.getByText("Genbanksintyg").first()).toBeVisible();
-    await expect(euSection.getByText("Kurser & utbildningar")).toBeVisible();
+    await expect(euSection.getByRole("listitem")).toHaveCount(8);
+    await expect(euSection.getByText("Genbanksintyg")).toBeVisible();
   });
 
   test("CTA section renders with membership info", async ({ page }) => {

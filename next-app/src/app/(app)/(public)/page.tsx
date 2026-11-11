@@ -458,14 +458,14 @@ function BreedsSection() {
 }
 
 const EU_ITEMS = [
-  ["Genbanks­besättningar", "Drift och underhåll"],
-  ["Medlems­tidningen", "Koharen, 3 nr/år"],
-  ["Trycksaker", "Faktablad, Färgatlas"],
-  ["Genbanksintyg", "Officiella dokument"],
-  ["Kurser & utbildningar", "För medlemmar"],
-  ["Transport av djur", "Värdefulla individer"],
-  ["Obduktioner", "Veterinär­medicinsk uppföljning"],
-  ["Marknadsföring", "Spridning av kunskap"],
+  "Genbanksbesättningarna",
+  "Medlemstidningen Koharen",
+  "Trycksaker som faktablad och färgatlas",
+  "Genbanksintyg",
+  "Kurser och utbildningar",
+  "Transport av värdefulla djur",
+  "Obduktioner",
+  "Marknadsföring",
 ];
 
 function EUSection() {
@@ -505,10 +505,6 @@ function EUSection() {
           position: "relative",
           display: "grid",
           gridTemplateColumns: {
-            // minmax(0, 1fr): a plain 1fr track is minmax(auto, 1fr), and the
-            // auto-fit EU_ITEMS grid below reports a 3-column min-content width
-            // (688px) that widened this column past a phone screen; the section
-            // is overflow:hidden, so the right half was simply cut off.
             xs: "minmax(0, 1fr)",
             md: "minmax(80px, 160px) minmax(0, 1fr) minmax(220px, 280px)",
           },
@@ -537,53 +533,31 @@ function EUSection() {
           </Typography>
           <Typography
             variant="lede"
-            sx={{
-              mt: 5.5,
-              color: "rgba(244,241,234,0.86)",
-              maxWidth: 720,
-            }}
+            sx={{ mt: 5.5, display: "block", color: "rgba(244,241,234,0.86)" }}
           >
-            Stödet går till genbanksbesättningarna, medlemstidningen,
-            trycksaker, genbanksintyg, marknadsföring, kurser, utbildningar,
-            transport av värdefulla djur samt obduktioner.
+            Stödet går till:
           </Typography>
           <Box
+            component="ul"
             sx={{
-              mt: 9,
+              mt: 4.5,
+              mb: 0,
+              p: 0,
+              listStyle: "none",
               display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: 3.5,
+              gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
+              columnGap: 8,
+              rowGap: 3,
               maxWidth: 720,
             }}
           >
-            {EU_ITEMS.map(([t, s], i) => (
+            {EU_ITEMS.map((item) => (
               <Box
-                key={i}
-                sx={{
-                  p: "14px 16px",
-                  bgcolor: "rgba(244,241,234,0.08)",
-                  borderLeft: "2px solid #e8c8a8",
-                  borderRadius: "0 4px 4px 0",
-                }}
+                component="li"
+                key={item}
+                sx={{ pl: 3.5, borderLeft: "2px solid #e8c8a8" }}
               >
-                <Typography
-                  sx={{
-                    fontSize: "14px",
-                    fontWeight: 500,
-                    color: "paper.main",
-                  }}
-                >
-                  {t}
-                </Typography>
-                <Typography
-                  sx={{
-                    fontSize: "12px",
-                    color: "rgba(244,241,234,0.65)",
-                    mt: 0.5,
-                  }}
-                >
-                  {s}
-                </Typography>
+                {item}
               </Box>
             ))}
           </Box>
