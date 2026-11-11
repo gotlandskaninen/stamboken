@@ -1,8 +1,9 @@
 import { notFound } from "next/navigation";
 import { getPublishedPage } from "@/lib/payload-queries";
-import { Box } from "@mui/material";
+import { Box, Container } from "@mui/material";
 import { RenderBlocks } from "@/components/blocks/RenderBlocks";
 import { PageHeader } from "@/components/public/PageHeader";
+import { NextSteps } from "@/components/public/NextSteps";
 import type { Metadata } from "next";
 
 type Props = { params: Promise<{ slug: string }> };
@@ -75,6 +76,9 @@ export default async function CmsPage({ params }: Props) {
       {hasBlocks && (
         <Box sx={{ px: { xs: 6, md: 14 }, py: { xs: 10, md: 16 } }}>
           <RenderBlocks blocks={pageAny.layout} />
+          <Container maxWidth="md">
+            <NextSteps slug={slug} />
+          </Container>
         </Box>
       )}
     </>
