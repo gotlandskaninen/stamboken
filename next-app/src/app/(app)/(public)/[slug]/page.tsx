@@ -11,8 +11,17 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const page = await getPublishedPage(slug);
   if (!page) return {};
+  const title = page.meta?.title || page.title;
   return {
-    title: page.meta?.title || page.title,
+    // The layout's title template ends with the association's name, so the
+    // page about the association would otherwise repeat it.
+    title:
+      title === "Föreningen Gotlandskaninen"
+        ? {
+            absolute:
+              "Föreningen Gotlandskaninen – bevarande av svenska lantraskaniner",
+          }
+        : title,
     description: page.meta?.description || undefined,
     openGraph: {
       title: page.meta?.title || page.title,
