@@ -25,6 +25,7 @@ import {
 } from "@/app/(app)/stamboken/(dashboard)/min-besattning/actions";
 import styles from "@/app/(app)/stamboken/(dashboard)/min-besattning/min-besattning.module.css";
 import { LitterRoster } from "./LitterRoster";
+import { renumberView, type RenumberFlow } from "./renumberFlow";
 
 const RegisterRabbitDialog = dynamic(
   () => import("./RegisterRabbitDialog").then((m) => m.RegisterRabbitDialog),
@@ -96,14 +97,14 @@ export function BreedingList({
   const [registerBreedingId, setRegisterBreedingId] = useState<number | null>(
     null,
   );
-  const [conflictData, setConflictData] = useState<{
-    conflicts: any[];
-    // null when the conflict was detected right after a birth registration —
-    // there is no pending rabbit registration to resume after renumbering.
-    pendingBreedingId: number | null;
-  } | null>(null);
-  const [isRenumbering, setIsRenumbering] = useState(false);
-  const [renumberError, setRenumberError] = useState<string | null>(null);
+  const [renumber, setRenumber] = useState<
+    RenumberFlow<{
+      conflicts: any[];
+      // null when the conflict was detected right after a birth registration —
+      // there is no pending rabbit registration to resume after renumbering.
+      pendingBreedingId: number | null;
+    }>
+  >({ phase: "closed" });
   // Captured once at mount — stable age-gate reference (avoids hydration mismatch)
   const [nowMs] = useState(() => Date.now());
   const [guideDismissed, setGuideDismissed] = useState(true);
@@ -122,9 +123,12 @@ export function BreedingList({
     const year = new Date(b.birth_date).getFullYear();
     const result = await checkLitterOrder(herdId, year);
     if (result.success && !result.data.consistent) {
-      setConflictData({
-        conflicts: result.data.conflicts as any[],
-        pendingBreedingId: b.id,
+      setRenumber({
+        phase: "conflict",
+        data: {
+          conflicts: result.data.conflicts as any[],
+          pendingBreedingId: b.id,
+        },
       });
     } else {
       setRegisterBreedingId(b.id);
@@ -132,25 +136,32 @@ export function BreedingList({
   };
 
   const handleRenumberConfirm = async () => {
-    if (!conflictData || !herdId) return;
+    if (renumber.phase !== "conflict" || !herdId) return;
+    const { data } = renumber;
     const year = parseInt(
-      conflictData.conflicts[0]?.birth_date?.substring(0, 4) || "0",
+      data.conflicts[0]?.birth_date?.substring(0, 4) || "0",
     );
-    setIsRenumbering(true);
-    setRenumberError(null);
-    const result = await renumberLitters(herdId, year, true);
-    setIsRenumbering(false);
-    if (result.success) {
-      if (conflictData.pendingBreedingId != null) {
-        setRegisterBreedingId(conflictData.pendingBreedingId);
+    setRenumber({ phase: "renumbering", data });
+    let result;
+    try {
+      result = await renumberLitters(herdId, year, true);
+    } catch {
+      result = null; // dropped connection: back to the dialog with an error
+    }
+    if (result?.success) {
+      if (data.pendingBreedingId != null) {
+        setRegisterBreedingId(data.pendingBreedingId);
       }
-      setConflictData(null);
+      setRenumber({ phase: "closed" });
     } else {
-      setRenumberError(
-        result.errorStatus === 403
-          ? t("addRabbit.conflict.renumberManagerRequired")
-          : t("addRabbit.conflict.renumberFailed"),
-      );
+      setRenumber({
+        phase: "conflict",
+        data,
+        error:
+          result?.errorStatus === 403
+            ? t("addRabbit.conflict.renumberManagerRequired")
+            : t("addRabbit.conflict.renumberFailed"),
+      });
     }
   };
 
@@ -180,17 +191,21 @@ export function BreedingList({
       return `${yyyy}-${mm}-${dd}`;
     };
     setIsSubmittingEdit(true);
-    const success = await onUpdate({
-      id: b.id,
-      breeding_herd: b.breeding_herd,
-      breed_date: fmt(editBreedDate),
-      breed_notes: editBreedNotes,
-      birth_date: fmt(editBirthDate),
-      birth_notes: editBirthNotes,
-      litter_size: editLitterSize ? parseInt(editLitterSize) : null,
-      litter_size6w: editLitterSize6w ? parseInt(editLitterSize6w) : null,
-    });
-    setIsSubmittingEdit(false);
+    let success;
+    try {
+      success = await onUpdate({
+        id: b.id,
+        breeding_herd: b.breeding_herd,
+        breed_date: fmt(editBreedDate),
+        breed_notes: editBreedNotes,
+        birth_date: fmt(editBirthDate),
+        birth_notes: editBirthNotes,
+        litter_size: editLitterSize ? parseInt(editLitterSize) : null,
+        litter_size6w: editLitterSize6w ? parseInt(editLitterSize6w) : null,
+      });
+    } finally {
+      setIsSubmittingEdit(false);
+    }
     if (success) resetEdit();
   };
 
@@ -208,14 +223,18 @@ export function BreedingList({
     const mm = String(birthDate.getMonth() + 1).padStart(2, "0");
     const dd = String(birthDate.getDate()).padStart(2, "0");
     setIsSubmittingBirth(true);
-    const success = await onRegisterBirth({
-      breedingId,
-      date: `${yyyy}-${mm}-${dd}`,
-      litter_size: parseInt(litterSize),
-      litter_size6w: litterSize6w ? parseInt(litterSize6w) : null,
-      notes: birthNotes || undefined,
-    });
-    setIsSubmittingBirth(false);
+    let success;
+    try {
+      success = await onRegisterBirth({
+        breedingId,
+        date: `${yyyy}-${mm}-${dd}`,
+        litter_size: parseInt(litterSize),
+        litter_size6w: litterSize6w ? parseInt(litterSize6w) : null,
+        notes: birthNotes || undefined,
+      });
+    } finally {
+      setIsSubmittingBirth(false);
+    }
     if (success) {
       resetBirthForm();
       // An out-of-order birth is appended at the end of the number series;
@@ -223,9 +242,12 @@ export function BreedingList({
       if (herdId) {
         const check = await checkLitterOrder(herdId, yyyy);
         if (check.success && !check.data.consistent) {
-          setConflictData({
-            conflicts: check.data.conflicts as any[],
-            pendingBreedingId: null,
+          setRenumber({
+            phase: "conflict",
+            data: {
+              conflicts: check.data.conflicts as any[],
+              pendingBreedingId: null,
+            },
           });
         }
       }
@@ -1006,17 +1028,13 @@ export function BreedingList({
       )}
 
       {/* Conflict resolution dialog */}
-      {conflictData && (
+      {renumber.phase !== "closed" && (
         <LitterNumberConflictDialog
-          conflicts={conflictData.conflicts}
+          conflicts={renumber.data.conflicts}
           open
           onConfirm={handleRenumberConfirm}
-          onClose={() => {
-            setConflictData(null);
-            setRenumberError(null);
-          }}
-          isRenumbering={isRenumbering}
-          error={renumberError}
+          onClose={() => setRenumber({ phase: "closed" })}
+          {...renumberView(renumber)}
         />
       )}
     </Box>

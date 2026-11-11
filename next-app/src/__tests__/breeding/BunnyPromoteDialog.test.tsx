@@ -10,20 +10,26 @@ import {
 import "@/i18n";
 import { BunnyPromoteDialog } from "@/components/herd/BunnyPromoteDialog";
 
-const { promoteBunny, updateBreeding, checkIndividualNumber } = vi.hoisted(
-  () => ({
-    promoteBunny: vi.fn(),
-    updateBreeding: vi.fn(),
-    checkIndividualNumber: vi.fn(),
-  }),
-);
+const {
+  promoteBunny,
+  updateBreeding,
+  checkIndividualNumber,
+  checkLitterOrder,
+  renumberLitters,
+} = vi.hoisted(() => ({
+  promoteBunny: vi.fn(),
+  updateBreeding: vi.fn(),
+  checkIndividualNumber: vi.fn(),
+  checkLitterOrder: vi.fn(),
+  renumberLitters: vi.fn(),
+}));
 
 vi.mock("@/app/(app)/stamboken/(dashboard)/min-besattning/actions", () => ({
   promoteBunny,
   updateBreeding,
   checkIndividualNumber,
-  checkLitterOrder: vi.fn(),
-  renumberLitters: vi.fn(),
+  checkLitterOrder,
+  renumberLitters,
   getColors: vi.fn().mockResolvedValue(null),
 }));
 vi.mock("@/lib/mode-context", () => ({ useMode: () => "prod" }));
@@ -148,4 +154,75 @@ describe("BunnyPromoteDialog without alive at 6 weeks", () => {
     );
     expect(updateBreeding).not.toHaveBeenCalled();
   }, 20000); // the full MUI dialog renders slowly under the parallel suite
+});
+
+describe("BunnyPromoteDialog litter renumbering", () => {
+  it("returns to the conflict dialog with an error when the renumber call rejects", async () => {
+    promoteBunny.mockResolvedValue({
+      success: false,
+      error: "x",
+      errorTitle: "litter_order_conflict",
+    });
+    checkLitterOrder.mockResolvedValue({
+      success: true,
+      data: {
+        consistent: false,
+        conflicts: [
+          {
+            breeding_id: 4,
+            current_litter_number: 3,
+            suggested_litter_number: 2,
+            birth_date: "2025-05-01",
+          },
+        ],
+      },
+    });
+    renumberLitters.mockRejectedValue(new Error("network down"));
+    render(
+      <BunnyPromoteDialog
+        open
+        onClose={() => {}}
+        onPromoted={() => {}}
+        bunny={{
+          id: 9,
+          breeding_id: 4,
+          slot_order: 1,
+          observed_sex: "female",
+          observed_color: "Viltgrå",
+          label: null,
+          notes: null,
+          fate: "undecided",
+          provisional_number: "G1-2511",
+          individual: null,
+        }}
+        breeding={{
+          id: 4,
+          litter_size: 4,
+          litter_size6w: 2,
+          birth_date: "2025-05-01",
+        }}
+        herdId="G1"
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Registrera" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Numrera om kullar automatiskt",
+      }),
+    );
+
+    await screen.findByText("Kunde inte numrera om kullarna");
+    // Not stuck: both buttons are usable again and the dialog can be dismissed.
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Numrera om kullar automatiskt",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+    expect(
+      (screen.getByRole("button", { name: "Avbryt" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+  }, 20000);
 });
