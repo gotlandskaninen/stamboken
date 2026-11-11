@@ -192,8 +192,6 @@ export function NavDropdown({ label, href, items, active }: NavDropdownProps) {
               display: "block",
               px: 4,
               py: 2.5,
-              borderTop: 1,
-              borderColor: "line.faint",
               textDecoration: "none",
               color: "inherit",
               "&:hover": { bgcolor: "paper.2" },
@@ -201,6 +199,9 @@ export function NavDropdown({ label, href, items, active }: NavDropdownProps) {
           >
             <Typography sx={{ fontSize: "14px", fontWeight: 600 }}>
               Om lantraskaninen
+            </Typography>
+            <Typography variant="mono" sx={{ mt: 0.5 }}>
+              vad en lantras är
             </Typography>
           </Box>
         </Box>
