@@ -166,6 +166,62 @@ function HeroSection() {
   );
 }
 
+const MISSION_LINKS = [
+  { href: "/foreningen", label: "Så fungerar genbanken" },
+  { href: "/bli-genbank", label: "Bli genbanksbesättning" },
+];
+
+function MissionSection() {
+  return (
+    <Box component="section" sx={{ px: { xs: 6, md: 14 }, pt: 16 }}>
+      <Box
+        sx={{
+          display: "grid",
+          gridTemplateColumns: { xs: "1fr", md: "minmax(80px, 160px) 1fr" },
+          gap: 8,
+        }}
+      >
+        <Typography variant="eyebrow">Uppdraget</Typography>
+        <Box>
+          <Typography variant="h2" sx={{ m: 0 }}>
+            Genbanken finns hemma hos medlemmarna.
+          </Typography>
+          <Typography
+            variant="lede"
+            sx={{ mt: 3.5, maxWidth: 720, display: "block" }}
+          >
+            Den gamla svenska lantraskaninen var nära att försvinna när gårdarna
+            slutade hålla kaniner och nya raser tog över. I dag lever den vidare
+            hos uppfödare runt om i Sverige som har avtal med föreningen. Varje
+            kanin i genbanken har ett intyg och finns i stamboken.
+          </Typography>
+          <Box sx={{ mt: 5, display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {MISSION_LINKS.map((l) => (
+              <Link
+                key={l.href}
+                href={l.href}
+                style={{ color: "inherit", textDecoration: "none" }}
+              >
+                <Typography
+                  component="span"
+                  sx={{
+                    color: "ink.main",
+                    textDecoration: "underline",
+                    textDecorationColor: "line.strong",
+                    textUnderlineOffset: "3px",
+                  }}
+                >
+                  {l.label} &rarr;
+                </Typography>
+              </Link>
+            ))}
+          </Box>
+        </Box>
+      </Box>
+    </Box>
+  );
+}
+
 // Card images are AI-generated illustrations chosen by the owner (2026-09-11);
 // the gotlandskanin one portrays Blomma, 107-014G.
 // `pos` keeps the rabbit in frame when the 320 px card crops the wide image
@@ -480,7 +536,7 @@ function EUSection() {
 
 function MemberSection() {
   return (
-    <Box component="section" sx={{ px: { xs: 6, md: 14 }, pt: 20, pb: 8 }}>
+    <Box component="section" sx={{ px: { xs: 6, md: 14 }, py: 20 }}>
       <Box
         sx={{
           display: "grid",
@@ -489,10 +545,20 @@ function MemberSection() {
           mb: 10,
         }}
       >
-        <Typography variant="eyebrow">Medlems&shy;verksamhet</Typography>
-        <Typography variant="h2" sx={{ m: 0 }}>
-          En tidskrift, ett forum, en stambok.
-        </Typography>
+        <Typography variant="eyebrow">Medlemskap</Typography>
+        <Box>
+          <Typography variant="h2" sx={{ m: 0 }}>
+            Bli en del av bevarandet.
+          </Typography>
+          <Typography
+            variant="lede"
+            sx={{ mt: 3.5, maxWidth: 720, display: "block" }}
+          >
+            Som medlem får du en tidskrift, ett forum och en stambok. Och du är
+            med och håller raserna vid liv, oavsett om du föder upp kaniner
+            själv.
+          </Typography>
+        </Box>
       </Box>
 
       <Box
@@ -607,29 +673,10 @@ function MemberSection() {
           </Link>
         ))}
       </Box>
-    </Box>
-  );
-}
-
-function CTASection() {
-  return (
-    <Box component="section" sx={{ px: { xs: 6, md: 14 }, pt: 8, pb: 20 }}>
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: { xs: "1fr", md: "minmax(80px, 160px) 1fr" },
-          gap: 8,
-          mb: 10,
-        }}
-      >
-        <Typography variant="eyebrow">Medlemskap</Typography>
-        <Typography variant="h2" sx={{ m: 0 }}>
-          Bli en del av bevarandet.
-        </Typography>
-      </Box>
 
       <Box
         sx={{
+          mt: 6,
           bgcolor: "paper.2",
           border: 1,
           borderColor: "line.strong",
@@ -655,7 +702,7 @@ function CTASection() {
         >
           <Image src="/stamboken/logo.png" alt="" width={56} height={56} />
         </Box>
-        <Box sx={{ minWidth: 280 }}>
+        <Box>
           <Typography variant="h3" sx={{ m: 0 }}>
             200 kr om året.
           </Typography>
@@ -667,8 +714,7 @@ function CTASection() {
               maxWidth: 600,
             }}
           >
-            Som medlem får du föreningens medlemstidning Koharen tre gånger om
-            året, tillgång till medlemsforum och Stamboken Online.
+            Medlemskapet gäller hela familjen.
           </Typography>
         </Box>
         <Box sx={{ display: "flex", gap: 2.5, flexWrap: "wrap" }}>
@@ -692,10 +738,10 @@ export default function HomePage() {
   return (
     <>
       <HeroSection />
+      <MissionSection />
       <BreedsSection />
       <EUSection />
       <MemberSection />
-      <CTASection />
     </>
   );
 }

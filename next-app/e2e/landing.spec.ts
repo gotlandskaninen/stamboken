@@ -30,6 +30,17 @@ test.describe("Landing page sections", () => {
     ).toBeVisible();
   });
 
+  test("mission section explains the gene bank and links on", async ({
+    page,
+  }) => {
+    await expect(
+      page.getByRole("heading", { level: 2, name: /Genbanken finns hemma/ }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("link", { name: /Så fungerar genbanken/ }),
+    ).toHaveAttribute("href", "/foreningen");
+  });
+
   test("breeds section renders with both breeds", async ({ page }) => {
     await expect(
       page.getByRole("heading", { level: 2, name: /lantraskaninen\./ }),
@@ -63,7 +74,9 @@ test.describe("Landing page sections", () => {
     await expect(euSection.getByText("Genbanksintyg")).toBeVisible();
   });
 
-  test("CTA section renders with membership info", async ({ page }) => {
+  test("membership section ends with the price and the button", async ({
+    page,
+  }) => {
     await expect(
       page.getByRole("heading", { name: /bevarandet/ }),
     ).toBeVisible();
