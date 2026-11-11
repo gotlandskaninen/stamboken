@@ -185,30 +185,23 @@ export function NavDropdown({ label, href, items, active }: NavDropdownProps) {
             </Box>
           ))}
           <Box
+            component={Link}
+            href={href}
+            onClick={close}
             sx={{
-              borderTop: 1,
-              borderColor: "line.faint",
+              display: "block",
               px: 4,
               py: 2.5,
+              borderTop: 1,
+              borderColor: "line.faint",
+              textDecoration: "none",
+              color: "inherit",
+              "&:hover": { bgcolor: "paper.2" },
             }}
           >
-            <Box
-              component={Link}
-              href={href}
-              onClick={close}
-              sx={{
-                fontSize: "13px",
-                color: "ink.3",
-                textDecoration: "none",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                "&:hover": { color: "ink.main" },
-              }}
-            >
+            <Typography sx={{ fontSize: "14px", fontWeight: 600 }}>
               Om lantraskaninen
-              <span>&rarr;</span>
-            </Box>
+            </Typography>
           </Box>
         </Box>
       )}
