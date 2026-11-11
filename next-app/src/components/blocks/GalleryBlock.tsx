@@ -77,7 +77,8 @@ export function GalleryBlockComponent({ images }: Props) {
           display: "grid",
           gridTemplateColumns: {
             xs: "repeat(4, minmax(0, 1fr))",
-            sm: "repeat(6, minmax(0, 1fr))",
+            // Up to eight share one row; fewer than six keep the six-column size.
+            sm: `repeat(${Math.max(6, Math.min(shown.length, 8))}, minmax(0, 1fr))`,
           },
           gap: 2.5,
         }}
