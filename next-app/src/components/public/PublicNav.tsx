@@ -102,7 +102,7 @@ export async function PublicNav() {
           <Typography
             variant="mono"
             sx={{
-              fontSize: "10px",
+              fontSize: "11px",
               letterSpacing: "0.14em",
               textTransform: "uppercase",
               color: "ink.3",
