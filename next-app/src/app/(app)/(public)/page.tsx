@@ -176,13 +176,6 @@ function HeroSection() {
               skriver vi om våra lantraskaniner, om bevarandearbetet och om
               föreningens verksamhet.
             </Typography>
-            <Typography
-              variant="mono"
-              component="p"
-              sx={{ mt: 4, mb: 0, color: "rgba(244,241,234,0.75)" }}
-            >
-              Bild: ung sandfärgad gotlandskanin i gräset
-            </Typography>
           </Box>
 
           {/* Right — quick shortcuts card */}
