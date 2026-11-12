@@ -390,10 +390,8 @@ Projektägaren beslutade 2026-10-30:
 9. **Dödsorsak**, inte dödsnotering eller dödsanteckning.
 10. **Okänt** om kön, eftersom kön är ett t-ord; **Okänd** där ordet gäller ett en-ord, som okänd mor eller okänd kanin.
 11. **Registrerad kanin** är en kanin som skrivits in i stamboken med intyg, pappersintyg eller digitalt intyg, och därmed fått sitt individnummer. Att registrera utan intyg går inte längre.
-
-Projektägaren beslutade 2026-11-12:
-
-12. **Brokig**, inte scheck, om vita kaniner med färgade fläckar, som i färgatlasen och färgnamnen.
+12. **Brokig**, inte scheck, om vita kaniner med färgade fläckar, som i färgatlasen och färgnamnen
+    (beslutat 2026-11-12).
 
 ## Öppna frågor
 
