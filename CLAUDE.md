@@ -93,9 +93,9 @@ eller planer här, inte heller i `docs/superpowers/`.
 
 - **Kör aldrig pytest i dev-containern**, testerna tömmer databasen. Isolerad
   pytest-stack och dess fällor, vitest och Playwright: [TESTING.md](TESTING.md).
-- `scripts/ci-local.sh` (`--quick`, `--only <steg>`) kör samma kontroller som
-  Actions lokalt; när Actions är av mergas ingen PR utan dess `summary.md` i
-  PR-texten. Detaljer i [TESTING.md](TESTING.md).
+- GitHub Actions är grinden för en PR: alla kontroller ska vara gröna före
+  merge. Kör inte `scripts/ci-local.sh` inför en PR. Skriptet finns kvar för
+  felsökning av ett enskilt steg (`--only <steg>`), se [TESTING.md](TESTING.md).
 - Legacy-regression (API-kontrakt + UI-smoke) vid API-ändringar och före
   release: [docs/legacy-regression-testing.md](docs/legacy-regression-testing.md).
 - CMS lokalt från tom databas: [docs/local-cms-testing.md](docs/local-cms-testing.md).
