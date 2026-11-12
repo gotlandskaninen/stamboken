@@ -11,13 +11,18 @@ test.describe("Landing page sections", () => {
     await page.goto("/", { waitUntil: "networkidle" });
   });
 
-  test("hero section renders with headline and shortcuts", async ({ page }) => {
+  test("hero section renders with headline, price and member links", async ({
+    page,
+  }) => {
     const h1 = page.getByRole("heading", { level: 1 });
     await expect(h1).toContainText("Vi bevarar");
     await expect(h1).toContainText("gotlandskanin och mellerudskanin");
 
-    // Quick shortcuts card
-    await expect(page.getByText("Snabbgenvägar")).toBeVisible();
+    const hero = page.locator(".landing-hero");
+    await expect(hero.getByText(/200 kr om året/)).toBeVisible();
+    await expect(
+      hero.getByRole("link", { name: "Medlemsforum" }),
+    ).toHaveAttribute("href", "/medlemsforum");
 
     // The "nya Stamboken (beta)" notice is scoped to /stamboken-online and
     // the app; the association's landing page must not show it.

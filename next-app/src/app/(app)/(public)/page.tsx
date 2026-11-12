@@ -5,162 +5,157 @@ import { LinkButton } from "@/components/public/LinkButton";
 import { Icon, ICONS } from "@/components/public/Icons";
 import { EUFundingBadge } from "@/components/public/EUFundingBadge";
 
+const heroLinkSx = {
+  display: "inline-block",
+  py: 2,
+  color: "ink.main",
+  textDecoration: "underline",
+  textDecorationColor: "var(--sb-line-strong)",
+  textUnderlineOffset: "3px",
+} as const;
+
+const italicSx = {
+  fontFamily: "'Source Serif 4', Georgia, serif",
+  fontStyle: "italic",
+} as const;
+
 function HeroSection() {
   return (
-    <Box component="section" sx={{ p: { xs: 3, md: 6 }, pb: 0 }}>
+    <Box
+      component="section"
+      className="landing-hero"
+      sx={{
+        px: { xs: 5, md: "clamp(24px, 5vw, 56px)" },
+        pt: { xs: 3, md: 8.5 },
+        display: "grid",
+        gridTemplateColumns: {
+          xs: "minmax(0, 1fr)",
+          md: "minmax(0, 1.05fr) minmax(0, 1fr)",
+        },
+        gap: { xs: 4.5, md: "clamp(24px, 4vw, 64px)" },
+        alignItems: "center",
+      }}
+    >
+      <Box>
+        <Typography
+          variant="h1"
+          component="h1"
+          sx={{
+            m: 0,
+            fontSize: "clamp(34px, 4.4vw, 62px)",
+            lineHeight: 1.05,
+            letterSpacing: "-0.025em",
+          }}
+        >
+          Vi bevarar{" "}
+          <Box component="span" sx={italicSx}>
+            gotlandskanin
+          </Box>{" "}
+          och{" "}
+          <Box component="span" sx={italicSx}>
+            mellerudskanin
+          </Box>{" "}
+          – de sista resterna av Sveriges lantraskaniner.
+        </Typography>
+        <Typography
+          sx={{
+            mt: 3.5,
+            maxWidth: "46ch",
+            fontSize: "clamp(17px, 1.5vw, 20px)",
+            lineHeight: 1.5,
+            color: "ink.2",
+          }}
+        >
+          Raserna lever vidare hemma hos föreningens medlemmar. Som medlem är du
+          med och håller dem vid liv.
+        </Typography>
+        <Box
+          sx={{
+            mt: 5,
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            columnGap: 5,
+            rowGap: 3,
+          }}
+        >
+          <LinkButton
+            href="/bli-medlem"
+            variant="contained"
+            endIcon={<Icon d={ICONS.arrow} size={14} />}
+            sx={{ flex: { xs: "1 1 100%", sm: "0 0 auto" } }}
+          >
+            Bli medlem
+          </LinkButton>
+          <Typography sx={{ fontSize: "15px", color: "ink.2" }}>
+            200 kr om året, för hela familjen
+          </Typography>
+        </Box>
+        <Typography
+          sx={{
+            mt: 5.5,
+            pt: 3.5,
+            borderTop: "1px solid var(--sb-line-strong)",
+            maxWidth: "46ch",
+            fontSize: "15px",
+            color: "ink.2",
+          }}
+        >
+          Omkring 400 medlemmar i hela landet håller i dag omkring 250
+          genbanksbesättningar. Du behöver inte föda upp kaniner själv för att
+          vara med.
+        </Typography>
+        <Box
+          sx={{
+            mt: 2,
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            columnGap: 3,
+            fontSize: "15px",
+            color: "ink.2",
+          }}
+        >
+          <Box
+            component="span"
+            sx={{ flex: { xs: "1 1 100%", sm: "0 0 auto" } }}
+          >
+            Redan medlem?
+          </Box>
+          <Link href="/stamboken-online" style={{ textDecoration: "none" }}>
+            <Box component="span" sx={heroLinkSx}>
+              Stamboken Online
+            </Box>
+          </Link>
+          <Link href="/medlemsforum" style={{ textDecoration: "none" }}>
+            <Box component="span" sx={heroLinkSx}>
+              Medlemsforum
+            </Box>
+          </Link>
+        </Box>
+      </Box>
       <Box
         sx={{
           position: "relative",
+          order: { xs: -1, md: 0 },
+          // Phones: a low banner, so "Bli medlem" stays on the first screen.
+          aspectRatio: { xs: "2 / 1", md: "4 / 5" },
+          maxHeight: { md: 640 },
+          width: { xs: "auto", md: "100%" },
+          mx: { xs: -2, md: 0 },
           borderRadius: "14px",
           overflow: "hidden",
-          minHeight: { sm: 480 },
-          // Phones: the tall stacked copy would crop the landscape photo down to
-          // an eye, so the photo becomes a 16:9 banner and the text sits on a
-          // skog panel below it. From sm the photo is the backdrop again (the
-          // Snabbgenvägar card must stay above the fold on tablets).
-          bgcolor: { xs: "skog.main", sm: "transparent" },
+          bgcolor: "paper.3",
         }}
       >
-        <Box
-          sx={{
-            position: { xs: "relative", sm: "absolute" },
-            inset: { sm: 0 },
-            aspectRatio: { xs: "16 / 9", sm: "auto" },
-          }}
-        >
-          <Image
-            src="/stamboken/hero-ungkanin-grass.jpg"
-            alt="Ung sandfärgad gotlandskanin i gräset"
-            fill
-            priority
-            sizes="100vw"
-            style={{ objectFit: "cover", objectPosition: "60% 40%" }}
-          />
-          <Box
-            sx={{
-              position: "absolute",
-              inset: 0,
-              background: {
-                xs: "linear-gradient(180deg, rgba(31,27,22,0) 70%, rgba(31,51,34,0.85) 100%)",
-                sm: "linear-gradient(180deg, rgba(31,27,22,0.42) 0%, rgba(31,27,22,0.32) 48%, rgba(31,27,22,0.82) 100%)",
-              },
-            }}
-          />
-        </Box>
-
-        <Box
-          sx={{
-            position: "relative",
-            p: {
-              xs: 5,
-              sm: 6,
-              md: "clamp(32px, 5vw, 64px) clamp(24px, 4vw, 56px) 56px",
-            },
-            display: "grid",
-            gridTemplateColumns: {
-              xs: "1fr",
-              md: "minmax(0, 1.4fr) minmax(280px, 1fr)",
-            },
-            gap: { xs: 6, md: "clamp(24px, 4vw, 48px)" },
-            alignItems: "end",
-            minHeight: { sm: 480 },
-          }}
-        >
-          {/* Left — headline. On phones its children join the grid so the
-              shortcuts card can sit between the headline and the welcome text,
-              which keeps "Bli medlem" on the first screen. */}
-          <Box sx={{ display: { xs: "contents", sm: "block" } }}>
-            <Typography
-              variant="h1"
-              component="h1"
-              sx={{
-                m: 0,
-                color: "paper.main",
-                fontSize: "clamp(32px, 4vw, 56px)",
-                lineHeight: 1.05,
-                letterSpacing: "-0.025em",
-              }}
-            >
-              Vi bevarar{" "}
-              <Box
-                component="span"
-                sx={{
-                  fontFamily: "'Source Serif 4', Georgia, serif",
-                  fontStyle: "italic",
-                }}
-              >
-                gotlandskanin
-              </Box>{" "}
-              och{" "}
-              <Box
-                component="span"
-                sx={{
-                  fontFamily: "'Source Serif 4', Georgia, serif",
-                  fontStyle: "italic",
-                }}
-              >
-                mellerudskanin
-              </Box>{" "}
-              – de sista resterna av Sveriges lantraskaniner.
-            </Typography>
-            <Typography
-              sx={{
-                mt: { xs: 0, sm: 4, md: 6 },
-                order: { xs: 2, sm: 0 },
-                color: "rgba(244,241,234,0.88)",
-                maxWidth: 620,
-                fontSize: "clamp(15px, 1.4vw, 19px)",
-                lineHeight: 1.5,
-              }}
-            >
-              Välkommen till Föreningen Gotlandskaninens officiella hemsida. Här
-              skriver vi om våra lantraskaniner, om bevarandearbetet och om
-              föreningens verksamhet.
-            </Typography>
-          </Box>
-
-          {/* Right — quick shortcuts card */}
-          <Box
-            component="aside"
-            sx={{
-              order: { xs: 1, sm: 0 },
-              bgcolor: "paper.main",
-              borderRadius: "8px",
-              p: 6.5,
-              boxShadow: 3,
-            }}
-          >
-            <Typography variant="eyebrow" sx={{ mb: 3.5, display: "block" }}>
-              Snabbgenvägar
-            </Typography>
-            <Box sx={{ display: "grid", gap: 2.5 }}>
-              <LinkButton
-                href="/bli-medlem"
-                variant="contained"
-                fullWidth
-                startIcon={<Icon d={ICONS.heart} size={15} />}
-              >
-                Bli medlem
-              </LinkButton>
-              <LinkButton
-                href="/stamboken-online"
-                variant="outlined"
-                fullWidth
-                startIcon={<Icon d={ICONS.book} size={15} />}
-              >
-                Stamboken Online
-              </LinkButton>
-              <LinkButton
-                href="/medlemsforum"
-                variant="outlined"
-                fullWidth
-                startIcon={<Icon d={ICONS.message} size={15} />}
-              >
-                Medlemsforum
-              </LinkButton>
-            </Box>
-          </Box>
-        </Box>
+        <Image
+          src="/stamboken/hero-ungkanin-grass.jpg"
+          alt="Ung sandfärgad gotlandskanin i gräset"
+          fill
+          priority
+          sizes="(min-width: 900px) 50vw, 100vw"
+          style={{ objectFit: "cover", objectPosition: "58% 40%" }}
+        />
       </Box>
     </Box>
   );
