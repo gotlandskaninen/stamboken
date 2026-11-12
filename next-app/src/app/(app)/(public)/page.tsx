@@ -280,7 +280,6 @@ function BreedsSection() {
             style={{ textDecoration: "none", color: "inherit" }}
           >
             <Box
-              component="article"
               sx={{
                 height: "100%",
                 bgcolor: "background.paper",
