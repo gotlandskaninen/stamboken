@@ -217,8 +217,9 @@ function MissionSection() {
   );
 }
 
-// Card photos are members' photos, cropped to the card's 2:1. The
-// mellerudskanin one is retouched: a fence behind the rabbit was removed.
+// Card photos are members' photos, cropped to the card's 2:1, and both are
+// retouched. Gotlandskanin: the background behind the rabbit (a house, a
+// fence) is replaced. Mellerudskanin: a fence behind the rabbit is removed.
 const BREEDS = [
   {
     name: "Gotlandskanin",
@@ -226,8 +227,8 @@ const BREEDS = [
     desc: "En lokal variant av den gamla svenska lantraskaninen, bevarad på Gotland.",
     href: "/gotlandskanin",
     img: "/stamboken/breed-gotlandskanin.jpg",
-    alt: "Brokig gotlandskanin på en äng",
-    pos: "55% 50%",
+    alt: "Vuxen gulbrokig gotlandskanin i gräset",
+    pos: "45% 50%",
   },
   {
     name: "Mellerudskanin",
