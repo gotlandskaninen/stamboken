@@ -39,7 +39,12 @@ const arrowSx = {
   lineHeight: 1,
   cursor: "pointer",
   "&:hover": { bgcolor: "rgba(31,27,22,0.8)" },
-  "&:focus-visible": { outline: "2px solid var(--sb-paper)", outlineOffset: 2 },
+  // Light ring inside a dark one, so it shows on any photo.
+  "&:focus-visible": {
+    outline: "2px solid var(--sb-paper)",
+    outlineOffset: 2,
+    boxShadow: "0 0 0 6px var(--sb-ink)",
+  },
 } as const;
 
 // One large image with arrows and swipe to step through, and a row of
@@ -114,6 +119,7 @@ export function GalleryBlockComponent({ images }: Props) {
         </Box>
         <Box
           component="figcaption"
+          aria-live="polite"
           sx={{
             mt: 2.5,
             display: "flex",
@@ -126,73 +132,77 @@ export function GalleryBlockComponent({ images }: Props) {
           }}
         >
           <span>{current.caption}</span>
-          <Typography
-            variant="mono"
-            component="span"
-            sx={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}
-          >
-            {index + 1} / {shown.length}
-          </Typography>
+          {shown.length > 1 && (
+            <Typography
+              variant="mono"
+              component="span"
+              sx={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}
+            >
+              {index + 1} / {shown.length}
+            </Typography>
+          )}
         </Box>
       </Box>
 
-      <Box
-        role="group"
-        aria-label="Välj bild"
-        sx={{
-          mt: 3.5,
-          display: "grid",
-          gridTemplateColumns: {
-            xs: "repeat(4, minmax(0, 1fr))",
-            // Up to eight share one row; fewer than six keep the six-column size.
-            sm: `repeat(${Math.max(6, Math.min(shown.length, 8))}, minmax(0, 1fr))`,
-          },
-          gap: 2.5,
-        }}
-      >
-        {shown.map((item, i) => (
-          <Box
-            component="button"
-            key={i}
-            type="button"
-            aria-label={`Visa bild ${i + 1}${item.caption ? `: ${item.caption}` : ""}`}
-            aria-current={item === current ? "true" : undefined}
-            onClick={() => setSelectedIndex(i)}
-            sx={{
-              p: 0,
-              border: 0,
-              bgcolor: "transparent",
-              borderRadius: "6px",
-              cursor: "pointer",
-              opacity: 0.7,
-              outline: "2px solid transparent",
-              outlineOffset: "2px",
-              transition:
-                "opacity 200ms cubic-bezier(0.2, 0.7, 0.2, 1), outline-color 200ms cubic-bezier(0.2, 0.7, 0.2, 1)",
-              "&:hover": { opacity: 1 },
-              '&[aria-current="true"]': {
-                opacity: 1,
-                outlineColor: "var(--sb-skog)",
-              },
-              // Not the look of the chosen thumbnail: someone tabbing must see
-              // where focus is as well as which image is shown.
-              "&:focus-visible": {
-                opacity: 1,
-                outline: "3px solid var(--sb-ink)",
-                outlineOffset: "4px",
-              },
-            }}
-          >
+      {shown.length > 1 && (
+        <Box
+          role="group"
+          aria-label="Välj bild"
+          sx={{
+            mt: 3.5,
+            display: "grid",
+            gridTemplateColumns: {
+              xs: "repeat(4, minmax(0, 1fr))",
+              // Up to eight share one row; fewer than six keep the six-column size.
+              sm: `repeat(${Math.max(6, Math.min(shown.length, 8))}, minmax(0, 1fr))`,
+            },
+            gap: 2.5,
+          }}
+        >
+          {shown.map((item, i) => (
             <Box
-              component="img"
-              src={thumbSrc(item)}
-              alt=""
-              loading="lazy"
-              sx={{ ...imageSx, borderRadius: "6px" }}
-            />
-          </Box>
-        ))}
-      </Box>
+              component="button"
+              key={i}
+              type="button"
+              aria-label={`Visa bild ${i + 1}${item.caption ? `: ${item.caption}` : ""}`}
+              aria-current={item === current ? "true" : undefined}
+              onClick={() => setSelectedIndex(i)}
+              sx={{
+                p: 0,
+                border: 0,
+                bgcolor: "transparent",
+                borderRadius: "6px",
+                cursor: "pointer",
+                opacity: 0.7,
+                outline: "2px solid transparent",
+                outlineOffset: "2px",
+                transition:
+                  "opacity 200ms cubic-bezier(0.2, 0.7, 0.2, 1), outline-color 200ms cubic-bezier(0.2, 0.7, 0.2, 1)",
+                "&:hover": { opacity: 1 },
+                '&[aria-current="true"]': {
+                  opacity: 1,
+                  outlineColor: "var(--sb-skog)",
+                },
+                // Not the look of the chosen thumbnail: someone tabbing must see
+                // where focus is as well as which image is shown.
+                "&:focus-visible": {
+                  opacity: 1,
+                  outline: "3px solid var(--sb-ink)",
+                  outlineOffset: "4px",
+                },
+              }}
+            >
+              <Box
+                component="img"
+                src={thumbSrc(item)}
+                alt=""
+                loading="lazy"
+                sx={{ ...imageSx, borderRadius: "6px" }}
+              />
+            </Box>
+          ))}
+        </Box>
+      )}
     </Box>
   );
 }

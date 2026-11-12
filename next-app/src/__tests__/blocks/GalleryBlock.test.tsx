@@ -3,9 +3,9 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { GalleryBlockComponent } from "@/components/blocks/GalleryBlock";
 
 const images = [
-  { image: { url: "/a.jpg", alt: "Svart scheck" }, caption: "Svart" },
+  { image: { url: "/a.jpg", alt: "Svartbrokig" }, caption: "Svart" },
   { image: null, caption: "Saknad bild" },
-  { image: { url: "/b.jpg", alt: "Gul scheck" }, caption: "Gul" },
+  { image: { url: "/b.jpg", alt: "Gulbrokig" }, caption: "Gul" },
 ];
 
 afterEach(cleanup);
@@ -13,7 +13,7 @@ afterEach(cleanup);
 describe("GalleryBlockComponent", () => {
   it("shows the first image and counts only images that exist", () => {
     render(<GalleryBlockComponent images={images} />);
-    expect(screen.getByAltText("Svart scheck")).toBeTruthy();
+    expect(screen.getByAltText("Svartbrokig")).toBeTruthy();
     expect(screen.getByText("1 / 2")).toBeTruthy();
   });
 
@@ -21,7 +21,7 @@ describe("GalleryBlockComponent", () => {
     render(<GalleryBlockComponent images={images} />);
     const second = screen.getByRole("button", { name: "Visa bild 2: Gul" });
     fireEvent.click(second);
-    expect(screen.getByAltText("Gul scheck")).toBeTruthy();
+    expect(screen.getByAltText("Gulbrokig")).toBeTruthy();
     expect(screen.getByText("2 / 2")).toBeTruthy();
     expect(second.getAttribute("aria-current")).toBe("true");
   });
@@ -45,13 +45,13 @@ describe("GalleryBlockComponent", () => {
 
   it("steps on a sideways swipe", () => {
     render(<GalleryBlockComponent images={images} />);
-    swipe(screen.getByAltText("Svart scheck"), -60, 10);
+    swipe(screen.getByAltText("Svartbrokig"), -60, 10);
     expect(screen.getByText("2 / 2")).toBeTruthy();
   });
 
   it("keeps the image when the page is scrolled with a drifting thumb", () => {
     render(<GalleryBlockComponent images={images} />);
-    swipe(screen.getByAltText("Svart scheck"), -50, 180);
+    swipe(screen.getByAltText("Svartbrokig"), -50, 180);
     expect(screen.getByText("1 / 2")).toBeTruthy();
   });
 
@@ -74,6 +74,13 @@ describe("GalleryBlockComponent", () => {
       img.getAttribute("src"),
     );
     expect(srcs).toEqual(["/a-card.jpg", "/a-thumb.jpg", "/b.jpg"]);
+  });
+
+  it("shows a single image without thumbnails or a counter", () => {
+    render(<GalleryBlockComponent images={images.slice(0, 1)} />);
+    expect(screen.getByAltText("Svartbrokig")).toBeTruthy();
+    expect(screen.queryByText("1 / 1")).toBeNull();
+    expect(screen.queryByRole("group", { name: "Välj bild" })).toBeNull();
   });
 
   it("renders nothing without images", () => {
