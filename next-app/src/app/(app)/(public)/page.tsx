@@ -7,7 +7,8 @@ import { EUFundingBadge } from "@/components/public/EUFundingBadge";
 
 const heroLinkSx = {
   display: "inline-block",
-  py: 2,
+  // 12px above and below: a 44px touch target on phones.
+  py: 3,
   color: "ink.main",
   textDecoration: "underline",
   textDecorationColor: "var(--sb-line-strong)",
@@ -190,24 +191,16 @@ function MissionSection() {
             hos uppfödare runt om i Sverige som har avtal med föreningen. Varje
             kanin i genbanken har ett intyg och finns i stamboken.
           </Typography>
-          <Box sx={{ mt: 5, display: "flex", flexWrap: "wrap", gap: 6 }}>
+          <Box sx={{ mt: 2, display: "flex", flexWrap: "wrap", columnGap: 6 }}>
             {MISSION_LINKS.map((l) => (
               <Link
                 key={l.href}
                 href={l.href}
                 style={{ color: "inherit", textDecoration: "none" }}
               >
-                <Typography
-                  component="span"
-                  sx={{
-                    color: "ink.main",
-                    textDecoration: "underline",
-                    textDecorationColor: "line.strong",
-                    textUnderlineOffset: "3px",
-                  }}
-                >
+                <Box component="span" sx={heroLinkSx}>
                   {l.label} &rarr;
-                </Typography>
+                </Box>
               </Link>
             ))}
           </Box>
@@ -649,8 +642,8 @@ export default function HomePage() {
       <HeroSection />
       <MissionSection />
       <BreedsSection />
-      <EUSection />
       <MemberSection />
+      <EUSection />
     </>
   );
 }

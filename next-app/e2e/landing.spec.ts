@@ -157,6 +157,27 @@ test.describe("Landing page viewport screenshots", () => {
 });
 
 test.describe("Landing page responsive", () => {
+  test("links and buttons in the page body are at least 44px high on phones", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto("/", { waitUntil: "networkidle" });
+    const small = await page.evaluate(() =>
+      [...document.querySelectorAll("main a, main button")]
+        .map((e) => ({
+          text: (e.textContent ?? "").trim().slice(0, 30),
+          height: Math.round(
+            Math.max(
+              e.getBoundingClientRect().height,
+              ...[...e.children].map((c) => c.getBoundingClientRect().height),
+            ),
+          ),
+        }))
+        .filter((x) => x.height > 0 && x.height < 44),
+    );
+    expect(small).toEqual([]);
+  });
+
   // ADR-0010 375-px-kravet: no horizontal scroll at the mobile breakpoint. Regression
   // for the fixed-56px h2 that let "lantraskaninen." push the page to 428px.
   test("no horizontal overflow at mobile (375px)", async ({ page }) => {
