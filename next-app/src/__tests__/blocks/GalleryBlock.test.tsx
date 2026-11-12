@@ -36,6 +36,25 @@ describe("GalleryBlockComponent", () => {
     expect(screen.getByText("2 / 2")).toBeTruthy();
   });
 
+  const swipe = (el: Element, dx: number, dy: number) => {
+    fireEvent.touchStart(el, { touches: [{ clientX: 200, clientY: 200 }] });
+    fireEvent.touchEnd(el, {
+      changedTouches: [{ clientX: 200 + dx, clientY: 200 + dy }],
+    });
+  };
+
+  it("steps on a sideways swipe", () => {
+    render(<GalleryBlockComponent images={images} />);
+    swipe(screen.getByAltText("Svart scheck"), -60, 10);
+    expect(screen.getByText("2 / 2")).toBeTruthy();
+  });
+
+  it("keeps the image when the page is scrolled with a drifting thumb", () => {
+    render(<GalleryBlockComponent images={images} />);
+    swipe(screen.getByAltText("Svart scheck"), -50, 180);
+    expect(screen.getByText("1 / 2")).toBeTruthy();
+  });
+
   it("renders nothing without images", () => {
     const { container } = render(<GalleryBlockComponent images={[]} />);
     expect(container.firstChild).toBeNull();

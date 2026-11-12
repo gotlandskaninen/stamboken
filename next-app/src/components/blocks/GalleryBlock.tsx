@@ -46,7 +46,7 @@ const arrowSx = {
 // thumbnails so a visitor sees at a glance how many photos there are.
 export function GalleryBlockComponent({ images }: Props) {
   const [selectedIndex, setSelectedIndex] = useState(0);
-  const touchX = useRef<number | null>(null);
+  const touchStart = useRef<{ x: number; y: number } | null>(null);
 
   const shown = (images ?? []).filter((item) => item.image?.url);
   if (shown.length === 0) return null;
@@ -64,13 +64,21 @@ export function GalleryBlockComponent({ images }: Props) {
         <Box
           sx={{ position: "relative" }}
           onTouchStart={(e) => {
-            touchX.current = e.touches[0].clientX;
+            const t = e.touches[0];
+            touchStart.current = { x: t.clientX, y: t.clientY };
           }}
           onTouchEnd={(e) => {
-            if (touchX.current === null) return;
-            const dx = e.changedTouches[0].clientX - touchX.current;
-            touchX.current = null;
-            if (Math.abs(dx) > 40) step(dx < 0 ? 1 : -1);
+            const start = touchStart.current;
+            if (!start) return;
+            touchStart.current = null;
+            const t = e.changedTouches[0];
+            const dx = t.clientX - start.x;
+            const dy = t.clientY - start.y;
+            // Mostly sideways only: a thumb that drifts while scrolling the
+            // page down must not change the image.
+            if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy)) {
+              step(dx < 0 ? 1 : -1);
+            }
           }}
         >
           <Box
