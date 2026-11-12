@@ -37,7 +37,7 @@ const mailLinkSx = {
 const REQUIREMENTS = [
   {
     title: "Du är medlem i föreningen",
-    desc: "Medlemskapet kostar 200 kr om året och gäller hela familjen. Betala till Plusgiro 35 03 44-8 eller Swish 123 095 70 50.",
+    desc: "Medlemskapet kostar 200 kr om året och gäller hela familjen.",
   },
   {
     title: "Du har både hane och hona",
