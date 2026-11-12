@@ -203,9 +203,12 @@ export function PublicFooter() {
                     key={row.label}
                     sx={{
                       display: "flex",
+                      // The number drops below its label in a narrow column
+                      // instead of breaking in two.
+                      flexWrap: "wrap",
                       justifyContent: "space-between",
                       alignItems: "baseline",
-                      gap: 4,
+                      columnGap: 4,
                       py: 2,
                       borderTop: i ? "1px solid var(--sb-line)" : "none",
                     }}
@@ -224,6 +227,7 @@ export function PublicFooter() {
                         m: 0,
                         fontSize: "14px",
                         fontWeight: 500,
+                        whiteSpace: "nowrap",
                         color: "ink.main",
                       }}
                     >
