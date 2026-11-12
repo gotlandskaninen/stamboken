@@ -98,7 +98,7 @@ const STEPS: Array<{
     title: "Godkännande",
     body: [
       "Du får tillbaka ditt exemplar av kontraktet, undertecknat av båda parter, och ett startpaket: välkomstbrev, rasram, infoblad om märkning och tillstånd, enkla mallar för att hålla ordning i aveln, fem genbanksintyg och några skötselhäften.",
-      "Ditt besättningsnummer är detsamma som ditt medlemsnummer: G123 för gotlandskanin, M123 för mellerudskanin. Sedan läggs besättningen in i Stamboken Online.",
+      "Ditt besättningsnummer består av rasens bokstav och ditt medlemsnummer: G123 för gotlandskanin, M123 för mellerudskanin. Sedan läggs besättningen in i Stamboken Online.",
     ],
   },
 ];
@@ -106,7 +106,7 @@ const STEPS: Array<{
 const YEARLY = [
   {
     title: "Para och dokumentera",
-    desc: "Följ avelsråden och undvik att para nära släkt. En testparning i Stamboken Online visar släktskapet i förväg.",
+    desc: "Följ avelsråden och undvik att para nära släkt. En provparning i Stamboken Online visar släktskapet i förväg.",
   },
   {
     title: "Intyg på varje avelsdjur",
@@ -156,8 +156,8 @@ const RULES = [
     text: "Nya djur kommer bara in som avkommor till djur som redan finns i genbanken. Därför köper du startdjuren från andra genbanksbesättningar.",
   },
   {
-    title: "Hela arvet bevaras",
-    text: "Inga snäva urval och ingen inkorsning av andra raser. Bara rena defekter sorteras bort.",
+    title: "Variationen bevaras",
+    text: "Målet är att bevara så mycket som möjligt av rasens arvsanlag. Inga snäva urval och ingen inkorsning av andra raser. Bara rena defekter sorteras bort.",
   },
   {
     title: "Alla djur har intyg",
@@ -165,7 +165,7 @@ const RULES = [
   },
 ];
 
-const RULE_LINE = "1px solid rgba(31,27,22,0.16)";
+const RULE_LINE = "1px solid var(--sb-line-strong)";
 
 function IntroSection() {
   return (
@@ -248,6 +248,8 @@ function IntroSection() {
         </Box>
         <Box
           component="ul"
+          // listStyle:none drops list semantics in Safari/VoiceOver; keep them.
+          role="list"
           sx={{
             listStyle: "none",
             m: 0,
@@ -363,8 +365,13 @@ function MailLink({ mail, sx }: { mail: string; sx?: object }) {
   );
 }
 
-// 12px above and below on phones: a 44px touch target.
-const stepLinkSx = { display: "inline-block", py: { xs: 3, md: 1 } } as const;
+// 12px above and below gives a 44px touch target: on phones, and on any
+// wider touch screen (ADR-0010).
+const stepLinkSx = {
+  display: "inline-block",
+  py: { xs: 3, md: 1 },
+  "@media (pointer: coarse)": { py: 3 },
+} as const;
 
 function StepsSection() {
   return (
@@ -500,6 +507,7 @@ function YearlySection() {
       <SectionHeading eyebrow="Löpande arbete" title="Sedan, år för år" />
       <Box
         component="ul"
+        role="list"
         sx={{
           listStyle: "none",
           m: 0,

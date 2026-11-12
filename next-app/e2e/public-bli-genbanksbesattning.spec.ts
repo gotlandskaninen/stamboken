@@ -66,6 +66,26 @@ test.describe("Bli genbanksbesättning", () => {
   });
 });
 
+test("the intro button leads to both breeds' contacts", async ({ page }) => {
+  await page.goto("/bli-genbanksbesattning", { waitUntil: "networkidle" });
+  await page
+    .getByRole("link", { name: "Kontakta genbanksansvarig" })
+    .first()
+    .click();
+  await expect(page).toHaveURL(/#kontakt$/);
+
+  const contact = page.locator("#kontakt");
+  await expect(
+    contact.getByRole("heading", { name: "Hör av dig" }),
+  ).toBeInViewport();
+  for (const address of [
+    "gotlandskanin@gotlandskaninen.se",
+    "mellerudskanin@gotlandskaninen.se",
+  ]) {
+    await expect(contact.locator(`a[href="mailto:${address}"]`)).toBeVisible();
+  }
+});
+
 test("the old address redirects to the page", async ({ page }) => {
   await page.goto("/bli-genbank");
   await expect(page).toHaveURL(/\/bli-genbanksbesattning$/);
