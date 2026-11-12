@@ -9,11 +9,14 @@ type FooterLink = {
   external?: boolean;
 };
 
-const FOOTER_COLUMNS: Array<{
-  heading: string;
-  links: FooterLink[];
-  payment?: { label: string; value: string }[];
-}> = [
+const CONTACT_EMAIL = "info@gotlandskaninen.se";
+
+const PAYMENT = [
+  { label: "Plusgiro", value: "35 03 44-8" },
+  { label: "Swish", value: "123 095 70 50" },
+];
+
+const FOOTER_ROWS: Array<{ heading: string; links: FooterLink[] }> = [
   {
     heading: "Läs mer",
     links: [
@@ -40,17 +43,7 @@ const FOOTER_COLUMNS: Array<{
   },
   {
     heading: "Kontakt",
-    links: [
-      {
-        label: "info@gotlandskaninen.se",
-        href: "mailto:info@gotlandskaninen.se",
-      },
-      { label: "Styrelse / Kontakt", href: "/styrelsen" },
-    ],
-    payment: [
-      { label: "Plusgiro", value: "35 03 44-8" },
-      { label: "Swish", value: "123 095 70 50" },
-    ],
+    links: [{ label: "Styrelse / Kontakt", href: "/styrelsen" }],
   },
 ];
 
@@ -81,72 +74,110 @@ export function PublicFooter() {
         px: { xs: 6, md: 10 },
       }}
     >
+      {/* Brand left; how to reach and pay the association right */}
       <Box
         sx={{
-          display: "grid",
-          // Phones: the two link lists side by side, brand and contact
-          // full width (the e-mail address does not fit half a screen).
-          gridTemplateColumns: {
-            xs: "1fr 1fr",
-            md: "2fr 1fr 1fr 1fr",
-          },
-          columnGap: { xs: 6, md: 12 },
-          rowGap: { xs: 10, md: 12 },
-          mb: 12,
+          display: "flex",
+          flexDirection: { xs: "column", md: "row" },
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: { xs: 5, md: 12 },
         }}
       >
-        {/* Brand column */}
-        <Box sx={{ gridColumn: { xs: "1 / -1", md: "auto" } }}>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 3, mb: 4.5 }}>
-            <Image src="/stamboken/logo.png" alt="" width={36} height={36} />
-            <Box sx={{ lineHeight: 1 }}>
-              <Typography
-                sx={{
-                  fontFamily: "'Source Serif 4', Georgia, serif",
-                  fontSize: "17px",
-                  fontWeight: 500,
-                }}
-              >
-                Föreningen Gotlandskaninen
-              </Typography>
-              <Typography
-                variant="mono"
-                sx={{
-                  fontSize: "11px",
-                  letterSpacing: "0.14em",
-                  textTransform: "uppercase",
-                  color: "ink.3",
-                  mt: 1,
-                }}
-              >
-                Sedan 1984
-              </Typography>
-            </Box>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 3 }}>
+          <Image src="/stamboken/logo.png" alt="" width={36} height={36} />
+          <Box sx={{ lineHeight: 1 }}>
+            <Typography
+              sx={{
+                fontFamily: "'Source Serif 4', Georgia, serif",
+                fontSize: "17px",
+                fontWeight: 500,
+              }}
+            >
+              Föreningen Gotlandskaninen
+            </Typography>
+            <Typography
+              variant="mono"
+              sx={{
+                fontSize: "11px",
+                letterSpacing: "0.14em",
+                textTransform: "uppercase",
+                color: "ink.3",
+                mt: 1,
+              }}
+            >
+              Sedan 1984
+            </Typography>
           </Box>
-          <Typography
-            sx={{
-              maxWidth: 320,
-              lineHeight: 1.55,
-              color: "ink.2",
-              fontSize: "14px",
-            }}
-          >
-            En ideell förening som sedan 1984 bevarar två svenska lantraser av
-            kanin – gotlandskanin och mellerudskanin – genom genbank, stambok
-            och aktivt avelsarbete.
-          </Typography>
         </Box>
-
-        {/* Link columns */}
-        {FOOTER_COLUMNS.map((col) => (
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: { md: "flex-end" },
+            gap: { md: 1.5 },
+          }}
+        >
+          <Box component="a" href={`mailto:${CONTACT_EMAIL}`} sx={footerLinkSx}>
+            {CONTACT_EMAIL}
+          </Box>
           <Box
-            key={col.heading}
+            component="dl"
             sx={{
-              gridColumn: { xs: col.payment ? "1 / -1" : "auto", md: "auto" },
+              m: 0,
+              display: "flex",
+              flexDirection: { xs: "column", md: "row" },
+              gap: { xs: 1.5, md: 7 },
             }}
           >
-            <Typography variant="eyebrow" sx={{ mb: 3, display: "block" }}>
-              {col.heading}
+            {PAYMENT.map((row) => (
+              <Box
+                key={row.label}
+                sx={{ display: "flex", alignItems: "baseline", columnGap: 4 }}
+              >
+                <Typography
+                  component="dt"
+                  sx={{ fontSize: "13px", color: "ink.2" }}
+                >
+                  {row.label}
+                </Typography>
+                <Typography
+                  component="dd"
+                  variant="mono"
+                  sx={{
+                    m: 0,
+                    fontSize: "14px",
+                    fontWeight: 500,
+                    whiteSpace: "nowrap",
+                    color: "ink.main",
+                  }}
+                >
+                  {row.value}
+                </Typography>
+              </Box>
+            ))}
+          </Box>
+        </Box>
+      </Box>
+
+      {/* One row per group: label left, links flowing right. Phones: the
+          label on top and the links in two columns. */}
+      <Box sx={{ mt: 8, borderTop: 1, borderColor: "line.main" }}>
+        {FOOTER_ROWS.map((row) => (
+          <Box
+            key={row.heading}
+            sx={{
+              display: { md: "grid" },
+              gridTemplateColumns: { md: "140px 1fr" },
+              alignItems: "baseline",
+              pt: { xs: 5, md: 3.5 },
+              pb: { xs: 2, md: 3.5 },
+              borderBottom: 1,
+              borderColor: "line.main",
+            }}
+          >
+            <Typography variant="eyebrow" sx={{ display: "block" }}>
+              {row.heading}
             </Typography>
             <Box
               component="ul"
@@ -154,19 +185,21 @@ export function PublicFooter() {
                 listStyle: "none",
                 p: 0,
                 m: 0,
-                display: "grid",
-                gap: { xs: 0, md: 2 },
+                mt: { xs: 1, md: 0 },
+                display: { xs: "grid", md: "flex" },
+                gridTemplateColumns: "1fr 1fr",
+                flexWrap: "wrap",
+                columnGap: { xs: 6, md: 7 },
               }}
             >
-              {col.links.map((link) =>
-                link.href.startsWith("mailto:") || link.external ? (
+              {row.links.map((link) =>
+                link.external ? (
                   <li key={link.href}>
                     <Box
                       component="a"
                       href={link.href}
-                      {...(link.external
-                        ? { target: "_blank", rel: "noopener noreferrer" }
-                        : {})}
+                      target="_blank"
+                      rel="noopener noreferrer"
                       sx={footerLinkSx}
                     >
                       {link.label}
@@ -183,60 +216,6 @@ export function PublicFooter() {
                 ),
               )}
             </Box>
-            {col.payment && (
-              <Box
-                component="dl"
-                sx={{
-                  m: 0,
-                  mt: 4.5,
-                  px: 3.5,
-                  py: 1,
-                  bgcolor: "paper.2",
-                  border: 1,
-                  borderColor: "line.main",
-                  borderRadius: "8px",
-                  maxWidth: 240,
-                }}
-              >
-                {col.payment.map((row, i) => (
-                  <Box
-                    key={row.label}
-                    sx={{
-                      display: "flex",
-                      // The number drops below its label in a narrow column
-                      // instead of breaking in two.
-                      flexWrap: "wrap",
-                      justifyContent: "space-between",
-                      alignItems: "baseline",
-                      columnGap: 4,
-                      py: 2,
-                      borderTop: i ? "1px solid var(--sb-line)" : "none",
-                    }}
-                  >
-                    {/* ink.2: ink.3 on paper.2 is 4.31:1; AA needs 4.5. */}
-                    <Typography
-                      component="dt"
-                      sx={{ fontSize: "13px", color: "ink.2" }}
-                    >
-                      {row.label}
-                    </Typography>
-                    <Typography
-                      component="dd"
-                      variant="mono"
-                      sx={{
-                        m: 0,
-                        fontSize: "14px",
-                        fontWeight: 500,
-                        whiteSpace: "nowrap",
-                        color: "ink.main",
-                      }}
-                    >
-                      {row.value}
-                    </Typography>
-                  </Box>
-                ))}
-              </Box>
-            )}
           </Box>
         ))}
       </Box>
@@ -244,9 +223,7 @@ export function PublicFooter() {
       {/* Bottom bar */}
       <Box
         sx={{
-          borderTop: 1,
-          borderColor: "line.main",
-          pt: 6,
+          pt: { xs: 6, md: 5 },
           display: "flex",
           gap: { xs: 4, md: 5 },
           alignItems: "center",
