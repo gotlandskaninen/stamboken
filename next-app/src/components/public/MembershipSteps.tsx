@@ -40,7 +40,12 @@ export function MembershipSteps() {
       >
         Så blir du medlem
       </Typography>
-      <Box component="ol" sx={{ m: 0, mt: 6, p: 0, listStyle: "none" }}>
+      {/* role: Safari drops list semantics when list-style is none. */}
+      <Box
+        component="ol"
+        role="list"
+        sx={{ m: 0, mt: 6, p: 0, listStyle: "none" }}
+      >
         {STEPS.map((step, i) => {
           const last = i === STEPS.length - 1;
           return (
