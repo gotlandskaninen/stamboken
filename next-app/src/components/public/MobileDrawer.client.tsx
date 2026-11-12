@@ -35,7 +35,12 @@ export function MobileDrawer({ links, cta }: MobileDrawerProps) {
       <IconButton
         aria-label="Meny"
         onClick={() => setOpen(true)}
-        sx={{ display: { xs: "flex", md: "none" }, color: "ink.main" }}
+        sx={{
+          display: { xs: "flex", md: "none" },
+          width: 44,
+          height: 44,
+          color: "ink.main",
+        }}
       >
         <Box
           component="svg"

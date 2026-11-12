@@ -1,8 +1,9 @@
 import { notFound } from "next/navigation";
 import { getPublishedPage } from "@/lib/payload-queries";
-import { Box } from "@mui/material";
+import { Box, Container } from "@mui/material";
 import { RenderBlocks } from "@/components/blocks/RenderBlocks";
 import { PageHeader } from "@/components/public/PageHeader";
+import { NextSteps } from "@/components/public/NextSteps";
 import type { Metadata } from "next";
 
 type Props = { params: Promise<{ slug: string }> };
@@ -11,8 +12,17 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params;
   const page = await getPublishedPage(slug);
   if (!page) return {};
+  const title = page.meta?.title || page.title;
   return {
-    title: page.meta?.title || page.title,
+    // The layout's title template ends with the association's name, so the
+    // page about the association would otherwise repeat it.
+    title:
+      title === "Föreningen Gotlandskaninen"
+        ? {
+            absolute:
+              "Föreningen Gotlandskaninen – bevarande av svenska lantraskaniner",
+          }
+        : title,
     description: page.meta?.description || undefined,
     openGraph: {
       title: page.meta?.title || page.title,
@@ -66,6 +76,9 @@ export default async function CmsPage({ params }: Props) {
       {hasBlocks && (
         <Box sx={{ px: { xs: 6, md: 14 }, py: { xs: 10, md: 16 } }}>
           <RenderBlocks blocks={pageAny.layout} />
+          <Container maxWidth="md">
+            <NextSteps slug={slug} />
+          </Container>
         </Box>
       )}
     </>
