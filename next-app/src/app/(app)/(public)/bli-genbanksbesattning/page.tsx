@@ -3,7 +3,6 @@ import { Box, Typography } from "@mui/material";
 import type { Metadata } from "next";
 import { Icon, ICONS } from "@/components/public/Icons";
 import { LinkButton } from "@/components/public/LinkButton";
-import { OrnamentDivider } from "@/components/public/OrnamentDivider";
 import { PageHeader } from "@/components/public/PageHeader";
 
 export const metadata: Metadata = {
@@ -32,7 +31,6 @@ const mailLinkSx = {
   textDecoration: "underline",
   textDecorationColor: "line.strong",
   textUnderlineOffset: "3px",
-  wordBreak: "break-word",
   "&:hover": { textDecorationColor: "lera.main" },
 } as const;
 
@@ -107,17 +105,14 @@ const STEPS: Array<{
 
 const YEARLY = [
   {
-    icon: ICONS.pedigree,
     title: "Para och dokumentera",
     desc: "Följ avelsråden och undvik att para nära släkt. En testparning i Stamboken Online visar släktskapet i förväg.",
   },
   {
-    icon: ICONS.shield,
     title: "Intyg på varje avelsdjur",
     desc: "Alla djur som säljs som avelsdjur ska ha genbanksintyg. En kanin utan intyg är en förlorad kanin för bevarandearbetet. Pappersintyg kostar 5 kr styck, och fem ingår vid godkännandet. I Stamboken Online är intyget gratis.",
   },
   {
-    icon: ICONS.book,
     title: "Årsrapport senast 31 januari",
     desc: "Sedan 2024 lämnar du den direkt i Stamboken Online. Årsrapporten är också grunden för Jordbruksverkets stöd, som kräver minst en kull under året, hane och hona vid årsskiftet och betald medlemsavgift.",
   },
@@ -210,7 +205,7 @@ function IntroSection() {
             </LinkButton>
             <Box
               component="a"
-              href={`mailto:${GOTLAND_MAIL}`}
+              href="#kontakt"
               sx={{
                 display: "inline-flex",
                 alignItems: "center",
@@ -228,7 +223,7 @@ function IntroSection() {
               }}
             >
               <Icon d={ICONS.mail} size={15} />
-              Mejla genbanksansvarig
+              Kontakta genbanksansvarig
             </Box>
           </Box>
           <Typography
@@ -357,6 +352,20 @@ function RequirementsSection() {
   );
 }
 
+// Breaks at the @ when the column is narrower than the address, never mid-word.
+function MailLink({ mail, sx }: { mail: string; sx?: object }) {
+  const [user, domain] = mail.split("@");
+  return (
+    <Box component="a" href={`mailto:${mail}`} sx={{ ...mailLinkSx, ...sx }}>
+      {user}@<wbr />
+      {domain}
+    </Box>
+  );
+}
+
+// 12px above and below on phones: a 44px touch target.
+const stepLinkSx = { display: "inline-block", py: { xs: 3, md: 1 } } as const;
+
 function StepsSection() {
   return (
     <Box
@@ -372,12 +381,8 @@ function StepsSection() {
           listStyle: "none",
           m: 0,
           p: 0,
-          maxWidth: 820,
-          border: 1,
+          borderBottom: 1,
           borderColor: "line.main",
-          borderRadius: "8px",
-          bgcolor: "background.paper",
-          px: { xs: 5, md: 9 },
         }}
       >
         {STEPS.map((step, i) => (
@@ -386,11 +391,16 @@ function StepsSection() {
             component="li"
             sx={{
               display: "grid",
-              gridTemplateColumns: { xs: "40px 1fr", md: "56px 1fr" },
-              columnGap: { xs: 4, md: 6 },
+              // Desktop: number, title and text side by side across the page.
+              gridTemplateColumns: {
+                xs: "40px 1fr",
+                md: "56px minmax(0, 300px) minmax(0, 1fr)",
+              },
+              columnGap: { xs: 4, md: 8 },
               alignItems: "start",
-              py: { xs: 6, md: 8 },
-              ...(i > 0 && { borderTop: 1, borderColor: "line.faint" }),
+              py: { xs: 6, md: 7 },
+              borderTop: 1,
+              borderColor: "line.main",
             }}
           >
             <Box
@@ -411,14 +421,25 @@ function StepsSection() {
             >
               {i + 1}
             </Box>
-            <Box sx={{ minWidth: 0 }}>
-              <Typography
-                variant="h4"
-                component="h3"
-                sx={{ m: 0, fontSize: { xs: "22px", md: "26px" } }}
-              >
-                {step.title}
-              </Typography>
+            <Typography
+              variant="h4"
+              component="h3"
+              sx={{
+                m: 0,
+                pt: { xs: 1.5, md: 3 },
+                fontSize: { xs: "22px", md: "26px" },
+              }}
+            >
+              {step.title}
+            </Typography>
+            <Box
+              sx={{
+                gridColumn: { xs: 2, md: 3 },
+                minWidth: 0,
+                maxWidth: "34rem",
+                pt: { md: 1 },
+              }}
+            >
               {step.body.map((para) => (
                 <Typography
                   key={para}
@@ -435,30 +456,28 @@ function StepsSection() {
               {step.links && (
                 <Box
                   sx={{
-                    mt: 4,
+                    mt: { xs: 1, md: 3 },
                     display: "flex",
                     flexDirection: "column",
                     alignItems: "flex-start",
-                    gap: 2,
                   }}
                 >
                   {step.links.map((l) =>
                     l.href.startsWith("mailto:") ? (
-                      <Box
+                      <MailLink
                         key={l.href}
-                        component="a"
-                        href={l.href}
-                        sx={{ ...mailLinkSx, fontSize: "14px" }}
-                      >
-                        {l.label}
-                      </Box>
+                        mail={l.label}
+                        sx={{ ...stepLinkSx, fontSize: "14px" }}
+                      />
                     ) : (
                       <Link
                         key={l.href}
                         href={l.href}
                         style={{ ...inlineLinkStyle, fontSize: "15px" }}
                       >
-                        {l.label}
+                        <Box component="span" sx={stepLinkSx}>
+                          {l.label}
+                        </Box>
                       </Link>
                     ),
                   )}
@@ -474,53 +493,53 @@ function StepsSection() {
 
 function YearlySection() {
   return (
-    <Box component="section" sx={{ px: { xs: 6, md: 14 }, pt: 8, pb: 8 }}>
+    <Box
+      component="section"
+      sx={{ px: { xs: 6, md: 14 }, pt: { xs: 10, md: 14 }, pb: 8 }}
+    >
       <SectionHeading eyebrow="Löpande arbete" title="Sedan, år för år" />
       <Box
+        component="ul"
         sx={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-          gap: 5,
+          listStyle: "none",
+          m: 0,
+          p: 0,
+          borderBottom: 1,
+          borderColor: "line.main",
         }}
       >
-        {YEARLY.map((card) => (
+        {YEARLY.map((item) => (
           <Box
-            key={card.title}
+            key={item.title}
+            component="li"
             sx={{
-              bgcolor: "background.paper",
-              border: 1,
+              display: "grid",
+              // 388px = the number and title columns of the steps above, so
+              // the two text columns line up.
+              gridTemplateColumns: { md: "minmax(0, 388px) minmax(0, 1fr)" },
+              columnGap: 8,
+              py: { xs: 5, md: 6 },
+              borderTop: 1,
               borderColor: "line.main",
-              borderRadius: "8px",
-              p: 7,
             }}
           >
-            <Box
-              aria-hidden
-              sx={{
-                width: 48,
-                height: 48,
-                borderRadius: "50%",
-                bgcolor: "skog.soft",
-                color: "skog.main",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                mb: 5,
-              }}
-            >
-              <Icon d={card.icon} size={22} />
-            </Box>
             <Typography
               variant="h4"
               component="h3"
               sx={{ m: 0, fontSize: "22px" }}
             >
-              {card.title}
+              {item.title}
             </Typography>
             <Typography
-              sx={{ mt: 3, color: "ink.2", fontSize: "15px", lineHeight: 1.6 }}
+              sx={{
+                mt: { xs: 2, md: 0.5 },
+                maxWidth: "34rem",
+                color: "ink.2",
+                fontSize: "15px",
+                lineHeight: 1.65,
+              }}
             >
-              {card.desc}
+              {item.desc}
             </Typography>
           </Box>
         ))}
@@ -533,14 +552,28 @@ function ContactSection() {
   return (
     <Box
       component="section"
-      sx={{ px: { xs: 6, md: 14 }, pt: { xs: 10, md: 14 }, pb: 20 }}
+      id="kontakt"
+      sx={{
+        px: { xs: 6, md: 14 },
+        pt: { xs: 10, md: 14 },
+        pb: 20,
+        // Clears the sticky site header when the intro button jumps here.
+        scrollMarginTop: "72px",
+      }}
     >
       <SectionHeading eyebrow="Kontakt" title="Hör av dig" />
+      <Typography sx={{ mb: 6, maxWidth: "40rem", color: "ink.2" }}>
+        Varje ras har en genbanksansvarig. Vem det är just nu står under{" "}
+        <Link href="/styrelsen" style={inlineLinkStyle}>
+          Styrelse och kontakt
+        </Link>
+        .
+      </Typography>
       <Box
         sx={{
           display: "grid",
           gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
-          gap: 6,
+          gap: { xs: 4, md: 6 },
           maxWidth: 900,
         }}
       >
@@ -569,22 +602,7 @@ function ContactSection() {
             >
               {c.breed}
             </Typography>
-            <Typography
-              sx={{ mt: 3, color: "ink.2", fontSize: "15px", lineHeight: 1.6 }}
-            >
-              Vem som är genbanksansvarig just nu står under{" "}
-              <Link href="/styrelsen" style={inlineLinkStyle}>
-                Styrelse och kontakt
-              </Link>
-              .
-            </Typography>
-            <Box
-              component="a"
-              href={`mailto:${c.mail}`}
-              sx={{ ...mailLinkSx, display: "inline-block", mt: 4 }}
-            >
-              {c.mail}
-            </Box>
+            <MailLink mail={c.mail} sx={{ ...stepLinkSx, mt: 2 }} />
           </Box>
         ))}
       </Box>
@@ -610,7 +628,6 @@ export default function BliGenbankPage() {
       <IntroSection />
       <RequirementsSection />
       <StepsSection />
-      <OrnamentDivider />
       <YearlySection />
       <ContactSection />
     </>
