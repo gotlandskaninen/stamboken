@@ -168,9 +168,16 @@ export function GalleryBlockComponent({ images }: Props) {
               transition:
                 "opacity 200ms cubic-bezier(0.2, 0.7, 0.2, 1), outline-color 200ms cubic-bezier(0.2, 0.7, 0.2, 1)",
               "&:hover": { opacity: 1 },
-              '&[aria-current="true"], &:focus-visible': {
+              '&[aria-current="true"]': {
                 opacity: 1,
                 outlineColor: "var(--sb-skog)",
+              },
+              // Not the look of the chosen thumbnail: someone tabbing must see
+              // where focus is as well as which image is shown.
+              "&:focus-visible": {
+                opacity: 1,
+                outline: "3px solid var(--sb-ink)",
+                outlineOffset: "4px",
               },
             }}
           >
