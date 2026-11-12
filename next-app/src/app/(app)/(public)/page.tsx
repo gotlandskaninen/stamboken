@@ -3,439 +3,241 @@ import Link from "next/link";
 import { Box, Typography } from "@mui/material";
 import { LinkButton } from "@/components/public/LinkButton";
 import { Icon, ICONS } from "@/components/public/Icons";
-import { OrnamentDivider } from "@/components/public/OrnamentDivider";
 import { EUFundingBadge } from "@/components/public/EUFundingBadge";
+
+const heroLinkSx = {
+  display: "inline-block",
+  // 12px above and below: a 44px touch target on phones.
+  py: 3,
+  color: "ink.main",
+  textDecoration: "underline",
+  textDecorationColor: "var(--sb-line-strong)",
+  textUnderlineOffset: "3px",
+} as const;
+
+const italicSx = {
+  fontFamily: "'Source Serif 4', Georgia, serif",
+  fontStyle: "italic",
+} as const;
 
 function HeroSection() {
   return (
-    <Box component="section" sx={{ p: { xs: 3, md: 6 }, pb: 0 }}>
+    <Box
+      component="section"
+      className="landing-hero"
+      sx={{
+        px: { xs: 5, md: "clamp(24px, 5vw, 56px)" },
+        pt: { xs: 3, md: 8.5 },
+        display: "grid",
+        gridTemplateColumns: {
+          xs: "minmax(0, 1fr)",
+          md: "minmax(0, 1.05fr) minmax(0, 1fr)",
+        },
+        gap: { xs: 4.5, md: "clamp(24px, 4vw, 64px)" },
+        alignItems: "center",
+      }}
+    >
+      <Box>
+        <Typography
+          variant="h1"
+          component="h1"
+          sx={{
+            m: 0,
+            fontSize: "clamp(34px, 4.4vw, 62px)",
+            lineHeight: 1.05,
+            letterSpacing: "-0.025em",
+          }}
+        >
+          Vi bevarar{" "}
+          <Box component="span" sx={italicSx}>
+            gotlandskanin
+          </Box>{" "}
+          och{" "}
+          <Box component="span" sx={italicSx}>
+            mellerudskanin
+          </Box>{" "}
+          – de sista resterna av Sveriges lantraskaniner.
+        </Typography>
+        <Typography
+          sx={{
+            mt: 3.5,
+            maxWidth: "46ch",
+            fontSize: "clamp(17px, 1.5vw, 20px)",
+            lineHeight: 1.5,
+            color: "ink.2",
+          }}
+        >
+          Raserna lever vidare hemma hos föreningens medlemmar. Som medlem är du
+          med och håller dem vid liv.
+        </Typography>
+        <Box
+          sx={{
+            mt: 5,
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            columnGap: 5,
+            rowGap: 3,
+          }}
+        >
+          <LinkButton
+            href="/bli-medlem"
+            variant="contained"
+            endIcon={<Icon d={ICONS.arrow} size={14} />}
+            sx={{ flex: { xs: "1 1 100%", sm: "0 0 auto" } }}
+          >
+            Bli medlem
+          </LinkButton>
+          <Typography sx={{ fontSize: "15px", color: "ink.2" }}>
+            200 kr om året, för hela familjen
+          </Typography>
+        </Box>
+        <Typography
+          sx={{
+            mt: 5.5,
+            pt: 3.5,
+            borderTop: "1px solid var(--sb-line-strong)",
+            maxWidth: "46ch",
+            fontSize: "15px",
+            color: "ink.2",
+          }}
+        >
+          Omkring 400 medlemmar i hela landet håller i dag omkring 250
+          genbanksbesättningar. Du behöver inte föda upp kaniner själv för att
+          vara med.
+        </Typography>
+        <Box
+          sx={{
+            mt: 2,
+            display: "flex",
+            flexWrap: "wrap",
+            alignItems: "center",
+            columnGap: 3,
+            fontSize: "15px",
+            color: "ink.2",
+          }}
+        >
+          <Box
+            component="span"
+            sx={{ flex: { xs: "1 1 100%", sm: "0 0 auto" } }}
+          >
+            Redan medlem?
+          </Box>
+          <Link href="/stamboken-online" style={{ textDecoration: "none" }}>
+            <Box component="span" sx={heroLinkSx}>
+              Stamboken Online
+            </Box>
+          </Link>
+          <Link href="/medlemsforum" style={{ textDecoration: "none" }}>
+            <Box component="span" sx={heroLinkSx}>
+              Medlemsforum
+            </Box>
+          </Link>
+        </Box>
+      </Box>
       <Box
         sx={{
           position: "relative",
+          order: { xs: -1, md: 0 },
+          // Phones: a low banner, so "Bli medlem" stays on the first screen.
+          aspectRatio: { xs: "2 / 1", md: "4 / 5" },
+          maxHeight: { md: 640 },
+          width: { xs: "auto", md: "100%" },
+          mx: { xs: -2, md: 0 },
           borderRadius: "14px",
           overflow: "hidden",
-          minHeight: { sm: 480, md: 620 },
-          // Phones: the tall stacked copy would crop the landscape photo down to
-          // an eye, so the photo becomes a 3:2 banner and the text sits on a
-          // skog panel below it. From sm the photo is the backdrop again (the
-          // Snabbgenvägar card must stay above the fold on tablets).
-          bgcolor: { xs: "skog.main", sm: "transparent" },
+          bgcolor: "paper.3",
         }}
       >
-        <Box
-          sx={{
-            position: { xs: "relative", sm: "absolute" },
-            inset: { sm: 0 },
-            aspectRatio: { xs: "3 / 2", sm: "auto" },
-          }}
-        >
-          <Image
-            src="/stamboken/hero-ungkanin-grass.jpg"
-            alt="Ung sandfärgad gotlandskanin i gräset"
-            fill
-            priority
-            sizes="100vw"
-            style={{ objectFit: "cover", objectPosition: "60% 40%" }}
-          />
-          <Box
-            sx={{
-              position: "absolute",
-              inset: 0,
-              background: {
-                xs: "linear-gradient(180deg, rgba(31,27,22,0) 70%, rgba(31,51,34,0.85) 100%)",
-                sm: "linear-gradient(180deg, rgba(31,27,22,0.42) 0%, rgba(31,27,22,0.32) 48%, rgba(31,27,22,0.82) 100%)",
-              },
-            }}
-          />
-        </Box>
-
-        <Box
-          sx={{
-            position: "relative",
-            p: {
-              xs: 5,
-              sm: 6,
-              md: "clamp(32px, 5vw, 64px) clamp(24px, 4vw, 56px) 56px",
-            },
-            display: "grid",
-            gridTemplateColumns: {
-              xs: "1fr",
-              md: "minmax(0, 1.4fr) minmax(280px, 1fr)",
-            },
-            gap: { xs: 6, md: "clamp(24px, 4vw, 48px)" },
-            alignItems: "end",
-            minHeight: { sm: 480, md: 620 },
-          }}
-        >
-          {/* Left — headline */}
-          <Box>
-            <Box
-              sx={{
-                mb: { xs: 5, md: 8 },
-                display: "inline-flex",
-                alignItems: "center",
-                gap: 4.5,
-                flexWrap: "wrap",
-              }}
-            >
-              <Box
-                sx={{
-                  width: { xs: 64, md: 88 },
-                  height: { xs: 64, md: 88 },
-                  bgcolor: "paper.main",
-                  borderRadius: "50%",
-                  // The site header already shows the logo right above on phones.
-                  display: { xs: "none", sm: "inline-flex" },
-                  alignItems: "center",
-                  justifyContent: "center",
-                  boxShadow: "0 8px 24px rgba(0,0,0,0.3)",
-                  flexShrink: 0,
-                  "& img": {
-                    width: { xs: 54, md: 76 },
-                    height: { xs: 54, md: 76 },
-                  },
-                }}
-              >
-                <Image
-                  src="/stamboken/logo.png"
-                  alt=""
-                  width={76}
-                  height={76}
-                />
-              </Box>
-              <Box sx={{ color: "paper.main" }}>
-                <Typography
-                  variant="mono"
-                  sx={{
-                    color: "paper.main",
-                    fontSize: "11px",
-                    letterSpacing: "0.16em",
-                    textTransform: "uppercase",
-                    opacity: 0.9,
-                  }}
-                >
-                  Föreningen sedan 1984
-                </Typography>
-                <Typography
-                  sx={{
-                    fontFamily: "'Source Serif 4', Georgia, serif",
-                    fontStyle: "italic",
-                    fontSize: "22px",
-                    mt: 1,
-                    color: "paper.main",
-                  }}
-                >
-                  Bevarar svenska lantraskaniner
-                </Typography>
-              </Box>
-            </Box>
-
-            <Typography
-              variant="h1"
-              component="h1"
-              sx={{
-                m: 0,
-                color: "paper.main",
-                fontSize: "clamp(34px, 7vw, 84px)",
-                lineHeight: 1,
-                letterSpacing: "-0.025em",
-              }}
-            >
-              Vi bevarar{" "}
-              <Box
-                component="span"
-                sx={{
-                  fontFamily: "'Source Serif 4', Georgia, serif",
-                  fontStyle: "italic",
-                }}
-              >
-                gotlandskanin
-              </Box>{" "}
-              och{" "}
-              <Box
-                component="span"
-                sx={{
-                  fontFamily: "'Source Serif 4', Georgia, serif",
-                  fontStyle: "italic",
-                }}
-              >
-                mellerudskanin
-              </Box>{" "}
-              – de sista resterna av Sveriges lantraskaniner.
-            </Typography>
-            <Typography
-              sx={{
-                mt: { xs: 4, md: 6 },
-                color: "rgba(244,241,234,0.88)",
-                maxWidth: 620,
-                fontSize: "clamp(15px, 1.4vw, 19px)",
-                lineHeight: 1.5,
-              }}
-            >
-              Välkommen till Föreningen Gotlandskaninens officiella hemsida. Här
-              skriver vi om våra lantraskaniner, om bevarandearbetet och om
-              föreningens verksamhet.
-            </Typography>
-            <Typography
-              variant="mono"
-              component="p"
-              sx={{ mt: 4, mb: 0, color: "rgba(244,241,234,0.75)" }}
-            >
-              Bild: ung sandfärgad gotlandskanin i gräset
-            </Typography>
-          </Box>
-
-          {/* Right — quick shortcuts card */}
-          <Box
-            component="aside"
-            sx={{
-              bgcolor: "paper.main",
-              borderRadius: "8px",
-              p: 6.5,
-              boxShadow: 3,
-            }}
-          >
-            <Typography variant="eyebrow" sx={{ mb: 3.5, display: "block" }}>
-              Snabbgenvägar
-            </Typography>
-            <Box sx={{ display: "grid", gap: 2.5 }}>
-              <LinkButton
-                href="/bli-medlem"
-                variant="contained"
-                fullWidth
-                startIcon={<Icon d={ICONS.heart} size={15} />}
-              >
-                Bli medlem
-              </LinkButton>
-              <LinkButton
-                href="/stamboken-online"
-                variant="outlined"
-                fullWidth
-                startIcon={<Icon d={ICONS.book} size={15} />}
-              >
-                Stamboken Online
-              </LinkButton>
-              <LinkButton
-                href="/medlemsforum"
-                variant="outlined"
-                fullWidth
-                startIcon={<Icon d={ICONS.message} size={15} />}
-              >
-                Medlemsforum
-              </LinkButton>
-            </Box>
-            <Box
-              sx={{
-                mt: 4.5,
-                pt: 4,
-                borderTop: 1,
-                borderColor: "line.main",
-                display: "flex",
-                gap: 3.5,
-                fontSize: "12px",
-                flexWrap: "wrap",
-              }}
-            >
-              <Box
-                component="a"
-                href="https://www.facebook.com/profile.php?id=100064726114664"
-                target="_blank"
-                rel="noopener noreferrer"
-                sx={{
-                  display: "inline-flex",
-                  alignItems: "center",
-                  gap: 1.5,
-                  textDecoration: "none",
-                  color: "ink.2",
-                  "&:hover": { color: "ink.main" },
-                }}
-              >
-                <Box
-                  sx={{
-                    width: 22,
-                    height: 22,
-                    borderRadius: "4px",
-                    bgcolor: "#1877F2",
-                    color: "#fff",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontWeight: 700,
-                  }}
-                >
-                  f
-                </Box>
-                Facebooksida
-              </Box>
-            </Box>
-          </Box>
-        </Box>
+        <Image
+          src="/stamboken/hero-ungkanin-grass.jpg"
+          alt="Ung sandfärgad gotlandskanin i gräset"
+          fill
+          priority
+          sizes="(min-width: 900px) 50vw, 100vw"
+          style={{ objectFit: "cover", objectPosition: "58% 40%" }}
+        />
       </Box>
     </Box>
   );
 }
 
-const PILLARS = [
-  {
-    title: "Bli medlem",
-    desc: "Som medlem stödjer du bevarandet av två svenska lantraser. Du får tidskriften Koharen tre gånger om året och tillgång till medlemsforum.",
-    href: "/bli-medlem",
-    icon: ICONS.heart,
-    tint: "lera",
-  },
-  {
-    title: "Föreningen",
-    desc: "Om vår verksamhet sedan 1984. Drygt 400 medlemmar över hela landet och ett genbankssystem för två lantraser.",
-    href: "/foreningen",
-    icon: ICONS.shield,
-    tint: "skog",
-  },
-  {
-    title: "Lantraskaninen",
-    desc: "Vad är en lantraskanin? En översikt av begreppet, vad som skiljer dem från andra raser och varför de behöver bevaras.",
-    href: "/lantraskaninen",
-    icon: ICONS.leaf,
-    tint: "mossa",
-  },
+const MISSION_LINKS = [
+  { href: "/foreningen", label: "Så fungerar genbanken" },
+  { href: "/bli-genbanksbesattning", label: "Bli genbanksbesättning" },
 ];
 
-function PillarsSection() {
+function MissionSection() {
   return (
-    <Box component="section" sx={{ px: { xs: 6, md: 14 }, pt: 16, pb: 8 }}>
+    <Box component="section" sx={{ px: { xs: 6, md: 14 }, pt: 16 }}>
       <Box
         sx={{
           display: "grid",
           gridTemplateColumns: { xs: "1fr", md: "minmax(80px, 160px) 1fr" },
           gap: 8,
-          mb: 9,
         }}
       >
-        <Typography variant="eyebrow">Föreningen</Typography>
-        <Typography variant="h2" sx={{ m: 0 }}>
-          Vad vi gör och hur du kan vara med i arbetet.
-        </Typography>
-      </Box>
-
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-          gap: 5,
-        }}
-      >
-        {PILLARS.map((c) => (
-          <Link
-            key={c.title}
-            href={c.href}
-            style={{ textDecoration: "none", color: "inherit" }}
+        <Typography variant="eyebrow">Uppdraget</Typography>
+        <Box>
+          <Typography variant="h2" sx={{ m: 0 }}>
+            Genbanken finns hemma hos medlemmarna.
+          </Typography>
+          <Typography
+            variant="lede"
+            sx={{ mt: 3.5, maxWidth: 720, display: "block" }}
           >
-            <Box
-              sx={{
-                bgcolor: "background.paper",
-                border: 1,
-                borderColor: "line.main",
-                borderRadius: "8px",
-                p: 7,
-                height: "100%",
-                transition: "transform 200ms cubic-bezier(0.2, 0.7, 0.2, 1)",
-                "&:hover": { transform: "translateY(-2px)" },
-              }}
-            >
-              <Box
-                sx={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  mb: 6,
-                }}
+            Den gamla svenska lantraskaninen var nära att försvinna när gårdarna
+            slutade hålla kaniner och nya raser tog över. I dag lever den vidare
+            hos uppfödare runt om i Sverige som har avtal med föreningen. Varje
+            kanin i genbanken har ett intyg och finns i stamboken.
+          </Typography>
+          <Box sx={{ mt: 2, display: "flex", flexWrap: "wrap", columnGap: 6 }}>
+            {MISSION_LINKS.map((l) => (
+              <Link
+                key={l.href}
+                href={l.href}
+                style={{ color: "inherit", textDecoration: "none" }}
               >
-                <Box
-                  sx={{
-                    width: 48,
-                    height: 48,
-                    borderRadius: "50%",
-                    bgcolor: `${c.tint}.soft`,
-                    color: c.tint === "lera" ? "lera.main" : "skog.main",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                  }}
-                >
-                  <Icon d={c.icon} size={22} />
+                <Box component="span" sx={heroLinkSx}>
+                  {l.label} &rarr;
                 </Box>
-              </Box>
-              <Typography
-                variant="h4"
-                component="h3"
-                sx={{ m: 0, fontSize: "24px" }}
-              >
-                {c.title}
-              </Typography>
-              <Typography
-                sx={{
-                  mt: 3,
-                  color: "ink.2",
-                  fontSize: "15px",
-                  lineHeight: 1.55,
-                }}
-              >
-                {c.desc}
-              </Typography>
-              <Typography
-                sx={{
-                  mt: 4.5,
-                  fontSize: "14px",
-                  color: "ink.main",
-                  textDecoration: "underline",
-                  textDecorationColor: "line.strong",
-                  textUnderlineOffset: "3px",
-                }}
-              >
-                Läs mer &rarr;
-              </Typography>
-            </Box>
-          </Link>
-        ))}
+              </Link>
+            ))}
+          </Box>
+        </Box>
       </Box>
     </Box>
   );
 }
 
-// Card images are AI-generated illustrations chosen by the owner (2026-09-11);
-// the gotlandskanin one portrays Blomma, 107-014G.
-// `pos` keeps the rabbit in frame when the 320 px card crops the wide image
-// on phones.
+// Card photos are members' photos, cropped to the card's 3:2, and both are
+// retouched. Gotlandskanin: the background behind the rabbit (a house, a
+// fence) is replaced, and the photo is mirrored so the two rabbits face each
+// other. Mellerudskanin: a fence behind the rabbit is removed.
 const BREEDS = [
   {
     name: "Gotlandskanin",
-    latin: "Återupptäckt 1976 genom ett upprop i tidskriften Kaninuppfödaren",
-    status: "Utrotningshotad",
-    n: "~200",
-    nLabel: "genbanksbesättningar",
-    desc: "En lokal variant av den gamla svenska lantraskaninen, bevarad på Gotland. Klassad som utrotningshotad svensk husdjursras av Jordbruksverket.",
+    n: "200",
+    desc: "En lokal variant av den gamla svenska lantraskaninen, bevarad på Gotland.",
     href: "/gotlandskanin",
     img: "/stamboken/breed-gotlandskanin.jpg",
-    alt: "Gotlandskaninen Blomma, 107-014G",
-    pos: "30% 50%",
+    alt: "Vuxen gulbrokig gotlandskanin i gräset",
+    pos: "45% 50%",
   },
   {
     name: "Mellerudskanin",
-    latin:
-      "Uppmärksammad genom personliga kontakter 2001 i Mellerud i Dalsland",
-    status: "Utrotningshotad",
-    n: "~50",
-    nLabel: "genbanksbesättningar",
-    desc: "Ytterligare en gren av den gamla lantrasen, bevarad som egen ras. Även den klassad som utrotningshotad svensk husdjursras av Jordbruksverket.",
+    n: "50",
+    desc: "Ytterligare en gren av den gamla lantrasen, bevarad som egen ras.",
     href: "/mellerudskanin",
     img: "/stamboken/breed-mellerudskanin.jpg",
-    alt: "Mellerudskanin",
-    pos: "75% 50%",
+    alt: "Mellerudskanin med svartvit holländarteckning i gräset",
+    pos: "50% 50%",
   },
 ];
 
 function BreedsSection() {
   return (
-    <Box component="section" sx={{ px: { xs: 6, md: 14 }, pt: 8, pb: 16 }}>
+    <Box component="section" sx={{ px: { xs: 6, md: 14 }, pt: 16, pb: 16 }}>
       <Box
         sx={{
           display: "grid",
@@ -449,7 +251,10 @@ function BreedsSection() {
           <Typography variant="h2" sx={{ m: 0 }}>
             Två kaninraser med ursprung i den svenska lantraskaninen.
           </Typography>
-          <Typography variant="lede" sx={{ mt: 3.5, maxWidth: 720 }}>
+          <Typography
+            variant="lede"
+            sx={{ mt: 3.5, maxWidth: 720, display: "block" }}
+          >
             Jordbruksverket klassar båda raserna som utrotningshotade svenska
             husdjursraser. Föreningen samordnar avelsarbetet i ett
             genbankssystem.
@@ -458,13 +263,14 @@ function BreedsSection() {
       </Box>
 
       <Box
+        className="breed-cards"
         sx={{
           display: "grid",
           gridTemplateColumns: {
-            xs: "1fr",
-            md: "repeat(auto-fit, minmax(380px, 1fr))",
+            xs: "minmax(0, 1fr)",
+            md: "repeat(2, minmax(0, 1fr))",
           },
-          gap: 6,
+          gap: 8,
         }}
       >
         {BREEDS.map((b) => (
@@ -474,108 +280,68 @@ function BreedsSection() {
             style={{ textDecoration: "none", color: "inherit" }}
           >
             <Box
-              component="article"
               sx={{
+                height: "100%",
                 bgcolor: "background.paper",
                 border: 1,
                 borderColor: "line.main",
                 borderRadius: "8px",
                 overflow: "hidden",
-                transition: "transform 200ms cubic-bezier(0.2, 0.7, 0.2, 1)",
-                "&:hover": { transform: "translateY(-2px)" },
+                "& img": {
+                  transition: "transform 360ms cubic-bezier(0.2, 0.7, 0.2, 1)",
+                },
+                "&:hover img": { transform: "scale(1.02)" },
+                "@media (prefers-reduced-motion: reduce)": {
+                  "& img": { transition: "none" },
+                  "&:hover img": { transform: "none" },
+                },
               }}
             >
               <Box
                 sx={{
                   position: "relative",
-                  width: "100%",
-                  height: 320,
+                  // 3:2, not wider: a sitting rabbit with its ears up is tall.
+                  aspectRatio: "3 / 2",
+                  overflow: "hidden",
+                  bgcolor: "paper.3",
                 }}
               >
                 <Image
                   src={b.img}
                   alt={b.alt}
                   fill
+                  sizes="(min-width: 900px) 50vw, 100vw"
                   style={{ objectFit: "cover", objectPosition: b.pos }}
                 />
               </Box>
-              <Box sx={{ p: 7 }}>
+              <Box
+                sx={{ px: { xs: 6.5, md: 9 }, pt: 8, pb: { xs: 6.5, md: 9 } }}
+              >
+                <Typography variant="h3" sx={{ m: 0 }}>
+                  {b.name}
+                </Typography>
+                <Typography sx={{ mt: 3, color: "ink.2" }}>{b.desc}</Typography>
                 <Box
                   sx={{
+                    mt: 6.5,
                     display: "flex",
+                    flexWrap: "wrap",
                     justifyContent: "space-between",
                     alignItems: "baseline",
-                    gap: 3,
-                    flexWrap: "wrap",
+                    columnGap: 4,
+                    rowGap: 2,
                   }}
                 >
-                  <Box>
-                    <Typography variant="h3" sx={{ m: 0 }}>
-                      {b.name}
-                    </Typography>
-                    <Typography variant="mono" sx={{ mt: 1 }}>
-                      {b.latin}
-                    </Typography>
-                  </Box>
-                  <Box
-                    sx={{
-                      fontFamily: "'IBM Plex Mono', monospace",
-                      fontSize: "11px",
-                      letterSpacing: "0.06em",
-                      textTransform: "uppercase",
-                      px: 2,
-                      py: 1,
-                      borderRadius: "4px",
-                      bgcolor: "lera.soft",
-                      color: "#8a3f1f",
-                      border: "1px solid #e6c0ad",
-                    }}
-                  >
-                    {b.status}
-                  </Box>
-                </Box>
-                <Typography sx={{ mt: 3.5, color: "ink.2", lineHeight: 1.6 }}>
-                  {b.desc}
-                </Typography>
-                <Box
-                  sx={{
-                    mt: 5.5,
-                    pt: 4.5,
-                    borderTop: 1,
-                    borderColor: "line.main",
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: 3,
-                  }}
-                >
-                  <Box>
-                    <Box
-                      component="span"
-                      sx={{
-                        fontFamily: "'Source Serif 4', Georgia, serif",
-                        fontSize: "30px",
-                        lineHeight: 1,
-                        letterSpacing: "-0.02em",
-                        color: "skog.main",
-                      }}
-                    >
-                      {b.n}
-                    </Box>
-                    <Typography
-                      variant="mono"
-                      component="span"
-                      sx={{ ml: 2.5 }}
-                    >
-                      {b.nLabel}
-                    </Typography>
-                  </Box>
+                  <Typography sx={{ fontSize: "15px", color: "ink.2" }}>
+                    Omkring {b.n} genbanksbesättningar
+                  </Typography>
                   <Typography
                     sx={{
-                      fontSize: "14px",
+                      fontSize: "15px",
+                      whiteSpace: "nowrap",
                       color: "ink.main",
                       textDecoration: "underline",
-                      textDecorationColor: "line.strong",
+                      textDecorationColor: "var(--sb-line-strong)",
                       textUnderlineOffset: "3px",
                     }}
                   >
@@ -591,291 +357,81 @@ function BreedsSection() {
   );
 }
 
-const EU_ITEMS = [
-  ["Genbanks­besättningar", "Drift och underhåll"],
-  ["Medlems­tidningen", "Koharen, 3 nr/år"],
-  ["Trycksaker", "Faktablad, Färgatlas"],
-  ["Genbanksintyg", "Officiella dokument"],
-  ["Kurser & utbildningar", "För medlemmar"],
-  ["Transport av djur", "Värdefulla individer"],
-  ["Obduktioner", "Veterinär­medicinsk uppföljning"],
-  ["Marknadsföring", "Spridning av kunskap"],
-];
-
 function EUSection() {
   return (
     <Box
       component="section"
       id="eu-stod"
+      className="eu-section"
       sx={{
-        position: "relative",
+        bgcolor: "skog.main",
         color: "paper.main",
-        py: 20,
-        px: { xs: 6, md: 14 },
-        overflow: "hidden",
+        py: 9,
+        px: { xs: 6, md: "clamp(24px, 4vw, 56px)" },
       }}
     >
-      <Image
-        src="/stamboken/eu-landscape-fence-barn.jpg"
-        alt=""
-        fill
-        style={{
-          objectFit: "cover",
-          objectPosition: "center 60%",
-          opacity: 0.45,
-        }}
-        aria-hidden="true"
-      />
       <Box
         sx={{
-          position: "absolute",
-          inset: 0,
-          background:
-            "linear-gradient(180deg, rgba(31,51,34,0.86) 0%, rgba(47,74,50,0.94) 100%)",
-        }}
-      />
-      <Box
-        sx={{
-          position: "relative",
-          display: "grid",
-          gridTemplateColumns: {
-            // minmax(0, 1fr): a plain 1fr track is minmax(auto, 1fr), and the
-            // auto-fit EU_ITEMS grid below reports a 3-column min-content width
-            // (688px) that widened this column past a phone screen; the section
-            // is overflow:hidden, so the right half was simply cut off.
-            xs: "minmax(0, 1fr)",
-            md: "minmax(80px, 160px) minmax(0, 1fr) minmax(220px, 280px)",
-          },
-          gap: 10,
-          alignItems: "start",
+          maxWidth: 1100,
+          mx: "auto",
+          display: "flex",
+          flexDirection: { xs: "column", md: "row" },
+          alignItems: { xs: "flex-start", md: "center" },
+          gap: { xs: 5, md: 8 },
         }}
       >
-        <Typography variant="eyebrow" sx={{ color: "rgba(244,241,234,0.78)" }}>
-          EU-stöd
-        </Typography>
-        <Box>
-          <Typography
-            variant="h2"
-            sx={{ m: 0, color: "paper.main", maxWidth: 720 }}
-          >
-            Föreningen Gotlandskaninen får stöd från{" "}
-            <Box
-              component="span"
-              sx={{
-                color: "#e8c8a8",
-              }}
-            >
-              EU
-            </Box>{" "}
-            för att bevara gotlands- och mellerudskanin.
-          </Typography>
-          <Typography
-            variant="lede"
-            sx={{
-              mt: 5.5,
-              color: "rgba(244,241,234,0.86)",
-              maxWidth: 720,
-            }}
-          >
-            Stödet går till genbanksbesättningarna, medlemstidningen,
-            trycksaker, genbanksintyg, marknadsföring, kurser, utbildningar,
-            transport av värdefulla djur samt obduktioner.
-          </Typography>
-          <Box
-            sx={{
-              mt: 9,
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-              gap: 3.5,
-              maxWidth: 720,
-            }}
-          >
-            {EU_ITEMS.map(([t, s], i) => (
-              <Box
-                key={i}
-                sx={{
-                  p: "14px 16px",
-                  bgcolor: "rgba(244,241,234,0.08)",
-                  borderLeft: "2px solid #e8c8a8",
-                  borderRadius: "0 4px 4px 0",
-                }}
-              >
-                <Typography
-                  sx={{
-                    fontSize: "14px",
-                    fontWeight: 500,
-                    color: "paper.main",
-                  }}
-                >
-                  {t}
-                </Typography>
-                <Typography
-                  sx={{
-                    fontSize: "12px",
-                    color: "rgba(244,241,234,0.65)",
-                    mt: 0.5,
-                  }}
-                >
-                  {s}
-                </Typography>
-              </Box>
-            ))}
-          </Box>
+        {/* Official EU funding lockup (emblem + mandated wording), on a
+            white card so it stays compliant and legible over the dark strip. */}
+        <Box sx={{ flex: "none", lineHeight: 0 }}>
+          <EUFundingBadge orientation="vertical" height={104} />
         </Box>
-        <Box
-          component="aside"
-          sx={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 4.5,
-            alignItems: "flex-start",
-          }}
-        >
-          {/* Official EU funding lockup (emblem + mandated wording), on a
-              white card so it stays compliant and legible over the dark strip. */}
-          <EUFundingBadge orientation="vertical" height={132} />
+        <Box sx={{ maxWidth: "72ch", color: "rgba(244,241,234,0.92)" }}>
+          {/* A heading for the section outline, set as the first sentence. */}
+          <Typography
+            component="h2"
+            sx={{ display: "inline", fontWeight: 600, color: "paper.main" }}
+          >
+            Föreningen Gotlandskaninen får stöd från EU för att bevara gotlands-
+            och mellerudskanin.
+          </Typography>{" "}
+          <Typography component="span">
+            Stödet går till genbanksbesättningarna, medlemstidningen Koharen,
+            trycksaker, genbanksintyg, kurser och utbildningar, transport av
+            värdefulla djur, obduktioner och marknadsföring.
+          </Typography>
         </Box>
       </Box>
     </Box>
   );
 }
+
+const MEMBER_BENEFITS: {
+  title: string;
+  text: string;
+  href?: string;
+  cta?: string;
+}[] = [
+  {
+    title: "Tidskriften Koharen",
+    text: "Tre nummer om året med artiklar, reportage, annonser och kontaktuppgifter.",
+  },
+  {
+    title: "Medlemsforum",
+    text: "Fråga och jämför med andra uppfödare.",
+    href: "/medlemsforum",
+    cta: "Till forumet",
+  },
+  {
+    title: "Stamboken Online",
+    text: "Registrera kaniner, kullar och härstamning.",
+    href: "/stamboken-online",
+    cta: "Till Stamboken",
+  },
+];
 
 function MemberSection() {
   return (
-    <Box component="section" sx={{ px: { xs: 6, md: 14 }, pt: 20, pb: 8 }}>
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: { xs: "1fr", md: "minmax(80px, 160px) 1fr" },
-          gap: 8,
-          mb: 10,
-        }}
-      >
-        <Typography variant="eyebrow">Medlems&shy;verksamhet</Typography>
-        <Typography variant="h2" sx={{ m: 0 }}>
-          En tidskrift, ett forum, en stambok.
-        </Typography>
-      </Box>
-
-      <Box
-        sx={{
-          display: "grid",
-          gridTemplateColumns: {
-            xs: "1fr",
-            md: "repeat(auto-fit, minmax(380px, 1fr))",
-          },
-          gap: 6,
-        }}
-      >
-        {[
-          {
-            href: "/medlemsforum",
-            img: "/stamboken/koharen-kit-in-hands.jpg",
-            badge: "Koharen / Medlemsforum",
-            badgeColor: "lera" as const,
-            title: "Tidskriften sedan 1984 och forumet på nätet.",
-            desc: "Som medlem får du Koharen tre gånger om året. I tidningen finns information till medlemmarna, artiklar och reportage, annonser samt kontaktuppgifter.",
-            cta: "Öppna medlemsforum →",
-          },
-          {
-            href: "/stamboken-online",
-            img: "/stamboken/breeding-notebook.jpg",
-            badge: "Stamboken Online",
-            badgeColor: "skog" as const,
-            title: "Den digitala stamboken för medlemmar.",
-            desc: "Registrera individer, kullar och härstamning. Varje kanin som fått genbanksintyg finns i föreningens centrala register.",
-            cta: "Logga in →",
-          },
-        ].map((card) => (
-          <Link
-            key={card.href}
-            href={card.href}
-            style={{ textDecoration: "none", color: "inherit" }}
-          >
-            <Box
-              component="article"
-              sx={{
-                bgcolor: "background.paper",
-                border: 1,
-                borderColor: "line.main",
-                borderRadius: "8px",
-                overflow: "hidden",
-                transition: "transform 200ms cubic-bezier(0.2, 0.7, 0.2, 1)",
-                "&:hover": { transform: "translateY(-2px)" },
-              }}
-            >
-              <Box sx={{ position: "relative", width: "100%", height: 280 }}>
-                <Image
-                  src={card.img}
-                  alt=""
-                  fill
-                  style={{ objectFit: "cover" }}
-                />
-              </Box>
-              <Box sx={{ p: 7 }}>
-                <Box
-                  sx={{
-                    fontFamily: "'IBM Plex Mono', monospace",
-                    fontSize: "11px",
-                    letterSpacing: "0.06em",
-                    textTransform: "uppercase",
-                    px: 2,
-                    py: 1,
-                    borderRadius: "4px",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 1.5,
-                    bgcolor:
-                      card.badgeColor === "lera" ? "lera.soft" : "skog.soft",
-                    color: card.badgeColor === "lera" ? "#8a3f1f" : "skog.main",
-                    border: "1px solid",
-                    borderColor:
-                      card.badgeColor === "lera" ? "#e6c0ad" : "#c0ccb4",
-                  }}
-                >
-                  {card.badge}
-                </Box>
-                <Typography
-                  variant="h4"
-                  component="h3"
-                  sx={{ mt: 3.5, m: "14px 0 0", fontSize: "26px" }}
-                >
-                  {card.title}
-                </Typography>
-                <Typography
-                  sx={{
-                    mt: 3,
-                    color: "ink.2",
-                    lineHeight: 1.6,
-                    fontSize: "15px",
-                  }}
-                >
-                  {card.desc}
-                </Typography>
-                <Typography
-                  sx={{
-                    mt: 4.5,
-                    fontSize: "14px",
-                    color: "ink.main",
-                    textDecoration: "underline",
-                    textDecorationColor: "line.strong",
-                    textUnderlineOffset: "3px",
-                  }}
-                >
-                  {card.cta}
-                </Typography>
-              </Box>
-            </Box>
-          </Link>
-        ))}
-      </Box>
-    </Box>
-  );
-}
-
-function CTASection() {
-  return (
-    <Box component="section" sx={{ px: { xs: 6, md: 14 }, pt: 8, pb: 20 }}>
+    <Box component="section" sx={{ px: { xs: 6, md: 14 }, py: 20 }}>
       <Box
         sx={{
           display: "grid",
@@ -885,65 +441,125 @@ function CTASection() {
         }}
       >
         <Typography variant="eyebrow">Medlemskap</Typography>
-        <Typography variant="h2" sx={{ m: 0 }}>
-          Bli en del av bevarandet.
-        </Typography>
+        <Box>
+          <Typography variant="h2" sx={{ m: 0 }}>
+            Bli en del av bevarandet.
+          </Typography>
+          <Typography
+            variant="lede"
+            sx={{ mt: 3.5, maxWidth: 720, display: "block" }}
+          >
+            Som medlem får du en tidskrift, ett forum och en stambok. Och du är
+            med och håller raserna vid liv, oavsett om du föder upp kaniner
+            själv.
+          </Typography>
+        </Box>
       </Box>
 
       <Box
+        className="member-body"
         sx={{
-          bgcolor: "paper.2",
-          border: 1,
-          borderColor: "line.strong",
-          borderRadius: "8px",
-          p: { xs: 6, md: 11 },
           display: "grid",
-          gridTemplateColumns: { xs: "1fr", md: "64px 1fr auto" },
-          gap: 6,
+          gridTemplateColumns: {
+            xs: "minmax(0, 1fr)",
+            md: "minmax(0, 0.95fr) minmax(0, 1fr)",
+          },
+          gap: { xs: 6, md: 12 },
           alignItems: "center",
         }}
       >
         <Box
           sx={{
-            width: 64,
-            height: 64,
-            bgcolor: "paper.main",
-            borderRadius: "50%",
-            display: { xs: "none", md: "inline-flex" },
-            alignItems: "center",
-            justifyContent: "center",
-            boxShadow: 1,
+            position: "relative",
+            aspectRatio: { xs: "3 / 2", md: "4 / 3" },
+            borderRadius: "8px",
+            overflow: "hidden",
+            bgcolor: "paper.3",
           }}
         >
-          <Image src="/stamboken/logo.png" alt="" width={56} height={56} />
+          <Image
+            src="/stamboken/medlem-angsbild.jpg"
+            alt="Ung brokig gotlandskanin på en äng"
+            fill
+            sizes="(min-width: 900px) 45vw, 100vw"
+            style={{ objectFit: "cover", objectPosition: "60% 50%" }}
+          />
         </Box>
-        <Box sx={{ minWidth: 280 }}>
-          <Typography variant="h3" sx={{ m: 0 }}>
-            200 kr om året.
-          </Typography>
-          <Typography
+        <Box>
+          <Box component="ul" sx={{ m: 0, p: 0, listStyle: "none" }}>
+            {MEMBER_BENEFITS.map((b, i) => (
+              <Box
+                component="li"
+                key={b.title}
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 1fr) auto",
+                  columnGap: 6,
+                  alignItems: "center",
+                  py: 4.5,
+                  borderTop: "1px solid var(--sb-line)",
+                  borderBottom:
+                    i === MEMBER_BENEFITS.length - 1
+                      ? "1px solid var(--sb-line)"
+                      : "none",
+                }}
+              >
+                <Box>
+                  <Typography
+                    component="h3"
+                    sx={{ m: 0, fontSize: "17px", fontWeight: 600 }}
+                  >
+                    {b.title}
+                  </Typography>
+                  <Typography sx={{ mt: 1, maxWidth: "46ch", color: "ink.2" }}>
+                    {b.text}
+                  </Typography>
+                </Box>
+                {b.href && (
+                  <Link href={b.href} style={{ textDecoration: "none" }}>
+                    <Box
+                      component="span"
+                      sx={{
+                        ...heroLinkSx,
+                        fontSize: "15px",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {b.cta} &rarr;
+                    </Box>
+                  </Link>
+                )}
+              </Box>
+            ))}
+          </Box>
+          <Box
             sx={{
-              mt: 2,
-              color: "ink.2",
-              lineHeight: 1.55,
-              maxWidth: 600,
+              mt: 7,
+              display: "flex",
+              flexWrap: "wrap",
+              justifyContent: "space-between",
+              alignItems: "center",
+              columnGap: 6,
+              rowGap: 4,
             }}
           >
-            Som medlem får du föreningens medlemstidning Koharen tre gånger om
-            året, tillgång till medlemsforum och Stamboken Online.
-          </Typography>
-        </Box>
-        <Box sx={{ display: "flex", gap: 2.5, flexWrap: "wrap" }}>
-          <LinkButton
-            href="/bli-medlem"
-            variant="contained"
-            endIcon={<Icon d={ICONS.arrow} size={14} />}
-          >
-            Bli medlem
-          </LinkButton>
-          <LinkButton href="/foreningen" variant="text">
-            Om föreningen
-          </LinkButton>
+            <Box>
+              <Typography variant="h3" component="p" sx={{ m: 0 }}>
+                200 kr om året
+              </Typography>
+              <Typography sx={{ mt: 1.5, fontSize: "15px", color: "ink.2" }}>
+                Medlemskapet gäller hela familjen.
+              </Typography>
+            </Box>
+            <LinkButton
+              href="/bli-medlem"
+              variant="contained"
+              endIcon={<Icon d={ICONS.arrow} size={14} />}
+              sx={{ flex: { xs: "1 1 100%", sm: "0 0 auto" } }}
+            >
+              Bli medlem
+            </LinkButton>
+          </Box>
         </Box>
       </Box>
     </Box>
@@ -954,12 +570,10 @@ export default function HomePage() {
   return (
     <>
       <HeroSection />
-      <PillarsSection />
-      <OrnamentDivider />
+      <MissionSection />
       <BreedsSection />
-      <EUSection />
       <MemberSection />
-      <CTASection />
+      <EUSection />
     </>
   );
 }

@@ -29,8 +29,8 @@ const FALLBACK_NAV_LINKS = [
         image: "/stamboken/breed-mellerudskanin.jpg",
       },
       {
-        label: "Bli genbank",
-        href: "/bli-genbank",
+        label: "Bli genbanksbesättning",
+        href: "/bli-genbanksbesattning",
         subtitle: "så går det till",
       },
     ],
@@ -102,7 +102,7 @@ export async function PublicNav() {
           <Typography
             variant="mono"
             sx={{
-              fontSize: "10px",
+              fontSize: "11px",
               letterSpacing: "0.14em",
               textTransform: "uppercase",
               color: "ink.3",

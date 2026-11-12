@@ -10,6 +10,7 @@ import {
   TextField,
 } from "@mui/material";
 import { formatPostalCode, isValidPostalCode } from "@/lib/postal";
+import { MEMBERSHIP_PAYMENT } from "@/components/public/MembershipSteps";
 import { submitApplication } from "./actions";
 import styles from "./ApplicationForm.module.css";
 
@@ -47,7 +48,8 @@ export function ApplicationForm() {
   if (submitted) {
     return (
       <Alert severity="success" sx={{ mt: 2 }}>
-        Tack för din ansökan! Föreningen kontaktar dig när den har behandlats.
+        Tack för din ansökan! Föreningen kontaktar dig när den har behandlats.{" "}
+        {MEMBERSHIP_PAYMENT}
       </Alert>
     );
   }

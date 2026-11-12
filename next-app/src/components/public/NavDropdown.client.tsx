@@ -42,7 +42,7 @@ export function NavDropdown({ label, href, items, active }: NavDropdownProps) {
   }, [open, close]);
 
   // Children with a thumbnail (the two breeds) keep the picture-card look;
-  // text-only children (e.g. "Bli genbank") would otherwise sit with their
+  // text-only children (e.g. "Bli genbanksbesättning") would otherwise sit with their
   // label under the thumbnails' baseline, so they render as a compact text
   // group below the cards instead.
   const cardItems = items.filter((i) => i.image);
@@ -185,30 +185,24 @@ export function NavDropdown({ label, href, items, active }: NavDropdownProps) {
             </Box>
           ))}
           <Box
+            component={Link}
+            href={href}
+            onClick={close}
             sx={{
-              borderTop: 1,
-              borderColor: "line.faint",
+              display: "block",
               px: 4,
               py: 2.5,
+              textDecoration: "none",
+              color: "inherit",
+              "&:hover": { bgcolor: "paper.2" },
             }}
           >
-            <Box
-              component={Link}
-              href={href}
-              onClick={close}
-              sx={{
-                fontSize: "13px",
-                color: "ink.3",
-                textDecoration: "none",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                "&:hover": { color: "ink.main" },
-              }}
-            >
+            <Typography sx={{ fontSize: "14px", fontWeight: 600 }}>
               Om lantraskaninen
-              <span>&rarr;</span>
-            </Box>
+            </Typography>
+            <Typography variant="mono" sx={{ mt: 0.5 }}>
+              vad en lantras är
+            </Typography>
           </Box>
         </Box>
       )}

@@ -84,6 +84,8 @@ export default function StambokenOnlinePage() {
                   variant="mono"
                   sx={{
                     mt: 1.5,
+                    // ink.2: the mono default (ink.3) is only 3.9:1 on skog.soft
+                    color: "ink.2",
                     fontSize: "11px",
                     textTransform: "uppercase",
                     letterSpacing: "0.12em",
@@ -97,13 +99,25 @@ export default function StambokenOnlinePage() {
           </Box>
 
           <Typography
-            sx={{ mt: 6, fontSize: "15px", lineHeight: 1.65, color: "ink.2" }}
+            sx={{
+              mt: 6,
+              maxWidth: "36rem",
+              fontSize: "15px",
+              lineHeight: 1.65,
+              color: "ink.2",
+            }}
           >
             Med registret på plats går det att följa en kanins anor bakåt, hitta
             kullar och hålla ihop avelsarbetet mellan besättningar.
           </Typography>
           <Typography
-            sx={{ mt: 4, fontSize: "15px", lineHeight: 1.65, color: "ink.2" }}
+            sx={{
+              mt: 4,
+              maxWidth: "36rem",
+              fontSize: "15px",
+              lineHeight: 1.65,
+              color: "ink.2",
+            }}
           >
             Du loggar in med ditt föreningskonto: en e-postadress på
             gotlandskaninen.se som föreningen skapar åt dig som medlem. Vi

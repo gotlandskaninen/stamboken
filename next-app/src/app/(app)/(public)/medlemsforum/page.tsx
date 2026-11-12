@@ -19,7 +19,7 @@ export default function MedlemsforumPage() {
         }}
       />
       <Box component="section" sx={{ p: { xs: "40px 24px", md: "80px 56px" } }}>
-        <Box sx={{ maxWidth: 720 }}>
+        <Box sx={{ maxWidth: 620 }}>
           <Typography variant="h2" sx={{ m: 0, mb: 4 }}>
             Här ses vi mellan numren av Koharen
           </Typography>

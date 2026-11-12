@@ -63,7 +63,7 @@ Jordbruksverkets/EU:s regler på webbplatser som rör verksamheten.
 
 | Yta | Komponent | Variant |
 |-----|-----------|---------|
-| Landningssidan | `(public)/page.tsx` | vertikal, h 132 |
+| Landningssidan | `(public)/page.tsx` | vertikal, h 104 |
 | Inloggning | `(auth)/auth/sign-in/page.tsx` | horisontell, h 44 (×2) |
 | Publik footer | `components/public/PublicFooter.tsx` | horisontell, h 52 |
 | Dashboard-footer | `components/shell/ShellFooter.tsx` | horisontell, h 44 |
