@@ -482,6 +482,30 @@ function EUSection() {
   );
 }
 
+const MEMBER_BENEFITS: {
+  title: string;
+  text: string;
+  href?: string;
+  cta?: string;
+}[] = [
+  {
+    title: "Tidskriften Koharen",
+    text: "Tre nummer om året med artiklar, reportage, annonser och kontaktuppgifter.",
+  },
+  {
+    title: "Medlemsforum",
+    text: "Fråga och jämför med andra uppfödare.",
+    href: "/medlemsforum",
+    cta: "Till forumet",
+  },
+  {
+    title: "Stamboken Online",
+    text: "Registrera kaniner, kullar och härstamning.",
+    href: "/stamboken-online",
+    cta: "Till Stamboken",
+  },
+];
+
 function MemberSection() {
   return (
     <Box component="section" sx={{ px: { xs: 6, md: 14 }, py: 20 }}>
@@ -510,172 +534,109 @@ function MemberSection() {
       </Box>
 
       <Box
+        className="member-body"
         sx={{
           display: "grid",
           gridTemplateColumns: {
-            xs: "1fr",
-            md: "repeat(auto-fit, minmax(380px, 1fr))",
+            xs: "minmax(0, 1fr)",
+            md: "minmax(0, 0.95fr) minmax(0, 1fr)",
           },
-          gap: 6,
-        }}
-      >
-        {[
-          {
-            href: "/medlemsforum",
-            img: "/stamboken/koharen-kit-in-hands.jpg",
-            badge: "Koharen / Medlemsforum",
-            badgeColor: "lera" as const,
-            title: "Tidskriften sedan 1984 och forumet på nätet.",
-            desc: "Som medlem får du Koharen tre gånger om året. I tidningen finns information till medlemmarna, artiklar och reportage, annonser samt kontaktuppgifter.",
-            cta: "Öppna medlemsforum →",
-          },
-          {
-            href: "/stamboken-online",
-            img: "/stamboken/breeding-notebook.jpg",
-            badge: "Stamboken Online",
-            badgeColor: "skog" as const,
-            title: "Den digitala stamboken för medlemmar.",
-            desc: "Registrera individer, kullar och härstamning. Varje kanin som fått genbanksintyg finns i föreningens centrala register.",
-            cta: "Logga in →",
-          },
-        ].map((card) => (
-          <Link
-            key={card.href}
-            href={card.href}
-            style={{ textDecoration: "none", color: "inherit" }}
-          >
-            <Box
-              component="article"
-              sx={{
-                bgcolor: "background.paper",
-                border: 1,
-                borderColor: "line.main",
-                borderRadius: "8px",
-                overflow: "hidden",
-                transition: "transform 200ms cubic-bezier(0.2, 0.7, 0.2, 1)",
-                "&:hover": { transform: "translateY(-2px)" },
-              }}
-            >
-              <Box sx={{ position: "relative", width: "100%", height: 280 }}>
-                <Image
-                  src={card.img}
-                  alt=""
-                  fill
-                  style={{ objectFit: "cover" }}
-                />
-              </Box>
-              <Box sx={{ p: 7 }}>
-                <Box
-                  sx={{
-                    fontFamily: "'IBM Plex Mono', monospace",
-                    fontSize: "11px",
-                    letterSpacing: "0.06em",
-                    textTransform: "uppercase",
-                    px: 2,
-                    py: 1,
-                    borderRadius: "4px",
-                    display: "inline-flex",
-                    alignItems: "center",
-                    gap: 1.5,
-                    bgcolor:
-                      card.badgeColor === "lera" ? "lera.soft" : "skog.soft",
-                    color: card.badgeColor === "lera" ? "#8a3f1f" : "skog.main",
-                    border: "1px solid",
-                    borderColor:
-                      card.badgeColor === "lera" ? "#e6c0ad" : "#c0ccb4",
-                  }}
-                >
-                  {card.badge}
-                </Box>
-                <Typography
-                  variant="h4"
-                  component="h3"
-                  sx={{ mt: 3.5, m: "14px 0 0", fontSize: "26px" }}
-                >
-                  {card.title}
-                </Typography>
-                <Typography
-                  sx={{
-                    mt: 3,
-                    color: "ink.2",
-                    lineHeight: 1.6,
-                    fontSize: "15px",
-                  }}
-                >
-                  {card.desc}
-                </Typography>
-                <Typography
-                  sx={{
-                    mt: 4.5,
-                    fontSize: "14px",
-                    color: "ink.main",
-                    textDecoration: "underline",
-                    textDecorationColor: "line.strong",
-                    textUnderlineOffset: "3px",
-                  }}
-                >
-                  {card.cta}
-                </Typography>
-              </Box>
-            </Box>
-          </Link>
-        ))}
-      </Box>
-
-      <Box
-        sx={{
-          mt: 6,
-          bgcolor: "paper.2",
-          border: 1,
-          borderColor: "line.strong",
-          borderRadius: "8px",
-          p: { xs: 6, md: 11 },
-          display: "grid",
-          gridTemplateColumns: { xs: "1fr", md: "64px 1fr auto" },
-          gap: 6,
+          gap: { xs: 6, md: 12 },
           alignItems: "center",
         }}
       >
         <Box
           sx={{
-            width: 64,
-            height: 64,
-            bgcolor: "paper.main",
-            borderRadius: "50%",
-            display: { xs: "none", md: "inline-flex" },
-            alignItems: "center",
-            justifyContent: "center",
-            boxShadow: 1,
+            position: "relative",
+            aspectRatio: { xs: "3 / 2", md: "4 / 3" },
+            borderRadius: "8px",
+            overflow: "hidden",
+            bgcolor: "paper.3",
           }}
         >
-          <Image src="/stamboken/logo.png" alt="" width={56} height={56} />
+          <Image
+            src="/stamboken/medlem-angsbild.jpg"
+            alt="Ung brokig gotlandskanin på en äng"
+            fill
+            sizes="(min-width: 900px) 45vw, 100vw"
+            style={{ objectFit: "cover", objectPosition: "60% 50%" }}
+          />
         </Box>
         <Box>
-          <Typography variant="h3" sx={{ m: 0 }}>
-            200 kr om året.
-          </Typography>
-          <Typography
+          <Box component="ul" sx={{ m: 0, p: 0, listStyle: "none" }}>
+            {MEMBER_BENEFITS.map((b, i) => (
+              <Box
+                component="li"
+                key={b.title}
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: "minmax(0, 1fr) auto",
+                  columnGap: 6,
+                  alignItems: "center",
+                  py: 4.5,
+                  borderTop: "1px solid var(--sb-line)",
+                  borderBottom:
+                    i === MEMBER_BENEFITS.length - 1
+                      ? "1px solid var(--sb-line)"
+                      : "none",
+                }}
+              >
+                <Box>
+                  <Typography
+                    component="h3"
+                    sx={{ m: 0, fontSize: "17px", fontWeight: 600 }}
+                  >
+                    {b.title}
+                  </Typography>
+                  <Typography sx={{ mt: 1, maxWidth: "46ch", color: "ink.2" }}>
+                    {b.text}
+                  </Typography>
+                </Box>
+                {b.href && (
+                  <Link href={b.href} style={{ textDecoration: "none" }}>
+                    <Box
+                      component="span"
+                      sx={{
+                        ...heroLinkSx,
+                        fontSize: "15px",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {b.cta} &rarr;
+                    </Box>
+                  </Link>
+                )}
+              </Box>
+            ))}
+          </Box>
+          <Box
             sx={{
-              mt: 2,
-              color: "ink.2",
-              lineHeight: 1.55,
-              maxWidth: 600,
+              mt: 7,
+              display: "flex",
+              flexWrap: "wrap",
+              justifyContent: "space-between",
+              alignItems: "center",
+              columnGap: 6,
+              rowGap: 4,
             }}
           >
-            Medlemskapet gäller hela familjen.
-          </Typography>
-        </Box>
-        <Box sx={{ display: "flex", gap: 2.5, flexWrap: "wrap" }}>
-          <LinkButton
-            href="/bli-medlem"
-            variant="contained"
-            endIcon={<Icon d={ICONS.arrow} size={14} />}
-          >
-            Bli medlem
-          </LinkButton>
-          <LinkButton href="/foreningen" variant="text">
-            Om föreningen
-          </LinkButton>
+            <Box>
+              <Typography variant="h3" component="p" sx={{ m: 0 }}>
+                200 kr om året
+              </Typography>
+              <Typography sx={{ mt: 1.5, fontSize: "15px", color: "ink.2" }}>
+                Medlemskapet gäller hela familjen.
+              </Typography>
+            </Box>
+            <LinkButton
+              href="/bli-medlem"
+              variant="contained"
+              endIcon={<Icon d={ICONS.arrow} size={14} />}
+              sx={{ flex: { xs: "1 1 100%", sm: "0 0 auto" } }}
+            >
+              Bli medlem
+            </LinkButton>
+          </Box>
         </Box>
       </Box>
     </Box>

@@ -81,15 +81,18 @@ test.describe("Landing page sections", () => {
     await expect(euSection.getByText("Genbanksintyg")).toBeVisible();
   });
 
-  test("membership section ends with the price and the button", async ({
+  test("membership section lists what a member gets and ends with the price", async ({
     page,
   }) => {
     await expect(
       page.getByRole("heading", { name: /bevarandet/ }),
     ).toBeVisible();
+    const body = page.locator(".member-body");
+    await expect(body.getByRole("listitem")).toHaveCount(3);
+    await expect(body.getByText(/200 kr om året/)).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: /200 kr om året/ }),
-    ).toBeVisible();
+      body.getByRole("link", { name: /Bli medlem/ }),
+    ).toHaveAttribute("href", "/bli-medlem");
   });
 
   test("footer renders with EU logo and footer links", async ({ page }) => {
