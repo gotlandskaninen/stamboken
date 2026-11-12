@@ -14,6 +14,12 @@ Källor och förkortningar:
 - **Nytt UI** – nya Stamboken: nycklar i `next-app/messages/sv.json` (skrivs som `nyckel`) och filer
   under `next-app/src/` (filnamnen är unika).
 - **Kod** – fält eller modell i `app/utils/database.py` eller i koden som nämns.
+- **Handlingsplanen** – Jordbruksverket, "Bevara, nyttja och utveckla – handlingsplan för uthållig
+  förvaltning av svenska husdjursraser 2023–2027", rapport RA22:20
+  ([PDF](https://www2.jordbruksverket.se/download/18.214df7cb1891939c0571de98/1688402181090/ra22_20.pdf)).
+- **FAO** – FAO:s arbetsdefinitioner för husdjursgenetiska resurser
+  ([Working definitions](https://www.fao.org/4/y1100m/y1100m03.htm)) och den globala handlingsplanen
+  ([Global Plan of Action for Animal Genetic Resources](https://www.fao.org/4/a1404e/a1404e.pdf)).
 
 I raden `Kod:` betyder "samma" att gränssnittet använder uppslagsordet och "–" att gränssnittet saknar
 etikett för begreppet. Källhänvisningarna står i inventeringen längre ned.
@@ -45,7 +51,9 @@ Kod: `Individual.foot_ring` · Legacy-manual: – · Legacy: – · Nytt UI: "Fo
 **Besättning / inaktiv besättning**\
 Din del i en genbank: dina registrerade och oregistrerade kaniner, och kontaktuppgifterna som andra
 uppfödare ser. En inaktiv besättning har upphört, tillfälligt eller för gott. GX1 och MX1 räknas
-också som inaktiva besättningar.\
+också som inaktiva besättningar. Kallas också genbanksbesättning, särskilt i text till läsare utanför
+föreningen. Handlingsplanen skriver "besättningar" och "genbanksbesättningar" (insats 21, s. 73).
+På engelska herd; FAO skriver conservation herd.\
 Kod: `Herd` (`Herd.is_active`) · Legacy-manual: "Besättning", "Inaktiv besättning" · Legacy: samma, "Aktiv" · Nytt UI: samma, "Besättningen är aktiv", "Min besättning" (menyn)
 
 **Besättningshistorik**\
@@ -90,7 +98,11 @@ Kod: `color` (`Color`), `color_note`, `eye_color`, `claw_color`, `belly_color`, 
 
 **Genbank**\
 Alla besättningar och alla kaniner av en ras i föreningens bevarandeprogram. Föreningen har två
-genbanker: gotlandskanin (besättningsnummer på G) och mellerudskanin (M).\
+genbanker: gotlandskanin (besättningsnummer på G) och mellerudskanin (M). En enskild uppfödares
+kaniner är en besättning, inte en genbank. FAO definierar en genbank som en samling av genetiskt
+material, antingen levande djur i bevarandebesättningar eller fryst material; en äldre
+FAO-definition säger uttryckligen att samlingen kan ligga på flera platser. Internationellt och i
+handlingsplanen betyder genbank oftast den frysta samlingen, så skriv live gene bank på engelska.\
 Kod: `Genebank` · Legacy-manual: samma · Legacy: "Genbank", "Genbanker" · Nytt UI: samma
 
 **Genbanksansvarig**\
@@ -383,6 +395,7 @@ Projektägaren beslutade 2026-10-30:
 9. **Dödsorsak**, inte dödsnotering eller dödsanteckning.
 10. **Okänt** om kön, eftersom kön är ett t-ord; **Okänd** där ordet gäller ett en-ord, som okänd mor eller okänd kanin.
 11. **Registrerad kanin** är en kanin som skrivits in i stamboken med intyg, pappersintyg eller digitalt intyg, och därmed fått sitt individnummer. Att registrera utan intyg går inte längre.
+12. Beslutat 2026-11-12: **Besättning** om en enskild uppfödares kaniner, aldrig genbank. **Genbank** är hela rasens bevarade population, och föreningen har två. **Genbanksbesättning** får användas som förtydligande. Orden följer handlingsplanen och FAO, se posterna Besättning och Genbank.
 
 ## Öppna frågor
 
@@ -412,3 +425,4 @@ Inget av detta är beslutat. En rad per fråga med alternativen.
 - **Hullskala**: "Låg/Normal/Hög" (individual_weighthull.tsx:178–180, HealthSection.tsx:20–22) eller "Under/Normal/Över" (BatchRabbitUpdateForm.tsx:468–478).
 - **Rasnamn och stavning i gamla manualen**: versal i löptext (manual:62, 150, 219) och stavfel "genbaksansvarig" (manual:84, 119), "genbaknsansvarig" (manual:116), "innavelskoefficient" (manual:65), "Gotlandkanin" (manual:219).
 - **DEVELOPMENT_GUIDE.md** kallar kaninens nummer "Genbanksnummer" (rad 95 och 115), mot kanoniska Individnummer.
+- **Bli genbank**: menyn och sidfoten på den publika webbplatsen säger "Bli genbank" (PublicNav.tsx:32, PublicFooter.tsx:25) och adressen är `/bli-genbank`, mot beslut 12. Sidans rubrik säger redan "Bli genbanksbesättning" (bli-genbank/page.tsx:10). Byt menytexten, och behåll eller byt adressen.
