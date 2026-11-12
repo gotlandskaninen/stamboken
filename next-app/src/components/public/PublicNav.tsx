@@ -29,8 +29,8 @@ const FALLBACK_NAV_LINKS = [
         image: "/stamboken/breed-mellerudskanin.jpg",
       },
       {
-        label: "Bli genbank",
-        href: "/bli-genbank",
+        label: "Bli genbanksbesättning",
+        href: "/bli-genbanksbesattning",
         subtitle: "så går det till",
       },
     ],

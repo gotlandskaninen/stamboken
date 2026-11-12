@@ -24,10 +24,13 @@ const JOIN = {
 const BREED = {
   title: "Vill du föda upp inom genbanken?",
   text: "Genbanksbesättningarna är kärnan i bevarandet. Så här går det till att bli en av dem.",
-  primary: { label: "Bli genbanksbesättning", href: "/bli-genbank" },
+  primary: { label: "Bli genbanksbesättning", href: "/bli-genbanksbesattning" },
 };
 
-const GENBANK = { label: "Bli genbanksbesättning", href: "/bli-genbank" };
+const GENBANK = {
+  label: "Bli genbanksbesättning",
+  href: "/bli-genbanksbesattning",
+};
 const GOTLAND = { label: "Gotlandskanin", href: "/gotlandskanin" };
 const MELLERUD = { label: "Mellerudskanin", href: "/mellerudskanin" };
 

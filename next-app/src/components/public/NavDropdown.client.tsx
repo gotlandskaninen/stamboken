@@ -42,7 +42,7 @@ export function NavDropdown({ label, href, items, active }: NavDropdownProps) {
   }, [open, close]);
 
   // Children with a thumbnail (the two breeds) keep the picture-card look;
-  // text-only children (e.g. "Bli genbank") would otherwise sit with their
+  // text-only children (e.g. "Bli genbanksbesättning") would otherwise sit with their
   // label under the thumbnails' baseline, so they render as a compact text
   // group below the cards instead.
   const cardItems = items.filter((i) => i.image);

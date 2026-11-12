@@ -25,7 +25,7 @@ const FOOTER_ROWS: Array<{ heading: string; links: FooterLink[] }> = [
       { label: "Lantraskaninen", href: "/lantraskaninen" },
       { label: "Gotlandskanin", href: "/gotlandskanin" },
       { label: "Mellerudskanin", href: "/mellerudskanin" },
-      { label: "Bli genbank", href: "/bli-genbank" },
+      { label: "Bli genbanksbesättning", href: "/bli-genbanksbesattning" },
     ],
   },
   {

@@ -164,7 +164,7 @@ function HeroSection() {
 
 const MISSION_LINKS = [
   { href: "/foreningen", label: "Så fungerar genbanken" },
-  { href: "/bli-genbank", label: "Bli genbanksbesättning" },
+  { href: "/bli-genbanksbesattning", label: "Bli genbanksbesättning" },
 ];
 
 function MissionSection() {
