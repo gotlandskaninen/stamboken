@@ -358,117 +358,48 @@ function BreedsSection() {
   );
 }
 
-const EU_ITEMS = [
-  "Genbanksbesättningarna",
-  "Medlemstidningen Koharen",
-  "Trycksaker som faktablad och färgatlas",
-  "Genbanksintyg",
-  "Kurser och utbildningar",
-  "Transport av värdefulla djur",
-  "Obduktioner",
-  "Marknadsföring",
-];
-
 function EUSection() {
   return (
     <Box
       component="section"
       id="eu-stod"
+      className="eu-section"
       sx={{
-        position: "relative",
+        bgcolor: "skog.main",
         color: "paper.main",
-        py: 20,
-        px: { xs: 6, md: 14 },
-        overflow: "hidden",
+        py: 9,
+        px: { xs: 6, md: "clamp(24px, 4vw, 56px)" },
       }}
     >
-      <Image
-        src="/stamboken/eu-landscape-fence-barn.jpg"
-        alt=""
-        fill
-        style={{
-          objectFit: "cover",
-          objectPosition: "center 60%",
-          opacity: 0.45,
-        }}
-        aria-hidden="true"
-      />
       <Box
         sx={{
-          position: "absolute",
-          inset: 0,
-          background:
-            "linear-gradient(180deg, rgba(31,51,34,0.86) 0%, rgba(47,74,50,0.94) 100%)",
-        }}
-      />
-      <Box
-        sx={{
-          position: "relative",
-          display: "grid",
-          gridTemplateColumns: {
-            xs: "minmax(0, 1fr)",
-            md: "minmax(80px, 160px) minmax(0, 1fr) minmax(220px, 280px)",
-          },
-          gap: 10,
-          alignItems: "start",
+          maxWidth: 1100,
+          mx: "auto",
+          display: "flex",
+          flexDirection: { xs: "column", md: "row" },
+          alignItems: { xs: "flex-start", md: "center" },
+          gap: { xs: 5, md: 8 },
         }}
       >
-        <Typography variant="eyebrow" sx={{ color: "rgba(244,241,234,0.78)" }}>
-          EU-stöd
-        </Typography>
-        <Box>
-          <Typography
-            variant="h2"
-            sx={{ m: 0, color: "paper.main", maxWidth: 720 }}
-          >
-            Föreningen Gotlandskaninen får stöd från{" "}
-            <Box
-              component="span"
-              sx={{
-                color: "#e8c8a8",
-              }}
-            >
-              EU
-            </Box>{" "}
-            för att bevara gotlands- och mellerudskanin.
-          </Typography>
-          <Typography
-            variant="lede"
-            sx={{ mt: 5.5, display: "block", color: "rgba(244,241,234,0.86)" }}
-          >
-            Stödet går till:
-          </Typography>
-          <Box
-            component="ul"
-            sx={{
-              mt: 4.5,
-              mb: 0,
-              pl: 5,
-              "& li::marker": { color: "#e8c8a8" },
-              display: "grid",
-              gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
-              columnGap: 8,
-              rowGap: 3,
-              maxWidth: 720,
-            }}
-          >
-            {EU_ITEMS.map((item) => (
-              <li key={item}>{item}</li>
-            ))}
-          </Box>
+        {/* Official EU funding lockup (emblem + mandated wording), on a
+            white card so it stays compliant and legible over the dark strip. */}
+        <Box sx={{ flex: "none", lineHeight: 0 }}>
+          <EUFundingBadge orientation="vertical" height={104} />
         </Box>
-        <Box
-          component="aside"
-          sx={{
-            display: "flex",
-            flexDirection: "column",
-            gap: 4.5,
-            alignItems: "flex-start",
-          }}
-        >
-          {/* Official EU funding lockup (emblem + mandated wording), on a
-              white card so it stays compliant and legible over the dark strip. */}
-          <EUFundingBadge orientation="vertical" height={132} />
+        <Box sx={{ maxWidth: "72ch", color: "rgba(244,241,234,0.92)" }}>
+          {/* A heading for the section outline, set as the first sentence. */}
+          <Typography
+            component="h2"
+            sx={{ display: "inline", fontWeight: 600, color: "paper.main" }}
+          >
+            Föreningen Gotlandskaninen får stöd från EU för att bevara gotlands-
+            och mellerudskanin.
+          </Typography>{" "}
+          <Typography component="span">
+            Stödet går till genbanksbesättningarna, medlemstidningen Koharen,
+            trycksaker, genbanksintyg, kurser och utbildningar, transport av
+            värdefulla djur, obduktioner och marknadsföring.
+          </Typography>
         </Box>
       </Box>
     </Box>

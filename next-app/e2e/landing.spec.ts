@@ -68,17 +68,21 @@ test.describe("Landing page sections", () => {
     await expect(cards.getByText(/genbanksbesättningar/)).toHaveCount(2);
   });
 
-  test("EU section renders with support text and items", async ({ page }) => {
+  test("EU section renders with the badge and what the support covers", async ({
+    page,
+  }) => {
     const euSection = page.locator("#eu-stod");
-    await expect(euSection).toBeVisible();
-
     await expect(
-      euSection.getByText(/Föreningen Gotlandskaninen får stöd/),
+      euSection.getByRole("heading", {
+        name: /Föreningen Gotlandskaninen får stöd/,
+      }),
     ).toBeVisible();
-
-    // Spot-check a few EU items
-    await expect(euSection.getByRole("listitem")).toHaveCount(8);
-    await expect(euSection.getByText("Genbanksintyg")).toBeVisible();
+    await expect(euSection.getByText(/genbanksintyg/)).toBeVisible();
+    await expect(
+      euSection.getByRole("img", {
+        name: "Medfinansieras av Europeiska unionen",
+      }),
+    ).toBeVisible();
   });
 
   test("membership section lists what a member gets and ends with the price", async ({
