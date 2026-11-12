@@ -94,8 +94,9 @@ const NEXT_STEPS: Record<string, NextStepsContent> = {
 };
 
 export function NextSteps({ slug }: { slug: string }) {
+  // hasOwn: a slug such as "constructor" must not find Object's own members.
+  if (!Object.hasOwn(NEXT_STEPS, slug)) return null;
   const content = NEXT_STEPS[slug];
-  if (!content) return null;
 
   return (
     <Box
