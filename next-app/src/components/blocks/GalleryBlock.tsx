@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { Box, Typography } from "@mui/material";
 
 interface GalleryImage {
@@ -24,15 +24,37 @@ const imageSx = {
   bgcolor: "paper.3",
 } as const;
 
-// One large image with a row of thumbnails to pick from, so a visitor sees at
-// a glance how many photos there are.
+const arrowSx = {
+  position: "absolute",
+  top: "50%",
+  transform: "translateY(-50%)",
+  width: 44,
+  height: 44,
+  p: 0,
+  border: 0,
+  borderRadius: "50%",
+  bgcolor: "rgba(31,27,22,0.55)",
+  color: "paper.main",
+  fontSize: "22px",
+  lineHeight: 1,
+  cursor: "pointer",
+  "&:hover": { bgcolor: "rgba(31,27,22,0.8)" },
+  "&:focus-visible": { outline: "2px solid var(--sb-paper)", outlineOffset: 2 },
+} as const;
+
+// One large image with arrows and swipe to step through, and a row of
+// thumbnails so a visitor sees at a glance how many photos there are.
 export function GalleryBlockComponent({ images }: Props) {
   const [selectedIndex, setSelectedIndex] = useState(0);
+  const touchX = useRef<number | null>(null);
 
   const shown = (images ?? []).filter((item) => item.image?.url);
   if (shown.length === 0) return null;
 
-  const current = shown[Math.min(selectedIndex, shown.length - 1)];
+  const index = Math.min(selectedIndex, shown.length - 1);
+  const current = shown[index];
+  const step = (d: number) =>
+    setSelectedIndex((index + d + shown.length) % shown.length);
   const src = (item: GalleryImage) =>
     item.image!.sizes?.card?.url || item.image!.url;
 
@@ -40,11 +62,46 @@ export function GalleryBlockComponent({ images }: Props) {
     <Box className="gallery" sx={{ my: 8 }}>
       <Box component="figure" sx={{ m: 0 }}>
         <Box
-          component="img"
-          src={src(current)}
-          alt={current.image!.alt || current.caption || ""}
-          sx={{ ...imageSx, borderRadius: "8px" }}
-        />
+          sx={{ position: "relative" }}
+          onTouchStart={(e) => {
+            touchX.current = e.touches[0].clientX;
+          }}
+          onTouchEnd={(e) => {
+            if (touchX.current === null) return;
+            const dx = e.changedTouches[0].clientX - touchX.current;
+            touchX.current = null;
+            if (Math.abs(dx) > 40) step(dx < 0 ? 1 : -1);
+          }}
+        >
+          <Box
+            component="img"
+            src={src(current)}
+            alt={current.image!.alt || current.caption || ""}
+            sx={{ ...imageSx, borderRadius: "8px" }}
+          />
+          {shown.length > 1 && (
+            <>
+              <Box
+                component="button"
+                type="button"
+                aria-label="Föregående bild"
+                onClick={() => step(-1)}
+                sx={{ ...arrowSx, left: 8 }}
+              >
+                <span aria-hidden="true">&lsaquo;</span>
+              </Box>
+              <Box
+                component="button"
+                type="button"
+                aria-label="Nästa bild"
+                onClick={() => step(1)}
+                sx={{ ...arrowSx, right: 8 }}
+              >
+                <span aria-hidden="true">&rsaquo;</span>
+              </Box>
+            </>
+          )}
+        </Box>
         <Box
           component="figcaption"
           sx={{
@@ -64,7 +121,7 @@ export function GalleryBlockComponent({ images }: Props) {
             component="span"
             sx={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}
           >
-            {shown.indexOf(current) + 1} / {shown.length}
+            {index + 1} / {shown.length}
           </Typography>
         </Box>
       </Box>

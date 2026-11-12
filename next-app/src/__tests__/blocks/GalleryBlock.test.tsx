@@ -26,6 +26,16 @@ describe("GalleryBlockComponent", () => {
     expect(second.getAttribute("aria-current")).toBe("true");
   });
 
+  it("steps with the arrows and wraps around", () => {
+    render(<GalleryBlockComponent images={images} />);
+    fireEvent.click(screen.getByRole("button", { name: "Nästa bild" }));
+    expect(screen.getByText("2 / 2")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Nästa bild" }));
+    expect(screen.getByText("1 / 2")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Föregående bild" }));
+    expect(screen.getByText("2 / 2")).toBeTruthy();
+  });
+
   it("renders nothing without images", () => {
     const { container } = render(<GalleryBlockComponent images={[]} />);
     expect(container.firstChild).toBeNull();
