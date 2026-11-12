@@ -217,10 +217,8 @@ function MissionSection() {
   );
 }
 
-// Card images are AI-generated illustrations chosen by the owner (2026-09-11);
-// the gotlandskanin one portrays Blomma, 107-014G.
-// `pos` keeps the rabbit in frame when the 320 px card crops the wide image
-// on phones.
+// Card photos are members' photos, cropped to the card's 2:1. The
+// mellerudskanin one is retouched: a fence behind the rabbit was removed.
 const BREEDS = [
   {
     name: "Gotlandskanin",
@@ -228,8 +226,8 @@ const BREEDS = [
     desc: "En lokal variant av den gamla svenska lantraskaninen, bevarad på Gotland.",
     href: "/gotlandskanin",
     img: "/stamboken/breed-gotlandskanin.jpg",
-    alt: "Gotlandskaninen Blomma, 107-014G",
-    pos: "30% 50%",
+    alt: "Brokig gotlandskanin på en äng",
+    pos: "55% 50%",
   },
   {
     name: "Mellerudskanin",
@@ -237,8 +235,8 @@ const BREEDS = [
     desc: "Ytterligare en gren av den gamla lantrasen, bevarad som egen ras.",
     href: "/mellerudskanin",
     img: "/stamboken/breed-mellerudskanin.jpg",
-    alt: "Mellerudskanin",
-    pos: "75% 50%",
+    alt: "Mellerudskanin med svartvit holländarteckning i gräset",
+    pos: "50% 50%",
   },
 ];
 
