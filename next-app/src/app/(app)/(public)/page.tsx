@@ -219,7 +219,8 @@ function MissionSection() {
 
 // Card photos are members' photos, cropped to the card's 3:2, and both are
 // retouched. Gotlandskanin: the background behind the rabbit (a house, a
-// fence) is replaced. Mellerudskanin: a fence behind the rabbit is removed.
+// fence) is replaced, and the photo is mirrored so the two rabbits face each
+// other. Mellerudskanin: a fence behind the rabbit is removed.
 const BREEDS = [
   {
     name: "Gotlandskanin",
