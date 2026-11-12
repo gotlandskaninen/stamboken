@@ -59,6 +59,13 @@ Besättningens nummer, till exempel G1274: rasens bokstav (G för gotlandskanin,
 och medlemsnumret. Det står först i individnumret på varje kanin som föds i besättningen.\
 Kod: `Herd.herd` · Legacy-manual: samma · Legacy: samma, "Besättnings-ID", "Genbanksnummer" · Nytt UI: samma
 
+**Brokig**\
+Vit kanin med färgade fläckar. Färgatlasen använder brokig för hela gruppen, och färgnamnen följer
+den: svartbrokig, gulbrokig, viltgråbrokig. Scheck, mantel och dalmatiner är varianter av brokig
+teckning, inte andra ord för samma sak. Skriv brokig i löptext, inte scheck. Rasramarnas text
+ändras inte.\
+Kod: färgnamnen i `Color` · Legacy-manual: – · Legacy: "Svartbrokig" med flera · Nytt UI: samma
+
 **Chipnummer**\
 Numret i kaninens chip: 15 siffror enligt ISO 11784, i Sverige börjar det på 752. En kanin kan ha
 både chip och benring.\
@@ -383,6 +390,10 @@ Projektägaren beslutade 2026-10-30:
 9. **Dödsorsak**, inte dödsnotering eller dödsanteckning.
 10. **Okänt** om kön, eftersom kön är ett t-ord; **Okänd** där ordet gäller ett en-ord, som okänd mor eller okänd kanin.
 11. **Registrerad kanin** är en kanin som skrivits in i stamboken med intyg, pappersintyg eller digitalt intyg, och därmed fått sitt individnummer. Att registrera utan intyg går inte längre.
+
+Projektägaren beslutade 2026-11-12:
+
+12. **Brokig**, inte scheck, om vita kaniner med färgade fläckar, som i färgatlasen och färgnamnen.
 
 ## Öppna frågor
 
