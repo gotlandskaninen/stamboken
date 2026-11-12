@@ -7,7 +7,7 @@ interface GalleryImage {
   image: {
     url: string;
     alt?: string;
-    sizes?: { card?: { url?: string } };
+    sizes?: { card?: { url?: string }; thumbnail?: { url?: string } };
   } | null;
   caption?: string;
 }
@@ -57,6 +57,8 @@ export function GalleryBlockComponent({ images }: Props) {
     setSelectedIndex((index + d + shown.length) % shown.length);
   const src = (item: GalleryImage) =>
     item.image!.sizes?.card?.url || item.image!.url;
+  const thumbSrc = (item: GalleryImage) =>
+    item.image!.sizes?.thumbnail?.url || src(item);
 
   return (
     <Box className="gallery" sx={{ my: 8 }}>
@@ -183,7 +185,7 @@ export function GalleryBlockComponent({ images }: Props) {
           >
             <Box
               component="img"
-              src={src(item)}
+              src={thumbSrc(item)}
               alt=""
               loading="lazy"
               sx={{ ...imageSx, borderRadius: "6px" }}

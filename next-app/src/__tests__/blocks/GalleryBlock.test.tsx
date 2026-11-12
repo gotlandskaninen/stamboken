@@ -55,6 +55,27 @@ describe("GalleryBlockComponent", () => {
     expect(screen.getByText("1 / 2")).toBeTruthy();
   });
 
+  it("loads the small size for the thumbnails", () => {
+    const sized = [
+      {
+        image: {
+          url: "/a.jpg",
+          alt: "Stor",
+          sizes: {
+            card: { url: "/a-card.jpg" },
+            thumbnail: { url: "/a-thumb.jpg" },
+          },
+        },
+      },
+      { image: { url: "/b.jpg", alt: "Utan storlekar" } },
+    ];
+    const { container } = render(<GalleryBlockComponent images={sized} />);
+    const srcs = Array.from(container.querySelectorAll("img")).map((img) =>
+      img.getAttribute("src"),
+    );
+    expect(srcs).toEqual(["/a-card.jpg", "/a-thumb.jpg", "/b.jpg"]);
+  });
+
   it("renders nothing without images", () => {
     const { container } = render(<GalleryBlockComponent images={[]} />);
     expect(container.firstChild).toBeNull();
