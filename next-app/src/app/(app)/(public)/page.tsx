@@ -224,10 +224,7 @@ function MissionSection() {
 const BREEDS = [
   {
     name: "Gotlandskanin",
-    latin: "Återupptäckt 1976 genom ett upprop i tidskriften Kaninuppfödaren",
-    status: "Utrotningshotad",
-    n: "~200",
-    nLabel: "genbanksbesättningar",
+    n: "200",
     desc: "En lokal variant av den gamla svenska lantraskaninen, bevarad på Gotland.",
     href: "/gotlandskanin",
     img: "/stamboken/breed-gotlandskanin.jpg",
@@ -236,11 +233,7 @@ const BREEDS = [
   },
   {
     name: "Mellerudskanin",
-    latin:
-      "Uppmärksammad genom personliga kontakter 2001 i Mellerud i Dalsland",
-    status: "Utrotningshotad",
-    n: "~50",
-    nLabel: "genbanksbesättningar",
+    n: "50",
     desc: "Ytterligare en gren av den gamla lantrasen, bevarad som egen ras.",
     href: "/mellerudskanin",
     img: "/stamboken/breed-mellerudskanin.jpg",
@@ -277,13 +270,14 @@ function BreedsSection() {
       </Box>
 
       <Box
+        className="breed-cards"
         sx={{
           display: "grid",
           gridTemplateColumns: {
-            xs: "1fr",
-            md: "repeat(auto-fit, minmax(380px, 1fr))",
+            xs: "minmax(0, 1fr)",
+            md: "repeat(2, minmax(0, 1fr))",
           },
-          gap: 6,
+          gap: 8,
         }}
       >
         {BREEDS.map((b) => (
@@ -295,108 +289,66 @@ function BreedsSection() {
             <Box
               component="article"
               sx={{
+                height: "100%",
                 bgcolor: "background.paper",
                 border: 1,
                 borderColor: "line.main",
                 borderRadius: "8px",
                 overflow: "hidden",
-                transition: "transform 200ms cubic-bezier(0.2, 0.7, 0.2, 1)",
-                "&:hover": { transform: "translateY(-2px)" },
+                "& img": {
+                  transition: "transform 360ms cubic-bezier(0.2, 0.7, 0.2, 1)",
+                },
+                "&:hover img": { transform: "scale(1.02)" },
+                "@media (prefers-reduced-motion: reduce)": {
+                  "& img": { transition: "none" },
+                  "&:hover img": { transform: "none" },
+                },
               }}
             >
               <Box
                 sx={{
                   position: "relative",
-                  width: "100%",
-                  height: 320,
+                  aspectRatio: "2 / 1",
+                  overflow: "hidden",
+                  bgcolor: "paper.3",
                 }}
               >
                 <Image
                   src={b.img}
                   alt={b.alt}
                   fill
+                  sizes="(min-width: 900px) 50vw, 100vw"
                   style={{ objectFit: "cover", objectPosition: b.pos }}
                 />
               </Box>
-              <Box sx={{ p: 7 }}>
+              <Box
+                sx={{ px: { xs: 6.5, md: 9 }, pt: 8, pb: { xs: 6.5, md: 9 } }}
+              >
+                <Typography variant="h3" sx={{ m: 0 }}>
+                  {b.name}
+                </Typography>
+                <Typography sx={{ mt: 3, color: "ink.2" }}>{b.desc}</Typography>
                 <Box
                   sx={{
+                    mt: 6.5,
                     display: "flex",
+                    flexWrap: "wrap",
                     justifyContent: "space-between",
                     alignItems: "baseline",
-                    gap: 3,
-                    flexWrap: "wrap",
+                    columnGap: 4,
+                    rowGap: 2,
                   }}
                 >
-                  <Box>
-                    <Typography variant="h3" sx={{ m: 0 }}>
-                      {b.name}
-                    </Typography>
-                    <Typography variant="mono" sx={{ mt: 1 }}>
-                      {b.latin}
-                    </Typography>
-                  </Box>
-                  <Box
-                    sx={{
-                      fontFamily: "'IBM Plex Mono', monospace",
-                      fontSize: "11px",
-                      letterSpacing: "0.06em",
-                      textTransform: "uppercase",
-                      px: 2,
-                      py: 1,
-                      borderRadius: "4px",
-                      bgcolor: "lera.soft",
-                      color: "#8a3f1f",
-                      border: "1px solid #e6c0ad",
-                    }}
-                  >
-                    {b.status}
-                  </Box>
-                </Box>
-                <Typography sx={{ mt: 3.5, color: "ink.2", lineHeight: 1.6 }}>
-                  {b.desc}
-                </Typography>
-                <Box
-                  sx={{
-                    mt: 5.5,
-                    pt: 4.5,
-                    borderTop: 1,
-                    borderColor: "line.main",
-                    display: "flex",
-                    flexWrap: "wrap",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: 3,
-                  }}
-                >
-                  <Box>
-                    <Box
-                      component="span"
-                      sx={{
-                        fontFamily: "'Source Serif 4', Georgia, serif",
-                        fontSize: "30px",
-                        lineHeight: 1,
-                        letterSpacing: "-0.02em",
-                        color: "skog.main",
-                      }}
-                    >
-                      {b.n}
-                    </Box>
-                    <Typography
-                      variant="mono"
-                      component="span"
-                      sx={{ ml: 2.5 }}
-                    >
-                      {b.nLabel}
-                    </Typography>
-                  </Box>
+                  <Typography sx={{ fontSize: "15px", color: "ink.2" }}>
+                    Omkring {b.n} genbanksbesättningar
+                  </Typography>
                   <Typography
                     sx={{
-                      fontSize: "14px",
+                      fontSize: "15px",
                       whiteSpace: "nowrap",
                       color: "ink.main",
                       textDecoration: "underline",
-                      textDecorationColor: "line.strong",
+                      textDecorationColor: "var(--sb-line-strong)",
                       textUnderlineOffset: "3px",
                     }}
                   >

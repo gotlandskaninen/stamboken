@@ -58,12 +58,14 @@ test.describe("Landing page sections", () => {
       page.getByRole("heading", { name: "Mellerudskanin", exact: true }),
     ).toBeVisible();
 
-    // Both breed cards have an endangered badge
-    const breedCards = page.locator("article");
-    await expect(breedCards.first()).toBeVisible();
-    expect(
-      await breedCards.filter({ hasText: "Utrotningshotad" }).count(),
-    ).toBe(2);
+    const cards = page.locator(".breed-cards");
+    await expect(
+      cards.getByRole("link", { name: /Gotlandskanin/ }),
+    ).toHaveAttribute("href", "/gotlandskanin");
+    await expect(
+      cards.getByRole("link", { name: /Mellerudskanin/ }),
+    ).toHaveAttribute("href", "/mellerudskanin");
+    await expect(cards.getByText(/genbanksbesättningar/)).toHaveCount(2);
   });
 
   test("EU section renders with support text and items", async ({ page }) => {
