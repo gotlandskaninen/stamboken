@@ -14,4 +14,5 @@ Manual: ändrad / ingen användarvänd ändring
 
 ## Verifiering
 
-<!-- Klistra in summary.md från scripts/ci-local.sh för head-SHA:n. -->
+<!-- GitHub Actions är grinden: alla kontroller ska vara gröna på head-SHA:n.
+Skriv här det du provat utöver dem, till exempel för hand i webbläsaren. -->

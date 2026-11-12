@@ -131,7 +131,7 @@ testanvändare; uppsättningen per konfigurationsfil står i
   bootstrap-skriptet och står i
   [docs/legacy-regression-testing.md](docs/legacy-regression-testing.md).
 
-### Hela CI-grinden lokalt
+### CI-stegen lokalt (frivilligt)
 
 ```bash
 scripts/ci-local.sh           # alla steg (lint, trivy, semgrep, pytest, tsc, eslint, vitest, build, images, e2e)
@@ -200,8 +200,9 @@ färger, individer, parningar och användare med olika roller. Läs metoden i
 
 ## CI
 
-Arbetsflödena ligger i `.github/workflows/`. `scripts/ci-local.sh` kör samma
-grind lokalt; kör den före en PR och klistra in `summary.md` i PR-texten.
+Arbetsflödena ligger i `.github/workflows/` och är grinden för en PR: alla
+kontroller ska vara gröna före merge. `scripts/ci-local.sh` kör samma steg
+lokalt och behövs inte inför en PR. Använd det för att felsöka ett steg.
 
 | Arbetsflöde | Trigger | Innehåll |
 |-------------|---------|----------|
