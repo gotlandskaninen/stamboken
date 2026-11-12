@@ -218,7 +218,7 @@ test.describe("Landing page accessibility", () => {
     const h1Elements = await page.getByRole("heading", { level: 1 }).all();
     expect(h1Elements).toHaveLength(1);
 
-    // Sections: Breeds, EU, Members, CTA
+    // Sections: mission, breeds, membership, EU
     const h2Elements = await page.getByRole("heading", { level: 2 }).all();
     expect(h2Elements.length).toBeGreaterThanOrEqual(4);
   });

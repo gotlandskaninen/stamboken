@@ -66,12 +66,12 @@ test.describe("Bli genbanksbesättning", () => {
   });
 });
 
-// ADR-0010 375-px-kravet: no horizontal scroll on any of the three breakpoints.
 test("the old address redirects to the page", async ({ page }) => {
   await page.goto("/bli-genbank");
   await expect(page).toHaveURL(/\/bli-genbanksbesattning$/);
 });
 
+// ADR-0010 375-px-kravet: no horizontal scroll on any of the three breakpoints.
 test.describe("Bli genbanksbesättning responsive", () => {
   for (const viewport of VIEWPORTS) {
     test(`no horizontal overflow at ${viewport.name} (${viewport.width}px)`, async ({
