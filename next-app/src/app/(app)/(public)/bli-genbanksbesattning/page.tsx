@@ -154,6 +154,24 @@ function SectionHeading({
   );
 }
 
+// What sets a gene bank apart from ordinary breeding, beside the plain answer.
+const RULES = [
+  {
+    title: "Slutet system",
+    text: "Nya djur kommer bara in som avkommor till djur som redan finns i genbanken. Därför köper du startdjuren från andra genbanksbesättningar.",
+  },
+  {
+    title: "Hela arvet bevaras",
+    text: "Inga snäva urval och ingen inkorsning av andra raser. Bara rena defekter sorteras bort.",
+  },
+  {
+    title: "Alla djur har intyg",
+    text: "De härstammar från kaninerna som inventerades 1993 (gotlandskanin) eller köptes ut 2001–2002 (mellerudskanin).",
+  },
+];
+
+const RULE_LINE = "1px solid rgba(31,27,22,0.16)";
+
 function IntroSection() {
   return (
     <Box
@@ -165,80 +183,112 @@ function IntroSection() {
           bgcolor: "skog.soft",
           borderRadius: "8px",
           p: { xs: 6, md: 11 },
-          maxWidth: 820,
+          display: "grid",
+          gridTemplateColumns: { md: "minmax(0, 1.1fr) minmax(0, 1fr)" },
+          gap: { xs: 8, md: 14 },
         }}
       >
-        <Typography variant="h2" sx={{ m: 0 }}>
-          {/* Soft hyphen: "genbanksbesättning" is wider than a 375px column at
-              the h2 size, so it has to be allowed to break (ADR-0010, 375-px-kravet).
-              Same trick as the landing page's "Medlems&shy;verksamhet". */}
-          {"Vad en genbanks\u00ADbesättning är"}
-        </Typography>
-        <Typography variant="lede" sx={{ mt: 4, display: "block" }}>
-          En genbank ska bevara så mycket som möjligt av rasens arvsanlag. Man
-          sorterar inte bort anlag genom snäva urval, bara rena defekter, och
-          korsar inte in andra raser. Alla djur är registrerade med
-          genbanksintyg och härstammar från de kaniner som inventerades 1993
-          (gotlandskanin) respektive köptes ut 2001–2002 (mellerudskanin).
-        </Typography>
-        <Typography
-          sx={{ mt: 5, maxWidth: "38rem", color: "ink.2", lineHeight: 1.65 }}
-        >
-          Genbanken är ett slutet system. Nya djur kommer in bara som avkommor
-          till djur som redan finns där. En kanin utifrån går inte att föra in.
-          Det är därför startdjuren måste komma från andra genbanksbesättningar
-          i föreningen.
-        </Typography>
-        <Box sx={{ mt: 8, display: "flex", gap: 3, flexWrap: "wrap" }}>
-          <LinkButton
-            href="/bli-medlem"
-            variant="contained"
-            endIcon={<Icon d={ICONS.arrow} size={14} />}
-          >
-            Bli medlem
-          </LinkButton>
-          <Box
-            component="a"
-            href={`mailto:${GOTLAND_MAIL}`}
+        <Box>
+          <Typography variant="h2" sx={{ m: 0 }}>
+            {/* Soft hyphen: "genbanksbesättning" is wider than a 375px column at
+                the h2 size, so it has to be allowed to break (ADR-0010, 375-px-kravet).
+                Same trick as the landing page's "Medlems&shy;verksamhet". */}
+            {"Vad är en genbanks­besättning?"}
+          </Typography>
+          <Typography variant="lede" sx={{ mt: 4, display: "block" }}>
+            En genbanksbesättning är kaniner som en medlem föder upp hemma, på
+            avtal med föreningen. Stammen lever ute hos medlemmarna, inte i en
+            byggnad eller ett museum.
+          </Typography>
+          <Box sx={{ mt: 7, display: "flex", gap: 3, flexWrap: "wrap" }}>
+            <LinkButton
+              href="/bli-medlem"
+              variant="contained"
+              endIcon={<Icon d={ICONS.arrow} size={14} />}
+            >
+              Bli medlem
+            </LinkButton>
+            <Box
+              component="a"
+              href={`mailto:${GOTLAND_MAIL}`}
+              sx={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 2,
+                minHeight: "44px",
+                px: 5,
+                py: 3,
+                borderRadius: "4px",
+                border: "1px solid #B8AE99",
+                color: "ink.main",
+                fontSize: "15px",
+                fontWeight: 500,
+                textDecoration: "none",
+                "&:hover": { bgcolor: "paper.2", borderColor: "ink.main" },
+              }}
+            >
+              <Icon d={ICONS.mail} size={15} />
+              Mejla genbanksansvarig
+            </Box>
+          </Box>
+          <Typography
             sx={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 2,
-              minHeight: "44px",
-              px: 5,
-              py: 3,
-              borderRadius: "4px",
-              border: "1px solid #B8AE99",
-              color: "ink.main",
+              mt: 5,
+              maxWidth: "36rem",
               fontSize: "15px",
-              fontWeight: 500,
-              textDecoration: "none",
-              "&:hover": { bgcolor: "paper.2", borderColor: "ink.main" },
+              lineHeight: 1.65,
+              color: "ink.2",
             }}
           >
-            <Icon d={ICONS.mail} size={15} />
-            Mejla genbanksansvarig
-          </Box>
+            Mer om hur bevarandet fungerar finns under{" "}
+            <Link href="/lantraskaninen" style={inlineLinkStyle}>
+              Så fungerar genbanken
+            </Link>
+            . Själva registret heter{" "}
+            <Link href="/stamboken-online" style={inlineLinkStyle}>
+              Stamboken Online
+            </Link>
+            .
+          </Typography>
         </Box>
-        <Typography
+        <Box
+          component="ul"
           sx={{
-            mt: 6,
-            maxWidth: "36rem",
-            fontSize: "15px",
-            lineHeight: 1.65,
-            color: "ink.2",
+            listStyle: "none",
+            m: 0,
+            p: 0,
+            // Full shorthands: a responsive `borderLeft: 1` resets the colour.
+            borderTop: { xs: RULE_LINE, md: "none" },
+            pt: { xs: 3, md: 0 },
+            borderLeft: { md: RULE_LINE },
+            pl: { md: 11 },
           }}
         >
-          Mer om hur bevarandet fungerar finns under{" "}
-          <Link href="/lantraskaninen" style={inlineLinkStyle}>
-            Så fungerar genbanken
-          </Link>
-          . Själva registret heter{" "}
-          <Link href="/stamboken-online" style={inlineLinkStyle}>
-            Stamboken Online
-          </Link>
-          .
-        </Typography>
+          {RULES.map((rule, i) => (
+            <Box
+              component="li"
+              key={rule.title}
+              sx={{ py: 3.5, borderTop: i ? RULE_LINE : "none" }}
+            >
+              <Typography
+                component="h3"
+                sx={{ fontSize: "15px", fontWeight: 600 }}
+              >
+                {rule.title}
+              </Typography>
+              <Typography
+                sx={{
+                  mt: 1,
+                  fontSize: "15px",
+                  lineHeight: 1.55,
+                  color: "ink.2",
+                }}
+              >
+                {rule.text}
+              </Typography>
+            </Box>
+          ))}
+        </Box>
       </Box>
     </Box>
   );
