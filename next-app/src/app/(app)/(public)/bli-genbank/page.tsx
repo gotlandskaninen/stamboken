@@ -552,9 +552,9 @@ export default function BliGenbankPage() {
         title={"Bli genbanks\u00ADbesättning"}
         lede="Genbanksbesättningarna är kärnan i bevarandet. Så här blir du en av dem: vad som krävs, vem du kontaktar och hur ansökan går till."
         image={{
-          src: "/stamboken/breeding-notebook.jpg",
-          alt: "Uppslagen avelsjournal med anteckningar om parningar och öronmärkningar, ett måttband och ett foto av en gotlandskanin",
-          position: "50% 45%",
+          src: "/stamboken/hero-ungar-gronfoder.jpg",
+          alt: "Kaninungar i olika färger äter grönt på en bädd av halm",
+          position: "50% 50%",
         }}
       />
       <IntroSection />
