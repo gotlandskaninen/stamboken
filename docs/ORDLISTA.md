@@ -434,4 +434,4 @@ Inget av detta är beslutat. En rad per fråga med alternativen.
 - **Hullskala**: "Låg/Normal/Hög" (individual_weighthull.tsx:178–180, HealthSection.tsx:20–22) eller "Under/Normal/Över" (BatchRabbitUpdateForm.tsx:468–478).
 - **Rasnamn och stavning i gamla manualen**: versal i löptext (manual:62, 150, 219) och stavfel "genbaksansvarig" (manual:84, 119), "genbaknsansvarig" (manual:116), "innavelskoefficient" (manual:65), "Gotlandkanin" (manual:219).
 - **DEVELOPMENT_GUIDE.md** kallar kaninens nummer "Genbanksnummer" (rad 95 och 115), mot kanoniska Individnummer.
-- **Bli genbank**: menyn och sidfoten på den publika webbplatsen säger "Bli genbank" (PublicNav.tsx:32, PublicFooter.tsx:25) och adressen är `/bli-genbank`, mot beslut 12. Sidans rubrik säger redan "Bli genbanksbesättning" (bli-genbank/page.tsx:10). Byt menytexten, och behåll eller byt adressen.
+- **Bli genbank**: menyn och sidfoten på den publika webbplatsen säger "Bli genbank" (PublicNav.tsx:32, PublicFooter.tsx:25) och adressen är `/bli-genbank`, mot beslut 13. Sidans rubrik säger redan "Bli genbanksbesättning" (bli-genbank/page.tsx:10). Byt menytexten, och behåll eller byt adressen.
