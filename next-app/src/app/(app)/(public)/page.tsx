@@ -217,7 +217,7 @@ function MissionSection() {
   );
 }
 
-// Card photos are members' photos, cropped to the card's 2:1, and both are
+// Card photos are members' photos, cropped to the card's 3:2, and both are
 // retouched. Gotlandskanin: the background behind the rabbit (a house, a
 // fence) is replaced. Mellerudskanin: a fence behind the rabbit is removed.
 const BREEDS = [
@@ -307,7 +307,8 @@ function BreedsSection() {
               <Box
                 sx={{
                   position: "relative",
-                  aspectRatio: "2 / 1",
+                  // 3:2, not wider: a sitting rabbit with its ears up is tall.
+                  aspectRatio: "3 / 2",
                   overflow: "hidden",
                   bgcolor: "paper.3",
                 }}
