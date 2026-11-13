@@ -289,7 +289,7 @@ _ENHANCED = re.compile(r"\b([245]\.\d{1,3}\.\d{1,3})\b")
 
 
 def _classify(code, text):
-    """(result, smtp_code) of an SMTP error reply. A 5xx outside the spec's classes counts as permanent."""
+    """(result, smtp_code) of an SMTP error reply. Every 5xx that is not systemic counts as permanent."""
     enhanced = _ENHANCED.search(text)
     smtp_code = enhanced.group(1) if enhanced else str(code)
     if code == 421 or smtp_code in ("5.7.0", "5.7.1"):
