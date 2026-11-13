@@ -20,6 +20,19 @@ export default function MedlemsforumPage() {
       />
       <Box component="section" sx={{ p: { xs: "40px 24px", md: "80px 56px" } }}>
         <Box sx={{ maxWidth: 620 }}>
+          <Box sx={{ mb: 8 }}>
+            <LinkButton
+              href="https://forum.gotlandskaninen.se"
+              variant="contained"
+            >
+              Till forumet
+            </LinkButton>
+            <Typography
+              sx={{ mt: 2, fontSize: "15px", lineHeight: 1.65, color: "ink.2" }}
+            >
+              Forumet är en egen webbplats, forum.gotlandskaninen.se.
+            </Typography>
+          </Box>
           <Typography variant="h2" sx={{ m: 0, mb: 4 }}>
             Här ses vi mellan numren av Koharen
           </Typography>
@@ -38,26 +51,16 @@ export default function MedlemsforumPage() {
             Mycket i avelsarbetet sitter i det praktiska: vilka parningar som
             fungerar, hur en kull utvecklas, vad du ska titta efter. Den
             kunskapen finns hos medlemmarna, och forumet är till för att fler
-            ska få del av den. Är du inte medlem än är du välkommen att gå med.
-            Avgiften är 200 kr om året och betalas till Plusgiro 35 03 44-8
-            eller Swish 123 095 70 50. Kassören svarar på frågor om medlemskap
-            via{" "}
+            ska få del av den. Är du inte medlem än är du välkommen att gå med:{" "}
+            <Link href="/bli-medlem" color="inherit">
+              så blir du medlem
+            </Link>
+            . Kassören svarar på frågor om medlemskap via{" "}
             <Link href="mailto:info@gotlandskaninen.se" color="inherit">
               info@gotlandskaninen.se
             </Link>
             .
           </Typography>
-          <Box sx={{ mt: 8, display: "flex", gap: 3, flexWrap: "wrap" }}>
-            <LinkButton
-              href="https://forum.gotlandskaninen.se"
-              variant="contained"
-            >
-              Till forumet
-            </LinkButton>
-            <LinkButton href="/" variant="outlined">
-              &larr; Till hem
-            </LinkButton>
-          </Box>
         </Box>
       </Box>
     </>
