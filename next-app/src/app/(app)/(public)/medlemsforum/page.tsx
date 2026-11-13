@@ -36,10 +36,10 @@ export default function MedlemsforumPage() {
                 color: "ink.2",
               }}
             >
-              Forumet är en egen webbplats, forum.gotlandskaninen.se. Du loggar
-              in med ditt föreningskonto: en e-postadress på gotlandskaninen.se
-              som föreningen skapar åt dig som medlem. Frågor om konton och
-              inloggning besvaras på{" "}
+              Forumet finns på forum.gotlandskaninen.se. Logga in med ditt
+              föreningskonto. Det är en e-postadress på gotlandskaninen.se som
+              föreningen skapar åt dig som medlem. Behöver du hjälp med kontot
+              eller inloggningen? Mejla{" "}
               <Link
                 href="mailto:admin@gotlandskaninen.se"
                 color="inherit"
