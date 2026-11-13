@@ -16,6 +16,10 @@ describe("PageHeader breadcrumb", () => {
     expect(
       screen.getByRole("link", { name: "Gotlandskanin" }).getAttribute("href"),
     ).toBe("/gotlandskanin");
+    expect(screen.getAllByRole("link").map((a) => a.textContent)).toEqual([
+      "Hem",
+      "Gotlandskanin",
+    ]);
   });
 
   it("has only Hem as a link without a parent", () => {

@@ -77,8 +77,8 @@ export function PageHeader({
               inset: 0,
               background: {
                 xs: "linear-gradient(180deg, rgba(31,51,34,0) 75%, rgba(31,51,34,0.85) 100%)",
-                // Dark behind the text column (wide titles reach ~65%
-                // at 1400 px and need 4.5:1), easing to a clear photo on the right.
+                // Dark behind the text column, which is kept inside the first
+                // 65% below, easing to a clear photo on the right.
                 md: "linear-gradient(90deg, rgba(31,27,22,0.82) 0%, rgba(31,27,22,0.82) 65%, rgba(31,27,22,0.15) 100%)",
               },
             }}
@@ -90,6 +90,9 @@ export function PageHeader({
           position: "relative",
           py: { xs: image ? 8 : 12, md: 14 },
           px: { xs: 6, md: 14 },
+          // Over a photo the text stays on the dark part of the overlay, so
+          // it keeps its contrast whatever the photo; a long title wraps.
+          ...(image && { maxWidth: { md: "65%" } }),
         }}
       >
         <Typography

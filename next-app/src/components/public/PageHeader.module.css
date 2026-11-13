@@ -1,9 +1,17 @@
+/* The global focus ring is forest green, which vanishes on the header. */
+.crumb:focus-visible {
+  outline: 2px solid var(--sb-paper);
+  outline-offset: 2px;
+}
+
 /* 44px touch target on touch screens (ADR-0010). The rule sits on the link
    itself: a tall wrapper around a short link is not tappable. */
 @media (pointer: coarse) {
   .crumb {
     display: inline-flex;
     align-items: center;
+    justify-content: center;
+    min-width: 44px;
     min-height: 44px;
   }
 }
