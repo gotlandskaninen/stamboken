@@ -1,7 +1,7 @@
 import { Box, Typography } from "@mui/material";
 
 export const MEMBERSHIP_PAYMENT =
-  "Årsavgiften är 200 kr och betalas till Plusgiro 35 03 44-8 eller Swish 123 095 70 50. Ange namn och adress.";
+  "Årsavgiften är 200 kr och betalas till Plusgiro\u00a035\u00a003\u00a044-8 eller Swish\u00a0123\u00a0095\u00a070\u00a050. Ange namn och adress.";
 
 const STEPS = [
   {
