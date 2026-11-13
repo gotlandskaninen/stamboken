@@ -444,6 +444,7 @@ def send_pending(now=None):
     One run of the scheduler's mail_send job: up to MAX_PER_RUN due rows, one claimed at a time, over one
     SMTP connection. Returns the number of rows taken.
     """
+    fixed = now
     now = now or _utcnow()
     paused_until = _heartbeat(now)
     if paused_until is not None and paused_until > now:
@@ -455,11 +456,13 @@ def send_pending(now=None):
     taken = 0
     try:
         while taken < MAX_PER_RUN:
-            row = _claim(now)
+            # A fresh time per row: a slow run claiming with its start time would look reclaimable at once.
+            tick = fixed or _utcnow()
+            row = _claim(tick)
             if row is None:
                 break
             taken += 1
-            if not _send_one(row, relay, now):
+            if not _send_one(row, relay, tick):
                 break
     finally:
         relay.close()
