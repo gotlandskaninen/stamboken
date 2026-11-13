@@ -17,6 +17,7 @@ from peewee import IntegrityError, fn
 # Note: try_auto_link_member is NOT imported here. Auto-link only
 # happens in the OAuth callback (app/herdbook.py), never at approve time.
 from utils.database import BILLING_FIELDS, DB_PROXY, Genebank, Member, MemberApplication, Membership
+from utils.mail import queue_application_mails
 from utils.matrikel import (
     AddressValidationError,
     allocate_member_number,
@@ -143,19 +144,21 @@ def create_application():
     # Membership is in the association, not a gene bank (Member Model v2).
     # A genebank_id key in the body is ignored; the column is dropped in
     # a later contract migration.
-    application = MemberApplication.create(
-        first_name=first_name,
-        last_name=last_name,
-        email=email,
-        phone=(body.get("phone") or "").strip() or None,
-        address=(body.get("address") or "").strip() or None,
-        postal_code=postal_code,
-        city=city,
-        **billing,
-        motivation=(body.get("motivation") or "").strip() or None,
-        gdpr_consented_at=datetime.now(),
-        status="pending",
-    )
+    with DB_PROXY.atomic():  # the application and its mails commit or roll back together
+        application = MemberApplication.create(
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
+            phone=(body.get("phone") or "").strip() or None,
+            address=(body.get("address") or "").strip() or None,
+            postal_code=postal_code,
+            city=city,
+            **billing,
+            motivation=(body.get("motivation") or "").strip() or None,
+            gdpr_consented_at=datetime.now(),
+            status="pending",
+        )
+        queue_application_mails(application.id)
 
     return (
         jsonify({"id": application.id, "status": application.status}),

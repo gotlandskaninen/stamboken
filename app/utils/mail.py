@@ -598,3 +598,24 @@ def _application(application_id):
 def _application_received(params):
     found = MemberApplication.select().where(MemberApplication.id == params["application_id"]).exists()
     return {} if found else None
+
+
+@mail_kind("ansokan.ny", priority=1, category="N")
+def _application_new(params):
+    pending = (
+        MemberApplication.select()
+        .where((MemberApplication.id == params["application_id"]) & (MemberApplication.status == "pending"))
+        .exists()
+    )
+    return {} if pending else None
+
+
+def queue_application_mails(application_id):
+    """The receipt to the applicant and a notice to each matrikel admin, in the caller's transaction."""
+    params = {"application_id": application_id}
+    ref = ("member_application", application_id)
+    enqueue_mail("ansokan.mottagen", "application", application_id, params, ref=ref)
+    candidates = User.select().where(User.is_active & User._privileges.contains("matrikel_admin"))
+    for user in candidates:
+        if user.is_matrikel_admin:
+            enqueue_mail("ansokan.ny", "user", user.id, params, ref=ref)

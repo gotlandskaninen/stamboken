@@ -1,0 +1,8 @@
+{% block subject %}Ny ansökan om medlemskap{% endblock %}
+
+{% block body %}
+Hej!
+
+En ny ansökan om medlemskap har kommit in. Du kan granska den här:
+{{ base_url }}/medlem/ansokningar
+{% endblock %}
