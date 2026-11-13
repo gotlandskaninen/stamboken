@@ -91,7 +91,9 @@ läggs till med `gh project item-add`
 
 **Branching:** `main` är huvudbranch och PR-mål; arbetsbrancher
 `feature/*`, `fix/*`, `chore/*`; releaser är taggar `vX.Y.Z` med GitHub Release
-([ADR-0012](docs/adr/0012-release-based-deployment.md)).
+([ADR-0012](docs/adr/0012-release-based-deployment.md)). Tagga bara en
+commit på `main` där alla kontroller är gröna, också Playwright: varje PR
+testas för sig, så körningen på `main` är den enda som testar summan.
 
 ## Tester och verktyg
 
