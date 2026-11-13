@@ -60,8 +60,8 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # medlem/profil (29: structured postal address, member.user_id unique link) +
 # Phase 999.5 herd tracking kind/void (30) + Phase 999.8 genetics version (31) + genetics history (32) +
 # history algorithm version (33) + genetics epoch (34) + the individual command log (35) +
-# Individual.microchip (36) + billing address on membership and member_application (37).
-CURRENT_SCHEMA_VERSION = 37
+# Individual.microchip (36) + billing address on membership and member_application (37) + the mail queue (38).
+CURRENT_SCHEMA_VERSION = 38
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -1996,6 +1996,72 @@ class IndividualCommand(BaseModel):
         indexes = ((("individual", "created_at"), False),)
 
 
+def _utcnow():
+    return datetime.now(timezone.utc)
+
+
+class MailMessage(BaseModel):
+    """One outgoing mail (docs/mejl.md): template, ids and a recipient reference, never an address or a text."""
+
+    id = AutoField()
+    kind = TextField()
+    params = BinaryJSONField(default=dict, index=False)  # ids and flags only, never searched
+    recipient_kind = TextField()
+    recipient_id = IntegerField()
+    ref_type = TextField(null=True)
+    ref_id = IntegerField(null=True)
+    # SET NULL: a queued mail must never make a write fail.
+    herd = ForeignKeyField(Herd, null=True, on_delete="SET NULL")
+    genebank = ForeignKeyField(Genebank, null=True, on_delete="SET NULL")
+    priority = SmallIntegerField()
+    category = CharField(1)  # T transaction, N notice
+    dedupe_key = TextField(null=True, unique=True)
+    status = TextField(default="queued")
+    attempts = SmallIntegerField(default=0)
+    next_attempt_at = TimestampTZField(default=_utcnow)
+    claimed_at = TimestampTZField(null=True)
+    claim_token = UUIDField(null=True)
+    sent_at = TimestampTZField(null=True)
+    address_hash = TextField(null=True)
+    last_error = TextField(null=True)
+    created_at = TimestampTZField(default=_utcnow)
+    created_by = ForeignKeyField(User, null=True, on_delete="SET NULL", column_name="created_by")
+
+    class Meta:
+        table_name = "mail_message"
+        indexes = (
+            (("status", "next_attempt_at", "priority", "id"), False),
+            (("ref_type", "ref_id"), False),
+            (("recipient_kind", "recipient_id"), False),
+        )
+
+
+class MailAttempt(BaseModel):
+    """One SMTP attempt or bounce of a mail."""
+
+    id = AutoField()
+    message = ForeignKeyField(MailMessage, on_delete="CASCADE")
+    at = TimestampTZField(default=_utcnow)
+    source = TextField()  # smtp, bounce
+    result = TextField()  # sent, temporary, permanent, systemic, bounce
+    smtp_code = TextField(null=True)
+    detail = TextField(null=True)  # scrubbed of addresses
+
+    class Meta:
+        table_name = "mail_attempt"
+
+
+class MailSender(BaseModel):
+    """The mail sender's one row: its heartbeat, for the "queue stalled" alarm, and its pause after a systemic error."""
+
+    id = IntegerField(primary_key=True, default=1, constraints=[Check("id = 1")])
+    last_run_at = TimestampTZField(null=True)
+    paused_until = TimestampTZField(null=True)
+
+    class Meta:
+        table_name = "mail_sender"
+
+
 MODELS = [
     Genebank,
     Membership,
@@ -2026,6 +2092,9 @@ MODELS = [
     HerdAccessGrant,
     MatrikelAudit,
     IndividualCommand,
+    MailMessage,
+    MailAttempt,
+    MailSender,
 ]
 
 
@@ -3560,6 +3629,15 @@ def migrate_36_to_37():
         ).execute()
 
 
+def migrate_37_to_38():
+    """The outgoing mail queue (docs/mejl.md). Not audited: no addresses or texts, purged after 13 months."""
+    with DATABASE.atomic():
+        DATABASE.create_tables([MailMessage, MailAttempt, MailSender], safe=True)
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=38, comment="mail queue: mail_message, mail_attempt, mail_sender", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4034,6 +4112,7 @@ MIGRATIONS = {
     (34, 35): migrate_34_to_35,  # ADR-0017 command log
     (35, 36): migrate_35_to_36,  # Individual.microchip
     (36, 37): migrate_36_to_37,  # billing address
+    (37, 38): migrate_37_to_38,  # mail queue
 }
 
 

@@ -1162,6 +1162,36 @@ class TestDatabaseMigration(DatabaseTest):
         db.check_migrations()
         self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
 
+    def test_replay_37_to_38_creates_the_mail_queue(self):
+        """A database stamped at 37 gets the three mail tables, with a fresh bootstrap's indexes, unaudited."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("index introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        tables = ("mail_attempt", "mail_message", "mail_sender")
+
+        def indexes():
+            return {(i.table, i.name, tuple(i.columns), i.unique) for t in tables for i in db.DATABASE.get_indexes(t)}
+
+        fresh = indexes()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 38).execute()
+        db.DATABASE.execute_sql("DROP TABLE mail_attempt, mail_message, mail_sender")
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(indexes(), fresh)
+        self.assertIn(("mail_message", "mailmessage_dedupe_key", ("dedupe_key",), True), fresh)
+        self.assertIn(
+            (
+                "mail_message",
+                "mailmessage_status_next_attempt_at_priority_id",
+                ("status", "next_attempt_at", "priority", "id"),
+                False,
+            ),
+            fresh,
+        )
+        self.assertTrue(set(tables).isdisjoint(db.AUDITED_TABLES))
+
     def _max_schema_version(self):
         return db.SchemaHistory.select(  # pylint: disable=E1120
             db.fn.MAX(db.SchemaHistory.version)
