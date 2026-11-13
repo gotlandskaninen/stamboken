@@ -87,7 +87,10 @@ const NEXT_STEPS: Record<string, NextStepsContent> = {
     text: "Fyll i ansökan, så hör vi av oss.",
     primary: { label: "Ansök om medlemskap", href: "/ansok" },
     more: [
-      { label: "Om föreningen", href: "/foreningen" },
+      {
+        label: "Mejla kassören om medlemskap",
+        href: "mailto:info@gotlandskaninen.se",
+      },
       { label: "Styrelse och kontakt", href: "/styrelsen" },
     ],
   },

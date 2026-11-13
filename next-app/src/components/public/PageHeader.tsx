@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Box, Typography } from "@mui/material";
+import { LinkButton } from "./LinkButton";
 import styles from "./PageHeader.module.css";
 
 interface PageHeaderImage {
@@ -18,6 +19,8 @@ interface PageHeaderProps {
   lede?: string;
   /** Optional middle breadcrumb step between "Hem" and the section. */
   parent?: { label: string; href: string };
+  /** Optional button under the lede, for a page whose point is one action. */
+  action?: { label: string; href: string };
   /** Optional photo behind the header — same look as the CMS pages' hero. */
   image?: PageHeaderImage;
 }
@@ -27,6 +30,7 @@ export function PageHeader({
   title,
   lede,
   parent,
+  action,
   image,
 }: PageHeaderProps) {
   return (
@@ -153,6 +157,21 @@ export function PageHeader({
           >
             {lede}
           </Typography>
+        )}
+        {action && (
+          // Light on dark: the theme's green button would vanish on the header.
+          <LinkButton
+            href={action.href}
+            variant="contained"
+            sx={{
+              mt: 6,
+              bgcolor: "paper.main",
+              color: "skog.main",
+              "&:hover": { bgcolor: "paper.2" },
+            }}
+          >
+            {action.label}
+          </LinkButton>
         )}
         {image?.caption && (
           <Typography
