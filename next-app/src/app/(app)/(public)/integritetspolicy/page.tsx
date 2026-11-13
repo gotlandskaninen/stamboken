@@ -71,7 +71,10 @@ export default function IntegritetspolicyPage() {
                 Servern loggar din IP-adress, tidpunkten och vilken sida du
                 hämtade. Loggarna behövs för drift och säkerhet (berättigat
                 intresse) och sparas{" "}
-                <mark>[BESLUT: hur länge sparas serverloggarna?]</mark>.
+                <mark>
+                  [BESLUT: hur länge sparas serverloggarna? Förslag: 90 dagar.]
+                </mark>
+                .
               </li>
               <li>
                 På inloggningssidan laddas Googles inloggningstjänst. Den sätter
@@ -185,7 +188,8 @@ export default function IntegritetspolicyPage() {
               vidare, tillsammans med besättningens nummer. Kontaktuppgifterna{" "}
               <mark>
                 [BESLUT: hur länge sparas kontaktuppgifter för en avslutad
-                genbanksbesättning?]
+                genbanksbesättning? Förslag: 12 månader, bankkontot tas bort
+                efter sista utbetalningen.]
               </mark>
             </p>
           </Section>
@@ -219,8 +223,8 @@ export default function IntegritetspolicyPage() {
               adressen. I forumet sparas ditt användarnamn, din e-postadress och
               det du skriver.{" "}
               <mark>
-                [BESLUT: vad ska stå om forumet, till exempel hur länge inlägg
-                och konton sparas?]
+                [BESLUT: forumet ska läggas ner. Förslag: konton och inlägg tas
+                bort när det stängs.]
               </mark>
             </p>
           </Section>
@@ -244,19 +248,19 @@ export default function IntegritetspolicyPage() {
                 </mark>
               </li>
               <li>
-                Driftleverantörer som tillhandahåller servrar och lagring för
-                Stamboken Online och säkerhetskopiorna.{" "}
-                <mark>
-                  [BESLUT: i vilket land finns servrar och säkerhetskopior?]
-                </mark>
+                Safespring, som tillhandahåller servrar och lagring för
+                Stamboken Online i datacenter i Stockholm.
               </li>
               <li>Tryckeriet som skickar ut Koharen.</li>
               <li>Jordbruksverket, när stödet till genbankerna redovisas.</li>
             </ul>
             <p>
               Säkerhetskopior sparas{" "}
-              <mark>[BESLUT: hur länge sparas säkerhetskopior?]</mark>. En
-              uppgift som vi har tagit bort kan därför finnas kvar i en
+              <mark>
+                [BESLUT: var lagras säkerhetskopiorna och hur länge? Förslag:
+                högst 12 månader.]
+              </mark>
+              . En uppgift som vi har tagit bort kan därför finnas kvar i en
               säkerhetskopia under den tiden.
             </p>
           </Section>
