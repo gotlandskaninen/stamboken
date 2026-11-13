@@ -407,12 +407,14 @@ def _send_one(row, relay, now):
         relay.send(msg, address)
     except _Systemic as exc:
         return _systemic(row, now, exc.smtp_code, exc.detail)
+    except smtplib.SMTPSenderRefused as exc:  # our own sender refused: every mail would fail alike
+        return _smtp_error(row, now, exc.smtp_code, exc.smtp_error, None, systemic=True)
     except smtplib.SMTPRecipientsRefused as exc:
         code, text = next(iter(exc.recipients.values()))
         return _smtp_error(row, now, code, text, address)
     except smtplib.SMTPResponseException as exc:
         return _smtp_error(row, now, exc.smtp_code, exc.smtp_error, address)
-    except (smtplib.SMTPException, OSError) as exc:  # disconnect or timeout on this mail
+    except Exception as exc:  # pylint: disable=broad-except  # disconnect, timeout or anything else on this mail
         relay.close()  # the next mail reconnects; if that fails, it is systemic
         return _failed(row, now, "temporary", None, _describe(exc))
     return _finish(
@@ -427,11 +429,11 @@ def _send_one(row, relay, now):
     )
 
 
-def _smtp_error(row, now, code, text, address):
+def _smtp_error(row, now, code, text, address, systemic=False):
     text = text.decode(errors="replace") if isinstance(text, bytes) else str(text)
     result, smtp_code = _classify(code, text)
     detail = f"{code} {text}"
-    if result == "systemic":
+    if systemic or result == "systemic":
         return _systemic(row, now, smtp_code, detail)
     return _failed(row, now, result, smtp_code, detail, address)
 

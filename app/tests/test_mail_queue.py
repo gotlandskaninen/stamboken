@@ -87,13 +87,14 @@ def _refused(code, text, address="sokande@example.org"):
 class MailTest(DatabaseTest):
     def setUp(self):
         super().setUp()
+        self.now = datetime.now(timezone.utc)
         for patch in (
             mock.patch.multiple(settings.mail, mode="live", link_secret=SECRET, allowlist=[]),
             mock.patch.object(settings.service, "host", f"https://{HOST}"),
+            mock.patch.object(mail, "_utcnow", return_value=self.now),  # the queue's clock stands still
         ):
             patch.start()
             self.addCleanup(patch.stop)
-        self.now = datetime.now(timezone.utc) + timedelta(seconds=1)  # rows queued during the test are due
 
     def relay(self, **kwargs):
         fake = FakeRelay(**kwargs)
@@ -357,6 +358,26 @@ class TestErrorClasses(MailTest):
         self.assertEqual(mail.send_pending(self.now + timedelta(minutes=6)), 2)
         self.assertEqual(sorted(_row_id(msg) for msg, _, _ in relay.sent), [first, second])
 
+    def test_refused_sender_is_systemic_whatever_the_code(self):
+        """A refused MAIL FROM would fail every mail alike, so it pauses the sender instead."""
+        first, second = self.queue("a@example.org"), self.queue("b@example.org")
+        refused = smtplib.SMTPSenderRefused(553, b"5.1.8 Sender address rejected", settings.mail.sender)
+        relay = self.relay(replies=[refused])
+        self.assertEqual(mail.send_pending(self.now), 1)
+        row = self.row(first)
+        self.assertEqual((row.status, row.attempts, row.address_hash), ("queued", 0, None))
+        self.assertEqual([(a.result, a.smtp_code) for a in self.attempts(first)], [("systemic", "5.1.8")])
+        self.assertEqual(self.row(second).status, "queued")
+        self.assertIsNotNone(db.MailSender.get_by_id(1).paused_until)
+        self.assertEqual(relay.sent, [])
+
+    def test_unexpected_send_error_counts_as_temporary(self):
+        first, second = self.queue("a@example.org"), self.queue("b@example.org")
+        self.relay(replies=[ValueError("odd reply from the relay")])
+        self.assertEqual(mail.send_pending(self.now), 2)
+        self.assertEqual((self.row(first).status, self.row(first).attempts), ("queued", 1))
+        self.assertEqual(self.row(second).status, "sent")
+
     def test_connection_failures_are_systemic(self):
         for name, kwargs in (
             ("refused", {"refuse": ConnectionRefusedError("connection refused")}),
@@ -405,7 +426,13 @@ class TestCancel(MailTest):
     def test_unknown_kind_or_recipient_kind_cancels_cleanly(self):
         a = self.application()
         unknown_kind = db.MailMessage.create(
-            kind="finns.inte", params={}, recipient_kind="application", recipient_id=a.id, priority=1, category="T"
+            kind="finns.inte",
+            params={},
+            recipient_kind="application",
+            recipient_id=a.id,
+            priority=1,
+            category="T",
+            next_attempt_at=self.now,
         ).id
         unknown_recipient = mail.enqueue_mail("ansokan.mottagen", "inbox_sender", 1, {"application_id": a.id})
         self.relay()
