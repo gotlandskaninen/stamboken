@@ -42,8 +42,10 @@ import json, sys
 c = json.load(open(sys.argv[1] + "/resolved.json"))
 env = lambda s: c["services"][s].get("environment") or {}
 up = sys.argv[1] + "/uppladdningar"  # the upload dir of this project
-# a bind source that is the upload dir, inside it, or a parent of it
-touches = lambda s: bool(s) and (s.rstrip("/") == up or s.startswith(up + "/") or up.startswith(s.rstrip("/") + "/"))
+sk = sys.argv[1] + "/skyddat"  # the private dir of the intake queue
+# a path that is the dir d, inside it, or a parent of it
+reaches = lambda s, d: bool(s) and (s.rstrip("/") == d or s.startswith(d + "/") or d.startswith(s.rstrip("/") + "/"))
+touches = lambda s: reaches(s, up)
 print(eval(sys.argv[2]))' "$1" "$2"
 }
 
@@ -106,6 +108,21 @@ check "R072 production api still mounts uppladdningar writable" "['/app/uppladdn
 # refusal, and without it on api-test its logins would be production sessions.
 check "production api does not set DEMO_INSTANCE" "None" "$(q "$work/r072" "env('api').get('DEMO_INSTANCE')")"
 check "production api-test sets DEMO_INSTANCE=true" "true" "$(q "$work/r072" "env('api-test').get('DEMO_INSTANCE')")"
+
+# ── The intake queue's originals are never public ───────────────────────
+# nginx serves all of uppladdningar without login, so the private dir must lie
+# outside it, and only the api may mount it: never nginx.
+for f in docker-compose docker-compose.local-production docker-compose.production; do
+  proj="$work/private-$f"
+  resolve "$ROOT/$f.yml" "$proj"
+  check "$f: only api mounts skyddat" "['api']" \
+    "$(q "$proj" "sorted(n for n, s in c['services'].items() if any(reaches(v.get('source', ''), sk) for v in s.get('volumes', [])))")"
+  check "$f: api mounts skyddat at PRIVATE_UPLOAD_FOLDER" "True" \
+    "$(q "$proj" "[v['target'] for v in c['services']['api']['volumes'] if reaches(v.get('source', ''), sk)] == [env('api').get('PRIVATE_UPLOAD_FOLDER', '/app/skyddat')]")"
+  check "$f: PRIVATE_UPLOAD_FOLDER is not under UPLOAD_FOLDER" "False" \
+    "$(q "$proj" "reaches(env('api').get('PRIVATE_UPLOAD_FOLDER', '/app/skyddat'), env('api').get('UPLOAD_FOLDER', '/app/uppladdningar'))")"
+  check "$f: skyddat is not in the upload dir" "False" "$(q "$proj" "touches(sk)")"
+done
 
 echo ""
 echo "passed: $pass, failed: $fail"

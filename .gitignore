@@ -36,6 +36,8 @@ uppladdningar/kaniner/*
 uppladdningar/besattningar/*
 uppladdningar/certifikat/*
 uppladdningar/dokument/*
+# Originals of the intake queue (PRIVATE_UPLOAD_FOLDER); app/skyddat when the app dir is bind-mounted
+skyddat/
 
 # Docker images
 .docker/images/*

@@ -67,6 +67,18 @@ service.host = os.environ.get("HERDBOOK_HOST", "https://127.0.0.1:8443")
 service.logfolder = os.environ.get("HERDBOOK_LOGFOLDER", "./")
 # The demo API (api-test): its logins are marked, and production refuses them.
 service.demo_instance = os.environ.get("DEMO_INSTANCE", "false").lower() == "true"
+# Originals of the intake queue (docs/inkorg.md). Never under UPLOAD_FOLDER: nginx serves all of that unauthenticated.
+service.private_upload_folder = os.environ.get("PRIVATE_UPLOAD_FOLDER", "/app/skyddat")
+
+
+def refuse_private_folder_under_uploads():
+    """Fail-safe at startup: a private folder inside the upload folder would publish every original."""
+    uploads = os.path.realpath(os.environ.get("UPLOAD_FOLDER", "/app/uppladdningar"))
+    private = os.path.realpath(service.private_upload_folder)
+    if os.path.commonpath([uploads, private]) in (uploads, private):
+        raise RuntimeError(
+            f"PRIVATE_UPLOAD_FOLDER={private} overlaps UPLOAD_FOLDER={uploads}, which nginx serves without login."
+        )
 
 
 def refuse_auto_validate_outside_demo():

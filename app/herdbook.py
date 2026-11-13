@@ -127,6 +127,7 @@ UPLOAD_DIR = os.getenv("UPLOAD_FOLDER", "/app/uppladdningar")
 settings.refuse_committed_signing_key()
 settings.refuse_auto_validate_outside_demo()
 settings.refuse_unsafe_mail_settings()
+settings.refuse_private_folder_under_uploads()
 
 # verify_oauth2_token would otherwise enforce audience "" and fail every login.
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID") or None
