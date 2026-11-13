@@ -25,3 +25,21 @@ describe("PageHeader breadcrumb", () => {
     ]);
   });
 });
+
+describe("PageHeader action", () => {
+  it("renders the page's one action as a button link under the lede", () => {
+    render(
+      <PageHeader
+        section="Bli medlem"
+        title="Bli medlem"
+        lede="Medlemskapet kostar 200 kr om året."
+        action={{ label: "Ansök om medlemskap", href: "/ansok" }}
+      />,
+    );
+    expect(
+      screen
+        .getByRole("link", { name: "Ansök om medlemskap" })
+        .getAttribute("href"),
+    ).toBe("/ansok");
+  });
+});
