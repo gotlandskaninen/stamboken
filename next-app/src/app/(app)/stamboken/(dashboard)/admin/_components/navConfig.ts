@@ -90,6 +90,16 @@ export const NAV_CONFIG: AdminNavGroup[] = [
     ],
   },
   {
+    label: "UTSKICK",
+    items: [
+      {
+        href: "/stamboken/admin/utskick",
+        label: () => "Utskick",
+        show: isAdminOrManager,
+      },
+    ],
+  },
+  {
     label: "SYSTEM",
     items: [
       {
