@@ -63,8 +63,8 @@ export default function IntegritetspolicyPage() {
           <Section title="När du besöker webbplatsen">
             <p>
               Webbplatsen mäter inte besök och har inga kakor för statistik
-              eller reklam. Så länge du inte loggar in sätter den inga kakor
-              alls.
+              eller reklam. De flesta sidor sätter inga kakor alls så länge du
+              inte loggar in.
             </p>
             <ul>
               <li>
@@ -75,8 +75,9 @@ export default function IntegritetspolicyPage() {
               </li>
               <li>
                 På sidan Stamboken Online och på inloggningssidan laddas Googles
-                inloggningstjänst. Google får då din IP-adress och uppgifter om
-                din webbläsare, även om du inte loggar in.
+                inloggningstjänst. Den sätter en kaka (g_state) i din
+                webbläsare, och Google får din IP-adress och uppgifter om din
+                webbläsare, även om du inte loggar in.
               </li>
               <li>
                 När du loggar in sätts två kakor som tjänsten behöver: en som
@@ -244,7 +245,11 @@ export default function IntegritetspolicyPage() {
                 inloggning och delade dokument. Google kan behandla uppgifter
                 utanför EU och EES. Överföringen stöds av EU-kommissionens
                 beslut om adekvat skyddsnivå för USA och av
-                standardavtalsklausuler.
+                standardavtalsklausuler.{" "}
+                <mark>
+                  [BESLUT: bekräfta att föreningen har godkänt Googles
+                  personuppgiftsbiträdesavtal i Workspace.]
+                </mark>
               </li>
               <li>
                 Driftleverantörer som tillhandahåller servrar och lagring för

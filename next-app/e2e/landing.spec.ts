@@ -125,6 +125,8 @@ test.describe("Landing page sections", () => {
     await expect(
       page.getByRole("heading", { level: 2, name: "Dina rättigheter" }),
     ).toBeVisible();
+    // Open decisions are marked with <mark>; the policy must not ship with any.
+    await expect(page.locator("mark")).toHaveCount(0);
   });
 });
 
