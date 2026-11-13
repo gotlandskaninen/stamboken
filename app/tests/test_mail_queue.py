@@ -7,11 +7,15 @@ erasure, retention, bounces by Message-ID, and that no row holds an address. Syn
 """
 
 import json
+import os
 import re
 import smtplib
+import subprocess
+import sys
 import threading
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from unittest import mock
 
 import utils.database as db
@@ -236,6 +240,17 @@ class TestModes(MailTest):
                         settings.refuse_unsafe_mail_settings()
                 else:
                     settings.refuse_unsafe_mail_settings()
+
+    def test_app_import_refuses_live_mail_on_the_demo(self):
+        """The guard runs when the app is imported: a demo with MAIL_MODE=live never comes up."""
+        env = {**os.environ, "MAIL_MODE": "live", "DEMO_INSTANCE": "true", "LINK_SECRET": "guard-test-only"}
+        probe = "import pytest, herdbook\nprint('STARTED')\n"  # pytest loaded: no blocking startup if it imports
+        app_dir = Path(__file__).resolve().parent.parent
+        p = subprocess.run(
+            [sys.executable, "-c", probe], cwd=app_dir, env=env, capture_output=True, text=True, timeout=120
+        )
+        self.assertNotIn("STARTED", p.stdout)
+        self.assertIn("MAIL_MODE=live is refused", p.stderr)
 
 
 class TestSending(MailTest):
@@ -517,6 +532,30 @@ class TestConcurrentSenders(MailTest):
         self.assertEqual(sorted(_row_id(msg) for msg, _, _ in relay.sent), ids)
         self.assertEqual({r.status for r in db.MailMessage.select()}, {"sent"})
         self.assertEqual(db.MailAttempt.select().count(), len(ids))
+
+    def test_claim_skips_a_row_another_sender_holds(self):
+        first, second = self.queue("a@example.org"), self.queue("b@example.org")
+        locked, release = threading.Event(), threading.Event()
+
+        def hold():
+            try:
+                with db.DB_PROXY.atomic():
+                    db.DB_PROXY.execute_sql("SELECT id FROM mail_message WHERE id = %s FOR UPDATE", (first,))
+                    locked.set()
+                    release.wait(timeout=5)  # without SKIP LOCKED the claim waits this out and takes `first`
+            finally:
+                db.DB_PROXY.close()
+
+        holder = threading.Thread(target=hold)
+        holder.start()
+        self.assertTrue(locked.wait(timeout=10))
+        try:
+            claimed = mail._claim(self.now)  # pylint: disable=protected-access
+        finally:
+            release.set()
+            holder.join(timeout=10)
+        self.assertEqual(claimed.id, second)
+        self.assertEqual(self.row(first).status, "queued")
 
     def test_sender_whose_row_was_reclaimed_cannot_write_status(self):
         row_id = self.queue()
