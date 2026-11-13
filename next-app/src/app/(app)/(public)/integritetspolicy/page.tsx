@@ -70,7 +70,7 @@ export default function IntegritetspolicyPage() {
                 Servern för ingen logg över vanliga besök. När något går fel
                 loggas felet, och en sådan rad kan innehålla din IP-adress.
                 Felloggarna behövs för drift och säkerhet (berättigat intresse)
-                och sparas i 90 dagar.
+                och sparas i ungefär tre månader.
               </li>
               <li>
                 På inloggningssidan laddas Googles inloggningstjänst. Den sätter
