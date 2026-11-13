@@ -1192,6 +1192,27 @@ class TestDatabaseMigration(DatabaseTest):
         )
         self.assertTrue(set(tables).isdisjoint(db.AUDITED_TABLES))
 
+    def test_replay_38_to_39_creates_the_intake_queue(self):
+        """A database stamped at 38 gets the queue's tables with a fresh bootstrap's indexes, unaudited."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("index introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        tables = [m._meta.table_name for m in db.INBOX_MODELS]
+
+        def indexes():
+            return {(i.table, i.name, tuple(i.columns), i.unique) for t in tables for i in db.DATABASE.get_indexes(t)}
+
+        fresh = indexes()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 39).execute()
+        db.DATABASE.execute_sql(f"DROP TABLE {', '.join(tables)} CASCADE")
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(indexes(), fresh)
+        self.assertIn(("inbox_item", "inboxitem_gmail_message_id", ("gmail_message_id",), True), fresh)
+        self.assertTrue(set(tables).isdisjoint(db.AUDITED_TABLES))
+
     def _max_schema_version(self):
         return db.SchemaHistory.select(  # pylint: disable=E1120
             db.fn.MAX(db.SchemaHistory.version)

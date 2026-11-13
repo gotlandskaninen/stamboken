@@ -60,8 +60,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # medlem/profil (29: structured postal address, member.user_id unique link) +
 # Phase 999.5 herd tracking kind/void (30) + Phase 999.8 genetics version (31) + genetics history (32) +
 # history algorithm version (33) + genetics epoch (34) + the individual command log (35) +
-# Individual.microchip (36) + billing address on membership and member_application (37) + the mail queue (38).
-CURRENT_SCHEMA_VERSION = 38
+# Individual.microchip (36) + billing address on membership and member_application (37) + the mail queue (38) +
+# the intake queue (39).
+CURRENT_SCHEMA_VERSION = 39
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -2062,6 +2063,155 @@ class MailSender(BaseModel):
         table_name = "mail_sender"
 
 
+# The intake queue (docs/inkorg.md). None of these tables is audited: inbox_event is the history, and audit
+# copies would keep personal data after the purge.
+
+
+class InboxItem(BaseModel):
+    """What came in at one go (an upload or a mail), with its state and its handler."""
+
+    id = AutoField()
+    kind = TextField()  # upload, mail, meddelande, kontroll, avisering
+    state = TextField(default="ny")
+    genebank = ForeignKeyField(Genebank, null=True, on_delete="SET NULL")
+    herd = ForeignKeyField(Herd, null=True, on_delete="SET NULL")
+    member = ForeignKeyField(Member, null=True, on_delete="SET NULL")  # the matched sender of a mail
+    sender_user = ForeignKeyField(User, null=True, on_delete="SET NULL", backref="+")  # the uploader
+    sender_address = TextField(null=True)  # mail only
+    message = TextField(null=True)
+    gmail_message_id = TextField(null=True, unique=True)
+    received_at = TimestampTZField(default=_utcnow)
+    assigned_to = ForeignKeyField(User, null=True, on_delete="SET NULL", backref="+", column_name="assigned_to")
+    assigned_at = TimestampTZField(null=True)
+    state_changed_at = TimestampTZField(default=_utcnow)
+    closed_at = TimestampTZField(null=True)
+    duplicate_of = ForeignKeyField("self", null=True, on_delete="SET NULL", backref="+", column_name="duplicate_of")
+    stalled = BooleanField(default=False)
+    missing_proof = BooleanField(default=False)
+    ref_type = TextField(null=True)  # kontroll and avisering point at another feature's row
+    ref_id = IntegerField(null=True)
+
+    class Meta:
+        table_name = "inbox_item"
+        indexes = ((("state", "received_at"), False),)
+
+
+class InboxDocument(BaseModel):
+    """One image of an item (a photo, or a page of a PDF), under PRIVATE_UPLOAD_FOLDER."""
+
+    id = AutoField()
+    item = ForeignKeyField(InboxItem, on_delete="CASCADE", backref="documents")
+    original_path = TextField()
+    public_path = TextField(null=True)  # the masked copy shown on the rabbit
+    mime = TextField()
+    sha256 = CharField(64, index=True)
+    quality = BinaryJSONField(null=True, index=False)
+    doc_type = TextField(default="intyg")
+    cert_format = TextField(null=True)
+    rotation = SmallIntegerField(default=0)
+    mask_rects = BinaryJSONField(null=True, index=False)
+    interpretation_status = TextField(default="av")
+    attempts = SmallIntegerField(default=0)
+    interpreter = TextField(null=True)
+    interpretation = BinaryJSONField(null=True, index=False)
+    proposal = BinaryJSONField(null=True, index=False)
+    interpreted_at = TimestampTZField(null=True)
+    waiting_for = BinaryJSONField(null=True)  # the parents' numbers; GIN, searched with @> on every registration
+    individual = ForeignKeyField(Individual, null=True, on_delete="SET NULL", backref="+")
+    herd_tracking = ForeignKeyField(HerdTracking, null=True, on_delete="SET NULL", backref="+")
+    purge_after = TimestampTZField(null=True)
+    done_at = TimestampTZField(null=True)
+
+    class Meta:
+        table_name = "inbox_document"
+
+
+class InboxEvent(BaseModel):
+    """An item's history: came in, taken, assigned, state, saved, opened."""
+
+    id = BigAutoField()
+    item = ForeignKeyField(InboxItem, on_delete="CASCADE", backref="events")
+    at = TimestampTZField(default=_utcnow)
+    user = ForeignKeyField(User, null=True, on_delete="SET NULL", backref="+")
+    kind = TextField()
+    detail = BinaryJSONField(null=True, index=False)
+
+    class Meta:
+        table_name = "inbox_event"
+        indexes = ((("item", "at"), False),)
+
+
+class InboxOperation(BaseModel):
+    """The trace "inlagd från foto av": a write's operation id, its handler and document. Outlives both."""
+
+    id = BigAutoField()
+    operation_id = UUIDField(index=True)
+    user = ForeignKeyField(User, null=True, on_delete="SET NULL", backref="+")
+    document = ForeignKeyField(InboxDocument, null=True, on_delete="SET NULL", backref="+")
+    created_at = TimestampTZField(default=_utcnow)
+
+    class Meta:
+        table_name = "inbox_operation"
+
+
+class Notice(BaseModel):
+    """A notice in Stamboken, mailed in the daily digest unless the user turned that off."""
+
+    id = AutoField()
+    user = ForeignKeyField(User, on_delete="CASCADE", backref="+")
+    kind = TextField()
+    item = ForeignKeyField(InboxItem, null=True, on_delete="CASCADE", backref="+")
+    created_at = TimestampTZField(default=_utcnow)
+    read_at = TimestampTZField(null=True)
+    mailed_at = TimestampTZField(null=True)
+
+    class Meta:
+        indexes = ((("user", "read_at"), False),)
+
+
+class NoticeSetting(BaseModel):
+    user = ForeignKeyField(User, primary_key=True, on_delete="CASCADE", backref="+")
+    mail_enabled = BooleanField(default=True)
+
+    class Meta:
+        table_name = "notice_setting"
+
+
+class GmailSync(BaseModel):
+    """The Gmail reader's one row (a later part of the queue)."""
+
+    id = IntegerField(primary_key=True, default=1, constraints=[Check("id = 1")])
+    history_id = TextField(null=True)
+    last_run_at = TimestampTZField(null=True)
+    last_error = TextField(null=True)
+
+    class Meta:
+        table_name = "gmail_sync"
+
+
+class GmailProcessed(BaseModel):
+    """One row per Gmail message handled, so a message read twice is handled once."""
+
+    gmail_message_id = TextField(primary_key=True)
+    kind = TextField()  # item, reply, bounce, ignored
+    item = ForeignKeyField(InboxItem, null=True, on_delete="SET NULL", backref="+")
+    at = TimestampTZField(default=_utcnow)
+
+    class Meta:
+        table_name = "gmail_processed"
+
+
+INBOX_MODELS = [
+    InboxItem,
+    InboxDocument,
+    InboxEvent,
+    InboxOperation,
+    Notice,
+    NoticeSetting,
+    GmailSync,
+    GmailProcessed,
+]
+
 MODELS = [
     Genebank,
     Membership,
@@ -2095,6 +2245,7 @@ MODELS = [
     MailMessage,
     MailAttempt,
     MailSender,
+    *INBOX_MODELS,
 ]
 
 
@@ -3638,6 +3789,15 @@ def migrate_37_to_38():
         ).execute()
 
 
+def migrate_38_to_39():
+    """The intake queue (docs/inkorg.md), and the Gmail reader's tables for a later part of it. Not audited."""
+    with DATABASE.atomic():
+        DATABASE.create_tables(INBOX_MODELS, safe=True)
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=39, comment="intake queue: inbox_*, notice, notice_setting, gmail_*", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4113,6 +4273,7 @@ MIGRATIONS = {
     (35, 36): migrate_35_to_36,  # Individual.microchip
     (36, 37): migrate_36_to_37,  # billing address
     (37, 38): migrate_37_to_38,  # mail queue
+    (38, 39): migrate_38_to_39,  # intake queue
 }
 
 
