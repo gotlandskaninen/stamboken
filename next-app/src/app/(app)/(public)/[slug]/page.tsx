@@ -91,9 +91,10 @@ export default async function CmsPage({ params }: Props) {
         }
       />
 
-      {hasBlocks && (
+      {/* The membership steps show even if the CMS page has no text yet. */}
+      {(hasBlocks || slug === JOIN_SLUG) && (
         <Box sx={{ px: { xs: 6, md: 14 }, py: { xs: 10, md: 16 } }}>
-          <RenderBlocks blocks={pageAny.layout} />
+          {hasBlocks && <RenderBlocks blocks={pageAny.layout} />}
           <Container maxWidth="md">
             {slug === JOIN_SLUG && <MembershipSteps />}
             <NextSteps slug={slug} />

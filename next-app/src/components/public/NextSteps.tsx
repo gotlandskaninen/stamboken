@@ -88,7 +88,7 @@ const NEXT_STEPS: Record<string, NextStepsContent> = {
     primary: { label: "Ansök om medlemskap", href: "/ansok" },
     more: [
       {
-        label: "Fråga kassören om medlemskap",
+        label: "Mejla kassören om medlemskap",
         href: "mailto:info@gotlandskaninen.se",
       },
       { label: "Styrelse och kontakt", href: "/styrelsen" },

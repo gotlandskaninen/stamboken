@@ -40,10 +40,16 @@ describe("PageHeader action", () => {
         action={{ label: "Ansök om medlemskap", href: "/ansok" }}
       />,
     );
+    const button = screen.getByRole("link", { name: "Ansök om medlemskap" });
+    expect(button.getAttribute("href")).toBe("/ansok");
+    const lede = screen.getByText("Medlemskapet kostar 200 kr om året.");
     expect(
-      screen
-        .getByRole("link", { name: "Ansök om medlemskap" })
-        .getAttribute("href"),
-    ).toBe("/ansok");
+      lede.compareDocumentPosition(button) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("has no button without an action", () => {
+    render(<PageHeader section="Historik" title="Historik" />);
+    expect(screen.queryByRole("link", { name: /Ansök/ })).toBeNull();
   });
 });
