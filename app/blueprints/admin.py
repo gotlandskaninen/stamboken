@@ -41,7 +41,7 @@ def admin_grant_role():
       {"operation": "add" | "remove",
        "user_id": <int>,
        "role": {"level": "admin"} | {"level": "matrikel_admin"}
-             | {"level": "manager" | "viewer", "genebank": <int>}
+             | {"level": "manager" | "helper" | "viewer", "genebank": <int>}
              | {"level": "owner", "herd": <int>}}   # numeric Herd.id
 
     Legacy POST /api/manage/role is UNTOUCHED — the
@@ -164,7 +164,7 @@ def get_sync_status():
 
 
 _USER_SORT_FIELDS = {"username", "email", "fullname", "last_active"}
-_USER_ROLE_FILTERS = {"admin", "matrikel_admin", "manager", "viewer", "owner", "none"}
+_USER_ROLE_FILTERS = {"admin", "matrikel_admin", "manager", "helper", "viewer", "owner", "none"}
 
 
 @admin_bp.route("/users", methods=["GET"])
@@ -174,7 +174,7 @@ def list_users_admin():
     Paginated admin user list with filters.
 
     Query params:
-      role=admin|matrikel_admin|manager|viewer|owner|none
+      role=admin|matrikel_admin|manager|helper|viewer|owner|none
       validated=true|false
       active=true|false       (hbuser.is_active — the Aktiv/Inaktiv filter)
       v2_prod_access=true|false  (hbuser.v2_prod_access — the yes/no filter)

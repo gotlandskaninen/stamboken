@@ -1094,7 +1094,7 @@ class User(BaseModel, UserMixin):
         The privileges are a list of roles, formatted as:
         [
             {'level': 'admin'} |
-            {'level': 'viewer' | 'manager', 'genebank': id} |
+            {'level': 'viewer' | 'manager' | 'helper', 'genebank': id} |
             {'level': 'owner', 'herd': id}
         ]
         """
@@ -1129,15 +1129,16 @@ class User(BaseModel, UserMixin):
             - level: matrikel_admin, (no target)
             - level: viewer, genebank: target_id
             - level: manager, genebank: target_id
+            - level: helper, genebank: target_id
             - level: owner, herd: target_id
         """
 
         privs = self.privileges
-        if level not in ["admin", "viewer", "manager", "owner", "matrikel_admin"]:
+        if level not in ["admin", "viewer", "manager", "helper", "owner", "matrikel_admin"]:
             logger.error("Unknown role level %s", level)
             return
         role = {"level": level}
-        if level in ["viewer", "manager"]:
+        if level in ["viewer", "manager", "helper"]:
             role["genebank"] = target_id
         elif level == "owner":
             role["herd"] = target_id
@@ -1155,13 +1156,14 @@ class User(BaseModel, UserMixin):
             - level: matrikel_admin, (no target)
             - level: viewer, genebank: target_id
             - level: manager, genebank: target_id
+            - level: helper, genebank: target_id
             - level: owner, herd: target_id
         """
         for role in self.privileges:
             if role["level"] == level:
                 if level in ("admin", "matrikel_admin"):
                     return True
-                if level in ["viewer", "manager"] and target_id == role["genebank"]:
+                if level in ["viewer", "manager", "helper"] and target_id == role["genebank"]:
                     return True
                 if level == "owner" and target_id == role["herd"]:
                     return True
@@ -1177,6 +1179,7 @@ class User(BaseModel, UserMixin):
             - level: matrikel_admin, (no target)
             - level: viewer, genebank: target_id
             - level: manager, genebank: target_id
+            - level: helper, genebank: target_id
             - level: owner, herd: target_id
         """
         new_privs = []
@@ -1184,7 +1187,7 @@ class User(BaseModel, UserMixin):
             if role["level"] == level:
                 if level in ("admin", "matrikel_admin"):
                     continue
-                if level in ["viewer", "manager"] and target_id == role["genebank"]:
+                if level in ["viewer", "manager", "helper"] and target_id == role["genebank"]:
                     continue
                 if level == "owner" and target_id == role["herd"]:
                     continue
@@ -1220,6 +1223,15 @@ class User(BaseModel, UserMixin):
             if role["level"] == "manager":
                 genebanks += [role["genebank"]]
         return genebanks or None
+
+    @property
+    def is_helper(self):
+        """
+        The ids of the genebanks where the user is a genebank helper (genbankshjälpare), or `None`. A helper
+        works in the intake queue and writes only through an item they have taken (utils.inbox.InboxGrant),
+        never through can_edit.
+        """
+        return [role["genebank"] for role in self.privileges if role["level"] == "helper"] or None
 
     @property
     def is_owner(self):
@@ -1339,7 +1351,7 @@ class User(BaseModel, UserMixin):
             return [g.id for g in Genebank(database=DATABASE).select()]
         has_access = []
         for role in self.privileges:
-            if role["level"] in ["viewer", "manager"]:
+            if role["level"] in ["viewer", "manager", "helper"]:
                 has_access += [role["genebank"]]
         herd_ids = self.effective_herd_ids()
         if herd_ids:
