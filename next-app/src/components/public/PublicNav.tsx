@@ -3,6 +3,7 @@ import Image from "next/image";
 import { Box, Typography } from "@mui/material";
 import { LinkButton } from "@/components/public/LinkButton";
 import { NavDropdown } from "./NavDropdown.client";
+import { NavLink } from "./NavLink.client";
 import { MobileDrawer } from "./MobileDrawer.client";
 import { getNavigation } from "@/lib/payload-queries";
 
@@ -136,24 +137,7 @@ export async function PublicNav() {
               items={link.children}
             />
           ) : (
-            <Link
-              key={link.href}
-              href={link.href}
-              style={{
-                fontSize: "13.5px",
-                color: "#3D362C",
-                textDecoration: "none",
-                fontWeight: 400,
-                borderBottom: "2px solid transparent",
-                paddingBottom: "2px",
-                minHeight: "44px",
-                display: "inline-flex",
-                alignItems: "center",
-                whiteSpace: "nowrap",
-              }}
-            >
-              {link.label}
-            </Link>
+            <NavLink key={link.href} href={link.href} label={link.label} />
           ),
         )}
       </Box>

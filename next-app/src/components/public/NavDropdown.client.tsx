@@ -2,6 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
 import { Box, Typography } from "@mui/material";
 
 interface DropdownItem {
@@ -18,7 +19,15 @@ interface NavDropdownProps {
   active?: boolean;
 }
 
-export function NavDropdown({ label, href, items, active }: NavDropdownProps) {
+export function NavDropdown({
+  label,
+  href,
+  items,
+  active: activeProp,
+}: NavDropdownProps) {
+  const pathname = usePathname();
+  const active =
+    activeProp ?? (pathname === href || items.some((i) => i.href === pathname));
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
