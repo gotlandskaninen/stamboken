@@ -65,7 +65,7 @@ const STEPS: Array<{
   {
     title: "Bli medlem",
     body: [
-      "Betala medlemsavgiften, så är du med i föreningen. Ansökan fyller du i på webben och avgiften gäller hela familjen.",
+      "Fyll i ansökan på webben och betala medlemsavgiften. Avgiften gäller hela familjen.",
     ],
     links: [{ href: "/bli-medlem", label: "Bli medlem →" }],
   },
@@ -114,7 +114,7 @@ const YEARLY = [
   },
   {
     title: "Årsrapport senast 31 januari",
-    desc: "Sedan 2024 lämnar du den direkt i Stamboken Online. Årsrapporten är också grunden för Jordbruksverkets stöd, som kräver minst en kull under året, hane och hona vid årsskiftet och betald medlemsavgift.",
+    desc: "Sedan 2024 lämnar du den direkt i Stamboken Online. Årsrapporten är också grunden för Jordbruksverkets stöd, som kräver minst en kull under året, hane och hona vid årsskiftet och betald medlemsavgift. Ett år utan kull ger inget stöd.",
   },
 ];
 
@@ -160,8 +160,8 @@ const RULES = [
     text: "Målet är att bevara så mycket som möjligt av rasens arvsanlag. Inga snäva urval och ingen inkorsning av andra raser. Bara rena defekter sorteras bort.",
   },
   {
-    title: "Alla djur har intyg",
-    text: "De härstammar från kaninerna som inventerades 1993 (gotlandskanin) eller köptes ut 2001–2002 (mellerudskanin).",
+    title: "Djuren har genbanksintyg",
+    text: "Alla kaniner i stamboken ska ha genbanksintyg, med vissa undantag. De härstammar från kaninerna som inventerades 1993 (gotlandskanin) eller köptes ut 2001–2002 (mellerudskanin).",
   },
 ];
 
@@ -191,9 +191,10 @@ function IntroSection() {
             {"Vad är en genbanks­besättning?"}
           </Typography>
           <Typography variant="lede" sx={{ mt: 4, display: "block" }}>
-            En genbanksbesättning är kaniner som en medlem föder upp hemma, på
-            avtal med föreningen. Stammen lever ute hos medlemmarna, inte i en
-            byggnad eller ett museum.
+            En genbanksbesättning är en grupp kaniner som en medlem föder upp
+            enligt avtal med föreningen. Rasen bevaras som levande djur hemma
+            hos uppfödarna, under förhållanden som liknar dem som har format
+            den. Det kallas bevarande på plats, in situ.
           </Typography>
           <Box sx={{ mt: 7, display: "flex", gap: 3, flexWrap: "wrap" }}>
             <LinkButton
