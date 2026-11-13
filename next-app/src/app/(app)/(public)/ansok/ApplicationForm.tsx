@@ -216,7 +216,7 @@ export function ApplicationForm() {
         }
         label={
           <>
-            Jag godkänner att mina personuppgifter behandlas enligt GDPR. Läs{" "}
+            Jag har läst hur föreningen behandlar mina personuppgifter i{" "}
             {/* New tab: following the link must not discard a filled-in form. */}
             <Link
               href="/integritetspolicy"

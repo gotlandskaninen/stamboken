@@ -63,8 +63,8 @@ export default function IntegritetspolicyPage() {
           <Section title="När du besöker webbplatsen">
             <p>
               Webbplatsen mäter inte besök och har inga kakor för statistik
-              eller reklam. De flesta sidor sätter inga kakor alls så länge du
-              inte loggar in.
+              eller reklam. Sidorna sätter inga kakor förrän du öppnar
+              inloggningssidan.
             </p>
             <ul>
               <li>
@@ -74,16 +74,15 @@ export default function IntegritetspolicyPage() {
                 <mark>[BESLUT: hur länge sparas serverloggarna?]</mark>.
               </li>
               <li>
-                På sidan Stamboken Online och på inloggningssidan laddas Googles
-                inloggningstjänst. Den sätter en kaka (g_state) i din
-                webbläsare, och Google får din IP-adress och uppgifter om din
-                webbläsare, även om du inte loggar in.
+                På inloggningssidan laddas Googles inloggningstjänst. Den sätter
+                en kaka (g_state) i din webbläsare, och Google får din IP-adress
+                och uppgifter om din webbläsare, även om du inte loggar in.
               </li>
               <li>
                 När du loggar in sätts två kakor som tjänsten behöver: en som
-                håller dig inloggad i upp till 31 dagar och en som minns vilket
-                läge du arbetar i. Formulär du har påbörjat sparas i din egen
-                webbläsare tills du skickar dem.
+                håller dig inloggad i upp till 31 dagar och en som minns om du
+                arbetar i riktiga stamboken eller i testmiljön. Formulär du har
+                påbörjat sparas i din egen webbläsare tills du skickar dem.
               </li>
             </ul>
           </Section>
@@ -101,10 +100,7 @@ export default function IntegritetspolicyPage() {
               medlemsregistret, av genbanksansvariga och av föreningens
               systemansvarig.
             </p>
-            <p>
-              Blir du inte medlem tar vi bort ansökan{" "}
-              <mark>[BESLUT: inom hur lång tid? Förslag: 12 månader.]</mark>
-            </p>
+            <p>Blir du inte medlem tar vi bort ansökan inom 12 månader.</p>
           </Section>
 
           <Section title="När du är medlem">
@@ -145,11 +141,7 @@ export default function IntegritetspolicyPage() {
             </ul>
             <p>
               Vi sparar uppgifterna så länge du är medlem. När medlemskapet
-              upphör{" "}
-              <mark>
-                [BESLUT: hur länge sparas uppgifterna efter utträde? Förslag: de
-                anonymiseras inom 24 månader.]
-              </mark>
+              upphör tar vi bort eller anonymiserar uppgifterna inom 12 månader.
             </p>
           </Section>
 
