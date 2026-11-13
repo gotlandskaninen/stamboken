@@ -516,10 +516,10 @@ def purge_old_mail(now):
 
 
 def recipient_label(row):
-    """The recipient as a name, looked up now; never the address."""
+    """The recipient as a name, looked up now; never the address, also when someone typed one as their name."""
     resolve = RECIPIENT_KINDS.get(row.recipient_kind)
     recipient = resolve(row.recipient_id) if resolve else None
-    return recipient.label if recipient else None
+    return _scrub(recipient.label) if recipient else None
 
 
 def message_view(row):

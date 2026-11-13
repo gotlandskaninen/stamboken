@@ -58,6 +58,17 @@ class TestStatusApi(MailTest):
         mail.send_pending()
         self.assertEqual(self.client.get("/api/v2/mail/messages").get_json()["alarms"], [])
 
+    def test_an_address_typed_as_a_name_is_not_shown(self):
+        a = db.MemberApplication.create(
+            first_name="namn@example.org", last_name="Sökande", email="annan@example.org", gdpr_consented_at=self.now
+        )
+        row_id = mail.enqueue_mail("ansokan.mottagen", "application", a.id, {"application_id": a.id})
+        self.login("admin")
+        resp = self.client.get("/api/v2/mail/messages")
+        self.assertIn(row_id, self._ids(resp))  # _ids fails on any "@" in the body
+        (item,) = [i for i in resp.get_json()["items"] if i["id"] == row_id]
+        self.assertEqual(item["recipient"], "<adress> Sökande")
+
     def test_manager_sees_only_their_genebank(self):
         self.login("man")
         self.assertEqual(self._ids(self.client.get("/api/v2/mail/messages")), [self.gotland])
