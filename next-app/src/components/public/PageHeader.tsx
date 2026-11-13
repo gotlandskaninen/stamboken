@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { Box, Typography } from "@mui/material";
+import styles from "./PageHeader.module.css";
 
 interface PageHeaderImage {
   /** Path under /public, e.g. "/stamboken/hero-kustvandring.jpg". */
@@ -15,11 +16,19 @@ interface PageHeaderProps {
   section: string;
   title: string;
   lede?: string;
+  /** Optional middle breadcrumb step between "Hem" and the section. */
+  parent?: { label: string; href: string };
   /** Optional photo behind the header — same look as the CMS pages' hero. */
   image?: PageHeaderImage;
 }
 
-export function PageHeader({ section, title, lede, image }: PageHeaderProps) {
+export function PageHeader({
+  section,
+  title,
+  lede,
+  parent,
+  image,
+}: PageHeaderProps) {
   return (
     <Box
       component="header"
@@ -68,8 +77,9 @@ export function PageHeader({ section, title, lede, image }: PageHeaderProps) {
               inset: 0,
               background: {
                 xs: "linear-gradient(180deg, rgba(31,51,34,0) 75%, rgba(31,51,34,0.85) 100%)",
-                // Dark all the way up: the breadcrumb sits a third down and needs 4.5:1.
-                md: "linear-gradient(180deg, rgba(31,27,22,0.7) 0%, rgba(31,27,22,0.58) 45%, rgba(31,27,22,0.8) 100%)",
+                // Dark behind the text column (wide titles reach ~65%
+                // at 1400 px and need 4.5:1), easing to a clear photo on the right.
+                md: "linear-gradient(90deg, rgba(31,27,22,0.82) 0%, rgba(31,27,22,0.82) 65%, rgba(31,27,22,0.15) 100%)",
               },
             }}
           />
@@ -91,10 +101,26 @@ export function PageHeader({ section, title, lede, image }: PageHeaderProps) {
             display: "block",
           }}
         >
-          <Link href="/" style={{ color: "inherit", textDecoration: "none" }}>
+          <Link
+            href="/"
+            className={styles.crumb}
+            style={{ color: "inherit", textDecoration: "none" }}
+          >
             Hem
           </Link>
           {" / "}
+          {parent && (
+            <>
+              <Link
+                href={parent.href}
+                className={styles.crumb}
+                style={{ color: "inherit", textDecoration: "none" }}
+              >
+                {parent.label}
+              </Link>
+              {" / "}
+            </>
+          )}
           <Box component="strong" sx={{ color: "paper.main" }}>
             {section}
           </Box>

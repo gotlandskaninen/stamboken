@@ -1,0 +1,9 @@
+/* 44px touch target on touch screens (ADR-0010). The rule sits on the link
+   itself: a tall wrapper around a short link is not tappable. */
+@media (pointer: coarse) {
+  .crumb {
+    display: inline-flex;
+    align-items: center;
+    min-height: 44px;
+  }
+}
