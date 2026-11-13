@@ -161,7 +161,7 @@ const RULES = [
   },
   {
     title: "Djuren har genbanksintyg",
-    text: "Alla kaniner i stamboken ska ha genbanksintyg, med vissa undantag. De härstammar från kaninerna som inventerades 1993 (gotlandskanin) eller köptes ut 2001–2002 (mellerudskanin).",
+    text: "Alla kaniner i stamboken ska ha genbanksintyg. De härstammar från kaninerna som inventerades 1993 (gotlandskanin) eller köptes ut 2001–2002 (mellerudskanin).",
   },
 ];
 
