@@ -35,7 +35,7 @@ export function RichTextBlockComponent({ content }: Props) {
         "& p": {
           mb: 2,
           lineHeight: 1.7,
-          fontSize: { xs: "0.95rem", md: "1.05rem" },
+          fontSize: { xs: "1rem", md: "1.05rem" },
         },
         "& a": { color: "primary.main" },
       }}

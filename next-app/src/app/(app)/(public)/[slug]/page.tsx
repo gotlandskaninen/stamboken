@@ -6,6 +6,11 @@ import { PageHeader } from "@/components/public/PageHeader";
 import { NextSteps } from "@/components/public/NextSteps";
 import type { Metadata } from "next";
 
+const BREADCRUMB_PARENTS: Record<string, { label: string; href: string }> = {
+  "rasram-gotlandskanin": { label: "Gotlandskanin", href: "/gotlandskanin" },
+  "rasram-mellerudskanin": { label: "Mellerudskanin", href: "/mellerudskanin" },
+};
+
 type Props = { params: Promise<{ slug: string }> };
 
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
@@ -60,6 +65,11 @@ export default async function CmsPage({ params }: Props) {
         section={page.title}
         title={page.title}
         lede={pageAny.subtitle || undefined}
+        parent={
+          Object.hasOwn(BREADCRUMB_PARENTS, slug)
+            ? BREADCRUMB_PARENTS[slug]
+            : undefined
+        }
         image={
           hasImage
             ? {

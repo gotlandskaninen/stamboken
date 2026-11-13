@@ -2,6 +2,8 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { isCurrentPath } from "./navCurrent";
 import {
   Box,
   Drawer,
@@ -29,6 +31,16 @@ interface MobileDrawerProps {
 
 export function MobileDrawer({ links, cta }: MobileDrawerProps) {
   const [open, setOpen] = useState(false);
+  const pathname = usePathname();
+  // Same mark as the desktop menu: lera bar on the left plus bold text.
+  const currentSx = (href: string) =>
+    isCurrentPath(pathname, href)
+      ? {
+          bgcolor: "paper.2",
+          boxShadow: (t: any) => `inset 3px 0 0 ${t.palette.lera.main}`,
+          "& .MuiListItemText-primary": { fontWeight: 600, color: "ink.main" },
+        }
+      : {};
 
   return (
     <>
@@ -123,8 +135,11 @@ export function MobileDrawer({ links, cta }: MobileDrawerProps) {
                 <ListItemButton
                   component={Link}
                   href={link.href}
+                  aria-current={
+                    isCurrentPath(pathname, link.href) ? "page" : undefined
+                  }
                   onClick={() => setOpen(false)}
-                  sx={{ borderRadius: "4px" }}
+                  sx={{ borderRadius: "4px", ...currentSx(link.href) }}
                 >
                   <ListItemText
                     primary={link.label}
@@ -139,8 +154,11 @@ export function MobileDrawer({ links, cta }: MobileDrawerProps) {
                   <ListItemButton
                     component={Link}
                     href={child.href}
+                    aria-current={
+                      isCurrentPath(pathname, child.href) ? "page" : undefined
+                    }
                     onClick={() => setOpen(false)}
-                    sx={{ borderRadius: "4px" }}
+                    sx={{ borderRadius: "4px", ...currentSx(child.href) }}
                   >
                     <ListItemText
                       primary={child.label}
