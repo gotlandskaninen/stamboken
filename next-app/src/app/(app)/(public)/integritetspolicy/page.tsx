@@ -68,11 +68,12 @@ export default function IntegritetspolicyPage() {
             </p>
             <ul>
               <li>
-                Servern loggar din IP-adress, tidpunkten och vilken sida du
-                hämtade. Loggarna behövs för drift och säkerhet (berättigat
-                intresse) och sparas{" "}
+                Servern för ingen logg över vanliga besök. När något går fel
+                loggas felet, och en sådan rad kan innehålla din IP-adress.
+                Felloggarna behövs för drift och säkerhet (berättigat intresse)
+                och sparas{" "}
                 <mark>
-                  [BESLUT: hur länge sparas serverloggarna? Förslag: 90 dagar.]
+                  [BESLUT: hur länge sparas loggarna? Förslag: 90 dagar.]
                 </mark>
                 .
               </li>
@@ -255,13 +256,10 @@ export default function IntegritetspolicyPage() {
               <li>Jordbruksverket, när stödet till genbankerna redovisas.</li>
             </ul>
             <p>
-              Säkerhetskopior sparas{" "}
-              <mark>
-                [BESLUT: var lagras säkerhetskopiorna och hur länge? Förslag:
-                högst 12 månader.]
-              </mark>
-              . En uppgift som vi har tagit bort kan därför finnas kvar i en
-              säkerhetskopia under den tiden.
+              Säkerhetskopiorna är krypterade och lagras hos Safespring i
+              Stockholm och i föreningens Google Drive. De sparas i upp till 12
+              månader. En uppgift som vi har tagit bort kan därför finnas kvar i
+              en säkerhetskopia under den tiden.
             </p>
           </Section>
 
