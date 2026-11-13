@@ -3,7 +3,6 @@ import { Box, Typography } from "@mui/material";
 import type { Metadata } from "next";
 import { Icon, ICONS } from "@/components/public/Icons";
 import { LinkButton } from "@/components/public/LinkButton";
-import { OrnamentDivider } from "@/components/public/OrnamentDivider";
 import { PageHeader } from "@/components/public/PageHeader";
 
 export const metadata: Metadata = {
@@ -32,14 +31,13 @@ const mailLinkSx = {
   textDecoration: "underline",
   textDecorationColor: "line.strong",
   textUnderlineOffset: "3px",
-  wordBreak: "break-word",
   "&:hover": { textDecorationColor: "lera.main" },
 } as const;
 
 const REQUIREMENTS = [
   {
     title: "Du är medlem i föreningen",
-    desc: "Medlemskapet kostar 200 kr om året och gäller hela familjen. Betala till Plusgiro 35 03 44-8 eller Swish 123 095 70 50.",
+    desc: "Medlemskapet kostar 200 kr om året och gäller hela familjen.",
   },
   {
     title: "Du har både hane och hona",
@@ -67,7 +65,7 @@ const STEPS: Array<{
   {
     title: "Bli medlem",
     body: [
-      "Betala medlemsavgiften, så är du med i föreningen. Ansökan fyller du i på webben och avgiften gäller hela familjen.",
+      "Fyll i ansökan på webben och betala medlemsavgiften. Avgiften gäller hela familjen.",
     ],
     links: [{ href: "/bli-medlem", label: "Bli medlem →" }],
   },
@@ -100,26 +98,23 @@ const STEPS: Array<{
     title: "Godkännande",
     body: [
       "Du får tillbaka ditt exemplar av kontraktet, undertecknat av båda parter, och ett startpaket: välkomstbrev, rasram, infoblad om märkning och tillstånd, enkla mallar för att hålla ordning i aveln, fem genbanksintyg och några skötselhäften.",
-      "Ditt besättningsnummer är detsamma som ditt medlemsnummer: G123 för gotlandskanin, M123 för mellerudskanin. Sedan läggs besättningen in i Stamboken Online.",
+      "Ditt besättningsnummer består av rasens bokstav och ditt medlemsnummer: G123 för gotlandskanin, M123 för mellerudskanin. Sedan läggs besättningen in i Stamboken Online.",
     ],
   },
 ];
 
 const YEARLY = [
   {
-    icon: ICONS.pedigree,
     title: "Para och dokumentera",
-    desc: "Följ avelsråden och undvik att para nära släkt. En testparning i Stamboken Online visar släktskapet i förväg.",
+    desc: "Följ avelsråden och undvik att para nära släkt. En provparning i Stamboken Online visar släktskapet i förväg.",
   },
   {
-    icon: ICONS.shield,
     title: "Intyg på varje avelsdjur",
     desc: "Alla djur som säljs som avelsdjur ska ha genbanksintyg. En kanin utan intyg är en förlorad kanin för bevarandearbetet. Pappersintyg kostar 5 kr styck, och fem ingår vid godkännandet. I Stamboken Online är intyget gratis.",
   },
   {
-    icon: ICONS.book,
     title: "Årsrapport senast 31 januari",
-    desc: "Sedan 2024 lämnar du den direkt i Stamboken Online. Årsrapporten är också grunden för Jordbruksverkets stöd, som kräver minst en kull under året, hane och hona vid årsskiftet och betald medlemsavgift.",
+    desc: "Sedan 2024 lämnar du den direkt i Stamboken Online. Årsrapporten är också grunden för Jordbruksverkets stöd, som kräver minst en kull under året, hane och hona vid årsskiftet och betald medlemsavgift. Ett år utan kull ger inget stöd.",
   },
 ];
 
@@ -154,6 +149,24 @@ function SectionHeading({
   );
 }
 
+// What sets a gene bank apart from ordinary breeding, beside the plain answer.
+const RULES = [
+  {
+    title: "Slutet system",
+    text: "Nya djur kommer bara in som avkommor till djur som redan finns i genbanken. Därför köper du startdjuren från andra genbanksbesättningar.",
+  },
+  {
+    title: "Variationen bevaras",
+    text: "Målet är att bevara så mycket som möjligt av rasens arvsanlag. Inga snäva urval och ingen inkorsning av andra raser. Bara rena defekter sorteras bort.",
+  },
+  {
+    title: "Djuren har genbanksintyg",
+    text: "Alla kaniner i stamboken ska ha genbanksintyg. De härstammar från kaninerna som inventerades 1993 (gotlandskanin) eller köptes ut 2001–2002 (mellerudskanin).",
+  },
+];
+
+const RULE_LINE = "1px solid var(--sb-line-strong)";
+
 function IntroSection() {
   return (
     <Box
@@ -165,80 +178,115 @@ function IntroSection() {
           bgcolor: "skog.soft",
           borderRadius: "8px",
           p: { xs: 6, md: 11 },
-          maxWidth: 820,
+          display: "grid",
+          gridTemplateColumns: { md: "minmax(0, 1.1fr) minmax(0, 1fr)" },
+          gap: { xs: 8, md: 14 },
         }}
       >
-        <Typography variant="h2" sx={{ m: 0 }}>
-          {/* Soft hyphen: "genbanksbesättning" is wider than a 375px column at
-              the h2 size, so it has to be allowed to break (ADR-0010, 375-px-kravet).
-              Same trick as the landing page's "Medlems&shy;verksamhet". */}
-          {"Vad en genbanks\u00ADbesättning är"}
-        </Typography>
-        <Typography variant="lede" sx={{ mt: 4, display: "block" }}>
-          En genbank ska bevara så mycket som möjligt av rasens arvsanlag. Man
-          sorterar inte bort anlag genom snäva urval, bara rena defekter, och
-          korsar inte in andra raser. Alla djur är registrerade med
-          genbanksintyg och härstammar från de kaniner som inventerades 1993
-          (gotlandskanin) respektive köptes ut 2001–2002 (mellerudskanin).
-        </Typography>
-        <Typography
-          sx={{ mt: 5, maxWidth: "38rem", color: "ink.2", lineHeight: 1.65 }}
-        >
-          Genbanken är ett slutet system. Nya djur kommer in bara som avkommor
-          till djur som redan finns där. En kanin utifrån går inte att föra in.
-          Det är därför startdjuren måste komma från andra genbanksbesättningar
-          i föreningen.
-        </Typography>
-        <Box sx={{ mt: 8, display: "flex", gap: 3, flexWrap: "wrap" }}>
-          <LinkButton
-            href="/bli-medlem"
-            variant="contained"
-            endIcon={<Icon d={ICONS.arrow} size={14} />}
-          >
-            Bli medlem
-          </LinkButton>
-          <Box
-            component="a"
-            href={`mailto:${GOTLAND_MAIL}`}
+        <Box>
+          <Typography variant="h2" sx={{ m: 0 }}>
+            {/* Soft hyphen: "genbanksbesättning" is wider than a 375px column at
+                the h2 size, so it has to be allowed to break (ADR-0010, 375-px-kravet).
+                Same trick as the landing page's "Medlems&shy;verksamhet". */}
+            {"Vad är en genbanks­besättning?"}
+          </Typography>
+          <Typography variant="lede" sx={{ mt: 4, display: "block" }}>
+            En genbanksbesättning är en grupp kaniner som en medlem föder upp
+            enligt avtal med föreningen. Rasen bevaras som levande djur hemma
+            hos uppfödarna, under förhållanden som liknar dem som har format
+            den. Det kallas bevarande på plats, <i lang="la">in situ</i>.
+          </Typography>
+          <Box sx={{ mt: 7, display: "flex", gap: 3, flexWrap: "wrap" }}>
+            <LinkButton
+              href="/bli-medlem"
+              variant="contained"
+              endIcon={<Icon d={ICONS.arrow} size={14} />}
+            >
+              Bli medlem
+            </LinkButton>
+            <Box
+              component="a"
+              href="#kontakt"
+              sx={{
+                display: "inline-flex",
+                alignItems: "center",
+                gap: 2,
+                minHeight: "44px",
+                px: 5,
+                py: 3,
+                borderRadius: "4px",
+                border: "1px solid #B8AE99",
+                color: "ink.main",
+                fontSize: "15px",
+                fontWeight: 500,
+                textDecoration: "none",
+                "&:hover": { bgcolor: "paper.2", borderColor: "ink.main" },
+              }}
+            >
+              <Icon d={ICONS.mail} size={15} />
+              Kontakta genbanksansvarig
+            </Box>
+          </Box>
+          <Typography
             sx={{
-              display: "inline-flex",
-              alignItems: "center",
-              gap: 2,
-              minHeight: "44px",
-              px: 5,
-              py: 3,
-              borderRadius: "4px",
-              border: "1px solid #B8AE99",
-              color: "ink.main",
+              mt: 5,
+              maxWidth: "36rem",
               fontSize: "15px",
-              fontWeight: 500,
-              textDecoration: "none",
-              "&:hover": { bgcolor: "paper.2", borderColor: "ink.main" },
+              lineHeight: 1.65,
+              color: "ink.2",
             }}
           >
-            <Icon d={ICONS.mail} size={15} />
-            Mejla genbanksansvarig
-          </Box>
+            Mer om hur bevarandet fungerar finns under{" "}
+            <Link href="/lantraskaninen" style={inlineLinkStyle}>
+              Så fungerar genbanken
+            </Link>
+            . Själva registret heter{" "}
+            <Link href="/stamboken-online" style={inlineLinkStyle}>
+              Stamboken Online
+            </Link>
+            .
+          </Typography>
         </Box>
-        <Typography
+        <Box
+          component="ul"
+          // listStyle:none drops list semantics in Safari/VoiceOver; keep them.
+          role="list"
           sx={{
-            mt: 6,
-            maxWidth: "36rem",
-            fontSize: "15px",
-            lineHeight: 1.65,
-            color: "ink.2",
+            listStyle: "none",
+            m: 0,
+            p: 0,
+            // Full shorthands: a responsive `borderLeft: 1` resets the colour.
+            borderTop: { xs: RULE_LINE, md: "none" },
+            pt: { xs: 3, md: 0 },
+            borderLeft: { md: RULE_LINE },
+            pl: { md: 11 },
           }}
         >
-          Mer om hur bevarandet fungerar finns under{" "}
-          <Link href="/lantraskaninen" style={inlineLinkStyle}>
-            Så fungerar genbanken
-          </Link>
-          . Själva registret heter{" "}
-          <Link href="/stamboken-online" style={inlineLinkStyle}>
-            Stamboken Online
-          </Link>
-          .
-        </Typography>
+          {RULES.map((rule, i) => (
+            <Box
+              component="li"
+              key={rule.title}
+              sx={{ py: 3.5, borderTop: i ? RULE_LINE : "none" }}
+            >
+              <Typography
+                component="h3"
+                sx={{ fontSize: "15px", fontWeight: 600 }}
+              >
+                {rule.title}
+              </Typography>
+              <Typography
+                sx={{
+                  mt: 1,
+                  fontSize: "15px",
+                  lineHeight: 1.55,
+                  color: "ink.2",
+                }}
+              >
+                {rule.text}
+              </Typography>
+            </Box>
+          ))}
+        </Box>
       </Box>
     </Box>
   );
@@ -307,6 +355,25 @@ function RequirementsSection() {
   );
 }
 
+// Breaks at the @ when the column is narrower than the address, never mid-word.
+function MailLink({ mail, sx }: { mail: string; sx?: object }) {
+  const [user, domain] = mail.split("@");
+  return (
+    <Box component="a" href={`mailto:${mail}`} sx={{ ...mailLinkSx, ...sx }}>
+      {user}@<wbr />
+      {domain}
+    </Box>
+  );
+}
+
+// 12px above and below gives a 44px touch target: on phones, and on any
+// wider touch screen (ADR-0010).
+const stepLinkSx = {
+  display: "inline-block",
+  py: { xs: 3, md: 1 },
+  "@media (pointer: coarse)": { py: 3 },
+} as const;
+
 function StepsSection() {
   return (
     <Box
@@ -322,12 +389,8 @@ function StepsSection() {
           listStyle: "none",
           m: 0,
           p: 0,
-          maxWidth: 820,
-          border: 1,
+          borderBottom: 1,
           borderColor: "line.main",
-          borderRadius: "8px",
-          bgcolor: "background.paper",
-          px: { xs: 5, md: 9 },
         }}
       >
         {STEPS.map((step, i) => (
@@ -336,11 +399,16 @@ function StepsSection() {
             component="li"
             sx={{
               display: "grid",
-              gridTemplateColumns: { xs: "40px 1fr", md: "56px 1fr" },
-              columnGap: { xs: 4, md: 6 },
+              // Desktop: number, title and text side by side across the page.
+              gridTemplateColumns: {
+                xs: "40px 1fr",
+                md: "56px minmax(0, 300px) minmax(0, 1fr)",
+              },
+              columnGap: { xs: 4, md: 8 },
               alignItems: "start",
-              py: { xs: 6, md: 8 },
-              ...(i > 0 && { borderTop: 1, borderColor: "line.faint" }),
+              py: { xs: 6, md: 7 },
+              borderTop: 1,
+              borderColor: "line.main",
             }}
           >
             <Box
@@ -361,14 +429,25 @@ function StepsSection() {
             >
               {i + 1}
             </Box>
-            <Box sx={{ minWidth: 0 }}>
-              <Typography
-                variant="h4"
-                component="h3"
-                sx={{ m: 0, fontSize: { xs: "22px", md: "26px" } }}
-              >
-                {step.title}
-              </Typography>
+            <Typography
+              variant="h4"
+              component="h3"
+              sx={{
+                m: 0,
+                pt: { xs: 1.5, md: 3 },
+                fontSize: { xs: "22px", md: "26px" },
+              }}
+            >
+              {step.title}
+            </Typography>
+            <Box
+              sx={{
+                gridColumn: { xs: 2, md: 3 },
+                minWidth: 0,
+                maxWidth: "34rem",
+                pt: { md: 1 },
+              }}
+            >
               {step.body.map((para) => (
                 <Typography
                   key={para}
@@ -385,30 +464,28 @@ function StepsSection() {
               {step.links && (
                 <Box
                   sx={{
-                    mt: 4,
+                    mt: { xs: 1, md: 3 },
                     display: "flex",
                     flexDirection: "column",
                     alignItems: "flex-start",
-                    gap: 2,
                   }}
                 >
                   {step.links.map((l) =>
                     l.href.startsWith("mailto:") ? (
-                      <Box
+                      <MailLink
                         key={l.href}
-                        component="a"
-                        href={l.href}
-                        sx={{ ...mailLinkSx, fontSize: "14px" }}
-                      >
-                        {l.label}
-                      </Box>
+                        mail={l.label}
+                        sx={{ ...stepLinkSx, fontSize: "14px" }}
+                      />
                     ) : (
                       <Link
                         key={l.href}
                         href={l.href}
                         style={{ ...inlineLinkStyle, fontSize: "15px" }}
                       >
-                        {l.label}
+                        <Box component="span" sx={stepLinkSx}>
+                          {l.label}
+                        </Box>
                       </Link>
                     ),
                   )}
@@ -424,53 +501,54 @@ function StepsSection() {
 
 function YearlySection() {
   return (
-    <Box component="section" sx={{ px: { xs: 6, md: 14 }, pt: 8, pb: 8 }}>
+    <Box
+      component="section"
+      sx={{ px: { xs: 6, md: 14 }, pt: { xs: 10, md: 14 }, pb: 8 }}
+    >
       <SectionHeading eyebrow="Löpande arbete" title="Sedan, år för år" />
       <Box
+        component="ul"
+        role="list"
         sx={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
-          gap: 5,
+          listStyle: "none",
+          m: 0,
+          p: 0,
+          borderBottom: 1,
+          borderColor: "line.main",
         }}
       >
-        {YEARLY.map((card) => (
+        {YEARLY.map((item) => (
           <Box
-            key={card.title}
+            key={item.title}
+            component="li"
             sx={{
-              bgcolor: "background.paper",
-              border: 1,
+              display: "grid",
+              // 388px = the number and title columns of the steps above, so
+              // the two text columns line up.
+              gridTemplateColumns: { md: "minmax(0, 388px) minmax(0, 1fr)" },
+              columnGap: 8,
+              py: { xs: 5, md: 6 },
+              borderTop: 1,
               borderColor: "line.main",
-              borderRadius: "8px",
-              p: 7,
             }}
           >
-            <Box
-              aria-hidden
-              sx={{
-                width: 48,
-                height: 48,
-                borderRadius: "50%",
-                bgcolor: "skog.soft",
-                color: "skog.main",
-                display: "inline-flex",
-                alignItems: "center",
-                justifyContent: "center",
-                mb: 5,
-              }}
-            >
-              <Icon d={card.icon} size={22} />
-            </Box>
             <Typography
               variant="h4"
               component="h3"
               sx={{ m: 0, fontSize: "22px" }}
             >
-              {card.title}
+              {item.title}
             </Typography>
             <Typography
-              sx={{ mt: 3, color: "ink.2", fontSize: "15px", lineHeight: 1.6 }}
+              sx={{
+                mt: { xs: 2, md: 0.5 },
+                maxWidth: "34rem",
+                color: "ink.2",
+                fontSize: "15px",
+                lineHeight: 1.65,
+              }}
             >
-              {card.desc}
+              {item.desc}
             </Typography>
           </Box>
         ))}
@@ -483,14 +561,28 @@ function ContactSection() {
   return (
     <Box
       component="section"
-      sx={{ px: { xs: 6, md: 14 }, pt: { xs: 10, md: 14 }, pb: 20 }}
+      id="kontakt"
+      sx={{
+        px: { xs: 6, md: 14 },
+        pt: { xs: 10, md: 14 },
+        pb: 20,
+        // Clears the sticky site header when the intro button jumps here.
+        scrollMarginTop: "72px",
+      }}
     >
       <SectionHeading eyebrow="Kontakt" title="Hör av dig" />
+      <Typography sx={{ mb: 6, maxWidth: "40rem", color: "ink.2" }}>
+        Varje ras har en genbanksansvarig. Vem det är just nu står under{" "}
+        <Link href="/styrelsen" style={inlineLinkStyle}>
+          Styrelse och kontakt
+        </Link>
+        .
+      </Typography>
       <Box
         sx={{
           display: "grid",
           gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
-          gap: 6,
+          gap: { xs: 4, md: 6 },
           maxWidth: 900,
         }}
       >
@@ -519,22 +611,7 @@ function ContactSection() {
             >
               {c.breed}
             </Typography>
-            <Typography
-              sx={{ mt: 3, color: "ink.2", fontSize: "15px", lineHeight: 1.6 }}
-            >
-              Vem som är genbanksansvarig just nu står under{" "}
-              <Link href="/styrelsen" style={inlineLinkStyle}>
-                Styrelse och kontakt
-              </Link>
-              .
-            </Typography>
-            <Box
-              component="a"
-              href={`mailto:${c.mail}`}
-              sx={{ ...mailLinkSx, display: "inline-block", mt: 4 }}
-            >
-              {c.mail}
-            </Box>
+            <MailLink mail={c.mail} sx={{ ...stepLinkSx, mt: 2 }} />
           </Box>
         ))}
       </Box>
@@ -560,7 +637,6 @@ export default function BliGenbankPage() {
       <IntroSection />
       <RequirementsSection />
       <StepsSection />
-      <OrnamentDivider />
       <YearlySection />
       <ContactSection />
     </>

@@ -39,7 +39,7 @@ export default function StambokenOnlinePage() {
             och härstamningar, och varje kanin som får ett genbanksintyg
             utfärdat hamnar i föreningens centrala register – ett för
             gotlandskanin, ett för mellerudskanin. Uppfödare kan också göra en
-            testparning i registret för att se hur nära släkt två tänkta
+            provparning i registret för att se hur nära släkt två tänkta
             avelsdjur är innan de paras.
           </Typography>
           <Box sx={{ mt: 8, display: "flex", gap: 3, flexWrap: "wrap" }}>
