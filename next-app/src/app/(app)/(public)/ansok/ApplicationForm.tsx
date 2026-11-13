@@ -7,6 +7,7 @@ import {
   Button,
   Checkbox,
   FormControlLabel,
+  Link,
   TextField,
 } from "@mui/material";
 import { formatPostalCode, isValidPostalCode } from "@/lib/postal";
@@ -213,7 +214,27 @@ export function ApplicationForm() {
             }
           />
         }
-        label="Jag godkänner att mina personuppgifter behandlas enligt GDPR"
+        label={
+          <>
+            Jag godkänner att mina personuppgifter behandlas enligt GDPR. Läs{" "}
+            {/* New tab: following the link must not discard a filled-in form. */}
+            <Link
+              href="/integritetspolicy"
+              target="_blank"
+              rel="noopener"
+              sx={{
+                "@media (pointer: coarse)": {
+                  display: "inline-block",
+                  minHeight: 44,
+                  lineHeight: "44px",
+                },
+              }}
+            >
+              integritetspolicyn
+            </Link>
+            .
+          </>
+        }
       />
       {error ? <Alert severity="error">{error}</Alert> : null}
       <Button
