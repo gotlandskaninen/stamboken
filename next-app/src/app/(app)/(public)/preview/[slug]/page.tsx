@@ -115,7 +115,12 @@ export default async function PreviewPage({ params }: Props) {
       )}
 
       {/* Block layout */}
-      {hasBlocks && <RenderBlocks blocks={pageAny.layout} />}
+      {/* Same side padding as the published page gives its blocks. */}
+      {hasBlocks && (
+        <Box sx={{ px: { xs: 6, md: 14 }, py: { xs: 10, md: 16 } }}>
+          <RenderBlocks blocks={pageAny.layout} />
+        </Box>
+      )}
     </>
   );
 }

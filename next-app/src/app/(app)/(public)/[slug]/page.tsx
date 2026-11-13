@@ -1,10 +1,11 @@
 import { notFound } from "next/navigation";
 import { getPublishedPage } from "@/lib/payload-queries";
-import { Box, Container } from "@mui/material";
+import { Box } from "@mui/material";
 import { RenderBlocks } from "@/components/blocks/RenderBlocks";
 import { PageHeader } from "@/components/public/PageHeader";
 import { MembershipSteps } from "@/components/public/MembershipSteps";
-import { NextSteps } from "@/components/public/NextSteps";
+import { NextSteps, hasNextSteps } from "@/components/public/NextSteps";
+import { TEXT_MAX_WIDTH, TEXT_ROW, WIDE } from "@/components/blocks/textColumn";
 import type { Metadata } from "next";
 
 const BREADCRUMB_PARENTS: Record<string, { label: string; href: string }> = {
@@ -93,12 +94,44 @@ export default async function CmsPage({ params }: Props) {
 
       {/* The membership steps show even if the CMS page has no text yet. */}
       {(hasBlocks || slug === JOIN_SLUG) && (
-        <Box sx={{ px: { xs: 6, md: 14 }, py: { xs: 10, md: 16 } }}>
-          {hasBlocks && <RenderBlocks blocks={pageAny.layout} />}
-          <Container maxWidth="md">
-            {slug === JOIN_SLUG && <MembershipSteps />}
-            <NextSteps slug={slug} />
-          </Container>
+        <Box
+          sx={{
+            px: { xs: 6, md: 14 },
+            py: { xs: 10, md: 16 },
+            // Wide screens: the next step follows the reader in a side
+            // column instead of waiting after the last paragraph.
+            ...(hasNextSteps(slug) && {
+              [WIDE]: {
+                display: "grid",
+                gridTemplateColumns: `minmax(0, ${TEXT_MAX_WIDTH}px) 296px`,
+                columnGap: 14,
+                alignItems: "start",
+              },
+            }),
+          }}
+        >
+          <Box sx={{ minWidth: 0 }}>
+            {hasBlocks && <RenderBlocks blocks={pageAny.layout} />}
+            {slug === JOIN_SLUG && (
+              <Box sx={{ ...TEXT_ROW, maxWidth: TEXT_MAX_WIDTH }}>
+                <Box sx={{ gridColumn: { md: 2 }, minWidth: 0 }}>
+                  <MembershipSteps />
+                </Box>
+              </Box>
+            )}
+          </Box>
+          <Box
+            sx={{
+              ...TEXT_ROW,
+              maxWidth: TEXT_MAX_WIDTH,
+              // 96px clears the sticky site header.
+              [WIDE]: { display: "block", position: "sticky", top: 96 },
+            }}
+          >
+            <Box sx={{ gridColumn: { md: 2 }, minWidth: 0 }}>
+              <NextSteps slug={slug} />
+            </Box>
+          </Box>
         </Box>
       )}
     </>
