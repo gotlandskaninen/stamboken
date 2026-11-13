@@ -237,11 +237,7 @@ export default function IntegritetspolicyPage() {
                 inloggning och delade dokument. Google kan behandla uppgifter
                 utanför EU och EES. Överföringen stöds av EU-kommissionens
                 beslut om adekvat skyddsnivå för USA och av
-                standardavtalsklausuler.{" "}
-                <mark>
-                  [BESLUT: bekräfta att föreningen har godkänt Googles
-                  personuppgiftsbiträdesavtal i Workspace.]
-                </mark>
+                standardavtalsklausuler.
               </li>
               <li>
                 Safespring, som tillhandahåller servrar och lagring för
