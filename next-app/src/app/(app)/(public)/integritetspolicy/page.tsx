@@ -70,7 +70,11 @@ export default function IntegritetspolicyPage() {
                 Servern loggar varje besök: din IP-adress, tidpunkten, adressen
                 du hämtade och vilken webbläsare du använder. Loggarna behövs
                 för felsökning och säkerhet (berättigat intresse) och sparas i
-                ungefär tre månader.
+                högst 90 dagar på servern. Säkerhetsloggar, till exempel besök,
+                inloggningar och nekad åtkomst, sparas dessutom i upp till 12
+                månader i ett skyddat arkiv hos Safespring i Stockholm, så att
+                vi kan utreda ett intrång som upptäcks sent. Under de första 90
+                dagarna går de inte att radera.
               </li>
               <li>
                 På inloggningssidan laddas Googles inloggningstjänst. Den sätter
