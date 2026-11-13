@@ -194,7 +194,7 @@ function IntroSection() {
             En genbanksbesättning är en grupp kaniner som en medlem föder upp
             enligt avtal med föreningen. Rasen bevaras som levande djur hemma
             hos uppfödarna, under förhållanden som liknar dem som har format
-            den. Det kallas bevarande på plats, in situ.
+            den. Det kallas bevarande på plats, <i lang="la">in situ</i>.
           </Typography>
           <Box sx={{ mt: 7, display: "flex", gap: 3, flexWrap: "wrap" }}>
             <LinkButton
