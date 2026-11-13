@@ -28,9 +28,32 @@ export default function MedlemsforumPage() {
               Till forumet
             </LinkButton>
             <Typography
-              sx={{ mt: 2, fontSize: "15px", lineHeight: 1.65, color: "ink.2" }}
+              sx={{
+                mt: 3,
+                maxWidth: "36rem",
+                fontSize: "15px",
+                lineHeight: 1.65,
+                color: "ink.2",
+              }}
             >
-              Forumet är en egen webbplats, forum.gotlandskaninen.se.
+              Forumet är en egen webbplats, forum.gotlandskaninen.se. Du loggar
+              in med ditt föreningskonto: en e-postadress på gotlandskaninen.se
+              som föreningen skapar åt dig som medlem. Frågor om konton och
+              inloggning besvaras på{" "}
+              <Link
+                href="mailto:admin@gotlandskaninen.se"
+                color="inherit"
+                sx={{
+                  "@media (pointer: coarse)": {
+                    display: "inline-block",
+                    minHeight: 44,
+                    lineHeight: "44px",
+                  },
+                }}
+              >
+                admin@gotlandskaninen.se
+              </Link>
+              .
             </Typography>
           </Box>
           <Typography variant="h2" sx={{ m: 0, mb: 4 }}>
