@@ -23,12 +23,12 @@ with DB_PROXY.atomic():
     )
 ```
 
-- `enqueue_mail` skriver en rad i den pågående transaktionen. Rullas
-  skrivningen tillbaka finns inget mejl, också i ett nästlat `atomic()`.
-- Skicka aldrig ett mejl direkt från en webbförfrågan. Jobbet `mail_send` i
-  schemaläggarens ledare skickar köade rader var 30:e sekund, så ett mejl kan
-  aldrig få en skrivning att misslyckas.
-- Torrkörningar och förhandsgranskningar anropar aldrig `enqueue_mail`.
+- `enqueue_mail` lägger raden i samma transaktion som anroparen. En rollback,
+  också av ett nästlat `atomic()`, tar bort mejlet med resten.
+- En webbförfrågan skickar aldrig själv. Jobbet `mail_send` körs var 30:e
+  sekund i schemaläggarens ledare och tar bara committade rader, så ett fel i
+  utskicket kan inte fälla den skrivning som köade mejlet.
+- Kod som bara provar eller visar en förhandsgranskning köar inget.
 - `dedupe_key` gör schemalagda utskick idempotenta: finns nyckeln redan blir
   det ingen ny rad, och anropet returnerar `None`.
 - `not_before` fördröjer ett mejl. `herd` och `genebank` används för filtren i
@@ -36,18 +36,19 @@ with DB_PROXY.atomic():
 
 ## Vad en rad får innehålla
 
-Kön sparar mallens namn, parametrar och en hänvisning till mottagaren
-(`recipient_kind`, `recipient_id`). Den sparar aldrig en adress, den färdiga
-texten eller en giltig länk. Adressen slås upp och texten byggs när mejlet
-skickas, så ett mejl går till den adress som gäller då.
+En rad i kön har mallens namn, parametrar och var mottagaren finns
+(`recipient_kind`, `recipient_id`). Adresser, färdiga texter och fungerande
+länkar hamnar aldrig där: allt sådant tas fram först vid utskicket, och
+mejlet går då till den adress som är aktuell just då.
 
 - `params` får bara innehålla heltal (id:n), booleska flaggor och `None`.
   Allt annat, också strängar, ger `ValueError`. Fritext ligger i funktionens
   egen tabell och hänvisas med id.
-- `last_error` och försökens `detail` skrubbas från allt som liknar en
-  e-postadress innan de sparas.
-- `address_hash` är en HMAC av den adress som användes, för studsflaggan. Den
-  nollas med `forget_recipient(kind, id)` när mottagarkällan raderas.
+- Innan `last_error` eller ett försöks `detail` sparas byts varje ord med
+  `@` ut mot `<adress>`, eftersom SMTP-fel gärna citerar mottagaren.
+- `address_hash` (HMAC med `LINK_SECRET`) visar vilken adress ett skickat mejl
+  gick till, så att en studs kan kopplas till adressen. Jobb som raderar en
+  mottagares rad anropar `forget_recipient(kind, id)`, som tömmer fältet.
 - Raderna raderas efter 396 dagar (`purge_old_mail`, nattjobbet kl. 03:30).
 
 ## Lägga till en mejltyp
@@ -68,8 +69,8 @@ skickas, så ett mejl går till den adress som gäller då.
    ```
 
 2. Registrera typen med en byggfunktion som tar `params` och returnerar
-   mallens variabler, eller `None` när mejlet inte längre är aktuellt (till
-   exempel när ansökan inte längre finns). `None` ger status `cancelled`.
+   mallens variabler. Returnerar den `None`, till exempel för att ansökan
+   har tagits bort, stoppas mejlet med status `cancelled`.
 
    ```python
    from utils.mail import mail_kind
@@ -120,7 +121,7 @@ att fungera.
 | `MAIL_MODE` | Effekt |
 |---|---|
 | `log` (standard) | Ingen SMTP-anslutning. Raden får `logged`, och loggen visar typ, id och mottagarens hänvisning, med den färdiga texten när `FLASK_ENV` inte är `production`. |
-| `allowlist` | Skickar bara till adresserna i `MAIL_ALLOWLIST` (hela adresser eller `@domän`, kommaseparerade). Övriga får `blocked`. Ämnesraden börjar med `[Demo] `. |
+| `allowlist` | `MAIL_ALLOWLIST` är en kommaseparerad lista med adresser och `@domän`. Mejl till något i listan skickas, med `[Demo] ` först i ämnesraden; resten får `blocked`. |
 | `live` | Skickar. |
 
 Starten stoppas om `MAIL_MODE=live` och `DEMO_INSTANCE=true`, om
@@ -131,10 +132,12 @@ inget användarnamn eller lösenord för SMTP.
 ## Sändaren
 
 - Varje körning stämplar `mail_sender.last_run_at`, också när kön är tom.
-- Raderna tas en i taget med `FOR UPDATE SKIP LOCKED` och en ny `claim_token`.
-  Status skrivs bara av den som har samma token, så två sändare skickar aldrig
-  samma rad och en sändare som förlorat sin rad skriver inte över den andras.
-  En rad som stått i `sending` mer än 10 minuter läggs tillbaka i kön.
+- En sändare tar en rad åt gången (`FOR UPDATE SKIP LOCKED`) och märker den
+  med en ny `claim_token`. Resultatet skrivs med villkoret att märket är
+  oförändrat. Två sändare får därför aldrig samma rad, och den som tappat en
+  rad kan inte skriva över resultatet från den som tog den.
+- Har en rad varit `sending` i över 10 minuter (sändaren dog) blir den
+  `queued` igen.
 - Högst 30 mejl per körning, över en SMTP-anslutning med STARTTLS (krävs) och
   60 sekunders tidsgräns per steg. Lägst prioritetsnummer först.
 - `Message-ID` är `<mail-<id>.<16 hextecken HMAC>@<värdnamnet i HERDBOOK_HOST>>`,
@@ -143,9 +146,9 @@ inget användarnamn eller lösenord för SMTP.
 | Svar | Klass | Följd |
 |---|---|---|
 | 250 | `sent` | `sent`, med `sent_at` och `address_hash` |
-| 4xx, avbruten anslutning eller annat fel under sändningen, fel när mejlet byggs | `temporary` | nytt försök efter 1 min, 5 min, 30 min, 2 h, 6 h och 12 h; efter sjunde försöket `failed` |
+| 4xx, avbruten anslutning eller annat fel under sändningen, fel när mejlet byggs | `temporary` | räknas; väntetiden före nästa försök växer från 1 min via 5 min, 30 min, 2 h och 6 h till 12 h, och det sjunde räknade felet ger `failed` |
 | 5.1.x, 5.2.x, 5.3.x och övriga 5xx | `permanent` | `failed` direkt |
-| anslutningen nekas, ingen STARTTLS, 421, 5.7.0, 5.7.1, avsändaren nekas | `systemic` | räknas inte på mejlet; körningen avbryts och sändaren pausar 5 minuter |
+| anslutningen nekas, ingen STARTTLS, 421, 5.7.0, 5.7.1, avsändaren nekas | `systemic` | felet ligger hos reläet, inte hos mejlet: raden står kvar i kön utan räknat försök, och sändaren vilar 5 minuter |
 
 ## Studsar och statusvy
 
