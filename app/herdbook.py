@@ -10,6 +10,7 @@ import base64
 import binascii
 import contextlib
 import datetime
+import fcntl
 import hashlib
 import logging
 import os
@@ -2857,8 +2858,9 @@ def _warm_genetics_in_background():
     threading.Thread(target=run, daemon=True, name="genetics-warmup").start()
 
 
-# Must match SCHEDULER_LOCK in gunicorn.conf.py (its on_starting hook removes a stale lock).
+# Must match SCHEDULER_LOCK in gunicorn.conf.py. The leader holds a flock on it for its lifetime.
 SCHEDULER_LOCK_PATH = "/tmp/herdbook_scheduler.lock"
+_SCHEDULER_LOCK_FD = None
 
 
 def initialize_app():
@@ -2900,10 +2902,16 @@ def initialize_app():
     _warm_genetics_in_background()
 
     # Only the scheduler leader runs debounce polling and the version poller.
-    # The lock file is cleaned by gunicorn's on_starting hook in gunicorn.conf.py.
+    # The leader keeps a flock on the lock file; the kernel releases it if the leader dies.
     try:
-        fd = os.open(SCHEDULER_LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.close(fd)
+        global _SCHEDULER_LOCK_FD  # pylint: disable=global-statement
+        fd = os.open(SCHEDULER_LOCK_PATH, os.O_CREAT | os.O_WRONLY)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            raise FileExistsError(SCHEDULER_LOCK_PATH) from None
+        _SCHEDULER_LOCK_FD = fd
         scheduler = apscheduler.schedulers.background.BackgroundScheduler()
 
         # Poll debounce keys every 5s

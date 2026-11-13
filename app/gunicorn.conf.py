@@ -18,8 +18,8 @@ keepalive = int(os.getenv("GUNICORN_KEEPALIVE", "75"))
 accesslog = "-"
 errorlog = "-"
 
-# Scheduler lock file — used by initialize_app() to ensure only one worker
-# starts the APScheduler background job.
+# Scheduler lock file — initialize_app() flocks it so only one worker starts the
+# APScheduler background job; the lock dies with that worker.
 SCHEDULER_LOCK = "/tmp/herdbook_scheduler.lock"
 
 
