@@ -125,6 +125,7 @@ UPLOAD_DIR = os.getenv("UPLOAD_FOLDER", "/app/uppladdningar")
 # string (e.g. a bare "GOOGLE_CLIENT_ID=" env line) must normalize to None:
 settings.refuse_committed_signing_key()
 settings.refuse_auto_validate_outside_demo()
+settings.refuse_unsafe_mail_settings()
 
 # verify_oauth2_token would otherwise enforce audience "" and fail every login.
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID") or None
