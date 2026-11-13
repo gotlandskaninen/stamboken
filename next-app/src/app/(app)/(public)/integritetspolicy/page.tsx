@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 
 export const metadata: Metadata = { title: "Integritetspolicy" };
 
-const CONTACT = "info@gotlandskaninen.se";
+const CONTACT = "dataskydd@gotlandskaninen.se";
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
@@ -55,8 +55,7 @@ export default function IntegritetspolicyPage() {
               personuppgiftsansvarig för uppgifterna i medlemsregistret, i
               Stamboken Online och på den här webbplatsen. Har du frågor om hur
               vi behandlar dina uppgifter, eller vill du använda någon av dina
-              rättigheter, mejla {contactLink}.{" "}
-              <mark>[BESLUT: är info@ rätt adress för dataskyddsfrågor?]</mark>
+              rättigheter, mejla {contactLink}.
             </p>
           </Section>
 
@@ -71,11 +70,7 @@ export default function IntegritetspolicyPage() {
                 Servern för ingen logg över vanliga besök. När något går fel
                 loggas felet, och en sådan rad kan innehålla din IP-adress.
                 Felloggarna behövs för drift och säkerhet (berättigat intresse)
-                och sparas{" "}
-                <mark>
-                  [BESLUT: hur länge sparas loggarna? Förslag: 90 dagar.]
-                </mark>
-                .
+                och sparas i 90 dagar.
               </li>
               <li>
                 På inloggningssidan laddas Googles inloggningstjänst. Den sätter
