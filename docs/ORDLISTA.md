@@ -302,8 +302,9 @@ Kod: `voided_at`, `IndividualCommand` · Legacy-manual: – · Legacy: – · Ny
 **Årsrapport / årsrapportera**\
 Varje år bekräftar du att varje registrerad kanin finns kvar i din besättning vid årets slut, och
 besättningen lämnar en årsrapport (kullar, födda ungar, avelsdjur) som är grund för genbanksstödet.
-En kanin som inte årsrapporterats inom 13 månader blir inaktiv. I nya Stamboken visar Årsrapportera
-ännu "Kommer snart".\
+En kanin som inte årsrapporterats inom 13 månader blir inaktiv. Årsrapporten lämnas i Stamboken
+Online sedan 2024. I det nya gränssnittet är den inte byggd än: menyvalet Årsrapportera visar
+"Kommer snart".\
 Kod: `YearlyHerdReport`, `HerdTracking` (`kind` ATTESTATION) · Legacy-manual: "Årsrapportering", "Årsrapportera" · Legacy: "Årsrapport", "Årsrapportera" · Nytt UI: samma
 
 **Ändringshistorik**\
@@ -423,7 +424,6 @@ Inget av detta är beslutat. En rad per fråga med alternativen.
 - **Kullens storlek**: "Antal födda" eller "Kullstorlek"; "Antal vid 6 veckor", "Levande i kullen efter 6 veckor" eller "Kullstorlek 6v".
 - **Färgfält**: "Bukfärg" eller "Färg på buken"; "Klofärg" eller "Klofärg(er)"; "Hårlag" eller "Avvikande hårlag" (nya UI har båda).
 - **Avkomma i genbanken** (legacy) eller **Avkommor** (nya UI).
-- **Provparning** eller **testparning** (publika sidor).
 - **Oregistrerade djur** (manual:30) eller **oregistrerad unge** och **kullista**.
 - **Släktskap**: "Genomsnittligt släktskap", "MK — Genomsnittlig medelkinship" eller "släktskapskoefficient", som inget av gränssnitten använder.
 - **Testmiljön**: "Testsystemet" och "den skarpa sidan" (manual:238–239, navigation.tsx:345) eller "testmiljön" och "riktiga stamboken"; ska admin säga "Demosynkronisering" eller "testmiljö"?
