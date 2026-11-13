@@ -2,6 +2,7 @@ import Link from "next/link";
 import { Box, Typography } from "@mui/material";
 import { LinkButton } from "@/components/public/LinkButton";
 import { Icon, ICONS } from "@/components/public/Icons";
+import { WIDE } from "@/components/blocks/textColumn";
 
 interface Step {
   label: string;
@@ -96,6 +97,11 @@ const NEXT_STEPS: Record<string, NextStepsContent> = {
   },
 };
 
+// Whether a page has the block, so the caller can leave out its column.
+export function hasNextSteps(slug: string) {
+  return Object.hasOwn(NEXT_STEPS, slug);
+}
+
 export function NextSteps({ slug }: { slug: string }) {
   // hasOwn: a slug such as "constructor" must not find Object's own members.
   if (!Object.hasOwn(NEXT_STEPS, slug)) return null;
@@ -108,6 +114,8 @@ export function NextSteps({ slug }: { slug: string }) {
       aria-label="Nästa steg"
       sx={{
         mt: 14,
+        // In the side column on wide screens: no gap above, one column.
+        [WIDE]: { mt: 0, gridTemplateColumns: "1fr" },
         bgcolor: "paper.2",
         border: 1,
         borderColor: "line.strong",
@@ -119,7 +127,7 @@ export function NextSteps({ slug }: { slug: string }) {
         },
       }}
     >
-      <Box sx={{ p: { xs: 6, sm: 9 } }}>
+      <Box sx={{ p: { xs: 6, sm: 9 }, [WIDE]: { p: 7 } }}>
         <Typography variant="h4" component="h2" sx={{ m: 0, fontWeight: 400 }}>
           {content.title}
         </Typography>
@@ -145,6 +153,11 @@ export function NextSteps({ slug }: { slug: string }) {
           // `borderColor` in the CSS and resets the colour to the text colour.
           borderLeft: { sm: "1px solid var(--sb-line-strong)" },
           borderTop: { xs: "1px solid var(--sb-line-strong)", sm: "none" },
+          [WIDE]: {
+            borderLeft: "none",
+            borderTop: "1px solid var(--sb-line-strong)",
+            px: 7,
+          },
           display: "flex",
           flexDirection: "column",
           justifyContent: "center",
