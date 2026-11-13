@@ -34,6 +34,7 @@ MAX_PER_RUN = 30
 SMTP_TIMEOUT = 60  # seconds, per SMTP step
 RECLAIM_AFTER = timedelta(minutes=10)
 PAUSE_AFTER_SYSTEMIC = timedelta(minutes=5)
+STALLED_AFTER = timedelta(minutes=5)  # no sender run for this long: the scheduler is dead
 # After the 1st..6th counted failure; the 7th fails the mail.
 RETRY_DELAYS = (
     timedelta(minutes=1),
@@ -509,6 +510,63 @@ def forget_recipient(kind, recipient_id):
 def purge_old_mail(now):
     """Deletes rows older than 13 months; their attempts follow (ON DELETE CASCADE)."""
     return MailMessage.delete().where(MailMessage.created_at < now - RETENTION).execute()
+
+
+# --- Status views ---
+
+
+def recipient_label(row):
+    """The recipient as a name, looked up now; never the address."""
+    resolve = RECIPIENT_KINDS.get(row.recipient_kind)
+    recipient = resolve(row.recipient_id) if resolve else None
+    return recipient.label if recipient else None
+
+
+def message_view(row):
+    return {
+        "id": row.id,
+        "kind": row.kind,
+        "category": row.category,
+        "priority": row.priority,
+        "status": row.status,
+        "recipient_kind": row.recipient_kind,
+        "recipient": recipient_label(row),
+        "ref_type": row.ref_type,
+        "ref_id": row.ref_id,
+        "herd_id": row.herd_id,
+        "genebank_id": row.genebank_id,
+        "attempts": row.attempts,
+        "last_error": row.last_error,
+        "created_at": row.created_at.isoformat(),
+        "next_attempt_at": row.next_attempt_at.isoformat(),
+        "sent_at": row.sent_at.isoformat() if row.sent_at else None,
+    }
+
+
+def sender_alarms(now=None):
+    """The status view's alarms: the relay refusing, the queue stalled, and when a mail last went out."""
+    now = now or _utcnow()
+    sender = MailSender.get_or_none(MailSender.id == 1)
+    last_smtp = (
+        MailAttempt.select(MailAttempt.result)
+        .where(MailAttempt.source == "smtp")
+        .order_by(MailAttempt.at.desc(), MailAttempt.id.desc())
+        .first()
+    )
+    last_run_at = sender.last_run_at if sender else None
+    alarms = []
+    if last_smtp is not None and last_smtp.result == "systemic":
+        alarms.append({"code": "relay_refusing", "message": "Reläet tar inte emot e-post från servern"})
+    if last_run_at is None or last_run_at < now - STALLED_AFTER:
+        alarms.append({"code": "queue_stalled", "message": "Kön står still"})
+    last_sent = MailMessage.select(MailMessage.sent_at).where(MailMessage.sent_at.is_null(False))
+    last_sent = last_sent.order_by(MailMessage.sent_at.desc()).first()
+    return {
+        "alarms": alarms,
+        "last_run_at": last_run_at.isoformat() if last_run_at else None,
+        "paused_until": sender.paused_until.isoformat() if sender and sender.paused_until else None,
+        "last_sent_at": last_sent.sent_at.isoformat() if last_sent else None,
+    }
 
 
 # --- Recipients ---
