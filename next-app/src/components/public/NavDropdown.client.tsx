@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { isCurrentPath } from "./navCurrent";
 import { Box, Typography } from "@mui/material";
 
 interface DropdownItem {
@@ -27,7 +28,9 @@ export function NavDropdown({
 }: NavDropdownProps) {
   const pathname = usePathname();
   const active =
-    activeProp ?? (pathname === href || items.some((i) => i.href === pathname));
+    activeProp ??
+    (isCurrentPath(pathname, href) ||
+      items.some((i) => isCurrentPath(pathname, i.href)));
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -125,6 +128,9 @@ export function NavDropdown({
               key={item.href}
               component={Link}
               href={item.href}
+              aria-current={
+                isCurrentPath(pathname, item.href) ? "page" : undefined
+              }
               onClick={close}
               sx={{
                 display: "flex",
@@ -168,6 +174,9 @@ export function NavDropdown({
               key={item.href}
               component={Link}
               href={item.href}
+              aria-current={
+                isCurrentPath(pathname, item.href) ? "page" : undefined
+              }
               onClick={close}
               sx={{
                 display: "block",
@@ -196,6 +205,7 @@ export function NavDropdown({
           <Box
             component={Link}
             href={href}
+            aria-current={isCurrentPath(pathname, href) ? "page" : undefined}
             onClick={close}
             sx={{
               display: "block",

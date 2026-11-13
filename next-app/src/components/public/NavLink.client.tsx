@@ -2,9 +2,10 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { isCurrentPath } from "./navCurrent";
 
 export function NavLink({ href, label }: { href: string; label: string }) {
-  const current = usePathname() === href;
+  const current = isCurrentPath(usePathname(), href);
   return (
     <Link
       href={href}

@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 import { NavLink } from "@/components/public/NavLink.client";
 import { NavDropdown } from "@/components/public/NavDropdown.client";
+import { isCurrentPath } from "@/components/public/navCurrent";
 
 vi.mock("next/navigation", () => ({ usePathname: () => "/historik" }));
 
@@ -44,5 +45,28 @@ describe("current page in the menu", () => {
       />,
     );
     expect(weight()).toBe("400");
+  });
+});
+
+describe("isCurrentPath", () => {
+  it("matches a CMS link written with a trailing slash, query or hash", () => {
+    for (const href of [
+      "/historik",
+      "/historik/",
+      "/historik?x=1",
+      "/historik#a",
+    ])
+      expect(isCurrentPath("/historik", href)).toBe(true);
+    expect(isCurrentPath("/", "/")).toBe(true);
+  });
+
+  it("never matches another page, another site or a mail link", () => {
+    for (const href of [
+      "/historik-2",
+      "/",
+      "https://example.com/historik",
+      "mailto:info@example.com",
+    ])
+      expect(isCurrentPath("/historik", href)).toBe(false);
   });
 });

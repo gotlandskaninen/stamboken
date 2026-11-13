@@ -3,6 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { isCurrentPath } from "./navCurrent";
 import {
   Box,
   Drawer,
@@ -33,7 +34,7 @@ export function MobileDrawer({ links, cta }: MobileDrawerProps) {
   const pathname = usePathname();
   // Same mark as the desktop menu: lera bar on the left plus bold text.
   const currentSx = (href: string) =>
-    href === pathname
+    isCurrentPath(pathname, href)
       ? {
           bgcolor: "paper.2",
           boxShadow: (t: any) => `inset 3px 0 0 ${t.palette.lera.main}`,
@@ -134,7 +135,9 @@ export function MobileDrawer({ links, cta }: MobileDrawerProps) {
                 <ListItemButton
                   component={Link}
                   href={link.href}
-                  aria-current={link.href === pathname ? "page" : undefined}
+                  aria-current={
+                    isCurrentPath(pathname, link.href) ? "page" : undefined
+                  }
                   onClick={() => setOpen(false)}
                   sx={{ borderRadius: "4px", ...currentSx(link.href) }}
                 >
@@ -151,7 +154,9 @@ export function MobileDrawer({ links, cta }: MobileDrawerProps) {
                   <ListItemButton
                     component={Link}
                     href={child.href}
-                    aria-current={child.href === pathname ? "page" : undefined}
+                    aria-current={
+                      isCurrentPath(pathname, child.href) ? "page" : undefined
+                    }
                     onClick={() => setOpen(false)}
                     sx={{ borderRadius: "4px", ...currentSx(child.href) }}
                   >
