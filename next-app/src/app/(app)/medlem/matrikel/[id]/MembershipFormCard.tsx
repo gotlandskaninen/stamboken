@@ -143,13 +143,6 @@ export function MembershipFormCard({
                   </MenuItem>
                 ))}
               </Select>
-              {locked ? (
-                <p className={ds["ad-field-hint"]}>
-                  {ended
-                    ? "Ett avslutat medlemskap kan inte återaktiveras. Skapa ett nytt medlemskap i stället."
-                    : "Medlemskapet saknar huvudmedlem. Utse en ny huvudmedlem för att kunna ändra status."}
-                </p>
-              ) : null}
             </div>
             <div>
               <label className="sb-label" htmlFor="ms-number">
@@ -170,6 +163,14 @@ export function MembershipFormCard({
               )}
             </div>
           </div>
+          {/* Below the row, not in the Status cell: there it pushes Medlemsnummer out of line. */}
+          {locked ? (
+            <p className={ds["ad-field-hint"]}>
+              {ended
+                ? "Ett avslutat medlemskap kan inte återaktiveras. Skapa ett nytt medlemskap i stället."
+                : "Medlemskapet saknar huvudmedlem. Utse en ny huvudmedlem för att kunna ändra status."}
+            </p>
+          ) : null}
           <p className={ds["ad-field-hint"]}>
             Ändringar auditloggas; ett nummer över märket höjer räknaren.
           </p>
