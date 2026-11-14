@@ -573,7 +573,8 @@ _MESSAGE_ID = re.compile(r"\s*<mail-(\d+)\.([0-9a-f]{16})@([^<>\s]+)>\s*")
 def record_bounce(message_id_header, diagnostic):
     """
     Marks the row behind a delivery report's Message-ID as bounced. Returns False when the id is not one of
-    this environment's mails, so the caller can hand the report to a human instead.
+    this environment's mails, or the row is not `sent` (a bounce never revives or overwrites another state),
+    so the caller can hand the report to a human instead.
     """
     match = _MESSAGE_ID.fullmatch(message_id_header or "")
     if match is None or match.group(3).lower() != _hostname().lower():
@@ -584,7 +585,10 @@ def record_bounce(message_id_header, diagnostic):
     detail = _scrub(diagnostic)
     enhanced = _ENHANCED.search(diagnostic or "")
     with DB_PROXY.atomic():
-        if not MailMessage.update(status="bounced", last_error=detail).where(MailMessage.id == row_id).execute():
+        bounced = MailMessage.update(status="bounced", last_error=detail).where(
+            (MailMessage.id == row_id) & (MailMessage.status == "sent")
+        )
+        if not bounced.execute():
             return False
         MailAttempt.create(
             message=row_id,

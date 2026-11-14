@@ -168,8 +168,9 @@ börjar räkningen om.
 ## Studsar och statusvy
 
 `record_bounce(message_id, diagnos)` markerar raden bakom en leveransrapport
-som `bounced`. Ett `Message-ID` med en annan miljös värdnamn eller fel HMAC
-rör ingen rad, och funktionen returnerar `False`.
+som `bounced`, men bara om den är `sent`. Ett `Message-ID` med en annan miljös
+värdnamn eller fel HMAC, eller en rad i någon annan status, rör ingen rad, och
+funktionen returnerar `False`.
 
 API:t under `/api/v2/mail` (admin ser allt, genbanksansvarig rader med sin
 genbank):

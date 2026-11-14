@@ -714,7 +714,7 @@ class TestConcurrentSenders(MailTest):
 
 class TestPrivacy(MailTest):
     def test_last_error_and_detail_never_hold_an_address(self):
-        rows = [self.queue(f"p{i}@example.org") for i in range(3)]
+        rows = [self.queue(f"p{i}@example.org") for i in range(4)]
         self.relay(
             replies=[
                 _refused(550, "5.1.1 <p0@example.org> unknown", "p0@example.org"),
@@ -723,9 +723,9 @@ class TestPrivacy(MailTest):
             ]
         )
         mail.send_pending(self.now)
-        self.assertTrue(mail.record_bounce(mail.message_id(rows[0]), "550 5.1.1 <p0@example.org> gone"))
+        self.assertTrue(mail.record_bounce(mail.message_id(rows[3]), "550 5.1.1 <p3@example.org> gone"))
         texts = [r.last_error for r in db.MailMessage.select()] + [a.detail for a in db.MailAttempt.select()]
-        self.assertEqual(len([t for t in texts if t]), 7)
+        self.assertEqual(len([t for t in texts if t]), 8)
         for text in texts:
             self.assertNotIn("@", text or "")
 
@@ -788,6 +788,15 @@ class TestBounces(MailTest):
             with self.subTest(other=other):
                 self.assertFalse(mail.record_bounce(other, "550 5.1.1 user unknown"))
         self.assertEqual(self.row(row_id).status, "sent")
+        self.assertEqual([a.source for a in self.attempts(row_id)], ["smtp"])
+
+    def test_only_a_sent_row_can_bounce(self):
+        row_id, message_id = self._sent()
+        for status in ("queued", "sending", "failed", "cancelled", "logged", "blocked", "bounced"):
+            with self.subTest(status=status):
+                db.MailMessage.update(status=status, last_error="före").where(db.MailMessage.id == row_id).execute()
+                self.assertFalse(mail.record_bounce(message_id, "550 5.1.1 user unknown"))
+                self.assertEqual((self.row(row_id).status, self.row(row_id).last_error), (status, "före"))
         self.assertEqual([a.source for a in self.attempts(row_id)], ["smtp"])
 
 
