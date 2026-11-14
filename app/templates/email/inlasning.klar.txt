@@ -7,7 +7,7 @@ Hej!
 {% for number in numbers %}
 {{ number }}{% endfor %}
 {% else %}Vi har gått igenom det du skickade in.
-{% endif %}
+{% endif %}{% if account %}
 Du ser dina inskick här:
-{{ base_url }}/stamboken/inskick
+{{ base_url }}/stamboken/inskick{% endif %}
 {% endblock %}

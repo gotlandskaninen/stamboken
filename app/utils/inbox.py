@@ -25,13 +25,14 @@ from utils.database import (
     InboxItem,
     InboxOperation,
     Individual,
+    MailMessage,
     Notice,
     NoticeSetting,
     User,
 )
 from utils.individual_number_v2 import parse_number
 from utils.individual_policy import Role
-from utils.mail import enqueue_mail, mail_kind
+from utils.mail import enqueue_mail, forget_recipient, mail_kind
 
 OPEN_STATES = ("ny", "tagen", "vantar_uppfodare", "vantar_foralder", "hos_genbanksansvarig", "ofullstandig")
 CLOSED_STATES = ("klar", "dubblett", "skrap")
@@ -398,10 +399,33 @@ def change_state(item, user, state, *, note=None, duplicate_of=None):
         for manager in queue_workers(item.genebank_id, managers_only=True):
             if manager.id != user.id:
                 notify(manager, "lamnad", item)
+    release_sender(item)
+
+
+def release_sender(item, *, force=False):
+    """
+    A closed item keeps a mail sender's address only while a mail to it is on its way (inlasning.klar needs
+    it); `force`: the sweep, 30 days after closing, drops it anyway. Conditional, so a reopened item keeps it.
+    """
+    if item.state not in CLOSED_STATES or item.sender_address is None:
+        return
+    query = InboxItem.update(sender_address=None).where(
+        (InboxItem.id == item.id) & InboxItem.state.in_(CLOSED_STATES) & InboxItem.sender_address.is_null(False)
+    )
+    if not force:
+        on_its_way = MailMessage.select().where(
+            (MailMessage.recipient_kind == "inbox_sender")
+            & (MailMessage.recipient_id == item.id)
+            & MailMessage.status.in_(("queued", "sending"))
+        )
+        query = query.where(~fn.EXISTS(on_its_way))
+    if query.execute():
+        item.sender_address = None
+        forget_recipient("inbox_sender", item.id)
 
 
 def close_if_done(item, user):
-    """The last document done or dismissed closes the item ("klar") and tells the uploader."""
+    """The last document done or dismissed closes the item ("klar") and tells the uploader, or the mail's sender."""
     if item.state in CLOSED_STATES or item.documents.where(InboxDocument.done_at.is_null(True)).exists():
         return
     if not item.documents.exists():
@@ -421,6 +445,17 @@ def close_if_done(item, user):
             herd=item.herd_id,
             genebank=item.genebank_id,
         )
+    elif item.sender_address:  # a mailed item's sender gets the same news, at the address it came from
+        enqueue_mail(
+            "inlasning.klar",
+            "inbox_sender",
+            item.id,
+            {"item_id": item.id},
+            ref=("inbox_item", item.id),
+            herd=item.herd_id,
+            genebank=item.genebank_id,
+        )
+    release_sender(item)
 
 
 def _rects(value):
@@ -791,7 +826,8 @@ def _item_done_mail(params):
         .where(InboxDocument.item == item.id)
         .order_by(InboxDocument.id)
     )
-    return {"item_id": item.id, "numbers": list(dict.fromkeys(number for (number,) in query.tuples()))}
+    numbers = list(dict.fromkeys(number for (number,) in query.tuples()))
+    return {"item_id": item.id, "numbers": numbers, "account": item.sender_user_id is not None}
 
 
 @mail_kind("notis.sammandrag", priority=1, category="N")

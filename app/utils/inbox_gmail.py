@@ -14,7 +14,7 @@ import html
 import io
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from email import policy
 from email.parser import HeaderParser
 from email.utils import parseaddr
@@ -36,12 +36,13 @@ from utils.database import (
     User,
 )
 from utils.gmail import Gmail, HistoryTooOld
-from utils.mail import _hostname, _normalize, _scrub
+from utils.mail import Recipient, _hostname, _normalize, _scrub, enqueue_mail, mail_kind, recipient_kind
 
 logger = logging.getLogger("herdbook.inbox_gmail")
 
 READ, FAILED, DEMO = "Inläst", "Fel vid inläsning", "Demo"
 MAX_TEXT = 10_000  # characters of a mail's text kept on the item; shortcut: cut, raise it if handlers miss text
+RELEASE_AFTER = timedelta(days=30)  # a closed item's sender address goes by then, whatever is still queued
 # One of our Message-IDs (utils.mail.message_id), of any environment: <mail-<row>.<16 hex>@<its hostname>>.
 _OUR_ID = re.compile(r"<mail-(\d{1,18})\.[0-9a-f]{16}@([A-Za-z0-9.-]+)>")
 _CASE = re.compile(r"\(ärende (\d{1,9})\)$")
@@ -61,8 +62,9 @@ def run(gmail=None):
     """
     One run of the job: the messages added to INBOX since the stored historyId, or the whole inbox when Gmail
     no longer has that history (or on the first run). The historyId moves on only when every message is
-    labelled, so a run that fails half way is read again.
+    labelled, so a run that fails half way is read again. Closed items' sender addresses are swept first.
     """
+    release_senders()
     GmailSync.insert(id=1).on_conflict_ignore().execute()
     sync = GmailSync.get_by_id(1)
     gmail = gmail or Gmail.from_settings()
@@ -147,6 +149,8 @@ def read_message(gmail_id, raw, received_at=None):
             else:
                 maybe = replied.id if replied is not None else None
                 item = _new_item(gmail_id, sender, text, received_at, stored, skipped, maybe_item=maybe)
+                if stored and authenticated(msg, sender):  # never a receipt to an address the sender only typed
+                    _receipt(item, len(stored))
                 _processed(gmail_id, "item", item)
     except BaseException:
         inbox.remove_files(path for path, _, _ in stored)
@@ -391,3 +395,42 @@ def _new_item(gmail_id, sender, text, received_at, stored=(), skipped=(), maybe_
     for worker in inbox.queue_workers(item.genebank_id):
         inbox.notify(worker, "ny_post", item)
     return item
+
+
+def _receipt(item, images):
+    """inlasning.kvitto, at most one a day to an address: the address never in the row, only its HMAC in the key."""
+    day = f"{inbox.now():%Y-%m-%d}"
+    enqueue_mail(
+        "inlasning.kvitto",
+        "inbox_sender",
+        item.id,
+        {"item_id": item.id, "images": images},
+        ref=("inbox_item", item.id),
+        herd=item.herd_id,
+        genebank=item.genebank_id,
+        dedupe_key=f"inlasning.kvitto:{mail.address_hash(item.sender_address)}:{day}",
+    )
+
+
+def release_senders(at=None):
+    """The job's sweep: a closed item's sender address goes once no mail to it is on its way, by 30 days at most."""
+    limit = (at or inbox.now()) - RELEASE_AFTER
+    closed = InboxItem.select().where(
+        InboxItem.state.in_(inbox.CLOSED_STATES) & InboxItem.sender_address.is_null(False)
+    )
+    for item in closed:
+        with DB_PROXY.atomic():
+            inbox.release_sender(item, force=item.closed_at < limit)
+
+
+@recipient_kind("inbox_sender")
+def _inbox_sender(item_id):
+    """The address a mailed item came from, while the item keeps it; labelled by the case, never by the address."""
+    item = InboxItem.get_or_none(InboxItem.id == item_id)
+    return Recipient(item.sender_address, f"Avsändaren av ärende {item.id}") if item and item.sender_address else None
+
+
+@mail_kind("inlasning.kvitto", priority=1, category="T")
+def _receipt_mail(params):
+    found = InboxItem.select().where(InboxItem.id == params["item_id"]).exists()
+    return {"item_id": params["item_id"], "images": params["images"]} if found else None

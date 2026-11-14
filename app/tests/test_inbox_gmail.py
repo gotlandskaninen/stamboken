@@ -7,6 +7,7 @@ isort:skip_file
 
 import base64
 import os
+from datetime import timedelta
 from email.message import EmailMessage
 from email.utils import make_msgid
 from unittest import mock
@@ -434,6 +435,93 @@ class TestItemsFromMail(GmailTest):
         self.assertEqual([name for _, _, names in os.walk(self.folder) for name in names], [])
 
 
+class TestReceipt(GmailTest):
+    def receipts(self):
+        return list(
+            db.MailMessage.select().where(db.MailMessage.kind == "inlasning.kvitto").order_by(db.MailMessage.id)
+        )
+
+    def photos(self, count=1):
+        return [(f"{n}.jpg", JPEG, encoded(photo(seed=n))) for n in range(count)]
+
+    def test_a_mail_with_images_gets_a_receipt_with_the_case_number(self):
+        self.fake.deliver(message(files=self.photos(2)))
+        self.read()
+        (item,) = self.items()
+        (row,) = self.receipts()
+        self.assertEqual((row.recipient_kind, row.recipient_id), ("inbox_sender", item.id))
+        self.assertEqual(row.params, {"item_id": item.id, "images": 2})
+        self.assertNotIn("@", row.dedupe_key)
+        relay = self.relay()
+        mail.send_pending()
+        ((msg, _, to),) = relay.sent
+        self.assertEqual(to, [SENDER])
+        self.assertEqual(msg["Subject"], f"Vi har fått dina bilder (ärende {item.id})")
+        self.assertIn("Vi har fått 2 bilder. Genbanksansvarig lägger in dem", msg.get_content())
+
+    def test_no_receipt_without_an_spf_or_dkim_pass_nor_without_images(self):
+        self.fake.deliver(message(files=self.photos(), auth=f"spf=softfail smtp.mailfrom={SENDER}"))
+        self.fake.deliver(message(files=self.photos(), auth="spf=pass smtp.mailfrom=bounce@example.net"))
+        self.fake.deliver(message(body="Bara text"))
+        self.read()
+        self.assertEqual(len(self.items()), 3)
+        self.assertEqual(self.receipts(), [])
+
+    def test_at_most_one_receipt_a_day_to_a_sender(self):
+        self.fake.deliver(message(files=self.photos()))
+        self.fake.deliver(message(sender=SENDER.upper(), files=self.photos()))
+        self.read()
+        self.assertEqual(len(self.receipts()), 1)
+        tomorrow = inbox.now() + timedelta(days=1)
+        self.fake.deliver(message(files=self.photos()))
+        with mock.patch.object(inbox, "now", return_value=tomorrow):
+            self.read()
+        self.assertEqual(len(self.receipts()), 2)
+
+
+class TestSenderAddress(GmailTest):
+    def mailed_item(self, **kwargs):
+        self.fake.deliver(message(files=[("a.jpg", JPEG, encoded(photo()))], **kwargs))
+        self.read()
+        return self.items()[-1]
+
+    def test_the_address_stays_until_the_final_mail_is_sent_and_goes_after(self):
+        item = self.mailed_item()
+        inbox.take(item, self.helper, over=False)
+        inbox.update_document(item, item.documents.get(), self.helper, {"dismissed": True})
+        self.assertEqual(self.reload(item).state, "klar")
+        (done,) = db.MailMessage.select().where(db.MailMessage.kind == "inlasning.klar")
+        self.assertEqual((done.recipient_kind, done.recipient_id), ("inbox_sender", item.id))
+        inbox_gmail.release_senders()
+        self.assertEqual(self.reload(item).sender_address, SENDER)  # the receipt and the final mail still wait
+        relay = self.relay()
+        mail.send_pending()
+        self.assertEqual([to for _, _, to in relay.sent], [[SENDER], [SENDER]])
+        self.assertNotIn("/stamboken/inskick", relay.sent[-1][0].get_content())  # no account to see it in
+        inbox_gmail.release_senders()
+        self.assertIsNone(self.reload(item).sender_address)
+        self.assertEqual({r.address_hash for r in db.MailMessage.select()}, {None})  # forgotten
+
+    def test_an_item_closed_with_nothing_on_its_way_drops_it_at_once(self):
+        item = self.mailed_item(auth=None)  # no receipt
+        inbox.take(item, self.helper, over=False)
+        inbox.change_state(item, self.helper, "skrap")
+        self.assertIsNone(self.reload(item).sender_address)
+
+    def test_thirty_days_after_closing_it_goes_whatever_waits(self):
+        item = self.mailed_item()
+        inbox.take(item, self.helper, over=False)
+        inbox.change_state(item, self.helper, "skrap")
+        self.assertEqual(self.reload(item).sender_address, SENDER)  # the receipt waits
+        inbox_gmail.release_senders(at=inbox.now() + timedelta(days=31))
+        self.assertIsNone(self.reload(item).sender_address)
+
+    def test_an_open_item_keeps_it(self):
+        item = self.mailed_item(auth=None)
+        inbox_gmail.release_senders(at=inbox.now() + timedelta(days=400))
+        self.assertEqual(self.reload(item).sender_address, SENDER)
+
+
 class TestAuthenticationResults(InboxTest):
     def check(self, *headers, sender=SENDER):
         msg = EmailMessage()
@@ -489,19 +577,18 @@ class TestSync(GmailTest):
         self.assertTrue(self.done(gmail_id))
 
     def test_a_crash_between_the_commit_and_the_labelling_only_labels_on_the_reread(self):
-        gmail_id = self.fake.deliver(message())
+        gmail_id = self.fake.deliver(message(files=[("a.jpg", JPEG, encoded(photo()))]))
         self.fake.failures.append(("POST", f"messages/{gmail_id}/modify"))
         with self.assertRaises(requests.HTTPError):
             self.read()
         self.assertFalse(self.done(gmail_id))
         self.assertIsNone(self.sync().history_id)  # not moved on: the next run reads the same messages
         self.assertIn("HTTPError", self.sync().last_error)
-        counts = (db.InboxItem.select().count(), db.InboxEvent.select().count(), db.Notice.select().count())
+        tables = (db.InboxItem, db.InboxDocument, db.InboxEvent, db.Notice, db.MailMessage)
+        counts = [table.select().count() for table in tables]
+        self.assertEqual(counts, [1, 1, 1, 4, 1])  # the item, its photo, "inkommen", all four workers told, a receipt
         self.read()
-        self.assertEqual(
-            (db.InboxItem.select().count(), db.InboxEvent.select().count(), db.Notice.select().count()), counts
-        )
-        self.assertEqual(counts[0], 1)
+        self.assertEqual([table.select().count() for table in tables], counts)
         self.assertTrue(self.done(gmail_id))
         self.assertIsNone(self.sync().last_error)
 
