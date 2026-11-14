@@ -236,6 +236,9 @@ class TestSorting(GmailTest):
         for part in ("message/rfc822", "text/rfc822-headers"):
             with self.subTest(part=part):
                 row_id = self.queue()
+                db.MailMessage.update(status="sent").where(
+                    db.MailMessage.id == row_id
+                ).execute()  # only sent mail bounces
                 gmail_id = self.fake.deliver(report(mail.message_id(row_id), part))
                 self.read()
                 row = self.row(row_id)
