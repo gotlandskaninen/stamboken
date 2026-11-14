@@ -162,11 +162,10 @@ export default function IntegritetspolicyPage() {
                 </mark>
               </li>
               <li>
-                I Koharen publicerar vi namn och kontaktuppgifter, i
-                medlemsförteckningen och i listan över aktiva genbanker, bara
-                med ett ja (samtycke). I dag lämnar huvudmedlemmen svaret för
-                hela medlemskapet, i årsrapporten eller i sin profil. Svaret
-                gäller tills det ändras, och den som aldrig har svarat
+                I Koharen trycks en lista över aktiva genbanker. Där står
+                innehavarens namn, ort och kontaktuppgifter bara om innehavaren
+                har sagt ja, i årsrapporten eller i sin profil (samtycke).
+                Svaret gäller tills det ändras, och den som aldrig har svarat
                 publiceras inte. Det som redan är tryckt går inte att ta
                 tillbaka.
               </li>
@@ -242,11 +241,11 @@ export default function IntegritetspolicyPage() {
                 Ändringar av kaniner, parningar, kullar, besättningar och konton
                 loggas med användare, tidpunkt, IP-adress och det gamla och det
                 nya värdet, så att fel kan spåras och rättas (berättigat
-                intresse).{" "}
+                intresse). IP-adressen tar vi bort efter 12 månader. Resten av
+                loggen sparas så länge uppgiften den gäller finns kvar.{" "}
                 <mark>
-                  [BESLUT: hur länge sparas IP-adressen i ändringsloggen?
-                  Förslag: 12 månader; resten av loggen så länge uppgiften den
-                  gäller finns kvar.]
+                  [INTE KLART: gallringen av IP-adresser ur ändringsloggen ska
+                  byggas innan sidan släpps.]
                 </mark>
               </li>
               <li>
