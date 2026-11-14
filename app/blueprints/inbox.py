@@ -16,6 +16,7 @@ import pypdfium2
 import utils.data_access as da
 import utils.inbox as inbox
 import utils.inbox_interpreter as interpreter
+import utils.inbox_purge as inbox_purge
 from extensions import limiter
 from flask import Blueprint, jsonify, request, send_file
 from flask_login import current_user
@@ -683,6 +684,26 @@ def confirm_mask(item_id, document_id):
     return _locked(item_id, action)
 
 
+# [Next.js] Erase one document's original on request; only the masked copy, if made, is left. Managers and admins.
+@inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/radera-original", methods=["POST"])
+@json_login_required
+@_queue_worker
+def erase_original(item_id, document_id):
+    try:
+        with DB_PROXY.atomic():
+            item = inbox.lock_item(item_id)
+            if not inbox.manages(current_user, item.genebank_id):
+                raise inbox.InboxError(403, "Bara genbanksansvarig och admin kan radera ett original.")
+            paths = inbox_purge.erase_document(item, inbox.document_of(item, document_id), current_user)
+            item = InboxItem.get_by_id(item_id)
+            document = inbox.document_of(item, document_id)
+            answer = {"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]}
+    except inbox.InboxError as exc:
+        return problem(exc.status, exc.title, exc.detail)
+    inbox_purge.remove_originals(paths)
+    return jsonify(answer)
+
+
 # [Next.js] The original as it came in, for those working in the queue only; every view is logged.
 @inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/original", methods=["GET"])
 @json_login_required
@@ -694,6 +715,8 @@ def original(item_id, document_id):
             if item is None:
                 raise inbox.InboxError(404, "Posten finns inte.")
             document = inbox.document_of(item, document_id)
+            if document.original_path is None:
+                raise inbox.InboxError(404, "Originalet är raderat.")
             inbox.log_event(item, current_user.id, "original_visat", document=document.id)
     except inbox.InboxError as exc:
         return problem(exc.status, exc.title, exc.detail)

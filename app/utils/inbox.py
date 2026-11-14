@@ -27,6 +27,7 @@ from utils.database import (
     InboxOperation,
     Individual,
     MailMessage,
+    Member,
     Notice,
     NoticeSetting,
     User,
@@ -42,6 +43,7 @@ HELD_STATES = ("tagen", "vantar_uppfodare", "vantar_foralder", "ofullstandig")  
 # ("tagen") by a manager of its genebank or an admin, who becomes its handler. The other states are reached
 # otherwise: "ny" when the item comes in, "tagen" also by taking or assigning, "klar" when its last document is
 # done or dismissed, "vantar_uppfodare" by the question to the breeder (utils/inbox_gmail.py, back with the answer).
+# A message has nothing to save: its handler closes it as "klar" once it is answered (MESSAGE_DONE_FROM).
 TRANSITIONS = {
     "tagen": ("vantar_foralder", "ofullstandig", *CLOSED_STATES),
     "vantar_foralder": ("tagen",),
@@ -50,6 +52,7 @@ TRANSITIONS = {
     "dubblett": HELD_STATES,
     "skrap": HELD_STATES,
 }
+MESSAGE_DONE_FROM = HELD_STATES
 # What "Mina inskick" shows the uploader instead of the queue's state.
 PLAIN_STATES = {
     "ny": "mottaget",
@@ -70,10 +73,13 @@ NOTICE_TEXTS = {
     "foralder_inlagd": "Föräldern är inlagd, och posten väntar inte längre",
     "klar": "Ditt inskick är klart",
     "svar": "Uppfödaren har svarat",
+    "star_still": "En post har stått still i 14 dagar",
 }
 DOC_TYPES = ("intyg", "bevis", "arsblankett", "annat")
 CERT_FORMATS = ("handskrivet", "datorskrivet", "v1_pdf", "intyg_b", "digitalt_v2")
 OPENED_EVERY = timedelta(hours=1)
+INCOMPLETE_MONTHS = 12  # an item left "ofullstandig" is deleted this long after it came in (utils/inbox_purge.py)
+REMIND_MONTHS = 11  # and its sender is reminded this long after it came in
 MAX_NOTE = 2000
 MAX_RECTS = 20
 # The masking a handwritten certificate (format 1) is offered: its lower third, where seller and buyer write.
@@ -103,6 +109,11 @@ _LAPLACIAN = ImageFilter.Kernel((3, 3), (0, 1, 0, 1, -4, 1, 0, 1, 0), scale=1, o
 
 def now():
     return datetime.now(timezone.utc)
+
+
+def months(count):
+    """`count` months as days, rounded up as the command log's 13 months (396 days): the retention's one measure."""
+    return timedelta(days=math.ceil(count * 365.25 / 12))
 
 
 def _iso(value):
@@ -172,7 +183,7 @@ def remove_files(relatives):
 
 
 def log_event(item, user, kind, **detail):
-    InboxEvent.create(item=item, user=user, kind=kind, detail=detail or None)
+    return InboxEvent.create(item=item, user=user, kind=kind, detail=detail or None)
 
 
 def notify(user, kind, item, *, mailed=False):
@@ -366,10 +377,11 @@ def assign(item, by, to):
 
 
 def change_state(item, user, state, *, note=None, duplicate_of=None):
-    """POST …/lage, by TRANSITIONS."""
-    if state not in TRANSITIONS:
+    """POST …/lage, by TRANSITIONS, and "klar" for a message (MESSAGE_DONE_FROM)."""
+    allowed = MESSAGE_DONE_FROM if state == "klar" and item.kind == "meddelande" else TRANSITIONS.get(state)
+    if allowed is None:
         raise InboxError(400, f"state är en av {', '.join(TRANSITIONS)}.")
-    if item.state not in TRANSITIONS[state]:
+    if item.state not in allowed:
         raise InboxError(409, f"Posten kan inte gå från {item.state} till {state}.")
     reopened = item.state in CLOSED_STATES
     if reopened and not manages(user, item.genebank_id):
@@ -383,6 +395,8 @@ def change_state(item, user, state, *, note=None, duplicate_of=None):
         raise InboxError(400, "Skriv vad som saknas.")
     if state == "vantar_foralder" and not item.documents.where(InboxDocument.waiting_for.is_null(False)).exists():
         raise InboxError(400, "Ange på dokumentet vilken förälder posten väntar på.")
+    if state == "klar" and item.documents.where(InboxDocument.done_at.is_null(True)).exists():
+        raise InboxError(409, "Gör klart eller avfärda dokumenten först.")
     item.duplicate_of = None
     if state == "dubblett":
         other = InboxItem.get_or_none(InboxItem.id == duplicate_of) if isinstance(duplicate_of, int) else None
@@ -395,7 +409,9 @@ def change_state(item, user, state, *, note=None, duplicate_of=None):
     if state == "hos_genbanksansvarig":
         item.assigned_to, item.assigned_at = None, None
     item.save()
-    log_event(item, user, "lage", **detail)
+    event = log_event(item, user, "lage", **detail)
+    if state == "ofullstandig":  # the builder reads the note from the event: no free text in the mail queue
+        mail_sender(item, "inlasning.ofullstandig", {"item_id": item.id, "event_id": event.id}, created_by=user.id)
     if state == "hos_genbanksansvarig":
         for manager in queue_workers(item.genebank_id, managers_only=True):
             if manager.id != user.id:
@@ -437,26 +453,20 @@ def close_if_done(item, user):
     log_event(item, user, "lage", **{"from": previous, "to": "klar"})
     if item.sender_user_id is not None:
         notify(item.sender_user_id, "klar", item, mailed=True)
-        enqueue_mail(
-            "inlasning.klar",
-            "user",
-            item.sender_user_id,
-            {"item_id": item.id},
-            ref=("inbox_item", item.id),
-            herd=item.herd_id,
-            genebank=item.genebank_id,
-        )
-    elif item.sender_address:  # a mailed item's sender gets the same news, at the address it came from
-        enqueue_mail(
-            "inlasning.klar",
-            "inbox_sender",
-            item.id,
-            {"item_id": item.id},
-            ref=("inbox_item", item.id),
-            herd=item.herd_id,
-            genebank=item.genebank_id,
-        )
+    mail_sender(item, "inlasning.klar", {"item_id": item.id})
     release_sender(item)
+
+
+def mail_sender(item, kind, params, **options):
+    """Queues `kind` to the item's uploader, or else to the address a mailed item came from; None without either."""
+    if item.sender_user_id is not None:
+        recipient = ("user", item.sender_user_id)
+    elif item.sender_address:
+        recipient = ("inbox_sender", item.id)
+    else:
+        return None
+    options.update(ref=("inbox_item", item.id), herd=item.herd_id, genebank=item.genebank_id)
+    return enqueue_mail(kind, *recipient, params, **options)
 
 
 def _rects(value):
@@ -533,6 +543,8 @@ def reinterpret(item, document, user):
         raise InboxError(409, "Bildtolkningen är avstängd.")
     if document.doc_type != "intyg" or document.done_at is not None or document.individual_id is not None:
         raise InboxError(409, "Bara ett intyg som inte är sparat kan tolkas.")
+    if document.original_path is None:
+        raise InboxError(409, "Originalet är raderat.")
     document.interpretation_status, document.attempts = "vantar", 0
     document.interpretation = document.proposal = document.interpreter = document.interpreted_at = None
     document.save()
@@ -543,8 +555,10 @@ def make_copy(document):
     """
     The copy shown on the rabbit, made from the original: turned `rotation` degrees clockwise, its mask_rects
     (fractions of the turned image) painted black, saved as inkorg/kopia/<document id>.jpg without metadata.
-    Made again whenever the rectangles or the rotation change.
+    Made again whenever the rectangles or the rotation change, which needs the original.
     """
+    if document.original_path is None:
+        raise InboxError(409, "Originalet är raderat, så kopian kan inte göras om.")
     with Image.open(private_path(document.original_path)) as original:
         image = original.convert("RGB").rotate(-document.rotation, expand=True)
     width, height = image.size
@@ -625,6 +639,7 @@ def documents_json(documents):
             "proposal": d.proposal,
             "individual": numbers.get(d.individual_id),
             "herd_tracking_id": d.herd_tracking_id,
+            "has_original": d.original_path is not None,
             "has_copy": d.public_path is not None,
             "done_at": _iso(d.done_at),
         }
@@ -782,22 +797,42 @@ def require_saving(item, document, user):
         raise InboxError(409, "Dokumentet är redan klart.")
 
 
+def herd_holder(herd_id):
+    """The herd's holder per the member register: the active main member of the membership that owns it."""
+    if herd_id is None:
+        return None
+    return (
+        Member.select()
+        .join(Herd, on=(Herd.membership == Member.membership))
+        .where((Herd.id == herd_id) & (Member.role == "huvudmedlem") & Member.end_date.is_null(True))
+        .order_by(Member.id)
+        .first()
+    )
+
+
 def saved(item, document, user, individual, action):
-    """The rabbit a certificate document registered or certified."""
+    """The rabbit a certificate document registered or certified; its seller is the holder of the rabbit's herd."""
     document.individual = individual
+    document.seller_member = herd_holder(individual.current_herd.id) or document.seller_member
     document.save()
     log_event(item, user, "sparad", document=document.id, action=action, individual=individual.number)
 
 
 def transferred(item, document, user, individual, row):
-    """A sale registered from a document: a proof (bevis) is done with it; anything else leaves the proof missing."""
+    """
+    A sale registered from a document: a proof (bevis) is done with it; anything else leaves the proof missing.
+    The document shows the sale's seller and, for a sale to a member, its buyer.
+    """
+    document.seller_member = herd_holder(row.from_herd_id or individual.origin_herd_id) or document.seller_member
+    if row.herd.herd not in OUTSIDE_GENEBANK_HERDS:
+        document.buyer_member = herd_holder(row.herd_id) or document.buyer_member
     proof = document.doc_type == "bevis"
     if proof:
         document.individual, document.herd_tracking_id, document.done_at = individual, row.id, now()
-        document.save()
     else:
         item.missing_proof = True
         item.save()
+    document.save()
     detail = {"document": document.id, "individual": individual.number, "herd": row.herd.herd}
     log_event(item, user, "sparad", action="overlatelse", missing_proof=not proof, **detail)
     close_if_done(item, user)
@@ -845,6 +880,23 @@ def _item_done_mail(params):
     )
     numbers = list(dict.fromkeys(number for (number,) in query.tuples()))
     return {"item_id": item.id, "numbers": numbers, "account": item.sender_user_id is not None}
+
+
+@mail_kind("inlasning.paminnelse", priority=1, category="T")
+@mail_kind("inlasning.ofullstandig", priority=1, category="T")
+def _incomplete_mail(params):
+    """What is missing, in the handler's note read when the mail goes (none left once purged); none once moved on."""
+    item = InboxItem.get_or_none(InboxItem.id == params["item_id"])
+    if item is None or item.state != "ofullstandig":
+        return None
+    event = InboxEvent.get_or_none((InboxEvent.id == params["event_id"]) & (InboxEvent.item == item.id))
+    note = (event.detail or {}).get("note") if event else None
+    return {
+        "item_id": item.id,
+        "note": note,
+        "deadline": f"{item.received_at + months(INCOMPLETE_MONTHS):%Y-%m-%d}",
+        "account": item.sender_user_id is not None,
+    }
 
 
 @mail_kind("notis.sammandrag", priority=1, category="N")

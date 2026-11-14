@@ -1213,6 +1213,32 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertIn(("inbox_item", "inboxitem_gmail_message_id", ("gmail_message_id",), True), fresh)
         self.assertTrue(set(tables).isdisjoint(db.AUDITED_TABLES))
 
+    def test_replay_39_to_40_lets_an_original_go_and_records_seller_and_buyer(self):
+        """A database stamped at 39 gets a nullable original and the two member columns, as a fresh bootstrap."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+
+        def shape():
+            columns = {(c.name, c.null) for c in db.DATABASE.get_columns("inbox_document")}
+            indexes = {(i.name, tuple(i.columns), i.unique) for i in db.DATABASE.get_indexes("inbox_document")}
+            keys = {(k.column, k.dest_table, k.dest_column) for k in db.DATABASE.get_foreign_keys("inbox_document")}
+            return columns, indexes, keys
+
+        fresh = shape()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 40).execute()
+        db.DATABASE.execute_sql(
+            "ALTER TABLE inbox_document DROP COLUMN seller_member_id, DROP COLUMN buyer_member_id, "
+            "ALTER COLUMN original_path SET NOT NULL"
+        )
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(shape(), fresh)
+        self.assertIn(("original_path", True), fresh[0])
+        self.assertIn(("seller_member_id", "member", "member_id"), fresh[2])
+
     def _max_schema_version(self):
         return db.SchemaHistory.select(  # pylint: disable=E1120
             db.fn.MAX(db.SchemaHistory.version)

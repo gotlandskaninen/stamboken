@@ -144,6 +144,13 @@ interpretation.interpreter = (os.environ.get("INLASNING_TOLKARE") or "av").strip
 interpretation.model = os.environ.get("INLASNING_MODELL") or "gemma4"
 interpretation.ollama_url = (os.environ.get("OLLAMA_URL") or "http://ollama:11434").rstrip("/")
 
+inbox = Namespace()  # pylint: disable=C0103
+# The intake queue's retention (docs/inkorg.md, "Gallring"): the months an original of a certificate or a proof is
+# kept after its item came in.
+inbox.original_months = int(os.environ.get("INLASNING_ORIGINAL_MANADER") or 12)
+if inbox.original_months < 1:
+    raise RuntimeError(f"INLASNING_ORIGINAL_MANADER={inbox.original_months} is not a number of months, 1 or more.")
+
 s3.bucket = os.environ.get("S3_BUCKET", "test")
 s3.endpoint = os.environ.get("S3_ENDPOINT", None)
 s3.region = os.environ.get("S3_REGION", "us-east-1")

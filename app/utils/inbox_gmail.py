@@ -332,23 +332,10 @@ def _related(item):
         & (MailMessage.ref_id == item.id)
     )
     addresses = [m.email for m in Member.select(Member.email).where(Member.id.in_(asked))]
-    holder = herd_holder(item.herd_id)
+    holder = inbox.herd_holder(item.herd_id)
     uploader = User.get_or_none(User.id == item.sender_user_id) if item.sender_user_id else None
     addresses += [item.sender_address, holder and holder.email, uploader and uploader.email]
     return {_normalize(address) for address in addresses} - {None}
-
-
-def herd_holder(herd_id):
-    """The herd's holder per the member register: the active main member of the membership that owns it."""
-    if herd_id is None:
-        return None
-    return (
-        Member.select()
-        .join(Herd, on=(Herd.membership == Member.membership))
-        .where((Herd.id == herd_id) & (Member.role == "huvudmedlem") & Member.end_date.is_null(True))
-        .order_by(Member.id)
-        .first()
-    )
 
 
 def authenticated(msg, sender):
@@ -476,7 +463,7 @@ def ask_breeder(item, user, text, document_id=None, crop=None):
         document = inbox.document_of(item, document_id)
         crop = inbox._rects([crop])[0]  # pylint: disable=protected-access  # as a masking rectangle
         detail.update(document=document.id, rotation=document.rotation, crop=crop)
-    holder = herd_holder(item.herd_id)
+    holder = inbox.herd_holder(item.herd_id)
     if holder is None or _normalize(holder.email) is None:
         raise inbox.InboxError(409, "Besättningen har ingen innehavare med e-post i matrikeln.")
     event = InboxEvent.create(item=item, user=user.id, kind="fraga", detail=detail)
@@ -511,12 +498,13 @@ def _cropped(document, rect, rotation):
 
 @mail_kind("inlasning.fraga", priority=1, category="T")
 def _question_mail(params):
-    """The question as it stands when the mail goes, with its frame cut from the original; none once closed."""
+    """The question as it stands when the mail goes, with its frame cut from the original; none once closed or once
+    its text is purged. The frame is left out when the original is gone."""
     event = InboxEvent.get_or_none((InboxEvent.id == params["event_id"]) & (InboxEvent.item == params["item_id"]))
-    if event is None or not event.detail or event.item.state in inbox.CLOSED_STATES:
+    if event is None or "text" not in (event.detail or {}) or event.item.state in inbox.CLOSED_STATES:
         return None
     detail, attachments = event.detail, []
     document = InboxDocument.get_or_none(InboxDocument.id == detail["document"]) if "crop" in detail else None
-    if document is not None:
+    if document is not None and document.original_path is not None:
         attachments.append(("utsnitt.jpg", "image/jpeg", _cropped(document, detail["crop"], detail["rotation"])))
     return {"item_id": event.item_id, "text": detail["text"], "crop": bool(attachments), "attachments": attachments}

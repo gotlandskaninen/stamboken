@@ -31,7 +31,8 @@ Driften av mejlläsningen står i [inkorg-gmail.md](inkorg-gmail.md).
 19. [Notiser](#notiser)
 20. [Mejl](#mejl)
 21. [Tolkning](#tolkning)
-22. [Gränser och sådant gränssnittet behöver veta](#gränser-och-sådant-gränssnittet-behöver-veta)
+22. [Gallring](#gallring)
+23. [Gränser och sådant gränssnittet behöver veta](#gränser-och-sådant-gränssnittet-behöver-veta)
 
 ## Begrepp
 
@@ -97,8 +98,8 @@ bort.
 | `vantar_uppfodare` | en fråga till uppfödaren är skickad (`…/fraga`) | ja |
 | `vantar_foralder` | ett intyg kan inte sparas förrän en förälder finns | ja |
 | `hos_genbanksansvarig` | lämnad till genbanksansvarig för korrigering eller beslut | nej |
-| `ofullstandig` | något saknas; handläggaren har skrivit vad | ja |
-| `klar` | alla dokument är klara eller avfärdade | (den sista) |
+| `ofullstandig` | något saknas; handläggaren har skrivit vad, och avsändaren har fått ett mejl | ja |
+| `klar` | alla dokument är klara eller avfärdade, eller meddelandet är besvarat | (den sista) |
 | `dubblett` | samma sak finns i en annan post (`duplicate_of`) | (den sista) |
 | `skrap` | reklam, fel adress | (den sista) |
 
@@ -122,8 +123,10 @@ bort.
 | `dubblett` | `…/lage` med `duplicate_of` | `tagen`, `vantar_uppfodare`, `vantar_foralder`, `ofullstandig` | handläggaren |
 | `skrap` | `…/lage` | `tagen`, `vantar_uppfodare`, `vantar_foralder`, `ofullstandig` | handläggaren |
 | `klar` | det sista dokumentet blir klart eller avfärdat | alla öppna lägen | systemet |
+| `klar` | `…/lage`, bara för `kind: "meddelande"` ("besvarat"); dokument som kommit med ett svar måste vara klara eller avfärdade | `tagen`, `vantar_uppfodare`, `vantar_foralder`, `ofullstandig` | handläggaren |
 
-Allt annat nekas med 409. `ny`, `klar` och `vantar_uppfodare` kan inte sättas med `…/lage` (400).
+Allt annat nekas med 409. `ny` och `vantar_uppfodare` kan inte sättas med `…/lage` (400), och inte heller
+`klar` för en post som inte är ett meddelande.
 
 ## Arbetsgången
 
@@ -201,7 +204,9 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
 - `sender` och `assigned_to`: `null` eller `{id, name}`. `name` är kontots fullständiga namn, och
   `"Konto <id>"` när namnet saknas. E-postadressen visas aldrig.
 - `missing_proof`: en försäljning har registrerats utan överlåtelsebevis ("bevis saknas").
-- `stalled`: sätts av en senare del (en post som stått still i 14 dagar); alltid `false` i dag.
+- `stalled`: "står still". Nattjobbet sätter den på en post som varit `tagen` i 14 dagar utan någon
+  händelse (att öppna posten eller visa originalet räknas inte), och tar bort den när något har hänt.
+  Genbanksansvariga i postens genbank får notisen `star_still`, en gång för varje gång posten stannar.
 - `maybe_blurry`: något dokument har varningen `suddig` (kön visar "kan vara oskarp").
 - `documents` och `documents_done`: antal dokument och antal klara eller avfärdade.
 
@@ -220,9 +225,9 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
 }
 ```
 
-`sender_address` är avsändarens adress för en mejlad post och `null` för uppladdningar. Den
-nollas när posten är stängd och inget mejl till avsändaren väntar, och senast 30 dagar efter
-stängningen.
+`message` är `null` när texten är gallrad (se [Gallring](#gallring)). `sender_address` är avsändarens
+adress för en mejlad post och `null` för uppladdningar. Den nollas när posten är stängd och inget mejl
+till avsändaren väntar, och senast 30 dagar efter stängningen.
 
 ### Dokument
 
@@ -244,6 +249,7 @@ stängningen.
   "proposal": null,
   "individual": null,
   "herd_tracking_id": null,
+  "has_original": true,
   "has_copy": false,
   "done_at": null
 }
@@ -297,6 +303,8 @@ stängningen.
   Förslaget sparas aldrig av sig självt: det är handläggarens `…/spara` som skriver.
 - `individual`: kaninens nummer när dokumentet är sparat, annars `null`.
 - `herd_tracking_id`: försäljningens rad i besättningshistoriken, för ett bevis.
+- `has_original`: originalet finns. `false` när det är gallrat eller raderat på begäran (se
+  [Gallring](#gallring)); `…/original` svarar då 404.
 - `has_copy`: kopian finns.
 
 ### Händelser
@@ -319,6 +327,9 @@ stängningen.
 | `fraga` | `{"text": "Står det G1-2112?", "document": 31, "rotation": 0, "crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.25}}`; de tre sista bara med utsnitt |
 | `svar` | `{"text": "Ja.", "documents": [33], "not_saved": ["brev.docx"]}`; `user` är `null`, `not_saved` bara när något inte sparades |
 | `tolka_igen` | `{"document": 31}`; handläggaren lade dokumentet i tolkningens kö igen |
+| `original_raderat` | `{"document": 31}`; originalet raderades på begäran (`…/radera-original`) |
+
+När postens text gallras försvinner `text`, `note` och `not_saved` ur `detail`; händelsen står kvar.
 
 ## Ladda upp
 
@@ -492,20 +503,22 @@ ovan; ett fel på någon post stoppar alla.
 
 | Fält | |
 |---|---|
-| `state` | `tagen`, `vantar_foralder`, `hos_genbanksansvarig`, `ofullstandig`, `dubblett` eller `skrap` |
+| `state` | `tagen`, `vantar_foralder`, `hos_genbanksansvarig`, `ofullstandig`, `dubblett`, `skrap`, eller `klar` för ett meddelande |
 | `note` | text, högst 2000 tecken; krävs för `ofullstandig`, valfri annars; sparas i händelsen |
 | `duplicate_of` | krävs för `dubblett`: id för den andra posten |
 
 Reglerna står i [Lägen](#lägen). Vid `hos_genbanksansvarig` tas handläggaren bort och
-genbanksansvariga i postens genbank får notisen `lamnad`. Öppnar genbanksansvarig eller admin en
-stängd post blir hen handläggare.
+genbanksansvariga i postens genbank får notisen `lamnad`. Vid `ofullstandig` köas mejlet
+`inlasning.ofullstandig` till avsändaren (se [Mejl](#mejl)). Ett meddelande som stängs som `klar` ger
+inget mejl. Öppnar genbanksansvarig eller admin en stängd post blir hen handläggare.
 
 **Svar 200:** posten i listform.
 
-**Fel:** 400 för ett okänt läge, `ofullstandig` utan `note`, `dubblett` utan en annan post,
-`vantar_foralder` när inget dokument har `waiting_for`; 403 när någon annan än genbanksansvarig
-eller admin öppnar en stängd post; 409 när anroparen inte är handläggare eller övergången inte
-finns.
+**Fel:** 400 för ett okänt läge, `klar` för en post som inte är ett meddelande, `ofullstandig` utan
+`note`, `dubblett` utan en annan post, `vantar_foralder` när inget dokument har `waiting_for`; 403 när
+någon annan än genbanksansvarig eller admin öppnar en stängd post; 409 när anroparen inte är
+handläggare, övergången inte finns eller ett meddelande har dokument som inte är klara (`Gör klart
+eller avfärda dokumenten först.`).
 
 ## Dokument
 
@@ -533,7 +546,8 @@ det sista dokumentet avfärdat blir posten `klar`.
 
 **Fel:** 400 för ett okänt fält, ett ogiltigt värde, ett nummer som inte går att läsa eller som
 redan finns i Stamboken (`"G1-2111 finns redan i Stamboken."`); 404 när dokumentet inte hör till
-posten; 409 när anroparen inte är handläggare.
+posten; 409 när anroparen inte är handläggare, eller när kopian skulle göras om men originalet är
+raderat.
 
 **Väntar på förälder.** Saknas en förälder i Stamboken: ange förälderns nummer i `waiting_for`
 och byt läge till `vantar_foralder`. När en kanin med det numret läggs in, var som helst i
@@ -552,8 +566,8 @@ ingen handläggare får genbanksansvariga den).
 **Svar 200:** `{"item": <post i listform>, "document": <dokument>}`.
 
 **Fel:** 404 när dokumentet inte hör till posten; 409 när anroparen inte är handläggare, när
-tolkningen är avstängd (`Bildtolkningen är avstängd.`) eller när dokumentet inte är ett intyg som
-inte sparats än (`Bara ett intyg som inte är sparat kan tolkas.`).
+tolkningen är avstängd (`Bildtolkningen är avstängd.`), när dokumentet inte är ett intyg som
+inte sparats än (`Bara ett intyg som inte är sparat kan tolkas.`) eller när originalet är raderat.
 
 ## Spara det intyget visar
 
@@ -729,7 +743,7 @@ Kopian görs om från originalet varje gång rektanglarna eller vridningen ändr
 **Svar 200:** `{"item": <post>, "document": <dokument>}`.
 
 **Fel:** 400 när `mask_rects` saknas både i anropet och på dokumentet, eller är ogiltiga; 409 när
-dokumentet inte är ett sparat intyg eller anroparen inte är handläggare.
+dokumentet inte är ett sparat intyg, anroparen inte är handläggare eller originalet är raderat.
 
 ## Bilderna
 
@@ -739,6 +753,7 @@ publika uppladdningskatalogen och nås bara genom de här endpointsen.
 ### `GET /api/v2/inkorg/{id}/dokument/{dok}/original`
 
 Originalet. **Vem:** de som arbetar i kön. Varje hämtning loggas som händelsen `original_visat`.
+**404** (`Originalet är raderat.`) när originalet är gallrat eller raderat på begäran; inget loggas då.
 
 ### `GET /api/v2/individual/{nummer}/paper-certificate`
 
@@ -768,7 +783,8 @@ Gränssnittet kan använda 404 för att dölja "Pappersintyg" på kaninens sida.
 
 Frågan sparas som händelsen `fraga`, och mejlet `inlasning.fraga` köas till besättningens
 innehavare enligt matrikeln (medlemskapets huvudmedlem). Ämnesraden slutar med "(ärende 12)".
-Med `crop` bifogas utsnittet som JPEG, skuret ur originalet när mejlet skickas. Posten blir
+Med `crop` bifogas utsnittet som JPEG, skuret ur originalet när mejlet skickas, utom när originalet
+hunnit raderas. Är frågans text gallrad när mejlet ska gå stoppas det. Posten blir
 `vantar_uppfodare`.
 
 Svaret kommer till föreningens brevlåda. Det läggs på posten som händelsen `svar`, med svarets
@@ -859,6 +875,7 @@ Alla har notiser, också den som bara laddar upp. Notiserna gäller poster och n
 | `foralder_inlagd` | Föräldern är inlagd, och posten väntar inte längre | handläggaren |
 | `svar` | Uppfödaren har svarat | handläggaren; genbanksansvariga i postens genbank när posten saknar handläggare |
 | `klar` | Ditt inskick är klart | uppladdaren; länka till Mina inskick, inte till kön |
+| `star_still` | En post har stått still i 14 dagar | genbanksansvariga i postens genbank (alla genbanksansvariga och admin när genbanken är okänd) |
 
 En notis blir läst när posten öppnas (`GET /api/v2/inkorg/{id}`), när Mina inskick öppnas
 (notiser av typen `klar`) eller genom `…/notiser/las`.
@@ -905,6 +922,14 @@ Mejlen går genom mejlkön ([mejl.md](mejl.md)) och köas i samma transaktion so
   Genbanksansvarig lägger in dem." med ämnesraden "Vi har fått dina bilder (ärende 12)". Bara
   när Gmail har godkänt avsändarens domän (SPF eller DKIM), och högst ett per avsändare och dygn.
 - **`inlasning.fraga`** till besättningens innehavare, se [Fråga uppfödaren](#fråga-uppfödaren).
+- **`inlasning.ofullstandig`** till uppladdaren, eller till avsändarens adress för en mejlad post,
+  när posten markeras `ofullstandig`. Ämnesraden är "Något saknas i ditt inskick (ärende 12)", och
+  mejlet har handläggarens anteckning och datumet då posten tas bort (se [Gallring](#gallring)).
+  Raden i mejlkön har bara postens och händelsens id; anteckningen läses ur händelsen när mejlet går,
+  och är den gallrad går mejlet utan den. Mejlet stoppas om posten inte längre är `ofullstandig`.
+- **`inlasning.paminnelse`** till samma mottagare, en gång, när posten fortfarande är `ofullstandig`
+  11 månader efter att den kom in: "Påminnelse: något saknas i ditt inskick (ärende 12)", med samma
+  anteckning, om den finns kvar, och datum. Nattjobbet `inbox_purge` köar det.
 - **`notis.sammandrag`** kl. 07 varje dag till var och en som har olästa notiser som inget
   sammandrag tagit med och som inte stängt av mejlet. Det listar de olästa notiserna med
   ärendenummer och länkar till `/stamboken/inkorg`. Notiser av typen `klar` tas aldrig med:
@@ -982,6 +1007,62 @@ Med `av` kommer dokumenten in med `interpretation_status: "av"`, och kön funger
 tolkning. Ett okänt värde räknas som `av`. Tolkaren är ett gränssnitt, `interpret(bild, schema) ->
 dict` i `app/utils/inbox_interpreter.py`, och en andra tolkare läggs till i `INTERPRETERS`. En
 tolkare som skickar foton från servern kräver styrelsens beslut och ett avtal först.
+
+## Gallring
+
+Nattjobbet `inbox_purge` (kl. 03:45 i schemaläggarens ledare, `app/utils/inbox_purge.py`) gallrar kön.
+Varje regel körs för sig, så att en regel som fallerar inte hoppar över de andra, och en regel som körs
+igen ändrar ingenting. En månad är 365,25/12 dagar avrundat uppåt till hela dagar, som i
+kommandologgen: 12 månader är 366 dagar och 13 månader 396.
+
+| Vad | Gallras |
+|---|---|
+| Originalet till ett intyg eller bevis (`doc_type` `intyg`, `bevis`) | `INLASNING_ORIGINAL_MANADER` månader (standard 12) efter att posten kom in, i alla lägen |
+| Bevisets original | också när kaninen sålts vidare: en senare `TRANSFER` från köparens besättning som inte är makulerad. Försäljningens rad i besättningshistoriken står kvar |
+| Postens text: `message` och `text`, `note` och `not_saved` i händelserna | samtidigt som originalen, för en post som har dokument. Händelserna står kvar med typ, tid och person |
+| Händelsen `oppnad` | 13 månader efter händelsen |
+| Ett stängt meddelande (`kind: "meddelande"`) utan dokument | 13 månader efter stängningen |
+| En post i läget `skrap` | 30 dagar efter stängningen |
+| En post i läget `ofullstandig` | 12 månader efter att den kom in; mejl när den markeras och efter 11 månader (se [Mejl](#mejl)) |
+| `sender_address` på en stängd post | när inget mejl till avsändaren väntar, senast 30 dagar efter stängningen, också när Gmail-läsningen är avstängd |
+| `gmail_processed` | 60 dagar |
+| Kopian på kaninen och spåret i `inbox_operation` | aldrig |
+
+- En post raderas med sina dokument, händelser, notiser och original, och mejlkön glömmer avsändarens
+  adress (`forget_recipient("inbox_sender", id)`). En post där något dokument har lagts på en kanin (en
+  kopia, en registrering eller ett bevis till en försäljning) raderas aldrig; dess original och text
+  gallras enligt de två första raderna.
+- Originalen till andra dokumenttyper (`arsblankett`, `annat`) gallras bara med sin post.
+- `original_path` släpps i databasen innan filen tas bort, och bara filer direkt i `inkorg/original/`
+  under `PRIVATE_UPLOAD_FOLDER` tas bort. Loggen visar antal, aldrig namn eller sökvägar.
+- När originalet är borta har dokumentet `has_original: false`, `…/original` svarar 404 och kopian kan
+  inte göras om. Kopian på kaninen visas som förut.
+
+**Inställning** (`.docker/api-variables.env`): `INLASNING_ORIGINAL_MANADER`, hela månader, minst 1,
+standard 12.
+
+### En person raderas
+
+När en person anonymiseras i matrikeln (`anonymize_person`) raderas originalen till de dokument där
+personen är sparad som säljare eller köpare, och texten i deras poster. Säljaren är innehavaren av
+kaninens besättning när ett intyg sparas, och av säljarens besättning vid en försäljning; köparen är
+innehavaren av köparens besättning vid en försäljning till en medlem. Innehavaren är medlemskapets
+huvudmedlem i matrikeln. Finns en kopia är den det enda som blir kvar, med säljar- och köparblocket
+täckt.
+
+### `POST /api/v2/inkorg/{id}/dokument/{dok}/radera-original`
+
+Samma sak för ett dokument på begäran, till exempel när en köpare utanför föreningen ber om det.
+Originalet raderas, postens text också, och händelsen `original_raderat` loggas. Ett nytt anrop loggas
+igen men har inget mer att radera.
+
+**Vem:** genbanksansvarig för postens genbank och admin (en post utan genbank: alla
+genbanksansvariga), i alla lägen.
+
+**Svar 200:** `{"item": <post i listform>, "document": <dokument>}`.
+
+**Fel:** 403 för en hjälpare och för den som inte arbetar i kön; 404 när posten inte finns eller
+dokumentet inte hör till den.
 
 ## Gränser och sådant gränssnittet behöver veta
 
