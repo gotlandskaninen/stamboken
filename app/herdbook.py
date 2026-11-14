@@ -80,6 +80,7 @@ import utils.genetics_service as genetics  # isort:skip
 from utils import number_assets  # isort:skip
 from utils.individual_commands import purge_command_free_text  # isort:skip
 from utils.mail import purge_old_mail, send_pending  # isort:skip
+from utils.inbox import queue_digests  # isort:skip
 from utils.members import try_auto_link_member  # isort:skip
 from utils.legacy_compat import is_legacy_host, legacy_classroom_url  # isort:skip
 from utils.redis_retry import reconnect_on_drop  # isort:skip
@@ -270,6 +271,16 @@ def _send_mail():
         send_pending()
     except Exception:  # pylint: disable=broad-except
         APP.logger.exception("Mail sender run failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _queue_notice_digests():
+    """Leader job at 07:00 (docs/inkorg.md), built as _send_mail: it closes its thread's connection."""
+    try:
+        APP.logger.info("Queued %s notice digests", queue_digests())
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Queueing the notice digests failed")
     finally:
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
@@ -2983,6 +2994,17 @@ def initialize_app():
             id="mail_send",
             max_instances=1,
             coalesce=True,
+        )
+
+        # The intake queue's daily digest of unread notices (docs/inkorg.md), category N in the mail queue.
+        scheduler.add_job(
+            _queue_notice_digests,
+            "cron",
+            hour=7,
+            id="notice_digest",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
         )
 
         # Warm the shared genetics memo once at startup (workers only build their snapshots)

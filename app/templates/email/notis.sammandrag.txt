@@ -1,0 +1,14 @@
+{% block subject %}Olästa notiser i Stamboken{% endblock %}
+
+{% block body %}
+Hej!
+
+Du har {{ notices|length }} {{ "oläst notis" if notices|length == 1 else "olästa notiser" }} i Stamboken:
+{% for notice in notices %}
+- {{ notice.text }}{% if notice.item_id %} (ärende {{ notice.item_id }}){% endif %}{% endfor %}
+
+Inläsningskön:
+{{ base_url }}/stamboken/inkorg
+
+Det här mejlet kommer en gång om dagen när du har olästa notiser. Du kan stänga av det under notiserna i Stamboken.
+{% endblock %}

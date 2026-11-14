@@ -17,6 +17,7 @@ from PIL import Image, ImageDraw, ImageFilter, ImageStat
 
 import utils.settings as settings
 from utils.database import (
+    DB_PROXY,
     OUTSIDE_GENEBANK_HERDS,
     Herd,
     InboxDocument,
@@ -30,6 +31,7 @@ from utils.database import (
 )
 from utils.individual_number_v2 import parse_number
 from utils.individual_policy import Role
+from utils.mail import enqueue_mail, mail_kind
 
 OPEN_STATES = ("ny", "tagen", "vantar_uppfodare", "vantar_foralder", "hos_genbanksansvarig", "ofullstandig")
 CLOSED_STATES = ("klar", "dubblett", "skrap")
@@ -397,6 +399,15 @@ def close_if_done(item, user):
     log_event(item, user, "lage", **{"from": previous, "to": "klar"})
     if item.sender_user_id is not None:
         notify(item.sender_user_id, "klar", item, mailed=True)
+        enqueue_mail(
+            "inlasning.klar",
+            "user",
+            item.sender_user_id,
+            {"item_id": item.id},
+            ref=("inbox_item", item.id),
+            herd=item.herd_id,
+            genebank=item.genebank_id,
+        )
 
 
 def _rects(value):
@@ -747,3 +758,57 @@ def parent_registered(number):
         handlers = [item.assigned_to_id] if item.assigned_to_id else queue_workers(item.genebank_id, managers_only=True)
         for handler in handlers:
             notify(handler, "foralder_inlagd", item)
+
+
+@mail_kind("inlasning.klar", priority=1, category="T")
+def _item_done_mail(params):
+    """To the uploader when the item is "klar"; stopped if it was reopened before the mail went."""
+    item = InboxItem.get_or_none(InboxItem.id == params["item_id"])
+    if item is None or item.state != "klar":
+        return None
+    query = (
+        InboxDocument.select(Individual.number)
+        .join(Individual)
+        .where(InboxDocument.item == item.id)
+        .order_by(InboxDocument.id)
+    )
+    return {"item_id": item.id, "numbers": list(dict.fromkeys(number for (number,) in query.tuples()))}
+
+
+@mail_kind("notis.sammandrag", priority=1, category="N")
+def _digest_mail(params):
+    """The user's unread notices when the mail goes; none left (all read since), no mail."""
+    notices = (
+        Notice.select()
+        .where((Notice.user == params["user_id"]) & Notice.read_at.is_null(True) & (Notice.kind != "klar"))
+        .order_by(Notice.created_at, Notice.id)
+    )
+    rows = [{"text": NOTICE_TEXTS.get(n.kind, n.kind), "item_id": n.item_id} for n in notices]
+    return {"notices": rows} if rows else None
+
+
+def queue_digests(at=None):
+    """
+    The daily notis.sammandrag (07:00): one mail to each active user with unread notices that no digest has
+    covered, unless they turned the mail off. The notices are marked as mailed in the same transaction as the
+    mail is queued. "Klar" notices never come here: they have inlasning.klar. Returns the number of mails.
+    """
+    at = at or now()
+    with DB_PROXY.atomic():
+        disabled = {s.user_id for s in NoticeSetting.select().where(~NoticeSetting.mail_enabled)}
+        pending = (
+            Notice.select(Notice.user)
+            .join(User)
+            .where(Notice.read_at.is_null(True) & Notice.mailed_at.is_null(True) & User.is_active)
+            .distinct()
+        )
+        queued = 0
+        for user_id in sorted({user_id for (user_id,) in pending.tuples()} - disabled):
+            key = f"notis.sammandrag:{user_id}:{at:%Y-%m-%d}"
+            if enqueue_mail("notis.sammandrag", "user", user_id, {"user_id": user_id}, dedupe_key=key) is None:
+                continue  # one digest a day: the rest waits for tomorrow's
+            Notice.update(mailed_at=at).where(
+                (Notice.user == user_id) & Notice.read_at.is_null(True) & Notice.mailed_at.is_null(True)
+            ).execute()
+            queued += 1
+    return queued

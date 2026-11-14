@@ -1,0 +1,13 @@
+{% block subject %}{% if numbers|length == 1 %}{{ numbers[0] }} är inlagd i Stamboken{% elif numbers %}Dina kaniner är inlagda i Stamboken{% else %}Ditt inskick är klart{% endif %} (ärende {{ item_id }}){% endblock %}
+
+{% block body %}
+Hej!
+
+{% if numbers %}Det du skickade in är inlagt i Stamboken:
+{% for number in numbers %}
+{{ number }}{% endfor %}
+{% else %}Vi har gått igenom det du skickade in.
+{% endif %}
+Du ser dina inskick här:
+{{ base_url }}/stamboken/inskick
+{% endblock %}
