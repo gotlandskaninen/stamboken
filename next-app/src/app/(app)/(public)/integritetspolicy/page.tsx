@@ -69,7 +69,8 @@ export default function IntegritetspolicyPage() {
               personuppgiftsansvarig för uppgifterna i medlemsregistret, i
               Stamboken Online och på den här webbplatsen. Har du frågor om hur
               vi behandlar dina uppgifter, eller vill du använda någon av dina
-              rättigheter, mejla {contactLink}.
+              rättigheter, mejla {contactLink}. Vill du ha den här texten på
+              papper kan du be genbanksansvarig eller mejla samma adress.
             </p>
           </Section>
 
