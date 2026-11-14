@@ -2,8 +2,10 @@
 #
 # Tests that the demo sync copies production without the data of the queue
 # tables: the demo API keeps running through the load, and its mail sender must
-# never see production's queue. Runs the pg_dump flags from sync-demo-db.sh
-# against a throwaway Postgres container.
+# never see production's queue. Nor does the demo keep production's buyers
+# outside the association: they are deleted after the load. Runs the pg_dump
+# flags and the buyer step from sync-demo-db.sh against a throwaway Postgres
+# container.
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -17,7 +19,8 @@ check() { # desc expected actual
 }
 
 SKIP_QUEUE_DATA=""
-eval "$(grep -E '^SKIP_QUEUE_DATA=' "$SCRIPT")"
+DROP_BUYERS_SQL=""
+eval "$(grep -E '^(SKIP_QUEUE_DATA|DROP_BUYERS_SQL)=' "$SCRIPT")"
 
 name="herdbook-sync-demo-test-$$"
 trap 'docker rm -f "$name" >/dev/null 2>&1' EXIT
@@ -39,6 +42,10 @@ INSERT INTO mail_message VALUES (1);
 INSERT INTO mail_attempt VALUES (1, 1);
 INSERT INTO notice_setting VALUES (1);
 INSERT INTO hbuser VALUES (1);
+CREATE TABLE buyer_contact (id int PRIMARY KEY);
+CREATE TABLE herd_tracking (id int PRIMARY KEY, holder_contact_id int REFERENCES buyer_contact ON DELETE SET NULL);
+INSERT INTO buyer_contact VALUES (1);
+INSERT INTO herd_tracking VALUES (1, 1);
 SQL
 
 # The dump-and-load step of sync-demo-db.sh. No inbox_*, notice or gmail_*
@@ -53,6 +60,13 @@ check "mail_message comes over without rows" 0 "$(sql -d dst -c 'SELECT count(*)
 check "mail_attempt comes over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM mail_attempt')"
 check "notice_setting (a user preference) keeps its rows" 1 "$(sql -d dst -c 'SELECT count(*) FROM notice_setting')"
 check "an ordinary table keeps its rows" 1 "$(sql -d dst -c 'SELECT count(*) FROM hbuser')"
+
+sql -d dst -c "$DROP_BUYERS_SQL" >/dev/null
+check "the buyer step succeeds" 0 "$?"
+check "the demo has no buyers" 0 "$(sql -d dst -c 'SELECT count(*) FROM buyer_contact')"
+check "the sale stays, without its buyer" "1|" "$(sql -d dst -c 'SELECT id, holder_contact_id FROM herd_tracking')"
+sql -d dst -c "DROP TABLE herd_tracking, buyer_contact" -c "$DROP_BUYERS_SQL" >/dev/null
+check "an older schema without buyers is skipped" 0 "$?"
 
 echo ""
 echo "passed: $pass, failed: $fail"

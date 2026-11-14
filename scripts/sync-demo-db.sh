@@ -174,21 +174,14 @@ docker exec "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -v ON_ERROR_STOP=1 -
 
 # The copy also carries production's buyers outside the association (ADR-0016).
 # Only a genebank's managers and helpers may see them, and every read is logged
-# in production, not in the demo, so they are deleted. They cannot be left out
-# of the dump as the queue tables are: herd_tracking points at them, and its
-# foreign key would fail the load. DELETE, not TRUNCATE: the FK nulls
-# herd_tracking.holder_contact_id and the sales stay. An older schema without
-# the table is skipped.
+# in production, not in the demo, so they are removed. They cannot be left out
+# with --exclude-table-data as the queue tables are: herd_tracking points at
+# them, and the load's foreign key would fail. One statement, so one
+# transaction: the FK (ON DELETE SET NULL) nulls herd_tracking.holder_contact_id
+# and the sales stay. An older schema without the table is skipped.
+DROP_BUYERS_SQL="DO \$\$ BEGIN IF to_regclass('buyer_contact') IS NOT NULL THEN DELETE FROM buyer_contact; END IF; END \$\$;"
 echo "Deleting the buyers outside the association in $TARGET_DB..."
-docker exec -i "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -v ON_ERROR_STOP=1 -q <<'SQL'
-DO $$
-BEGIN
-	IF to_regclass('buyer_contact') IS NOT NULL THEN
-		DELETE FROM buyer_contact;
-	END IF;
-END
-$$;
-SQL
+docker exec "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -v ON_ERROR_STOP=1 -q -c "$DROP_BUYERS_SQL"
 
 # Verifiera
 TABLES=$(docker exec "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -t -c \
