@@ -26,7 +26,16 @@ from urllib.parse import urlparse
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 import utils.settings as settings
-from utils.database import DB_PROXY, MailAttempt, MailMessage, MailSender, Member, MemberApplication, User
+from utils.database import (
+    DB_PROXY,
+    BuyerContact,
+    MailAttempt,
+    MailMessage,
+    MailSender,
+    Member,
+    MemberApplication,
+    User,
+)
 
 logger = logging.getLogger("herdbook.mail")
 
@@ -592,6 +601,13 @@ def _user(user_id):
 def _application(application_id):
     a = MemberApplication.get_or_none(MemberApplication.id == application_id)
     return Recipient(a.email, f"{a.first_name} {a.last_name}") if a else None
+
+
+@recipient_kind("buyer_contact")
+def _buyer_contact(contact_id):
+    c = BuyerContact.get_or_none(BuyerContact.id == contact_id)
+    # Never the name: only a genebank's managers and helpers see a buyer, and each read is logged (ADR-0016).
+    return Recipient(c.email, f"Köpare {c.id}") if c else None
 
 
 # --- Kinds ---

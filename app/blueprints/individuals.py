@@ -178,9 +178,10 @@ def _min_sale_date(individual):
     return None
 
 
-def _validate_sale(individual, form, user):
+def _validate_sale(individual, form, user, buyer=None):
     """
-    Server-side rules for a sale/move (a PATCH carrying `selling_date`).
+    Server-side rules for a sale/move (a PATCH carrying `selling_date`). With a `buyer`, GX1 to GX1 (MX1 to MX1)
+    is a sale too: one buyer outside the association selling to another (ADR-0016).
     Returns a Swedish error message, or None if the sale is valid.
     Kept out of data_access.update_individual so legacy behaviour is untouched (ADR-0006).
     """
@@ -201,7 +202,8 @@ def _validate_sale(individual, form, user):
         )
 
     target_code = _herd_code(form.get("herd"))
-    if target_code == _herd_code(individual.get("herd")):
+    resale = buyer is not None and target_code in OUTSIDE_GENEBANK_HERDS
+    if target_code == _herd_code(individual.get("herd")) and not resale:
         return "Individen finns redan i den besättningen."
     target = Herd.get_or_none(Herd.herd == target_code)
     if target is None:
@@ -217,7 +219,7 @@ def _validate_sale(individual, form, user):
     return None
 
 
-def _check_transfer(individual, form, user_uuid):
+def _check_transfer(individual, form, user_uuid, buyer=None):
     """
     Guard for PATCHes that move an individual to another herd. A move is any
     request whose `herd` differs from the current herd, whether or not it carries
@@ -241,7 +243,7 @@ def _check_transfer(individual, form, user_uuid):
         return problem(400, "Bad Request", "Ange försäljningsdatum för att flytta individen.")
     if "herd" not in form:
         return problem(400, "Bad Request", "Ange vilken besättning individen ska flyttas till.")
-    error = _validate_sale(individual, form, user)
+    error = _validate_sale(individual, form, user, buyer)
     if error:
         return problem(400, "Ogiltig försäljning", error)
     return None
@@ -307,6 +309,10 @@ def update_individual_v2(number):
     # clear a field that does not exist.
     if "selling_date" in form and form["selling_date"] is None:
         del form["selling_date"]
+    # The buyer outside the association, on a sale to GX1/MX1 (ADR-0016); kept out of the legacy form.
+    buyer = form.pop("buyer", None)
+    if buyer is not None and not form.get("selling_date"):
+        return problem(400, "Bad Request", "Köparens uppgifter registreras bara vid en försäljning.")
     # A first paper certificate comes with the individual number the paper says: the number
     # is pinned to the URL here, so it is the paper's claim that is checked against the litter.
     uncertified = not (individual.get("certificate") or individual.get("digital_certificate"))
@@ -332,7 +338,7 @@ def update_individual_v2(number):
             if user is None or not user.can_edit(individual["id"]):
                 return problem(403, "Forbidden", "Forbidden")
 
-            error_response = _check_transfer(individual, form, user_uuid) or _check_origin_herd_change(
+            error_response = _check_transfer(individual, form, user_uuid, buyer) or _check_origin_herd_change(
                 individual, form, user_uuid
             )
             if error_response is not None:
@@ -346,7 +352,7 @@ def update_individual_v2(number):
 
             # clear_nulls: the death and castration fields sent as null are cleared (undo death, IR-51).
             result = da.update_individual(
-                form, user_uuid, genebank_change_reason=form.pop("reason", None), clear_nulls=True
+                form, user_uuid, genebank_change_reason=form.pop("reason", None), clear_nulls=True, buyer=buyer
             )
             if result is None or result.get("status") == "error":
                 msg = (result or {}).get("message", "Unknown error")

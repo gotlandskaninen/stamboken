@@ -168,6 +168,7 @@ class LegacyHerdEvent(Command):
     field: str  # selling_date or yearly_report_date: the key the date came from
     date: object
     reason: str | None = None
+    buyer: dict | None = None  # v2 only: the buyer outside the association on a sale to GX1/MX1
     apply_rank = 70
 
     def apply(self, ctx):
@@ -176,10 +177,10 @@ class LegacyHerdEvent(Command):
         old = ctx.stored.current_herd.herd
         ctx.update_log.info(f"{ctx.user.username},{ctx.individual.number},{self.field},{old},{code},{when}")
         target = resolve_herd(code)
-        if target.herd == _holder(ctx).herd:
+        if target.herd == _holder(ctx).herd and self.buyer is None:
             RecordAttestation(target, self.date).apply(ctx)
-        else:
-            TransferIndividual(target, self.date, self.reason).apply(ctx)
+        else:  # with a buyer also GX1 to GX1: one buyer outside the association selling to another (ADR-0016)
+            TransferIndividual(target, self.date, self.reason, self.buyer).apply(ctx)
 
 
 def _rename(form, stored):
@@ -232,14 +233,14 @@ def _measurements(form):
     return None
 
 
-def _herd_event(form, reason):
+def _herd_event(form, reason, buyer):
     if ("yearly_report_date" in form or "selling_date" in form) and "herd" in form:
         field = "selling_date" if form.get("selling_date") else "yearly_report_date"
-        return LegacyHerdEvent(form["herd"], field, form.get(field), reason)
+        return LegacyHerdEvent(form["herd"], field, form.get(field), reason, buyer)
     return None
 
 
-def translate(form, ctx, *, issue_digital=False, clear_nulls=False, genebank_change_reason=None):
+def translate(form, ctx, *, issue_digital=False, clear_nulls=False, genebank_change_reason=None, buyer=None):
     """
     The commands for `form`, in list order within a stage. A key is read by its presence, null too, and
     gets today's lookup; only the writes skip null (IR-10, IR-40–IR-43).
@@ -256,6 +257,6 @@ def translate(form, ctx, *, issue_digital=False, clear_nulls=False, genebank_cha
         _fields(EditDescription, form, stored),
         _cleared(form) if clear_nulls else None,
         _measurements(form),
-        _herd_event(form, genebank_change_reason),
+        _herd_event(form, genebank_change_reason, buyer),
     )
     return [command for command in commands if command is not None]

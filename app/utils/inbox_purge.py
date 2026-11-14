@@ -255,3 +255,12 @@ def erase_document(item, document, user):
     _clear_text([item.id])
     inbox.log_event(item, user, "original_raderat", document=document.id)
     return paths
+
+
+def erase_buyer_from_inbox(herd_tracking_id):  # pylint: disable=unused-argument
+    """
+    Seam, a no-op for now: when a buyer outside the association is deleted (an erasure, a void of the sale or the
+    five-year purge, utils.herd_tracking.delete_buyer_contacts), the original of the sale's proof (the bevis whose
+    inbox_document.herd_tracking_id is this sale) is to go too, as erase_document does for one document. Called
+    in the caller's transaction, before the buyer is deleted.
+    """
