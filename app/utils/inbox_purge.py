@@ -3,7 +3,8 @@ The intake queue's retention (docs/inkorg.md, "Gallring"): the rules of the nigh
 
 A row lets go of a file before the file goes: the rows change in a transaction with their items locked (every
 write through the queue locks its item first, so none can save a stale document over ours), and the files are
-removed after the commit. A crash in between leaves a file that no row names, never a row naming a missing file.
+removed after the commit. A crash in between leaves a file that no row names, never a row naming a missing file,
+and remove_orphans takes such files a day later.
 Only originals are removed, and only inside PRIVATE_UPLOAD_FOLDER/inkorg/original: the masked copy on the rabbit
 and the inbox_operation trace stay. Every rule takes `now` and is idempotent.
 """
@@ -29,6 +30,7 @@ MESSAGE_MONTHS = 13
 JUNK_AFTER = timedelta(days=30)
 GMAIL_PROCESSED_AFTER = timedelta(days=60)
 STALLED_AFTER = timedelta(days=14)
+ORPHAN_AFTER = timedelta(days=1)  # an upload in progress has written its files but not committed its rows
 VIEWS = ("oppnad", "original_visat")  # looking at an item is not something happening to it
 
 
@@ -60,12 +62,12 @@ def _clear_text(items):
     return cleared.execute() + events.execute()
 
 
-def remove_originals(paths):
+def remove_originals(paths, folder="inkorg/original"):
     """
     After the commit: removes the originals the rows let go of, but only files directly in the originals folder
     (a path naming anything else, also a copy, is kept). Logs counts, never names. Returns how many went.
     """
-    folder = os.path.realpath(inbox.private_path("inkorg/original"))
+    folder = os.path.realpath(inbox.private_path(folder))
     removed = kept = failed = 0
     for relative in paths:
         path = os.path.realpath(inbox.private_path(relative))
@@ -186,6 +188,32 @@ def purge_opened(now):
     return InboxEvent.delete().where((InboxEvent.kind == "oppnad") & (InboxEvent.at < old)).execute()
 
 
+def remove_orphans(now):
+    """
+    Files directly in the originals and the copies folders that no row names: a removal that failed or never ran
+    after its commit, an upload whose transaction rolled back, a temporary file. Only files older than a day, so a
+    file whose row is not committed yet (an upload in progress) is never touched; same path guard as above.
+    """
+    named = set()
+    for column in (InboxDocument.original_path, InboxDocument.public_path):
+        named.update(path for (path,) in InboxDocument.select(column).where(column.is_null(False)).tuples())
+    removed = 0
+    for folder in ("inkorg/original", "inkorg/kopia"):
+        try:
+            entries = list(os.scandir(inbox.private_path(folder)))
+        except FileNotFoundError:
+            continue
+        orphans = [
+            f"{folder}/{entry.name}"
+            for entry in entries
+            if entry.is_file(follow_symlinks=False)
+            and f"{folder}/{entry.name}" not in named
+            and entry.stat(follow_symlinks=False).st_mtime < (now - ORPHAN_AFTER).timestamp()
+        ]
+        removed += remove_originals(orphans, folder)
+    return removed
+
+
 def purge_gmail_processed(now):
     """The Gmail reader's rows after 60 days, when the mail is long gone from Gmail's trash."""
     return GmailProcessed.delete().where(GmailProcessed.at < now - GMAIL_PROCESSED_AFTER).execute()
@@ -221,6 +249,7 @@ RULES = (
     purge_opened,
     purge_gmail_processed,
     mark_stalled,
+    remove_orphans,
 )
 
 

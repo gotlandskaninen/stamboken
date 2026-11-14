@@ -1054,6 +1054,9 @@ kommandologgen: 12 månader är 366 dagar och 13 månader 396.
 - Originalen till andra dokumenttyper (`arsblankett`, `annat`) gallras bara med sin post.
 - `original_path` släpps i databasen innan filen tas bort, och bara filer direkt i `inkorg/original/`
   under `PRIVATE_UPLOAD_FOLDER` tas bort. Loggen visar antal, aldrig namn eller sökvägar.
+- En fil direkt i `inkorg/original/` eller `inkorg/kopia/` som ingen rad pekar på och som är äldre än
+  ett dygn tas bort av nattjobbet: en borttagning som misslyckades efter commit, ett inskick som
+  rullades tillbaka eller en halvskriven fil. Ett dygn, så att ett inskick som pågår aldrig rörs.
 - När originalet är borta har dokumentet `has_original: false`, `…/original` svarar 404 och kopian kan
   inte göras om. Kopian på kaninen visas som förut.
 

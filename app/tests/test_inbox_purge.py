@@ -364,6 +364,47 @@ class TestSafety(PurgeTest):
         )
 
 
+class TestOrphans(PurgeTest):
+    def aged(self, relative, age):
+        path = os.path.join(self.folder, self.write(relative))
+        os.utime(path, ((NOW - age).timestamp(),) * 2)
+        return relative
+
+    def test_files_no_row_names_go_after_a_day_and_nothing_else(self):
+        document = self.with_copy(self.make())
+        os.utime(self.stored(document), ((NOW - timedelta(days=30)).timestamp(),) * 2)  # named: stays however old
+        old = timedelta(days=2)
+        orphans = [
+            self.aged("inkorg/original/lost.jpg", old),  # its removal failed after the commit
+            self.aged("inkorg/original/lost.jpg.0a1b.tmp", old),  # a write that died half way
+            self.aged("inkorg/kopia/999.jpg", old),
+        ]
+        kept = [
+            self.aged("inkorg/original/uploading.jpg", timedelta(hours=1)),  # its upload has not committed yet
+            self.aged("inkorg/original/sub/deeper.jpg", old),  # not directly in the folder
+            self.aged("inkorg/elsewhere.jpg", old),
+        ]
+        outside = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, outside, True)
+        victim = os.path.join(outside, "keep.jpg")
+        with open(victim, "wb") as out:
+            out.write(b"not the queue's")
+        os.symlink(victim, os.path.join(self.folder, "inkorg/original/link.jpg"))
+        os.utime(os.path.join(self.folder, "inkorg/original/link.jpg"), ((NOW - old).timestamp(),) * 2)
+
+        with self.assertLogs(purge.logger, "INFO") as logs:
+            purge.run(NOW)
+
+        for relative in orphans:
+            self.assertFalse(self.exists(relative), relative)
+        for relative in kept + [document.original_path, document.public_path, "inkorg/original/link.jpg"]:
+            self.assertTrue(os.path.lexists(os.path.join(self.folder, relative)), relative)
+        self.assertTrue(os.path.exists(victim))
+        self.assertIn("INFO:herdbook.inbox_purge:Inbox purge remove_orphans: 3", logs.output)
+        self.assertFalse(any("lost" in line or "999" in line for line in logs.output))  # counts, never names
+        self.assertIdempotent(purge.remove_orphans)
+
+
 class TestJob(PurgeTest):
     def test_the_leader_runs_the_purge_at_night(self):
         lock = os.path.join(tempfile.mkdtemp(), "scheduler.lock")
