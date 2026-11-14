@@ -3,6 +3,9 @@
 import importlib.util
 import logging
 import os
+import subprocess
+import sys
+import textwrap
 import unittest
 
 from utils.log_masking import _TOKEN, TokenMaskFilter, mask_tokens
@@ -33,3 +36,37 @@ class TestLogMasking(unittest.TestCase):
         conf = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(conf)
         self.assertEqual(conf._LINK_TOKEN.pattern, _TOKEN.pattern)  # pylint: disable=protected-access
+
+    def test_app_log_handlers_mask_exception_paths_and_mail_lines(self):
+        """
+        A fresh process, so the handlers are the ones the app runs with (under pytest the root logger holds
+        pytest's): the app's file handler, pointed at stderr here, and the root's stderr handler.
+        """
+        probe = textwrap.dedent(
+            """
+            import logging, sys
+            import pytest  # no blocking startup
+            from herdbook import APP
+
+            token = "4711." + "a" * 22
+            for handler in APP.logger.handlers:
+                handler.setStream(sys.stderr)
+            APP.config["PROPAGATE_EXCEPTIONS"] = False  # log the exception as in production, not re-raise it
+            rule = next(r for r in APP.url_map.iter_rules() if r.rule == "/api/v2/certificates/<i_number>")
+
+            def boom(**kwargs):
+                raise RuntimeError("boom")
+
+            APP.view_functions[rule.endpoint] = boom
+            print("status", APP.test_client().get(f"/api/v2/certificates/{token}").status_code, file=sys.stderr)
+            logging.getLogger("herdbook.mail").info("Mail 1: https://example.org/rapport/%s", token)
+            """
+        )
+        app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        p = subprocess.run(
+            [sys.executable, "-c", probe], cwd=app_dir, env=os.environ, capture_output=True, text=True, timeout=120
+        )
+        self.assertIn("status 500", p.stderr)
+        self.assertIn("Exception on /api/v2/certificates/4711.***", p.stderr)
+        self.assertIn("Mail 1: https://example.org/rapport/4711.***", p.stderr)
+        self.assertNotIn(TOKEN, p.stderr)

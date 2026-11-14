@@ -45,6 +45,8 @@ services:
       - SECRET_KEY=dev-secret-do-not-use-in-prod
       - SESSION_REDIS_URL=redis://redis:6379/2
       - RATELIMIT_STORAGE_URL=redis://redis:6379/3
+      # api-variables.env may be a copy of prod's (the local-production bootstrap); the dev stack never mails.
+      - MAIL_MODE=log
     ports:
       - "127.0.0.1:9090:9090"
     logging:

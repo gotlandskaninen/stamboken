@@ -8,13 +8,16 @@ text rendered when the mail goes out.
 """
 
 import base64
+import contextlib
 import hashlib
 import hmac
 import logging
 import os
 import re
 import smtplib
+import socket
 import ssl
+import threading
 import uuid
 from collections import namedtuple
 from datetime import datetime, timedelta, timezone
@@ -27,11 +30,15 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 import utils.settings as settings
 from utils.database import DB_PROXY, MailAttempt, MailMessage, MailSender, Member, MemberApplication, User
+from utils.log_masking import mask_tokens
 
 logger = logging.getLogger("herdbook.mail")
 
 MAX_PER_RUN = 30
 SMTP_TIMEOUT = 60  # seconds, per SMTP step
+# Seconds for one mail's whole SMTP conversation, connecting included. The claim is renewed just before it, so
+# a sender never still talks to the relay when another may reclaim the row.
+SEND_DEADLINE = 120
 RECLAIM_AFTER = timedelta(minutes=10)
 PAUSE_AFTER_SYSTEMIC = timedelta(minutes=5)
 STALLED_AFTER = timedelta(minutes=5)  # no sender run for this long: the scheduler is dead
@@ -241,20 +248,13 @@ class _Systemic(Exception):
         self.detail = detail
 
 
-def _connect():
-    conn = smtplib.SMTP(
-        settings.mail.smtp_host, settings.mail.smtp_port, local_hostname=_hostname(), timeout=SMTP_TIMEOUT
-    )
-    try:
-        conn.ehlo()
-        if not conn.has_extn("starttls"):
-            raise smtplib.SMTPNotSupportedError("the relay does not offer STARTTLS")
-        conn.starttls(context=ssl.create_default_context())
-        conn.ehlo()
-        return conn
-    except BaseException:
-        conn.close()
-        raise
+def _connect(conn):
+    conn.connect(settings.mail.smtp_host, settings.mail.smtp_port)
+    conn.ehlo()
+    if not conn.has_extn("starttls"):
+        raise smtplib.SMTPNotSupportedError("the relay does not offer STARTTLS")
+    conn.starttls(context=ssl.create_default_context())
+    conn.ehlo()
 
 
 class _Relay:
@@ -262,15 +262,61 @@ class _Relay:
 
     def __init__(self):
         self.conn = None
+        self.dropped = False  # the previous mail lost the connection
+        self.timed_out = False
 
     def send(self, msg, address):
+        """
+        One mail's whole SMTP conversation, connecting included, cut off at SEND_DEADLINE. Per-step socket
+        timeouts alone do not bound it: a relay can drip its replies a byte at a time.
+        """
+        self.timed_out = False
+        timer = threading.Timer(SEND_DEADLINE, self._cut)
+        timer.start()
+        try:
+            self._send(msg, address)
+        finally:
+            timer.cancel()
+            timer.join()
+            if self.timed_out:
+                self.close()  # its socket is shut down, also if the reply came just in time
+
+    def _send(self, msg, address):
         if self.conn is None:
+            self.conn = smtplib.SMTP(local_hostname=_hostname(), timeout=SMTP_TIMEOUT)  # set first: _cut reaches it
             try:
-                self.conn = _connect()
+                _connect(self.conn)
             except Exception as exc:
+                conn, self.conn = self.conn, None
+                conn.close()
                 code = getattr(exc, "smtp_code", None)
-                raise _Systemic(str(code) if code else None, _describe(exc)) from exc
-        self.conn.send_message(msg, from_addr=settings.mail.sender, to_addrs=[address])
+                raise _Systemic(str(code) if code else None, _describe(self._why(exc))) from exc
+        try:
+            self.conn.send_message(msg, from_addr=settings.mail.sender, to_addrs=[address])
+        except Exception as exc:
+            if not _lost(exc):
+                self.dropped = False  # the relay answered
+                raise
+            self.close()  # the next mail reconnects; if that fails, it is systemic
+            if self.dropped:  # twice in a row: the relay drops us, not this mail
+                raise _Systemic(None, _describe(self._why(exc))) from exc
+            self.dropped = True
+            if self.timed_out:
+                raise self._why(exc) from exc
+            raise
+        self.dropped = False
+
+    def _cut(self):
+        """Timer thread: shutting the socket down makes the blocked conversation fail at once."""
+        self.timed_out = True
+        sock = getattr(self.conn, "sock", None)
+        if sock is not None:
+            with contextlib.suppress(OSError):
+                sock.shutdown(socket.SHUT_RDWR)
+
+    def _why(self, exc):
+        """A cut by the deadline is a timeout, not the disconnect it looks like."""
+        return TimeoutError(f"no reply within {SEND_DEADLINE} s") if self.timed_out else exc
 
     def close(self):
         conn, self.conn = self.conn, None
@@ -285,14 +331,24 @@ def _describe(exc):
     return f"{type(exc).__name__}: {exc}"
 
 
+def _lost(exc):
+    """The connection broke or timed out, as opposed to the relay answering (an SMTPException is an OSError too)."""
+    return isinstance(exc, smtplib.SMTPServerDisconnected) or (
+        isinstance(exc, OSError) and not isinstance(exc, smtplib.SMTPException)
+    )
+
+
 _ENHANCED = re.compile(r"\b([245]\.\d{1,3}\.\d{1,3})\b")
 
 
 def _classify(code, text):
-    """(result, smtp_code) of an SMTP error reply. Every 5xx that is not systemic counts as permanent."""
+    """
+    (result, smtp_code) of an SMTP error reply. A refusal at RCPT or DATA is about this recipient or this
+    message, whatever its code (5.7.x policy too), unless the relay is closing the connection (421).
+    """
     enhanced = _ENHANCED.search(text)
     smtp_code = enhanced.group(1) if enhanced else str(code)
-    if code == 421 or smtp_code in ("5.7.0", "5.7.1"):
+    if code == 421:
         return "systemic", smtp_code
     if 400 <= code < 500:
         return "temporary", smtp_code
@@ -326,6 +382,17 @@ def _claim(now):
     return MailMessage.get_by_id(found[0]) if found else None
 
 
+def _renew(row):
+    """
+    Restarts the claim's clock just before SMTP, so the row cannot be reclaimed until long after SEND_DEADLINE.
+    False when another sender has taken the row since (this one was slow): it must not send.
+    """
+    renewed = MailMessage.update(claimed_at=_utcnow()).where(
+        (MailMessage.id == row.id) & (MailMessage.claim_token == row.claim_token)
+    )
+    return renewed.execute() == 1
+
+
 def _finish(row, now, attempt=None, **fields):
     """Writes a claimed row's outcome, but only while the claim is still ours. Returns True (the run goes on)."""
     if fields.get("last_error"):
@@ -357,12 +424,38 @@ def _failed(row, now, result, smtp_code, detail, address=None):
     return _finish(row, now, attempt, attempts=attempts, last_error=detail, **fields)
 
 
+def _strikes(row, now):
+    """
+    How many of this row's systemic outcomes, since its last counted one (a retry starts over), were followed
+    by other mail going through before the next: a refusal that keeps hitting only this mail is its own.
+    """
+    cursor = DB_PROXY.execute_sql(
+        """
+        SELECT count(*) FROM (
+            SELECT at, lead(at, 1, %s) OVER (ORDER BY at, id) AS next_at FROM mail_attempt
+            WHERE message_id = %s AND result = 'systemic' AND at > coalesce(
+                (SELECT max(at) FROM mail_attempt WHERE message_id = %s AND result <> 'systemic'), '-infinity')
+        ) own
+        WHERE EXISTS (SELECT 1 FROM mail_attempt o WHERE o.result = 'sent' AND o.at > own.at AND o.at < own.next_at)
+        """,
+        (now, row.id, row.id),
+    )
+    return cursor.fetchone()[0]
+
+
 def _systemic(row, now, smtp_code, detail):
-    """Not counted on the mail: the row goes back as it was, the run stops and the sender pauses."""
+    """
+    Not counted on the mail: the run stops, the sender pauses, and the row waits until after the pause so the
+    mail behind it goes first. The third time while other mail went through in between, the row fails.
+    """
     detail = _scrub(detail)
+    if _strikes(row, now) >= 2:
+        _failed(row, now, "permanent", smtp_code, detail)
+        return False  # the connection may not survive what the relay said; the next run reconnects
+    paused_until = now + PAUSE_AFTER_SYSTEMIC
     attempt = {"result": "systemic", "smtp_code": smtp_code, "detail": detail}
-    _finish(row, now, attempt, status="queued", last_error=detail)
-    MailSender.update(paused_until=now + PAUSE_AFTER_SYSTEMIC).where(MailSender.id == 1).execute()
+    _finish(row, now, attempt, status="queued", next_attempt_at=paused_until + RETRY_DELAYS[0], last_error=detail)
+    MailSender.update(paused_until=paused_until).where(MailSender.id == 1).execute()
     return False
 
 
@@ -399,17 +492,21 @@ def _send_one(row, relay, now):
     if mode == "log":
         logger.info("Mail %s (%s) to %s %s logged, not sent", row.id, row.kind, row.recipient_kind, row.recipient_id)
         if os.environ.get("FLASK_ENV") != "production":
-            logger.info("Mail %s:\n%s\n\n%s", row.id, subject, body)
+            logger.info("Mail %s:\n%s\n\n%s", row.id, mask_tokens(subject), mask_tokens(body))
         return _finish(row, now, status="logged")
     if mode == "allowlist" and not _allowed(address):
         return _finish(row, now, status="blocked", last_error="spärrat: adressen finns inte i MAIL_ALLOWLIST")
+    if not _renew(row):
+        logger.warning("Mail %s was reclaimed by another sender; it is not sent", row.id)
+        return True
 
     try:
         relay.send(msg, address)
     except _Systemic as exc:
         return _systemic(row, now, exc.smtp_code, exc.detail)
-    except smtplib.SMTPSenderRefused as exc:  # our own sender refused: every mail would fail alike
-        return _smtp_error(row, now, exc.smtp_code, exc.smtp_error, None, systemic=True)
+    except smtplib.SMTPSenderRefused as exc:  # MAIL FROM: our sender or IP refused, every mail would fail alike...
+        # ...except 552, the relay's size limit checked against SIZE=, which is this mail's own failure
+        return _smtp_error(row, now, exc.smtp_code, exc.smtp_error, None, systemic=exc.smtp_code != 552)
     except smtplib.SMTPRecipientsRefused as exc:
         code, text = next(iter(exc.recipients.values()))
         return _smtp_error(row, now, code, text, address)
@@ -477,7 +574,8 @@ _MESSAGE_ID = re.compile(r"\s*<mail-(\d+)\.([0-9a-f]{16})@([^<>\s]+)>\s*")
 def record_bounce(message_id_header, diagnostic):
     """
     Marks the row behind a delivery report's Message-ID as bounced. Returns False when the id is not one of
-    this environment's mails, so the caller can hand the report to a human instead.
+    this environment's mails, or the row is not `sent` (a bounce never revives or overwrites another state),
+    so the caller can hand the report to a human instead.
     """
     match = _MESSAGE_ID.fullmatch(message_id_header or "")
     if match is None or match.group(3).lower() != _hostname().lower():
@@ -488,7 +586,10 @@ def record_bounce(message_id_header, diagnostic):
     detail = _scrub(diagnostic)
     enhanced = _ENHANCED.search(diagnostic or "")
     with DB_PROXY.atomic():
-        if not MailMessage.update(status="bounced", last_error=detail).where(MailMessage.id == row_id).execute():
+        bounced = MailMessage.update(status="bounced", last_error=detail).where(
+            (MailMessage.id == row_id) & (MailMessage.status == "sent")
+        )
+        if not bounced.execute():
             return False
         MailAttempt.create(
             message=row_id,
@@ -504,7 +605,7 @@ def record_bounce(message_id_header, diagnostic):
 def forget_recipient(kind, recipient_id):
     """Called by the jobs that delete a recipient source: no trace of the address stays in the queue."""
     return (
-        MailMessage.update(address_hash=None)
+        MailMessage.update(address_hash=None, dedupe_key=None)  # a dedupe_key may hold the address's HMAC
         .where((MailMessage.recipient_kind == kind) & (MailMessage.recipient_id == recipient_id))
         .execute()
     )
@@ -618,11 +719,16 @@ def _application_approved(params):
     return {} if Member.select().where(Member.id == params["member_id"]).exists() else None
 
 
-def queue_application_mails(application_id):
-    """The receipt to the applicant and a notice to each matrikel admin, in the caller's transaction."""
+def queue_application_mails(application_id, address):
+    """
+    The receipt to the applicant and a notice to each matrikel admin, in the caller's transaction. The public
+    form takes any address, so `address` gets at most one receipt a day, keyed on its HMAC, never on itself.
+    """
     params = {"application_id": application_id}
     ref = ("member_application", application_id)
-    enqueue_mail("ansokan.mottagen", "application", application_id, params, ref=ref)
+    # Without LINK_SECRET (log mode only, nothing is sent) there is no HMAC, and no need for the limit.
+    once_a_day = f"ansokan.mottagen:{address_hash(address)}:{_utcnow().date()}" if settings.mail.link_secret else None
+    enqueue_mail("ansokan.mottagen", "application", application_id, params, ref=ref, dedupe_key=once_a_day)
     candidates = User.select().where(User.is_active & User._privileges.contains("matrikel_admin"))
     for user in candidates:
         if user.is_matrikel_admin:

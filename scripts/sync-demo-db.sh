@@ -133,6 +133,11 @@ docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
 # Sync using pg_dump | psql (non-disruptive to source DB). The target is
 # empty, so no --clean is needed. Abort on the first SQL error — a silently
 # broken sync locks recently-registered users out of v2 (demo is the default).
+# The queue tables come over without their data: the demo API keeps running
+# through the load, and its sender must never see production's mail queue or
+# intake items, not even for a moment. A pattern that matches no table (an
+# older schema) is fine; notice_setting, a user preference, is copied.
+SKIP_QUEUE_DATA="--exclude-table-data='mail_*' --exclude-table-data='inbox_*' --exclude-table-data=notice --exclude-table-data='gmail_*'"
 echo "Syncing $SOURCE_DB -> $TARGET_DB via pg_dump..."
 # ON_ERROR_STOP=1 aborts psql on the first SQL error; the
 # outer set -Eeo pipefail then fires the ERR trap so the failure telemetry row
@@ -140,7 +145,7 @@ echo "Syncing $SOURCE_DB -> $TARGET_DB via pg_dump..."
 # record_sync_failure's detail.
 docker exec "$CONTAINER" bash -c "
 	set -o pipefail
-	pg_dump -U $DB_USER --no-owner --no-privileges $SOURCE_DB \
+	pg_dump -U $DB_USER --no-owner --no-privileges $SKIP_QUEUE_DATA $SOURCE_DB \
 	| psql -U $DB_USER -d $TARGET_DB -q -v ON_ERROR_STOP=1
 " 2>&1 | tee "${DUMP_LOG:-/dev/null}" | { grep -v '^$' || true; } | tail -5
 
@@ -166,30 +171,6 @@ docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
 echo "Setting all users to validated in $TARGET_DB..."
 docker exec "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -v ON_ERROR_STOP=1 -c \
 	"UPDATE hbuser SET validated = true WHERE validated = false;"
-
-# The copy carries production's mail queue and intake items. The demo must not
-# send or show them as its own, so they are emptied. Tables an older schema
-# lacks are skipped; without CASCADE, so a table that points at them fails
-# the sync loudly instead of being emptied too.
-echo "Emptying the mail queue and the intake queue in $TARGET_DB..."
-docker exec -i "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -v ON_ERROR_STOP=1 -q <<'SQL'
-DO $$
-DECLARE
-	names text;
-BEGIN
-	SELECT string_agg(quote_ident(t), ', ') INTO names
-	FROM unnest(ARRAY[
-		'mail_attempt', 'mail_message', 'mail_sender',
-		'notice', 'inbox_operation', 'inbox_event', 'inbox_document', 'inbox_item',
-		'gmail_processed', 'gmail_sync'
-	]) AS t
-	WHERE to_regclass(t) IS NOT NULL;
-	IF names IS NOT NULL THEN
-		EXECUTE 'TRUNCATE ' || names;
-	END IF;
-END
-$$;
-SQL
 
 # Verifiera
 TABLES=$(docker exec "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -t -c \

@@ -111,6 +111,12 @@ describe("alarms", () => {
 });
 
 describe("actions", () => {
+  it("are async functions, as next build requires of a 'use server' export", () => {
+    for (const action of [retryMessage, cancelMessage]) {
+      expect(action.constructor.name).toBe("AsyncFunction");
+    }
+  });
+
   it("POST the retry and cancel endpoints", async () => {
     vi.mocked(fetchApi).mockResolvedValue({});
     await retryMessage(7);
