@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 from peewee import IntegrityError, fn
 
+from utils.buyer_mail import queue_buyer_mails
 from utils.database import (
     DB_PROXY,
     HOLDER_CHANGING_KINDS,
@@ -312,6 +313,8 @@ def record_herd_tracking(
             if _violated_constraint(exc) != "idx_herdtracking_report_attestation":
                 raise
             raise HerdTrackingConflict("Kaninen har redan en aktiv rad för den här rapporten.") from exc
+        if contact is not None:
+            queue_buyer_mails(contact, row)
         _assert_no_new_violations(ind, before, before + [row])
     return row
 
@@ -700,6 +703,8 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
                     else event["holder_contact_id"]
                 ),
             )
+            if event["buyer"]:
+                queue_buyer_mails(row.holder_contact, row)
             written.append(row)
             current.append(row)
         # Admin only (rolled back). An event's herd is in the origin genebank, but the holder before it may

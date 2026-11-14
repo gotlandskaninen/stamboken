@@ -14,6 +14,19 @@ const nextConfig = {
     serverActions: { bodySizeLimit: "10mb" },
     optimizePackageImports: ["@mui/material", "@mui/icons-material"],
   },
+  // The buyer's erase link carries its token in the fragment, which no server
+  // sees; the page is never cached nor named in a referrer either.
+  async headers() {
+    return [
+      {
+        source: "/kopare/:path*",
+        headers: [
+          { key: "Cache-Control", value: "no-store" },
+          { key: "Referrer-Policy", value: "no-referrer" },
+        ],
+      },
+    ];
+  },
   async rewrites() {
     const apiUrl = process.env.API_INTERNAL_URL || "http://localhost:9090";
     return [

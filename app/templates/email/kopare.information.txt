@@ -1,0 +1,17 @@
+{% block subject %}Din kanin {% if name %}{{ name }} ({{ number }}){% else %}{{ number }}{% endif %} är registrerad hos Föreningen Gotlandskaninen{% endblock %}
+
+{% block body %}
+Hej {{ buyer }},
+
+du har köpt kaninen {% if name %}{{ name }}, {% endif %}{{ number }}. Säljaren har registrerat köpet i Stamboken, föreningens register över genbankens kaniner.{% if certificate %} Kaninens genbanksintyg ligger som bilaga.{% endif %}
+
+Föreningen Gotlandskaninen sparar ditt namn och din ort till och med {{ until }}. Då vet vi var genbankens kaniner finns, till exempel om det blir smitta eller om en kanin behöver köpas tillbaka till genbanken (berättigat intresse). Uppgifterna kommer från säljaren. Din e-postadress, och postadress och telefon om du har lämnat dem, sparar vi bara för att du har sagt ja till det, och bara tills kaninen byter ägare igen. Ditt ja kan du ta tillbaka när du vill.
+
+Uppgifterna ses av genbanksansvarig och genbankshjälpare för rasen, föreningens systemansvarig och leverantörerna som driver Stamboken och tar säkerhetskopior. De kan lämnas till ansvarig myndighet vid smittskydd. Du har rätt att få veta vad vi har om dig, och att få uppgifterna rättade, raderade eller begränsade. Du kan klaga hos Integritetsskyddsmyndigheten.
+
+Vill du inte finnas med i registret, eller är det inte du som har köpt kaninen? Klicka här så tar vi bort alla dina uppgifter, även namn och ort: {{ base_url }}/kopare/ta-bort#{{ token }}
+Du kan också skriva till dataskydd@gotlandskaninen.se.
+
+Hälsningar
+Föreningen Gotlandskaninen
+{% endblock %}
