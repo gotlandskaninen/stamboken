@@ -2228,7 +2228,8 @@ class GmailProcessed(BaseModel):
     """One row per Gmail message handled, so a message read twice is handled once."""
 
     gmail_message_id = TextField(primary_key=True)
-    kind = TextField()  # item, reply, bounce, ignored
+    kind = TextField()  # item, reply, bounce, ignored; retry (its content failed) and failed (FAILED_AFTER times)
+    failures = SmallIntegerField(default=0)  # runs in a row in which the message's content could not be read
     item = ForeignKeyField(InboxItem, null=True, on_delete="SET NULL", backref="+")
     at = TimestampTZField(default=_utcnow)
 
@@ -3836,10 +3837,13 @@ def migrate_38_to_39():
 def migrate_39_to_40():
     """The intake queue's retention (docs/inkorg.md, "Gallring"): an original can be gone, and a document records the
     members it shows (seller and buyer), so an erasure finds it. A mailed item records whether Gmail authenticated
-    its sender, the only one mail goes back to."""
+    its sender, the only one mail goes back to. The Gmail reader counts the runs a message failed in."""
     with DATABASE.atomic():
         DATABASE.execute_sql("ALTER TABLE inbox_document ALTER COLUMN original_path DROP NOT NULL")
         DATABASE.execute_sql("ALTER TABLE inbox_item ADD COLUMN IF NOT EXISTS sender_authenticated BOOLEAN")
+        DATABASE.execute_sql(
+            "ALTER TABLE gmail_processed ADD COLUMN IF NOT EXISTS failures SMALLINT NOT NULL DEFAULT 0"
+        )
         for column in ("seller_member_id", "buyer_member_id"):
             DATABASE.execute_sql(
                 f"ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS {column} INTEGER "
@@ -3848,7 +3852,8 @@ def migrate_39_to_40():
         InboxDocument._schema.create_indexes(safe=True)  # same names as a fresh bootstrap
         SchemaHistory.insert(  # pylint: disable=E1120
             version=40,
-            comment="inbox_document: original_path nullable, seller and buyer members; inbox_item.sender_authenticated",
+            comment="inbox_document: original_path nullable, seller and buyer members; "
+            "inbox_item.sender_authenticated; gmail_processed.failures",
             applied=datetime.now(),
         ).execute()
 

@@ -1221,7 +1221,9 @@ class TestDatabaseMigration(DatabaseTest):
 
         def shape():
             columns = {
-                (t, c.name, c.null) for t in ("inbox_document", "inbox_item") for c in db.DATABASE.get_columns(t)
+                (t, c.name, c.null)
+                for t in ("inbox_document", "inbox_item", "gmail_processed")
+                for c in db.DATABASE.get_columns(t)
             }
             indexes = {(i.name, tuple(i.columns), i.unique) for i in db.DATABASE.get_indexes("inbox_document")}
             keys = {(k.column, k.dest_table, k.dest_column) for k in db.DATABASE.get_foreign_keys("inbox_document")}
@@ -1234,6 +1236,7 @@ class TestDatabaseMigration(DatabaseTest):
             "ALTER COLUMN original_path SET NOT NULL"
         )
         db.DATABASE.execute_sql("ALTER TABLE inbox_item DROP COLUMN sender_authenticated")
+        db.DATABASE.execute_sql("ALTER TABLE gmail_processed DROP COLUMN failures")
 
         db.check_migrations()
 
@@ -1241,6 +1244,7 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertEqual(shape(), fresh)
         self.assertIn(("inbox_document", "original_path", True), fresh[0])
         self.assertIn(("inbox_item", "sender_authenticated", True), fresh[0])
+        self.assertIn(("gmail_processed", "failures", False), fresh[0])
         self.assertIn(("seller_member_id", "member", "member_id"), fresh[2])
 
     def _max_schema_version(self):

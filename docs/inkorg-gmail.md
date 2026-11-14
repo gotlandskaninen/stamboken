@@ -69,8 +69,15 @@ kommer hit. Brevlådan ska därför vara samma adress som `MAIL_FROM`.
 - **En gång per mejl.** Varje behandlat mejl får en rad i `gmail_processed` i samma
   transaktion som posten, svaret eller studsen och mejlen de köar. Efter commit får mejlet
   etiketten "Inläst" och läggs i papperskorgen, som Gmail tömmer efter 30 dagar. Dör jobbet
-  mellan commit och etikett läses mejlet igen vid nästa körning, och då sätts bara etiketten.
-  `historyId` flyttas fram först när alla mejl i körningen är klara.
+  mellan commit och etikett, eller mellan etikett och papperskorg, görs vid nästa körning bara de
+  steg i Gmail som fattas. Ett mejl i inkorgen med etiketten "Inläst" räknas som läst också när
+  dess rad har gallrats. `historyId` flyttas fram först när alla mejl i körningen är klara.
+- **Fel.** Ett fel i databasen, filsystemet eller Gmail avbryter körningen utan etikett och utan
+  att `historyId` flyttas fram, så att nästa körning läser samma mejl igen. Ett fel i ett mejls
+  innehåll räknas i `gmail_processed` (`kind` `retry`, `failures`), och mejlet läses igen vid
+  nästa körning också när `historyId` har flyttats fram. Efter tre körningar i rad med fel får
+  det etiketten "Fel vid inläsning", raden blir `failed` och mejlet läses inte mer. Ett mejl kan
+  aldrig stoppa de andra. Texten sparas utan NUL-tecken.
 - **Sorteringen**, i den här ordningen:
   1. En leveransrapport (`multipart/report; report-type=delivery-status`) går till mejlkön,
      som markerar mejlet som studsat. En rapport om ett mejl från en annan miljö (ett annat
@@ -111,7 +118,9 @@ senaste körningen hade ett fel.
 
 - **Läsningen står still:** schemaläggaren går inte, eller körningen avbryts varje gång (till
   exempel en återkallad token). Felet står i larmet och i API:ts logg.
-- **Fel vid inläsning:** ett mejl gick inte att läsa, och larmet ligger kvar så länge något
-  mejl har etiketten. Ta hand om mejlet i Gmail och lägg det i papperskorgen, eller ta bort
+- **Fel vid inläsning:** ett mejl gick inte att läsa tre körningar i rad, och larmet ligger kvar
+  så länge något mejl har etiketten. Ett mejl som ännu inte har nått tre fel står i `last_error`
+  för den körning där det felade. Ta hand om mejlet i Gmail och lägg det i papperskorgen, eller ta bort
   etiketten. Ska Stamboken läsa det igen efter en rättning: nollställ `history_id` i
-  `gmail_sync`. Nästa körning läser då hela inkorgen, utom det som har etiketten "Inläst".
+  `gmail_sync` och ta bort mejlets rad (`failed`) i `gmail_processed`. Nästa körning läser då hela
+inkorgen, utom det som har etiketten "Inläst".

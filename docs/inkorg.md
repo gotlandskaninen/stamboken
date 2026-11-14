@@ -856,8 +856,8 @@ Gränssnittet visar "Gäller kanske ärende 12". Handläggaren avgör.
 ```
 
 `last_run_at` är den senaste körningen som gick igenom, och `last_error` felet från den senaste
-körningen: ett mejl som inte gick att läsa (det har då etiketten "Fel vid inläsning" i
-brevlådan) eller en körning som avbröts. `alarm` är sant när `last_error` finns, eller när
+körningen: ett mejl som inte gick att läsa (efter tre körningar i rad får det etiketten "Fel vid
+inläsning" i brevlådan) eller en körning som avbröts. `alarm` är sant när `last_error` finns, eller när
 läsningen är på och inte har gått igenom de senaste 20 minuterna. Gränssnittet visar då en rad
 överst i kön.
 
