@@ -1,6 +1,6 @@
 ---
 status: "proposed"
-date: 2026-11-11
+date: 2026-11-14
 decision-makers: Jonas
 ---
 
@@ -51,9 +51,12 @@ utan databas.
 3. **Fältet skrivs i en modul.** Medlemskapets status skrivs bara i
    `app/utils/matrikel.py`, intygskolumnerna på individ bara i
    `app/utils/individual_commands.py` och `is_current` bara i modellens två
-   metoder i `app/utils/database.py`. Skrivaren prövar övergången mot
-   tabellen. En rad som redan ligger i ett otillåtet läge får lämna det men
-   aldrig hamna där.
+   metoder i `app/utils/database.py`. Intygets skrivare och medlemskapets
+   skapande och statusbyte prövar övergången mot tabellen när de körs. Att
+   avsluta ett medlemskap, radera huvudmedlemmen och utse en ny prövas inte i
+   drift, eftersom en radering aldrig får nekas; där håller Hypothesis-testet
+   koden och tabellen lika. En rad som redan ligger i ett otillåtet läge får
+   lämna det men aldrig hamna där.
 4. **Diagrammet genereras.** `python -m utils.membership_lifecycle` och
    `python -m utils.certificate_lifecycle` skriver ett
    `stateDiagram-v2`-diagram ur tabellen. Resultatet ligger i
@@ -67,6 +70,11 @@ utan databas.
 Ett avslutat medlemskap återaktiveras inte. Behövs det igen skapas ett nytt
 medlemskap. Båda PATCH-anropen svarar 409 på försöket. De används bara av
 Next.js, så [ADR-0006](0006-api-compatibility-during-migration.md) berörs inte.
+Finns en familjemedlem kvar går medlemskapet att öppna igen genom att utse
+den till huvudmedlem.
+
+Ett tomt intygsnummer tar bort ett pappersintyg, som förut, men nekas på en
+kanin med digitalt intyg. Förut tog det bort det digitala numret.
 
 ### Konsekvenser
 
@@ -87,7 +95,8 @@ Next.js, så [ADR-0006](0006-api-compatibility-during-migration.md) berörs inte
   `test_certificate_lifecycle_machine.py`. Båda föll på koden före ändringen.
 * Ett test per maskin söker igenom `app/` efter skrivningar av fältet utanför
   den ägande modulen, och ett jämför det incheckade diagrammet med det
-  genererade.
+  genererade. Sökningen ser bara skrivningar med fältnamnet i klartext, inte
+  en `setattr` med uträknat namn.
 
 ## Mer information
 
@@ -101,3 +110,4 @@ Genomgången av övriga maskiner finns i föreningens interna dokumentation.
 | Datum | Författare | Förändring |
 |-------|------------|------------|
 | 2026-11-11 | Jonas | Skapad |
+| 2026-11-14 | Jonas | Tomt intygsnummer, vad som prövas i drift, sökningens gräns |
