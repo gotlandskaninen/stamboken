@@ -319,7 +319,7 @@ def _replied_item(msg):
 
 
 def _may_answer(msg, sender, item):
-    """An answer goes on an open item only from an authenticated sender who is related to it (Codex 5)."""
+    """An answer goes on an open item only from an authenticated sender who is related to it."""
     return item.state not in inbox.CLOSED_STATES and authenticated(msg, sender) and sender in _related(item)
 
 

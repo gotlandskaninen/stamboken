@@ -116,7 +116,7 @@ class FakeGmail:
 
 
 SENDER = "uppfodare@example.org"
-PASS = f"spf=pass (google.com: domain of {SENDER} designates 192.0.2.1 as permitted sender) smtp.mailfrom={SENDER}"
+PASS = f"spf=pass (google.com: domain of {SENDER} designates a server as permitted sender) smtp.mailfrom={SENDER}"
 
 
 def message(

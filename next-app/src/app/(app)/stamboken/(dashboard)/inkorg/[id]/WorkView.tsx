@@ -372,7 +372,9 @@ export function WorkView({
               documentId={doc && !masking ? doc.id : null}
               crop={
                 crop && doc
-                  ? rotateRect(crop, (doc.rotation - rotation) / 90)
+                  ? toApiRects([
+                      rotateRect(crop, (doc.rotation - rotation) / 90),
+                    ])[0]
                   : null
               }
               onFrame={(on) =>
