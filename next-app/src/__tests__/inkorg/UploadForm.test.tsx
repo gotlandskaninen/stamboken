@@ -146,6 +146,7 @@ describe("UploadForm", () => {
       "Uppladdningen avbröts. Försök igen.",
     );
     expect(screen.getByLabelText("Valda filer")).toHaveTextContent("intyg.pdf");
-    expect(screen.getByRole("button", { name: "Skicka" })).toBeEnabled();
+    // The transition can still be pending when the alert shows: wait for the button to come back.
+    expect(await screen.findByRole("button", { name: "Skicka" })).toBeEnabled();
   });
 });
