@@ -1,5 +1,6 @@
 import { Box, Typography } from "@mui/material";
 import { PageHeader } from "@/components/public/PageHeader";
+import { TEXT_MAX_WIDTH, TEXT_ROW } from "@/components/blocks/textColumn";
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
@@ -7,13 +8,27 @@ export const metadata: Metadata = { title: "Integritetspolicy" };
 
 const CONTACT = "dataskydd@gotlandskaninen.se";
 
+// Same grid as the CMS text pages: the heading in the margin column.
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <Box component="section" sx={{ mt: 12, "&:first-of-type": { mt: 0 } }}>
-      <Typography variant="h4" component="h2" sx={{ m: 0, mb: 3 }}>
+    <Box
+      component="section"
+      sx={{
+        ...TEXT_ROW,
+        rowGap: 3,
+        py: { xs: 7, md: 9 },
+        borderTop: "1px solid var(--sb-line)",
+        "&:first-of-type": { pt: 0, borderTop: 0 },
+      }}
+    >
+      <Typography
+        variant="h4"
+        component="h2"
+        sx={{ m: 0, fontWeight: 400, fontSize: { xs: "24px", md: "26px" } }}
+      >
         {title}
       </Typography>
-      {children}
+      <Box sx={{ minWidth: 0, "& > :first-child": { mt: 0 } }}>{children}</Box>
     </Box>
   );
 }
@@ -31,12 +46,11 @@ export default function IntegritetspolicyPage() {
       <Box component="section" sx={{ p: { xs: "40px 24px", md: "80px 56px" } }}>
         <Box
           sx={{
-            maxWidth: "42rem",
+            maxWidth: TEXT_MAX_WIDTH,
             fontSize: "17px",
             lineHeight: 1.65,
             color: "ink.2",
             "& p": { m: 0, mt: 4 },
-            "& h2 + p": { mt: 0 },
             "& ul": { m: 0, mt: 3, pl: 6 },
             "& li": { mt: 1.5 },
             "& a": {
