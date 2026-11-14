@@ -60,8 +60,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # medlem/profil (29: structured postal address, member.user_id unique link) +
 # Phase 999.5 herd tracking kind/void (30) + Phase 999.8 genetics version (31) + genetics history (32) +
 # history algorithm version (33) + genetics epoch (34) + the individual command log (35) +
-# Individual.microchip (36) + billing address on membership and member_application (37).
-CURRENT_SCHEMA_VERSION = 37
+# Individual.microchip (36) + billing address on membership and member_application (37) +
+# audit_log IP retention index (38).
+CURRENT_SCHEMA_VERSION = 38
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -2653,6 +2654,13 @@ AUDITED_TABLES = {
 }
 
 
+# Only rows still holding an IP address, so the nightly purge reads one day of rows once it has caught up.
+AUDIT_IP_INDEX_SQL = """
+    CREATE INDEX IF NOT EXISTS idx_audit_log_ip_retention
+        ON audit_log (changed_at, id) WHERE ip_address IS NOT NULL
+"""
+
+
 def _create_audit_table_and_triggers():
     """
     Create the audit_log table (if missing) via raw SQL DDL, then create or
@@ -2687,6 +2695,7 @@ def _create_audit_table_and_triggers():
         CREATE INDEX IF NOT EXISTS idx_audit_log_changed_by
             ON audit_log (changed_by);
     """)
+    DATABASE.execute_sql(AUDIT_IP_INDEX_SQL)
 
     # Append-only: block UPDATE/DELETE on audit_log (NFR-S8)
     DATABASE.execute_sql("""
@@ -3560,6 +3569,16 @@ def migrate_36_to_37():
         ).execute()
 
 
+def migrate_37_to_38():
+    """Partial index for the nightly removal of audit_log IP addresses older than 12 months (purge_audit_ip)."""
+    with DATABASE.atomic():
+        if not isinstance(DATABASE, SqliteDatabase) and "audit_log" in DATABASE.get_tables():
+            DATABASE.execute_sql(AUDIT_IP_INDEX_SQL)
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=38, comment="audit_log IP retention index", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4034,6 +4053,7 @@ MIGRATIONS = {
     (34, 35): migrate_34_to_35,  # ADR-0017 command log
     (35, 36): migrate_35_to_36,  # Individual.microchip
     (36, 37): migrate_36_to_37,  # billing address
+    (37, 38): migrate_37_to_38,  # audit_log IP retention index
 }
 
 

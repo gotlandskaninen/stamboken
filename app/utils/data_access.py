@@ -4290,6 +4290,42 @@ def purge_user_audit_pii(user_id: int, username: str, email: str) -> int:
     return rows_redacted
 
 
+AUDIT_IP_RETENTION = timedelta(days=366)  # 12 months, never short of one in a leap year
+AUDIT_IP_BATCH = 5000
+
+
+def purge_audit_ip(now, batch=AUDIT_IP_BATCH) -> int:
+    """
+    Removes ip_address from audit_log rows older than AUDIT_IP_RETENTION; the rest of the row stays.
+    Each batch is found without a lock through idx_audit_log_ip_retention, then the no-update rule is lifted
+    only for one short UPDATE of those ids (the purge_user_audit_pii mechanism). Returns the rows changed.
+    """
+    cutoff = now - AUDIT_IP_RETENTION
+    total, last = 0, (datetime.min.replace(tzinfo=timezone.utc), 0)
+    while True:
+        rows = DATABASE.execute_sql(
+            """
+            SELECT changed_at, id FROM audit_log
+            WHERE ip_address IS NOT NULL AND changed_at < %s AND (changed_at, id) > (%s, %s)
+            ORDER BY changed_at, id LIMIT %s
+            """,
+            (cutoff, *last, batch),
+        ).fetchall()
+        if not rows:
+            return total
+        with DATABASE.atomic():
+            # DROP RULE locks audit_log exclusively until commit: never queue every audited write behind it.
+            DATABASE.execute_sql("SET LOCAL lock_timeout = '5s'")
+            DATABASE.execute_sql("DROP RULE IF EXISTS audit_log_no_update ON audit_log")
+            cursor = DATABASE.execute_sql(
+                "UPDATE audit_log SET ip_address = NULL WHERE id = ANY(%s) AND changed_at < %s",
+                ([row[1] for row in rows], cutoff),
+            )
+            total += cursor.rowcount or 0
+            DATABASE.execute_sql("CREATE RULE audit_log_no_update AS ON UPDATE TO audit_log DO INSTEAD NOTHING")
+        last = rows[-1]
+
+
 # Session-store counter of mass logouts. Outside 'session:*', so the sweep never
 # deletes it, and without a TTL: it must outlive every session issued before it.
 LOGOUT_EPOCH_KEY = "logout-epoch"
