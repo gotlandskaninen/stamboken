@@ -13,6 +13,7 @@ from .bunny_v2 import bunny_v2_bp
 from .certificates import certificates_bp
 from .herd_tracking import herd_tracking_bp
 from .inbox import inbox_bp
+from .inbox_gmail import inbox_gmail_bp
 from .individual_v2_create import individual_v2_create_bp
 from .individuals import individuals_bp
 from .mail import mail_bp
@@ -36,6 +37,7 @@ def register_blueprints(app):
     app.register_blueprint(certificates_bp)
     app.register_blueprint(herd_tracking_bp)
     app.register_blueprint(inbox_bp)
+    app.register_blueprint(inbox_gmail_bp)
     app.register_blueprint(individual_v2_create_bp)
     app.register_blueprint(individuals_bp)
     app.register_blueprint(mail_bp)

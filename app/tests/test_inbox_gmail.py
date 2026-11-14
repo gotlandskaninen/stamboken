@@ -6,8 +6,9 @@ isort:skip_file
 """
 
 import base64
+import io
 import os
-from datetime import timedelta
+from datetime import date, timedelta
 from email.message import EmailMessage
 from email.utils import make_msgid
 from unittest import mock
@@ -520,6 +521,99 @@ class TestSenderAddress(GmailTest):
         item = self.mailed_item(auth=None)
         inbox_gmail.release_senders(at=inbox.now() + timedelta(days=400))
         self.assertEqual(self.reload(item).sender_address, SENDER)
+
+
+class TestAskBreeder(GmailTest):
+    ASKED = "innehavare@example.org"
+
+    def setUp(self):
+        super().setUp()
+        self.asked = self.holder(self.herds[0], address=self.ASKED)
+        self.login("owner")
+        resp = self.upload()  # one photo, 1200 x 1600
+        self.assertEqual(resp.status_code, 201, resp.get_json())
+        self.item_id = resp.get_json()["item"]["id"]
+        self.document = db.InboxDocument.get(db.InboxDocument.item == self.item_id)
+        inbox.take(db.InboxItem.get_by_id(self.item_id), self.helper, over=False)
+        self.login("hjalp")
+
+    def ask(self, **body):
+        return self.client.post(f"/api/v2/inkorg/{self.item_id}/fraga", json=body)
+
+    def questions(self):
+        return list(db.MailMessage.select().where(db.MailMessage.kind == "inlasning.fraga"))
+
+    def test_the_handler_asks_the_holder_with_a_part_of_the_photo_and_the_item_waits(self):
+        db.InboxDocument.update(rotation=90).where(db.InboxDocument.id == self.document.id).execute()
+        crop = {"x": 0, "y": 0, "w": 0.5, "h": 0.25}
+        resp = self.ask(text="  Står det G1-2112 eller G1-2113?  ", document=self.document.id, crop=crop)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["state"], "vantar_uppfodare")
+        (event,) = db.InboxEvent.select().where(db.InboxEvent.kind == "fraga")
+        self.assertEqual(event.user_id, self.helper.id)
+        self.assertEqual(
+            event.detail,
+            {"text": "Står det G1-2112 eller G1-2113?", "document": self.document.id, "rotation": 90, "crop": crop},
+        )
+        (row,) = self.questions()
+        self.assertEqual((row.recipient_kind, row.recipient_id), ("member", self.asked.id))
+        self.assertEqual(row.params, {"item_id": self.item_id, "event_id": event.id})
+        relay = self.relay()
+        mail.send_pending()
+        ((msg, _, to),) = relay.sent
+        self.assertEqual(to, [self.ASKED])
+        self.assertTrue(msg["Subject"].endswith(f"(ärende {self.item_id})"))
+        self.assertIn("Står det G1-2112 eller G1-2113?", msg.get_body(("plain",)).get_content())
+        (attachment,) = msg.iter_attachments()
+        with Image.open(io.BytesIO(attachment.get_content())) as part:
+            self.assertEqual((part.format, part.size), ("JPEG", (800, 300)))  # the turned photo is 1600 x 1200
+
+    def test_who_may_ask_and_when(self):
+        self.login("man")  # in the queue, but not the item's handler
+        self.assertEqual(self.ask(text="Fråga").status_code, 409)
+        self.login("owner")  # the uploader does not work in the queue
+        self.assertEqual(self.ask(text="Fråga").status_code, 403)
+        self.client.get("/api/logout")
+        self.assertEqual(self.ask(text="Fråga").status_code, 401)
+        self.login("hjalp")
+        for body in (
+            {},
+            {"text": "   "},
+            {"text": "x" * 2001},
+            {"text": "Fråga", "crop": {"x": 0, "y": 0, "w": 1, "h": 1}},
+            {"text": "Fråga", "document": self.document.id, "crop": {"x": 0.5, "y": 0, "w": 0.6, "h": 1}},
+        ):
+            with self.subTest(body=body):
+                self.assertEqual(self.ask(**body).status_code, 400)
+        other = self.item(2)
+        self.assertEqual(
+            self.ask(
+                text="Fråga", document=other.documents.get().id, crop={"x": 0, "y": 0, "w": 1, "h": 1}
+            ).status_code,
+            404,
+        )
+        db.Herd.update(membership=None).where(db.Herd.id == self.herds[0].id).execute()
+        self.assertEqual(self.ask(text="Fråga").status_code, 409)  # no holder to ask
+        db.Herd.update(membership=self.asked.membership_id).where(db.Herd.id == self.herds[0].id).execute()
+        self.assertEqual(self.ask(text="Fråga").status_code, 200)
+        self.assertEqual(self.ask(text="Fråga igen").status_code, 409)  # it already waits
+        self.assertEqual(len(self.questions()), 1)
+        self.assertEqual(db.InboxItem.get_by_id(self.item_id).state, "vantar_uppfodare")
+
+    def test_the_answer_of_the_one_asked_comes_back_to_the_handler(self):
+        self.assertEqual(self.ask(text="Vilken färg har kaninen?").status_code, 200)
+        (question,) = self.questions()
+        db.Member.update(end_date=date.today()).where(db.Member.id == self.asked.id).execute()  # no longer the holder
+        dkim = "dkim=pass header.i=@example.org header.s=s1 header.b=AbC1"
+        self.fake.deliver(
+            message(sender=self.ASKED, auth=dkim, body="Viltgrå.", In_Reply_To=mail.message_id(question.id))
+        )
+        self.read()
+        item = db.InboxItem.get_by_id(self.item_id)
+        self.assertEqual(item.state, "tagen")
+        self.assertEqual(item.events.where(db.InboxEvent.kind == "svar").get().detail["text"], "Viltgrå.")
+        (notice,) = db.Notice.select().where(db.Notice.kind == "svar")
+        self.assertEqual(notice.user_id, self.helper.id)
 
 
 class TestAuthenticationResults(InboxTest):

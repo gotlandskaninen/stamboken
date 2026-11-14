@@ -13,6 +13,7 @@ import hmac
 import html
 import io
 import logging
+import math
 import re
 from datetime import datetime, timedelta, timezone
 from email import policy
@@ -20,6 +21,7 @@ from email.parser import HeaderParser
 from email.utils import parseaddr
 
 from peewee import fn
+from PIL import Image
 
 import utils.inbox as inbox
 import utils.mail as mail
@@ -43,6 +45,7 @@ logger = logging.getLogger("herdbook.inbox_gmail")
 READ, FAILED, DEMO = "Inläst", "Fel vid inläsning", "Demo"
 MAX_TEXT = 10_000  # characters of a mail's text kept on the item; shortcut: cut, raise it if handlers miss text
 RELEASE_AFTER = timedelta(days=30)  # a closed item's sender address goes by then, whatever is still queued
+CROP_SIDE = 2000  # pixels, the longest side of the photo's part a question carries
 # One of our Message-IDs (utils.mail.message_id), of any environment: <mail-<row>.<16 hex>@<its hostname>>.
 _OUR_ID = re.compile(r"<mail-(\d{1,18})\.[0-9a-f]{16}@([A-Za-z0-9.-]+)>")
 _CASE = re.compile(r"\(ärende (\d{1,9})\)$")
@@ -434,3 +437,67 @@ def _inbox_sender(item_id):
 def _receipt_mail(params):
     found = InboxItem.select().where(InboxItem.id == params["item_id"]).exists()
     return {"item_id": params["item_id"], "images": params["images"]} if found else None
+
+
+def ask_breeder(item, user, text, document_id=None, crop=None):
+    """
+    "Fråga uppfödaren" (POST …/fraga), by the item's handler: the question (and the frame of the photo it is
+    about) is an event on the item, inlasning.fraga goes to the herd's holder per the member register, and the
+    item waits for the answer. The answer comes back through read_message.
+    """
+    inbox.require_handler(item, user)
+    if item.state != "tagen":
+        raise inbox.InboxError(409, "Posten väntar. Arbeta vidare med den för att fråga uppfödaren.")
+    if not isinstance(text, str) or not text.strip() or len(text) > inbox.MAX_NOTE:
+        raise inbox.InboxError(400, f"Skriv frågan, högst {inbox.MAX_NOTE} tecken.")
+    detail = {"text": text.strip()}
+    if crop is not None:
+        if isinstance(document_id, bool) or not isinstance(document_id, int):
+            raise inbox.InboxError(400, "Ange dokumentet som utsnittet är ur.")
+        document = inbox.document_of(item, document_id)
+        crop = inbox._rects([crop])[0]  # pylint: disable=protected-access  # as a masking rectangle
+        detail.update(document=document.id, rotation=document.rotation, crop=crop)
+    holder = herd_holder(item.herd_id)
+    if holder is None or _normalize(holder.email) is None:
+        raise inbox.InboxError(409, "Besättningen har ingen innehavare med e-post i matrikeln.")
+    event = InboxEvent.create(item=item, user=user.id, kind="fraga", detail=detail)
+    enqueue_mail(
+        "inlasning.fraga",
+        "member",
+        holder.id,
+        {"item_id": item.id, "event_id": event.id},
+        ref=("inbox_item", item.id),
+        herd=item.herd_id,
+        genebank=item.genebank_id,
+        created_by=user.id,
+    )
+    inbox._set_state(item, "vantar_uppfodare")  # pylint: disable=protected-access
+    item.save()
+
+
+def _cropped(document, rect, rotation):
+    """The framed part of the original, turned as the handler saw it, as a JPEG at most CROP_SIDE a side."""
+    with Image.open(inbox.private_path(document.original_path)) as original:
+        image = original.convert("RGB").rotate(-rotation, expand=True)
+    width, height = image.size
+    left, top = math.floor(rect["x"] * width), math.floor(rect["y"] * height)
+    part = image.crop(
+        (left, top, math.ceil((rect["x"] + rect["w"]) * width), math.ceil((rect["y"] + rect["h"]) * height))
+    )
+    part.thumbnail((CROP_SIDE, CROP_SIDE))
+    buffer = io.BytesIO()
+    part.save(buffer, "JPEG", quality=inbox.JPEG_QUALITY)
+    return buffer.getvalue()
+
+
+@mail_kind("inlasning.fraga", priority=1, category="T")
+def _question_mail(params):
+    """The question as it stands when the mail goes, with its frame cut from the original; none once closed."""
+    event = InboxEvent.get_or_none((InboxEvent.id == params["event_id"]) & (InboxEvent.item == params["item_id"]))
+    if event is None or not event.detail or event.item.state in inbox.CLOSED_STATES:
+        return None
+    detail, attachments = event.detail, []
+    document = InboxDocument.get_or_none(InboxDocument.id == detail["document"]) if "crop" in detail else None
+    if document is not None:
+        attachments.append(("utsnitt.jpg", "image/jpeg", _cropped(document, detail["crop"], detail["rotation"])))
+    return {"item_id": event.item_id, "text": detail["text"], "crop": bool(attachments), "attachments": attachments}

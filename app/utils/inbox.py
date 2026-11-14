@@ -40,7 +40,7 @@ HELD_STATES = ("tagen", "vantar_uppfodare", "vantar_foralder", "ofullstandig")  
 # POST …/lage: the target state and the states the item's handler may move it from. A closed item is reopened
 # ("tagen") by a manager of its genebank or an admin, who becomes its handler. The other states are reached
 # otherwise: "ny" when the item comes in, "tagen" also by taking or assigning, "klar" when its last document is
-# done or dismissed, "vantar_uppfodare" by the question to the breeder (a later part).
+# done or dismissed, "vantar_uppfodare" by the question to the breeder (utils/inbox_gmail.py, back with the answer).
 TRANSITIONS = {
     "tagen": ("vantar_foralder", "ofullstandig", *CLOSED_STATES),
     "vantar_foralder": ("tagen",),
