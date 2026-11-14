@@ -62,7 +62,7 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # history algorithm version (33) + genetics epoch (34) + the individual command log (35) +
 # Individual.microchip (36) + billing address on membership and member_application (37) + the mail queue (38) +
 # the intake queue (39).
-CURRENT_SCHEMA_VERSION = 41
+CURRENT_SCHEMA_VERSION = 42
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -523,6 +523,8 @@ class Breeding(BaseModel):
     litter_size = IntegerField(null=True)
     litter_size6w = IntegerField(null=True)
     litter_number = SmallIntegerField(null=True)
+    # litter_size6w is prefilled with litter_size and not yet confirmed (yearly report, step 4)
+    litter_size6w_preliminary = BooleanField(default=False, constraints=[SQL("DEFAULT false")])
     updated_at = DateTimeField(default=datetime.now, null=True)
 
     def save(self, *args, **kwargs):
@@ -1548,6 +1550,7 @@ class YearlyReportRound(BaseModel):
     id = AutoField(primary_key=True, column_name="yearly_report_round_id")
     report_year = IntegerField(unique=True)
     start_date = DateField(null=True)
+    deadline = DateField(null=True)  # the support condition's last day; legacy rounds keep NULL
     end_date = DateField(null=True)
     manually_activated = BooleanField(default=False)
     is_active = BooleanField(default=False)
@@ -1561,20 +1564,39 @@ class YearlyHerdReport(BaseModel):
 
     The data field stores the report data in json format, but we refrained from
     storing it in a JSONField so that we could still use sqlite for testing.
+
+    v2 (migration 42) writes status submitted or voided and leaves name, publish* and generated_by NULL; the legacy
+    rows are status legacy. The CHECKs, the access-code FKs and the one-submitted index come from
+    _create_arsrapport_schema.
     """
 
     id = AutoField(primary_key=True, column_name="yearly_herd_report_id")
     herd = ForeignKeyField(Herd)
     report_date = DateField()
-    generated_by = ForeignKeyField(User)
-    name = CharField()
+    generated_by = ForeignKeyField(User, null=True)
+    name = CharField(null=True)
     data = TextField()
-    publish = BooleanField()
-    publish_tel = BooleanField()
-    publish_email = BooleanField()
-    publish_address = BooleanField()
+    publish = BooleanField(null=True)
+    publish_tel = BooleanField(null=True)
+    publish_email = BooleanField(null=True)
+    publish_address = BooleanField(null=True)
     version = CharField(null=True)
     round = ForeignKeyField(YearlyReportRound, null=True)
+    status = TextField(default="legacy", constraints=[SQL("DEFAULT 'legacy'")])  # REPORT_STATUSES
+    source = TextField(null=True)  # REPORT_SOURCES
+    access_code_id = IntegerField(null=True)
+    entered_by = ForeignKeyField(User, null=True, backref="+")
+    on_time_set_by = ForeignKeyField(User, null=True, backref="+")
+    support_approved_by = ForeignKeyField(User, null=True, backref="+")
+    voided_by_user = ForeignKeyField(User, null=True, backref="+")
+    inbox_item_id = IntegerField(null=True)  # no FK: the demo sync leaves out the queue's data
+    received_at = TimestampTZField(null=True)
+    support_approved_at = TimestampTZField(null=True)
+    voided_at = TimestampTZField(null=True)
+    on_time_override = BooleanField(null=True)
+    revision = IntegerField(default=0, constraints=[SQL("DEFAULT 0")])
+    voided_by_access_code_id = IntegerField(null=True)
+    void_reason = TextField(null=True)
 
 
 class BuyerContact(BaseModel):
@@ -1644,6 +1666,9 @@ class HerdTracking(BaseModel):
     holder_contact = ForeignKeyField(
         BuyerContact, null=True, on_delete="SET NULL", column_name="holder_contact_id", backref="+"
     )
+    # The yearly report link as actor and voider; FKs to report_access_code from _create_arsrapport_schema.
+    access_code_id = IntegerField(null=True)
+    voided_by_access_code_id = IntegerField(null=True)
 
     class Meta:  # pylint: disable=too-few-public-methods
         """
@@ -2041,7 +2066,9 @@ class IndividualCommand(BaseModel):
     request_id = UUIDField(index=True)  # one per execute(); the commands of a legacy PATCH share it
     command = CharField(40)  # the command class name, or "Undo"
     individual = ForeignKeyField(Individual)
-    actor = ForeignKeyField(User)  # pseudonymised with the user, never SET NULL
+    actor = ForeignKeyField(User, null=True)  # pseudonymised with the user, never SET NULL
+    # Or the yearly report link: exactly one of the two (individual_command_actor_check, _create_arsrapport_schema).
+    access_code_id = IntegerField(null=True)
     created_at = TimestampTZField(default=lambda: datetime.now(timezone.utc))
     before = BinaryJSONField(null=True)
     after = BinaryJSONField(null=True)
@@ -2284,6 +2311,176 @@ INBOX_MODELS = [
     GmailProcessed,
 ]
 
+# Yearly report v2 (migration 42). Not audited: buyers, contact values and free text must not stay in audit_log.
+
+REPORT_STATUSES = ("submitted", "voided", "legacy")
+REPORT_SOURCES = ("login", "link", "paper")
+CONSENT_SOURCES = ("profil", "login", "link", "paper", "admin")
+
+
+def _sql_in(column, values):
+    """`column IN ('a', 'b')` for a CHECK."""
+    return f"{column} IN (" + ", ".join(f"'{value}'" for value in values) + ")"
+
+
+class ReportAccessCode(BaseModel):
+    """A herd's yearly report link for one round (step 3). Neither the code nor a hash of it is stored."""
+
+    id = AutoField()
+    herd = ForeignKeyField(Herd, backref="+")
+    round = ForeignKeyField(YearlyReportRound, backref="+")
+    member = ForeignKeyField(Member, backref="+")  # the main member who got the link
+    created_at = TimestampTZField(default=_utcnow)
+    expires_at = DateField()
+    revoked_at = TimestampTZField(null=True)
+    last_opened_at = TimestampTZField(null=True)
+
+    class Meta:
+        table_name = "report_access_code"
+
+
+class YearlyReportRoundGenebank(BaseModel):
+    """A genebank's activation of a round, and when its invitations go out."""
+
+    id = AutoField()
+    round = ForeignKeyField(YearlyReportRound, backref="+")
+    genebank = ForeignKeyField(Genebank, backref="+")
+    activated_by = ForeignKeyField(User, backref="+")
+    activated_at = TimestampTZField()
+    send_at = DateField()
+    sent_at = TimestampTZField(null=True)
+
+    class Meta:
+        table_name = "yearly_report_round_genebank"
+        indexes = ((("round", "genebank"), True),)
+
+
+class YearlyReportSubmission(BaseModel):
+    """One row per Skicka, never changed: what it sent, and the commands and measurements it wrote."""
+
+    id = AutoField()
+    report = ForeignKeyField(YearlyHerdReport, backref="+")
+    submission_key = UUIDField(unique=True)
+    created_at = TimestampTZField(default=_utcnow)
+    source = TextField()
+    user = ForeignKeyField(User, null=True, backref="+")
+    access_code = ForeignKeyField(ReportAccessCode, null=True, backref="+")
+    operation_ids = BinaryJSONField(default=list, index=False, constraints=[SQL("DEFAULT '[]'")])
+    added_measurements = BinaryJSONField(default=list, index=False, constraints=[SQL("DEFAULT '[]'")])
+    data = BinaryJSONField(index=False)
+    request_hash = TextField()  # keyed HMAC of the parsed body, matrikel and buyers included (D21)
+
+    class Meta:
+        table_name = "yearly_report_submission"
+        constraints = [
+            SQL(f"CONSTRAINT yearly_report_submission_source_check CHECK ({_sql_in('source', REPORT_SOURCES)})"),
+            SQL(
+                "CONSTRAINT yearly_report_submission_actor_check CHECK ((user_id IS NULL) <> (access_code_id IS NULL))"
+            ),
+        ]
+
+
+class SaleProposal(BaseModel):
+    """A sale proposed by a caretaker or the report link (step 4), which a manager approves or rejects."""
+
+    id = AutoField()
+    report = ForeignKeyField(YearlyHerdReport, backref="+")
+    submission = ForeignKeyField(YearlyReportSubmission, backref="+")
+    individual = ForeignKeyField(Individual, backref="+")
+    to_herd = ForeignKeyField(Herd, null=True, backref="+")
+    buyer = BinaryJSONField(null=True, index=False)
+    sale_date = DateField()
+    buyer_notified_at = TimestampTZField(null=True)
+    state = TextField(default="foreslagen", constraints=[SQL("DEFAULT 'foreslagen'")])
+    decided_by = ForeignKeyField(User, null=True, backref="+")
+    decided_at = TimestampTZField(null=True)
+    reason = TextField(null=True)
+    # No FKs, as inbox_document.herd_tracking_id: TRUNCATE herd_tracking and the demo sync keep working.
+    herd_tracking_id = IntegerField(null=True)
+    inbox_item_id = IntegerField(null=True)
+    created_at = TimestampTZField(default=_utcnow)
+
+    class Meta:
+        table_name = "sale_proposal"
+        constraints = [
+            SQL(
+                "CONSTRAINT sale_proposal_state_check "
+                f"CHECK ({_sql_in('state', ('foreslagen', 'godkand', 'avvisad', 'atertagen'))})"
+            )
+        ]
+
+
+class YearlyReportDraft(BaseModel):
+    """The server draft of a herd's report: the body without the matrikel and the buyers."""
+
+    id = AutoField()
+    herd = ForeignKeyField(Herd, backref="+")
+    round = ForeignKeyField(YearlyReportRound, backref="+")
+    data = BinaryJSONField(index=False)
+    submission_key = UUIDField(null=True)
+    updated_at = TimestampTZField()
+    updated_by_user = ForeignKeyField(User, null=True, backref="+")
+    updated_by_access_code = ForeignKeyField(ReportAccessCode, null=True, backref="+")
+
+    class Meta:
+        table_name = "yearly_report_draft"
+        indexes = ((("herd", "round"), True),)
+
+
+class MemberChangeRequest(BaseModel):
+    """A pending matrikel change from the report link (step 5), or a confirmed e-mail change from paper."""
+
+    id = AutoField()
+    member = ForeignKeyField(Member, backref="+")
+    submission = ForeignKeyField(YearlyReportSubmission, backref="+")
+    kind = TextField()
+    value = BinaryJSONField(index=False)
+    access_code = ForeignKeyField(ReportAccessCode, null=True, backref="+")
+    created_at = TimestampTZField(default=_utcnow)
+    expires_at = TimestampTZField(null=True)
+    old_confirmed_at = TimestampTZField(null=True)
+    confirmed_at = TimestampTZField(null=True)
+    revoked_at = TimestampTZField(null=True)
+
+    class Meta:
+        table_name = "member_change_request"
+        constraints = [
+            SQL(
+                "CONSTRAINT member_change_request_kind_check "
+                f"CHECK ({_sql_in('kind', ('kontakt', 'epost', 'konto', 'publicering'))})"
+            )
+        ]
+
+
+class PublicationConsentChange(BaseModel):
+    """One row per actual change of a membership's publication consent, from every path that writes it."""
+
+    id = AutoField()
+    membership = ForeignKeyField(Membership, backref="+")
+    at = TimestampTZField(default=_utcnow)
+    value = BinaryJSONField(index=False)
+    text_version = TextField()
+    source = TextField()
+    user = ForeignKeyField(User, null=True, on_delete="SET NULL", backref="+")
+    report = ForeignKeyField(YearlyHerdReport, null=True, backref="+")
+
+    class Meta:
+        table_name = "publication_consent_change"
+        constraints = [
+            SQL(f"CONSTRAINT publication_consent_change_source_check CHECK ({_sql_in('source', CONSENT_SOURCES)})")
+        ]
+
+
+ARSRAPPORT_MODELS = [
+    ReportAccessCode,
+    YearlyReportRoundGenebank,
+    YearlyReportSubmission,
+    SaleProposal,
+    YearlyReportDraft,
+    MemberChangeRequest,
+    PublicationConsentChange,
+]
+
 MODELS = [
     Genebank,
     Membership,
@@ -2319,6 +2516,7 @@ MODELS = [
     MailAttempt,
     MailSender,
     *INBOX_MODELS,
+    *ARSRAPPORT_MODELS,
 ]
 
 
@@ -2395,6 +2593,9 @@ def init():
 
     # ADR-0016: herd_tracking.holder_contact_id -> buyer_contact on a database whose herd_tracking predates it
     _create_buyer_contact_guards()
+
+    # Yearly report v2: CHECKs, access-code FKs and the new void CHECK (migration won't run)
+    _create_arsrapport_schema()
 
 
 def verify(try_init=True):
@@ -3927,6 +4128,132 @@ def migrate_40_to_41():
         ).execute()
 
 
+_REPORT_V2_COLUMNS = (
+    ("status", "TEXT NOT NULL DEFAULT 'legacy'"),  # existing rows are the legacy reports
+    ("source", "TEXT"),
+    ("access_code_id", "INTEGER"),
+    ("entered_by_id", 'INTEGER REFERENCES "hbuser" ("user_id")'),
+    ("on_time_set_by_id", 'INTEGER REFERENCES "hbuser" ("user_id")'),
+    ("support_approved_by_id", 'INTEGER REFERENCES "hbuser" ("user_id")'),
+    ("voided_by_user_id", 'INTEGER REFERENCES "hbuser" ("user_id")'),
+    ("inbox_item_id", "INTEGER"),
+    ("received_at", "TIMESTAMPTZ"),
+    ("support_approved_at", "TIMESTAMPTZ"),
+    ("voided_at", "TIMESTAMPTZ"),
+    ("on_time_override", "BOOLEAN"),
+    ("revision", "INTEGER NOT NULL DEFAULT 0"),
+    ("voided_by_access_code_id", "INTEGER"),
+    ("void_reason", "TEXT"),
+)
+_LEGACY_REPORT_FIELDS = ("name", "publish", "publish_tel", "publish_email", "publish_address", "generated_by_id")
+_ACCESS_CODE_COLUMNS = (
+    ("yearlyherdreport", "access_code_id"),
+    ("yearlyherdreport", "voided_by_access_code_id"),
+    ("herd_tracking", "access_code_id"),
+    ("herd_tracking", "voided_by_access_code_id"),
+    ("individual_command", "access_code_id"),
+)
+# A voided row needs a voider: the account or the report link.
+_HT_VOID_CHECK = (
+    "(voided_at IS NULL AND voided_by_user_id IS NULL AND voided_by_access_code_id IS NULL "
+    "AND voided_operation_id IS NULL AND voided_reason IS NULL) OR (voided_at IS NOT NULL "
+    "AND (voided_by_user_id IS NOT NULL OR voided_by_access_code_id IS NOT NULL) "
+    "AND voided_operation_id IS NOT NULL AND btrim(coalesce(voided_reason, '')) <> '')"
+)
+
+
+def _create_arsrapport_schema():
+    """
+    Idempotent: the yearly report v2 tables, and what they add to yearlyreportround, yearlyherdreport, breeding,
+    herd_tracking and individual_command, with the names a fresh bootstrap gives them (an FK is
+    <table>_<column>_fkey). Called from init() and migrate_41_to_42. Skipped on SQLite.
+    """
+    if isinstance(DATABASE, SqliteDatabase):
+        return
+    DATABASE.create_tables(ARSRAPPORT_MODELS, safe=True)
+    sql = DATABASE.execute_sql
+    sql('ALTER TABLE "yearlyreportround" ADD COLUMN IF NOT EXISTS "deadline" DATE')
+    sql('ALTER TABLE "breeding" ADD COLUMN IF NOT EXISTS "litter_size6w_preliminary" BOOLEAN NOT NULL DEFAULT false')
+    sql(
+        'ALTER TABLE "yearlyherdreport" '
+        + ", ".join(f'ALTER COLUMN "{name}" DROP NOT NULL' for name in _LEGACY_REPORT_FIELDS)
+        + ", "
+        + ", ".join(f'ADD COLUMN IF NOT EXISTS "{name}" {ddl}' for name, ddl in _REPORT_V2_COLUMNS)
+    )
+    YearlyHerdReport._schema.create_indexes(safe=True)  # the new FK indexes, named as on a fresh bootstrap
+    sql(
+        'ALTER TABLE "herd_tracking" ADD COLUMN IF NOT EXISTS "access_code_id" INTEGER, '
+        'ADD COLUMN IF NOT EXISTS "voided_by_access_code_id" INTEGER'
+    )
+    sql(
+        'ALTER TABLE "individual_command" ALTER COLUMN "actor_id" DROP NOT NULL, '
+        'ADD COLUMN IF NOT EXISTS "access_code_id" INTEGER'
+    )
+    constraints = (
+        ("yearlyherdreport", "yearlyherdreport_status_check", f"CHECK ({_sql_in('status', REPORT_STATUSES)})"),
+        ("yearlyherdreport", "yearlyherdreport_source_check", f"CHECK ({_sql_in('source', REPORT_SOURCES)})"),
+        (
+            "yearlyherdreport",
+            "yearlyherdreport_void_check",
+            "CHECK ((status = 'voided') = (voided_at IS NOT NULL) AND (voided_at IS NULL "
+            "OR voided_by_user_id IS NOT NULL OR voided_by_access_code_id IS NOT NULL))",
+        ),
+        (
+            "individual_command",
+            "individual_command_actor_check",
+            "CHECK ((actor_id IS NULL) <> (access_code_id IS NULL))",
+        ),
+        *(
+            (table, f"{table}_{column}_fkey", f'FOREIGN KEY ("{column}") REFERENCES "report_access_code" ("id")')
+            for table, column in _ACCESS_CODE_COLUMNS
+        ),
+    )
+    for table, name, definition in constraints:
+        sql(
+            f"""DO $$ BEGIN
+                    ALTER TABLE "{table}" ADD CONSTRAINT "{name}" {definition};
+                EXCEPTION WHEN duplicate_object THEN NULL;
+                END $$;"""
+        )
+    # _create_herd_tracking_guards adds the old CHECK (migration 30 runs before the column exists): replace it once.
+    sql(
+        f"""DO $$ BEGIN
+                IF NOT EXISTS (SELECT 1 FROM pg_constraint
+                                WHERE conrelid = '"herd_tracking"'::regclass
+                                  AND conname = 'herd_tracking_void_fields_check'
+                                  AND strpos(pg_get_constraintdef(oid), 'voided_by_access_code_id') > 0) THEN
+                    ALTER TABLE "herd_tracking" DROP CONSTRAINT IF EXISTS "herd_tracking_void_fields_check";
+                    ALTER TABLE "herd_tracking" ADD CONSTRAINT "herd_tracking_void_fields_check"
+                        CHECK ({_HT_VOID_CHECK});
+                END IF;
+            END $$;"""
+    )
+    sql(
+        'CREATE UNIQUE INDEX IF NOT EXISTS "idx_yearlyherdreport_submitted" ON "yearlyherdreport" (herd_id, round_id) '
+        "WHERE status = 'submitted'"
+    )
+    sql(
+        'CREATE UNIQUE INDEX IF NOT EXISTS "idx_report_access_code_active" ON "report_access_code" (herd_id, round_id) '
+        "WHERE revoked_at IS NULL"
+    )
+    sql(
+        'CREATE UNIQUE INDEX IF NOT EXISTS "idx_sale_proposal_open" ON "sale_proposal" (individual_id, report_id) '
+        "WHERE state = 'foreslagen'"
+    )
+
+
+def migrate_41_to_42():
+    """Yearly report v2: rounds per genebank, the report row's status and actors, and the tables around it."""
+    with DATABASE.atomic():
+        _create_arsrapport_schema()
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=42,
+            comment="yearly report v2: rounds per genebank, submissions, drafts, sale proposals, access codes, "
+            "change requests, consent history",
+            applied=datetime.now(),
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4405,6 +4732,7 @@ MIGRATIONS = {
     (38, 39): migrate_38_to_39,  # intake queue
     (39, 40): migrate_39_to_40,  # intake queue retention
     (40, 41): migrate_40_to_41,  # buyer contact
+    (41, 42): migrate_41_to_42,  # yearly report v2
 }
 
 

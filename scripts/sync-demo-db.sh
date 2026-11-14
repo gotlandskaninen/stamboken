@@ -136,8 +136,11 @@ docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
 # The queue tables come over without their data: the demo API keeps running
 # through the load, and its sender must never see production's mail queue or
 # intake items, not even for a moment. A pattern that matches no table (an
-# older schema) is fine; notice_setting, a user preference, is copied.
-SKIP_QUEUE_DATA="--exclude-table-data='mail_*' --exclude-table-data='inbox_*' --exclude-table-data=notice --exclude-table-data='gmail_*'"
+# older schema) is fine; notice_setting, a user preference, is copied. The
+# yearly report's drafts, change requests and sale proposals are left out too:
+# no FK points at them, and they hold contact values, buyers or unsent text.
+# Its submissions are copied, purged after 13 months like the report rows.
+SKIP_QUEUE_DATA="--exclude-table-data='mail_*' --exclude-table-data='inbox_*' --exclude-table-data=notice --exclude-table-data='gmail_*' --exclude-table-data=yearly_report_draft --exclude-table-data=member_change_request --exclude-table-data=sale_proposal"
 echo "Syncing $SOURCE_DB -> $TARGET_DB via pg_dump..."
 # ON_ERROR_STOP=1 aborts psql on the first SQL error; the
 # outer set -Eeo pipefail then fires the ERR trap so the failure telemetry row

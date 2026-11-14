@@ -58,6 +58,7 @@ from utils.database import AUDITED_TABLES  # isort: skip
 from utils.database import IndividualDisease  # isort: skip
 
 from utils.database import YearlyReportRound  # isort:skip
+from utils.database import YearlyReportRoundGenebank  # isort:skip
 from utils.csv_safe import csv_cell  # isort:skip
 from utils.herd_tracking import BIRTH_HERD_CHANGED_REASON  # isort:skip
 from utils.herd_tracking import HerdTrackingError  # isort:skip
@@ -1577,6 +1578,17 @@ def save_yearly_report(herd_id, form_data, user):
                     "message": "Report year does not match report round year",
                 }
 
+            # Legacy closes for a genebank once v2 activated it for the year, whatever the round's flags say
+            if (
+                YearlyReportRoundGenebank.select()
+                .where(
+                    (YearlyReportRoundGenebank.round == report_round.id)
+                    & (YearlyReportRoundGenebank.genebank == herd.genebank_id)
+                )
+                .exists()
+            ):
+                return {"status": "error", "message": "Årsrapporten för den här genbanken lämnas i nya Stamboken."}
+
             # Validate that no other report exists for this herd in this year
             existing_reports = (
                 YearlyHerdReport.select()
@@ -1585,6 +1597,7 @@ def save_yearly_report(herd_id, form_data, user):
                     (YearlyHerdReport.herd == herd_id)
                     & (YearlyReportRound.report_year == report_year)
                     & (YearlyHerdReport.round != report_round_id)
+                    & (YearlyHerdReport.status == "legacy")
                 )
             )
             if existing_reports.exists():
@@ -1601,7 +1614,11 @@ def save_yearly_report(herd_id, form_data, user):
         # Check if a report already exists for this herd and round
         existing_report = (
             YearlyHerdReport.select()
-            .where((YearlyHerdReport.herd == herd_id) & (YearlyHerdReport.round == report_round_id))
+            .where(
+                (YearlyHerdReport.herd == herd_id)
+                & (YearlyHerdReport.round == report_round_id)
+                & (YearlyHerdReport.status == "legacy")
+            )
             .first()
         )
 
@@ -3332,7 +3349,7 @@ def get_yearly_report_rounds_with_counts(user_uuid=None):
             .join(
                 YearlyHerdReport,
                 JOIN.LEFT_OUTER,
-                on=(YearlyHerdReport.round == YearlyReportRound.id),
+                on=((YearlyHerdReport.round == YearlyReportRound.id) & (YearlyHerdReport.status == "legacy")),
             )
             .group_by(YearlyReportRound, User.username)
             .dicts()
@@ -3370,7 +3387,11 @@ def get_yearly_report_by_round(herd_id, round_id):
     try:
         report = (
             YearlyHerdReport.select()
-            .where((YearlyHerdReport.herd == herd_id) & (YearlyHerdReport.round == round_id))
+            .where(
+                (YearlyHerdReport.herd == herd_id)
+                & (YearlyHerdReport.round == round_id)
+                & (YearlyHerdReport.status == "legacy")
+            )
             .get()
         )
         report_data = report.as_dict()
@@ -3388,7 +3409,11 @@ def get_yearly_reports(round_id: int, genebank_id: int) -> list[dict]:
             reports = (
                 YearlyHerdReport.select(YearlyHerdReport, Herd)
                 .join(Herd)
-                .where((YearlyHerdReport.round == round_id) & (Herd.genebank == genebank_id))
+                .where(
+                    (YearlyHerdReport.round == round_id)
+                    & (Herd.genebank == genebank_id)
+                    & (YearlyHerdReport.status == "legacy")
+                )
             )
 
             formatted_reports = []

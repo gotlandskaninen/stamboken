@@ -96,7 +96,7 @@ class TestSchema(BuyerBase):
 
         db.check_migrations()
 
-        self.assertEqual(db.SchemaHistory.select(db.fn.MAX(db.SchemaHistory.version)).scalar(), 41)  # pylint: disable=E1120
+        self.assertTrue(db.SchemaHistory.select().where(db.SchemaHistory.version == 41).exists())
         self.assertIn("buyer_contact", db.DATABASE.get_tables())
         delete_rule = sql(
             "SELECT confdeltype FROM pg_constraint WHERE conname = 'herd_tracking_holder_contact_id_fkey'"
