@@ -6,6 +6,7 @@ docs/inkorg.md is the API; the rules live in utils/inbox.py (ADR-0007).
 import datetime
 import logging
 import os
+import re
 import threading
 import uuid
 from functools import wraps
@@ -267,6 +268,14 @@ def queue():
     return jsonify({"items": inbox.items_json(items), "total": query.count(), "counts": counts})
 
 
+# [Next.js] Who the person pickers offer: every active admin, manager and helper, by name only.
+@inbox_bp.route("/inkorg/handlaggare", methods=["GET"])
+@json_login_required
+@_queue_worker
+def handlers():
+    return jsonify({"people": inbox.handlers()})
+
+
 # [Next.js] One item with its documents and history; opening it is logged and reads its notices.
 @inbox_bp.route("/inkorg/<int:item_id>", methods=["GET"])
 @json_login_required
@@ -428,6 +437,45 @@ REGISTRATION_FIELDS = (
 _REFUSED_AS_FORBIDDEN = {"Forbidden", AssignPaperCertificate(None).denied().envelope["message"]}
 
 
+# The request field a refusal is about, from its wording (the registration's own messages) and title; the
+# UI places an error by `field` first.
+_FIELD_BY_DETAIL = (
+    (re.compile(r"^Välj mor och far|^Modern "), "mother"),
+    (re.compile(r"^Fadern "), "father"),
+    (re.compile(r"levande vid 6 veckor|litter_size6w", re.I), "litter_size6w"),
+    (re.compile(r"antal födda", re.I), "litter_size"),
+    (re.compile(r"^Födelsedatum"), "birth_date"),
+    (re.compile(r"^name must"), "name"),
+    (
+        re.compile(r"intygsnumret|Intygsnummer krävs|paper_certificate|certificate already exists", re.I),
+        "paper_certificate",
+    ),
+    (re.compile(r"som det står på pappersintyget|^Individnumret ska skrivas"), "paper_number"),
+    (re.compile(r"färg|color", re.I), "color"),
+    (re.compile(r"^Kaninen finns inte"), "individual"),
+)
+_FIELD_BY_TITLE = {"number_conflict": "paper_number", "too_young": "birth_date", "litter_order_conflict": "birth_date"}
+
+
+def _field_of(title, detail):
+    if title in _FIELD_BY_TITLE:
+        return _FIELD_BY_TITLE[title]
+    if title == "Ogiltig försäljning":
+        return "date" if re.search("datum", detail, re.I) else "herd"
+    if title == "Conflict":
+        return "paper_certificate" if re.search("certificate number", detail, re.I) else None
+    return next((field for pattern, field in _FIELD_BY_DETAIL if pattern.search(detail)), None)
+
+
+def _placed(response):
+    """A problem response with `field` added where the request field it concerns is known."""
+    body, status, headers = response
+    problem_body = body.get_json()
+    if field := _field_of(problem_body["title"], problem_body["detail"]):
+        problem_body["field"] = field
+    return jsonify(problem_body), status, headers
+
+
 def _command_problem(exc):
     """A refusal from the write commands or herd-tracking, as v2's PATCH answers it."""
     if isinstance(exc, HerdTrackingError):
@@ -515,9 +563,9 @@ def save_document(item_id, document_id):
             inbox.saved(item, document, user, result[1], action)
             answer = _with_item(result, item, document)
     except _Refused as refused:
-        return refused.response
+        return _placed(refused.response)
     except inbox.InboxError as exc:
-        return problem(exc.status, exc.title, exc.detail)
+        return _placed(problem(exc.status, exc.title, exc.detail))
     _invalidate(result[1])
     return jsonify(answer), 201 if action == "ny_kanin" else 200
 
@@ -533,8 +581,10 @@ def transfer(item_id, document_id):
         when = datetime.date.fromisoformat(date) if isinstance(date, str) else None
     except ValueError:
         when = None
-    if not isinstance(herd, str) or Herd.get_or_none(Herd.herd == herd) is None or when is None:
-        return problem(400, "Ogiltig begäran", "Ange köparens besättning (herd) och datum (date, ÅÅÅÅ-MM-DD).")
+    bad = "herd" if not isinstance(herd, str) or Herd.get_or_none(Herd.herd == herd) is None else None
+    if bad or when is None:
+        detail = "Ange köparens besättning (herd) och datum (date, ÅÅÅÅ-MM-DD)."
+        return problem(400, "Ogiltig begäran", detail, field=bad or "date")
     try:
         with DB_PROXY.atomic():
             item = inbox.lock_item(item_id)
@@ -571,11 +621,11 @@ def transfer(item_id, document_id):
                 "document": inbox.documents_json([document])[0],
             }
     except _Refused as refused:
-        return refused.response
+        return _placed(refused.response)
     except inbox.InboxError as exc:
-        return problem(exc.status, exc.title, exc.detail)
+        return _placed(problem(exc.status, exc.title, exc.detail))
     except (IndividualRefused, HerdTrackingError) as exc:
-        return _command_problem(exc)
+        return _placed(_command_problem(exc))
     _invalidate(individual)
     return jsonify(answer), 200
 

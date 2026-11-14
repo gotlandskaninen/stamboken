@@ -10,7 +10,7 @@ import io
 import math
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from peewee import fn
 from PIL import Image, ImageDraw, ImageFilter, ImageStat
@@ -70,6 +70,7 @@ NOTICE_TEXTS = {
 }
 DOC_TYPES = ("intyg", "bevis", "arsblankett", "annat")
 CERT_FORMATS = ("handskrivet", "datorskrivet", "v1_pdf", "intyg_b", "digitalt_v2")
+OPENED_EVERY = timedelta(hours=1)
 MAX_NOTE = 2000
 MAX_RECTS = 20
 # The masking a handwritten certificate (format 1) is offered: its lower third, where seller and buyer write.
@@ -197,6 +198,13 @@ def queue_workers(genebank_id, *, managers_only=False):
     return [user for user in User.select().where(User.is_active & prefilter).order_by(User.id) if wanted(user)]
 
 
+def handlers():
+    """Who the queue's person pickers offer: id and name of every active admin, manager and helper."""
+    workers = queue_workers(None)
+    names = person_names([w.id for w in workers])
+    return sorted((_person(w.id, names) for w in workers), key=lambda p: p["name"].casefold())
+
+
 def create_upload(user, herd, message, stored):
     """The item of an upload: one document per stored image ((path, sha256, quality)), and its notices."""
     item = InboxItem.create(kind="upload", genebank=herd.genebank_id, herd=herd, sender_user=user, message=message)
@@ -229,7 +237,10 @@ def items_json(items):
     herd_ids = {i.herd_id for i in items if i.herd_id}
     herds = {h.id: h.herd for h in Herd.select(Herd.id, Herd.herd).where(Herd.id.in_(herd_ids))} if herd_ids else {}
     counts = {item_id: (0, 0) for item_id in ids}
+    blurry = set()
     if ids:
+        flagged = InboxDocument.select(InboxDocument.item, InboxDocument.quality).where(InboxDocument.item.in_(ids))
+        blurry = {item_id for item_id, quality in flagged.tuples() if "suddig" in warnings(quality)}
         done = fn.COUNT(InboxDocument.done_at)
         query = (
             InboxDocument.select(InboxDocument.item, fn.COUNT(InboxDocument.id), done)
@@ -256,6 +267,7 @@ def items_json(items):
             "ref_type": item.ref_type,
             "ref_id": item.ref_id,
             "has_message": bool(item.message),
+            "maybe_blurry": item.id in blurry,
             "documents": counts[item.id][0],
             "documents_done": counts[item.id][1],
         }
@@ -585,8 +597,14 @@ def item_detail(item):
 
 
 def open_item(item, user):
-    """Who opened which item is logged (it may show a buyer's details), and its notices are read."""
-    log_event(item, user, "oppnad")
+    """
+    Who opened which item is logged (it may show a buyer's details), at most once an hour per user and item so
+    that reloading does not fill the history; its notices are read.
+    """
+    since = now() - OPENED_EVERY
+    seen = item.events.where((InboxEvent.kind == "oppnad") & (InboxEvent.user == user.id) & (InboxEvent.at > since))
+    if not seen.exists():
+        log_event(item, user, "oppnad")
     Notice.update(read_at=now()).where(
         (Notice.user == user.id) & (Notice.item == item.id) & Notice.read_at.is_null(True)
     ).execute()

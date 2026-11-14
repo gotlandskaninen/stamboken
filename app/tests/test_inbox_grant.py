@@ -223,6 +223,44 @@ class TestSaveEndpoint(GrantTest):
         certified = {**body, "individual": "G1-2111", "paper_certificate": "P-10", "paper_number": "G1-2111"}
         self.assertEqual(self.save(item2, document2, **certified).status_code, 403)
 
+    def test_a_number_conflict_on_an_existing_rabbit_is_not_resolved_by_resolution(self):
+        item, document = self.taken(self.helper)
+        db.Breeding.update(litter_number=1).where(db.Breeding.id == self.rabbit("G1-2112").breeding_id).execute()
+        self.login("hjalp")
+        body = {
+            "action": "pappersintyg",
+            "individual": "G1-2112",
+            "paper_certificate": "P-9",
+            "paper_number": "G1-2113",
+        }
+        for resolution in (None, {"expected_number": "G1-2112", "choice": "use_stamboken_number"}):
+            with self.subTest(resolution=resolution):
+                resp = self.save(item, document, **body, **({"resolution": resolution} if resolution else {}))
+                self.assertEqual(resp.status_code, 409, resp.get_json())
+                self.assertEqual(
+                    (resp.get_json()["title"], resp.get_json()["field"]), ("number_conflict", "paper_number")
+                )
+                self.assertIsNone(self.rabbit("G1-2112").certificate)
+
+    def test_errors_name_the_request_field_they_concern(self):
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        for name, body, field in [
+            ("no certificate number", {**NEW_RABBIT, "paper_certificate": ""}, "paper_certificate"),
+            ("no paper number", {**NEW_RABBIT, "paper_number": "x"}, "paper_number"),
+            ("unknown mother", {**NEW_RABBIT, "mother": "G1-9999"}, "mother"),
+            ("no litter size", {**NEW_RABBIT, "litter_size": None}, "litter_size"),
+            ("the paper disagrees", {**NEW_RABBIT, "paper_number": "G1-2521"}, "paper_number"),
+        ]:
+            with self.subTest(name):
+                resp = self.save(item, document, **body)
+                self.assertGreaterEqual(resp.status_code, 400)
+                self.assertEqual(resp.get_json().get("field"), field, resp.get_json())
+        resp = self.save(item, document, action="pappersintyg", individual="G1-9999", paper_certificate="P-1")
+        self.assertEqual(resp.get_json().get("field"), "individual", resp.get_json())
+        resp = self.save(item, document, action="okand")
+        self.assertNotIn("field", resp.get_json())
+
     def test_the_trace_outlives_the_item(self):
         item, document = self.taken(self.helper)
         self.certify(self.helper, item, document)
@@ -259,6 +297,21 @@ class TestTransferEndpoint(GrantTest):
         self.assertFalse(body["item"]["missing_proof"])
         self.assertEqual((body["document"]["status"], body["item"]["state"]), ("klar", "klar"))
         self.assertEqual(db.InboxDocument.get_by_id(document.id).herd_tracking_id, body["herd_tracking_id"])
+
+    def test_a_refused_sale_names_its_field(self):
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        today = date.today().isoformat()
+        future = (date.today() + timedelta(days=3)).isoformat()
+        for name, body, field in [
+            ("no date", {"individual": "G1-2111", "herd": "G2"}, "date"),
+            ("unknown herd", {"individual": "G1-2111", "herd": "G99", "date": today}, "herd"),
+            ("future", {"individual": "G1-2111", "herd": "G2", "date": future}, "date"),
+            ("another genebank", {"individual": "G1-2111", "herd": "M3", "date": today}, "herd"),
+            ("unknown rabbit", {"individual": "G1-9999", "herd": "G2", "date": today}, "individual"),
+        ]:
+            with self.subTest(name):
+                self.assertEqual(self.transfer(item, document, **body).get_json().get("field"), field)
 
     def test_the_sale_rules_still_apply(self):
         item, document = self.taken(self.helper)

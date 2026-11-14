@@ -3,6 +3,8 @@
 isort:skip_file
 """
 
+from datetime import timedelta  # noqa: E402
+
 import utils.database as db  # noqa: E402
 import utils.inbox as inbox  # noqa: E402
 
@@ -30,6 +32,32 @@ class TestVisibility(InboxTest):
                 self.assertEqual(self.client.get(f"/api/v2/inkorg/{item.id}").status_code, 403)
                 self.assertEqual(self.post(f"/{item.id}/ta").status_code, 403)
                 self.assertEqual(self.client.get("/api/v2/inkorg/notiser/antal").get_json()["works_in_queue"], False)
+
+    def test_the_handlers_are_listed_by_name_for_the_queue_only(self):
+        inactive = self.user("gammal", ("helper", self.genebanks[0].id))
+        db.User.update(is_active=False).where(db.User.id == inactive.id).execute()
+        self.assertEqual(self.client.get("/api/v2/inkorg/handlaggare").status_code, 401)
+        self.login("owner")
+        self.assertEqual(self.client.get("/api/v2/inkorg/handlaggare").status_code, 403)
+        self.login("man")
+        resp = self.client.get("/api/v2/inkorg/handlaggare")
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        people = resp.get_json()["people"]
+        ids = {p["id"] for p in people}
+        self.assertTrue({self.helper.id, self.mellerud_helper.id, self.manager.id, self.admin.id} <= ids)
+        self.assertNotIn(inactive.id, ids)
+        self.assertNotIn(self.owner.id, ids)
+        for person in people:
+            self.assertEqual(set(person), {"id", "name"})
+
+    def test_a_blurry_document_flags_the_item_in_the_list(self):
+        sharp, blurred = self.item(0), self.item(1, documents=2)
+        db.InboxDocument.update(quality={"short_side": 1200, "sharpness": 3.0, "brightness": 200.0}).where(
+            db.InboxDocument.item == blurred.id
+        ).execute()
+        self.login("hjalp")
+        flags = {i["id"]: i["maybe_blurry"] for i in self.client.get("/api/v2/inkorg").get_json()["items"]}
+        self.assertEqual(flags, {sharp.id: False, blurred.id: True})
 
     def test_filters_and_counts(self):
         mine, untaken, mellerud = self.item(0), self.item(1), self.item(2)
@@ -66,6 +94,27 @@ class TestVisibility(InboxTest):
             [(e.kind, e.user_id) for e in events], [("inkommen", self.owner.id), ("oppnad", self.helper.id)]
         )
         self.assertEqual(self.client.get("/api/v2/inkorg/notiser/antal").get_json()["unread"], 0)
+
+    def test_opening_is_logged_once_an_hour_per_user_and_item(self):
+        item = self.item(0)
+        self.login("hjalp")
+        for _ in range(3):
+            self.client.get(f"/api/v2/inkorg/{item.id}")
+        self.login("man")
+        self.client.get(f"/api/v2/inkorg/{item.id}")
+
+        def opened():
+            return list(
+                db.InboxEvent.select().where((db.InboxEvent.item == item.id) & (db.InboxEvent.kind == "oppnad"))
+            )
+
+        self.assertEqual(sorted(e.user_id for e in opened()), sorted([self.helper.id, self.manager.id]))
+        db.InboxEvent.update(at=inbox.now() - timedelta(minutes=61)).where(
+            (db.InboxEvent.kind == "oppnad") & (db.InboxEvent.user == self.helper.id)
+        ).execute()
+        self.login("hjalp")
+        self.client.get(f"/api/v2/inkorg/{item.id}")
+        self.assertEqual(len(opened()), 3)
 
 
 class TestTakeAndAssign(InboxTest):

@@ -144,7 +144,9 @@ Alla fel är RFC 9457 Problem Details med `Content-Type: application/problem+jso
 ```
 
 `detail` är på svenska och kan visas för användaren. Vissa fel har fler fält, se respektive
-endpoint. Gemensamt för alla endpoints:
+endpoint. Ett fel från `…/spara` och `…/overlat` som gäller ett fält i anropet har dessutom
+`"field"`: fältets namn i anropet (till exempel `"paper_number"`, `"mother"` eller `"date"`).
+Gränssnittet placerar felet vid det fältet. Har felet inget `field` gäller det anropet som helhet. Gemensamt för alla endpoints:
 
 | Status | När |
 |---|---|
@@ -178,6 +180,7 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
   "ref_type": null,
   "ref_id": null,
   "has_message": true,
+  "maybe_blurry": false,
   "documents": 2,
   "documents_done": 1
 }
@@ -189,6 +192,7 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
   `"Konto <id>"` när namnet saknas. E-postadressen visas aldrig.
 - `missing_proof`: en försäljning har registrerats utan överlåtelsebevis ("bevis saknas").
 - `stalled`: sätts av en senare del (en post som stått still i 14 dagar); alltid `false` i dag.
+- `maybe_blurry`: något dokument har varningen `suddig` (kön visar "kan vara oskarp").
 - `documents` och `documents_done`: antal dokument och antal klara eller avfärdade.
 
 ### Post (detalj)
@@ -262,7 +266,7 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
 | `kind` | `detail` |
 |---|---|
 | `inkommen` | `{"documents": 2}` |
-| `oppnad` | `null`; någon i kön öppnade posten |
+| `oppnad` | `null`; någon i kön öppnade posten (högst en gång i timmen per person och post) |
 | `tagen` | `null` |
 | `overtagen` | `{"from_user": 7}` |
 | `tilldelad` | `{"to_user": 7, "from_user": null}` |
@@ -370,10 +374,20 @@ Kölistan, äldst först (`received_at`).
 
 **Fel:** 400 för ett okänt läge eller ett id som inte är ett heltal.
 
+### `GET /api/v2/inkorg/handlaggare`
+
+De som kan arbeta med poster, för personväljare och tilldelning: varje aktiv admin,
+genbanksansvarig och genbankshjälpare, sorterade efter namn. Bara id och namn (namnet som i
+`sender`), aldrig e-postadress eller användarnamn. Posten kan ändå bara tilldelas den som får
+arbeta i postens genbank (se [Ta, ta över och tilldela](#ta-ta-över-och-tilldela)).
+
+**Svar 200:** `{"people": [{"id": 7, "name": "Test Hjälpare"}]}`
+
 ### `GET /api/v2/inkorg/{id}`
 
-Posten i detaljform med dokument och historik. Varje anrop loggas som händelsen `oppnad` (vem
-och när), och anroparens notiser om posten blir lästa.
+Posten i detaljform med dokument och historik. Öppnandet loggas som händelsen `oppnad` (vem och
+när), högst en gång i timmen per person och post så att en omladdning inte fyller historiken. Ett
+öppnande efter en timme loggas igen. Anroparens notiser om posten blir lästa varje gång.
 
 ## Ta, ta över och tilldela
 
@@ -568,7 +582,10 @@ hjälpare får bara sätta intyget på en kanin som saknar intyg.
 **Fel:** 400 utan intygsnummer eller individnummer, eller när intygsnumret redan finns
 (`Individual certificate already exists`); 403 när anroparen inte får ändra kaninen eller kaninen
 redan har intyg och anroparen inte är genbanksansvarig eller admin; 404 när kaninen inte finns;
-409 `number_conflict` som ovan.
+409 `number_conflict` när `paper_number` inte är kaninens nummer i Stamboken (eller finns på en annan
+kanin), med samma fält som ovan. `resolution` läses inte här: kaninens nummer är redan satt och
+pappret kan inte rätta det, så ett intyg med ett annat nummer lämnar handläggaren till
+genbanksansvarig (`hos_genbanksansvarig`).
 
 **För båda:** 409 när posten inte är anroparens, inte är `tagen`, har `ref_type`, eller
 dokumentet inte är ett osparat intyg; 400 för okänd `action`. Efter sparandet har dokumentet
