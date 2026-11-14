@@ -432,6 +432,15 @@ class TestRetention(BuyerBase):
             [r.new_data for r in self._buyer_log(self.contact_id, "DELETE")], [{"action": "gallring_fem_ar"}]
         )
 
+    def test_the_buyer_goes_when_the_rabbit_is_dead(self):
+        self.assertEqual(buyer_contact.purge_dead(NOW), 0)
+        db.Individual.update(death_date="2022-06-01").where(db.Individual.id == self.rabbit.id).execute()
+        self.assertEqual(buyer_contact.purge_dead(NOW), 1)
+        self.assertIsNone(self._contact(self.contact_id))
+        self.assertIsNotNone(db.HerdTracking.get_by_id(self.sale.id))  # the sale stays
+        self.assertEqual([r.new_data for r in self._buyer_log(self.contact_id, "DELETE")], [{"action": "gallring_dod"}])
+        self.assertEqual(buyer_contact.purge_dead(NOW), 0)
+
     def test_contact_details_go_when_the_rabbit_is_sold_on(self):
         self.assertEqual(buyer_contact.purge_sold_on(NOW), 0)
         record_herd_tracking(self.rabbit, self.herds[1], "2022-01-01", "TRANSFER", self.manager)  # buyback

@@ -8,9 +8,9 @@ Registration, visibility and the deletion on a void live with the sale in utils.
 import logging
 from datetime import timedelta
 
-from peewee import Case
+from peewee import Case, fn
 
-from utils.database import DB_PROXY, BuyerContact, HerdTracking
+from utils.database import DB_PROXY, BuyerContact, HerdTracking, Individual
 from utils.herd_tracking import (
     HerdTrackingForbidden,
     HerdTrackingNotFound,
@@ -47,6 +47,21 @@ def purge_expired(now):
     with DB_PROXY.atomic():
         expired = BuyerContact.select(BuyerContact.id).where(BuyerContact.purge_at <= now)
         count, paths = delete_buyer_contacts([contact_id for (contact_id,) in expired.tuples()], "gallring_fem_ar")
+    remove_originals(paths)
+    return count
+
+
+def purge_dead(now):  # pylint: disable=unused-argument  # every rule takes the clock
+    """Once the association learns the rabbit is dead, its buyers' names and towns go before the five years."""
+    dead = (Individual.death_date.is_null(False)) | (fn.COALESCE(Individual.death_note, "") != "")
+    with DB_PROXY.atomic():
+        held = (
+            HerdTracking.select(HerdTracking.holder_contact)
+            .join(Individual, on=(Individual.id == HerdTracking.individual))
+            .where(HerdTracking.holder_contact.is_null(False) & dead)
+            .distinct()
+        )
+        count, paths = delete_buyer_contacts([contact_id for (contact_id,) in held.tuples()], "gallring_dod")
     remove_originals(paths)
     return count
 
@@ -104,7 +119,7 @@ def purge_membership_optin(now):
     return _null_fields(BuyerContact.membership_optin_at < now - MEMBERSHIP_OPTIN_FOR, changes, "gallring_medlemskap")
 
 
-RULES = (purge_membership_optin, purge_sold_on, purge_expired)
+RULES = (purge_membership_optin, purge_sold_on, purge_dead, purge_expired)
 
 
 def run(now):
