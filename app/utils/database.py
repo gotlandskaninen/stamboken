@@ -4153,11 +4153,13 @@ _ACCESS_CODE_COLUMNS = (
     ("herd_tracking", "voided_by_access_code_id"),
     ("individual_command", "access_code_id"),
 )
-# A voided row needs a voider: the account or the report link.
+# A voided row has exactly one voider: the account or the report link. PostgreSQL keeps this text in
+# pg_get_constraintdef, so the swap in _create_arsrapport_schema looks for it.
+_HT_VOID_ACTOR = "(voided_by_user_id IS NULL) <> (voided_by_access_code_id IS NULL)"
 _HT_VOID_CHECK = (
     "(voided_at IS NULL AND voided_by_user_id IS NULL AND voided_by_access_code_id IS NULL "
     "AND voided_operation_id IS NULL AND voided_reason IS NULL) OR (voided_at IS NOT NULL "
-    "AND (voided_by_user_id IS NOT NULL OR voided_by_access_code_id IS NOT NULL) "
+    f"AND ({_HT_VOID_ACTOR}) "
     "AND voided_operation_id IS NOT NULL AND btrim(coalesce(voided_reason, '')) <> '')"
 )
 
@@ -4215,13 +4217,14 @@ def _create_arsrapport_schema():
                 EXCEPTION WHEN duplicate_object THEN NULL;
                 END $$;"""
         )
-    # _create_herd_tracking_guards adds the old CHECK (migration 30 runs before the column exists): replace it once.
+    # Replace, once, the CHECK that _create_herd_tracking_guards adds (migration 30 runs before the column exists),
+    # and the "user or code" version this branch's 42 first had.
     sql(
         f"""DO $$ BEGIN
                 IF NOT EXISTS (SELECT 1 FROM pg_constraint
                                 WHERE conrelid = '"herd_tracking"'::regclass
                                   AND conname = 'herd_tracking_void_fields_check'
-                                  AND strpos(pg_get_constraintdef(oid), 'voided_by_access_code_id') > 0) THEN
+                                  AND strpos(pg_get_constraintdef(oid), '{_HT_VOID_ACTOR}') > 0) THEN
                     ALTER TABLE "herd_tracking" DROP CONSTRAINT IF EXISTS "herd_tracking_void_fields_check";
                     ALTER TABLE "herd_tracking" ADD CONSTRAINT "herd_tracking_void_fields_check"
                         CHECK ({_HT_VOID_CHECK});

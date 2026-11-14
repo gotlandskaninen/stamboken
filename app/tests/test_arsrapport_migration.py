@@ -163,12 +163,29 @@ class TestArsrapportMigration(IsolatedSchemaTest):
             "ATTESTATION", individual=self.individuals[0], herd=self.herds[0], herd_tracking_date=date(2025, 12, 31)
         )
         code = self._code()
-        with self.assertRaises(IntegrityError), db.DB_PROXY.atomic():
-            db.HerdTracking.update(voided_by_access_code_id=code.id).where(db.HerdTracking.id == row.id).execute()
-        db.HerdTracking.update(
-            voided_at=NOW, voided_by_access_code_id=code.id, voided_operation_id=uuid.uuid4(), voided_reason="ändrad"
-        ).where(db.HerdTracking.id == row.id).execute()
+        void = {"voided_at": NOW, "voided_operation_id": uuid.uuid4(), "voided_reason": "ändrad"}
+        for fields in (
+            {"voided_by_access_code_id": code.id},  # not voided
+            {**void, "voided_by_user": self.manager, "voided_by_access_code_id": code.id},  # two voiders
+        ):
+            with self.subTest(fields=sorted(fields)), self.assertRaises(IntegrityError), db.DB_PROXY.atomic():
+                db.HerdTracking.update(**fields).where(db.HerdTracking.id == row.id).execute()
+        db.HerdTracking.update(voided_by_access_code_id=code.id, **void).where(db.HerdTracking.id == row.id).execute()
         self.assertEqual(db.HerdTracking.get_by_id(row.id).voided_by_access_code_id, code.id)
+
+    def test_helper_replaces_the_first_42_void_check(self):
+        """A database that ran this branch's first 42 has the "user or code" CHECK: the helper swaps it."""
+        _sql('ALTER TABLE "herd_tracking" DROP CONSTRAINT "herd_tracking_void_fields_check"')
+        _sql(
+            'ALTER TABLE "herd_tracking" ADD CONSTRAINT "herd_tracking_void_fields_check" CHECK ('
+            "(voided_at IS NULL AND voided_by_user_id IS NULL AND voided_by_access_code_id IS NULL "
+            "AND voided_operation_id IS NULL AND voided_reason IS NULL) OR (voided_at IS NOT NULL "
+            "AND (voided_by_user_id IS NOT NULL OR voided_by_access_code_id IS NOT NULL) "
+            "AND voided_operation_id IS NOT NULL AND btrim(coalesce(voided_reason, '')) <> ''))"
+        )
+        self.assertNotEqual(snapshot(), self.bootstrapped)
+        db._create_arsrapport_schema()
+        self.assertEqual(snapshot(), self.bootstrapped)
 
     def test_command_actor_or_access_code_exactly_one(self):
         code = self._code()
