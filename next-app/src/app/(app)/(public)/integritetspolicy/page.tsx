@@ -197,7 +197,8 @@ export default function IntegritetspolicyPage() {
               som rapporterade den. Rapporterar du på papper skickar du
               blanketten till genbanksansvarig för rasen, som sammanställer
               årsrapporterna. Pappersblanketter och kopior av genbanksintyg
-              förvaras hos genbanksansvarig och förstörs efter tio år.
+              förvaras hos genbanksansvarig och förstörs efter tio år. Äldre
+              kopior av intyg kan innehålla köparens namn och adress.
               Sammanställningen av årsrapporterna, med bankkonton för
               utbetalningen, förvaras hos genbanksansvarig och i föreningens
               Google Drive.{" "}
