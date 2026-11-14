@@ -5,6 +5,7 @@ import {
   canEditDocuments,
   canSave,
   CLOSED_STATES,
+  colorNamesFor,
   initialCertForm,
   initialSaveMode,
   itemActions,
@@ -579,5 +580,20 @@ describe("people", () => {
         (p) => p.id,
       ),
     ).toEqual([8, 7, 3]);
+  });
+});
+
+describe("colorNamesFor", () => {
+  const lists = {
+    Gotlandskanin: [{ name: "Svart" }],
+    Mellerudskanin: [{ name: "Vit" }, { name: "Grå" }],
+  };
+  it("picks the list of the genebank, by its name", () => {
+    expect(colorNamesFor(lists, "Mellerud")).toEqual(["Vit", "Grå"]);
+    expect(colorNamesFor(lists, "Gotland")).toEqual(["Svart"]);
+  });
+  it("is empty when the genebank is unknown", () => {
+    expect(colorNamesFor(lists, undefined)).toEqual([]);
+    expect(colorNamesFor(null, "Mellerud")).toEqual([]);
   });
 });

@@ -6,7 +6,7 @@ import { fetchHandlers, requireQueueWorker } from "@/lib/inkorg-server";
 import { Masthead } from "@/components/shell/Masthead";
 import type { ColorOption } from "@/app/(app)/stamboken/(dashboard)/min-besattning/actions";
 import type { GenebankHerd } from "@/utils/saleRules";
-import { STATE_LABEL, type InboxDetail } from "../lib";
+import { colorNamesFor, STATE_LABEL, type InboxDetail } from "../lib";
 import { WorkView } from "./WorkView";
 
 export const dynamic = "force-dynamic";
@@ -28,8 +28,11 @@ export default async function InkorgItemPage({
     if (e instanceof ApiError && e.status === 404) notFound();
     throw e;
   }
-  const [colors, herds, handlers] = await Promise.all([
+  const [colors, genebanks, herds, handlers] = await Promise.all([
     fetchApi<Record<string, ColorOption[]>>("/colors").catch(() => null),
+    fetchApi<{ genebanks: { id: number; name: string }[] }>("/genebanks")
+      .then((r) => r.genebanks)
+      .catch(() => []),
     item.genebank_id
       ? fetchApi<{ herds: GenebankHerd[] }>(
           `/v2/genebank/${item.genebank_id}/herds`,
@@ -39,12 +42,11 @@ export default async function InkorgItemPage({
       : Promise.resolve([]),
     fetchHandlers(),
   ]);
-  // The genebank's colour list, picked as BunnyPromoteDialog does.
-  const mellerud = item.herd?.startsWith("M") ?? false;
-  const key = Object.keys(colors ?? {}).find((k) =>
-    k.includes(mellerud ? "Mellerud" : "Gotland"),
+  // The colour list of the item's genebank, not of its herd: it may have none.
+  const colorNames = colorNamesFor(
+    colors,
+    genebanks.find((g) => g.id === item.genebank_id)?.name,
   );
-  const colorNames = (key && colors?.[key]?.map((c) => c.name)) || [];
 
   return (
     <>

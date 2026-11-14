@@ -524,6 +524,20 @@ export function numberCheckOf(problem: Problem): NumberCheck | null {
   };
 }
 
+/** The colour names of the item's genebank (matched by its name, as the list's keys are); empty when unknown. */
+export function colorNamesFor(
+  colors: Record<string, { name: string }[]> | null,
+  genebank: string | null | undefined,
+): string[] {
+  const breed = genebank?.includes("Mellerud")
+    ? "Mellerud"
+    : genebank?.includes("Gotland")
+      ? "Gotland"
+      : null;
+  const key = breed && Object.keys(colors ?? {}).find((k) => k.includes(breed));
+  return (key && colors?.[key]?.map((c) => c.name)) || [];
+}
+
 /** The people a manager can pick: you, everyone the list shows, and `extra`. */
 export function people(
   me: Person,
