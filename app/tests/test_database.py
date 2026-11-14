@@ -1082,6 +1082,22 @@ class TestDatabaseMigration(DatabaseTest):
         db.check_migrations()
         self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
 
+    def test_replay_37_to_38_resets_bank_privacy(self):
+        """A database stamped at 37 gets every stored bank privacy level reset to private."""
+        self.addCleanup(db.check_migrations)
+        gb = db.Genebank.create(name="Replay38")
+        herd = db.Herd.create(
+            genebank=gb, herd="R38", bank_account_number_privacy="public", bank_name_privacy="Public "
+        )
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 38).execute()
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        herd = db.Herd.get_by_id(herd.id)
+        self.assertEqual(herd.bank_account_number_privacy, "private")
+        self.assertEqual(herd.bank_name_privacy, "private")
+
     def test_replay_32_to_33_adds_the_history_algorithm_version(self):
         """
         A database stamped at 32 gets genetics_history_state.algorithm_version,

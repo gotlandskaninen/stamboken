@@ -61,7 +61,7 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # Phase 999.5 herd tracking kind/void (30) + Phase 999.8 genetics version (31) + genetics history (32) +
 # history algorithm version (33) + genetics epoch (34) + the individual command log (35) +
 # Individual.microchip (36) + billing address on membership and member_application (37).
-CURRENT_SCHEMA_VERSION = 37
+CURRENT_SCHEMA_VERSION = 38
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -3573,6 +3573,18 @@ def migrate_36_to_37():
         ).execute()
 
 
+def migrate_37_to_38():
+    """Issue #33: the bank details are always private, so reset any stored level."""
+    with DATABASE.atomic():
+        for field in BANK_PRIVACY_FIELDS:
+            Herd.update({field: "private"}).where(
+                Herd._meta.fields[field].is_null(True) | (Herd._meta.fields[field] != "private")
+            ).execute()
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=38, comment="herd bank privacy reset to private", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4047,6 +4059,7 @@ MIGRATIONS = {
     (34, 35): migrate_34_to_35,  # ADR-0017 command log
     (35, 36): migrate_35_to_36,  # Individual.microchip
     (36, 37): migrate_36_to_37,  # billing address
+    (37, 38): migrate_37_to_38,  # bank privacy reset
 }
 
 
