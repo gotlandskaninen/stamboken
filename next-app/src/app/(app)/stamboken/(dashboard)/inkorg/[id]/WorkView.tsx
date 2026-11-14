@@ -760,7 +760,7 @@ export function WorkView({
             </>
           ) : doc.doc_type === "intyg" ? (
             <CertificateForm
-              key={`${doc.id}:${doc.interpretation_status}`}
+              key={doc.id}
               itemId={item.id}
               doc={doc}
               colors={colors}
