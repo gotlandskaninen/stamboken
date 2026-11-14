@@ -177,13 +177,16 @@ class TestUpload(InboxTest):
                 self.login(username)
                 self.assertEqual(self.upload(herd=herd).status_code, status)
 
-    def test_a_body_over_the_app_wide_limit_is_accepted(self):
-        noise = Image.frombytes("RGB", (1500, 1500), os.urandom(1500 * 1500 * 3))
+    def test_a_body_over_what_nginx_lets_through_is_refused_as_problem_json(self):
+        noise = Image.frombytes("RGB", (1100, 1100), os.urandom(1100 * 1100 * 3))
         big = encoded(noise, "PNG")
-        self.assertGreater(2 * len(big), 11 * 1024 * 1024)  # MAX_CONTENT_LENGTH elsewhere
+        self.assertLess(len(big), 10 * 1024 * 1024 // 2)  # each file under 10 MB, together over
         self.login("owner")
-        resp = self.upload(("a.png", big), ("b.png", big))
-        self.assertEqual(resp.status_code, 201, resp.get_json())
+        resp = self.upload(("a.png", big), ("b.png", big), ("c.png", big))
+        self.assertEqual((resp.status_code, resp.mimetype), (413, "application/problem+json"))
+        self.assertIn("10 MB", resp.get_json()["detail"])
+        self.assertFalse(db.InboxItem.select().exists())
+        self.assertEqual(self.upload(("a.png", big), accept_warnings="1").status_code, 201)
 
     def test_files_are_removed_when_the_item_cannot_be_written(self):
         self.login("owner")

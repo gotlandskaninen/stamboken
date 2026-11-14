@@ -56,6 +56,7 @@ pillow_heif.register_heif_opener()
 inbox_bp = Blueprint("inbox", __name__, url_prefix="/api/v2")
 
 MAX_FILES = 10  # files per upload, and images once each PDF is split into pages
+MAX_REQUEST = 10 * 1024 * 1024  # a whole upload: what nginx lets through (client_max_body_size 10M)
 MAX_MESSAGE = 2000
 PDF_DPI = 200
 PDF_MAX_SIDE = 3000  # pixels; bounds the memory a page takes, whatever size the PDF says it is
@@ -161,6 +162,14 @@ def _each_image(file, room, handle):
     return 1
 
 
+@inbox_bp.errorhandler(413)
+def too_large(_exc):
+    """A body over MAX_REQUEST (werkzeug's 413 is HTML) as problem+json."""
+    return problem(
+        413, "Payload Too Large", "Inskicket är för stort. Högst 10 MB allt som allt, skicka resten i ett nytt."
+    )
+
+
 @inbox_bp.errorhandler(429)
 def rate_limited(exc):
     """The limiter's 429 as problem+json, as in admin.py."""
@@ -175,8 +184,8 @@ def rate_limited(exc):
     "20 per hour", key_func=lambda: str(current_user.id), deduct_when=lambda response: response.status_code == 201
 )
 def upload():
-    # Up to MAX_FILES files of MAX_FILE_SIZE each, not the app-wide MAX_CONTENT_LENGTH; set before the body is read.
-    request.max_content_length = MAX_FILES * MAX_FILE_SIZE + 1024 * 1024
+    # Set before the body is read: the same limit as nginx's, so a larger upload never half reaches Flask.
+    request.max_content_length = MAX_REQUEST
     herd = Herd.get_or_none(Herd.herd == request.form.get("herd"))
     if herd is None:
         return problem(400, "Bad Request", "Välj besättning.")

@@ -351,7 +351,7 @@ timmen per användare (429 efter det); ett anrop som nekas, också 409 nedan, r�
 | Fält | | |
 |---|---|---|
 | `herd` | krävs | besättningsnumret, till exempel `G1` |
-| `files` | krävs, upprepas | 1–10 filer: JPEG, PNG, WebP, HEIC eller PDF, högst 10 MB styck |
+| `files` | krävs, upprepas | 1–10 filer: JPEG, PNG, WebP, HEIC eller PDF, högst 10 MB allt som allt (se nedan) |
 | `message` | valfritt | uppladdarens meddelande, högst 2000 tecken |
 | `accept_warnings` | valfritt | `1` eller `true`: spara också när någon bild har en varning |
 
@@ -412,7 +412,7 @@ själv.
 |---|---|
 | 400 | `Välj besättning.` (saknas eller okänd), `Ingen fil bifogad.`, `Högst 10 bilder per inskick. En PDF räknas sida för sida.`, `Meddelandet får vara högst 2000 tecken.` |
 | 403 | `Du kan bara skicka in för dina egna besättningar.` |
-| 413 | `Filen är för stor. Max 10 MB.`, `Bilden har för många pixlar. Max 40 megapixlar.` |
+| 413 | `Inskicket är för stort. …` (hela begäran över 10 MB), `Filen är för stor. Max 10 MB.`, `Bilden har för många pixlar. Max 40 megapixlar.` |
 | 415 | `Otillåten filtyp. Bara JPEG, PNG, WebP, HEIC och PDF.` |
 | 422 | `Filen kunde inte läsas. Den kan vara skadad.` |
 | 429 | för många inskick den senaste timmen |
@@ -1142,9 +1142,11 @@ dokumentet inte hör till den.
 
 ## Gränser och sådant gränssnittet behöver veta
 
-- Uppladdningen tar emot högst 10 filer à 10 MB i en begäran. Resten av API:t tar högst 11 MB.
-  nginx tar i dag emot högst 10 MB per begäran på de publika värdnamnen, så ett större inskick
-  måste antingen få en egen gräns i nginx eller skickas som flera inskick.
+- En begäran till uppladdningen får vara högst 10 MB allt som allt, filer och formulär tillsammans:
+  lika mycket som nginx släpper igenom (`client_max_body_size 10M`). Ett större inskick nekas med 413
+  (problem+json när begäran når Flask, annars nginx egen sida), så gränssnittet bör räkna filernas
+  storlek före sändningen och dela upp inskicket. Resten av API:t tar högst 11 MB, men nginx högst
+  10 MB.
 - Telefonens filväljare: `<input type="file" accept="image/*,application/pdf" multiple>` ger både
   kamera och bildbibliotek.
 - Bilderna kräver inloggningens cookie. Använd dem som `src` i samma ursprung, eller hämta dem
