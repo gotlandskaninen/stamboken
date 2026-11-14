@@ -89,7 +89,6 @@ export default function KomIgangPage() {
             listStyle: "none",
             m: 0,
             p: 0,
-            maxWidth: "52rem",
             borderBottom: 1,
             borderColor: "line.main",
           }}
@@ -100,7 +99,12 @@ export default function KomIgangPage() {
               component="li"
               sx={{
                 display: "grid",
-                gridTemplateColumns: { xs: "40px 1fr", md: "56px 1fr" },
+                // Desktop: number, title and text side by side, as on
+                // Bli genbanksbesättning.
+                gridTemplateColumns: {
+                  xs: "40px 1fr",
+                  md: "56px minmax(0, 300px) minmax(0, 1fr)",
+                },
                 columnGap: { xs: 4, md: 8 },
                 alignItems: "start",
                 py: { xs: 6, md: 7 },
@@ -126,18 +130,25 @@ export default function KomIgangPage() {
               >
                 {i + 1}
               </Box>
-              <Box sx={{ minWidth: 0 }}>
-                <Typography
-                  variant="h4"
-                  component="h2"
-                  sx={{
-                    m: 0,
-                    pt: { xs: 1.5, md: 3 },
-                    fontSize: { xs: "22px", md: "26px" },
-                  }}
-                >
-                  {step.title}
-                </Typography>
+              <Typography
+                variant="h4"
+                component="h2"
+                sx={{
+                  m: 0,
+                  pt: { xs: 1.5, md: 3 },
+                  fontSize: { xs: "22px", md: "26px" },
+                }}
+              >
+                {step.title}
+              </Typography>
+              <Box
+                sx={{
+                  gridColumn: { xs: 2, md: 3 },
+                  minWidth: 0,
+                  maxWidth: "34rem",
+                  pt: { md: 1 },
+                }}
+              >
                 <Typography
                   sx={{
                     mt: 3,
