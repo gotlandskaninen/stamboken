@@ -162,11 +162,13 @@ export default function IntegritetspolicyPage() {
                 </mark>
               </li>
               <li>
-                I Koharens lista över aktiva genbanker står innehavarens namn,
-                ort och kontaktuppgifter bara om innehavaren har sagt ja, i
-                årsrapporten eller i sin profil (samtycke). Svaret gäller tills
-                det ändras, och den som aldrig har svarat publiceras inte. Det
-                som redan är tryckt går inte att ta tillbaka.
+                I Koharen publicerar vi namn och kontaktuppgifter, i
+                medlemsförteckningen och i listan över aktiva genbanker, bara
+                med ett ja (samtycke). I dag lämnar huvudmedlemmen svaret för
+                hela medlemskapet, i årsrapporten eller i sin profil. Svaret
+                gäller tills det ändras, och den som aldrig har svarat
+                publiceras inte. Det som redan är tryckt går inte att ta
+                tillbaka.
               </li>
             </ul>
             <p>
@@ -195,7 +197,13 @@ export default function IntegritetspolicyPage() {
               och koordinater. Där finns också dina kaniner, parningar och
               kullar, foton du laddar upp, och dina årsrapporter med dina val om
               vad som får publiceras. Vid varje rapporterad händelse står vem
-              som rapporterade den.
+              som rapporterade den. Rapporterar du på papper skickar du
+              blanketten till genbanksansvarig för rasen, som för in
+              uppgifterna.{" "}
+              <mark>
+                [BESLUT: hur länge sparas pappersblanketter och intygskopior hos
+                genbanksansvarig?]
+              </mark>
             </p>
             <p>
               Uppgifterna behövs för genbanksavtalet mellan dig och föreningen
@@ -216,8 +224,8 @@ export default function IntegritetspolicyPage() {
               </li>
               <li>
                 Har du rätt till stöd lägger du in ett bankkonto för
-                utbetalningen. Det ses bara av dig, av kassören och av
-                föreningens systemansvarig.{" "}
+                utbetalningen. Det ses bara av dig, av den som betalar ut stödet
+                och av föreningens systemansvarig.{" "}
                 <mark>
                   [INTE KLART: i dag ser även genbanksansvarig bankkontot, och
                   det kan ställas in som synligt för andra. Spärren ska byggas
