@@ -224,12 +224,14 @@ export default function IntegritetspolicyPage() {
               </li>
               <li>
                 Har du rätt till stöd lägger du in ett bankkonto för
-                utbetalningen. Det ses bara av dig, av den som betalar ut stödet
-                och av föreningens systemansvarig.{" "}
+                utbetalningen. Det visas aldrig för andra medlemmar. Det ses av
+                dig, av den som administrerar medlemsregistret och betalar ut
+                stödet, av föreningens systemansvarig, och av genbanksansvariga
+                och deras hjälpare när de för in en årsrapport på papper.{" "}
                 <mark>
-                  [INTE KLART: i dag ser även genbanksansvarig bankkontot, och
-                  det kan ställas in som synligt för andra. Spärren ska byggas
-                  innan sidan släpps.]
+                  [INTE KLART: i dag kan bankkontot ställas in som synligt för
+                  andra inloggade, och genbanksansvarig ser det i Stamboken
+                  Online. Spärren ska byggas innan sidan släpps.]
                 </mark>{" "}
                 <mark>
                   [BESLUT: får Jordbruksverket fortfarande ta del av
