@@ -25,6 +25,7 @@ from PIL import Image
 
 import utils.inbox as inbox
 import utils.mail as mail
+import utils.settings as settings
 from utils.database import (
     DB_PROXY,
     GmailProcessed,
@@ -46,6 +47,7 @@ READ, FAILED, DEMO = "Inläst", "Fel vid inläsning", "Demo"
 MAX_TEXT = 10_000  # characters of a mail's text kept on the item; shortcut: cut, raise it if handlers miss text
 RELEASE_AFTER = timedelta(days=30)  # a closed item's sender address goes by then, whatever is still queued
 CROP_SIDE = 2000  # pixels, the longest side of the photo's part a question carries
+STALLED_AFTER = timedelta(minutes=20)  # four missed runs: the reader has stopped
 # One of our Message-IDs (utils.mail.message_id), of any environment: <mail-<row>.<16 hex>@<its hostname>>.
 _OUR_ID = re.compile(r"<mail-(\d{1,18})\.[0-9a-f]{16}@([A-Za-z0-9.-]+)>")
 _CASE = re.compile(r"\(ärende (\d{1,9})\)$")
@@ -66,6 +68,7 @@ def run(gmail=None):
     One run of the job: the messages added to INBOX since the stored historyId, or the whole inbox when Gmail
     no longer has that history (or on the first run). The historyId moves on only when every message is
     labelled, so a run that fails half way is read again. Closed items' sender addresses are swept first.
+    last_error keeps the alarm on while any message is labelled "Fel vid inläsning" (a human handles those).
     """
     release_senders()
     GmailSync.insert(id=1).on_conflict_ignore().execute()
@@ -74,12 +77,28 @@ def run(gmail=None):
     try:
         ids, newest = _new_messages(gmail, sync.history_id)
         errors = [error for message_id in ids if (error := _handle(gmail, message_id))]
+        if failed := len(gmail.labelled(gmail.label(FAILED))):
+            errors.append(f"{failed} mejl har etiketten {FAILED} i brevlådan")
     except Exception as exc:
         GmailSync.update(last_error=_scrub(f"{type(exc).__name__}: {exc}")).where(GmailSync.id == 1).execute()
         raise
     GmailSync.update(history_id=newest, last_run_at=inbox.now(), last_error="; ".join(errors) or None).where(
         GmailSync.id == 1
     ).execute()
+
+
+def status(at=None):
+    """GET …/status: the reader's last run and error, and the alarm (no run for 20 minutes while on, or an error)."""
+    sync = GmailSync.get_or_none(GmailSync.id == 1)
+    enabled = settings.gmail.mode == "on"
+    last_run_at, last_error = (sync.last_run_at, sync.last_error) if sync else (None, None)
+    stalled = enabled and (last_run_at is None or last_run_at < (at or inbox.now()) - STALLED_AFTER)
+    return {
+        "enabled": enabled,
+        "last_run_at": last_run_at.isoformat() if last_run_at else None,
+        "last_error": last_error,
+        "alarm": bool(stalled or last_error),
+    }
 
 
 def _new_messages(gmail, history_id):
@@ -89,7 +108,7 @@ def _new_messages(gmail, history_id):
         except HistoryTooOld:
             logger.warning("Gmail has no history since %s: reading the whole inbox", history_id)
     newest = gmail.history_id()  # before the listing, so that nothing arriving during it is missed
-    return gmail.inbox(), newest
+    return gmail.labelled("INBOX"), newest
 
 
 def _handle(gmail, message_id):

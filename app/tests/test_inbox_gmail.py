@@ -92,8 +92,9 @@ class FakeGmail:
             added = [{"messagesAdded": [{"message": {"id": m}}]} for h, m in self.history if h > start]
             return _Response(200, {"history": added, "historyId": str(self.history_id)})
         if path == "messages":
-            inbox = [m for m, found in self.messages.items() if "INBOX" in found["labelIds"]]
-            return _Response(200, {"messages": [{"id": m} for m in reversed(inbox)]})  # newest first, as Gmail
+            label, hidden = params["labelIds"], {"SPAM", "TRASH"}
+            found = [m for m, f in self.messages.items() if label in f["labelIds"] and not hidden & {*f["labelIds"]}]
+            return _Response(200, {"messages": [{"id": m} for m in reversed(found)]})  # newest first, as Gmail
         if path == "labels" and method == "GET":
             return _Response(200, {"labels": [{"id": i, "name": n} for n, i in self.labels.items()]})
         if path == "labels":
@@ -616,6 +617,31 @@ class TestAskBreeder(GmailTest):
         self.assertEqual(notice.user_id, self.helper.id)
 
 
+class TestStatus(GmailTest):
+    def status(self):
+        resp = self.client.get("/api/v2/inkorg/status")
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        return resp.get_json()["gmail"]
+
+    def test_the_alarm_when_the_reader_stopped_or_failed(self):
+        self.login("hjalp")
+        with mock.patch.object(settings.gmail, "mode", "off"):
+            self.assertEqual(self.status(), {"enabled": False, "last_run_at": None, "last_error": None, "alarm": False})
+        with mock.patch.object(settings.gmail, "mode", "on"):
+            self.assertTrue(self.status()["alarm"])  # never run
+            self.read()
+            self.assertFalse(self.status()["alarm"])
+            self.assertIsNotNone(self.status()["last_run_at"])
+            db.GmailSync.update(last_run_at=inbox.now() - timedelta(minutes=21)).execute()
+            self.assertTrue(self.status()["alarm"])
+            db.GmailSync.update(last_run_at=inbox.now(), last_error="g0001: ValueError").execute()
+            self.assertEqual((self.status()["alarm"], self.status()["last_error"]), (True, "g0001: ValueError"))
+
+    def test_only_for_those_working_the_queue(self):
+        self.login("owner")
+        self.assertEqual(self.client.get("/api/v2/inkorg/status").status_code, 403)
+
+
 class TestAuthenticationResults(InboxTest):
     def check(self, *headers, sender=SENDER):
         msg = EmailMessage()
@@ -716,6 +742,11 @@ class TestSync(GmailTest):
         self.assertIn(bad, error)
         self.assertNotIn("@", error)  # every queue worker sees it
         self.assertEqual(self.sync().history_id, str(self.fake.history_id))
+        self.read()  # a later run with nothing new: the labelled mail still raises the alarm
+        self.assertEqual(self.sync().last_error, "1 mejl har etiketten Fel vid inläsning i brevlådan")
+        self.fake.messages[bad]["labelIds"].append("TRASH")  # a human dealt with it
+        self.read()
+        self.assertIsNone(self.sync().last_error)
 
 
 class TestClient(InboxTest):
@@ -730,7 +761,7 @@ class TestClient(InboxTest):
         second = self.fake.deliver(b"Subject: tva\r\n\r\ntva\r\n")
         self.fake.deliver(b"Subject: skrap\r\n\r\nskrap\r\n", labels=("SPAM",))
         self.assertEqual(self.gmail.added_since(since), ([second], str(self.fake.history_id)))
-        self.assertEqual(self.gmail.inbox(), [first, second])
+        self.assertEqual(self.gmail.labelled(), [first, second])
 
     def test_a_history_id_gmail_no_longer_has(self):
         self.fake.oldest_history = 5000

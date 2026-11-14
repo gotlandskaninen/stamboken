@@ -76,10 +76,10 @@ class Gmail:
             raise
         return list(dict.fromkeys(ids)), newest
 
-    def inbox(self):
-        """The ids of every message in INBOX, oldest first."""
+    def labelled(self, label_id="INBOX"):
+        """The ids of every message with the label (never in SPAM or the trash), oldest first."""
         ids = []
-        for page in self._pages("messages", {"labelIds": "INBOX", "maxResults": 500}):
+        for page in self._pages("messages", {"labelIds": label_id, "maxResults": 500}):
             ids += [message["id"] for message in page.get("messages", [])]
         return ids[::-1]
 

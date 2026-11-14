@@ -3,6 +3,7 @@ import { ApiError, fetchApi } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import { fetchHandlers, requireQueueWorker } from "@/lib/inkorg-server";
 import { Masthead } from "@/components/shell/Masthead";
+import { GmailAlarm } from "./GmailAlarm";
 import { AssignHerd, RowActions } from "./QueueControls";
 import {
   CLOSED_STATES,
@@ -94,6 +95,7 @@ export default async function InkorgPage({
         meta="Foton av pappersintyg och bevis som ska läggas in."
       />
       <div className={styles.container}>
+        <GmailAlarm />
         <nav className={styles.counts} aria-label="Lägen">
           {stateTabs.map(([state, label, n]) => (
             <Link
