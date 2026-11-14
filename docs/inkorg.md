@@ -1074,6 +1074,12 @@ innehavaren av köparens besättning vid en försäljning till en medlem. Inneha
 huvudmedlem i matrikeln. Finns en kopia är den det enda som blir kvar, med säljar- och köparblocket
 täckt.
 
+Det personen själv har skickat in raderas också: poster där personen är den matchade avsändaren av ett
+mejl (`member`) och poster som personens konto har laddat upp. En sådan post som inte har lagt något på
+en kanin raderas med sina filer. En post som har det står kvar utan original, text och
+`sender_address`, och mejl till avsändaren som ännu inte har gått stoppas (`cancelled`), och mejlkön
+glömmer adressen.
+
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/radera-original`
 
 Samma sak för ett dokument på begäran, till exempel när en köpare utanför föreningen ber om det.

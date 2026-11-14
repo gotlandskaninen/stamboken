@@ -26,6 +26,7 @@ from utils.database import (
     InboxEvent,
     InboxItem,
     InboxOperation,
+    MailMessage,
 )
 from utils.mail import forget_recipient
 
@@ -296,17 +297,41 @@ def run(now):
             logger.exception("Inbox purge %s failed", rule.__name__)
 
 
-def erase_person_from_inbox(member):
+def erase_person_from_inbox(member, user_id=None):
     """
     Erasure of a member (anonymize_person): every document recorded as showing the member as seller or buyer
     loses its original, so that only the masked copy without the seller and buyer block is left where there is
-    one, and its item loses its text. In the caller's transaction; the caller passes the returned paths to
-    remove_originals after the commit.
+    one, and its item loses its text. What the member sent goes too: the items matched to them as a mail's sender
+    or uploaded by their account (`user_id`, read before the account is detached). Such an item that put nothing
+    on a rabbit is deleted with its files; one that did loses its originals, its text and its sender's address,
+    and the mails queued to its sender are cancelled. In the caller's transaction; the caller passes the returned
+    paths to remove_originals after the commit.
     """
     shown = (InboxDocument.seller_member == member.id) | (InboxDocument.buyer_member == member.id)
     paths = _null_originals(shown)
     _clear_text(InboxDocument.select(InboxDocument.item).where(shown))
-    return paths
+    sent = InboxItem.member == member.id
+    if user_id is not None:
+        sent |= InboxItem.sender_user == user_id
+    ids = [item_id for (item_id,) in InboxItem.select(InboxItem.id).where(sent).tuples()]
+    if not ids:
+        return paths
+    to_sender = (MailMessage.recipient_kind == "inbox_sender") & MailMessage.recipient_id.in_(ids)
+    if user_id is not None:
+        to_sender |= (MailMessage.recipient_kind == "user") & (MailMessage.recipient_id == user_id)
+    MailMessage.update(status="cancelled", last_error="avsändaren är raderad").where(
+        to_sender
+        & (MailMessage.ref_type == "inbox_item")
+        & MailMessage.ref_id.in_(ids)
+        & (MailMessage.status == "queued")
+        & MailMessage.claim_token.is_null(True)
+    ).execute()
+    gone, more = _delete_rows(InboxItem.id.in_(ids))
+    kept = [item_id for item_id in ids if item_id not in gone]
+    InboxItem.update(sender_address=None).where(InboxItem.id.in_(kept)).execute()
+    for item_id in kept:
+        forget_recipient("inbox_sender", item_id)
+    return paths + more
 
 
 def erase_document(item, document, user):
