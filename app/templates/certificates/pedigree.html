@@ -345,7 +345,7 @@ body {
       </table>
       <p class="sign-note">Intyget är digitalt signerat av Föreningen Gotlandskaninen. Skanna QR-koden för att verifiera äktheten.</p>
       <p class="perma"><span class="pl">Permanent sida</span>{{ public_url }}</p>
-      {% if replaces_date %}<p class="reissue">Ersätter intyg utfärdat {{ replaces_date }}</p>{% elif replaces_v1 %}<p class="reissue">Återutfärdat. Ersätter det tidigare digitala intyget nr {{ digital_certificate }}.</p>{% endif %}
+      {% if replaces_date %}<p class="reissue">Ersätter intyg utfärdat {{ replaces_date }}</p>{% elif replaces_v1 %}<p class="reissue">Återutfärdat av föreningen {{ issue_date }}. Ersätter det tidigare digitala intyget nr {{ digital_certificate }}.</p>{% endif %}
     </div>
     <div class="qr">{{ qr_svg|safe }}<div class="qt">Verifiera</div></div>
   </div>

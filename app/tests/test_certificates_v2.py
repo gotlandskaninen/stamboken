@@ -179,8 +179,8 @@ class TestPedigreeTemplateV2(unittest.TestCase):
         self.assertNotIn("Fotringsnr", html)
 
     def test_reissue_of_v1(self):
-        html = self._html(replaces_v1=True, digital_certificate="345")
-        self.assertIn("Ersätter det tidigare digitala intyget nr 345", html)
+        html = self._html(replaces_v1=True, digital_certificate="345", issue_date="2026-12-01")
+        self.assertIn("Återutfärdat av föreningen 2026-12-01. Ersätter det tidigare digitala intyget nr 345.", html)
         self.assertNotIn("Ersätter det tidigare", self._html())
         both = self._html(replaces_v1=True, replaces_date="2026-11-01")
         self.assertIn("Ersätter intyg utfärdat 2026-11-01", both)
