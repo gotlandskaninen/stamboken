@@ -38,6 +38,27 @@ async function syntheticCertificate(page: Page): Promise<Buffer> {
   return Buffer.from(base64, "base64");
 }
 
+/** A 40 x 40 px smooth gradient: too small and too soft, so the API warns about it. */
+async function tinyBlurryImage(page: Page): Promise<Buffer> {
+  const base64 = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 40;
+    canvas.height = 40;
+    const ctx = canvas.getContext("2d")!;
+    const g = ctx.createLinearGradient(0, 0, 40, 40);
+    g.addColorStop(0, "#808080");
+    g.addColorStop(1, "#909090");
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 40, 40);
+    return canvas.toDataURL("image/png").split(",")[1];
+  });
+  return Buffer.from(base64, "base64");
+}
+
+const myItems = async (page: Page): Promise<number> =>
+  (await (await page.request.get("/api/v2/inkorg/mina-inskick")).json()).items
+    .length;
+
 test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
   page,
   browser,
@@ -45,6 +66,28 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
 }) => {
   let itemId = "";
   let rabbit = "";
+
+  await test.step("0. Ett suddigt foto lagras inte förrän uppfödaren väljer Skicka ändå", async () => {
+    const before = await myItems(page);
+    await page.goto("/stamboken/inskick/ny");
+    await page.getByTestId("inskick-files").setInputFiles({
+      name: "suddigt.png",
+      mimeType: "image/png",
+      buffer: await tinyBlurryImage(page),
+    });
+    await page.getByRole("button", { name: "Skicka", exact: true }).click();
+    await expect(
+      page.getByText(/Bilden (har låg upplösning|ser suddig)/).first(),
+    ).toBeVisible({
+      timeout: 60000,
+    });
+    expect(await myItems(page)).toBe(before);
+    await page.getByRole("button", { name: "Skicka ändå" }).click();
+    await page.waitForURL(/\/stamboken\/inskick#arende-\d+/, {
+      timeout: 60000,
+    });
+    expect(await myItems(page)).toBe(before + 1);
+  });
 
   await test.step("1. Uppfödaren laddar upp ett intyg på telefonen", async () => {
     await page.goto("/stamboken/inskick");
@@ -88,13 +131,42 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
   try {
     await test.step("3. Hjälparen tar ärendet i Inkorg", async () => {
       await loginInline(desk, worker, TEST_USERS.helper);
-      await desk.goto("/stamboken/inkorg");
-      const row = desk.getByRole("row").filter({ hasText: `Ärende ${itemId}` });
-      await row.getByRole("button", { name: "Jag tar den" }).click();
-      await desk.waitForURL(new RegExp(`/stamboken/inkorg/${itemId}$`));
-      await expect(
-        desk.getByRole("heading", { name: `Ärende ${itemId}` }),
-      ).toBeVisible();
+      const canvasSize = () =>
+        desk
+          .locator("canvas")
+          .first()
+          .evaluate((c: HTMLCanvasElement) => [c.width, c.height]);
+      // Read the photo first and turn it for reading: nothing is saved before the case is taken.
+      await desk.goto(`/stamboken/inkorg/${itemId}`);
+      await expect
+        .poll(async () => (await canvasSize())[0])
+        .toBeGreaterThan(300);
+      await desk.getByRole("button", { name: /Vrid höger/ }).click();
+      await expect
+        .poll(async () => {
+          const [w, h] = await canvasSize();
+          return w > h;
+        })
+        .toBe(true);
+      await desk
+        .getByLabel("Ärendet")
+        .getByRole("button", { name: "Jag tar den" })
+        .click();
+      // The unsaved turn is dropped once the item is taken: the view starts from the stored 0.
+      await expect
+        .poll(async () => {
+          const [w, h] = await canvasSize();
+          return w < h;
+        })
+        .toBe(true);
+      // Now a turn is saved with the document.
+      await desk.getByRole("button", { name: /Vrid höger/ }).click();
+      await expect
+        .poll(async () => {
+          const [w, h] = await canvasSize();
+          return w > h;
+        })
+        .toBe(true);
       // The photo is drawn on a canvas once the queue-only original endpoint has answered.
       await expect
         .poll(() =>
@@ -104,8 +176,11 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
             .evaluate((canvas: HTMLCanvasElement) => canvas.width),
         )
         .toBeGreaterThan(300);
-      const detail = await desk.request.get(`/api/v2/inkorg/${itemId}`);
-      documentId = String((await detail.json()).documents[0].id);
+      const readDoc = async () =>
+        (await (await desk.request.get(`/api/v2/inkorg/${itemId}`)).json())
+          .documents[0];
+      documentId = String((await readDoc()).id);
+      await expect.poll(async () => (await readDoc()).rotation).toBe(90);
     });
 
     await test.step("4. Hjälparen lägger in en ny kanin från intyget", async () => {
@@ -139,6 +214,13 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
     });
 
     await test.step("5. Hjälparen bekräftar maskeringen", async () => {
+      // The masking starts from the stored turn: the photo is still lying on its side.
+      expect(
+        await desk
+          .locator("canvas")
+          .first()
+          .evaluate((c: HTMLCanvasElement) => c.width > c.height),
+      ).toBe(true);
       await desk.getByRole("button", { name: "Lägg till ruta" }).click();
       await desk
         .getByRole("button", { name: "Bekräfta maskningen och nästa" })
@@ -190,6 +272,57 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
       );
       expect(copy.status()).toBe(200);
       expect(copy.headers()["cache-control"]).toContain("no-store");
+    });
+
+    await test.step("8. Kopian är vriden åt samma håll som i maskningen och rutan är svart", async () => {
+      // Read the copy the way the owner's browser shows it, pixel by pixel.
+      const copy = await page.evaluate(async (number) => {
+        const res = await fetch(
+          `/api/v2/individual/${number}/paper-certificate`,
+        );
+        const bitmap = await createImageBitmap(await res.blob());
+        const canvas = document.createElement("canvas");
+        canvas.width = bitmap.width;
+        canvas.height = bitmap.height;
+        const ctx = canvas.getContext("2d")!;
+        ctx.drawImage(bitmap, 0, 0);
+        // Fractions of the copy: the default box (x .35-.65, y .45-.55) and a corner of paper.
+        const at = (fx: number, fy: number) =>
+          Array.from(
+            ctx
+              .getImageData(
+                Math.floor(fx * canvas.width),
+                Math.floor(fy * canvas.height),
+                1,
+                1,
+              )
+              .data.slice(0, 3),
+          );
+        return {
+          width: canvas.width,
+          height: canvas.height,
+          inside: [
+            [0.36, 0.46],
+            [0.64, 0.46],
+            [0.36, 0.54],
+            [0.64, 0.54],
+            [0.5, 0.5],
+          ].map(([x, y]) => at(x, y)),
+          paper: at(0.02, 0.02),
+        };
+      }, rabbit);
+      // Turned 90 degrees: landscape, and a box wider than tall, not the other way round.
+      expect(copy.width).toBeGreaterThan(copy.height);
+      for (const px of copy.inside) expect(Math.max(...px)).toBeLessThan(20);
+      expect(Math.min(...copy.paper)).toBeGreaterThan(150);
+    });
+
+    await test.step("9. Uppfödaren hör inte hemma i Inkorg", async () => {
+      const res = await page.goto("/stamboken/inkorg");
+      expect(res?.status()).toBe(404);
+      await expect(
+        page.getByRole("heading", { name: "Sidan kunde inte hittas" }),
+      ).toBeVisible();
     });
   } finally {
     await worker.close();
