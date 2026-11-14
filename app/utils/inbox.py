@@ -71,6 +71,7 @@ NOTICE_TEXTS = {
     "foralder_inlagd": "Föräldern är inlagd, och posten väntar inte längre",
     "klar": "Ditt inskick är klart",
     "svar": "Uppfödaren har svarat",
+    "star_still": "En post har stått still i 14 dagar",
 }
 DOC_TYPES = ("intyg", "bevis", "arsblankett", "annat")
 CERT_FORMATS = ("handskrivet", "datorskrivet", "v1_pdf", "intyg_b", "digitalt_v2")

@@ -28,6 +28,8 @@ OPENED_MONTHS = 13
 MESSAGE_MONTHS = 13
 JUNK_AFTER = timedelta(days=30)
 GMAIL_PROCESSED_AFTER = timedelta(days=60)
+STALLED_AFTER = timedelta(days=14)
+VIEWS = ("oppnad", "original_visat")  # looking at an item is not something happening to it
 
 
 def _lock(items):
@@ -189,6 +191,24 @@ def purge_gmail_processed(now):
     return GmailProcessed.delete().where(GmailProcessed.at < now - GMAIL_PROCESSED_AFTER).execute()
 
 
+def mark_stalled(now):
+    """
+    "Står still": an item "tagen" for 14 days with no event since (a view is none) gets the flag, and its genebank's
+    managers a notice, once per stall; the flag goes when something has happened.
+    """
+    since = now - STALLED_AFTER
+    recent = InboxEvent.select(InboxEvent.item).where((InboxEvent.at > since) & InboxEvent.kind.not_in(VIEWS))
+    still = (InboxItem.state == "tagen") & (InboxItem.state_changed_at < since) & InboxItem.id.not_in(recent)
+    with DB_PROXY.atomic():
+        InboxItem.update(stalled=False).where(InboxItem.stalled & ~still).execute()
+        stalled = InboxItem.update(stalled=True).where(~InboxItem.stalled & still)
+        stalled = list(stalled.returning(InboxItem.id, InboxItem.genebank).tuples())
+        for item_id, genebank_id in stalled:
+            for manager in inbox.queue_workers(genebank_id, managers_only=True):
+                inbox.notify(manager, "star_still", item_id)
+    return len(stalled)
+
+
 # The Gmail job sweeps sender addresses too, but it runs only with the reading on.
 RULES = (
     inbox_gmail.release_senders,
@@ -200,6 +220,7 @@ RULES = (
     purge_messages,
     purge_opened,
     purge_gmail_processed,
+    mark_stalled,
 )
 
 

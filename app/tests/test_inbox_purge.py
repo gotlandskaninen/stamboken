@@ -70,7 +70,15 @@ class PurgeTest(InboxTest):
         return " ".join([item.message or ""] + [str(e.detail) for e in item.events])
 
     def snapshot(self):
-        tables = (db.InboxItem, db.InboxDocument, db.InboxEvent, db.InboxOperation, db.GmailProcessed, db.MailMessage)
+        tables = (
+            db.InboxItem,
+            db.InboxDocument,
+            db.InboxEvent,
+            db.InboxOperation,
+            db.Notice,
+            db.GmailProcessed,
+            db.MailMessage,
+        )
         rows = [list(model.select().order_by(model._meta.primary_key).tuples()) for model in tables]
         files = sorted(os.path.join(root, name) for root, _, names in os.walk(self.folder) for name in names)
         return rows, files
