@@ -1192,6 +1192,61 @@ class TestDatabaseMigration(DatabaseTest):
         )
         self.assertTrue(set(tables).isdisjoint(db.AUDITED_TABLES))
 
+    def test_replay_38_to_39_creates_the_intake_queue(self):
+        """A database stamped at 38 gets the queue's tables with a fresh bootstrap's indexes, unaudited."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("index introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        tables = [m._meta.table_name for m in db.INBOX_MODELS]
+
+        def indexes():
+            return {(i.table, i.name, tuple(i.columns), i.unique) for t in tables for i in db.DATABASE.get_indexes(t)}
+
+        fresh = indexes()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 39).execute()
+        db.DATABASE.execute_sql(f"DROP TABLE {', '.join(tables)} CASCADE")
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(indexes(), fresh)
+        self.assertIn(("inbox_item", "inboxitem_gmail_message_id", ("gmail_message_id",), True), fresh)
+        self.assertTrue(set(tables).isdisjoint(db.AUDITED_TABLES))
+
+    def test_replay_39_to_40_lets_an_original_go_and_records_seller_and_buyer(self):
+        """A database stamped at 39 gets a nullable original and the two member columns, as a fresh bootstrap."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+
+        def shape():
+            columns = {
+                (t, c.name, c.null)
+                for t in ("inbox_document", "inbox_item", "gmail_processed")
+                for c in db.DATABASE.get_columns(t)
+            }
+            indexes = {(i.name, tuple(i.columns), i.unique) for i in db.DATABASE.get_indexes("inbox_document")}
+            keys = {(k.column, k.dest_table, k.dest_column) for k in db.DATABASE.get_foreign_keys("inbox_document")}
+            return columns, indexes, keys
+
+        fresh = shape()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 40).execute()
+        db.DATABASE.execute_sql(
+            "ALTER TABLE inbox_document DROP COLUMN seller_member_id, DROP COLUMN buyer_member_id, "
+            "ALTER COLUMN original_path SET NOT NULL"
+        )
+        db.DATABASE.execute_sql("ALTER TABLE inbox_item DROP COLUMN sender_authenticated")
+        db.DATABASE.execute_sql("ALTER TABLE gmail_processed DROP COLUMN failures")
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(shape(), fresh)
+        self.assertIn(("inbox_document", "original_path", True), fresh[0])
+        self.assertIn(("inbox_item", "sender_authenticated", True), fresh[0])
+        self.assertIn(("gmail_processed", "failures", False), fresh[0])
+        self.assertIn(("seller_member_id", "member", "member_id"), fresh[2])
+
     def _max_schema_version(self):
         return db.SchemaHistory.select(  # pylint: disable=E1120
             db.fn.MAX(db.SchemaHistory.version)

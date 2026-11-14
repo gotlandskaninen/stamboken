@@ -9,6 +9,8 @@
     "search": "Sök..."
   },
   "sidebar": {
+    "minaInskick": "Mina inskick",
+    "inkorg": "Inkorg",
     "minBesattning": "Min besättning",
     "genetik": "Genetik",
     "provparning": "Provparning",

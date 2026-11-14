@@ -860,7 +860,7 @@ def update_user(form, user_uuid=None):
     return {"status": "unchanged"}
 
 
-_ALLOWED_LEVELS = ("admin", "matrikel_admin", "manager", "viewer", "owner")
+_ALLOWED_LEVELS = ("admin", "matrikel_admin", "manager", "helper", "viewer", "owner")
 
 
 def validate_privileges(privileges):
@@ -871,6 +871,7 @@ def validate_privileges(privileges):
     - {"level": "admin"}
     - {"level": "matrikel_admin"}
     - {"level": "manager", "genebank": <int>}
+    - {"level": "helper",  "genebank": <int>}
     - {"level": "viewer",  "genebank": <int>}
     - {"level": "owner",   "herd":     <int>}   # numeric Herd.id
 
@@ -907,7 +908,7 @@ def validate_privileges(privileges):
                 raise ValueError(f"Nivå {level!r} får inte ha extra fält (fick {sorted(extra_keys)}).")
             validated.append({"level": level})
 
-        elif level in ("manager", "viewer"):
+        elif level in ("manager", "helper", "viewer"):
             if "genebank" not in entry:
                 raise ValueError(f"Nivå {level!r} kräver 'genebank'.")
             gb = entry["genebank"]
@@ -1025,7 +1026,7 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
 
     The input data should be formatted like:
         {action: add | remove,
-         role: owner | manager | viewer | admin | matrikel_admin,
+         role: owner | manager | helper | viewer | admin | matrikel_admin,
          user: <id>,
          herd | genebank: <id>
         }
@@ -1060,9 +1061,9 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
     ):
         valid = False
     elif (
-        operation.get("role", {}) not in ["owner", "manager", "viewer", "admin", "matrikel_admin"]
+        operation.get("role", {}) not in ["owner", "manager", "helper", "viewer", "admin", "matrikel_admin"]
         or (
-            operation["role"] in ["manager", "viewer"]
+            operation["role"] in ["manager", "helper", "viewer"]
             and not (operation.get("genebank") and _is_int_id(operation["genebank"]))
         )
         or (operation["role"] == "owner" and not (operation.get("herd") and _is_int_id(operation["herd"])))
@@ -3738,7 +3739,7 @@ def _genebank_letters():
 def _role_summary(user, letters):
     """
     Short computed role label:
-    "admin" | "manager(G,M)" | "viewer(G)" | "owner(2 besättningar)" |
+    "admin" | "manager(G,M)" | "helper(G)" | "viewer(G)" | "owner(2 besättningar)" |
     "ingen roll". Precedence: admin > manager > viewer > owner.
     matrikel_admin is no studbook role and is never hidden by that
     precedence: it is appended ("manager(G) + matrikel_admin") or stands
@@ -3754,7 +3755,7 @@ def _role_summary(user, letters):
 def _studbook_role_summary(privs, letters):
     if any(p.get("level") == "admin" for p in privs):
         return "admin"
-    for level in ("manager", "viewer"):
+    for level in ("manager", "helper", "viewer"):
         ids = [p.get("genebank") for p in privs if p.get("level") == level]
         if ids:
             return f"{level}({','.join(letters.get(i, '?') for i in ids)})"

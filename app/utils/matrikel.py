@@ -35,6 +35,7 @@ from utils.database import (
     Membership,
     User,
 )
+from utils.inbox_purge import erase_person_from_inbox, remove_originals
 from utils.postal import (  # noqa: F401 — public helpers
     format_postal_address,
     normalize_postal_code,
@@ -438,8 +439,11 @@ def anonymize_person(member, actor):
 
     Detaches the account through the same locked unlink path as the endpoint
     (mode="anonymize") and invalidates the genebanks whose
-    access the account loses. Returns the scrubbed person: the caller's
-    pre-lock instance is stale afterwards.
+    access the account loses. Erases the intake queue's originals and texts
+    that show the person as seller or buyer, and what they sent
+    (erase_person_from_inbox).
+    Returns the scrubbed person: the caller's pre-lock instance is stale
+    afterwards.
     """
     with DB_PROXY.atomic():
         # current user_id under the membership lock, never the caller's stale copy
@@ -503,6 +507,9 @@ def anonymize_person(member, actor):
         lost_genebanks = (
             {h.genebank_id for h in Herd.select(Herd.genebank).where(Herd.id.in_(list(lost)))} if lost else set()
         )
+        # the intake queue's photos that show the person, and what they sent (their account read before the detach)
+        originals = erase_person_from_inbox(person, user.id if user is not None else None)
+    remove_originals(originals)  # only after the commit: a row never names a removed file
     _invalidate_genebanks(lost_genebanks)
     return person
 

@@ -115,8 +115,10 @@ export function UserEditClient({
     if (p.level === "admin") return "Administratör";
     if (p.level === "matrikel_admin") return "Matrikeladministratör";
     if (p.level === "owner") return `Besättningsägare — ${herdLabel(p.herd)}`;
-    return p.level === "manager"
-      ? `Genbanksansvarig — ${gbName(p.genebank)}`
+    if (p.level === "manager")
+      return `Genbanksansvarig — ${gbName(p.genebank)}`;
+    return p.level === "helper"
+      ? `Genbankshjälpare — ${gbName(p.genebank)}`
       : `Granskare — ${gbName(p.genebank)}`;
   };
 
@@ -126,6 +128,7 @@ export function UserEditClient({
     admin: "Administratör",
     matrikel_admin: "Matrikeladministratör",
     manager: "Genbanksansvarig",
+    helper: "Genbankshjälpare",
     viewer: "Granskare",
     owner: "Besättningsägare",
   };
@@ -133,6 +136,7 @@ export function UserEditClient({
     admin: "sb-badge-skog",
     matrikel_admin: "sb-badge-lera",
     manager: "sb-badge-mossa",
+    helper: "sb-badge-mossa",
     viewer: "",
     owner: "sb-badge-himmel",
   };

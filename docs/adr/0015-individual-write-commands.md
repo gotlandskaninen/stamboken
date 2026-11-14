@@ -1,6 +1,6 @@
 ---
 status: "proposed"
-date: 2026-11-06
+date: 2026-11-14
 decision-makers: Jonas
 ---
 
@@ -111,6 +111,31 @@ Regler:
 * Matrisen genereras ur policytabellen och jämförs med en incheckad
   förväntan. Mutationstest på policymodulen.
 
+## Tillägg 2026-11-14: policyrollen HANDLAGGARE och grants (föreslaget)
+
+Föreslaget tillägg, att godkännas av beslutsfattaren. Regel 2 säger att inga
+nya roller lagras. Inläsningskön behöver en relation mellan användaren och
+kaninen som inte är en lagrad roll:
+
+1. **Grant.** `execute(…, grant=…)` tar emot ett objekt (`Grant` i
+   `app/utils/individual_commands.py`) som ger roller på en kanin utifrån något
+   användaren håller, inte utifrån hennes egna roller. Skrivaren frågar det
+   under kaninens lås, i skrivtransaktionen. Det granten själv beror på (dess
+   egen rad) låser anroparen före `execute`. Grantens roller läggs till
+   rollerna från `roles_for`, och policytabellen ensam avgör. Granten skriver
+   sitt spår när kommandona är loggade.
+2. **`HANDLAGGARE`** är en roll i policytabellen men lagras aldrig. Bara
+   `InboxGrant` (`app/utils/inbox.py`) ger den: till en genbankshjälpare som är
+   handläggare för en post i läget `tagen` utan `ref_type`, för en kanin vars
+   besättning ligger i en genbank där hon är hjälpare och inte är GX1 eller MX1.
+   Tabellen ger `HANDLAGGARE` samma rader som ägaren, alltså inga
+   korrigeringar (ADR-0017 nivå 2).
+3. Den lagrade rollen `helper` (ADR-0014, tillägg 2026-11-14) har ingen rad i
+   tabellen: utan grant har en hjälpare ingen skrivrätt på en kanin.
+4. Varje skrivning genom kön ger en rad i `inbox_operation` (operationen,
+   handläggaren, dokumentet). Genbanksansvarig och admin skriver med sina egna
+   roller också genom kön; för dem lämnar granten bara spåret.
+
 ## Mer information
 
 * [ADR-0006: API-kompatibilitet under migreringsperioden](0006-api-compatibility-during-migration.md)
@@ -127,3 +152,4 @@ implementationsplanen ligger i driftrepot.
 |-------|------------|------------|
 | 2026-10-27 | Jonas | Utkast |
 | 2026-11-06 | Jonas | MADR-format, kortad |
+| 2026-11-14 | Jonas | Föreslaget tillägg: policyrollen `HANDLAGGARE`, som bara en grant ger |

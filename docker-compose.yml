@@ -67,6 +67,10 @@ services:
       - type: bind
         source: ./uppladdningar
         target: /app/uppladdningar
+      # Originals of the intake queue: the api only, never nginx, which serves all of uppladdningar.
+      - type: bind
+        source: ./skyddat
+        target: /app/skyddat
     depends_on:
       database:
         condition: service_healthy

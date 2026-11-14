@@ -53,7 +53,7 @@ as CI does), start the stack, then load the demo data and the test users:
 
 ```console
 for f in .docker/*.env.default; do cp "$f" "${f%.default}"; done
-mkdir -p config logs uppladdningar
+mkdir -p config logs uppladdningar skyddat
 docker compose run --rm api python3 -c "from utils.database import init, DATABASE; DATABASE.connect(reuse_if_open=True); init()"
 docker compose up -d
 docker compose exec api flask seed create

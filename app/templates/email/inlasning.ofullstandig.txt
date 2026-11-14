@@ -1,0 +1,14 @@
+{% block subject %}Något saknas i ditt inskick (ärende {{ item_id }}){% endblock %}
+
+{% block body %}
+Hej!
+
+Vi har gått igenom det du skickade in till Stamboken, men något saknas innan vi kan lägga in det.
+{% if note %}
+{{ note }}
+{% endif %}
+Svara på det här mejlet med det som saknas och behåll ärendenumret i ämnesraden. Hör vi inget från dig tas inskicket bort efter {{ deadline }}.
+{% if account %}
+Du ser dina inskick här:
+{{ base_url }}/stamboken/inskick{% endif %}
+{% endblock %}

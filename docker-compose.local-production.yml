@@ -98,6 +98,8 @@ services:
       - PDF_SIGNING_KEY=certs/key.pem
       - PDF_SIGNING_CA=certs/ca.pem
       - CERT_DEMO_WATERMARK=true
+      # Reading the association's mailbox trashes what it reads: only production does it.
+      - INLASNING_GMAIL=off
       # Same reason: the prod file may say MAIL_MODE=live, and this database holds a copy of prod's mail queue.
       - MAIL_MODE=log
     ports:
@@ -120,6 +122,10 @@ services:
       - type: bind
         source: ./uppladdningar
         target: /app/uppladdningar
+      # Originals of the intake queue: the api only, never nginx, which serves all of uppladdningar.
+      - type: bind
+        source: ./skyddat
+        target: /app/skyddat
     depends_on:
       database:
         condition: service_healthy
@@ -167,6 +173,8 @@ services:
       - S3_BUCKET=test
       - S3_ACCESSKEY=accesskeytest
       - S3_SECRETKEY=secretkeytest
+      # Never the mailbox (the demo refuses to start with it on).
+      - INLASNING_GMAIL=off
       # Same mail pin as `api`: a local stack never mails.
       - MAIL_MODE=log
     logging:
@@ -189,6 +197,11 @@ services:
       - type: bind
         source: ./uppladdningar
         target: /app/uppladdningar
+      # The demo's own intake queue files, never production's: its nightly sweep removes files its own
+      # database does not name.
+      - type: bind
+        source: ./skyddat-test
+        target: /app/skyddat
     depends_on:
       database:
         condition: service_healthy
@@ -308,5 +321,20 @@ services:
       retries: 3
       start_period: 30s
 
+  # ============================================
+  # Ollama - bildtolkningen av intyg (docs/inkorg.md, "Tolkning")
+  # Som i produktion: bara med profilen tolkning, ingen publicerad port.
+  # ============================================
+  ollama:
+    image: ollama/ollama:latest
+    profiles:
+      - tolkning
+    cpus: 6
+    environment:
+      - OLLAMA_KEEP_ALIVE=5m
+    volumes:
+      - ollama_models:/root/.ollama
+
 volumes:
   redis_data:
+  ollama_models:

@@ -9,6 +9,8 @@
     "search": "Search..."
   },
   "sidebar": {
+    "minaInskick": "My submissions",
+    "inkorg": "Inbox",
     "minBesattning": "My Herd",
     "genetik": "Genetics",
     "provparning": "Test mating",

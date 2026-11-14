@@ -58,11 +58,19 @@ def create_individual():
     form = request.get_json(silent=True)
     if not form or not isinstance(form, dict):
         return problem(400, "Bad Request", "Request body must be a JSON object")
+    return register_individual(form)
 
+
+def register_individual(form, may_register=None, created=None):
+    """
+    POST /v2/individual's registration; returns its response. The intake queue registers through it with
+    `may_register(herd)`, the herds the caller may register in (its grant), and `created(individual)`, called
+    in the transaction once the rabbit exists.
+    """
     breeding_id = form.get("breeding_id")
     new_litter = None  # "Lägg till kanin": the litter to create, when no breeding_id and no matching litter
     if breeding_id is None:
-        breeding, new_litter, refusal = _shortcut_litter(form)
+        breeding, new_litter, refusal = _shortcut_litter(form, may_register)
         if refusal:
             return refusal
     else:
@@ -76,7 +84,7 @@ def create_individual():
         except DoesNotExist:
             return problem(404, "Not Found", f"Breeding {breeding_id} not found")
 
-    if breeding is not None and (refusal := _registration_refusal(breeding)):
+    if breeding is not None and (refusal := _registration_refusal(breeding, may_register)):
         return refusal
 
     # Generate individual number (optionally with explicit position)
@@ -128,7 +136,7 @@ def create_individual():
                 breeding = lock_litter(breeding.id)
                 # Decided again on the locked litter: it may have moved to another herd (or been renumbered or
                 # re-dated) since the check above, and the rabbit is born in the locked litter's herd.
-                if refusal := _registration_refusal(breeding):
+                if refusal := _registration_refusal(breeding, may_register):
                     return refusal
             herd = breeding.breeding_herd_id
 
@@ -164,6 +172,8 @@ def create_individual():
             )
             if check is not None and check["status"] != "match":
                 record_number_choice(individual, current_user, check)
+            if created is not None:
+                created(individual)
     except RosterActionError as e:
         return problem(e.status, e.title, e.detail, **e.extra)
     except RosterAliveExceeds6w as e:
@@ -458,10 +468,10 @@ def import_individual():
     return jsonify(response_data), 201
 
 
-def _registration_refusal(breeding):
+def _registration_refusal(breeding, may_register=None):
     """The problem response refusing a direct registration into `breeding` now, or None."""
     # Authorization: check user can edit in this herd
-    if not _can_register_in_herd(current_user, breeding.breeding_herd_id):
+    if not _may_register(breeding.breeding_herd_id, may_register):
         return problem(403, "Forbidden", "Åtkomst nekad")
 
     # Validate litter_number exists
@@ -502,9 +512,9 @@ def _litter_key(values):
     return (mother, father, birth_date), None
 
 
-def _new_litter_refusal(herd, father, birth_date):
+def _new_litter_refusal(herd, father, birth_date, may_register=None):
     """The refusal of a new litter born in `herd` (the mother's) to `father`, or None."""
-    if not _can_register_in_herd(current_user, herd):
+    if not _may_register(herd, may_register):
         return problem(403, "Forbidden", "Modern finns inte i en besättning där du får registrera kaniner.")
     # Any registered buck of the genebank may be the father, alive or not (as for "Ny parning").
     if father.origin_herd.genebank_id != herd.genebank_id:
@@ -516,7 +526,7 @@ def _new_litter_refusal(herd, father, birth_date):
     return None
 
 
-def _shortcut_litter(form):
+def _shortcut_litter(form, may_register=None):
     """The litter of a registration without breeding_id ("Lägg till kanin", the legacy add form's shortcut).
 
     The body names the litter by mother, father and birth_date, unique in the litter table: an existing litter
@@ -532,7 +542,7 @@ def _shortcut_litter(form):
         return existing, None, None
 
     herd = mother.current_herd
-    if refusal := _new_litter_refusal(herd, father, birth_date):
+    if refusal := _new_litter_refusal(herd, father, birth_date, may_register):
         return None, None, refusal
     litter_size, litter_size6w = _as_int(form.get("litter_size")), _as_int(form.get("litter_size6w"))
     if litter_size is None or litter_size < 1:
@@ -618,6 +628,11 @@ def _new_litter_suggestion(herd, father, birth_date):
         "litter_number": litter_number,
     }
     return jsonify(suggestion), 200
+
+
+def _may_register(herd, may_register):
+    """The current user's own right to register in `herd`, or the intake queue's `may_register`."""
+    return _can_register_in_herd(current_user, herd) or bool(may_register and herd is not None and may_register(herd))
 
 
 def _can_register_in_herd(user, herd):

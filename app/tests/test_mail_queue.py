@@ -559,7 +559,7 @@ class TestCancel(MailTest):
             category="T",
             next_attempt_at=self.now,
         ).id
-        unknown_recipient = mail.enqueue_mail("ansokan.mottagen", "inbox_sender", 1, {"application_id": a.id})
+        unknown_recipient = mail.enqueue_mail("ansokan.mottagen", "finns_inte", 1, {"application_id": a.id})
         self.relay()
         mail.send_pending(self.now)
         self.assertEqual(
@@ -568,7 +568,7 @@ class TestCancel(MailTest):
         )
         self.assertEqual(
             (self.row(unknown_recipient).status, self.row(unknown_recipient).last_error),
-            ("cancelled", "okänd mottagartyp: inbox_sender"),
+            ("cancelled", "okänd mottagartyp: finns_inte"),
         )
 
     def test_missing_address_cancels(self):

@@ -102,8 +102,9 @@ av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas.
 ## Mottagare
 
 `recipient_kind` säger var adressen finns. Inbyggda: `member`
-(`Member.email`), `user` (`hbuser.email`) och `application` (ansökan om
-medlemskap). En ny sort registreras med
+(`Member.email`), `user` (`hbuser.email`), `application` (ansökan om
+medlemskap) och `inbox_sender` (avsändaren av en mejlad post i
+inläsningskön, [inkorg-gmail.md](inkorg-gmail.md)). En ny sort registreras med
 `@recipient_kind("<namn>")` och en funktion som tar id:t och returnerar
 `Recipient(address, label)` eller `None`. `label` är det statusvyn visar, ett
 namn, aldrig adressen. Saknas mottagaren, adressen eller
@@ -174,9 +175,10 @@ börjar räkningen om.
 ## Studsar och statusvy
 
 `record_bounce(message_id, diagnos)` markerar raden bakom en leveransrapport
-som `bounced`, men bara om den är `sent`. Ett `Message-ID` med en annan miljös
-värdnamn eller fel HMAC, eller en rad i någon annan status, rör ingen rad, och
-funktionen returnerar `False`.
+som `bounced`, men bara om den är `sent`. Inläsningskön anropar den för varje
+leveransrapport i brevlådan ([inkorg-gmail.md](inkorg-gmail.md)). Ett `Message-ID`
+med en annan miljös värdnamn eller fel HMAC, eller en rad i någon annan status,
+rör ingen rad, och funktionen returnerar `False`.
 
 API:t under `/api/v2/mail` (admin ser allt, genbanksansvarig rader med sin
 genbank):

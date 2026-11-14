@@ -58,7 +58,7 @@ describe("TopbarNav", () => {
     ).toBe(true);
   });
 
-  it("renders the five Swedish dashboard links in navigation order", () => {
+  it("renders the five Swedish dashboard links and Mina inskick in navigation order", () => {
     render(<TopbarNav />);
 
     const navigation = screen.getByRole("navigation", {
@@ -78,6 +78,7 @@ describe("TopbarNav", () => {
       { name: "Genetik", href: "/stamboken/genetik" },
       { name: "Provparning", href: "/stamboken/provparning" },
       { name: "Profil", href: "/stamboken/profil" },
+      { name: "Mina inskick", href: "/stamboken/inskick" },
     ]);
   });
 

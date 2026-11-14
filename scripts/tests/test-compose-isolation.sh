@@ -42,12 +42,14 @@ import json, sys
 c = json.load(open(sys.argv[1] + "/resolved.json"))
 env = lambda s: c["services"][s].get("environment") or {}
 up = sys.argv[1] + "/uppladdningar"  # the upload dir of this project
-# a bind source that is the upload dir, inside it, or a parent of it
-touches = lambda s: bool(s) and (s.rstrip("/") == up or s.startswith(up + "/") or up.startswith(s.rstrip("/") + "/"))
+sk = sys.argv[1] + "/skyddat"  # the private dir of the intake queue
+# a path that is the dir d, inside it, or a parent of it
+reaches = lambda s, d: bool(s) and (s.rstrip("/") == d or s.startswith(d + "/") or d.startswith(s.rstrip("/") + "/"))
+touches = lambda s: reaches(s, up)
 print(eval(sys.argv[2]))' "$1" "$2"
 }
 
-# ── R097: local stacks must not reach the prod bucket or the prod signing key ─
+# ── R097: local stacks must not reach the prod bucket, signing key or mailbox ─
 # The local-production bootstrap (stamboken-drift) copies the prod api-variables.env
 # (S3 and signing settings) into .docker/, a file every compose file reads.
 cat > "$work/prod-api-variables.env" <<'EOF'
@@ -58,6 +60,7 @@ S3_ACCESSKEY=PRODKEY-SENTINEL
 S3_SECRETKEY=PRODSECRET-SENTINEL
 PDF_SIGNING_KEY=/config/pdf_signing_key.pem
 PDF_SIGNING_CA=/config/pdf_signing_ca.pem
+INLASNING_GMAIL=on
 MAIL_MODE=live
 EOF
 
@@ -69,7 +72,7 @@ cp "$work/prod-api-variables.env" "$proj/.docker/api-variables.env"
 resolve "$ROOT/docker-compose.local-production.yml" "$proj"
 for svc in api api-test; do
   for kv in S3_ENDPOINT=http://s3backend:9000 S3_BUCKET=test S3_ACCESSKEY=accesskeytest S3_SECRETKEY=secretkeytest \
-    PDF_SIGNING_KEY=certs/key.pem PDF_SIGNING_CA=certs/ca.pem CERT_DEMO_WATERMARK=true; do
+    PDF_SIGNING_KEY=certs/key.pem PDF_SIGNING_CA=certs/ca.pem CERT_DEMO_WATERMARK=true INLASNING_GMAIL=off; do
     check "R097 local-production $svc: ${kv%%=*} is pinned" "${kv#*=}" "$(q "$proj" "env('$svc').get('${kv%%=*}')")"
   done
 done
@@ -119,6 +122,44 @@ check "R072 production api still mounts uppladdningar writable" "['/app/uppladdn
 # refusal, and without it on api-test its logins would be production sessions.
 check "production api does not set DEMO_INSTANCE" "None" "$(q "$work/r072" "env('api').get('DEMO_INSTANCE')")"
 check "production api-test sets DEMO_INSTANCE=true" "true" "$(q "$work/r072" "env('api-test').get('DEMO_INSTANCE')")"
+
+# ── The intake queue's originals are never public ───────────────────────
+# nginx serves all of uppladdningar without login, so the private dir must lie
+# outside it, and only the api may mount it: never nginx.
+for f in docker-compose docker-compose.local-production docker-compose.production; do
+  proj="$work/private-$f"
+  resolve "$ROOT/$f.yml" "$proj"
+  check "$f: only api mounts skyddat" "['api']" \
+    "$(q "$proj" "sorted(n for n, s in c['services'].items() if any(reaches(v.get('source', ''), sk) for v in s.get('volumes', [])))")"
+  check "$f: api mounts skyddat at PRIVATE_UPLOAD_FOLDER" "True" \
+    "$(q "$proj" "[v['target'] for v in c['services']['api']['volumes'] if reaches(v.get('source', ''), sk)] == [env('api').get('PRIVATE_UPLOAD_FOLDER', '/app/skyddat')]")"
+  check "$f: PRIVATE_UPLOAD_FOLDER is not under UPLOAD_FOLDER" "False" \
+    "$(q "$proj" "reaches(env('api').get('PRIVATE_UPLOAD_FOLDER', '/app/skyddat'), env('api').get('UPLOAD_FOLDER', '/app/uppladdningar'))")"
+  check "$f: skyddat is not in the upload dir" "False" "$(q "$proj" "touches(sk)")"
+done
+# The demo API has a private dir of its own: production's originals are never its to read, and its nightly
+# sweep removes every file its own database does not name.
+for f in docker-compose.local-production docker-compose.production; do
+  check "$f: api-test mounts its own skyddat-test at /app/skyddat" "['$work/private-$f/skyddat-test']" \
+    "$(q "$work/private-$f" "[v['source'] for v in c['services']['api-test']['volumes'] if v['target'] == '/app/skyddat']")"
+done
+
+# ── The image reading's model server: opt-in, internal, at most 6 CPUs ─────
+# Ollama has no login, so it publishes no port; only the api reaches it. It starts
+# only with the profile tolkning, so neither a plain `up` nor the e2e stack (named
+# services, none depending on it) nor the pytest stack starts it.
+check "docker-compose (the pytest stack's base) has no ollama" "False" \
+  "$(q "$work/ports-docker-compose" "'ollama' in c['services']")"
+for f in docker-compose.local-production docker-compose.production; do
+  check "$f: ollama is not started without the tolkning profile" "False" \
+    "$(q "$work/private-$f" "'ollama' in c['services']")"
+  proj="$work/ollama-$f"
+  COMPOSE_PROFILES=tolkning resolve "$ROOT/$f.yml" "$proj"
+  check "$f: ollama publishes no port" "[]" "$(q "$proj" "c['services']['ollama'].get('ports', [])")"
+  check "$f: ollama has at most 6 CPUs" "6.0" "$(q "$proj" "float(c['services']['ollama'].get('cpus', 0))")"
+  check "$f: nothing depends on ollama" "[]" \
+    "$(q "$proj" "[n for n, s in c['services'].items() if 'ollama' in (s.get('depends_on') or {})]")"
+done
 
 echo ""
 echo "passed: $pass, failed: $fail"
