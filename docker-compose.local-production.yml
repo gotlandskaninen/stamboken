@@ -113,9 +113,6 @@ services:
         source: ./config
         target: /config
       - type: bind
-        source: ./logs
-        target: /logs
-      - type: bind
         source: ./uppladdningar
         target: /app/uppladdningar
     depends_on:
@@ -177,11 +174,6 @@ services:
       - type: bind
         source: ./config
         target: /config
-      - type: bind
-        # Own dir: the genebank CSV logs don't record the instance, so demo
-        # edits must not land in production's logs. Create it like ./logs.
-        source: ./logs-test
-        target: /logs
       - type: bind
         source: ./uppladdningar
         target: /app/uppladdningar
@@ -265,6 +257,7 @@ services:
       - LOCAL_CA_ROOT_CERT_VALIDITY=730
       - LOCAL_CA_CERT_VALIDITY=730
     volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./nginx/herdbook-local-production.conf:/etc/nginx/user_conf.d/herdbook.conf:ro
       # Legacy frontends (build with: ./scripts/build-legacy.sh --all)
       - ./nginx/legacy-frontend-prod:/etc/nginx/legacy-frontend-prod:ro
