@@ -145,6 +145,21 @@ def purge_sold_proofs(now):  # pylint: disable=unused-argument  # every rule tak
     return remove_originals(paths)
 
 
+def remind_incomplete(now):
+    """inlasning.paminnelse once to the sender of an item still "ofullstandig" 11 months after it came in."""
+    old = now - inbox.months(inbox.REMIND_MONTHS)
+    queued = 0
+    with DB_PROXY.atomic():
+        for item in InboxItem.select().where((InboxItem.state == "ofullstandig") & (InboxItem.received_at < old)):
+            marked = item.events.where((InboxEvent.kind == "lage") & InboxEvent.detail.contains({"to": "ofullstandig"}))
+            marked = marked.order_by(InboxEvent.id.desc()).first()
+            params = {"item_id": item.id, "event_id": marked.id} if marked else None
+            key = f"inlasning.paminnelse:{item.id}"
+            if params and inbox.mail_sender(item, "inlasning.paminnelse", params, dedupe_key=key):
+                queued += 1
+    return queued
+
+
 def purge_incomplete(now):
     """An item left "ofullstandig" a year after it came in."""
     old = now - inbox.months(inbox.INCOMPLETE_MONTHS)
@@ -177,6 +192,7 @@ def purge_gmail_processed(now):
 # The Gmail job sweeps sender addresses too, but it runs only with the reading on.
 RULES = (
     inbox_gmail.release_senders,
+    remind_incomplete,
     purge_originals,
     purge_sold_proofs,
     purge_incomplete,

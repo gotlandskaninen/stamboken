@@ -76,6 +76,7 @@ DOC_TYPES = ("intyg", "bevis", "arsblankett", "annat")
 CERT_FORMATS = ("handskrivet", "datorskrivet", "v1_pdf", "intyg_b", "digitalt_v2")
 OPENED_EVERY = timedelta(hours=1)
 INCOMPLETE_MONTHS = 12  # an item left "ofullstandig" is deleted this long after it came in (utils/inbox_purge.py)
+REMIND_MONTHS = 11  # and its sender is reminded this long after it came in
 MAX_NOTE = 2000
 MAX_RECTS = 20
 # The masking a handwritten certificate (format 1) is offered: its lower third, where seller and buyer write.
@@ -179,7 +180,7 @@ def remove_files(relatives):
 
 
 def log_event(item, user, kind, **detail):
-    InboxEvent.create(item=item, user=user, kind=kind, detail=detail or None)
+    return InboxEvent.create(item=item, user=user, kind=kind, detail=detail or None)
 
 
 def notify(user, kind, item, *, mailed=False):
@@ -402,7 +403,9 @@ def change_state(item, user, state, *, note=None, duplicate_of=None):
     if state == "hos_genbanksansvarig":
         item.assigned_to, item.assigned_at = None, None
     item.save()
-    log_event(item, user, "lage", **detail)
+    event = log_event(item, user, "lage", **detail)
+    if state == "ofullstandig":  # the builder reads the note from the event: no free text in the mail queue
+        mail_sender(item, "inlasning.ofullstandig", {"item_id": item.id, "event_id": event.id}, created_by=user.id)
     if state == "hos_genbanksansvarig":
         for manager in queue_workers(item.genebank_id, managers_only=True):
             if manager.id != user.id:
@@ -444,26 +447,20 @@ def close_if_done(item, user):
     log_event(item, user, "lage", **{"from": previous, "to": "klar"})
     if item.sender_user_id is not None:
         notify(item.sender_user_id, "klar", item, mailed=True)
-        enqueue_mail(
-            "inlasning.klar",
-            "user",
-            item.sender_user_id,
-            {"item_id": item.id},
-            ref=("inbox_item", item.id),
-            herd=item.herd_id,
-            genebank=item.genebank_id,
-        )
-    elif item.sender_address:  # a mailed item's sender gets the same news, at the address it came from
-        enqueue_mail(
-            "inlasning.klar",
-            "inbox_sender",
-            item.id,
-            {"item_id": item.id},
-            ref=("inbox_item", item.id),
-            herd=item.herd_id,
-            genebank=item.genebank_id,
-        )
+    mail_sender(item, "inlasning.klar", {"item_id": item.id})
     release_sender(item)
+
+
+def mail_sender(item, kind, params, **options):
+    """Queues `kind` to the item's uploader, or else to the address a mailed item came from; None without either."""
+    if item.sender_user_id is not None:
+        recipient = ("user", item.sender_user_id)
+    elif item.sender_address:
+        recipient = ("inbox_sender", item.id)
+    else:
+        return None
+    options.update(ref=("inbox_item", item.id), herd=item.herd_id, genebank=item.genebank_id)
+    return enqueue_mail(kind, *recipient, params, **options)
 
 
 def _rects(value):
@@ -877,6 +874,23 @@ def _item_done_mail(params):
     )
     numbers = list(dict.fromkeys(number for (number,) in query.tuples()))
     return {"item_id": item.id, "numbers": numbers, "account": item.sender_user_id is not None}
+
+
+@mail_kind("inlasning.paminnelse", priority=1, category="T")
+@mail_kind("inlasning.ofullstandig", priority=1, category="T")
+def _incomplete_mail(params):
+    """What is missing, in the handler's note read when the mail goes; none once the item moved on or the note went."""
+    item = InboxItem.get_or_none(InboxItem.id == params["item_id"])
+    event = InboxEvent.get_or_none((InboxEvent.id == params["event_id"]) & (InboxEvent.item == params["item_id"]))
+    note = (event.detail or {}).get("note") if event else None
+    if item is None or item.state != "ofullstandig" or note is None:
+        return None
+    return {
+        "item_id": item.id,
+        "note": note,
+        "deadline": f"{item.received_at + months(INCOMPLETE_MONTHS):%Y-%m-%d}",
+        "account": item.sender_user_id is not None,
+    }
 
 
 @mail_kind("notis.sammandrag", priority=1, category="N")
