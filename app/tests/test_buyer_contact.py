@@ -18,6 +18,7 @@ from utils.herd_tracking import (  # noqa: E402
     HerdTrackingConflict,
     HerdTrackingInvalid,
     correct_herd_tracking,
+    new_operation_id,
     record_herd_tracking,
     undo_herd_tracking_operation,
     void_herd_tracking,
@@ -331,6 +332,38 @@ class TestVoid(BuyerBase):
     def test_a_correction_that_voids_the_sale_deletes_the_buyer(self):
         correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [], "Fel datum")
         self.assertIsNone(self._contact(self.contact_id))
+
+    def _correct_date(self, **event):
+        op = new_operation_id()
+        sale_event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", **event}
+        return op, correct_herd_tracking(self.rabbit, self.manager, op, [self.sale.id], [sale_event], "Fel datum")
+
+    def test_a_correction_of_the_sale_keeps_the_buyer_and_its_purge_date(self):
+        purge_at = self._contact(self.contact_id).purge_at
+        _op, (written,) = self._correct_date(holder_contact_id=self.contact_id)
+        self.assertEqual(written.holder_contact_id, self.contact_id)
+        self.assertEqual(self._contact(self.contact_id).purge_at, purge_at)
+        self.assertEqual(self._buyer_log(self.contact_id, "DELETE"), [])
+
+    def test_undoing_that_correction_restores_the_old_sale_with_its_buyer(self):
+        op, _written = self._correct_date(holder_contact_id=self.contact_id)
+        undo_herd_tracking_operation(op, self.manager, "Rätt datum ändå")
+        self.assertEqual(self._latest().id, self.sale.id)
+        self.assertEqual(self._latest().holder_contact_id, self.contact_id)
+        self.assertIsNotNone(self._contact(self.contact_id))
+
+    def test_a_correction_without_the_buyer_deletes_it(self):
+        self._correct_date()
+        self.assertIsNone(self._contact(self.contact_id))
+
+    def test_a_buyer_from_a_row_not_voided_in_the_correction_is_400(self):
+        event = {"kind": "TRANSFER", "date": "2022-01-01", "herd": "GX1", "holder_contact_id": self.contact_id}
+        with self.assertRaises(HerdTrackingInvalid):
+            correct_herd_tracking(self.rabbit, self.manager, None, [], [event])
+        with self.assertRaises(HerdTrackingInvalid):  # and only on a sale outside the genebank
+            self._correct_date(herd="G2", holder_contact_id=self.contact_id)
+        self.assertEqual(self._latest().id, self.sale.id)
+        self.assertIsNotNone(self._contact(self.contact_id))
 
     def test_the_reason_never_names_the_buyer(self):
         with self.assertRaises(HerdTrackingInvalid):

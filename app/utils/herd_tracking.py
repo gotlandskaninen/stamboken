@@ -79,12 +79,13 @@ def new_operation_id(value=None):
 
 def _void_rows(rows, user, reason, operation_id):
     """
-    WHITELISTED in-place UPDATE #1: set the four void fields on still-active rows. A voided sale's buyer outside
-    the association is deleted with it (ADR-0016: the purpose is gone), and is never named in the reason.
+    WHITELISTED in-place UPDATE #1: set the four void fields on still-active rows. Returns the buyers outside the
+    association those rows held; the caller passes them to _drop_orphan_buyers once its writes are done. A buyer
+    is never named in the reason.
     """
     ids = [r.id for r in rows]
     if not ids:
-        return 0
+        return []
     _reject_buyer_name(reason, HerdTracking.select(HerdTracking.holder_contact).where(HerdTracking.id.in_(ids)))
     voided = list(
         HerdTracking.update(
@@ -97,8 +98,24 @@ def _void_rows(rows, user, reason, operation_id):
         .returning(HerdTracking.holder_contact)
         .tuples()
     )
-    delete_buyer_contacts([contact for (contact,) in voided if contact], "forsaljning_ogiltig", user)
-    return len(voided)
+    return [contact for (contact,) in voided if contact]
+
+
+VOID_ACTION = "forsaljning_ogiltig"  # audit_log action: the sale holding the buyer was voided
+
+
+def _drop_orphan_buyers(contact_ids, action, user):
+    """
+    A buyer lives as long as an active row holds it (ADR-0016): a sale undone, rejected or corrected away takes its
+    buyer with it, a correction that rewrites the sale keeps it. Call at the end of the transaction.
+    """
+    if not contact_ids:
+        return 0
+    held = HerdTracking.select(HerdTracking.holder_contact).where(
+        HerdTracking.holder_contact.in_(contact_ids), ht_not_voided()
+    )
+    orphans = set(contact_ids) - {contact_id for (contact_id,) in held.tuples()}
+    return delete_buyer_contacts(orphans, action, user)
 
 
 def void_all_for_unpromote(individual, user, operation_id=None):
@@ -109,7 +126,7 @@ def void_all_for_unpromote(individual, user, operation_id=None):
         rows = list(HerdTracking.select().where(HerdTracking.individual == individual.id, ht_not_voided()))
         if not user.is_admin and _moves_across_genebanks(individual, rows, []):
             raise HerdTrackingForbidden(GENEBANK_CHANGE_ADMIN_ONLY)
-        _void_rows(rows, user, UNPROMOTE_REASON, op)
+        _drop_orphan_buyers(_void_rows(rows, user, UNPROMOTE_REASON, op), VOID_ACTION, user)
     return rows
 
 
@@ -329,7 +346,7 @@ def replace_birth_row(individual, user, *, herd=None, date=None, reason, operati
             new_date is None or new_date == coerce_date(birth.herd_tracking_date)
         ):
             return birth  # nothing to replace: no void, no new row
-        _void_rows([birth], user, reason, op)
+        voided = _void_rows([birth], user, reason, op)
         new_birth = HerdTracking.create(
             individual=ind.id,
             herd=new_herd if new_herd is not None else birth.herd_id,
@@ -344,6 +361,7 @@ def replace_birth_row(individual, user, *, herd=None, date=None, reason, operati
         if not user.is_admin and _moves_across_genebanks(ind, before, after):
             raise HerdTrackingForbidden(GENEBANK_CHANGE_ADMIN_ONLY)
         _assert_no_new_violations(ind, before, after)
+        _drop_orphan_buyers(voided, VOID_ACTION, user)
     return new_birth
 
 
@@ -509,8 +527,9 @@ def void_herd_tracking(ht_id, user, reason, operation_id=None):
         denial = void_denial(user, row, before, individual)
         if denial:
             raise HerdTrackingForbidden(denial)
-        _void_rows([row], user, cleaned, op)
+        voided = _void_rows([row], user, cleaned, op)
         _assert_no_new_violations(individual, before, [r for r in before if r.id != row.id])
+        _drop_orphan_buyers(voided, VOID_ACTION, user)
     return HerdTracking.get_by_id(ht_id)
 
 
@@ -565,7 +584,15 @@ def _parse_events(events, individual):
             raise HerdTrackingInvalid(f"Händelse {number}: anteckningen måste vara text.")
         notes = (raw_notes or "").strip() or None
         reject_contact_details(notes)
-        parsed.append({"date": when, "herd": herd, "kind": kind, "notes": notes})
+        contact = event.get("holder_contact_id")
+        if contact is not None and (
+            not isinstance(contact, int)
+            or isinstance(contact, bool)
+            or kind != "TRANSFER"
+            or herd.herd not in OUTSIDE_GENEBANK_HERDS
+        ):
+            raise HerdTrackingInvalid(f"Händelse {number}: en köpare hör bara till en försäljning utanför genbanken.")
+        parsed.append({"date": when, "herd": herd, "kind": kind, "notes": notes, "holder_contact_id": contact})
         previous = when
     return parsed
 
@@ -628,7 +655,11 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
                     if r.kind == "BIRTH"
                 ],
             )
-        _void_rows([by_id[v] for v in void_ids], user, cleaned, op)
+        # A rewritten sale keeps its buyer, with the original purge_at: only one a row voided here held.
+        released = {by_id[v].holder_contact_id for v in void_ids} - {None}
+        if any(e["holder_contact_id"] not in released for e in parsed if e["holder_contact_id"] is not None):
+            raise HerdTrackingInvalid("En köpare kan bara flyttas från en rad som ångras i samma korrigering.")
+        voided = _void_rows([by_id[v] for v in void_ids], user, cleaned, op)
         written, current = [], list(kept)
         for event in parsed:
             birth = event["kind"] == "BIRTH"
@@ -638,6 +669,7 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
                 event["kind"] == "TRANSFER"
                 and from_herd == event["herd"].id
                 and event["herd"].herd in OUTSIDE_GENEBANK_HERDS
+                and event["holder_contact_id"] is None
             ):
                 detail = "En flytt måste gå till en annan besättning än den som har kaninen."
                 raise HerdTrackingConflict(detail, rows=[{"id": None, "code": "I4", "detail": detail}])
@@ -650,6 +682,7 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
                 kind=event["kind"],
                 operation_id=op,
                 notes=event["notes"],
+                holder_contact=event["holder_contact_id"],
             )
             written.append(row)
             current.append(row)
@@ -660,6 +693,7 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
         if any(_changes_genebank(r, ind, current) and not r.notes for r in written):
             raise HerdTrackingInvalid("Ange en anledning i anteckningen för ett genbanksbyte.")
         _assert_no_new_violations(ind, before, current)
+        _drop_orphan_buyers(voided, VOID_ACTION, user)
     return written
 
 
@@ -792,8 +826,9 @@ def undo_herd_tracking_operation(operation_id, user, reason, undo_operation_id=N
                 )
         try:
             with DB_PROXY.atomic():
-                _void_rows(revoid, user, cleaned, undo_op)  # voids first: the unvoids may reuse a unique slot
+                voided = _void_rows(revoid, user, cleaned, undo_op)  # voids first: the unvoids may reuse a slot
                 _unvoid_rows(unvoid, undo_op)
+                _drop_orphan_buyers(voided, VOID_ACTION, user)
         except IntegrityError as exc:
             if _violated_constraint(exc) not in ("idx_herdtracking_one_birth", "idx_herdtracking_report_attestation"):
                 raise
