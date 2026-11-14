@@ -255,11 +255,12 @@ class TestDeletedItems(PurgeTest):
         gone = self.make(state="klar", closed_at=limit - MINUTE, kind="meddelande", documents=0)
         open_one = self.make(limit - MINUTE, state="tagen", kind="meddelande", documents=0)
         with_document = self.make(state="klar", closed_at=limit - MINUTE, kind="meddelande")
+        attachments_skipped = self.make(state="klar", closed_at=limit - MINUTE, kind="mail", documents=0)
 
         self.assertEqual(purge.purge_messages(NOW), 1)
 
         self.assertDeleted(gone, [])
-        for item in (kept, open_one, with_document):
+        for item in (kept, open_one, with_document, attachments_skipped):
             self.assertIsNotNone(db.InboxItem.get_or_none(db.InboxItem.id == item.id))
         self.assertIdempotent(purge.purge_messages)
 
@@ -276,6 +277,21 @@ class TestDeletedItems(PurgeTest):
         for item in (junk, incomplete):
             self.assertIsNotNone(db.InboxItem.get_or_none(db.InboxItem.id == item.id))
         self.assertTrue(self.exists(copy.public_path))
+
+    def test_the_copy_on_the_rabbit_survives_every_rule(self):
+        old = NOW - inbox.months(36)
+        copies = []
+        for state in ("klar", "skrap", "ofullstandig", "tagen", "dubblett"):
+            item = self.make(old, state=state, closed_at=old if state in inbox.CLOSED_STATES else None)
+            copies.append(self.with_copy(item))
+        db.InboxItem.update(state_changed_at=old).execute()
+
+        purge.run(NOW)
+
+        for copy in copies:
+            self.assertEqual(db.InboxDocument.get_by_id(copy.id).public_path, copy.public_path)
+            self.assertTrue(self.exists(copy.public_path))
+            self.assertIsNone(db.InboxDocument.get_by_id(copy.id).original_path)  # the original did go
 
 
 class TestLogs(PurgeTest):

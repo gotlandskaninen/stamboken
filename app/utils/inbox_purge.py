@@ -174,10 +174,10 @@ def purge_junk(now):
 
 
 def purge_messages(now):
-    """A closed item without documents (a message) 13 months after it closed."""
+    """A closed message ("meddelande") without documents 13 months after it closed."""
     no_documents = InboxItem.id.not_in(InboxDocument.select(InboxDocument.item))
-    old = now - inbox.months(MESSAGE_MONTHS)
-    return _delete_items(InboxItem.state.in_(inbox.CLOSED_STATES) & (InboxItem.closed_at < old) & no_documents)
+    closed = InboxItem.state.in_(inbox.CLOSED_STATES) & (InboxItem.closed_at < now - inbox.months(MESSAGE_MONTHS))
+    return _delete_items((InboxItem.kind == "meddelande") & closed & no_documents)
 
 
 def purge_opened(now):

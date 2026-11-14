@@ -1021,7 +1021,7 @@ kommandologgen: 12 månader är 366 dagar och 13 månader 396.
 | Bevisets original | också när kaninen sålts vidare: en senare `TRANSFER` från köparens besättning som inte är makulerad. Försäljningens rad i besättningshistoriken står kvar |
 | Postens text: `message` och `text`, `note` och `not_saved` i händelserna | samtidigt som originalen, för en post som har dokument. Händelserna står kvar med typ, tid och person |
 | Händelsen `oppnad` | 13 månader efter händelsen |
-| En stängd post utan dokument (ett meddelande) | 13 månader efter stängningen |
+| Ett stängt meddelande (`kind: "meddelande"`) utan dokument | 13 månader efter stängningen |
 | En post i läget `skrap` | 30 dagar efter stängningen |
 | En post i läget `ofullstandig` | 12 månader efter att den kom in; mejl när den markeras och efter 11 månader (se [Mejl](#mejl)) |
 | `sender_address` på en stängd post | när inget mejl till avsändaren väntar, senast 30 dagar efter stängningen, också när Gmail-läsningen är avstängd |
