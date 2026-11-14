@@ -178,6 +178,14 @@ class TestPedigreeTemplateV2(unittest.TestCase):
         self.assertIn("752098100012345", html)
         self.assertNotIn("Fotringsnr", html)
 
+    def test_reissue_of_v1(self):
+        html = self._html(replaces_v1=True, digital_certificate="345")
+        self.assertIn("Ersätter det tidigare digitala intyget nr 345", html)
+        self.assertNotIn("Ersätter det tidigare", self._html())
+        both = self._html(replaces_v1=True, replaces_date="2026-11-01")
+        self.assertIn("Ersätter intyg utfärdat 2026-11-01", both)
+        self.assertNotIn("Ersätter det tidigare", both)
+
     def test_only_foot_ring(self):
         html = self._html(foot_ring="FGK 218")
         self.assertIn("FGK 218", html)
@@ -219,14 +227,18 @@ class TestBuildCertData(unittest.TestCase):
         from utils.cert_service_v2 import build_cert_data
 
         ind = SimpleNamespace(
-            origin_herd=SimpleNamespace(genebank=SimpleNamespace(name="Mellerud")),
+            origin_herd=SimpleNamespace(genebank=SimpleNamespace(name="Mellerud"), name="Uppfödare", herd_name=None, herd="M12"),
             microchip="752098100012345",
             number="G1-1",
             digital_certificate="1",
         )
-        with patch("utils.cert_service_v2.get_certificate_data", return_value={}):
+        current = {"fullname": "Den som utfärdar", "herd": "MX1"}
+        with patch("utils.cert_service_v2.get_certificate_data", return_value=current):
             data = build_cert_data(ind, {}, 1)
         self.assertEqual(data["breed"], "Mellerudskanin")
+        # The breeder attests, with the origin herd, not the issuing user or the current (buyer's) herd
+        self.assertEqual(data["fullname"], "Uppfödare")
+        self.assertEqual(data["herd"], "M12")
         self.assertEqual(data["microchip"], "752098100012345")
         ind.microchip = None
         with patch("utils.cert_service_v2.get_certificate_data", return_value={}):
