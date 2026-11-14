@@ -9,6 +9,7 @@ import {
   initialCertForm,
   initialSaveMode,
   itemActions,
+  lacksRole,
   nextOpenDocument,
   numberCheckOf,
   OPEN_STATES,
@@ -595,5 +596,17 @@ describe("colorNamesFor", () => {
   it("is empty when the genebank is unknown", () => {
     expect(colorNamesFor(lists, undefined)).toEqual([]);
     expect(colorNamesFor(null, "Mellerud")).toEqual([]);
+  });
+});
+
+describe("lacksRole", () => {
+  it("is true for an item of a genebank the user has no role in", () => {
+    expect(lacksRole(helper, 2, [1])).toBe(true);
+    expect(lacksRole(helper, 1, [1])).toBe(false);
+  });
+  it("is false for an admin, an item without genebank, or unknown genebanks", () => {
+    expect(lacksRole(admin, 2, [1])).toBe(false);
+    expect(lacksRole(helper, null, [1])).toBe(false);
+    expect(lacksRole(helper, 2, null)).toBe(false);
   });
 });

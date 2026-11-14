@@ -118,7 +118,23 @@ export interface QueueList {
   total: number;
   counts: Partial<Record<ItemState, number>>;
   interpretation?: InterpretationSummary;
+  /** The scope the server applied, and the genebanks the user manages or helps in. */
+  scope?: QueueScope;
+  my_genebanks?: number[];
 }
+
+export type QueueScope = "mina" | "alla";
+
+/** An item of a genebank the user has no role in: readable, but nothing can be saved. */
+export const lacksRole = (
+  user: QueueUser,
+  genebankId: number | null,
+  myGenebanks: number[] | null,
+) =>
+  !user.is_admin &&
+  genebankId !== null &&
+  myGenebanks !== null &&
+  !myGenebanks.includes(genebankId);
 
 /** An RFC 9457 problem as a server action hands it to the client. */
 export type Problem = {

@@ -96,7 +96,9 @@ export function WorkView({
   colors,
   herds,
   people,
+  noRole = false,
 }: {
+  noRole?: boolean;
   item: InboxDetail;
   user: QueueUser;
   colors: string[];
@@ -114,9 +116,10 @@ export function WorkView({
     () => nextOpenDocument(docs, null) ?? docs[0]?.id ?? null,
   );
   const doc = docs.find((d) => d.id === selectedId) ?? null;
-  const editable = canEditDocuments(item, user);
-  const saving = canSave(item, user);
-  const allActions = itemActions(item, user);
+  // No role in the item's genebank: read only (the server refuses the rest anyway).
+  const editable = !noRole && canEditDocuments(item, user);
+  const saving = !noRole && canSave(item, user);
+  const allActions = noRole ? [] : itemActions(item, user);
   const actions = allActions.filter((a) => a !== "tilldela");
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -132,7 +135,7 @@ export function WorkView({
     (doc.status === "sparad" || (redo && doc.status === "klar"));
   // The handler of an open item, and a manager or admin at any time once a copy exists.
   const mayMask =
-    editable || (!!doc?.has_copy && manages(user, item.genebank_id));
+    editable || (!noRole && !!doc?.has_copy && manages(user, item.genebank_id));
   const [noPersonalData, setNoPersonalData] = useState(false);
   // Nothing saved from it yet: its type can change and it can be dismissed.
   const fresh = doc?.status === "ny" || doc?.status === "vantar_foralder";
@@ -241,6 +244,12 @@ export function WorkView({
 
   return (
     <div className={styles.container}>
+      {noRole && (
+        <p role="status" className={styles.note}>
+          Du kan läsa det här ärendet men inte spara: du har inte rollen för den
+          här genbanken.
+        </p>
+      )}
       {error && (
         <p role="alert" className={styles.error}>
           {error}
@@ -384,22 +393,24 @@ export function WorkView({
             </div>
           )}
 
-          {item.state === "tagen" && item.assigned_to?.id === user.id && (
-            <AskBreeder
-              itemId={item.id}
-              documentId={doc && !masking ? doc.id : null}
-              crop={
-                crop && doc
-                  ? toApiRects([
-                      rotateRect(crop, (doc.rotation - rotation) / 90),
-                    ])[0]
-                  : null
-              }
-              onFrame={(on) =>
-                setCrop(on ? { x: 0.2, y: 0.2, w: 0.6, h: 0.3 } : null)
-              }
-            />
-          )}
+          {!noRole &&
+            item.state === "tagen" &&
+            item.assigned_to?.id === user.id && (
+              <AskBreeder
+                itemId={item.id}
+                documentId={doc && !masking ? doc.id : null}
+                crop={
+                  crop && doc
+                    ? toApiRects([
+                        rotateRect(crop, (doc.rotation - rotation) / 90),
+                      ])[0]
+                    : null
+                }
+                onFrame={(on) =>
+                  setCrop(on ? { x: 0.2, y: 0.2, w: 0.6, h: 0.3 } : null)
+                }
+              />
+            )}
 
           {allActions.includes("tilldela") && (
             <RowActions
@@ -581,7 +592,7 @@ export function WorkView({
 
         {/* Right: what the document shows */}
         <section className={`sb-card ${styles.card}`} aria-label="Registrering">
-          {doc && !saving && (
+          {doc && !saving && !noRole && (
             <div className={styles.note}>
               {CLOSED_STATES.includes(item.state)
                 ? "Ärendet är stängt."

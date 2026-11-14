@@ -913,7 +913,10 @@ bara för administratör.
 
 <!-- route: /stamboken/inkorg -->
 
-Överst antalet ärenden per läge: **Öppna**, varje läge som har ärenden och **Alla**.
+Överst väljer du **Mina genbanker** (ärenden i genbanker där du är genbanksansvarig eller
+hjälpare, och ärenden utan genbank) eller **Alla genbanker**. Utan val visas **Mina genbanker**
+för genbanksansvariga och hjälpare och **Alla genbanker** för administratörer; valet ligger i
+adressen. Därunder antalet ärenden per läge: **Öppna**, varje läge som har ärenden och **Alla**.
 Filtren **Mina**, **Otagna**, **Handläggare**, **Genbank**, **Besättning** och **Typ**
 ligger i adressen, så en filtrerad lista går att länka; **Rensa** tar bort dem. Tabellen
 visar **Ärende** (med hur många dokument som är klara och märkena "bevis saknas" och
@@ -939,7 +942,9 @@ verktygen, varningar som "kan vara oskarp" och "samma bild i ärende 12", och **
 **Format**, **Avfärda** och, när bildtolkningen är på, **Tolka igen**. Till höger formuläret för
 dokumentet: intyget, försäljningen eller maskningen. Ett intyg som tolkats har fälten ifyllda och
 färgade efter varifrån värdet kommer, far- och morföräldrarna och kontrollerna under fälten; medan
-fotot tolkas står det "Fotot tolkas". Har du inte ärendet står det vem som har det, med **Jag tar
+fotot tolkas står det "Fotot tolkas". Gäller ärendet en genbank där du inte har rollen står det "Du kan läsa det här ärendet men inte
+spara: du har inte rollen för den här genbanken." överst, och knapparna för att ta, byta läge och
+spara finns inte. Har du inte ärendet står det vem som har det, med **Jag tar
 den** eller **Ta över**; du kan bara spara när ärendet är ditt och taget. Ett mejlat ärende visar
 avsändarens adress (med "Avsändaren är inte bekräftad" när den inte gick att bekräfta; inget
 mejl skickas då till adressen), **Gäller kanske** när det kan höra till ett annat ärende, och

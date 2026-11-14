@@ -12,7 +12,13 @@ import { RefreshBadge } from "@/components/shell/RefreshBadge";
 import { Masthead } from "@/components/shell/Masthead";
 import type { ColorOption } from "@/app/(app)/stamboken/(dashboard)/min-besattning/actions";
 import type { GenebankHerd } from "@/utils/saleRules";
-import { colorNamesFor, STATE_LABEL, type InboxDetail } from "../lib";
+import {
+  colorNamesFor,
+  lacksRole,
+  STATE_LABEL,
+  type InboxDetail,
+  type QueueList,
+} from "../lib";
 import { WorkView } from "./WorkView";
 
 export const dynamic = "force-dynamic";
@@ -36,7 +42,7 @@ export default async function InkorgItemPage({
     if (e instanceof ApiError && e.status === 404) notFound();
     throw e;
   }
-  const [colors, genebanks, herds, handlers] = await Promise.all([
+  const [colors, genebanks, herds, handlers, myGenebanks] = await Promise.all([
     fetchApi<Record<string, ColorOption[]>>("/colors").catch(() => null),
     fetchApi<{ genebanks: { id: number; name: string }[] }>("/genebanks")
       .then((r) => r.genebanks)
@@ -49,6 +55,10 @@ export default async function InkorgItemPage({
           .catch(() => [])
       : Promise.resolve([]),
     fetchHandlers(),
+    // The cheapest place for the user's genebanks: the list answers with them.
+    fetchApi<QueueList>("/v2/inkorg?limit=1")
+      .then((r) => r.my_genebanks ?? null)
+      .catch(() => null),
   ]);
   // The colour list of the item's genebank, not of its herd: it may have none.
   const colorNames = colorNamesFor(
@@ -79,6 +89,11 @@ export default async function InkorgItemPage({
           is_admin: user.is_admin,
           is_manager: user.is_manager,
         }}
+        noRole={lacksRole(
+          { id: user.id, is_admin: user.is_admin, is_manager: user.is_manager },
+          item.genebank_id,
+          myGenebanks,
+        )}
         colors={colorNames}
         herds={herds}
         people={handlers}

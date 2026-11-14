@@ -106,9 +106,16 @@ const item = (changes: Partial<InboxDetail> = {}): InboxDetail => ({
   ...changes,
 });
 
-const view = (i: InboxDetail, user: QueueUser = helper) => (
+const view = (i: InboxDetail, user: QueueUser = helper, noRole = false) => (
   <ModeProvider mode="prod">
-    <WorkView item={i} user={user} colors={[]} herds={[]} people={[]} />
+    <WorkView
+      item={i}
+      user={user}
+      noRole={noRole}
+      colors={[]}
+      herds={[]}
+      people={[]}
+    />
   </ModeProvider>
 );
 
@@ -204,6 +211,22 @@ describe("WorkView: masking", () => {
     );
     expect(
       screen.queryByRole("button", { name: "Gör om maskningen" }),
+    ).toBeNull();
+  });
+});
+
+describe("WorkView: an item of a genebank without a role", () => {
+  it("says so, and offers no take, state or save buttons", () => {
+    render(view(item({ state: "ny", assigned_to: null }), boss, true));
+    expect(
+      screen.getByText(
+        "Du kan läsa det här ärendet men inte spara: du har inte rollen för den här genbanken.",
+      ),
+    ).toBeInTheDocument();
+    for (const name of ["Jag tar den", "Skräp", "Tilldela"])
+      expect(screen.queryByRole("button", { name })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Spara och nästa" }),
     ).toBeNull();
   });
 });
