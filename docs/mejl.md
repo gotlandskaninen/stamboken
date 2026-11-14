@@ -148,7 +148,7 @@ inget användarnamn eller lösenord för SMTP.
 | 250 | `sent` | `sent`, med `sent_at` och `address_hash` |
 | 4xx vid RCPT eller DATA, avbruten anslutning eller annat fel under sändningen, fel när mejlet byggs | `temporary` | räknas; väntetiden före nästa försök växer från 1 min via 5 min, 30 min, 2 h och 6 h till 12 h, och det sjunde räknade felet ger `failed` |
 | 5xx vid RCPT eller DATA, också 5.7.x (policy), och 552 (för stort) vid MAIL FROM | `permanent` | `failed` direkt |
-| anslutningen nekas, ingen STARTTLS, EHLO nekas, 421, reläet nekar vår avsändare eller vår IP vid MAIL FROM | `systemic` | felet ligger hos reläet, inte hos mejlet: försöket räknas inte, sändaren vilar 5 minuter och raden väntar till en minut efter pausen, så att mejlen bakom den går först |
+| anslutningen nekas, ingen STARTTLS, EHLO nekas, 421, reläet nekar vår avsändare eller vår IP vid MAIL FROM, anslutningen bryts eller tar för lång tid för det andra mejlet i rad i samma körning | `systemic` | felet ligger hos reläet, inte hos mejlet: försöket räknas inte, sändaren vilar 5 minuter och raden väntar till en minut efter pausen, så att mejlen bakom den går först |
 
 Ett avslag vid RCPT eller DATA gäller den mottagaren eller det mejlet, vilken
 kod det än har. Ett relä som nekar alla mottagare fäller därför mejlen ett i

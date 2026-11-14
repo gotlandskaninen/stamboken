@@ -262,6 +262,7 @@ class _Relay:
 
     def __init__(self):
         self.conn = None
+        self.dropped = False  # the previous mail lost the connection
 
     def send(self, msg, address):
         if self.conn is None:
@@ -270,7 +271,18 @@ class _Relay:
             except Exception as exc:
                 code = getattr(exc, "smtp_code", None)
                 raise _Systemic(str(code) if code else None, _describe(exc)) from exc
-        self.conn.send_message(msg, from_addr=settings.mail.sender, to_addrs=[address])
+        try:
+            self.conn.send_message(msg, from_addr=settings.mail.sender, to_addrs=[address])
+        except Exception as exc:
+            if not _lost(exc):
+                self.dropped = False  # the relay answered
+                raise
+            self.close()  # the next mail reconnects; if that fails, it is systemic
+            if self.dropped:  # twice in a row: the relay drops us, not this mail
+                raise _Systemic(None, _describe(exc)) from exc
+            self.dropped = True
+            raise
+        self.dropped = False
 
     def close(self):
         conn, self.conn = self.conn, None
@@ -283,6 +295,13 @@ class _Relay:
 
 def _describe(exc):
     return f"{type(exc).__name__}: {exc}"
+
+
+def _lost(exc):
+    """The connection broke or timed out, as opposed to the relay answering (an SMTPException is an OSError too)."""
+    return isinstance(exc, smtplib.SMTPServerDisconnected) or (
+        isinstance(exc, OSError) and not isinstance(exc, smtplib.SMTPException)
+    )
 
 
 _ENHANCED = re.compile(r"\b([245]\.\d{1,3}\.\d{1,3})\b")

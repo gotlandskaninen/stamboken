@@ -483,6 +483,19 @@ class TestErrorClasses(MailTest):
         self.assertEqual(self.row(second).status, "sent")
         self.assertEqual(len(relay.opened), 2)
 
+    def test_two_dropped_connections_in_a_row_pause_the_sender(self):
+        """A relay that accepts the connection and then drops every transaction must not use up the mails."""
+        first, second, third = (self.queue(f"{x}@example.org") for x in "abc")
+        drops = [smtplib.SMTPServerDisconnected("Connection unexpectedly closed"), TimeoutError("timed out")]
+        relay = self.relay(replies=drops)
+        self.assertEqual(mail.send_pending(self.now), 2)
+        self.assertEqual((self.row(first).status, self.row(first).attempts), ("queued", 1))
+        self.assertEqual((self.row(second).status, self.row(second).attempts), ("queued", 0))
+        self.assertEqual([a.result for a in self.attempts(second)], ["systemic"])
+        self.assertEqual(self.attempts(third), [])
+        self.assertIsNotNone(db.MailSender.get_by_id(1).paused_until)
+        self.assertEqual(relay.sent, [])
+
     def test_same_message_id_on_every_attempt(self):
         self.queue()
         relay = self.relay(replies=[_refused(451, "4.3.0 Temporary failure")])
