@@ -20,6 +20,7 @@ const RESERVED_SLUGS = new Set([
   "bli-genbank",
   "bli-genbanksbesattning",
   "integritetspolicy",
+  "dataskydd",
   "v2",
   "uppladdningar",
   "_next",

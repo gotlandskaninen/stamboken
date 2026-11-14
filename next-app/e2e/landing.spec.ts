@@ -130,6 +130,13 @@ test.describe("Landing page sections", () => {
   });
 });
 
+test("the short address /dataskydd leads to the privacy policy", async ({
+  page,
+}) => {
+  await page.goto("/dataskydd");
+  await expect(page).toHaveURL(/\/integritetspolicy$/);
+});
+
 test.describe("Landing page CTA above fold", () => {
   for (const viewport of VIEWPORTS) {
     test(`Bli medlem visible above fold at ${viewport.name} (${viewport.width}px)`, async ({
