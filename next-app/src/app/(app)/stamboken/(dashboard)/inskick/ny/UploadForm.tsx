@@ -2,6 +2,8 @@
 
 import { useRef, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { Autocomplete, TextField } from "@mui/material";
+import type { GenebankHerd } from "@/utils/saleRules";
 import { useSnackbar } from "@/components/SnackbarProvider";
 import { planImage, warningText } from "@/lib/inkorg";
 import { uploadIntyg } from "./actions";
@@ -37,7 +39,17 @@ async function prepare(file: File): Promise<File> {
   });
 }
 
-export function UploadForm({ herds }: { herds: string[] }) {
+/**
+ * `herds` are the user's own. Someone who works in the queue may upload for
+ * any herd, so they get `herdOptions` to search instead (as SalePanel's buyer).
+ */
+export function UploadForm({
+  herds,
+  herdOptions,
+}: {
+  herds: string[];
+  herdOptions?: GenebankHerd[];
+}) {
   const router = useRouter();
   const { showSnackbar } = useSnackbar();
   const inputRef = useRef<HTMLInputElement>(null);
@@ -74,7 +86,8 @@ export function UploadForm({ herds }: { herds: string[] }) {
       return null;
     }
     const fd = new FormData();
-    fd.set("herd", herd);
+    // The picker's label is "G1274 – Name": the code is its first word.
+    fd.set("herd", herd.trim().split(/\s/)[0].toUpperCase());
     prepared.forEach((f) => fd.append("files", f));
     if (message.trim()) fd.set("message", message.trim());
     return fd;
@@ -116,22 +129,42 @@ export function UploadForm({ herds }: { herds: string[] }) {
           </div>
         )}
         <div className={styles.field}>
-          <label className="sb-label" htmlFor="inskick-herd">
-            Besättning
-          </label>
-          <select
-            id="inskick-herd"
-            className="sb-input"
-            value={herd}
-            onChange={(e) => setHerd(e.target.value)}
-          >
-            {herds.length !== 1 && <option value="">Välj besättning</option>}
-            {herds.map((h) => (
-              <option key={h} value={h}>
-                {h}
-              </option>
-            ))}
-          </select>
+          {herdOptions ? (
+            <Autocomplete
+              freeSolo
+              options={herdOptions.map((h) => h.herd)}
+              getOptionLabel={(h) => {
+                const name = herdOptions.find((o) => o.herd === h)?.herd_name;
+                return name ? `${h} – ${name}` : h;
+              }}
+              inputValue={herd}
+              onInputChange={(_, v) => setHerd(v)}
+              renderInput={(params) => (
+                <TextField {...params} label="Besättning" size="small" />
+              )}
+            />
+          ) : (
+            <>
+              <label className="sb-label" htmlFor="inskick-herd">
+                Besättning
+              </label>
+              <select
+                id="inskick-herd"
+                className="sb-input"
+                value={herd}
+                onChange={(e) => setHerd(e.target.value)}
+              >
+                {herds.length !== 1 && (
+                  <option value="">Välj besättning</option>
+                )}
+                {herds.map((h) => (
+                  <option key={h} value={h}>
+                    {h}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
         </div>
         <input
           ref={inputRef}

@@ -42,6 +42,29 @@ describe("UploadForm", () => {
     expect(screen.getByRole("button", { name: "Skicka" })).toBeDisabled();
   });
 
+  it("lets a queue worker search any herd and sends its code", async () => {
+    uploadIntyg
+      .mockResolvedValueOnce({ ok: true, documents: [], itemId: null })
+      .mockResolvedValueOnce({ ok: true, documents: [], itemId: 14 });
+    render(
+      <UploadForm
+        herds={[]}
+        herdOptions={[
+          { herd: "G9001", herd_name: "Testbesättningen", is_active: true },
+        ]}
+      />,
+    );
+    const input = screen.getByRole("combobox", { name: "Besättning" });
+    fireEvent.change(input, { target: { value: "G9" } });
+    fireEvent.click(await screen.findByText("G9001 – Testbesättningen"));
+    pick();
+    fireEvent.click(await screen.findByRole("button", { name: "Skicka" }));
+    await waitFor(() => expect(push).toHaveBeenCalled());
+    expect((uploadIntyg.mock.calls[0][0] as FormData).get("herd")).toBe(
+      "G9001",
+    );
+  });
+
   it("sends straight on when the dry run has no warnings", async () => {
     uploadIntyg
       .mockResolvedValueOnce({

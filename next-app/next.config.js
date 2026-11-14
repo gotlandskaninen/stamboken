@@ -8,6 +8,8 @@ const nextConfig = {
   transpilePackages: ["react-easy-crop"],
   experimental: {
     // Intyg uploads go through a Server Action: up to 10 photos of ≤10 MB.
+    // Next.js only has this limit globally (no per-action setting), so every
+    // Server Action accepts 11 MB; Flask enforces the real limits per endpoint.
     serverActions: { bodySizeLimit: "11mb" },
     optimizePackageImports: ["@mui/material", "@mui/icons-material"],
   },
