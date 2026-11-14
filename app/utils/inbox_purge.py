@@ -194,3 +194,27 @@ def run(now):
             logger.info("Inbox purge %s: %s", rule.__name__, rule(now))
         except Exception:  # pylint: disable=broad-except
             logger.exception("Inbox purge %s failed", rule.__name__)
+
+
+def erase_person_from_inbox(member):
+    """
+    Erasure of a member (anonymize_person): every document recorded as showing the member as seller or buyer
+    loses its original, so that only the masked copy without the seller and buyer block is left where there is
+    one, and its item loses its text. In the caller's transaction; the caller passes the returned paths to
+    remove_originals after the commit.
+    """
+    shown = (InboxDocument.seller_member == member.id) | (InboxDocument.buyer_member == member.id)
+    paths = _null_originals(shown)
+    _clear_text(InboxDocument.select(InboxDocument.item).where(shown))
+    return paths
+
+
+def erase_document(item, document, user):
+    """
+    POST …/radera-original: the same for one document on request (a buyer outside the association has no member
+    row), logged on the item. The caller holds the item's lock; returns the paths for remove_originals.
+    """
+    paths = _null_originals(InboxDocument.id == document.id)
+    _clear_text([item.id])
+    inbox.log_event(item, user, "original_raderat", document=document.id)
+    return paths

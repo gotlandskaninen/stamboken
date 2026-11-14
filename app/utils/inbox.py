@@ -27,6 +27,7 @@ from utils.database import (
     InboxOperation,
     Individual,
     MailMessage,
+    Member,
     Notice,
     NoticeSetting,
     User,
@@ -793,22 +794,42 @@ def require_saving(item, document, user):
         raise InboxError(409, "Dokumentet är redan klart.")
 
 
+def herd_holder(herd_id):
+    """The herd's holder per the member register: the active main member of the membership that owns it."""
+    if herd_id is None:
+        return None
+    return (
+        Member.select()
+        .join(Herd, on=(Herd.membership == Member.membership))
+        .where((Herd.id == herd_id) & (Member.role == "huvudmedlem") & Member.end_date.is_null(True))
+        .order_by(Member.id)
+        .first()
+    )
+
+
 def saved(item, document, user, individual, action):
-    """The rabbit a certificate document registered or certified."""
+    """The rabbit a certificate document registered or certified; its seller is the holder of the rabbit's herd."""
     document.individual = individual
+    document.seller_member = herd_holder(individual.current_herd.id) or document.seller_member
     document.save()
     log_event(item, user, "sparad", document=document.id, action=action, individual=individual.number)
 
 
 def transferred(item, document, user, individual, row):
-    """A sale registered from a document: a proof (bevis) is done with it; anything else leaves the proof missing."""
+    """
+    A sale registered from a document: a proof (bevis) is done with it; anything else leaves the proof missing.
+    The document shows the sale's seller and, for a sale to a member, its buyer.
+    """
+    document.seller_member = herd_holder(row.from_herd_id or individual.origin_herd_id) or document.seller_member
+    if row.herd.herd not in OUTSIDE_GENEBANK_HERDS:
+        document.buyer_member = herd_holder(row.herd_id) or document.buyer_member
     proof = document.doc_type == "bevis"
     if proof:
         document.individual, document.herd_tracking_id, document.done_at = individual, row.id, now()
-        document.save()
     else:
         item.missing_proof = True
         item.save()
+    document.save()
     detail = {"document": document.id, "individual": individual.number, "herd": row.herd.herd}
     log_event(item, user, "sparad", action="overlatelse", missing_proof=not proof, **detail)
     close_if_done(item, user)
