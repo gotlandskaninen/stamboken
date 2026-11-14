@@ -162,10 +162,11 @@ export default function IntegritetspolicyPage() {
                 </mark>
               </li>
               <li>
-                I Koharen publicerar vi bara de kontaktuppgifter som
-                huvudmedlemmen har sagt ja till (samtycke). Valet gäller alla
-                personer i medlemskapet och kan ändras när som helst. Det som
-                redan är tryckt går inte att ta tillbaka.
+                I Koharens lista över aktiva genbanker står innehavarens namn,
+                ort och kontaktuppgifter bara om innehavaren har sagt ja, i
+                årsrapporten eller i sin profil (samtycke). Svaret gäller tills
+                det ändras, och den som aldrig har svarat publiceras inte. Det
+                som redan är tryckt går inte att ta tillbaka.
               </li>
             </ul>
             <p>
