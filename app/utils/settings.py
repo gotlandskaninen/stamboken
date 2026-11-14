@@ -116,6 +116,28 @@ def refuse_unsafe_mail_settings():
         raise RuntimeError(f"MAIL_MODE={mail.mode} requires LINK_SECRET.")
 
 
+gmail = Namespace()  # pylint: disable=C0103
+# Reading the association's mailbox into the intake queue (docs/inkorg-gmail.md). Reading moves mail to the trash.
+gmail.mode = (os.environ.get("INLASNING_GMAIL") or "off").strip().lower()
+gmail.client_id = os.environ.get("GMAIL_CLIENT_ID", "")
+gmail.client_secret = os.environ.get("GMAIL_CLIENT_SECRET", "")
+gmail.refresh_token = os.environ.get("GMAIL_REFRESH_TOKEN", "")
+
+
+def refuse_unsafe_gmail_settings():
+    """Fail-safe at startup: the demo never reads the mailbox, and reading needs its credentials."""
+    if gmail.mode not in ("on", "off"):
+        raise RuntimeError(f"INLASNING_GMAIL={gmail.mode!r} is not on or off.")
+    if gmail.mode == "off":
+        return
+    if service.demo_instance:
+        raise RuntimeError("INLASNING_GMAIL=on is refused on the demo API (DEMO_INSTANCE=true): reading trashes mail.")
+    if not (gmail.client_id and gmail.client_secret and gmail.refresh_token):
+        raise RuntimeError("INLASNING_GMAIL=on requires GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET and GMAIL_REFRESH_TOKEN.")
+    if not mail.link_secret:  # replies are tied to their question by the Message-ID's HMAC
+        raise RuntimeError("INLASNING_GMAIL=on requires LINK_SECRET.")
+
+
 s3.bucket = os.environ.get("S3_BUCKET", "test")
 s3.endpoint = os.environ.get("S3_ENDPOINT", None)
 s3.region = os.environ.get("S3_REGION", "us-east-1")

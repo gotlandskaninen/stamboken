@@ -128,6 +128,7 @@ UPLOAD_DIR = os.getenv("UPLOAD_FOLDER", "/app/uppladdningar")
 settings.refuse_committed_signing_key()
 settings.refuse_auto_validate_outside_demo()
 settings.refuse_unsafe_mail_settings()
+settings.refuse_unsafe_gmail_settings()
 settings.refuse_private_folder_under_uploads()
 
 # verify_oauth2_token would otherwise enforce audience "" and fail every login.
@@ -212,6 +213,10 @@ APP.cli.add_command(members_cli)
 from cli.breeding import breeding_cli  # noqa: E402
 
 APP.cli.add_command(breeding_cli)
+
+from cli.gmail import gmail_cli  # noqa: E402
+
+APP.cli.add_command(gmail_cli)
 
 
 @genetics_cli.command("recompute-history")
