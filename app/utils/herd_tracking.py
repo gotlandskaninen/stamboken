@@ -115,7 +115,8 @@ def _drop_orphan_buyers(contact_ids, action, user):
         HerdTracking.holder_contact.in_(contact_ids), ht_not_voided()
     )
     orphans = set(contact_ids) - {contact_id for (contact_id,) in held.tuples()}
-    return delete_buyer_contacts(orphans, action, user)
+    # The proofs' files go with remove_orphans: this runs inside the caller's transaction.
+    return delete_buyer_contacts(orphans, action, user)[0]
 
 
 def void_all_for_unpromote(individual, user, operation_id=None):
@@ -958,27 +959,30 @@ def _reject_buyer_name(text, contact_ids):
         raise HerdTrackingInvalid(BUYER_PRIVACY_HELP)
 
 
-def delete_buyer_contacts(contact_ids, action, user=None):
+def delete_buyer_contacts(contact_ids, action, user=None, certificates=False):
     """
     Deletes buyers outside the association, in the caller's transaction: on a void of the sale, an erasure and
     the five-year purge. The sale's holder_contact_id goes NULL (ON DELETE SET NULL); the sale stays. Each
-    deletion is one audit_log row without personal data. Returns how many went.
+    deletion is one audit_log row without personal data. The sale's documents in the queue lose their originals
+    (inbox_purge.erase_buyer_from_inbox; `certificates` on an erasure). Returns how many went and the paths for
+    inbox_purge.remove_originals after the commit.
     """
     # Imported here: inbox_purge imports inbox, which imports individual_number_v2, which imports this module.
     from utils.inbox_purge import erase_buyer_from_inbox  # pylint: disable=import-outside-toplevel
 
     ids = sorted(set(contact_ids))
     if not ids:
-        return 0
+        return 0, []
+    paths = []
     # The sales first: the delete nulls their link.
     for (sale_id,) in HerdTracking.select(HerdTracking.id).where(HerdTracking.holder_contact.in_(ids)).tuples():
-        erase_buyer_from_inbox(sale_id)
+        paths += erase_buyer_from_inbox(sale_id, certificates=certificates)
     deleted = BuyerContact.delete().where(BuyerContact.id.in_(ids)).returning(BuyerContact.id).tuples()
     deleted = [contact_id for (contact_id,) in deleted]
     for contact_id in deleted:
         forget_recipient("buyer_contact", contact_id)
         log_buyer_contact(contact_id, "DELETE", action, user)
-    return len(deleted)
+    return len(deleted), paths
 
 
 def _transfer_confirmed(transfer_id):

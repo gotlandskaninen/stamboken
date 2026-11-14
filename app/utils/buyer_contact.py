@@ -18,6 +18,7 @@ from utils.herd_tracking import (
     is_manager_of,
     log_buyer_contact,
 )
+from utils.inbox_purge import remove_originals
 
 logger = logging.getLogger("herdbook.buyer_contact")
 
@@ -37,14 +38,17 @@ def erase_buyer_contact(contact_id, user):
     if not (user.is_admin or (genebank_id is not None and is_manager_of(user, genebank_id))):
         raise HerdTrackingForbidden("Bara genbanksansvarig eller administratör kan radera köparens uppgifter.")
     with DB_PROXY.atomic():
-        delete_buyer_contacts([contact_id], "radering", user)
+        _count, paths = delete_buyer_contacts([contact_id], "radering", user, certificates=True)
+    remove_originals(paths)  # only after the commit: a row never names a removed file
 
 
 def purge_expired(now):
     """Name and town five years after they were entered: the buyer goes."""
     with DB_PROXY.atomic():
         expired = BuyerContact.select(BuyerContact.id).where(BuyerContact.purge_at <= now)
-        return delete_buyer_contacts([contact_id for (contact_id,) in expired.tuples()], "gallring_fem_ar")
+        count, paths = delete_buyer_contacts([contact_id for (contact_id,) in expired.tuples()], "gallring_fem_ar")
+    remove_originals(paths)
+    return count
 
 
 def _null_fields(where, changes, action):

@@ -355,10 +355,18 @@ def erase_document(item, document, user):
     return paths
 
 
-def erase_buyer_from_inbox(herd_tracking_id):  # pylint: disable=unused-argument
+def erase_buyer_from_inbox(herd_tracking_id, certificates=True):
     """
-    Seam, a no-op for now: when a buyer outside the association is deleted (an erasure, a void of the sale or the
-    five-year purge, utils.herd_tracking.delete_buyer_contacts), the original of the sale's proof (the bevis whose
-    inbox_document.herd_tracking_id is this sale) is to go too, as erase_document does for one document. Called
-    in the caller's transaction, before the buyer is deleted.
+    A buyer outside the association is deleted (utils.herd_tracking.delete_buyer_contacts): the documents of the
+    sale (inbox_document.herd_tracking_id) lose their originals, as for a member in erase_person_from_inbox. On an
+    erasure (`certificates`) a certificate the sale was registered from keeps only its masked copy, and the items
+    lose their text; on a void or the five-year purge only the proof (bevis) goes. A buyer has no member row, so
+    buyer_member never names one. In the caller's transaction; returns the paths for remove_originals after the
+    commit (remove_orphans takes any the caller leaves). Nothing to do once the originals are purged.
     """
+    shown = InboxDocument.herd_tracking_id == herd_tracking_id
+    if not certificates:
+        return _null_originals(shown & (InboxDocument.doc_type == "bevis"))
+    paths = _null_originals(shown)
+    _clear_text(InboxDocument.select(InboxDocument.item).where(shown))
+    return paths
