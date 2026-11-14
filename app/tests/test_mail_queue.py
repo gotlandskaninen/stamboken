@@ -223,6 +223,20 @@ class TestModes(MailTest):
         self.assertTrue(any("Vi har tagit emot din ansökan" in line for line in logs.output))
         self.assertFalse(any("@" in line for line in logs.output))
 
+    def test_log_mode_masks_link_tokens_in_the_text(self):
+        self.queue()
+        token = "4711." + "a" * 22  # shaped like link_token; built, so no scanner takes it for a secret
+        rendered = (f"Din länk {token}", f"Öppna https://{HOST}/rapport/{token}")
+        with (
+            mock.patch.multiple(settings.mail, mode="log"),
+            mock.patch.object(mail, "render", return_value=rendered),
+            self.assertLogs("herdbook.mail", "INFO") as logs,
+        ):
+            mail.send_pending(self.now)
+        text = "\n".join(logs.output)
+        self.assertIn(f"Din länk 4711.***\n\nÖppna https://{HOST}/rapport/4711.***", text)
+        self.assertNotIn(token, text)
+
     def test_allowlist_sends_to_listed_and_blocks_the_rest(self):
         domain, named, other = (
             self.queue("a@example.org"),

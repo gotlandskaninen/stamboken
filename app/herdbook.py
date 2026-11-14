@@ -79,6 +79,7 @@ import utils.genebank_logging as gblogging  # isort:skip
 import utils.genetics_service as genetics  # isort:skip
 from utils import number_assets  # isort:skip
 from utils.individual_commands import purge_command_free_text  # isort:skip
+from utils.log_masking import TokenMaskFilter  # isort:skip
 from utils.mail import purge_old_mail, send_pending  # isort:skip
 from utils.members import try_auto_link_member  # isort:skip
 from utils.legacy_compat import is_legacy_host, legacy_classroom_url  # isort:skip
@@ -320,6 +321,10 @@ file_handler.setFormatter(
     )
 )
 APP.logger.addHandler(file_handler)
+# Link tokens are credentials. Mask them in every line the app's handlers and the root's stderr handler write:
+# Flask's "Exception on <path>", and herdbook.mail's lines, which propagate to both.
+for _handler in APP.logger.handlers + logging.getLogger().handlers:
+    _handler.addFilter(TokenMaskFilter())
 utils.external_auth.setup(APP)
 
 Session(APP)

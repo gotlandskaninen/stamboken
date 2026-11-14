@@ -30,6 +30,7 @@ from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 import utils.settings as settings
 from utils.database import DB_PROXY, MailAttempt, MailMessage, MailSender, Member, MemberApplication, User
+from utils.log_masking import mask_tokens
 
 logger = logging.getLogger("herdbook.mail")
 
@@ -491,7 +492,7 @@ def _send_one(row, relay, now):
     if mode == "log":
         logger.info("Mail %s (%s) to %s %s logged, not sent", row.id, row.kind, row.recipient_kind, row.recipient_id)
         if os.environ.get("FLASK_ENV") != "production":
-            logger.info("Mail %s:\n%s\n\n%s", row.id, subject, body)
+            logger.info("Mail %s:\n%s\n\n%s", row.id, mask_tokens(subject), mask_tokens(body))
         return _finish(row, now, status="logged")
     if mode == "allowlist" and not _allowed(address):
         return _finish(row, now, status="blocked", last_error="spärrat: adressen finns inte i MAIL_ALLOWLIST")
