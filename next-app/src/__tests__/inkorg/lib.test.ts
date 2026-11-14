@@ -454,6 +454,20 @@ describe("problemField", () => {
     expect(problemField(problem)).toBe(field);
   });
 
+  it("goes by the field the API names before the title and the wording", () => {
+    const named = (field: unknown, title = "Ogiltig begäran") => ({
+      status: 400,
+      title,
+      detail: "Något som ingen mönstermatchning känner igen.",
+      extensions: { field },
+    });
+    expect(problemField(named("mother"))).toBe("mother");
+    expect(problemField(named("date", "number_conflict"))).toBe("date");
+    // Not a field of the forms: the fallback decides.
+    expect(problemField(named("__proto__"))).toBeNull();
+    expect(problemField(named(42))).toBeNull();
+  });
+
   it("words the bare rule keys and leaves Swedish details as they are", () => {
     const p = (detail: string) => ({
       status: 400,

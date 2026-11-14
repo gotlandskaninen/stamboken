@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ApiError, fetchApi } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
+import { fetchHandlers, requireQueueWorker } from "@/lib/inkorg-server";
 import { Masthead } from "@/components/shell/Masthead";
 import type { ColorOption } from "@/app/(app)/stamboken/(dashboard)/min-besattning/actions";
 import type { GenebankHerd } from "@/utils/saleRules";
@@ -18,17 +19,16 @@ export default async function InkorgItemPage({
   const { id } = await params;
   if (!/^\d+$/.test(id)) notFound();
   const user = await requireUser();
+  await requireQueueWorker();
   let item: InboxDetail;
   try {
     // Logged by the API as "oppnad", and reads the caller's notices of the item.
     item = await fetchApi<InboxDetail>(`/v2/inkorg/${id}`);
   } catch (e) {
-    // 403: not a queue worker. 404 as the admin pages do (no enumeration).
-    if (e instanceof ApiError && (e.status === 403 || e.status === 404))
-      notFound();
+    if (e instanceof ApiError && e.status === 404) notFound();
     throw e;
   }
-  const [colors, herds] = await Promise.all([
+  const [colors, herds, handlers] = await Promise.all([
     fetchApi<Record<string, ColorOption[]>>("/colors").catch(() => null),
     item.genebank_id
       ? fetchApi<{ herds: GenebankHerd[] }>(
@@ -37,6 +37,7 @@ export default async function InkorgItemPage({
           .then((r) => r.herds)
           .catch(() => [])
       : Promise.resolve([]),
+    fetchHandlers(),
   ]);
   // The genebank's colour list, picked as BunnyPromoteDialog does.
   const mellerud = item.herd?.startsWith("M") ?? false;
@@ -69,6 +70,7 @@ export default async function InkorgItemPage({
         }}
         colors={colorNames}
         herds={herds}
+        people={handlers}
       />
     </>
   );

@@ -1,7 +1,7 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
 import { ApiError, fetchApi } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
+import { fetchHandlers, requireQueueWorker } from "@/lib/inkorg-server";
 import { Masthead } from "@/components/shell/Masthead";
 import { AssignHerd, RowActions } from "./QueueControls";
 import {
@@ -33,35 +33,13 @@ const FILTER_KEYS = [
   "kind",
 ] as const;
 
-type AdminUser = {
-  id: number;
-  fullname: string | null;
-  username: string | null;
-};
-
-/** Admins can list who has a queue role; managers cannot (no such endpoint). */
-async function queueRoleHolders(): Promise<Person[]> {
-  const lists = await Promise.all(
-    ["manager", "helper"].map((role) =>
-      fetchApi<{ users: AdminUser[] }>(
-        `/v2/admin/users?role=${role}&active=true&per_page=200`,
-      )
-        .then((r) => r.users)
-        .catch(() => []),
-    ),
-  );
-  return lists.flat().map((u) => ({
-    id: u.id,
-    name: u.fullname || u.username || `Konto ${u.id}`,
-  }));
-}
-
 export default async function InkorgPage({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | undefined>>;
 }) {
   const user = await requireUser();
+  await requireQueueWorker();
   const sp = await searchParams;
   const filters = new URLSearchParams();
   for (const k of FILTER_KEYS) if (sp[k]) filters.set(k, sp[k] as string);
@@ -75,8 +53,6 @@ export default async function InkorgPage({
   try {
     data = await fetchApi<QueueList>(`/v2/inkorg?${api}`);
   } catch (e) {
-    // 403: not a queue worker. 404 as the admin pages do (no enumeration).
-    if (e instanceof ApiError && e.status === 403) notFound();
     if (!(e instanceof ApiError) || e.status !== 400) throw e;
     problem = e.detail;
   }
@@ -84,7 +60,7 @@ export default async function InkorgPage({
     fetchApi<{ genebanks: { id: number; name: string }[] }>("/genebanks")
       .then((r) => r.genebanks ?? [])
       .catch(() => []),
-    user.is_admin ? queueRoleHolders() : Promise.resolve([]),
+    fetchHandlers(),
   ]);
   const me: Person = { id: user.id, name: user.fullname || `Konto ${user.id}` };
   const pickable = people(me, data?.items ?? [], extra);
@@ -261,6 +237,11 @@ export default async function InkorgPage({
                           {item.missing_proof && (
                             <span className={`sb-badge ${styles.badgeWarn}`}>
                               bevis saknas
+                            </span>
+                          )}
+                          {item.maybe_blurry && (
+                            <span className={`sb-badge ${styles.badgeWarn}`}>
+                              kan vara oskarp
                             </span>
                           )}
                           {item.stalled && (

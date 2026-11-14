@@ -37,9 +37,11 @@ import {
   type InboxEvent,
   type ItemAction,
   type ItemState,
+  type Person,
   type QueueUser,
   type Rect,
 } from "../lib";
+import { RowActions } from "../QueueControls";
 import { CertificateForm } from "./CertificateForm";
 import { PhotoViewer } from "./PhotoViewer";
 import { SalePanel } from "./SalePanel";
@@ -86,11 +88,13 @@ export function WorkView({
   user,
   colors,
   herds,
+  people,
 }: {
   item: InboxDetail;
   user: QueueUser;
   colors: string[];
   herds: GenebankHerd[];
+  people: Person[];
 }) {
   const mode = useMode();
   // As RegisterRabbitDialog: demo reads from /api-test when it is configured.
@@ -105,7 +109,8 @@ export function WorkView({
   const doc = docs.find((d) => d.id === selectedId) ?? null;
   const editable = canEditDocuments(item, user);
   const saving = canSave(item, user);
-  const actions = itemActions(item, user).filter((a) => a !== "tilldela");
+  const allActions = itemActions(item, user);
+  const actions = allActions.filter((a) => a !== "tilldela");
   const [pending, start] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
@@ -348,6 +353,15 @@ export function WorkView({
                 </div>
               ))}
             </div>
+          )}
+
+          {allActions.includes("tilldela") && (
+            <RowActions
+              id={item.id}
+              canTake={false}
+              canAssign
+              people={people}
+            />
           )}
 
           <details className={styles.history}>

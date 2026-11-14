@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { requireDashboardSession } from "@/lib/auth";
-import { fetchApi } from "@/lib/api";
-import { NO_INBOX, type InboxCount } from "@/lib/inkorg";
+import { NO_INBOX } from "@/lib/inkorg";
+import { getInboxCount } from "@/lib/inkorg-server";
 import { UserProvider } from "@/lib/user-context";
 import { MODE_COOKIE, parseMode } from "@/lib/mode";
 import { ModeProvider } from "@/lib/mode-context";
@@ -40,9 +40,7 @@ export default async function DashboardLayout({
   const cookieStore = await cookies();
   const mode = parseMode(cookieStore.get(MODE_COOKIE)?.value);
   // The menu must render even when the notice count is unavailable.
-  const inbox = await fetchApi<InboxCount>("/v2/inkorg/notiser/antal").catch(
-    () => NO_INBOX,
-  );
+  const inbox = await getInboxCount().catch(() => NO_INBOX);
   return (
     <ClientProviders>
       <UserProvider user={user}>

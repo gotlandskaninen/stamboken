@@ -35,6 +35,7 @@ export interface InboxItem {
   ref_type: string | null;
   ref_id: number | null;
   has_message: boolean;
+  maybe_blurry: boolean;
   documents: number;
   documents_done: number;
 }
@@ -396,8 +397,9 @@ export function buildSalePayload(form: SaleForm) {
 }
 
 // ---------------------------------------------------------------------------
-// API errors next to their field. Problems carry no field name, so this goes
-// by title where there is one and by the API's exact wording otherwise.
+// API errors next to their field. The API names the request field in `field`
+// where one applies; otherwise this goes by title and by the API's exact
+// wording.
 
 export type FieldKey = keyof CertForm | keyof SaleForm;
 
@@ -418,7 +420,17 @@ const DETAIL_FIELDS: [RegExp, FieldKey][] = [
   [/köparens besättning/, "herd"],
 ];
 
+const FIELD_KEYS: string[] = [
+  ...Object.keys(EMPTY_FORM),
+  "herd",
+  "date",
+  "outside",
+];
+
 export function problemField(problem: Problem): FieldKey | null {
+  const named = problem.extensions?.field;
+  if (typeof named === "string" && FIELD_KEYS.includes(named))
+    return named as FieldKey;
   switch (problem.title) {
     case "number_conflict":
       return "paper_number";
