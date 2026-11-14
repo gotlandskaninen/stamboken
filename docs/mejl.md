@@ -125,7 +125,7 @@ att fungera.
 | `MAIL_MODE` | Effekt |
 |---|---|
 | `log` (standard) | Ingen SMTP-anslutning. Raden får `logged`, och loggen visar typ, id och mottagarens hänvisning, med den färdiga texten, länkkoderna maskerade, när `FLASK_ENV` inte är `production`. |
-| `allowlist` | `MAIL_ALLOWLIST` är en kommaseparerad lista med adresser och `@domän`. Mejl till något i listan skickas, med `[Demo] ` först i ämnesraden; resten får `blocked`. |
+| `allowlist` | `MAIL_ALLOWLIST` är en kommaseparerad lista med adresser och `@domän`. Mejl till något i listan skickas, med `[Demo]` och ett mellanslag först i ämnesraden; resten får `blocked`. |
 | `live` | Skickar. |
 
 Starten stoppas om `MAIL_MODE=live` och `DEMO_INSTANCE=true`, om
