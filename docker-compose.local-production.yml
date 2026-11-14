@@ -100,6 +100,8 @@ services:
       - CERT_DEMO_WATERMARK=true
       # Reading the association's mailbox trashes what it reads: only production does it.
       - INLASNING_GMAIL=off
+      # This stack copies production's env file: it must never send mail for real.
+      - MAIL_MODE=log
     ports:
       - "127.0.0.1:9090:9090"
     logging:
@@ -173,6 +175,7 @@ services:
       - S3_SECRETKEY=secretkeytest
       # Never the mailbox (the demo refuses to start with it on).
       - INLASNING_GMAIL=off
+      - MAIL_MODE=log
     logging:
       driver: "json-file"
       options:
