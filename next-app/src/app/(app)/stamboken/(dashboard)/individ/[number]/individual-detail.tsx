@@ -42,6 +42,7 @@ import { PedigreeSection } from "@/components/individual/PedigreeSection";
 import { HealthSection } from "@/components/individual/HealthSection";
 import { HerdHistorySection } from "@/components/individual/HerdHistorySection";
 import { NotesSection } from "@/components/individual/NotesSection";
+import { PaperCertificate } from "@/components/individual/PaperCertificate";
 import { EditSaveBar } from "@/components/individual/EditSaveBar";
 import { ReportDeathDialog } from "@/components/individual/ReportDeathDialog";
 import { SellRabbitDialog } from "@/components/individual/SellRabbitDialog";
@@ -718,6 +719,9 @@ export function IndividualDetail({
                 setCorrectionOpen(true);
               }}
             />
+            {individual.number && (
+              <PaperCertificate number={individual.number} />
+            )}
             <NotesSection
               individual={individual}
               isEditing={isEditing}
