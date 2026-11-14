@@ -38,9 +38,9 @@ from utils.herd_tracking import HerdTrackingError, correct_herd_tracking, is_man
 from utils.individual_commands import (
     AssignPaperCertificate,
     IndividualRefused,
-    TransferIndividual,
     execute,
     lock_individual_for_edit,
+    record_sale,
 )
 from utils.individual_number_v2 import PAPER_NUMBER_REQUIRED, parse_number
 
@@ -657,6 +657,7 @@ def save_document(item_id, document_id):
 def transfer(item_id, document_id):
     body, user = _body(), User.get_by_id(current_user.id)
     herd, date = body.get("herd"), body.get("date")
+    buyer = body.get("buyer")  # the buyer outside the association, on a sale to GX1/MX1 (ADR-0016)
     try:
         when = datetime.date.fromisoformat(date) if isinstance(date, str) else None
     except ValueError:
@@ -679,6 +680,10 @@ def transfer(item_id, document_id):
             latest = current_holder_row(individual.id)
             proven = inbox.proven_sale(item, document, individual, herd, when)
             if proven is not None:  # the proof of a sale registered from another document: nothing to write
+                if buyer is not None:
+                    raise inbox.InboxError(
+                        400, "Försäljningen är redan registrerad. Köparen ändras av genbanksansvarig."
+                    )
                 seller = proven.from_herd or individual.origin_herd
                 if not (is_manager_of(user, seller.genebank_id) or grant.allows(user, seller)):
                     raise inbox.InboxError(403, "Du får inte koppla ett bevis till kaninens försäljning.")
@@ -690,17 +695,18 @@ def transfer(item_id, document_id):
             ):
                 # A correction: before the rabbit's latest row, a manager's or an admin's (ADR-0017 level 2).
                 operation = uuid.uuid4()
+                event = {"kind": "TRANSFER", "date": date, "herd": herd}
                 (row,) = correct_herd_tracking(
-                    individual, user, operation, [], [{"kind": "TRANSFER", "date": date, "herd": herd}]
+                    individual, user, operation, [], [event if buyer is None else {**event, "buyer": buyer}]
                 )
                 grant.trace(operation)
             else:
                 stored = da.get_individual(individual.number, user.uuid)
                 if stored is None:
                     raise inbox.InboxError(404, "Kaninen finns inte i Stamboken.")
-                if error := _validate_sale(stored, {"selling_date": date, "herd": herd}, user):
+                if error := _validate_sale(stored, {"selling_date": date, "herd": herd}, user, buyer):
                     raise _Refused(problem(400, "Ogiltig försäljning", error))
-                execute(user, individual.id, lambda ctx: [TransferIndividual(herd, date)], grant=grant)
+                record_sale(user, individual.id, herd, date, buyer=buyer, grant=grant)
                 row = current_holder_row(individual.id)
             inbox.transferred(item, document, user, individual, row, linked=proven is not None)
             answer = {

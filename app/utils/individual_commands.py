@@ -639,11 +639,15 @@ def _genebank_correction(ctx, from_herd, to_herd, reason):
 
 @dataclass(frozen=True)
 class TransferIndividual(PolicyCommand):
-    """A sale or move out of the holder's herd; into another genebank an admin's correction (IR-32, IR-54)."""
+    """
+    A sale or move out of the holder's herd; into another genebank an admin's correction (IR-32, IR-54). On a sale
+    to GX1/MX1, `buyer` is the buyer outside the association (herd_tracking.buyer_contact_fields), never logged.
+    """
 
     herd: object
     date: str
     reason: str | None = None
+    buyer: dict | None = None
     apply_rank = 70
     policy_stage = None  # asked in apply, after the measurements are written (IR-52)
 
@@ -659,7 +663,14 @@ class TransferIndividual(PolicyCommand):
         if target.genebank_id != holder.genebank_id:
             note = _genebank_correction(ctx, holder, target, self.reason)
         op = ctx.record(type(self).__name__, None, None)
-        record_herd_tracking(ctx.individual, target, when, "TRANSFER", ctx.user, operation_id=op, notes=note)
+        record_herd_tracking(
+            ctx.individual, target, when, "TRANSFER", ctx.user, operation_id=op, notes=note, buyer=self.buyer
+        )
+
+
+def record_sale(user, individual_id, herd, date, buyer=None, grant=None):
+    """A sale under the policy, with the buyer outside the association when given (ADR-0016): the queue's way in."""
+    return execute(user, individual_id, lambda ctx: [TransferIndividual(herd, date, buyer=buyer)], grant=grant)
 
 
 def _first_certificate(ctx, certificate):

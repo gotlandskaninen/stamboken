@@ -130,43 +130,28 @@ class TestHistoryEndpoint(HistoryBase):
 
 
 class TestBuyerVisibility(HistoryBase):
-    """Dormant until Phase 10 (holder_contact_id is NULL), but the rule is enforced now."""
+    """The buyer outside the association; the full rules are in test_buyer_contact.py."""
 
     def setUp(self):
         super().setUp()
         self.out = make_individual(self.g1, "G1-2404", date(2024, 1, 1))
         ht_row("BIRTH", individual=self.out, herd=self.g1, herd_tracking_date=date(2024, 1, 1))
-        self.out_row = record_herd_tracking(self.out, self.gx1, date(2024, 9, 30), "TRANSFER", self.owner)
-        # Test-only: Phase 10's inlösen is the one production path that sets holder_contact_id.
-        db.HerdTracking.update(holder_contact_id=7).where(db.HerdTracking.id == self.out_row.id).execute()
-
-    def _buyer_seen_by(self, username, consent):
-        contact = {"name": "Anna Köpare", "contact": "anna@example.com", "manager_disclosure_consent": consent}
-        self._login(username)
-        with mock.patch("utils.herd_tracking._load_buyer_contact", return_value=contact):
-            rows = self.client.get(f"/api/v2/individual/{self.out.number}/herd-tracking").get_json()["rows"]
-        return next(r for r in rows if r["id"] == self.out_row.id)["buyer"]
-
-    def test_manager_sees_buyer_only_with_consent(self):
-        self.assertIsNone(self._buyer_seen_by("man", consent=False))
-        self.assertEqual(self._buyer_seen_by("man", consent=True)["name"], "Anna Köpare")
-
-    def test_owner_never_sees_buyer(self):
-        self.assertIsNone(self._buyer_seen_by("owner", consent=True))
+        buyer = {"name": "Anna Köpare", "town": "Visby"}
+        self.out_row = record_herd_tracking(self.out, self.gx1, date(2024, 9, 30), "TRANSFER", self.owner, buyer=buyer)
 
     def test_manager_of_another_genebank_never_sees_buyer(self):
         other = da.register_user("othermgr", "pass")
         other.add_role("manager", self.genebanks[1].id)
-        self.assertFalse(can_see_buyer(db.User.get_by_id(other.id), self.genebanks[0].id, True))
-        self.assertTrue(can_see_buyer(self.manager, self.genebanks[0].id, True))
-        self.assertFalse(can_see_buyer(self.manager, self.genebanks[0].id, False))
+        self.assertFalse(can_see_buyer(db.User.get_by_id(other.id), self.genebanks[0].id))
+        self.assertTrue(can_see_buyer(self.manager, self.genebanks[0].id))
+        self.assertFalse(can_see_buyer(self.owner, self.genebanks[0].id))
 
     def test_v1_never_carries_buyer_fields(self):
         data = db.Individual.get_by_id(self.out.id).as_dict()
         for entry in data["herd_tracking"]:
             self.assertEqual(set(entry), {"herd_id", "herd", "herd_name", "date", "kind"})
 
-    @mock.patch("utils.herd_tracking._load_buyer_contact", return_value={"name": "Anna Köpare"})
+    @mock.patch("utils.herd_tracking._load_buyer_contact")
     def test_audit_view_shows_holder_contact_id_only_as_an_id(self, _loader):  # M20
         if not _USE_POSTGRES:
             self.skipTest("audit_log needs PostgreSQL")
@@ -174,7 +159,8 @@ class TestBuyerVisibility(HistoryBase):
         response = self.client.get(f"/api/audit-log/herd_tracking/{self.out_row.id}")
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         entries = response.get_json()["data"]
-        self.assertTrue(any((e.get("new_data") or {}).get("holder_contact_id") == 7 for e in entries))
+        contact_id = self.out_row.holder_contact_id
+        self.assertTrue(any((e.get("new_data") or {}).get("holder_contact_id") == contact_id for e in entries))
         _loader.assert_not_called()  # the audit view never resolves the contact to a name
 
 

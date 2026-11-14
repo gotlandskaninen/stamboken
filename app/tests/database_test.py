@@ -64,6 +64,7 @@ _TABLES_TO_TRUNCATE = [
     "member",  # before membership (FK membership)
     "member_number_counter",  # single-row counter — re-seeded to 0 below
     "herd_tracking",
+    "buyer_contact",  # after herd_tracking (FK holder_contact_id)
     "authenticators",
     "yearlyherdreport",
     "yearlyreportround",

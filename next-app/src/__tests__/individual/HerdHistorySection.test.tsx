@@ -149,6 +149,25 @@ describe("HerdHistorySection", () => {
     expect(screen.getByText("ej bekräftad")).toBeDefined();
   });
 
+  it("shows the buyer's name and town only when the API returns them", () => {
+    const outside = {
+      kind: "TRANSFER" as const,
+      herd: herd("GX1", null, true),
+    };
+    const buyer = { id: 3, name: "Anna Köpare", town: "Visby" };
+    const { rerender } = render(
+      <HerdHistorySection history={history({ rows: [row(outside)] })} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Visa allt" }));
+    expect(screen.queryByText(/Köpare:/)).toBeNull();
+    rerender(
+      <HerdHistorySection
+        history={history({ rows: [row({ ...outside, buyer })] })}
+      />,
+    );
+    expect(screen.getByText("Köpare: Anna Köpare, Visby")).toBeDefined();
+  });
+
   it("offers Ångra only where the server allows it", () => {
     const onVoid = vi.fn();
     render(<HerdHistorySection history={history()} onVoid={onVoid} />);

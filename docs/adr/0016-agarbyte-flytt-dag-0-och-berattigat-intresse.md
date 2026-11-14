@@ -113,7 +113,7 @@ Konkret:
   samma regler; pärmen hos genbanksansvarig omfattas av samma avvägning och
   samma lag.
 * Neutralt, eftersom specen för ägarhistoriken ändras: samtyckeskravet och
-  fältet `manager_disclosure_consent` utgår, och specen för
+  fältet manager_disclosure_consent utgår, och specen för
   överlåtelseflödet ersätts i de delar som rör bekräftelse och inlösen. Båda
   är bara spec; ingen kod behöver tas bort.
 * Neutralt, eftersom granskningskön bara får skriva det den centrala

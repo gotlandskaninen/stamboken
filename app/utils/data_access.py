@@ -1983,7 +1983,7 @@ LEGACY_GENEBANK_CHANGE_NOTE = "Genbanksbyte av admin via legacy"
 
 
 @number_assets.finishing  # inside a caller's transaction, teardown_request finishes instead
-def update_individual(form, user_uuid, issue_digital=False, genebank_change_reason=None, clear_nulls=False):
+def update_individual(form, user_uuid, issue_digital=False, genebank_change_reason=None, clear_nulls=False, buyer=None):
     """
     Updates the individual `form["id"]` by the values in `form`, if the user identified by `user_uuid`
     may: translate (utils.individual_legacy) turns the form into write commands, which execute runs under
@@ -1992,7 +1992,7 @@ def update_individual(form, user_uuid, issue_digital=False, genebank_change_reas
     required note for an admin's move into another genebank (legacy PATCH passes
     LEGACY_GENEBANK_CHANGE_NOTE, the v2 certificate routes the body's reason; the legacy certificate
     routes pass none, and their form drops herd). `clear_nulls` (v2) clears the death and castration
-    fields sent as null.
+    fields sent as null. `buyer` (v2) is the buyer outside the association on a sale to GX1/MX1.
     """
     user = fetch_user_info(user_uuid)
     if user is None:
@@ -2018,6 +2018,7 @@ def update_individual(form, user_uuid, issue_digital=False, genebank_change_reas
                 issue_digital=issue_digital,
                 clear_nulls=clear_nulls,
                 genebank_change_reason=genebank_change_reason,
+                buyer=buyer,
             ),
             target_breeding=form.get("breeding"),
         )
