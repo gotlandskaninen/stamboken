@@ -67,10 +67,11 @@ export default function IntegritetspolicyPage() {
             <p>
               Föreningen Gotlandskaninen, organisationsnummer 834001-9549, är
               personuppgiftsansvarig för uppgifterna i medlemsregistret, i
-              Stamboken Online och på den här webbplatsen. Har du frågor om hur
-              vi behandlar dina uppgifter, eller vill du använda någon av dina
-              rättigheter, mejla {contactLink}. Vill du ha den här texten på
-              papper kan du be genbanksansvarig eller mejla samma adress.
+              Stamboken Online och på den här webbplatsen. Medlemsregistret och
+              Stamboken Online är två delar av samma system. Har du frågor om
+              hur vi behandlar dina uppgifter, eller vill du använda någon av
+              dina rättigheter, mejla {contactLink}. Vill du ha den här texten
+              på papper kan du be genbanksansvarig eller mejla samma adress.
             </p>
           </Section>
 
@@ -109,8 +110,8 @@ export default function IntegritetspolicyPage() {
                 förrän du sparar.
               </li>
               <li>
-                Bäddar vi in en film från YouTube eller Vimeo på en sida laddas
-                den därifrån, och de tjänsterna kan då sätta egna kakor.
+                En film från YouTube eller Vimeo som visas på en sida hämtas
+                först när du klickar på den. Då kan tjänsten sätta egna kakor.
               </li>
             </ul>
           </Section>
@@ -180,11 +181,9 @@ export default function IntegritetspolicyPage() {
               mottagare för fakturan. Då har vi fått ditt namn och dina
               kontaktuppgifter från huvudmedlemmen och inte från dig. Vi
               använder dem på samma sätt och lika länge som medlemmens egna
-              uppgifter, och du har samma rättigheter.{" "}
-              <mark>
-                [BESLUT: hur får den som lagts in av någon annan veta det?
-                Förslag: föreningen mejlar personen inom en månad.]
-              </mark>
+              uppgifter, och du har samma rättigheter. Har vi fått din
+              e-postadress mejlar vi dig inom en månad och berättar att du har
+              lagts in.
             </p>
           </Section>
 
@@ -192,10 +191,10 @@ export default function IntegritetspolicyPage() {
             <p>
               I Stamboken Online finns besättningens nummer och namn,
               kontaktperson, adress, telefon, e-postadress, eventuell webbplats
-              och koordinater, samt bankkonto för utbetalning av stöd. Där finns
-              också dina kaniner, parningar och kullar, foton du laddar upp, och
-              dina årsrapporter med dina val om vad som får publiceras. Vid
-              varje rapporterad händelse står vem som rapporterade den.
+              och koordinater. Där finns också dina kaniner, parningar och
+              kullar, foton du laddar upp, och dina årsrapporter med dina val om
+              vad som får publiceras. Vid varje rapporterad händelse står vem
+              som rapporterade den.
             </p>
             <p>
               Uppgifterna behövs för genbanksavtalet mellan dig och föreningen
@@ -210,12 +209,19 @@ export default function IntegritetspolicyPage() {
               </li>
               <li>
                 Andra inloggade medlemmar ser besättningens nummer och namn och
-                dina kaniner. Kontaktuppgifter och bankkonto är dolda för dem
-                från början. De visas bara om fältet har ställts in som synligt,
-                av dig eller av genbanksansvarig.
+                dina kaniner. Kontaktuppgifterna är dolda för dem från början.
+                De visas bara om fältet har ställts in som synligt, av dig eller
+                av genbanksansvarig.
               </li>
               <li>
-                Bankkontot används för att betala ut stöd.{" "}
+                Har du rätt till stöd lägger du in ett bankkonto för
+                utbetalningen. Det ses bara av dig, av kassören och av
+                föreningens systemansvarig.{" "}
+                <mark>
+                  [INTE KLART: i dag ser även genbanksansvarig bankkontot, och
+                  det kan ställas in som synligt för andra. Spärren ska byggas
+                  innan sidan släpps.]
+                </mark>{" "}
                 <mark>
                   [BESLUT: får Jordbruksverket fortfarande ta del av
                   utbetalningsunderlaget med namn och bankkonto?]
@@ -283,8 +289,10 @@ export default function IntegritetspolicyPage() {
               (avtal). När du mejlar föreningen lagras mejlet hos Google och
               läses av den funktionär som har adressen, för att vi ska kunna
               svara dig (berättigat intresse). I forumet sparas ditt
-              användarnamn, din e-postadress och det du skriver. Forumet ska
-              läggas ner, och då tas konton och inlägg bort.
+              användarnamn, din e-postadress och det du skriver. Det fristående
+              forumet ska ersättas av en motsvarande funktion i Stamboken
+              Online. Vi berättar i förväg om konton och inlägg flyttas dit
+              eller tas bort.
             </p>
           </Section>
 
