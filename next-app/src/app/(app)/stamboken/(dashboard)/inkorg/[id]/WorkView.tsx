@@ -46,7 +46,7 @@ import {
 import { RowActions } from "../QueueControls";
 import { AskBreeder } from "./AskBreeder";
 import { CertificateForm } from "./CertificateForm";
-import { MailFacts } from "./MailFacts";
+import { MailFacts, SenderUnconfirmed } from "./MailFacts";
 import { PhotoViewer } from "./PhotoViewer";
 import { SalePanel } from "./SalePanel";
 import styles from "../inkorg.module.css";
@@ -273,7 +273,10 @@ export function WorkView({
             <dt>Handläggare</dt>
             <dd>{item.assigned_to?.name ?? "ingen"}</dd>
             <dt>Inskickat av</dt>
-            <dd>{item.sender?.name ?? item.sender_address ?? "–"}</dd>
+            <dd>
+              {item.sender?.name ?? item.sender_address ?? "–"}
+              <SenderUnconfirmed item={item} />
+            </dd>
             <MailFacts item={item} />
             <dt>Besättning</dt>
             <dd>{item.herd ?? "–"}</dd>

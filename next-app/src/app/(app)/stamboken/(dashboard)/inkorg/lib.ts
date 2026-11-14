@@ -107,6 +107,8 @@ export interface InboxEvent {
 export interface InboxDetail extends Omit<InboxItem, "documents"> {
   message: string | null;
   sender_address: string | null;
+  /** A mailed item: whether the sender's authentication passed; null for uploads. */
+  sender_authenticated: boolean | null;
   documents: InboxDocument[];
   events: InboxEvent[];
 }
