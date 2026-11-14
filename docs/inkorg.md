@@ -123,10 +123,10 @@ bort.
 | `dubblett` | `…/lage` med `duplicate_of` | `tagen`, `vantar_uppfodare`, `vantar_foralder`, `ofullstandig` | handläggaren |
 | `skrap` | `…/lage` | `tagen`, `vantar_uppfodare`, `vantar_foralder`, `ofullstandig` | handläggaren |
 | `klar` | det sista dokumentet blir klart eller avfärdat | alla öppna lägen | systemet |
-| `klar` | `…/lage`, bara för `kind: "meddelande"` ("besvarat"); dokument som kommit med ett svar måste vara klara eller avfärdade | `tagen`, `vantar_uppfodare`, `vantar_foralder`, `ofullstandig` | handläggaren |
+| `klar` | `…/lage`, bara för `kind: "meddelande"` och för en post utan dokument (till exempel ett mejl vars bilagor inte sparades), oavsett typ ("besvarat"); dokument som kommit med ett svar måste vara klara eller avfärdade | `tagen`, `vantar_uppfodare`, `vantar_foralder`, `ofullstandig` | handläggaren |
 
 Allt annat nekas med 409. `ny` och `vantar_uppfodare` kan inte sättas med `…/lage` (400), och inte heller
-`klar` för en post som inte är ett meddelande.
+`klar` för en post som varken är ett meddelande eller saknar dokument.
 
 ## Arbetsgången
 
@@ -518,7 +518,7 @@ ovan; ett fel på någon post stoppar alla.
 
 | Fält | |
 |---|---|
-| `state` | `tagen`, `vantar_foralder`, `hos_genbanksansvarig`, `ofullstandig`, `dubblett`, `skrap`, eller `klar` för ett meddelande |
+| `state` | `tagen`, `vantar_foralder`, `hos_genbanksansvarig`, `ofullstandig`, `dubblett`, `skrap`, eller `klar` för ett meddelande eller en post utan dokument |
 | `note` | text, högst 2000 tecken; krävs för `ofullstandig`, valfri annars; sparas i händelsen |
 | `duplicate_of` | krävs för `dubblett`: id för den andra posten |
 
@@ -529,7 +529,7 @@ inget mejl. Öppnar genbanksansvarig eller admin en stängd post blir hen handl�
 
 **Svar 200:** posten i listform.
 
-**Fel:** 400 för ett okänt läge, `klar` för en post som inte är ett meddelande, `ofullstandig` utan
+**Fel:** 400 för ett okänt läge, `klar` för en post med dokument som inte är ett meddelande, `ofullstandig` utan
 `note`, `dubblett` utan en annan post, `vantar_foralder` när inget dokument har `waiting_for`; 403 när
 någon annan än genbanksansvarig eller admin öppnar en stängd post; 409 när anroparen inte är
 handläggare, övergången inte finns eller ett meddelande har dokument som inte är klara (`Gör klart

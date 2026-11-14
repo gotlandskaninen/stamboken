@@ -44,7 +44,8 @@ HELD_STATES = ("tagen", "vantar_uppfodare", "vantar_foralder", "ofullstandig")  
 # ("tagen") by a manager of its genebank or an admin, who becomes its handler. The other states are reached
 # otherwise: "ny" when the item comes in, "tagen" also by taking or assigning, "klar" when its last document is
 # done or dismissed, "vantar_uppfodare" by the question to the breeder (utils/inbox_gmail.py, back with the answer).
-# A message has nothing to save: its handler closes it as "klar" once it is answered (MESSAGE_DONE_FROM).
+# A message, or any item without documents (a mail whose attachments were all skipped), has nothing to save: its
+# handler closes it as "klar" once it is answered (MESSAGE_DONE_FROM).
 TRANSITIONS = {
     "tagen": ("vantar_foralder", "ofullstandig", *CLOSED_STATES),
     "vantar_foralder": ("tagen",),
@@ -382,8 +383,9 @@ def assign(item, by, to):
 
 
 def change_state(item, user, state, *, note=None, duplicate_of=None):
-    """POST …/lage, by TRANSITIONS, and "klar" for a message (MESSAGE_DONE_FROM)."""
-    allowed = MESSAGE_DONE_FROM if state == "klar" and item.kind == "meddelande" else TRANSITIONS.get(state)
+    """POST …/lage, by TRANSITIONS, and "klar" for a message or an item without documents (MESSAGE_DONE_FROM)."""
+    answered = item.kind == "meddelande" or not item.documents.exists()
+    allowed = MESSAGE_DONE_FROM if state == "klar" and answered else TRANSITIONS.get(state)
     if allowed is None:
         raise InboxError(400, f"state är en av {', '.join(TRANSITIONS)}.")
     if item.state not in allowed:

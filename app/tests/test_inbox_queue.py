@@ -289,6 +289,19 @@ class TestStates(InboxTest):
         self.assertEqual(event.detail, {"from": "tagen", "to": "klar", "note": "Besvarat i telefon"})
         self.assertFalse(db.MailMessage.select().where(db.MailMessage.kind == "inlasning.klar").exists())
 
+    def test_an_item_without_documents_is_closed_as_answered_whatever_its_kind(self):
+        self.login("hjalp")
+        for state in inbox.HELD_STATES:
+            with self.subTest(state):
+                item = self.at(state)
+                db.InboxItem.update(kind="mail").where(db.InboxItem.id == item.id).execute()
+                db.InboxDocument.delete().where(db.InboxDocument.item == item.id).execute()  # all skipped
+                resp = self.post(f"/{item.id}/lage", state="klar")
+                self.assertEqual(resp.status_code, 200, resp.get_json())
+                self.assertEqual(resp.get_json()["state"], "klar")
+        with_document = self.at("tagen")
+        self.assertEqual(self.post(f"/{with_document.id}/lage", state="klar").status_code, 400)
+
     def test_handing_over_to_the_manager(self):
         item = self.at("tagen")
         self.login("hjalp")
