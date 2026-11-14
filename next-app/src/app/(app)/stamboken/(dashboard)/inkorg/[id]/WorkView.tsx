@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
+import { formatTime } from "@/lib/inkorg";
 import { useMode } from "@/lib/mode-context";
 import type { GenebankHerd } from "@/utils/saleRules";
 import {
@@ -49,9 +50,6 @@ import { MailFacts } from "./MailFacts";
 import { PhotoViewer } from "./PhotoViewer";
 import { SalePanel } from "./SalePanel";
 import styles from "../inkorg.module.css";
-
-const time = (iso: string) =>
-  new Date(iso).toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" });
 
 const EVENT_LABEL: Record<string, string> = {
   inkommen: "Inkommet",
@@ -281,7 +279,7 @@ export function WorkView({
             <dd>{item.herd ?? "–"}</dd>
             <dt>Inkommet</dt>
             <dd>
-              {time(item.received_at)} ({waited(item.received_at)})
+              {formatTime(item.received_at)} ({waited(item.received_at)})
             </dd>
             {item.missing_proof && (
               <>
@@ -401,7 +399,7 @@ export function WorkView({
             <ol>
               {item.events.map((e) => (
                 <li key={e.id}>
-                  {time(e.at)} · {eventText(e)}
+                  {formatTime(e.at)} · {eventText(e)}
                   {e.user ? ` · ${e.user.name}` : ""}
                 </li>
               ))}

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ApiError, fetchApi } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
+import { formatTime } from "@/lib/inkorg";
 import { fetchHandlers, requireQueueWorker } from "@/lib/inkorg-server";
 import { Masthead } from "@/components/shell/Masthead";
 import { GmailAlarm } from "./GmailAlarm";
@@ -116,7 +117,7 @@ export default async function InkorgPage({
             Bildtolkning: {reading.waiting}{" "}
             {reading.waiting === 1 ? "foto väntar" : "foton väntar"}
             {reading.last_done_at &&
-              `, senast klar ${new Date(reading.last_done_at).toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" })}`}
+              `, senast klar ${formatTime(reading.last_done_at)}`}
             .
           </p>
         )}

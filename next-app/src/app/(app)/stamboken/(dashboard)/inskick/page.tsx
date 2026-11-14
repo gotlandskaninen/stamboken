@@ -1,7 +1,12 @@
 import Link from "next/link";
 import { fetchApi } from "@/lib/api";
 import { Masthead } from "@/components/shell/Masthead";
-import { STATUS_BADGE, statusText, type Inskick } from "@/lib/inkorg";
+import {
+  formatDate,
+  STATUS_BADGE,
+  statusText,
+  type Inskick,
+} from "@/lib/inkorg";
 import styles from "./inskick.module.css";
 
 export const dynamic = "force-dynamic";
@@ -53,9 +58,7 @@ export default async function MinaInskickPage() {
                       {statusText(it.status)}
                     </span>
                   </span>
-                  <span className="sb-meta">
-                    {new Date(it.received_at).toLocaleDateString("sv-SE")}
-                  </span>
+                  <span className="sb-meta">{formatDate(it.received_at)}</span>
                 </div>
                 <p className="sb-meta" style={{ margin: "6px 0 0" }}>
                   Besättning {it.herd}, {it.documents}{" "}

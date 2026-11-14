@@ -31,6 +31,14 @@ export interface InboxCount {
   works_in_queue: boolean;
 }
 
+// The API sends UTC; the association reads Stockholm time. An explicit zone
+// also keeps server and browser rendering the same text (no hydration mismatch).
+const STHLM = { timeZone: "Europe/Stockholm" } as const;
+export const formatTime = (iso: string) =>
+  new Date(iso).toLocaleString("sv-SE", STHLM);
+export const formatDate = (iso: string) =>
+  new Date(iso).toLocaleDateString("sv-SE", STHLM);
+
 export const NO_INBOX: InboxCount = { unread: 0, works_in_queue: false };
 
 export const STATUS_TEXT: Record<InskickStatus, string> = {
