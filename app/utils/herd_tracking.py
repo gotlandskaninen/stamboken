@@ -632,10 +632,19 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
         written, current = [], list(kept)
         for event in parsed:
             birth = event["kind"] == "BIRTH"
+            from_herd = None if birth else _holder_before(ind, current, event["date"], event["kind"])
+            # GX1 to GX1 only with a new buyer (record_herd_tracking); elsewhere I4 below answers.
+            if (
+                event["kind"] == "TRANSFER"
+                and from_herd == event["herd"].id
+                and event["herd"].herd in OUTSIDE_GENEBANK_HERDS
+            ):
+                detail = "En flytt måste gå till en annan besättning än den som har kaninen."
+                raise HerdTrackingConflict(detail, rows=[{"id": None, "code": "I4", "detail": detail}])
             row = HerdTracking.create(
                 individual=ind_id,
                 herd=event["herd"],
-                from_herd=None if birth else _holder_before(ind, current, event["date"], event["kind"]),
+                from_herd=from_herd,
                 signature=user,
                 herd_tracking_date=event["date"],
                 kind=event["kind"],

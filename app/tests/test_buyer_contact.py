@@ -241,6 +241,12 @@ class TestOutsideResale(BuyerBase):
         self.assertEqual(self._sell(buyer=BUYER, date="2022-01-01").status_code, 403)  # can_transfer
         self.assertEqual(self._latest().id, self.first.id)
 
+    def test_a_correction_cannot_write_it(self):
+        event = {"kind": "TRANSFER", "date": "2022-01-01", "herd": "GX1"}
+        with self.assertRaises(HerdTrackingConflict):
+            correct_herd_tracking(self.rabbit, self.manager, None, [], [event])
+        self.assertEqual(self._latest().id, self.first.id)
+
     def test_the_resale_stays_valid_after_both_buyers_are_erased(self):
         second = record_herd_tracking(self.rabbit, self.gx1, "2022-01-01", "TRANSFER", self.admin, buyer=BUYER)
         for sale in (self.first, second):
