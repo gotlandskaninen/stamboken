@@ -979,8 +979,9 @@ formuläret. Förslaget är bara ifyllda fält: inget sparas förrän handlägga
   det, skalas ned till högst 2 000 bildpunkter på längsta sidan och förstärks (grön kanal, delad
   med bakgrunden, sträckt kontrast). Ingen databastransaktion eller -anslutning hålls medan
   modellen läser.
-- Svaret sparas i `interpretation`, förslaget i `proposal`, tolkaren i `interpreter` och tiden i
-  `interpreted_at`. Ett dokument får två försök, sedan är det `misslyckad`.
+- Svaret hålls först mot schemat: okända nycklar tas bort, ett värde av fel typ räknas som saknat,
+  en text kortas till 200 tecken och förlorar NUL-tecken. Det sparas sedan i `interpretation`,
+  förslaget i `proposal`, tolkaren i `interpreter` och tiden i `interpreted_at`. Ett dokument får två försök, sedan är det `misslyckad`.
 - Vrids, köas om eller ändras dokumentet medan modellen läser kastas svaret, och dokumentet
   väntar kvar.
 

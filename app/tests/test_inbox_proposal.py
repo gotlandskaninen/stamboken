@@ -408,6 +408,6 @@ class TestRegistryOnly(ProposalTest):
         self.assertEqual(self.source(proposal, "paper_number"), ("osäker", None))
 
     def test_garbage_from_the_model_is_survived(self):
-        for raw in (None, [], {"far": "G9003-2311", "overstruket": "far", "fodelsedatum": 250510}):
+        for raw in (None, [], {"far": "G9003-2311", "overstruket": "far", "fodelsedatum": 250510}, {"overstruket": 3}):
             with self.subTest(raw):
                 self.assertIsInstance(self.propose(raw)["fields"], dict)

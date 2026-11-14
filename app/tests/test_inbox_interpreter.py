@@ -49,6 +49,34 @@ class TestInterpreter(unittest.TestCase):
             interpreter.SCHEMA["properties"]["mormor"]["required"], ["genbanksnr", "ar_kull_individ", "namn"]
         )
 
+    def test_the_answer_is_held_to_the_schema(self):
+        answer = {
+            "genbanksnr": "G9001\x00",  # NUL: jsonb refuses it
+            "ar_kull_individ": 2512,  # a number where a string belongs: missing
+            "namn": "x" * 5000,
+            "farg": "vit\ud800",  # a lone surrogate: not UTF-8
+            "fodda_i_kullen": float("nan"),
+            "kon": None,
+            "mor": {"genbanksnr": "G9001", "ar_kull_individ": ["2211"], "namn": "Mira", "extra": "x"},
+            "far": "G9003-2311",  # a string where an object belongs
+            "overstruket": ["far", "okänt fält", 3, "mor"],
+            "okand_nyckel": {"x": 1},
+        }
+        with mock.patch.object(requests, "post", return_value=_answer(json.dumps(answer))):
+            conformed = interpreter.interpret(b"jpeg-bytes")
+        self.assertEqual(
+            conformed,
+            {
+                "genbanksnr": "G9001",
+                "namn": "x" * interpreter.MAX_STRING,
+                "farg": "vit",
+                "mor": {"genbanksnr": "G9001", "namn": "Mira"},
+                "overstruket": ["far", "mor"],
+            },
+        )
+        self.assertEqual(interpreter.conform({"overstruket": 5}, interpreter.SCHEMA), {})
+        self.assertIsNone(interpreter.conform([], interpreter.SCHEMA))
+
     def test_off_reads_nothing(self):
         for value in ("av", "okänd"):
             with self.subTest(value), mock.patch.object(settings.interpretation, "interpreter", value):

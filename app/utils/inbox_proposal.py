@@ -508,7 +508,8 @@ def build_proposal(raw, genebank_id, herd_id=None):
     visar") and the grandparents': farfar, farmor, morfar, mormor.
     """
     raw = raw if isinstance(raw, dict) else {}
-    struck = {key for key in raw.get("overstruket") or [] if isinstance(key, str)}
+    struck = raw.get("overstruket")
+    struck = {key for key in struck if isinstance(key, str)} if isinstance(struck, list) else set()
     registry = _Registry(genebank_id)
     fields, checks = {}, []
     own_text = _number_text(raw)
