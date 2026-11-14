@@ -195,10 +195,11 @@ export default function IntegritetspolicyPage() {
               kullar, foton du laddar upp, och dina årsrapporter med dina val om
               vad som får publiceras. Vid varje rapporterad händelse står vem
               som rapporterade den. Rapporterar du på papper skickar du
-              blanketten till genbanksansvarig för rasen, som sammanställer
-              årsrapporterna. Pappersblanketter och kopior av genbanksintyg
-              förvaras hos genbanksansvarig och förstörs efter tio år. Äldre
-              kopior av intyg kan innehålla köparens namn och adress.
+              blanketten till genbanksansvarig för rasen, som för in ändringarna
+              för dina kaniner i Stamboken Online och sammanställer övriga
+              uppgifter i årsrapporten. Pappersblanketter och kopior av
+              genbanksintyg förvaras hos genbanksansvarig och förstörs efter tio
+              år. Äldre kopior av intyg kan innehålla köparens namn och adress.
               Sammanställningen av årsrapporterna, med bankkonton för
               utbetalningen, förvaras hos genbanksansvarig och i föreningens
               Google Drive.{" "}
