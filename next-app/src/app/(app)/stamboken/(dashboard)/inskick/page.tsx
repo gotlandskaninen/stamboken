@@ -1,8 +1,11 @@
 import Link from "next/link";
 import { fetchApi } from "@/lib/api";
 import { Masthead } from "@/components/shell/Masthead";
+import { RefreshBadge } from "@/components/shell/RefreshBadge";
+import { getInboxCount } from "@/lib/inkorg-server";
 import {
   formatDate,
+  NO_INBOX,
   STATUS_BADGE,
   statusText,
   type Inskick,
@@ -14,13 +17,16 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Mina inskick" };
 
 export default async function MinaInskickPage() {
-  // Opening this page also marks the user's "klart" notices as read.
+  // Opening this page also marks the user's "klart" notices as read, after the
+  // layout counted them: the count seen here is the stale one.
+  const { unread } = await getInboxCount().catch(() => NO_INBOX);
   const { items } = await fetchApi<{ items: Inskick[] }>(
     "/v2/inkorg/mina-inskick",
   );
 
   return (
     <>
+      <RefreshBadge unread={unread} />
       <Masthead
         eyebrow="Inläsning"
         title="Mina inskick"

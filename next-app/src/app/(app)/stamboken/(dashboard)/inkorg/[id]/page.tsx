@@ -2,7 +2,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ApiError, fetchApi } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
-import { fetchHandlers, requireQueueWorker } from "@/lib/inkorg-server";
+import {
+  fetchHandlers,
+  getInboxCount,
+  requireQueueWorker,
+} from "@/lib/inkorg-server";
+import { NO_INBOX } from "@/lib/inkorg";
+import { RefreshBadge } from "@/components/shell/RefreshBadge";
 import { Masthead } from "@/components/shell/Masthead";
 import type { ColorOption } from "@/app/(app)/stamboken/(dashboard)/min-besattning/actions";
 import type { GenebankHerd } from "@/utils/saleRules";
@@ -20,6 +26,8 @@ export default async function InkorgItemPage({
   if (!/^\d+$/.test(id)) notFound();
   const user = await requireUser();
   await requireQueueWorker();
+  // Opening the item marks its notices read after the layout counted them.
+  const { unread } = await getInboxCount().catch(() => NO_INBOX);
   let item: InboxDetail;
   try {
     // Logged by the API as "oppnad", and reads the caller's notices of the item.
@@ -50,6 +58,7 @@ export default async function InkorgItemPage({
 
   return (
     <>
+      <RefreshBadge unread={unread} />
       <Masthead
         eyebrow="Inkorg"
         title={`Ärende ${item.id}`}
