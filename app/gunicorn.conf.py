@@ -1,6 +1,8 @@
 """Gunicorn configuration for herdbook API."""
 
+import logging
 import os
+import re
 
 # Server socket
 bind = "0.0.0.0:9090"
@@ -23,8 +25,22 @@ errorlog = "-"
 SCHEDULER_LOCK = "/tmp/herdbook_scheduler.lock"
 
 
+# Must match _TOKEN in utils/log_masking.py; repeated because this file is loaded before the app is importable.
+_LINK_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])(\d{1,19})\.[A-Za-z0-9_-]{22}(?![A-Za-z0-9_-])")
+
+
+class _TokenMaskFilter(logging.Filter):
+    """Keeps link tokens in the request line out of the access log."""
+
+    def filter(self, record):
+        record.msg, record.args = _LINK_TOKEN.sub(r"\1.***", record.getMessage()), None
+        return True
+
+
 def on_starting(server):
     """Clean up stale scheduler lock from previous runs."""
+    # Before the workers fork, so every worker's access log is masked.
+    logging.getLogger("gunicorn.access").addFilter(_TokenMaskFilter())
     try:
         os.unlink(SCHEDULER_LOCK)
     except FileNotFoundError:
