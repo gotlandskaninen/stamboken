@@ -177,6 +177,40 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
         self.assertEqual(self.herds[0].filtered_dict(self.viewer).get("email"), "o@h1")  # "authenticated"
         self.assertEqual(self.herds[1].filtered_dict(self.viewer).get("name"), "owner2")  # "authenticated"
 
+    def test_bank_fields_never_shown_to_other_members(self):
+        """Issue #33: stored 'authenticated'/'public' must not expose the bank details."""
+        herd = self.herds[1]
+        for level in ("authenticated", "public"):
+            herd.bank_account_number, herd.bank_name = "1234-5", "Bank"
+            herd.bank_account_number_privacy = herd.bank_name_privacy = level
+            herd.save()
+            for user in (self.viewer, None):
+                data = herd.filtered_dict(user)
+                self.assertNotIn("bank_account_number", data)
+                self.assertNotIn("bank_name", data)
+            for user in (self.manager, self.admin):
+                data = herd.filtered_dict(user)
+                self.assertEqual(data.get("bank_account_number"), "1234-5")
+                self.assertEqual(data.get("bank_name"), "Bank")
+
+    def test_bank_fields_still_shown_to_herd_user(self):
+        user = self._caretaker_with_grant("bank-caretaker@example.com", self.herds[1])
+        self.herds[1].bank_account_number = "1234-5"
+        self.herds[1].bank_account_number_privacy = "public"
+        self.herds[1].save()
+        self.assertEqual(self.herds[1].filtered_dict(user).get("bank_account_number"), "1234-5")
+
+    def test_update_herd_ignores_bank_privacy(self):
+        herd = self.herds[0]
+        result = da.update_herd(
+            {"id": herd.id, "www": "w", "bank_account_number_privacy": "public", "bank_name_privacy": "authenticated"},
+            self.admin.uuid,
+        )
+        self.assertEqual(result, {"status": "updated"})
+        herd = db.Herd.get(herd.id)
+        self.assertEqual(herd.bank_account_number_privacy, "private")
+        self.assertEqual(herd.bank_name_privacy, "private")
+
     def test_filtered_dict_manager_of_genebank_gets_private_level(self):
         self.herds[1].bank_account_number = "1234-5"  # bank_account_number_privacy="private"
         self.herds[1].save()

@@ -427,6 +427,10 @@ class Herd(BaseModel):
 
 PRIVACY_LEVELS = ("public", "authenticated", "private")
 
+# The bank details are only for support payouts: never shown to other members,
+# whatever the stored level says (issue #33).
+BANK_PRIVACY_FIELDS = ("bank_account_number_privacy", "bank_name_privacy")
+
 
 def remove_fields_by_privacy(data, access_level):
     """
@@ -469,7 +473,7 @@ def remove_fields_by_privacy(data, access_level):
     # prune data according to access level
     for field in [f for f in data.keys() if f.endswith("_privacy")]:
         # remove values if access_level is less than required
-        field_level = data[field] or "private"
+        field_level = "private" if field in BANK_PRIVACY_FIELDS else data[field] or "private"
         if field_level not in levels:  # unknown stored value: fail closed instead of raising
             field_level = "private"
         if levels.index(access_level) < levels.index(field_level):

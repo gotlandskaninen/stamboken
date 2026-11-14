@@ -44,7 +44,7 @@ from utils.database import Weight  # isort: skip
 from utils.database import next_individual_number  # isort: skip
 from utils.database import ACTIVE_WINDOW_DAYS  # isort: skip
 from utils.database import OUTSIDE_GENEBANK_HERDS  # isort: skip
-from utils.database import PRIVACY_LEVELS  # isort: skip
+from utils.database import BANK_PRIVACY_FIELDS, PRIVACY_LEVELS  # isort: skip
 from utils.database import ht_not_voided  # isort: skip
 from utils.database import ht_order_desc  # isort: skip
 from utils.database import latest_ht_per_individual  # isort: skip
@@ -1524,7 +1524,7 @@ def add_herd(form, user_uuid):
             return {"status": "error", "message": f"Invalid value for {bad}"}
         # Real columns only: Herd(**form) also took _pk, genebank_id and __data__, which let a
         # manager overwrite another genebank's herd. membership is admin-only, as in update_herd.
-        locked = {"id"} | (set() if user.is_admin else {"membership"})
+        locked = {"id", *BANK_PRIVACY_FIELDS} | (set() if user.is_admin else {"membership"})
         herd = Herd(**{k: v for k, v in form.items() if k in Herd._meta.fields and k not in locked})
         try:
             herd.save(force_insert=True)
@@ -1661,6 +1661,8 @@ def update_herd(form, user_uuid):
             # methods such as save). Identity/ownership columns are admin-only; the
             # legacy SPA echoes the whole herd object, so locked keys are dropped, not refused.
             locked = set() if user.is_admin else {"id", "herd", "genebank", "membership"}
+            # Bank privacy is fixed at 'private' (issue #33): silently ignored, response unchanged.
+            locked |= set(BANK_PRIVACY_FIELDS)
             written = [key for key in form if key in Herd._meta.fields and key not in locked]
             for key in written:
                 setattr(herd, key, form[key])
