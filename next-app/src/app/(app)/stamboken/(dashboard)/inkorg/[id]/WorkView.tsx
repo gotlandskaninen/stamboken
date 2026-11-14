@@ -133,13 +133,15 @@ export function WorkView({
   const run = <T,>(
     action: () => Promise<ActionResult<T>>,
     then?: (data: T) => void,
+    undo?: () => void,
   ) =>
     start(async () => {
       setError(null);
       setNotice(null);
       const res = await action();
-      if (res.ok) then?.(res.data);
-      else setError(res.problem.detail);
+      if (res.ok) return then?.(res.data);
+      setError(res.problem.detail);
+      undo?.();
     });
 
   /** On to the next document that needs work (the same one while a certificate waits for its masking). */
@@ -153,14 +155,26 @@ export function WorkView({
     else setSelectedId(next);
   };
 
+  const turnView = (quarterTurns: number) => {
+    setRotation((r) => turn(r, quarterTurns));
+    if (masking) setRects((rs) => rs.map((r) => rotateRect(r, quarterTurns)));
+  };
+
   const rotate = (quarterTurns: number) => {
     if (!doc) return;
-    const next = turn(rotation, quarterTurns);
-    setRotation(next);
-    if (masking) setRects((rs) => rs.map((r) => rotateRect(r, quarterTurns)));
-    // The server turns the copy by it; without the item the turn is only for reading.
-    if (editable)
-      run(() => updateDocument(item.id, doc.id, { rotation: next }));
+    turnView(quarterTurns);
+    // The server turns the copy by it. Once the copy exists a new turn would
+    // remake it under the old rectangles, so the turn is only for reading then,
+    // as it is without the item. A refused turn is turned back.
+    if (editable && !doc.has_copy)
+      run(
+        () =>
+          updateDocument(item.id, doc.id, {
+            rotation: turn(rotation, quarterTurns),
+          }),
+        undefined,
+        () => turnView(-quarterTurns),
+      );
   };
 
   const toggleAsk = (action: ItemAction) => {
@@ -592,10 +606,8 @@ export function WorkView({
                   <p className={styles.muted}>Ta ärendet för att maskera.</p>
                 )}
               </div>
-              <details>
-                <summary className={styles.history}>
-                  Visar intyget en försäljning?
-                </summary>
+              <details className={styles.history}>
+                <summary>Visar intyget en försäljning?</summary>
                 <SalePanel
                   key={doc.id}
                   itemId={item.id}

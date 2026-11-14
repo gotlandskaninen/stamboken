@@ -383,12 +383,14 @@ export function outsideHerd(individual: string): string | null {
   );
 }
 
-/** The body of POST …/overlat. */
+/** The body of POST …/overlat. The herd field may hold a picked label, "G1274 – Name": the code is its first word. */
 export function buildSalePayload(form: SaleForm) {
   const individual = number(form.individual);
   return {
     individual,
-    herd: form.outside ? (outsideHerd(individual) ?? "") : number(form.herd),
+    herd: form.outside
+      ? (outsideHerd(individual) ?? "")
+      : number(form.herd.trim().split(/\s/)[0]),
     date: form.date,
   };
 }
@@ -424,7 +426,8 @@ export function problemField(problem: Problem): FieldKey | null {
     case "litter_order_conflict":
       return "birth_date";
     case "Ogiltig försäljning":
-      return "date";
+      // The sale rules: a date too early or in the future, else the buyer herd.
+      return /datum/i.test(problem.detail) ? "date" : "herd";
     case "Conflict":
       // Also "Mor eller far ändrades samtidigt": that one is for the whole form.
       return /certificate number/i.test(problem.detail)
@@ -433,6 +436,23 @@ export function problemField(problem: Problem): FieldKey | null {
   }
   return DETAIL_FIELDS.find(([re]) => re.test(problem.detail))?.[1] ?? null;
 }
+
+// The registration answers some litter rules with a bare key as its detail;
+// RegisterRabbitDialog words them the same way (messages/sv.json addRabbit.*).
+const RULE_TEXT: Record<string, string> = {
+  max_reached: "Kullen är full — max 9 kaniner per kull.",
+  litter_size: "Antal registrerade kaniner matchar redan kullstorleken.",
+  litter_size6w_required:
+    "Fyll i hur många kaniner som var levande efter 6 veckor innan intyget kan sparas.",
+  certificate_quota_exceeded:
+    "Kullen har inga intyg kvar att ge (antal levande efter 6 veckor).",
+  roster_alive_exceeds_6w:
+    "Kullistan har fler levande ungar än antalet levande vid 6 veckor. Markera de döda ungarna i kullistan först.",
+};
+
+/** The problem's detail for the user: rule keys in words, everything else as the API wrote it. */
+export const problemText = (problem: Problem) =>
+  RULE_TEXT[problem.detail] ?? problem.detail;
 
 /** The number check in a 409 number_conflict, for NumberConflictDialog. */
 export function numberCheckOf(problem: Problem): NumberCheck | null {

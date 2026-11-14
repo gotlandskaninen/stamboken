@@ -61,7 +61,10 @@ export function SalePanel({
         return;
       }
       const field = problemField(res.problem);
-      if (field && field in form) setErrors({ [field]: res.problem.detail });
+      // The herd field is hidden for a buyer outside the association.
+      const shown = ["individual", "date", ...(form.outside ? [] : ["herd"])];
+      if (field && shown.includes(field))
+        setErrors({ [field]: res.problem.detail });
       else setFormError(res.problem.detail);
     });
   };
@@ -123,9 +126,7 @@ export function SalePanel({
                 names.get(h) ? `${h} – ${names.get(h)}` : h
               }
               inputValue={form.herd}
-              onInputChange={(_, v, reason) =>
-                set({ herd: reason === "reset" ? v.split(" ")[0] : v })
-              }
+              onInputChange={(_, v) => set({ herd: v })}
               renderInput={(params) => (
                 <TextField
                   {...params}

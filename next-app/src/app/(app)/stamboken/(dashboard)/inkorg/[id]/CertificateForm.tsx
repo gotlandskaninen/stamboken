@@ -18,6 +18,7 @@ import {
   initialCertForm,
   numberCheckOf,
   problemField,
+  problemText,
   type CertForm,
   type InboxDocument,
   type NumberResolution,
@@ -141,8 +142,14 @@ export function CertificateForm({
       // pappersintyg takes no resolution: there the conflict is only shown.
       setConflict(mode === "ny_kanin" ? numberCheckOf(problem) : null);
       const field = problemField(problem);
-      if (field && field in form) setErrors({ [field]: problem.detail });
-      else setFormError(problem.detail);
+      // Next to the field when this mode shows it, else above the buttons.
+      const shown =
+        mode === "pappersintyg"
+          ? ["individual", "paper_number", "paper_certificate"]
+          : Object.keys(form).filter((k) => k !== "individual");
+      if (field && shown.includes(field))
+        setErrors({ [field]: problemText(problem) });
+      else setFormError(problemText(problem));
     });
 
   const text = (

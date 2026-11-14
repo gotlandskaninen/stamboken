@@ -12,6 +12,7 @@ import {
   OPEN_STATES,
   people,
   problemField,
+  problemText,
   waited,
   type CertForm,
   type InboxItem,
@@ -299,6 +300,16 @@ describe("the …/overlat payload", () => {
       }),
     ).toEqual({ individual: "G9001-2511", herd: "G9002", date: "2026-10-03" });
   });
+  it("a herd picked from the list sends its code, not its label", () => {
+    const sale = {
+      individual: "G9001-2511",
+      outside: false,
+      date: "2026-10-03",
+    };
+    expect(buildSalePayload({ ...sale, herd: "G9002 – Testgården" }).herd).toBe(
+      "G9002",
+    );
+  });
   it("outside the association: the genebank's GX1 or MX1", () => {
     const sale = { herd: "G9002", outside: true, date: "2026-10-03" };
     expect(buildSalePayload({ ...sale, individual: "G9001-2511" }).herd).toBe(
@@ -335,7 +346,22 @@ describe("problemField", () => {
       "birth_date",
     ],
     [p(409, "litter_order_conflict", "Kullen är född före …"), "birth_date"],
-    [p(400, "Ogiltig försäljning", "Datumet ligger i framtiden."), "date"],
+    [
+      p(
+        400,
+        "Ogiltig försäljning",
+        "Försäljningsdatumet får inte ligga i framtiden.",
+      ),
+      "date",
+    ],
+    [
+      p(
+        400,
+        "Ogiltig försäljning",
+        "Individen kan bara flyttas till en besättning inom samma genbank.",
+      ),
+      "herd",
+    ],
     [
       p(
         409,
@@ -426,6 +452,20 @@ describe("problemField", () => {
     [p(400, "Bad Request", "Parningsdatum måste anges som ÅÅÅÅ-MM-DD."), null],
   ])("%o -> %s", (problem, field) => {
     expect(problemField(problem)).toBe(field);
+  });
+
+  it("words the bare rule keys and leaves Swedish details as they are", () => {
+    const p = (detail: string) => ({
+      status: 400,
+      title: "Bad Request",
+      detail,
+    });
+    expect(problemText(p("litter_size6w_required"))).toMatch(
+      /levande efter 6 veckor/,
+    );
+    expect(problemField(p("litter_size6w_required"))).toBe("litter_size6w");
+    expect(problemText(p("max_reached"))).toMatch(/Kullen är full/);
+    expect(problemText(p("Ta posten först."))).toBe("Ta posten först.");
   });
 });
 
