@@ -1,10 +1,12 @@
 # Inläsningskön (inkorgen): API
 
 Inläsningskön är en gemensam inkorg i Stamboken. En medlem fotograferar sina pappersintyg och
-laddar upp fotona, och den som arbetar i kön tar posten, lägger in kaninerna och lägger en
+laddar upp fotona eller mejlar dem till föreningen, och den som arbetar i kön tar posten, lägger in kaninerna och lägger en
 maskerad kopia av intyget på kaninen. Det här dokumentet beskriver Flask-API:t som gränssnittet
 bygger på: varje endpoint, vem som får anropa den, vad den tar emot och svarar, och lägena en
-post går igenom. Reglerna finns i `app/utils/inbox.py` och endpointsen i `app/blueprints/inbox.py`.
+post går igenom. Reglerna finns i `app/utils/inbox.py` och endpointsen i `app/blueprints/inbox.py`;
+mejlen in och frågan till uppfödaren i `app/utils/inbox_gmail.py` och `app/blueprints/inbox_gmail.py`.
+Driften av mejlläsningen står i [inkorg-gmail.md](inkorg-gmail.md).
 
 ## Innehåll
 
@@ -23,14 +25,16 @@ post går igenom. Reglerna finns i `app/utils/inbox.py` och endpointsen i `app/b
 13. [Registrera en försäljning](#registrera-en-försäljning)
 14. [Maskning och kopian på kaninen](#maskning-och-kopian-på-kaninen)
 15. [Bilderna](#bilderna)
-16. [Mina inskick](#mina-inskick)
-17. [Notiser](#notiser)
-18. [Mejl](#mejl)
-19. [Gränser och sådant gränssnittet behöver veta](#gränser-och-sådant-gränssnittet-behöver-veta)
+16. [Fråga uppfödaren](#fråga-uppfödaren)
+17. [Mejlade poster](#mejlade-poster)
+18. [Mina inskick](#mina-inskick)
+19. [Notiser](#notiser)
+20. [Mejl](#mejl)
+21. [Gränser och sådant gränssnittet behöver veta](#gränser-och-sådant-gränssnittet-behöver-veta)
 
 ## Begrepp
 
-- **Post** (`item`): det som kom in i ett svep, i dag en uppladdning. Postens id visas som
+- **Post** (`item`): det som kom in i ett svep, en uppladdning eller ett mejl. Postens id visas som
   "ärende 1234" i kön, under Mina inskick och i ämnesraden på mejlen.
 - **Dokument** (`document`): en bild i posten. Ett foto blir ett dokument, och en PDF blir ett
   dokument per sida.
@@ -89,7 +93,7 @@ bort.
 |---|---|---|
 | `ny` | ingen har tagit posten | nej |
 | `tagen` | en handläggare har posten | ja |
-| `vantar_uppfodare` | en fråga till uppfödaren är skickad (en senare del, kan inte nås i dag) | ja |
+| `vantar_uppfodare` | en fråga till uppfödaren är skickad (`…/fraga`) | ja |
 | `vantar_foralder` | ett intyg kan inte sparas förrän en förälder finns | ja |
 | `hos_genbanksansvarig` | lämnad till genbanksansvarig för korrigering eller beslut | nej |
 | `ofullstandig` | något saknas; handläggaren har skrivit vad | ja |
@@ -109,6 +113,8 @@ bort.
 | `tagen` | `…/lage` | `vantar_foralder`, `ofullstandig` | handläggaren |
 | `tagen` | `…/lage` (öppna igen) | `klar`, `dubblett`, `skrap` | genbanksansvarig för postens genbank, admin; den som öppnar blir handläggare |
 | `tagen` | föräldern sparas (var som helst i Stamboken) | `vantar_foralder` | systemet |
+| `tagen` | svaret på frågan läses in | `vantar_uppfodare` | systemet |
+| `vantar_uppfodare` | `…/fraga` | `tagen` | handläggaren |
 | `vantar_foralder` | `…/lage`; något dokument måste ha `waiting_for` | `tagen` | handläggaren |
 | `hos_genbanksansvarig` | `…/lage`; handläggaren tas bort | `tagen` | handläggaren |
 | `ofullstandig` | `…/lage` med `note` (vad som saknas) | `tagen` | handläggaren |
@@ -186,8 +192,11 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
 }
 ```
 
-- `kind`: `upload` i dag; `mail`, `meddelande`, `kontroll` och `avisering` kommer med senare delar.
-- `herd`: besättningsnumret uppladdaren valde.
+- `kind`: `upload`, `mail` (ett mejl med bilagor) eller `meddelande` (ett mejl utan bilagor);
+  `kontroll` och `avisering` kommer med senare delar.
+- `herd`: besättningsnumret uppladdaren valde. För ett mejl gissningen från avsändarens adress i
+  matrikeln, och `null` (okänd) när adressen inte finns där eller medlemskapet har flera
+  besättningar; `genebank_id` är då också `null` om besättningarna ligger i olika genbanker.
 - `sender` och `assigned_to`: `null` eller `{id, name}`. `name` är kontots fullständiga namn, och
   `"Konto <id>"` när namnet saknas. E-postadressen visas aldrig.
 - `missing_proof`: en försäljning har registrerats utan överlåtelsebevis ("bevis saknas").
@@ -210,7 +219,9 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
 }
 ```
 
-`sender_address` gäller mejlade poster (en senare del) och är `null` för uppladdningar.
+`sender_address` är avsändarens adress för en mejlad post och `null` för uppladdningar. Den
+nollas när posten är stängd och inget mejl till avsändaren väntar, och senast 30 dagar efter
+stängningen.
 
 ### Dokument
 
@@ -265,7 +276,7 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
 
 | `kind` | `detail` |
 |---|---|
-| `inkommen` | `{"documents": 2}` |
+| `inkommen` | `{"documents": 2}`; för ett mejl också `not_saved` (namnen på bilagor som inte sparades) och `maybe_item` (posten ett svar från någon annan kanske gäller), när de finns |
 | `oppnad` | `null`; någon i kön öppnade posten (högst en gång i timmen per person och post) |
 | `tagen` | `null` |
 | `overtagen` | `{"from_user": 7}` |
@@ -276,6 +287,8 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
 | `kopia` | `{"document": 31, "rects": 1}` |
 | `original_visat` | `{"document": 31}` |
 | `foralder_inlagd` | `{"individual": "G1-2431"}` |
+| `fraga` | `{"text": "Står det G1-2112?", "document": 31, "rotation": 0, "crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.25}}`; de tre sista bara med utsnitt |
+| `svar` | `{"text": "Ja.", "documents": [33], "not_saved": ["brev.docx"]}`; `user` är `null`, `not_saved` bara när något inte sparades |
 
 ## Ladda upp
 
@@ -684,6 +697,76 @@ genbanksansvarig och admin. En genbankshjälpare ser originalet i kön men inte 
 tillgänglig, eller saknar ett inläst pappersintyg (`Kaninen har inget inläst pappersintyg.`).
 Gränssnittet kan använda 404 för att dölja "Pappersintyg" på kaninens sida.
 
+## Fråga uppfödaren
+
+### `POST /api/v2/inkorg/{id}/fraga`
+
+**Vem:** handläggaren, med posten i läget `tagen`.
+
+```json
+{"text": "Står det G1-2112 eller G1-2113?", "document": 31, "crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.25}}
+```
+
+| Fält | |
+|---|---|
+| `text` | krävs, högst 2000 tecken |
+| `crop` | valfritt: utsnittet av fotot som frågan gäller, en rektangel som i [Maskning](#maskning-och-kopian-på-kaninen) (bråkdelar av bilden efter dokumentets vridning) |
+| `document` | krävs med `crop`: dokumentet som utsnittet är ur |
+
+Frågan sparas som händelsen `fraga`, och mejlet `inlasning.fraga` köas till besättningens
+innehavare enligt matrikeln (medlemskapets huvudmedlem). Ämnesraden slutar med "(ärende 12)".
+Med `crop` bifogas utsnittet som JPEG, skuret ur originalet när mejlet skickas. Posten blir
+`vantar_uppfodare`.
+
+Svaret kommer till föreningens brevlåda. Det läggs på posten som händelsen `svar`, med svarets
+foton som nya dokument, bara när Gmail har godkänt avsändarens domän och avsändaren är den som
+fick frågan, postens avsändare eller besättningens innehavare. Posten blir då `tagen` igen och
+handläggaren får notisen `svar`. Annars blir svaret en egen post med `maybe_item` (se
+[Mejlade poster](#mejlade-poster)).
+
+**Svar 200:** posten i listform.
+
+**Fel:** 400 utan text eller med för lång text, med `crop` utan `document` eller med en
+rektangel utanför bilden; 403 när anroparen inte arbetar i kön; 404 när dokumentet inte hör
+till posten; 409 när anroparen inte är handläggare, posten inte är `tagen`, eller besättningen
+saknar innehavare med e-post i matrikeln.
+
+## Mejlade poster
+
+Jobbet `inbox_gmail` läser föreningens brevlåda var femte minut när `INLASNING_GMAIL=on` (drift
+och inställningar: [inkorg-gmail.md](inkorg-gmail.md)). Varje mejl i inkorgen blir en av:
+
+- en studs: mejlkön markerar mejlet som `bounced` ([mejl.md](mejl.md)). En studs som inte går
+  att koppla till ett mejl blir en post av typen `meddelande`;
+- ett autosvar: ingenting;
+- ett svar på ett mejl om en post: läggs på posten (se [Fråga uppfödaren](#fråga-uppfödaren));
+- en ny post, `mail` med bilagor och `meddelande` utan.
+
+En ny post får avsändarens adress i `sender_address`, mejlets text i `message` (en HTML-text
+utan taggar) och en gissad besättning. Bilagorna går genom samma kontroller som en uppladdning
+([Ladda upp](#ladda-upp)): JPEG, PNG, WebP, HEIC och PDF, högst 10 MB styck och högst 10 bilder
+per mejl. Övriga bilagor sparas inte, men deras namn står i händelsen `inkommen`. Ett foto som
+skickats inbäddat i texten räknas som en bilaga. Genbanksansvarig och hjälpare i postens
+genbank får notisen `ny_post`, alla i kön när genbanken är okänd.
+
+Ett mejl som ser ut som ett svar men inte får läggas på posten (avsändaren är inte godkänd, är
+någon annan, eller posten är stängd) blir en ny post med `maybe_item` i händelsen `inkommen`.
+Gränssnittet visar "Gäller kanske ärende 12". Handläggaren avgör.
+
+### `GET /api/v2/inkorg/status`
+
+**Vem:** de som arbetar i kön. För larmet överst i kön.
+
+```json
+{"gmail": {"enabled": true, "last_run_at": "2026-11-14T08:05:00+00:00", "last_error": null, "alarm": false}}
+```
+
+`last_run_at` är den senaste körningen som gick igenom, och `last_error` felet från den senaste
+körningen: ett mejl som inte gick att läsa (det har då etiketten "Fel vid inläsning" i
+brevlådan) eller en körning som avbröts. `alarm` är sant när `last_error` finns, eller när
+läsningen är på och inte har gått igenom de senaste 20 minuterna. Gränssnittet visar då en rad
+överst i kön.
+
 ## Mina inskick
 
 ### `GET /api/v2/inkorg/mina-inskick`
@@ -721,6 +804,7 @@ Alla har notiser, också den som bara laddar upp. Notiserna gäller poster och n
 | `overtagen` | Någon har tagit över din post | den som hade posten |
 | `lamnad` | En post har lämnats till genbanksansvarig | genbanksansvariga i postens genbank |
 | `foralder_inlagd` | Föräldern är inlagd, och posten väntar inte längre | handläggaren |
+| `svar` | Uppfödaren har svarat | handläggaren; genbanksansvariga i postens genbank när posten saknar handläggare |
 | `klar` | Ditt inskick är klart | uppladdaren; länka till Mina inskick, inte till kön |
 
 En notis blir läst när posten öppnas (`GET /api/v2/inkorg/{id}`), när Mina inskick öppnas
@@ -762,7 +846,12 @@ Mejlen går genom mejlkön ([mejl.md](mejl.md)) och köas i samma transaktion so
   "G1-2511 är inlagd i Stamboken (ärende 12)", "Dina kaniner är inlagda i Stamboken
   (ärende 12)" eller "Ditt inskick är klart (ärende 12)", och mejlet listar kaninernas nummer
   och länkar till `/stamboken/inskick`. Öppnas posten igen innan mejlet gått stoppas det; blir
-  en öppnad post klar igen går ett nytt mejl.
+  en öppnad post klar igen går ett nytt mejl. En mejlad post har ingen uppladdare: mejlet går
+  då till avsändarens adress, utan länken.
+- **`inlasning.kvitto`** till avsändaren av ett mejl med bilder: "Vi har fått 2 bilder.
+  Genbanksansvarig lägger in dem." med ämnesraden "Vi har fått dina bilder (ärende 12)". Bara
+  när Gmail har godkänt avsändarens domän (SPF eller DKIM), och högst ett per avsändare och dygn.
+- **`inlasning.fraga`** till besättningens innehavare, se [Fråga uppfödaren](#fråga-uppfödaren).
 - **`notis.sammandrag`** kl. 07 varje dag till var och en som har olästa notiser som inget
   sammandrag tagit med och som inte stängt av mejlet. Det listar de olästa notiserna med
   ärendenummer och länkar till `/stamboken/inkorg`. Notiser av typen `klar` tas aldrig med:
