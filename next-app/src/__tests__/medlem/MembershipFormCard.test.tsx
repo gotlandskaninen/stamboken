@@ -76,7 +76,7 @@ const spara = () => screen.getByRole("button", { name: /Spara/ });
 
 describe("MembershipFormCard — medlemsnummer validation", () => {
   it("blocks a medlemsnummer that is not a positive integer", () => {
-    render(<MembershipFormCard membership={MEMBERSHIP} hasActivePersons />);
+    render(<MembershipFormCard membership={MEMBERSHIP} />);
 
     fireEvent.change(numberField(), { target: { value: "abc" } });
     expect(screen.getByText(NUMBER_ERROR)).toBeInTheDocument();
@@ -94,7 +94,7 @@ describe("MembershipFormCard — medlemsnummer validation", () => {
   });
 
   it("sends a valid medlemsnummer", async () => {
-    render(<MembershipFormCard membership={MEMBERSHIP} hasActivePersons />);
+    render(<MembershipFormCard membership={MEMBERSHIP} />);
 
     fireEvent.change(numberField(), { target: { value: "12" } });
     expect(screen.queryByText(NUMBER_ERROR)).not.toBeInTheDocument();
@@ -112,7 +112,7 @@ describe("MembershipFormCard — medlemsnummer validation", () => {
 
 describe("MembershipFormCard — retire re-bases the status select", () => {
   it("sends membership_status=inactive on the next Spara after a retire", async () => {
-    render(<MembershipFormCard membership={MEMBERSHIP} hasActivePersons />);
+    render(<MembershipFormCard membership={MEMBERSHIP} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Avsluta medlemskap" }));
     fireEvent.click(screen.getByRole("button", { name: "Bekräfta" }));
@@ -146,31 +146,40 @@ describe("MembershipFormCard — retire re-bases the status select", () => {
 });
 
 describe("MembershipFormCard — retired state", () => {
-  const INACTIVE = { ...MEMBERSHIP, membership_status: "inactive" as const };
+  const person = (role: string) =>
+    ({ role, end_date: null }) as MembershipDetail["persons"][number];
+  const inactive = (...roles: string[]) => ({
+    ...MEMBERSHIP,
+    membership_status: "inactive" as const,
+    persons: roles.map(person),
+  });
   const avsluta = () =>
     screen.queryByRole("button", { name: "Avsluta medlemskap" });
+  const locked = () =>
+    screen.getByRole("combobox").getAttribute("aria-disabled") === "true";
 
   it("locks the select and hides Avsluta when inactive with no active person", () => {
-    render(
-      <MembershipFormCard membership={INACTIVE} hasActivePersons={false} />,
-    );
+    render(<MembershipFormCard membership={inactive()} />);
 
-    expect(screen.getByRole("combobox")).toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
+    expect(locked()).toBe(true);
     expect(screen.getByText(/kan inte återaktiveras/)).toBeInTheDocument();
     expect(avsluta()).not.toBeInTheDocument();
   });
 
-  it("still offers Avsluta when inactive but persons remain active", () => {
-    render(<MembershipFormCard membership={INACTIVE} hasActivePersons />);
+  it("still offers Avsluta when inactive but the main member remains", () => {
+    render(<MembershipFormCard membership={inactive("huvudmedlem")} />);
 
     expect(avsluta()).toBeInTheDocument();
-    expect(screen.getByRole("combobox")).not.toHaveAttribute(
-      "aria-disabled",
-      "true",
-    );
+    expect(locked()).toBe(false);
+  });
+
+  // The backend answers 409 here: inactive without a huvudmedlem is its RETIRED.
+  it("locks the select but keeps Avsluta when only a family member is left", () => {
+    render(<MembershipFormCard membership={inactive("familjemedlem")} />);
+
+    expect(locked()).toBe(true);
+    expect(screen.getByText(/saknar huvudmedlem/)).toBeInTheDocument();
+    expect(avsluta()).toBeInTheDocument();
   });
 });
 
@@ -179,7 +188,7 @@ describe("MembershipFormCard — annan fakturaadress", () => {
     screen.getByRole("checkbox", { name: "Annan fakturaadress" });
 
   it("is folded away and saves an empty billing address by default", async () => {
-    render(<MembershipFormCard membership={MEMBERSHIP} hasActivePersons />);
+    render(<MembershipFormCard membership={MEMBERSHIP} />);
 
     expect(billingBox()).not.toBeChecked();
     expect(screen.queryByLabelText("Fakturamottagare")).not.toBeInTheDocument();
@@ -203,7 +212,7 @@ describe("MembershipFormCard — annan fakturaadress", () => {
   });
 
   it("unfolds, validates the postnummer and sends the billing fields", async () => {
-    render(<MembershipFormCard membership={MEMBERSHIP} hasActivePersons />);
+    render(<MembershipFormCard membership={MEMBERSHIP} />);
 
     fireEvent.click(billingBox());
     fireEvent.change(screen.getByLabelText("Fakturamottagare"), {
@@ -252,7 +261,6 @@ describe("MembershipFormCard — annan fakturaadress", () => {
           billing_name: "Gården",
           billing_city: "Annanstad",
         }}
-        hasActivePersons
       />,
     );
 

@@ -156,6 +156,19 @@ class TestMembershipLifecycleMachine(DatabaseTest):
         user.add_role("matrikel_admin", None)
         self.client.post("/api/login", json={"username": "matadmin", "password": "pass"})
 
+    def test_a_retired_membership_refuses_a_status_change_on_both_endpoints(self):
+        """Not left to chance: memberships.py writes its fields with a setattr the grep test cannot see."""
+        created = self.client.post("/api/v2/memberships", json={"first_name": "A", "last_name": "B"}).get_json()
+        self.assertEqual(self.client.delete(f"/api/v2/memberships/{created['id']}").status_code, 200)
+        for endpoint in ("memberships", "members"):
+            with self.subTest(endpoint=endpoint):
+                response = self.client.patch(
+                    f"/api/v2/{endpoint}/{created['id']}", json={"membership_status": "active", "notes": "x"}
+                )
+                self.assertEqual(response.status_code, 409)
+                stored = db.Membership.get_by_id(created["id"])
+                self.assertEqual((stored.membership_status, stored.notes), ("inactive", None))
+
     def test_random_sequences(self):
         stats = Counter()
         examples = int(os.environ.get("LIFECYCLE_EXAMPLES", "40"))

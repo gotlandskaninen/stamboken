@@ -66,6 +66,10 @@ class TestMembershipLifecycle(unittest.TestCase):
         self.assertEqual(set(re.findall(r"'(\w+)'", listed)), {s.value for s in Status})
 
     def test_only_matrikel_writes_the_status(self):
+        """
+        Sees literal writes only. patch_membership (blueprints/memberships.py) writes its fields with a
+        setattr this cannot see: test_a_retired_membership_refuses_a_status_change_on_both_endpoints pins it.
+        """
         offenders = []
         for path in APP_DIR.rglob("*.py"):
             rel = path.relative_to(APP_DIR)

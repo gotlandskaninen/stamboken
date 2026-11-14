@@ -25,10 +25,8 @@ const toBillingForm = (m: BillingAddress) =>
 
 export function MembershipFormCard({
   membership,
-  hasActivePersons,
 }: {
   membership: MembershipDetail;
-  hasActivePersons: boolean;
 }) {
   const [pending, startTransition] = useTransition();
   const { showSnackbar } = useSnackbar();
@@ -54,12 +52,15 @@ export function MembershipFormCard({
   // when the revalidated prop arrives — a second click in that window wrote
   // another membership_retired audit row.
   const [retired, setRetired] = useState(false);
-  // Inaktiv with no active person: the backend refuses any further status
-  // change (409), so the select is locked and Avsluta has nothing left to do.
-  // Inaktiv *with* active persons (set through the select) can still be ended.
-  const ended =
-    retired ||
-    (membership.membership_status === "inactive" && !hasActivePersons);
+  const inactive = membership.membership_status === "inactive";
+  const active = membership.persons.filter((p) => p.end_date === null);
+  // Avsluta has nothing left to do once no person is active. Inaktiv *with*
+  // active persons (set through the select) can still be ended.
+  const ended = retired || (inactive && active.length === 0);
+  // The backend's RETIRED (app/utils/membership_lifecycle.py): inactive with no
+  // active huvudmedlem. It refuses a status change (409) until one is appointed.
+  const locked =
+    ended || (inactive && !active.some((p) => p.role === "huvudmedlem"));
   const postalOk = isValidPostalCode(postalCode);
   const billingPostalOk =
     !billingOn || isValidPostalCode(billing.billing_postal_code);
@@ -134,7 +135,7 @@ export function MembershipFormCard({
                 aria-labelledby="ms-status-label"
                 size="small"
                 fullWidth
-                disabled={ended}
+                disabled={locked}
               >
                 {MEMBERSHIP_STATUSES.map((s) => (
                   <MenuItem key={s} value={s}>
@@ -142,10 +143,11 @@ export function MembershipFormCard({
                   </MenuItem>
                 ))}
               </Select>
-              {ended ? (
+              {locked ? (
                 <p className={ds["ad-field-hint"]}>
-                  Ett avslutat medlemskap kan inte återaktiveras. Skapa ett nytt
-                  medlemskap i stället.
+                  {ended
+                    ? "Ett avslutat medlemskap kan inte återaktiveras. Skapa ett nytt medlemskap i stället."
+                    : "Medlemskapet saknar huvudmedlem. Utse en ny huvudmedlem för att kunna ändra status."}
                 </p>
               ) : null}
             </div>

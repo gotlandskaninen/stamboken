@@ -70,14 +70,7 @@ export default async function MembershipDetailPage({
         <OversiktCard membership={membership} />
         <div className={ds["ad-col"]}>
           <PersonsCard membership={membership} canEdit={canEdit} />
-          {canEdit ? (
-            <MembershipFormCard
-              membership={membership}
-              hasActivePersons={membership.persons.some(
-                (p) => p.end_date === null,
-              )}
-            />
-          ) : null}
+          {canEdit ? <MembershipFormCard membership={membership} /> : null}
           {/* Read-only managers never see MembershipFormCard, where the
               billing address is edited. */}
           {!canEdit && hasBillingAddress(membership) ? (

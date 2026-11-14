@@ -380,7 +380,8 @@ def patch_membership(membership_id: int):
         return problem(
             409,
             "Medlemskapet är avslutat",
-            "Ett avslutat medlemskap kan inte återaktiveras. Skapa ett nytt medlemskap.",
+            "Ett inaktivt medlemskap utan huvudmedlem kan inte byta status. Utse en ny huvudmedlem, "
+            "eller skapa ett nytt medlemskap om inga personer finns kvar.",
         )
     except IntegrityError:
         # The partial unique index on member_number is the backstop for the
