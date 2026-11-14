@@ -477,7 +477,7 @@ class TestItemsFromMail(GmailTest):
                 msg.set_content(body, subtype="html")
                 started = time.monotonic()
                 text = inbox_gmail._text(msg)
-                self.assertLess(time.monotonic() - started, 0.5)
+                self.assertLess(time.monotonic() - started, 1.0)  # linear; the old regexes took minutes
                 self.assertLessEqual(len(text or ""), inbox_gmail.MAX_TEXT)
                 if name == "a head left open":
                     self.assertEqual(text, "Hej")

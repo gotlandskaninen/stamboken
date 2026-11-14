@@ -49,7 +49,7 @@ logger = logging.getLogger("herdbook.inbox_gmail")
 
 READ, FAILED, DEMO = "Inläst", "Fel vid inläsning", "Demo"
 MAX_TEXT = 10_000  # characters of a mail's text kept on the item; shortcut: cut, raise it if handlers miss text
-MAX_BODY = 200_000  # characters of a mail's body read at all, before anything parses it: bounds the work
+MAX_BODY = 100_000  # characters of a mail's body read at all, before anything parses it: about 0.2 s of parsing
 RELEASE_AFTER = timedelta(days=30)  # a closed item's sender address goes by then, whatever is still queued
 CROP_SIDE = 2000  # pixels, the longest side of the photo's part a question carries
 MIN_SIDE = 200  # pixels: an image with a shorter side is a signature logo or a tracking pixel, not a document
