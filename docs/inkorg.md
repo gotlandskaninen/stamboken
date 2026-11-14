@@ -83,6 +83,9 @@ låset, mot den lagrade posten:
   kaninens senaste händelse. Korrigeringar (datum före senaste händelse, ändringar av andras rader)
   gör genbanksansvarig och admin. En hjälpare som behöver en korrigering lämnar posten till
   genbanksansvarig (`hos_genbanksansvarig`).
+- En hjälpare avgör aldrig en post som hen själv har laddat upp: hen kan inte ta den (403) eller
+  få den tilldelad (400), och kan inte skriva genom den. Någon annan tar den. Genbanksansvarig
+  och admin avgör sina egna.
 - Genbanksansvarig och admin skriver med sina vanliga rättigheter.
 
 Varje skrivning ger en rad i `inbox_operation` med operationens id, handläggaren och dokumentet,

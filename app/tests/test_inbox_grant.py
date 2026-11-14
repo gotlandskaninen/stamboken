@@ -111,6 +111,23 @@ class TestExecuteWithGrant(GrantTest):
                 self.assertIsNone(self.rabbit("G1-2112").certificate)
         self.assertFalse(db.InboxOperation.select().exists())
 
+    def test_a_helpers_own_upload_is_decided_by_someone_else(self):
+        item = self.item(0, sender=self.helper)
+        document = item.documents.get()
+        with self.assertRaises(inbox.InboxError) as refused:
+            inbox.take(item, self.helper, over=False)
+        self.assertEqual((refused.exception.status, refused.exception.detail), (403, inbox.OWN_UPLOAD))
+        with self.assertRaises(inbox.InboxError):
+            inbox.assign(item, self.manager, self.helper)
+        item.state, item.assigned_to = "tagen", self.helper  # however it came to be hers, the grant refuses
+        item.save()
+        with self.assertRaises(IndividualRefused):
+            self.certify(self.helper, item, document)
+        self.assertIsNone(self.rabbit("G1-2112").certificate)
+        own = self.item(0, sender=self.manager)  # a manager decides their own
+        inbox.take(own, self.manager, over=False)
+        self.assertEqual(self.reload(own).assigned_to_id, self.manager.id)
+
     def test_a_helper_of_the_other_genebank_is_refused(self):
         item, document = self.taken(self.mellerud_helper)  # an item may hold rabbits of any herd
         with self.assertRaises(IndividualRefused):
