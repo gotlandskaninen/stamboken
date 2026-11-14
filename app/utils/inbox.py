@@ -793,6 +793,7 @@ class InboxGrant:
     def __init__(self, item, user, document=None):
         self.item_id, self.user_id = item.id, user.id
         self.document_id = document.id if document is not None else None
+        self.traced = 0  # the writes traced: none means the save changed nothing
 
     def allows(self, user, herd):
         """May `user` write, as handler, to a rabbit in `herd` (also a newborn's herd)?"""
@@ -812,6 +813,7 @@ class InboxGrant:
     def trace(self, operation_id):
         """ "Inlagd från foto av": the write's operation id, its handler and the document."""
         InboxOperation.create(operation_id=operation_id, user=self.user_id, document=self.document_id)
+        self.traced += 1
 
     def record(self, ctx):
         for row in ctx.log_rows:

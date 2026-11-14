@@ -678,7 +678,8 @@ hjälpare får bara sätta intyget på en kanin som saknar intyg.
 **Fel:** 400 utan intygsnummer eller individnummer, eller när intygsnumret redan finns
 (`Individual certificate already exists`); 403 när anroparen inte får ändra kaninen eller kaninen
 redan har intyg och anroparen inte är genbanksansvarig eller admin; 404 när kaninen inte finns;
-409 `number_conflict` när `paper_number` inte är kaninens nummer i Stamboken (eller finns på en annan
+409 `Ingen ändring: G1-2511 har redan intyget 123456.` när kaninen redan har just det intyget (inget
+sparas och dokumentet kopplas inte till kaninen); 409 `number_conflict` när `paper_number` inte är kaninens nummer i Stamboken (eller finns på en annan
 kanin), med samma fält som ovan. `resolution` läses inte här: kaninens nummer är redan satt och
 pappret kan inte rätta det, så ett intyg med ett annat nummer lämnar handläggaren till
 genbanksansvarig (`hos_genbanksansvarig`).

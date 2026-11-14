@@ -561,6 +561,8 @@ def _assign_certificate(body, user, grant, document):
         )
     except (IndividualRefused, HerdTrackingError, ValueError) as exc:
         raise _Refused(_command_problem(exc)) from None
+    if not grant.traced:  # nothing written, so no trace: the document stays unlinked
+        raise inbox.InboxError(409, f"Ingen ändring: {individual.number} har redan intyget {certificate.strip()}.")
     individual = Individual.get_by_id(individual.id)
     return {"individual": individual.as_dict()}, individual
 

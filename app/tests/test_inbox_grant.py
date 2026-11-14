@@ -223,6 +223,22 @@ class TestSaveEndpoint(GrantTest):
         certified = {**body, "individual": "G1-2111", "paper_certificate": "P-10", "paper_number": "G1-2111"}
         self.assertEqual(self.save(item2, document2, **certified).status_code, 403)
 
+    def test_a_save_that_changes_nothing_is_refused_and_links_nothing(self):
+        held = self.rabbit("G1-2111")
+        item, document = self.taken(self.manager)
+        self.login("man")
+        body = {
+            "action": "pappersintyg",
+            "individual": held.number,
+            "paper_certificate": held.certificate,
+            "paper_number": held.number,
+        }
+        resp = self.save(item, document, **body)
+        self.assertEqual((resp.status_code, resp.get_json()["detail"][:13]), (409, "Ingen ändring"))
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).individual_id)
+        self.assertFalse(db.InboxEvent.select().where(db.InboxEvent.kind == "sparad").exists())
+        self.assertFalse(db.InboxOperation.select().exists())
+
     def test_a_number_conflict_on_an_existing_rabbit_is_not_resolved_by_resolution(self):
         item, document = self.taken(self.helper)
         db.Breeding.update(litter_number=1).where(db.Breeding.id == self.rabbit("G1-2112").breeding_id).execute()
