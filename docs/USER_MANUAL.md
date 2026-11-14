@@ -819,6 +819,15 @@ genbanksansvariga och genbankshjälpare, och alla tre ser hela kön.
    Stämmer inte individnumret på pappret med Stambokens öppnas samma ruta som för
    uppfödaren, se [När pappret och Stamboken har olika individnummer](#när-pappret-och-stamboken-har-olika-individnummer).
    Stämmer pappret lämnar du ärendet till genbanksansvarig.
+
+   Är bildtolkningen på har Stamboken redan läst fotot, och formuläret är ifyllt med ett förslag.
+   Varje fält är märkt med varifrån värdet kommer: **läst** (läst på intyget och kontrollerat mot
+   registret), **härlett** (hämtat ur registret), **avviker** (intyget och registret säger olika)
+   eller **osäker**. Fält som avviker eller är osäkra är tomma, med det som lästes bredvid: skriv av
+   dem från fotot. Under fälten står kontrollerna, till exempel "Mor och far finns i Stamboken med
+   intyg", "Numret stämmer med kullen" och "Intygsnumret är ledigt". Jämför alltid förslaget med
+   fotot innan du sparar; inget sparas förrän du klickar **Spara och nästa**. Har du vridit fotot
+   rätt efteråt klickar du **Tolka igen**, så kommer ett nytt förslag några minuter senare.
 4. Dölj säljaren och köparen. En svart ruta täcker intygets nedre tredjedel. Dra rutan
    eller dess hörn, eller välj den och använd piltangenterna (Skift ändrar storleken,
    Delete tar bort den). **Lägg till ruta** ger fler. Klicka **Bekräfta maskningen och
@@ -887,7 +896,9 @@ Genbanksansvarig och administratör väljer en person och klickar **Tilldela**, 
 tilldelar alla öppna ärenden i en besättning under **Tilldela en hel besättning**.
 Personlistorna visar dig och dem som har ärenden i listan; administratören ser också alla
 genbanksansvariga och genbankshjälpare. På en telefon blir varje rad ett kort. Den som
-inte arbetar i kön får "sidan finns inte". Se [Arbeta i inkorgen](#arbeta-i-inkorgen).
+inte arbetar i kön får "sidan finns inte". När bildtolkningen är på står det under lägena hur
+många foton som väntar på tolkning och när det senaste förslaget blev klart, och en röd ruta
+visas om tre foton i rad inte gick att tolka. Se [Arbeta i inkorgen](#arbeta-i-inkorgen).
 
 #### Inkorg – ärende
 
@@ -898,9 +909,11 @@ status (Att lägga in, Väntar på förälder, Inlagt, maskning kvar, Klart elle
 ärendets läge, handläggare, avsändare och meddelande, knapparna som ärendets läge och din
 roll tillåter, och **Historik**, som är hopfälld tills du öppnar den. I mitten fotot med
 verktygen, varningar som "kan vara oskarp" och "samma bild i ärende 12", och **Typ**,
-**Format** och **Avfärda**. Till höger formuläret för dokumentet: intyget, försäljningen
-eller maskningen. Har du inte ärendet står det vem som har det, med **Jag tar den** eller
-**Ta över**; du kan bara spara när ärendet är ditt och taget.
+**Format**, **Avfärda** och, när bildtolkningen är på, **Tolka igen**. Till höger formuläret för
+dokumentet: intyget, försäljningen eller maskningen. Ett intyg som tolkats har fälten ifyllda och
+färgade efter varifrån värdet kommer, far- och morföräldrarna och kontrollerna under fälten; medan
+fotot tolkas står det "Fotot tolkas". Har du inte ärendet står det vem som har det, med **Jag tar
+den** eller **Ta över**; du kan bara spara när ärendet är ditt och taget.
 
 ---
 

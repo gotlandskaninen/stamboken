@@ -125,6 +125,12 @@ export async function waitForParent(
   });
 }
 
+/** "Tolka igen": the certificate waits for the image reading again, after a turn. */
+export async function reinterpretDocument(id: number, doc: number) {
+  if (!isId(id) || !isId(doc)) return refused("Ogiltigt dokument.");
+  return call<DocResult>(id, `/${id}/dokument/${doc}/tolka-igen`, "POST");
+}
+
 export async function saveCertificate(
   id: number,
   doc: number,

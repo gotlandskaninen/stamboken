@@ -168,3 +168,18 @@ class TestReinterpret(InterpretationTest):
             self.assertEqual(self.reinterpret(item, document).status_code, 409)
         self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{document.id}", json={"doc_type": "bevis"})
         self.assertEqual(self.reinterpret(item, document).status_code, 409)
+
+
+class TestStatus(InterpretationTest):
+    def test_waiting_last_done_and_the_alarm(self):
+        _, documents = self.uploaded(files=4)
+        self.login("hjalp")
+        status = self.client.get("/api/v2/inkorg").get_json()["interpretation"]
+        self.assertEqual(status, {"interpreter": "gemma", "waiting": 4, "last_done_at": None, "alarm": False})
+        interpreter.interpret_next()
+        self.answer = interpreter.InterpretationError("slut på minne")
+        for _ in range(6):  # three documents, two attempts each
+            interpreter.interpret_next()
+        status = self.client.get("/api/v2/inkorg").get_json()["interpretation"]
+        self.assertEqual((status["waiting"], status["alarm"]), (0, True))
+        self.assertEqual(status["last_done_at"], self.doc(documents[0]).interpreted_at.isoformat())

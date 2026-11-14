@@ -16,18 +16,38 @@ import { lookupRabbit, saveCertificate, type RegistryRabbit } from "../actions";
 import {
   buildSavePayload,
   initialCertForm,
+  initialSaveMode,
   numberCheckOf,
   problemField,
   problemText,
+  shownProposal,
   type CertForm,
   type InboxDocument,
   type NumberResolution,
+  type ProposedField,
   type SaveMode,
+  type Source,
 } from "../lib";
 import styles from "../inkorg.module.css";
 
-/** Where a proposed value came from, once the image reading fills the form. */
-export type Source = "läst" | "härlett" | "avviker" | "osäker";
+const GRANDPARENTS = [
+  ["farfar", "Farfar"],
+  ["farmor", "Farmor"],
+  ["morfar", "Morfar"],
+  ["mormor", "Mormor"],
+] as const;
+
+/** What the reading saw and what the registry says, beside a field that is not simply läst. */
+function ProposalHint({ field }: { field?: ProposedField }) {
+  if (!field || field.source === "läst") return null;
+  const parts = [
+    field.read && `Intyget: ${field.read}`,
+    field.registry != null && `Registret: ${field.registry}`,
+  ].filter(Boolean);
+  return parts.length ? (
+    <span className={styles.registry}>{parts.join(" · ")}</span>
+  ) : null;
+}
 
 function Field({
   source,
@@ -92,14 +112,14 @@ function RegistryHint({ number }: { number: string }) {
 /**
  * What a certificate shows, saved with …/spara: a new rabbit, or the paper
  * certificate on a rabbit that exists. Every field starts empty or from the
- * document's proposal; `sources` marks where proposed values came from.
+ * image reading's proposal, coloured by where its value came from, with the
+ * proposal's checks under the fields. Nothing is saved until Spara.
  */
 export function CertificateForm({
   itemId,
   doc,
   colors,
   canSave,
-  sources,
   onSaved,
   onSkip,
 }: {
@@ -107,14 +127,16 @@ export function CertificateForm({
   doc: InboxDocument;
   colors: string[];
   canSave: boolean;
-  sources?: Partial<Record<keyof CertForm, Source>>;
   onSaved: (document: InboxDocument) => void;
   onSkip: () => void;
 }) {
-  const [mode, setMode] = useState<SaveMode>("ny_kanin");
-  const [form, setForm] = useState<CertForm>(() =>
-    initialCertForm(doc.proposal),
-  );
+  const proposal = shownProposal(doc);
+  const proposed = proposal?.fields ?? {};
+  const sources = Object.fromEntries(
+    Object.entries(proposed).map(([key, field]) => [key, field?.source]),
+  ) as Partial<Record<keyof CertForm, Source>>;
+  const [mode, setMode] = useState<SaveMode>(() => initialSaveMode(proposal));
+  const [form, setForm] = useState<CertForm>(() => initialCertForm(proposal));
   const [errors, setErrors] = useState<Partial<Record<keyof CertForm, string>>>(
     {},
   );
@@ -158,7 +180,7 @@ export function CertificateForm({
     props: TextFieldProps = {},
     wide = false,
   ) => (
-    <Field source={sources?.[key]} wide={wide}>
+    <Field source={sources[key]} wide={wide}>
       <TextField
         label={label}
         value={form[key]}
@@ -167,7 +189,14 @@ export function CertificateForm({
         size="small"
         fullWidth
         {...props}
-        helperText={errors[key] ?? props.helperText}
+        helperText={
+          errors[key] ?? (
+            <>
+              <ProposalHint field={proposed[key]} />
+              {props.helperText}
+            </>
+          )
+        }
       />
     </Field>
   );
@@ -187,6 +216,24 @@ export function CertificateForm({
       }}
     >
       <h2 className={styles.cardTitle}>Det intyget visar</h2>
+      {doc.interpretation_status === "vantar" && (
+        <p className={styles.muted}>
+          Fotot tolkas. Förslaget kommer om några minuter; ladda om sidan då.
+        </p>
+      )}
+      {doc.interpretation_status === "misslyckad" && (
+        <p className={styles.muted}>
+          Fotot gick inte att tolka. Skriv av fälten, eller vrid fotot rätt och
+          klicka Tolka igen.
+        </p>
+      )}
+      {proposal && (
+        <p className={styles.note}>
+          Förslag från bildtolkningen. Jämför varje fält med fotot innan du
+          sparar. Fält som avviker från registret eller är osäkra är tomma:
+          skriv av dem från fotot.
+        </p>
+      )}
       <div
         className={`${styles.segment}`}
         role="group"
@@ -246,7 +293,7 @@ export function CertificateForm({
               type: "date",
               slotProps: { inputLabel: { shrink: true } },
             })}
-            <Field source={sources?.color}>
+            <Field source={sources.color}>
               <Autocomplete
                 options={colors}
                 freeSolo={colors.length === 0}
@@ -261,7 +308,9 @@ export function CertificateForm({
                     label="Färg"
                     size="small"
                     error={!!errors.color}
-                    helperText={errors.color}
+                    helperText={
+                      errors.color ?? <ProposalHint field={proposed.color} />
+                    }
                   />
                 )}
               />
@@ -280,6 +329,38 @@ export function CertificateForm({
           </>
         )}
       </div>
+
+      {proposal && (
+        <>
+          {mode === "ny_kanin" &&
+            GRANDPARENTS.some(([key]) => proposed[key]) && (
+              <ul className={styles.checks} aria-label="Far- och morföräldrar">
+                {GRANDPARENTS.filter(([key]) => proposed[key]).map(
+                  ([key, label]) => (
+                    <li key={key}>
+                      <Field source={proposed[key]?.source}>
+                        {label}: {proposed[key]?.value ?? "–"}
+                        <ProposalHint field={proposed[key]} />
+                      </Field>
+                    </li>
+                  ),
+                )}
+              </ul>
+            )}
+          {proposal.checks.length > 0 && (
+            <ul className={styles.checks} aria-label="Kontroller">
+              {proposal.checks.map((check) => (
+                <li key={check.text} data-ok={String(check.ok)}>
+                  <span aria-hidden="true">
+                    {check.ok === true ? "✓" : check.ok === false ? "✗" : "·"}
+                  </span>{" "}
+                  {check.text}
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      )}
 
       {formError && (
         <p role="alert" className={styles.error}>

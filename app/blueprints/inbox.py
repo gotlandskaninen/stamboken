@@ -15,6 +15,7 @@ import pillow_heif
 import pypdfium2
 import utils.data_access as da
 import utils.inbox as inbox
+import utils.inbox_interpreter as interpreter
 from extensions import limiter
 from flask import Blueprint, jsonify, request, send_file
 from flask_login import current_user
@@ -265,7 +266,14 @@ def queue():
     limit = min(max(args.get("limit", 50, type=int) or 50, 1), 200)
     offset = max(args.get("offset", 0, type=int) or 0, 0)
     items = list(query.order_by(InboxItem.received_at, InboxItem.id).limit(limit).offset(offset))
-    return jsonify({"items": inbox.items_json(items), "total": query.count(), "counts": counts})
+    return jsonify(
+        {
+            "items": inbox.items_json(items),
+            "total": query.count(),
+            "counts": counts,
+            "interpretation": interpreter.status(),
+        }
+    )
 
 
 # [Next.js] Who the person pickers offer: every active admin, manager and helper, by name only.
