@@ -165,6 +165,23 @@ class TestInformationSent(BuyerMailTest):
         self.assertEqual(subject, "Din kanin G1-2111 är registrerad hos Föreningen Gotlandskaninen")
         self.assertIn("du har köpt kaninen G1-2111. Säljaren", body)
 
+    def test_the_retention_sentence_follows_the_consent_the_address_was_given_under(self):
+        consent = "sparar vi bara för att du har sagt ja till det, och bara tills kaninen byter ägare igen. Ditt ja kan"
+        membership = (
+            "Din e-postadress sparar vi bara för att du har sagt ja till att vi hör av oss om medlemskap, "
+            "och i högst 12 månader."
+        )
+        self.assertIn(consent, self.text()[1])
+        self.assertNotIn(membership, self.text()[1])
+        db.BuyerContact.update(contact_consent_at=None, membership_optin_at=datetime.now(timezone.utc)).where(
+            db.BuyerContact.id == self.contact_id
+        ).execute()
+        body = self.text()[1]
+        self.assertIn(f"Uppgifterna kommer från säljaren. {membership}\n\nUppgifterna ses av", body)
+        self.assertIn(membership, body)
+        self.assertNotIn("byter ägare igen", body)
+        self.assertNotIn("Ditt ja kan du ta tillbaka", body)
+
     def test_not_sent_once_the_buyer_is_erased(self):
         buyer_contact.erase_buyer_contact(self.contact_id, self.admin)
         self.assertEqual(self.send(), [])

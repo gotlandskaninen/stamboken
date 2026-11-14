@@ -92,6 +92,7 @@ def _information_mail(params):
         "number": rabbit.number,
         "until": _swedish_date(contact.purge_at),
         "token": link_token(ERASE_PURPOSE, contact.id),
+        "consent": contact.contact_consent_at is not None,
         "certificate": pdf is not None,
         "attachments": [(f"genbanksintyg-{rabbit.number}.pdf", "application/pdf", pdf)] if pdf else [],
     }
