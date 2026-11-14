@@ -141,6 +141,34 @@ def _has_certificate(rabbit):
     return bool(rabbit.certificate) or rabbit.digital_certificate is not None
 
 
+def _sex(value):
+    return {"eunuch": "male"}.get(value, value)
+
+
+def _littermate_doubt(rabbit, name):
+    """
+    Littermates share their parents and their birth date, so nothing in the pedigree tells them apart, and a
+    misread individual digit lands exactly on one. A rabbit with a littermate of its sex (or of an unknown sex)
+    is therefore only told apart by its name: the doubt, unless the name read is its own and no such littermate's.
+    """
+    if rabbit.breeding_id is None:
+        return None
+    mates = Individual.select().where(
+        (Individual.breeding == rabbit.breeding_id) & (Individual.id != rabbit.id) & not_voided()
+    )
+    alike = [m for m in mates if not (rabbit.sex and m.sex) or _sex(m.sex) == _sex(rabbit.sex)]
+    if not alike:
+        return None
+    if (
+        name
+        and rabbit.name
+        and _same_name(name, rabbit.name)
+        and not any(_same_name(name, m.name or "") for m in alike)
+    ):
+        return None
+    return f"{rabbit.number} har ett kullsyskon av samma kön, och namnet på intyget skiljer dem inte åt"
+
+
 class _Registry:
     """The genebank's registry, as the checks ask it."""
 
@@ -194,7 +222,8 @@ class _Registry:
 def _branch(registry, raw, struck, role, fields, checks):
     """
     A parent and its parents (rule 3). The parent is confirmed when its number is in the registry and the
-    registry's parents of it agree with the certificate's: one of them at least, and neither against. Its parents
+    registry's parents of it agree with the certificate's: one of them at least, and neither against; a parent
+    with a littermate of its sex, whom its parents cannot tell apart, also by its name. Its parents
     are then proposed from the registry (rule 3: only under a confirmed parent). A disagreement marks the whole
     branch, since the parent may as well be the one misread. Returns (the confirmed parent, the rabbit found if
     nothing ruled it out but a lack of grandparents to compare), each None otherwise.
@@ -238,6 +267,8 @@ def _branch(registry, raw, struck, role, fields, checks):
     name = _text(entry.get("namn"))
     if name and rabbit.name and not _same_name(name, rabbit.name):
         doubts.append(f"namnet på intyget är inte registrets ({rabbit.name})")
+    elif sibling := _littermate_doubt(rabbit, name):
+        doubts.append(sibling)
     compared = any(result in (READ, DERIVED) for *_, result in grandparents)
     if not compared:
         doubts.append(f"far- och morföräldrarna går inte att jämföra med registrets för {rabbit.number}")
@@ -419,20 +450,20 @@ def _plain_fields(registry, raw, struck, fields):
 
 def _existing(registry, raw, struck, rabbit, own_text, swapped):
     """
-    A certificate of a rabbit already in Stamboken: the paper certificate to put on it. A digital certificate,
-    its number read as printed, needs nothing more. Otherwise its parents, sex and name must agree with the
-    registry, so that a misread last digit does not land on a sibling unseen.
+    A certificate of a rabbit already in Stamboken: the paper certificate to put on it, or for a digital one
+    nothing more. Either way its parents and birth date must agree with the registry, and its sex and name must
+    not disagree. That does not tell a rabbit from a littermate of its sex, which has the same parents and birth
+    date and is one misread digit away: such a rabbit is läst only when the name read is its own.
     """
     doubts = []
     sex = _SEXES.get(re.sub(r"[^A-ZÅÄÖ]", "", _text(raw.get("kon")).upper()))
-    if sex and rabbit.sex and sex != {"eunuch": "male"}.get(rabbit.sex, rabbit.sex):
+    if sex and rabbit.sex and sex != _sex(rabbit.sex):
         doubts.append(f"Könet på intyget är inte registrets för {rabbit.number}.")
     name = _text(raw.get("namn"))
     if name and rabbit.name and not _same_name(name, rabbit.name):
         doubts.append(f"Namnet på intyget är inte registrets för {rabbit.number} ({rabbit.name}).")
-    if rabbit.digital_certificate is not None and not doubts and not swapped:
-        fields = {"individual": _field(READ, rabbit.number, read=own_text)}
-        return {"fields": fields, "checks": [_check(True, f"{rabbit.number} finns redan med digitalt intyg.")]}
+    elif sibling := _littermate_doubt(rabbit, name):
+        doubts.append(f"{sibling}.")
 
     fields, checks = {}, [_check(None, f"{rabbit.number} finns redan i Stamboken.")]
     checks.extend(_check(False, doubt) for doubt in doubts)
@@ -442,9 +473,14 @@ def _existing(registry, raw, struck, rabbit, own_text, swapped):
         key = _PARENTS[role][0]
         parsed = None if key in struck else _parse_number(_entry(raw, key), registry.letter)
         results.append(registry.compare(parsed, litter and getattr(litter, role)))
-    if "differs" in results:
+    birth = None if "fodelsedatum" in struck else _date(_text(raw.get("fodelsedatum")))
+    born_else = birth and litter is not None and litter.birth_date and birth != litter.birth_date
+    if "differs" in results or born_else:  # another rabbit's certificate as likely as a misread one
         source = DEVIATES
-        checks.append(_check(False, f"Mor eller far på intyget är inte registrets för {rabbit.number}."))
+        if "differs" in results:
+            checks.append(_check(False, f"Mor eller far på intyget är inte registrets för {rabbit.number}."))
+        if born_else:
+            checks.append(_check(False, f"Intyget säger född {birth}, Stamboken {litter.birth_date}."))
     elif doubts or not any(result in (READ, DERIVED) for result in results):
         source = UNSURE
         if not doubts:
@@ -452,11 +488,12 @@ def _existing(registry, raw, struck, rabbit, own_text, swapped):
     else:
         source = DERIVED if swapped else READ
         checks.append(_check(True, "Föräldrarna på intyget stämmer med registret."))
-    fields["individual"] = _field(source, rabbit.number, read=own_text)
-    fields["paper_number"] = _field(source, rabbit.number, read=own_text)
-    birth = _date(_text(raw.get("fodelsedatum")))
-    if birth and litter is not None and litter.birth_date and birth != litter.birth_date:
-        checks.append(_check(False, f"Intyget säger född {birth}, Stamboken {litter.birth_date}."))
+    if rabbit.digital_certificate is not None and source == READ:
+        fields = {"individual": _field(READ, rabbit.number, read=own_text)}
+        return {"fields": fields, "checks": [_check(True, f"{rabbit.number} finns redan med digitalt intyg.")]}
+    registry_number = rabbit.number if source == DEVIATES else None
+    fields["individual"] = _field(source, rabbit.number, read=own_text, registry=registry_number)
+    fields["paper_number"] = _field(source, rabbit.number, read=own_text, registry=registry_number)
     if rabbit.certificate and rabbit.certificate != re.sub(r"\s", "", _text(raw.get("intygsnummer"))):
         checks.append(_check(False, f"{rabbit.number} har redan intyg {rabbit.certificate} i Stamboken."))
     _certificate(raw, struck, rabbit, fields, checks)
@@ -471,7 +508,8 @@ def build_proposal(raw, genebank_id, herd_id=None):
     visar") and the grandparents': farfar, farmor, morfar, mormor.
     """
     raw = raw if isinstance(raw, dict) else {}
-    struck = {key for key in raw.get("overstruket") or [] if isinstance(key, str)}
+    struck = raw.get("overstruket")
+    struck = {key for key in struck if isinstance(key, str)} if isinstance(struck, list) else set()
     registry = _Registry(genebank_id)
     fields, checks = {}, []
     own_text = _number_text(raw)

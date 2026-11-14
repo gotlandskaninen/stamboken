@@ -115,7 +115,10 @@ class TestNormalise(ProposalTest):
             with self.subTest(written):
                 proposal = self.propose(
                     reading(
-                        fodelsedatum=written, genbanksnr="G 9001", ar_kull_individ="25 11", mor=ancestor("9001", "2211")
+                        fodelsedatum=written,
+                        genbanksnr="G 9001",
+                        ar_kull_individ="25 11",
+                        mor=ancestor("9001", "2211", "Mira"),
                     )
                 )
                 self.assertEqual(self.source(proposal, "birth_date"), ("läst", "2025-05-10"))
@@ -185,6 +188,17 @@ class TestPedigree(ProposalTest):
         for key in ("farfar", "farmor"):
             self.assertNotIn(proposal["fields"].get(key, {}).get("source"), ("läst", "härlett"), key)
 
+    def test_a_parent_with_a_littermate_of_its_sex_needs_its_name(self):
+        # Max and Mats are brothers: the same parents, the same birth date, one digit apart.
+        for name, source in (("", "osäker"), ("Mats", "osäker"), ("Max", "läst")):
+            with self.subTest(name=name):
+                proposal = self.propose(reading(far=ancestor("G9003", "2311", name)))
+                self.assertEqual(self.source(proposal, "father")[0], source)
+                if source == "osäker":
+                    self.assertNotIn(self.source(proposal, "farfar"), [("läst", "G9003-2011")])
+        proposal = self.propose(reading(far=ancestor("G9003", "2311")))
+        self.assertIn("Far: G9003-2311 har ett kullsyskon av samma kön", " ".join(self.texts(proposal, False)))
+
     def test_a_littermate_of_the_other_sex_or_name_is_caught(self):
         for number, name in (("2312", "Max"), ("2313", "Max")):  # Mats is a brother, Maja a sister of Max
             with self.subTest(number):
@@ -204,7 +218,7 @@ class TestNearestMatch(ProposalTest):
     def test_one_character_off_is_derived(self):
         for herd, individual in (("G9013", "2311"), ("69003", "2311"), ("G9OO3", "23l1")):
             with self.subTest(f"{herd} {individual}"):
-                proposal = self.propose(reading(far=ancestor(herd, individual)))
+                proposal = self.propose(reading(far=ancestor(herd, individual, "Max")))
                 self.assertEqual(self.source(proposal, "father"), ("härlett", "G9003-2311"))
                 self.assertEqual(proposal["fields"]["father"]["read"], f"{herd} {individual}")
 
@@ -292,7 +306,7 @@ class TestExistingRabbit(ProposalTest):
         self.litter("G9001", "G9001-2211", "G9003-2311", date(2024, 4, 20), rabbits)
 
     def existing(self, number, **changes):
-        return reading(ar_kull_individ=number, fodelsedatum="240420", intygsnummer="SYN-777", **changes)
+        return reading(**{"ar_kull_individ": number, "fodelsedatum": "240420", "intygsnummer": "SYN-777", **changes})
 
     def test_a_digital_certificate_needs_nothing_more(self):
         proposal = self.propose(self.existing("2412", kon="Hane", namn="Ebbe"))
@@ -300,6 +314,36 @@ class TestExistingRabbit(ProposalTest):
             proposal["fields"], {"individual": {"value": "G9001-2412", "source": "läst", "read": "G9001 2412"}}
         )
         self.assertEqual(self.texts(proposal), ["G9001-2412 finns redan med digitalt intyg."])
+
+    def test_another_birth_date_deviates_and_proposes_no_rabbit(self):
+        proposal = self.propose(self.existing("2411", namn="Elsa", fodelsedatum="240421"))
+        for key in ("individual", "paper_number"):
+            self.assertEqual(self.source(proposal, key), ("avviker", None), key)
+            self.assertEqual(proposal["fields"][key]["registry"], "G9001-2411")
+        self.assertIn("Intyget säger född 2024-04-21, Stamboken 2024-04-20.", self.texts(proposal, False))
+        proposal = self.propose(self.existing("2412", kon="Hane", namn="Ebbe", fodelsedatum="240421"))
+        self.assertEqual(self.source(proposal, "individual"), ("avviker", None))  # a digital one too
+
+    def test_a_rabbit_with_a_sister_is_read_only_by_its_name(self):
+        sisters = [
+            ("G9003-2421", "female", "Lova", {"certificate": None}),
+            ("G9003-2422", "female", "Lisa", {"certificate": None}),
+            ("G9003-2423", "female", "Vera", {"certificate": None, "digital_certificate": 9002}),
+            ("G9003-2424", "female", "Vega", {"certificate": None, "digital_certificate": 9003}),
+        ]
+        self.litter("G9003", "G9001-2211", "G9003-2311", date(2024, 6, 1), sisters)  # G9003's first litter of 2024
+        for number, name, source in (
+            ("2422", "", "osäker"),  # the name not read: Lova as likely
+            ("2422", "Lisa", "läst"),
+            ("2424", "", "osäker"),  # a digital certificate is no exception
+            ("2424", "Vega", "läst"),
+        ):
+            with self.subTest(number=number, name=name):
+                reading_ = self.existing(number, genbanksnr="G9003", kon="Hona", namn=name, fodelsedatum="240601")
+                proposal = self.propose(reading_)
+                self.assertEqual(self.source(proposal, "individual")[0], source)
+        proposal = self.propose(self.existing("2424", genbanksnr="G9003", kon="Hona", namn="", fodelsedatum="240601"))
+        self.assertNotIn("G9003-2424 finns redan med digitalt intyg.", self.texts(proposal))
 
     def test_a_paper_certificate_for_a_rabbit_in_stamboken(self):
         proposal = self.propose(self.existing("2411", namn="Elsa"))
@@ -364,6 +408,6 @@ class TestRegistryOnly(ProposalTest):
         self.assertEqual(self.source(proposal, "paper_number"), ("osäker", None))
 
     def test_garbage_from_the_model_is_survived(self):
-        for raw in (None, [], {"far": "G9003-2311", "overstruket": "far", "fodelsedatum": 250510}):
+        for raw in (None, [], {"far": "G9003-2311", "overstruket": "far", "fodelsedatum": 250510}, {"overstruket": 3}):
             with self.subTest(raw):
                 self.assertIsInstance(self.propose(raw)["fields"], dict)

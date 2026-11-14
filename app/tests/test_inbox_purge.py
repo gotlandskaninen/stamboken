@@ -137,6 +137,26 @@ class TestOriginals(PurgeTest):
         purge.purge_originals(NOW)
         self.assertIn(PHONE, self.text(item))  # a message's text follows the message's own rule
 
+    def test_the_models_transcription_goes_with_the_original(self):
+        reading = {"namn": "Testa", "mor": {"genbanksnr": "G9001", "ar_kull_individ": "2211", "namn": "Mira"}}
+        proposal = {"fields": {"name": {"value": "Testa", "source": "läst", "read": "Testa"}}, "checks": []}
+        items = {"purged": self.make(NOW - inbox.months(13)), "erased": self.make(), "person": self.make()}
+        db.InboxDocument.update(interpretation=reading, proposal=proposal, interpretation_status="klar").execute()
+        seller = db.Member.create(
+            first_name="Saljare", last_name="Test", membership=db.Membership.create(member_number=990)
+        )
+        db.InboxDocument.update(seller_member=seller).where(db.InboxDocument.item == items["person"].id).execute()
+
+        purge.purge_originals(NOW)
+        with db.DB_PROXY.atomic():
+            purge.erase_document(items["erased"], self.document(items["erased"]), self.manager)
+            purge.erase_person_from_inbox(seller)
+
+        for name, item in items.items():
+            with self.subTest(name):
+                document = self.document(item)
+                self.assertEqual((document.original_path, document.interpretation, document.proposal), (None,) * 3)
+
     def test_waiting_for_the_reading_stops_with_the_original(self):
         item = self.make(self.limit - MINUTE)
         db.InboxDocument.update(interpretation_status="vantar").execute()
@@ -223,15 +243,12 @@ class TestDeletedItems(PurgeTest):
         kept = self.make(state="skrap", closed_at=limit + MINUTE)
         gone = self.make(state="skrap", closed_at=limit - MINUTE)
         paths = [self.document(gone).original_path]
-        trace = db.InboxOperation.create(operation_id=uuid.uuid4(), user=self.helper, document=self.document(gone))
         row_id = self.queued_mail(gone)
 
         self.assertEqual(purge.purge_junk(NOW), 1)
 
         self.assertDeleted(gone, paths)
         self.assertTrue(self.exists(self.document(kept).original_path))
-        trace = db.InboxOperation.get_by_id(trace.id)  # "inlagd från foto av" outlives its item
-        self.assertEqual((trace.document_id, trace.user_id), (None, self.helper.id))
         self.assertIsNone(db.MailMessage.get_by_id(row_id).address_hash)
         self.assertIdempotent(purge.purge_junk)
 
@@ -277,6 +294,27 @@ class TestDeletedItems(PurgeTest):
         for item in (junk, incomplete):
             self.assertIsNotNone(db.InboxItem.get_or_none(db.InboxItem.id == item.id))
         self.assertTrue(self.exists(copy.public_path))
+
+    def test_a_document_a_write_was_traced_to_is_never_deleted(self):
+        """A sale from a certificate leaves only its trace; the item keeps the document, without original or text."""
+        old = NOW - inbox.months(24)
+        items = {"junk": self.make(state="skrap", closed_at=old), "incomplete": self.make(old, state="ofullstandig")}
+        traces = {}
+        for name, item in items.items():
+            document = self.document(item)
+            traces[name] = db.InboxOperation.create(operation_id=uuid.uuid4(), user=self.helper, document=document)
+
+        self.assertEqual(purge.purge_junk(NOW) + purge.purge_incomplete(NOW), 0)
+
+        for name, item in items.items():
+            with self.subTest(name):
+                document = self.document(item)
+                self.assertEqual(db.InboxOperation.get_by_id(traces[name].id).document_id, document.id)
+                self.assertIsNone(document.original_path)
+                self.assertNotIn(PHONE, self.text(item))
+        self.assertEqual([p for _, _, names in os.walk(self.folder) for p in names], [])
+        self.assertIdempotent(purge.purge_junk)
+        self.assertIdempotent(purge.purge_incomplete)
 
     def test_the_copy_on_the_rabbit_survives_every_rule(self):
         old = NOW - inbox.months(36)
@@ -364,6 +402,47 @@ class TestSafety(PurgeTest):
         )
 
 
+class TestOrphans(PurgeTest):
+    def aged(self, relative, age):
+        path = os.path.join(self.folder, self.write(relative))
+        os.utime(path, ((NOW - age).timestamp(),) * 2)
+        return relative
+
+    def test_files_no_row_names_go_after_a_day_and_nothing_else(self):
+        document = self.with_copy(self.make())
+        os.utime(self.stored(document), ((NOW - timedelta(days=30)).timestamp(),) * 2)  # named: stays however old
+        old = timedelta(days=2)
+        orphans = [
+            self.aged("inkorg/original/lost.jpg", old),  # its removal failed after the commit
+            self.aged("inkorg/original/lost.jpg.0a1b.tmp", old),  # a write that died half way
+            self.aged("inkorg/kopia/999.jpg", old),
+        ]
+        kept = [
+            self.aged("inkorg/original/uploading.jpg", timedelta(hours=1)),  # its upload has not committed yet
+            self.aged("inkorg/original/sub/deeper.jpg", old),  # not directly in the folder
+            self.aged("inkorg/elsewhere.jpg", old),
+        ]
+        outside = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, outside, True)
+        victim = os.path.join(outside, "keep.jpg")
+        with open(victim, "wb") as out:
+            out.write(b"not the queue's")
+        os.symlink(victim, os.path.join(self.folder, "inkorg/original/link.jpg"))
+        os.utime(os.path.join(self.folder, "inkorg/original/link.jpg"), ((NOW - old).timestamp(),) * 2)
+
+        with self.assertLogs(purge.logger, "INFO") as logs:
+            purge.run(NOW)
+
+        for relative in orphans:
+            self.assertFalse(self.exists(relative), relative)
+        for relative in kept + [document.original_path, document.public_path, "inkorg/original/link.jpg"]:
+            self.assertTrue(os.path.lexists(os.path.join(self.folder, relative)), relative)
+        self.assertTrue(os.path.exists(victim))
+        self.assertIn("INFO:herdbook.inbox_purge:Inbox purge remove_orphans: 3", logs.output)
+        self.assertFalse(any("lost" in line or "999" in line for line in logs.output))  # counts, never names
+        self.assertIdempotent(purge.remove_orphans)
+
+
 class TestJob(PurgeTest):
     def test_the_leader_runs_the_purge_at_night(self):
         lock = os.path.join(tempfile.mkdtemp(), "scheduler.lock")
@@ -382,6 +461,13 @@ class TestJob(PurgeTest):
         self.assertEqual(
             {k: job.kwargs[k] for k in ("hour", "minute", "id", "max_instances")},
             {"hour": 3, "minute": 45, "id": "inbox_purge", "max_instances": 1},
+        )
+        (wake,) = [
+            c for c in scheduler_cls.return_value.add_job.call_args_list if herdbook._wake_waiting_items in c.args
+        ]
+        self.assertEqual(
+            {k: wake.kwargs[k] for k in ("trigger", "hours", "id")},
+            {"trigger": "interval", "hours": 1, "id": "inbox_wake"},
         )
 
         gone = self.make(state="skrap", closed_at=datetime.now(timezone.utc) - timedelta(days=31))  # the job's clock

@@ -1,4 +1,5 @@
 import { fetchApi } from "@/lib/api";
+import { formatTime } from "@/lib/inkorg";
 import styles from "./inkorg.module.css";
 
 type GmailStatus = {
@@ -7,9 +8,6 @@ type GmailStatus = {
   last_error: string | null;
   alarm: boolean;
 };
-
-const time = (iso: string) =>
-  new Date(iso).toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" });
 
 /** One line at the top of the queue when reading the mailbox has stopped or failed (GET /v2/inkorg/status). */
 export async function GmailAlarm() {
@@ -22,7 +20,7 @@ export async function GmailAlarm() {
       {gmail.last_error
         ? `Fel vid inläsning av mejl: ${gmail.last_error}`
         : gmail.last_run_at
-          ? `Mejlen har inte lästs in sedan ${time(gmail.last_run_at)}.`
+          ? `Mejlen har inte lästs in sedan ${formatTime(gmail.last_run_at)}.`
           : "Mejlen har inte lästs in än."}
     </p>
   );

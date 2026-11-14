@@ -9,7 +9,8 @@ import os
 import re
 import threading
 import uuid
-from functools import wraps
+from contextlib import contextmanager
+from functools import partial, wraps
 
 import pillow_heif
 import pypdfium2
@@ -55,6 +56,7 @@ pillow_heif.register_heif_opener()
 inbox_bp = Blueprint("inbox", __name__, url_prefix="/api/v2")
 
 MAX_FILES = 10  # files per upload, and images once each PDF is split into pages
+MAX_REQUEST = 10 * 1024 * 1024  # a whole upload: what nginx lets through (client_max_body_size 10M)
 MAX_MESSAGE = 2000
 PDF_DPI = 200
 PDF_MAX_SIDE = 3000  # pixels; bounds the memory a page takes, whatever size the PDF says it is
@@ -82,21 +84,44 @@ def _kind(file):
     return None
 
 
-def _pdf_pages(data, room):
-    """Each page as an RGB image, at PDF_DPI but at most PDF_MAX_SIDE pixels a side."""
-    with _PDFIUM:
+@contextmanager
+def _decoding():
+    """What a decoder raises, as the upload's refusals; what the caller does with an image is not in here."""
+    try:
+        yield
+    except _Refused:
+        raise
+    except Image.DecompressionBombError:
+        raise _Refused(_too_many_pixels()) from None
+    except Exception:
+        raise _Refused(problem(422, "Unprocessable Content", "Filen kunde inte läsas. Den kan vara skadad.")) from None
+
+
+def _each_page(data, room, handle):
+    """handle(page) for each page as an RGB image, at PDF_DPI but at most PDF_MAX_SIDE pixels a side."""
+    with _PDFIUM, _decoding():
         pdf = pypdfium2.PdfDocument(data)
-        try:
-            if len(pdf) > room:
-                raise _Refused(_too_many_images())
-            pages = []
-            for page in pdf:
+    try:
+        with _PDFIUM:
+            count = len(pdf)
+        if count > room:
+            raise _Refused(_too_many_images())
+        for index in range(count):
+            with _PDFIUM, _decoding():  # shortcut: no time limit on rendering, pypdfium2 has none short of ctypes
+                page = pdf[index]
                 width, height = page.get_size()
                 scale = min(PDF_DPI / 72, PDF_MAX_SIDE / max(width, height, 1))
-                pages.append(page.render(scale=scale).to_pil().convert("RGB"))
+                bitmap = page.render(scale=scale)
+                image = bitmap.to_pil().convert("RGB")
+                bitmap.close()
                 page.close()
-            return pages
-        finally:
+            try:
+                handle(image)
+            finally:
+                image.close()
+        return count
+    finally:
+        with _PDFIUM:
             pdf.close()
 
 
@@ -104,8 +129,11 @@ def _too_many_images():
     return problem(400, "Bad Request", f"Högst {MAX_FILES} bilder per inskick. En PDF räknas sida för sida.")
 
 
-def _images(file, room):
-    """The file's images, RGB and turned upright as the phone saw them; a PDF page by page."""
+def _each_image(file, room, handle):
+    """
+    handle(image) for each of the file's images, RGB and turned upright as the phone saw it, a PDF page by page:
+    one decoded image at a time, each closed before the next is decoded. Returns how many there were.
+    """
     file.seek(0, os.SEEK_END)
     size = file.tell()
     file.seek(0)
@@ -114,25 +142,32 @@ def _images(file, room):
     kind = _kind(file)
     if kind is None:
         raise _Refused(problem(415, "Unsupported Media Type", "Otillåten filtyp. Bara JPEG, PNG, WebP, HEIC och PDF."))
-    try:
-        if kind == "pdf":
-            return _pdf_pages(file.read(), room)
-        if room < 1:
-            raise _Refused(_too_many_images())
+    if kind == "pdf":
+        return _each_page(file.read(), room, handle)
+    if room < 1:
+        raise _Refused(_too_many_images())
+    with _decoding():
         if kind == "webp" and _webp_pixels(file.read(30)) > MAX_PIXELS:
             raise _Refused(_too_many_pixels())
         file.seek(0)
-        with Image.open(file) as image:
-            if image.width * image.height > MAX_PIXELS:  # Image.open reads only the header
+        with Image.open(file) as source:
+            if source.width * source.height > MAX_PIXELS:  # Image.open reads only the header
                 raise _Refused(_too_many_pixels())
-            image.load()
-            return [ImageOps.exif_transpose(image).convert("RGB")]
-    except _Refused:
-        raise
-    except Image.DecompressionBombError:
-        raise _Refused(_too_many_pixels()) from None
-    except Exception:
-        raise _Refused(problem(422, "Unprocessable Content", "Filen kunde inte läsas. Den kan vara skadad.")) from None
+            source.load()
+            image = ImageOps.exif_transpose(source).convert("RGB")
+    try:
+        handle(image)
+    finally:
+        image.close()
+    return 1
+
+
+@inbox_bp.errorhandler(413)
+def too_large(_exc):
+    """A body over MAX_REQUEST (werkzeug's 413 is HTML) as problem+json."""
+    return problem(
+        413, "Payload Too Large", "Inskicket är för stort. Högst 10 MB allt som allt, skicka resten i ett nytt."
+    )
 
 
 @inbox_bp.errorhandler(429)
@@ -144,10 +179,13 @@ def rate_limited(exc):
 # [Next.js] Upload photos of certificates from the phone (docs/inkorg.md).
 @inbox_bp.route("/inkorg/upload", methods=["POST"])
 @json_login_required
-@limiter.limit("20 per hour", key_func=lambda: str(current_user.id))
+# Only a stored upload counts: a refusal, also the 409 that asks to accept the warnings, spends nothing.
+@limiter.limit(
+    "20 per hour", key_func=lambda: str(current_user.id), deduct_when=lambda response: response.status_code == 201
+)
 def upload():
-    # Up to MAX_FILES files of MAX_FILE_SIZE each, not the app-wide MAX_CONTENT_LENGTH; set before the body is read.
-    request.max_content_length = MAX_FILES * MAX_FILE_SIZE + 1024 * 1024
+    # Set before the body is read: the same limit as nginx's, so a larger upload never half reaches Flask.
+    request.max_content_length = MAX_REQUEST
     herd = Herd.get_or_none(Herd.herd == request.form.get("herd"))
     if herd is None:
         return problem(400, "Bad Request", "Välj besättning.")
@@ -161,26 +199,25 @@ def upload():
         return problem(400, "Bad Request", "Ingen fil bifogad.")
     if len(files) > MAX_FILES:
         return _too_many_images()
-    dry_run = request.form.get("dry_run") in ("1", "true")
+    accepted = request.form.get("accept_warnings") in ("1", "true")
 
-    results, stored = [], []
+    results, encoded, stored = [], [], []
+
+    def keep(index, image):  # measured and encoded; written only once every file has been read
+        quality = inbox.measure(image)
+        page = sum(result["file"] == index for result in results) + 1
+        results.append({"file": index, "page": page, "quality": quality, "warnings": inbox.warnings(quality)})
+        encoded.append(inbox.jpeg_bytes(image))
+
     try:
         for index, file in enumerate(files):
-            images = _images(file, MAX_FILES - len(results))
-            for page, image in enumerate(images, 1):
-                quality = inbox.measure(image)
-                results.append(
-                    {
-                        "file": index,
-                        "page": page if len(images) > 1 else None,
-                        "quality": quality,
-                        "warnings": inbox.warnings(quality),
-                    }
-                )
-                if not dry_run:
-                    stored.append((*inbox.store_jpeg(image, "original"), quality))
-        if dry_run:
-            return jsonify({"documents": results}), 200
+            if _each_image(file, MAX_FILES - len(results), partial(keep, index)) == 1:
+                results[-1]["page"] = None  # an image, or a PDF of one page
+        if not accepted and any(result["warnings"] for result in results):
+            detail = "Någon bild ser svårläst ut. Skicka igen med accept_warnings=1 för att spara den ändå."
+            return problem(409, "Konflikt", detail, warnings=results)
+        for data, result in zip(encoded, results, strict=True):
+            stored.append((*inbox.write_jpeg(data, "original"), result["quality"]))
         with DB_PROXY.atomic():
             item, documents = inbox.create_upload(current_user, herd, message, stored)
     except _Refused as refused:
@@ -207,12 +244,21 @@ def _queue_worker(f):
 
 
 def _locked(item_id, action):
-    """action(item) on the item locked in one transaction; a refusal rolls it back and becomes a problem."""
+    """
+    action(item) on the item locked in one transaction; a refusal rolls it back (unless it keeps what was done
+    before it) and becomes a problem.
+    """
     try:
         with DB_PROXY.atomic():
-            return action(inbox.lock_item(item_id))
+            try:
+                return action(inbox.lock_item(item_id))
+            except inbox.InboxError as exc:
+                if not exc.keep:
+                    raise
+                refused = exc
     except inbox.InboxError as exc:
-        return problem(exc.status, exc.title, exc.detail)
+        refused = exc
+    return problem(refused.status, refused.title, refused.detail)
 
 
 def _then_item(change):
@@ -243,7 +289,13 @@ def _user_in_body():
 @_queue_worker
 def queue():
     args = request.args
+    mine = sorted(set(current_user.is_manager or []) | set(current_user.is_helper or []))
+    scope = args.get("scope") or ("alla" if current_user.is_admin else "mina")
+    if scope not in ("mina", "alla"):
+        return problem(400, "Bad Request", "scope är mina eller alla.")
     query = InboxItem.select()
+    if scope == "mina":  # a narrower view only: anyone in the queue may still open any item
+        query = query.where(InboxItem.genebank.in_(mine) | InboxItem.genebank.is_null(True))
     if args.get("mine") in ("1", "true"):
         query = query.where(InboxItem.assigned_to == current_user.id)
     if args.get("untaken") in ("1", "true"):
@@ -273,6 +325,8 @@ def queue():
             "total": query.count(),
             "counts": counts,
             "interpretation": interpreter.status(),
+            "scope": scope,
+            "my_genebanks": mine,
         }
     )
 
@@ -538,9 +592,10 @@ def _register_new(body, user, grant):
     return response[0].get_json(), individual
 
 
-def _assign_certificate(body, user, grant):
+def _assign_certificate(body, user, grant, document):
     """The paper certificate on a rabbit already in Stamboken (AssignPaperCertificate)."""
     individual = _live_individual(body.get("individual"))
+    inbox.require_same_rabbit(document, individual)
     certificate, paper_number = body.get("paper_certificate"), body.get("paper_number")
     if not isinstance(certificate, str) or not certificate.strip() or len(certificate) > 20:
         raise inbox.InboxError(400, "Ange intygsnumret (paper_certificate), högst 20 tecken.")
@@ -552,6 +607,8 @@ def _assign_certificate(body, user, grant):
         )
     except (IndividualRefused, HerdTrackingError, ValueError) as exc:
         raise _Refused(_command_problem(exc)) from None
+    if not grant.traced:  # nothing written, so no trace: the document stays unlinked
+        raise inbox.InboxError(409, f"Ingen ändring: {individual.number} har redan intyget {certificate.strip()}.")
     individual = Individual.get_by_id(individual.id)
     return {"individual": individual.as_dict()}, individual
 
@@ -577,9 +634,10 @@ def save_document(item_id, document_id):
                 raise inbox.InboxError(409, "Bara ett intyg som inte är sparat än kan sparas.")
             grant = inbox.InboxGrant(item, user, document)
             if action == "ny_kanin":
+                inbox.require_same_rabbit(document)  # a rabbit sold through the document is not a new one
                 result = _register_new(body, user, grant)
             elif action == "pappersintyg":
-                result = _assign_certificate(body, user, grant)
+                result = _assign_certificate(body, user, grant, document)
             else:
                 raise inbox.InboxError(400, 'action är "ny_kanin" eller "pappersintyg".')
             inbox.saved(item, document, user, result[1], action)
@@ -613,10 +671,19 @@ def transfer(item_id, document_id):
             document = inbox.document_of(item, document_id)
             inbox.require_saving(item, document, user)
             individual = _live_individual(body.get("individual"))
+            inbox.require_same_rabbit(document, individual)
+            if document.herd_tracking_id is not None:
+                raise inbox.InboxError(409, "En försäljning är redan registrerad genom dokumentet.")
             grant = inbox.InboxGrant(item, user, document)
             lock_individual_for_edit(individual.id)
             latest = current_holder_row(individual.id)
-            if (
+            proven = inbox.proven_sale(item, document, individual, herd, when)
+            if proven is not None:  # the proof of a sale registered from another document: nothing to write
+                seller = proven.from_herd or individual.origin_herd
+                if not (is_manager_of(user, seller.genebank_id) or grant.allows(user, seller)):
+                    raise inbox.InboxError(403, "Du får inte koppla ett bevis till kaninens försäljning.")
+                row = proven
+            elif (
                 latest
                 and when < coerce_date(latest.herd_tracking_date)
                 and is_manager_of(user, individual.current_herd.genebank_id)
@@ -635,7 +702,7 @@ def transfer(item_id, document_id):
                     raise _Refused(problem(400, "Ogiltig försäljning", error))
                 execute(user, individual.id, lambda ctx: [TransferIndividual(herd, date)], grant=grant)
                 row = current_holder_row(individual.id)
-            inbox.transferred(item, document, user, individual, row)
+            inbox.transferred(item, document, user, individual, row, linked=proven is not None)
             answer = {
                 "individual": Individual.get_by_id(individual.id).as_dict(),
                 "herd_tracking_id": row.id,
@@ -678,7 +745,9 @@ def confirm_mask(item_id, document_id):
 
     def action(item):
         document = inbox.document_of(item, document_id)
-        inbox.confirm_mask(item, document, current_user, body.get("mask_rects"))
+        inbox.confirm_mask(
+            item, document, current_user, body.get("rotation"), body.get("mask_rects"), body.get("no_personal_data")
+        )
         return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]})
 
     return _locked(item_id, action)

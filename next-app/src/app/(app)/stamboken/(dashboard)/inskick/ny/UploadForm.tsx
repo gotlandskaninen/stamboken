@@ -5,39 +5,14 @@ import { useRouter } from "next/navigation";
 import { Autocomplete, TextField } from "@mui/material";
 import type { GenebankHerd } from "@/utils/saleRules";
 import { useSnackbar } from "@/components/SnackbarProvider";
-import { planImage, warningText } from "@/lib/inkorg";
+import { warningText } from "@/lib/inkorg";
 import { uploadIntyg } from "./actions";
+import { prepare } from "./prepare";
 import styles from "../inskick.module.css";
 
-const MAX_TOTAL = 10 * 1024 * 1024; // nginx request limit, docs/inkorg.md
-
-// Downscale per planImage; anything the browser cannot decode goes unchanged.
-async function prepare(file: File): Promise<File> {
-  let bitmap: ImageBitmap | null = null;
-  if (file.type.startsWith("image/")) {
-    try {
-      bitmap = await createImageBitmap(file);
-    } catch {
-      bitmap = null;
-    }
-  }
-  const plan = planImage(
-    file.type,
-    bitmap ? { width: bitmap.width, height: bitmap.height } : null,
-  );
-  if (!bitmap || plan.action === "keep") return file;
-  const canvas = document.createElement("canvas");
-  canvas.width = plan.width;
-  canvas.height = plan.height;
-  canvas.getContext("2d")!.drawImage(bitmap, 0, 0, plan.width, plan.height);
-  const blob = await new Promise<Blob | null>((r) =>
-    canvas.toBlob(r, "image/jpeg", 0.85),
-  );
-  if (!blob) return file;
-  return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", {
-    type: "image/jpeg",
-  });
-}
+// nginx cuts the request at 10 MiB, multipart overhead included (docs/inkorg.md),
+// so the files get a little less.
+const MAX_TOTAL = 9 * 1024 * 1024;
 
 /**
  * `herds` are the user's own. Someone who works in the queue may upload for
@@ -57,7 +32,7 @@ export function UploadForm({
   const [files, setFiles] = useState<File[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
-  // Warnings per index in `files`, set after the dry run.
+  // Warnings per index in `files`, from the API's 409.
   const [warnings, setWarnings] = useState<Record<number, string[]> | null>(
     null,
   );
@@ -80,9 +55,13 @@ export function UploadForm({
   };
 
   const build = async (): Promise<FormData | null> => {
-    const prepared = await Promise.all(files.map(prepare));
+    // One at a time: decoded phone photos are large.
+    const prepared: File[] = [];
+    for (const f of files) prepared.push(await prepare(f));
     if (prepared.reduce((n, f) => n + f.size, 0) > MAX_TOTAL) {
-      setError("Bilderna är för stora tillsammans. Skicka färre åt gången.");
+      setError(
+        "Bilderna är för stora tillsammans (högst 9 MB). Skicka färre åt gången.",
+      );
       return null;
     }
     const fd = new FormData();
@@ -93,23 +72,27 @@ export function UploadForm({
     return fd;
   };
 
-  const send = (skipCheck: boolean) =>
+  const send = (acceptWarnings: boolean) =>
     start(async () => {
       setError(null);
       const fd = await build();
       if (!fd) return;
-      if (!skipCheck) {
-        const dry = await uploadIntyg(fd, true);
-        if (!dry.ok) return setError(dry.error);
-        const byFile: Record<number, string[]> = {};
-        for (const d of dry.documents) {
-          if (d.warnings.length)
-            byFile[d.file] = [...(byFile[d.file] ?? []), ...d.warnings];
-        }
-        if (Object.keys(byFile).length) return setWarnings(byFile);
+      if (acceptWarnings) fd.set("accept_warnings", "1");
+      let res: Awaited<ReturnType<typeof uploadIntyg>>;
+      try {
+        res = await uploadIntyg(fd);
+      } catch {
+        // The connection dropped: the call itself rejects. The files stay chosen.
+        return setError("Uppladdningen avbröts. Försök igen.");
       }
-      const res = await uploadIntyg(fd, false);
-      if (!res.ok) return setError(res.error);
+      if (!res.ok) {
+        if (!res.warnings?.length) return setError(res.error);
+        // Nothing was stored: show what the API saw, per file.
+        const byFile: Record<number, string[]> = {};
+        for (const d of res.warnings)
+          byFile[d.file] = [...(byFile[d.file] ?? []), ...d.warnings];
+        return setWarnings(byFile);
+      }
       showSnackbar("Tack, intygen är skickade", "success");
       router.push(
         res.itemId
@@ -220,7 +203,7 @@ export function UploadForm({
             Ta foto eller välj filer
           </button>
           <span className="sb-meta">
-            Foton eller PDF. Högst 10 bilder per inskick.
+            Foton eller PDF. Högst 10 bilder och 9 MB per inskick.
           </span>
         </div>
         <div className={styles.field}>

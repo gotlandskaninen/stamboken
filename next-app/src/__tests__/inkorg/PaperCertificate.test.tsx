@@ -1,13 +1,24 @@
 import "@testing-library/jest-dom/vitest";
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { cleanup, render, screen } from "@testing-library/react";
 import { PaperCertificate } from "@/components/individual/PaperCertificate";
+import { ModeProvider } from "@/lib/mode-context";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllEnvs();
+});
+
+const inMode = (mode: "demo" | "prod") =>
+  render(
+    <ModeProvider mode={mode}>
+      <PaperCertificate number="G9001-2512" />
+    </ModeProvider>,
+  );
 
 describe("PaperCertificate", () => {
   it("shows the thumbnail linking to the full image", () => {
-    render(<PaperCertificate number="G9001-2512" />);
+    inMode("prod");
     expect(screen.getByText("Pappersintyg")).toBeInTheDocument();
     expect(screen.getByRole("link")).toHaveAttribute(
       "href",
@@ -15,9 +26,12 @@ describe("PaperCertificate", () => {
     );
   });
 
-  it("hides the block when the image fails to load (403/404)", () => {
-    render(<PaperCertificate number="G9001-2512" />);
-    fireEvent.error(screen.getByRole("img"));
-    expect(screen.queryByText("Pappersintyg")).toBeNull();
+  it("reads the copy from the demo API in demo mode", () => {
+    vi.stubEnv("NEXT_PUBLIC_API_TEST_URL", "/api-test");
+    inMode("demo");
+    expect(screen.getByRole("img")).toHaveAttribute(
+      "src",
+      "/api-test/v2/individual/G9001-2512/paper-certificate",
+    );
   });
 });

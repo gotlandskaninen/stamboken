@@ -13,6 +13,7 @@ import smtplib
 import subprocess
 import sys
 import threading
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -41,17 +42,35 @@ class FakeRelay:
         self.opened = []
         self.tls = False
         self.lock = threading.Lock()
+        self.cut = threading.Event()  # set when the sender shuts the socket down
 
-    def __call__(self, host, port, local_hostname=None, timeout=None):
-        if self.refuse:
-            raise self.refuse
-        self.opened.append((host, port, local_hostname, timeout))
-        return _FakeConnection(self)
+    def __call__(self, host="", port=0, local_hostname=None, timeout=None):
+        conn = _FakeConnection(self, local_hostname, timeout)
+        if host:  # like smtplib.SMTP: a host connects at once
+            conn.connect(host, port)
+        return conn
+
+
+class _FakeSocket:
+    def __init__(self, relay):
+        self.relay = relay
+
+    def shutdown(self, how):
+        self.relay.cut.set()
 
 
 class _FakeConnection:
-    def __init__(self, relay):
+    def __init__(self, relay, local_hostname, timeout):
         self.relay = relay
+        self.local_hostname, self.timeout = local_hostname, timeout
+        self.sock = None
+
+    def connect(self, host, port):
+        if self.relay.refuse:
+            raise self.relay.refuse
+        self.relay.opened.append((host, port, self.local_hostname, self.timeout))
+        self.sock = _FakeSocket(self.relay)
+        return 220, b"ready"
 
     def ehlo(self):
         return 250, b"ok"
@@ -203,6 +222,20 @@ class TestModes(MailTest):
         self.assertEqual(self.attempts(row_id), [])
         self.assertTrue(any("Vi har tagit emot din ansökan" in line for line in logs.output))
         self.assertFalse(any("@" in line for line in logs.output))
+
+    def test_log_mode_masks_link_tokens_in_the_text(self):
+        self.queue()
+        token = "4711." + "a" * 22  # shaped like link_token; built, so no scanner takes it for a secret
+        rendered = (f"Din länk {token}", f"Öppna https://{HOST}/rapport/{token}")
+        with (
+            mock.patch.multiple(settings.mail, mode="log"),
+            mock.patch.object(mail, "render", return_value=rendered),
+            self.assertLogs("herdbook.mail", "INFO") as logs,
+        ):
+            mail.send_pending(self.now)
+        text = "\n".join(logs.output)
+        self.assertIn(f"Din länk 4711.***\n\nÖppna https://{HOST}/rapport/4711.***", text)
+        self.assertNotIn(token, text)
 
     def test_allowlist_sends_to_listed_and_blocks_the_rest(self):
         domain, named, other = (
@@ -358,13 +391,13 @@ class TestErrorClasses(MailTest):
         first, second = self.queue("a@example.org"), self.queue("b@example.org")
         denied = smtplib.SMTPSenderRefused(550, b"5.7.1 Invalid credentials for relay", settings.mail.sender)
         relay = self.relay(replies=[denied])
-        due = self.row(first).next_attempt_at
         self.assertEqual(mail.send_pending(self.now), 1)  # the run stops at the first
         row = self.row(first)
-        self.assertEqual((row.status, row.attempts, row.next_attempt_at), ("queued", 0, due))
+        self.assertEqual((row.status, row.attempts), ("queued", 0))
         self.assertEqual(self.row(second).status, "queued")
         self.assertEqual([(a.result, a.smtp_code) for a in self.attempts(first)], [("systemic", "5.7.1")])
         self.assertEqual(db.MailSender.get_by_id(1).paused_until, self.now + mail.PAUSE_AFTER_SYSTEMIC)
+        self.assertGreater(row.next_attempt_at, self.now + mail.PAUSE_AFTER_SYSTEMIC)
 
         later = self.now + timedelta(minutes=1)
         self.assertEqual(mail.send_pending(later), 0)  # paused, but the heartbeat still beats
@@ -385,6 +418,70 @@ class TestErrorClasses(MailTest):
         self.assertEqual(self.row(second).status, "queued")
         self.assertIsNotNone(db.MailSender.get_by_id(1).paused_until)
         self.assertEqual(relay.sent, [])
+
+    def test_policy_refusal_of_one_recipient_fails_only_that_mail(self):
+        """5.7.1 at RCPT is about this recipient, not the relay: the next mail goes out in the same run."""
+        first, second = self.queue("a@example.org"), self.queue("b@example.org")
+        refusal = _refused(550, "5.7.1 Recipient address rejected by policy <a@example.org>", "a@example.org")
+        relay = self.relay(replies=[refusal])
+        self.assertEqual(mail.send_pending(self.now), 2)
+        self.assertEqual((self.row(first).status, self.row(first).attempts), ("failed", 1))
+        self.assertEqual([(a.result, a.smtp_code) for a in self.attempts(first)], [("permanent", "5.7.1")])
+        self.assertEqual([_row_id(msg) for msg, _, _ in relay.sent], [second])
+        self.assertIsNone(db.MailSender.get_by_id(1).paused_until)
+
+    def test_size_limit_fails_only_that_mail(self):
+        """552 at MAIL FROM (smtplib sends SIZE=) or at DATA is this message's own failure."""
+        too_big = b"5.3.4 Message size exceeds fixed maximum message size"
+        at_mail_from, at_data, fine = (self.queue(f"{x}@example.org") for x in "abc")
+        relay = self.relay(
+            replies=[smtplib.SMTPSenderRefused(552, too_big, settings.mail.sender), smtplib.SMTPDataError(552, too_big)]
+        )
+        self.assertEqual(mail.send_pending(self.now), 3)
+        for row_id in (at_mail_from, at_data):
+            self.assertEqual((self.row(row_id).status, self.row(row_id).attempts), ("failed", 1))
+            self.assertEqual([(a.result, a.smtp_code) for a in self.attempts(row_id)], [("permanent", "5.3.4")])
+        self.assertEqual([_row_id(msg) for msg, _, _ in relay.sent], [fine])
+        self.assertIsNone(db.MailSender.get_by_id(1).paused_until)
+
+    def test_systemic_row_does_not_head_the_queue_after_the_pause(self):
+        first, second = self.queue("a@example.org"), self.queue("b@example.org")
+        denied = smtplib.SMTPSenderRefused(550, b"5.7.1 Invalid credentials for relay", settings.mail.sender)
+        relay = self.relay(replies=[denied])
+        mail.send_pending(self.now)
+        self.assertEqual(mail.send_pending(db.MailSender.get_by_id(1).paused_until), 1)
+        self.assertEqual([_row_id(msg) for msg, _, _ in relay.sent], [second])
+        self.assertEqual(self.row(first).status, "queued")
+
+    def test_row_refused_three_times_while_other_mail_goes_through_fails(self):
+        stuck = self.queue("stuck@example.org")
+        denied = smtplib.SMTPSenderRefused(550, b"5.7.1 Sender rejected", settings.mail.sender)
+
+        def gate(msg):
+            if _row_id(msg) == stuck:
+                raise denied
+
+        self.relay(gate=gate)
+        results = lambda: [a.result for a in self.attempts(stuck)]  # noqa: E731
+        for _ in range(3):  # nothing else goes out between the refusals: the relay's fault, never the mail's
+            mail.send_pending(self.row(stuck).next_attempt_at)
+        self.assertEqual(results(), ["systemic"] * 3)
+        for i in range(2):  # now other mail is accepted in between
+            other = self.queue(f"other{i}@example.org")
+            self.assertEqual(mail.send_pending(db.MailSender.get_by_id(1).paused_until), 1)
+            self.assertEqual(self.row(other).status, "sent")
+            mail.send_pending(self.row(stuck).next_attempt_at)
+        row = self.row(stuck)
+        self.assertEqual((row.status, row.attempts), ("failed", 1))
+        self.assertEqual(results(), ["systemic"] * 4 + ["permanent"])
+
+        # "Försök igen" starts the count over.
+        later = self.attempts(stuck)[-1].at + timedelta(minutes=1)
+        db.MailMessage.update(status="queued", attempts=0, next_attempt_at=later).where(
+            db.MailMessage.id == stuck
+        ).execute()
+        mail.send_pending(later)
+        self.assertEqual((self.row(stuck).status, results()[-1]), ("queued", "systemic"))
 
     def test_unexpected_send_error_counts_as_temporary(self):
         first, second = self.queue("a@example.org"), self.queue("b@example.org")
@@ -418,6 +515,19 @@ class TestErrorClasses(MailTest):
         self.assertEqual((self.row(first).status, self.row(first).attempts), ("queued", 1))
         self.assertEqual(self.row(second).status, "sent")
         self.assertEqual(len(relay.opened), 2)
+
+    def test_two_dropped_connections_in_a_row_pause_the_sender(self):
+        """A relay that accepts the connection and then drops every transaction must not use up the mails."""
+        first, second, third = (self.queue(f"{x}@example.org") for x in "abc")
+        drops = [smtplib.SMTPServerDisconnected("Connection unexpectedly closed"), TimeoutError("timed out")]
+        relay = self.relay(replies=drops)
+        self.assertEqual(mail.send_pending(self.now), 2)
+        self.assertEqual((self.row(first).status, self.row(first).attempts), ("queued", 1))
+        self.assertEqual((self.row(second).status, self.row(second).attempts), ("queued", 0))
+        self.assertEqual([a.result for a in self.attempts(second)], ["systemic"])
+        self.assertEqual(self.attempts(third), [])
+        self.assertIsNotNone(db.MailSender.get_by_id(1).paused_until)
+        self.assertEqual(relay.sent, [])
 
     def test_same_message_id_on_every_attempt(self):
         self.queue()
@@ -557,42 +667,68 @@ class TestConcurrentSenders(MailTest):
         self.assertEqual(claimed.id, second)
         self.assertEqual(self.row(first).status, "queued")
 
-    def test_sender_whose_row_was_reclaimed_cannot_write_status(self):
+    def test_sender_stuck_in_smtp_gives_up_long_before_its_row_can_be_reclaimed(self):
+        """
+        A relay that never answers is cut off at SEND_DEADLINE, counted from the claim's renewal and far below
+        RECLAIM_AFTER, so no other sender can take the row while this one may still be talking to the relay.
+        """
         row_id = self.queue()
-        in_send, release = threading.Event(), threading.Event()
 
-        def gate(msg):
-            if threading.current_thread().name == "stuck":
-                in_send.set()
-                release.wait(timeout=10)
+        def gate(msg):  # silent until the sender shuts the socket down; without a deadline it accepts after 10 s
+            if relay.cut.wait(timeout=10):
+                raise smtplib.SMTPServerDisconnected("Connection unexpectedly closed")
 
         relay = self.relay(gate=gate)
-        errors = []
-        stuck = self._sender(errors, name="stuck")
-        stuck.start()
-        self.assertTrue(in_send.wait(timeout=10))
-        old_token = self.row(row_id).claim_token
-        # The stuck sender's claim is past the reclaim limit: the next run takes the row over and sends it.
-        db.MailMessage.update(claimed_at=self.now - timedelta(minutes=11)).where(db.MailMessage.id == row_id).execute()
-        self.assertEqual(mail.send_pending(), 1)
-        after_takeover = self.row(row_id)
-        self.assertEqual(after_takeover.status, "sent")
-
-        with self.assertLogs("herdbook.mail", "WARNING") as logs:
-            release.set()
-            stuck.join(timeout=10)
-        self.assertEqual(errors, [])
-        self.assertTrue(any("reclaimed" in line for line in logs.output))
+        started = time.monotonic()
+        with mock.patch.object(mail, "SEND_DEADLINE", 0.2, create=True):
+            self.assertEqual(mail.send_pending(), 1)
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(relay.sent, [])
         row = self.row(row_id)
-        self.assertEqual((row.status, row.attempts, row.sent_at), ("sent", 1, after_takeover.sent_at))
-        self.assertEqual(len(self.attempts(row_id)), 1)  # only the new claim's outcome was written
-        self.assertEqual(len(relay.sent), 2)  # both reached the relay: the same Message-ID dedupes it
-        self.assertIsNotNone(old_token)
+        self.assertEqual((row.status, row.attempts), ("queued", 1))
+        self.assertIn("TimeoutError", row.last_error)
+        self.assertLess(mail.SEND_DEADLINE * 4, mail.RECLAIM_AFTER.total_seconds())
+
+    def test_slow_sender_that_lost_its_claim_neither_sends_nor_writes(self):
+        real = mail.MAIL_KINDS["ansokan.mottagen"]
+        relay = self.relay()
+        for crash in (False, True):  # the slow build returns (the send is skipped) or fails (the write is dropped)
+            with self.subTest(crash=crash):
+                row_id = self.queue(f"slow{int(crash)}@example.org")
+                in_build, release = threading.Event(), threading.Event()
+
+                def build(params, crash=crash, in_build=in_build, release=release):
+                    if threading.current_thread().name == "slow":
+                        in_build.set()
+                        release.wait(timeout=10)
+                        if crash:
+                            raise RuntimeError("the build failed late")
+                    return real.build(params)
+
+                errors = []
+                slow = self._sender(errors, name="slow")
+                with mock.patch.dict(mail.MAIL_KINDS, {"ansokan.mottagen": real._replace(build=build)}):
+                    slow.start()
+                    self.assertTrue(in_build.wait(timeout=10))
+                    # The slow sender's claim is past the reclaim limit: the next run takes the row over and sends it.
+                    db.MailMessage.update(claimed_at=self.now - timedelta(minutes=11)).where(
+                        db.MailMessage.id == row_id
+                    ).execute()
+                    self.assertEqual(mail.send_pending(), 1)
+                    with self.assertLogs("herdbook.mail", "WARNING") as logs:
+                        release.set()
+                        slow.join(timeout=10)
+                self.assertEqual(errors, [])
+                self.assertTrue(any("reclaimed" in line for line in logs.output))
+                self.assertEqual([_row_id(msg) for msg, _, _ in relay.sent].count(row_id), 1)
+                row = self.row(row_id)
+                self.assertEqual((row.status, row.attempts, row.last_error), ("sent", 1, None))
+                self.assertEqual([a.result for a in self.attempts(row_id)], ["sent"])
 
 
 class TestPrivacy(MailTest):
     def test_last_error_and_detail_never_hold_an_address(self):
-        rows = [self.queue(f"p{i}@example.org") for i in range(3)]
+        rows = [self.queue(f"p{i}@example.org") for i in range(4)]
         self.relay(
             replies=[
                 _refused(550, "5.1.1 <p0@example.org> unknown", "p0@example.org"),
@@ -601,9 +737,9 @@ class TestPrivacy(MailTest):
             ]
         )
         mail.send_pending(self.now)
-        self.assertTrue(mail.record_bounce(mail.message_id(rows[0]), "550 5.1.1 <p0@example.org> gone"))
+        self.assertTrue(mail.record_bounce(mail.message_id(rows[3]), "550 5.1.1 <p3@example.org> gone"))
         texts = [r.last_error for r in db.MailMessage.select()] + [a.detail for a in db.MailAttempt.select()]
-        self.assertEqual(len([t for t in texts if t]), 7)
+        self.assertEqual(len([t for t in texts if t]), 8)
         for text in texts:
             self.assertNotIn("@", text or "")
 
@@ -666,6 +802,15 @@ class TestBounces(MailTest):
             with self.subTest(other=other):
                 self.assertFalse(mail.record_bounce(other, "550 5.1.1 user unknown"))
         self.assertEqual(self.row(row_id).status, "sent")
+        self.assertEqual([a.source for a in self.attempts(row_id)], ["smtp"])
+
+    def test_only_a_sent_row_can_bounce(self):
+        row_id, message_id = self._sent()
+        for status in ("queued", "sending", "failed", "cancelled", "logged", "blocked", "bounced"):
+            with self.subTest(status=status):
+                db.MailMessage.update(status=status, last_error="före").where(db.MailMessage.id == row_id).execute()
+                self.assertFalse(mail.record_bounce(message_id, "550 5.1.1 user unknown"))
+                self.assertEqual((self.row(row_id).status, self.row(row_id).last_error), (status, "före"))
         self.assertEqual([a.source for a in self.attempts(row_id)], ["smtp"])
 
 

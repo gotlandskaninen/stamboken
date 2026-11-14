@@ -79,7 +79,9 @@ import utils.genebank_logging as gblogging  # isort:skip
 import utils.genetics_service as genetics  # isort:skip
 from utils import number_assets  # isort:skip
 from utils.individual_commands import purge_command_free_text  # isort:skip
+from utils.log_masking import TokenMaskFilter  # isort:skip
 from utils.mail import purge_old_mail, send_pending  # isort:skip
+from utils import inbox  # isort:skip
 from utils.inbox import queue_digests  # isort:skip
 from utils import inbox_gmail  # isort:skip
 from utils import inbox_purge  # isort:skip
@@ -134,6 +136,7 @@ settings.refuse_auto_validate_outside_demo()
 settings.refuse_unsafe_mail_settings()
 settings.refuse_unsafe_gmail_settings()
 settings.refuse_private_folder_under_uploads()
+settings.report_unwritable_private_folder()
 
 # verify_oauth2_token would otherwise enforce audience "" and fail every login.
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID") or None
@@ -325,6 +328,18 @@ def _read_gmail():
             inbox_gmail.run()
     except Exception:  # pylint: disable=broad-except
         APP.logger.exception("Reading the Gmail mailbox failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _wake_waiting_items():
+    """Leader job every hour (docs/inkorg.md, "Väntar på förälder"), built as _send_mail: it closes its connection."""
+    try:
+        APP.logger.info("Woke %s inbox items waiting for a parent", inbox.wake_waiting())
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Waking the inbox items waiting for a parent failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
 
 def _interpret_document():
@@ -384,6 +399,10 @@ file_handler.setFormatter(
     )
 )
 APP.logger.addHandler(file_handler)
+# Link tokens are credentials. Mask them in every line the app's handlers and the root's stderr handler write:
+# Flask's "Exception on <path>", and herdbook.mail's lines, which propagate to both.
+for _handler in APP.logger.handlers + logging.getLogger().handlers:
+    _handler.addFilter(TokenMaskFilter())
 utils.external_auth.setup(APP)
 
 Session(APP)
@@ -3088,6 +3107,10 @@ def initialize_app():
             scheduler.add_job(
                 _read_gmail, trigger="interval", minutes=5, id="inbox_gmail", max_instances=1, coalesce=True
             )
+        # Wakes the intake queue's items still waiting for a registered parent, which a save skipped as locked.
+        scheduler.add_job(
+            _wake_waiting_items, trigger="interval", hours=1, id="inbox_wake", max_instances=1, coalesce=True
+        )
         # The image reading of photographed certificates, one document a run (docs/inkorg.md, "Tolkning").
         scheduler.add_job(
             _interpret_document,

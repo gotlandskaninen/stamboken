@@ -9,6 +9,7 @@ from datetime import date
 import utils.database as db  # noqa: E402
 import utils.inbox as inbox  # noqa: E402
 import utils.inbox_purge as purge  # noqa: E402
+import utils.mail as mail  # noqa: E402
 import utils.matrikel as matrikel  # noqa: E402
 
 from tests.test_inbox_purge import PHONE, PurgeTest  # noqa: E402
@@ -54,7 +55,7 @@ class ErasureTest(PurgeTest):
         resp = self.post(f"/{item.id}/dokument/{document.id}/spara", **body)
         self.assertEqual(resp.status_code, 200, resp.get_json())
         resp = self.post(
-            f"/{item.id}/dokument/{document.id}/maskning", mask_rects=[{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+            f"/{item.id}/dokument/{document.id}/maskning", rotation=0, mask_rects=[{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
         )
         self.assertEqual(resp.status_code, 200, resp.get_json())
         return item, db.InboxDocument.get_by_id(document.id)
@@ -167,3 +168,55 @@ class TestEraseEndpoint(ErasureTest):
                 self.assertEqual(self.erase(item, document).status_code, 403)
         self.assertTrue(os.path.exists(os.path.join(self.folder, document.original_path)))
         self.assertIn(PHONE, self.text(item))
+
+
+class TestEraseWhatThePersonSent(ErasureTest):
+    def mailed(self, member):
+        """A mail from the member, matched to them, with one photo and a queued mail to its address."""
+        path = self.write(f"inkorg/original/{member.id}-mejl.jpg")
+        item = db.InboxItem.create(
+            kind="mail", member=member, sender_address=member.email, message=f"Ring mig på {PHONE}"
+        )
+        db.InboxDocument.create(item=item, original_path=path, mime="image/jpeg", sha256="1" * 64)
+        row = mail.enqueue_mail(
+            "inlasning.klar", "inbox_sender", item.id, {"item_id": item.id}, ref=("inbox_item", item.id)
+        )
+        db.MailMessage.update(address_hash="ab" * 32).where(db.MailMessage.id == row).execute()
+        return item, path, row
+
+    def test_a_mail_they_sent_with_nothing_saved_is_deleted(self):
+        item, path, row = self.mailed(self.seller)
+        other, other_path, _ = self.mailed(self.buyer)
+        with db.DB_PROXY.atomic():
+            paths = purge.erase_person_from_inbox(self.seller)
+        self.assertTrue(os.path.exists(os.path.join(self.folder, path)))  # the file waits for the commit
+        purge.remove_originals(paths)
+        self.assertIsNone(db.InboxItem.get_or_none(db.InboxItem.id == item.id))
+        self.assertFalse(self.exists(path))
+        mailed = db.MailMessage.get_by_id(row)
+        self.assertEqual((mailed.status, mailed.address_hash), ("cancelled", None))
+        self.assertIsNotNone(db.InboxItem.get_or_none(db.InboxItem.id == other.id))
+        self.assertTrue(self.exists(other_path))
+
+    def test_what_their_account_uploaded_is_erased_and_a_saved_item_keeps_only_the_copy(self):
+        db.Member.update(user=self.owner).where(db.Member.id == self.buyer.id).execute()  # not the rabbit's seller
+        item, document = self.certified()  # uploaded by the owner's account, the copy on G1-2112
+        unsaved, unsaved_document = self.uploaded()
+        db.InboxItem.update(sender_address="kopare@example.org").where(db.InboxItem.id == item.id).execute()
+        row = mail.enqueue_mail(
+            "inlasning.klar", "user", self.owner.id, {"item_id": item.id}, ref=("inbox_item", item.id)
+        )
+
+        matrikel.anonymize_person(db.Member.get_by_id(self.buyer.id), self.admin)  # detaches the account first
+
+        self.assertIsNone(db.InboxItem.get_or_none(db.InboxItem.id == unsaved.id))
+        self.assertFalse(self.exists(unsaved_document.original_path))
+        kept = self.reload(item)
+        self.assertEqual((kept.message, kept.sender_address), (None, None))
+        self.assertNotIn(PHONE, self.text(item))
+        erased = db.InboxDocument.get_by_id(document.id)
+        self.assertIsNone(erased.original_path)
+        self.assertFalse(self.exists(document.original_path))
+        self.assertTrue(self.exists(erased.public_path))
+        self.assertEqual(self.certificate_served(), 200)
+        self.assertEqual(db.MailMessage.get_by_id(row).status, "cancelled")

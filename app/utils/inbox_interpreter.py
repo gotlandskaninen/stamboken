@@ -26,6 +26,7 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 2  # then the document is "misslyckad" and the handler types it
 TIMEOUT = 900  # seconds: a model on CPU takes minutes per photo, and longer while it loads
 MAX_SIDE = 2000  # pixels, the longest side of the photo the interpreter gets
+MAX_STRING = 200  # characters of a string the model answers; a field on a certificate is far shorter
 _BACKGROUND_SCALE = 4  # the paper's background is estimated on a copy this many times smaller
 
 _ANCESTOR = {
@@ -69,6 +70,26 @@ PROMPT = (
 
 class InterpretationError(Exception):
     """The interpreter gave no usable answer: the server is down, timed out, or answered something else."""
+
+
+def conform(value, schema):
+    """
+    The model's answer as `schema` describes it, or None: an object keeps only its known keys, a value of the
+    wrong type counts as missing, a string loses its NUL characters and lone surrogates (jsonb takes neither)
+    and is cut to MAX_STRING, an enum keeps only its values. Nothing the model sends reaches the database or
+    the checks otherwise.
+    """
+    kind = schema.get("type")
+    if kind == "object" and isinstance(value, dict):
+        kept = {key: conform(value.get(key), sub) for key, sub in schema["properties"].items()}
+        return {key: item for key, item in kept.items() if item is not None}
+    if kind == "array" and isinstance(value, list):
+        kept = [conform(item, schema["items"]) for item in value[: len(schema["items"].get("enum", value))]]
+        return [item for item in kept if item is not None]
+    if kind == "string" and isinstance(value, str):
+        text = value.replace("\x00", "").encode("utf-8", "ignore").decode()[:MAX_STRING]
+        return text if text in schema.get("enum", [text]) else None
+    return None
 
 
 def prepare_image(source, rotation):
@@ -141,7 +162,7 @@ def interpret(image, schema=SCHEMA):
         raise InterpretationError(f"{type(exc).__name__}: {exc}") from exc
     if not isinstance(answer, dict):
         raise InterpretationError("Svaret är inget JSON-objekt.")
-    return answer
+    return conform(answer, schema)
 
 
 def initial_status():

@@ -30,6 +30,9 @@ app-cache/
 logs/
 logs-test/
 uppladdningar/
+# The intake queue's original photos must never be copied into an image.
+**/skyddat/
+**/skyddat-test/
 letsencrypt/
 local_ca/
 

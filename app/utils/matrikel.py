@@ -440,7 +440,8 @@ def anonymize_person(member, actor):
     Detaches the account through the same locked unlink path as the endpoint
     (mode="anonymize") and invalidates the genebanks whose
     access the account loses. Erases the intake queue's originals and texts
-    that show the person as seller or buyer (erase_person_from_inbox).
+    that show the person as seller or buyer, and what they sent
+    (erase_person_from_inbox).
     Returns the scrubbed person: the caller's pre-lock instance is stale
     afterwards.
     """
@@ -506,7 +507,8 @@ def anonymize_person(member, actor):
         lost_genebanks = (
             {h.genebank_id for h in Herd.select(Herd.genebank).where(Herd.id.in_(list(lost)))} if lost else set()
         )
-        originals = erase_person_from_inbox(person)  # the photos in the intake queue that show the person
+        # the intake queue's photos that show the person, and what they sent (their account read before the detach)
+        originals = erase_person_from_inbox(person, user.id if user is not None else None)
     remove_originals(originals)  # only after the commit: a row never names a removed file
     _invalidate_genebanks(lost_genebanks)
     return person

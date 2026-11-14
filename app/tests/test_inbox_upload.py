@@ -79,20 +79,70 @@ class TestUpload(InboxTest):
             ("suddig.jpg", encoded(blurry())),
             ("liten.jpg", encoded(photo((600, 800)))),
         ]
-        resp = self.upload(*files)
+        resp = self.upload(*files, accept_warnings="1")
         self.assertEqual(resp.status_code, 201, resp.get_json())
         self.assertEqual([d["warnings"] for d in resp.get_json()["documents"]], [[], ["suddig"], ["lag_upplosning"]])
         sharp, soft, _ = self.documents(resp.get_json()["item"]["id"])
         self.assertGreater(sharp.quality["sharpness"], inbox.MIN_SHARPNESS)
         self.assertLess(soft.quality["sharpness"], inbox.MIN_SHARPNESS)
 
-    def test_dry_run_measures_without_storing(self):
+    def test_a_flagged_upload_stores_nothing_until_the_warnings_are_accepted(self):
         self.login("owner")
-        resp = self.upload(("suddig.jpg", encoded(blurry())), dry_run="1")
-        self.assertEqual(resp.status_code, 200, resp.get_json())
-        self.assertEqual(resp.get_json()["documents"][0]["warnings"], ["suddig"])
+        files = [("skarp.jpg", encoded(photo())), ("suddig.pdf", pdf(photo(), blurry()))]
+        resp = self.upload(*files)
+        self.assertEqual((resp.status_code, resp.mimetype), (409, "application/problem+json"))
+        self.assertEqual(
+            [(d["file"], d["page"], d["warnings"]) for d in resp.get_json()["warnings"]],
+            [(0, None, []), (1, 1, []), (1, 2, ["suddig"])],
+        )
+        self.assertTrue(all("quality" in d and "id" not in d for d in resp.get_json()["warnings"]))
         self.assertFalse(db.InboxItem.select().exists())
         self.assertEqual(os.listdir(self.folder), [])
+        resp = self.upload(*files, accept_warnings="1")
+        self.assertEqual(resp.status_code, 201, resp.get_json())
+        self.assertEqual([d["warnings"] for d in resp.get_json()["documents"]], [[], [], ["suddig"]])
+        self.assertEqual(self.upload(dry_run="1").status_code, 201)  # dry_run is gone: an unflagged upload is stored
+
+    def test_an_image_of_a_pixel_or_two_is_measured(self):
+        for size in ((1, 1), (2, 900), (900, 2)):
+            with self.subTest(size=size):
+                quality = inbox.measure(Image.new("RGB", size, (200, 200, 200)))
+                self.assertEqual(quality["short_side"], min(size))
+        self.login("owner")
+        resp = self.upload(("pixel.png", encoded(Image.new("RGB", (1, 1)), "PNG")), accept_warnings="1")
+        self.assertNotEqual(resp.status_code, 500)
+        self.assertIn("lag_upplosning", resp.get_json()["documents"][0]["warnings"])
+
+    def test_one_decoded_image_at_a_time(self):
+        """Ten large images in one request: each is closed before the next is decoded, a PDF page by page too."""
+        live, peak = set(), []
+        convert, close = Image.Image.convert, Image.Image.close
+
+        def counting_convert(image, mode=None, *args, **kwargs):
+            result = convert(image, mode, *args, **kwargs)
+            if mode == "RGB":  # the decoded image the pipeline works on
+                live.add(id(result))
+                peak.append(len(live))
+            return result
+
+        def counting_close(image):
+            live.discard(id(image))
+            return close(image)
+
+        large = [(f"{n}.jpg", encoded(photo((2000, 2600), seed=n), quality=20)) for n in range(10)]
+        pages = [("tio.pdf", pdf(*[photo(seed=n) for n in range(10)]))]
+        self.login("owner")
+        for name, files in (("ten photos", large), ("ten pages", pages)):
+            with (
+                self.subTest(name),
+                mock.patch.object(Image.Image, "convert", counting_convert),
+                mock.patch.object(Image.Image, "close", counting_close),
+            ):
+                live.clear()
+                peak.clear()
+                resp = self.upload(*files)
+                self.assertEqual(resp.status_code, 201, resp.get_json())
+                self.assertEqual((len(peak), max(peak)), (10, 1))
 
     def test_refusals(self):
         self.login("owner")
@@ -127,13 +177,16 @@ class TestUpload(InboxTest):
                 self.login(username)
                 self.assertEqual(self.upload(herd=herd).status_code, status)
 
-    def test_a_body_over_the_app_wide_limit_is_accepted(self):
-        noise = Image.frombytes("RGB", (1500, 1500), os.urandom(1500 * 1500 * 3))
+    def test_a_body_over_what_nginx_lets_through_is_refused_as_problem_json(self):
+        noise = Image.frombytes("RGB", (1100, 1100), os.urandom(1100 * 1100 * 3))
         big = encoded(noise, "PNG")
-        self.assertGreater(2 * len(big), 11 * 1024 * 1024)  # MAX_CONTENT_LENGTH elsewhere
+        self.assertLess(len(big), 10 * 1024 * 1024 // 2)  # each file under 10 MB, together over
         self.login("owner")
-        resp = self.upload(("a.png", big), ("b.png", big))
-        self.assertEqual(resp.status_code, 201, resp.get_json())
+        resp = self.upload(("a.png", big), ("b.png", big), ("c.png", big))
+        self.assertEqual((resp.status_code, resp.mimetype), (413, "application/problem+json"))
+        self.assertIn("10 MB", resp.get_json()["detail"])
+        self.assertFalse(db.InboxItem.select().exists())
+        self.assertEqual(self.upload(("a.png", big), accept_warnings="1").status_code, 201)
 
     def test_files_are_removed_when_the_item_cannot_be_written(self):
         self.login("owner")
@@ -151,14 +204,15 @@ class TestUploadRateLimit(InboxTest):
         self.addCleanup(limiter.reset)
         self.addCleanup(setattr, limiter, "enabled", False)
 
-    def test_twenty_uploads_an_hour_per_user(self):
-        small = ("x.jpg", encoded(photo((200, 200))))
-        self.assertEqual(self.upload(small, dry_run="1").status_code, 401)  # anonymous: no limit to count
+    def test_twenty_stored_uploads_an_hour_per_user(self):
+        small = ("x.jpg", encoded(photo((200, 200))))  # flagged: low resolution
+        self.assertEqual(self.upload(small).status_code, 401)  # anonymous: no limit to count
         self.login("owner")
-        codes = [self.upload(small, dry_run="1").status_code for _ in range(21)]
-        self.assertEqual(codes, [200] * 20 + [429])
-        resp = self.upload(small, dry_run="1")
+        self.assertEqual([self.upload(small).status_code for _ in range(25)], [409] * 25)  # refusals spend nothing
+        codes = [self.upload(small, accept_warnings="1").status_code for _ in range(21)]
+        self.assertEqual(codes, [201] * 20 + [429])
+        resp = self.upload(small, accept_warnings="1")
         self.assertEqual((resp.status_code, resp.mimetype), (429, "application/problem+json"))
         self.assertEqual(resp.get_json()["type"], "rate-limit-exceeded")
         self.login("man")  # another user has an hour of their own
-        self.assertEqual(self.upload(small, dry_run="1").status_code, 200)
+        self.assertEqual(self.upload(small, accept_warnings="1").status_code, 201)

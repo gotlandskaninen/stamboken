@@ -17,6 +17,7 @@ const STATES = [
   "vantar_foralder",
   "hos_genbanksansvarig",
   "ofullstandig",
+  "klar",
   "dubblett",
   "skrap",
 ];
@@ -37,16 +38,21 @@ async function call<T>(
   method: string,
   body?: unknown,
 ): Promise<ActionResult<T>> {
+  const refresh = () => {
+    revalidatePath(LIST);
+    if (itemId !== null) revalidatePath(`${LIST}/${itemId}`);
+  };
   try {
     const data = await fetchApi<T>(`/v2/inkorg${path}`, {
       method,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    revalidatePath(LIST);
-    if (itemId !== null) revalidatePath(`${LIST}/${itemId}`);
+    refresh();
     return { ok: true, data };
   } catch (e) {
-    if (e instanceof ApiError)
+    if (e instanceof ApiError) {
+      // Someone else changed the item: the view must show how it stands now.
+      if (e.status === 409) refresh();
       return {
         ok: false,
         problem: {
@@ -56,7 +62,17 @@ async function call<T>(
           extensions: e.extensions,
         },
       };
-    throw e;
+    }
+    // A timeout or a dropped connection to the API: a refusal the form can
+    // show, so that what the handler typed stays on the screen.
+    return {
+      ok: false,
+      problem: {
+        status: 502,
+        title: "Bad Gateway",
+        detail: "Det gick inte att nå servern. Försök igen.",
+      },
+    };
   }
 }
 
@@ -149,12 +165,28 @@ export async function registerSale(
   return call<DocResult>(id, `/${id}/dokument/${doc}/overlat`, "POST", payload);
 }
 
-export async function confirmMask(id: number, doc: number, rects: Rect[]) {
+/**
+ * The rectangles come with the rotation they were drawn in (fractions of the
+ * image as turned by it): the API stores both and makes the copy from the pair.
+ * An empty list needs `noPersonalData`, the handler's explicit "nothing to hide".
+ */
+export async function confirmMask(
+  id: number,
+  doc: number,
+  rotation: number,
+  rects: Rect[],
+  noPersonalData = false,
+) {
   if (!isId(id) || !isId(doc) || !Array.isArray(rects))
     return refused("Ogiltig maskning.");
-  // Always a list, also an empty one: left out, the API would use the saved rectangles.
+  if (![0, 90, 180, 270].includes(rotation))
+    return refused("Ogiltig vridning.");
+  if (rects.length === 0 && noPersonalData !== true)
+    return refused("Bekräfta att fotot inte visar några uppgifter.");
   return call<DocResult>(id, `/${id}/dokument/${doc}/maskning`, "POST", {
+    rotation,
     mask_rects: rects,
+    ...(rects.length === 0 ? { no_personal_data: true } : {}),
   });
 }
 

@@ -3,7 +3,8 @@ The intake queue's retention (docs/inkorg.md, "Gallring"): the rules of the nigh
 
 A row lets go of a file before the file goes: the rows change in a transaction with their items locked (every
 write through the queue locks its item first, so none can save a stale document over ours), and the files are
-removed after the commit. A crash in between leaves a file that no row names, never a row naming a missing file.
+removed after the commit. A crash in between leaves a file that no row names, never a row naming a missing file,
+and remove_orphans takes such files a day later.
 Only originals are removed, and only inside PRIVATE_UPLOAD_FOLDER/inkorg/original: the masked copy on the rabbit
 and the inbox_operation trace stay. Every rule takes `now` and is idempotent.
 """
@@ -17,7 +18,16 @@ from peewee import SQL, Case
 import utils.inbox as inbox
 import utils.inbox_gmail as inbox_gmail
 import utils.settings as settings
-from utils.database import DB_PROXY, GmailProcessed, HerdTracking, InboxDocument, InboxEvent, InboxItem
+from utils.database import (
+    DB_PROXY,
+    GmailProcessed,
+    HerdTracking,
+    InboxDocument,
+    InboxEvent,
+    InboxItem,
+    InboxOperation,
+    MailMessage,
+)
 from utils.mail import forget_recipient
 
 logger = logging.getLogger("herdbook.inbox_purge")
@@ -29,6 +39,7 @@ MESSAGE_MONTHS = 13
 JUNK_AFTER = timedelta(days=30)
 GMAIL_PROCESSED_AFTER = timedelta(days=60)
 STALLED_AFTER = timedelta(days=14)
+ORPHAN_AFTER = timedelta(days=1)  # an upload in progress has written its files but not committed its rows
 VIEWS = ("oppnad", "original_visat")  # looking at an item is not something happening to it
 
 
@@ -39,7 +50,10 @@ def _lock(items):
 
 
 def _null_originals(where):
-    """In the caller's transaction: the documents matching `where` let go of their originals; returns the paths."""
+    """
+    In the caller's transaction: the documents matching `where` let go of their originals, and of what the model
+    read on them; returns the paths.
+    """
     _lock(InboxDocument.select(InboxDocument.item).where(where))
     rows = InboxDocument.select(InboxDocument.id, InboxDocument.original_path)
     rows = list(rows.where(where & InboxDocument.original_path.is_null(False)).tuples())
@@ -47,7 +61,10 @@ def _null_originals(where):
         waiting = Case(
             None, [(InboxDocument.interpretation_status == "vantar", "av")], InboxDocument.interpretation_status
         )
-        query = InboxDocument.update(original_path=None, interpretation_status=waiting)
+        # The model's reading and the proposal from it are a transcription of the photo: they go with it.
+        query = InboxDocument.update(
+            original_path=None, interpretation_status=waiting, interpretation=None, proposal=None
+        )
         query.where(InboxDocument.id.in_([document_id for document_id, _ in rows])).execute()
     return [path for _, path in rows]
 
@@ -60,12 +77,12 @@ def _clear_text(items):
     return cleared.execute() + events.execute()
 
 
-def remove_originals(paths):
+def remove_originals(paths, folder="inkorg/original"):
     """
     After the commit: removes the originals the rows let go of, but only files directly in the originals folder
     (a path naming anything else, also a copy, is kept). Logs counts, never names. Returns how many went.
     """
-    folder = os.path.realpath(inbox.private_path("inkorg/original"))
+    folder = os.path.realpath(inbox.private_path(folder))
     removed = kept = failed = 0
     for relative in paths:
         path = os.path.realpath(inbox.private_path(relative))
@@ -86,28 +103,48 @@ def remove_originals(paths):
     return removed
 
 
-def _delete_items(where):
+def _saved():
     """
-    Deletes the items matching `where`, with their documents, events, notices and originals. Never an item that
-    put something on a rabbit (a copy, a registration or a sale's proof): the originals and text rules take those.
+    The items that put something on a rabbit: a copy, a registration, a sale, or any write traced to one of their
+    documents ("inlagd från foto av"). They are never deleted.
     """
-    saved = InboxDocument.select(InboxDocument.item).where(
+    traced = InboxOperation.select(InboxOperation.document).where(InboxOperation.document.is_null(False))
+    return InboxDocument.select(InboxDocument.item).where(
         InboxDocument.public_path.is_null(False)
         | InboxDocument.individual.is_null(False)
         | InboxDocument.herd_tracking_id.is_null(False)
+        | InboxDocument.id.in_(traced)
     )
+
+
+def _delete_rows(where):
+    """
+    In the caller's transaction: deletes the items matching `where`, with their documents, events and notices, and
+    the mail queue forgets their sender. An item that put something on a rabbit (_saved) stays, and loses its
+    originals and its text instead. Returns the paths for remove_originals.
+    """
+    ids = _lock(InboxItem.select(InboxItem.id).where(where))
+    kept = [item_id for (item_id,) in _saved().where(InboxDocument.item.in_(ids)).distinct().tuples()]
+    gone = [item_id for item_id in ids if item_id not in kept]
+    documents = InboxDocument.select(InboxDocument.original_path).where(
+        InboxDocument.item.in_(gone) & InboxDocument.original_path.is_null(False)
+    )
+    paths = [path for (path,) in documents.tuples()]
+    InboxItem.delete().where(InboxItem.id.in_(gone)).execute()
+    for item_id in gone:
+        forget_recipient("inbox_sender", item_id)
+    if kept:
+        paths += _null_originals(InboxDocument.item.in_(kept))
+        _clear_text(kept)
+    return gone, paths
+
+
+def _delete_items(where):
+    """_delete_rows in a transaction of its own, the files after the commit; returns how many items went."""
     with DB_PROXY.atomic():
-        query = InboxItem.select(InboxItem.id).where(where & InboxItem.id.not_in(saved))
-        ids = [item_id for (item_id,) in query.order_by(InboxItem.id).for_update().tuples()]
-        documents = InboxDocument.select(InboxDocument.original_path).where(
-            InboxDocument.item.in_(ids) & InboxDocument.original_path.is_null(False)
-        )
-        paths = [path for (path,) in documents.tuples()]
-        InboxItem.delete().where(InboxItem.id.in_(ids)).execute()
-        for item_id in ids:
-            forget_recipient("inbox_sender", item_id)
+        gone, paths = _delete_rows(where)
     remove_originals(paths)
-    return len(ids)
+    return len(gone)
 
 
 def purge_originals(now):
@@ -147,25 +184,35 @@ def purge_sold_proofs(now):  # pylint: disable=unused-argument  # every rule tak
     return remove_originals(paths)
 
 
+def _quiet_since(when):
+    """Items that came in before `when` and have had no answer from their sender since (inbox.incomplete_since)."""
+    answered = InboxEvent.select(InboxEvent.item).where((InboxEvent.kind == "svar") & (InboxEvent.at >= when))
+    return (InboxItem.received_at < when) & InboxItem.id.not_in(answered)
+
+
 def remind_incomplete(now):
-    """inlasning.paminnelse once to the sender of an item still "ofullstandig" 11 months after it came in."""
+    """
+    inlasning.paminnelse once to the sender of an item still "ofullstandig" 11 months after it came in or was last
+    answered (once per such date).
+    """
     old = now - inbox.months(inbox.REMIND_MONTHS)
     queued = 0
     with DB_PROXY.atomic():
-        for item in InboxItem.select().where((InboxItem.state == "ofullstandig") & (InboxItem.received_at < old)):
+        for item in InboxItem.select().where((InboxItem.state == "ofullstandig") & _quiet_since(old)):
             marked = item.events.where((InboxEvent.kind == "lage") & InboxEvent.detail.contains({"to": "ofullstandig"}))
             marked = marked.order_by(InboxEvent.id.desc()).first()
             params = {"item_id": item.id, "event_id": marked.id} if marked else None
-            key = f"inlasning.paminnelse:{item.id}"
+            since = inbox.incomplete_since(item)
+            key = f"inlasning.paminnelse:{item.id}" + (f":{since:%Y-%m-%d}" if since != item.received_at else "")
             if params and inbox.mail_sender(item, "inlasning.paminnelse", params, dedupe_key=key):
                 queued += 1
     return queued
 
 
 def purge_incomplete(now):
-    """An item left "ofullstandig" a year after it came in."""
+    """An item left "ofullstandig" a year after it came in or was last answered."""
     old = now - inbox.months(inbox.INCOMPLETE_MONTHS)
-    return _delete_items((InboxItem.state == "ofullstandig") & (InboxItem.received_at < old))
+    return _delete_items((InboxItem.state == "ofullstandig") & _quiet_since(old))
 
 
 def purge_junk(now):
@@ -184,6 +231,32 @@ def purge_opened(now):
     """The log of who opened an item, after 13 months."""
     old = now - inbox.months(OPENED_MONTHS)
     return InboxEvent.delete().where((InboxEvent.kind == "oppnad") & (InboxEvent.at < old)).execute()
+
+
+def remove_orphans(now):
+    """
+    Files directly in the originals and the copies folders that no row names: a removal that failed or never ran
+    after its commit, an upload whose transaction rolled back, a temporary file. Only files older than a day, so a
+    file whose row is not committed yet (an upload in progress) is never touched; same path guard as above.
+    """
+    named = set()
+    for column in (InboxDocument.original_path, InboxDocument.public_path):
+        named.update(path for (path,) in InboxDocument.select(column).where(column.is_null(False)).tuples())
+    removed = 0
+    for folder in ("inkorg/original", "inkorg/kopia"):
+        try:
+            entries = list(os.scandir(inbox.private_path(folder)))
+        except FileNotFoundError:
+            continue
+        orphans = [
+            f"{folder}/{entry.name}"
+            for entry in entries
+            if entry.is_file(follow_symlinks=False)
+            and f"{folder}/{entry.name}" not in named
+            and entry.stat(follow_symlinks=False).st_mtime < (now - ORPHAN_AFTER).timestamp()
+        ]
+        removed += remove_originals(orphans, folder)
+    return removed
 
 
 def purge_gmail_processed(now):
@@ -221,6 +294,7 @@ RULES = (
     purge_opened,
     purge_gmail_processed,
     mark_stalled,
+    remove_orphans,
 )
 
 
@@ -233,17 +307,41 @@ def run(now):
             logger.exception("Inbox purge %s failed", rule.__name__)
 
 
-def erase_person_from_inbox(member):
+def erase_person_from_inbox(member, user_id=None):
     """
     Erasure of a member (anonymize_person): every document recorded as showing the member as seller or buyer
     loses its original, so that only the masked copy without the seller and buyer block is left where there is
-    one, and its item loses its text. In the caller's transaction; the caller passes the returned paths to
-    remove_originals after the commit.
+    one, and its item loses its text. What the member sent goes too: the items matched to them as a mail's sender
+    or uploaded by their account (`user_id`, read before the account is detached). Such an item that put nothing
+    on a rabbit is deleted with its files; one that did loses its originals, its text and its sender's address,
+    and the mails queued to its sender are cancelled. In the caller's transaction; the caller passes the returned
+    paths to remove_originals after the commit.
     """
     shown = (InboxDocument.seller_member == member.id) | (InboxDocument.buyer_member == member.id)
     paths = _null_originals(shown)
     _clear_text(InboxDocument.select(InboxDocument.item).where(shown))
-    return paths
+    sent = InboxItem.member == member.id
+    if user_id is not None:
+        sent |= InboxItem.sender_user == user_id
+    ids = [item_id for (item_id,) in InboxItem.select(InboxItem.id).where(sent).tuples()]
+    if not ids:
+        return paths
+    to_sender = (MailMessage.recipient_kind == "inbox_sender") & MailMessage.recipient_id.in_(ids)
+    if user_id is not None:
+        to_sender |= (MailMessage.recipient_kind == "user") & (MailMessage.recipient_id == user_id)
+    MailMessage.update(status="cancelled", last_error="avsändaren är raderad").where(
+        to_sender
+        & (MailMessage.ref_type == "inbox_item")
+        & MailMessage.ref_id.in_(ids)
+        & (MailMessage.status == "queued")
+        & MailMessage.claim_token.is_null(True)
+    ).execute()
+    gone, more = _delete_rows(InboxItem.id.in_(ids))
+    kept = [item_id for item_id in ids if item_id not in gone]
+    InboxItem.update(sender_address=None).where(InboxItem.id.in_(kept)).execute()
+    for item_id in kept:
+        forget_recipient("inbox_sender", item_id)
+    return paths + more
 
 
 def erase_document(item, document, user):

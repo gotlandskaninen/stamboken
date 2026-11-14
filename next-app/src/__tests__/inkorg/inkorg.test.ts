@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  formatDate,
+  formatTime,
   noticeHref,
   planImage,
   statusText,
@@ -116,5 +118,13 @@ describe("nav visibility and badge", () => {
     expect(badgeLabel(0)).toBeNull();
     expect(badgeLabel(3)).toBe("3");
     expect(badgeLabel(120)).toBe("99+");
+  });
+});
+
+describe("Stockholm time", () => {
+  // 23:30 UTC on 14 November is already the 15th in Stockholm (CET), wherever the server runs.
+  it("formats a UTC instant in Europe/Stockholm", () => {
+    expect(formatTime("2026-11-14T23:30:00+00:00")).toBe("2026-11-15 00:30:00");
+    expect(formatDate("2026-11-14T23:30:00+00:00")).toBe("2026-11-15");
   });
 });

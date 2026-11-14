@@ -21,6 +21,7 @@ from utils.database import (
     DB_PROXY,
     OUTSIDE_GENEBANK_HERDS,
     Herd,
+    HerdTracking,
     InboxDocument,
     InboxEvent,
     InboxItem,
@@ -43,7 +44,8 @@ HELD_STATES = ("tagen", "vantar_uppfodare", "vantar_foralder", "ofullstandig")  
 # ("tagen") by a manager of its genebank or an admin, who becomes its handler. The other states are reached
 # otherwise: "ny" when the item comes in, "tagen" also by taking or assigning, "klar" when its last document is
 # done or dismissed, "vantar_uppfodare" by the question to the breeder (utils/inbox_gmail.py, back with the answer).
-# A message has nothing to save: its handler closes it as "klar" once it is answered (MESSAGE_DONE_FROM).
+# A message, or any item without documents (a mail whose attachments were all skipped), has nothing to save: its
+# handler closes it as "klar" once it is answered (MESSAGE_DONE_FROM).
 TRANSITIONS = {
     "tagen": ("vantar_foralder", "ofullstandig", *CLOSED_STATES),
     "vantar_foralder": ("tagen",),
@@ -78,8 +80,10 @@ NOTICE_TEXTS = {
 DOC_TYPES = ("intyg", "bevis", "arsblankett", "annat")
 CERT_FORMATS = ("handskrivet", "datorskrivet", "v1_pdf", "intyg_b", "digitalt_v2")
 OPENED_EVERY = timedelta(hours=1)
-INCOMPLETE_MONTHS = 12  # an item left "ofullstandig" is deleted this long after it came in (utils/inbox_purge.py)
-REMIND_MONTHS = 11  # and its sender is reminded this long after it came in
+# An item left "ofullstandig" is deleted this long after it came in or was last answered (utils/inbox_purge.py),
+# and its sender is reminded after REMIND_MONTHS.
+INCOMPLETE_MONTHS = 12
+REMIND_MONTHS = 11
 MAX_NOTE = 2000
 MAX_RECTS = 20
 # The masking a handwritten certificate (format 1) is offered: its lower third, where seller and buyer write.
@@ -87,13 +91,16 @@ HANDWRITTEN_MASK = [{"x": 0.0, "y": 0.6667, "w": 1.0, "h": 0.3333}]
 
 
 class InboxError(Exception):
-    """A refusal with its HTTP status, turned into a problem response by the blueprint."""
+    """
+    A refusal with its HTTP status, turned into a problem response by the blueprint. It rolls back the request's
+    transaction, unless `keep`: what was done before it (a correction the refusal reports) is committed.
+    """
 
     TITLES = {400: "Ogiltig begäran", 403: "Åtkomst nekad", 404: "Hittades inte", 409: "Konflikt"}
 
-    def __init__(self, status, detail):
+    def __init__(self, status, detail, *, keep=False):
         super().__init__(detail)
-        self.status, self.title, self.detail = status, self.TITLES[status], detail
+        self.status, self.title, self.detail, self.keep = status, self.TITLES[status], detail, keep
 
 
 JPEG_QUALITY = 90
@@ -130,7 +137,8 @@ def measure(image):
     grey = image.convert("L")
     grey.thumbnail((SHARPNESS_SIDE, SHARPNESS_SIDE))
     edges = grey.filter(_LAPLACIAN)
-    edges = edges.crop((1, 1, edges.width - 1, edges.height - 1))  # the filter leaves the border unfiltered
+    if min(edges.size) > 2:  # the filter leaves the border unfiltered; an image of a pixel or two has only border
+        edges = edges.crop((1, 1, edges.width - 1, edges.height - 1))
     return {
         "short_side": min(image.size),
         "sharpness": round(ImageStat.Stat(edges).var[0], 1),
@@ -155,15 +163,24 @@ def private_path(relative):
     return os.path.join(settings.service.private_upload_folder, relative)
 
 
-def store_jpeg(image, folder, name=None):
-    """
-    Saves `image` as a JPEG without metadata (EXIF, GPS, XMP) as inkorg/<folder>/<name>.jpg under
-    PRIVATE_UPLOAD_FOLDER; returns (relative path, sha256). A new name is random; a given one is replaced.
-    """
+def jpeg_bytes(image):
+    """`image` as a JPEG without metadata (EXIF, GPS, XMP)."""
     image.info = {}  # nothing of the uploaded file's metadata may reach the saved one
     buffer = io.BytesIO()
     image.save(buffer, "JPEG", quality=JPEG_QUALITY)
-    data = buffer.getvalue()
+    return buffer.getvalue()
+
+
+def store_jpeg(image, folder, name=None):
+    """write_jpeg of `image` as a JPEG without metadata."""
+    return write_jpeg(jpeg_bytes(image), folder, name)
+
+
+def write_jpeg(data, folder, name=None):
+    """
+    Saves the JPEG `data` as inkorg/<folder>/<name>.jpg under PRIVATE_UPLOAD_FOLDER; returns (relative path,
+    sha256). A new name is random; a given one is replaced.
+    """
     relative = f"inkorg/{folder}/{name or uuid.uuid4().hex}.jpg"
     path = private_path(relative)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -280,6 +297,7 @@ def items_json(items):
             "missing_proof": item.missing_proof,
             "ref_type": item.ref_type,
             "ref_id": item.ref_id,
+            "sender_authenticated": item.sender_authenticated,
             "has_message": bool(item.message),
             "maybe_blurry": item.id in blurry,
             "documents": counts[item.id][0],
@@ -377,8 +395,9 @@ def assign(item, by, to):
 
 
 def change_state(item, user, state, *, note=None, duplicate_of=None):
-    """POST …/lage, by TRANSITIONS, and "klar" for a message (MESSAGE_DONE_FROM)."""
-    allowed = MESSAGE_DONE_FROM if state == "klar" and item.kind == "meddelande" else TRANSITIONS.get(state)
+    """POST …/lage, by TRANSITIONS, and "klar" for a message or an item without documents (MESSAGE_DONE_FROM)."""
+    answered = item.kind == "meddelande" or not item.documents.exists()
+    allowed = MESSAGE_DONE_FROM if state == "klar" and answered else TRANSITIONS.get(state)
     if allowed is None:
         raise InboxError(400, f"state är en av {', '.join(TRANSITIONS)}.")
     if item.state not in allowed:
@@ -393,8 +412,15 @@ def change_state(item, user, state, *, note=None, duplicate_of=None):
     detail = {"from": item.state, "to": state, **({"note": note.strip()} if note and note.strip() else {})}
     if state == "ofullstandig" and "note" not in detail:
         raise InboxError(400, "Skriv vad som saknas.")
-    if state == "vantar_foralder" and not item.documents.where(InboxDocument.waiting_for.is_null(False)).exists():
-        raise InboxError(400, "Ange på dokumentet vilken förälder posten väntar på.")
+    if state == "vantar_foralder":
+        waited = {n for d in item.documents.where(InboxDocument.waiting_for.is_null(False)) for n in d.waiting_for}
+        if not waited:
+            raise InboxError(400, "Ange på dokumentet vilken förälder posten väntar på.")
+        registered = _registered(waited)
+        _clear_waiting(item, registered)  # a parent registered meanwhile is waited for no more
+        if registered == waited:
+            names = ", ".join(sorted(registered))
+            raise InboxError(409, f"{names} finns redan i Stamboken. Posten väntar inte på någon förälder.", keep=True)
     if state == "klar" and item.documents.where(InboxDocument.done_at.is_null(True)).exists():
         raise InboxError(409, "Gör klart eller avfärda dokumenten först.")
     item.duplicate_of = None
@@ -457,11 +483,20 @@ def close_if_done(item, user):
     release_sender(item)
 
 
+def incomplete_since(item):
+    """What an incomplete item's months count from: when it came in, or the sender's latest answer on it."""
+    answered = item.events.select(fn.MAX(InboxEvent.at)).where(InboxEvent.kind == "svar").scalar()
+    return max(item.received_at, answered) if answered else item.received_at
+
+
 def mail_sender(item, kind, params, **options):
-    """Queues `kind` to the item's uploader, or else to the address a mailed item came from; None without either."""
+    """
+    Queues `kind` to the item's uploader, or else to the address a mailed item came from, but only when Gmail
+    authenticated it: a forged From must never make us mail its victim. None without either.
+    """
     if item.sender_user_id is not None:
         recipient = ("user", item.sender_user_id)
-    elif item.sender_address:
+    elif item.sender_address and item.sender_authenticated:
         recipient = ("inbox_sender", item.id)
     else:
         return None
@@ -500,6 +535,13 @@ def _waiting_for(value):
 
 
 DOCUMENT_FIELDS = ("doc_type", "cert_format", "rotation", "mask_rects", "waiting_for", "dismissed")
+COPY_FIELDS = {"rotation", "mask_rects", "doc_type"}  # fixed once the copy is made: only …/maskning remakes it
+
+
+def _rotation(value):
+    if isinstance(value, bool) or value not in (0, 90, 180, 270):
+        raise InboxError(400, "rotation är 0, 90, 180 eller 270 grader medurs.")
+    return value
 
 
 def update_document(item, document, user, changes):
@@ -507,12 +549,18 @@ def update_document(item, document, user, changes):
     require_handler(item, user)
     if not changes or set(changes) - set(DOCUMENT_FIELDS):
         raise InboxError(400, f"Ändra något av {', '.join(DOCUMENT_FIELDS)}.")
+    if document.public_path and COPY_FIELDS & set(changes):
+        raise InboxError(409, "Kopian är gjord. Vridning och maskning ändras med …/maskning, och typen inte alls.")
+    if changes.get("doc_type", document.doc_type) != document.doc_type and (
+        document.individual_id or document.herd_tracking_id
+    ):
+        raise InboxError(409, "Något är redan sparat från dokumentet, så typen kan inte ändras.")
     if "doc_type" in changes and changes["doc_type"] not in DOC_TYPES:
         raise InboxError(400, f"doc_type är en av {', '.join(DOC_TYPES)}.")
     if "cert_format" in changes and changes["cert_format"] not in (None, *CERT_FORMATS):
         raise InboxError(400, f"cert_format är null eller en av {', '.join(CERT_FORMATS)}.")
-    if "rotation" in changes and changes["rotation"] not in (0, 90, 180, 270):
-        raise InboxError(400, "rotation är 0, 90, 180 eller 270 grader medurs.")
+    if "rotation" in changes:
+        _rotation(changes["rotation"])
     if "dismissed" in changes and not isinstance(changes["dismissed"], bool):
         raise InboxError(400, "dismissed är true eller false.")
     if changes.get("doc_type", document.doc_type) != document.doc_type:  # only certificates are read
@@ -529,8 +577,6 @@ def update_document(item, document, user, changes):
         document.done_at = document.done_at or now()
     elif changes.get("dismissed") is False and document.public_path is None and document.herd_tracking_id is None:
         document.done_at = None
-    if document.public_path and {"rotation", "mask_rects"} & set(changes):
-        make_copy(document)
     document.save()
     log_event(item, user, "dokument", document=document.id, fields=sorted(changes))
     close_if_done(item, user)
@@ -555,7 +601,7 @@ def make_copy(document):
     """
     The copy shown on the rabbit, made from the original: turned `rotation` degrees clockwise, its mask_rects
     (fractions of the turned image) painted black, saved as inkorg/kopia/<document id>.jpg without metadata.
-    Made again whenever the rectangles or the rotation change, which needs the original.
+    Only confirm_mask makes it, from the pair it was given, which needs the original.
     """
     if document.original_path is None:
         raise InboxError(409, "Originalet är raderat, så kopian kan inte göras om.")
@@ -571,19 +617,26 @@ def make_copy(document):
     document.public_path, _ = store_jpeg(image, "kopia", name=str(document.id))
 
 
-def confirm_mask(item, document, user, rects=None):
-    """The handler confirms what covers the seller and the buyer: the copy goes on the rabbit, the document is done."""
-    require_handler(item, user)
+def confirm_mask(item, document, user, rotation, rects, no_personal_data=None):
+    """
+    POST …/maskning: the rotation and the rectangles covering the seller and the buyer, stored together, and the copy
+    made from exactly that pair goes on the rabbit; the document is done. The item's handler, while the item is open;
+    a copy already made can be made again by a manager of the item's genebank or an admin at any time.
+    """
+    if not (document.public_path and manages(user, item.genebank_id)):
+        require_handler(item, user)
     if document.doc_type != "intyg" or document.individual_id is None:
         raise InboxError(409, "Spara kaninen från intyget först.")
-    if rects is not None:
-        document.mask_rects = _rects(rects)
-    if document.mask_rects is None:
-        raise InboxError(400, "Ange mask_rects, eller en tom lista om intyget inte visar någon säljare eller köpare.")
+    rotation, rects = _rotation(rotation), _rects(rects)
+    if rects is None:
+        raise InboxError(400, "Ange mask_rects: rektanglarna som täcker säljaren och köparen.")
+    if not rects and no_personal_data is not True:
+        raise InboxError(400, 'En tom mask_rects kräver "no_personal_data": true: intyget visar ingen säljare.')
+    document.rotation, document.mask_rects = rotation, rects
     document.done_at = document.done_at or now()
     make_copy(document)
     document.save()
-    log_event(item, user, "kopia", document=document.id, rects=len(document.mask_rects))
+    log_event(item, user, "kopia", document=document.id, rects=len(rects), rotation=rotation)
     close_if_done(item, user)
 
 
@@ -761,6 +814,7 @@ class InboxGrant:
     def __init__(self, item, user, document=None):
         self.item_id, self.user_id = item.id, user.id
         self.document_id = document.id if document is not None else None
+        self.traced = 0  # the writes traced: none means the save changed nothing
 
     def allows(self, user, herd):
         """May `user` write, as handler, to a rabbit in `herd` (also a newborn's herd)?"""
@@ -780,6 +834,7 @@ class InboxGrant:
     def trace(self, operation_id):
         """ "Inlagd från foto av": the write's operation id, its handler and the document."""
         InboxOperation.create(operation_id=operation_id, user=self.user_id, document=self.document_id)
+        self.traced += 1
 
     def record(self, ctx):
         for row in ctx.log_rows:
@@ -818,52 +873,156 @@ def saved(item, document, user, individual, action):
     log_event(item, user, "sparad", document=document.id, action=action, individual=individual.number)
 
 
-def transferred(item, document, user, individual, row):
+def bound_rabbit(document):
+    """The rabbit a document is bound to by its first save: the one registered or certified from it, or sold."""
+    if document.individual_id is not None:
+        return document.individual_id
+    if document.herd_tracking_id is not None:
+        return HerdTracking.get_by_id(document.herd_tracking_id).individual_id
+    return None
+
+
+def require_same_rabbit(document, individual=None):
     """
-    A sale registered from a document: a proof (bevis) is done with it; anything else leaves the proof missing.
-    The document shows the sale's seller and, for a sale to a member, its buyer.
+    One document, one rabbit: whatever is saved through a document concerns the rabbit of its first save (a new
+    rabbit, `individual` None, never one already bound), and a document carries at most one sale.
+    """
+    bound = bound_rabbit(document)
+    if bound is not None and (individual is None or individual.id != bound):
+        number = Individual.get_by_id(bound).number
+        raise InboxError(409, f"Dokumentet gäller {number}. Det som sparas genom det måste gälla samma kanin.")
+
+
+def proven_sale(item, document, individual, herd, date):
+    """
+    The sale a proof (bevis) shows when it is already registered from another document of the item, without proof:
+    the same rabbit, buyer and date. The proof is then linked to it rather than registering it again.
+    """
+    if document.doc_type != "bevis":
+        return None
+    sales = item.documents.select(InboxDocument.herd_tracking_id).where(
+        (InboxDocument.doc_type != "bevis") & InboxDocument.herd_tracking_id.is_null(False)
+    )
+    return (
+        HerdTracking.select()
+        .join(Herd, on=(HerdTracking.herd == Herd.id))
+        .where(
+            HerdTracking.id.in_(sales)
+            & (HerdTracking.individual == individual.id)
+            & (Herd.herd == herd)
+            & (HerdTracking.herd_tracking_date == date)
+            & HerdTracking.voided_at.is_null(True)
+        )
+        .first()
+    )
+
+
+def transferred(item, document, user, individual, row, *, linked=False):
+    """
+    A sale registered from a document (or, `linked`, a proof of one registered before): the sale is the
+    document's (herd_tracking_id) whatever its type, and a proof (bevis) is done with it. The item lacks a proof
+    ("bevis saknas") while a sale from another type of document has no proof on the item. The document shows the
+    sale's seller and, for a sale to a member, its buyer.
     """
     document.seller_member = herd_holder(row.from_herd_id or individual.origin_herd_id) or document.seller_member
     if row.herd.herd not in OUTSIDE_GENEBANK_HERDS:
         document.buyer_member = herd_holder(row.herd_id) or document.buyer_member
     proof = document.doc_type == "bevis"
+    document.herd_tracking_id = row.id
     if proof:
-        document.individual, document.herd_tracking_id, document.done_at = individual, row.id, now()
-    else:
-        item.missing_proof = True
-        item.save()
+        document.individual, document.done_at = individual, now()
     document.save()
+    proven = item.documents.select(InboxDocument.herd_tracking_id).where(
+        (InboxDocument.doc_type == "bevis") & InboxDocument.herd_tracking_id.is_null(False)
+    )
+    item.missing_proof = item.documents.where(
+        (InboxDocument.doc_type != "bevis")
+        & InboxDocument.herd_tracking_id.is_null(False)
+        & InboxDocument.herd_tracking_id.not_in(proven)
+    ).exists()
+    item.save()
     detail = {"document": document.id, "individual": individual.number, "herd": row.herd.herd}
-    log_event(item, user, "sparad", action="overlatelse", missing_proof=not proof, **detail)
+    log_event(item, user, "sparad", action="bevis" if linked else "overlatelse", missing_proof=not proof, **detail)
     close_if_done(item, user)
+
+
+def _registered(numbers):
+    """The numbers among `numbers` that are in Stamboken."""
+    found = Individual.select(Individual.number).where(Individual.number.in_(list(numbers))) if numbers else []
+    return {number for (number,) in found.tuples()} if numbers else set()
+
+
+def _clear_waiting(item, numbers):
+    """`numbers` leave the waiting_for of the item's documents; returns those that were waited for."""
+    cleared = set()
+    for document in item.documents.where(InboxDocument.waiting_for.is_null(False)):
+        kept = [n for n in document.waiting_for if n not in numbers]
+        if len(kept) < len(document.waiting_for):
+            cleared |= set(document.waiting_for) - set(kept)
+            document.waiting_for = kept or None
+            document.save()
+    return cleared
+
+
+def _wake(item, numbers):
+    """
+    Parents registered: out of the open item's waiting_for, each logged; once it waits for no one its handler is
+    told (or its genebank's managers when it has none), and an item that was waiting goes back to "tagen".
+    """
+    cleared = _clear_waiting(item, numbers)
+    for number in sorted(cleared):
+        log_event(item, None, "foralder_inlagd", individual=number)
+    if not cleared or item.documents.where(InboxDocument.waiting_for.is_null(False)).exists():
+        return bool(cleared)
+    if item.state == "vantar_foralder":
+        _set_state(item, "tagen")
+        item.save()
+    handlers = [item.assigned_to_id] if item.assigned_to_id else queue_workers(item.genebank_id, managers_only=True)
+    for handler in handlers:
+        notify(handler, "foralder_inlagd", item)
+    return True
 
 
 def parent_registered(number):
     """
-    A rabbit was created (Individual.save, in its transaction, wherever it was created): its number leaves the
-    waiting_for of the items waiting for it, and an item no longer waiting for anything goes back to its
-    handler ("tagen"). Only items in "vantar_foralder" are locked here, after the rabbit's own locks: no save
-    holds such an item (a save needs "tagen"), so the reversed lock order cannot deadlock with one.
+    A rabbit was created (Individual.save, in its transaction, wherever it was created): every open item waiting
+    for it is woken (_wake). The items are locked after the rabbit's own locks and after the item a save through
+    the queue holds, the reverse of the queue's order, so they are locked SKIP LOCKED: this never waits, and an
+    item someone else holds (assigning a herd's items, say) is left to wake_waiting.
     """
     waiting = InboxDocument.select(InboxDocument.item).where(InboxDocument.waiting_for.contains([number]))
     items = list(
         InboxItem.select()
-        .where((InboxItem.state == "vantar_foralder") & InboxItem.id.in_(waiting))
+        .where(InboxItem.state.in_(OPEN_STATES) & InboxItem.id.in_(waiting))
         .order_by(InboxItem.id)
-        .for_update()
+        .for_update("FOR UPDATE SKIP LOCKED")
     )
     for item in items:
-        for document in item.documents.where(InboxDocument.waiting_for.contains([number])):
-            document.waiting_for = [n for n in document.waiting_for if n != number] or None
-            document.save()
-        if item.documents.where(InboxDocument.waiting_for.is_null(False)).exists():
-            continue
-        _set_state(item, "tagen")
-        item.save()
-        log_event(item, None, "foralder_inlagd", individual=number)
-        handlers = [item.assigned_to_id] if item.assigned_to_id else queue_workers(item.genebank_id, managers_only=True)
-        for handler in handlers:
-            notify(handler, "foralder_inlagd", item)
+        _wake(item, {number})
+
+
+def wake_waiting():
+    """
+    The hourly sweep: wakes the open items still waiting for a rabbit that is in Stamboken (one parent_registered
+    skipped as locked, or missed). One short transaction per item, locked in the queue's order. Returns how many.
+    """
+    rows = (
+        InboxDocument.select(InboxDocument.item, InboxDocument.waiting_for)
+        .join(InboxItem)
+        .where(InboxDocument.waiting_for.is_null(False) & InboxItem.state.in_(OPEN_STATES))
+        .tuples()
+    )
+    waited = {}
+    for item_id, numbers in rows:
+        waited.setdefault(item_id, set()).update(numbers)
+    registered = _registered(set().union(*waited.values()))
+    woken = 0
+    for item_id in sorted(i for i, numbers in waited.items() if numbers & registered):
+        with DB_PROXY.atomic():
+            item = InboxItem.select().where(InboxItem.id == item_id).for_update().first()
+            if item is not None and item.state in OPEN_STATES and _wake(item, registered):
+                woken += 1
+    return woken
 
 
 @mail_kind("inlasning.klar", priority=1, category="T")
@@ -894,7 +1053,7 @@ def _incomplete_mail(params):
     return {
         "item_id": item.id,
         "note": note,
-        "deadline": f"{item.received_at + months(INCOMPLETE_MONTHS):%Y-%m-%d}",
+        "deadline": f"{incomplete_since(item) + months(INCOMPLETE_MONTHS):%Y-%m-%d}",
         "account": item.sender_user_id is not None,
     }
 

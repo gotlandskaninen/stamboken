@@ -3,6 +3,7 @@
 isort:skip_file
 """
 
+import datetime
 import io
 import os
 
@@ -25,11 +26,11 @@ def close(pixel, colour, slack=40):
     return all(abs(a - b) <= slack for a, b in zip(pixel, colour, strict=True))
 
 
-class TestCopy(InboxTest):
+class CopyTest(InboxTest):
     def saved_document(self):
         """An uploaded certificate, taken by the helper and saved as G1-2112's paper certificate."""
         self.login("owner")
-        resp = self.upload(("intyg.jpg", encoded(red_over_blue())))
+        resp = self.upload(("intyg.jpg", encoded(red_over_blue())), accept_warnings="1")  # flat colours look blurry
         item = db.InboxItem.get_by_id(resp.get_json()["item"]["id"])
         document = item.documents.get()
         self.login("hjalp")
@@ -44,19 +45,20 @@ class TestCopy(InboxTest):
         self.assertEqual(resp.status_code, 200, resp.get_json())
         return item, document
 
-    def mask(self, item, document, **body):
-        return self.post(f"/{item.id}/dokument/{document.id}/maskning", **body)
+    def mask(self, item, document, rotation=0, **body):
+        return self.post(f"/{item.id}/dokument/{document.id}/maskning", rotation=rotation, **body)
 
     def copy(self, document):
         document = db.InboxDocument.get_by_id(document.id)
         with Image.open(os.path.join(self.folder, document.public_path)) as image:
             return image.convert("RGB")
 
+
+class TestCopy(CopyTest):
     def test_the_copy_lacks_what_the_rectangles_cover_and_the_original_stays(self):
         item, document = self.saved_document()
         original = open(self.stored(document), "rb").read()
-        self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{document.id}", json={"rotation": 90})
-        resp = self.mask(item, document, mask_rects=[{"x": 0, "y": 0, "w": 0.5, "h": 1}])
+        resp = self.mask(item, document, rotation=90, mask_rects=[{"x": 0, "y": 0, "w": 0.5, "h": 1}])
         self.assertEqual(resp.status_code, 200, resp.get_json())
         self.assertEqual(resp.get_json()["document"]["status"], "klar")
         self.assertEqual(resp.get_json()["item"]["state"], "klar")
@@ -77,12 +79,8 @@ class TestCopy(InboxTest):
         item, document = self.saved_document()
         self.mask(item, document, mask_rects=[{"x": 0, "y": 0.5, "w": 1, "h": 0.5}])
         self.assertTrue(close(self.copy(document).getpixel((600, 1200)), (0, 0, 0)))
-        self.login("man")  # the item is closed: a manager reopens it
-        self.post(f"/{item.id}/lage", state="tagen")
-        resp = self.client.patch(
-            f"/api/v2/inkorg/{item.id}/dokument/{document.id}",
-            json={"mask_rects": [{"x": 0, "y": 0, "w": 1, "h": 0.5}]},
-        )
+        self.login("man")  # the item is closed: a manager makes it again, without reopening it
+        resp = self.mask(item, document, mask_rects=[{"x": 0, "y": 0, "w": 1, "h": 0.5}])
         self.assertEqual(resp.status_code, 200, resp.get_json())
         copy = self.copy(document)
         self.assertTrue(close(copy.getpixel((600, 400)), (0, 0, 0)))
@@ -94,10 +92,24 @@ class TestCopy(InboxTest):
         document = item.documents.get()
         self.login("hjalp")
         self.post(f"/{item.id}/ta")
-        self.assertEqual(self.mask(item, document, mask_rects=[]).status_code, 409)  # nothing saved yet
+        nothing = self.mask(item, document, mask_rects=[], no_personal_data=True)
+        self.assertEqual(nothing.status_code, 409)  # nothing saved yet
         item, document = self.saved_document()
-        self.assertEqual(self.mask(item, document).status_code, 400)  # neither stored nor sent
-        self.assertEqual(self.mask(item, document, mask_rects=[]).status_code, 200)  # nothing to cover
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        for body in (
+            {},  # neither rotation nor rectangles
+            {"mask_rects": None},
+            {"rotation": None, "mask_rects": rects},
+            {"rotation": 45, "mask_rects": rects},
+            {"rotation": False, "mask_rects": rects},
+            {"mask_rects": []},  # an empty list says nothing without the explicit confirmation
+            {"mask_rects": [], "no_personal_data": "true"},
+        ):
+            with self.subTest(body=body):
+                resp = self.post(f"/{item.id}/dokument/{document.id}/maskning", **body)
+                self.assertEqual(resp.status_code, 400, resp.get_json())
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).public_path)
+        self.assertEqual(self.mask(item, document, mask_rects=[], no_personal_data=True).status_code, 200)
 
     def test_who_is_served_the_original_and_the_copy(self):
         item, document = self.saved_document()
@@ -129,10 +141,99 @@ class TestCopy(InboxTest):
         self.login("man")
         self.assertEqual(self.client.get("/api/v2/individual/G1-2111/paper-certificate").status_code, 404)
 
+    def test_head_says_whether_there_is_a_copy_to_show_without_sending_it(self):
+        item, document = self.saved_document()
+        copy = "/api/v2/individual/G1-2112/paper-certificate"
+        self.login("owner")
+        self.assertEqual(self.client.head(copy).status_code, 404)  # no copy yet
+        self.login("hjalp")
+        self.mask(item, document, mask_rects=[], no_personal_data=True)
+        for username, status in (("owner", 200), ("spec", 403), ("hjalp", 403)):
+            with self.subTest(username):
+                self.login(username)
+                resp = self.client.head(copy)
+                self.assertEqual((resp.status_code, resp.data), (status, b""))
+        self.login("owner")
+        self.assertEqual(self.client.head("/api/v2/individual/G1-2111/paper-certificate").status_code, 404)
+
     def test_files_are_never_under_the_public_upload_folder(self):
         item, document = self.saved_document()
-        self.mask(item, document, mask_rects=[])
+        self.mask(item, document, mask_rects=[], no_personal_data=True)
         document = db.InboxDocument.get_by_id(document.id)
         for relative in (document.original_path, document.public_path):
             self.assertTrue(os.path.exists(os.path.join(self.folder, relative)))
             self.assertFalse(os.path.exists(os.path.join(os.getenv("UPLOAD_FOLDER", "/app/uppladdningar"), relative)))
+
+
+class TestCopyIsFixed(CopyTest):
+    """Once the copy is made, nothing but …/maskning changes what it shows, and it shows exactly the pair it got."""
+
+    def patch(self, item, document, **body):
+        return self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{document.id}", json=body)
+
+    def test_patch_refuses_the_rotation_the_rectangles_and_the_type_once_the_copy_is_made(self):
+        item, document = self.saved_document()
+        self.login("man")
+        self.post(f"/{item.id}/ta-over")
+        resp = self.mask(item, document, mask_rects=[{"x": 0, "y": 0.5, "w": 1, "h": 0.5}])
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.post(f"/{item.id}/lage", state="tagen")  # reopened: its handler again
+        before = open(os.path.join(self.folder, db.InboxDocument.get_by_id(document.id).public_path), "rb").read()
+        for body in ({"rotation": 90}, {"mask_rects": None}, {"mask_rects": []}, {"doc_type": "bevis"}):
+            with self.subTest(body=body):
+                self.assertEqual(self.patch(item, document, **body).status_code, 409)
+        stored = db.InboxDocument.get_by_id(document.id)
+        self.assertEqual((stored.rotation, stored.mask_rects), (0, [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]))
+        self.assertEqual(open(os.path.join(self.folder, stored.public_path), "rb").read(), before)
+        self.assertTrue(close(self.copy(document).getpixel((600, 1200)), (0, 0, 0)))  # still masked
+
+    def test_the_copy_is_made_from_the_pair_it_was_given(self):
+        item, document = self.saved_document()
+        self.patch(item, document, rotation=90)  # stored, but the masking names its own
+        resp = self.mask(item, document, rotation=0, mask_rects=[{"x": 0, "y": 0.5, "w": 1, "h": 0.5}])
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["document"]["rotation"], 0)
+        copy = self.copy(document)
+        self.assertEqual(copy.size, (1200, 1600))
+        self.assertTrue(close(copy.getpixel((600, 1200)), (0, 0, 0)))
+        self.assertTrue(close(copy.getpixel((600, 400)), RED))
+
+    def test_a_finished_proof_cannot_become_a_certificate(self):
+        db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        self.login("owner")
+        item = db.InboxItem.get_by_id(self.upload().get_json()["item"]["id"])
+        document = item.documents.get()
+        self.login("hjalp")
+        self.post(f"/{item.id}/ta")
+        self.patch(item, document, doc_type="bevis")
+        today = datetime.date.today().isoformat()
+        resp = self.post(f"/{item.id}/dokument/{document.id}/overlat", individual="G1-2111", herd="GX1", date=today)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.login("man")
+        self.post(f"/{item.id}/lage", state="tagen")
+        self.assertEqual(self.patch(item, document, doc_type="intyg").status_code, 409)
+        self.assertEqual(self.mask(item, document, mask_rects=[], no_personal_data=True).status_code, 409)
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).public_path)
+
+    def test_who_may_make_the_copy_again(self):
+        item, document = self.saved_document()
+        rects = [{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 200)  # the helper, its handler
+        self.assertEqual(self.reload(item).state, "klar")
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 409)  # closed: no longer hers
+        self.login("mhjalp")
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 409)
+        for username in ("man", "admin"):
+            with self.subTest(username):
+                self.login(username)
+                resp = self.mask(item, document, rotation=180, mask_rects=[{"x": 0, "y": 0, "w": 1, "h": 0.5}])
+                self.assertEqual(resp.status_code, 200, resp.get_json())
+                copy = self.copy(document)
+                self.assertTrue(close(copy.getpixel((600, 400)), (0, 0, 0)))  # turned: blue on top, covered
+                self.assertTrue(close(copy.getpixel((600, 1200)), RED))
+        events = self.reload(item).events.where(db.InboxEvent.kind == "kopia").order_by(db.InboxEvent.id)
+        self.assertEqual(
+            [(e.user_id, e.detail["rotation"]) for e in events],
+            [(self.helper.id, 0), (self.manager.id, 180), (self.admin.id, 180)],
+        )
+        self.assertEqual(self.reload(item).state, "klar")

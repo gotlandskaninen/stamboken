@@ -1220,7 +1220,11 @@ class TestDatabaseMigration(DatabaseTest):
         self.addCleanup(db.check_migrations)
 
         def shape():
-            columns = {(c.name, c.null) for c in db.DATABASE.get_columns("inbox_document")}
+            columns = {
+                (t, c.name, c.null)
+                for t in ("inbox_document", "inbox_item", "gmail_processed")
+                for c in db.DATABASE.get_columns(t)
+            }
             indexes = {(i.name, tuple(i.columns), i.unique) for i in db.DATABASE.get_indexes("inbox_document")}
             keys = {(k.column, k.dest_table, k.dest_column) for k in db.DATABASE.get_foreign_keys("inbox_document")}
             return columns, indexes, keys
@@ -1231,12 +1235,16 @@ class TestDatabaseMigration(DatabaseTest):
             "ALTER TABLE inbox_document DROP COLUMN seller_member_id, DROP COLUMN buyer_member_id, "
             "ALTER COLUMN original_path SET NOT NULL"
         )
+        db.DATABASE.execute_sql("ALTER TABLE inbox_item DROP COLUMN sender_authenticated")
+        db.DATABASE.execute_sql("ALTER TABLE gmail_processed DROP COLUMN failures")
 
         db.check_migrations()
 
         self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
         self.assertEqual(shape(), fresh)
-        self.assertIn(("original_path", True), fresh[0])
+        self.assertIn(("inbox_document", "original_path", True), fresh[0])
+        self.assertIn(("inbox_item", "sender_authenticated", True), fresh[0])
+        self.assertIn(("gmail_processed", "failures", False), fresh[0])
         self.assertIn(("seller_member_id", "member", "member_id"), fresh[2])
 
     def _max_schema_version(self):

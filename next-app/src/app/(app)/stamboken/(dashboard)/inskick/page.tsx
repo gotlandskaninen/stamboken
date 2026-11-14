@@ -1,7 +1,15 @@
 import Link from "next/link";
 import { fetchApi } from "@/lib/api";
 import { Masthead } from "@/components/shell/Masthead";
-import { STATUS_BADGE, statusText, type Inskick } from "@/lib/inkorg";
+import { RefreshBadge } from "@/components/shell/RefreshBadge";
+import { getInboxCount } from "@/lib/inkorg-server";
+import {
+  formatDate,
+  NO_INBOX,
+  STATUS_BADGE,
+  statusText,
+  type Inskick,
+} from "@/lib/inkorg";
 import styles from "./inskick.module.css";
 
 export const dynamic = "force-dynamic";
@@ -9,13 +17,16 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Mina inskick" };
 
 export default async function MinaInskickPage() {
-  // Opening this page also marks the user's "klart" notices as read.
+  // Opening this page also marks the user's "klart" notices as read, after the
+  // layout counted them: the count seen here is the stale one.
+  const { unread } = await getInboxCount().catch(() => NO_INBOX);
   const { items } = await fetchApi<{ items: Inskick[] }>(
     "/v2/inkorg/mina-inskick",
   );
 
   return (
     <>
+      <RefreshBadge unread={unread} />
       <Masthead
         eyebrow="Inläsning"
         title="Mina inskick"
@@ -53,9 +64,7 @@ export default async function MinaInskickPage() {
                       {statusText(it.status)}
                     </span>
                   </span>
-                  <span className="sb-meta">
-                    {new Date(it.received_at).toLocaleDateString("sv-SE")}
-                  </span>
+                  <span className="sb-meta">{formatDate(it.received_at)}</span>
                 </div>
                 <p className="sb-meta" style={{ margin: "6px 0 0" }}>
                   Besättning {it.herd}, {it.documents}{" "}

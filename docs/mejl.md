@@ -48,7 +48,11 @@ mejlet går då till den adress som är aktuell just då.
   `@` ut mot `<adress>`, eftersom SMTP-fel gärna citerar mottagaren.
 - `address_hash` (HMAC med `LINK_SECRET`) visar vilken adress ett skickat mejl
   gick till, så att en studs kan kopplas till adressen. Jobb som raderar en
-  mottagares rad anropar `forget_recipient(kind, id)`, som tömmer fältet.
+  mottagares rad anropar `forget_recipient(kind, id)`, som tömmer fältet och
+  `dedupe_key`.
+- Den publika ansökan tar emot vilken adress som helst, så kvittot
+  `ansokan.mottagen` går högst en gång per adress och dag: `dedupe_key` är
+  adressens HMAC och datumet, aldrig adressen.
 - Raderna raderas efter 396 dagar (`purge_old_mail`, nattjobbet kl. 03:30).
 
 ## Lägga till en mejltyp
@@ -121,14 +125,16 @@ att fungera.
 
 | `MAIL_MODE` | Effekt |
 |---|---|
-| `log` (standard) | Ingen SMTP-anslutning. Raden får `logged`, och loggen visar typ, id och mottagarens hänvisning, med den färdiga texten när `FLASK_ENV` inte är `production`. |
-| `allowlist` | `MAIL_ALLOWLIST` är en kommaseparerad lista med adresser och `@domän`. Mejl till något i listan skickas, med `[Demo] ` först i ämnesraden; resten får `blocked`. |
+| `log` (standard) | Ingen SMTP-anslutning. Raden får `logged`, och loggen visar typ, id och mottagarens hänvisning, med den färdiga texten, länkkoderna maskerade, när `FLASK_ENV` inte är `production`. |
+| `allowlist` | `MAIL_ALLOWLIST` är en kommaseparerad lista med adresser och `@domän`. Mejl till något i listan skickas, med `[Demo]` och ett mellanslag först i ämnesraden; resten får `blocked`. |
 | `live` | Skickar. |
 
 Starten stoppas om `MAIL_MODE=live` och `DEMO_INSTANCE=true`, om
 `LINK_SECRET` saknas när läget inte är `log`, eller om läget är okänt.
 Övriga inställningar: `SMTP_HOST`, `SMTP_PORT` och `MAIL_FROM`. Appen har
-inget användarnamn eller lösenord för SMTP.
+inget användarnamn eller lösenord för SMTP. Compose-filerna för dev och den
+lokala produktionsstacken låser `MAIL_MODE=log`, också om `api-variables.env`
+är en kopia av produktionens.
 
 ## Sändaren
 
@@ -139,6 +145,15 @@ inget användarnamn eller lösenord för SMTP.
   rad kan inte skriva över resultatet från den som tog den.
 - Har en rad varit `sending` i över 10 minuter (sändaren dog) blir den
   `queued` igen.
+- Precis före SMTP förnyar sändaren märket (`claimed_at` med villkoret att
+  `claim_token` är oförändrad); har en annan sändare tagit raden under tiden
+  skickas den inte. Hela samtalet med reläet för ett mejl, anslutningen
+  inräknad, avbryts efter 120 sekunder. En rad kan därför inte tas över medan
+  dess sändare fortfarande talar med reläet.
+- Utskicket sker minst en gång, inte exakt en gång, i ett enda fall: reläet tog
+  emot mejlet men statusen skrevs aldrig (svaret eller skrivningen gick
+  förlorad), och raden skickas igen när den tas över. Därför handlar ett
+  kvitto om en händelse som inte ändras, så att en dubblett säger samma sak.
 - Högst 30 mejl per körning, över en SMTP-anslutning med STARTTLS (krävs) och
   60 sekunders tidsgräns per steg. Lägst prioritetsnummer först.
 - `Message-ID` är `<mail-<id>.<16 hextecken HMAC>@<värdnamnet i HERDBOOK_HOST>>`,
@@ -147,15 +162,22 @@ inget användarnamn eller lösenord för SMTP.
 | Svar | Klass | Följd |
 |---|---|---|
 | 250 | `sent` | `sent`, med `sent_at` och `address_hash` |
-| 4xx, avbruten anslutning eller annat fel under sändningen, fel när mejlet byggs | `temporary` | räknas; väntetiden före nästa försök växer från 1 min via 5 min, 30 min, 2 h och 6 h till 12 h, och det sjunde räknade felet ger `failed` |
-| 5.1.x, 5.2.x, 5.3.x och övriga 5xx | `permanent` | `failed` direkt |
-| anslutningen nekas, ingen STARTTLS, 421, 5.7.0, 5.7.1, avsändaren nekas | `systemic` | felet ligger hos reläet, inte hos mejlet: raden står kvar i kön utan räknat försök, och sändaren vilar 5 minuter |
+| 4xx vid RCPT eller DATA, avbruten anslutning eller annat fel under sändningen, fel när mejlet byggs | `temporary` | räknas; väntetiden före nästa försök växer från 1 min via 5 min, 30 min, 2 h och 6 h till 12 h, och det sjunde räknade felet ger `failed` |
+| 5xx vid RCPT eller DATA, också 5.7.x (policy), och 552 (för stort) vid MAIL FROM | `permanent` | `failed` direkt |
+| anslutningen nekas, ingen STARTTLS, EHLO nekas, 421, reläet nekar vår avsändare eller vår IP vid MAIL FROM, anslutningen bryts eller tar för lång tid för det andra mejlet i rad i samma körning | `systemic` | felet ligger hos reläet, inte hos mejlet: försöket räknas inte, sändaren vilar 5 minuter och raden väntar till en minut efter pausen, så att mejlen bakom den går först |
+
+Ett avslag vid RCPT eller DATA gäller den mottagaren eller det mejlet, vilken
+kod det än har. Ett relä som nekar alla mottagare fäller därför mejlen ett i
+taget. Får samma rad `systemic` en tredje gång och annan post har gått fram
+mellan gångerna, är felet mejlets eget och raden blir `failed`. "Försök igen"
+börjar räkningen om.
 
 ## Studsar och statusvy
 
 `record_bounce(message_id, diagnos)` markerar raden bakom en leveransrapport
-som `bounced`. Inläsningskön anropar den för varje leveransrapport i
-brevlådan ([inkorg-gmail.md](inkorg-gmail.md)). Ett `Message-ID` med en annan miljös värdnamn eller fel HMAC
+som `bounced`, men bara om den är `sent`. Inläsningskön anropar den för varje
+leveransrapport i brevlådan ([inkorg-gmail.md](inkorg-gmail.md)). Ett `Message-ID`
+med en annan miljös värdnamn eller fel HMAC, eller en rad i någon annan status,
 rör ingen rad, och funktionen returnerar `False`.
 
 API:t under `/api/v2/mail` (admin ser allt, genbanksansvarig rader med sin

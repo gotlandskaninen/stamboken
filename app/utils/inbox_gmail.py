@@ -4,13 +4,14 @@ mailbox and turns each message in INBOX into an item of the queue.
 
 Each Gmail message is handled once: its row in gmail_processed is written in the transaction of its effects
 (and of the mails they queue). Only after the commit is the message labelled "Inläst" and moved to the trash,
-so a message read again after a crash in between is only labelled. A message that cannot be read is labelled
-"Fel vid inläsning" and left in the inbox.
+so a message read again after a crash in between only gets the Gmail steps it lacks. An error of the database,
+the filesystem or Gmail stops the run, which is read again; an error of a message's content is counted, and a
+message that fails FAILED_AFTER runs in a row is labelled "Fel vid inläsning", recorded as failed and left in
+the inbox. No message can stop the others.
 """
 
 import email
 import hmac
-import html
 import io
 import logging
 import math
@@ -19,8 +20,11 @@ from datetime import datetime, timedelta, timezone
 from email import policy
 from email.parser import HeaderParser
 from email.utils import parseaddr
+from html.parser import HTMLParser
 
-from peewee import fn
+import requests
+from google.auth.exceptions import GoogleAuthError
+from peewee import InterfaceError, OperationalError, fn
 from PIL import Image
 
 import utils.inbox as inbox
@@ -45,9 +49,13 @@ logger = logging.getLogger("herdbook.inbox_gmail")
 
 READ, FAILED, DEMO = "Inläst", "Fel vid inläsning", "Demo"
 MAX_TEXT = 10_000  # characters of a mail's text kept on the item; shortcut: cut, raise it if handlers miss text
+MAX_BODY = 100_000  # characters of a mail's body read at all, before anything parses it: about 0.2 s of parsing
 RELEASE_AFTER = timedelta(days=30)  # a closed item's sender address goes by then, whatever is still queued
 CROP_SIDE = 2000  # pixels, the longest side of the photo's part a question carries
+MIN_SIDE = 200  # pixels: an image with a shorter side is a signature logo or a tracking pixel, not a document
 STALLED_AFTER = timedelta(minutes=20)  # four missed runs: the reader has stopped
+FAILED_AFTER = 3  # runs in a row a message's content may fail before it is set aside for a human
+RETRY = "retry"  # gmail_processed.kind of a message that failed fewer times: read again by every run
 # One of our Message-IDs (utils.mail.message_id), of any environment: <mail-<row>.<16 hex>@<its hostname>>.
 _OUR_ID = re.compile(r"<mail-(\d{1,18})\.[0-9a-f]{16}@([A-Za-z0-9.-]+)>")
 _CASE = re.compile(r"\(ärende (\d{1,9})\)$")
@@ -57,25 +65,56 @@ _QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"')
 _COMMENT = re.compile(r"\([^()]*\)")
 _SPF = re.compile(r"spf=pass\s.*\bsmtp\.mailfrom=(\S+)", re.I | re.S)
 _DKIM = re.compile(r"dkim=pass\s+header\.[id]=@?([a-z0-9.-]+)(?:\s|$)", re.I)
-# An HTML-only mail as text: what is never shown goes, a line break per paragraph, then every tag.
-_HIDDEN = re.compile(r"(?is)<(script|style|head)\b.*?</\1\s*>|<!--.*?-->")
-_BREAK = re.compile(r"(?i)<br\s*/?>|</(?:p|div|li|tr|h\d)\s*>")
-_TAG = re.compile(r"<[^>]*>")
+
+
+class _HtmlText(HTMLParser):
+    """
+    An HTML-only mail as text, by the standard library's parser (linear, where regexes over tags were quadratic):
+    what is never shown goes (script, style, head, comments), a line break per paragraph, every tag.
+    """
+
+    HIDDEN = {"script", "style", "head"}
+    BREAKS = {"p", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts, self.hidden = [], 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.HIDDEN:
+            self.hidden += 1
+        elif tag == "body":
+            self.hidden = 0  # a head left open hides nothing of the body
+        elif tag == "br":
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in self.HIDDEN:
+            self.hidden = max(self.hidden - 1, 0)
+        elif tag in self.BREAKS:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if not self.hidden:
+            self.parts.append(data)
 
 
 def run(gmail=None):
     """
     One run of the job: the messages added to INBOX since the stored historyId, or the whole inbox when Gmail
     no longer has that history (or on the first run). The historyId moves on only when every message is
-    labelled, so a run that fails half way is read again. Closed items' sender addresses are swept first.
-    last_error keeps the alarm on while any message is labelled "Fel vid inläsning" (a human handles those).
+    labelled, so a run that fails half way is read again; the messages whose content failed in an earlier run are
+    read again too. Closed items' sender addresses are swept first. last_error keeps the alarm on while any
+    message is labelled "Fel vid inläsning" (a human handles those).
     """
-    release_senders()
     GmailSync.insert(id=1).on_conflict_ignore().execute()
     sync = GmailSync.get_by_id(1)
-    gmail = gmail or Gmail.from_settings()
     try:
+        release_senders()
+        gmail = gmail or Gmail.from_settings()
         ids, newest = _new_messages(gmail, sync.history_id)
+        retries = GmailProcessed.select(GmailProcessed.gmail_message_id).where(GmailProcessed.kind == RETRY)
+        ids = list(dict.fromkeys([message_id for (message_id,) in retries.tuples()] + ids))
         errors = [error for message_id in ids if (error := _handle(gmail, message_id))]
         if failed := len(gmail.labelled(gmail.label(FAILED))):
             errors.append(f"{failed} mejl har etiketten {FAILED} i brevlådan")
@@ -111,25 +150,68 @@ def _new_messages(gmail, history_id):
     return gmail.labelled("INBOX"), newest
 
 
+def _infrastructure(exc):
+    """An error of the database, the filesystem or Gmail, not of the message: the run stops and is read again."""
+    if isinstance(exc, (OperationalError, InterfaceError, requests.RequestException, GoogleAuthError)):
+        return True
+    return isinstance(exc, OSError) and exc.errno is not None  # an image library's OSError has no errno
+
+
 def _handle(gmail, message_id):
-    """Reads and labels one message; returns the error when it could not be read."""
-    found = gmail.message(message_id)
-    if found is None or "INBOX" not in found["labelIds"] or gmail.label(READ) in found["labelIds"]:
-        return None  # gone, not in the inbox (never SPAM), or read before
-    if not GmailProcessed.select().where(GmailProcessed.gmail_message_id == message_id).exists():
-        received = datetime.fromtimestamp(int(found["internalDate"]) / 1000, timezone.utc)
-        try:
-            outcome = read_message(message_id, found["raw"], received)
-        except Exception as exc:  # pylint: disable=broad-except  # one bad message must not stop the others
-            logger.exception("Reading Gmail message %s failed", message_id)
-            gmail.modify(message_id, add=[gmail.label(FAILED)])
-            return _scrub(f"{message_id}: {type(exc).__name__}: {exc}")
-        if outcome == DEMO:
-            gmail.modify(message_id, add=[gmail.label(DEMO)])
+    """
+    One message, all of it inside the try: read and labelled, or only the Gmail steps it lacks when it was handled
+    before (also a message labelled "Inläst" whose row has gone). Returns the error when its content could not be
+    read; raises an error of the infrastructure.
+    """
+    try:
+        found = gmail.message(message_id)
+        labels = (found or {}).get("labelIds") or []  # Gmail leaves the key out when a message has no labels
+        done = GmailProcessed.get_or_none(GmailProcessed.gmail_message_id == message_id)
+        if found is None or "INBOX" not in labels:  # gone, or not in the inbox (never SPAM): nothing to do
+            if done is not None and done.kind == RETRY:
+                done.delete_instance()
             return None
-    gmail.modify(message_id, add=[gmail.label(READ)], remove=[gmail.label(FAILED)])
-    gmail.trash(message_id)
-    return None
+        kind = done.kind if done is not None else ("item" if gmail.label(READ) in labels else RETRY)
+        if kind == RETRY:
+            received = datetime.fromtimestamp(int(found["internalDate"]) / 1000, timezone.utc)
+            if read_message(message_id, found["raw"], received) == DEMO:
+                gmail.modify(message_id, add=[gmail.label(DEMO)])
+                return None
+            kind = GmailProcessed.get_by_id(message_id).kind
+        if kind == "failed":
+            if gmail.label(FAILED) not in labels:
+                gmail.modify(message_id, add=[gmail.label(FAILED)])
+            return None
+        if gmail.label(READ) not in labels or gmail.label(FAILED) in labels:
+            gmail.modify(message_id, add=[gmail.label(READ)], remove=[gmail.label(FAILED)])
+        gmail.trash(message_id)
+        return None
+    except Exception as exc:  # pylint: disable=broad-except  # one bad message must not stop the others
+        if _infrastructure(exc):
+            raise
+        logger.exception("Reading Gmail message %s failed", message_id)
+        return _failed(gmail, message_id, exc)
+
+
+def _failed(gmail, message_id, exc):
+    """
+    A message whose content failed: counted, and after FAILED_AFTER runs labelled and recorded as failed. A message
+    handled before keeps its row (only a Gmail step failed, which the next run redoes): never read twice.
+    """
+    error = _scrub(f"{message_id}: {type(exc).__name__}: {exc}")
+    with DB_PROXY.atomic():
+        row = GmailProcessed.get_or_none(GmailProcessed.gmail_message_id == message_id)
+        if row is not None and row.kind != RETRY:
+            return error
+        failures = (row.failures if row is not None else 0) + 1
+        kind = "failed" if failures >= FAILED_AFTER else RETRY
+        GmailProcessed.insert(gmail_message_id=message_id, kind=kind, failures=failures).on_conflict(
+            conflict_target=[GmailProcessed.gmail_message_id],
+            update={GmailProcessed.kind: kind, GmailProcessed.failures: failures, GmailProcessed.at: inbox.now()},
+        ).execute()
+    if kind == "failed":
+        gmail.modify(message_id, add=[gmail.label(FAILED)])
+    return error
 
 
 def read_message(gmail_id, raw, received_at=None):
@@ -140,7 +222,7 @@ def read_message(gmail_id, raw, received_at=None):
     nothing here touches (no row either: it has no effects to guard).
     """
     msg = email.message_from_bytes(raw, policy=policy.default)
-    sender = _normalize(parseaddr(str(msg.get("From", "")))[1])
+    sender = _normalize(_no_nul(parseaddr(str(msg.get("From", "")))[1]))
     here = _hostname().lower()
     report = _delivery_report(msg)
     if report is not None:
@@ -151,7 +233,8 @@ def read_message(gmail_id, raw, received_at=None):
             if mail.record_bounce(original, diagnostic):
                 _processed(gmail_id, "bounce")
             else:  # a report on no mail of ours: a human has a look
-                _processed(gmail_id, "item", _new_item(gmail_id, sender, text, received_at))
+                item = _new_item(gmail_id, sender, text, received_at, verified=authenticated(msg, sender))
+                _processed(gmail_id, "item", item)
         return None
     if _auto_reply(msg):
         with DB_PROXY.atomic():
@@ -170,8 +253,11 @@ def read_message(gmail_id, raw, received_at=None):
                 _processed(gmail_id, "reply", replied)
             else:
                 maybe = replied.id if replied is not None else None
-                item = _new_item(gmail_id, sender, text, received_at, stored, skipped, maybe_item=maybe)
-                if stored and authenticated(msg, sender):  # never a receipt to an address the sender only typed
+                verified = authenticated(msg, sender)
+                item = _new_item(
+                    gmail_id, sender, text, received_at, stored, skipped, maybe_item=maybe, verified=verified
+                )
+                if stored and verified:  # never a receipt to an address the sender only typed
                     _receipt(item, len(stored))
                 _processed(gmail_id, "item", item)
     except BaseException:
@@ -181,12 +267,21 @@ def read_message(gmail_id, raw, received_at=None):
 
 
 def _processed(gmail_id, kind, item=None):
+    """The message's row, with its effects: it replaces the count of failed runs, never a row of handled mail."""
+    GmailProcessed.delete().where(
+        (GmailProcessed.gmail_message_id == gmail_id) & (GmailProcessed.kind == RETRY)
+    ).execute()
     GmailProcessed.create(gmail_message_id=gmail_id, kind=kind, item=item)
 
 
 def _hosts(*headers):
     """The hostnames of our Message-IDs in the headers, of whichever environment sent them."""
     return {match.group(2).lower() for header in headers for match in _OUR_ID.finditer(str(header or ""))}
+
+
+def _no_nul(text):
+    """A NUL character is never stored: Postgres takes none in text, nor in jsonb."""
+    return text.replace("\x00", "")
 
 
 def _content(part):
@@ -201,11 +296,13 @@ def _text(msg):
     part = msg.get_body(preferencelist=("plain", "html"))
     if part is None:
         return None
-    text = _content(part)
+    text = _content(part)[:MAX_BODY]
     if part.get_content_subtype() == "html":
-        text = html.unescape(_TAG.sub("", _BREAK.sub("\n", _HIDDEN.sub("", text))))
-        text = "\n".join(" ".join(line.split()) for line in text.splitlines() if line.strip())
-    return text.strip()[:MAX_TEXT] or None
+        parser = _HtmlText()
+        parser.feed(text)
+        parser.close()
+        text = "\n".join(" ".join(line.split()) for line in "".join(parser.parts).splitlines() if line.strip())
+    return _no_nul(text).strip()[:MAX_TEXT] or None
 
 
 def _attachments(msg):
@@ -215,7 +312,7 @@ def _attachments(msg):
         name = part.get_filename()
         if part.is_multipart() or (part.get_content_maintype() == "text" and not name):
             continue
-        found.append(((name or "namnlös")[:200], part.get_payload(decode=True) or b""))
+        found.append((_no_nul(name or "namnlös")[:200], part.get_payload(decode=True) or b""))
     return found
 
 
@@ -224,18 +321,26 @@ def _store(attachments):
     Each attachment through the upload's checks and conversion (at most MAX_FILES images in all, 10 MB a file,
     re-saved as JPEG without EXIF): (stored (path, sha256, quality), names of the files not stored).
     """
-    from blueprints.inbox import MAX_FILES, _images, _Refused  # the upload's pipeline; its refusals need an app context
+    from blueprints.inbox import MAX_FILES, _each_image, _Refused  # the upload's; its refusals need an app context
 
-    stored, skipped = [], []
+    stored, skipped, small = [], [], []
+
+    def keep(image):
+        if min(image.size) < MIN_SIDE:
+            small.append(image.size)
+        else:
+            stored.append((*inbox.store_jpeg(image, "original"), inbox.measure(image)))
+
     try:
         for name, data in attachments:
+            small.clear()
             try:
-                images = _images(io.BytesIO(data), MAX_FILES - len(stored))
+                _each_image(io.BytesIO(data), MAX_FILES - len(stored), keep)
             except _Refused:
                 skipped.append(name)
                 continue
-            for image in images:
-                stored.append((*inbox.store_jpeg(image, "original"), inbox.measure(image)))
+            if small:
+                skipped.append(name)
     except BaseException:
         inbox.remove_files(path for path, _, _ in stored)
         raise
@@ -277,7 +382,7 @@ def _delivery_report(msg):
     for part in msg.walk():
         kind = part.get_content_type()
         if kind == "text/plain" and text is None:
-            text = _content(part).strip()[:MAX_TEXT] or None
+            text = _no_nul(_content(part)[:MAX_BODY]).strip()[:MAX_TEXT] or None
         elif kind == "message/delivery-status":
             for fields in part.get_payload():
                 diagnostic = diagnostic or fields.get("Diagnostic-Code") or fields.get("Status")
@@ -366,11 +471,14 @@ def _not_saved(skipped):
 
 
 def _attach_reply(item, text, stored=(), skipped=()):
-    """An answer on the item: an event with its text and new documents, back to the handler if it waited, a notice."""
+    """
+    An answer on the item: an event with its text and new documents, a notice, and back to its handler if it
+    waited for the answer or was incomplete (the mail about it asked the sender to reply with what is missing).
+    """
     documents = _documents(item, stored)
     detail = {"text": text, "documents": [document.id for document in documents], **_not_saved(skipped)}
     InboxEvent.create(item=item, kind="svar", detail=detail)
-    if item.state == "vantar_uppfodare":
+    if item.state in ("vantar_uppfodare", "ofullstandig"):
         inbox._set_state(item, "tagen")  # pylint: disable=protected-access
         item.save()
     if item.assigned_to_id:
@@ -381,11 +489,12 @@ def _attach_reply(item, text, stored=(), skipped=()):
         inbox.notify(handler, "svar", item)
 
 
-def _new_item(gmail_id, sender, text, received_at, stored=(), skipped=(), maybe_item=None):
+def _new_item(gmail_id, sender, text, received_at, stored=(), skipped=(), maybe_item=None, verified=False):
     """
     An item of kind mail (with attachments) or meddelande, its herd guessed from the sender; with no match the
     genebank is unknown and every queue worker is told. The files not stored and the case a reply may be about
-    are on its "inkommen" event.
+    are on its "inkommen" event. `verified`: Gmail authenticated the sender (authenticated), the only one any
+    mail about the item goes back to.
     """
     member, herd, genebank = _match(sender)
     item = InboxItem.create(
@@ -394,6 +503,7 @@ def _new_item(gmail_id, sender, text, received_at, stored=(), skipped=(), maybe_
         herd=herd,
         member=member,
         sender_address=sender,
+        sender_authenticated=verified,
         message=text,
         gmail_message_id=gmail_id,
         received_at=received_at or inbox.now(),

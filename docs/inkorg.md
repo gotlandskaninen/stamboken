@@ -114,8 +114,8 @@ bort.
 | `tagen` | `…/tilldela` | `ny`, `hos_genbanksansvarig`, `tagen` (de väntande lägena behåller sitt läge och byter bara handläggare) | genbanksansvarig för postens genbank, admin |
 | `tagen` | `…/lage` | `vantar_foralder`, `ofullstandig` | handläggaren |
 | `tagen` | `…/lage` (öppna igen) | `klar`, `dubblett`, `skrap` | genbanksansvarig för postens genbank, admin; den som öppnar blir handläggare |
-| `tagen` | föräldern sparas (var som helst i Stamboken) | `vantar_foralder` | systemet |
-| `tagen` | svaret på frågan läses in | `vantar_uppfodare` | systemet |
+| `tagen` | den sista föräldern posten väntar på sparas (var som helst i Stamboken) | `vantar_foralder` | systemet |
+| `tagen` | ett svar från avsändaren läses in (se [Fråga uppfödaren](#fråga-uppfödaren)) | `vantar_uppfodare`, `ofullstandig` | systemet |
 | `vantar_uppfodare` | `…/fraga` | `tagen` | handläggaren |
 | `vantar_foralder` | `…/lage`; något dokument måste ha `waiting_for` | `tagen` | handläggaren |
 | `hos_genbanksansvarig` | `…/lage`; handläggaren tas bort | `tagen` | handläggaren |
@@ -123,10 +123,10 @@ bort.
 | `dubblett` | `…/lage` med `duplicate_of` | `tagen`, `vantar_uppfodare`, `vantar_foralder`, `ofullstandig` | handläggaren |
 | `skrap` | `…/lage` | `tagen`, `vantar_uppfodare`, `vantar_foralder`, `ofullstandig` | handläggaren |
 | `klar` | det sista dokumentet blir klart eller avfärdat | alla öppna lägen | systemet |
-| `klar` | `…/lage`, bara för `kind: "meddelande"` ("besvarat"); dokument som kommit med ett svar måste vara klara eller avfärdade | `tagen`, `vantar_uppfodare`, `vantar_foralder`, `ofullstandig` | handläggaren |
+| `klar` | `…/lage`, bara för `kind: "meddelande"` och för en post utan dokument (till exempel ett mejl vars bilagor inte sparades), oavsett typ ("besvarat"); dokument som kommit med ett svar måste vara klara eller avfärdade | `tagen`, `vantar_uppfodare`, `vantar_foralder`, `ofullstandig` | handläggaren |
 
 Allt annat nekas med 409. `ny` och `vantar_uppfodare` kan inte sättas med `…/lage` (400), och inte heller
-`klar` för en post som inte är ett meddelande.
+`klar` för en post som varken är ett meddelande eller saknar dokument.
 
 ## Arbetsgången
 
@@ -135,7 +135,7 @@ Allt annat nekas med 409. `ny` och `vantar_uppfodare` kan inte sättas med `…/
 3. Ett intyg: spara det intyget visar (`…/spara`), en ny kanin eller pappersintyget på en kanin
    som finns. Visar intyget också en försäljning, registrera den nu (`…/overlat`): ett dokument som
    är klart går inte att spara eller sälja från.
-4. Bekräfta maskningen (`…/maskning`). Kopian läggs på kaninen och dokumentet blir klart.
+4. Bekräfta vridning och maskning (`…/maskning`). Kopian läggs på kaninen och dokumentet blir klart.
 5. Ett överlåtelsebevis: typen `bevis`, sedan `…/overlat`. Beviset blir klart med försäljningen.
 6. Ett foto som inte ska sparas: `dismissed: true`.
 7. När det sista dokumentet är klart eller avfärdat blir posten `klar`, och uppladdaren får en
@@ -189,6 +189,7 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
   "missing_proof": false,
   "ref_type": null,
   "ref_id": null,
+  "sender_authenticated": null,
   "has_message": true,
   "maybe_blurry": false,
   "documents": 2,
@@ -207,6 +208,11 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
 - `stalled`: "står still". Nattjobbet sätter den på en post som varit `tagen` i 14 dagar utan någon
   händelse (att öppna posten eller visa originalet räknas inte), och tar bort den när något har hänt.
   Genbanksansvariga i postens genbank får notisen `star_still`, en gång för varje gång posten stannar.
+- `sender_authenticated`: för en mejlad post `true` när Gmail har godkänt avsändaradressens domän (SPF
+  eller DKIM, samma kontroll som kvittot) och annars `false`; `null` för en uppladdning. Mejlen om posten
+  (`inlasning.klar`, `inlasning.ofullstandig`, `inlasning.paminnelse`) går till en mejlad posts adress
+  bara när den är `true`, så att en förfalskad avsändare aldrig får kön att mejla någon annan. Visa till
+  exempel "Avsändaren är inte bekräftad" när den är `false`.
 - `maybe_blurry`: något dokument har varningen `suddig` (kön visar "kan vara oskarp").
 - `documents` och `documents_done`: antal dokument och antal klara eller avfärdade.
 
@@ -302,7 +308,8 @@ till avsändaren väntar, och senast 30 dagar efter stängningen.
   de skiljer sig. `checks` är kontrollerna i ord; `ok` är `true`, `false` eller `null` (upplysning).
   Förslaget sparas aldrig av sig självt: det är handläggarens `…/spara` som skriver.
 - `individual`: kaninens nummer när dokumentet är sparat, annars `null`.
-- `herd_tracking_id`: försäljningens rad i besättningshistoriken, för ett bevis.
+- `herd_tracking_id`: raden i besättningshistoriken för försäljningen som registrerats genom
+  dokumentet (för ett bevis: försäljningen det visar).
 - `has_original`: originalet finns. `false` när det är gallrat eller raderat på begäran (se
   [Gallring](#gallring)); `…/original` svarar då 404.
 - `has_copy`: kopian finns.
@@ -320,10 +327,10 @@ till avsändaren väntar, och senast 30 dagar efter stängningen.
 | `tilldelad` | `{"to_user": 7, "from_user": null}` |
 | `lage` | `{"from": "tagen", "to": "ofullstandig", "note": "Pappersintyget saknas"}`; `note` bara när den gavs, `duplicate_of` vid `dubblett` |
 | `dokument` | `{"document": 31, "fields": ["mask_rects", "rotation"]}` |
-| `sparad` | `{"document": 31, "action": "ny_kanin" \| "pappersintyg", "individual": "G1-2511"}`, eller vid en försäljning `{"document": 31, "action": "overlatelse", "individual": "G1-2111", "herd": "G2", "missing_proof": true}` |
-| `kopia` | `{"document": 31, "rects": 1}` |
+| `sparad` | `{"document": 31, "action": "ny_kanin" \| "pappersintyg", "individual": "G1-2511"}`, eller vid en försäljning `{"document": 31, "action": "overlatelse", "individual": "G1-2111", "herd": "G2", "missing_proof": true}`; `"action": "bevis"` när ett bevis kopplas till en försäljning som redan är registrerad |
+| `kopia` | `{"document": 31, "rects": 1, "rotation": 90}`; varje anrop till `…/maskning` |
 | `original_visat` | `{"document": 31}` |
-| `foralder_inlagd` | `{"individual": "G1-2431"}` |
+| `foralder_inlagd` | `{"individual": "G1-2431"}`; en kanin som posten väntade på är inlagd |
 | `fraga` | `{"text": "Står det G1-2112?", "document": 31, "rotation": 0, "crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.25}}`; de tre sista bara med utsnitt |
 | `svar` | `{"text": "Ja.", "documents": [33], "not_saved": ["brev.docx"]}`; `user` är `null`, `not_saved` bara när något inte sparades |
 | `tolka_igen` | `{"document": 31}`; handläggaren lade dokumentet i tolkningens kö igen |
@@ -336,17 +343,17 @@ När postens text gallras försvinner `text`, `note` och `not_saved` ur `detail`
 ### `POST /api/v2/inkorg/upload`
 
 **Vem:** inloggad ägare eller skötare av besättningen (den finns bland användarens besättningar),
-eller vem som helst som arbetar i kön, för vilken besättning som helst. Högst 20 anrop i timmen
-per användare (429 efter det).
+eller vem som helst som arbetar i kön, för vilken besättning som helst. Högst 20 sparade inskick i
+timmen per användare (429 efter det); ett anrop som nekas, också 409 nedan, räknas inte.
 
 **Begäran:** `multipart/form-data`:
 
 | Fält | | |
 |---|---|---|
 | `herd` | krävs | besättningsnumret, till exempel `G1` |
-| `files` | krävs, upprepas | 1–10 filer: JPEG, PNG, WebP, HEIC eller PDF, högst 10 MB styck |
+| `files` | krävs, upprepas | 1–10 filer: JPEG, PNG, WebP, HEIC eller PDF, högst 10 MB allt som allt (se nedan) |
 | `message` | valfritt | uppladdarens meddelande, högst 2000 tecken |
-| `dry_run` | valfritt | `1` eller `true`: mät bilderna och svara, men spara ingenting |
+| `accept_warnings` | valfritt | `1` eller `true`: spara också när någon bild har en varning |
 
 Filtypen avgörs av filens innehåll, inte av namnet. Varje bild avkodas, vrids efter telefonens
 orientering och sparas om som JPEG utan EXIF och GPS. En PDF blir en bild per sida (200 dpi,
@@ -360,10 +367,10 @@ räknas sida för sida. En bild får ha högst 40 megapixlar.
 - `brightness`: medelljuset, 0–255.
 
 `warnings` listar det som gör bilden svårläst: `lag_upplosning` (kortaste sidan under 1000
-bildpunkter), `suddig`, `for_mork`, `for_ljus`. Gränserna är preliminära. Visa till exempel
-"Bilden ser suddig ut. Ta om den?" med "Skicka ändå". Gränssnittet kan först anropa med
-`dry_run=1`, visa varningarna och sedan skicka på riktigt; båda anropen räknas mot gränsen 20 i
-timmen.
+bildpunkter), `suddig`, `for_mork`, `for_ljus`. Gränserna är preliminära. Har någon bild en varning
+och saknas `accept_warnings` sparas ingenting, och svaret är 409 med varningarna. Visa till exempel
+"Bilden ser suddig ut. Ta om den?" med "Skicka ändå", som skickar samma filer igen med
+`accept_warnings=1`. Utan varningar sparas inskicket direkt.
 
 **Svar 201** (inskicket är sparat):
 
@@ -379,7 +386,22 @@ timmen.
 
 `file` är filens plats (0, 1, …) i begäran, och `page` sidan i en PDF (`null` för en bild).
 
-**Svar 200** med `dry_run`: samma `documents` utan `id`, och inget `item`.
+**Svar 409** (någon bild har en varning och `accept_warnings` saknas; ingenting är sparat):
+
+```json
+{
+  "type": "about:blank",
+  "title": "Konflikt",
+  "status": 409,
+  "detail": "Någon bild ser svårläst ut. Skicka igen med accept_warnings=1 för att spara den ändå.",
+  "warnings": [
+    {"file": 0, "page": null, "quality": {"short_side": 3024, "sharpness": 812.4, "brightness": 201.3}, "warnings": []},
+    {"file": 1, "page": 1, "quality": {"short_side": 1654, "sharpness": 12.0, "brightness": 210.0}, "warnings": ["suddig"]}
+  ]
+}
+```
+
+`warnings` har en rad per bild, i samma form som `documents` i svaret 201 men utan `id`.
 
 Genbanksansvarig och hjälpare i besättningens genbank får notisen `ny_post`, utom uppladdaren
 själv.
@@ -390,7 +412,7 @@ själv.
 |---|---|
 | 400 | `Välj besättning.` (saknas eller okänd), `Ingen fil bifogad.`, `Högst 10 bilder per inskick. En PDF räknas sida för sida.`, `Meddelandet får vara högst 2000 tecken.` |
 | 403 | `Du kan bara skicka in för dina egna besättningar.` |
-| 413 | `Filen är för stor. Max 10 MB.`, `Bilden har för många pixlar. Max 40 megapixlar.` |
+| 413 | `Inskicket är för stort. …` (hela begäran över 10 MB), `Filen är för stor. Max 10 MB.`, `Bilden har för många pixlar. Max 40 megapixlar.` |
 | 415 | `Otillåten filtyp. Bara JPEG, PNG, WebP, HEIC och PDF.` |
 | 422 | `Filen kunde inte läsas. Den kan vara skadad.` |
 | 429 | för många inskick den senaste timmen |
@@ -408,6 +430,8 @@ Kölistan, äldst först (`received_at`).
 
 | Parameter | |
 |---|---|
+| `scope=mina` | poster i de genbanker där anroparen är genbanksansvarig eller hjälpare, och poster utan genbank. Standard för genbanksansvariga och hjälpare |
+| `scope=alla` | alla poster. Standard för admin |
 | `mine=1` | poster där anroparen är handläggare |
 | `untaken=1` | poster utan handläggare |
 | `assigned_to=<user id>` | en viss handläggares poster |
@@ -424,18 +448,24 @@ Kölistan, äldst först (`received_at`).
   "items": [ { "…": "poster i listform" } ],
   "total": 17,
   "counts": {"ny": 9, "tagen": 6, "klar": 2},
-  "interpretation": {"interpreter": "gemma", "waiting": 3, "last_done_at": "2026-11-14T08:01:02+00:00", "alarm": false}
+  "interpretation": {"interpreter": "gemma", "waiting": 3, "last_done_at": "2026-11-14T08:01:02+00:00", "alarm": false},
+  "scope": "mina",
+  "my_genebanks": [1]
 }
 ```
 
-`total` är antalet poster med alla filter. `counts` är antalet per läge med alla filter utom
-`state`, så att flikar per läge kan visa sina antal. Ett läge utan poster saknas i `counts`.
+`scope` är den avgränsning som användes och `my_genebanks` id:na för de genbanker där anroparen är
+genbanksansvarig eller hjälpare (tom för en admin utan sådana roller), oberoende av filtren, så att
+`GET /api/v2/inkorg?limit=1` räcker för att läsa dem. `scope` avgränsar bara listan: alla som arbetar
+i kön kan öppna och läsa varje post, och reglerna för att skriva är desamma. `total` är antalet poster
+med alla filter. `counts` är antalet per läge med alla filter utom `state` (också `scope`), så att
+flikar per läge kan visa sina antal. Ett läge utan poster saknas i `counts`.
 `interpretation` är tolkningens läge, oberoende av filtren: `interpreter` (`av` när den är
 avstängd), `waiting` (intyg i kö), `last_done_at` (när det senaste förslaget blev klart) och
 `alarm`, som är `true` när de tre senast tolkade dokumenten alla misslyckades (till exempel när
 tolkningen inte är igång eller har slut på minne). Se [Tolkning](#tolkning).
 
-**Fel:** 400 för ett okänt läge eller ett id som inte är ett heltal.
+**Fel:** 400 för ett okänt läge, en okänd `scope` eller ett id som inte är ett heltal.
 
 ### `GET /api/v2/inkorg/handlaggare`
 
@@ -503,7 +533,7 @@ ovan; ett fel på någon post stoppar alla.
 
 | Fält | |
 |---|---|
-| `state` | `tagen`, `vantar_foralder`, `hos_genbanksansvarig`, `ofullstandig`, `dubblett`, `skrap`, eller `klar` för ett meddelande |
+| `state` | `tagen`, `vantar_foralder`, `hos_genbanksansvarig`, `ofullstandig`, `dubblett`, `skrap`, eller `klar` för ett meddelande eller en post utan dokument |
 | `note` | text, högst 2000 tecken; krävs för `ofullstandig`, valfri annars; sparas i händelsen |
 | `duplicate_of` | krävs för `dubblett`: id för den andra posten |
 
@@ -514,11 +544,12 @@ inget mejl. Öppnar genbanksansvarig eller admin en stängd post blir hen handl�
 
 **Svar 200:** posten i listform.
 
-**Fel:** 400 för ett okänt läge, `klar` för en post som inte är ett meddelande, `ofullstandig` utan
+**Fel:** 400 för ett okänt läge, `klar` för en post med dokument som inte är ett meddelande, `ofullstandig` utan
 `note`, `dubblett` utan en annan post, `vantar_foralder` när inget dokument har `waiting_for`; 403 när
 någon annan än genbanksansvarig eller admin öppnar en stängd post; 409 när anroparen inte är
 handläggare, övergången inte finns eller ett meddelande har dokument som inte är klara (`Gör klart
-eller avfärda dokumenten först.`).
+eller avfärda dokumenten först.`), eller `vantar_foralder` när varje nummer i `waiting_for` redan finns i
+Stamboken (numren tas då bort, se [Dokument](#dokument)).
 
 ## Dokument
 
@@ -539,21 +570,26 @@ eller avfärda dokumenten först.`).
 | `waiting_for` | `null`, `[]` eller en lista med ett eller två individnummer (till exempel `G1-2431`) som inte finns i Stamboken än |
 | `dismissed` | `true` avfärdar dokumentet (klart utan att något sparas, till exempel ett foto som inte är ett intyg); `false` ångrar det, om inget har sparats från dokumentet |
 
-Ändras `rotation` eller `mask_rects` på ett dokument som redan har en kopia görs kopian om. Blir
-det sista dokumentet avfärdat blir posten `klar`.
+När dokumentet har en kopia nekas `rotation`, `mask_rects` och `doc_type` (409): kopian görs bara om
+med `…/maskning`. `doc_type` nekas också när något har sparats från dokumentet (en kanin eller en
+försäljning). Blir det sista dokumentet avfärdat blir posten `klar`.
 
 **Svar 200:** `{"item": <post i listform>, "document": <dokument>}`.
 
 **Fel:** 400 för ett okänt fält, ett ogiltigt värde, ett nummer som inte går att läsa eller som
 redan finns i Stamboken (`"G1-2111 finns redan i Stamboken."`); 404 när dokumentet inte hör till
-posten; 409 när anroparen inte är handläggare, eller när kopian skulle göras om men originalet är
-raderat.
+posten; 409 när anroparen inte är handläggare, när kopian är gjord och anropet ändrar `rotation`,
+`mask_rects` eller `doc_type`, eller när typen ändras på ett dokument som något har sparats från.
 
 **Väntar på förälder.** Saknas en förälder i Stamboken: ange förälderns nummer i `waiting_for`
-och byt läge till `vantar_foralder`. När en kanin med det numret läggs in, var som helst i
-Stamboken, tas numret bort ur `waiting_for` i samma transaktion. Väntar posten inte längre på
-någon förälder blir den `tagen` igen, och handläggaren får notisen `foralder_inlagd` (har posten
-ingen handläggare får genbanksansvariga den).
+och byt läge till `vantar_foralder`. Finns redan alla nummer i `waiting_for` i Stamboken nekas bytet
+(409 `G1-2431 finns redan i Stamboken. …`), och numren tas bort ur `waiting_for`; finns bara några av
+dem tas de bort och posten väntar på resten. När en kanin läggs in, var som helst i Stamboken, tas
+dess nummer bort ur `waiting_for` på alla öppna poster, i vilket läge de än är, i samma transaktion
+(händelsen `foralder_inlagd`). Väntar posten inte längre på någon förälder får handläggaren notisen
+`foralder_inlagd` (har posten ingen handläggare får genbanksansvariga den), och en post i
+`vantar_foralder` blir `tagen` igen. En post som någon annan har låst just då hoppas över, så att
+registreringen aldrig väntar på den; jobbet `inbox_wake` väcker varje timme det som hoppats över.
 
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/tolka-igen`
 
@@ -662,13 +698,21 @@ hjälpare får bara sätta intyget på en kanin som saknar intyg.
 **Fel:** 400 utan intygsnummer eller individnummer, eller när intygsnumret redan finns
 (`Individual certificate already exists`); 403 när anroparen inte får ändra kaninen eller kaninen
 redan har intyg och anroparen inte är genbanksansvarig eller admin; 404 när kaninen inte finns;
-409 `number_conflict` när `paper_number` inte är kaninens nummer i Stamboken (eller finns på en annan
+409 `Ingen ändring: G1-2511 har redan intyget 123456.` när kaninen redan har just det intyget (inget
+sparas och dokumentet kopplas inte till kaninen); 409 `number_conflict` när `paper_number` inte är kaninens nummer i Stamboken (eller finns på en annan
 kanin), med samma fält som ovan. `resolution` läses inte här: kaninens nummer är redan satt och
 pappret kan inte rätta det, så ett intyg med ett annat nummer lämnar handläggaren till
 genbanksansvarig (`hos_genbanksansvarig`).
 
 **För båda:** 409 när posten inte är anroparens, inte är `tagen`, har `ref_type`, eller
-dokumentet inte är ett osparat intyg; 400 för okänd `action`. Efter sparandet har dokumentet
+dokumentet inte är ett osparat intyg, och när dokumentet redan gäller en annan kanin (se nedan);
+400 för okänd `action`.
+
+**Ett dokument, en kanin.** Det första som sparas genom ett dokument (en ny kanin, ett
+pappersintyg eller en försäljning) binder dokumentet till den kaninen. Allt som sparas genom det
+sedan måste gälla samma kanin (409 `Dokumentet gäller G1-2111. …`), och ett dokument bär högst en
+registrering och en försäljning. Är en kanin såld genom dokumentet kan en ny kanin inte sparas från
+det. Efter sparandet har dokumentet
 `status: "sparad"`. Det blir klart först när maskningen är bekräftad.
 
 ## Registrera en försäljning
@@ -692,7 +736,10 @@ En hjälpare får sälja kaniner i sin genbank som en ägare får.
 
 **Bevis.** Är dokumentet ett överlåtelsebevis (`doc_type: "bevis"`) blir det klart och kopplas
 till försäljningens rad (`herd_tracking_id`). Annars registreras försäljningen ändå, och posten
-får `missing_proof: true` ("bevis saknas").
+får `missing_proof: true` ("bevis saknas"). Kommer beviset senare till samma post skickas det med
+`…/overlat` med samma kanin, köpare och datum: det kopplas då till försäljningen som redan finns,
+utan att den registreras igen, och `missing_proof` blir `false` när ingen försäljning i posten
+längre saknar bevis. Den som kopplar måste få sälja kaninen, som för en försäljning.
 
 **Korrigering.** Ligger datumet före kaninens senaste händelse är det en korrigering. Den gör
 bara genbanksansvarig för kaninens genbank och admin, och anropet skriver då in försäljningen på
@@ -711,7 +758,7 @@ sin plats i historiken. Alla andra får 400.
 | 400 | besättning eller datum saknas eller är okänd; `title: "Ogiltig försäljning"` med försäljningens regler: datumet i framtiden, före 43 dagars ålder eller före kaninens senaste händelse, en annan genbank, en kanin utan intyg till en annan besättning än GX1/MX1, kaninen finns redan där |
 | 403 | anroparen får inte sälja kaninen |
 | 404 | kaninen finns inte |
-| 409 | som för `…/spara`; eller besättningshistoriken skulle bli motsägelsefull (med `rows`) |
+| 409 | som för `…/spara`; en försäljning är redan registrerad genom dokumentet; eller besättningshistoriken skulle bli motsägelsefull (med `rows`) |
 
 ## Maskning och kopian på kaninen
 
@@ -725,30 +772,48 @@ kopian genom att rita rektanglarna över det vridna originalet.
 
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/maskning`
 
-Bekräftar maskningen och gör kopian.
+Bekräftar vridningen och maskningen tillsammans och gör kopian av just det paret.
 
 ```json
-{"mask_rects": [{"x": 0, "y": 0.6667, "w": 1, "h": 0.3333}]}
+{"rotation": 90, "mask_rects": [{"x": 0, "y": 0.6667, "w": 1, "h": 0.3333}]}
 ```
 
-`mask_rects` kan utelämnas om de redan är sparade på dokumentet. En tom lista bekräftar att
-intyget inte visar någon säljare eller köpare.
+| Fält | |
+|---|---|
+| `rotation` | krävs: 0, 90, 180 eller 270 grader medurs |
+| `mask_rects` | krävs: rektanglarna i bråkdelar av bilden vriden `rotation` grader. Får inte vara `null` |
+| `no_personal_data` | `true` krävs när `mask_rects` är en tom lista: intyget visar ingen säljare eller köpare |
 
-**Vem:** handläggaren. Dokumentet måste vara ett sparat intyg (`individual` satt).
+Båda värdena sparas på dokumentet i samma transaktion som kopian görs. Det som redan står på
+dokumentet (från `PATCH`) används inte: kopian visar exakt det paret som skickades.
+
+**Vem:** handläggaren medan posten är öppen. Har dokumentet redan en kopia får också
+genbanksansvarig för postens genbank och admin göra om den, i alla lägen och också när posten är
+stängd eller någon annan har den, så att en felaktig kopia kan rättas. Dokumentet måste vara ett
+sparat intyg (`individual` satt).
 
 Dokumentet blir klart (`status: "klar"`, `has_copy: true`). Är alla dokument i posten klara
 eller avfärdade blir posten `klar`, uppladdaren får notisen `klar` och mejlet `inlasning.klar`.
-Kopian görs om från originalet varje gång rektanglarna eller vridningen ändras.
+Varje anrop loggas som händelsen `kopia`.
 
 **Svar 200:** `{"item": <post>, "document": <dokument>}`.
 
-**Fel:** 400 när `mask_rects` saknas både i anropet och på dokumentet, eller är ogiltiga; 409 när
-dokumentet inte är ett sparat intyg, anroparen inte är handläggare eller originalet är raderat.
+**Fel:** 400 när `rotation` eller `mask_rects` saknas eller är ogiltiga, eller när `mask_rects` är tom
+utan `"no_personal_data": true`; 409 när dokumentet inte är ett sparat intyg, anroparen inte får göra
+kopian eller originalet är raderat.
 
 ## Bilderna
 
 Båda svarar med `image/jpeg` och `Cache-Control: no-store, private`. Bilderna ligger utanför den
 publika uppladdningskatalogen och nås bara genom de här endpointsen.
+
+**Katalogen.** Originalen och kopiorna ligger i `PRIVATE_UPLOAD_FOLDER` (`/app/skyddat`), som bara
+`api` monterar: `./skyddat` på värden. Imagen kör som uid 1001, och Docker skapar en saknad
+källkatalog som root, så skapa den före första starten, som `./uppladdningar`, ägd av uid 1001 och
+utan läsrätt för andra: `install -d -o 1001 -g 1001 -m 700 skyddat skyddat-test`. Demons `api-test`
+har en egen, `./skyddat-test`, aldrig produktionens: dess nattjobb tar bort filer som demodatabasen
+inte pekar på. Går katalogen inte att skriva i loggar API:t ett fel med katalogens namn vid
+starten, och varje inskick misslyckas tills den är rättad.
 
 ### `GET /api/v2/inkorg/{id}/dokument/{dok}/original`
 
@@ -763,7 +828,8 @@ genbanksansvarig och admin. En genbankshjälpare ser originalet i kön men inte 
 
 **Fel:** 403 för den som inte får se intyget; 404 när kaninen inte finns eller inte är
 tillgänglig, eller saknar ett inläst pappersintyg (`Kaninen har inget inläst pappersintyg.`).
-Gränssnittet kan använda 404 för att dölja "Pappersintyg" på kaninens sida.
+Gränssnittet kan använda 404 för att dölja "Pappersintyg" på kaninens sida, med `HEAD` på samma adress:
+samma status (200, 403 eller 404) utan bilden.
 
 ## Fråga uppfödaren
 
@@ -789,8 +855,9 @@ hunnit raderas. Är frågans text gallrad när mejlet ska gå stoppas det. Poste
 
 Svaret kommer till föreningens brevlåda. Det läggs på posten som händelsen `svar`, med svarets
 foton som nya dokument, bara när Gmail har godkänt avsändarens domän och avsändaren är den som
-fick frågan, postens avsändare eller besättningens innehavare. Posten blir då `tagen` igen och
-handläggaren får notisen `svar`. Annars blir svaret en egen post med `maybe_item` (se
+fick frågan, postens avsändare eller besättningens innehavare. Väntade posten på svaret
+(`vantar_uppfodare`) eller var den `ofullstandig` blir den `tagen` igen, och handläggaren får notisen
+`svar`. Mejlen om en ofullständig post ber avsändaren svara med det som saknas. Annars blir svaret en egen post med `maybe_item` (se
 [Mejlade poster](#mejlade-poster)).
 
 **Svar 200:** posten i listform.
@@ -812,9 +879,10 @@ och inställningar: [inkorg-gmail.md](inkorg-gmail.md)). Varje mejl i inkorgen b
 - en ny post, `mail` med bilagor och `meddelande` utan.
 
 En ny post får avsändarens adress i `sender_address`, mejlets text i `message` (en HTML-text
-utan taggar) och en gissad besättning. Bilagorna går genom samma kontroller som en uppladdning
+utan taggar; bara de första 100 000 tecknen läses och högst 10 000 sparas) och en gissad besättning. Bilagorna går genom samma kontroller som en uppladdning
 ([Ladda upp](#ladda-upp)): JPEG, PNG, WebP, HEIC och PDF, högst 10 MB styck och högst 10 bilder
-per mejl. Övriga bilagor sparas inte, men deras namn står i händelsen `inkommen`. Ett foto som
+per mejl. En bild vars kortaste sida är under 200 bildpunkter (en logotyp i signaturen, en
+spårningspixel) är inget dokument. Övriga bilagor sparas inte, men deras namn står i händelsen `inkommen`. Ett foto som
 skickats inbäddat i texten räknas som en bilaga. Genbanksansvarig och hjälpare i postens
 genbank får notisen `ny_post`, alla i kön när genbanken är okänd.
 
@@ -831,8 +899,8 @@ Gränssnittet visar "Gäller kanske ärende 12". Handläggaren avgör.
 ```
 
 `last_run_at` är den senaste körningen som gick igenom, och `last_error` felet från den senaste
-körningen: ett mejl som inte gick att läsa (det har då etiketten "Fel vid inläsning" i
-brevlådan) eller en körning som avbröts. `alarm` är sant när `last_error` finns, eller när
+körningen: ett mejl som inte gick att läsa (efter tre körningar i rad får det etiketten "Fel vid
+inläsning" i brevlådan) eller en körning som avbröts. `alarm` är sant när `last_error` finns, eller när
 läsningen är på och inte har gått igenom de senaste 20 minuterna. Gränssnittet visar då en rad
 överst i kön.
 
@@ -917,7 +985,8 @@ Mejlen går genom mejlkön ([mejl.md](mejl.md)) och köas i samma transaktion so
   (ärende 12)" eller "Ditt inskick är klart (ärende 12)", och mejlet listar kaninernas nummer
   och länkar till `/stamboken/inskick`. Öppnas posten igen innan mejlet gått stoppas det; blir
   en öppnad post klar igen går ett nytt mejl. En mejlad post har ingen uppladdare: mejlet går
-  då till avsändarens adress, utan länken.
+  då till avsändarens adress, utan länken, men bara när Gmail har godkänt avsändaren
+  (`sender_authenticated`). Det gäller också de två mejlen nedan.
 - **`inlasning.kvitto`** till avsändaren av ett mejl med bilder: "Vi har fått 2 bilder.
   Genbanksansvarig lägger in dem." med ämnesraden "Vi har fått dina bilder (ärende 12)". Bara
   när Gmail har godkänt avsändarens domän (SPF eller DKIM), och högst ett per avsändare och dygn.
@@ -951,8 +1020,9 @@ formuläret. Förslaget är bara ifyllda fält: inget sparas förrän handlägga
   det, skalas ned till högst 2 000 bildpunkter på längsta sidan och förstärks (grön kanal, delad
   med bakgrunden, sträckt kontrast). Ingen databastransaktion eller -anslutning hålls medan
   modellen läser.
-- Svaret sparas i `interpretation`, förslaget i `proposal`, tolkaren i `interpreter` och tiden i
-  `interpreted_at`. Ett dokument får två försök, sedan är det `misslyckad`.
+- Svaret hålls först mot schemat: okända nycklar tas bort, ett värde av fel typ räknas som saknat,
+  en text kortas till 200 tecken och förlorar NUL-tecken. Det sparas sedan i `interpretation`,
+  förslaget i `proposal`, tolkaren i `interpreter` och tiden i `interpreted_at`. Ett dokument får två försök, sedan är det `misslyckad`.
 - Vrids, köas om eller ändras dokumentet medan modellen läser kastas svaret, och dokumentet
   väntar kvar.
 
@@ -965,7 +1035,9 @@ så hur säkert ett fält är avgörs av kontrollerna mot registret, aldrig av m
 2. Bara postens genbank söks: kaniner byter aldrig genbank.
 3. En förälder är bekräftad när numret finns och förälderns egna föräldrar i registret stämmer
    med intyget, minst en av dem och ingen emot. Fel kön eller ett annat namn i registret gör
-   föräldern osäker. Far- och morföräldrar föreslås bara under en bekräftad förälder. Står något
+   föräldern osäker. Kullsyskon har samma föräldrar och födelsedatum, och en felläst siffra landar
+   på ett av dem: en förälder med ett kullsyskon av samma kön är bekräftad bara när namnet på
+   intyget är dess eget. Far- och morföräldrar föreslås bara under en bekräftad förälder. Står något
    annat på intyget markeras hela grenen, eftersom det lika gärna kan vara föräldern som är fel
    läst.
 4. Ett nummer ett tecken fel ger registrets nummer som `härlett`, om bara en kanin passar.
@@ -974,8 +1046,10 @@ så hur säkert ett fält är avgörs av kontrollerna mot registret, aldrig av m
 6. Där intyget och registret skiljer sig blir fältet `avviker`, med båda värdena. Förslaget
    väljer aldrig.
 
-Ett värde som är överstruket eller rättat på intyget är alltid `osäker`. Finns kaninen redan med
-digitalt intyg blir förslaget bara "finns redan med digitalt intyg". Ger tolkningen inte två
+Ett värde som är överstruket eller rättat på intyget är alltid `osäker`. Finns kaninen redan i
+Stamboken prövas den på samma sätt: föräldrarna mot registret, kön och namn, och namnet när kaninen
+har ett kullsyskon av samma kön. Ett annat födelsedatum än kullens gör den `avviker`, utan värde.
+Har den digitalt intyg och går allt igenom blir förslaget bara "finns redan med digitalt intyg". Ger tolkningen inte två
 bekräftade föräldrar hjälper registret: en förälder som hittats, eller uppladdarens besättning när
 ingen förälder gick att läsa, ger sina kullar. En enda kull född det lästa datumet fyller i mor och
 far som `härlett`; annars listas kullarna i `checks`.
@@ -1023,20 +1097,25 @@ kommandologgen: 12 månader är 366 dagar och 13 månader 396.
 | Händelsen `oppnad` | 13 månader efter händelsen |
 | Ett stängt meddelande (`kind: "meddelande"`) utan dokument | 13 månader efter stängningen |
 | En post i läget `skrap` | 30 dagar efter stängningen |
-| En post i läget `ofullstandig` | 12 månader efter att den kom in; mejl när den markeras och efter 11 månader (se [Mejl](#mejl)) |
+| En post i läget `ofullstandig` | 12 månader efter att den kom in eller efter avsändarens senaste svar på den; mejl när den markeras och efter 11 månader (se [Mejl](#mejl)) |
 | `sender_address` på en stängd post | när inget mejl till avsändaren väntar, senast 30 dagar efter stängningen, också när Gmail-läsningen är avstängd |
 | `gmail_processed` | 60 dagar |
 | Kopian på kaninen och spåret i `inbox_operation` | aldrig |
 
 - En post raderas med sina dokument, händelser, notiser och original, och mejlkön glömmer avsändarens
   adress (`forget_recipient("inbox_sender", id)`). En post där något dokument har lagts på en kanin (en
-  kopia, en registrering eller ett bevis till en försäljning) raderas aldrig; dess original och text
-  gallras enligt de två första raderna.
+  kopia, en registrering, en försäljning, eller någon skrivning som har en rad i `inbox_operation`)
+  raderas aldrig, så att spåret "inlagd från foto av" behåller sitt dokument. När en sådan post skulle
+  ha raderats gallras i stället alla dess original och dess text.
 - Originalen till andra dokumenttyper (`arsblankett`, `annat`) gallras bara med sin post.
 - `original_path` släpps i databasen innan filen tas bort, och bara filer direkt i `inkorg/original/`
   under `PRIVATE_UPLOAD_FOLDER` tas bort. Loggen visar antal, aldrig namn eller sökvägar.
+- En fil direkt i `inkorg/original/` eller `inkorg/kopia/` som ingen rad pekar på och som är äldre än
+  ett dygn tas bort av nattjobbet: en borttagning som misslyckades efter commit, ett inskick som
+  rullades tillbaka eller en halvskriven fil. Ett dygn, så att ett inskick som pågår aldrig rörs.
 - När originalet är borta har dokumentet `has_original: false`, `…/original` svarar 404 och kopian kan
-  inte göras om. Kopian på kaninen visas som förut.
+  inte göras om. Kopian på kaninen visas som förut. Tolkningens svar (`interpretation`) och förslaget
+  (`proposal`) är en avskrift av fotot och raderas med originalet, också vid radering på begäran.
 
 **Inställning** (`.docker/api-variables.env`): `INLASNING_ORIGINAL_MANADER`, hela månader, minst 1,
 standard 12.
@@ -1049,6 +1128,12 @@ kaninens besättning när ett intyg sparas, och av säljarens besättning vid en
 innehavaren av köparens besättning vid en försäljning till en medlem. Innehavaren är medlemskapets
 huvudmedlem i matrikeln. Finns en kopia är den det enda som blir kvar, med säljar- och köparblocket
 täckt.
+
+Det personen själv har skickat in raderas också: poster där personen är den matchade avsändaren av ett
+mejl (`member`) och poster som personens konto har laddat upp. En sådan post som inte har lagt något på
+en kanin raderas med sina filer. En post som har det står kvar utan original, text och
+`sender_address`, och mejl till avsändaren som ännu inte har gått stoppas (`cancelled`), och mejlkön
+glömmer adressen.
 
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/radera-original`
 
@@ -1066,9 +1151,11 @@ dokumentet inte hör till den.
 
 ## Gränser och sådant gränssnittet behöver veta
 
-- Uppladdningen tar emot högst 10 filer à 10 MB i en begäran. Resten av API:t tar högst 11 MB.
-  nginx tar i dag emot högst 10 MB per begäran på de publika värdnamnen, så ett större inskick
-  måste antingen få en egen gräns i nginx eller skickas som flera inskick.
+- En begäran till uppladdningen får vara högst 10 MB allt som allt, filer och formulär tillsammans:
+  lika mycket som nginx släpper igenom (`client_max_body_size 10M`). Ett större inskick nekas med 413
+  (problem+json när begäran når Flask, annars nginx egen sida), så gränssnittet bör räkna filernas
+  storlek före sändningen och dela upp inskicket. Resten av API:t tar högst 11 MB, men nginx högst
+  10 MB.
 - Telefonens filväljare: `<input type="file" accept="image/*,application/pdf" multiple>` ger både
   kamera och bildbibliotek.
 - Bilderna kräver inloggningens cookie. Använd dem som `src` i samma ursprung, eller hämta dem

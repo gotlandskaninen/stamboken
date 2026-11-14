@@ -5,6 +5,7 @@ Instance specific settings for the herdbook.
 import json
 import logging
 import os
+import tempfile
 from argparse import Namespace
 from pathlib import Path
 
@@ -79,6 +80,28 @@ def refuse_private_folder_under_uploads():
         raise RuntimeError(
             f"PRIVATE_UPLOAD_FOLDER={private} overlaps UPLOAD_FOLDER={uploads}, which nginx serves without login."
         )
+
+
+def report_unwritable_private_folder():
+    """
+    At startup: the image runs as a non-root user, and Docker creates a missing bind source as root, so a private
+    folder nobody created for that user fails every upload and mail. One clear error naming it; the API still starts.
+    """
+    folder = service.private_upload_folder
+    try:
+        os.makedirs(folder, exist_ok=True)
+        with tempfile.TemporaryFile(dir=folder):
+            pass
+    except OSError as exc:
+        logging.getLogger(__name__).error(
+            "PRIVATE_UPLOAD_FOLDER %s is not writable by uid %s (%s): create it on the host owned by that user, as "
+            "uppladdningar. Uploads and mailed photos to the intake queue fail until then.",
+            folder,
+            os.getuid(),
+            exc.strerror or exc,
+        )
+        return False
+    return True
 
 
 def refuse_auto_validate_outside_demo():

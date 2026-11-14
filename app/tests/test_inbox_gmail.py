@@ -6,17 +6,22 @@ isort:skip_file
 """
 
 import base64
+import errno
 import io
 import os
+import time
 from datetime import date, timedelta
 from email.message import EmailMessage
 from email.utils import make_msgid
 from unittest import mock
 
+import herdbook
+import peewee
 import requests
 import utils.database as db
 import utils.inbox as inbox
 import utils.inbox_gmail as inbox_gmail
+import utils.inbox_purge as purge
 import utils.mail as mail
 import utils.settings as settings
 from PIL import Image
@@ -93,7 +98,11 @@ class FakeGmail:
             return _Response(200, {"history": added, "historyId": str(self.history_id)})
         if path == "messages":
             label, hidden = params["labelIds"], {"SPAM", "TRASH"}
-            found = [m for m, f in self.messages.items() if label in f["labelIds"] and not hidden & {*f["labelIds"]}]
+            found = [
+                m
+                for m, f in self.messages.items()
+                if label in f.get("labelIds", []) and not hidden & {*f.get("labelIds", [])}
+            ]
             return _Response(200, {"messages": [{"id": m} for m in reversed(found)]})  # newest first, as Gmail
         if path == "labels" and method == "GET":
             return _Response(200, {"labels": [{"id": i, "name": n} for n, i in self.labels.items()]})
@@ -227,6 +236,9 @@ class TestSorting(GmailTest):
         for part in ("message/rfc822", "text/rfc822-headers"):
             with self.subTest(part=part):
                 row_id = self.queue()
+                db.MailMessage.update(status="sent").where(
+                    db.MailMessage.id == row_id
+                ).execute()  # only sent mail bounces
                 gmail_id = self.fake.deliver(report(mail.message_id(row_id), part))
                 self.read()
                 row = self.row(row_id)
@@ -288,6 +300,31 @@ class TestSorting(GmailTest):
         self.assertEqual(event.detail["text"], "Det är G1-2112.")
         (notice,) = db.Notice.select().where(db.Notice.kind == "svar")
         self.assertEqual((notice.user_id, notice.item_id), (self.helper.id, item.id))
+
+    def test_a_reply_to_an_incomplete_item_returns_it_and_restarts_its_year(self):
+        self.holder(self.herds[0])
+        item = self.item(0)
+        inbox.take(item, self.helper, over=False)
+        inbox.change_state(item, self.helper, "ofullstandig", note="Pappersintyget saknas")
+        year_ago = inbox.now() - inbox.months(13)
+        db.InboxItem.update(received_at=year_ago).where(db.InboxItem.id == item.id).execute()
+        (asked,) = db.MailMessage.select().where(db.MailMessage.kind == "inlasning.ofullstandig")
+        files = [("intyg.jpg", JPEG, encoded(photo()))]
+        self.fake.deliver(message(body="Här är det.", files=files, In_Reply_To=mail.message_id(asked.id)))
+        self.read()
+        self.assertEqual(self.items(), [item])
+        self.assertEqual(self.reload(item).state, "tagen")
+        (notice,) = db.Notice.select().where(db.Notice.kind == "svar")
+        self.assertEqual(notice.user_id, self.helper.id)
+
+        item = self.reload(item)
+        inbox.change_state(item, self.helper, "ofullstandig", note="Beviset saknas också")
+        self.assertEqual(purge.purge_incomplete(inbox.now()), 0)  # a year from the answer, not from coming in
+        self.assertEqual(purge.remind_incomplete(inbox.now()), 0)
+        self.assertEqual(len(self.reload(item).documents), 2)  # the photo the sender supplied stays
+        later = inbox.now() + inbox.months(12) + timedelta(days=1)
+        self.assertEqual(purge.remind_incomplete(later), 1)
+        self.assertEqual(purge.purge_incomplete(later), 1)
 
     def test_a_reply_read_twice_gives_one_event_and_one_notice(self):
         self.holder(self.herds[0])
@@ -394,6 +431,18 @@ class TestItemsFromMail(GmailTest):
         self.assertEqual(len(self.documents(item)), 10)
         self.assertEqual(item.events.get().detail["not_saved"], ["stor.jpg", "brev.docx", "10.jpg"])
 
+    def test_logos_and_tracking_pixels_are_not_documents(self):
+        files = [
+            ("pixel.png", "image/png", encoded(Image.new("RGB", (1, 1), (255, 255, 255)), "PNG")),
+            ("logo.png", "image/png", encoded(photo((400, 120)), "PNG")),
+            ("intyg.jpg", JPEG, encoded(photo())),
+        ]
+        self.fake.deliver(message(files=files))
+        self.read()
+        (item,) = self.items()
+        self.assertEqual(len(self.documents(item)), 1)
+        self.assertEqual(item.events.get().detail["not_saved"], ["pixel.png", "logo.png"])
+
     def test_exif_is_gone_and_an_inline_photo_counts(self):
         exif = Image.Exif()
         exif[0x0110] = "SecretCam"  # camera model
@@ -418,6 +467,23 @@ class TestItemsFromMail(GmailTest):
         self.fake.deliver(msg)
         self.read()
         self.assertEqual(self.items()[0].message, "Hej!\nIntyget & beviset\nkommer snart")
+
+    def test_a_hostile_html_body_is_read_in_bounded_time(self):
+        for name, body in (
+            ("unclosed tags", "<" * 1024 * 1024),
+            ("unclosed comments", "<!--" * 256 * 1024),
+            ("unclosed script", "<script>" + "x<" * 512 * 1024),
+            ("a head left open", "<html><head><title>x</title><body><p>Hej</p>" + "<b>" * 300_000),
+        ):
+            with self.subTest(name):
+                msg = message()
+                msg.set_content(body, subtype="html")
+                started = time.monotonic()
+                text = inbox_gmail._text(msg)
+                self.assertLess(time.monotonic() - started, 1.0)  # linear; the old regexes took minutes
+                self.assertLessEqual(len(text or ""), inbox_gmail.MAX_TEXT)
+                if name == "a head left open":
+                    self.assertEqual(text, "Hej")
 
     def test_a_reply_brings_its_photos_as_new_documents_on_the_item(self):
         self.holder(self.herds[0])
@@ -517,6 +583,36 @@ class TestSenderAddress(GmailTest):
         self.assertEqual(self.reload(item).sender_address, SENDER)  # the receipt waits
         inbox_gmail.release_senders(at=inbox.now() + timedelta(days=31))
         self.assertIsNone(self.reload(item).sender_address)
+
+    def test_mail_goes_back_only_to_a_sender_gmail_authenticated(self):
+        """A forged From must never make the queue mail its victim: no klar, ofullstandig or paminnelse."""
+        forged = self.mailed_item(auth=f"spf=fail smtp.mailfrom={SENDER}")
+        genuine = self.mailed_item()
+        self.login("hjalp")
+        for item, expected in ((forged, False), (genuine, True)):
+            with self.subTest(authenticated=expected):
+                self.assertIs(self.reload(item).sender_authenticated, expected)
+                listed = self.client.get(f"/api/v2/inkorg/{item.id}").get_json()
+                self.assertIs(listed["sender_authenticated"], expected)
+                inbox.take(item, self.helper, over=False)
+                inbox.change_state(item, self.helper, "ofullstandig", note="Pappersintyget saknas")
+                db.InboxItem.update(received_at=inbox.now() - inbox.months(12)).where(
+                    db.InboxItem.id == item.id
+                ).execute()
+                purge.remind_incomplete(inbox.now())
+                inbox.change_state(item, self.helper, "tagen")
+                inbox.update_document(item, item.documents.get(), self.helper, {"dismissed": True})
+                kinds = {
+                    m.kind
+                    for m in db.MailMessage.select().where(
+                        (db.MailMessage.recipient_kind == "inbox_sender") & (db.MailMessage.recipient_id == item.id)
+                    )
+                }
+                sent_back = {"inlasning.ofullstandig", "inlasning.paminnelse", "inlasning.klar"}
+                self.assertEqual(kinds & sent_back, sent_back if expected else set())
+        upload = self.item(0)
+        self.assertIsNone(self.client.get("/api/v2/inkorg?scope=alla").get_json()["items"][-1]["sender_authenticated"])
+        self.assertEqual(self.client.get("/api/v2/inkorg?scope=alla").get_json()["items"][-1]["id"], upload.id)
 
     def test_an_open_item_keeps_it(self):
         item = self.mailed_item(auth=None)
@@ -724,29 +820,126 @@ class TestSync(GmailTest):
         self.assertEqual([i.gmail_message_id for i in self.items()], [first, new])
         self.assertEqual(self.sync().history_id, str(self.fake.history_id))
 
-    def test_a_message_that_cannot_be_read_is_labelled_and_the_others_are_read(self):
-        bad, good = self.fake.deliver(message(subject="Trasig")), self.fake.deliver(message(subject="Hel"))
-        real = inbox_gmail.read_message
+    def flaky(self, bad, error):
+        """read_message raising `error` for the message `bad`, as a poison message or a broken disk would."""
+        real, calls = inbox_gmail.read_message, []
 
-        def flaky(gmail_id, raw, received_at=None):
+        def read(gmail_id, raw, received_at=None):
             if gmail_id == bad:
-                raise ValueError(f"kunde inte läsa {SENDER}")
+                calls.append(gmail_id)
+                raise error
             return real(gmail_id, raw, received_at)
 
-        with mock.patch.object(inbox_gmail, "read_message", flaky):
+        return mock.patch.object(inbox_gmail, "read_message", read), calls
+
+    def test_a_message_that_fails_three_runs_in_a_row_is_set_aside_and_never_stops_the_others(self):
+        bad, good = self.fake.deliver(message(subject="Trasig")), self.fake.deliver(message(subject="Hel"))
+        poison, calls = self.flaky(bad, ValueError(f"kunde inte läsa {SENDER}"))
+        with poison:
+            for run in (1, 2):
+                self.read()
+                self.assertFalse(self.fake.labelled(bad, "Fel vid inläsning"), run)  # not yet: it is read again
+                self.assertEqual(db.GmailProcessed.get_by_id(bad).failures, run)
+                self.assertEqual(self.sync().history_id, str(self.fake.history_id))  # the others go on
+                error = self.sync().last_error
+                self.assertIn(bad, error)
+                self.assertNotIn("@", error)  # every queue worker sees it
             self.read()
+            self.assertTrue(self.fake.labelled(bad, "Fel vid inläsning"))
+            self.assertIn("INBOX", self.fake.messages[bad]["labelIds"])
+            self.assertEqual((db.GmailProcessed.get_by_id(bad).kind, len(calls)), ("failed", 3))
+            self.read()  # set aside: never read again, and the label keeps the alarm on
+            self.assertEqual(len(calls), 3)
         self.assertEqual([i.gmail_message_id for i in self.items()], [good])
-        self.assertTrue(self.fake.labelled(bad, "Fel vid inläsning"))
-        self.assertIn("INBOX", self.fake.messages[bad]["labelIds"])
-        error = self.sync().last_error
-        self.assertIn(bad, error)
-        self.assertNotIn("@", error)  # every queue worker sees it
-        self.assertEqual(self.sync().history_id, str(self.fake.history_id))
-        self.read()  # a later run with nothing new: the labelled mail still raises the alarm
         self.assertEqual(self.sync().last_error, "1 mejl har etiketten Fel vid inläsning i brevlådan")
         self.fake.messages[bad]["labelIds"].append("TRASH")  # a human dealt with it
         self.read()
         self.assertIsNone(self.sync().last_error)
+
+    def test_a_message_that_fails_once_is_read_by_the_next_run(self):
+        gmail_id = self.fake.deliver(message())
+        poison, _ = self.flaky(gmail_id, UnicodeError("trasig teckenkodning"))
+        with poison:
+            self.read()
+        self.assertEqual(self.items(), [])
+        self.read()  # history has moved on, but the count brings it back
+        (item,) = self.items()
+        self.assertEqual(db.GmailProcessed.get_by_id(gmail_id).kind, "item")
+        self.assertTrue(self.done(gmail_id))
+
+    def test_an_error_after_the_commit_never_reads_the_message_again(self):
+        gmail_id = self.fake.deliver(message())
+        with mock.patch.object(self.gmail, "trash", side_effect=KeyError("id")):  # not the infrastructure's
+            self.read()
+        self.assertEqual(db.GmailProcessed.get_by_id(gmail_id).kind, "item")  # not turned into a retry
+        self.assertIn(gmail_id, self.sync().last_error)
+        db.GmailSync.update(history_id=None).execute()  # the next read of it
+        self.read()
+        self.assertTrue(self.done(gmail_id))
+        self.assertEqual(len(self.items()), 1)
+
+    def test_a_message_without_labels_is_skipped(self):
+        bare, good = self.fake.deliver(message(subject="Utan etiketter")), self.fake.deliver(message())
+        del self.fake.messages[bare]["labelIds"]  # Gmail leaves the key out
+        self.read()
+        self.assertEqual([i.gmail_message_id for i in self.items()], [good])
+        self.assertEqual(self.sync().history_id, str(self.fake.history_id))
+
+    def test_a_database_or_disk_error_stops_the_run_without_labelling_and_the_next_run_reads_it(self):
+        self.read()  # the reader's row, with a history id
+        for error in (peewee.OperationalError("server closed the connection"), OSError(errno.ENOSPC, "disk full")):
+            with self.subTest(type(error).__name__):
+                gmail_id = self.fake.deliver(message())
+                before = self.sync().history_id
+                broken, _ = self.flaky(gmail_id, error)
+                with broken, self.assertRaises(type(error)):
+                    self.read()
+                self.assertEqual(self.sync().history_id, before)
+                self.assertFalse(self.fake.labelled(gmail_id, "Fel vid inläsning"))
+                self.assertIsNone(db.GmailProcessed.get_or_none(db.GmailProcessed.gmail_message_id == gmail_id))
+                self.read()
+                self.assertTrue(self.done(gmail_id))
+
+    def test_a_nul_character_is_never_stored(self):
+        files = [("in\x00tyg.docx", "application/octet-stream", b"PK\x03\x04syntetisk")]
+        self.fake.deliver(message(body="Hej\x00 där", files=files))
+        self.read()
+        (item,) = self.items()
+        self.assertEqual(item.message, "Hej där")
+        self.assertEqual(item.events.get().detail["not_saved"], ["intyg.docx"])
+
+    def test_labelled_read_but_not_trashed_gets_only_the_trash(self):
+        gmail_id = self.fake.deliver(message())
+        self.fake.failures.append(("POST", f"messages/{gmail_id}/trash"))
+        with self.assertRaises(requests.HTTPError):
+            self.read()
+        self.assertTrue(self.fake.labelled(gmail_id, "Inläst"))
+        self.assertIn("INBOX", self.fake.messages[gmail_id]["labelIds"])
+        self.read()
+        self.assertTrue(self.done(gmail_id))
+        self.assertEqual(len(self.items()), 1)
+        # Also when its row is long gone (60 days): the label says it was read.
+        again = self.fake.deliver(message(subject="Gammal"))
+        self.read()
+        self.fake.messages[again]["labelIds"] = ["INBOX", self.fake.labels["Inläst"]]
+        db.GmailProcessed.delete().execute()
+        db.GmailSync.update(history_id=None).execute()
+        self.read()
+        self.assertTrue(self.done(again))
+        self.assertEqual(len(self.items()), 2)
+
+
+class TestJob(GmailTest):
+    def test_the_job_closes_its_threads_connection_and_records_a_failing_sweep(self):
+        with (
+            mock.patch.object(inbox_gmail, "release_senders", side_effect=RuntimeError("sweep failed")),
+            mock.patch.object(herdbook.genetics.ps, "_close_db_connection") as close,
+            mock.patch.object(inbox_gmail.Gmail, "from_settings", return_value=self.gmail),
+            self.assertLogs(herdbook.APP.logger, "ERROR"),
+        ):
+            herdbook._read_gmail()
+        close.assert_called_once()
+        self.assertIn("sweep failed", self.sync().last_error)
 
 
 class TestClient(InboxTest):

@@ -3,9 +3,11 @@
 isort:skip_file
 """
 
+import threading
 from datetime import date, timedelta
 from unittest import mock
 
+import herdbook  # noqa: E402
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
 import utils.inbox as inbox  # noqa: E402
@@ -223,6 +225,22 @@ class TestSaveEndpoint(GrantTest):
         certified = {**body, "individual": "G1-2111", "paper_certificate": "P-10", "paper_number": "G1-2111"}
         self.assertEqual(self.save(item2, document2, **certified).status_code, 403)
 
+    def test_a_save_that_changes_nothing_is_refused_and_links_nothing(self):
+        held = self.rabbit("G1-2111")
+        item, document = self.taken(self.manager)
+        self.login("man")
+        body = {
+            "action": "pappersintyg",
+            "individual": held.number,
+            "paper_certificate": held.certificate,
+            "paper_number": held.number,
+        }
+        resp = self.save(item, document, **body)
+        self.assertEqual((resp.status_code, resp.get_json()["detail"][:13]), (409, "Ingen ändring"))
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).individual_id)
+        self.assertFalse(db.InboxEvent.select().where(db.InboxEvent.kind == "sparad").exists())
+        self.assertFalse(db.InboxOperation.select().exists())
+
     def test_a_number_conflict_on_an_existing_rabbit_is_not_resolved_by_resolution(self):
         item, document = self.taken(self.helper)
         db.Breeding.update(litter_number=1).where(db.Breeding.id == self.rabbit("G1-2112").breeding_id).execute()
@@ -297,6 +315,69 @@ class TestTransferEndpoint(GrantTest):
         self.assertFalse(body["item"]["missing_proof"])
         self.assertEqual((body["document"]["status"], body["item"]["state"]), ("klar", "klar"))
         self.assertEqual(db.InboxDocument.get_by_id(document.id).herd_tracking_id, body["herd_tracking_id"])
+
+    def test_one_document_one_rabbit_and_one_sale(self):
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        today = date.today().isoformat()
+        sold = self.transfer(item, document, individual="G1-2111", herd="GX1", date=today)
+        self.assertEqual(sold.status_code, 200, sold.get_json())
+        for name, resp in (
+            ("another sale", self.transfer(item, document, individual="G1-2111", herd="G2", date=today)),
+            ("another rabbit sold", self.transfer(item, document, individual="G1-2112", herd="GX1", date=today)),
+            ("a new rabbit", self.save(item, document, **NEW_RABBIT)),
+            (
+                "another rabbit certified",
+                self.save(
+                    item,
+                    document,
+                    action="pappersintyg",
+                    individual="G1-2112",
+                    paper_certificate="P-5",
+                    paper_number="G1-2112",
+                ),
+            ),
+        ):
+            with self.subTest(name):
+                self.assertEqual(resp.status_code, 409, resp.get_json())
+        self.assertEqual(db.InboxOperation.select().count(), 1)
+        self.assertIsNone(self.rabbit("G1-2112").certificate)
+
+        item, document = self.taken(self.helper)  # certified first: then only that rabbit is sold through it
+        body = {
+            "action": "pappersintyg",
+            "individual": "G1-2112",
+            "paper_certificate": "P-6",
+            "paper_number": "G1-2112",
+        }
+        self.assertEqual(self.save(item, document, **body).status_code, 200)
+        resp = self.transfer(item, document, individual="G1-2111", herd="GX1", date=today)
+        self.assertEqual(resp.status_code, 409, resp.get_json())
+        resp = self.transfer(item, document, individual="G1-2112", herd="GX1", date=today)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+
+    def test_a_proof_arriving_later_is_linked_to_the_sale_and_clears_the_missing_proof(self):
+        item = self.item(0, documents=2)
+        inbox.take(item, self.helper, over=False)
+        certificate, proof = list(item.documents.order_by(db.InboxDocument.id))
+        self.login("hjalp")
+        today = date.today().isoformat()
+        resp = self.transfer(item, certificate, individual="G1-2111", herd="G2", date=today)
+        self.assertTrue(resp.get_json()["item"]["missing_proof"])
+        sale = resp.get_json()["herd_tracking_id"]
+        self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{proof.id}", json={"doc_type": "bevis"})
+        transfers = db.HerdTracking.select().where(db.HerdTracking.kind == "TRANSFER").count()
+
+        resp = self.transfer(item, proof, individual="G1-2111", herd="G2", date=today)
+
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        body = resp.get_json()
+        self.assertEqual((body["herd_tracking_id"], body["item"]["missing_proof"]), (sale, False))
+        self.assertEqual((body["document"]["status"], body["document"]["individual"]), ("klar", "G1-2111"))
+        self.assertEqual(db.HerdTracking.select().where(db.HerdTracking.kind == "TRANSFER").count(), transfers)
+        self.assertEqual(db.InboxOperation.select().count(), 1)  # linking writes nothing on the rabbit
+        event = self.reload(item).events.where(db.InboxEvent.kind == "sparad").order_by(db.InboxEvent.id.desc()).get()
+        self.assertEqual(event.detail["action"], "bevis")
 
     def test_a_refused_sale_names_its_field(self):
         item, document = self.taken(self.helper)
@@ -390,6 +471,66 @@ class TestWaitingForAParent(GrantTest):
         }
         self.assertEqual(da.add_individual(form, self.admin.uuid)["status"], "success")
         self.assertEqual(self.reload(item).state, "tagen")
+
+    def register(self, number):
+        return db.Individual.create(number=number, origin_herd=self.herds[0], breeding=self.breeding[0])
+
+    def test_a_parent_registered_clears_it_on_every_open_item_whatever_its_state(self):
+        item, document = self.taken(self.helper)
+        inbox.update_document(item, document, self.helper, {"waiting_for": ["G1-2431"]})  # still tagen
+        self.register("G1-2431")
+        self.assertEqual(
+            (self.reload(item).state, db.InboxDocument.get_by_id(document.id).waiting_for), ("tagen", None)
+        )
+        notice = db.Notice.get(db.Notice.kind == "foralder_inlagd")
+        self.assertEqual((notice.user_id, notice.item_id), (self.helper.id, item.id))
+
+    def test_waiting_for_a_rabbit_that_exists_is_refused_and_the_number_cleared(self):
+        item, document = self.taken(self.helper)
+        db.InboxDocument.update(waiting_for=["G1-2112"]).where(db.InboxDocument.id == document.id).execute()
+        self.login("hjalp")
+        resp = self.post(f"/{item.id}/lage", state="vantar_foralder")
+        self.assertEqual(resp.status_code, 409, resp.get_json())
+        self.assertIn("G1-2112 finns redan", resp.get_json()["detail"])
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).waiting_for)  # cleared, and committed
+        self.assertEqual(self.reload(item).state, "tagen")
+        db.InboxDocument.update(waiting_for=["G1-2112", "G1-2433"]).where(db.InboxDocument.id == document.id).execute()
+        resp = self.post(f"/{item.id}/lage", state="vantar_foralder")
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(db.InboxDocument.get_by_id(document.id).waiting_for, ["G1-2433"])
+
+    def test_a_locked_item_is_skipped_never_waited_for_and_woken_by_the_sweep(self):
+        """The reverse lock order (a save wakes items another transaction holds) must never wait: no deadlock."""
+        item = self.waiting()
+        held, release = threading.Event(), threading.Event()
+
+        def hold():  # as assigning a herd's items does, in another transaction
+            with db.DB_PROXY.atomic():
+                db.InboxItem.select().where(db.InboxItem.id == item.id).for_update().first()
+                held.set()
+                release.wait(10)
+            db.DB_PROXY.close()
+
+        holder = threading.Thread(target=hold)
+        holder.start()
+        self.assertTrue(held.wait(10))
+        try:
+            with db.DB_PROXY.atomic():
+                db.DB_PROXY.execute_sql("SET LOCAL lock_timeout = '2s'")  # waiting would fail here
+                self.register("G1-2431")
+        finally:
+            release.set()
+            holder.join()
+        self.assertEqual(self.reload(item).state, "vantar_foralder")  # skipped
+        self.assertEqual(inbox.wake_waiting(), 1)
+        self.assertEqual(self.reload(item).state, "tagen")
+        self.assertIsNone(self.reload(item).documents.get().waiting_for)
+        self.assertEqual(inbox.wake_waiting(), 0)
+
+    def test_the_sweep_job_closes_its_connection(self):
+        with mock.patch.object(herdbook.genetics.ps, "_close_db_connection") as close:
+            herdbook._wake_waiting_items()
+        close.assert_called_once()
 
     def test_the_insert_and_the_wake_up_are_one_transaction(self):
         self.waiting()

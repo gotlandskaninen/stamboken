@@ -37,7 +37,7 @@ export default async function IndividualPage({
     `/individual/${encodeURIComponent(number)}/pedigree?generations=4`,
   ).catch(() => null);
 
-  const [history, auditData] = await Promise.all([
+  const [history, auditData, hasPaperCertificate] = await Promise.all([
     // Herd-tracking history (spec 999.5) — voided rows included; the section's
     // "Visa ångrade" toggle decides what is shown. Fails gracefully (null).
     fetchApi<HerdTrackingHistory>(
@@ -46,6 +46,14 @@ export default async function IndividualPage({
     // Audit history — manager/admin only, fails gracefully for non-managers (403 → null)
     fetchApi<AuditLogResponse>(`/audit-log/individual/${individual.id!}`).catch(
       () => null,
+    ),
+    // The masked copy of the paper certificate: shown only when the API has one
+    // (404 none, 403 not for this user), asked here so no broken image is rendered.
+    fetchApi(`/v2/individual/${encodeURIComponent(number)}/paper-certificate`, {
+      method: "HEAD",
+    }).then(
+      () => true,
+      () => false,
     ),
   ]);
 
@@ -56,6 +64,7 @@ export default async function IndividualPage({
         pedigree={pedigreeData}
         history={history}
         auditEntries={auditData?.data ?? []}
+        hasPaperCertificate={hasPaperCertificate}
         geneticsSlot={
           <Suspense fallback={<GeneticsSkeleton />}>
             <IndividualGenetics number={number} />
