@@ -871,8 +871,9 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
             data = verify_resp.get_json()
             self.assertTrue(data["verified"])
             self.assertEqual(data["individual_number"], individual.number)
-            # Verify no email is exposed in public endpoint
-            self.assertNotIn("@", data.get("issued_by", ""))
+            # No person on the public page: neither the issuing user's name nor an email
+            self.assertNotIn("issued_by", data)
+            self.assertNotIn("@", str(data))
 
     def test_verify_post_with_pdf(self):
         """POST verify with actual PDF bytes checks checksum + signature."""

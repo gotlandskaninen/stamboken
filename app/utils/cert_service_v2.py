@@ -42,6 +42,13 @@ _GENEBANK_TO_BREED = {
 }
 
 
+def _breed_for(individual):
+    genebank_name = ""
+    if individual.origin_herd and individual.origin_herd.genebank:
+        genebank_name = individual.origin_herd.genebank.name or ""
+    return _GENEBANK_TO_BREED.get(genebank_name, "genbankskanin")
+
+
 def _signature_metadata_for(individual):
     """Return (reason, contact_info) tuple for a certificate signature.
 
@@ -49,10 +56,7 @@ def _signature_metadata_for(individual):
     so contact_info is constant. The reason is parameterised with the breed
     name of the individual's origin genebank for traceability.
     """
-    genebank_name = ""
-    if individual.origin_herd and individual.origin_herd.genebank:
-        genebank_name = individual.origin_herd.genebank.name or ""
-    breed = _GENEBANK_TO_BREED.get(genebank_name, "genbankskanin")
+    breed = _breed_for(individual)
     reason = f"Signerat av Föreningen Gotlandskaninen för {breed}"
     if cert_settings.demo_watermark:
         reason = f"DEMO – EJ GILTIGT INTYG. {reason}"
@@ -70,9 +74,16 @@ def build_cert_data(individual, ind_data, user_id):
     raw_color_note = ind_data.get("color_note") or ""
 
     cert_data = get_certificate_data(ind_data, user_id)
+    # The breeder attests: the origin herd's holder and number, not the user who issues it or the herd the rabbit
+    # is in now, which after a sale is the buyer's or GX1/MX1 (board 2026-10-25 §10).
+    breeder = individual.origin_herd
+    cert_data["fullname"] = (breeder.name or breeder.herd_name or "") if breeder else ""
+    cert_data["herd"] = breeder.herd if breeder else ""
     cert_data["notes"] = raw_notes
     cert_data["color_note"] = raw_color_note
     cert_data["foot_ring"] = ind_data.get("foot_ring") or ""
+    cert_data["microchip"] = individual.microchip or ""
+    cert_data["breed"] = _breed_for(individual).capitalize()
     # Color-code system (herdbookcolors) is not in the DB yet — the template
     # skips the chip when empty.
     cert_data["color_code"] = ""
@@ -95,7 +106,7 @@ def compute_doc_hash_stub(cert_data):
     return compute_checksum(canonical.encode("utf-8"))[:8].upper()
 
 
-def generate_and_store(individual, user, ind_data, user_id):
+def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False):
     """Generate, sign, and store a v2 certificate.
 
     Order of operations (Fix 2 — failure-safe ordering):
@@ -132,6 +143,8 @@ def generate_and_store(individual, user, ind_data, user_id):
         .first()
     )
     cert_data["replaces_date"] = prev.issued_at.date().isoformat() if prev else ""
+    # Reissue of a v1 certificate (a PDF without a v2 row): v1 kept no issue date, so the line names the number.
+    cert_data["replaces_v1"] = bool(replaces_v1 and not prev)
     cert_data["doc_hash_stub"] = compute_doc_hash_stub(cert_data)
 
     # Step 1: Generate + sign PDF (no DB/S3 side effects yet)
