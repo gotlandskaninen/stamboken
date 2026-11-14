@@ -21,6 +21,7 @@ class Role(StrEnum):
     OWNER = "owner"  # current herd in user.transfer_herd_ids()
     CARETAKER = "caretaker"  # current herd in effective_herd_ids() - transfer_herd_ids()
     ACTOR = "actor"  # ran the logged command; derived only by Undo (actor_role), never by roles_for
+    HANDLAGGARE = "handlaggare"  # a genebank helper through an inbox item they hold; only a grant gives it
 
 
 @dataclass(frozen=True)
@@ -71,6 +72,13 @@ POLICY: tuple[Allow, ...] = (
     Allow("GenebankCorrection", Role.ADMIN),
     # Entry applies too, so an actor who sold the rabbit or lost the right to edit it is denied (ADR-0017).
     *[Allow("Undo", r) for r in (Role.ACTOR, *EDITORS)],
+)
+# The inbox handler (utils.inbox.InboxGrant) may do what the owner may. That leaves out the corrections, which
+# are a manager's or an admin's (ADR-0017 level 2), and any rabbit in GX1/MX1, which Entry keeps out.
+POLICY += tuple(
+    Allow(row.command, Role.HANDLAGGARE, row.certified, row.outside_genebank)
+    for row in POLICY
+    if row.role == Role.OWNER
 )
 
 # Command -> form fields, for the matrix.

@@ -15,8 +15,20 @@ from peewee import fn
 from PIL import ImageFilter, ImageStat
 
 import utils.settings as settings
-from utils.database import Herd, InboxDocument, InboxEvent, InboxItem, Individual, Notice, NoticeSetting, User
+from utils.database import (
+    OUTSIDE_GENEBANK_HERDS,
+    Herd,
+    InboxDocument,
+    InboxEvent,
+    InboxItem,
+    InboxOperation,
+    Individual,
+    Notice,
+    NoticeSetting,
+    User,
+)
 from utils.individual_number_v2 import parse_number
+from utils.individual_policy import Role
 
 OPEN_STATES = ("ny", "tagen", "vantar_uppfodare", "vantar_foralder", "hos_genbanksansvarig", "ofullstandig")
 CLOSED_STATES = ("klar", "dubblett", "skrap")
@@ -587,3 +599,100 @@ def set_mail_enabled(user, enabled):
     NoticeSetting.insert(user=user.id, mail_enabled=enabled).on_conflict(
         conflict_target=[NoticeSetting.user], update={NoticeSetting.mail_enabled: enabled}
     ).execute()
+
+
+class InboxGrant:
+    """
+    HANDLAGGARE on a rabbit through an inbox item (individual_commands.Grant), for a genebank helper who holds
+    the item: never through an item in another state or someone else's, nor one that points at another
+    feature's row (ref_type: decided there), nor for a rabbit outside the genebanks the user helps in or in
+    GX1/MX1. Managers and admins write with their own roles; for them the grant only leaves the trace.
+    The caller locks the item first (lock order: item, litters, rabbits); `allows` re-reads it under that lock.
+    """
+
+    def __init__(self, item, user, document=None):
+        self.item_id, self.user_id = item.id, user.id
+        self.document_id = document.id if document is not None else None
+
+    def allows(self, user, herd):
+        """May `user` write, as handler, to a rabbit in `herd` (also a newborn's herd)?"""
+        item = lock_item(self.item_id)
+        return (
+            user.id == self.user_id
+            and item.state == "tagen"
+            and item.assigned_to_id == user.id
+            and item.ref_type is None
+            and herd.genebank_id in (user.is_helper or [])
+            and herd.herd not in OUTSIDE_GENEBANK_HERDS
+        )
+
+    def roles(self, user, individual):
+        return frozenset({Role.HANDLAGGARE}) if self.allows(user, individual.current_herd) else frozenset()
+
+    def trace(self, operation_id):
+        """ "Inlagd från foto av": the write's operation id, its handler and the document."""
+        InboxOperation.create(operation_id=operation_id, user=self.user_id, document=self.document_id)
+
+    def record(self, ctx):
+        for row in ctx.log_rows:
+            self.trace(row["operation_id"])
+
+
+def require_saving(item, document, user):
+    """Writes on rabbits through the item: its handler, in "tagen", and never an item that points elsewhere."""
+    if item.ref_type is not None:
+        raise InboxError(409, f"Posten gäller {item.ref_type} {item.ref_id} och avgörs där, inte i kön.")
+    require_handler(item, user)
+    if item.state != "tagen":
+        raise InboxError(409, "Posten väntar. Gör den till tagen igen för att spara.")
+    if document.done_at is not None:
+        raise InboxError(409, "Dokumentet är redan klart.")
+
+
+def saved(item, document, user, individual, action):
+    """The rabbit a certificate document registered or certified."""
+    document.individual = individual
+    document.save()
+    log_event(item, user, "sparad", document=document.id, action=action, individual=individual.number)
+
+
+def transferred(item, document, user, individual, row):
+    """A sale registered from a document: a proof (bevis) is done with it; anything else leaves the proof missing."""
+    proof = document.doc_type == "bevis"
+    if proof:
+        document.individual, document.herd_tracking, document.done_at = individual, row, now()
+        document.save()
+    else:
+        item.missing_proof = True
+        item.save()
+    detail = {"document": document.id, "individual": individual.number, "herd": row.herd.herd}
+    log_event(item, user, "sparad", action="overlatelse", missing_proof=not proof, **detail)
+    close_if_done(item, user)
+
+
+def parent_registered(number):
+    """
+    A rabbit was created (Individual.save, in its transaction, wherever it was created): its number leaves the
+    waiting_for of the items waiting for it, and an item no longer waiting for anything goes back to its
+    handler ("tagen"). Only items in "vantar_foralder" are locked here, after the rabbit's own locks: no save
+    holds such an item (a save needs "tagen"), so the reversed lock order cannot deadlock with one.
+    """
+    waiting = InboxDocument.select(InboxDocument.item).where(InboxDocument.waiting_for.contains([number]))
+    items = list(
+        InboxItem.select()
+        .where((InboxItem.state == "vantar_foralder") & InboxItem.id.in_(waiting))
+        .order_by(InboxItem.id)
+        .for_update()
+    )
+    for item in items:
+        for document in item.documents.where(InboxDocument.waiting_for.contains([number])):
+            document.waiting_for = [n for n in document.waiting_for if n != number] or None
+            document.save()
+        if item.documents.where(InboxDocument.waiting_for.is_null(False)).exists():
+            continue
+        _set_state(item, "tagen")
+        item.save()
+        log_event(item, None, "foralder_inlagd", individual=number)
+        handlers = [item.assigned_to_id] if item.assigned_to_id else queue_workers(item.genebank_id, managers_only=True)
+        for handler in handlers:
+            notify(handler, "foralder_inlagd", item)

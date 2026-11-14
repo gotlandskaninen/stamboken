@@ -731,7 +731,14 @@ class Individual(BaseModel):
 
     def save(self, *args, **kwargs):
         self.updated_at = datetime.now()
-        return super().save(*args, **kwargs)
+        created = self.id is None
+        saved = super().save(*args, **kwargs)
+        if created:
+            # Here, so that every way a rabbit is created wakes the intake queue's items waiting for it.
+            from utils.inbox import parent_registered  # pylint: disable=import-outside-toplevel  # it imports us
+
+            parent_registered(self.number)
+        return saved
 
     @property
     def current_herd(self):

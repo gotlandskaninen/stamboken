@@ -113,6 +113,7 @@ class WriteContext:
     request_id: uuid.UUID = field(default_factory=uuid.uuid4)  # shared by the log rows of one execute()
     log_rows: list = field(default_factory=list)  # inserted together once every command has run
     number_verified: bool = False  # _verify_number runs once per request, whichever command asks
+    granted: frozenset[Role] = frozenset()  # the roles a Grant added to `roles`
 
     def record(self, command, before, after, *, undoes=None, reason=None) -> uuid.UUID:
         """A command log row (ADR-0017); its operation_id now, the row with the others at the end of execute."""
@@ -192,8 +193,24 @@ class PolicyCommand(Command):
             hook(ctx)
 
 
-def roles_for(user, individual) -> frozenset[Role]:
-    """The user's roles on `individual`, from the same sources as User.can_edit and User.can_transfer."""
+class Grant(Protocol):
+    """
+    Roles on a rabbit that come from something the user holds rather than from their own roles, such as an
+    inbox item they have taken (utils.inbox.InboxGrant). execute asks `roles` under the rabbit's lock, in the
+    write transaction: what it returns joins roles_for's, and a call it gives any role passes the can_edit
+    guard, so the policy table alone decides. Anything the grant itself depends on (its own row) the caller
+    locks before calling execute, since the rabbit's locks come after it. `record` writes the grant's trace
+    once every command has run and been logged (ctx.log_rows). A new grant brings its own Role and rows in
+    individual_policy.POLICY.
+    """
+
+    def roles(self, user, individual) -> frozenset[Role]: ...
+
+    def record(self, ctx: WriteContext) -> None: ...
+
+
+def roles_for(user, individual, grant: Grant | None = None) -> frozenset[Role]:
+    """The user's roles on `individual`, from the same sources as User.can_edit and User.can_transfer, and `grant`."""
     herd = individual.current_herd  # the holder row's herd, else the origin herd (current_holder_row)
     managed = user.is_manager or []
     owned = user.transfer_herd_ids()
@@ -204,7 +221,8 @@ def roles_for(user, individual) -> frozenset[Role]:
         Role.OWNER: herd.id in owned,
         Role.CARETAKER: herd.id in user.effective_herd_ids() - owned,
     }
-    return frozenset(role for role, held in roles.items() if held)
+    held = frozenset(role for role, held in roles.items() if held)
+    return held | grant.roles(user, individual) if grant is not None else held
 
 
 def state_for(individual) -> State:
@@ -216,7 +234,7 @@ def state_for(individual) -> State:
 
 def _shared_guards(ctx):
     """Every write, whatever its commands: permission, then voided, both under the lock (IR-03, IR-05)."""
-    if not ctx.user.can_edit(ctx.individual.id):
+    if not ctx.granted and not ctx.user.can_edit(ctx.individual.id):
         raise IndividualRefused("Forbidden")
     if ctx.individual.voided:  # unpromoted while this request waited: its slot is free again
         raise IndividualRefused("Individual not found")
@@ -230,20 +248,23 @@ def execute(
     *,
     target_breeding: int | None = None,
     with_parents: bool = False,
+    grant: Grant | None = None,
 ) -> Individual:
-    """Run the commands `translate` builds from the locked row; raises their refusals unmapped."""
+    """Run the commands `translate` builds from the locked row; raises their refusals unmapped. See Grant."""
     with DATABASE.atomic():
         lock_individual_for_edit(individual_id, target_breeding, with_parents)
         individual = Individual.get_by_id(individual_id)
         target = canonical_breeding_id(target_breeding)
+        granted = grant.roles(user, individual) if grant is not None else frozenset()
         ctx = WriteContext(
             user=user,
             individual=individual,
             stored=Individual.get_by_id(individual_id),
-            roles=roles_for(user, individual),
+            roles=roles_for(user, individual) | granted,
             state=state_for(individual),
             breeding_after=individual.breeding_id if target is None else target,
             update_log=logging.getLogger(f"{individual.current_herd.genebank.name}_update"),
+            granted=granted,
         )
         commands = translate(ctx)
         if not any(isinstance(command, MoveToLitter) for command in commands):
@@ -275,6 +296,8 @@ def execute(
         for command in ordered:
             command.verify(ctx)
         _log_changes(ctx, commands, Individual.get_by_id(individual_id))
+        if grant is not None:
+            grant.record(ctx)
     return ctx.individual
 
 

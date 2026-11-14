@@ -3,22 +3,49 @@ The intake queue (inläsningskön): uploads, the queue, its notices and the pape
 docs/inkorg.md is the API; the rules live in utils/inbox.py (ADR-0007).
 """
 
+import datetime
+import logging
 import os
 import threading
+import uuid
 from functools import wraps
 
 import pillow_heif
 import pypdfium2
+import utils.data_access as da
 import utils.inbox as inbox
 from extensions import limiter
 from flask import Blueprint, jsonify, request
 from flask_login import current_user
 from peewee import fn
 from PIL import Image, ImageOps
-from utils.database import DB_PROXY, Herd, InboxItem, User
+from utils.database import (
+    DB_PROXY,
+    Herd,
+    HerdTracking,
+    InboxItem,
+    Individual,
+    User,
+    coerce_date,
+    current_holder_row,
+    not_voided,
+)
+from utils.herd_tracking import HerdTrackingError, correct_herd_tracking, is_manager_of
+from utils.individual_commands import (
+    AssignPaperCertificate,
+    IndividualRefused,
+    TransferIndividual,
+    execute,
+    lock_individual_for_edit,
+)
+from utils.individual_number_v2 import PAPER_NUMBER_REQUIRED, parse_number
 
 from .common import json_login_required, problem
+from .individual_v2_create import register_individual
+from .individuals import _validate_sale
 from .uploads import MAX_FILE_SIZE, MAX_PIXELS, _too_many_pixels, _validate_magic_bytes, _webp_pixels
+
+logger = logging.getLogger(__name__)
 
 pillow_heif.register_heif_opener()
 
@@ -368,3 +395,190 @@ def notice_setting():
             return problem(400, "Bad Request", "mail_enabled är true eller false.")
         inbox.set_mail_enabled(current_user, enabled)
     return jsonify({"mail_enabled": inbox.mail_enabled(current_user)})
+
+
+# What a certificate shows, as POST /v2/individual takes it (docs/inkorg.md lists which field is which).
+REGISTRATION_FIELDS = (
+    "breeding_id",
+    "mother",
+    "father",
+    "birth_date",
+    "breed_date",
+    "litter_size",
+    "litter_size6w",
+    "position",
+    "paper_number",
+    "paper_certificate",
+    "resolution",
+    "sex",
+    "color",
+    "name",
+    "color_note",
+    "eye_color",
+    "claw_color",
+    "belly_color",
+    "hair_notes",
+)
+_REFUSED_AS_FORBIDDEN = {"Forbidden", AssignPaperCertificate(None).denied().envelope["message"]}
+
+
+def _command_problem(exc):
+    """A refusal from the write commands or herd-tracking, as v2's PATCH answers it."""
+    if isinstance(exc, HerdTrackingError):
+        return problem(exc.status, exc.title, exc.detail, rows=exc.rows)
+    if not isinstance(exc, IndividualRefused):
+        return problem(400, "Ogiltig begäran", str(exc))
+    envelope, message = exc.envelope, exc.envelope.get("message")
+    if "problem_status" in envelope:
+        extra = {k: v for k, v in envelope.items() if k not in ("status", "message", "problem_status", "title")}
+        return problem(envelope["problem_status"], envelope["title"], message, **extra)
+    if message == "Individual not found":
+        return problem(404, "Hittades inte", message)
+    if message in _REFUSED_AS_FORBIDDEN:
+        return problem(403, "Åtkomst nekad", message)
+    return problem(400, "Ogiltig begäran", message, **{k: v for k, v in envelope.items() if k == "must_mark_dead"})
+
+
+def _live_individual(number):
+    individual = (
+        Individual.get_or_none((Individual.number == number) & not_voided()) if isinstance(number, str) else None
+    )
+    if individual is None:
+        raise inbox.InboxError(404, "Kaninen finns inte i Stamboken.")
+    return individual
+
+
+def _register_new(body, user, grant):
+    """A new rabbit from the certificate, as POST /v2/individual registers it, with a paper certificate."""
+    form = {key: body[key] for key in REGISTRATION_FIELDS if key in body}
+    form["certificate_type"] = "paper"
+    created = []
+    response = register_individual(form, lambda herd: grant.allows(user, herd), created.append)
+    if not created:
+        raise _Refused(response)
+    individual = created[0]
+    birth = HerdTracking.get((HerdTracking.individual == individual.id) & (HerdTracking.kind == "BIRTH"))
+    grant.trace(birth.operation_id)
+    return response[0].get_json(), individual
+
+
+def _assign_certificate(body, user, grant):
+    """The paper certificate on a rabbit already in Stamboken (AssignPaperCertificate)."""
+    individual = _live_individual(body.get("individual"))
+    certificate, paper_number = body.get("paper_certificate"), body.get("paper_number")
+    if not isinstance(certificate, str) or not certificate.strip() or len(certificate) > 20:
+        raise inbox.InboxError(400, "Ange intygsnumret (paper_certificate), högst 20 tecken.")
+    if parse_number(paper_number) is None:
+        raise inbox.InboxError(400, PAPER_NUMBER_REQUIRED)
+    try:
+        execute(
+            user, individual.id, lambda ctx: [AssignPaperCertificate(certificate.strip(), paper_number)], grant=grant
+        )
+    except (IndividualRefused, HerdTrackingError, ValueError) as exc:
+        raise _Refused(_command_problem(exc)) from None
+    individual = Individual.get_by_id(individual.id)
+    return {"individual": individual.as_dict()}, individual
+
+
+def _with_item(body_and_individual, item, document):
+    body, _ = body_and_individual
+    return {**body, "item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]}
+
+
+# [Next.js] Save what a certificate shows: a new rabbit, or the paper certificate on one that exists.
+@inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/spara", methods=["POST"])
+@json_login_required
+@_queue_worker
+def save_document(item_id, document_id):
+    body, user = _body(), User.get_by_id(current_user.id)
+    action = body.get("action")
+    try:
+        with DB_PROXY.atomic():
+            item = inbox.lock_item(item_id)
+            document = inbox.document_of(item, document_id)
+            inbox.require_saving(item, document, user)
+            if document.doc_type != "intyg" or document.individual_id is not None:
+                raise inbox.InboxError(409, "Bara ett intyg som inte är sparat än kan sparas.")
+            grant = inbox.InboxGrant(item, user, document)
+            if action == "ny_kanin":
+                result = _register_new(body, user, grant)
+            elif action == "pappersintyg":
+                result = _assign_certificate(body, user, grant)
+            else:
+                raise inbox.InboxError(400, 'action är "ny_kanin" eller "pappersintyg".')
+            inbox.saved(item, document, user, result[1], action)
+            answer = _with_item(result, item, document)
+    except _Refused as refused:
+        return refused.response
+    except inbox.InboxError as exc:
+        return problem(exc.status, exc.title, exc.detail)
+    _invalidate(result[1])
+    return jsonify(answer), 201 if action == "ny_kanin" else 200
+
+
+# [Next.js] Register a sale shown by a document; without a proof (bevis) the item is marked "bevis saknas".
+@inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/overlat", methods=["POST"])
+@json_login_required
+@_queue_worker
+def transfer(item_id, document_id):
+    body, user = _body(), User.get_by_id(current_user.id)
+    herd, date = body.get("herd"), body.get("date")
+    try:
+        when = datetime.date.fromisoformat(date) if isinstance(date, str) else None
+    except ValueError:
+        when = None
+    if not isinstance(herd, str) or Herd.get_or_none(Herd.herd == herd) is None or when is None:
+        return problem(400, "Ogiltig begäran", "Ange köparens besättning (herd) och datum (date, ÅÅÅÅ-MM-DD).")
+    try:
+        with DB_PROXY.atomic():
+            item = inbox.lock_item(item_id)
+            document = inbox.document_of(item, document_id)
+            inbox.require_saving(item, document, user)
+            individual = _live_individual(body.get("individual"))
+            grant = inbox.InboxGrant(item, user, document)
+            lock_individual_for_edit(individual.id)
+            latest = current_holder_row(individual.id)
+            if (
+                latest
+                and when < coerce_date(latest.herd_tracking_date)
+                and is_manager_of(user, individual.current_herd.genebank_id)
+            ):
+                # A correction: before the rabbit's latest row, a manager's or an admin's (ADR-0017 level 2).
+                operation = uuid.uuid4()
+                (row,) = correct_herd_tracking(
+                    individual, user, operation, [], [{"kind": "TRANSFER", "date": date, "herd": herd}]
+                )
+                grant.trace(operation)
+            else:
+                stored = da.get_individual(individual.number, user.uuid)
+                if stored is None:
+                    raise inbox.InboxError(404, "Kaninen finns inte i Stamboken.")
+                if error := _validate_sale(stored, {"selling_date": date, "herd": herd}, user):
+                    raise _Refused(problem(400, "Ogiltig försäljning", error))
+                execute(user, individual.id, lambda ctx: [TransferIndividual(herd, date)], grant=grant)
+                row = current_holder_row(individual.id)
+            inbox.transferred(item, document, user, individual, row)
+            answer = {
+                "individual": Individual.get_by_id(individual.id).as_dict(),
+                "herd_tracking_id": row.id,
+                "item": inbox.items_json([item])[0],
+                "document": inbox.documents_json([document])[0],
+            }
+    except _Refused as refused:
+        return refused.response
+    except inbox.InboxError as exc:
+        return problem(exc.status, exc.title, exc.detail)
+    except (IndividualRefused, HerdTrackingError) as exc:
+        return _command_problem(exc)
+    _invalidate(individual)
+    return jsonify(answer), 200
+
+
+def _invalidate(individual):
+    """Best-effort Next.js cache invalidation, after the commit: never fails the request."""
+    try:
+        from utils.cache_invalidation import trigger_invalidation
+
+        trigger_invalidation(individual.origin_herd.genebank_id)
+    except Exception:  # pylint: disable=broad-except
+        logger.warning("Cache invalidation failed for %s", individual.number, exc_info=True)

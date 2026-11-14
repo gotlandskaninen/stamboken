@@ -8,24 +8,8 @@ import utils.inbox as inbox  # noqa: E402
 
 from tests.inbox_fixtures import InboxTest  # noqa: E402
 
-QUALITY = {"short_side": 1200, "sharpness": 500.0, "brightness": 200.0}
 
-
-class QueueTest(InboxTest):
-    def item(self, herd=0, documents=1, sender=None):
-        """An uploaded item without files (the queue never reads them)."""
-        stored = [(f"inkorg/original/{n}.jpg", f"{herd}{n}".rjust(64, "0"), QUALITY) for n in range(documents)]
-        item, _ = inbox.create_upload(sender or self.owner, self.herds[herd], None, stored)
-        return db.InboxItem.get_by_id(item.id)
-
-    def post(self, path, **body):
-        return self.client.post(f"/api/v2/inkorg{path}", json=body)
-
-    def reload(self, item):
-        return db.InboxItem.get_by_id(item.id)
-
-
-class TestVisibility(QueueTest):
+class TestVisibility(InboxTest):
     def test_admin_manager_and_helpers_see_the_whole_queue(self):
         gotland, mellerud = self.item(0), self.item(2)
         for username in ("admin", "man", "hjalp", "mhjalp"):
@@ -84,7 +68,7 @@ class TestVisibility(QueueTest):
         self.assertEqual(self.client.get("/api/v2/inkorg/notiser/antal").get_json()["unread"], 0)
 
 
-class TestTakeAndAssign(QueueTest):
+class TestTakeAndAssign(InboxTest):
     def test_take_and_take_over(self):
         item = self.item(0)
         self.login("hjalp")
@@ -149,7 +133,7 @@ class TestTakeAndAssign(QueueTest):
         self.assertEqual((item.state, item.assigned_to_id), ("vantar_foralder", self.manager.id))
 
 
-class TestStates(QueueTest):
+class TestStates(InboxTest):
     STATES = inbox.OPEN_STATES + inbox.CLOSED_STATES
 
     def at(self, state):
@@ -230,7 +214,7 @@ class TestStates(QueueTest):
         self.assertEqual((resp.get_json()["assigned_to"]["id"], resp.get_json()["closed_at"]), (self.manager.id, None))
 
 
-class TestDocuments(QueueTest):
+class TestDocuments(InboxTest):
     def patch(self, item, document, **body):
         return self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{document.id}", json=body)
 
@@ -291,7 +275,7 @@ class TestDocuments(QueueTest):
         self.assertEqual(document["duplicates"], [{"item_id": first.id, "document_id": first.documents.get().id}])
 
 
-class TestUploaderAndNotices(QueueTest):
+class TestUploaderAndNotices(InboxTest):
     def test_my_uploads_in_plain_words(self):
         mine, other = self.item(0), self.item(1, sender=self.manager)
         inbox.take(mine, self.helper, over=False)

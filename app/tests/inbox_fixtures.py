@@ -16,6 +16,7 @@ os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), 
 
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
+import utils.inbox as inbox  # noqa: E402
 import utils.settings as settings  # noqa: E402
 from herdbook import APP, limiter  # noqa: E402
 from PIL import Image, ImageDraw, ImageFilter  # noqa: E402
@@ -23,6 +24,8 @@ from PIL import Image, ImageDraw, ImageFilter  # noqa: E402
 from tests.database_test import DatabaseTest  # noqa: E402
 
 limiter.enabled = False
+
+QUALITY = {"short_side": 1200, "sharpness": 500.0, "brightness": 200.0}
 
 
 def photo(size=(1200, 1600), seed=1):
@@ -84,3 +87,15 @@ class InboxTest(DatabaseTest):
 
     def stored(self, document):
         return os.path.join(self.folder, document.original_path)
+
+    def item(self, herd=0, documents=1, sender=None):
+        """An uploaded item, without files unless a test writes them (the queue never reads them)."""
+        stored = [(f"inkorg/original/{n}.jpg", f"{herd}{n}".rjust(64, "0"), QUALITY) for n in range(documents)]
+        item, _ = inbox.create_upload(sender or self.owner, self.herds[herd], None, stored)
+        return db.InboxItem.get_by_id(item.id)
+
+    def post(self, path, **body):
+        return self.client.post(f"/api/v2/inkorg{path}", json=body)
+
+    def reload(self, item):
+        return db.InboxItem.get_by_id(item.id)
