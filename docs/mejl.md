@@ -138,6 +138,15 @@ inget användarnamn eller lösenord för SMTP.
   rad kan inte skriva över resultatet från den som tog den.
 - Har en rad varit `sending` i över 10 minuter (sändaren dog) blir den
   `queued` igen.
+- Precis före SMTP förnyar sändaren märket (`claimed_at` med villkoret att
+  `claim_token` är oförändrad); har en annan sändare tagit raden under tiden
+  skickas den inte. Hela samtalet med reläet för ett mejl, anslutningen
+  inräknad, avbryts efter 120 sekunder. En rad kan därför inte tas över medan
+  dess sändare fortfarande talar med reläet.
+- Utskicket sker minst en gång, inte exakt en gång, i ett enda fall: reläet tog
+  emot mejlet men statusen skrevs aldrig (svaret eller skrivningen gick
+  förlorad), och raden skickas igen när den tas över. Därför handlar ett
+  kvitto om en händelse som inte ändras, så att en dubblett säger samma sak.
 - Högst 30 mejl per körning, över en SMTP-anslutning med STARTTLS (krävs) och
   60 sekunders tidsgräns per steg. Lägst prioritetsnummer först.
 - `Message-ID` är `<mail-<id>.<16 hextecken HMAC>@<värdnamnet i HERDBOOK_HOST>>`,

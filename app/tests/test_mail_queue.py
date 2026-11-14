@@ -13,6 +13,7 @@ import smtplib
 import subprocess
 import sys
 import threading
+import time
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -41,17 +42,35 @@ class FakeRelay:
         self.opened = []
         self.tls = False
         self.lock = threading.Lock()
+        self.cut = threading.Event()  # set when the sender shuts the socket down
 
-    def __call__(self, host, port, local_hostname=None, timeout=None):
-        if self.refuse:
-            raise self.refuse
-        self.opened.append((host, port, local_hostname, timeout))
-        return _FakeConnection(self)
+    def __call__(self, host="", port=0, local_hostname=None, timeout=None):
+        conn = _FakeConnection(self, local_hostname, timeout)
+        if host:  # like smtplib.SMTP: a host connects at once
+            conn.connect(host, port)
+        return conn
+
+
+class _FakeSocket:
+    def __init__(self, relay):
+        self.relay = relay
+
+    def shutdown(self, how):
+        self.relay.cut.set()
 
 
 class _FakeConnection:
-    def __init__(self, relay):
+    def __init__(self, relay, local_hostname, timeout):
         self.relay = relay
+        self.local_hostname, self.timeout = local_hostname, timeout
+        self.sock = None
+
+    def connect(self, host, port):
+        if self.relay.refuse:
+            raise self.relay.refuse
+        self.relay.opened.append((host, port, self.local_hostname, self.timeout))
+        self.sock = _FakeSocket(self.relay)
+        return 220, b"ready"
 
     def ehlo(self):
         return 250, b"ok"
@@ -634,37 +653,63 @@ class TestConcurrentSenders(MailTest):
         self.assertEqual(claimed.id, second)
         self.assertEqual(self.row(first).status, "queued")
 
-    def test_sender_whose_row_was_reclaimed_cannot_write_status(self):
+    def test_sender_stuck_in_smtp_gives_up_long_before_its_row_can_be_reclaimed(self):
+        """
+        A relay that never answers is cut off at SEND_DEADLINE, counted from the claim's renewal and far below
+        RECLAIM_AFTER, so no other sender can take the row while this one may still be talking to the relay.
+        """
         row_id = self.queue()
-        in_send, release = threading.Event(), threading.Event()
 
-        def gate(msg):
-            if threading.current_thread().name == "stuck":
-                in_send.set()
-                release.wait(timeout=10)
+        def gate(msg):  # silent until the sender shuts the socket down; without a deadline it accepts after 10 s
+            if relay.cut.wait(timeout=10):
+                raise smtplib.SMTPServerDisconnected("Connection unexpectedly closed")
 
         relay = self.relay(gate=gate)
-        errors = []
-        stuck = self._sender(errors, name="stuck")
-        stuck.start()
-        self.assertTrue(in_send.wait(timeout=10))
-        old_token = self.row(row_id).claim_token
-        # The stuck sender's claim is past the reclaim limit: the next run takes the row over and sends it.
-        db.MailMessage.update(claimed_at=self.now - timedelta(minutes=11)).where(db.MailMessage.id == row_id).execute()
-        self.assertEqual(mail.send_pending(), 1)
-        after_takeover = self.row(row_id)
-        self.assertEqual(after_takeover.status, "sent")
-
-        with self.assertLogs("herdbook.mail", "WARNING") as logs:
-            release.set()
-            stuck.join(timeout=10)
-        self.assertEqual(errors, [])
-        self.assertTrue(any("reclaimed" in line for line in logs.output))
+        started = time.monotonic()
+        with mock.patch.object(mail, "SEND_DEADLINE", 0.2, create=True):
+            self.assertEqual(mail.send_pending(), 1)
+        self.assertLess(time.monotonic() - started, 5)
+        self.assertEqual(relay.sent, [])
         row = self.row(row_id)
-        self.assertEqual((row.status, row.attempts, row.sent_at), ("sent", 1, after_takeover.sent_at))
-        self.assertEqual(len(self.attempts(row_id)), 1)  # only the new claim's outcome was written
-        self.assertEqual(len(relay.sent), 2)  # both reached the relay: the same Message-ID dedupes it
-        self.assertIsNotNone(old_token)
+        self.assertEqual((row.status, row.attempts), ("queued", 1))
+        self.assertIn("TimeoutError", row.last_error)
+        self.assertLess(mail.SEND_DEADLINE * 4, mail.RECLAIM_AFTER.total_seconds())
+
+    def test_slow_sender_that_lost_its_claim_neither_sends_nor_writes(self):
+        real = mail.MAIL_KINDS["ansokan.mottagen"]
+        relay = self.relay()
+        for crash in (False, True):  # the slow build returns (the send is skipped) or fails (the write is dropped)
+            with self.subTest(crash=crash):
+                row_id = self.queue(f"slow{int(crash)}@example.org")
+                in_build, release = threading.Event(), threading.Event()
+
+                def build(params, crash=crash, in_build=in_build, release=release):
+                    if threading.current_thread().name == "slow":
+                        in_build.set()
+                        release.wait(timeout=10)
+                        if crash:
+                            raise RuntimeError("the build failed late")
+                    return real.build(params)
+
+                errors = []
+                slow = self._sender(errors, name="slow")
+                with mock.patch.dict(mail.MAIL_KINDS, {"ansokan.mottagen": real._replace(build=build)}):
+                    slow.start()
+                    self.assertTrue(in_build.wait(timeout=10))
+                    # The slow sender's claim is past the reclaim limit: the next run takes the row over and sends it.
+                    db.MailMessage.update(claimed_at=self.now - timedelta(minutes=11)).where(
+                        db.MailMessage.id == row_id
+                    ).execute()
+                    self.assertEqual(mail.send_pending(), 1)
+                    with self.assertLogs("herdbook.mail", "WARNING") as logs:
+                        release.set()
+                        slow.join(timeout=10)
+                self.assertEqual(errors, [])
+                self.assertTrue(any("reclaimed" in line for line in logs.output))
+                self.assertEqual([_row_id(msg) for msg, _, _ in relay.sent].count(row_id), 1)
+                row = self.row(row_id)
+                self.assertEqual((row.status, row.attempts, row.last_error), ("sent", 1, None))
+                self.assertEqual([a.result for a in self.attempts(row_id)], ["sent"])
 
 
 class TestPrivacy(MailTest):

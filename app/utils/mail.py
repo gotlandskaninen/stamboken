@@ -8,13 +8,16 @@ text rendered when the mail goes out.
 """
 
 import base64
+import contextlib
 import hashlib
 import hmac
 import logging
 import os
 import re
 import smtplib
+import socket
 import ssl
+import threading
 import uuid
 from collections import namedtuple
 from datetime import datetime, timedelta, timezone
@@ -32,6 +35,9 @@ logger = logging.getLogger("herdbook.mail")
 
 MAX_PER_RUN = 30
 SMTP_TIMEOUT = 60  # seconds, per SMTP step
+# Seconds for one mail's whole SMTP conversation, connecting included. The claim is renewed just before it, so
+# a sender never still talks to the relay when another may reclaim the row.
+SEND_DEADLINE = 120
 RECLAIM_AFTER = timedelta(minutes=10)
 PAUSE_AFTER_SYSTEMIC = timedelta(minutes=5)
 STALLED_AFTER = timedelta(minutes=5)  # no sender run for this long: the scheduler is dead
@@ -241,20 +247,13 @@ class _Systemic(Exception):
         self.detail = detail
 
 
-def _connect():
-    conn = smtplib.SMTP(
-        settings.mail.smtp_host, settings.mail.smtp_port, local_hostname=_hostname(), timeout=SMTP_TIMEOUT
-    )
-    try:
-        conn.ehlo()
-        if not conn.has_extn("starttls"):
-            raise smtplib.SMTPNotSupportedError("the relay does not offer STARTTLS")
-        conn.starttls(context=ssl.create_default_context())
-        conn.ehlo()
-        return conn
-    except BaseException:
-        conn.close()
-        raise
+def _connect(conn):
+    conn.connect(settings.mail.smtp_host, settings.mail.smtp_port)
+    conn.ehlo()
+    if not conn.has_extn("starttls"):
+        raise smtplib.SMTPNotSupportedError("the relay does not offer STARTTLS")
+    conn.starttls(context=ssl.create_default_context())
+    conn.ehlo()
 
 
 class _Relay:
@@ -263,14 +262,34 @@ class _Relay:
     def __init__(self):
         self.conn = None
         self.dropped = False  # the previous mail lost the connection
+        self.timed_out = False
 
     def send(self, msg, address):
+        """
+        One mail's whole SMTP conversation, connecting included, cut off at SEND_DEADLINE. Per-step socket
+        timeouts alone do not bound it: a relay can drip its replies a byte at a time.
+        """
+        self.timed_out = False
+        timer = threading.Timer(SEND_DEADLINE, self._cut)
+        timer.start()
+        try:
+            self._send(msg, address)
+        finally:
+            timer.cancel()
+            timer.join()
+            if self.timed_out:
+                self.close()  # its socket is shut down, also if the reply came just in time
+
+    def _send(self, msg, address):
         if self.conn is None:
+            self.conn = smtplib.SMTP(local_hostname=_hostname(), timeout=SMTP_TIMEOUT)  # set first: _cut reaches it
             try:
-                self.conn = _connect()
+                _connect(self.conn)
             except Exception as exc:
+                conn, self.conn = self.conn, None
+                conn.close()
                 code = getattr(exc, "smtp_code", None)
-                raise _Systemic(str(code) if code else None, _describe(exc)) from exc
+                raise _Systemic(str(code) if code else None, _describe(self._why(exc))) from exc
         try:
             self.conn.send_message(msg, from_addr=settings.mail.sender, to_addrs=[address])
         except Exception as exc:
@@ -279,10 +298,24 @@ class _Relay:
                 raise
             self.close()  # the next mail reconnects; if that fails, it is systemic
             if self.dropped:  # twice in a row: the relay drops us, not this mail
-                raise _Systemic(None, _describe(exc)) from exc
+                raise _Systemic(None, _describe(self._why(exc))) from exc
             self.dropped = True
+            if self.timed_out:
+                raise self._why(exc) from exc
             raise
         self.dropped = False
+
+    def _cut(self):
+        """Timer thread: shutting the socket down makes the blocked conversation fail at once."""
+        self.timed_out = True
+        sock = getattr(self.conn, "sock", None)
+        if sock is not None:
+            with contextlib.suppress(OSError):
+                sock.shutdown(socket.SHUT_RDWR)
+
+    def _why(self, exc):
+        """A cut by the deadline is a timeout, not the disconnect it looks like."""
+        return TimeoutError(f"no reply within {SEND_DEADLINE} s") if self.timed_out else exc
 
     def close(self):
         conn, self.conn = self.conn, None
@@ -346,6 +379,17 @@ def _claim(now):
     )
     found = cursor.fetchone()
     return MailMessage.get_by_id(found[0]) if found else None
+
+
+def _renew(row):
+    """
+    Restarts the claim's clock just before SMTP, so the row cannot be reclaimed until long after SEND_DEADLINE.
+    False when another sender has taken the row since (this one was slow): it must not send.
+    """
+    renewed = MailMessage.update(claimed_at=_utcnow()).where(
+        (MailMessage.id == row.id) & (MailMessage.claim_token == row.claim_token)
+    )
+    return renewed.execute() == 1
 
 
 def _finish(row, now, attempt=None, **fields):
@@ -451,6 +495,9 @@ def _send_one(row, relay, now):
         return _finish(row, now, status="logged")
     if mode == "allowlist" and not _allowed(address):
         return _finish(row, now, status="blocked", last_error="spärrat: adressen finns inte i MAIL_ALLOWLIST")
+    if not _renew(row):
+        logger.warning("Mail %s was reclaimed by another sender; it is not sent", row.id)
+        return True
 
     try:
         relay.send(msg, address)
