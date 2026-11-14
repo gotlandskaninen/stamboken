@@ -82,6 +82,7 @@ from utils.legacy_compat import is_legacy_host, legacy_classroom_url  # isort:sk
 from utils.redis_retry import reconnect_on_drop  # isort:skip
 
 APP = Flask(__name__, static_folder="/static")
+app_logging.setup()  # before any APP.logger use, or Flask adds its own stderr handler
 auth_log = logging.getLogger("herdbook.auth")
 
 
@@ -289,7 +290,6 @@ limiter.init_app(APP)
 LOGIN_RATE_LIMIT = "5 per minute"
 LOGIN_RATE_SCOPE = "login"
 
-app_logging.setup()
 utils.external_auth.setup(APP)
 
 Session(APP)
@@ -531,7 +531,7 @@ def _session_revoked():
     roles) is a stale or altered copy and must not grant production access.
     """
     if session.get("demo_login") and not settings.service.demo_instance:
-        APP.logger.warning("Refused a session minted by the demo API")
+        da.auth_log.warning("Refused a session minted by the demo API")
         return True
     return session.get("logout_epoch", 0) < _logout_epoch()
 
@@ -633,7 +633,7 @@ def user_profile():
                 try:
                     file.save(file_path)
                     profile_picture_url = unique_filename
-                    APP.logger.info(f"Profile picture uploaded: {unique_filename}")
+                    APP.logger.info("Profile picture uploaded")
                 except Exception as e:
                     APP.logger.error(f"Error uploading file: {e}")
                     return jsonify({"status": "error", "message": "Failed to upload image"})
@@ -730,7 +730,7 @@ def manage_user(u_id):
             try:
                 file.save(file_path)
                 profile_picture_url = unique_filename  # Only filename, not full URL
-                APP.logger.info(f"Profile picture uploaded: {unique_filename}")
+                APP.logger.info("Profile picture uploaded")
             except Exception as e:
                 APP.logger.error(f"Error uploading file: {e}")
                 return jsonify({"status": "error", "message": "Failed to upload image"})
@@ -756,7 +756,7 @@ def manage_user(u_id):
     if request.method in ("UPDATE", "PATCH"):
         retval = da.update_user(form, session.get("user_id", None))
         if retval.get("status") != "error":
-            auth_log.info("user updated actor=%s target=%s", current_user.id, u_id)
+            auth_log.info("user updated actor=%s target=%s", current_user.id, form.get("id", u_id))
     if request.method == "POST":
         retval = da.add_user(form, session.get("user_id", None))
         if retval.get("status") != "error":
@@ -1397,7 +1397,7 @@ def google_token_login():
 
     except ValueError as e:
         # Invalid token
-        APP.logger.error(f"Invalid Google token: {str(e)}")
+        da.auth_log.error("Invalid Google token: %s", e)
         return jsonify({"error": "Invalid Google token"}), 401
     except Exception as e:
         APP.logger.error(f"Google login error: {str(e)}")
@@ -2070,7 +2070,7 @@ def testbreed():
     Requires authentication.
     """
     payload = request.json
-    APP.logger.info(f"Testbreed calculation input {payload}")
+    APP.logger.info("Testbreed calculation requested")
     try:
         genebank_id = int(payload.get("genebankId"))
         # Unregistered parents fall through to the snapshot of `genebank_id`, so gate it here.

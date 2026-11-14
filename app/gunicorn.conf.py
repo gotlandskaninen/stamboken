@@ -1,6 +1,9 @@
 """Gunicorn configuration for herdbook API."""
 
 import os
+from urllib.parse import quote
+
+from gunicorn.glogging import Logger
 
 # Server socket
 bind = "0.0.0.0:9090"
@@ -15,6 +18,18 @@ timeout = 120
 keepalive = int(os.getenv("GUNICORN_KEEPALIVE", "75"))
 
 # Logging
+
+
+class QuotingLogger(Logger):
+    """%(U)s is the decoded path; quote it so a %0A cannot forge a log line."""
+
+    def atoms(self, resp, req, environ, request_time):
+        atoms = super().atoms(resp, req, environ, request_time)
+        atoms["U"] = quote(atoms["U"] or "")
+        return atoms
+
+
+logger_class = QuotingLogger
 accesslog = "-"
 # %(U)s is the path without the query string (%(r)s would include it).
 access_log_format = '%(h)s %(t)s "%(m)s %(U)s" %(s)s %(B)s %(M)s'

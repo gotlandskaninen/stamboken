@@ -2,6 +2,7 @@
 
 import logging
 import sys
+from urllib.parse import quote
 
 from flask import has_request_context, request
 
@@ -12,7 +13,8 @@ class _RequestFilter(logging.Filter):
     def filter(self, record):
         # remote_addr är klientadressen efter ProxyFix; path saknar frågesträng.
         record.ip = request.remote_addr if has_request_context() else "-"
-        record.path = request.path if has_request_context() else "-"
+        # quoted: a decoded %0A in the path would otherwise forge a log line
+        record.path = quote(request.path) if has_request_context() else "-"
         return True
 
 

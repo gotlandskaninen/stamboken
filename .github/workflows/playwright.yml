@@ -214,9 +214,6 @@ jobs:
         run: |
           docker compose -f docker-compose.local-production.yml up -d nginx
 
-      - name: Check nginx access log format
-        run: scripts/check-nginx-log-format.sh
-
       - name: Wait for nginx
         run: |
           timeout 60 bash -c 'until curl -ksf https://localhost; do sleep 3; done'

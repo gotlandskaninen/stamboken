@@ -60,6 +60,9 @@ jobs:
             -f .docker/api \
             .
 
+      - name: Check nginx access log format
+        run: scripts/check-nginx-log-format.sh
+
       - name: Run tests in container
         run: |
           docker run \

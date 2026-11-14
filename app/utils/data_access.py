@@ -1121,16 +1121,16 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                 updated = False
                 if has_role and operation["action"] == "remove":
                     logger.info(
-                        f"User:{user.username} UPDATE: Role remove on user: "
-                        f"{target_user.username} removed: {operation['role']} "
+                        f"User:{user.id} UPDATE: Role remove on user: "
+                        f"{target_user.id} removed: {operation['role']} "
                         f"target:{operation.get(target)}"
                     )
                     target_user.remove_role(operation["role"], operation.get(target))
                     updated = True
                 elif not has_role and operation["action"] == "add":
                     logger.info(
-                        f"User:{user.username} UPDATE: Role added on user: "
-                        f"{target_user.username} added: {operation['role']} "
+                        f"User:{user.id} UPDATE: Role added on user: "
+                        f"{target_user.id} added: {operation['role']} "
                         f"target:{operation.get(target)}"
                     )
                     target_user.add_role(operation["role"], operation.get(target))
@@ -1164,7 +1164,7 @@ def edit_genebank(gb, fields, actor):
             gb.name = value.strip()
     with DATABASE.atomic():
         gb.save()
-    logger.info(f"User:{actor.username or actor.email} edited genebank {gb.id}")
+    logger.info(f"User:{actor.id} edited genebank {gb.id}")
     return {"id": gb.id, "name": gb.name}
 
 
@@ -1322,7 +1322,7 @@ def edit_herd(herd, fields, actor):
         # over a membership/genebank change committed since the row was loaded.
         with DATABASE.atomic():
             herd.save(only=changed)
-    logger.info(f"User:{actor.username or actor.email} edited herd {herd.herd} via adminpanel")
+    logger.info(f"User:{actor.id} edited herd {herd.id} via adminpanel")
     return get_herd_for_admin(actor, herd)
 
 
@@ -1521,7 +1521,7 @@ def add_herd(form, user_uuid):
             herd.save(force_insert=True)
         except IntegrityError:
             return {"status": "error", "message": "missing data"}
-        logger.info(f"User:{user.username} Added herd: {herd.short_info()}")
+        logger.info(f"User:{user.id} Added herd: {herd.id}")
         return {"status": "success"}
 
 
@@ -1659,7 +1659,7 @@ def update_herd(form, user_uuid):
                 # only= : a full-row save would write the stale ownership columns back
                 # over a membership/genebank change committed since the row was loaded.
                 herd.save(only=written)
-        logger.info(f"User:{user.username} Updated herd: {herd.short_info()}")
+        logger.info(f"User:{user.id} Updated herd: {herd.id}")
         return {"status": "updated"}
     except DoesNotExist:
         return {"status": "error", "message": "Unknown herd"}
@@ -2018,7 +2018,7 @@ def update_individual(form, user_uuid, issue_digital=False, genebank_change_reas
     except Exception as e:
         if hasattr(e, "individual_stage"):  # today's checks before the lock: legacy 500, v2 400/500
             raise
-        logger.error(f"Expetion in update individual {form.get('id')}, user: {user.username} exception: {e}")
+        logger.error(f"Expetion in update individual {form.get('id')}, user: {user.id} exception: {e}")
         return {"status": "error", "message": "Kunde inte uppdatera individ."}
     return {
         "status": "success",
@@ -2712,7 +2712,7 @@ def register_breeding(form, user_uuid):
             breed_notes=form.get("notes", None),
         )
         breeding.save()
-        logger.info(f"User:{user.username} added breeding: {breeding.as_dict()}")
+        logger.info(f"User:{user.id} added breeding: {breeding.id}")
         result = {"status": "success", "breeding_id": breeding.id}
         if date_warnings:
             result["warnings"] = date_warnings
@@ -2775,9 +2775,9 @@ def delete_breeding(id, user_uuid):
             # the individuals check above already returned for promoted kits.
             bunny_count = Bunny.delete().where(Bunny.breeding == breeding).execute()
             if bunny_count:
-                logger.info(f"User:{user.username} deleted {bunny_count} bunny roster rows with breeding {id}")
+                logger.info(f"User:{user.id} deleted {bunny_count} bunny roster rows with breeding {id}")
             Breeding.delete().where(Breeding.id == id).execute()
-            logger.info(f"User:{user.username} deleted empty breeding: {breeding.as_dict()}")
+            logger.info(f"User:{user.id} deleted empty breeding: {breeding.id}")
             return {"status": "success"}
     except DoesNotExist:
         return {
@@ -2976,7 +2976,7 @@ def register_birth(form, user_uuid):
             for slot in range(1, litter_size + 1):
                 Bunny.create(breeding=breeding, slot_order=slot)
 
-        logger.info(f"User:{user.username} added birth: {breeding.as_dict()}")
+        logger.info(f"User:{user.id} added birth: {breeding.id}")
         result = {"status": "success", "litter_number": assigned_litter_number}
         if litter_conflicts:
             result["litter_number_conflicts"] = litter_conflicts

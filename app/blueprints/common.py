@@ -114,7 +114,7 @@ _auth_log = logging.getLogger("herdbook.auth")
 
 def problem(status, title, detail, **extra):
     """Return RFC 9457 Problem Details response."""
-    if status in (401, 403):  # denied attempts are security events
+    if status == 403:  # denied attempts are security events (401 from anonymous callers is noise)
         _auth_log.info("Denied %s: %s user id=%s", status, title, getattr(current_user, "id", None))
     body = {
         "type": "about:blank",

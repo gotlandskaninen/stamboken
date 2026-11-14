@@ -9,7 +9,6 @@ from types import SimpleNamespace
 from unittest import mock
 
 from gunicorn.config import Config
-from gunicorn.glogging import Logger as GunicornLogger
 from herdbook import APP
 from utils import app_logging
 
@@ -73,7 +72,18 @@ class TestAppLogging(DatabaseTest):
             "QUERY_STRING": "code=HEMLIG",
         }
         resp = SimpleNamespace(status="200 OK", status_code=200, sent=2, headers=[], response_length=2)
-        atoms = GunicornLogger(cfg).atoms(resp, req, environ, datetime.timedelta(seconds=1))
+        environ["PATH_INFO"] = "/api/health\nherdbook.auth INFO forged"
+        atoms = conf.QuotingLogger(cfg).atoms(resp, req, environ, datetime.timedelta(seconds=1))
         line = cfg.access_log_format % atoms
         self.assertIn("/api/health", line)
         self.assertNotIn("HEMLIG", line)
+        self.assertNotIn("\n", line)
+
+    def test_decoded_newline_in_path_cannot_forge_a_log_line(self):
+        with APP.test_request_context("/a%0Aherdbook.auth%20INFO%20forged"):
+            logging.getLogger("herdbook.test").info("hello")
+        self.assertEqual(len(self.out.getvalue().splitlines()), 1)
+
+    def test_log_lines_are_written_once(self):
+        # Flask's own stderr handler on `herdbook` would repeat each line without ip/path.
+        self.assertEqual([h for h in logging.getLogger("herdbook").handlers], [])
