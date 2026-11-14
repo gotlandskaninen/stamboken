@@ -19,6 +19,8 @@ const RESERVED_SLUGS = new Set([
   "medlemsforum",
   "bli-genbank",
   "bli-genbanksbesattning",
+  "integritetspolicy",
+  "dataskydd",
   "v2",
   "uppladdningar",
   "_next",

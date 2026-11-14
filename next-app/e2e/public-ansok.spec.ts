@@ -13,7 +13,7 @@ test("anonymous user submits a membership application", async ({ page }) => {
   // Clicking the next field blurs postnummer, which is what formats it.
   await page.getByLabel(/Postort/i).click();
   await page.getByLabel(/Postort/i).fill("Visby");
-  await page.getByLabel(/GDPR/i).check();
+  await page.getByLabel(/personuppgifter/i).check();
 
   await expect(page.getByLabel(/Postnummer/i)).toHaveValue("623 55");
   await page.getByRole("button", { name: /Skicka ansökan/i }).click();
