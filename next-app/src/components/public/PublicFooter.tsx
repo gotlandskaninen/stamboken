@@ -246,7 +246,11 @@ export function PublicFooter() {
           <Link href="/integritetspolicy" style={{ color: "inherit" }}>
             <Box
               component="span"
-              sx={{ display: "inline-block", py: { xs: 3, md: 0 } }}
+              sx={{
+                display: "inline-block",
+                py: { xs: 3, md: 0 },
+                "@media (pointer: coarse)": { py: 3 },
+              }}
             >
               Integritetspolicy
             </Box>

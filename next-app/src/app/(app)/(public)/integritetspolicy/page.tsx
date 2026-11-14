@@ -76,7 +76,7 @@ export default function IntegritetspolicyPage() {
           <Section title="När du besöker webbplatsen">
             <p>
               Webbplatsen mäter inte besök och har inga kakor för statistik
-              eller reklam. Sidorna sätter inga kakor förrän du öppnar
+              eller reklam. Våra egna sidor sätter inga kakor förrän du öppnar
               inloggningssidan.
             </p>
             <ul>
@@ -91,15 +91,25 @@ export default function IntegritetspolicyPage() {
                 dagarna går de inte att radera.
               </li>
               <li>
-                På inloggningssidan laddas Googles inloggningstjänst. Den sätter
-                en kaka (g_state) i din webbläsare, och Google får din IP-adress
-                och uppgifter om din webbläsare, även om du inte loggar in.
+                På inloggningssidan laddas Googles inloggningstjänst. Google får
+                då din IP-adress och uppgifter om din webbläsare, och tjänsten
+                kan sätta en kaka (g_state), även om du inte loggar in.
               </li>
               <li>
                 När du loggar in sätts två kakor som tjänsten behöver: en som
-                håller dig inloggad i upp till 31 dagar och en som minns om du
-                arbetar i riktiga stamboken eller i testmiljön. Formulär du har
-                påbörjat sparas i din egen webbläsare tills du skickar dem.
+                håller dig inloggad tills du loggar ut, stänger webbläsaren
+                eller har varit inaktiv i 31 dagar, och en som minns om du
+                arbetar i riktiga stamboken eller i testmiljön.
+              </li>
+              <li>
+                Vissa val och utkast sparas i din egen webbläsare, till exempel
+                att du har stängt en informationsruta eller påbörjat en
+                registrering av en parning eller kull. De skickas inte till oss
+                förrän du sparar.
+              </li>
+              <li>
+                Bäddar vi in en film från YouTube eller Vimeo på en sida laddas
+                den därifrån, och de tjänsterna kan då sätta egna kakor.
               </li>
             </ul>
           </Section>
@@ -115,7 +125,7 @@ export default function IntegritetspolicyPage() {
               in dig i medlemsregistret när du blir medlem. Det behövs för att
               du ska kunna bli medlem (avtal). Ansökan läses av dem som sköter
               medlemsregistret, av genbanksansvariga och av föreningens
-              systemansvarig.
+              systemansvarig. De antecknar beslutet och, vid avslag, skälet.
             </p>
             <p>Blir du inte medlem tar vi bort ansökan inom 12 månader.</p>
           </Section>
@@ -124,24 +134,22 @@ export default function IntegritetspolicyPage() {
             <p>
               I medlemsregistret finns ditt medlemsnummer, namn, adress, telefon
               och e-postadress, när du gick med, om avgiften är betald och en
-              eventuell fakturaadress. Ingår fler personer i medlemskapet, till
-              exempel familjemedlemmar eller någon som sköter kaninerna åt dig,
-              finns deras namn och kontaktuppgifter också. Lägger du själv in en
-              annan person ska du berätta det för den personen och visa den här
-              sidan.
+              eventuell fakturaadress. Den som sköter registret kan också skriva
+              en anteckning om medlemskapet, till exempel om en betalning.
             </p>
             <p>
               Vi använder uppgifterna för att ta emot medlemsavgiften, skicka
               Koharen, kalla till årsmöte och kunna nå dig i föreningens arbete.
               Det behövs för medlemskapet (avtal). Uppgifter om betalningar som
-              ingår i bokföringen sparar vi i sju år, eftersom bokföringslagen
-              kräver det (rättslig förpliktelse).
+              ingår i bokföringen sparar vi i sju år efter det år de gäller,
+              eftersom bokföringslagen kräver det (rättslig förpliktelse).
             </p>
             <ul>
               <li>
                 Hela medlemsregistret kan läsas av dem som sköter det, av
                 genbanksansvariga och av föreningens systemansvarig. Du ser
-                själv uppgifterna om ditt eget medlemskap.
+                själv uppgifterna om ditt eget medlemskap. Ändringar i registret
+                loggas med vem som gjorde dem och när.
               </li>
               <li>
                 Tryckeriet får namn, adress och medlemsnummer för att kunna
@@ -152,8 +160,10 @@ export default function IntegritetspolicyPage() {
                 </mark>
               </li>
               <li>
-                I Koharen publicerar vi bara de kontaktuppgifter du själv har
-                sagt ja till (samtycke). Du kan ändra dig när du vill.
+                I Koharen publicerar vi bara de kontaktuppgifter som
+                huvudmedlemmen har sagt ja till (samtycke). Valet gäller alla
+                personer i medlemskapet och kan ändras när som helst. Det som
+                redan är tryckt går inte att ta tillbaka.
               </li>
             </ul>
             <p>
@@ -162,12 +172,29 @@ export default function IntegritetspolicyPage() {
             </p>
           </Section>
 
+          <Section title="När någon annan har lämnat dina uppgifter">
+            <p>
+              En huvudmedlem kan lägga in familjemedlemmar och personer som
+              sköter kaninerna i sitt medlemskap, och kan ange en annan
+              mottagare för fakturan. Då har vi fått ditt namn och dina
+              kontaktuppgifter från huvudmedlemmen och inte från dig. Vi
+              använder dem på samma sätt och lika länge som medlemmens egna
+              uppgifter, och du har samma rättigheter.{" "}
+              <mark>
+                [BESLUT: hur får den som lagts in av någon annan veta det?
+                Förslag: föreningen mejlar personen inom en månad.]
+              </mark>
+            </p>
+          </Section>
+
           <Section title="När du har en genbanksbesättning">
             <p>
               I Stamboken Online finns besättningens nummer och namn,
               kontaktperson, adress, telefon, e-postadress, eventuell webbplats
               och koordinater, samt bankkonto för utbetalning av stöd. Där finns
-              också dina kaniner, parningar, kullar och årsrapporter.
+              också dina kaniner, parningar och kullar, foton du laddar upp, och
+              dina årsrapporter med dina val om vad som får publiceras. Vid
+              varje rapporterad händelse står vem som rapporterade den.
             </p>
             <p>
               Uppgifterna behövs för genbanksavtalet mellan dig och föreningen
@@ -176,13 +203,15 @@ export default function IntegritetspolicyPage() {
             </p>
             <ul>
               <li>
-                Du själv, genbanksansvarig för rasen och föreningens
+                Du själv, de som har fått åtkomst till besättningen (till
+                exempel en skötare), genbanksansvarig för rasen och föreningens
                 systemansvarig ser alla uppgifter om besättningen.
               </li>
               <li>
                 Andra inloggade medlemmar ser besättningens nummer och namn och
-                dina kaniner. Kontaktuppgifterna ser de bara om du själv har
-                valt att visa dem.
+                dina kaniner. Kontaktuppgifter och bankkonto är dolda för dem
+                från början. De visas bara om fältet har ställts in som synligt,
+                av dig eller av genbanksansvarig.
               </li>
               <li>
                 Bankkontot används för att betala ut stöd.{" "}
@@ -192,26 +221,46 @@ export default function IntegritetspolicyPage() {
                 </mark>
               </li>
               <li>
-                Varje ändring i stamboken loggas med användare, tidpunkt och
-                IP-adress, så att fel kan spåras och rättas. Loggen sparas tills
-                vidare.
+                Ändringar av kaniner, parningar, kullar, besättningar och konton
+                loggas med användare, tidpunkt, IP-adress och det gamla och det
+                nya värdet, så att fel kan spåras och rättas (berättigat
+                intresse).{" "}
+                <mark>
+                  [BESLUT: hur länge sparas IP-adressen i ändringsloggen?
+                  Förslag: 12 månader; resten av loggen så länge uppgiften den
+                  gäller finns kvar.]
+                </mark>
+              </li>
+              <li>
+                Testmiljön är en kopia av den riktiga stamboken, så att du kan
+                öva utan att ändra något på riktigt. Kopian innehåller samma
+                uppgifter. Alla som har ett föreningskonto kan logga in i
+                testmiljön, också den vars konto ännu inte är godkänt för den
+                riktiga stamboken, och ser där det som andra inloggade medlemmar
+                ser.
               </li>
             </ul>
             <p>
-              Uppgifterna om kaninerna och deras härstamning sparas tills
-              vidare, tillsammans med besättningens nummer. Kontaktuppgifterna
-              tar vi bort inom 12 månader efter att genbanksbesättningen har
-              avslutats, och bankkontot när det sista stödet är utbetalt.
+              Uppgifterna om kaninerna och deras härstamning sparas så länge
+              stamboken finns, tillsammans med besättningens nummer.
+              Kontaktuppgifterna tar vi bort inom 12 månader efter att
+              genbanksbesättningen har avslutats, och bankkontot när det sista
+              stödet är utbetalt.
             </p>
           </Section>
 
           <Section title="Ditt konto i Stamboken Online">
             <p>
-              Kontot innehåller användarnamn, namn, e-postadress, din roll och
-              när du senast var inloggad. Loggar du in med Google sparas också
-              namnet och profilbilden från ditt föreningskonto. Lösenord sparas
-              aldrig i klartext. Kontot behövs för att bara rätt person ska
-              kunna se och ändra uppgifter (avtal och berättigat intresse).
+              Kontot innehåller användarnamn, namn, e-postadress, vad du får
+              läsa och ändra, och när du senast använde tjänsten. Loggar du in
+              med Google sparas också namnet, e-postadressen och länken till
+              profilbilden från ditt föreningskonto. Du kan ladda upp en egen
+              profilbild. Lösenord sparas aldrig i klartext.
+            </p>
+            <p>
+              Kontot behövs för att du ska kunna använda Stamboken Online och
+              för att bara rätt person ska se och ändra uppgifter (avtal). Det
+              finns kvar så länge du är medlem eller har en genbanksbesättning.
             </p>
           </Section>
 
@@ -229,11 +278,12 @@ export default function IntegritetspolicyPage() {
             <p>
               Som medlem kan du få ett föreningskonto: en e-postadress på
               gotlandskaninen.se hos Google Workspace. Med det loggar du in i
-              Stamboken Online och i medlemsforumet. När du mejlar föreningen
-              lagras mejlet hos Google och läses av den funktionär som har
-              adressen. I forumet sparas ditt användarnamn, din e-postadress och
-              det du skriver. Forumet ska läggas ner, och då tas konton och
-              inlägg bort.
+              Stamboken Online och i medlemsforumet. Kontot ingår i medlemskapet
+              (avtal). När du mejlar föreningen lagras mejlet hos Google och
+              läses av den funktionär som har adressen, för att vi ska kunna
+              svara dig (berättigat intresse). I forumet sparas ditt
+              användarnamn, din e-postadress och det du skriver. Forumet ska
+              läggas ner, och då tas konton och inlägg bort.
             </p>
           </Section>
 
@@ -247,9 +297,11 @@ export default function IntegritetspolicyPage() {
               <li>
                 Google, som levererar föreningens e-post, föreningskonton,
                 inloggning och delade dokument. Google kan behandla uppgifter
-                utanför EU och EES. Överföringen stöds av EU-kommissionens
-                beslut om adekvat skyddsnivå för USA och av
-                standardavtalsklausuler.
+                utanför EU och EES. Överföringen till USA stöds av
+                EU-kommissionens beslut om att skyddet där är tillräckligt
+                (EU–US Data Privacy Framework) och av EU:s standardavtal för
+                överföring av personuppgifter, som ingår i vårt avtal med
+                Google.
               </li>
               <li>
                 Safespring, som tillhandahåller servrar och lagring för
@@ -272,15 +324,18 @@ export default function IntegritetspolicyPage() {
               <li>få veta vilka uppgifter vi har om dig och få en kopia</li>
               <li>få felaktiga uppgifter rättade</li>
               <li>
-                få uppgifter raderade när vi inte längre behöver dem eller måste
-                spara dem enligt lag
+                begära att få uppgifter raderade; i vissa fall behöver vi
+                behålla dem, till exempel när en lag kräver det
               </li>
               <li>begära att vi begränsar behandlingen</li>
               <li>
-                få ut de uppgifter du själv har lämnat i ett format som går att
-                flytta
+                få ut de uppgifter du själv har lämnat, när vi behandlar dem med
+                stöd av avtal eller samtycke, i ett format som går att flytta
               </li>
-              <li>ta tillbaka ett samtycke när du vill.</li>
+              <li>
+                ta tillbaka ett samtycke när du vill; det påverkar inte det vi
+                redan har gjort med stöd av samtycket.
+              </li>
             </ul>
             <p>
               Du har också rätt att invända mot behandling som vi stöder på
@@ -288,8 +343,9 @@ export default function IntegritetspolicyPage() {
               dina.
             </p>
             <p>
-              Mejla {contactLink}. Vi svarar inom en månad. Är du inte nöjd kan
-              du klaga hos{" "}
+              Vi fattar inga beslut om dig med enbart automatik. Mejla{" "}
+              {contactLink} om du vill använda en rättighet. Vi svarar inom en
+              månad. Du kan också när som helst klaga direkt hos{" "}
               <a href="https://www.imy.se">Integritetsskyddsmyndigheten</a>.
             </p>
           </Section>
