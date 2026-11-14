@@ -5,39 +5,12 @@ import { useRouter } from "next/navigation";
 import { Autocomplete, TextField } from "@mui/material";
 import type { GenebankHerd } from "@/utils/saleRules";
 import { useSnackbar } from "@/components/SnackbarProvider";
-import { planImage, warningText } from "@/lib/inkorg";
+import { warningText } from "@/lib/inkorg";
 import { uploadIntyg } from "./actions";
+import { prepare } from "./prepare";
 import styles from "../inskick.module.css";
 
 const MAX_TOTAL = 10 * 1024 * 1024; // nginx request limit, docs/inkorg.md
-
-// Downscale per planImage; anything the browser cannot decode goes unchanged.
-async function prepare(file: File): Promise<File> {
-  let bitmap: ImageBitmap | null = null;
-  if (file.type.startsWith("image/")) {
-    try {
-      bitmap = await createImageBitmap(file);
-    } catch {
-      bitmap = null;
-    }
-  }
-  const plan = planImage(
-    file.type,
-    bitmap ? { width: bitmap.width, height: bitmap.height } : null,
-  );
-  if (!bitmap || plan.action === "keep") return file;
-  const canvas = document.createElement("canvas");
-  canvas.width = plan.width;
-  canvas.height = plan.height;
-  canvas.getContext("2d")!.drawImage(bitmap, 0, 0, plan.width, plan.height);
-  const blob = await new Promise<Blob | null>((r) =>
-    canvas.toBlob(r, "image/jpeg", 0.85),
-  );
-  if (!blob) return file;
-  return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", {
-    type: "image/jpeg",
-  });
-}
 
 /**
  * `herds` are the user's own. Someone who works in the queue may upload for
@@ -80,7 +53,9 @@ export function UploadForm({
   };
 
   const build = async (): Promise<FormData | null> => {
-    const prepared = await Promise.all(files.map(prepare));
+    // One at a time: decoded phone photos are large.
+    const prepared: File[] = [];
+    for (const f of files) prepared.push(await prepare(f));
     if (prepared.reduce((n, f) => n + f.size, 0) > MAX_TOTAL) {
       setError("Bilderna är för stora tillsammans. Skicka färre åt gången.");
       return null;
