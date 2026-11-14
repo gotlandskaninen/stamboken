@@ -343,8 +343,8 @@ När postens text gallras försvinner `text`, `note` och `not_saved` ur `detail`
 ### `POST /api/v2/inkorg/upload`
 
 **Vem:** inloggad ägare eller skötare av besättningen (den finns bland användarens besättningar),
-eller vem som helst som arbetar i kön, för vilken besättning som helst. Högst 20 anrop i timmen
-per användare (429 efter det).
+eller vem som helst som arbetar i kön, för vilken besättning som helst. Högst 20 sparade inskick i
+timmen per användare (429 efter det); ett anrop som nekas, också 409 nedan, räknas inte.
 
 **Begäran:** `multipart/form-data`:
 
@@ -353,7 +353,7 @@ per användare (429 efter det).
 | `herd` | krävs | besättningsnumret, till exempel `G1` |
 | `files` | krävs, upprepas | 1–10 filer: JPEG, PNG, WebP, HEIC eller PDF, högst 10 MB styck |
 | `message` | valfritt | uppladdarens meddelande, högst 2000 tecken |
-| `dry_run` | valfritt | `1` eller `true`: mät bilderna och svara, men spara ingenting |
+| `accept_warnings` | valfritt | `1` eller `true`: spara också när någon bild har en varning |
 
 Filtypen avgörs av filens innehåll, inte av namnet. Varje bild avkodas, vrids efter telefonens
 orientering och sparas om som JPEG utan EXIF och GPS. En PDF blir en bild per sida (200 dpi,
@@ -367,10 +367,10 @@ räknas sida för sida. En bild får ha högst 40 megapixlar.
 - `brightness`: medelljuset, 0–255.
 
 `warnings` listar det som gör bilden svårläst: `lag_upplosning` (kortaste sidan under 1000
-bildpunkter), `suddig`, `for_mork`, `for_ljus`. Gränserna är preliminära. Visa till exempel
-"Bilden ser suddig ut. Ta om den?" med "Skicka ändå". Gränssnittet kan först anropa med
-`dry_run=1`, visa varningarna och sedan skicka på riktigt; båda anropen räknas mot gränsen 20 i
-timmen.
+bildpunkter), `suddig`, `for_mork`, `for_ljus`. Gränserna är preliminära. Har någon bild en varning
+och saknas `accept_warnings` sparas ingenting, och svaret är 409 med varningarna. Visa till exempel
+"Bilden ser suddig ut. Ta om den?" med "Skicka ändå", som skickar samma filer igen med
+`accept_warnings=1`. Utan varningar sparas inskicket direkt.
 
 **Svar 201** (inskicket är sparat):
 
@@ -386,7 +386,22 @@ timmen.
 
 `file` är filens plats (0, 1, …) i begäran, och `page` sidan i en PDF (`null` för en bild).
 
-**Svar 200** med `dry_run`: samma `documents` utan `id`, och inget `item`.
+**Svar 409** (någon bild har en varning och `accept_warnings` saknas; ingenting är sparat):
+
+```json
+{
+  "type": "about:blank",
+  "title": "Konflikt",
+  "status": 409,
+  "detail": "Någon bild ser svårläst ut. Skicka igen med accept_warnings=1 för att spara den ändå.",
+  "warnings": [
+    {"file": 0, "page": null, "quality": {"short_side": 3024, "sharpness": 812.4, "brightness": 201.3}, "warnings": []},
+    {"file": 1, "page": 1, "quality": {"short_side": 1654, "sharpness": 12.0, "brightness": 210.0}, "warnings": ["suddig"]}
+  ]
+}
+```
+
+`warnings` har en rad per bild, i samma form som `documents` i svaret 201 men utan `id`.
 
 Genbanksansvarig och hjälpare i besättningens genbank får notisen `ny_post`, utom uppladdaren
 själv.

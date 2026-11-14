@@ -30,7 +30,7 @@ class CopyTest(InboxTest):
     def saved_document(self):
         """An uploaded certificate, taken by the helper and saved as G1-2112's paper certificate."""
         self.login("owner")
-        resp = self.upload(("intyg.jpg", encoded(red_over_blue())))
+        resp = self.upload(("intyg.jpg", encoded(red_over_blue())), accept_warnings="1")  # flat colours look blurry
         item = db.InboxItem.get_by_id(resp.get_json()["item"]["id"])
         document = item.documents.get()
         self.login("hjalp")

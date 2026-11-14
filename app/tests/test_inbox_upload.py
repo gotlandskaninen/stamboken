@@ -79,20 +79,29 @@ class TestUpload(InboxTest):
             ("suddig.jpg", encoded(blurry())),
             ("liten.jpg", encoded(photo((600, 800)))),
         ]
-        resp = self.upload(*files)
+        resp = self.upload(*files, accept_warnings="1")
         self.assertEqual(resp.status_code, 201, resp.get_json())
         self.assertEqual([d["warnings"] for d in resp.get_json()["documents"]], [[], ["suddig"], ["lag_upplosning"]])
         sharp, soft, _ = self.documents(resp.get_json()["item"]["id"])
         self.assertGreater(sharp.quality["sharpness"], inbox.MIN_SHARPNESS)
         self.assertLess(soft.quality["sharpness"], inbox.MIN_SHARPNESS)
 
-    def test_dry_run_measures_without_storing(self):
+    def test_a_flagged_upload_stores_nothing_until_the_warnings_are_accepted(self):
         self.login("owner")
-        resp = self.upload(("suddig.jpg", encoded(blurry())), dry_run="1")
-        self.assertEqual(resp.status_code, 200, resp.get_json())
-        self.assertEqual(resp.get_json()["documents"][0]["warnings"], ["suddig"])
+        files = [("skarp.jpg", encoded(photo())), ("suddig.pdf", pdf(photo(), blurry()))]
+        resp = self.upload(*files)
+        self.assertEqual((resp.status_code, resp.mimetype), (409, "application/problem+json"))
+        self.assertEqual(
+            [(d["file"], d["page"], d["warnings"]) for d in resp.get_json()["warnings"]],
+            [(0, None, []), (1, 1, []), (1, 2, ["suddig"])],
+        )
+        self.assertTrue(all("quality" in d and "id" not in d for d in resp.get_json()["warnings"]))
         self.assertFalse(db.InboxItem.select().exists())
         self.assertEqual(os.listdir(self.folder), [])
+        resp = self.upload(*files, accept_warnings="1")
+        self.assertEqual(resp.status_code, 201, resp.get_json())
+        self.assertEqual([d["warnings"] for d in resp.get_json()["documents"]], [[], [], ["suddig"]])
+        self.assertEqual(self.upload(dry_run="1").status_code, 201)  # dry_run is gone: an unflagged upload is stored
 
     def test_an_image_of_a_pixel_or_two_is_measured(self):
         for size in ((1, 1), (2, 900), (900, 2)):
@@ -100,7 +109,7 @@ class TestUpload(InboxTest):
                 quality = inbox.measure(Image.new("RGB", size, (200, 200, 200)))
                 self.assertEqual(quality["short_side"], min(size))
         self.login("owner")
-        resp = self.upload(("pixel.png", encoded(Image.new("RGB", (1, 1)), "PNG")))
+        resp = self.upload(("pixel.png", encoded(Image.new("RGB", (1, 1)), "PNG")), accept_warnings="1")
         self.assertNotEqual(resp.status_code, 500)
         self.assertIn("lag_upplosning", resp.get_json()["documents"][0]["warnings"])
 
@@ -192,14 +201,15 @@ class TestUploadRateLimit(InboxTest):
         self.addCleanup(limiter.reset)
         self.addCleanup(setattr, limiter, "enabled", False)
 
-    def test_twenty_uploads_an_hour_per_user(self):
-        small = ("x.jpg", encoded(photo((200, 200))))
-        self.assertEqual(self.upload(small, dry_run="1").status_code, 401)  # anonymous: no limit to count
+    def test_twenty_stored_uploads_an_hour_per_user(self):
+        small = ("x.jpg", encoded(photo((200, 200))))  # flagged: low resolution
+        self.assertEqual(self.upload(small).status_code, 401)  # anonymous: no limit to count
         self.login("owner")
-        codes = [self.upload(small, dry_run="1").status_code for _ in range(21)]
-        self.assertEqual(codes, [200] * 20 + [429])
-        resp = self.upload(small, dry_run="1")
+        self.assertEqual([self.upload(small).status_code for _ in range(25)], [409] * 25)  # refusals spend nothing
+        codes = [self.upload(small, accept_warnings="1").status_code for _ in range(21)]
+        self.assertEqual(codes, [201] * 20 + [429])
+        resp = self.upload(small, accept_warnings="1")
         self.assertEqual((resp.status_code, resp.mimetype), (429, "application/problem+json"))
         self.assertEqual(resp.get_json()["type"], "rate-limit-exceeded")
         self.login("man")  # another user has an hour of their own
-        self.assertEqual(self.upload(small, dry_run="1").status_code, 200)
+        self.assertEqual(self.upload(small, accept_warnings="1").status_code, 201)

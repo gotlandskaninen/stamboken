@@ -170,7 +170,10 @@ def rate_limited(exc):
 # [Next.js] Upload photos of certificates from the phone (docs/inkorg.md).
 @inbox_bp.route("/inkorg/upload", methods=["POST"])
 @json_login_required
-@limiter.limit("20 per hour", key_func=lambda: str(current_user.id))
+# Only a stored upload counts: a refusal, also the 409 that asks to accept the warnings, spends nothing.
+@limiter.limit(
+    "20 per hour", key_func=lambda: str(current_user.id), deduct_when=lambda response: response.status_code == 201
+)
 def upload():
     # Up to MAX_FILES files of MAX_FILE_SIZE each, not the app-wide MAX_CONTENT_LENGTH; set before the body is read.
     request.max_content_length = MAX_FILES * MAX_FILE_SIZE + 1024 * 1024
@@ -187,7 +190,7 @@ def upload():
         return problem(400, "Bad Request", "Ingen fil bifogad.")
     if len(files) > MAX_FILES:
         return _too_many_images()
-    dry_run = request.form.get("dry_run") in ("1", "true")
+    accepted = request.form.get("accept_warnings") in ("1", "true")
 
     results, encoded, stored = [], [], []
 
@@ -201,8 +204,9 @@ def upload():
         for index, file in enumerate(files):
             if _each_image(file, MAX_FILES - len(results), partial(keep, index)) == 1:
                 results[-1]["page"] = None  # an image, or a PDF of one page
-        if dry_run:
-            return jsonify({"documents": results}), 200
+        if not accepted and any(result["warnings"] for result in results):
+            detail = "Någon bild ser svårläst ut. Skicka igen med accept_warnings=1 för att spara den ändå."
+            return problem(409, "Konflikt", detail, warnings=results)
         for data, result in zip(encoded, results, strict=True):
             stored.append((*inbox.write_jpeg(data, "original"), result["quality"]))
         with DB_PROXY.atomic():
