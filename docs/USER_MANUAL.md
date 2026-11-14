@@ -399,16 +399,18 @@ fotona. De som arbetar med inläsningen lägger in kaninerna åt dig.
 1. Välj **Mina inskick** i menyn och klicka **Ladda upp intyg**.
 2. Välj **Besättning**. Har du bara en är den redan vald.
 3. Klicka **Ta foto eller välj filer**. På telefonen kan du välja kameran eller
-   bildbiblioteket. Du kan också välja en PDF. Högst 10 bilder per inskick; en PDF
-   räknas sida för sida.
+   bildbiblioteket. Du kan också välja en PDF. Högst 10 bilder och 9 MB tillsammans per
+   inskick; en PDF räknas sida för sida.
 4. Skriv ett **Meddelande** om du vill (valfritt).
 5. Klicka **Skicka**.
 
 Bilderna förminskas i telefonen till högst 3000 pixlar på längsta sidan innan de
-skickas. Ser en bild suddig, mörk eller för liten ut visas en varning, till exempel
-"Bilden ser suddig ut. Ta om den?". Klicka **Ta om** för att ta ett nytt foto, eller
-**Skicka ändå** om bilden duger. Efteråt hittar du inskicket under **Mina inskick**.
-Är det klart får du en notis och, om du inte har stängt av det, ett mejl.
+skickas, och fotot hålls upprätt. Bilderna skickas en gång. Ser en bild suddig, mörk eller
+för liten ut sparas inget, och en varning visas, till exempel "Bilden ser suddig ut. Ta om
+den?". Klicka **Ta om** för att ta ett nytt foto, eller **Skicka ändå** om bilden duger;
+då skickas bilderna igen och sparas. Tappar telefonen nätet mitt i står "Uppladdningen
+avbröts. Försök igen." och de valda bilderna ligger kvar. Efteråt hittar du inskicket under
+**Mina inskick**. Är det klart får du en notis och, om du inte har stängt av det, ett mejl.
 
 ### Redigera en kanin
 
@@ -524,7 +526,8 @@ medlemskapets uppgifter.
 - **Publicering i Koharen**: slå på eller av **Namn**, **Telefon**, **E-post** och
   **Adress** för den tryckta medlemsmatrikeln, klicka **Spara**.
 - **Notiser**: slå på eller av **Skicka notiser per e-post en gång om dagen**. Notiserna
-  syns i Stamboken oavsett.
+  syns i Stamboken oavsett. Inställningen stänger inte av mejlet om att ditt eget inskick
+  är klart; det skickas ändå.
 - **Personer i medlemskapet**: huvudmedlemmen lägger till familjemedlemmar och skötare
   med **Lägg till person** (**Förnamn**, **Efternamn**, **Roll**), ger dem rätt att
   sköta en besättning med **Ge åtkomst**, förnyar en skötares tidsbegränsade åtkomst
@@ -684,8 +687,9 @@ till för. Se [Ladda upp intyg](#ladda-upp-intyg).
 <!-- route: /stamboken/inskick/ny -->
 
 Rubriken **Ladda upp intyg** med **Besättning**, knappen **Ta foto eller välj filer**,
-listan över valda filer, **Meddelande** och **Skicka**. Visas en varning över en bild
-byts **Skicka** mot **Skicka ändå**, och bilden har knappen **Ta om**. Har du ingen
+listan över valda filer, **Meddelande** och **Skicka**. Bilderna skickas en gång. Visas en
+varning över en bild har inget sparats, **Skicka** byts mot **Skicka ändå**, och bilden har
+knappen **Ta om**. Har du ingen
 besättning säger sidan det. Se [Ladda upp intyg](#ladda-upp-intyg).
 
 #### Notiser
@@ -811,7 +815,10 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre ser hela
 1. Öppna **Inkorg** i menyn. Klicka **Jag tar den** på ett ärende som ingen har tagit,
    eller öppna ärendet och ta det där. Har någon annan ärendet klickar du **Ta över**.
 2. Välj ett dokument i listan till vänster. Vrid fotot med **Vrid vänster** eller
-   **Vrid höger** tills intyget står rätt; vridningen sparas och används för kopian.
+   **Vrid höger** tills intyget står rätt. Vridningen sparas bara medan du har ärendet och
+   innan kopian finns; den följer också med när du bekräftar maskningen, och kopian görs
+   efter den. Har du vridit fotot utan att ha ärendet börjar du om från den sparade
+   vridningen när du tar det.
    Zoom, **Kontrast** och **Förstärk blyerts** ändrar bara hur fotot visas. Ange **Typ**
    (Intyg, Bevis, Årsblankett eller Annat) och **Format**.
 3. Ett intyg: välj **Ny kanin** eller **Pappersintyg på en kanin som finns** och skriv av
@@ -830,11 +837,19 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre ser hela
    intyg", "Numret stämmer med kullen" och "Intygsnumret är ledigt". Jämför alltid förslaget med
    fotot innan du sparar; inget sparas förrän du klickar **Spara och nästa**. Har du vridit fotot
    rätt efteråt klickar du **Tolka igen**, så kommer ett nytt förslag några minuter senare.
+   Det du har skrivit skrivs aldrig över: har du redan börjat fylla i när förslaget kommer står
+   "Det finns ett förslag från tolkningen", och först när du klickar **Fyll i förslaget** läggs
+   det in.
 4. Dölj säljaren och köparen. En svart ruta täcker intygets nedre tredjedel. Dra rutan
    eller dess hörn, eller välj den och använd piltangenterna (Skift ändrar storleken,
    Delete tar bort den). **Lägg till ruta** ger fler. Klicka **Bekräfta maskningen och
-   nästa**. Visar intyget ingen säljare eller köpare tar du bort rutorna och klickar
-   **Bekräfta: inget att dölja**. Kopian läggs på kaninen som pappersintyg.
+   nästa**. Rutorna och fotots vridning skickas tillsammans, så kopian görs som du ser fotot.
+   Visar intyget ingen säljare eller köpare tar du bort rutorna, kryssar i **Fotot visar inga
+   säljar- eller köparuppgifter** och klickar **Bekräfta maskningen och nästa**. Kopian läggs
+   på kaninen som pappersintyg. Därefter går vridning och typ inte att ändra. Blev maskningen
+   fel klickar du **Gör om maskningen** på det klara dokumentet: handläggaren kan det medan
+   ärendet är öppet, genbanksansvarig och administratör när som helst. Kopian på kaninen
+   ersätts.
 5. Visar intyget en försäljning registrerar du den innan du bekräftar maskningen: öppna
    **Visar intyget en försäljning?** och fyll i **Individnummer**, **Köparens besättning**
    eller **Köparen är utanför föreningen** (sparas på GX1 eller MX1) och **Säljdatum**.
@@ -843,7 +858,8 @@ administratörer, genbanksansvariga och genbankshjälpare, och alla tre ser hela
 7. Ett foto som inte ska sparas: **Avfärda**. **Hoppa över** går till nästa dokument utan
    att spara.
 8. När alla dokument är klara eller avfärdade blir ärendet klart, och den som skickade
-   in får besked.
+   in får besked. Ett ärende utan dokument, till exempel ett meddelande, stänger du som
+   handläggare med **Klar** (**Besvarat** för typen Meddelande) när det är besvarat.
 
 Behöver du fråga uppfödaren, till exempel om en siffra som är svår att läsa: klicka
 **Fråga uppfödaren**, skriv frågan och klicka **Skicka frågan**. Frågan går per mejl till
@@ -905,8 +921,8 @@ visar **Ärende** (med hur många dokument som är klara och märkena "bevis sak
 **Väntat**, äldst först. **Jag tar den** finns på ärenden som ingen har tagit.
 Genbanksansvarig och administratör väljer en person och klickar **Tilldela**, eller
 tilldelar alla öppna ärenden i en besättning under **Tilldela en hel besättning**.
-Personlistorna visar dig och dem som har ärenden i listan; administratören ser också alla
-genbanksansvariga och genbankshjälpare. På en telefon blir varje rad ett kort. Den som
+Alla som arbetar i kön ser listan över handläggare, inte bara administratören; genbanksansvarig
+och administratör väljer ur den när de tilldelar. På en telefon blir varje rad ett kort. Den som
 inte arbetar i kön får "sidan finns inte". När bildtolkningen är på står det under lägena hur
 många foton som väntar på tolkning och när det senaste förslaget blev klart, och en röd ruta
 visas om tre foton i rad inte gick att tolka. Se [Arbeta i inkorgen](#arbeta-i-inkorgen).
@@ -925,9 +941,11 @@ dokumentet: intyget, försäljningen eller maskningen. Ett intyg som tolkats har
 färgade efter varifrån värdet kommer, far- och morföräldrarna och kontrollerna under fälten; medan
 fotot tolkas står det "Fotot tolkas". Har du inte ärendet står det vem som har det, med **Jag tar
 den** eller **Ta över**; du kan bara spara när ärendet är ditt och taget. Ett mejlat ärende visar
-avsändarens adress, **Gäller kanske** när det kan höra till ett annat ärende, och
+avsändarens adress (med "Avsändaren är inte bekräftad" när den inte gick att bekräfta; inget
+mejl skickas då till adressen), **Gäller kanske** när det kan höra till ett annat ärende, och
 **Sparades inte** med namnen på bilagor som inte är foton eller PDF, är större än 10 MB
-eller kom efter de tio första bilderna. **Fråga uppfödaren** finns när ärendet är ditt
+eller kom efter de tio första bilderna. På ett klart intyg finns **Gör om maskningen** för dem som
+får. **Fråga uppfödaren** finns när ärendet är ditt
 och taget, se [Arbeta i inkorgen](#arbeta-i-inkorgen).
 
 ---
