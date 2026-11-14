@@ -196,6 +196,11 @@ services:
       - type: bind
         source: ./uppladdningar
         target: /app/uppladdningar
+      # The demo's own intake queue files, never production's: its nightly sweep removes files its own
+      # database does not name.
+      - type: bind
+        source: ./skyddat-test
+        target: /app/skyddat
     depends_on:
       database:
         condition: service_healthy

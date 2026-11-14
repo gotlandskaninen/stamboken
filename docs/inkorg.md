@@ -807,6 +807,14 @@ kopian eller originalet är raderat.
 Båda svarar med `image/jpeg` och `Cache-Control: no-store, private`. Bilderna ligger utanför den
 publika uppladdningskatalogen och nås bara genom de här endpointsen.
 
+**Katalogen.** Originalen och kopiorna ligger i `PRIVATE_UPLOAD_FOLDER` (`/app/skyddat`), som bara
+`api` monterar: `./skyddat` på värden. Imagen kör som uid 1001, och Docker skapar en saknad
+källkatalog som root, så skapa den före första starten, som `./uppladdningar`, ägd av uid 1001 och
+utan läsrätt för andra: `install -d -o 1001 -g 1001 -m 700 skyddat skyddat-test`. Demons `api-test`
+har en egen, `./skyddat-test`, aldrig produktionens: dess nattjobb tar bort filer som demodatabasen
+inte pekar på. Går katalogen inte att skriva i loggar API:t ett fel med katalogens namn vid
+starten, och varje inskick misslyckas tills den är rättad.
+
 ### `GET /api/v2/inkorg/{id}/dokument/{dok}/original`
 
 Originalet. **Vem:** de som arbetar i kön. Varje hämtning loggas som händelsen `original_visat`.

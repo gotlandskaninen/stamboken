@@ -198,6 +198,11 @@ services:
         source: ./uppladdningar
         target: /app/uppladdningar
         read_only: true
+      # The demo's own intake queue files, never production's: its nightly sweep removes files its own
+      # database does not name. Create it like ./skyddat (writable by the image's uid 1001).
+      - type: bind
+        source: ./skyddat-test
+        target: /app/skyddat
     depends_on:
       database:
         condition: service_healthy

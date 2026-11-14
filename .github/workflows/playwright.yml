@@ -146,7 +146,7 @@ jobs:
           # Disable rate limiting for CI (legacy tests hit API rapidly)
           echo "RATELIMIT_ENABLED=false" >> .docker/api-variables.env
           echo "RATELIMIT_ENABLED=false" >> .docker/api-test-variables.env
-          mkdir -p config logs logs-test cache cache-test uppladdningar s3data letsencrypt local_ca
+          mkdir -p config logs logs-test cache cache-test uppladdningar skyddat skyddat-test s3data letsencrypt local_ca
           cp app/tests/auth.ini.test config/auth.ini
 
       # --- Start Docker Compose stack ---

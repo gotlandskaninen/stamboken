@@ -134,6 +134,7 @@ settings.refuse_auto_validate_outside_demo()
 settings.refuse_unsafe_mail_settings()
 settings.refuse_unsafe_gmail_settings()
 settings.refuse_private_folder_under_uploads()
+settings.report_unwritable_private_folder()
 
 # verify_oauth2_token would otherwise enforce audience "" and fail every login.
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID") or None

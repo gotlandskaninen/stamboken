@@ -124,6 +124,12 @@ for f in docker-compose docker-compose.local-production docker-compose.productio
     "$(q "$proj" "reaches(env('api').get('PRIVATE_UPLOAD_FOLDER', '/app/skyddat'), env('api').get('UPLOAD_FOLDER', '/app/uppladdningar'))")"
   check "$f: skyddat is not in the upload dir" "False" "$(q "$proj" "touches(sk)")"
 done
+# The demo API has a private dir of its own: production's originals are never its to read, and its nightly
+# sweep removes every file its own database does not name.
+for f in docker-compose.local-production docker-compose.production; do
+  check "$f: api-test mounts its own skyddat-test at /app/skyddat" "['$work/private-$f/skyddat-test']" \
+    "$(q "$work/private-$f" "[v['source'] for v in c['services']['api-test']['volumes'] if v['target'] == '/app/skyddat']")"
+done
 
 # ── The image reading's model server: opt-in, internal, at most 6 CPUs ─────
 # Ollama has no login, so it publishes no port; only the api reaches it. It starts
