@@ -41,13 +41,16 @@ from utils.herd_tracking import (
     BIRTH_DATE_CHANGED_REASON,
     BIRTH_HERD_CHANGED_REASON,
     CONTACT_MANAGER,
+    REPORT_ROW,
     HerdTrackingConflict,
     HerdTrackingError,
     HerdTrackingForbidden,
     HerdTrackingInvalid,
     HerdTrackingNotFound,
+    latest_death_op,
     record_herd_tracking,
     replace_birth_row,
+    report_owners,
     require_reason,
     resolve_herd,
     void_herd_tracking,
@@ -578,6 +581,13 @@ class ClearFields(PolicyCommand):
     def pre_write(self, ctx):
         return dict.fromkeys(self.fields)
 
+    def check_reauth(self, ctx):
+        """The rabbit page's "Ångra död" of a death the yearly report wrote leads to Ändra (spec 8)."""
+        clears_death = any(getattr(ctx.stored, f) for f in self.fields & set(COMMAND_FIELDS["RecordDeath"]))
+        if clears_death and not ctx.roles & {Role.MANAGER_CURRENT, Role.ADMIN}:
+            if report_owners([latest_death_op(ctx.individual.id)]):
+                raise HerdTrackingForbidden(REPORT_ROW)
+
 
 @dataclass(frozen=True)
 class SetMeasurements(PolicyCommand):
@@ -611,6 +621,7 @@ class RecordAttestation(PolicyCommand):
 
     herd: object
     date: str
+    report: int | None = None  # the yearly herd report that writes it (yearly_herd_report_id)
     apply_rank = 70
     policy_stage = None  # asked in apply, after the measurements are written (IR-52)
 
@@ -622,7 +633,9 @@ class RecordAttestation(PolicyCommand):
             raise AssertionError(f"{target.herd} does not hold the rabbit: that is a TransferIndividual")
         # The herd-tracking row with the same operation_id holds what was written.
         op = ctx.record(type(self).__name__, None, None)
-        record_herd_tracking(ctx.individual, target, when, "ATTESTATION", ctx.user, operation_id=op)
+        record_herd_tracking(
+            ctx.individual, target, when, "ATTESTATION", ctx.user, operation_id=op, yearly_herd_report=self.report
+        )
 
 
 def _genebank_correction(ctx, from_herd, to_herd, reason):
@@ -937,6 +950,7 @@ class IssueDigitalCertificate(PolicyCommand):
 UNDO_WINDOW = timedelta(days=7)  # as undoing a sale or an attestation in herd-tracking
 UNDOABLE = frozenset({"EditDescription", "RecordDeath", "ClearFields", "RecordAttestation"})
 UNDO_REASON = "Ångrad av den som registrerade den"
+REPORT_UNDO_REASON = "Årsrapporten ändrades eller drogs tillbaka"
 # The TextFields of FORM_WRITABLE_FIELDS; not name, the rabbit's name.
 FREE_TEXT_FIELDS = ("notes", "hair_notes", "color_note", "death_note", "eye_color", "claw_color", "belly_color")
 FREE_TEXT_RETENTION = timedelta(days=396)  # 13 months, rounded up
@@ -971,11 +985,14 @@ def _undone(entry):
 class Undo(Command):
     """
     Undoes a logged command: its actor within UNDO_WINDOW, or a correction by an editor with a reason
-    (ADR-0017). The steps run in apply, under the individual's lock, in this order.
+    (ADR-0017). The steps run in apply, under the individual's lock, in this order. With Role.RAPPORT granted,
+    `report_ops` (str operation ids) are the yearly report's own commands, which the report's right may undo
+    whoever ran them and however old they are (ADR-0017, addendum 2026-11-14); WriteContext carries only roles.
     """
 
     operation_id: uuid.UUID
     reason: str | None = None
+    report_ops: frozenset[str] = frozenset()
 
     def apply(self, ctx):
         # FOR UPDATE: the free-text purge's UPDATE waits for this undo, or this undo reads the purged row.
@@ -994,11 +1011,19 @@ class Undo(Command):
         if _undone(entry):
             raise HerdTrackingConflict("Ändringen är redan ångrad.")
         actor = actor_role(ctx.user, entry)
-        if not (allowed("Undo", ctx.roles | actor, ctx.state) and allowed(entry.command, ctx.roles, ctx.state)):
+        report = Role.RAPPORT in ctx.granted and str(self.operation_id) in self.report_ops
+        roles = ctx.roles if report else ctx.roles - {Role.RAPPORT}  # RAPPORT reaches only the report's own ops
+        if not (allowed("Undo", roles | actor, ctx.state) and allowed(entry.command, ctx.roles, ctx.state)):
             raise HerdTrackingForbidden(f"Bara den som gjorde ändringen kan ångra den. {CONTACT_MANAGER}")
-        if actor and datetime.now(timezone.utc) - entry.created_at <= UNDO_WINDOW:
+        editor = ctx.roles & {Role.MANAGER_CURRENT, Role.ADMIN}
+        # First: the report's backout often runs as the original actor within the window.
+        if report:
+            note = self.reason or REPORT_UNDO_REASON
+        elif not editor and report_owners([entry.operation_id]):
+            raise HerdTrackingForbidden(REPORT_ROW)
+        elif actor and datetime.now(timezone.utc) - entry.created_at <= UNDO_WINDOW:
             note = UNDO_REASON
-        elif ctx.roles & {Role.MANAGER_CURRENT, Role.ADMIN}:
+        elif editor:
             note = require_reason(self.reason)
         else:
             raise HerdTrackingForbidden(f"Ändringen gjordes för mer än 7 dagar sedan. {CONTACT_MANAGER}")
@@ -1006,8 +1031,9 @@ class Undo(Command):
             raise HerdTrackingConflict("Uppgifterna är rensade och kan inte återställas.")
         if entry.command == "RecordAttestation":
             undo_op = ctx.record("Undo", None, None, undoes=entry.operation_id, reason=note)
-            for row in _active_attestation_rows(entry):  # herd-tracking's void rules apply unchanged
-                void_herd_tracking(row.id, ctx.user, note, operation_id=undo_op)
+            ops = self.report_ops if report else None  # an empty set would refuse every row as not the report's
+            for row in _active_attestation_rows(entry):  # herd-tracking's void rules, or the report's
+                void_herd_tracking(row.id, ctx.user, note, operation_id=undo_op, report_ops=ops)
             return
         changed = sorted(key for key, value in entry.after.items() if _column_value(ctx.individual, key) != value)
         if changed:

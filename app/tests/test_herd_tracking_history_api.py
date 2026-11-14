@@ -39,6 +39,7 @@ ROW_KEYS = {
     "can_void",
     "can_undo_sale",
     "can_undo_operation",
+    "report",
 }
 
 

@@ -92,6 +92,18 @@ Regler:
 * Tabelltest: för alla andra kommandon än `Undo` ger `ACTOR` samma svar som
   utan.
 
+## Tillägg 2026-11-14 (årsrapport v2, fråga 15)
+
+Den som har rätt till en årsrapport (ägare, skötare, genbanksansvarig, admin
+och en hjälpare genom en post hon har tagit) får makulera och ångra de rader
+som rapportens inskick skrev, så länge rundan är öppen, oavsett vem som skrev
+dem och hur gamla de är. Rätten prövas på rapportnivå, i årsrapportens modul
+utils/arsrapport.py. Den når kommandona som `Role.RAPPORT` tillsammans med
+rapportens operations-id (`report_ops`), och en rad eller ett kommando utanför
+dem vägras. Den vanliga makuleringen, `Undo` och "Ångra död" vägrar
+rapportens rader för alla utom genbanksansvarig och admin och hänvisar till
+Ändra. Koden som aktör (`access_code_id`) kommer i steg 3.
+
 ## Mer information
 
 * [ADR-0014: Behörighetsmodell för Stambokens API](0014-authorization-model.md)
@@ -106,3 +118,4 @@ interna dokumentation.
 |-------|------------|------------|
 | 2026-10-29 | Jonas | Utkast |
 | 2026-11-06 | Jonas | MADR-format, kortad |
+| 2026-11-14 | Jonas | Tillägg: årsrapportens rätt att makulera och ångra sina egna rader (`Role.RAPPORT`, `report_ops`) |

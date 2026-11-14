@@ -22,6 +22,8 @@ class Role(StrEnum):
     CARETAKER = "caretaker"  # current herd in effective_herd_ids() - transfer_herd_ids()
     ACTOR = "actor"  # ran the logged command; derived only by Undo (actor_role), never by roles_for
     HANDLAGGARE = "handlaggare"  # a genebank helper through an inbox item they hold; only a grant gives it
+    # the yearly report's right holder for the report's own writes; only utils.arsrapport.ReportGrant gives it
+    RAPPORT = "rapport"
 
 
 @dataclass(frozen=True)
@@ -72,6 +74,8 @@ POLICY: tuple[Allow, ...] = (
     Allow("GenebankCorrection", Role.ADMIN),
     # Entry applies too, so an actor who sold the rabbit or lost the right to edit it is denied (ADR-0017).
     *[Allow("Undo", r) for r in (Role.ACTOR, *EDITORS)],
+    # Only the report's own operations (Undo's report_ops); Entry applies too, and so does the undone command's row.
+    Allow("Undo", Role.RAPPORT),
 )
 # The inbox handler (utils.inbox.InboxGrant) may do what the owner may. That leaves out the corrections, which
 # are a manager's or an admin's (ADR-0017 level 2), and any rabbit in GX1/MX1, which Entry keeps out.

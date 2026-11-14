@@ -24,6 +24,10 @@ from utils.database import (
     Herd,
     HerdTracking,
     Individual,
+    IndividualCommand,
+    YearlyHerdReport,
+    YearlyReportRound,
+    YearlyReportSubmission,
     coerce_date,
     ht_not_voided,
     ht_order_desc,
@@ -478,14 +482,56 @@ def _moves_across_genebanks(individual, before, after):
     )
 
 
-def void_denial(user, row, active_rows, individual, transfer_herd_ids=None):
-    """The void permission table. None = allowed."""
+REPORT_ROW = "Raden kommer från årsrapporten. Ändra årsrapporten i stället."
+BIRTH_NOT_VOIDABLE = "En födelserad kan inte ångras — den kan bara ersättas."
+
+
+def report_owners(op_ids):
+    """
+    {str(op): the submitted yearly report whose submissions wrote op}, in one query; ops no submitted report
+    wrote are left out. The report comes with its herd and round, so `{herd, year}` costs nothing more.
+    """
+    wanted = {str(op) for op in op_ids if op is not None}
+    if not wanted:
+        return {}
+    submissions = (
+        YearlyReportSubmission.select(YearlyReportSubmission.operation_ids, YearlyHerdReport, Herd, YearlyReportRound)
+        .join(YearlyHerdReport)
+        .join(Herd)
+        .switch(YearlyHerdReport)
+        .join(YearlyReportRound)
+        .where(YearlyHerdReport.status == "submitted", YearlyReportSubmission.operation_ids.contains_any(*wanted))
+    )
+    return {op: s.report for s in submissions for op in s.operation_ids if op in wanted}
+
+
+def latest_death_op(individual_id):
+    """The operation id of the rabbit's latest RecordDeath that no Undo names (ADR-0017), or None."""
+    undone = IndividualCommand.select(IndividualCommand.undoes).where(
+        IndividualCommand.individual == individual_id, IndividualCommand.undoes.is_null(False)
+    )
+    return (
+        IndividualCommand.select(IndividualCommand.operation_id)
+        .where(
+            IndividualCommand.individual == individual_id,
+            IndividualCommand.command == "RecordDeath",
+            IndividualCommand.operation_id.not_in(undone),
+        )
+        .order_by(IndividualCommand.created_at.desc(), IndividualCommand.id.desc())
+        .scalar()
+    )
+
+
+def void_denial(user, row, active_rows, individual, transfer_herd_ids=None, owners=None):
+    """The void permission table. None = allowed. `owners`: report_owners for the row's op, looked up if not given."""
     if row.kind == "BIRTH":
-        return "En födelserad kan inte ångras — den kan bara ersättas."
+        return BIRTH_NOT_VOIDABLE
     if not user.is_admin and _moves_across_genebanks(individual, active_rows, [r for r in active_rows if r != row]):
         return GENEBANK_CHANGE_ADMIN_ONLY
     if is_manager_of(user, _row_genebank_id(row, individual)):
         return None
+    if str(row.operation_id) in (report_owners([row.operation_id]) if owners is None else owners):
+        return REPORT_ROW  # spec 8: the rabbit page leads to Ändra, so the report and the register agree
     if row.kind == "ATTESTATION":
         if row.herd.herd in OUTSIDE_GENEBANK_HERDS:  # owner privileges on GX1/MX1 never authorise
             return f"Kaninen är såld utanför genbanken. {CONTACT_MANAGER}"
@@ -503,12 +549,34 @@ def void_denial(user, row, active_rows, individual, transfer_herd_ids=None):
     return f"Bara genbanksansvarig kan ångra en korrigering. {CONTACT_MANAGER}"
 
 
-def void_herd_tracking(ht_id, user, reason, operation_id=None):
+def report_void_denial(user, row, active_rows, individual, report_ops):
+    """
+    The yearly report's right (ADR-0017, addendum 2026-11-14): the report's own rows, whoever wrote them and however
+    old, unless something was registered after them. The right itself is checked at report level. None = allowed.
+    """
+    if str(row.operation_id) not in report_ops:
+        return "Raden hör inte till årsrapporten."
+    if row.kind == "BIRTH":
+        return BIRTH_NOT_VOIDABLE
+    if not user.is_admin and _moves_across_genebanks(individual, active_rows, [r for r in active_rows if r != row]):
+        return GENEBANK_CHANGE_ADMIN_ONLY
+    if not active_rows or active_rows[-1].id != row.id:
+        return "Något har registrerats på kaninen efter årsrapporten. Genbanksansvarig kan rätta."
+    if row.kind == "TRANSFER":  # the seller's rules that do not depend on who or when (sale_undo_denial)
+        if row.transfer_id is not None:
+            return f"Överlåtelsen avbryts i överlåtelseflödet. {CONTACT_MANAGER}"
+        if _has_dependent_breeding(row.individual_id, row):
+            return "Kaninen har en parning eller kull registrerad efter försäljningen. Genbanksansvarig kan rätta."
+    return None
+
+
+def void_herd_tracking(ht_id, user, reason, operation_id=None, *, report_ops=None):
     """
     Void one row (also "Ångra försäljning"). Idempotent per (individual, operation_id):
     a replayed operation returns the row it voided; an already voided row is a no-op.
     Checks I1–I5 afterwards. Callers must gate READ access first: the idempotent
-    replay returns before the permission check.
+    replay returns before the permission check. With `report_ops` (a frozenset of str operation ids), the
+    yearly report's right replaces the void table: only utils.arsrapport passes them, once it has checked it.
     """
     cleaned = require_reason(reason)
     op = new_operation_id(operation_id)
@@ -525,7 +593,10 @@ def void_herd_tracking(ht_id, user, reason, operation_id=None):
             return row
         individual = Individual.get_by_id(row.individual_id)
         before = _active_rows(individual.id)
-        denial = void_denial(user, row, before, individual)
+        if report_ops is None:
+            denial = void_denial(user, row, before, individual)
+        else:
+            denial = report_void_denial(user, row, before, individual, report_ops)
         if denial:
             raise HerdTrackingForbidden(denial)
         voided = _void_rows([row], user, cleaned, op)
@@ -1086,6 +1157,8 @@ def herd_tracking_history(individual, user, include_voided=None):
         if row.from_herd_id:
             row.from_herd = herds[row.from_herd_id]
     seller_herds = user.transfer_herd_ids()  # once per call, not per TRANSFER row
+    death_op = latest_death_op(individual.id)
+    owners = report_owners([r.operation_id for r in rows] + [death_op])  # once per call, not per row
     active = sorted((r for r in rows if r.voided_at is None), key=ht_sort_key)
     latest_id = active[-1].id if active else None
     out = []
@@ -1097,7 +1170,7 @@ def herd_tracking_history(individual, user, include_voided=None):
         undo_target = row.operation_id if is_active else row.voided_operation_id
         can_void = (
             is_active
-            and void_denial(user, row, active, individual, seller_herds) is None
+            and void_denial(user, row, active, individual, seller_herds, owners) is None
             and _void_keeps_invariants(individual, active, row)
         )
         row_genebank = herds[row.herd_id].genebank_id if row.herd_id else genebank_id
@@ -1123,11 +1196,18 @@ def herd_tracking_history(individual, user, include_voided=None):
                 "can_undo_operation": bool(
                     can_manage and not individual.voided and _operation_undo_hint(undo_target, rows, individual)
                 ),
+                "report": _report_ref(owners.get(str(row.operation_id))),
             }
         )
     return {
         "individual": {"id": individual.id, "number": individual.number},
         "viewer": {"can_manage": can_manage},
+        "death_report": _report_ref(owners.get(str(death_op))),  # the death the rabbit page's "Ångra död" undoes
         "rows": out,
         "periods": compute_periods(active, herds),
     }
+
+
+def _report_ref(report):
+    """The submitted yearly report that wrote a row, for the rabbit page's link to Ändra; None if none did."""
+    return None if report is None else {"herd": report.herd.herd, "year": report.round.report_year}
