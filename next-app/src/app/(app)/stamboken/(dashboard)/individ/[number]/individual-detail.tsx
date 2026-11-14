@@ -45,10 +45,8 @@ import { NotesSection } from "@/components/individual/NotesSection";
 import { PaperCertificate } from "@/components/individual/PaperCertificate";
 import { EditSaveBar } from "@/components/individual/EditSaveBar";
 import { ReportDeathDialog } from "@/components/individual/ReportDeathDialog";
-import {
-  SellRabbitDialog,
-  type SaleBuyer,
-} from "@/components/individual/SellRabbitDialog";
+import { SellRabbitDialog } from "@/components/individual/SellRabbitDialog";
+import type { SaleBuyer } from "@/components/individual/BuyerFields";
 import { isOutsideGenebankHerd } from "@/utils/saleRules";
 import {
   saveFormData,

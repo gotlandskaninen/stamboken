@@ -27,6 +27,7 @@ from utils.herd_tracking import (  # noqa: E402
 from utils.individual_commands import record_sale  # noqa: E402
 
 from tests.database_test import DatabaseTest  # noqa: E402
+from tests.test_inbox_erasure import ErasureTest
 from tests.test_inbox_purge import NOW as PURGE_NOW  # noqa: E402
 from tests.test_inbox_purge import PHONE, PurgeTest
 
@@ -512,3 +513,54 @@ class TestQueueDocuments(PurgeTest):
         before = list(db.InboxDocument.select().order_by(db.InboxDocument.id).tuples())
         self.assertEqual(buyer_contact.purge_expired(NOW + timedelta(days=5 * 366)), 1)
         self.assertEqual(list(db.InboxDocument.select().order_by(db.InboxDocument.id).tuples()), before)
+
+
+class TestQueueSale(ErasureTest):
+    """POST …/overlat with the buyer outside the association (docs/inkorg.md)."""
+
+    def setUp(self):
+        super().setUp()
+        db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        self.item, document = self.uploaded()
+        self.client.patch(f"/api/v2/inkorg/{self.item.id}/dokument/{document.id}", json={"doc_type": "bevis"})
+        self.document = document
+
+    def _sale(self, herd="GX1", buyer=BUYER):
+        return self.post(
+            f"/{self.item.id}/dokument/{self.document.id}/overlat",
+            individual="G1-2111",
+            herd=herd,
+            date="2021-06-01",
+            buyer=buyer,
+        )
+
+    def test_the_helper_registers_the_buyer_with_the_sale(self):
+        resp = self._sale(buyer={**BUYER, "email": "z@example.org", "membership_optin": True})
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        sale = db.HerdTracking.get_by_id(resp.get_json()["herd_tracking_id"])
+        contact = db.BuyerContact.get_by_id(sale.holder_contact_id)
+        self.assertEqual((contact.name, contact.town, contact.email), (NAME, "Visby", "z@example.org"))
+        self.assertEqual(contact.created_by_user_id, self.helper.id)
+        self.assertEqual(db.InboxDocument.get_by_id(self.document.id).herd_tracking_id, sale.id)
+
+    def test_contact_details_without_the_yes_are_400_and_nothing_is_written(self):
+        resp = self._sale(buyer={**BUYER, "postal_address": "Väg 1"})
+        self.assertEqual(resp.status_code, 400, resp.get_json())
+        self.assertIn("kryssat ja", resp.get_json()["detail"])
+        self.assertEqual(db.BuyerContact.select().count(), 0)
+        self.assertIsNone(db.InboxDocument.get_by_id(self.document.id).herd_tracking_id)
+
+    def test_a_buyer_for_a_herd_in_the_association_is_400(self):
+        resp = self._sale(herd="G2")
+        self.assertEqual(resp.status_code, 400, resp.get_json())
+        self.assertEqual(db.BuyerContact.select().count(), 0)
+
+    def test_a_late_sale_entered_as_a_correction_gets_its_buyer(self):
+        rabbit = db.Individual.get(db.Individual.number == "G1-2111")
+        record_herd_tracking(rabbit, self.herds[1], "2022-01-01", "TRANSFER", self.manager)
+        self.login("man")
+        self.post(f"/{self.item.id}/ta-over")
+        resp = self._sale()
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        sale = db.HerdTracking.get_by_id(resp.get_json()["herd_tracking_id"])
+        self.assertEqual(db.BuyerContact.get_by_id(sale.holder_contact_id).name, NAME)

@@ -8,6 +8,12 @@ import {
   TextField,
 } from "@mui/material";
 import type { GenebankHerd } from "@/utils/saleRules";
+import {
+  BuyerFields,
+  EMPTY_BUYER,
+  buyerComplete,
+  buyerPayload,
+} from "@/components/individual/BuyerFields";
 import { registerSale } from "../actions";
 import {
   buildSalePayload,
@@ -41,6 +47,7 @@ export function SalePanel({
   const [errors, setErrors] = useState<Partial<Record<keyof SaleForm, string>>>(
     {},
   );
+  const [buyer, setBuyer] = useState(EMPTY_BUYER);
   const [formError, setFormError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [pending, start] = useTransition();
@@ -54,7 +61,12 @@ export function SalePanel({
     start(async () => {
       setErrors({});
       setFormError(null);
-      const res = await registerSale(itemId, doc.id, buildSalePayload(form));
+      const payload = buildSalePayload(form);
+      const res = await registerSale(
+        itemId,
+        doc.id,
+        form.outside ? { ...payload, buyer: buyerPayload(buyer) } : payload,
+      );
       if (res.ok) {
         setSaved(true);
         onDone(res.data.document);
@@ -113,11 +125,12 @@ export function SalePanel({
         </div>
         <div className={styles.wide}>
           {form.outside ? (
-            <p className={styles.muted}>
-              Sparas på {outsideHerd(form.individual) ?? "GX1 eller MX1"}.
-              Köparens namn och adress sparas inte; de finns bara på
-              originalfotot.
-            </p>
+            <>
+              <p className={styles.muted}>
+                Sparas på {outsideHerd(form.individual) ?? "GX1 eller MX1"}.
+              </p>
+              <BuyerFields value={buyer} onChange={setBuyer} size="small" />
+            </>
           ) : (
             <Autocomplete
               freeSolo
@@ -152,7 +165,13 @@ export function SalePanel({
         </p>
       )}
       <div className={styles.submitRow}>
-        <button type="submit" className="sb-btn" disabled={!canSave || pending}>
+        <button
+          type="submit"
+          className="sb-btn"
+          disabled={
+            !canSave || pending || (form.outside && !buyerComplete(buyer))
+          }
+        >
           {pending
             ? "Sparar…"
             : proof

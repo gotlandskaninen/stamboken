@@ -23,6 +23,14 @@ import {
 } from "@mui/x-date-pickers/hooks";
 import { useTranslation } from "react-i18next";
 import {
+  BuyerFields,
+  EMPTY_BUYER,
+  buyerComplete,
+  buyerPayload,
+  type BuyerDraft,
+  type SaleBuyer,
+} from "./BuyerFields";
+import {
   type GenebankHerd,
   isOutsideGenebankHerd,
   minSaleDate,
@@ -45,17 +53,6 @@ function StockholmTodayActionBar({ className, sx }: PickersActionBarProps) {
       </Button>
     </DialogActions>
   );
-}
-
-/** The buyer outside the association, sent with a sale to GX1/MX1 (ADR-0016). */
-export interface SaleBuyer {
-  name: string;
-  town: string;
-  contact_consent: boolean;
-  membership_optin: boolean;
-  postal_address?: string;
-  email?: string;
-  phone?: string;
 }
 
 type LoadHerdsResult =
@@ -134,15 +131,7 @@ function SellRabbitDialogContent({
   const [target, setTarget] = React.useState<GenebankHerd | null>(null);
   const [date, setDate] = React.useState<Date | null>(() => stockholmToday());
   const [acknowledged, setAcknowledged] = React.useState(false);
-  const [buyer, setBuyer] = React.useState({
-    name: "",
-    town: "",
-    postal_address: "",
-    email: "",
-    phone: "",
-  });
-  const [contactConsent, setContactConsent] = React.useState(false);
-  const [membershipOptin, setMembershipOptin] = React.useState(false);
+  const [buyer, setBuyer] = React.useState<BuyerDraft>(EMPTY_BUYER);
 
   // Load the herd list when the dialog opens (picker data is not needed earlier).
   React.useEffect(() => {
@@ -180,12 +169,11 @@ function SellRabbitDialogContent({
   const dateProblem = validateSaleDate(date, minDate, today);
   const outsideCode = options.find((h) => isOutsideGenebankHerd(h.herd))?.herd;
   const targetOutside = target ? isOutsideGenebankHerd(target.herd) : false;
-  const buyerComplete = !!buyer.name.trim() && !!buyer.town.trim();
   const canSubmit =
     !!target &&
     !dateProblem &&
     acknowledged &&
-    (!targetOutside || buyerComplete) &&
+    (!targetOutside || buyerComplete(buyer)) &&
     !isSaving;
 
   const optionLabel = (h: GenebankHerd) =>
@@ -213,38 +201,8 @@ function SellRabbitDialogContent({
       onConfirm(target.herd, toIsoDate(date));
       return;
     }
-    // Only what the buyer said yes to: a field hidden by an unticked box is never sent.
-    const kept = (
-      field: "postal_address" | "email" | "phone",
-      allowed: boolean,
-    ) =>
-      allowed && buyer[field].trim() ? { [field]: buyer[field].trim() } : {};
-    const contactAllowed = contactConsent || membershipOptin;
-    onConfirm(target.herd, toIsoDate(date), {
-      name: buyer.name.trim(),
-      town: buyer.town.trim(),
-      contact_consent: contactConsent,
-      membership_optin: membershipOptin,
-      ...kept("postal_address", contactConsent),
-      ...kept("email", contactAllowed),
-      ...kept("phone", contactAllowed),
-    });
+    onConfirm(target.herd, toIsoDate(date), buyerPayload(buyer));
   };
-
-  const buyerField = (
-    field: keyof typeof buyer,
-    label: string,
-    required = false,
-  ) => (
-    <TextField
-      label={label}
-      value={buyer[field]}
-      onChange={(e) => setBuyer((b) => ({ ...b, [field]: e.target.value }))}
-      required={required}
-      fullWidth
-      slotProps={{ htmlInput: { maxLength: 200 } }}
-    />
-  );
 
   const displayName = individualName || individualNumber;
   const dateError = dateProblem
@@ -397,45 +355,8 @@ function SellRabbitDialogContent({
         </Box>
 
         {targetOutside && (
-          <Box
-            sx={{ display: "flex", flexDirection: "column", gap: 2, mt: 2.5 }}
-            data-testid="sell-buyer"
-          >
-            {buyerField("name", t("individual.sell.buyerName"), true)}
-            {buyerField("town", t("individual.sell.buyerTown"), true)}
-            <FormControlLabel
-              sx={{ alignItems: "flex-start", ml: 0 }}
-              control={
-                <Checkbox
-                  checked={contactConsent}
-                  onChange={(e) => setContactConsent(e.target.checked)}
-                  sx={{ pt: 0.5 }}
-                />
-              }
-              label={t("individual.sell.buyerContactConsent")}
-            />
-            <FormControlLabel
-              sx={{ alignItems: "flex-start", ml: 0 }}
-              control={
-                <Checkbox
-                  checked={membershipOptin}
-                  onChange={(e) => setMembershipOptin(e.target.checked)}
-                  sx={{ pt: 0.5 }}
-                />
-              }
-              label={t("individual.sell.buyerMembershipOptin")}
-            />
-            {contactConsent &&
-              buyerField("postal_address", t("individual.sell.buyerAddress"))}
-            {(contactConsent || membershipOptin) && (
-              <>
-                {buyerField("email", t("individual.sell.buyerEmail"))}
-                {buyerField("phone", t("individual.sell.buyerPhone"))}
-              </>
-            )}
-            <Box sx={{ fontSize: 13, color: "var(--sb-ink-3)" }}>
-              {t("individual.sell.buyerNote")}
-            </Box>
+          <Box sx={{ mt: 2.5 }}>
+            <BuyerFields value={buyer} onChange={setBuyer} />
           </Box>
         )}
 

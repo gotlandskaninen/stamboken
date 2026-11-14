@@ -585,15 +585,25 @@ def _parse_events(events, individual):
             raise HerdTrackingInvalid(f"Händelse {number}: anteckningen måste vara text.")
         notes = (raw_notes or "").strip() or None
         reject_contact_details(notes)
-        contact = event.get("holder_contact_id")
-        if contact is not None and (
-            not isinstance(contact, int)
-            or isinstance(contact, bool)
+        # The sale's buyer outside the association: one kept from a row voided here, or a new one (the queue).
+        contact, buyer = event.get("holder_contact_id"), event.get("buyer")
+        if (contact is not None or buyer is not None) and (
+            (contact is not None and (not isinstance(contact, int) or isinstance(contact, bool)))
+            or (contact is not None and buyer is not None)
             or kind != "TRANSFER"
             or herd.herd not in OUTSIDE_GENEBANK_HERDS
         ):
             raise HerdTrackingInvalid(f"Händelse {number}: en köpare hör bara till en försäljning utanför genbanken.")
-        parsed.append({"date": when, "herd": herd, "kind": kind, "notes": notes, "holder_contact_id": contact})
+        parsed.append(
+            {
+                "date": when,
+                "herd": herd,
+                "kind": kind,
+                "notes": notes,
+                "holder_contact_id": contact,
+                "buyer": buyer_contact_fields(buyer) if buyer is not None else None,
+            }
+        )
         previous = when
     return parsed
 
@@ -671,6 +681,7 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
                 and from_herd == event["herd"].id
                 and event["herd"].herd in OUTSIDE_GENEBANK_HERDS
                 and event["holder_contact_id"] is None
+                and event["buyer"] is None
             ):
                 detail = "En flytt måste gå till en annan besättning än den som har kaninen."
                 raise HerdTrackingConflict(detail, rows=[{"id": None, "code": "I4", "detail": detail}])
@@ -683,7 +694,11 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
                 kind=event["kind"],
                 operation_id=op,
                 notes=event["notes"],
-                holder_contact=event["holder_contact_id"],
+                holder_contact=(
+                    BuyerContact.create(**event["buyer"], created_by_user=user)
+                    if event["buyer"]
+                    else event["holder_contact_id"]
+                ),
             )
             written.append(row)
             current.append(row)

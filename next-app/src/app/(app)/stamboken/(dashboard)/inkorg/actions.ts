@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { SaleBuyer } from "@/components/individual/BuyerFields";
 import { fetchApi, ApiError } from "@/lib/api";
 import type { InboxDocument, InboxItem, Problem, Rect } from "./lib";
 
@@ -159,7 +160,12 @@ export async function saveCertificate(
 export async function registerSale(
   id: number,
   doc: number,
-  payload: { individual: string; herd: string; date: string },
+  payload: {
+    individual: string;
+    herd: string;
+    date: string;
+    buyer?: SaleBuyer;
+  },
 ) {
   if (!isId(id) || !isId(doc)) return refused("Ogiltigt dokument.");
   return call<DocResult>(id, `/${id}/dokument/${doc}/overlat`, "POST", payload);
