@@ -80,6 +80,7 @@ import utils.genetics_service as genetics  # isort:skip
 from utils import number_assets  # isort:skip
 from utils.individual_commands import purge_command_free_text  # isort:skip
 from utils.mail import purge_old_mail, send_pending  # isort:skip
+from utils import inbox  # isort:skip
 from utils.inbox import queue_digests  # isort:skip
 from utils import inbox_gmail  # isort:skip
 from utils import inbox_purge  # isort:skip
@@ -314,6 +315,16 @@ def _read_gmail():
             inbox_gmail.run()
     except Exception:  # pylint: disable=broad-except
         APP.logger.exception("Reading the Gmail mailbox failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _wake_waiting_items():
+    """Leader job every hour (docs/inkorg.md, "Väntar på förälder"), built as _send_mail: it closes its connection."""
+    try:
+        APP.logger.info("Woke %s inbox items waiting for a parent", inbox.wake_waiting())
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Waking the inbox items waiting for a parent failed")
     finally:
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
@@ -3067,6 +3078,10 @@ def initialize_app():
             scheduler.add_job(
                 _read_gmail, trigger="interval", minutes=5, id="inbox_gmail", max_instances=1, coalesce=True
             )
+        # Wakes the intake queue's items still waiting for a registered parent, which a save skipped as locked.
+        scheduler.add_job(
+            _wake_waiting_items, trigger="interval", hours=1, id="inbox_wake", max_instances=1, coalesce=True
+        )
         # The image reading of photographed certificates, one document a run (docs/inkorg.md, "Tolkning").
         scheduler.add_job(
             _interpret_document,

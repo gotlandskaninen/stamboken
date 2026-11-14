@@ -91,13 +91,16 @@ HANDWRITTEN_MASK = [{"x": 0.0, "y": 0.6667, "w": 1.0, "h": 0.3333}]
 
 
 class InboxError(Exception):
-    """A refusal with its HTTP status, turned into a problem response by the blueprint."""
+    """
+    A refusal with its HTTP status, turned into a problem response by the blueprint. It rolls back the request's
+    transaction, unless `keep`: what was done before it (a correction the refusal reports) is committed.
+    """
 
     TITLES = {400: "Ogiltig begäran", 403: "Åtkomst nekad", 404: "Hittades inte", 409: "Konflikt"}
 
-    def __init__(self, status, detail):
+    def __init__(self, status, detail, *, keep=False):
         super().__init__(detail)
-        self.status, self.title, self.detail = status, self.TITLES[status], detail
+        self.status, self.title, self.detail, self.keep = status, self.TITLES[status], detail, keep
 
 
 JPEG_QUALITY = 90
@@ -400,8 +403,15 @@ def change_state(item, user, state, *, note=None, duplicate_of=None):
     detail = {"from": item.state, "to": state, **({"note": note.strip()} if note and note.strip() else {})}
     if state == "ofullstandig" and "note" not in detail:
         raise InboxError(400, "Skriv vad som saknas.")
-    if state == "vantar_foralder" and not item.documents.where(InboxDocument.waiting_for.is_null(False)).exists():
-        raise InboxError(400, "Ange på dokumentet vilken förälder posten väntar på.")
+    if state == "vantar_foralder":
+        waited = {n for d in item.documents.where(InboxDocument.waiting_for.is_null(False)) for n in d.waiting_for}
+        if not waited:
+            raise InboxError(400, "Ange på dokumentet vilken förälder posten väntar på.")
+        registered = _registered(waited)
+        _clear_waiting(item, registered)  # a parent registered meanwhile is waited for no more
+        if registered == waited:
+            names = ", ".join(sorted(registered))
+            raise InboxError(409, f"{names} finns redan i Stamboken. Posten väntar inte på någon förälder.", keep=True)
     if state == "klar" and item.documents.where(InboxDocument.done_at.is_null(True)).exists():
         raise InboxError(409, "Gör klart eller avfärda dokumenten först.")
     item.duplicate_of = None
@@ -927,32 +937,83 @@ def transferred(item, document, user, individual, row, *, linked=False):
     close_if_done(item, user)
 
 
+def _registered(numbers):
+    """The numbers among `numbers` that are in Stamboken."""
+    found = Individual.select(Individual.number).where(Individual.number.in_(list(numbers))) if numbers else []
+    return {number for (number,) in found.tuples()} if numbers else set()
+
+
+def _clear_waiting(item, numbers):
+    """`numbers` leave the waiting_for of the item's documents; returns those that were waited for."""
+    cleared = set()
+    for document in item.documents.where(InboxDocument.waiting_for.is_null(False)):
+        kept = [n for n in document.waiting_for if n not in numbers]
+        if len(kept) < len(document.waiting_for):
+            cleared |= set(document.waiting_for) - set(kept)
+            document.waiting_for = kept or None
+            document.save()
+    return cleared
+
+
+def _wake(item, numbers):
+    """
+    Parents registered: out of the open item's waiting_for, each logged; once it waits for no one its handler is
+    told (or its genebank's managers when it has none), and an item that was waiting goes back to "tagen".
+    """
+    cleared = _clear_waiting(item, numbers)
+    for number in sorted(cleared):
+        log_event(item, None, "foralder_inlagd", individual=number)
+    if not cleared or item.documents.where(InboxDocument.waiting_for.is_null(False)).exists():
+        return bool(cleared)
+    if item.state == "vantar_foralder":
+        _set_state(item, "tagen")
+        item.save()
+    handlers = [item.assigned_to_id] if item.assigned_to_id else queue_workers(item.genebank_id, managers_only=True)
+    for handler in handlers:
+        notify(handler, "foralder_inlagd", item)
+    return True
+
+
 def parent_registered(number):
     """
-    A rabbit was created (Individual.save, in its transaction, wherever it was created): its number leaves the
-    waiting_for of the items waiting for it, and an item no longer waiting for anything goes back to its
-    handler ("tagen"). Only items in "vantar_foralder" are locked here, after the rabbit's own locks: no save
-    holds such an item (a save needs "tagen"), so the reversed lock order cannot deadlock with one.
+    A rabbit was created (Individual.save, in its transaction, wherever it was created): every open item waiting
+    for it is woken (_wake). The items are locked after the rabbit's own locks and after the item a save through
+    the queue holds, the reverse of the queue's order, so they are locked SKIP LOCKED: this never waits, and an
+    item someone else holds (assigning a herd's items, say) is left to wake_waiting.
     """
     waiting = InboxDocument.select(InboxDocument.item).where(InboxDocument.waiting_for.contains([number]))
     items = list(
         InboxItem.select()
-        .where((InboxItem.state == "vantar_foralder") & InboxItem.id.in_(waiting))
+        .where(InboxItem.state.in_(OPEN_STATES) & InboxItem.id.in_(waiting))
         .order_by(InboxItem.id)
-        .for_update()
+        .for_update("FOR UPDATE SKIP LOCKED")
     )
     for item in items:
-        for document in item.documents.where(InboxDocument.waiting_for.contains([number])):
-            document.waiting_for = [n for n in document.waiting_for if n != number] or None
-            document.save()
-        if item.documents.where(InboxDocument.waiting_for.is_null(False)).exists():
-            continue
-        _set_state(item, "tagen")
-        item.save()
-        log_event(item, None, "foralder_inlagd", individual=number)
-        handlers = [item.assigned_to_id] if item.assigned_to_id else queue_workers(item.genebank_id, managers_only=True)
-        for handler in handlers:
-            notify(handler, "foralder_inlagd", item)
+        _wake(item, {number})
+
+
+def wake_waiting():
+    """
+    The hourly sweep: wakes the open items still waiting for a rabbit that is in Stamboken (one parent_registered
+    skipped as locked, or missed). One short transaction per item, locked in the queue's order. Returns how many.
+    """
+    rows = (
+        InboxDocument.select(InboxDocument.item, InboxDocument.waiting_for)
+        .join(InboxItem)
+        .where(InboxDocument.waiting_for.is_null(False) & InboxItem.state.in_(OPEN_STATES))
+        .tuples()
+    )
+    waited = {}
+    for item_id, numbers in rows:
+        waited.setdefault(item_id, set()).update(numbers)
+    registered = _registered(set().union(*waited.values()))
+    woken = 0
+    for item_id in sorted(i for i, numbers in waited.items() if numbers & registered):
+        with DB_PROXY.atomic():
+            item = InboxItem.select().where(InboxItem.id == item_id).for_update().first()
+            if item is not None and item.state in OPEN_STATES and _wake(item, registered):
+                woken += 1
+    return woken
 
 
 @mail_kind("inlasning.klar", priority=1, category="T")

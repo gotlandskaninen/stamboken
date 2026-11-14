@@ -207,12 +207,21 @@ def _queue_worker(f):
 
 
 def _locked(item_id, action):
-    """action(item) on the item locked in one transaction; a refusal rolls it back and becomes a problem."""
+    """
+    action(item) on the item locked in one transaction; a refusal rolls it back (unless it keeps what was done
+    before it) and becomes a problem.
+    """
     try:
         with DB_PROXY.atomic():
-            return action(inbox.lock_item(item_id))
+            try:
+                return action(inbox.lock_item(item_id))
+            except inbox.InboxError as exc:
+                if not exc.keep:
+                    raise
+                refused = exc
     except inbox.InboxError as exc:
-        return problem(exc.status, exc.title, exc.detail)
+        refused = exc
+    return problem(refused.status, refused.title, refused.detail)
 
 
 def _then_item(change):

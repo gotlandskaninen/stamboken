@@ -462,6 +462,13 @@ class TestJob(PurgeTest):
             {k: job.kwargs[k] for k in ("hour", "minute", "id", "max_instances")},
             {"hour": 3, "minute": 45, "id": "inbox_purge", "max_instances": 1},
         )
+        (wake,) = [
+            c for c in scheduler_cls.return_value.add_job.call_args_list if herdbook._wake_waiting_items in c.args
+        ]
+        self.assertEqual(
+            {k: wake.kwargs[k] for k in ("trigger", "hours", "id")},
+            {"trigger": "interval", "hours": 1, "id": "inbox_wake"},
+        )
 
         gone = self.make(state="skrap", closed_at=datetime.now(timezone.utc) - timedelta(days=31))  # the job's clock
         with mock.patch.object(herdbook.genetics.ps, "_close_db_connection") as close:

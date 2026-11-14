@@ -114,7 +114,7 @@ bort.
 | `tagen` | `…/tilldela` | `ny`, `hos_genbanksansvarig`, `tagen` (de väntande lägena behåller sitt läge och byter bara handläggare) | genbanksansvarig för postens genbank, admin |
 | `tagen` | `…/lage` | `vantar_foralder`, `ofullstandig` | handläggaren |
 | `tagen` | `…/lage` (öppna igen) | `klar`, `dubblett`, `skrap` | genbanksansvarig för postens genbank, admin; den som öppnar blir handläggare |
-| `tagen` | föräldern sparas (var som helst i Stamboken) | `vantar_foralder` | systemet |
+| `tagen` | den sista föräldern posten väntar på sparas (var som helst i Stamboken) | `vantar_foralder` | systemet |
 | `tagen` | ett svar från avsändaren läses in (se [Fråga uppfödaren](#fråga-uppfödaren)) | `vantar_uppfodare`, `ofullstandig` | systemet |
 | `vantar_uppfodare` | `…/fraga` | `tagen` | handläggaren |
 | `vantar_foralder` | `…/lage`; något dokument måste ha `waiting_for` | `tagen` | handläggaren |
@@ -330,7 +330,7 @@ till avsändaren väntar, och senast 30 dagar efter stängningen.
 | `sparad` | `{"document": 31, "action": "ny_kanin" \| "pappersintyg", "individual": "G1-2511"}`, eller vid en försäljning `{"document": 31, "action": "overlatelse", "individual": "G1-2111", "herd": "G2", "missing_proof": true}`; `"action": "bevis"` när ett bevis kopplas till en försäljning som redan är registrerad |
 | `kopia` | `{"document": 31, "rects": 1, "rotation": 90}`; varje anrop till `…/maskning` |
 | `original_visat` | `{"document": 31}` |
-| `foralder_inlagd` | `{"individual": "G1-2431"}` |
+| `foralder_inlagd` | `{"individual": "G1-2431"}`; en kanin som posten väntade på är inlagd |
 | `fraga` | `{"text": "Står det G1-2112?", "document": 31, "rotation": 0, "crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.25}}`; de tre sista bara med utsnitt |
 | `svar` | `{"text": "Ja.", "documents": [33], "not_saved": ["brev.docx"]}`; `user` är `null`, `not_saved` bara när något inte sparades |
 | `tolka_igen` | `{"document": 31}`; handläggaren lade dokumentet i tolkningens kö igen |
@@ -533,7 +533,8 @@ inget mejl. Öppnar genbanksansvarig eller admin en stängd post blir hen handl�
 `note`, `dubblett` utan en annan post, `vantar_foralder` när inget dokument har `waiting_for`; 403 när
 någon annan än genbanksansvarig eller admin öppnar en stängd post; 409 när anroparen inte är
 handläggare, övergången inte finns eller ett meddelande har dokument som inte är klara (`Gör klart
-eller avfärda dokumenten först.`).
+eller avfärda dokumenten först.`), eller `vantar_foralder` när varje nummer i `waiting_for` redan finns i
+Stamboken (numren tas då bort, se [Dokument](#dokument)).
 
 ## Dokument
 
@@ -566,10 +567,14 @@ posten; 409 när anroparen inte är handläggare, när kopian är gjord och anro
 `mask_rects` eller `doc_type`, eller när typen ändras på ett dokument som något har sparats från.
 
 **Väntar på förälder.** Saknas en förälder i Stamboken: ange förälderns nummer i `waiting_for`
-och byt läge till `vantar_foralder`. När en kanin med det numret läggs in, var som helst i
-Stamboken, tas numret bort ur `waiting_for` i samma transaktion. Väntar posten inte längre på
-någon förälder blir den `tagen` igen, och handläggaren får notisen `foralder_inlagd` (har posten
-ingen handläggare får genbanksansvariga den).
+och byt läge till `vantar_foralder`. Finns redan alla nummer i `waiting_for` i Stamboken nekas bytet
+(409 `G1-2431 finns redan i Stamboken. …`), och numren tas bort ur `waiting_for`; finns bara några av
+dem tas de bort och posten väntar på resten. När en kanin läggs in, var som helst i Stamboken, tas
+dess nummer bort ur `waiting_for` på alla öppna poster, i vilket läge de än är, i samma transaktion
+(händelsen `foralder_inlagd`). Väntar posten inte längre på någon förälder får handläggaren notisen
+`foralder_inlagd` (har posten ingen handläggare får genbanksansvariga den), och en post i
+`vantar_foralder` blir `tagen` igen. En post som någon annan har låst just då hoppas över, så att
+registreringen aldrig väntar på den; jobbet `inbox_wake` väcker varje timme det som hoppats över.
 
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/tolka-igen`
 

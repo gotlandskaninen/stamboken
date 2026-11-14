@@ -3,9 +3,11 @@
 isort:skip_file
 """
 
+import threading
 from datetime import date, timedelta
 from unittest import mock
 
+import herdbook  # noqa: E402
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
 import utils.inbox as inbox  # noqa: E402
@@ -469,6 +471,66 @@ class TestWaitingForAParent(GrantTest):
         }
         self.assertEqual(da.add_individual(form, self.admin.uuid)["status"], "success")
         self.assertEqual(self.reload(item).state, "tagen")
+
+    def register(self, number):
+        return db.Individual.create(number=number, origin_herd=self.herds[0], breeding=self.breeding[0])
+
+    def test_a_parent_registered_clears_it_on_every_open_item_whatever_its_state(self):
+        item, document = self.taken(self.helper)
+        inbox.update_document(item, document, self.helper, {"waiting_for": ["G1-2431"]})  # still tagen
+        self.register("G1-2431")
+        self.assertEqual(
+            (self.reload(item).state, db.InboxDocument.get_by_id(document.id).waiting_for), ("tagen", None)
+        )
+        notice = db.Notice.get(db.Notice.kind == "foralder_inlagd")
+        self.assertEqual((notice.user_id, notice.item_id), (self.helper.id, item.id))
+
+    def test_waiting_for_a_rabbit_that_exists_is_refused_and_the_number_cleared(self):
+        item, document = self.taken(self.helper)
+        db.InboxDocument.update(waiting_for=["G1-2112"]).where(db.InboxDocument.id == document.id).execute()
+        self.login("hjalp")
+        resp = self.post(f"/{item.id}/lage", state="vantar_foralder")
+        self.assertEqual(resp.status_code, 409, resp.get_json())
+        self.assertIn("G1-2112 finns redan", resp.get_json()["detail"])
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).waiting_for)  # cleared, and committed
+        self.assertEqual(self.reload(item).state, "tagen")
+        db.InboxDocument.update(waiting_for=["G1-2112", "G1-2433"]).where(db.InboxDocument.id == document.id).execute()
+        resp = self.post(f"/{item.id}/lage", state="vantar_foralder")
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(db.InboxDocument.get_by_id(document.id).waiting_for, ["G1-2433"])
+
+    def test_a_locked_item_is_skipped_never_waited_for_and_woken_by_the_sweep(self):
+        """The reverse lock order (a save wakes items another transaction holds) must never wait: no deadlock."""
+        item = self.waiting()
+        held, release = threading.Event(), threading.Event()
+
+        def hold():  # as assigning a herd's items does, in another transaction
+            with db.DB_PROXY.atomic():
+                db.InboxItem.select().where(db.InboxItem.id == item.id).for_update().first()
+                held.set()
+                release.wait(10)
+            db.DB_PROXY.close()
+
+        holder = threading.Thread(target=hold)
+        holder.start()
+        self.assertTrue(held.wait(10))
+        try:
+            with db.DB_PROXY.atomic():
+                db.DB_PROXY.execute_sql("SET LOCAL lock_timeout = '2s'")  # waiting would fail here
+                self.register("G1-2431")
+        finally:
+            release.set()
+            holder.join()
+        self.assertEqual(self.reload(item).state, "vantar_foralder")  # skipped
+        self.assertEqual(inbox.wake_waiting(), 1)
+        self.assertEqual(self.reload(item).state, "tagen")
+        self.assertIsNone(self.reload(item).documents.get().waiting_for)
+        self.assertEqual(inbox.wake_waiting(), 0)
+
+    def test_the_sweep_job_closes_its_connection(self):
+        with mock.patch.object(herdbook.genetics.ps, "_close_db_connection") as close:
+            herdbook._wake_waiting_items()
+        close.assert_called_once()
 
     def test_the_insert_and_the_wake_up_are_one_transaction(self):
         self.waiting()
