@@ -820,7 +820,8 @@ genbanksansvarig och admin. En genbankshjälpare ser originalet i kön men inte 
 
 **Fel:** 403 för den som inte får se intyget; 404 när kaninen inte finns eller inte är
 tillgänglig, eller saknar ett inläst pappersintyg (`Kaninen har inget inläst pappersintyg.`).
-Gränssnittet kan använda 404 för att dölja "Pappersintyg" på kaninens sida.
+Gränssnittet kan använda 404 för att dölja "Pappersintyg" på kaninens sida, med `HEAD` på samma adress:
+samma status (200, 403 eller 404) utan bilden.
 
 ## Fråga uppfödaren
 

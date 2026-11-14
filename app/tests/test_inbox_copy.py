@@ -141,6 +141,21 @@ class TestCopy(CopyTest):
         self.login("man")
         self.assertEqual(self.client.get("/api/v2/individual/G1-2111/paper-certificate").status_code, 404)
 
+    def test_head_says_whether_there_is_a_copy_to_show_without_sending_it(self):
+        item, document = self.saved_document()
+        copy = "/api/v2/individual/G1-2112/paper-certificate"
+        self.login("owner")
+        self.assertEqual(self.client.head(copy).status_code, 404)  # no copy yet
+        self.login("hjalp")
+        self.mask(item, document, mask_rects=[], no_personal_data=True)
+        for username, status in (("owner", 200), ("spec", 403), ("hjalp", 403)):
+            with self.subTest(username):
+                self.login(username)
+                resp = self.client.head(copy)
+                self.assertEqual((resp.status_code, resp.data), (status, b""))
+        self.login("owner")
+        self.assertEqual(self.client.head("/api/v2/individual/G1-2111/paper-certificate").status_code, 404)
+
     def test_files_are_never_under_the_public_upload_folder(self):
         item, document = self.saved_document()
         self.mask(item, document, mask_rects=[], no_personal_data=True)
