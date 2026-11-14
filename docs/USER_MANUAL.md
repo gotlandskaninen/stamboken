@@ -31,8 +31,9 @@ på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
   - Så gör du: [rätta en kanin](#rätta-en-kanin-i-en-annan-besättning),
     [korrigera historik](#korrigera-besättningshistorik), [ändringshistorik](#läsa-och-ångra-i-ändringshistoriken),
     [kullnummer](#numrera-om-kullar-med-registrerade-kaniner), [genetik](#använda-genetiksidan),
-    [besättningar](#skapa-och-redigera-besättningar-i-din-genbank)
-  - Skärmarna: [Genetik](#genetik), [Adminpanelen för genbanksansvarig](#adminpanelen-för-genbanksansvarig)
+    [besättningar](#skapa-och-redigera-besättningar-i-din-genbank), [inkorgen](#arbeta-i-inkorgen)
+  - Skärmarna: [Genetik](#genetik), [Adminpanelen för genbanksansvarig](#adminpanelen-för-genbanksansvarig),
+    [Inkorg](#inkorg), [Inkorg – ärende](#inkorg--ärende)
 - [Del 3 – Administratör](#del-3--administratör)
   - Så gör du: [hitta användare](#hitta-en-användare), [roller](#ge-eller-ta-bort-en-roll),
     [lösenord](#återställa-ett-lösenord), [åtkomst](#ge-tillgång-till-riktiga-stamboken),
@@ -800,6 +801,50 @@ kontaktuppgifter; stegen är samma som för administratör, se
 [Skapa en besättning](#skapa-en-besättning) och [Besättning – redigera](#besättning--redigera).
 Ägare kopplas av administratör.
 
+### Arbeta i inkorgen
+
+Medlemmarna fotograferar sina pappersintyg och bevis och laddar upp fotona. Varje
+uppladdning blir ett ärende i **Inkorg**. Inkorgen är för administratörer,
+genbanksansvariga och genbankshjälpare, och alla tre ser hela kön.
+
+1. Öppna **Inkorg** i menyn. Klicka **Jag tar den** på ett ärende som ingen har tagit,
+   eller öppna ärendet och ta det där. Har någon annan ärendet klickar du **Ta över**.
+2. Välj ett dokument i listan till vänster. Vrid fotot med **Vrid vänster** eller
+   **Vrid höger** tills intyget står rätt; vridningen sparas och används för kopian.
+   Zoom, **Kontrast** och **Förstärk blyerts** ändrar bara hur fotot visas. Ange **Typ**
+   (Intyg, Bevis, Årsblankett eller Annat) och **Format**.
+3. Ett intyg: välj **Ny kanin** eller **Pappersintyg på en kanin som finns** och skriv av
+   fälten. Under **Mor** och **Far** visar Stamboken registrets uppgifter, så att du kan
+   jämföra dem med fotot. Klicka **Spara och nästa**. Ett fel visas vid fältet det gäller.
+   Stämmer inte individnumret på pappret med Stambokens öppnas samma ruta som för
+   uppfödaren, se [När pappret och Stamboken har olika individnummer](#när-pappret-och-stamboken-har-olika-individnummer).
+   Stämmer pappret lämnar du ärendet till genbanksansvarig.
+4. Dölj säljaren och köparen. En svart ruta täcker intygets nedre tredjedel. Dra rutan
+   eller dess hörn, eller välj den och använd piltangenterna (Skift ändrar storleken,
+   Delete tar bort den). **Lägg till ruta** ger fler. Klicka **Bekräfta maskningen och
+   nästa**. Visar intyget ingen säljare eller köpare tar du bort rutorna och klickar
+   **Bekräfta: inget att dölja**. Kopian läggs på kaninen som pappersintyg.
+5. Visar intyget en försäljning registrerar du den innan du bekräftar maskningen: öppna
+   **Visar intyget en försäljning?** och fyll i **Individnummer**, **Köparens besättning**
+   eller **Köparen är utanför föreningen** (sparas på GX1 eller MX1) och **Säljdatum**.
+   Utan bevis märks ärendet "bevis saknas".
+6. Ett bevis: välj typen **Bevis** och fyll i försäljningen. Beviset blir klart med den.
+7. Ett foto som inte ska sparas: **Avfärda**. **Hoppa över** går till nästa dokument utan
+   att spara.
+8. När alla dokument är klara eller avfärdade blir ärendet klart, och den som skickade
+   in får besked.
+
+Går ärendet inte att avsluta väljer du **Väntar på förälder** (ange förälderns
+individnummer; ärendet blir taget igen när föräldern läggs in), **Ofullständig** (skriv
+vad som saknas), **Lämna till genbanksansvarig** (för en korrigering eller ett beslut),
+**Dubblett** (ange numret på det andra ärendet) eller **Skräp**. **Arbeta vidare** tar
+upp ett väntande ärende igen. Genbanksansvarig och administratör kan också tilldela
+ärenden och **Öppna igen** ett stängt ärende.
+
+En genbankshjälpare sparar bara det en uppfödare får spara: en ny kanin, pappersintyget
+på en kanin som saknar intyg och en försäljning med datum efter kaninens senaste
+händelse. En korrigering lämnar hjälparen till genbanksansvarig.
+
 ### Skärmarna – genbanksansvarig
 
 #### Genetik
@@ -827,6 +872,35 @@ bara för administratör.
 ![Adminpanelen för genbanksansvarig](manual/manager-admin-desktop.png)
 
 ![Besättningar för genbanksansvarig](manual/manager-besattningar-desktop.png)
+
+#### Inkorg
+
+<!-- route: /stamboken/inkorg -->
+
+Överst antalet ärenden per läge: **Öppna**, varje läge som har ärenden och **Alla**.
+Filtren **Mina**, **Otagna**, **Handläggare**, **Genbank**, **Besättning** och **Typ**
+ligger i adressen, så en filtrerad lista går att länka; **Rensa** tar bort dem. Tabellen
+visar **Ärende** (med hur många dokument som är klara och märkena "bevis saknas" och
+"står still"), **Besättning**, **Inskickat av**, **Typ**, **Läge**, **Handläggare** och
+**Väntat**, äldst först. **Jag tar den** finns på ärenden som ingen har tagit.
+Genbanksansvarig och administratör väljer en person och klickar **Tilldela**, eller
+tilldelar alla öppna ärenden i en besättning under **Tilldela en hel besättning**.
+Personlistorna visar dig och dem som har ärenden i listan; administratören ser också alla
+genbanksansvariga och genbankshjälpare. På en telefon blir varje rad ett kort. Den som
+inte arbetar i kön får "sidan finns inte". Se [Arbeta i inkorgen](#arbeta-i-inkorgen).
+
+#### Inkorg – ärende
+
+<!-- route: /stamboken/inkorg/[id] -->
+
+Tre kolumner på en dator, under varandra på en telefon. Till vänster dokumenten med sin
+status (Att lägga in, Väntar på förälder, Inlagt, maskning kvar, Klart eller Avfärdat),
+ärendets läge, handläggare, avsändare och meddelande, knapparna som ärendets läge och din
+roll tillåter, och **Historik**, som är hopfälld tills du öppnar den. I mitten fotot med
+verktygen, varningar som "kan vara oskarp" och "samma bild i ärende 12", och **Typ**,
+**Format** och **Avfärda**. Till höger formuläret för dokumentet: intyget, försäljningen
+eller maskningen. Har du inte ärendet står det vem som har det, med **Jag tar den** eller
+**Ta över**; du kan bara spara när ärendet är ditt och taget.
 
 ---
 
