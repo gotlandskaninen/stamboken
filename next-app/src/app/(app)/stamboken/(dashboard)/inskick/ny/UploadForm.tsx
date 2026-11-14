@@ -78,7 +78,13 @@ export function UploadForm({
       const fd = await build();
       if (!fd) return;
       if (acceptWarnings) fd.set("accept_warnings", "1");
-      const res = await uploadIntyg(fd);
+      let res: Awaited<ReturnType<typeof uploadIntyg>>;
+      try {
+        res = await uploadIntyg(fd);
+      } catch {
+        // The connection dropped: the call itself rejects. The files stay chosen.
+        return setError("Uppladdningen avbröts. Försök igen.");
+      }
       if (!res.ok) {
         if (!res.warnings?.length) return setError(res.error);
         // Nothing was stored: show what the API saw, per file.

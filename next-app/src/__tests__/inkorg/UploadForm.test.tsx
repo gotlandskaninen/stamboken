@@ -136,4 +136,16 @@ describe("UploadForm", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("högst 9 MB");
     expect(uploadIntyg).not.toHaveBeenCalled();
   });
+
+  it("keeps the files and says so when the call itself fails (connection dropped)", async () => {
+    uploadIntyg.mockRejectedValueOnce(new Error("fetch failed"));
+    render(<UploadForm herds={["G9001"]} />);
+    pick();
+    fireEvent.click(await screen.findByRole("button", { name: "Skicka" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Uppladdningen avbröts. Försök igen.",
+    );
+    expect(screen.getByLabelText("Valda filer")).toHaveTextContent("intyg.pdf");
+    expect(screen.getByRole("button", { name: "Skicka" })).toBeEnabled();
+  });
 });
