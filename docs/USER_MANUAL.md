@@ -26,7 +26,7 @@ på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
   - Skärmarna: [Min besättning](#min-besättning), [Kaninens sida](#kaninens-sida),
     [Alla kaniner](#alla-kaniner), [Provparning](#provparning), [Min profil](#min-profil),
     [Mina inskick](#mina-inskick), [Ladda upp intyg](#ladda-upp-intyg-skärmen), [Notiser](#notiser),
-    [Verifiera intyg](#verifiera-intyg)
+    [Verifiera intyg](#verifiera-intyg), [Ta bort köparens uppgifter](#ta-bort-köparens-uppgifter)
 - [Del 2 – Genbanksansvarig](#del-2--genbanksansvarig)
   - Så gör du: [rätta en kanin](#rätta-en-kanin-i-en-annan-besättning),
     [korrigera historik](#korrigera-besättningshistorik), [ändringshistorik](#läsa-och-ångra-i-ändringshistoriken),
@@ -717,6 +717,26 @@ visar ett av tre besked:
   föreningen med **Kontakta Föreningen Gotlandskaninen**.
 
 ![Verifierat intyg](manual/verifiera-intyg-mobil.png)
+
+#### Ta bort köparens uppgifter
+
+<!-- route: /kopare/ta-bort -->
+
+Har du sålt kaninen till någon utanför föreningen och skrivit köparens e-post får köparen
+ett mejl från föreningen. Det säger vad föreningen sparar om köparen och har kaninens
+intyg som bilaga, om kaninen har ett digitalt intyg. Mejlet har en länk till den här
+sidan, som inte kräver inloggning.
+
+Sidan visar vad som tas bort, köparens namn, ort och kontaktuppgifter, och knappen
+**Ta bort mina uppgifter**. Inget tas bort förrän köparen trycker på knappen.
+Försäljningen står kvar i kaninens historik, utan köparen. Sedan visar sidan ett av tre
+besked:
+
+- **Dina uppgifter är borttagna.**
+- **Dina uppgifter är redan borttagna.** – länken har redan använts.
+- **Länken gäller inte längre.** – länken är fel eller ofullständig, eller sidan har
+  laddats om. Köparen kan klicka på länken i mejlet igen eller skriva till
+  `dataskydd@gotlandskaninen.se`.
 
 ---
 
