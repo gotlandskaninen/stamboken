@@ -871,6 +871,21 @@ far som `härlett`; annars listas kullarna i `checks`.
 | `INLASNING_MODELL` | modellens namn i Ollama | `gemma4` |
 | `OLLAMA_URL` | Ollama-servern | `http://ollama:11434` |
 
+**Driften.** Modellen körs i tjänsten `ollama` i `docker-compose.production.yml` och
+`docker-compose.local-production.yml`. Den startar bara med profilen `tolkning`, så varken en vanlig
+`up`, e2e-stacken eller pytest-stacken startar den. Tjänsten publicerar ingen port: bara `api` når
+den, på `http://ollama:11434`. Den får högst 6 processorer, laddar ur modellen efter fem minuter
+utan arbete (`OLLAMA_KEEP_ALIVE=5m`) och sparar modellerna i volymen `ollama_models`. Att slå på
+tolkningen:
+
+1. Starta tjänsten: `docker compose -f docker-compose.production.yml --profile tolkning up -d ollama`.
+2. Hämta modellen en gång: `docker compose -f docker-compose.production.yml exec ollama ollama pull gemma4`.
+3. Sätt `INLASNING_TOLKARE=gemma` i `.docker/api-variables.env` och starta om `api`.
+
+Medan modellen läser behöver Ollama omkring 8,5 GB minne, utöver resten av stacken; mät med
+`docker stats` att allt ryms innan tolkningen slås på. Ett foto tar minuter utan grafikkort, så
+kön tolkas i bakgrunden och förslaget är bara handläggarens.
+
 Med `av` kommer dokumenten in med `interpretation_status: "av"`, och kön fungerar som utan
 tolkning. Ett okänt värde räknas som `av`. Tolkaren är ett gränssnitt, `interpret(bild, schema) ->
 dict` i `app/utils/inbox_interpreter.py`, och en andra tolkare läggs till i `INTERPRETERS`. En

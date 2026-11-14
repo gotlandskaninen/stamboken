@@ -275,5 +275,22 @@ services:
       - api-test
   # S3: S3-kompatibel lagring, nycklar i .docker/api-variables.env
 
+  # ============================================
+  # Ollama - bildtolkningen av intyg (docs/inkorg.md, "Tolkning")
+  # Startar bara med profilen tolkning. Ingen publicerad port: bara api når den,
+  # på http://ollama:11434. Modellen hämtas en gång till volymen.
+  # ============================================
+  ollama:
+    image: ollama/ollama:latest
+    restart: always
+    profiles:
+      - tolkning
+    cpus: 6
+    environment:
+      - OLLAMA_KEEP_ALIVE=5m
+    volumes:
+      - ollama_models:/root/.ollama
+
 volumes:
   redis_data:
+  ollama_models:

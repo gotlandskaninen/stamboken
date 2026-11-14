@@ -124,6 +124,23 @@ for f in docker-compose docker-compose.local-production docker-compose.productio
   check "$f: skyddat is not in the upload dir" "False" "$(q "$proj" "touches(sk)")"
 done
 
+# ── The image reading's model server: opt-in, internal, at most 6 CPUs ─────
+# Ollama has no login, so it publishes no port; only the api reaches it. It starts
+# only with the profile tolkning, so neither a plain `up` nor the e2e stack (named
+# services, none depending on it) nor the pytest stack starts it.
+check "docker-compose (the pytest stack's base) has no ollama" "False" \
+  "$(q "$work/ports-docker-compose" "'ollama' in c['services']")"
+for f in docker-compose.local-production docker-compose.production; do
+  check "$f: ollama is not started without the tolkning profile" "False" \
+    "$(q "$work/private-$f" "'ollama' in c['services']")"
+  proj="$work/ollama-$f"
+  COMPOSE_PROFILES=tolkning resolve "$ROOT/$f.yml" "$proj"
+  check "$f: ollama publishes no port" "[]" "$(q "$proj" "c['services']['ollama'].get('ports', [])")"
+  check "$f: ollama has at most 6 CPUs" "6.0" "$(q "$proj" "float(c['services']['ollama'].get('cpus', 0))")"
+  check "$f: nothing depends on ollama" "[]" \
+    "$(q "$proj" "[n for n, s in c['services'].items() if 'ollama' in (s.get('depends_on') or {})]")"
+done
+
 echo ""
 echo "passed: $pass, failed: $fail"
 [ "$fail" -eq 0 ]
