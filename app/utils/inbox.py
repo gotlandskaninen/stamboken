@@ -67,6 +67,7 @@ NOTICE_TEXTS = {
     "lamnad": "En post har lämnats till genbanksansvarig",
     "foralder_inlagd": "Föräldern är inlagd, och posten väntar inte längre",
     "klar": "Ditt inskick är klart",
+    "svar": "Uppfödaren har svarat",
 }
 DOC_TYPES = ("intyg", "bevis", "arsblankett", "annat")
 CERT_FORMATS = ("handskrivet", "datorskrivet", "v1_pdf", "intyg_b", "digitalt_v2")

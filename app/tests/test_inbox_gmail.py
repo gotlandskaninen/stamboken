@@ -12,12 +12,14 @@ from unittest import mock
 
 import requests
 import utils.database as db
+import utils.inbox as inbox
 import utils.inbox_gmail as inbox_gmail
+import utils.mail as mail
 import utils.settings as settings
 from utils.gmail import Gmail, HistoryTooOld
 
 from tests.inbox_fixtures import APP, InboxTest
-from tests.test_mail_queue import MailTest
+from tests.test_mail_queue import HOST, MailTest
 
 # Token-shaped values are built from parts so that they are plainly synthetic.
 FAKE_SECRET = "-".join(("synthetic", "client", "secret"))
@@ -152,6 +154,223 @@ class GmailTest(InboxTest, MailTest):
 
     def sync(self):
         return db.GmailSync.get_by_id(1)
+
+    def holder(self, herd, address=SENDER, first_name="Test"):
+        """The herd's holder in the member register: the main member of the membership that owns it."""
+        membership = db.Membership.create(member_number=900 + herd.id)
+        member = db.Member.create(first_name=first_name, last_name="Innehavare", email=address, membership=membership)
+        db.Herd.update(membership=membership).where(db.Herd.id == herd.id).execute()
+        return member
+
+    def our_mail(self, item, kind="inlasning.klar"):
+        """The Message-ID of a mail of ours about the item, as a reply's In-Reply-To carries it."""
+        row_id = mail.enqueue_mail(kind, "user", self.owner.id, {"item_id": item.id}, ref=("inbox_item", item.id))
+        return mail.message_id(row_id)
+
+    def waiting(self):
+        """An upload of G1 that the helper asked its breeder about."""
+        item = self.item(0)
+        inbox.take(item, self.helper, over=False)
+        inbox._set_state(item, "vantar_uppfodare")
+        item.save()
+        return item
+
+
+REPORT = """\
+From: Mail Delivery Subsystem <mailer-daemon@example.org>
+To: stamboken@example.org
+Subject: Delivery Status Notification (Failure)
+Auto-Submitted: auto-replied
+MIME-Version: 1.0
+Content-Type: multipart/report; report-type=delivery-status; boundary="gr"
+
+--gr
+Content-Type: text/plain; charset="utf-8"
+
+Mejlet till mottagare@example.org kom inte fram.
+
+--gr
+Content-Type: message/delivery-status
+
+Reporting-MTA: dns; relay.example.org
+
+Final-Recipient: rfc822; mottagare@example.org
+Action: failed
+Status: 5.1.1
+Diagnostic-Code: smtp; 550 5.1.1 <mottagare@example.org>: user unknown
+
+--gr
+Content-Type: {part}
+
+Message-ID: {message_id}
+From: stamboken@example.org
+To: mottagare@example.org
+Subject: Vi har fått dina bilder
+
+{body}
+--gr--
+"""
+
+
+def report(message_id, part="message/rfc822"):
+    body = "Hej!\n" if part == "message/rfc822" else ""
+    return REPORT.format(part=part, message_id=message_id, body=body).replace("\n", "\r\n").encode()
+
+
+class TestSorting(GmailTest):
+    def test_a_bounce_marks_our_mail_bounced_and_makes_no_item(self):
+        for part in ("message/rfc822", "text/rfc822-headers"):
+            with self.subTest(part=part):
+                row_id = self.queue()
+                gmail_id = self.fake.deliver(report(mail.message_id(row_id), part))
+                self.read()
+                row = self.row(row_id)
+                self.assertEqual(row.status, "bounced")
+                self.assertIn("5.1.1", row.last_error)
+                self.assertNotIn("@", row.last_error)
+                self.assertEqual(self.items(), [])
+                self.assertEqual(db.GmailProcessed.get_by_id(gmail_id).kind, "bounce")
+                self.assertTrue(self.done(gmail_id))
+
+    def test_a_bounce_of_another_environments_mail_touches_nothing(self):
+        row_id = self.queue()
+        other = mail.message_id(row_id).replace(HOST, "demo.example.org")
+        gmail_id = self.fake.deliver(report(other))
+        self.read()
+        self.assertEqual(self.row(row_id).status, "queued")
+        self.assertEqual(self.items(), [])
+        self.assertIsNone(db.GmailProcessed.get_or_none(db.GmailProcessed.gmail_message_id == gmail_id))
+        self.assertTrue(self.fake.labelled(gmail_id, "Demo"))
+        self.assertIn("INBOX", self.fake.messages[gmail_id]["labelIds"])
+
+    def test_a_bounce_on_no_mail_of_ours_becomes_an_item(self):
+        gmail_id = self.fake.deliver(report("<CAsomething@mail.example.org>"))
+        self.read()
+        (item,) = self.items()
+        self.assertEqual(item.kind, "meddelande")
+        self.assertIn("kom inte fram", item.message)
+        self.assertTrue(self.done(gmail_id))
+
+    def test_an_automatic_answer_is_ignored(self):
+        for header in ({"Auto-Submitted": "auto-replied"}, {"X-Autoreply": "yes"}, {"Precedence": "auto_reply"}):
+            with self.subTest(header=header):
+                gmail_id = self.fake.deliver(message(subject="Frånvaro", **header))
+                self.read()
+                self.assertEqual(self.items(), [])
+                self.assertEqual(db.GmailProcessed.get_by_id(gmail_id).kind, "ignored")
+                self.assertTrue(self.done(gmail_id))
+
+    def test_a_reply_to_another_environments_mail_is_labelled_demo_and_nothing_else(self):
+        item = self.waiting()
+        other = self.our_mail(item).replace(HOST, "demo.example.org")
+        gmail_id = self.fake.deliver(message(In_Reply_To=other, References=other))
+        self.read()
+        self.assertEqual(self.items(), [item])
+        self.assertTrue(self.fake.labelled(gmail_id, "Demo"))
+        self.assertFalse(self.fake.labelled(gmail_id, "Inläst"))
+        self.assertIsNone(db.GmailProcessed.get_or_none(db.GmailProcessed.gmail_message_id == gmail_id))
+
+    def test_an_authenticated_reply_from_the_holder_goes_on_the_item(self):
+        self.holder(self.herds[0])
+        item = self.waiting()
+        self.fake.deliver(
+            message(subject=f"Re: Fråga (ärende {item.id})", body="Det är G1-2112.", In_Reply_To=self.our_mail(item))
+        )
+        self.read()
+        self.assertEqual(self.items(), [item])
+        self.assertEqual(self.reload(item).state, "tagen")
+        (event,) = item.events.where(db.InboxEvent.kind == "svar")
+        self.assertEqual(event.detail["text"], "Det är G1-2112.")
+        (notice,) = db.Notice.select().where(db.Notice.kind == "svar")
+        self.assertEqual((notice.user_id, notice.item_id), (self.helper.id, item.id))
+
+    def test_a_reply_read_twice_gives_one_event_and_one_notice(self):
+        self.holder(self.herds[0])
+        item = self.waiting()
+        gmail_id = self.fake.deliver(message(In_Reply_To=self.our_mail(item)))
+        self.read()
+        self.fake.messages[gmail_id]["labelIds"] = ["INBOX"]
+        db.GmailSync.update(history_id=None).execute()
+        self.read()
+        self.assertEqual(item.events.where(db.InboxEvent.kind == "svar").count(), 1)
+        self.assertEqual(db.Notice.select().where(db.Notice.kind == "svar").count(), 1)
+
+    def test_a_forged_reply_becomes_a_new_item_pointing_at_the_case(self):
+        self.holder(self.herds[0])
+        stranger = "annan@example.net"
+        cases = {
+            "unauthenticated": message(auth="spf=fail smtp.mailfrom=" + SENDER),
+            "no results": message(auth=None),
+            "unrelated sender": message(
+                sender=stranger, auth=f"spf=pass smtp.mailfrom={stranger}; dkim=pass header.i=@example.net"
+            ),
+            "pass for another domain": message(auth="spf=pass smtp.mailfrom=bounce@example.net"),
+        }
+        for name, forged in cases.items():
+            with self.subTest(name):
+                item = self.waiting()
+                forged["In-Reply-To"] = self.our_mail(item)
+                self.fake.deliver(forged)
+                self.read()
+                new = self.items()[-1]
+                self.assertNotEqual(new.id, item.id)
+                self.assertEqual(new.events.get().detail["maybe_item"], item.id)
+                self.assertEqual(self.reload(item).state, "vantar_uppfodare")
+                self.assertEqual(item.events.where(db.InboxEvent.kind == "svar").count(), 0)
+
+    def test_the_case_number_in_the_subject_counts_only_for_a_related_sender(self):
+        self.holder(self.herds[0])
+        item = self.waiting()
+        stranger = "annan@example.net"
+        self.fake.deliver(
+            message(sender=stranger, subject=f"Re: (ärende {item.id})", auth=f"spf=pass smtp.mailfrom={stranger}")
+        )
+        self.fake.deliver(message(subject=f"Re: Fråga om intyget (ärende {item.id})"))
+        self.read()
+        new = self.items()[-1]
+        self.assertEqual(new.events.get().detail["maybe_item"], item.id)
+        self.assertEqual(item.events.where(db.InboxEvent.kind == "svar").count(), 1)
+        self.assertEqual(self.reload(item).state, "tagen")
+
+    def test_a_reply_to_a_closed_item_becomes_a_new_item(self):
+        self.holder(self.herds[0])
+        item = self.waiting()
+        inbox.change_state(item, self.helper, "skrap")
+        self.fake.deliver(message(In_Reply_To=self.our_mail(item)))
+        self.read()
+        self.assertEqual(self.items()[-1].events.get().detail["maybe_item"], item.id)
+
+
+class TestAuthenticationResults(InboxTest):
+    def check(self, *headers, sender=SENDER):
+        msg = EmailMessage()
+        for header in headers:
+            msg["Authentication-Results"] = header
+        return inbox_gmail.authenticated(msg, sender)
+
+    def test_a_pass_for_the_senders_domain_counts(self):
+        self.assertTrue(self.check(f"mx.google.com; {PASS}"))
+        self.assertTrue(
+            self.check("mx.google.com; dkim=pass header.i=@example.org header.s=s1 header.b=AbC1; spf=none")
+        )
+        self.assertTrue(self.check("mx.google.com; dkim=pass header.i=@mejl.example.org header.s=s1 header.b=x"))
+
+    def test_only_the_topmost_header_counts(self):
+        self.assertFalse(self.check(f"mx.google.com; spf=fail smtp.mailfrom={SENDER}", f"mx.google.com; {PASS}"))
+
+    def test_the_header_must_be_googles(self):
+        self.assertFalse(self.check(f"mx.example.org; {PASS}"))
+
+    def test_a_pass_for_another_domain_or_text_in_a_comment_does_not_count(self):
+        for header in (
+            "mx.google.com; spf=pass smtp.mailfrom=bounce@example.net",
+            "mx.google.com; dkim=pass header.i=@example.net header.s=s1; spf=fail smtp.mailfrom=x@example.org",
+            "mx.google.com; spf=pass (domain of a smtp.mailfrom=example.org designates) smtp.mailfrom=x@example.net",
+            'mx.google.com; spf=pass smtp.mailfrom="a;spf=pass smtp.mailfrom=example.org"@example.net',
+            "mx.google.com; dmarc=pass header.from=example.org",
+        ):
+            with self.subTest(header):
+                self.assertFalse(self.check(header))
 
 
 class TestSync(GmailTest):
