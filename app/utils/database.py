@@ -62,7 +62,7 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # history algorithm version (33) + genetics epoch (34) + the individual command log (35) +
 # Individual.microchip (36) + billing address on membership and member_application (37) + the mail queue (38) +
 # the intake queue (39).
-CURRENT_SCHEMA_VERSION = 39
+CURRENT_SCHEMA_VERSION = 40
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -2129,7 +2129,7 @@ class InboxDocument(BaseModel):
 
     id = AutoField()
     item = ForeignKeyField(InboxItem, on_delete="CASCADE", backref="documents")
-    original_path = TextField()
+    original_path = TextField(null=True)  # NULL once the original is purged or erased (utils/inbox_purge.py)
     public_path = TextField(null=True)  # the masked copy shown on the rabbit
     mime = TextField()
     sha256 = CharField(64, index=True)
@@ -2151,6 +2151,9 @@ class InboxDocument(BaseModel):
     herd_tracking_id = IntegerField(null=True)
     purge_after = TimestampTZField(null=True)
     done_at = TimestampTZField(null=True)
+    # The members the photo shows, recorded when it is saved through the queue, so an erasure finds it.
+    seller_member = ForeignKeyField(Member, null=True, on_delete="SET NULL", backref="+")
+    buyer_member = ForeignKeyField(Member, null=True, on_delete="SET NULL", backref="+")
 
     class Meta:
         table_name = "inbox_document"
@@ -3828,6 +3831,24 @@ def migrate_38_to_39():
         ).execute()
 
 
+def migrate_39_to_40():
+    """The intake queue's retention (docs/inkorg.md, "Gallring"): an original can be gone, and a document records the
+    members it shows (seller and buyer), so an erasure finds it."""
+    with DATABASE.atomic():
+        DATABASE.execute_sql("ALTER TABLE inbox_document ALTER COLUMN original_path DROP NOT NULL")
+        for column in ("seller_member_id", "buyer_member_id"):
+            DATABASE.execute_sql(
+                f"ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS {column} INTEGER "
+                "REFERENCES member (member_id) ON DELETE SET NULL"
+            )
+        InboxDocument._schema.create_indexes(safe=True)  # same names as a fresh bootstrap
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=40,
+            comment="inbox_document: original_path nullable, seller and buyer members",
+            applied=datetime.now(),
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4304,6 +4325,7 @@ MIGRATIONS = {
     (36, 37): migrate_36_to_37,  # billing address
     (37, 38): migrate_37_to_38,  # mail queue
     (38, 39): migrate_38_to_39,  # intake queue
+    (39, 40): migrate_39_to_40,  # intake queue retention
 }
 
 

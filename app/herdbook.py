@@ -82,6 +82,7 @@ from utils.individual_commands import purge_command_free_text  # isort:skip
 from utils.mail import purge_old_mail, send_pending  # isort:skip
 from utils.inbox import queue_digests  # isort:skip
 from utils import inbox_gmail  # isort:skip
+from utils import inbox_purge  # isort:skip
 from utils.inbox_interpreter import interpret_next  # isort:skip
 from utils.members import try_auto_link_member  # isort:skip
 from utils.legacy_compat import is_legacy_host, legacy_classroom_url  # isort:skip
@@ -268,6 +269,18 @@ def _purge_command_free_text():
             APP.logger.exception("Purging the mail queue failed")
         count = purge_command_free_text(now)
         APP.logger.info("Purged free text from %s command log rows", count)
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _purge_inbox():
+    """Nightly leader job (docs/inkorg.md, "Gallring"), built as _send_mail: it closes its thread's connection.
+
+    Each rule runs on its own inside inbox_purge.run, so one failing does not skip the others."""
+    try:
+        inbox_purge.run(datetime.datetime.now(datetime.timezone.utc))
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("The inbox purge failed")
     finally:
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
@@ -3009,6 +3022,18 @@ def initialize_app():
             hour=3,
             minute=30,
             id="command_free_text_purge",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        # The intake queue's retention (docs/inkorg.md, "Gallring"); idempotent, so a late leader still runs it.
+        scheduler.add_job(
+            _purge_inbox,
+            "cron",
+            hour=3,
+            minute=45,
+            id="inbox_purge",
             max_instances=1,
             coalesce=True,
             misfire_grace_time=3600,

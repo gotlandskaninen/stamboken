@@ -74,6 +74,7 @@ NOTICE_TEXTS = {
 DOC_TYPES = ("intyg", "bevis", "arsblankett", "annat")
 CERT_FORMATS = ("handskrivet", "datorskrivet", "v1_pdf", "intyg_b", "digitalt_v2")
 OPENED_EVERY = timedelta(hours=1)
+INCOMPLETE_MONTHS = 12  # an item left "ofullstandig" is deleted this long after it came in (utils/inbox_purge.py)
 MAX_NOTE = 2000
 MAX_RECTS = 20
 # The masking a handwritten certificate (format 1) is offered: its lower third, where seller and buyer write.
@@ -103,6 +104,11 @@ _LAPLACIAN = ImageFilter.Kernel((3, 3), (0, 1, 0, 1, -4, 1, 0, 1, 0), scale=1, o
 
 def now():
     return datetime.now(timezone.utc)
+
+
+def months(count):
+    """`count` months as days, rounded up as the command log's 13 months (396 days): the retention's one measure."""
+    return timedelta(days=math.ceil(count * 365.25 / 12))
 
 
 def _iso(value):
@@ -533,6 +539,8 @@ def reinterpret(item, document, user):
         raise InboxError(409, "Bildtolkningen är avstängd.")
     if document.doc_type != "intyg" or document.done_at is not None or document.individual_id is not None:
         raise InboxError(409, "Bara ett intyg som inte är sparat kan tolkas.")
+    if document.original_path is None:
+        raise InboxError(409, "Originalet är raderat.")
     document.interpretation_status, document.attempts = "vantar", 0
     document.interpretation = document.proposal = document.interpreter = document.interpreted_at = None
     document.save()
@@ -543,8 +551,10 @@ def make_copy(document):
     """
     The copy shown on the rabbit, made from the original: turned `rotation` degrees clockwise, its mask_rects
     (fractions of the turned image) painted black, saved as inkorg/kopia/<document id>.jpg without metadata.
-    Made again whenever the rectangles or the rotation change.
+    Made again whenever the rectangles or the rotation change, which needs the original.
     """
+    if document.original_path is None:
+        raise InboxError(409, "Originalet är raderat, så kopian kan inte göras om.")
     with Image.open(private_path(document.original_path)) as original:
         image = original.convert("RGB").rotate(-document.rotation, expand=True)
     width, height = image.size
@@ -625,6 +635,7 @@ def documents_json(documents):
             "proposal": d.proposal,
             "individual": numbers.get(d.individual_id),
             "herd_tracking_id": d.herd_tracking_id,
+            "has_original": d.original_path is not None,
             "has_copy": d.public_path is not None,
             "done_at": _iso(d.done_at),
         }

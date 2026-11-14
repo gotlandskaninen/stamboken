@@ -511,12 +511,13 @@ def _cropped(document, rect, rotation):
 
 @mail_kind("inlasning.fraga", priority=1, category="T")
 def _question_mail(params):
-    """The question as it stands when the mail goes, with its frame cut from the original; none once closed."""
+    """The question as it stands when the mail goes, with its frame cut from the original; none once closed or once
+    its text is purged. The frame is left out when the original is gone."""
     event = InboxEvent.get_or_none((InboxEvent.id == params["event_id"]) & (InboxEvent.item == params["item_id"]))
-    if event is None or not event.detail or event.item.state in inbox.CLOSED_STATES:
+    if event is None or "text" not in (event.detail or {}) or event.item.state in inbox.CLOSED_STATES:
         return None
     detail, attachments = event.detail, []
     document = InboxDocument.get_or_none(InboxDocument.id == detail["document"]) if "crop" in detail else None
-    if document is not None:
+    if document is not None and document.original_path is not None:
         attachments.append(("utsnitt.jpg", "image/jpeg", _cropped(document, detail["crop"], detail["rotation"])))
     return {"item_id": event.item_id, "text": detail["text"], "crop": bool(attachments), "attachments": attachments}

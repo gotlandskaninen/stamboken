@@ -694,6 +694,8 @@ def original(item_id, document_id):
             if item is None:
                 raise inbox.InboxError(404, "Posten finns inte.")
             document = inbox.document_of(item, document_id)
+            if document.original_path is None:
+                raise inbox.InboxError(404, "Originalet är raderat.")
             inbox.log_event(item, current_user.id, "original_visat", document=document.id)
     except inbox.InboxError as exc:
         return problem(exc.status, exc.title, exc.detail)
