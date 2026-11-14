@@ -4,6 +4,7 @@ isort:skip_file
 """
 
 import os
+from datetime import timedelta
 from unittest import mock
 
 os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), "auth.ini.test"))
@@ -11,6 +12,7 @@ os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), 
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
 import utils.mail as mail  # noqa: E402
+import utils.settings as settings  # noqa: E402
 from herdbook import APP, limiter  # noqa: E402
 
 from tests.test_mail_queue import HOST, MailTest  # noqa: E402
@@ -31,11 +33,54 @@ class TestApplicationFlow(MailTest):
         retired.is_active = False
         retired.save()
 
-    def _apply(self):
+    def _apply(self, email="sokande@example.org", **kwargs):
         return self.client.post(
             "/api/v2/member-applications",
-            json={"first_name": "Test", "last_name": "Sökande", "email": "sokande@example.org", "gdpr_consent": True},
+            json={"first_name": "Test", "last_name": "Sökande", "email": email, "gdpr_consent": True},
+            **kwargs,
         )
+
+    def receipts(self):
+        return list(
+            db.MailMessage.select().where(db.MailMessage.kind == "ansokan.mottagen").order_by(db.MailMessage.id)
+        )
+
+    def test_public_form_is_limited_to_ten_applications_per_client_and_hour(self):
+        """The limit that applies: herdbook.py wraps create_application in limiter.limit("10 per hour")."""
+        limiter.reset()
+        limiter.enabled = True
+        self.addCleanup(limiter.reset)
+        self.addCleanup(setattr, limiter, "enabled", False)
+        client = {"headers": {"X-Forwarded-For": "192.0.2.10"}}  # documentation addresses (RFC 5737)
+        codes = [self._apply(f"s{i}@example.org", **client).status_code for i in range(11)]
+        self.assertEqual(codes, [201] * 10 + [429])
+        self.assertEqual(self._apply(headers={"X-Forwarded-For": "192.0.2.11"}).status_code, 201)
+
+    def test_one_receipt_per_address_and_day(self):
+        for email in ("sokande@example.org", "Sokande@Example.org", "annan@example.org"):
+            self.assertEqual(self._apply(email).status_code, 201)
+        receipts = self.receipts()
+        self.assertEqual(
+            [r.recipient_id for r in receipts],
+            [a.id for a in db.MemberApplication.select().order_by(db.MemberApplication.id)][::2],
+        )
+        self.assertEqual(db.MailMessage.select().where(db.MailMessage.kind == "ansokan.ny").count(), 3)
+        day = self.now.date().isoformat()
+        self.assertEqual(receipts[0].dedupe_key, f"ansokan.mottagen:{mail.address_hash('sokande@example.org')}:{day}")
+        self.assertNotIn("sokande", receipts[0].dedupe_key)
+
+        with mock.patch.object(mail, "_utcnow", return_value=self.now + timedelta(days=1)):
+            self.assertEqual(self._apply().status_code, 201)
+        self.assertEqual(len(self.receipts()), 3)  # a new day, a new receipt
+
+        mail.forget_recipient("application", receipts[0].recipient_id)
+        self.assertIsNone(self.receipts()[0].dedupe_key)  # the address's HMAC goes with the rest
+
+    def test_receipts_without_link_secret(self):
+        """Log mode may run without LINK_SECRET; nothing is sent, so the receipt is queued without the limit."""
+        with mock.patch.multiple(settings.mail, mode="log", link_secret=""):
+            self.assertEqual([self._apply().status_code for _ in range(2)], [201, 201])
+        self.assertEqual(len(self.receipts()), 2)
 
     def test_application_queues_the_receipt_and_the_notice(self):
         resp = self._apply()

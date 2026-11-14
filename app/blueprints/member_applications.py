@@ -158,7 +158,7 @@ def create_application():
             gdpr_consented_at=datetime.now(),
             status="pending",
         )
-        queue_application_mails(application.id)
+        queue_application_mails(application.id, email)
 
     return (
         jsonify({"id": application.id, "status": application.status}),

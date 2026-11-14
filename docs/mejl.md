@@ -48,7 +48,11 @@ mejlet går då till den adress som är aktuell just då.
   `@` ut mot `<adress>`, eftersom SMTP-fel gärna citerar mottagaren.
 - `address_hash` (HMAC med `LINK_SECRET`) visar vilken adress ett skickat mejl
   gick till, så att en studs kan kopplas till adressen. Jobb som raderar en
-  mottagares rad anropar `forget_recipient(kind, id)`, som tömmer fältet.
+  mottagares rad anropar `forget_recipient(kind, id)`, som tömmer fältet och
+  `dedupe_key`.
+- Den publika ansökan tar emot vilken adress som helst, så kvittot
+  `ansokan.mottagen` går högst en gång per adress och dag: `dedupe_key` är
+  adressens HMAC och datumet, aldrig adressen.
 - Raderna raderas efter 396 dagar (`purge_old_mail`, nattjobbet kl. 03:30).
 
 ## Lägga till en mejltyp

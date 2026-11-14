@@ -605,7 +605,7 @@ def record_bounce(message_id_header, diagnostic):
 def forget_recipient(kind, recipient_id):
     """Called by the jobs that delete a recipient source: no trace of the address stays in the queue."""
     return (
-        MailMessage.update(address_hash=None)
+        MailMessage.update(address_hash=None, dedupe_key=None)  # a dedupe_key may hold the address's HMAC
         .where((MailMessage.recipient_kind == kind) & (MailMessage.recipient_id == recipient_id))
         .execute()
     )
@@ -719,11 +719,16 @@ def _application_approved(params):
     return {} if Member.select().where(Member.id == params["member_id"]).exists() else None
 
 
-def queue_application_mails(application_id):
-    """The receipt to the applicant and a notice to each matrikel admin, in the caller's transaction."""
+def queue_application_mails(application_id, address):
+    """
+    The receipt to the applicant and a notice to each matrikel admin, in the caller's transaction. The public
+    form takes any address, so `address` gets at most one receipt a day, keyed on its HMAC, never on itself.
+    """
     params = {"application_id": application_id}
     ref = ("member_application", application_id)
-    enqueue_mail("ansokan.mottagen", "application", application_id, params, ref=ref)
+    # Without LINK_SECRET (log mode only, nothing is sent) there is no HMAC, and no need for the limit.
+    once_a_day = f"ansokan.mottagen:{address_hash(address)}:{_utcnow().date()}" if settings.mail.link_secret else None
+    enqueue_mail("ansokan.mottagen", "application", application_id, params, ref=ref, dedupe_key=once_a_day)
     candidates = User.select().where(User.is_active & User._privileges.contains("matrikel_admin"))
     for user in candidates:
         if user.is_matrikel_admin:
