@@ -364,6 +364,19 @@ def update_document(item_id, document_id):
     return _locked(item_id, action)
 
 
+# [Next.js] "Tolka igen": the certificate waits for the image reading again, after a turn.
+@inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/tolka-igen", methods=["POST"])
+@json_login_required
+@_queue_worker
+def reinterpret(item_id, document_id):
+    def action(item):
+        document = inbox.document_of(item, document_id)
+        inbox.reinterpret(item, document, current_user)
+        return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]})
+
+    return _locked(item_id, action)
+
+
 # [Next.js] "Mina inskick": the user's own uploads, in plain words.
 @inbox_bp.route("/inkorg/mina-inskick", methods=["GET"])
 @json_login_required

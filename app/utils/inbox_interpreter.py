@@ -1,19 +1,29 @@
 """
 The intake queue's image reading (docs/inkorg.md, "Tolkning"): a photo of a paper certificate in, the fields the
-model reads on it out. Nothing here decides what is right: utils/inbox_proposal.py checks the reading against the
-registry, and only a human saves. INLASNING_TOLKARE picks the interpreter; "av", the default, reads nothing.
+model reads on it out, one document a minute in the scheduler's inbox_interpret. Nothing here decides what is
+right: utils/inbox_proposal.py checks the reading against the registry, and only a human saves. INLASNING_TOLKARE
+picks the interpreter; "av", the default, reads nothing.
 """
 
 import base64
 import io
 import json
+import logging
+import os
+from datetime import datetime, timezone
 
 import numpy as np
 import requests
+from peewee import fn
 from PIL import Image, ImageFilter
 
 import utils.settings as settings
+from utils.database import DB_PROXY, InboxDocument, InboxItem
+from utils.inbox_proposal import build_proposal
 
+logger = logging.getLogger(__name__)
+
+MAX_ATTEMPTS = 2  # then the document is "misslyckad" and the handler types it
 TIMEOUT = 900  # seconds: a model on CPU takes minutes per photo, and longer while it loads
 MAX_SIDE = 2000  # pixels, the longest side of the photo the interpreter gets
 _BACKGROUND_SCALE = 4  # the paper's background is estimated on a copy this many times smaller
@@ -132,3 +142,100 @@ def interpret(image, schema=SCHEMA):
     if not isinstance(answer, dict):
         raise InterpretationError("Svaret är inget JSON-objekt.")
     return answer
+
+
+def initial_status():
+    """A certificate's interpretation_status when it comes in or becomes a certificate: waiting, or off."""
+    return "vantar" if enabled() else "av"
+
+
+def _waiting():
+    """A certificate waiting to be read, in an open item, with nothing saved from it yet."""
+    return (
+        (InboxDocument.interpretation_status == "vantar")
+        & (InboxDocument.doc_type == "intyg")
+        & InboxDocument.done_at.is_null()
+        & InboxDocument.individual.is_null()
+        & InboxItem.closed_at.is_null()
+    )
+
+
+def _locked(document_id, item_id):
+    """The document, its item locked first: the order of every write through the queue (utils/inbox.py)."""
+    InboxItem.select().where(InboxItem.id == item_id).for_update().first()
+    return InboxDocument.get_or_none(InboxDocument.id == document_id)
+
+
+def _finish(document, status, **values):
+    document.interpretation_status, document.interpreted_at = status, datetime.now(timezone.utc)
+    document.interpreter = settings.interpretation.interpreter
+    for name, value in values.items():
+        setattr(document, name, value)
+    document.save()
+
+
+def interpret_next():
+    """
+    The scheduler's inbox_interpret: the oldest certificate waiting is read and checked into a proposal, one per
+    run. The attempt is counted before the model runs, so a run that dies counts too; after MAX_ATTEMPTS the
+    document is "misslyckad". No transaction and no connection is held while the model reads, which takes
+    minutes: the claim and the result are short transactions of their own, and a document turned, requeued or
+    changed meanwhile keeps waiting and the stale reading is dropped. Returns the document's id, or None.
+    """
+    if not enabled():
+        return None
+    with DB_PROXY.atomic():
+        oldest = InboxDocument.select(InboxDocument.id, InboxDocument.item).join(InboxItem).where(_waiting())
+        oldest = oldest.order_by(InboxDocument.id).first()
+        if oldest is None:
+            return None
+        document = _locked(oldest.id, oldest.item_id)
+        item = InboxItem.get_by_id(oldest.item_id)
+        if document is None or document.interpretation_status != "vantar":
+            return None
+        if document.attempts >= MAX_ATTEMPTS:  # the runs that tried it died
+            _finish(document, "misslyckad")
+            return document.id
+        document.attempts += 1
+        document.save()
+    document_id, claimed = document.id, ("vantar", document.attempts, document.rotation, document.doc_type)
+    DB_PROXY.close()
+    try:
+        image = prepare_image(os.path.join(settings.service.private_upload_folder, document.original_path), claimed[2])
+        raw = interpret(image)
+    except Exception as exc:  # pylint: disable=broad-except  # whatever failed, it was an attempt
+        logger.warning("Interpreting inbox document %s failed (attempt %s): %s", document_id, claimed[1], exc)
+        raw = None
+    with DB_PROXY.atomic():
+        document = _locked(document_id, item.id)
+        if document is None or (
+            (document.interpretation_status, document.attempts, document.rotation, document.doc_type) != claimed
+        ):
+            return document_id
+        if raw is not None:
+            proposal = build_proposal(raw, item.genebank_id, item.herd_id)
+            _finish(document, "klar", interpretation=raw, proposal=proposal)
+        elif document.attempts >= MAX_ATTEMPTS:
+            _finish(document, "misslyckad")
+    return document_id
+
+
+def status():
+    """For the queue's header: documents waiting, the last one read, and an alarm when the last three failed."""
+    recent = (
+        InboxDocument.select(InboxDocument.interpretation_status)
+        .where(InboxDocument.interpreted_at.is_null(False))
+        .order_by(InboxDocument.interpreted_at.desc())
+        .limit(3)
+    )
+    last = [state for (state,) in recent.tuples()]
+    done = InboxDocument.select(fn.MAX(InboxDocument.interpreted_at)).where(
+        InboxDocument.interpretation_status == "klar"
+    )
+    last_done = done.scalar()
+    return {
+        "interpreter": settings.interpretation.interpreter if enabled() else "av",
+        "waiting": InboxDocument.select().join(InboxItem).where(_waiting()).count(),
+        "last_done_at": last_done.isoformat() if last_done else None,
+        "alarm": last == ["misslyckad"] * 3,
+    }

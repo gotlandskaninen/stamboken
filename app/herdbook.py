@@ -81,6 +81,7 @@ from utils import number_assets  # isort:skip
 from utils.individual_commands import purge_command_free_text  # isort:skip
 from utils.mail import purge_old_mail, send_pending  # isort:skip
 from utils.inbox import queue_digests  # isort:skip
+from utils.inbox_interpreter import interpret_next  # isort:skip
 from utils.members import try_auto_link_member  # isort:skip
 from utils.legacy_compat import is_legacy_host, legacy_classroom_url  # isort:skip
 from utils.redis_retry import reconnect_on_drop  # isort:skip
@@ -281,6 +282,16 @@ def _queue_notice_digests():
         APP.logger.info("Queued %s notice digests", queue_digests())
     except Exception:  # pylint: disable=broad-except
         APP.logger.exception("Queueing the notice digests failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _interpret_document():
+    """Leader job every minute (docs/inkorg.md, "Tolkning"), built as _send_mail: it closes its thread's connection."""
+    try:
+        interpret_next()
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Interpreting an inbox document failed")
     finally:
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
@@ -3005,6 +3016,16 @@ def initialize_app():
             max_instances=1,
             coalesce=True,
             misfire_grace_time=3600,
+        )
+
+        # The image reading of photographed certificates, one document a run (docs/inkorg.md, "Tolkning").
+        scheduler.add_job(
+            _interpret_document,
+            trigger="interval",
+            minutes=1,
+            id="inbox_interpret",
+            max_instances=1,
+            coalesce=True,
         )
 
         # Warm the shared genetics memo once at startup (workers only build their snapshots)
