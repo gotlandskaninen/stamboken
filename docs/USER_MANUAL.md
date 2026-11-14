@@ -803,9 +803,10 @@ kontaktuppgifter; stegen är samma som för administratör, se
 
 ### Arbeta i inkorgen
 
-Medlemmarna fotograferar sina pappersintyg och bevis och laddar upp fotona. Varje
-uppladdning blir ett ärende i **Inkorg**. Inkorgen är för administratörer,
-genbanksansvariga och genbankshjälpare, och alla tre ser hela kön.
+Medlemmarna fotograferar sina pappersintyg och bevis och laddar upp fotona eller mejlar
+dem till föreningens Stamboken-adress. Varje uppladdning och varje mejl blir ett ärende i
+**Inkorg**, typen **Mejl** med bilagor och **Meddelande** utan. Inkorgen är för
+administratörer, genbanksansvariga och genbankshjälpare, och alla tre ser hela kön.
 
 1. Öppna **Inkorg** i menyn. Klicka **Jag tar den** på ett ärende som ingen har tagit,
    eller öppna ärendet och ta det där. Har någon annan ärendet klickar du **Ta över**.
@@ -833,6 +834,15 @@ genbanksansvariga och genbankshjälpare, och alla tre ser hela kön.
    att spara.
 8. När alla dokument är klara eller avfärdade blir ärendet klart, och den som skickade
    in får besked.
+
+Behöver du fråga uppfödaren, till exempel om en siffra som är svår att läsa: klicka
+**Fråga uppfödaren**, skriv frågan och klicka **Skicka frågan**. Frågan går per mejl till
+besättningens innehavare enligt matrikeln. Med **Bifoga utsnitt** lägger sig en streckad
+ram på fotot; dra ramen runt det frågan gäller, så följer den delen av fotot med mejlet.
+Ärendet väntar på uppfödaren tills svaret kommer. Svaret syns i **Historik**, ärendet blir
+ditt och taget igen, och du får en notis. Ett svar från någon annan, eller från en
+avsändare som inte gick att bekräfta, blir ett eget ärende med raden **Gäller kanske**
+och en länk till ditt ärende.
 
 Går ärendet inte att avsluta väljer du **Väntar på förälder** (ange förälderns
 individnummer; ärendet blir taget igen när föräldern läggs in), **Ofullständig** (skriv
@@ -900,7 +910,11 @@ roll tillåter, och **Historik**, som är hopfälld tills du öppnar den. I mitt
 verktygen, varningar som "kan vara oskarp" och "samma bild i ärende 12", och **Typ**,
 **Format** och **Avfärda**. Till höger formuläret för dokumentet: intyget, försäljningen
 eller maskningen. Har du inte ärendet står det vem som har det, med **Jag tar den** eller
-**Ta över**; du kan bara spara när ärendet är ditt och taget.
+**Ta över**; du kan bara spara när ärendet är ditt och taget. Ett mejlat ärende visar
+avsändarens adress, **Gäller kanske** när det kan höra till ett annat ärende, och
+**Sparades inte** med namnen på bilagor som inte är foton eller PDF, är större än 10 MB
+eller kom efter de tio första bilderna. **Fråga uppfödaren** finns när ärendet är ditt
+och taget, se [Arbeta i inkorgen](#arbeta-i-inkorgen).
 
 ---
 

@@ -42,7 +42,9 @@ import {
   type Rect,
 } from "../lib";
 import { RowActions } from "../QueueControls";
+import { AskBreeder } from "./AskBreeder";
 import { CertificateForm } from "./CertificateForm";
+import { MailFacts } from "./MailFacts";
 import { PhotoViewer } from "./PhotoViewer";
 import { SalePanel } from "./SalePanel";
 import styles from "../inkorg.module.css";
@@ -62,6 +64,8 @@ const EVENT_LABEL: Record<string, string> = {
   kopia: "Kopia lagd på kaninen",
   original_visat: "Originalet visat",
   foralder_inlagd: "Förälder inlagd",
+  fraga: "Fråga till uppfödaren",
+  svar: "Svar från uppfödaren",
 };
 
 function eventText(e: InboxEvent): string {
@@ -72,6 +76,8 @@ function eventText(e: InboxEvent): string {
   if (e.kind === "sparad")
     return `${label}: ${d.individual}${d.action === "overlatelse" ? `, såld till ${d.herd}` : ""}`;
   if (e.kind === "foralder_inlagd") return `${label}: ${d.individual}`;
+  if (e.kind === "fraga" || e.kind === "svar")
+    return d.text ? `${label}: ${d.text}` : label;
   return label;
 }
 
@@ -128,11 +134,14 @@ export function WorkView({
     doc ? initialRects(doc) : [],
   );
   const [selectedRect, setSelectedRect] = useState<number | null>(null);
+  // "Bifoga utsnitt": the frame on the photo, in the view's rotation.
+  const [crop, setCrop] = useState<Rect | null>(null);
   if (step !== shownStep) {
     setShownStep(step);
     setRotation(doc?.rotation ?? 0);
     setRects(doc ? initialRects(doc) : []);
     setSelectedRect(null);
+    setCrop(null);
   }
 
   const run = <T,>(
@@ -163,6 +172,7 @@ export function WorkView({
   const turnView = (quarterTurns: number) => {
     setRotation((r) => turn(r, quarterTurns));
     if (masking) setRects((rs) => rs.map((r) => rotateRect(r, quarterTurns)));
+    setCrop((c) => c && rotateRect(c, quarterTurns));
   };
 
   const rotate = (quarterTurns: number) => {
@@ -263,7 +273,8 @@ export function WorkView({
             <dt>Handläggare</dt>
             <dd>{item.assigned_to?.name ?? "ingen"}</dd>
             <dt>Inskickat av</dt>
-            <dd>{item.sender?.name ?? "–"}</dd>
+            <dd>{item.sender?.name ?? item.sender_address ?? "–"}</dd>
+            <MailFacts item={item} />
             <dt>Besättning</dt>
             <dd>{item.herd ?? "–"}</dd>
             <dt>Inkommet</dt>
@@ -355,6 +366,21 @@ export function WorkView({
             </div>
           )}
 
+          {item.state === "tagen" && item.assigned_to?.id === user.id && (
+            <AskBreeder
+              itemId={item.id}
+              documentId={doc && !masking ? doc.id : null}
+              crop={
+                crop && doc
+                  ? rotateRect(crop, (doc.rotation - rotation) / 90)
+                  : null
+              }
+              onFrame={(on) =>
+                setCrop(on ? { x: 0.2, y: 0.2, w: 0.6, h: 0.3 } : null)
+              }
+            />
+          )}
+
           {allActions.includes("tilldela") && (
             <RowActions
               id={item.id}
@@ -399,7 +425,16 @@ export function WorkView({
                           setSelectedRect(null);
                         },
                       }
-                    : undefined
+                    : crop
+                      ? {
+                          rects: [crop],
+                          selected: 0,
+                          frame: true,
+                          onSelect: () => undefined,
+                          onChange: (_, r) => setCrop(r),
+                          onRemove: () => setCrop(null),
+                        }
+                      : undefined
                 }
               />
               {(doc.warnings.length > 0 || doc.duplicates.length > 0) && (

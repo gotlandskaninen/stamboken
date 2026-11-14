@@ -317,6 +317,10 @@
   border-color: var(--sb-lera);
   outline: 2px solid #fff;
 }
+.rect.frame {
+  background: transparent;
+  border: 3px dashed var(--sb-lera);
+}
 .handle {
   position: absolute;
   right: -12px;

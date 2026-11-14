@@ -19,6 +19,8 @@ const KEYS: Record<string, [number, number]> = {
 
 export type MaskLayer = {
   rects: Rect[];
+  /** An open frame around a part of the photo ("Bifoga utsnitt") instead of black boxes. */
+  frame?: boolean;
   selected: number | null;
   onSelect: (i: number) => void;
   onChange: (i: number, r: Rect) => void;
@@ -241,9 +243,9 @@ export function PhotoViewer({
                 <button
                   key={i}
                   type="button"
-                  className={styles.rect}
+                  className={`${styles.rect} ${mask.frame ? styles.frame : ""}`}
                   aria-pressed={mask.selected === i}
-                  aria-label={`Svart ruta ${i + 1} av ${mask.rects.length}. Piltangenterna flyttar, Skift och piltangenterna ändrar storleken, Delete tar bort.`}
+                  aria-label={`${mask.frame ? "Ramen runt utsnittet" : `Svart ruta ${i + 1} av ${mask.rects.length}`}. Piltangenterna flyttar, Skift och piltangenterna ändrar storleken, Delete tar bort.`}
                   style={{
                     left: `${r.x * 100}%`,
                     top: `${r.y * 100}%`,

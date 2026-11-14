@@ -76,6 +76,7 @@ export interface InboxEvent {
 
 export interface InboxDetail extends Omit<InboxItem, "documents"> {
   message: string | null;
+  sender_address: string | null;
   documents: InboxDocument[];
   events: InboxEvent[];
 }
