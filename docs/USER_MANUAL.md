@@ -19,12 +19,13 @@ på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
   - Så gör du: [parning](#registrera-en-parning), [kull](#registrera-en-kull),
     [kullistan](#föra-kullistan), [registrera unge och utfärda intyg](#registrera-en-unge-och-utfärda-intyg),
     [kanin utan kull](#lägga-till-en-kanin-utan-registrerad-kull), [pappersintygets nummer](#när-pappret-och-stamboken-har-olika-individnummer),
-    [kullnummer](#när-kullnumren-inte-stämmer), [foto](#ladda-upp-ett-foto),
+    [kullnummer](#när-kullnumren-inte-stämmer), [foto](#ladda-upp-ett-foto), [ladda upp intyg](#ladda-upp-intyg),
     [redigera](#redigera-en-kanin), [död](#rapportera-en-kanin-som-död),
     [sälja](#sälja-eller-flytta-en-kanin), [provpara](#provpara),
     [besättningsuppgifter](#uppdatera-besättningsuppgifter), [profil](#uppdatera-din-profil)
   - Skärmarna: [Min besättning](#min-besättning), [Kaninens sida](#kaninens-sida),
     [Alla kaniner](#alla-kaniner), [Provparning](#provparning), [Min profil](#min-profil),
+    [Mina inskick](#mina-inskick), [Ladda upp intyg](#ladda-upp-intyg-skärmen), [Notiser](#notiser),
     [Verifiera intyg](#verifiera-intyg)
 - [Del 2 – Genbanksansvarig](#del-2--genbanksansvarig)
   - Så gör du: [rätta en kanin](#rätta-en-kanin-i-en-annan-besättning),
@@ -389,6 +390,25 @@ då genbanksansvarig, se [del 2](#numrera-om-kullar-med-registrerade-kaniner).
 Bilden skalas ned till högst 1600 pixlar och sparas som JPEG. Tappar du nätet mitt i
 sparas bilden i webbläsaren och laddas upp när nätet är tillbaka.
 
+### Ladda upp intyg
+
+Har du pappersintyg som ska in i Stamboken kan du fotografera dem och skicka in
+fotona. De som arbetar med inläsningen lägger in kaninerna åt dig.
+
+1. Välj **Mina inskick** i menyn och klicka **Ladda upp intyg**.
+2. Välj **Besättning**. Har du bara en är den redan vald.
+3. Klicka **Ta foto eller välj filer**. På telefonen kan du välja kameran eller
+   bildbiblioteket. Du kan också välja en PDF. Högst 10 bilder per inskick; en PDF
+   räknas sida för sida.
+4. Skriv ett **Meddelande** om du vill (valfritt).
+5. Klicka **Skicka**.
+
+Bilderna förminskas i telefonen till högst 3000 pixlar på längsta sidan innan de
+skickas. Ser en bild suddig, mörk eller för liten ut visas en varning, till exempel
+"Bilden ser suddig ut. Ta om den?". Klicka **Ta om** för att ta ett nytt foto, eller
+**Skicka ändå** om bilden duger. Efteråt hittar du inskicket under **Mina inskick**.
+Är det klart får du en notis och, om du inte har stängt av det, ett mejl.
+
 ### Redigera en kanin
 
 Du kan ändra färguppgifterna och anteckningarna på dina kaniner. Nummer, kön,
@@ -502,6 +522,8 @@ medlemskapets uppgifter.
   föreningens utskick.
 - **Publicering i Koharen**: slå på eller av **Namn**, **Telefon**, **E-post** och
   **Adress** för den tryckta medlemsmatrikeln, klicka **Spara**.
+- **Notiser**: slå på eller av **Skicka notiser per e-post en gång om dagen**. Notiserna
+  syns i Stamboken oavsett.
 - **Personer i medlemskapet**: huvudmedlemmen lägger till familjemedlemmar och skötare
   med **Lägg till person** (**Förnamn**, **Efternamn**, **Roll**), ger dem rätt att
   sköta en besättning med **Ge åtkomst**, förnyar en skötares tidsbegränsade åtkomst
@@ -591,6 +613,9 @@ Allt om en kanin. Adressen är /stamboken/individ/ följt av individnumret.
 - **Besättningshistorik** – var kaninen funnits, med **Född här**, **Flyttad hit** och
   antal årsrapporter. **Visa allt** listar varje händelse med datum; där finns också
   **Ångra** på händelser du själv får ångra.
+- **Pappersintyg** – en kopia av pappersintyget som lästs in, med säljarens och
+  köparens uppgifter överstrukna. Klicka bilden för full storlek. Blocket visas bara
+  om kaninen har en kopia och du får se den.
 - **Anteckningar** – fritext och eventuell dödsorsak.
 - **Ändringshistorik** – visas bara för genbanksansvarig och administratör.
 
@@ -641,6 +666,35 @@ full åtkomst till systemet." med länken **Gå kursen nu**. Med Google kommer d
 alls förrän du är validerad; inloggningssidan visar då adressen till kursen.
 
 ![Min profil](manual/profil-desktop.png)
+
+#### Mina inskick
+
+<!-- route: /stamboken/inskick -->
+
+Dina inskick, nyast först. Varje inskick visar "ärende" och numret, datum,
+besättning, antal bilder och hur långt vi har kommit: **Mottaget**, **Under arbete**,
+**Vi har frågat dig något**, **Klart** eller **Avslutat**. När inskicket är klart
+länkas kaninerna som lagts in. Knappen **Ladda upp intyg** öppnar
+[Ladda upp intyg](#ladda-upp-intyg). Har du inget inskick förklarar sidan vad den är
+till för. Se [Ladda upp intyg](#ladda-upp-intyg).
+
+#### Ladda upp intyg (skärmen)
+
+<!-- route: /stamboken/inskick/ny -->
+
+Rubriken **Ladda upp intyg** med **Besättning**, knappen **Ta foto eller välj filer**,
+listan över valda filer, **Meddelande** och **Skicka**. Visas en varning över en bild
+byts **Skicka** mot **Skicka ändå**, och bilden har knappen **Ta om**. Har du ingen
+besättning säger sidan det. Se [Ladda upp intyg](#ladda-upp-intyg).
+
+#### Notiser
+
+<!-- route: /stamboken/notiser -->
+
+Dina notiser om inskick, nyast först; olästa står med fet stil. Varje notis länkar till
+sitt ärende, och en notis blir läst när du klickar på den. **Markera alla som lästa**
+läser alla. Antalet olästa visas i menyn, vid **Mina inskick** (eller **Inkorg**) och
+vid **Notiser** under kontomenyn.
 
 #### Verifiera intyg
 
@@ -798,8 +852,9 @@ Kolumnen **Status och åtkomst** visar märkena **Webbkurs** (validerad),
 ### Ge eller ta bort en roll
 
 1. Öppna användaren och gå till kortet **Roller**.
-2. Välj **Roll**: Administratör, Matrikeladministratör, Genbanksansvarig, Granskare
-   eller Besättningsägare. För Genbanksansvarig och Granskare väljer du **Genbank**;
+2. Välj **Roll**: Administratör, Matrikeladministratör, Genbanksansvarig,
+   Genbankshjälpare, Granskare eller Besättningsägare. För Genbanksansvarig,
+   Genbankshjälpare och Granskare väljer du **Genbank**;
    för Besättningsägare söker du besättningen i **Besättning**.
 3. Klicka **Lägg till roll**.
 4. Ta bort en roll med **Ta bort** på raden.
