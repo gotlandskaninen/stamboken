@@ -162,8 +162,8 @@ export default function IntegritetspolicyPage() {
                 </mark>
               </li>
               <li>
-                I Koharen trycks en lista över aktiva genbanker. Där står
-                innehavarens namn, ort och kontaktuppgifter bara om innehavaren
+                I listan över aktiva genbanker i Koharen står innehavarens namn,
+                postnummer och ort, telefon och e-postadress bara om innehavaren
                 har sagt ja, i årsrapporten eller i sin profil (samtycke).
                 Svaret gäller tills det ändras, och den som aldrig har svarat
                 publiceras inte. Det som redan är tryckt går inte att ta
