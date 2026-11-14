@@ -10,12 +10,16 @@ so a message read again after a crash in between is only labelled. A message tha
 
 import email
 import hmac
+import html
+import io
 import logging
 import re
 from datetime import datetime, timezone
 from email import policy
 from email.parser import HeaderParser
 from email.utils import parseaddr
+
+from peewee import fn
 
 import utils.inbox as inbox
 import utils.mail as mail
@@ -24,6 +28,7 @@ from utils.database import (
     GmailProcessed,
     GmailSync,
     Herd,
+    InboxDocument,
     InboxEvent,
     InboxItem,
     MailMessage,
@@ -46,6 +51,10 @@ _QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"')
 _COMMENT = re.compile(r"\([^()]*\)")
 _SPF = re.compile(r"spf=pass\s.*\bsmtp\.mailfrom=(\S+)", re.I | re.S)
 _DKIM = re.compile(r"dkim=pass\s+header\.[id]=@?([a-z0-9.-]+)(?:\s|$)", re.I)
+# An HTML-only mail as text: what is never shown goes, a line break per paragraph, then every tag.
+_HIDDEN = re.compile(r"(?is)<(script|style|head)\b.*?</\1\s*>|<!--.*?-->")
+_BREAK = re.compile(r"(?i)<br\s*/?>|</(?:p|div|li|tr|h\d)\s*>")
+_TAG = re.compile(r"<[^>]*>")
 
 
 def run(gmail=None):
@@ -128,14 +137,20 @@ def read_message(gmail_id, raw, received_at=None):
     if replied_to and here not in replied_to:
         return DEMO
     text = _text(msg)
-    with DB_PROXY.atomic():
-        replied = _replied_item(msg)
-        if replied is not None and _may_answer(msg, sender, replied):
-            _attach_reply(replied, text)
-            _processed(gmail_id, "reply", replied)
-        else:
-            maybe = replied.id if replied is not None else None
-            _processed(gmail_id, "item", _new_item(gmail_id, sender, text, received_at, maybe_item=maybe))
+    stored, skipped = _store(_attachments(msg))
+    try:
+        with DB_PROXY.atomic():
+            replied = _replied_item(msg)
+            if replied is not None and _may_answer(msg, sender, replied):
+                _attach_reply(replied, text, stored, skipped)
+                _processed(gmail_id, "reply", replied)
+            else:
+                maybe = replied.id if replied is not None else None
+                item = _new_item(gmail_id, sender, text, received_at, stored, skipped, maybe_item=maybe)
+                _processed(gmail_id, "item", item)
+    except BaseException:
+        inbox.remove_files(path for path, _, _ in stored)
+        raise
     return None
 
 
@@ -156,11 +171,73 @@ def _content(part):
 
 
 def _text(msg):
-    """The mail's own text, plain if it has it."""
+    """The mail's own text: its plain text, or its HTML without the tags."""
     part = msg.get_body(preferencelist=("plain", "html"))
     if part is None:
         return None
-    return _content(part).strip()[:MAX_TEXT] or None
+    text = _content(part)
+    if part.get_content_subtype() == "html":
+        text = html.unescape(_TAG.sub("", _BREAK.sub("\n", _HIDDEN.sub("", text))))
+        text = "\n".join(" ".join(line.split()) for line in text.splitlines() if line.strip())
+    return text.strip()[:MAX_TEXT] or None
+
+
+def _attachments(msg):
+    """(file name, bytes) of every part that is not the mail's text: phones often send their photos inline."""
+    found = []
+    for part in msg.walk():
+        name = part.get_filename()
+        if part.is_multipart() or (part.get_content_maintype() == "text" and not name):
+            continue
+        found.append(((name or "namnlös")[:200], part.get_payload(decode=True) or b""))
+    return found
+
+
+def _store(attachments):
+    """
+    Each attachment through the upload's checks and conversion (at most MAX_FILES images in all, 10 MB a file,
+    re-saved as JPEG without EXIF): (stored (path, sha256, quality), names of the files not stored).
+    """
+    from blueprints.inbox import MAX_FILES, _images, _Refused  # the upload's pipeline; its refusals need an app context
+
+    stored, skipped = [], []
+    try:
+        for name, data in attachments:
+            try:
+                images = _images(io.BytesIO(data), MAX_FILES - len(stored))
+            except _Refused:
+                skipped.append(name)
+                continue
+            for image in images:
+                stored.append((*inbox.store_jpeg(image, "original"), inbox.measure(image)))
+    except BaseException:
+        inbox.remove_files(path for path, _, _ in stored)
+        raise
+    return stored, skipped
+
+
+def _documents(item, stored):
+    return [
+        InboxDocument.create(item=item, original_path=path, mime="image/jpeg", sha256=sha256, quality=quality)
+        for path, sha256, quality in stored
+    ]
+
+
+def _match(address):
+    """The member, herd and genebank the sender's address gives in the member register: a hint, never a gate."""
+    member = (
+        Member.select()
+        .where((fn.LOWER(fn.TRIM(Member.email)) == address) & Member.end_date.is_null(True))
+        .order_by((Member.role == "huvudmedlem").desc(), Member.id)
+        .first()
+        if address
+        else None
+    )
+    if member is None:
+        return None, None, None
+    herds = list(Herd.select(Herd.id, Herd.genebank).where(Herd.membership == member.membership_id))
+    genebanks = {herd.genebank_id for herd in herds}
+    return member, (herds[0] if len(herds) == 1 else None), (genebanks.pop() if len(genebanks) == 1 else None)
 
 
 def _delivery_report(msg):
@@ -271,9 +348,15 @@ def authenticated(msg, sender):
     return False
 
 
-def _attach_reply(item, text):
-    """An answer on the item: an event with its text, back to the handler if it waited, and a notice."""
-    InboxEvent.create(item=item, kind="svar", detail={"text": text})
+def _not_saved(skipped):
+    return {"not_saved": list(skipped)} if skipped else {}
+
+
+def _attach_reply(item, text, stored=(), skipped=()):
+    """An answer on the item: an event with its text and new documents, back to the handler if it waited, a notice."""
+    documents = _documents(item, stored)
+    detail = {"text": text, "documents": [document.id for document in documents], **_not_saved(skipped)}
+    InboxEvent.create(item=item, kind="svar", detail=detail)
     if item.state == "vantar_uppfodare":
         inbox._set_state(item, "tagen")  # pylint: disable=protected-access
         item.save()
@@ -285,15 +368,25 @@ def _attach_reply(item, text):
         inbox.notify(handler, "svar", item)
 
 
-def _new_item(gmail_id, sender, text, received_at, maybe_item=None):
+def _new_item(gmail_id, sender, text, received_at, stored=(), skipped=(), maybe_item=None):
+    """
+    An item of kind mail (with attachments) or meddelande, its herd guessed from the sender; with no match the
+    genebank is unknown and every queue worker is told. The files not stored and the case a reply may be about
+    are on its "inkommen" event.
+    """
+    member, herd, genebank = _match(sender)
     item = InboxItem.create(
-        kind="meddelande",
+        kind="mail" if stored or skipped else "meddelande",
+        genebank=genebank,
+        herd=herd,
+        member=member,
         sender_address=sender,
         message=text,
         gmail_message_id=gmail_id,
         received_at=received_at or inbox.now(),
     )
-    detail = {"documents": 0, **({"maybe_item": maybe_item} if maybe_item else {})}
+    documents = _documents(item, stored)
+    detail = {"documents": len(documents), **_not_saved(skipped), **({"maybe_item": maybe_item} if maybe_item else {})}
     InboxEvent.create(item=item, kind="inkommen", detail=detail)
     for worker in inbox.queue_workers(item.genebank_id):
         inbox.notify(worker, "ny_post", item)

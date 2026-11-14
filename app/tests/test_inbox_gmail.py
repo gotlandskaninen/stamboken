@@ -6,6 +6,7 @@ isort:skip_file
 """
 
 import base64
+import os
 from email.message import EmailMessage
 from email.utils import make_msgid
 from unittest import mock
@@ -16,9 +17,10 @@ import utils.inbox as inbox
 import utils.inbox_gmail as inbox_gmail
 import utils.mail as mail
 import utils.settings as settings
+from PIL import Image
 from utils.gmail import Gmail, HistoryTooOld
 
-from tests.inbox_fixtures import APP, InboxTest
+from tests.inbox_fixtures import APP, InboxTest, encoded, photo
 from tests.test_mail_queue import HOST, MailTest
 
 # Token-shaped values are built from parts so that they are plainly synthetic.
@@ -339,6 +341,97 @@ class TestSorting(GmailTest):
         self.fake.deliver(message(In_Reply_To=self.our_mail(item)))
         self.read()
         self.assertEqual(self.items()[-1].events.get().detail["maybe_item"], item.id)
+
+
+JPEG = "image/jpeg"
+
+
+class TestItemsFromMail(GmailTest):
+    def documents(self, item):
+        return list(item.documents.order_by(db.InboxDocument.id))
+
+    def notified(self):
+        return sorted(n.user_id for n in db.Notice.select().where(db.Notice.kind == "ny_post"))
+
+    def test_a_mail_with_two_images_is_one_item_with_two_documents_in_the_senders_herd(self):
+        holder = self.holder(self.herds[0])
+        files = [("a.jpg", JPEG, encoded(photo())), ("b.png", "image/png", encoded(photo(seed=2), "PNG"))]
+        self.fake.deliver(message(sender=f"Test Uppfödare <{SENDER.upper()}>", files=files))
+        self.read()
+        (item,) = self.items()
+        self.assertEqual(item.kind, "mail")
+        self.assertEqual(
+            (item.herd_id, item.genebank_id, item.member_id), (self.herds[0].id, self.genebanks[0].id, holder.id)
+        )
+        documents = self.documents(item)
+        self.assertEqual(len(documents), 2)
+        for document in documents:
+            with Image.open(self.stored(document)) as image:
+                self.assertEqual(image.format, "JPEG")
+        self.assertEqual(item.events.get().detail, {"documents": 2})
+        self.assertEqual(self.notified(), sorted([self.manager.id, self.helper.id]))  # Gotland's workers
+
+    def test_an_unknown_sender_is_seen_by_every_queue_worker(self):
+        self.fake.deliver(message(sender="okand@example.net", body="Var skickar jag intyget?"))
+        self.read()
+        (item,) = self.items()
+        self.assertEqual((item.kind, item.genebank_id, item.herd_id, item.member_id), ("meddelande", None, None, None))
+        self.assertEqual(item.message, "Var skickar jag intyget?")
+        self.assertEqual(self.notified(), sorted(u.id for u in inbox.queue_workers(None)))
+        self.assertIn(self.mellerud_helper.id, self.notified())
+
+    def test_files_too_big_too_many_or_of_another_type_are_named_and_not_stored(self):
+        big = encoded(photo()) + b"\0" * (10 * 1024 * 1024)  # a JPEG by its first bytes, over 10 MB
+        docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        files = [("stor.jpg", JPEG, big), ("brev.docx", docx, b"PK\x03\x04syntetisk")]
+        files += [(f"{n}.jpg", JPEG, encoded(photo((600, 800), seed=n))) for n in range(11)]
+        self.fake.deliver(message(files=files))
+        self.read()
+        (item,) = self.items()
+        self.assertEqual(len(self.documents(item)), 10)
+        self.assertEqual(item.events.get().detail["not_saved"], ["stor.jpg", "brev.docx", "10.jpg"])
+
+    def test_exif_is_gone_and_an_inline_photo_counts(self):
+        exif = Image.Exif()
+        exif[0x0110] = "SecretCam"  # camera model
+        exif.get_ifd(0x8825)[2] = (57.0, 30.0, 0.0)  # GPS latitude
+        msg = message(body="Se bilden")
+        msg.add_attachment(encoded(photo(), exif=exif), maintype="image", subtype="jpeg", disposition="inline")
+        self.fake.deliver(msg)
+        self.read()
+        (document,) = self.documents(self.items()[0])
+        with open(self.stored(document), "rb") as stored:
+            data = stored.read()
+        self.assertNotIn(b"Exif", data)
+        self.assertNotIn(b"SecretCam", data)
+
+    def test_an_html_only_mail_becomes_text(self):
+        msg = message()
+        msg.set_content(
+            "<html><head><style>p {color: red}</style></head><body><p>Hej!</p>"
+            "<p>Intyget &amp; beviset<br>kommer snart</p><script>x()</script></body></html>",
+            subtype="html",
+        )
+        self.fake.deliver(msg)
+        self.read()
+        self.assertEqual(self.items()[0].message, "Hej!\nIntyget & beviset\nkommer snart")
+
+    def test_a_reply_brings_its_photos_as_new_documents_on_the_item(self):
+        self.holder(self.herds[0])
+        item = self.waiting()
+        self.fake.deliver(message(files=[("ny.jpg", JPEG, encoded(photo()))], In_Reply_To=self.our_mail(item)))
+        self.read()
+        self.assertEqual(self.items(), [item])
+        added = self.documents(item)[-1]
+        self.assertEqual(len(self.documents(item)), 2)
+        self.assertEqual(item.events.where(db.InboxEvent.kind == "svar").get().detail["documents"], [added.id])
+
+    def test_a_message_that_fails_leaves_no_files(self):
+        self.fake.deliver(message(files=[("a.jpg", JPEG, encoded(photo()))]))
+        with mock.patch.object(inbox_gmail, "_processed", side_effect=RuntimeError("fel")):
+            self.read()
+        self.assertEqual(self.items(), [])
+        self.assertEqual([name for _, _, names in os.walk(self.folder) for name in names], [])
 
 
 class TestAuthenticationResults(InboxTest):
