@@ -2654,6 +2654,9 @@ AUDITED_TABLES = {
 }
 
 
+# Append-only audit_log (NFR-S8). The one definition every path re-creates after lifting it.
+AUDIT_LOG_NO_UPDATE_RULE = "CREATE RULE audit_log_no_update AS ON UPDATE TO audit_log DO INSTEAD NOTHING"
+
 # Only rows still holding an IP address, so the nightly purge reads one day of rows once it has caught up.
 AUDIT_IP_INDEX_SQL = """
     CREATE INDEX IF NOT EXISTS idx_audit_log_ip_retention
@@ -2698,10 +2701,9 @@ def _create_audit_table_and_triggers():
     DATABASE.execute_sql(AUDIT_IP_INDEX_SQL)
 
     # Append-only: block UPDATE/DELETE on audit_log (NFR-S8)
-    DATABASE.execute_sql("""
+    DATABASE.execute_sql(f"""
         DO $$ BEGIN
-            CREATE RULE audit_log_no_update AS ON UPDATE TO audit_log
-                DO INSTEAD NOTHING;
+            {AUDIT_LOG_NO_UPDATE_RULE};
         EXCEPTION WHEN duplicate_object THEN NULL;
         END $$;
     """)
