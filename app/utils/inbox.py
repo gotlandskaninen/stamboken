@@ -313,6 +313,14 @@ def manages(user, genebank_id):
     return bool(user.is_admin or (genebank_id in managed if genebank_id is not None else managed))
 
 
+OWN_UPLOAD = "Du har själv skickat in posten. Någon annan behöver ta den."
+
+
+def own_upload(item, user):
+    """A helper's own upload: someone else decides it (Jonas 2026-11-14). Managers and admins decide their own."""
+    return item.sender_user_id == user.id and not manages(user, item.genebank_id)
+
+
 def can_handle(user, genebank_id):
     """Who an item may be assigned to: an admin, or a manager or helper of the item's genebank."""
     if not user.is_active:
@@ -366,6 +374,8 @@ def take(item, user, *, over):
     if previous not in (None, user.id) and not over:
         name = person_names([previous])[previous]
         raise InboxError(409, f"{name} har posten. Ta över den för att arbeta med den.")
+    if own_upload(item, user):
+        raise InboxError(403, OWN_UPLOAD)
     item.assigned_to, item.assigned_at = user, now()
     _set_state(item, "tagen")
     item.save()
@@ -384,6 +394,8 @@ def assign(item, by, to):
         raise InboxError(409, "Posten är stängd.")
     if not can_handle(to, item.genebank_id):
         raise InboxError(400, "Posten kan bara tilldelas någon som arbetar i kön för postens genbank.")
+    if own_upload(item, to):
+        raise InboxError(400, "Posten kan inte tilldelas den som har skickat in den.")
     previous = item.assigned_to_id
     item.assigned_to, item.assigned_at = to, now()
     if item.state in ("ny", "hos_genbanksansvarig"):
@@ -805,7 +817,8 @@ def set_mail_enabled(user, enabled):
 class InboxGrant:
     """
     HANDLAGGARE on a rabbit through an inbox item (individual_commands.Grant), for a genebank helper who holds
-    the item: never through an item in another state or someone else's, nor one that points at another
+    the item: never through an item in another state or someone else's, nor one they uploaded themselves
+    (own_upload: take and assign refuse it too, so nobody is left holding it), nor one that points at another
     feature's row (ref_type: decided there), nor for a rabbit outside the genebanks the user helps in or in
     GX1/MX1. Managers and admins write with their own roles; for them the grant only leaves the trace.
     The caller locks the item first (lock order: item, litters, rabbits); `allows` re-reads it under that lock.
@@ -824,6 +837,7 @@ class InboxGrant:
             and item.state == "tagen"
             and item.assigned_to_id == user.id
             and item.ref_type is None
+            and item.sender_user_id != user.id
             and herd.genebank_id in (user.is_helper or [])
             and herd.herd not in OUTSIDE_GENEBANK_HERDS
         )
