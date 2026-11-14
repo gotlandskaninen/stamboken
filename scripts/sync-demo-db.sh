@@ -167,6 +167,30 @@ echo "Setting all users to validated in $TARGET_DB..."
 docker exec "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -v ON_ERROR_STOP=1 -c \
 	"UPDATE hbuser SET validated = true WHERE validated = false;"
 
+# The copy carries production's mail queue and intake items. The demo must not
+# send or show them as its own, so they are emptied. Tables an older schema
+# lacks are skipped; without CASCADE, so a table that points at them fails
+# the sync loudly instead of being emptied too.
+echo "Emptying the mail queue and the intake queue in $TARGET_DB..."
+docker exec -i "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -v ON_ERROR_STOP=1 -q <<'SQL'
+DO $$
+DECLARE
+	names text;
+BEGIN
+	SELECT string_agg(quote_ident(t), ', ') INTO names
+	FROM unnest(ARRAY[
+		'mail_attempt', 'mail_message', 'mail_sender',
+		'notice', 'inbox_operation', 'inbox_event', 'inbox_document', 'inbox_item',
+		'gmail_processed', 'gmail_sync'
+	]) AS t
+	WHERE to_regclass(t) IS NOT NULL;
+	IF names IS NOT NULL THEN
+		EXECUTE 'TRUNCATE ' || names;
+	END IF;
+END
+$$;
+SQL
+
 # Verifiera
 TABLES=$(docker exec "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -t -c \
 	"SELECT count(*) FROM information_schema.tables WHERE table_schema = 'public';")
