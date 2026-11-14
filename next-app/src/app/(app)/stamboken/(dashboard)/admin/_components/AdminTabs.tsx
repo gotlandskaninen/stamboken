@@ -26,6 +26,7 @@ const TAB_META: Record<
   ANVÄNDARE: { label: "Användare", icon: "user" },
   BESÄTTNINGAR: { label: "Besättningar", icon: "home", scoped: true },
   GENBANKER: { label: "Genbanker", icon: "rabbit" },
+  UTSKICK: { label: "Utskick", icon: "mail" },
   SYSTEM: { label: "System", icon: "cog" },
 };
 

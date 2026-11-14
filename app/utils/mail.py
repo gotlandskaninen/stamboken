@@ -613,6 +613,11 @@ def _application_new(params):
     return {} if pending else None
 
 
+@mail_kind("ansokan.godkand", priority=1, category="T")
+def _application_approved(params):
+    return {} if Member.select().where(Member.id == params["member_id"]).exists() else None
+
+
 def queue_application_mails(application_id):
     """The receipt to the applicant and a notice to each matrikel admin, in the caller's transaction."""
     params = {"application_id": application_id}

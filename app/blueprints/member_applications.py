@@ -17,7 +17,7 @@ from peewee import IntegrityError, fn
 # Note: try_auto_link_member is NOT imported here. Auto-link only
 # happens in the OAuth callback (app/herdbook.py), never at approve time.
 from utils.database import BILLING_FIELDS, DB_PROXY, Genebank, Member, MemberApplication, Membership
-from utils.mail import queue_application_mails
+from utils.mail import enqueue_mail, queue_application_mails
 from utils.matrikel import (
     AddressValidationError,
     allocate_member_number,
@@ -310,6 +310,13 @@ def approve_application(app_id: int):
                     "member_number": membership.member_number,
                     "person_id": member.id,
                 },
+            )
+            enqueue_mail(
+                "ansokan.godkand",
+                "member",
+                member.id,
+                {"member_id": member.id},
+                ref=("member_application", a.id),
             )
 
             # Member.user_id is intentionally left NULL. Per the auto-link

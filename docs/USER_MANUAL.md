@@ -40,7 +40,7 @@ på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
     [aktivitetslogg](#söka-i-aktivitetsloggen), [massutloggning](#logga-ut-alla-användare)
   - Skärmarna: [Adminpanel](#adminpanel), [Användare](#användare), [Användare – redigera](#användare--redigera),
     [Besättningar](#besättningar), [Besättning – redigera](#besättning--redigera), [Ny besättning](#ny-besättning),
-    [Genbanker](#genbanker), [Genbank – redigera](#genbank--redigera), [System](#system),
+    [Genbanker](#genbanker), [Genbank – redigera](#genbank--redigera), [Utskick](#utskick), [System](#system),
     [Aktiva användare](#aktiva-användare), [Aktivitetslogg](#aktivitetslogg),
     [Demosynkronisering](#demosynkronisering), [Anropsgränser](#anropsgränser)
 - [Bilagor](#bilagor): [felmeddelanden](#felmeddelanden-och-vad-de-betyder), [kontakt](#kontakt),
@@ -765,7 +765,7 @@ sidan men får ingen genbank att välja. Se [Använda genetiksidan](#använda-ge
 #### Adminpanelen för genbanksansvarig
 
 Samma panel som administratörens men med färre flikar: **Översikt**, **Besättningar i
-din genbank** och **Genbanker**. Rollraden lyder "Inloggad som genbanksansvarig ·
+din genbank**, **Genbanker** och **Utskick**. Rollraden lyder "Inloggad som genbanksansvarig ·
 Gotlandskanin". Besättningslistan visar bara din genbank och saknar filter; på
 genbankssidan kan du bara ändra **Namn**. Flikarna **Användare** och **System** finns
 bara för administratör.
@@ -971,6 +971,20 @@ Fältet **Namn** med **Spara**, listan **Genbanksansvariga** med **Ta bort ansva
 sökfältet **Ny genbanksansvarig** och **Lägg till genbanksansvarig**.
 
 ![Genbank, redigera](manual/admin-genbank-detalj-desktop.png)
+
+#### Utskick
+
+<!-- route: /stamboken/admin/utskick -->
+
+Status för utgående e-post. Överst står larmen när något är fel ("Reläet tar inte emot
+e-post från servern" och "Kön står still"), **Senaste utskick** och, när utskicken är
+pausade, **Pausad till**. Filtren **Status** (Köad, Skickas, Skickad, Misslyckades,
+Studsade, Spärrad, Loggad, Stoppad), **Typ**, **Från** och **Till** ligger i adressen,
+så en filtrerad lista går att länka. Tabellen visar **Skapad**, **Typ**, **Mottagare**
+(namn, aldrig adress), **Status**, **Försök** och **Senaste fel**, med **Föregående** och
+**Nästa** för fler rader. På en telefon blir varje rad ett kort. **Försök igen** finns
+på misslyckade och studsade utskick och **Stoppa** på köade. Har utskicket hunnit
+ändra status visas felet från servern. Genbanksansvariga ser bara sin genbanks utskick.
 
 #### System
 
