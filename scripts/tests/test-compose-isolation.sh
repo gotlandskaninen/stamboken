@@ -49,7 +49,7 @@ touches = lambda s: reaches(s, up)
 print(eval(sys.argv[2]))' "$1" "$2"
 }
 
-# ── R097: local stacks must not reach the prod bucket or the prod signing key ─
+# ── R097: local stacks must not reach the prod bucket, signing key or mailbox ─
 # The local-production bootstrap (stamboken-drift) copies the prod api-variables.env
 # (S3 and signing settings) into .docker/, a file every compose file reads.
 cat > "$work/prod-api-variables.env" <<'EOF'
@@ -60,6 +60,7 @@ S3_ACCESSKEY=PRODKEY-SENTINEL
 S3_SECRETKEY=PRODSECRET-SENTINEL
 PDF_SIGNING_KEY=/config/pdf_signing_key.pem
 PDF_SIGNING_CA=/config/pdf_signing_ca.pem
+INLASNING_GMAIL=on
 EOF
 
 # 2. Defence in depth: even a hand-edited .docker/api-variables.env holding prod
@@ -70,7 +71,7 @@ cp "$work/prod-api-variables.env" "$proj/.docker/api-variables.env"
 resolve "$ROOT/docker-compose.local-production.yml" "$proj"
 for svc in api api-test; do
   for kv in S3_ENDPOINT=http://s3backend:9000 S3_BUCKET=test S3_ACCESSKEY=accesskeytest S3_SECRETKEY=secretkeytest \
-    PDF_SIGNING_KEY=certs/key.pem PDF_SIGNING_CA=certs/ca.pem CERT_DEMO_WATERMARK=true; do
+    PDF_SIGNING_KEY=certs/key.pem PDF_SIGNING_CA=certs/ca.pem CERT_DEMO_WATERMARK=true INLASNING_GMAIL=off; do
     check "R097 local-production $svc: ${kv%%=*} is pinned" "${kv#*=}" "$(q "$proj" "env('$svc').get('${kv%%=*}')")"
   done
 done
