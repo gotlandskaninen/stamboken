@@ -9,7 +9,8 @@ import os
 import re
 import threading
 import uuid
-from functools import wraps
+from contextlib import contextmanager
+from functools import partial, wraps
 
 import pillow_heif
 import pypdfium2
@@ -82,21 +83,44 @@ def _kind(file):
     return None
 
 
-def _pdf_pages(data, room):
-    """Each page as an RGB image, at PDF_DPI but at most PDF_MAX_SIDE pixels a side."""
-    with _PDFIUM:
+@contextmanager
+def _decoding():
+    """What a decoder raises, as the upload's refusals; what the caller does with an image is not in here."""
+    try:
+        yield
+    except _Refused:
+        raise
+    except Image.DecompressionBombError:
+        raise _Refused(_too_many_pixels()) from None
+    except Exception:
+        raise _Refused(problem(422, "Unprocessable Content", "Filen kunde inte läsas. Den kan vara skadad.")) from None
+
+
+def _each_page(data, room, handle):
+    """handle(page) for each page as an RGB image, at PDF_DPI but at most PDF_MAX_SIDE pixels a side."""
+    with _PDFIUM, _decoding():
         pdf = pypdfium2.PdfDocument(data)
-        try:
-            if len(pdf) > room:
-                raise _Refused(_too_many_images())
-            pages = []
-            for page in pdf:
+    try:
+        with _PDFIUM:
+            count = len(pdf)
+        if count > room:
+            raise _Refused(_too_many_images())
+        for index in range(count):
+            with _PDFIUM, _decoding():  # shortcut: no time limit on rendering, pypdfium2 has none short of ctypes
+                page = pdf[index]
                 width, height = page.get_size()
                 scale = min(PDF_DPI / 72, PDF_MAX_SIDE / max(width, height, 1))
-                pages.append(page.render(scale=scale).to_pil().convert("RGB"))
+                bitmap = page.render(scale=scale)
+                image = bitmap.to_pil().convert("RGB")
+                bitmap.close()
                 page.close()
-            return pages
-        finally:
+            try:
+                handle(image)
+            finally:
+                image.close()
+        return count
+    finally:
+        with _PDFIUM:
             pdf.close()
 
 
@@ -104,8 +128,11 @@ def _too_many_images():
     return problem(400, "Bad Request", f"Högst {MAX_FILES} bilder per inskick. En PDF räknas sida för sida.")
 
 
-def _images(file, room):
-    """The file's images, RGB and turned upright as the phone saw them; a PDF page by page."""
+def _each_image(file, room, handle):
+    """
+    handle(image) for each of the file's images, RGB and turned upright as the phone saw it, a PDF page by page:
+    one decoded image at a time, each closed before the next is decoded. Returns how many there were.
+    """
     file.seek(0, os.SEEK_END)
     size = file.tell()
     file.seek(0)
@@ -114,25 +141,24 @@ def _images(file, room):
     kind = _kind(file)
     if kind is None:
         raise _Refused(problem(415, "Unsupported Media Type", "Otillåten filtyp. Bara JPEG, PNG, WebP, HEIC och PDF."))
-    try:
-        if kind == "pdf":
-            return _pdf_pages(file.read(), room)
-        if room < 1:
-            raise _Refused(_too_many_images())
+    if kind == "pdf":
+        return _each_page(file.read(), room, handle)
+    if room < 1:
+        raise _Refused(_too_many_images())
+    with _decoding():
         if kind == "webp" and _webp_pixels(file.read(30)) > MAX_PIXELS:
             raise _Refused(_too_many_pixels())
         file.seek(0)
-        with Image.open(file) as image:
-            if image.width * image.height > MAX_PIXELS:  # Image.open reads only the header
+        with Image.open(file) as source:
+            if source.width * source.height > MAX_PIXELS:  # Image.open reads only the header
                 raise _Refused(_too_many_pixels())
-            image.load()
-            return [ImageOps.exif_transpose(image).convert("RGB")]
-    except _Refused:
-        raise
-    except Image.DecompressionBombError:
-        raise _Refused(_too_many_pixels()) from None
-    except Exception:
-        raise _Refused(problem(422, "Unprocessable Content", "Filen kunde inte läsas. Den kan vara skadad.")) from None
+            source.load()
+            image = ImageOps.exif_transpose(source).convert("RGB")
+    try:
+        handle(image)
+    finally:
+        image.close()
+    return 1
 
 
 @inbox_bp.errorhandler(429)
@@ -163,24 +189,22 @@ def upload():
         return _too_many_images()
     dry_run = request.form.get("dry_run") in ("1", "true")
 
-    results, stored = [], []
+    results, encoded, stored = [], [], []
+
+    def keep(index, image):  # measured and encoded; written only once every file has been read
+        quality = inbox.measure(image)
+        page = sum(result["file"] == index for result in results) + 1
+        results.append({"file": index, "page": page, "quality": quality, "warnings": inbox.warnings(quality)})
+        encoded.append(inbox.jpeg_bytes(image))
+
     try:
         for index, file in enumerate(files):
-            images = _images(file, MAX_FILES - len(results))
-            for page, image in enumerate(images, 1):
-                quality = inbox.measure(image)
-                results.append(
-                    {
-                        "file": index,
-                        "page": page if len(images) > 1 else None,
-                        "quality": quality,
-                        "warnings": inbox.warnings(quality),
-                    }
-                )
-                if not dry_run:
-                    stored.append((*inbox.store_jpeg(image, "original"), quality))
+            if _each_image(file, MAX_FILES - len(results), partial(keep, index)) == 1:
+                results[-1]["page"] = None  # an image, or a PDF of one page
         if dry_run:
             return jsonify({"documents": results}), 200
+        for data, result in zip(encoded, results, strict=True):
+            stored.append((*inbox.write_jpeg(data, "original"), result["quality"]))
         with DB_PROXY.atomic():
             item, documents = inbox.create_upload(current_user, herd, message, stored)
     except _Refused as refused:

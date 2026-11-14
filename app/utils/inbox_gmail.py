@@ -315,21 +315,26 @@ def _store(attachments):
     Each attachment through the upload's checks and conversion (at most MAX_FILES images in all, 10 MB a file,
     re-saved as JPEG without EXIF): (stored (path, sha256, quality), names of the files not stored).
     """
-    from blueprints.inbox import MAX_FILES, _images, _Refused  # the upload's pipeline; its refusals need an app context
+    from blueprints.inbox import MAX_FILES, _each_image, _Refused  # the upload's; its refusals need an app context
 
-    stored, skipped = [], []
+    stored, skipped, small = [], [], []
+
+    def keep(image):
+        if min(image.size) < MIN_SIDE:
+            small.append(image.size)
+        else:
+            stored.append((*inbox.store_jpeg(image, "original"), inbox.measure(image)))
+
     try:
         for name, data in attachments:
+            small.clear()
             try:
-                images = _images(io.BytesIO(data), MAX_FILES - len(stored))
+                _each_image(io.BytesIO(data), MAX_FILES - len(stored), keep)
             except _Refused:
                 skipped.append(name)
                 continue
-            documents = [image for image in images if min(image.size) >= MIN_SIDE]
-            if len(documents) < len(images):
+            if small:
                 skipped.append(name)
-            for image in documents:
-                stored.append((*inbox.store_jpeg(image, "original"), inbox.measure(image)))
     except BaseException:
         inbox.remove_files(path for path, _, _ in stored)
         raise

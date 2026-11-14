@@ -163,15 +163,24 @@ def private_path(relative):
     return os.path.join(settings.service.private_upload_folder, relative)
 
 
-def store_jpeg(image, folder, name=None):
-    """
-    Saves `image` as a JPEG without metadata (EXIF, GPS, XMP) as inkorg/<folder>/<name>.jpg under
-    PRIVATE_UPLOAD_FOLDER; returns (relative path, sha256). A new name is random; a given one is replaced.
-    """
+def jpeg_bytes(image):
+    """`image` as a JPEG without metadata (EXIF, GPS, XMP)."""
     image.info = {}  # nothing of the uploaded file's metadata may reach the saved one
     buffer = io.BytesIO()
     image.save(buffer, "JPEG", quality=JPEG_QUALITY)
-    data = buffer.getvalue()
+    return buffer.getvalue()
+
+
+def store_jpeg(image, folder, name=None):
+    """write_jpeg of `image` as a JPEG without metadata."""
+    return write_jpeg(jpeg_bytes(image), folder, name)
+
+
+def write_jpeg(data, folder, name=None):
+    """
+    Saves the JPEG `data` as inkorg/<folder>/<name>.jpg under PRIVATE_UPLOAD_FOLDER; returns (relative path,
+    sha256). A new name is random; a given one is replaced.
+    """
     relative = f"inkorg/{folder}/{name or uuid.uuid4().hex}.jpg"
     path = private_path(relative)
     os.makedirs(os.path.dirname(path), exist_ok=True)

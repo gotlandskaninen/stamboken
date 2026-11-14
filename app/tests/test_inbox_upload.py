@@ -104,6 +104,37 @@ class TestUpload(InboxTest):
         self.assertNotEqual(resp.status_code, 500)
         self.assertIn("lag_upplosning", resp.get_json()["documents"][0]["warnings"])
 
+    def test_one_decoded_image_at_a_time(self):
+        """Ten large images in one request: each is closed before the next is decoded, a PDF page by page too."""
+        live, peak = set(), []
+        convert, close = Image.Image.convert, Image.Image.close
+
+        def counting_convert(image, mode=None, *args, **kwargs):
+            result = convert(image, mode, *args, **kwargs)
+            if mode == "RGB":  # the decoded image the pipeline works on
+                live.add(id(result))
+                peak.append(len(live))
+            return result
+
+        def counting_close(image):
+            live.discard(id(image))
+            return close(image)
+
+        large = [(f"{n}.jpg", encoded(photo((2000, 2600), seed=n), quality=20)) for n in range(10)]
+        pages = [("tio.pdf", pdf(*[photo(seed=n) for n in range(10)]))]
+        self.login("owner")
+        for name, files in (("ten photos", large), ("ten pages", pages)):
+            with (
+                self.subTest(name),
+                mock.patch.object(Image.Image, "convert", counting_convert),
+                mock.patch.object(Image.Image, "close", counting_close),
+            ):
+                live.clear()
+                peak.clear()
+                resp = self.upload(*files)
+                self.assertEqual(resp.status_code, 201, resp.get_json())
+                self.assertEqual((len(peak), max(peak)), (10, 1))
+
     def test_refusals(self):
         self.login("owner")
         too_many_pixels = encoded(Image.new("1", (8000, 6000)), "PNG")
