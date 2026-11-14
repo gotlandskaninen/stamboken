@@ -4,6 +4,7 @@ No model runs here: the HTTP call is faked.
 """
 
 import base64
+import io
 import json
 import unittest
 from unittest import mock
@@ -11,6 +12,7 @@ from unittest import mock
 import requests
 import utils.inbox_interpreter as interpreter
 import utils.settings as settings
+from PIL import Image, ImageDraw, ImageStat
 
 
 def _answer(content, status=200):
@@ -67,6 +69,41 @@ class TestInterpreter(unittest.TestCase):
         with mock.patch.object(requests, "post", side_effect=requests.Timeout("slut på tid")):
             with self.assertRaises(interpreter.InterpretationError):
                 interpreter.interpret(b"jpeg-bytes")
+
+    def test_the_photo_is_turned_bounded_and_enhanced(self):
+        # Pale green paper with pencil strokes in the top left corner; turned 90 degrees clockwise they are top right.
+        photo = Image.new("RGB", (3000, 4000), (200, 230, 190))
+        draw = ImageDraw.Draw(photo)
+        for y in range(100, 500, 12):
+            draw.line([(100, y), (500, y)], fill=(90, 90, 100), width=4)
+        source = io.BytesIO()
+        photo.save(source, "JPEG")
+        for rotation, size in [(0, (1500, 2000)), (90, (2000, 1500)), (270, (2000, 1500))]:
+            with self.subTest(rotation):
+                source.seek(0)
+                with Image.open(io.BytesIO(interpreter.prepare_image(source, rotation))) as prepared:
+                    self.assertEqual((prepared.format, prepared.mode, prepared.size), ("JPEG", "L", size))
+                    w, h = size
+
+                    def mean(box):
+                        return ImageStat.Stat(prepared.crop(box)).mean[0]
+
+                    corners = {
+                        "top left": mean((50, 50, 250, 250)),
+                        "top right": mean((w - 250, 50, w - 50, 250)),
+                        "bottom left": mean((50, h - 250, 250, h - 50)),
+                    }
+                written = {0: "top left", 90: "top right", 270: "bottom left"}[rotation]
+                blank = [v for k, v in corners.items() if k != written]
+                self.assertTrue(all(v > 240 for v in blank), corners)  # the paper turns white
+                self.assertLess(corners[written], min(blank) - 50, corners)
+
+    def test_a_small_photo_is_not_enlarged(self):
+        source = io.BytesIO()
+        Image.new("RGB", (800, 600), (220, 220, 220)).save(source, "PNG")
+        source.seek(0)
+        with Image.open(io.BytesIO(interpreter.prepare_image(source, 180))) as prepared:
+            self.assertEqual(prepared.size, (800, 600))
 
     def test_a_second_interpreter_is_one_more_entry(self):
         with mock.patch.dict(interpreter.INTERPRETERS, {"annan": lambda image, schema: {"namn": "Testa"}}):

@@ -5,13 +5,18 @@ registry, and only a human saves. INLASNING_TOLKARE picks the interpreter; "av",
 """
 
 import base64
+import io
 import json
 
+import numpy as np
 import requests
+from PIL import Image, ImageFilter
 
 import utils.settings as settings
 
 TIMEOUT = 900  # seconds: a model on CPU takes minutes per photo, and longer while it loads
+MAX_SIDE = 2000  # pixels, the longest side of the photo the interpreter gets
+_BACKGROUND_SCALE = 4  # the paper's background is estimated on a copy this many times smaller
 
 _ANCESTOR = {
     "type": "object",
@@ -54,6 +59,35 @@ PROMPT = (
 
 class InterpretationError(Exception):
     """The interpreter gave no usable answer: the server is down, timed out, or answered something else."""
+
+
+def prepare_image(source, rotation):
+    """
+    The photo (a path or a file) as the interpreter gets it, a greyscale JPEG: turned `rotation` degrees
+    clockwise as the handler set it, at most MAX_SIDE pixels on its longest side, and enhanced as in the trial.
+    The green channel fades the form, which is printed in green, and keeps the writing; dividing by the
+    paper's background takes away shadows and uneven light; the stretch darkens the midtones so that faint
+    pencil shows.
+    """
+    with Image.open(source) as original:
+        image = original.convert("RGB").rotate(-rotation, expand=True)
+    image.thumbnail((MAX_SIDE, MAX_SIDE))
+    green = image.getchannel("G")
+    # A closing (max, then min) wipes out the writing and a median smooths what is left. On a smaller copy,
+    # since Pillow's rank filters at full size take minutes; the sizes match the trial's at full size.
+    background = (
+        green.reduce(_BACKGROUND_SCALE)
+        .filter(ImageFilter.MaxFilter(7))
+        .filter(ImageFilter.MinFilter(7))
+        .filter(ImageFilter.MedianFilter(7))
+        .resize(green.size, Image.Resampling.BILINEAR)
+    )
+    level = np.clip(np.asarray(green, np.float32) / np.maximum(np.asarray(background, np.float32), 1) * 255, 0, 255)
+    low = np.percentile(level, 0.5)
+    level = np.clip((level - low) / max(255 - low, 1), 0, 1)
+    buffer = io.BytesIO()
+    Image.fromarray((255 * level**2).astype(np.uint8)).save(buffer, "JPEG", quality=90)
+    return buffer.getvalue()
 
 
 def _gemma(image, schema):
