@@ -44,7 +44,7 @@ from utils.database import Weight  # isort: skip
 from utils.database import next_individual_number  # isort: skip
 from utils.database import ACTIVE_WINDOW_DAYS  # isort: skip
 from utils.database import OUTSIDE_GENEBANK_HERDS  # isort: skip
-from utils.database import BANK_PRIVACY_FIELDS, PRIVACY_LEVELS  # isort: skip
+from utils.database import BANK_PRIVACY_FIELDS, PRIVACY_LEVELS, account_end  # isort: skip
 from utils.database import ht_not_voided  # isort: skip
 from utils.database import ht_order_desc  # isort: skip
 from utils.database import latest_ht_per_individual  # isort: skip
@@ -3383,8 +3383,11 @@ def get_yearly_report_by_round(herd_id, round_id):
         return None
 
 
-def get_yearly_reports(round_id: int, genebank_id: int) -> list[dict]:
-    """Get all yearly reports for a specific round and genebank."""
+def get_yearly_reports(round_id: int, genebank_id: int, full_account: bool = False) -> list[dict]:
+    """
+    Get all yearly reports for a specific round and genebank. The bank account number is
+    cut to its last two digits unless `full_account` (admin, matrikel_admin).
+    """
     try:
         with DATABASE.atomic():
             reports = (
@@ -3464,7 +3467,7 @@ def get_yearly_reports(round_id: int, genebank_id: int) -> list[dict]:
                     "email": (r.herd.email if "noEmail" not in allow_publication else None),
                     "phone": (r.herd.mobile_phone if "noPhone" not in allow_publication else None),
                     "address": (r.herd.physical_address if "noAddress" not in allow_publication else None),
-                    "bank_account": r.herd.bank_account_number,
+                    "bank_account": r.herd.bank_account_number if full_account else account_end(r.herd.bank_account_number),
                     "bank_name": r.herd.bank_name,
                     # Additional fields
                     "eligible_for_support": form_data.get("eligibleForSupport", False),
@@ -3494,10 +3497,10 @@ def format_disease_cases(diseases: dict) -> str:
     return "; ".join(cases) if cases else "Inga rapporterade sjukdomsfall"
 
 
-def export_yearly_reports_csv(round_id: int, genebank_id: int) -> str:
+def export_yearly_reports_csv(round_id: int, genebank_id: int, full_account: bool = False) -> str:
     """Export yearly reports as CSV data."""
     try:
-        reports = get_yearly_reports(round_id, genebank_id)
+        reports = get_yearly_reports(round_id, genebank_id, full_account)
 
         # CSV Headers in Swedish - exactly matching the table view
         headers = [

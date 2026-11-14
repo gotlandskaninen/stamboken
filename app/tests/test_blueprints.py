@@ -594,6 +594,19 @@ class TestAuditBlueprint(DatabaseTest):
         self.assertIsInstance(data["data"], list)
         self.assertGreater(len(data["data"]), 0)
 
+    def test_herd_audit_history_cuts_the_bank_account_for_a_manager(self):
+        herd = self.herds[0]
+        herd.bank_account_number = "1234-5"
+        herd.save()
+        for username, expected in (("admin", "1234-5"), ("man", "••45")):
+            self.client.get("/api/logout")
+            self.login(username)
+            response = self.client.get(f"/api/audit-log/herd/{herd.id}")
+            self.assertEqual(response.status_code, 200)
+            seen = [e["new_data"].get("bank_account_number") for e in response.get_json()["data"] if e["new_data"]]
+            self.assertIn(expected, seen)
+            self.assertNotIn("1234-5" if expected != "1234-5" else "never", seen)
+
     def test_get_audit_history_omits_editor_ip_address(self):
         """The editor's IP is PII (purge_user_audit_pii NULLs it, the admin reader
         omits it): neither a genebank manager nor an admin gets it per record."""

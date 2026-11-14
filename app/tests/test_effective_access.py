@@ -188,10 +188,12 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
                 data = herd.filtered_dict(user)
                 self.assertNotIn("bank_account_number", data)
                 self.assertNotIn("bank_name", data)
-            for user in (self.manager, self.admin):
-                data = herd.filtered_dict(user)
-                self.assertEqual(data.get("bank_account_number"), "1234-5")
-                self.assertEqual(data.get("bank_name"), "Bank")
+            data = herd.filtered_dict(self.admin)
+            self.assertEqual(data.get("bank_account_number"), "1234-5")
+            self.assertEqual(data.get("bank_name"), "Bank")
+            data = herd.filtered_dict(self.manager)
+            self.assertEqual(data.get("bank_account_number"), "••45")
+            self.assertEqual(data.get("bank_name"), "Bank")
 
     def test_bank_fields_still_shown_to_herd_user(self):
         user = self._caretaker_with_grant("bank-caretaker@example.com", self.herds[1])
@@ -232,12 +234,36 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
         herd = db.Herd.get(db.Herd.herd == "ZZ99")
         self.assertEqual(herd.bank_name_privacy, "private")
 
+    def test_matrikel_admin_sees_the_whole_account(self):
+        self.herds[1].bank_account_number = "1234-5"
+        self.herds[1].save()
+        user = self._user("matrikel@example.com")
+        user.add_role("matrikel_admin", None)
+        self.assertEqual(self.herds[1].filtered_dict(user).get("bank_account_number"), "1234-5")
+
+    def test_yearly_report_cuts_the_account_unless_full_account(self):
+        herd = self.herds[0]
+        herd.bank_account_number = "1234-5"
+        herd.save()
+        rnd = db.YearlyReportRound.create(
+            report_year=2025, start_date=date(2025, 12, 31), end_date=date(2026, 3, 30), created_by=self.admin
+        )
+        db.YearlyHerdReport.create(
+            herd=herd, report_date=date(2026, 1, 1), generated_by=self.manager, name="2025", data="{}",
+            publish=False, publish_tel=False, publish_email=False, publish_address=False, round=rnd,
+        )  # fmt: skip
+        gb = herd.genebank_id
+        self.assertEqual(da.get_yearly_reports(rnd.id, gb)[0]["bank_account"], "••45")
+        self.assertEqual(da.get_yearly_reports(rnd.id, gb, True)[0]["bank_account"], "1234-5")
+        self.assertIn("••45", da.export_yearly_reports_csv(rnd.id, gb))
+        self.assertNotIn("1234-5", da.export_yearly_reports_csv(rnd.id, gb))
+
     def test_filtered_dict_manager_of_genebank_gets_private_level(self):
         self.herds[1].bank_account_number = "1234-5"  # bank_account_number_privacy="private"
         self.herds[1].save()
         data = self.herds[1].filtered_dict(self.manager)
         self.assertEqual(data.get("www"), "www2")  # www_privacy="private"
-        self.assertEqual(data.get("bank_account_number"), "1234-5")
+        self.assertEqual(data.get("bank_account_number"), "••45")
 
     def test_filtered_dict_manager_of_other_genebank_gets_public_level(self):
         user = self._user("othermanager@example.se")
