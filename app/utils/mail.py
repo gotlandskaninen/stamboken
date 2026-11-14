@@ -289,10 +289,13 @@ _ENHANCED = re.compile(r"\b([245]\.\d{1,3}\.\d{1,3})\b")
 
 
 def _classify(code, text):
-    """(result, smtp_code) of an SMTP error reply. Every 5xx that is not systemic counts as permanent."""
+    """
+    (result, smtp_code) of an SMTP error reply. A refusal at RCPT or DATA is about this recipient or this
+    message, whatever its code (5.7.x policy too), unless the relay is closing the connection (421).
+    """
     enhanced = _ENHANCED.search(text)
     smtp_code = enhanced.group(1) if enhanced else str(code)
-    if code == 421 or smtp_code in ("5.7.0", "5.7.1"):
+    if code == 421:
         return "systemic", smtp_code
     if 400 <= code < 500:
         return "temporary", smtp_code
@@ -357,12 +360,38 @@ def _failed(row, now, result, smtp_code, detail, address=None):
     return _finish(row, now, attempt, attempts=attempts, last_error=detail, **fields)
 
 
+def _strikes(row, now):
+    """
+    How many of this row's systemic outcomes, since its last counted one (a retry starts over), were followed
+    by other mail going through before the next: a refusal that keeps hitting only this mail is its own.
+    """
+    cursor = DB_PROXY.execute_sql(
+        """
+        SELECT count(*) FROM (
+            SELECT at, lead(at, 1, %s) OVER (ORDER BY at, id) AS next_at FROM mail_attempt
+            WHERE message_id = %s AND result = 'systemic' AND at > coalesce(
+                (SELECT max(at) FROM mail_attempt WHERE message_id = %s AND result <> 'systemic'), '-infinity')
+        ) own
+        WHERE EXISTS (SELECT 1 FROM mail_attempt o WHERE o.result = 'sent' AND o.at > own.at AND o.at < own.next_at)
+        """,
+        (now, row.id, row.id),
+    )
+    return cursor.fetchone()[0]
+
+
 def _systemic(row, now, smtp_code, detail):
-    """Not counted on the mail: the row goes back as it was, the run stops and the sender pauses."""
+    """
+    Not counted on the mail: the run stops, the sender pauses, and the row waits until after the pause so the
+    mail behind it goes first. The third time while other mail went through in between, the row fails.
+    """
     detail = _scrub(detail)
+    if _strikes(row, now) >= 2:
+        _failed(row, now, "permanent", smtp_code, detail)
+        return False  # the connection may not survive what the relay said; the next run reconnects
+    paused_until = now + PAUSE_AFTER_SYSTEMIC
     attempt = {"result": "systemic", "smtp_code": smtp_code, "detail": detail}
-    _finish(row, now, attempt, status="queued", last_error=detail)
-    MailSender.update(paused_until=now + PAUSE_AFTER_SYSTEMIC).where(MailSender.id == 1).execute()
+    _finish(row, now, attempt, status="queued", next_attempt_at=paused_until + RETRY_DELAYS[0], last_error=detail)
+    MailSender.update(paused_until=paused_until).where(MailSender.id == 1).execute()
     return False
 
 
@@ -408,8 +437,9 @@ def _send_one(row, relay, now):
         relay.send(msg, address)
     except _Systemic as exc:
         return _systemic(row, now, exc.smtp_code, exc.detail)
-    except smtplib.SMTPSenderRefused as exc:  # our own sender refused: every mail would fail alike
-        return _smtp_error(row, now, exc.smtp_code, exc.smtp_error, None, systemic=True)
+    except smtplib.SMTPSenderRefused as exc:  # MAIL FROM: our sender or IP refused, every mail would fail alike...
+        # ...except 552, the relay's size limit checked against SIZE=, which is this mail's own failure
+        return _smtp_error(row, now, exc.smtp_code, exc.smtp_error, None, systemic=exc.smtp_code != 552)
     except smtplib.SMTPRecipientsRefused as exc:
         code, text = next(iter(exc.recipients.values()))
         return _smtp_error(row, now, code, text, address)

@@ -358,13 +358,13 @@ class TestErrorClasses(MailTest):
         first, second = self.queue("a@example.org"), self.queue("b@example.org")
         denied = smtplib.SMTPSenderRefused(550, b"5.7.1 Invalid credentials for relay", settings.mail.sender)
         relay = self.relay(replies=[denied])
-        due = self.row(first).next_attempt_at
         self.assertEqual(mail.send_pending(self.now), 1)  # the run stops at the first
         row = self.row(first)
-        self.assertEqual((row.status, row.attempts, row.next_attempt_at), ("queued", 0, due))
+        self.assertEqual((row.status, row.attempts), ("queued", 0))
         self.assertEqual(self.row(second).status, "queued")
         self.assertEqual([(a.result, a.smtp_code) for a in self.attempts(first)], [("systemic", "5.7.1")])
         self.assertEqual(db.MailSender.get_by_id(1).paused_until, self.now + mail.PAUSE_AFTER_SYSTEMIC)
+        self.assertGreater(row.next_attempt_at, self.now + mail.PAUSE_AFTER_SYSTEMIC)
 
         later = self.now + timedelta(minutes=1)
         self.assertEqual(mail.send_pending(later), 0)  # paused, but the heartbeat still beats
@@ -385,6 +385,70 @@ class TestErrorClasses(MailTest):
         self.assertEqual(self.row(second).status, "queued")
         self.assertIsNotNone(db.MailSender.get_by_id(1).paused_until)
         self.assertEqual(relay.sent, [])
+
+    def test_policy_refusal_of_one_recipient_fails_only_that_mail(self):
+        """5.7.1 at RCPT is about this recipient, not the relay: the next mail goes out in the same run."""
+        first, second = self.queue("a@example.org"), self.queue("b@example.org")
+        refusal = _refused(550, "5.7.1 Recipient address rejected by policy <a@example.org>", "a@example.org")
+        relay = self.relay(replies=[refusal])
+        self.assertEqual(mail.send_pending(self.now), 2)
+        self.assertEqual((self.row(first).status, self.row(first).attempts), ("failed", 1))
+        self.assertEqual([(a.result, a.smtp_code) for a in self.attempts(first)], [("permanent", "5.7.1")])
+        self.assertEqual([_row_id(msg) for msg, _, _ in relay.sent], [second])
+        self.assertIsNone(db.MailSender.get_by_id(1).paused_until)
+
+    def test_size_limit_fails_only_that_mail(self):
+        """552 at MAIL FROM (smtplib sends SIZE=) or at DATA is this message's own failure."""
+        too_big = b"5.3.4 Message size exceeds fixed maximum message size"
+        at_mail_from, at_data, fine = (self.queue(f"{x}@example.org") for x in "abc")
+        relay = self.relay(
+            replies=[smtplib.SMTPSenderRefused(552, too_big, settings.mail.sender), smtplib.SMTPDataError(552, too_big)]
+        )
+        self.assertEqual(mail.send_pending(self.now), 3)
+        for row_id in (at_mail_from, at_data):
+            self.assertEqual((self.row(row_id).status, self.row(row_id).attempts), ("failed", 1))
+            self.assertEqual([(a.result, a.smtp_code) for a in self.attempts(row_id)], [("permanent", "5.3.4")])
+        self.assertEqual([_row_id(msg) for msg, _, _ in relay.sent], [fine])
+        self.assertIsNone(db.MailSender.get_by_id(1).paused_until)
+
+    def test_systemic_row_does_not_head_the_queue_after_the_pause(self):
+        first, second = self.queue("a@example.org"), self.queue("b@example.org")
+        denied = smtplib.SMTPSenderRefused(550, b"5.7.1 Invalid credentials for relay", settings.mail.sender)
+        relay = self.relay(replies=[denied])
+        mail.send_pending(self.now)
+        self.assertEqual(mail.send_pending(db.MailSender.get_by_id(1).paused_until), 1)
+        self.assertEqual([_row_id(msg) for msg, _, _ in relay.sent], [second])
+        self.assertEqual(self.row(first).status, "queued")
+
+    def test_row_refused_three_times_while_other_mail_goes_through_fails(self):
+        stuck = self.queue("stuck@example.org")
+        denied = smtplib.SMTPSenderRefused(550, b"5.7.1 Sender rejected", settings.mail.sender)
+
+        def gate(msg):
+            if _row_id(msg) == stuck:
+                raise denied
+
+        self.relay(gate=gate)
+        results = lambda: [a.result for a in self.attempts(stuck)]  # noqa: E731
+        for _ in range(3):  # nothing else goes out between the refusals: the relay's fault, never the mail's
+            mail.send_pending(self.row(stuck).next_attempt_at)
+        self.assertEqual(results(), ["systemic"] * 3)
+        for i in range(2):  # now other mail is accepted in between
+            other = self.queue(f"other{i}@example.org")
+            self.assertEqual(mail.send_pending(db.MailSender.get_by_id(1).paused_until), 1)
+            self.assertEqual(self.row(other).status, "sent")
+            mail.send_pending(self.row(stuck).next_attempt_at)
+        row = self.row(stuck)
+        self.assertEqual((row.status, row.attempts), ("failed", 1))
+        self.assertEqual(results(), ["systemic"] * 4 + ["permanent"])
+
+        # "Försök igen" starts the count over.
+        later = self.attempts(stuck)[-1].at + timedelta(minutes=1)
+        db.MailMessage.update(status="queued", attempts=0, next_attempt_at=later).where(
+            db.MailMessage.id == stuck
+        ).execute()
+        mail.send_pending(later)
+        self.assertEqual((self.row(stuck).status, results()[-1]), ("queued", "systemic"))
 
     def test_unexpected_send_error_counts_as_temporary(self):
         first, second = self.queue("a@example.org"), self.queue("b@example.org")
