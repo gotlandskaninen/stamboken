@@ -196,7 +196,8 @@ def _branch(registry, raw, struck, role, fields, checks):
     A parent and its parents (rule 3). The parent is confirmed when its number is in the registry and the
     registry's parents of it agree with the certificate's: one of them at least, and neither against. Its parents
     are then proposed from the registry (rule 3: only under a confirmed parent). A disagreement marks the whole
-    branch, since the parent may as well be the one misread. Returns (confirmed parent or None, the rabbit found).
+    branch, since the parent may as well be the one misread. Returns (the confirmed parent, the rabbit found if
+    nothing ruled it out but a lack of grandparents to compare), each None otherwise.
     """
     key, father_key, mother_key, sexes, label = _PARENTS[role]
     entry = _entry(raw, key)
