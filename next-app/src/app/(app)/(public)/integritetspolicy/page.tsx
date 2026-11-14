@@ -171,6 +171,8 @@ export default function IntegritetspolicyPage() {
             <p>
               Vi sparar uppgifterna så länge du är medlem. När medlemskapet
               upphör tar vi bort eller anonymiserar uppgifterna inom 12 månader.
+              Äldre medlemsförteckningar som finns kvar som filer eller på
+              papper tar vi bort efter två år.
             </p>
           </Section>
 
@@ -201,14 +203,11 @@ export default function IntegritetspolicyPage() {
               genbanksintyg förvaras hos genbanksansvarig och förstörs efter tio
               år. Äldre kopior av intyg kan innehålla köparens namn och adress.
               Sammanställningen av årsrapporterna, med bankkonton för
-              utbetalningen, förvaras hos genbanksansvarig och i föreningens
-              Google Drive.{" "}
-              <mark>
-                [BESLUT: äldre medlemsmatriklar på papper och alla
-                genbankskontrakt sparas i dag utan tidsgräns, och
-                sammanställningen av årsrapporter har ingen bestämd lagringstid.
-                Vad ska gälla?]
-              </mark>
+              utbetalningen, förvaras hos genbanksansvarig och i en låst mapp i
+              föreningens Google Drive, som bara genbanksansvariga och
+              systemansvarig kommer åt. Den sparas i sju år, som underlag för
+              utbetalningarna. Genbankskontraktet sparar vi så länge
+              genbanksbesättningen finns och i tio år därefter.
             </p>
             <p>
               Uppgifterna behövs för genbanksavtalet mellan dig och föreningen
