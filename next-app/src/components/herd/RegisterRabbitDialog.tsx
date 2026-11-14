@@ -196,7 +196,7 @@ export function RegisterRabbitDialog({
     } catch {
       result = {
         success: false as const,
-        error: t("litterRoster.promoteError"),
+        error: t("litterRoster.suggestionError"),
         errorTitle: undefined,
       };
     }
