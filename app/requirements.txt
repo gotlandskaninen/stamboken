@@ -37,6 +37,9 @@ pyHanko>=0.28.0
 # QR Codes & Images
 qrcode==8.2
 Pillow==13.0.0
+# The intake queue: iPhone photos (HEIC) and PDFs, rendered page by page
+pillow-heif==1.8.1
+pypdfium2==5.15.2
 
 # HTTP & OAuth
 Requests==2.33.0
