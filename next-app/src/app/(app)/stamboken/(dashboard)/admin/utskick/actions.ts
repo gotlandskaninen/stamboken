@@ -24,5 +24,10 @@ async function post(
   revalidatePath("/stamboken/admin/utskick");
 }
 
-export const retryMessage = (id: number) => post(id, "retry");
-export const cancelMessage = (id: number) => post(id, "cancel");
+export async function retryMessage(id: number) {
+  return post(id, "retry");
+}
+
+export async function cancelMessage(id: number) {
+  return post(id, "cancel");
+}
