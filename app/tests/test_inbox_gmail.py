@@ -8,6 +8,7 @@ isort:skip_file
 import base64
 import io
 import os
+import time
 from datetime import date, timedelta
 from email.message import EmailMessage
 from email.utils import make_msgid
@@ -419,6 +420,23 @@ class TestItemsFromMail(GmailTest):
         self.fake.deliver(msg)
         self.read()
         self.assertEqual(self.items()[0].message, "Hej!\nIntyget & beviset\nkommer snart")
+
+    def test_a_hostile_html_body_is_read_in_bounded_time(self):
+        for name, body in (
+            ("unclosed tags", "<" * 1024 * 1024),
+            ("unclosed comments", "<!--" * 256 * 1024),
+            ("unclosed script", "<script>" + "x<" * 512 * 1024),
+            ("a head left open", "<html><head><title>x</title><body><p>Hej</p>" + "<b>" * 300_000),
+        ):
+            with self.subTest(name):
+                msg = message()
+                msg.set_content(body, subtype="html")
+                started = time.monotonic()
+                text = inbox_gmail._text(msg)
+                self.assertLess(time.monotonic() - started, 0.5)
+                self.assertLessEqual(len(text or ""), inbox_gmail.MAX_TEXT)
+                if name == "a head left open":
+                    self.assertEqual(text, "Hej")
 
     def test_a_reply_brings_its_photos_as_new_documents_on_the_item(self):
         self.holder(self.herds[0])

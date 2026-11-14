@@ -10,7 +10,6 @@ so a message read again after a crash in between is only labelled. A message tha
 
 import email
 import hmac
-import html
 import io
 import logging
 import math
@@ -19,6 +18,7 @@ from datetime import datetime, timedelta, timezone
 from email import policy
 from email.parser import HeaderParser
 from email.utils import parseaddr
+from html.parser import HTMLParser
 
 from peewee import fn
 from PIL import Image
@@ -45,6 +45,7 @@ logger = logging.getLogger("herdbook.inbox_gmail")
 
 READ, FAILED, DEMO = "Inläst", "Fel vid inläsning", "Demo"
 MAX_TEXT = 10_000  # characters of a mail's text kept on the item; shortcut: cut, raise it if handlers miss text
+MAX_BODY = 200_000  # characters of a mail's body read at all, before anything parses it: bounds the work
 RELEASE_AFTER = timedelta(days=30)  # a closed item's sender address goes by then, whatever is still queued
 CROP_SIDE = 2000  # pixels, the longest side of the photo's part a question carries
 STALLED_AFTER = timedelta(minutes=20)  # four missed runs: the reader has stopped
@@ -57,10 +58,38 @@ _QUOTED = re.compile(r'"(?:[^"\\]|\\.)*"')
 _COMMENT = re.compile(r"\([^()]*\)")
 _SPF = re.compile(r"spf=pass\s.*\bsmtp\.mailfrom=(\S+)", re.I | re.S)
 _DKIM = re.compile(r"dkim=pass\s+header\.[id]=@?([a-z0-9.-]+)(?:\s|$)", re.I)
-# An HTML-only mail as text: what is never shown goes, a line break per paragraph, then every tag.
-_HIDDEN = re.compile(r"(?is)<(script|style|head)\b.*?</\1\s*>|<!--.*?-->")
-_BREAK = re.compile(r"(?i)<br\s*/?>|</(?:p|div|li|tr|h\d)\s*>")
-_TAG = re.compile(r"<[^>]*>")
+
+
+class _HtmlText(HTMLParser):
+    """
+    An HTML-only mail as text, by the standard library's parser (linear, where regexes over tags were quadratic):
+    what is never shown goes (script, style, head, comments), a line break per paragraph, every tag.
+    """
+
+    HIDDEN = {"script", "style", "head"}
+    BREAKS = {"p", "div", "li", "tr", "h1", "h2", "h3", "h4", "h5", "h6"}
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts, self.hidden = [], 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag in self.HIDDEN:
+            self.hidden += 1
+        elif tag == "body":
+            self.hidden = 0  # a head left open hides nothing of the body
+        elif tag == "br":
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in self.HIDDEN:
+            self.hidden = max(self.hidden - 1, 0)
+        elif tag in self.BREAKS:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        if not self.hidden:
+            self.parts.append(data)
 
 
 def run(gmail=None):
@@ -205,10 +234,12 @@ def _text(msg):
     part = msg.get_body(preferencelist=("plain", "html"))
     if part is None:
         return None
-    text = _content(part)
+    text = _content(part)[:MAX_BODY]
     if part.get_content_subtype() == "html":
-        text = html.unescape(_TAG.sub("", _BREAK.sub("\n", _HIDDEN.sub("", text))))
-        text = "\n".join(" ".join(line.split()) for line in text.splitlines() if line.strip())
+        parser = _HtmlText()
+        parser.feed(text)
+        parser.close()
+        text = "\n".join(" ".join(line.split()) for line in "".join(parser.parts).splitlines() if line.strip())
     return text.strip()[:MAX_TEXT] or None
 
 
@@ -281,7 +312,7 @@ def _delivery_report(msg):
     for part in msg.walk():
         kind = part.get_content_type()
         if kind == "text/plain" and text is None:
-            text = _content(part).strip()[:MAX_TEXT] or None
+            text = _content(part)[:MAX_BODY].strip()[:MAX_TEXT] or None
         elif kind == "message/delivery-status":
             for fields in part.get_payload():
                 diagnostic = diagnostic or fields.get("Diagnostic-Code") or fields.get("Status")

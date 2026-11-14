@@ -837,7 +837,7 @@ och inställningar: [inkorg-gmail.md](inkorg-gmail.md)). Varje mejl i inkorgen b
 - en ny post, `mail` med bilagor och `meddelande` utan.
 
 En ny post får avsändarens adress i `sender_address`, mejlets text i `message` (en HTML-text
-utan taggar) och en gissad besättning. Bilagorna går genom samma kontroller som en uppladdning
+utan taggar; bara de första 200 000 tecknen läses och högst 10 000 sparas) och en gissad besättning. Bilagorna går genom samma kontroller som en uppladdning
 ([Ladda upp](#ladda-upp)): JPEG, PNG, WebP, HEIC och PDF, högst 10 MB styck och högst 10 bilder
 per mejl. Övriga bilagor sparas inte, men deras namn står i händelsen `inkommen`. Ett foto som
 skickats inbäddat i texten räknas som en bilaga. Genbanksansvarig och hjälpare i postens
