@@ -22,6 +22,7 @@ class CertState(StrEnum):
 class Event(StrEnum):
     REGISTER_WITH_PAPER = "register_with_paper"  # the paper number written when the rabbit is created
     ASSIGN_PAPER = "assign_paper"  # AssignPaperCertificate; retires the digital certificate
+    CLEAR_PAPER = "clear_paper"  # AssignPaperCertificate with a blank number, as the legacy form sends it
     ISSUE_NUMBER = "issue_number"  # IssueDigitalCertificate / assign_certificate_number; clears the paper number
     ISSUE_PDF = "issue_pdf"  # generate_and_store: the new current row; first issue and re-issue alike
 
@@ -37,6 +38,9 @@ S = CertState
 TRANSITIONS: tuple[Transition, ...] = (
     Transition(S.NONE, Event.REGISTER_WITH_PAPER, S.PAPER),
     *[Transition(s, Event.ASSIGN_PAPER, S.PAPER) for s in S],
+    # A blank number never removes a digital certificate: no row from the digital states.
+    Transition(S.NONE, Event.CLEAR_PAPER, S.NONE),
+    Transition(S.PAPER, Event.CLEAR_PAPER, S.NONE),
     Transition(S.NONE, Event.ISSUE_NUMBER, S.DIGITAL_NUMBER),
     Transition(S.PAPER, Event.ISSUE_NUMBER, S.DIGITAL_NUMBER),
     Transition(S.DIGITAL_NUMBER, Event.ISSUE_PDF, S.DIGITAL),
@@ -47,6 +51,7 @@ TRANSITIONS: tuple[Transition, ...] = (
 EVENTS = {
     Event.REGISTER_WITH_PAPER: ("POST /api/v2/individual med pappersintyg", "den som registrerar kaninen"),
     Event.ASSIGN_PAPER: ("`AssignPaperCertificate` (PATCH /api/individual)", "manager, admin; ägare bara utan intyg"),
+    Event.CLEAR_PAPER: ("`AssignPaperCertificate` med tomt nummer (PATCH /api/individual)", "manager, admin"),
     Event.ISSUE_NUMBER: (
         "`IssueDigitalCertificate`, `assign_certificate_number`",
         "den som får utfärda intyg (uppfödaren, manager, admin)",

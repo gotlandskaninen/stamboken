@@ -76,12 +76,17 @@ def make_machine(case, clients, stats, covered):
                 if "verification_token" in response.json:
                     self.tokens.append(response.json["verification_token"])
 
-        @rule(actor=st.sampled_from(["manager", "viewer"]))
-        def assign_paper(self, actor):
-            body = {"id": kit.id, "number": kit.number, "herd": "G1", "certificate": f"PAP-{next(NUMBERS)}"}
-            self._step(
-                "ASSIGN_PAPER", actor, [PAPER], lambda c: c.patch("/api/individual", json=body), successes=(200,)
-            )
+        @rule(actor=st.sampled_from(["manager", "viewer"]), blank=st.booleans())
+        def assign_paper(self, actor, blank):
+            """A paper number, or the blank one the legacy form sends to clear it."""
+            body = {
+                "id": kit.id,
+                "number": kit.number,
+                "herd": "G1",
+                "certificate": "" if blank else f"PAP-{next(NUMBERS)}",
+            }
+            name, events = ("CLEAR_PAPER", [Event.CLEAR_PAPER]) if blank else ("ASSIGN_PAPER", [PAPER])
+            self._step(name, actor, events, lambda c: c.patch("/api/individual", json=body), successes=(200,))
 
         # The POST endpoint refuses a paper-certified rabbit (convert via update), which the table would allow.
         @precondition(lambda self: self.model != CertState.PAPER)
@@ -102,7 +107,10 @@ def make_machine(case, clients, stats, covered):
         def legacy_v1(self):
             """Data from before the PDF rows: a digital number and no row."""
             number = 500000 + next(NUMBERS)
-            db.Individual.update(digital_certificate=number).where(db.Individual.id == kit.id).execute()
+            # No paper number, not even a cleared "": issuing a digital number always nulls it.
+            db.Individual.update(digital_certificate=number, certificate=None).where(
+                db.Individual.id == kit.id
+            ).execute()
             self.model = CertState.DIGITAL_NUMBER
             stats["legacy v1"] += 1
 
@@ -123,6 +131,29 @@ def make_machine(case, clients, stats, covered):
 
 @unittest.skipUnless(_USE_POSTGRES, "needs Postgres")
 class TestCertificateStateMachine(CertV2Mixin, FlaskTest):
+    def _manager_patch(self, **fields):
+        client = self.app.application.test_client(use_cookies=True)
+        client.post("/api/login", json={"username": self.manager.email, "password": "pass"})
+        kit = self.individuals[3]
+        body = {"id": kit.id, "number": kit.number, "herd": "G1", **fields}
+        return client.patch("/api/individual", json=body).get_json()
+
+    def test_a_blank_number_clears_a_paper_certificate_and_keeps_the_other_edits(self):
+        kit = self.individuals[3]
+        db.Individual.update(certificate="PAP-0").where(db.Individual.id == kit.id).execute()
+        self.assertEqual(self._manager_patch(certificate="", name="Agnes").get("status", "success"), "success")
+        kit = db.Individual.get_by_id(kit.id)
+        self.assertEqual((kit.certificate, kit.name), ("", "Agnes"))
+
+    def test_a_blank_number_does_not_remove_a_digital_certificate(self):
+        kit = self.individuals[3]
+        db.Individual.update(digital_certificate=500000).where(db.Individual.id == kit.id).execute()
+        body = self._manager_patch(certificate="", name="Agnes")
+        self.assertEqual(body["status"], "error")
+        self.assertIn("digitalt intyg", body["message"])
+        after = db.Individual.get_by_id(kit.id)
+        self.assertEqual((after.digital_certificate, after.name), (500000, kit.name))
+
     def test_random_sequences(self):
         clients = {}
         for name, user in (("admin", self.admin), ("manager", self.manager), ("viewer", self.viewer)):

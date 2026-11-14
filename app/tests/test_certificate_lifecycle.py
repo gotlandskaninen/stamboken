@@ -89,7 +89,12 @@ class TestCertificateLifecycle(unittest.TestCase):
         self.assertEqual(render_mermaid(), checked_in)
 
     def test_only_the_owners_write_the_certificate_columns(self):
-        """Grep gate: the writers check their transition, so nobody else may write the columns."""
+        """
+        Grep gate: the writers check their transition, so nobody else may write the columns.
+
+        It sees literal writes only. A setattr with a computed name passes it: form_to_individual
+        (utils/data_access.py) writes `certificate` that way when the legacy POST creates a rabbit.
+        """
         found = {}
         for path in sorted(APP.rglob("*.py")):
             relative = path.relative_to(APP).as_posix()

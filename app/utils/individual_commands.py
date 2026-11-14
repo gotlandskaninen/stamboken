@@ -19,7 +19,7 @@ from typing import ClassVar, Protocol
 from peewee import DateField, fn
 
 from utils import number_assets
-from utils.certificate_lifecycle import Event, check
+from utils.certificate_lifecycle import Event, check, next_state
 from utils.database import DB_PROXY as DATABASE
 from utils.database import (
     OUTSIDE_GENEBANK_HERDS,
@@ -718,6 +718,21 @@ class AssignPaperCertificate(PolicyCommand):
             )
             raise IndividualRefused("Individual certificate already exists")
 
+    @property
+    def event(self):
+        """Blank is what state_of calls no certificate: the legacy form sends "" to clear the paper number."""
+        return Event.ASSIGN_PAPER if str(self.certificate) else Event.CLEAR_PAPER
+
+    def check_cert_auth(self, ctx):
+        """Asks the table before anything is written, so a transition without a row is a refusal, not a crash."""
+        before = ctx.stored.cert_state()
+        if self.certificate is None or str(self.certificate) == ctx.stored.certificate or before is None:
+            return
+        try:
+            next_state(before, self.event)
+        except ValueError:
+            raise IndividualRefused("Ett digitalt intyg kan inte tas bort genom att tömma intygsnumret") from None
+
     def check_quota(self, ctx):
         if self.certificate is not None:
             _first_certificate(ctx, str(self.certificate))
@@ -736,7 +751,7 @@ class AssignPaperCertificate(PolicyCommand):
             ctx.update_log.info(f"{user},{ind.number},certificate,{ind.certificate},{value},")
         ind.certificate = value
         if changed:
-            check(before, Event.ASSIGN_PAPER, ind.cert_state())
+            check(before, self.event, ind.cert_state())
 
     def verify(self, ctx):
         if self.certificate:
