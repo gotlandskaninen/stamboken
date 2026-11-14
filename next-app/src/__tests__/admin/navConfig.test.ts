@@ -34,12 +34,13 @@ const visibleHrefs = (user: UserContext) =>
     .map((i) => i.href);
 
 describe("NAV_CONFIG predicates", () => {
-  it("admin sees every item, incl. all 4 SYSTEM items", () => {
+  it("admin sees every item, incl. Utskick and all 4 SYSTEM items", () => {
     const admin = makeUser({ is_admin: true });
     expect(visibleHrefs(admin)).toEqual([
       "/stamboken/admin/anvandare",
       "/stamboken/admin/besattningar",
       "/stamboken/admin/genbanker",
+      "/stamboken/admin/utskick",
       "/stamboken/admin/system/online",
       "/stamboken/admin/system/audit",
       "/stamboken/admin/system/synk",
@@ -48,11 +49,12 @@ describe("NAV_CONFIG predicates", () => {
     expect(hasAnyVisible(admin)).toBe(true);
   });
 
-  it("manager(gb) sees only besättningar + genbanker", () => {
+  it("manager(gb) sees only besättningar, genbanker + utskick", () => {
     const manager = makeUser({ is_manager: [1] });
     expect(visibleHrefs(manager)).toEqual([
       "/stamboken/admin/besattningar",
       "/stamboken/admin/genbanker",
+      "/stamboken/admin/utskick",
     ]);
     expect(hasAnyVisible(manager)).toBe(true);
   });

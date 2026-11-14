@@ -83,6 +83,27 @@ def refuse_auto_validate_outside_demo():
         )
 
 
+mail = Namespace()  # pylint: disable=C0103
+# Outgoing mail (docs/mejl.md). The mode is the guard that keeps the demo from mailing members.
+mail.mode = (os.environ.get("MAIL_MODE") or "log").strip().lower()
+mail.allowlist = [entry.strip().lower() for entry in os.environ.get("MAIL_ALLOWLIST", "").split(",") if entry.strip()]
+mail.smtp_host = os.environ.get("SMTP_HOST", "smtp-relay.gmail.com")
+mail.smtp_port = int(os.environ.get("SMTP_PORT", "587"))
+mail.sender = os.environ.get("MAIL_FROM", "stamboken@gotlandskaninen.se")
+# Its own secret per environment, not SECRET_KEY: link tokens, Message-IDs and address hashes.
+mail.link_secret = os.environ.get("LINK_SECRET", "")
+
+
+def refuse_unsafe_mail_settings():
+    """Fail-safe at startup, like refuse_auto_validate_outside_demo: the demo never mails for real."""
+    if mail.mode not in ("live", "allowlist", "log"):
+        raise RuntimeError(f"MAIL_MODE={mail.mode!r} is not one of live, allowlist or log.")
+    if mail.mode == "live" and service.demo_instance:
+        raise RuntimeError("MAIL_MODE=live is refused on the demo API (DEMO_INSTANCE=true); use allowlist.")
+    if mail.mode != "log" and not mail.link_secret:
+        raise RuntimeError(f"MAIL_MODE={mail.mode} requires LINK_SECRET.")
+
+
 s3.bucket = os.environ.get("S3_BUCKET", "test")
 s3.endpoint = os.environ.get("S3_ENDPOINT", None)
 s3.region = os.environ.get("S3_REGION", "us-east-1")

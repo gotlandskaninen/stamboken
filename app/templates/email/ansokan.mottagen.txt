@@ -1,0 +1,7 @@
+{% block subject %}Vi har tagit emot din ansökan om medlemskap{% endblock %}
+
+{% block body %}
+Hej!
+
+Tack för din ansökan om medlemskap i Föreningen Gotlandskaninen. Vi har tagit emot den och går igenom den så snart vi kan. Du får besked när den är behandlad.
+{% endblock %}

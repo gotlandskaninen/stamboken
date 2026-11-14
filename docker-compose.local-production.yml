@@ -98,6 +98,8 @@ services:
       - PDF_SIGNING_KEY=certs/key.pem
       - PDF_SIGNING_CA=certs/ca.pem
       - CERT_DEMO_WATERMARK=true
+      # Same reason: the prod file may say MAIL_MODE=live, and this database holds a copy of prod's mail queue.
+      - MAIL_MODE=log
     ports:
       - "127.0.0.1:9090:9090"
     logging:
@@ -165,6 +167,8 @@ services:
       - S3_BUCKET=test
       - S3_ACCESSKEY=accesskeytest
       - S3_SECRETKEY=secretkeytest
+      # Same mail pin as `api`: a local stack never mails.
+      - MAIL_MODE=log
     logging:
       driver: "json-file"
       options:

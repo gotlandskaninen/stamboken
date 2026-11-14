@@ -14,6 +14,7 @@ from .certificates import certificates_bp
 from .herd_tracking import herd_tracking_bp
 from .individual_v2_create import individual_v2_create_bp
 from .individuals import individuals_bp
+from .mail import mail_bp
 from .member_applications import member_applications_bp
 from .members import members_bp
 from .memberships import memberships_bp
@@ -35,6 +36,7 @@ def register_blueprints(app):
     app.register_blueprint(herd_tracking_bp)
     app.register_blueprint(individual_v2_create_bp)
     app.register_blueprint(individuals_bp)
+    app.register_blueprint(mail_bp)
     app.register_blueprint(member_applications_bp)
     app.register_blueprint(members_bp)
     app.register_blueprint(memberships_bp)

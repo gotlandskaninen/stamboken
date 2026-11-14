@@ -56,6 +56,7 @@ describe("AdminTabs (ersätter den gamla sidomenyn)", () => {
       { name: "Användare", href: "/stamboken/admin/anvandare" },
       { name: "Besättningar", href: "/stamboken/admin/besattningar" },
       { name: "Genbanker", href: "/stamboken/admin/genbanker" },
+      { name: "Utskick", href: "/stamboken/admin/utskick" },
       { name: "System", href: "/stamboken/admin/system/online" },
     ]);
   });
@@ -72,6 +73,7 @@ describe("AdminTabs (ersätter den gamla sidomenyn)", () => {
       "Översikt",
       "Besättningar i Gotlandskanin",
       "Genbanker",
+      "Utskick",
     ]);
   });
 
