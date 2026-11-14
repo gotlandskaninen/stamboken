@@ -30,6 +30,7 @@ import {
   DOC_STATUS_LABEL,
   DOC_TYPE_LABEL,
   itemActions,
+  manages,
   nextOpenDocument,
   STATE_LABEL,
   waited,
@@ -124,10 +125,20 @@ export function WorkView({
   const [answer, setAnswer] = useState("");
 
   // The photo and masking state of the selected document, reset when it or its step changes.
-  const masking = doc?.doc_type === "intyg" && doc.status === "sparad";
+  // "Gör om maskningen": the editor on a finished document that has a copy.
+  const [redo, setRedo] = useState(false);
+  const masking =
+    doc?.doc_type === "intyg" &&
+    (doc.status === "sparad" || (redo && doc.status === "klar"));
+  // The handler of an open item, and a manager or admin at any time once a copy exists.
+  const mayMask =
+    editable || (!!doc?.has_copy && manages(user, item.genebank_id));
+  const [noPersonalData, setNoPersonalData] = useState(false);
   // Nothing saved from it yet: its type can change and it can be dismissed.
   const fresh = doc?.status === "ny" || doc?.status === "vantar_foralder";
-  const step = `${doc?.id}:${doc?.status}`;
+  // Also reset when the handler changes: a turn made before the item was taken
+  // was never saved, and the masking must start from the stored rotation.
+  const step = `${doc?.id}:${doc?.status}:${item.assigned_to?.id ?? ""}`;
   const [shownStep, setShownStep] = useState(step);
   const [rotation, setRotation] = useState(doc?.rotation ?? 0);
   const [rects, setRects] = useState<Rect[]>(() =>
@@ -142,6 +153,8 @@ export function WorkView({
     setRects(doc ? initialRects(doc) : []);
     setSelectedRect(null);
     setCrop(null);
+    setRedo(false);
+    setNoPersonalData(false);
   }
 
   const run = <T,>(
@@ -420,7 +433,7 @@ export function WorkView({
                 rotation={rotation}
                 onRotate={rotate}
                 mask={
-                  masking && editable
+                  masking && mayMask
                     ? {
                         rects,
                         selected: selectedRect,
@@ -597,7 +610,8 @@ export function WorkView({
             </div>
           )}
 
-          {!doc ? null : doc.status === "klar" || doc.status === "avfardad" ? (
+          {!doc ? null : (doc.status === "klar" || doc.status === "avfardad") &&
+            !masking ? (
             <div className={styles.card}>
               <h2 className={styles.cardTitle}>
                 {DOC_STATUS_LABEL[doc.status]}
@@ -612,25 +626,43 @@ export function WorkView({
                   {doc.has_copy ? ": pappersintyget ligger på kaninen." : ""}
                 </p>
               )}
-              <button
-                type="button"
-                className="sb-btn sb-btn-secondary"
-                onClick={() => advance(doc, true)}
-              >
-                Nästa dokument
-              </button>
+              <div className={styles.row}>
+                <button
+                  type="button"
+                  className="sb-btn sb-btn-secondary"
+                  onClick={() => advance(doc, true)}
+                >
+                  Nästa dokument
+                </button>
+                {doc.doc_type === "intyg" && doc.has_copy && mayMask && (
+                  <button
+                    type="button"
+                    className="sb-btn sb-btn-secondary"
+                    onClick={() => {
+                      // From the stored pair, not from a turn made for reading.
+                      setRotation(doc.rotation);
+                      setRects(initialRects(doc));
+                      setSelectedRect(null);
+                      setRedo(true);
+                    }}
+                  >
+                    Gör om maskningen
+                  </button>
+                )}
+              </div>
             </div>
-          ) : doc.doc_type === "intyg" && doc.status === "sparad" ? (
+          ) : masking ? (
             <>
               <div className={styles.card}>
                 <h2 className={styles.cardTitle}>Dölj säljare och köpare</h2>
                 <p className={styles.muted}>
-                  {doc.individual} är sparad. Täck säljarens och köparens
-                  uppgifter med svarta rutor innan kopian läggs på kaninen. Dra
-                  en ruta eller dess hörn, eller välj den och använd
-                  piltangenterna (Skift ändrar storleken).
+                  {doc.individual} är sparad.
+                  {redo && " Kopian på kaninen ersätts när du bekräftar."} Täck
+                  säljarens och köparens uppgifter med svarta rutor innan kopian
+                  läggs på kaninen. Dra en ruta eller dess hörn, eller välj den
+                  och använd piltangenterna (Skift ändrar storleken).
                 </p>
-                {editable ? (
+                {mayMask ? (
                   <>
                     <div className={styles.row}>
                       <button
@@ -661,37 +693,70 @@ export function WorkView({
                         Ta bort vald ruta
                       </button>
                     </div>
-                    <button
-                      type="button"
-                      className="sb-btn"
-                      disabled={pending}
-                      onClick={() =>
-                        run(
-                          () => confirmMask(item.id, doc.id, toApiRects(rects)),
-                          (d) => advance(d.document),
-                        )
-                      }
-                    >
-                      {rects.length
-                        ? "Bekräfta maskningen och nästa"
-                        : "Bekräfta: inget att dölja"}
-                    </button>
+                    {rects.length === 0 && (
+                      <label className={styles.row}>
+                        <input
+                          type="checkbox"
+                          checked={noPersonalData}
+                          onChange={(e) => setNoPersonalData(e.target.checked)}
+                        />
+                        Fotot visar inga säljar- eller köparuppgifter
+                      </label>
+                    )}
+                    <div className={styles.row}>
+                      <button
+                        type="button"
+                        className="sb-btn"
+                        disabled={
+                          pending || (rects.length === 0 && !noPersonalData)
+                        }
+                        onClick={() =>
+                          run(
+                            () =>
+                              confirmMask(
+                                item.id,
+                                doc.id,
+                                rotation,
+                                toApiRects(rects),
+                                noPersonalData,
+                              ),
+                            (d) => {
+                              setRedo(false);
+                              advance(d.document);
+                            },
+                          )
+                        }
+                      >
+                        Bekräfta maskningen och nästa
+                      </button>
+                      {redo && (
+                        <button
+                          type="button"
+                          className="sb-btn sb-btn-ghost"
+                          onClick={() => setRedo(false)}
+                        >
+                          Avbryt
+                        </button>
+                      )}
+                    </div>
                   </>
                 ) : (
                   <p className={styles.muted}>Ta ärendet för att maskera.</p>
                 )}
               </div>
-              <details className={styles.history}>
-                <summary>Visar intyget en försäljning?</summary>
-                <SalePanel
-                  key={doc.id}
-                  itemId={item.id}
-                  doc={doc}
-                  herds={herds}
-                  canSave={saving}
-                  onDone={() => undefined}
-                />
-              </details>
+              {doc.status === "sparad" && (
+                <details className={styles.history}>
+                  <summary>Visar intyget en försäljning?</summary>
+                  <SalePanel
+                    key={doc.id}
+                    itemId={item.id}
+                    doc={doc}
+                    herds={herds}
+                    canSave={saving}
+                    onDone={() => undefined}
+                  />
+                </details>
+              )}
             </>
           ) : doc.doc_type === "intyg" ? (
             <CertificateForm

@@ -165,12 +165,28 @@ export async function registerSale(
   return call<DocResult>(id, `/${id}/dokument/${doc}/overlat`, "POST", payload);
 }
 
-export async function confirmMask(id: number, doc: number, rects: Rect[]) {
+/**
+ * The rectangles come with the rotation they were drawn in (fractions of the
+ * image as turned by it): the API stores both and makes the copy from the pair.
+ * An empty list needs `noPersonalData`, the handler's explicit "nothing to hide".
+ */
+export async function confirmMask(
+  id: number,
+  doc: number,
+  rotation: number,
+  rects: Rect[],
+  noPersonalData = false,
+) {
   if (!isId(id) || !isId(doc) || !Array.isArray(rects))
     return refused("Ogiltig maskning.");
-  // Always a list, also an empty one: left out, the API would use the saved rectangles.
+  if (![0, 90, 180, 270].includes(rotation))
+    return refused("Ogiltig vridning.");
+  if (rects.length === 0 && noPersonalData !== true)
+    return refused("Bekräfta att fotot inte visar några uppgifter.");
   return call<DocResult>(id, `/${id}/dokument/${doc}/maskning`, "POST", {
+    rotation,
     mask_rects: rects,
+    ...(rects.length === 0 ? { no_personal_data: true } : {}),
   });
 }
 

@@ -87,9 +87,26 @@ describe("the queue's server actions", () => {
     expect(api).toHaveBeenCalledTimes(1);
   });
 
-  it("send an empty mask list as a list (nothing to hide), never leave it out", async () => {
-    await confirmMask(12, 31, []);
-    expect(body(0)).toEqual({ mask_rects: [] });
+  it("send the rotation together with the rectangles drawn in it", async () => {
+    const rect = { x: 0, y: 0, w: 0.3, h: 1 };
+    await confirmMask(12, 31, 90, [rect]);
+    expect(body(0)).toEqual({ rotation: 90, mask_rects: [rect] });
+  });
+
+  it("need the explicit no_personal_data for an empty list", async () => {
+    expect((await confirmMask(12, 31, 0, [])).ok).toBe(false);
+    expect(api).not.toHaveBeenCalled();
+    await confirmMask(12, 31, 180, [], true);
+    expect(body(0)).toEqual({
+      rotation: 180,
+      mask_rects: [],
+      no_personal_data: true,
+    });
+  });
+
+  it("refuse a rotation that is not a quarter turn", async () => {
+    expect((await confirmMask(12, 31, 45, [])).ok).toBe(false);
+    expect(api).not.toHaveBeenCalled();
   });
 
   it("hand the whole problem back, extensions included", async () => {
