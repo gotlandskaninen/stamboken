@@ -151,7 +151,8 @@ def read_message(gmail_id, raw, received_at=None):
             if mail.record_bounce(original, diagnostic):
                 _processed(gmail_id, "bounce")
             else:  # a report on no mail of ours: a human has a look
-                _processed(gmail_id, "item", _new_item(gmail_id, sender, text, received_at))
+                item = _new_item(gmail_id, sender, text, received_at, verified=authenticated(msg, sender))
+                _processed(gmail_id, "item", item)
         return None
     if _auto_reply(msg):
         with DB_PROXY.atomic():
@@ -170,8 +171,11 @@ def read_message(gmail_id, raw, received_at=None):
                 _processed(gmail_id, "reply", replied)
             else:
                 maybe = replied.id if replied is not None else None
-                item = _new_item(gmail_id, sender, text, received_at, stored, skipped, maybe_item=maybe)
-                if stored and authenticated(msg, sender):  # never a receipt to an address the sender only typed
+                verified = authenticated(msg, sender)
+                item = _new_item(
+                    gmail_id, sender, text, received_at, stored, skipped, maybe_item=maybe, verified=verified
+                )
+                if stored and verified:  # never a receipt to an address the sender only typed
                     _receipt(item, len(stored))
                 _processed(gmail_id, "item", item)
     except BaseException:
@@ -381,11 +385,12 @@ def _attach_reply(item, text, stored=(), skipped=()):
         inbox.notify(handler, "svar", item)
 
 
-def _new_item(gmail_id, sender, text, received_at, stored=(), skipped=(), maybe_item=None):
+def _new_item(gmail_id, sender, text, received_at, stored=(), skipped=(), maybe_item=None, verified=False):
     """
     An item of kind mail (with attachments) or meddelande, its herd guessed from the sender; with no match the
     genebank is unknown and every queue worker is told. The files not stored and the case a reply may be about
-    are on its "inkommen" event.
+    are on its "inkommen" event. `verified`: Gmail authenticated the sender (authenticated), the only one any
+    mail about the item goes back to.
     """
     member, herd, genebank = _match(sender)
     item = InboxItem.create(
@@ -394,6 +399,7 @@ def _new_item(gmail_id, sender, text, received_at, stored=(), skipped=(), maybe_
         herd=herd,
         member=member,
         sender_address=sender,
+        sender_authenticated=verified,
         message=text,
         gmail_message_id=gmail_id,
         received_at=received_at or inbox.now(),

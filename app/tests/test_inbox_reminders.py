@@ -61,7 +61,9 @@ class TestIncompleteMail(ReminderTest):
         self.assertIn("/stamboken/inskick", body)
 
     def test_a_mailed_item_mails_the_address_it_came_from(self):
-        item, _ = self.incomplete(kind="mail", sender_user=None, sender_address="avsandare@example.org")
+        item, _ = self.incomplete(
+            kind="mail", sender_user=None, sender_address="avsandare@example.org", sender_authenticated=True
+        )
         (row,) = self.mails("inlasning.ofullstandig")
         self.assertEqual((row.recipient_kind, row.recipient_id), ("inbox_sender", item.id))
         ((_, to, body),) = self.sent()

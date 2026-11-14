@@ -17,6 +17,7 @@ import requests
 import utils.database as db
 import utils.inbox as inbox
 import utils.inbox_gmail as inbox_gmail
+import utils.inbox_purge as purge
 import utils.mail as mail
 import utils.settings as settings
 from PIL import Image
@@ -517,6 +518,36 @@ class TestSenderAddress(GmailTest):
         self.assertEqual(self.reload(item).sender_address, SENDER)  # the receipt waits
         inbox_gmail.release_senders(at=inbox.now() + timedelta(days=31))
         self.assertIsNone(self.reload(item).sender_address)
+
+    def test_mail_goes_back_only_to_a_sender_gmail_authenticated(self):
+        """A forged From must never make the queue mail its victim: no klar, ofullstandig or paminnelse."""
+        forged = self.mailed_item(auth=f"spf=fail smtp.mailfrom={SENDER}")
+        genuine = self.mailed_item()
+        self.login("hjalp")
+        for item, expected in ((forged, False), (genuine, True)):
+            with self.subTest(authenticated=expected):
+                self.assertIs(self.reload(item).sender_authenticated, expected)
+                listed = self.client.get(f"/api/v2/inkorg/{item.id}").get_json()
+                self.assertIs(listed["sender_authenticated"], expected)
+                inbox.take(item, self.helper, over=False)
+                inbox.change_state(item, self.helper, "ofullstandig", note="Pappersintyget saknas")
+                db.InboxItem.update(received_at=inbox.now() - inbox.months(12)).where(
+                    db.InboxItem.id == item.id
+                ).execute()
+                purge.remind_incomplete(inbox.now())
+                inbox.change_state(item, self.helper, "tagen")
+                inbox.update_document(item, item.documents.get(), self.helper, {"dismissed": True})
+                kinds = {
+                    m.kind
+                    for m in db.MailMessage.select().where(
+                        (db.MailMessage.recipient_kind == "inbox_sender") & (db.MailMessage.recipient_id == item.id)
+                    )
+                }
+                sent_back = {"inlasning.ofullstandig", "inlasning.paminnelse", "inlasning.klar"}
+                self.assertEqual(kinds & sent_back, sent_back if expected else set())
+        upload = self.item(0)
+        self.assertIsNone(self.client.get("/api/v2/inkorg?scope=alla").get_json()["items"][-1]["sender_authenticated"])
+        self.assertEqual(self.client.get("/api/v2/inkorg?scope=alla").get_json()["items"][-1]["id"], upload.id)
 
     def test_an_open_item_keeps_it(self):
         item = self.mailed_item(auth=None)

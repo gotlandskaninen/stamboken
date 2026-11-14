@@ -189,6 +189,7 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
   "missing_proof": false,
   "ref_type": null,
   "ref_id": null,
+  "sender_authenticated": null,
   "has_message": true,
   "maybe_blurry": false,
   "documents": 2,
@@ -207,6 +208,11 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
 - `stalled`: "står still". Nattjobbet sätter den på en post som varit `tagen` i 14 dagar utan någon
   händelse (att öppna posten eller visa originalet räknas inte), och tar bort den när något har hänt.
   Genbanksansvariga i postens genbank får notisen `star_still`, en gång för varje gång posten stannar.
+- `sender_authenticated`: för en mejlad post `true` när Gmail har godkänt avsändaradressens domän (SPF
+  eller DKIM, samma kontroll som kvittot) och annars `false`; `null` för en uppladdning. Mejlen om posten
+  (`inlasning.klar`, `inlasning.ofullstandig`, `inlasning.paminnelse`) går till en mejlad posts adress
+  bara när den är `true`, så att en förfalskad avsändare aldrig får kön att mejla någon annan. Visa till
+  exempel "Avsändaren är inte bekräftad" när den är `false`.
 - `maybe_blurry`: något dokument har varningen `suddig` (kön visar "kan vara oskarp").
 - `documents` och `documents_done`: antal dokument och antal klara eller avfärdade.
 
@@ -936,7 +942,8 @@ Mejlen går genom mejlkön ([mejl.md](mejl.md)) och köas i samma transaktion so
   (ärende 12)" eller "Ditt inskick är klart (ärende 12)", och mejlet listar kaninernas nummer
   och länkar till `/stamboken/inskick`. Öppnas posten igen innan mejlet gått stoppas det; blir
   en öppnad post klar igen går ett nytt mejl. En mejlad post har ingen uppladdare: mejlet går
-  då till avsändarens adress, utan länken.
+  då till avsändarens adress, utan länken, men bara när Gmail har godkänt avsändaren
+  (`sender_authenticated`). Det gäller också de två mejlen nedan.
 - **`inlasning.kvitto`** till avsändaren av ett mejl med bilder: "Vi har fått 2 bilder.
   Genbanksansvarig lägger in dem." med ämnesraden "Vi har fått dina bilder (ärende 12)". Bara
   när Gmail har godkänt avsändarens domän (SPF eller DKIM), och högst ett per avsändare och dygn.

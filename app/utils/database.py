@@ -2099,6 +2099,8 @@ class InboxItem(BaseModel):
     member = ForeignKeyField(Member, null=True, on_delete="SET NULL")  # the matched sender of a mail
     sender_user = ForeignKeyField(User, null=True, on_delete="SET NULL", backref="+")  # the uploader
     sender_address = TextField(null=True)  # mail only
+    # Gmail authenticated the From address's domain (SPF or DKIM); None for an upload. Mail goes back only then.
+    sender_authenticated = BooleanField(null=True)
     message = TextField(null=True)
     gmail_message_id = TextField(null=True, unique=True)
     received_at = TimestampTZField(default=_utcnow)
@@ -3833,9 +3835,11 @@ def migrate_38_to_39():
 
 def migrate_39_to_40():
     """The intake queue's retention (docs/inkorg.md, "Gallring"): an original can be gone, and a document records the
-    members it shows (seller and buyer), so an erasure finds it."""
+    members it shows (seller and buyer), so an erasure finds it. A mailed item records whether Gmail authenticated
+    its sender, the only one mail goes back to."""
     with DATABASE.atomic():
         DATABASE.execute_sql("ALTER TABLE inbox_document ALTER COLUMN original_path DROP NOT NULL")
+        DATABASE.execute_sql("ALTER TABLE inbox_item ADD COLUMN IF NOT EXISTS sender_authenticated BOOLEAN")
         for column in ("seller_member_id", "buyer_member_id"):
             DATABASE.execute_sql(
                 f"ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS {column} INTEGER "
@@ -3844,7 +3848,7 @@ def migrate_39_to_40():
         InboxDocument._schema.create_indexes(safe=True)  # same names as a fresh bootstrap
         SchemaHistory.insert(  # pylint: disable=E1120
             version=40,
-            comment="inbox_document: original_path nullable, seller and buyer members",
+            comment="inbox_document: original_path nullable, seller and buyer members; inbox_item.sender_authenticated",
             applied=datetime.now(),
         ).execute()
 

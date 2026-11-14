@@ -280,6 +280,7 @@ def items_json(items):
             "missing_proof": item.missing_proof,
             "ref_type": item.ref_type,
             "ref_id": item.ref_id,
+            "sender_authenticated": item.sender_authenticated,
             "has_message": bool(item.message),
             "maybe_blurry": item.id in blurry,
             "documents": counts[item.id][0],
@@ -458,10 +459,13 @@ def close_if_done(item, user):
 
 
 def mail_sender(item, kind, params, **options):
-    """Queues `kind` to the item's uploader, or else to the address a mailed item came from; None without either."""
+    """
+    Queues `kind` to the item's uploader, or else to the address a mailed item came from, but only when Gmail
+    authenticated it: a forged From must never make us mail its victim. None without either.
+    """
     if item.sender_user_id is not None:
         recipient = ("user", item.sender_user_id)
-    elif item.sender_address:
+    elif item.sender_address and item.sender_authenticated:
         recipient = ("inbox_sender", item.id)
     else:
         return None
