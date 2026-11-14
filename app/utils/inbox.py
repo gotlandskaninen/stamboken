@@ -21,6 +21,7 @@ from utils.database import (
     DB_PROXY,
     OUTSIDE_GENEBANK_HERDS,
     Herd,
+    HerdTracking,
     InboxDocument,
     InboxEvent,
     InboxItem,
@@ -849,23 +850,76 @@ def saved(item, document, user, individual, action):
     log_event(item, user, "sparad", document=document.id, action=action, individual=individual.number)
 
 
-def transferred(item, document, user, individual, row):
+def bound_rabbit(document):
+    """The rabbit a document is bound to by its first save: the one registered or certified from it, or sold."""
+    if document.individual_id is not None:
+        return document.individual_id
+    if document.herd_tracking_id is not None:
+        return HerdTracking.get_by_id(document.herd_tracking_id).individual_id
+    return None
+
+
+def require_same_rabbit(document, individual=None):
     """
-    A sale registered from a document: a proof (bevis) is done with it; anything else leaves the proof missing.
-    The document shows the sale's seller and, for a sale to a member, its buyer.
+    One document, one rabbit: whatever is saved through a document concerns the rabbit of its first save (a new
+    rabbit, `individual` None, never one already bound), and a document carries at most one sale.
+    """
+    bound = bound_rabbit(document)
+    if bound is not None and (individual is None or individual.id != bound):
+        number = Individual.get_by_id(bound).number
+        raise InboxError(409, f"Dokumentet gäller {number}. Det som sparas genom det måste gälla samma kanin.")
+
+
+def proven_sale(item, document, individual, herd, date):
+    """
+    The sale a proof (bevis) shows when it is already registered from another document of the item, without proof:
+    the same rabbit, buyer and date. The proof is then linked to it rather than registering it again.
+    """
+    if document.doc_type != "bevis":
+        return None
+    sales = item.documents.select(InboxDocument.herd_tracking_id).where(
+        (InboxDocument.doc_type != "bevis") & InboxDocument.herd_tracking_id.is_null(False)
+    )
+    return (
+        HerdTracking.select()
+        .join(Herd, on=(HerdTracking.herd == Herd.id))
+        .where(
+            HerdTracking.id.in_(sales)
+            & (HerdTracking.individual == individual.id)
+            & (Herd.herd == herd)
+            & (HerdTracking.herd_tracking_date == date)
+            & HerdTracking.voided_at.is_null(True)
+        )
+        .first()
+    )
+
+
+def transferred(item, document, user, individual, row, *, linked=False):
+    """
+    A sale registered from a document (or, `linked`, a proof of one registered before): the sale is the
+    document's (herd_tracking_id) whatever its type, and a proof (bevis) is done with it. The item lacks a proof
+    ("bevis saknas") while a sale from another type of document has no proof on the item. The document shows the
+    sale's seller and, for a sale to a member, its buyer.
     """
     document.seller_member = herd_holder(row.from_herd_id or individual.origin_herd_id) or document.seller_member
     if row.herd.herd not in OUTSIDE_GENEBANK_HERDS:
         document.buyer_member = herd_holder(row.herd_id) or document.buyer_member
     proof = document.doc_type == "bevis"
+    document.herd_tracking_id = row.id
     if proof:
-        document.individual, document.herd_tracking_id, document.done_at = individual, row.id, now()
-    else:
-        item.missing_proof = True
-        item.save()
+        document.individual, document.done_at = individual, now()
     document.save()
+    proven = item.documents.select(InboxDocument.herd_tracking_id).where(
+        (InboxDocument.doc_type == "bevis") & InboxDocument.herd_tracking_id.is_null(False)
+    )
+    item.missing_proof = item.documents.where(
+        (InboxDocument.doc_type != "bevis")
+        & InboxDocument.herd_tracking_id.is_null(False)
+        & InboxDocument.herd_tracking_id.not_in(proven)
+    ).exists()
+    item.save()
     detail = {"document": document.id, "individual": individual.number, "herd": row.herd.herd}
-    log_event(item, user, "sparad", action="overlatelse", missing_proof=not proof, **detail)
+    log_event(item, user, "sparad", action="bevis" if linked else "overlatelse", missing_proof=not proof, **detail)
     close_if_done(item, user)
 
 

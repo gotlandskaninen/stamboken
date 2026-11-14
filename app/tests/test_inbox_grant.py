@@ -298,6 +298,69 @@ class TestTransferEndpoint(GrantTest):
         self.assertEqual((body["document"]["status"], body["item"]["state"]), ("klar", "klar"))
         self.assertEqual(db.InboxDocument.get_by_id(document.id).herd_tracking_id, body["herd_tracking_id"])
 
+    def test_one_document_one_rabbit_and_one_sale(self):
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        today = date.today().isoformat()
+        sold = self.transfer(item, document, individual="G1-2111", herd="GX1", date=today)
+        self.assertEqual(sold.status_code, 200, sold.get_json())
+        for name, resp in (
+            ("another sale", self.transfer(item, document, individual="G1-2111", herd="G2", date=today)),
+            ("another rabbit sold", self.transfer(item, document, individual="G1-2112", herd="GX1", date=today)),
+            ("a new rabbit", self.save(item, document, **NEW_RABBIT)),
+            (
+                "another rabbit certified",
+                self.save(
+                    item,
+                    document,
+                    action="pappersintyg",
+                    individual="G1-2112",
+                    paper_certificate="P-5",
+                    paper_number="G1-2112",
+                ),
+            ),
+        ):
+            with self.subTest(name):
+                self.assertEqual(resp.status_code, 409, resp.get_json())
+        self.assertEqual(db.InboxOperation.select().count(), 1)
+        self.assertIsNone(self.rabbit("G1-2112").certificate)
+
+        item, document = self.taken(self.helper)  # certified first: then only that rabbit is sold through it
+        body = {
+            "action": "pappersintyg",
+            "individual": "G1-2112",
+            "paper_certificate": "P-6",
+            "paper_number": "G1-2112",
+        }
+        self.assertEqual(self.save(item, document, **body).status_code, 200)
+        resp = self.transfer(item, document, individual="G1-2111", herd="GX1", date=today)
+        self.assertEqual(resp.status_code, 409, resp.get_json())
+        resp = self.transfer(item, document, individual="G1-2112", herd="GX1", date=today)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+
+    def test_a_proof_arriving_later_is_linked_to_the_sale_and_clears_the_missing_proof(self):
+        item = self.item(0, documents=2)
+        inbox.take(item, self.helper, over=False)
+        certificate, proof = list(item.documents.order_by(db.InboxDocument.id))
+        self.login("hjalp")
+        today = date.today().isoformat()
+        resp = self.transfer(item, certificate, individual="G1-2111", herd="G2", date=today)
+        self.assertTrue(resp.get_json()["item"]["missing_proof"])
+        sale = resp.get_json()["herd_tracking_id"]
+        self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{proof.id}", json={"doc_type": "bevis"})
+        transfers = db.HerdTracking.select().where(db.HerdTracking.kind == "TRANSFER").count()
+
+        resp = self.transfer(item, proof, individual="G1-2111", herd="G2", date=today)
+
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        body = resp.get_json()
+        self.assertEqual((body["herd_tracking_id"], body["item"]["missing_proof"]), (sale, False))
+        self.assertEqual((body["document"]["status"], body["document"]["individual"]), ("klar", "G1-2111"))
+        self.assertEqual(db.HerdTracking.select().where(db.HerdTracking.kind == "TRANSFER").count(), transfers)
+        self.assertEqual(db.InboxOperation.select().count(), 1)  # linking writes nothing on the rabbit
+        event = self.reload(item).events.where(db.InboxEvent.kind == "sparad").order_by(db.InboxEvent.id.desc()).get()
+        self.assertEqual(event.detail["action"], "bevis")
+
     def test_a_refused_sale_names_its_field(self):
         item, document = self.taken(self.helper)
         self.login("hjalp")

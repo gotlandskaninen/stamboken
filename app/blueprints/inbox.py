@@ -546,9 +546,10 @@ def _register_new(body, user, grant):
     return response[0].get_json(), individual
 
 
-def _assign_certificate(body, user, grant):
+def _assign_certificate(body, user, grant, document):
     """The paper certificate on a rabbit already in Stamboken (AssignPaperCertificate)."""
     individual = _live_individual(body.get("individual"))
+    inbox.require_same_rabbit(document, individual)
     certificate, paper_number = body.get("paper_certificate"), body.get("paper_number")
     if not isinstance(certificate, str) or not certificate.strip() or len(certificate) > 20:
         raise inbox.InboxError(400, "Ange intygsnumret (paper_certificate), högst 20 tecken.")
@@ -585,9 +586,10 @@ def save_document(item_id, document_id):
                 raise inbox.InboxError(409, "Bara ett intyg som inte är sparat än kan sparas.")
             grant = inbox.InboxGrant(item, user, document)
             if action == "ny_kanin":
+                inbox.require_same_rabbit(document)  # a rabbit sold through the document is not a new one
                 result = _register_new(body, user, grant)
             elif action == "pappersintyg":
-                result = _assign_certificate(body, user, grant)
+                result = _assign_certificate(body, user, grant, document)
             else:
                 raise inbox.InboxError(400, 'action är "ny_kanin" eller "pappersintyg".')
             inbox.saved(item, document, user, result[1], action)
@@ -621,10 +623,19 @@ def transfer(item_id, document_id):
             document = inbox.document_of(item, document_id)
             inbox.require_saving(item, document, user)
             individual = _live_individual(body.get("individual"))
+            inbox.require_same_rabbit(document, individual)
+            if document.herd_tracking_id is not None:
+                raise inbox.InboxError(409, "En försäljning är redan registrerad genom dokumentet.")
             grant = inbox.InboxGrant(item, user, document)
             lock_individual_for_edit(individual.id)
             latest = current_holder_row(individual.id)
-            if (
+            proven = inbox.proven_sale(item, document, individual, herd, when)
+            if proven is not None:  # the proof of a sale registered from another document: nothing to write
+                seller = proven.from_herd or individual.origin_herd
+                if not (is_manager_of(user, seller.genebank_id) or grant.allows(user, seller)):
+                    raise inbox.InboxError(403, "Du får inte koppla ett bevis till kaninens försäljning.")
+                row = proven
+            elif (
                 latest
                 and when < coerce_date(latest.herd_tracking_date)
                 and is_manager_of(user, individual.current_herd.genebank_id)
@@ -643,7 +654,7 @@ def transfer(item_id, document_id):
                     raise _Refused(problem(400, "Ogiltig försäljning", error))
                 execute(user, individual.id, lambda ctx: [TransferIndividual(herd, date)], grant=grant)
                 row = current_holder_row(individual.id)
-            inbox.transferred(item, document, user, individual, row)
+            inbox.transferred(item, document, user, individual, row, linked=proven is not None)
             answer = {
                 "individual": Individual.get_by_id(individual.id).as_dict(),
                 "herd_tracking_id": row.id,

@@ -308,7 +308,8 @@ till avsändaren väntar, och senast 30 dagar efter stängningen.
   de skiljer sig. `checks` är kontrollerna i ord; `ok` är `true`, `false` eller `null` (upplysning).
   Förslaget sparas aldrig av sig självt: det är handläggarens `…/spara` som skriver.
 - `individual`: kaninens nummer när dokumentet är sparat, annars `null`.
-- `herd_tracking_id`: försäljningens rad i besättningshistoriken, för ett bevis.
+- `herd_tracking_id`: raden i besättningshistoriken för försäljningen som registrerats genom
+  dokumentet (för ett bevis: försäljningen det visar).
 - `has_original`: originalet finns. `false` när det är gallrat eller raderat på begäran (se
   [Gallring](#gallring)); `…/original` svarar då 404.
 - `has_copy`: kopian finns.
@@ -326,7 +327,7 @@ till avsändaren väntar, och senast 30 dagar efter stängningen.
 | `tilldelad` | `{"to_user": 7, "from_user": null}` |
 | `lage` | `{"from": "tagen", "to": "ofullstandig", "note": "Pappersintyget saknas"}`; `note` bara när den gavs, `duplicate_of` vid `dubblett` |
 | `dokument` | `{"document": 31, "fields": ["mask_rects", "rotation"]}` |
-| `sparad` | `{"document": 31, "action": "ny_kanin" \| "pappersintyg", "individual": "G1-2511"}`, eller vid en försäljning `{"document": 31, "action": "overlatelse", "individual": "G1-2111", "herd": "G2", "missing_proof": true}` |
+| `sparad` | `{"document": 31, "action": "ny_kanin" \| "pappersintyg", "individual": "G1-2511"}`, eller vid en försäljning `{"document": 31, "action": "overlatelse", "individual": "G1-2111", "herd": "G2", "missing_proof": true}`; `"action": "bevis"` när ett bevis kopplas till en försäljning som redan är registrerad |
 | `kopia` | `{"document": 31, "rects": 1, "rotation": 90}`; varje anrop till `…/maskning` |
 | `original_visat` | `{"document": 31}` |
 | `foralder_inlagd` | `{"individual": "G1-2431"}` |
@@ -683,7 +684,14 @@ pappret kan inte rätta det, så ett intyg med ett annat nummer lämnar handläg
 genbanksansvarig (`hos_genbanksansvarig`).
 
 **För båda:** 409 när posten inte är anroparens, inte är `tagen`, har `ref_type`, eller
-dokumentet inte är ett osparat intyg; 400 för okänd `action`. Efter sparandet har dokumentet
+dokumentet inte är ett osparat intyg, och när dokumentet redan gäller en annan kanin (se nedan);
+400 för okänd `action`.
+
+**Ett dokument, en kanin.** Det första som sparas genom ett dokument (en ny kanin, ett
+pappersintyg eller en försäljning) binder dokumentet till den kaninen. Allt som sparas genom det
+sedan måste gälla samma kanin (409 `Dokumentet gäller G1-2111. …`), och ett dokument bär högst en
+registrering och en försäljning. Är en kanin såld genom dokumentet kan en ny kanin inte sparas från
+det. Efter sparandet har dokumentet
 `status: "sparad"`. Det blir klart först när maskningen är bekräftad.
 
 ## Registrera en försäljning
@@ -707,7 +715,10 @@ En hjälpare får sälja kaniner i sin genbank som en ägare får.
 
 **Bevis.** Är dokumentet ett överlåtelsebevis (`doc_type: "bevis"`) blir det klart och kopplas
 till försäljningens rad (`herd_tracking_id`). Annars registreras försäljningen ändå, och posten
-får `missing_proof: true` ("bevis saknas").
+får `missing_proof: true` ("bevis saknas"). Kommer beviset senare till samma post skickas det med
+`…/overlat` med samma kanin, köpare och datum: det kopplas då till försäljningen som redan finns,
+utan att den registreras igen, och `missing_proof` blir `false` när ingen försäljning i posten
+längre saknar bevis. Den som kopplar måste få sälja kaninen, som för en försäljning.
 
 **Korrigering.** Ligger datumet före kaninens senaste händelse är det en korrigering. Den gör
 bara genbanksansvarig för kaninens genbank och admin, och anropet skriver då in försäljningen på
@@ -726,7 +737,7 @@ sin plats i historiken. Alla andra får 400.
 | 400 | besättning eller datum saknas eller är okänd; `title: "Ogiltig försäljning"` med försäljningens regler: datumet i framtiden, före 43 dagars ålder eller före kaninens senaste händelse, en annan genbank, en kanin utan intyg till en annan besättning än GX1/MX1, kaninen finns redan där |
 | 403 | anroparen får inte sälja kaninen |
 | 404 | kaninen finns inte |
-| 409 | som för `…/spara`; eller besättningshistoriken skulle bli motsägelsefull (med `rows`) |
+| 409 | som för `…/spara`; en försäljning är redan registrerad genom dokumentet; eller besättningshistoriken skulle bli motsägelsefull (med `rows`) |
 
 ## Maskning och kopian på kaninen
 
