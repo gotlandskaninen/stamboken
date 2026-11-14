@@ -276,7 +276,10 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
 
   Nycklarna i `fields` är fälten i `…/spara` (se [Spara det intyget visar](#spara-det-intyget-visar)),
   `individual` när kaninen redan finns i Stamboken, och `farfar`, `farmor`, `morfar` och `mormor`.
-  Ett fält som tolkningen inte såg saknas. `source` säger varifrån värdet kommer, och bara `läst` och
+  Ett fält som tolkningen inte såg saknas. `source` säger varifrån värdet kommer: `läst` (läst på
+  intyget; ett nummer är dessutom bekräftat av registret, medan namn, kön, färg, intygsnummer och, för
+  en kull som inte finns i Stamboken, födelsedatum och antal bara är lästa och giltiga), `härlett`
+  (hämtat ur registret), `avviker` (intyget och registret säger olika) eller `osäker`. Bara `läst` och
   `härlett` har ett `value` att fylla i formuläret med; `avviker` och `osäker` har `value: null` och
   skrivs av från fotot. `read` är det tolkningen läste på intyget och `registry` registrets värde där
   de skiljer sig. `checks` är kontrollerna i ord; `ok` är `true`, `false` eller `null` (upplysning).

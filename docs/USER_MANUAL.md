@@ -821,9 +821,10 @@ genbanksansvariga och genbankshjälpare, och alla tre ser hela kön.
    Stämmer pappret lämnar du ärendet till genbanksansvarig.
 
    Är bildtolkningen på har Stamboken redan läst fotot, och formuläret är ifyllt med ett förslag.
-   Varje fält är märkt med varifrån värdet kommer: **läst** (läst på intyget och kontrollerat mot
-   registret), **härlett** (hämtat ur registret), **avviker** (intyget och registret säger olika)
-   eller **osäker**. Fält som avviker eller är osäkra är tomma, med det som lästes bredvid: skriv av
+   Varje fält är märkt med varifrån värdet kommer: **läst** (läst på intyget; mor, far och
+   individnumret är dessutom kontrollerade mot registret, men namn, kön, färg och intygsnummer, och
+   för en ny kull födelsedatum och antal, är bara lästa), **härlett** (hämtat ur registret),
+   **avviker** (intyget och registret säger olika) eller **osäker**. Fält som avviker eller är osäkra är tomma, med det som lästes bredvid: skriv av
    dem från fotot. Under fälten står kontrollerna, till exempel "Mor och far finns i Stamboken med
    intyg", "Numret stämmer med kullen" och "Intygsnumret är ledigt". Jämför alltid förslaget med
    fotot innan du sparar; inget sparas förrän du klickar **Spara och nästa**. Har du vridit fotot

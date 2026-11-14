@@ -37,8 +37,8 @@ const GRANDPARENTS = [
   ["mormor", "Mormor"],
 ] as const;
 
-/** What the reading saw and what the registry says, beside a field that is not simply läst. */
-function ProposalHint({ field }: { field?: ProposedField }) {
+/** What the reading saw and what the registry says, beside a field that is not simply läst; null otherwise. */
+function proposalHint(field?: ProposedField) {
   if (!field || field.source === "läst") return null;
   const parts = [
     field.read && `Intyget: ${field.read}`,
@@ -179,27 +179,33 @@ export function CertificateForm({
     label: string,
     props: TextFieldProps = {},
     wide = false,
-  ) => (
-    <Field source={sources[key]} wide={wide}>
-      <TextField
-        label={label}
-        value={form[key]}
-        onChange={(e) => set(key, e.target.value)}
-        error={!!errors[key]}
-        size="small"
-        fullWidth
-        {...props}
-        helperText={
-          errors[key] ?? (
-            <>
-              <ProposalHint field={proposed[key]} />
-              {props.helperText}
-            </>
-          )
-        }
-      />
-    </Field>
-  );
+  ) => {
+    const hint = proposalHint(proposed[key]);
+    return (
+      <Field source={sources[key]} wide={wide}>
+        <TextField
+          label={label}
+          value={form[key]}
+          onChange={(e) => set(key, e.target.value)}
+          error={!!errors[key]}
+          size="small"
+          fullWidth
+          {...props}
+          helperText={
+            errors[key] ??
+            (hint ? (
+              <>
+                {hint}
+                {props.helperText}
+              </>
+            ) : (
+              props.helperText
+            ))
+          }
+        />
+      </Field>
+    );
+  };
   const number = (key: keyof CertForm, label: string, required = true) =>
     text(key, label, {
       required,
@@ -308,9 +314,7 @@ export function CertificateForm({
                     label="Färg"
                     size="small"
                     error={!!errors.color}
-                    helperText={
-                      errors.color ?? <ProposalHint field={proposed.color} />
-                    }
+                    helperText={errors.color ?? proposalHint(proposed.color)}
                   />
                 )}
               />
@@ -340,7 +344,7 @@ export function CertificateForm({
                     <li key={key}>
                       <Field source={proposed[key]?.source}>
                         {label}: {proposed[key]?.value ?? "–"}
-                        <ProposalHint field={proposed[key]} />
+                        {proposalHint(proposed[key])}
                       </Field>
                     </li>
                   ),
