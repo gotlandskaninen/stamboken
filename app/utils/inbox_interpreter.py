@@ -237,5 +237,5 @@ def status():
         "interpreter": settings.interpretation.interpreter if enabled() else "av",
         "waiting": InboxDocument.select().join(InboxItem).where(_waiting()).count(),
         "last_done_at": last_done.isoformat() if last_done else None,
-        "alarm": last == ["misslyckad"] * 3,
+        "alarm": enabled() and last == ["misslyckad"] * 3,
     }

@@ -183,3 +183,6 @@ class TestStatus(InterpretationTest):
         status = self.client.get("/api/v2/inkorg").get_json()["interpretation"]
         self.assertEqual((status["waiting"], status["alarm"]), (0, True))
         self.assertEqual(status["last_done_at"], self.doc(documents[0]).interpreted_at.isoformat())
+        with mock.patch.object(settings.interpretation, "interpreter", "av"):  # turned off: no alarm to act on
+            status = self.client.get("/api/v2/inkorg").get_json()["interpretation"]
+        self.assertEqual((status["interpreter"], status["alarm"]), ("av", False))
