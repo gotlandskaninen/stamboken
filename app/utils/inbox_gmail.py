@@ -52,6 +52,7 @@ MAX_TEXT = 10_000  # characters of a mail's text kept on the item; shortcut: cut
 MAX_BODY = 200_000  # characters of a mail's body read at all, before anything parses it: bounds the work
 RELEASE_AFTER = timedelta(days=30)  # a closed item's sender address goes by then, whatever is still queued
 CROP_SIDE = 2000  # pixels, the longest side of the photo's part a question carries
+MIN_SIDE = 200  # pixels: an image with a shorter side is a signature logo or a tracking pixel, not a document
 STALLED_AFTER = timedelta(minutes=20)  # four missed runs: the reader has stopped
 FAILED_AFTER = 3  # runs in a row a message's content may fail before it is set aside for a human
 RETRY = "retry"  # gmail_processed.kind of a message that failed fewer times: read again by every run
@@ -324,7 +325,10 @@ def _store(attachments):
             except _Refused:
                 skipped.append(name)
                 continue
-            for image in images:
+            documents = [image for image in images if min(image.size) >= MIN_SIDE]
+            if len(documents) < len(images):
+                skipped.append(name)
+            for image in documents:
                 stored.append((*inbox.store_jpeg(image, "original"), inbox.measure(image)))
     except BaseException:
         inbox.remove_files(path for path, _, _ in stored)

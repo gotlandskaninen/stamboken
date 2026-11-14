@@ -402,6 +402,18 @@ class TestItemsFromMail(GmailTest):
         self.assertEqual(len(self.documents(item)), 10)
         self.assertEqual(item.events.get().detail["not_saved"], ["stor.jpg", "brev.docx", "10.jpg"])
 
+    def test_logos_and_tracking_pixels_are_not_documents(self):
+        files = [
+            ("pixel.png", "image/png", encoded(Image.new("RGB", (1, 1), (255, 255, 255)), "PNG")),
+            ("logo.png", "image/png", encoded(photo((400, 120)), "PNG")),
+            ("intyg.jpg", JPEG, encoded(photo())),
+        ]
+        self.fake.deliver(message(files=files))
+        self.read()
+        (item,) = self.items()
+        self.assertEqual(len(self.documents(item)), 1)
+        self.assertEqual(item.events.get().detail["not_saved"], ["pixel.png", "logo.png"])
+
     def test_exif_is_gone_and_an_inline_photo_counts(self):
         exif = Image.Exif()
         exif[0x0110] = "SecretCam"  # camera model

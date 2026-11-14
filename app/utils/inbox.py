@@ -130,7 +130,8 @@ def measure(image):
     grey = image.convert("L")
     grey.thumbnail((SHARPNESS_SIDE, SHARPNESS_SIDE))
     edges = grey.filter(_LAPLACIAN)
-    edges = edges.crop((1, 1, edges.width - 1, edges.height - 1))  # the filter leaves the border unfiltered
+    if min(edges.size) > 2:  # the filter leaves the border unfiltered; an image of a pixel or two has only border
+        edges = edges.crop((1, 1, edges.width - 1, edges.height - 1))
     return {
         "short_side": min(image.size),
         "sharpness": round(ImageStat.Stat(edges).var[0], 1),

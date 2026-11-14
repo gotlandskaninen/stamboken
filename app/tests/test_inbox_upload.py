@@ -94,6 +94,16 @@ class TestUpload(InboxTest):
         self.assertFalse(db.InboxItem.select().exists())
         self.assertEqual(os.listdir(self.folder), [])
 
+    def test_an_image_of_a_pixel_or_two_is_measured(self):
+        for size in ((1, 1), (2, 900), (900, 2)):
+            with self.subTest(size=size):
+                quality = inbox.measure(Image.new("RGB", size, (200, 200, 200)))
+                self.assertEqual(quality["short_side"], min(size))
+        self.login("owner")
+        resp = self.upload(("pixel.png", encoded(Image.new("RGB", (1, 1)), "PNG")))
+        self.assertNotEqual(resp.status_code, 500)
+        self.assertIn("lag_upplosning", resp.get_json()["documents"][0]["warnings"])
+
     def test_refusals(self):
         self.login("owner")
         too_many_pixels = encoded(Image.new("1", (8000, 6000)), "PNG")
