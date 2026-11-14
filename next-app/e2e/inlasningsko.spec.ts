@@ -59,6 +59,14 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
     });
     await expect(page.getByLabel("Valda filer")).toContainText("intyg.png");
     await page.getByRole("button", { name: "Skicka", exact: true }).click();
+    // One upload: the API either stores the photo or answers 409 with warnings
+    // and stores nothing, and then "Skicka ändå" sends the same photo again.
+    const sendAnyway = page.getByRole("button", { name: "Skicka ändå" });
+    await Promise.race([
+      page.waitForURL(/\/stamboken\/inskick#arende-\d+/, { timeout: 60000 }),
+      sendAnyway.waitFor({ timeout: 60000 }),
+    ]);
+    if (await sendAnyway.isVisible()) await sendAnyway.click();
   });
 
   await test.step("2. Ärendet syns under Mina inskick med ärendenummer", async () => {

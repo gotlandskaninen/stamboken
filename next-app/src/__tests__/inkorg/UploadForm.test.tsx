@@ -43,9 +43,11 @@ describe("UploadForm", () => {
   });
 
   it("lets a queue worker search any herd and sends its code", async () => {
-    uploadIntyg
-      .mockResolvedValueOnce({ ok: true, documents: [], itemId: null })
-      .mockResolvedValueOnce({ ok: true, documents: [], itemId: 14 });
+    uploadIntyg.mockResolvedValueOnce({
+      ok: true,
+      documents: [],
+      itemId: 14,
+    });
     render(
       <UploadForm
         herds={[]}
@@ -65,29 +67,26 @@ describe("UploadForm", () => {
     );
   });
 
-  it("sends straight on when the dry run has no warnings", async () => {
-    uploadIntyg
-      .mockResolvedValueOnce({
-        ok: true,
-        documents: [{ file: 0, page: 1, warnings: [] }],
-        itemId: null,
-      })
-      .mockResolvedValueOnce({ ok: true, documents: [], itemId: 12 });
+  it("sends the files once, without accept_warnings", async () => {
+    uploadIntyg.mockResolvedValueOnce({ ok: true, documents: [], itemId: 12 });
     render(<UploadForm herds={["G9001"]} />);
     pick();
     fireEvent.click(await screen.findByRole("button", { name: "Skicka" }));
     await waitFor(() =>
       expect(push).toHaveBeenCalledWith("/stamboken/inskick#arende-12"),
     );
-    expect(uploadIntyg.mock.calls.map((c) => c[1])).toEqual([true, false]);
+    expect(uploadIntyg).toHaveBeenCalledTimes(1);
+    expect(
+      (uploadIntyg.mock.calls[0][0] as FormData).has("accept_warnings"),
+    ).toBe(false);
   });
 
-  it("shows the API warning, then Skicka ändå sends without a second dry run", async () => {
+  it("shows the warnings of a refused upload, then Skicka ändå sends again with accept_warnings", async () => {
     uploadIntyg
       .mockResolvedValueOnce({
-        ok: true,
-        documents: [{ file: 0, page: null, warnings: ["suddig"] }],
-        itemId: null,
+        ok: false,
+        error: "Bilden kan vara svår att läsa.",
+        warnings: [{ file: 0, page: null, warnings: ["suddig"] }],
       })
       .mockResolvedValueOnce({ ok: true, documents: [], itemId: 13 });
     render(<UploadForm herds={["G9001"]} />);
@@ -97,6 +96,7 @@ describe("UploadForm", () => {
       await screen.findByText("Bilden ser suddig ut. Ta om den?"),
     ).toBeInTheDocument();
     expect(push).not.toHaveBeenCalled();
+    expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.getByRole("button", { name: "Ta om" })).toBeInTheDocument();
     await waitFor(() =>
       expect(screen.getByRole("button", { name: "Skicka ändå" })).toBeEnabled(),
@@ -105,7 +105,8 @@ describe("UploadForm", () => {
     await waitFor(() =>
       expect(push).toHaveBeenCalledWith("/stamboken/inskick#arende-13"),
     );
-    expect(uploadIntyg.mock.calls.map((c) => c[1])).toEqual([true, false]);
+    const forms = uploadIntyg.mock.calls.map((c) => c[0] as FormData);
+    expect(forms.map((f) => f.get("accept_warnings"))).toEqual([null, "1"]);
   });
 
   it("shows the API problem detail on failure", async () => {

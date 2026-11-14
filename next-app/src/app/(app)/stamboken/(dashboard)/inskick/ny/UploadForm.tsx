@@ -32,7 +32,7 @@ export function UploadForm({
   const [files, setFiles] = useState<File[]>([]);
   const [message, setMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
-  // Warnings per index in `files`, set after the dry run.
+  // Warnings per index in `files`, from the API's 409.
   const [warnings, setWarnings] = useState<Record<number, string[]> | null>(
     null,
   );
@@ -72,23 +72,21 @@ export function UploadForm({
     return fd;
   };
 
-  const send = (skipCheck: boolean) =>
+  const send = (acceptWarnings: boolean) =>
     start(async () => {
       setError(null);
       const fd = await build();
       if (!fd) return;
-      if (!skipCheck) {
-        const dry = await uploadIntyg(fd, true);
-        if (!dry.ok) return setError(dry.error);
+      if (acceptWarnings) fd.set("accept_warnings", "1");
+      const res = await uploadIntyg(fd);
+      if (!res.ok) {
+        if (!res.warnings?.length) return setError(res.error);
+        // Nothing was stored: show what the API saw, per file.
         const byFile: Record<number, string[]> = {};
-        for (const d of dry.documents) {
-          if (d.warnings.length)
-            byFile[d.file] = [...(byFile[d.file] ?? []), ...d.warnings];
-        }
-        if (Object.keys(byFile).length) return setWarnings(byFile);
+        for (const d of res.warnings)
+          byFile[d.file] = [...(byFile[d.file] ?? []), ...d.warnings];
+        return setWarnings(byFile);
       }
-      const res = await uploadIntyg(fd, false);
-      if (!res.ok) return setError(res.error);
       showSnackbar("Tack, intygen är skickade", "success");
       router.push(
         res.itemId
