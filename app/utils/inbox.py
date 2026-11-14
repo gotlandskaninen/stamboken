@@ -500,6 +500,13 @@ def _waiting_for(value):
 
 
 DOCUMENT_FIELDS = ("doc_type", "cert_format", "rotation", "mask_rects", "waiting_for", "dismissed")
+COPY_FIELDS = {"rotation", "mask_rects", "doc_type"}  # fixed once the copy is made: only …/maskning remakes it
+
+
+def _rotation(value):
+    if isinstance(value, bool) or value not in (0, 90, 180, 270):
+        raise InboxError(400, "rotation är 0, 90, 180 eller 270 grader medurs.")
+    return value
 
 
 def update_document(item, document, user, changes):
@@ -507,12 +514,18 @@ def update_document(item, document, user, changes):
     require_handler(item, user)
     if not changes or set(changes) - set(DOCUMENT_FIELDS):
         raise InboxError(400, f"Ändra något av {', '.join(DOCUMENT_FIELDS)}.")
+    if document.public_path and COPY_FIELDS & set(changes):
+        raise InboxError(409, "Kopian är gjord. Vridning och maskning ändras med …/maskning, och typen inte alls.")
+    if changes.get("doc_type", document.doc_type) != document.doc_type and (
+        document.individual_id or document.herd_tracking_id
+    ):
+        raise InboxError(409, "Något är redan sparat från dokumentet, så typen kan inte ändras.")
     if "doc_type" in changes and changes["doc_type"] not in DOC_TYPES:
         raise InboxError(400, f"doc_type är en av {', '.join(DOC_TYPES)}.")
     if "cert_format" in changes and changes["cert_format"] not in (None, *CERT_FORMATS):
         raise InboxError(400, f"cert_format är null eller en av {', '.join(CERT_FORMATS)}.")
-    if "rotation" in changes and changes["rotation"] not in (0, 90, 180, 270):
-        raise InboxError(400, "rotation är 0, 90, 180 eller 270 grader medurs.")
+    if "rotation" in changes:
+        _rotation(changes["rotation"])
     if "dismissed" in changes and not isinstance(changes["dismissed"], bool):
         raise InboxError(400, "dismissed är true eller false.")
     if changes.get("doc_type", document.doc_type) != document.doc_type:  # only certificates are read
@@ -529,8 +542,6 @@ def update_document(item, document, user, changes):
         document.done_at = document.done_at or now()
     elif changes.get("dismissed") is False and document.public_path is None and document.herd_tracking_id is None:
         document.done_at = None
-    if document.public_path and {"rotation", "mask_rects"} & set(changes):
-        make_copy(document)
     document.save()
     log_event(item, user, "dokument", document=document.id, fields=sorted(changes))
     close_if_done(item, user)
@@ -555,7 +566,7 @@ def make_copy(document):
     """
     The copy shown on the rabbit, made from the original: turned `rotation` degrees clockwise, its mask_rects
     (fractions of the turned image) painted black, saved as inkorg/kopia/<document id>.jpg without metadata.
-    Made again whenever the rectangles or the rotation change, which needs the original.
+    Only confirm_mask makes it, from the pair it was given, which needs the original.
     """
     if document.original_path is None:
         raise InboxError(409, "Originalet är raderat, så kopian kan inte göras om.")
@@ -571,19 +582,26 @@ def make_copy(document):
     document.public_path, _ = store_jpeg(image, "kopia", name=str(document.id))
 
 
-def confirm_mask(item, document, user, rects=None):
-    """The handler confirms what covers the seller and the buyer: the copy goes on the rabbit, the document is done."""
-    require_handler(item, user)
+def confirm_mask(item, document, user, rotation, rects, no_personal_data=None):
+    """
+    POST …/maskning: the rotation and the rectangles covering the seller and the buyer, stored together, and the copy
+    made from exactly that pair goes on the rabbit; the document is done. The item's handler, while the item is open;
+    a copy already made can be made again by a manager of the item's genebank or an admin at any time.
+    """
+    if not (document.public_path and manages(user, item.genebank_id)):
+        require_handler(item, user)
     if document.doc_type != "intyg" or document.individual_id is None:
         raise InboxError(409, "Spara kaninen från intyget först.")
-    if rects is not None:
-        document.mask_rects = _rects(rects)
-    if document.mask_rects is None:
-        raise InboxError(400, "Ange mask_rects, eller en tom lista om intyget inte visar någon säljare eller köpare.")
+    rotation, rects = _rotation(rotation), _rects(rects)
+    if rects is None:
+        raise InboxError(400, "Ange mask_rects: rektanglarna som täcker säljaren och köparen.")
+    if not rects and no_personal_data is not True:
+        raise InboxError(400, 'En tom mask_rects kräver "no_personal_data": true: intyget visar ingen säljare.')
+    document.rotation, document.mask_rects = rotation, rects
     document.done_at = document.done_at or now()
     make_copy(document)
     document.save()
-    log_event(item, user, "kopia", document=document.id, rects=len(document.mask_rects))
+    log_event(item, user, "kopia", document=document.id, rects=len(rects), rotation=rotation)
     close_if_done(item, user)
 
 

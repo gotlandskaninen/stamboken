@@ -678,7 +678,9 @@ def confirm_mask(item_id, document_id):
 
     def action(item):
         document = inbox.document_of(item, document_id)
-        inbox.confirm_mask(item, document, current_user, body.get("mask_rects"))
+        inbox.confirm_mask(
+            item, document, current_user, body.get("rotation"), body.get("mask_rects"), body.get("no_personal_data")
+        )
         return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]})
 
     return _locked(item_id, action)

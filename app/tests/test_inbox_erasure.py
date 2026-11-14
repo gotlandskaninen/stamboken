@@ -54,7 +54,7 @@ class ErasureTest(PurgeTest):
         resp = self.post(f"/{item.id}/dokument/{document.id}/spara", **body)
         self.assertEqual(resp.status_code, 200, resp.get_json())
         resp = self.post(
-            f"/{item.id}/dokument/{document.id}/maskning", mask_rects=[{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
+            f"/{item.id}/dokument/{document.id}/maskning", rotation=0, mask_rects=[{"x": 0, "y": 0.5, "w": 1, "h": 0.5}]
         )
         self.assertEqual(resp.status_code, 200, resp.get_json())
         return item, db.InboxDocument.get_by_id(document.id)

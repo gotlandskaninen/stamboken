@@ -135,7 +135,7 @@ Allt annat nekas med 409. `ny` och `vantar_uppfodare` kan inte sättas med `…/
 3. Ett intyg: spara det intyget visar (`…/spara`), en ny kanin eller pappersintyget på en kanin
    som finns. Visar intyget också en försäljning, registrera den nu (`…/overlat`): ett dokument som
    är klart går inte att spara eller sälja från.
-4. Bekräfta maskningen (`…/maskning`). Kopian läggs på kaninen och dokumentet blir klart.
+4. Bekräfta vridning och maskning (`…/maskning`). Kopian läggs på kaninen och dokumentet blir klart.
 5. Ett överlåtelsebevis: typen `bevis`, sedan `…/overlat`. Beviset blir klart med försäljningen.
 6. Ett foto som inte ska sparas: `dismissed: true`.
 7. När det sista dokumentet är klart eller avfärdat blir posten `klar`, och uppladdaren får en
@@ -321,7 +321,7 @@ till avsändaren väntar, och senast 30 dagar efter stängningen.
 | `lage` | `{"from": "tagen", "to": "ofullstandig", "note": "Pappersintyget saknas"}`; `note` bara när den gavs, `duplicate_of` vid `dubblett` |
 | `dokument` | `{"document": 31, "fields": ["mask_rects", "rotation"]}` |
 | `sparad` | `{"document": 31, "action": "ny_kanin" \| "pappersintyg", "individual": "G1-2511"}`, eller vid en försäljning `{"document": 31, "action": "overlatelse", "individual": "G1-2111", "herd": "G2", "missing_proof": true}` |
-| `kopia` | `{"document": 31, "rects": 1}` |
+| `kopia` | `{"document": 31, "rects": 1, "rotation": 90}`; varje anrop till `…/maskning` |
 | `original_visat` | `{"document": 31}` |
 | `foralder_inlagd` | `{"individual": "G1-2431"}` |
 | `fraga` | `{"text": "Står det G1-2112?", "document": 31, "rotation": 0, "crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.25}}`; de tre sista bara med utsnitt |
@@ -539,15 +539,16 @@ eller avfärda dokumenten först.`).
 | `waiting_for` | `null`, `[]` eller en lista med ett eller två individnummer (till exempel `G1-2431`) som inte finns i Stamboken än |
 | `dismissed` | `true` avfärdar dokumentet (klart utan att något sparas, till exempel ett foto som inte är ett intyg); `false` ångrar det, om inget har sparats från dokumentet |
 
-Ändras `rotation` eller `mask_rects` på ett dokument som redan har en kopia görs kopian om. Blir
-det sista dokumentet avfärdat blir posten `klar`.
+När dokumentet har en kopia nekas `rotation`, `mask_rects` och `doc_type` (409): kopian görs bara om
+med `…/maskning`. `doc_type` nekas också när något har sparats från dokumentet (en kanin eller en
+försäljning). Blir det sista dokumentet avfärdat blir posten `klar`.
 
 **Svar 200:** `{"item": <post i listform>, "document": <dokument>}`.
 
 **Fel:** 400 för ett okänt fält, ett ogiltigt värde, ett nummer som inte går att läsa eller som
 redan finns i Stamboken (`"G1-2111 finns redan i Stamboken."`); 404 när dokumentet inte hör till
-posten; 409 när anroparen inte är handläggare, eller när kopian skulle göras om men originalet är
-raderat.
+posten; 409 när anroparen inte är handläggare, när kopian är gjord och anropet ändrar `rotation`,
+`mask_rects` eller `doc_type`, eller när typen ändras på ett dokument som något har sparats från.
 
 **Väntar på förälder.** Saknas en förälder i Stamboken: ange förälderns nummer i `waiting_for`
 och byt läge till `vantar_foralder`. När en kanin med det numret läggs in, var som helst i
@@ -725,25 +726,35 @@ kopian genom att rita rektanglarna över det vridna originalet.
 
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/maskning`
 
-Bekräftar maskningen och gör kopian.
+Bekräftar vridningen och maskningen tillsammans och gör kopian av just det paret.
 
 ```json
-{"mask_rects": [{"x": 0, "y": 0.6667, "w": 1, "h": 0.3333}]}
+{"rotation": 90, "mask_rects": [{"x": 0, "y": 0.6667, "w": 1, "h": 0.3333}]}
 ```
 
-`mask_rects` kan utelämnas om de redan är sparade på dokumentet. En tom lista bekräftar att
-intyget inte visar någon säljare eller köpare.
+| Fält | |
+|---|---|
+| `rotation` | krävs: 0, 90, 180 eller 270 grader medurs |
+| `mask_rects` | krävs: rektanglarna i bråkdelar av bilden vriden `rotation` grader. Får inte vara `null` |
+| `no_personal_data` | `true` krävs när `mask_rects` är en tom lista: intyget visar ingen säljare eller köpare |
 
-**Vem:** handläggaren. Dokumentet måste vara ett sparat intyg (`individual` satt).
+Båda värdena sparas på dokumentet i samma transaktion som kopian görs. Det som redan står på
+dokumentet (från `PATCH`) används inte: kopian visar exakt det paret som skickades.
+
+**Vem:** handläggaren medan posten är öppen. Har dokumentet redan en kopia får också
+genbanksansvarig för postens genbank och admin göra om den, i alla lägen och också när posten är
+stängd eller någon annan har den, så att en felaktig kopia kan rättas. Dokumentet måste vara ett
+sparat intyg (`individual` satt).
 
 Dokumentet blir klart (`status: "klar"`, `has_copy: true`). Är alla dokument i posten klara
 eller avfärdade blir posten `klar`, uppladdaren får notisen `klar` och mejlet `inlasning.klar`.
-Kopian görs om från originalet varje gång rektanglarna eller vridningen ändras.
+Varje anrop loggas som händelsen `kopia`.
 
 **Svar 200:** `{"item": <post>, "document": <dokument>}`.
 
-**Fel:** 400 när `mask_rects` saknas både i anropet och på dokumentet, eller är ogiltiga; 409 när
-dokumentet inte är ett sparat intyg, anroparen inte är handläggare eller originalet är raderat.
+**Fel:** 400 när `rotation` eller `mask_rects` saknas eller är ogiltiga, eller när `mask_rects` är tom
+utan `"no_personal_data": true`; 409 när dokumentet inte är ett sparat intyg, anroparen inte får göra
+kopian eller originalet är raderat.
 
 ## Bilderna
 
