@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Provar nginx/nginx.conf mot en riktig nginx: konfigen ska vara giltig, och en
+# Provar nginx-main/nginx.conf mot en riktig nginx: konfigen ska vara giltig, och en
 # frågesträng (HEMLIG) ska inte synas i åtkomstloggen, varken över http eller
 # för okänt värdnamn. Kräver docker. Användning: scripts/check-nginx-log-format.sh
 set -euo pipefail
@@ -14,7 +14,7 @@ server {
 }
 CONF
 docker run -d --name "$name" \
-	-v "$root/nginx/nginx.conf:/etc/nginx/nginx.conf:ro" \
+	-v "$root/nginx-main/nginx.conf:/etc/nginx/nginx.conf:ro" \
 	-v "$tmp/test.conf:/etc/nginx/conf.d/test.conf:ro" \
 	nginx:1.27-alpine >/dev/null
 for _ in $(seq 20); do docker exec "$name" nginx -t >/dev/null 2>&1 && break; sleep 0.5; done
