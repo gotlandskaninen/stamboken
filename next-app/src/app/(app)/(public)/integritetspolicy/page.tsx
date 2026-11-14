@@ -185,12 +185,9 @@ export default function IntegritetspolicyPage() {
             </ul>
             <p>
               Uppgifterna om kaninerna och deras härstamning sparas tills
-              vidare, tillsammans med besättningens nummer. Kontaktuppgifterna{" "}
-              <mark>
-                [BESLUT: hur länge sparas kontaktuppgifter för en avslutad
-                genbanksbesättning? Förslag: 12 månader, bankkontot tas bort
-                efter sista utbetalningen.]
-              </mark>
+              vidare, tillsammans med besättningens nummer. Kontaktuppgifterna
+              tar vi bort inom 12 månader efter att genbanksbesättningen har
+              avslutats, och bankkontot när det sista stödet är utbetalt.
             </p>
           </Section>
 
@@ -221,11 +218,8 @@ export default function IntegritetspolicyPage() {
               Stamboken Online och i medlemsforumet. När du mejlar föreningen
               lagras mejlet hos Google och läses av den funktionär som har
               adressen. I forumet sparas ditt användarnamn, din e-postadress och
-              det du skriver.{" "}
-              <mark>
-                [BESLUT: forumet ska läggas ner. Förslag: konton och inlägg tas
-                bort när det stängs.]
-              </mark>
+              det du skriver. Forumet ska läggas ner, och då tas konton och
+              inlägg bort.
             </p>
           </Section>
 
