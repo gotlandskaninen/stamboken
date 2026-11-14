@@ -722,7 +722,7 @@ def transferred(item, document, user, individual, row):
     """A sale registered from a document: a proof (bevis) is done with it; anything else leaves the proof missing."""
     proof = document.doc_type == "bevis"
     if proof:
-        document.individual, document.herd_tracking, document.done_at = individual, row, now()
+        document.individual, document.herd_tracking_id, document.done_at = individual, row.id, now()
         document.save()
     else:
         item.missing_proof = True
