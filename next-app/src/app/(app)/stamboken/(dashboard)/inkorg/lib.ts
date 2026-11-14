@@ -61,10 +61,40 @@ export interface InboxDocument {
   mask_rects: Rect[] | null;
   mask_suggestion: Rect[] | null;
   waiting_for: string[] | null;
-  proposal: Partial<CertForm> | null;
+  interpretation_status: InterpretationStatus;
+  proposal: Proposal | null;
   individual: string | null;
   has_copy: boolean;
 }
+
+// The image reading (docs/inkorg.md, "Tolkning"): its status on a document and
+// its proposal, fields with where each value came from and the checks in words.
+export type InterpretationStatus = "av" | "vantar" | "klar" | "misslyckad";
+export type Source = "läst" | "härlett" | "avviker" | "osäker";
+export type ProposedField = {
+  /** null for avviker and osäker: those are read off the photo. */
+  value: string | number | null;
+  source: Source;
+  /** What the reading saw on the certificate. */
+  read?: string;
+  /** The registry's value, where it differs. */
+  registry?: string | number;
+};
+export type Proposal = {
+  fields: Partial<Record<string, ProposedField>>;
+  checks: { ok: boolean | null; text: string }[];
+};
+
+export type InterpretationSummary = {
+  interpreter: string;
+  waiting: number;
+  last_done_at: string | null;
+  alarm: boolean;
+};
+
+/** The proposal the form shows: only a finished reading's. */
+export const shownProposal = (doc: InboxDocument): Proposal | null =>
+  doc.interpretation_status === "klar" ? doc.proposal : null;
 
 export interface InboxEvent {
   id: number;
@@ -85,6 +115,7 @@ export interface QueueList {
   items: InboxItem[];
   total: number;
   counts: Partial<Record<ItemState, number>>;
+  interpretation?: InterpretationSummary;
 }
 
 /** An RFC 9457 problem as a server action hands it to the client. */
@@ -318,16 +349,20 @@ const EMPTY_FORM: CertForm = {
   individual: "",
 };
 
-/** The form's first values: empty, or what the image reading proposes. */
-export function initialCertForm(proposal: Partial<CertForm> | null): CertForm {
+/** The form's first values: empty, or what the image reading proposes (läst and härlett carry a value). */
+export function initialCertForm(proposal: Proposal | null): CertForm {
   const form = { ...EMPTY_FORM };
   for (const key of Object.keys(EMPTY_FORM) as (keyof CertForm)[]) {
-    const value = proposal?.[key];
+    const value = proposal?.fields[key]?.value;
     if (value !== undefined && value !== null)
       Object.assign(form, { [key]: String(value) });
   }
   return form;
 }
+
+/** A proposal that found the rabbit in Stamboken is for its paper certificate. */
+export const initialSaveMode = (proposal: Proposal | null): SaveMode =>
+  proposal?.fields.individual ? "pappersintyg" : "ny_kanin";
 
 const number = (s: string) => s.trim().toUpperCase();
 const count = (s: string) => (/^\d+$/.test(s.trim()) ? Number(s) : undefined);

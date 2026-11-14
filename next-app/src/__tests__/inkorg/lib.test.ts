@@ -6,6 +6,7 @@ import {
   canSave,
   CLOSED_STATES,
   initialCertForm,
+  initialSaveMode,
   itemActions,
   nextOpenDocument,
   numberCheckOf,
@@ -229,14 +230,30 @@ describe("the …/spara payload", () => {
       true,
     );
   });
-  it("takes a proposed value per field", () => {
-    expect(
-      initialCertForm({ name: "Testa", litter_size: 5 as unknown as string }),
-    ).toMatchObject({
+  it("takes a proposed value per field, none from avviker or osäker", () => {
+    const form = initialCertForm({
+      fields: {
+        name: { value: "Testa", source: "läst" },
+        litter_size: { value: 5, source: "härlett" },
+        mother: { value: null, source: "avviker", read: "G9001 2131" },
+        father: { value: null, source: "osäker", read: "G9OO2 2214" },
+      },
+      checks: [],
+    });
+    expect(form).toMatchObject({
       name: "Testa",
       litter_size: "5",
       mother: "",
+      father: "",
     });
+  });
+  it("starts on the paper certificate when the proposal found the rabbit", () => {
+    const found = { value: "G9001-2512", source: "läst" as const };
+    expect(initialSaveMode({ fields: { individual: found }, checks: [] })).toBe(
+      "pappersintyg",
+    );
+    expect(initialSaveMode({ fields: {}, checks: [] })).toBe("ny_kanin");
+    expect(initialSaveMode(null)).toBe("ny_kanin");
   });
   it("a new rabbit: every field of the certificate, numbers trimmed and upper case", () => {
     expect(buildSavePayload("ny_kanin", filled)).toEqual({

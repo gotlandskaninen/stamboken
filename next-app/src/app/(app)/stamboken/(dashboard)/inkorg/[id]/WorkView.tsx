@@ -7,6 +7,7 @@ import type { GenebankHerd } from "@/utils/saleRules";
 import {
   changeState,
   confirmMask,
+  reinterpretDocument,
   takeItem,
   updateDocument,
   waitForParent,
@@ -66,6 +67,7 @@ const EVENT_LABEL: Record<string, string> = {
   foralder_inlagd: "Förälder inlagd",
   fraga: "Fråga till uppfödaren",
   svar: "Svar från uppfödaren",
+  tolka_igen: "Tolkas igen",
 };
 
 function eventText(e: InboxEvent): string {
@@ -520,6 +522,25 @@ export function WorkView({
                       Avfärda
                     </button>
                   )}
+                  {fresh &&
+                    doc.doc_type === "intyg" &&
+                    doc.interpretation_status !== "av" && (
+                      <button
+                        type="button"
+                        className="sb-btn sb-btn-secondary sb-btn-sm"
+                        disabled={
+                          pending || doc.interpretation_status === "vantar"
+                        }
+                        onClick={() =>
+                          run(
+                            () => reinterpretDocument(item.id, doc.id),
+                            () => setNotice("Fotot tolkas igen."),
+                          )
+                        }
+                      >
+                        Tolka igen
+                      </button>
+                    )}
                   {doc.status === "avfardad" && (
                     <button
                       type="button"
@@ -671,7 +692,7 @@ export function WorkView({
             </>
           ) : doc.doc_type === "intyg" ? (
             <CertificateForm
-              key={doc.id}
+              key={`${doc.id}:${doc.interpretation_status}`}
               itemId={item.id}
               doc={doc}
               colors={colors}

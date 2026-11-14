@@ -315,5 +315,20 @@ services:
       retries: 3
       start_period: 30s
 
+  # ============================================
+  # Ollama - bildtolkningen av intyg (docs/inkorg.md, "Tolkning")
+  # Som i produktion: bara med profilen tolkning, ingen publicerad port.
+  # ============================================
+  ollama:
+    image: ollama/ollama:latest
+    profiles:
+      - tolkning
+    cpus: 6
+    environment:
+      - OLLAMA_KEEP_ALIVE=5m
+    volumes:
+      - ollama_models:/root/.ollama
+
 volumes:
   redis_data:
+  ollama_models:

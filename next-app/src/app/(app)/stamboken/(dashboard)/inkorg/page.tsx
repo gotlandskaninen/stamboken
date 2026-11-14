@@ -74,6 +74,7 @@ export default async function InkorgPage({
     return s ? `${PATH}?${s}` : PATH;
   };
   const counts = data?.counts ?? {};
+  const reading = data?.interpretation;
   const openCount = OPEN_STATES.reduce((n, s) => n + (counts[s] ?? 0), 0);
   const stateTabs: [string | null, string, number | null][] = [
     [null, "Öppna", openCount],
@@ -109,6 +110,22 @@ export default async function InkorgPage({
             </Link>
           ))}
         </nav>
+
+        {reading && reading.interpreter !== "av" && (
+          <p className={styles.muted}>
+            Bildtolkning: {reading.waiting}{" "}
+            {reading.waiting === 1 ? "foto väntar" : "foton väntar"}
+            {reading.last_done_at &&
+              `, senast klar ${new Date(reading.last_done_at).toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" })}`}
+            .
+          </p>
+        )}
+        {reading?.alarm && (
+          <p role="alert" className={styles.error}>
+            Tre foton i rad gick inte att tolka. Kontrollera att bildtolkningen
+            är igång.
+          </p>
+        )}
 
         <section className={`sb-card ${styles.card}`}>
           {/* Plain GET form: the filters live in the URL. */}

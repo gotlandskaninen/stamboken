@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from peewee import fn
 from PIL import Image, ImageDraw, ImageFilter, ImageStat
 
+import utils.inbox_interpreter as interpreter
 import utils.settings as settings
 from utils.database import (
     DB_PROXY,
@@ -504,6 +505,9 @@ def update_document(item, document, user, changes):
         raise InboxError(400, "rotation är 0, 90, 180 eller 270 grader medurs.")
     if "dismissed" in changes and not isinstance(changes["dismissed"], bool):
         raise InboxError(400, "dismissed är true eller false.")
+    if changes.get("doc_type", document.doc_type) != document.doc_type:  # only certificates are read
+        document.interpretation_status = interpreter.initial_status() if changes["doc_type"] == "intyg" else "av"
+        document.attempts = 0
     for key in ("doc_type", "cert_format", "rotation"):
         if key in changes:
             setattr(document, key, changes[key])
@@ -520,6 +524,19 @@ def update_document(item, document, user, changes):
     document.save()
     log_event(item, user, "dokument", document=document.id, fields=sorted(changes))
     close_if_done(item, user)
+
+
+def reinterpret(item, document, user):
+    """ "Tolka igen", after a turn: the certificate waits for the image reading again, its old proposal gone."""
+    require_handler(item, user)
+    if not interpreter.enabled():
+        raise InboxError(409, "Bildtolkningen är avstängd.")
+    if document.doc_type != "intyg" or document.done_at is not None or document.individual_id is not None:
+        raise InboxError(409, "Bara ett intyg som inte är sparat kan tolkas.")
+    document.interpretation_status, document.attempts = "vantar", 0
+    document.interpretation = document.proposal = document.interpreter = document.interpreted_at = None
+    document.save()
+    log_event(item, user, "tolka_igen", document=document.id)
 
 
 def make_copy(document):

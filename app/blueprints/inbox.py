@@ -15,6 +15,7 @@ import pillow_heif
 import pypdfium2
 import utils.data_access as da
 import utils.inbox as inbox
+import utils.inbox_interpreter as interpreter
 from extensions import limiter
 from flask import Blueprint, jsonify, request, send_file
 from flask_login import current_user
@@ -265,7 +266,14 @@ def queue():
     limit = min(max(args.get("limit", 50, type=int) or 50, 1), 200)
     offset = max(args.get("offset", 0, type=int) or 0, 0)
     items = list(query.order_by(InboxItem.received_at, InboxItem.id).limit(limit).offset(offset))
-    return jsonify({"items": inbox.items_json(items), "total": query.count(), "counts": counts})
+    return jsonify(
+        {
+            "items": inbox.items_json(items),
+            "total": query.count(),
+            "counts": counts,
+            "interpretation": interpreter.status(),
+        }
+    )
 
 
 # [Next.js] Who the person pickers offer: every active admin, manager and helper, by name only.
@@ -359,6 +367,19 @@ def update_document(item_id, document_id):
     def action(item):
         document = inbox.document_of(item, document_id)
         inbox.update_document(item, document, current_user, body)
+        return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]})
+
+    return _locked(item_id, action)
+
+
+# [Next.js] "Tolka igen": the certificate waits for the image reading again, after a turn.
+@inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/tolka-igen", methods=["POST"])
+@json_login_required
+@_queue_worker
+def reinterpret(item_id, document_id):
+    def action(item):
+        document = inbox.document_of(item, document_id)
+        inbox.reinterpret(item, document, current_user)
         return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]})
 
     return _locked(item_id, action)

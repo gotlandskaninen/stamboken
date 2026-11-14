@@ -2117,6 +2117,13 @@ class InboxItem(BaseModel):
         indexes = ((("state", "received_at"), False),)
 
 
+def _initial_interpretation():
+    """A new document waits for the image reading when it is on, however it came in (docs/inkorg.md, "Tolkning")."""
+    from utils.inbox_interpreter import initial_status  # pylint: disable=import-outside-toplevel  # it imports us
+
+    return initial_status()
+
+
 class InboxDocument(BaseModel):
     """One image of an item (a photo, or a page of a PDF), under PRIVATE_UPLOAD_FOLDER."""
 
@@ -2131,7 +2138,7 @@ class InboxDocument(BaseModel):
     cert_format = TextField(null=True)
     rotation = SmallIntegerField(default=0)
     mask_rects = BinaryJSONField(null=True, index=False)
-    interpretation_status = TextField(default="av")
+    interpretation_status = TextField(default=_initial_interpretation)  # av, vantar, klar or misslyckad
     attempts = SmallIntegerField(default=0)
     interpreter = TextField(null=True)
     interpretation = BinaryJSONField(null=True, index=False)

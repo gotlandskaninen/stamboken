@@ -30,7 +30,8 @@ Driften av mejlläsningen står i [inkorg-gmail.md](inkorg-gmail.md).
 18. [Mina inskick](#mina-inskick)
 19. [Notiser](#notiser)
 20. [Mejl](#mejl)
-21. [Gränser och sådant gränssnittet behöver veta](#gränser-och-sådant-gränssnittet-behöver-veta)
+21. [Tolkning](#tolkning)
+22. [Gränser och sådant gränssnittet behöver veta](#gränser-och-sådant-gränssnittet-behöver-veta)
 
 ## Begrepp
 
@@ -263,9 +264,37 @@ stängningen.
 - `mask_suggestion`: förslaget när `cert_format` är `handskrivet` och `mask_rects` saknas: den
   nedre tredjedelen, `[{"x": 0.0, "y": 0.6667, "w": 1.0, "h": 0.3333}]`. Annars `null`.
 - `waiting_for`: `null` eller en lista med de föräldranummer dokumentet väntar på.
-- `interpretation_status` och `proposal`: bildtolkningen är en senare del. I dag är
-  `interpretation_status` alltid `"av"` och `proposal` alltid `null`; handläggaren skriver av
-  fälten själv.
+- `interpretation_status`: bildtolkningen av fotot, se [Tolkning](#tolkning). `av` (tolkningen är
+  avstängd, eller dokumentet är inget intyg), `vantar` (i kö), `klar` (förslaget finns) eller
+  `misslyckad` (två försök gick fel; handläggaren skriver av fälten själv).
+- `proposal`: `null`, eller förslaget från tolkningen när `interpretation_status` är `klar`:
+
+  ```json
+  {
+    "fields": {
+      "paper_number": {"value": "G1-2511", "source": "läst", "read": "G1 2511"},
+      "mother": {"value": "G1-1911", "source": "härlett", "read": "61 1911"},
+      "father": {"value": null, "source": "avviker", "read": "G2 1712"},
+      "farfar": {"value": null, "source": "avviker", "read": "G2 1411", "registry": "G2-1311"},
+      "birth_date": {"value": null, "source": "osäker", "read": "10/5"}
+    },
+    "checks": [
+      {"ok": true, "text": "Intygsnumret är ledigt."},
+      {"ok": false, "text": "Far: far- och morföräldrarna på intyget är inte registrets för G2-1712."}
+    ]
+  }
+  ```
+
+  Nycklarna i `fields` är fälten i `…/spara` (se [Spara det intyget visar](#spara-det-intyget-visar)),
+  `individual` när kaninen redan finns i Stamboken, och `farfar`, `farmor`, `morfar` och `mormor`.
+  Ett fält som tolkningen inte såg saknas. `source` säger varifrån värdet kommer: `läst` (läst på
+  intyget; ett nummer är dessutom bekräftat av registret, medan namn, kön, färg, intygsnummer och, för
+  en kull som inte finns i Stamboken, födelsedatum och antal bara är lästa och giltiga), `härlett`
+  (hämtat ur registret), `avviker` (intyget och registret säger olika) eller `osäker`. Bara `läst` och
+  `härlett` har ett `value` att fylla i formuläret med; `avviker` och `osäker` har `value: null` och
+  skrivs av från fotot. `read` är det tolkningen läste på intyget och `registry` registrets värde där
+  de skiljer sig. `checks` är kontrollerna i ord; `ok` är `true`, `false` eller `null` (upplysning).
+  Förslaget sparas aldrig av sig självt: det är handläggarens `…/spara` som skriver.
 - `individual`: kaninens nummer när dokumentet är sparat, annars `null`.
 - `herd_tracking_id`: försäljningens rad i besättningshistoriken, för ett bevis.
 - `has_copy`: kopian finns.
@@ -289,6 +318,7 @@ stängningen.
 | `foralder_inlagd` | `{"individual": "G1-2431"}` |
 | `fraga` | `{"text": "Står det G1-2112?", "document": 31, "rotation": 0, "crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.25}}`; de tre sista bara med utsnitt |
 | `svar` | `{"text": "Ja.", "documents": [33], "not_saved": ["brev.docx"]}`; `user` är `null`, `not_saved` bara när något inte sparades |
+| `tolka_igen` | `{"document": 31}`; handläggaren lade dokumentet i tolkningens kö igen |
 
 ## Ladda upp
 
@@ -379,11 +409,20 @@ Kölistan, äldst först (`received_at`).
 **Svar 200:**
 
 ```json
-{"items": [ { "…": "poster i listform" } ], "total": 17, "counts": {"ny": 9, "tagen": 6, "klar": 2}}
+{
+  "items": [ { "…": "poster i listform" } ],
+  "total": 17,
+  "counts": {"ny": 9, "tagen": 6, "klar": 2},
+  "interpretation": {"interpreter": "gemma", "waiting": 3, "last_done_at": "2026-11-14T08:01:02+00:00", "alarm": false}
+}
 ```
 
 `total` är antalet poster med alla filter. `counts` är antalet per läge med alla filter utom
 `state`, så att flikar per läge kan visa sina antal. Ett läge utan poster saknas i `counts`.
+`interpretation` är tolkningens läge, oberoende av filtren: `interpreter` (`av` när den är
+avstängd), `waiting` (intyg i kö), `last_done_at` (när det senaste förslaget blev klart) och
+`alarm`, som är `true` när de tre senast tolkade dokumenten alla misslyckades (till exempel när
+tolkningen inte är igång eller har slut på minne). Se [Tolkning](#tolkning).
 
 **Fel:** 400 för ett okänt läge eller ett id som inte är ett heltal.
 
@@ -480,7 +519,7 @@ finns.
 
 | Fält | |
 |---|---|
-| `doc_type` | `intyg`, `bevis`, `arsblankett` eller `annat` |
+| `doc_type` | `intyg`, `bevis`, `arsblankett` eller `annat`. Blir dokumentet ett intyg läggs det i tolkningens kö (när tolkningen är på); andra typer tolkas inte (`interpretation_status: "av"`) |
 | `cert_format` | `null` eller ett av formaten under [Dokument](#dokument) i objekten |
 | `rotation` | 0, 90, 180 eller 270 (grader medurs) |
 | `mask_rects` | `null` eller en lista med högst 20 rektanglar, se [Maskning](#maskning-och-kopian-på-kaninen) |
@@ -501,6 +540,20 @@ och byt läge till `vantar_foralder`. När en kanin med det numret läggs in, va
 Stamboken, tas numret bort ur `waiting_for` i samma transaktion. Väntar posten inte längre på
 någon förälder blir den `tagen` igen, och handläggaren får notisen `foralder_inlagd` (har posten
 ingen handläggare får genbanksansvariga den).
+
+### `POST /api/v2/inkorg/{id}/dokument/{dok}/tolka-igen`
+
+"Tolka igen", till exempel när fotot har vridits rätt: dokumentet väntar på tolkningen igen
+(`interpretation_status: "vantar"`), med två nya försök, och det gamla förslaget tas bort. Se
+[Tolkning](#tolkning). Händelsen `tolka_igen` loggas.
+
+**Vem:** handläggaren (posten i ett läge med handläggare).
+
+**Svar 200:** `{"item": <post i listform>, "document": <dokument>}`.
+
+**Fel:** 404 när dokumentet inte hör till posten; 409 när anroparen inte är handläggare, när
+tolkningen är avstängd (`Bildtolkningen är avstängd.`) eller när dokumentet inte är ett intyg som
+inte sparats än (`Bara ett intyg som inte är sparat kan tolkas.`).
 
 ## Spara det intyget visar
 
@@ -858,6 +911,77 @@ Mejlen går genom mejlkön ([mejl.md](mejl.md)) och köas i samma transaktion so
   de har sitt eget mejl.
 
 Gränssnittet ska därför ha Mina inskick på `/stamboken/inskick` och kön på `/stamboken/inkorg`.
+
+## Tolkning
+
+Fotot av ett intyg kan läsas av en bildmodell på servern, och handläggaren får ett förslag i
+formuläret. Förslaget är bara ifyllda fält: inget sparas förrän handläggaren klickar Spara.
+
+**Gången.**
+
+- Ett nytt dokument av typen `intyg` väntar (`vantar`) när tolkningen är på, liksom ett dokument
+  som byter typ till `intyg` och ett som får "Tolka igen".
+- Schemaläggarens jobb `inbox_interpret` tar varje minut det äldsta väntande intyget i en öppen
+  post, om inget sparats från det: ett dokument per körning. Fotot vrids som handläggaren vridit
+  det, skalas ned till högst 2 000 bildpunkter på längsta sidan och förstärks (grön kanal, delad
+  med bakgrunden, sträckt kontrast). Ingen databastransaktion eller -anslutning hålls medan
+  modellen läser.
+- Svaret sparas i `interpretation`, förslaget i `proposal`, tolkaren i `interpreter` och tiden i
+  `interpreted_at`. Ett dokument får två försök, sedan är det `misslyckad`.
+- Vrids, köas om eller ändras dokumentet medan modellen läser kastas svaret, och dokumentet
+  väntar kvar.
+
+**Kontrollerna** (`app/utils/inbox_proposal.py`). Modellen gissar hellre än lämnar ett fält tomt,
+så hur säkert ett fält är avgörs av kontrollerna mot registret, aldrig av modellen:
+
+1. Nummer, datum och antal normaliseras: nummer med och utan mellanslag och bokstav, datum som
+   ÅÅMMDD, D/M-ÅÅ och ÅÅÅÅ-MM-DD, "st" i antal. En bokstav läst som siffra (S för 5, O för 0, l för
+   1) ger aldrig `läst`.
+2. Bara postens genbank söks: kaniner byter aldrig genbank.
+3. En förälder är bekräftad när numret finns och förälderns egna föräldrar i registret stämmer
+   med intyget, minst en av dem och ingen emot. Fel kön eller ett annat namn i registret gör
+   föräldern osäker. Far- och morföräldrar föreslås bara under en bekräftad förälder. Står något
+   annat på intyget markeras hela grenen, eftersom det lika gärna kan vara föräldern som är fel
+   läst.
+4. Ett nummer ett tecken fel ger registrets nummer som `härlett`, om bara en kanin passar.
+5. Kaninens eget nummer: årssiffrorna mot födelsedatumet och numret mot kullen (samma kontroll
+   som pappersnumret vid registreringen), och intygsnumret ska vara ledigt.
+6. Där intyget och registret skiljer sig blir fältet `avviker`, med båda värdena. Förslaget
+   väljer aldrig.
+
+Ett värde som är överstruket eller rättat på intyget är alltid `osäker`. Finns kaninen redan med
+digitalt intyg blir förslaget bara "finns redan med digitalt intyg". Ger tolkningen inte två
+bekräftade föräldrar hjälper registret: en förälder som hittats, eller uppladdarens besättning när
+ingen förälder gick att läsa, ger sina kullar. En enda kull född det lästa datumet fyller i mor och
+far som `härlett`; annars listas kullarna i `checks`.
+
+**Inställningar** (`.docker/api-variables.env`):
+
+| Variabel | Värde | Standard |
+|---|---|---|
+| `INLASNING_TOLKARE` | `av` (ingen tolkning) eller `gemma` (Gemma i Ollama) | `av` |
+| `INLASNING_MODELL` | modellens namn i Ollama | `gemma4` |
+| `OLLAMA_URL` | Ollama-servern | `http://ollama:11434` |
+
+**Driften.** Modellen körs i tjänsten `ollama` i `docker-compose.production.yml` och
+`docker-compose.local-production.yml`. Den startar bara med profilen `tolkning`, så varken en vanlig
+`up`, e2e-stacken eller pytest-stacken startar den. Tjänsten publicerar ingen port: bara `api` når
+den, på `http://ollama:11434`. Den får högst 6 processorer, laddar ur modellen efter fem minuter
+utan arbete (`OLLAMA_KEEP_ALIVE=5m`) och sparar modellerna i volymen `ollama_models`. Att slå på
+tolkningen:
+
+1. Starta tjänsten: `docker compose -f docker-compose.production.yml --profile tolkning up -d ollama`.
+2. Hämta modellen en gång: `docker compose -f docker-compose.production.yml exec ollama ollama pull gemma4`.
+3. Sätt `INLASNING_TOLKARE=gemma` i `.docker/api-variables.env` och starta om `api`.
+
+Medan modellen läser behöver Ollama omkring 8,5 GB minne, utöver resten av stacken; mät med
+`docker stats` att allt ryms innan tolkningen slås på. Ett foto tar minuter utan grafikkort, så
+kön tolkas i bakgrunden och förslaget är bara handläggarens.
+
+Med `av` kommer dokumenten in med `interpretation_status: "av"`, och kön fungerar som utan
+tolkning. Ett okänt värde räknas som `av`. Tolkaren är ett gränssnitt, `interpret(bild, schema) ->
+dict` i `app/utils/inbox_interpreter.py`, och en andra tolkare läggs till i `INTERPRETERS`. En
+tolkare som skickar foton från servern kräver styrelsens beslut och ett avtal först.
 
 ## Gränser och sådant gränssnittet behöver veta
 
