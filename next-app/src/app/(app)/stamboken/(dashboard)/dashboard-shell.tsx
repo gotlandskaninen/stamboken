@@ -7,14 +7,21 @@ import { DemoBanner } from "@/components/public/DemoBanner.client";
 import { ModeHtmlAttribute } from "@/components/public/ModeHtmlAttribute.client";
 import { WipBanner } from "@/components/public/WipBanner.client";
 import SessionExpiredModal from "@/components/auth/SessionExpiredModal";
+import type { InboxCount } from "@/lib/inkorg";
 import styles from "@/components/shell/shell.module.css";
 
-export function DashboardShell({ children }: { children: React.ReactNode }) {
+export function DashboardShell({
+  children,
+  inbox,
+}: {
+  children: React.ReactNode;
+  inbox?: InboxCount;
+}) {
   const mode = useMode();
   return (
     <div className={styles.appShell}>
       <ModeHtmlAttribute />
-      <Topbar />
+      <Topbar inbox={inbox} />
       <main className={styles.appMain}>
         {mode === "demo" && <DemoBanner />}
         <WipBanner />
