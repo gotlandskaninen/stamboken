@@ -62,7 +62,7 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # history algorithm version (33) + genetics epoch (34) + the individual command log (35) +
 # Individual.microchip (36) + billing address on membership and member_application (37) + the mail queue (38) +
 # the intake queue (39).
-CURRENT_SCHEMA_VERSION = 40
+CURRENT_SCHEMA_VERSION = 41
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -1577,6 +1577,39 @@ class YearlyHerdReport(BaseModel):
     round = ForeignKeyField(YearlyReportRound, null=True)
 
 
+class BuyerContact(BaseModel):
+    """
+    A buyer outside the association, on a sale to GX1/MX1 (ADR-0016): name and town always, the contact details
+    only with the buyer's yes. Not in AUDITED_TABLES, so erased values never stay in audit_log.
+    """
+
+    id = AutoField()
+    name = TextField()
+    town = TextField()
+    postal_address = TextField(null=True)
+    email = TextField(null=True)
+    phone = TextField(null=True)
+    contact_consent_at = TimestampTZField(null=True)  # may keep address, e-mail and phone while the buyer has it
+    membership_optin_at = TimestampTZField(null=True)  # may be contacted about membership
+    # Set by the database in one statement, so purge_at is exactly five years after created_at.
+    created_at = TimestampTZField(constraints=[SQL("DEFAULT now()")])
+    created_by_user = ForeignKeyField(User, column_name="created_by_user_id", backref="+")
+    purge_at = TimestampTZField(constraints=[SQL("DEFAULT (now() + interval '5 years')")])
+
+    class Meta:  # pylint: disable=too-few-public-methods
+        table_name = "buyer_contact"
+        constraints = [
+            SQL(
+                "CONSTRAINT buyer_contact_address_needs_consent "
+                "CHECK (postal_address IS NULL OR contact_consent_at IS NOT NULL)"
+            ),
+            SQL(
+                "CONSTRAINT buyer_contact_email_phone_need_consent CHECK ((email IS NULL AND phone IS NULL) "
+                "OR contact_consent_at IS NOT NULL OR membership_optin_at IS NOT NULL)"
+            ),
+        ]
+
+
 HT_KINDS = ("BIRTH", "TRANSFER", "ATTESTATION", "CORRECTION")
 
 
@@ -1607,7 +1640,10 @@ class HerdTracking(BaseModel):
     # Reserved links (NULL until the owning phase ships).
     yearly_herd_report = ForeignKeyField(YearlyHerdReport, null=True)  # Phase 6
     transfer_id = IntegerField(null=True)  # Phase 10 adds FK -> transfer
-    holder_contact_id = IntegerField(null=True)  # Phase 10 adds FK -> buyer_contact ON DELETE SET NULL
+    # The buyer outside the association; erasing the contact nulls the link, the sale stays.
+    holder_contact = ForeignKeyField(
+        BuyerContact, null=True, on_delete="SET NULL", column_name="holder_contact_id", backref="+"
+    )
 
     class Meta:  # pylint: disable=too-few-public-methods
         """
@@ -2263,6 +2299,7 @@ MODELS = [
     UserMessage,
     YearlyReportRound,
     YearlyHerdReport,
+    BuyerContact,
     HerdTracking,
     Authenticators,
     AuditLog,
@@ -2352,6 +2389,9 @@ def init():
 
     # 999.8: global genetics version + deferred bump triggers (migration won't run)
     _create_genetics_version_guards()
+
+    # ADR-0016: herd_tracking.holder_contact_id -> buyer_contact on a database whose herd_tracking predates it
+    _create_buyer_contact_guards()
 
 
 def verify(try_init=True):
@@ -3849,6 +3889,35 @@ def migrate_39_to_40():
         ).execute()
 
 
+def _create_buyer_contact_guards():
+    """
+    Idempotent: the buyer_contact table and herd_tracking.holder_contact_id as its FK, ON DELETE SET NULL, with the
+    names a fresh bootstrap gives them. Called from init() and migrate_40_to_41. Skipped on SQLite.
+    """
+    if isinstance(DATABASE, SqliteDatabase):
+        return
+    BuyerContact.create_table(safe=True)
+    DATABASE.execute_sql(
+        """DO $$ BEGIN
+               ALTER TABLE "herd_tracking" ADD CONSTRAINT "herd_tracking_holder_contact_id_fkey"
+                   FOREIGN KEY ("holder_contact_id") REFERENCES "buyer_contact" ("id") ON DELETE SET NULL;
+           EXCEPTION WHEN duplicate_object THEN NULL;
+           END $$;"""
+    )
+    DATABASE.execute_sql(
+        'CREATE INDEX IF NOT EXISTS "herdtracking_holder_contact_id" ON "herd_tracking" ("holder_contact_id")'
+    )
+
+
+def migrate_40_to_41():
+    """ADR-0016: buyer_contact, the buyer outside the association, and holder_contact_id becomes its FK."""
+    with DATABASE.atomic():
+        _create_buyer_contact_guards()
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=41, comment="buyer_contact; herd_tracking.holder_contact_id FK", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4326,6 +4395,7 @@ MIGRATIONS = {
     (37, 38): migrate_37_to_38,  # mail queue
     (38, 39): migrate_38_to_39,  # intake queue
     (39, 40): migrate_39_to_40,  # intake queue retention
+    (40, 41): migrate_40_to_41,  # buyer contact
 }
 
 
