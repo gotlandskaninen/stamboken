@@ -155,19 +155,17 @@ export default function IntegritetspolicyPage() {
               </li>
               <li>
                 Tryckeriet får namn, adress och medlemsnummer för att kunna
-                skicka Koharen.{" "}
-                <mark>
-                  [BESLUT: stämmer det fortfarande, och raderar tryckeriet filen
-                  efter utskicket?]
-                </mark>
+                skicka Koharen. Till årets två första nummer får det också veta
+                vilka som inte har betalat medlemsavgiften, så att en påminnelse
+                kan följa med.
               </li>
               <li>
-                I listan över aktiva genbanker i Koharen står innehavarens namn,
-                postnummer och ort, telefon och e-postadress bara om innehavaren
-                har sagt ja, i årsrapporten eller i sin profil (samtycke).
-                Svaret gäller tills det ändras, och den som aldrig har svarat
-                publiceras inte. Det som redan är tryckt går inte att ta
-                tillbaka.
+                I listan över aktiva genbanker i Koharen står innehavarens namn
+                och besättningens nummer, och dessutom postnummer och ort,
+                telefon och e-postadress, bara om innehavaren har sagt ja, i
+                årsrapporten eller i sin profil (samtycke). Svaret gäller tills
+                det ändras, och den som aldrig har svarat publiceras inte. Det
+                som redan är tryckt går inte att ta tillbaka.
               </li>
             </ul>
             <p>
@@ -197,11 +195,17 @@ export default function IntegritetspolicyPage() {
               kullar, foton du laddar upp, och dina årsrapporter med dina val om
               vad som får publiceras. Vid varje rapporterad händelse står vem
               som rapporterade den. Rapporterar du på papper skickar du
-              blanketten till genbanksansvarig för rasen, som för in
-              uppgifterna.{" "}
+              blanketten till genbanksansvarig för rasen, som sammanställer
+              årsrapporterna. Pappersblanketter och kopior av genbanksintyg
+              förvaras hos genbanksansvarig och förstörs efter tio år.
+              Sammanställningen av årsrapporterna, med bankkonton för
+              utbetalningen, förvaras hos genbanksansvarig och i föreningens
+              Google Drive.{" "}
               <mark>
-                [BESLUT: hur länge sparas pappersblanketter och intygskopior hos
-                genbanksansvarig?]
+                [BESLUT: äldre medlemsmatriklar på papper och alla
+                genbankskontrakt sparas i dag utan tidsgräns, och
+                sammanställningen av årsrapporter har ingen bestämd lagringstid.
+                Vad ska gälla?]
               </mark>
             </p>
             <p>
@@ -231,10 +235,8 @@ export default function IntegritetspolicyPage() {
                   [INTE KLART: i dag kan bankkontot ställas in som synligt för
                   andra inloggade. Spärren ska byggas innan sidan släpps.]
                 </mark>{" "}
-                <mark>
-                  [BESLUT: får Jordbruksverket fortfarande ta del av
-                  utbetalningsunderlaget med namn och bankkonto?]
-                </mark>
+                Underlaget för utbetalningen sparas så att det kan visas för
+                Jordbruksverket vid en kontroll.
               </li>
               <li>
                 Ändringar av kaniner, parningar, kullar, besättningar och konton
@@ -326,7 +328,10 @@ export default function IntegritetspolicyPage() {
                 Stamboken Online i datacenter i Stockholm.
               </li>
               <li>Tryckeriet som skickar ut Koharen.</li>
-              <li>Jordbruksverket, när stödet till genbankerna redovisas.</li>
+              <li>
+                Jordbruksverket, om myndigheten begär att få se underlaget för
+                stödet vid en kontroll.
+              </li>
             </ul>
             <p>
               Säkerhetskopiorna är krypterade och lagras hos Safespring i
