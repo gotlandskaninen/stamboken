@@ -119,7 +119,9 @@ export function HerdHistorySection({
                     <span className="sb-badge sb-badge-lera">ej bekräftad</span>
                   )}
                   {row.buyer && (
-                    <span className="sb-meta">Köpare: {row.buyer.name}</span>
+                    <span className="sb-meta">
+                      Köpare: {row.buyer.name}, {row.buyer.town}
+                    </span>
                   )}
                   {row.voided_reason && (
                     <span className="sb-meta">{row.voided_reason}</span>

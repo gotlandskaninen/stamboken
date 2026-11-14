@@ -45,7 +45,10 @@ import { NotesSection } from "@/components/individual/NotesSection";
 import { PaperCertificate } from "@/components/individual/PaperCertificate";
 import { EditSaveBar } from "@/components/individual/EditSaveBar";
 import { ReportDeathDialog } from "@/components/individual/ReportDeathDialog";
-import { SellRabbitDialog } from "@/components/individual/SellRabbitDialog";
+import {
+  SellRabbitDialog,
+  type SaleBuyer,
+} from "@/components/individual/SellRabbitDialog";
 import { isOutsideGenebankHerd } from "@/utils/saleRules";
 import {
   saveFormData,
@@ -532,12 +535,13 @@ export function IndividualDetail({
     });
   };
 
-  const handleSell = (herd: string, sellingDate: string) => {
+  const handleSell = (herd: string, sellingDate: string, buyer?: SaleBuyer) => {
     setSellError(null);
     startTransition(async () => {
       const result = await updateIndividual(individual.number || "", {
         herd,
         selling_date: sellingDate,
+        ...(buyer ? { buyer } : {}),
       });
       if (result.success) {
         setSellDialogOpen(false);
