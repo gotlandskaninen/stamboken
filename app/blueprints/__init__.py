@@ -10,6 +10,7 @@ from .audit import audit_bp
 from .breeding import breeding_bp
 from .breeding_v2 import breeding_v2_bp
 from .bunny_v2 import bunny_v2_bp
+from .buyer_link import buyer_link_bp
 from .certificates import certificates_bp
 from .herd_tracking import herd_tracking_bp
 from .inbox import inbox_bp
@@ -34,6 +35,7 @@ def register_blueprints(app):
     app.register_blueprint(breeding_bp)
     app.register_blueprint(breeding_v2_bp)
     app.register_blueprint(bunny_v2_bp)
+    app.register_blueprint(buyer_link_bp)
     app.register_blueprint(certificates_bp)
     app.register_blueprint(herd_tracking_bp)
     app.register_blueprint(inbox_bp)

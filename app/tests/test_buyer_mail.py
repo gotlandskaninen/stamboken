@@ -14,11 +14,13 @@ os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), 
 import utils.database as db  # noqa: E402
 import utils.mail as mail  # noqa: E402
 import utils.settings as settings  # noqa: E402
+from herdbook import limiter  # noqa: E402
 from utils import buyer_contact  # noqa: E402
 from utils.buyer_mail import ERASE_PURPOSE, queue_buyer_mails  # noqa: E402
-from utils.herd_tracking import correct_herd_tracking, record_herd_tracking  # noqa: E402
+from utils.herd_tracking import correct_herd_tracking, delete_buyer_contacts, record_herd_tracking  # noqa: E402
 
 from tests.test_buyer_contact import BUYER, NAME, SALE_DATE, BuyerBase  # noqa: E402
+from tests.test_inbox_purge import PurgeTest  # noqa: E402
 from tests.test_mail_queue import HOST, SECRET, FakeRelay  # noqa: E402
 
 EMAIL = "zelda@example.org"
@@ -188,3 +190,103 @@ class TestMembership(BuyerMailTest):
             ["Din kanin Stjärna (G1-2111) är registrerad hos Föreningen Gotlandskaninen"],
         )
         self.assertEqual(self.mails("kopare.medlemskap")[0].status, "cancelled")
+
+
+ERASE_URL = "/api/v2/kopare/ta-bort"
+
+
+class TestEraseLink(PurgeTest):
+    """POST /api/v2/kopare/ta-bort, the link in kopare.information, with the sale's proof in the intake queue."""
+
+    def setUp(self):
+        super().setUp()
+        patch = mock.patch.multiple(settings.mail, mode="log", link_secret=SECRET)
+        patch.start()
+        self.addCleanup(patch.stop)
+        gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        rabbit = db.Individual.get(db.Individual.number == "G1-2112")
+        self.sale = record_herd_tracking(rabbit, gx1, "2026-01-01", "TRANSFER", self.manager, buyer=WITH_EMAIL)
+        self.contact_id = self.sale.holder_contact_id
+        self.proof = self.document(self.make(doc_type="bevis"))
+        db.InboxDocument.update(herd_tracking_id=self.sale.id).where(db.InboxDocument.id == self.proof.id).execute()
+        db.MailMessage.update(status="sent", address_hash="0" * 64).execute()  # the mail went
+        self.token = mail.link_token(ERASE_PURPOSE, self.contact_id)
+
+    def erase(self, token, **kwargs):
+        return self.client.post(ERASE_URL, json={"token": token}, **kwargs)
+
+    def deletions(self):
+        rows = db.AuditLog.select().where(
+            (db.AuditLog.table_name == "buyer_contact") & (db.AuditLog.operation == "DELETE")
+        )
+        return [(row.record_id, row.new_data, row.changed_by) for row in rows]
+
+    def assertNoStore(self, response):  # pylint: disable=invalid-name
+        self.assertEqual(response.headers["Cache-Control"], "no-store")
+
+    def test_a_genuine_link_erases_the_buyer_as_an_objection(self):
+        with mock.patch("utils.herd_tracking.delete_buyer_contacts", wraps=delete_buyer_contacts) as erasure:
+            response = self.erase(self.token)
+        self.assertEqual((response.status_code, response.get_json()), (200, {"result": "removed"}))
+        self.assertNoStore(response)
+        erasure.assert_called_once_with([self.contact_id], "invandning", certificates=True)
+        self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == self.contact_id))
+        sale = db.HerdTracking.get_by_id(self.sale.id)
+        self.assertEqual((sale.voided_at, sale.holder_contact_id, sale.herd.herd), (None, None, "GX1"))
+        self.assertIsNone(db.InboxDocument.get_by_id(self.proof.id).original_path)  # the proof's original
+        self.assertFalse(self.exists(self.proof.original_path))
+        (sent,) = db.MailMessage.select()
+        self.assertEqual((sent.address_hash, sent.dedupe_key), (None, None))  # forget_recipient
+        self.assertEqual(self.deletions(), [(str(self.contact_id), {"action": "invandning"}, None)])
+
+    def test_a_second_visit_says_it_is_already_done(self):
+        self.erase(self.token)
+        response = self.erase(self.token)
+        self.assertEqual((response.status_code, response.get_json()), (200, {"result": "already_removed"}))
+        self.assertEqual(len(self.deletions()), 1)
+
+    def test_any_other_token_changes_nothing_and_answers_alike(self):
+        mac = self.token.split(".")[1]
+        tokens = {
+            "forged, the buyer's id": f"{self.contact_id}." + "A" * 22,
+            "forged, an unknown id": "9001." + "A" * 22,
+            "another buyer's mac": f"{self.contact_id + 1}.{mac}",
+            "another purpose": mail.link_token("annat_syfte", self.contact_id),
+            "trailing space": self.token + " ",
+            "no mac": f"{self.contact_id}.",
+            "empty": "",
+            "a number": self.contact_id,
+            "missing": None,
+        }
+        answers = {name: self.erase(token) for name, token in tokens.items()}
+        answers["no json"] = self.client.post(ERASE_URL, data=self.token)
+        answers["a list"] = self.client.post(ERASE_URL, json=[self.token])
+        for name, response in answers.items():
+            with self.subTest(name):
+                self.assertEqual(response.status_code, 404)
+                self.assertEqual(response.get_data(), answers["forged, an unknown id"].get_data())
+                self.assertNoStore(response)
+        self.assertEqual(
+            answers["empty"].get_json()["detail"], "Länken gäller inte längre. Skriv till dataskydd@gotlandskaninen.se."
+        )
+        self.assertIsNotNone(db.BuyerContact.get_or_none(db.BuyerContact.id == self.contact_id))
+        self.assertEqual(self.deletions(), [])
+
+    def test_a_get_never_erases(self):
+        for url in (ERASE_URL, f"{ERASE_URL}?token={self.token}"):
+            self.client.get(url)  # the route takes POST only; a GET falls through to the app's catch-all
+        self.assertIsNotNone(db.BuyerContact.get_or_none(db.BuyerContact.id == self.contact_id))
+        self.assertEqual(self.deletions(), [])
+
+    def test_at_most_ten_tries_an_hour_from_one_address(self):
+        limiter.reset()
+        limiter.enabled = True
+        self.addCleanup(setattr, limiter, "enabled", False)
+        for _ in range(10):
+            self.assertEqual(self.erase("1." + "A" * 22).status_code, 404)
+        blocked = self.erase(self.token)
+        self.assertEqual(blocked.status_code, 429)
+        self.assertNoStore(blocked)
+        self.assertIsNotNone(db.BuyerContact.get_or_none(db.BuyerContact.id == self.contact_id))
+        elsewhere = self.erase(self.token, environ_overrides={"REMOTE_ADDR": "127.0.0.2"})
+        self.assertEqual(elsewhere.status_code, 200)

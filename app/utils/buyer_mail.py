@@ -8,8 +8,8 @@ utils.herd_tracking imports this module, so it imports nothing that imports that
 import os
 from zoneinfo import ZoneInfo
 
-from utils.database import BuyerContact, DigitalCertificateV2, Individual
-from utils.mail import enqueue_mail, link_token, mail_kind
+from utils.database import DB_PROXY, BuyerContact, DigitalCertificateV2, Individual
+from utils.mail import enqueue_mail, link_token, mail_kind, verify_link
 
 ERASE_PURPOSE = "kopare_invandning"  # link_token's purpose for the link that erases the buyer
 _STOCKHOLM = ZoneInfo("Europe/Stockholm")
@@ -105,3 +105,23 @@ def _membership_mail(params):
     if contact is None or contact.membership_optin_at is None or rabbit is None:
         return None
     return {"buyer": contact.name, "rabbit": rabbit.name or rabbit.number}
+
+
+def erase_by_link(token):
+    """
+    POST /api/v2/kopare/ta-bort: the buyer objects through the link in kopare.information, and every detail goes
+    as when a manager erases the buyer, with the action "invandning" and no user. "removed" or "already_removed"
+    for a genuine link; None for any other token, decided before the database is read, so the answer never tells
+    whether an id exists.
+    """
+    contact_id = verify_link(ERASE_PURPOSE, token)
+    if contact_id is None:
+        return None
+    # Imported here: both import utils.herd_tracking, which imports this module.
+    from utils.herd_tracking import delete_buyer_contacts  # pylint: disable=import-outside-toplevel
+    from utils.inbox_purge import remove_originals  # pylint: disable=import-outside-toplevel
+
+    with DB_PROXY.atomic():
+        count, paths = delete_buyer_contacts([contact_id], "invandning", certificates=True)
+    remove_originals(paths)  # after the commit, as utils.buyer_contact.erase_buyer_contact
+    return "removed" if count else "already_removed"
