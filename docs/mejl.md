@@ -99,6 +99,12 @@ mejl, 2 för massutskick. **Kategori:** `T` (transaktion) eller `N` (notis).
 **Bilagor:** byggfunktionen kan returnera nyckeln `attachments` med en lista
 av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas.
 
+**Försök och notering:** en byggfunktion som tar nyckelordet `attempt` får
+veta vilket försök det är (1 vid första), de andra får det inte. Ett fel i
+byggfunktionen räknas som ett tillfälligt fel, men en funktion kan fånga det
+på ett sent försök och ändå bygga mejlet, till exempel utan bilaga. Nyckeln
+`sent_note` bland variablerna sparas i `last_error` när mejlet har skickats.
+
 ## Mottagare
 
 `recipient_kind` säger var adressen finns. Inbyggda: `member`
@@ -139,8 +145,12 @@ mejl två gånger. Är köparen raderad när mejlet ska gå blir det `cancelled`
   svenskt datum. Mejlet har [raderingslänken](#raderingslänken). Har kaninen
   ett digitalt intyg ligger det som PDF, hämtat när mejlet går, på samma sätt
   som när intyget laddas ner; annars går mejlet utan bilaga och utan meningen
-  om den. Går intyget inte att hämta räknas det som ett tillfälligt fel, och
-  mejlet går inte utan bilagan. Utan `LINK_SECRET` kan mejlet inte byggas.
+  om den. Går intyget inte att hämta räknas det som ett tillfälligt fel och
+  mejlet försöks igen, men från tredje försöket går det utan bilaga och utan
+  meningen om den: informationen till köparen väger tyngre än intyget. Mejlet
+  blir `sent` och `last_error` får noteringen "skickat utan bilaga: intyget
+  kunde inte hämtas", så att det syns i statusvyn. Utan `LINK_SECRET` kan mejlet
+  inte byggas.
 - **`kopare.medlemskap`** går när köparen har sagt ja till att föreningen
   hör av sig om medlemskap (`membership_optin_at`). Är ja:et gallrat när
   mejlet ska gå blir det `cancelled`.

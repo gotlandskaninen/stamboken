@@ -5,13 +5,17 @@ buyer, in the sale's transaction; the text and the certificate are read when the
 utils.herd_tracking imports this module, so it imports nothing that imports that one, except inside a function.
 """
 
+import logging
 import os
 from zoneinfo import ZoneInfo
 
 from utils.database import DB_PROXY, BuyerContact, DigitalCertificateV2, Individual
 from utils.mail import enqueue_mail, link_token, mail_kind, verify_link
 
+logger = logging.getLogger(__name__)
+
 ERASE_PURPOSE = "kopare_invandning"  # link_token's purpose for the link that erases the buyer
+ATTACHMENT_GIVE_UP = 3  # the attempt from which kopare.information goes without a certificate it cannot fetch
 _STOCKHOLM = ZoneInfo("Europe/Stockholm")
 _MONTHS = (
     "januari",
@@ -79,13 +83,23 @@ def _certificate_pdf(rabbit):
 
 
 @mail_kind("kopare.information", priority=1, category="T")
-def _information_mail(params):
-    """The buyer's notice (GDPR art. 14) with the erase link and the certificate; none once the buyer is erased."""
+def _information_mail(params, attempt=1):
+    """
+    The buyer's notice (GDPR art. 14) with the erase link and the certificate; none once the buyer is erased. A
+    certificate that cannot be fetched is tried again, and from the third attempt the notice goes without it.
+    """
     contact = BuyerContact.get_or_none(BuyerContact.id == params["buyer_contact_id"])
     rabbit = Individual.get_or_none(Individual.id == params["individual_id"])
     if contact is None or rabbit is None:
         return None
-    pdf = _certificate_pdf(rabbit)
+    note = None
+    try:
+        pdf = _certificate_pdf(rabbit)
+    except Exception:  # pylint: disable=broad-except  # S3, disk or PDF: the queue retries, then the notice matters more
+        if attempt < ATTACHMENT_GIVE_UP:
+            raise
+        logger.exception("Certificate for mail to buyer %s unavailable; sent without it", contact.id)
+        pdf, note = None, "skickat utan bilaga: intyget kunde inte hämtas"
     return {
         "buyer": contact.name,
         "name": rabbit.name,
@@ -94,6 +108,7 @@ def _information_mail(params):
         "token": link_token(ERASE_PURPOSE, contact.id),
         "consent": contact.contact_consent_at is not None,
         "certificate": pdf is not None,
+        "sent_note": note,
         "attachments": [(f"genbanksintyg-{rabbit.number}.pdf", "application/pdf", pdf)] if pdf else [],
     }
 

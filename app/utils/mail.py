@@ -11,6 +11,7 @@ import base64
 import contextlib
 import hashlib
 import hmac
+import inspect
 import logging
 import os
 import re
@@ -66,7 +67,9 @@ MailKind = namedtuple("MailKind", "priority category build")
 Recipient = namedtuple("Recipient", "address label")
 
 # kind -> MailKind; build(params) returns the template variables (plus an optional "attachments" list of
-# (filename, mime type, bytes)), or None when the mail is no longer relevant, which cancels it.
+# (filename, mime type, bytes)), or None when the mail is no longer relevant, which cancels it. A builder that
+# declares an `attempt` keyword (1 on the first try) is told which attempt this is. A "sent_note" among the variables
+# is kept in last_error when the mail is sent.
 MAIL_KINDS = {}
 # recipient_kind -> resolve(recipient_id) returning a Recipient, or None.
 RECIPIENT_KINDS = {}
@@ -488,10 +491,12 @@ def _send_one(row, relay, now):
         address = _normalize(recipient.address) if recipient else None
         if address is None:
             return _finish(row, now, status="cancelled", last_error="mottagaren saknar e-post")
-        variables = kind.build(row.params)
+        extra = {"attempt": row.attempts + 1} if "attempt" in inspect.signature(kind.build).parameters else {}
+        variables = kind.build(row.params, **extra)
         if variables is None:
             return _finish(row, now, status="cancelled", last_error="mejlet är inte längre aktuellt")
         attachments = variables.pop("attachments", [])
+        note = variables.pop("sent_note", None)
         subject, body = render(row.kind, variables)
         msg = None if mode == "log" else _message(row, address, subject, body, attachments)
     except Exception as exc:  # pylint: disable=broad-except  # a bug or a lost database: retried like a 4xx
@@ -532,7 +537,7 @@ def _send_one(row, relay, now):
         sent_at=now,
         attempts=row.attempts + 1,
         address_hash=address_hash(address),
-        last_error=None,
+        last_error=note,
     )
 
 

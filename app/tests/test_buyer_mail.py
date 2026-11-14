@@ -149,6 +149,32 @@ class TestInformationSent(BuyerMailTest):
         self.assertEqual((row.status, row.attempts), ("queued", 1))
         self.assertIn("bygget misslyckades", row.last_error)
 
+    def test_the_third_attempt_sends_without_a_certificate_it_cannot_fetch(self):
+        db.Individual.update(digital_certificate=9001).where(db.Individual.id == self.rabbit.id).execute()
+        with mock.patch("utils.cert_acess.download_certificate_s3", side_effect=OSError("S3 is down")):
+            self.assertEqual(self.send(), [])  # attempt 1
+            db.MailMessage.update(attempts=1, next_attempt_at=datetime(2000, 1, 1)).execute()
+            self.assertEqual(self.send(), [])  # attempt 2: still tried again
+            self.assertEqual(self.mails()[0].status, "queued")
+            db.MailMessage.update(attempts=2, next_attempt_at=datetime(2000, 1, 1)).execute()
+            (msg,) = self.send()  # attempt 3
+        body = msg.get_body(("plain",)).get_content()
+        self.assertNotIn("bilaga", body)
+        self.assertIn("föreningens register över genbankens kaniner.\n\nFöreningen Gotlandskaninen sparar", body)
+        self.assertEqual(list(msg.iter_attachments()), [])
+        (row,) = self.mails()
+        self.assertEqual(
+            (row.status, row.attempts, row.last_error), ("sent", 3, "skickat utan bilaga: intyget kunde inte hämtas")
+        )
+
+    def test_a_certificate_that_works_leaves_last_error_empty_on_a_late_attempt(self):
+        self.certificate()
+        db.MailMessage.update(attempts=2).execute()
+        (msg,) = self.send()
+        self.assertEqual(len(list(msg.iter_attachments())), 1)
+        (row,) = self.mails()
+        self.assertEqual((row.status, row.last_error), ("sent", None))
+
     def test_the_date_is_the_rows_purge_at_in_stockholm(self):
         cases = (
             (datetime(2031, 11, 13, 23, 30, tzinfo=timezone.utc), "14 november 2031"),  # after midnight in Sweden
