@@ -9,7 +9,6 @@ interface VerificationResponse {
   individual_number: string;
   genebank: string;
   digital_certificate: number;
-  issued_by: string;
   issued_at: string;
   is_current: boolean;
   replaced_by_date: string | null;
@@ -157,10 +156,6 @@ export default async function VerifieraPage({
           <div className="frow">
             <span className="l">Intygsnummer</span>
             <span className="v">{data.digital_certificate}</span>
-          </div>
-          <div className="frow">
-            <span className="l">Utfärdat av</span>
-            <span className="v">{data.issued_by}</span>
           </div>
           <div className="frow">
             <span className="l">Datum</span>

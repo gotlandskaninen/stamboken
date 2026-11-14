@@ -29,7 +29,6 @@ const VERIFIED = {
   individual_number: "G1",
   genebank: "Gotlandskanin",
   digital_certificate: 1,
-  issued_by: "x",
   issued_at: "2026-01-01T00:00:00",
   is_current: true,
   replaced_by_date: null,
