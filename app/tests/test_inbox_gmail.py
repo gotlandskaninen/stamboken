@@ -6,13 +6,18 @@ isort:skip_file
 """
 
 import base64
+from email.message import EmailMessage
+from email.utils import make_msgid
 from unittest import mock
 
 import requests
+import utils.database as db
+import utils.inbox_gmail as inbox_gmail
 import utils.settings as settings
 from utils.gmail import Gmail, HistoryTooOld
 
 from tests.inbox_fixtures import APP, InboxTest
+from tests.test_mail_queue import MailTest
 
 # Token-shaped values are built from parts so that they are plainly synthetic.
 FAKE_SECRET = "-".join(("synthetic", "client", "secret"))
@@ -101,6 +106,123 @@ class FakeGmail:
             return _Response(200, {"id": message_id})
         raw = base64.urlsafe_b64encode(found["raw"]).rstrip(b"=").decode()  # Gmail leaves out the padding
         return _Response(200, {"id": message_id, **found, "raw": raw})
+
+
+SENDER = "uppfodare@example.org"
+PASS = f"spf=pass (google.com: domain of {SENDER} designates 192.0.2.1 as permitted sender) smtp.mailfrom={SENDER}"
+
+
+def message(
+    sender=f"Test Uppfödare <{SENDER}>", subject="Intyg", body="Hej! Här är intygen.", files=(), auth=PASS, **headers
+):
+    """A synthetic mail as Gmail stores it: the receiving server's Authentication-Results on top."""
+    msg = EmailMessage()
+    if auth is not None:
+        msg["Authentication-Results"] = f"mx.google.com; {auth}"
+    msg["From"] = sender
+    msg["To"] = "stamboken@example.org"
+    msg["Subject"] = subject
+    msg["Message-ID"] = make_msgid(domain="example.org")
+    for name, value in headers.items():
+        msg[name.replace("_", "-")] = value
+    msg.set_content(body)
+    for name, mime, data in files:
+        maintype, subtype = mime.split("/")
+        msg.add_attachment(data, maintype=maintype, subtype=subtype, filename=name)
+    return msg
+
+
+class GmailTest(InboxTest, MailTest):
+    def setUp(self):
+        super().setUp()
+        self.fake = FakeGmail()
+        self.gmail = Gmail(self.fake)
+
+    def read(self):
+        with APP.app_context():  # as the scheduler's job runs it
+            inbox_gmail.run(self.gmail)
+
+    def items(self):
+        return list(db.InboxItem.select().order_by(db.InboxItem.id))
+
+    def done(self, gmail_id):
+        """Labelled "Inläst" and in the trash."""
+        labels = self.fake.messages[gmail_id]["labelIds"]
+        return self.fake.labelled(gmail_id, "Inläst") and "TRASH" in labels and "INBOX" not in labels
+
+    def sync(self):
+        return db.GmailSync.get_by_id(1)
+
+
+class TestSync(GmailTest):
+    def test_a_message_becomes_an_item_and_goes_to_the_trash(self):
+        gmail_id = self.fake.deliver(message())
+        self.read()
+        (item,) = self.items()
+        self.assertEqual((item.gmail_message_id, item.sender_address), (gmail_id, SENDER))
+        self.assertEqual(item.message, "Hej! Här är intygen.")
+        self.assertTrue(self.done(gmail_id))
+        self.assertEqual(db.GmailProcessed.get_by_id(gmail_id).item_id, item.id)
+        sync = self.sync()
+        self.assertEqual((sync.history_id, sync.last_error), (str(self.fake.history_id), None))
+        self.assertIsNotNone(sync.last_run_at)
+
+    def test_the_same_message_read_twice_gives_one_item(self):
+        gmail_id = self.fake.deliver(message())
+        self.read()
+        self.fake.messages[gmail_id]["labelIds"] = ["INBOX"]  # back in the inbox, unlabelled
+        db.GmailSync.update(history_id=None).execute()  # and the whole inbox read again
+        self.read()
+        self.assertEqual(len(self.items()), 1)
+        self.assertTrue(self.done(gmail_id))
+
+    def test_a_crash_between_the_commit_and_the_labelling_only_labels_on_the_reread(self):
+        gmail_id = self.fake.deliver(message())
+        self.fake.failures.append(("POST", f"messages/{gmail_id}/modify"))
+        with self.assertRaises(requests.HTTPError):
+            self.read()
+        self.assertFalse(self.done(gmail_id))
+        self.assertIsNone(self.sync().history_id)  # not moved on: the next run reads the same messages
+        self.assertIn("HTTPError", self.sync().last_error)
+        counts = (db.InboxItem.select().count(), db.InboxEvent.select().count(), db.Notice.select().count())
+        self.read()
+        self.assertEqual(
+            (db.InboxItem.select().count(), db.InboxEvent.select().count(), db.Notice.select().count()), counts
+        )
+        self.assertEqual(counts[0], 1)
+        self.assertTrue(self.done(gmail_id))
+        self.assertIsNone(self.sync().last_error)
+
+    def test_history_too_old_reads_the_inbox_but_not_what_is_read_nor_spam(self):
+        first = self.fake.deliver(message(subject="Först"))
+        self.read()
+        labelled = self.fake.deliver(message(subject="Redan inläst"))
+        self.fake.messages[labelled]["labelIds"].append(self.fake.labels["Inläst"])
+        self.fake.deliver(message(subject="Skräp"), labels=("SPAM",))
+        new = self.fake.deliver(message(subject="Ny"))
+        self.fake.oldest_history = self.fake.history_id + 1
+        self.read()
+        self.assertEqual([i.gmail_message_id for i in self.items()], [first, new])
+        self.assertEqual(self.sync().history_id, str(self.fake.history_id))
+
+    def test_a_message_that_cannot_be_read_is_labelled_and_the_others_are_read(self):
+        bad, good = self.fake.deliver(message(subject="Trasig")), self.fake.deliver(message(subject="Hel"))
+        real = inbox_gmail.read_message
+
+        def flaky(gmail_id, raw, received_at=None):
+            if gmail_id == bad:
+                raise ValueError(f"kunde inte läsa {SENDER}")
+            return real(gmail_id, raw, received_at)
+
+        with mock.patch.object(inbox_gmail, "read_message", flaky):
+            self.read()
+        self.assertEqual([i.gmail_message_id for i in self.items()], [good])
+        self.assertTrue(self.fake.labelled(bad, "Fel vid inläsning"))
+        self.assertIn("INBOX", self.fake.messages[bad]["labelIds"])
+        error = self.sync().last_error
+        self.assertIn(bad, error)
+        self.assertNotIn("@", error)  # every queue worker sees it
+        self.assertEqual(self.sync().history_id, str(self.fake.history_id))
 
 
 class TestClient(InboxTest):

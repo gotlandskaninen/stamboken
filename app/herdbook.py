@@ -81,6 +81,7 @@ from utils import number_assets  # isort:skip
 from utils.individual_commands import purge_command_free_text  # isort:skip
 from utils.mail import purge_old_mail, send_pending  # isort:skip
 from utils.inbox import queue_digests  # isort:skip
+from utils import inbox_gmail  # isort:skip
 from utils.members import try_auto_link_member  # isort:skip
 from utils.legacy_compat import is_legacy_host, legacy_classroom_url  # isort:skip
 from utils.redis_retry import reconnect_on_drop  # isort:skip
@@ -286,6 +287,19 @@ def _queue_notice_digests():
         APP.logger.info("Queued %s notice digests", queue_digests())
     except Exception:  # pylint: disable=broad-except
         APP.logger.exception("Queueing the notice digests failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _read_gmail():
+    """Leader job every 5 minutes (docs/inkorg-gmail.md), built as _send_mail: it closes its thread's connection.
+
+    The app context is for the upload's image checks, which answer with Flask responses."""
+    try:
+        with APP.app_context():
+            inbox_gmail.run()
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Reading the Gmail mailbox failed")
     finally:
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
@@ -3011,6 +3025,12 @@ def initialize_app():
             coalesce=True,
             misfire_grace_time=3600,
         )
+
+        # Reads the association's mailbox into the intake queue (docs/inkorg-gmail.md); never on the demo.
+        if settings.gmail.mode == "on":
+            scheduler.add_job(
+                _read_gmail, trigger="interval", minutes=5, id="inbox_gmail", max_instances=1, coalesce=True
+            )
 
         # Warm the shared genetics memo once at startup (workers only build their snapshots)
         scheduler.add_job(reload_genetics_caches, trigger="date", id="initial_warm", misfire_grace_time=None)
