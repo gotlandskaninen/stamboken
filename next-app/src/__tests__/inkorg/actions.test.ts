@@ -44,8 +44,13 @@ describe("the queue's server actions", () => {
   });
 
   it("refuse a state …/lage cannot take", async () => {
-    expect((await changeState(12, "klar")).ok).toBe(false);
+    expect((await changeState(12, "ny")).ok).toBe(false);
     expect(api).not.toHaveBeenCalled();
+  });
+
+  it("let a message be closed as klar", async () => {
+    await changeState(12, "klar");
+    expect(body(0)).toEqual({ state: "klar" });
   });
 
   it("pass only the document fields the UI changes", async () => {

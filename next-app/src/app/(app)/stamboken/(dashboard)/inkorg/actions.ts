@@ -17,6 +17,7 @@ const STATES = [
   "vantar_foralder",
   "hos_genbanksansvarig",
   "ofullstandig",
+  "klar",
   "dubblett",
   "skrap",
 ];

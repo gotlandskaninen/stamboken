@@ -234,6 +234,7 @@ export type ItemAction =
   | "ofullstandig"
   | "dubblett"
   | "skrap"
+  | "klar"
   | "oppna";
 
 export const ACTION_LABEL: Record<ItemAction, string> = {
@@ -246,10 +247,14 @@ export const ACTION_LABEL: Record<ItemAction, string> = {
   ofullstandig: "Ofullständig",
   dubblett: "Dubblett",
   skrap: "Skräp",
+  klar: "Klar",
   oppna: "Öppna igen",
 };
 
-type ItemFacts = Pick<InboxItem, "state" | "assigned_to" | "genebank_id">;
+type ItemFacts = Pick<InboxItem, "state" | "assigned_to" | "genebank_id"> & {
+  /** The count (queue list) or the documents themselves (working view). */
+  documents?: number | unknown[];
+};
 
 const isMine = (item: ItemFacts, user: QueueUser) =>
   item.assigned_to?.id === user.id;
@@ -272,6 +277,12 @@ export function itemActions(item: ItemFacts, user: QueueUser): ItemAction[] {
     actions.push("hos_genbanksansvarig", "vantar_foralder", "ofullstandig");
   if (mine && HELD_STATES.includes(item.state))
     actions.push("dubblett", "skrap");
+  // Nothing to save: a message is closed once answered, whatever its kind.
+  const count = Array.isArray(item.documents)
+    ? item.documents.length
+    : item.documents;
+  if (mine && HELD_STATES.includes(item.state) && count === 0)
+    actions.push("klar");
   if (CLOSED_STATES.includes(item.state) && boss) actions.push("oppna");
   return actions;
 }

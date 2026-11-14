@@ -318,7 +318,9 @@ export function WorkView({
                     aria-expanded={a in ASK ? asking === a : undefined}
                     onClick={() => (a in ASK ? toggleAsk(a) : doAction(a))}
                   >
-                    {ACTION_LABEL[a]}
+                    {a === "klar" && item.kind === "meddelande"
+                      ? "Besvarat"
+                      : ACTION_LABEL[a]}
                   </button>
                   {asking === a && (
                     <form

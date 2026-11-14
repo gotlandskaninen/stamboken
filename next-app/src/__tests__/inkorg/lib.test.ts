@@ -159,6 +159,31 @@ describe("itemActions, by docs/inkorg.md", () => {
   });
 });
 
+describe("klar for an item without documents", () => {
+  const empty = (state: ItemState, assigned: { id: number; name: string }) => ({
+    ...item(state, assigned),
+    documents: 0,
+  });
+  it("is offered to the handler of a held item, whatever its kind", () => {
+    for (const state of ["tagen", "ofullstandig", "vantar_uppfodare"] as const)
+      expect(itemActions(empty(state, holder(helper)), helper)).toContain(
+        "klar",
+      );
+    // the item arrives with an array of documents in the working view
+    expect(
+      itemActions({ ...item("tagen", holder(helper)), documents: [] }, helper),
+    ).toContain("klar");
+  });
+  it("is not offered with documents, to others, or on a closed item", () => {
+    const withDocs = { ...item("tagen", holder(helper)), documents: 2 };
+    expect(itemActions(withDocs, helper)).not.toContain("klar");
+    expect(itemActions(empty("tagen", someone), helper)).not.toContain("klar");
+    expect(itemActions(empty("klar", holder(helper)), helper)).not.toContain(
+      "klar",
+    );
+  });
+});
+
 describe("the two gates", () => {
   const facts = (
     state: ItemState,
