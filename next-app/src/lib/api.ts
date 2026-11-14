@@ -146,7 +146,9 @@ export async function fetchApi<T>(
       throw new ApiError(problem);
     }
 
-    if (res.status === 204) return undefined as T;
+    // A HEAD has no body: the status is the answer.
+    if (res.status === 204 || fetchOptions.method === "HEAD")
+      return undefined as T;
     return res.json();
   } catch (e) {
     clearTimeout(timeoutId);

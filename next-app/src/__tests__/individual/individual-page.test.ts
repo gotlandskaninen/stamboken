@@ -37,4 +37,28 @@ describe("individual page data loading", () => {
     expect(element.props.children.props.history).toBeNull();
     expect(element.props.children.props.auditEntries).toEqual([]);
   });
+
+  test("renders the paper certificate only when the API has a copy", async () => {
+    for (const has of [true, false]) {
+      mockedFetch.mockReset();
+      mockedFetch.mockImplementation((path: string, options?: RequestInit) => {
+        if (path.endsWith("/paper-certificate")) {
+          expect(options?.method).toBe("HEAD");
+          return has ? Promise.resolve(undefined) : Promise.reject(new Error());
+        }
+        if (
+          path.startsWith("/v2/individual/") &&
+          !path.includes("herd-tracking")
+        )
+          return Promise.resolve({ id: 7, number: "G1-2401" });
+        return Promise.resolve(null);
+      });
+      const element = (await IndividualPage({
+        params: Promise.resolve({ number: "G1-2401" }),
+      })) as React.ReactElement<{
+        children: React.ReactElement<{ hasPaperCertificate: boolean }>;
+      }>;
+      expect(element.props.children.props.hasPaperCertificate).toBe(has);
+    }
+  });
 });
