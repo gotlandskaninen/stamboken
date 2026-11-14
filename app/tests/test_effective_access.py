@@ -195,10 +195,11 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
 
     def test_bank_fields_still_shown_to_herd_user(self):
         user = self._caretaker_with_grant("bank-caretaker@example.com", self.herds[1])
-        self.herds[1].bank_account_number = "1234-5"
-        self.herds[1].bank_account_number_privacy = "public"
+        self.herds[1].bank_account_number, self.herds[1].bank_name = "1234-5", "Bank"
+        self.herds[1].bank_account_number_privacy = self.herds[1].bank_name_privacy = "public"
         self.herds[1].save()
         self.assertEqual(self.herds[1].filtered_dict(user).get("bank_account_number"), "1234-5")
+        self.assertEqual(self.herds[1].filtered_dict(user).get("bank_name"), "Bank")
 
     def test_update_herd_ignores_bank_privacy(self):
         herd = self.herds[0]
@@ -209,6 +210,26 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
         self.assertEqual(result, {"status": "updated"})
         herd = db.Herd.get(herd.id)
         self.assertEqual(herd.bank_account_number_privacy, "private")
+        self.assertEqual(herd.bank_name_privacy, "private")
+
+    def test_update_herd_ignores_bank_privacy_as_manager_even_if_stored_value_is_bad(self):
+        herd = self.herds[0]
+        herd.bank_account_number_privacy = "Public "  # invalid legacy value echoed back by the SPA
+        herd.save()
+        result = da.update_herd(
+            {"id": herd.id, "www": "w", "bank_account_number_privacy": "Public "},
+            self.manager.uuid,
+        )
+        self.assertEqual(result, {"status": "updated"})
+        self.assertEqual(db.Herd.get(herd.id).www, "w")
+
+    def test_add_herd_ignores_bank_privacy(self):
+        result = da.add_herd(
+            {"herd": "ZZ99", "genebank": self.genebanks[0].id, "bank_name_privacy": "public"},
+            self.admin.uuid,
+        )
+        self.assertEqual(result, {"status": "success"})
+        herd = db.Herd.get(db.Herd.herd == "ZZ99")
         self.assertEqual(herd.bank_name_privacy, "private")
 
     def test_filtered_dict_manager_of_genebank_gets_private_level(self):

@@ -452,6 +452,15 @@ def remove_fields_by_privacy(data, access_level):
     >>> remove_fields_by_privacy(test_data, 'public')
     {'low': 5}
 
+    The bank details are always private, whatever level is stored.
+
+    >>> test_data = {
+    ...     'bank_name': 'B',
+    ...     'bank_name_privacy': 'public',
+    ... }
+    >>> remove_fields_by_privacy(test_data, 'public')
+    {}
+
     The privacy level of the fields 'latitude' and 'longitude' are
     under 'coordinates_privacy'.
 
