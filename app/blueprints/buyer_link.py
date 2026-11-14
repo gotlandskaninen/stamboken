@@ -16,7 +16,7 @@ GONE = "Länken gäller inte längre. Skriv till dataskydd@gotlandskaninen.se."
 
 @buyer_link_bp.after_request
 def _no_store(response):
-    """No answer is cached, the 429 included. Referrer-Policy is Talisman's, app-wide; the page sets no-referrer."""
+    """No answer is cached, the 429 included. Referrer-Policy is set in herdbook.py, after Talisman's."""
     response.headers["Cache-Control"] = "no-store"
     return response
 

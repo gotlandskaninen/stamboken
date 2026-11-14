@@ -173,7 +173,7 @@ bevisets original, adressen i mejlkön (`forget_recipient`) och en rad i
 | 404 med `detail` "Länken gäller inte längre. Skriv till `dataskydd@gotlandskaninen.se`." | allt annat: förfalskad, trasig eller saknad kod, eller en kod för ett annat syfte. Svaret är detsamma vilket id koden än nämner |
 | 429 | för många anrop |
 
-API:ts svar har `Cache-Control: no-store`, sidan också
+Både sidan och API:ts svar har `Cache-Control: no-store` och
 `Referrer-Policy: no-referrer`. `app/tests/test_buyer_mail.py` kontrollerar
 att koden inte hamnar i appens loggar eller i gunicorns åtkomstlogg.
 

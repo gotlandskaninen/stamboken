@@ -224,14 +224,16 @@ class TestEraseLink(PurgeTest):
         )
         return [(row.record_id, row.new_data, row.changed_by) for row in rows]
 
-    def assertNoStore(self, response):  # pylint: disable=invalid-name
-        self.assertEqual(response.headers["Cache-Control"], "no-store")
+    def assertPrivate(self, response):  # pylint: disable=invalid-name
+        self.assertEqual(
+            (response.headers["Cache-Control"], response.headers["Referrer-Policy"]), ("no-store", "no-referrer")
+        )
 
     def test_a_genuine_link_erases_the_buyer_as_an_objection(self):
         with mock.patch("utils.herd_tracking.delete_buyer_contacts", wraps=delete_buyer_contacts) as erasure:
             response = self.erase(self.token)
         self.assertEqual((response.status_code, response.get_json()), (200, {"result": "removed"}))
-        self.assertNoStore(response)
+        self.assertPrivate(response)
         erasure.assert_called_once_with([self.contact_id], "invandning", certificates=True)
         self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == self.contact_id))
         sale = db.HerdTracking.get_by_id(self.sale.id)
@@ -268,7 +270,7 @@ class TestEraseLink(PurgeTest):
             with self.subTest(name):
                 self.assertEqual(response.status_code, 404)
                 self.assertEqual(response.get_data(), answers["forged, an unknown id"].get_data())
-                self.assertNoStore(response)
+                self.assertPrivate(response)
         self.assertEqual(
             answers["empty"].get_json()["detail"], "Länken gäller inte längre. Skriv till dataskydd@gotlandskaninen.se."
         )
@@ -289,7 +291,7 @@ class TestEraseLink(PurgeTest):
             self.assertEqual(self.erase("1." + "A" * 22).status_code, 404)
         blocked = self.erase(self.token)
         self.assertEqual(blocked.status_code, 429)
-        self.assertNoStore(blocked)
+        self.assertPrivate(blocked)
         self.assertIsNotNone(db.BuyerContact.get_or_none(db.BuyerContact.id == self.contact_id))
         elsewhere = self.erase(self.token, environ_overrides={"REMOTE_ADDR": "127.0.0.2"})
         self.assertEqual(elsewhere.status_code, 200)

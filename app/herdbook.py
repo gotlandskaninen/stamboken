@@ -352,6 +352,14 @@ def _interpret_document():
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
 
+@APP.after_request  # registered before Talisman, so it runs after Talisman's, which sets one policy for every route
+def _erase_link_referrer_policy(response):
+    """The buyer's erase link (blueprints/buyer_link.py) is named in no referrer."""
+    if request.blueprint == "buyer_link":
+        response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
 # Initialize security packages
 # Flask-Talisman: Add security headers
 Talisman(
