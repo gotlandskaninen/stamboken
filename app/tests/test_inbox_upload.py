@@ -9,6 +9,7 @@ from unittest import mock
 
 import utils.database as db  # noqa: E402
 import utils.inbox as inbox  # noqa: E402
+from herdbook import limiter  # noqa: E402
 from PIL import Image  # noqa: E402
 
 from tests.inbox_fixtures import InboxTest, blurry, encoded, pdf, photo  # noqa: E402
@@ -140,3 +141,24 @@ class TestUpload(InboxTest):
             with self.assertRaises(RuntimeError):
                 self.upload(("a.jpg", encoded(photo())), ("b.jpg", encoded(photo(seed=2))))
         self.assertEqual(os.listdir(os.path.join(self.folder, "inkorg", "original")), [])
+
+
+class TestUploadRateLimit(InboxTest):
+    def setUp(self):
+        super().setUp()
+        limiter.reset()  # memory:// counters from earlier tests in this worker
+        limiter.enabled = True
+        self.addCleanup(limiter.reset)
+        self.addCleanup(setattr, limiter, "enabled", False)
+
+    def test_twenty_uploads_an_hour_per_user(self):
+        small = ("x.jpg", encoded(photo((200, 200))))
+        self.assertEqual(self.upload(small, dry_run="1").status_code, 401)  # anonymous: no limit to count
+        self.login("owner")
+        codes = [self.upload(small, dry_run="1").status_code for _ in range(21)]
+        self.assertEqual(codes, [200] * 20 + [429])
+        resp = self.upload(small, dry_run="1")
+        self.assertEqual((resp.status_code, resp.mimetype), (429, "application/problem+json"))
+        self.assertEqual(resp.get_json()["type"], "rate-limit-exceeded")
+        self.login("man")  # another user has an hour of their own
+        self.assertEqual(self.upload(small, dry_run="1").status_code, 200)

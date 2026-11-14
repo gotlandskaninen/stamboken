@@ -132,6 +132,12 @@ def _images(file, room):
         raise _Refused(problem(422, "Unprocessable Content", "Filen kunde inte läsas. Den kan vara skadad.")) from None
 
 
+@inbox_bp.errorhandler(429)
+def rate_limited(exc):
+    """The limiter's 429 as problem+json, as in admin.py."""
+    return problem(429, "För många anrop", f"För många inskick: högst {exc.description}.", type="rate-limit-exceeded")
+
+
 # [Next.js] Upload photos of certificates from the phone (docs/inkorg.md).
 @inbox_bp.route("/inkorg/upload", methods=["POST"])
 @json_login_required

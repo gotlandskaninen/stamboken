@@ -4,7 +4,9 @@ isort:skip_file
 """
 
 from datetime import date, timedelta
+from unittest import mock
 
+import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
 import utils.inbox as inbox  # noqa: E402
 from utils.herd_tracking import HerdTrackingConflict  # noqa: E402
@@ -323,3 +325,22 @@ class TestWaitingForAParent(GrantTest):
         )
         db.Individual.create(number="G1-2432", origin_herd=self.herds[0], breeding=self.breeding[0])
         self.assertEqual(self.reload(item).state, "tagen")
+
+    def test_the_legacy_form_wakes_it_too(self):
+        item = self.waiting("G1-1922")
+        form = {
+            "herd": "G1",
+            "origin_herd": {"herd": "G1"},
+            "number": "G1-1922",
+            "breeding": self.breeding[0].id,
+            "birth_date": (date.today() - timedelta(days=30)).isoformat(),
+        }
+        self.assertEqual(da.add_individual(form, self.admin.uuid)["status"], "success")
+        self.assertEqual(self.reload(item).state, "tagen")
+
+    def test_the_insert_and_the_wake_up_are_one_transaction(self):
+        self.waiting()
+        with mock.patch.object(inbox, "parent_registered", side_effect=RuntimeError("the wake-up failed")):
+            with self.assertRaises(RuntimeError):
+                db.Individual.create(number="G1-2431", origin_herd=self.herds[0], breeding=self.breeding[0])
+        self.assertFalse(db.Individual.select().where(db.Individual.number == "G1-2431").exists())

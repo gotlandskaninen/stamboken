@@ -731,12 +731,14 @@ class Individual(BaseModel):
 
     def save(self, *args, **kwargs):
         self.updated_at = datetime.now()
-        created = self.id is None
-        saved = super().save(*args, **kwargs)
-        if created:
-            # Here, so that every way a rabbit is created wakes the intake queue's items waiting for it.
-            from utils.inbox import parent_registered  # pylint: disable=import-outside-toplevel  # it imports us
+        if self.id is not None:
+            return super().save(*args, **kwargs)
+        # Here, so that every way a rabbit is created wakes the intake queue's items waiting for it, in one
+        # transaction with the insert even when the caller has none.
+        from utils.inbox import parent_registered  # pylint: disable=import-outside-toplevel  # it imports us
 
+        with DB_PROXY.atomic():
+            saved = super().save(*args, **kwargs)
             parent_registered(self.number)
         return saved
 

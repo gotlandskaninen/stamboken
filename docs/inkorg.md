@@ -11,21 +11,22 @@ post går igenom. Reglerna finns i `app/utils/inbox.py` och endpointsen i `app/b
 1. [Begrepp](#begrepp)
 2. [Roller](#roller)
 3. [Lägen](#lägen)
-4. [Fel](#fel)
-5. [Objekt i svaren](#objekt-i-svaren)
-6. [Ladda upp](#ladda-upp)
-7. [Kön](#kön)
-8. [Ta, ta över och tilldela](#ta-ta-över-och-tilldela)
-9. [Byta läge](#byta-läge)
-10. [Dokument](#dokument)
-11. [Spara det intyget visar](#spara-det-intyget-visar)
-12. [Registrera en försäljning](#registrera-en-försäljning)
-13. [Maskning och kopian på kaninen](#maskning-och-kopian-på-kaninen)
-14. [Bilderna](#bilderna)
-15. [Mina inskick](#mina-inskick)
-16. [Notiser](#notiser)
-17. [Mejl](#mejl)
-18. [Gränser och sådant gränssnittet behöver veta](#gränser-och-sådant-gränssnittet-behöver-veta)
+4. [Arbetsgången](#arbetsgången)
+5. [Fel](#fel)
+6. [Objekt i svaren](#objekt-i-svaren)
+7. [Ladda upp](#ladda-upp)
+8. [Kön](#kön)
+9. [Ta, ta över och tilldela](#ta-ta-över-och-tilldela)
+10. [Byta läge](#byta-läge)
+11. [Dokument](#dokument)
+12. [Spara det intyget visar](#spara-det-intyget-visar)
+13. [Registrera en försäljning](#registrera-en-försäljning)
+14. [Maskning och kopian på kaninen](#maskning-och-kopian-på-kaninen)
+15. [Bilderna](#bilderna)
+16. [Mina inskick](#mina-inskick)
+17. [Notiser](#notiser)
+18. [Mejl](#mejl)
+19. [Gränser och sådant gränssnittet behöver veta](#gränser-och-sådant-gränssnittet-behöver-veta)
 
 ## Begrepp
 
@@ -117,6 +118,23 @@ bort.
 
 Allt annat nekas med 409. `ny`, `klar` och `vantar_uppfodare` kan inte sättas med `…/lage` (400).
 
+## Arbetsgången
+
+1. Ta posten (`…/ta`), eller få den tilldelad.
+2. Gå igenom dokumenten: vrid dem rätt och ange typ och format (`PATCH …/dokument/{dok}`).
+3. Ett intyg: spara det intyget visar (`…/spara`), en ny kanin eller pappersintyget på en kanin
+   som finns. Visar intyget också en försäljning, registrera den nu (`…/overlat`): ett dokument som
+   är klart går inte att spara eller sälja från.
+4. Bekräfta maskningen (`…/maskning`). Kopian läggs på kaninen och dokumentet blir klart.
+5. Ett överlåtelsebevis: typen `bevis`, sedan `…/overlat`. Beviset blir klart med försäljningen.
+6. Ett foto som inte ska sparas: `dismissed: true`.
+7. När det sista dokumentet är klart eller avfärdat blir posten `klar`, och uppladdaren får en
+   notis och ett mejl.
+
+Saknas en förälder i Stamboken: ange numret i `waiting_for` och byt läge till `vantar_foralder`.
+Behövs en korrigering eller ett beslut: lämna posten till genbanksansvarig
+(`hos_genbanksansvarig`). Saknas något från uppladdaren: `ofullstandig` med vad som saknas.
+
 ## Fel
 
 Alla fel är RFC 9457 Problem Details med `Content-Type: application/problem+json`:
@@ -151,7 +169,7 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
   "received_at": "2026-11-14T08:01:02.123456+00:00",
   "state_changed_at": "2026-11-14T09:15:00.000000+00:00",
   "closed_at": null,
-  "sender": {"id": 4, "name": "Anna Andersson"},
+  "sender": {"id": 4, "name": "Test Uppladdare"},
   "assigned_to": {"id": 7, "name": "Konto 7"},
   "assigned_at": "2026-11-14T09:15:00.000000+00:00",
   "duplicate_of": null,
@@ -183,7 +201,7 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
   "sender_address": null,
   "documents": [ { "…": "dokument, se nedan" } ],
   "events": [
-    {"id": 1, "at": "2026-11-14T08:01:02+00:00", "kind": "inkommen", "user": {"id": 4, "name": "Anna Andersson"}, "detail": {"documents": 2}}
+    {"id": 1, "at": "2026-11-14T08:01:02+00:00", "kind": "inkommen", "user": {"id": 4, "name": "Test Uppladdare"}, "detail": {"documents": 2}}
   ]
 }
 ```
@@ -439,7 +457,7 @@ finns.
 | `cert_format` | `null` eller ett av formaten under [Dokument](#dokument) i objekten |
 | `rotation` | 0, 90, 180 eller 270 (grader medurs) |
 | `mask_rects` | `null` eller en lista med högst 20 rektanglar, se [Maskning](#maskning-och-kopian-på-kaninen) |
-| `waiting_for` | `null`, `[]` eller en lista med ett eller två individnummer (`G1274-2512`) som inte finns i Stamboken än |
+| `waiting_for` | `null`, `[]` eller en lista med ett eller två individnummer (till exempel `G1-2431`) som inte finns i Stamboken än |
 | `dismissed` | `true` avfärdar dokumentet (klart utan att något sparas, till exempel ett foto som inte är ett intyg); `false` ångrar det, om inget har sparats från dokumentet |
 
 Ändras `rotation` eller `mask_rects` på ett dokument som redan har en kopia görs kopian om. Blir
@@ -474,12 +492,12 @@ med pappersintyg. Kullen anges med föräldrarna och födelsedatumet; finns den 
 ```json
 {
   "action": "ny_kanin",
-  "mother": "G1274-2213",
-  "father": "G1101-2232",
+  "mother": "G1-1911",
+  "father": "G2-1711",
   "birth_date": "2025-05-10",
   "litter_size": 5,
   "litter_size6w": 4,
-  "paper_number": "G1274-2511",
+  "paper_number": "G1-2511",
   "paper_certificate": "123456",
   "name": "Stina",
   "sex": "female",
@@ -491,7 +509,7 @@ Vad på intyget som hör till vilket fält:
 
 | På intyget | Fält |
 |---|---|
-| Kaninens nummer (individnumret) | `paper_number`, krävs, till exempel `G1274-2511` |
+| Kaninens nummer (individnumret) | `paper_number`, krävs, till exempel `G1-2511` |
 | Intygsnummer | `paper_certificate`, krävs, högst 20 tecken |
 | Namn | `name`, högst 50 tecken |
 | Kön | `sex`: `female`, `male` |
@@ -539,7 +557,7 @@ och genbanksansvarigs rätt, inte hjälparens. En hjälpare får därför kontro
 #### `"action": "pappersintyg"`: pappersintyget på en kanin som finns
 
 ```json
-{"action": "pappersintyg", "individual": "G1274-2511", "paper_certificate": "123456", "paper_number": "G1274-2511"}
+{"action": "pappersintyg", "individual": "G1-2511", "paper_certificate": "123456", "paper_number": "G1-2511"}
 ```
 
 `individual` är kaninens nummer i Stamboken, `paper_number` numret som står på intyget. En
@@ -563,7 +581,7 @@ dokumentet inte är ett osparat intyg; 400 för okänd `action`. Efter sparandet
 Registrerar att kaninen sålts, med samma regler som försäljningen på kaninens sida.
 
 ```json
-{"individual": "G1274-2511", "herd": "G1101", "date": "2026-10-03"}
+{"individual": "G1-2511", "herd": "G2", "date": "2026-10-03"}
 ```
 
 | Fält | |
@@ -659,7 +677,7 @@ anroparens notiser av typen `klar`.
 ```json
 {
   "items": [
-    {"id": 12, "status": "klart", "received_at": "2026-11-14T08:01:02+00:00", "herd": "G1", "documents": 2, "individuals": ["G1274-2511"]}
+    {"id": 12, "status": "klart", "received_at": "2026-11-14T08:01:02+00:00", "herd": "G1", "documents": 2, "individuals": ["G1-2511"]}
   ]
 }
 ```
@@ -724,9 +742,10 @@ syns i Stamboken oavsett.
 Mejlen går genom mejlkön ([mejl.md](mejl.md)) och köas i samma transaktion som ändringen.
 
 - **`inlasning.klar`** till uppladdaren när posten blir `klar`. Ämnesraden är
-  "G1274-2511 är inlagd i Stamboken (ärende 12)", "Dina kaniner är inlagda i Stamboken
+  "G1-2511 är inlagd i Stamboken (ärende 12)", "Dina kaniner är inlagda i Stamboken
   (ärende 12)" eller "Ditt inskick är klart (ärende 12)", och mejlet listar kaninernas nummer
-  och länkar till `/stamboken/inskick`. Öppnas posten igen innan mejlet gått stoppas det.
+  och länkar till `/stamboken/inskick`. Öppnas posten igen innan mejlet gått stoppas det; blir
+  en öppnad post klar igen går ett nytt mejl.
 - **`notis.sammandrag`** kl. 07 varje dag till var och en som har olästa notiser som inget
   sammandrag tagit med och som inte stängt av mejlet. Det listar de olästa notiserna med
   ärendenummer och länkar till `/stamboken/inkorg`. Notiser av typen `klar` tas aldrig med:
