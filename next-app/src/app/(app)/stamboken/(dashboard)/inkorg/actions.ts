@@ -38,16 +38,21 @@ async function call<T>(
   method: string,
   body?: unknown,
 ): Promise<ActionResult<T>> {
+  const refresh = () => {
+    revalidatePath(LIST);
+    if (itemId !== null) revalidatePath(`${LIST}/${itemId}`);
+  };
   try {
     const data = await fetchApi<T>(`/v2/inkorg${path}`, {
       method,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
-    revalidatePath(LIST);
-    if (itemId !== null) revalidatePath(`${LIST}/${itemId}`);
+    refresh();
     return { ok: true, data };
   } catch (e) {
-    if (e instanceof ApiError)
+    if (e instanceof ApiError) {
+      // Someone else changed the item: the view must show how it stands now.
+      if (e.status === 409) refresh();
       return {
         ok: false,
         problem: {
@@ -57,7 +62,17 @@ async function call<T>(
           extensions: e.extensions,
         },
       };
-    throw e;
+    }
+    // A timeout or a dropped connection to the API: a refusal the form can
+    // show, so that what the handler typed stays on the screen.
+    return {
+      ok: false,
+      problem: {
+        status: 502,
+        title: "Bad Gateway",
+        detail: "Det gick inte att nå servern. Försök igen.",
+      },
+    };
   }
 }
 

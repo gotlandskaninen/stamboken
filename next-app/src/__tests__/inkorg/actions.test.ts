@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { revalidatePath } from "next/cache";
 import { ApiError, fetchApi } from "@/lib/api";
 import {
   assignItem,
   changeState,
   confirmMask,
+  saveCertificate,
   takeItem,
   updateDocument,
   waitForParent,
@@ -14,6 +16,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return { ...actual, fetchApi: vi.fn() };
 });
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+const revalidated = vi.mocked(revalidatePath);
 
 const api = vi.mocked(fetchApi);
 const body = (call: number) =>
@@ -106,6 +109,30 @@ describe("the queue's server actions", () => {
         detail: "…",
         extensions: { stamboken_number: "G9001-2513" },
       },
+    });
+  });
+
+  it("revalidate the item also when the API refuses with 409", async () => {
+    api.mockRejectedValueOnce(
+      new ApiError({ status: 409, title: "Conflict", detail: "Taget." }),
+    );
+    expect((await takeItem(12)).ok).toBe(false);
+    expect(revalidated).toHaveBeenCalledWith("/stamboken/inkorg/12");
+  });
+
+  it("do not revalidate after other refusals", async () => {
+    api.mockRejectedValueOnce(
+      new ApiError({ status: 400, title: "x", detail: "Nej." }),
+    );
+    await takeItem(12);
+    expect(revalidated).not.toHaveBeenCalled();
+  });
+
+  it("answer a dropped connection to the API as a refusal instead of throwing", async () => {
+    api.mockRejectedValueOnce(new TypeError("fetch failed"));
+    expect(await saveCertificate(12, 31, {})).toMatchObject({
+      ok: false,
+      problem: { detail: "Det gick inte att nå servern. Försök igen." },
     });
   });
 });
