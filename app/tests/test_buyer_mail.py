@@ -178,6 +178,8 @@ class TestMembership(BuyerMailTest):
 
     def test_the_welcome_with_the_yes_alone(self):
         contact_id = self._sale({**BUYER, "email": EMAIL, "membership_optin": True}).holder_contact_id
+        # The notice goes too: the e-mail given for membership alone still reaches the buyer with the erase link.
+        self.assertEqual([row.kind for row in self.mails()], ["kopare.information", "kopare.medlemskap"])
         (row,) = self.mails("kopare.medlemskap")
         self.assertEqual((row.recipient_kind, row.recipient_id, row.category), ("buyer_contact", contact_id, "T"))
         subject, body = self.text("kopare.medlemskap")
