@@ -5,6 +5,9 @@ isort:skip_file
 
 import os
 import re
+import subprocess
+import sys
+import textwrap
 import uuid
 from datetime import datetime, timezone
 from unittest import mock
@@ -290,3 +293,78 @@ class TestEraseLink(PurgeTest):
         self.assertIsNotNone(db.BuyerContact.get_or_none(db.BuyerContact.id == self.contact_id))
         elsewhere = self.erase(self.token, environ_overrides={"REMOTE_ADDR": "127.0.0.2"})
         self.assertEqual(elsewhere.status_code, 200)
+
+
+class TestNoTokenInLogs(BuyerMailTest):
+    """
+    The first route that takes a link token: the token reaches no log line on its way in, when the erasure fails or
+    succeeds, nor in the mail's own text in log mode. A fresh process, so the handlers are the app's (as in
+    test_log_masking): its file handler, pointed at stderr, the root's stderr handler, and gunicorn's access log with
+    the filter gunicorn.conf.py puts on it, fed each request as gunicorn would see it.
+    """
+
+    PROBE = textwrap.dedent(
+        """
+        import importlib.util, logging, sys
+        from datetime import timedelta
+        from types import SimpleNamespace
+        from unittest import mock
+        import pytest  # no blocking startup
+        from gunicorn.config import Config
+        from gunicorn.glogging import Logger
+        from herdbook import APP
+        import utils.mail as mail
+        from utils.buyer_mail import ERASE_PURPOSE
+
+        contact_id = int(sys.argv[1])
+        for handler in APP.logger.handlers:
+            handler.setStream(sys.stderr)
+        APP.config["PROPAGATE_EXCEPTIONS"] = False  # log the exception as in production, not re-raise it
+        spec = importlib.util.spec_from_file_location("gunicorn_conf", "gunicorn.conf.py")
+        conf = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(conf)
+        config = Config()
+        config.set("accesslog", "-")
+        access = Logger(config)
+        logging.getLogger("gunicorn.access").addFilter(conf._TokenMaskFilter())
+
+        def post(token):
+            with APP.test_client() as client:
+                response = client.post("/api/v2/kopare/ta-bort", json={"token": token})
+            request = response.request
+            environ = dict(request.environ, RAW_URI=request.environ["PATH_INFO"])
+            sent = SimpleNamespace(status=response.status, headers=list(response.headers.items()), sent=1)
+            access.access(sent, SimpleNamespace(headers=list(request.headers.items())), environ, timedelta(0))
+            print("answer", response.status_code, file=sys.stderr)
+
+        mail.send_pending()  # kopare.information with the link, in log mode
+        token = mail.link_token(ERASE_PURPOSE, contact_id)
+        post(f"{contact_id}." + "B" * 22)  # forged
+        with mock.patch("utils.herd_tracking.delete_buyer_contacts", side_effect=RuntimeError("database gone")):
+            post(token)  # the view raises
+        post(token)  # erased
+        post(token)  # already erased
+        """
+    )
+
+    def test_the_token_reaches_no_log(self):
+        contact_id = self._sale(WITH_EMAIL).holder_contact_id
+        token = mail.link_token(ERASE_PURPOSE, contact_id)
+        app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        env = {**os.environ, "MAIL_MODE": "log", "LINK_SECRET": SECRET, "FLASK_ENV": "testing"}
+        p = subprocess.run(
+            [sys.executable, "-c", self.PROBE, str(contact_id)],
+            cwd=app_dir,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        logs = p.stdout + p.stderr
+        self.assertEqual(re.findall(r"^answer (\d+)$", logs, re.MULTILINE), ["404", "500", "200", "200"], logs)
+        self.assertIn(f"/kopare/ta-bort#{contact_id}.***", logs)  # the mail's text, logged and masked
+        self.assertIn("Exception on /api/v2/kopare/ta-bort [POST]", logs)
+        self.assertEqual(logs.count('"POST /api/v2/kopare/ta-bort HTTP/1.1" '), 4)  # the access log
+        self.assertNotIn(token, logs)
+        self.assertNotIn(token.split(".")[1], logs)  # nor the mac alone, which the mask would not catch
+        self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == contact_id))
