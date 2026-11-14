@@ -864,6 +864,17 @@ class TestSync(GmailTest):
         self.assertEqual(db.GmailProcessed.get_by_id(gmail_id).kind, "item")
         self.assertTrue(self.done(gmail_id))
 
+    def test_an_error_after_the_commit_never_reads_the_message_again(self):
+        gmail_id = self.fake.deliver(message())
+        with mock.patch.object(self.gmail, "trash", side_effect=KeyError("id")):  # not the infrastructure's
+            self.read()
+        self.assertEqual(db.GmailProcessed.get_by_id(gmail_id).kind, "item")  # not turned into a retry
+        self.assertIn(gmail_id, self.sync().last_error)
+        db.GmailSync.update(history_id=None).execute()  # the next read of it
+        self.read()
+        self.assertTrue(self.done(gmail_id))
+        self.assertEqual(len(self.items()), 1)
+
     def test_a_message_without_labels_is_skipped(self):
         bare, good = self.fake.deliver(message(subject="Utan etiketter")), self.fake.deliver(message())
         del self.fake.messages[bare]["labelIds"]  # Gmail leaves the key out

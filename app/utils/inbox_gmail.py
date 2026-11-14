@@ -194,9 +194,15 @@ def _handle(gmail, message_id):
 
 
 def _failed(gmail, message_id, exc):
-    """A message whose content failed: counted, and after FAILED_AFTER runs labelled and recorded as failed."""
+    """
+    A message whose content failed: counted, and after FAILED_AFTER runs labelled and recorded as failed. A message
+    handled before keeps its row (only a Gmail step failed, which the next run redoes): never read twice.
+    """
+    error = _scrub(f"{message_id}: {type(exc).__name__}: {exc}")
     with DB_PROXY.atomic():
         row = GmailProcessed.get_or_none(GmailProcessed.gmail_message_id == message_id)
+        if row is not None and row.kind != RETRY:
+            return error
         failures = (row.failures if row is not None else 0) + 1
         kind = "failed" if failures >= FAILED_AFTER else RETRY
         GmailProcessed.insert(gmail_message_id=message_id, kind=kind, failures=failures).on_conflict(
@@ -205,7 +211,7 @@ def _failed(gmail, message_id, exc):
         ).execute()
     if kind == "failed":
         gmail.modify(message_id, add=[gmail.label(FAILED)])
-    return _scrub(f"{message_id}: {type(exc).__name__}: {exc}")
+    return error
 
 
 def read_message(gmail_id, raw, received_at=None):
