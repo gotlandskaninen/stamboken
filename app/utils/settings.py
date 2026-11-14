@@ -116,6 +116,12 @@ def refuse_unsafe_mail_settings():
         raise RuntimeError(f"MAIL_MODE={mail.mode} requires LINK_SECRET.")
 
 
+interpretation = Namespace()  # pylint: disable=C0103
+# The intake queue's image reading (docs/inkorg.md, "Tolkning"): av, the default, reads nothing.
+interpretation.interpreter = (os.environ.get("INLASNING_TOLKARE") or "av").strip().lower()
+interpretation.model = os.environ.get("INLASNING_MODELL") or "gemma4"
+interpretation.ollama_url = (os.environ.get("OLLAMA_URL") or "http://ollama:11434").rstrip("/")
+
 s3.bucket = os.environ.get("S3_BUCKET", "test")
 s3.endpoint = os.environ.get("S3_ENDPOINT", None)
 s3.region = os.environ.get("S3_REGION", "us-east-1")
