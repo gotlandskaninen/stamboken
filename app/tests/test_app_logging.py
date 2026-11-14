@@ -86,4 +86,11 @@ class TestAppLogging(DatabaseTest):
 
     def test_log_lines_are_written_once(self):
         # Flask's own stderr handler on `herdbook` would repeat each line without ip/path.
-        self.assertEqual([h for h in logging.getLogger("herdbook").handlers], [])
+        self.assertEqual(
+            [h for h in logging.getLogger().handlers if type(h) is logging.StreamHandler], [app_logging.HANDLER]
+        )
+        self.assertEqual(logging.getLogger("herdbook").handlers, [])
+
+    def test_newline_in_a_message_cannot_forge_a_log_line(self):
+        logging.getLogger("herdbook.test").info("Unknown level: %s", "x\nherdbook.auth INFO Login ok")
+        self.assertEqual(len(self.out.getvalue().splitlines()), 1)

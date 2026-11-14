@@ -651,8 +651,8 @@ class TestTransferIndividual(IndividualTest):
         self.assertEqual(
             logs.output,
             [
-                "WARNING:herdbook.da:Genebank change by admin admin: G1-2112 from Gotland (G1) to Mellerud (M3): "
-                "Felregistrerad"
+                f"WARNING:herdbook.da:Genebank change by admin {self.admin.id}: G1-2112 "
+                "from Gotland (G1) to Mellerud (M3)"
             ],
         )
 
@@ -1024,8 +1024,8 @@ class TestChangeOriginHerd(IndividualTest):
         self.assertEqual(
             logs.output,
             [
-                "WARNING:herdbook.da:Genebank change by admin admin: G1-2113 from Gotland (G1) to Mellerud (M3): "
-                "Felregistrerad"
+                f"WARNING:herdbook.da:Genebank change by admin {self.admin.id}: G1-2113 "
+                "from Gotland (G1) to Mellerud (M3)"
             ],
         )
         self.assertEqual(self._origin(), "M3")

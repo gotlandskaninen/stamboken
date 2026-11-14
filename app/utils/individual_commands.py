@@ -588,8 +588,8 @@ def _genebank_correction(ctx, from_herd, to_herd, reason):
         raise HerdTrackingForbidden("Bara administratör kan flytta en individ till en annan genbank.")
     note = require_reason(reason)
     logger.warning(
-        f"Genebank change by admin {ctx.user.username}: {ctx.stored.number} from {from_herd.genebank.name} "
-        f"({from_herd.herd}) to {to_herd.genebank.name} ({to_herd.herd}): {note}"
+        f"Genebank change by admin {ctx.user.id}: {ctx.stored.number} from {from_herd.genebank.name} "
+        f"({from_herd.herd}) to {to_herd.genebank.name} ({to_herd.herd})"
     )
     return note
 
@@ -691,7 +691,7 @@ class AssignPaperCertificate(PolicyCommand):
             return
         if Individual.select().where(Individual.certificate == value).exists():
             logger.warning(
-                f"User: {ctx.user.username} trying to change {ctx.stored.id}:{ctx.stored.number} "
+                f"User: {ctx.user.id} trying to change {ctx.stored.id}:{ctx.stored.number} "
                 f"intyg number already exists {value}"
             )
             raise IndividualRefused("Individual certificate already exists")
@@ -730,7 +730,7 @@ class RenameIndividual(PolicyCommand):
     def check_number_unique(self, ctx):
         if Individual.select().where(Individual.number == self.number).exists():
             logger.warning(
-                f"User: {ctx.user.username} trying to update {ctx.stored.id}:{ctx.stored.number} "
+                f"User: {ctx.user.id} trying to update {ctx.stored.id}:{ctx.stored.number} "
                 f"new number already exists {self.number}"
             )
             raise IndividualRefused("Individual number already exists")

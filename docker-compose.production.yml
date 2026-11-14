@@ -236,7 +236,7 @@ services:
       # Certbot hanterar flera domäner
       - STAGING=${CERTBOT_STAGING:-0}
     volumes:
-      - ./nginx-main/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/nginx.main:/etc/nginx/nginx.conf:ro
       - ./nginx/production/herdbook-production.conf:/etc/nginx/user_conf.d/herdbook.conf:ro
       - ./nginx/legacy-frontend-prod:/etc/nginx/legacy-frontend-prod:ro
       - ./nginx/legacy-frontend-test:/etc/nginx/legacy-frontend-test:ro

@@ -1120,7 +1120,7 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                 has_role = target_user.has_role(operation["role"], operation.get(target))
                 updated = False
                 if has_role and operation["action"] == "remove":
-                    logger.info(
+                    auth_log.info(
                         f"User:{user.id} UPDATE: Role remove on user: "
                         f"{target_user.id} removed: {operation['role']} "
                         f"target:{operation.get(target)}"
@@ -1128,7 +1128,7 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                     target_user.remove_role(operation["role"], operation.get(target))
                     updated = True
                 elif not has_role and operation["action"] == "add":
-                    logger.info(
+                    auth_log.info(
                         f"User:{user.id} UPDATE: Role added on user: "
                         f"{target_user.id} added: {operation['role']} "
                         f"target:{operation.get(target)}"

@@ -325,7 +325,6 @@ jobs:
           # Kopiera nödvändiga filer
           cp docker-compose.production.yml release/docker-compose.yml
           cp -r nginx release/
-          cp -r nginx-main release/
           cp -r scripts release/
           cp .docker/*.default release/.docker/
 

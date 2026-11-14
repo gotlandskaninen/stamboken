@@ -1,3 +1,6 @@
+# Not named *.conf on purpose: ./nginx is also mounted as user_conf.d (dev, and the
+# deploy script copies only ./nginx), and a *.conf here would be included inside http.
+# Mounted over /etc/nginx/nginx.conf in the production compose files.
 # Replaces the image's nginx.conf (jonasal/nginx-certbot) to put the access log
 # format on http level, so port 80, unknown host names and every vhost share it.
 user  nginx;

@@ -19,12 +19,20 @@ class _RequestFilter(logging.Filter):
 
 
 HANDLER = logging.StreamHandler(sys.stdout)
-HANDLER.setFormatter(logging.Formatter(FORMAT))
+
+
+class _OneLineFormatter(logging.Formatter):
+    def format(self, record):
+        # A newline in a message (user input) would forge a log line.
+        return super().format(record).replace("\r", "\\r").replace("\n", "\\n")
+
+
+HANDLER.setFormatter(_OneLineFormatter(FORMAT))
 HANDLER.addFilter(_RequestFilter())
 
 
 def setup():
     root = logging.getLogger()
     root.setLevel(logging.INFO)
-    if HANDLER not in root.handlers:
-        root.addHandler(HANDLER)
+    root.handlers[:] = [HANDLER]  # also drops the basicConfig() stderr handler settings.py triggers
+    logging.getLogger("apscheduler").setLevel(logging.WARNING)  # a job every 5 s at INFO
