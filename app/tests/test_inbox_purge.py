@@ -137,6 +137,26 @@ class TestOriginals(PurgeTest):
         purge.purge_originals(NOW)
         self.assertIn(PHONE, self.text(item))  # a message's text follows the message's own rule
 
+    def test_the_models_transcription_goes_with_the_original(self):
+        reading = {"namn": "Testa", "mor": {"genbanksnr": "G9001", "ar_kull_individ": "2211", "namn": "Mira"}}
+        proposal = {"fields": {"name": {"value": "Testa", "source": "läst", "read": "Testa"}}, "checks": []}
+        items = {"purged": self.make(NOW - inbox.months(13)), "erased": self.make(), "person": self.make()}
+        db.InboxDocument.update(interpretation=reading, proposal=proposal, interpretation_status="klar").execute()
+        seller = db.Member.create(
+            first_name="Saljare", last_name="Test", membership=db.Membership.create(member_number=990)
+        )
+        db.InboxDocument.update(seller_member=seller).where(db.InboxDocument.item == items["person"].id).execute()
+
+        purge.purge_originals(NOW)
+        with db.DB_PROXY.atomic():
+            purge.erase_document(items["erased"], self.document(items["erased"]), self.manager)
+            purge.erase_person_from_inbox(seller)
+
+        for name, item in items.items():
+            with self.subTest(name):
+                document = self.document(item)
+                self.assertEqual((document.original_path, document.interpretation, document.proposal), (None,) * 3)
+
     def test_waiting_for_the_reading_stops_with_the_original(self):
         item = self.make(self.limit - MINUTE)
         db.InboxDocument.update(interpretation_status="vantar").execute()

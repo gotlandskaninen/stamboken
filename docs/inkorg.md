@@ -1058,7 +1058,8 @@ kommandologgen: 12 månader är 366 dagar och 13 månader 396.
   ett dygn tas bort av nattjobbet: en borttagning som misslyckades efter commit, ett inskick som
   rullades tillbaka eller en halvskriven fil. Ett dygn, så att ett inskick som pågår aldrig rörs.
 - När originalet är borta har dokumentet `has_original: false`, `…/original` svarar 404 och kopian kan
-  inte göras om. Kopian på kaninen visas som förut.
+  inte göras om. Kopian på kaninen visas som förut. Tolkningens svar (`interpretation`) och förslaget
+  (`proposal`) är en avskrift av fotot och raderas med originalet, också vid radering på begäran.
 
 **Inställning** (`.docker/api-variables.env`): `INLASNING_ORIGINAL_MANADER`, hela månader, minst 1,
 standard 12.

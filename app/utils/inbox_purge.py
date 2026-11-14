@@ -41,7 +41,10 @@ def _lock(items):
 
 
 def _null_originals(where):
-    """In the caller's transaction: the documents matching `where` let go of their originals; returns the paths."""
+    """
+    In the caller's transaction: the documents matching `where` let go of their originals, and of what the model
+    read on them; returns the paths.
+    """
     _lock(InboxDocument.select(InboxDocument.item).where(where))
     rows = InboxDocument.select(InboxDocument.id, InboxDocument.original_path)
     rows = list(rows.where(where & InboxDocument.original_path.is_null(False)).tuples())
@@ -49,7 +52,10 @@ def _null_originals(where):
         waiting = Case(
             None, [(InboxDocument.interpretation_status == "vantar", "av")], InboxDocument.interpretation_status
         )
-        query = InboxDocument.update(original_path=None, interpretation_status=waiting)
+        # The model's reading and the proposal from it are a transcription of the photo: they go with it.
+        query = InboxDocument.update(
+            original_path=None, interpretation_status=waiting, interpretation=None, proposal=None
+        )
         query.where(InboxDocument.id.in_([document_id for document_id, _ in rows])).execute()
     return [path for _, path in rows]
 
