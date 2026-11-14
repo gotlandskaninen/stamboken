@@ -88,6 +88,12 @@ def make_machine(case, clients, stats, covered):
             name, events = ("CLEAR_PAPER", [Event.CLEAR_PAPER]) if blank else ("ASSIGN_PAPER", [PAPER])
             self._step(name, actor, events, lambda c: c.patch("/api/individual", json=body), successes=(200,))
 
+        @precondition(lambda self: self.model == CertState.DIGITAL_NUMBER)
+        @rule()
+        def paper_over_v1(self):
+            """Its own rule: assign_paper alone reaches this row too rarely for the coverage assertion."""
+            self.assign_paper(actor="manager", blank=False)
+
         # The POST endpoint refuses a paper-certified rabbit (convert via update), which the table would allow.
         @precondition(lambda self: self.model != CertState.PAPER)
         @rule(actor=st.sampled_from(["admin", "viewer"]))
@@ -176,6 +182,7 @@ class TestCertificateStateMachine(CertV2Mixin, FlaskTest):
             settings=settings(
                 max_examples=examples,
                 stateful_step_count=20,
+                derandomize=True,  # the same sequences every run, so the coverage assertion is not left to chance
                 deadline=None,
                 database=None,
                 suppress_health_check=[HealthCheck.too_slow, HealthCheck.filter_too_much],
