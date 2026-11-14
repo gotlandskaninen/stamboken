@@ -1049,8 +1049,9 @@ kommandologgen: 12 månader är 366 dagar och 13 månader 396.
 
 - En post raderas med sina dokument, händelser, notiser och original, och mejlkön glömmer avsändarens
   adress (`forget_recipient("inbox_sender", id)`). En post där något dokument har lagts på en kanin (en
-  kopia, en registrering eller ett bevis till en försäljning) raderas aldrig; dess original och text
-  gallras enligt de två första raderna.
+  kopia, en registrering, en försäljning, eller någon skrivning som har en rad i `inbox_operation`)
+  raderas aldrig, så att spåret "inlagd från foto av" behåller sitt dokument. När en sådan post skulle
+  ha raderats gallras i stället alla dess original och dess text.
 - Originalen till andra dokumenttyper (`arsblankett`, `annat`) gallras bara med sin post.
 - `original_path` släpps i databasen innan filen tas bort, och bara filer direkt i `inkorg/original/`
   under `PRIVATE_UPLOAD_FOLDER` tas bort. Loggen visar antal, aldrig namn eller sökvägar.

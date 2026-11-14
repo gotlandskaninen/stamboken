@@ -243,15 +243,12 @@ class TestDeletedItems(PurgeTest):
         kept = self.make(state="skrap", closed_at=limit + MINUTE)
         gone = self.make(state="skrap", closed_at=limit - MINUTE)
         paths = [self.document(gone).original_path]
-        trace = db.InboxOperation.create(operation_id=uuid.uuid4(), user=self.helper, document=self.document(gone))
         row_id = self.queued_mail(gone)
 
         self.assertEqual(purge.purge_junk(NOW), 1)
 
         self.assertDeleted(gone, paths)
         self.assertTrue(self.exists(self.document(kept).original_path))
-        trace = db.InboxOperation.get_by_id(trace.id)  # "inlagd från foto av" outlives its item
-        self.assertEqual((trace.document_id, trace.user_id), (None, self.helper.id))
         self.assertIsNone(db.MailMessage.get_by_id(row_id).address_hash)
         self.assertIdempotent(purge.purge_junk)
 
@@ -297,6 +294,27 @@ class TestDeletedItems(PurgeTest):
         for item in (junk, incomplete):
             self.assertIsNotNone(db.InboxItem.get_or_none(db.InboxItem.id == item.id))
         self.assertTrue(self.exists(copy.public_path))
+
+    def test_a_document_a_write_was_traced_to_is_never_deleted(self):
+        """A sale from a certificate leaves only its trace; the item keeps the document, without original or text."""
+        old = NOW - inbox.months(24)
+        items = {"junk": self.make(state="skrap", closed_at=old), "incomplete": self.make(old, state="ofullstandig")}
+        traces = {}
+        for name, item in items.items():
+            document = self.document(item)
+            traces[name] = db.InboxOperation.create(operation_id=uuid.uuid4(), user=self.helper, document=document)
+
+        self.assertEqual(purge.purge_junk(NOW) + purge.purge_incomplete(NOW), 0)
+
+        for name, item in items.items():
+            with self.subTest(name):
+                document = self.document(item)
+                self.assertEqual(db.InboxOperation.get_by_id(traces[name].id).document_id, document.id)
+                self.assertIsNone(document.original_path)
+                self.assertNotIn(PHONE, self.text(item))
+        self.assertEqual([p for _, _, names in os.walk(self.folder) for p in names], [])
+        self.assertIdempotent(purge.purge_junk)
+        self.assertIdempotent(purge.purge_incomplete)
 
     def test_the_copy_on_the_rabbit_survives_every_rule(self):
         old = NOW - inbox.months(36)

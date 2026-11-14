@@ -18,7 +18,15 @@ from peewee import SQL, Case
 import utils.inbox as inbox
 import utils.inbox_gmail as inbox_gmail
 import utils.settings as settings
-from utils.database import DB_PROXY, GmailProcessed, HerdTracking, InboxDocument, InboxEvent, InboxItem
+from utils.database import (
+    DB_PROXY,
+    GmailProcessed,
+    HerdTracking,
+    InboxDocument,
+    InboxEvent,
+    InboxItem,
+    InboxOperation,
+)
 from utils.mail import forget_recipient
 
 logger = logging.getLogger("herdbook.inbox_purge")
@@ -94,28 +102,48 @@ def remove_originals(paths, folder="inkorg/original"):
     return removed
 
 
-def _delete_items(where):
+def _saved():
     """
-    Deletes the items matching `where`, with their documents, events, notices and originals. Never an item that
-    put something on a rabbit (a copy, a registration or a sale's proof): the originals and text rules take those.
+    The items that put something on a rabbit: a copy, a registration, a sale, or any write traced to one of their
+    documents ("inlagd från foto av"). They are never deleted.
     """
-    saved = InboxDocument.select(InboxDocument.item).where(
+    traced = InboxOperation.select(InboxOperation.document).where(InboxOperation.document.is_null(False))
+    return InboxDocument.select(InboxDocument.item).where(
         InboxDocument.public_path.is_null(False)
         | InboxDocument.individual.is_null(False)
         | InboxDocument.herd_tracking_id.is_null(False)
+        | InboxDocument.id.in_(traced)
     )
+
+
+def _delete_rows(where):
+    """
+    In the caller's transaction: deletes the items matching `where`, with their documents, events and notices, and
+    the mail queue forgets their sender. An item that put something on a rabbit (_saved) stays, and loses its
+    originals and its text instead. Returns the paths for remove_originals.
+    """
+    ids = _lock(InboxItem.select(InboxItem.id).where(where))
+    kept = [item_id for (item_id,) in _saved().where(InboxDocument.item.in_(ids)).distinct().tuples()]
+    gone = [item_id for item_id in ids if item_id not in kept]
+    documents = InboxDocument.select(InboxDocument.original_path).where(
+        InboxDocument.item.in_(gone) & InboxDocument.original_path.is_null(False)
+    )
+    paths = [path for (path,) in documents.tuples()]
+    InboxItem.delete().where(InboxItem.id.in_(gone)).execute()
+    for item_id in gone:
+        forget_recipient("inbox_sender", item_id)
+    if kept:
+        paths += _null_originals(InboxDocument.item.in_(kept))
+        _clear_text(kept)
+    return gone, paths
+
+
+def _delete_items(where):
+    """_delete_rows in a transaction of its own, the files after the commit; returns how many items went."""
     with DB_PROXY.atomic():
-        query = InboxItem.select(InboxItem.id).where(where & InboxItem.id.not_in(saved))
-        ids = [item_id for (item_id,) in query.order_by(InboxItem.id).for_update().tuples()]
-        documents = InboxDocument.select(InboxDocument.original_path).where(
-            InboxDocument.item.in_(ids) & InboxDocument.original_path.is_null(False)
-        )
-        paths = [path for (path,) in documents.tuples()]
-        InboxItem.delete().where(InboxItem.id.in_(ids)).execute()
-        for item_id in ids:
-            forget_recipient("inbox_sender", item_id)
+        gone, paths = _delete_rows(where)
     remove_originals(paths)
-    return len(ids)
+    return len(gone)
 
 
 def purge_originals(now):
