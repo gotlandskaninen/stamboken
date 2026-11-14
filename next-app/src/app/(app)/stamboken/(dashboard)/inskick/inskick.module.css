@@ -1,0 +1,71 @@
+.container {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 24px 16px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.cardBody {
+  padding: 16px 20px 20px;
+}
+.note {
+  margin: 0 0 14px;
+  font-size: 14px;
+  color: var(--sb-ink-2);
+}
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.rowTitle {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.list {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.warn {
+  color: var(--sb-ink-2);
+  font-size: 14px;
+  margin: 4px 0 0;
+}
+.error {
+  padding: 12px 16px;
+  border: 1px solid var(--sb-danger);
+  border-radius: var(--sb-r-3);
+  color: var(--sb-danger);
+  font-size: 14px;
+  margin-bottom: 14px;
+}
+.actions {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.bigBtn {
+  min-height: 44px;
+}
+.individuals {
+  margin: 8px 0 0;
+  font-size: 14px;
+}
+.target:target {
+  outline: 2px solid var(--sb-skog);
+}

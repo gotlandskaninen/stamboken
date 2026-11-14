@@ -7,6 +7,8 @@ const nextConfig = {
   output: "standalone",
   transpilePackages: ["react-easy-crop"],
   experimental: {
+    // Intyg uploads go through a Server Action: up to 10 photos of ≤10 MB.
+    serverActions: { bodySizeLimit: "11mb" },
     optimizePackageImports: ["@mui/material", "@mui/icons-material"],
   },
   async rewrites() {
