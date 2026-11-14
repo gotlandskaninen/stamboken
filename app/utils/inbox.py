@@ -7,12 +7,13 @@ The files live under PRIVATE_UPLOAD_FOLDER, never under UPLOAD_FOLDER, which ngi
 
 import hashlib
 import io
+import math
 import os
 import uuid
 from datetime import datetime, timezone
 
 from peewee import fn
-from PIL import ImageFilter, ImageStat
+from PIL import Image, ImageDraw, ImageFilter, ImageStat
 
 import utils.settings as settings
 from utils.database import (
@@ -455,9 +456,59 @@ def update_document(item, document, user, changes):
         document.done_at = document.done_at or now()
     elif changes.get("dismissed") is False and document.public_path is None and document.herd_tracking_id is None:
         document.done_at = None
+    if document.public_path and {"rotation", "mask_rects"} & set(changes):
+        make_copy(document)
     document.save()
     log_event(item, user, "dokument", document=document.id, fields=sorted(changes))
     close_if_done(item, user)
+
+
+def make_copy(document):
+    """
+    The copy shown on the rabbit, made from the original: turned `rotation` degrees clockwise, its mask_rects
+    (fractions of the turned image) painted black, saved as inkorg/kopia/<document id>.jpg without metadata.
+    Made again whenever the rectangles or the rotation change.
+    """
+    with Image.open(private_path(document.original_path)) as original:
+        image = original.convert("RGB").rotate(-document.rotation, expand=True)
+    width, height = image.size
+    draw = ImageDraw.Draw(image)
+    for r in document.mask_rects or []:
+        box = (r["x"] * width, r["y"] * height, (r["x"] + r["w"]) * width, (r["y"] + r["h"]) * height)
+        draw.rectangle(
+            [math.floor(box[0]), math.floor(box[1]), math.ceil(box[2]) - 1, math.ceil(box[3]) - 1], fill="black"
+        )
+    document.public_path, _ = store_jpeg(image, "kopia", name=str(document.id))
+
+
+def confirm_mask(item, document, user, rects=None):
+    """The handler confirms what covers the seller and the buyer: the copy goes on the rabbit, the document is done."""
+    require_handler(item, user)
+    if document.doc_type != "intyg" or document.individual_id is None:
+        raise InboxError(409, "Spara kaninen från intyget först.")
+    if rects is not None:
+        document.mask_rects = _rects(rects)
+    if document.mask_rects is None:
+        raise InboxError(400, "Ange mask_rects, eller en tom lista om intyget inte visar någon säljare eller köpare.")
+    document.done_at = document.done_at or now()
+    make_copy(document)
+    document.save()
+    log_event(item, user, "kopia", document=document.id, rects=len(document.mask_rects))
+    close_if_done(item, user)
+
+
+def paper_certificate(individual):
+    """The rabbit's paper certificate: the newest copy made from an "intyg" document for it, or None."""
+    return (
+        InboxDocument.select()
+        .where(
+            (InboxDocument.individual == individual.id)
+            & (InboxDocument.doc_type == "intyg")
+            & InboxDocument.public_path.is_null(False)
+        )
+        .order_by(InboxDocument.done_at.desc(), InboxDocument.id.desc())
+        .first()
+    )
 
 
 def _document_status(document):

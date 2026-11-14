@@ -15,7 +15,7 @@ import pypdfium2
 import utils.data_access as da
 import utils.inbox as inbox
 from extensions import limiter
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 from flask_login import current_user
 from peewee import fn
 from PIL import Image, ImageOps
@@ -582,3 +582,58 @@ def _invalidate(individual):
         trigger_invalidation(individual.origin_herd.genebank_id)
     except Exception:  # pylint: disable=broad-except
         logger.warning("Cache invalidation failed for %s", individual.number, exc_info=True)
+
+
+def _private_jpeg(relative):
+    """A file under PRIVATE_UPLOAD_FOLDER, never cached anywhere on the way."""
+    response = send_file(inbox.private_path(relative), mimetype="image/jpeg", max_age=0)
+    response.headers["Cache-Control"] = "no-store, private"
+    return response
+
+
+# [Next.js] Confirm the masking: the copy goes on the rabbit and the document is done.
+@inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/maskning", methods=["POST"])
+@json_login_required
+@_queue_worker
+def confirm_mask(item_id, document_id):
+    body = _body()
+
+    def action(item):
+        document = inbox.document_of(item, document_id)
+        inbox.confirm_mask(item, document, current_user, body.get("mask_rects"))
+        return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]})
+
+    return _locked(item_id, action)
+
+
+# [Next.js] The original as it came in, for those working in the queue only; every view is logged.
+@inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/original", methods=["GET"])
+@json_login_required
+@_queue_worker
+def original(item_id, document_id):
+    try:
+        with DB_PROXY.atomic():
+            item = InboxItem.get_or_none(InboxItem.id == item_id)
+            if item is None:
+                raise inbox.InboxError(404, "Posten finns inte.")
+            document = inbox.document_of(item, document_id)
+            inbox.log_event(item, current_user.id, "original_visat", document=document.id)
+    except inbox.InboxError as exc:
+        return problem(exc.status, exc.title, exc.detail)
+    return _private_jpeg(document.original_path)
+
+
+# [Next.js] The paper certificate on the rabbit's page: the masked copy, for whoever may see its certificate.
+@inbox_bp.route("/individual/<number>/paper-certificate", methods=["GET"])
+@json_login_required
+def paper_certificate(number):
+    individual = Individual.get_or_none((Individual.number == number) & not_voided())
+    user = User.get_by_id(current_user.id)
+    if individual is None or da.get_individual(number, user.uuid) is None:
+        return problem(404, "Not Found", f"Individual {number} not found")
+    if not user.can_view_certificate(individual):
+        return problem(403, "Forbidden", "Bara ägaren, uppfödaren och genbanksansvarig kan hämta intyget")
+    document = inbox.paper_certificate(individual)
+    if document is None:
+        return problem(404, "Not Found", "Kaninen har inget inläst pappersintyg.")
+    return _private_jpeg(document.public_path)
