@@ -17,10 +17,42 @@ class TestVisibility(InboxTest):
         for username in ("admin", "man", "hjalp", "mhjalp"):
             with self.subTest(username):
                 self.login(username)
-                resp = self.client.get("/api/v2/inkorg")
+                resp = self.client.get("/api/v2/inkorg?scope=alla")
                 self.assertEqual(resp.status_code, 200, resp.get_json())
                 self.assertEqual([i["id"] for i in resp.get_json()["items"]], [gotland.id, mellerud.id])
                 self.assertEqual(self.client.get(f"/api/v2/inkorg/{mellerud.id}").status_code, 200)
+
+    def test_the_scope_is_ones_own_genebanks_and_the_unknown_by_default_for_managers_and_helpers(self):
+        gotland, mellerud = self.item(0), self.item(2)
+        unknown = db.InboxItem.create(kind="meddelande", sender_address="okand@example.org")
+        inbox.take(gotland, self.helper, over=False)
+        gotland_id, mellerud_id = self.genebanks[0].id, self.genebanks[1].id
+        expected = {
+            # username: (default scope, item ids by default, my_genebanks)
+            "admin": ("alla", [gotland.id, mellerud.id, unknown.id], []),
+            "man": ("mina", [gotland.id, unknown.id], [gotland_id]),
+            "hjalp": ("mina", [gotland.id, unknown.id], [gotland_id]),
+            "mhjalp": ("mina", [mellerud.id, unknown.id], [mellerud_id]),
+        }
+        for username, (scope, ids, genebanks) in expected.items():
+            with self.subTest(username):
+                self.login(username)
+                body = self.client.get("/api/v2/inkorg").get_json()
+                self.assertEqual((body["scope"], body["my_genebanks"]), (scope, genebanks))
+                self.assertEqual([i["id"] for i in body["items"]], ids)
+                self.assertEqual(sum(body["counts"].values()), len(ids))  # the counts follow the scope
+                every = self.client.get("/api/v2/inkorg?scope=alla").get_json()
+                self.assertEqual([i["id"] for i in every["items"]], [gotland.id, mellerud.id, unknown.id])
+                self.assertEqual((every["scope"], every["counts"]), ("alla", {"ny": 2, "tagen": 1}))
+                # a filter never hides my_genebanks: the item page reads it with limit=1
+                one = self.client.get("/api/v2/inkorg?limit=1&state=klar").get_json()
+                self.assertEqual((one["items"], one["my_genebanks"]), ([], genebanks))
+        self.login("admin")
+        admin_mine = self.client.get("/api/v2/inkorg?scope=mina").get_json()["items"]
+        self.assertEqual([i["id"] for i in admin_mine], [unknown.id])  # no genebank of its own: the unknown only
+        self.assertEqual(self.client.get("/api/v2/inkorg?scope=min").status_code, 400)
+        self.login("mhjalp")  # reads the other genebank's item, but cannot save through it
+        self.assertEqual(self.client.get(f"/api/v2/inkorg/{gotland.id}").status_code, 200)
 
     def test_an_owner_or_viewer_sees_none_of_it(self):
         item = self.item(0)
@@ -65,7 +97,7 @@ class TestVisibility(InboxTest):
         self.login("hjalp")
 
         def ids(query):
-            resp = self.client.get(f"/api/v2/inkorg?{query}")
+            resp = self.client.get(f"/api/v2/inkorg?scope=alla&{query}")
             self.assertEqual(resp.status_code, 200, resp.get_json())
             return [i["id"] for i in resp.get_json()["items"]]
 
@@ -76,7 +108,7 @@ class TestVisibility(InboxTest):
         self.assertEqual(ids("herd=G2"), [untaken.id])
         self.assertEqual(ids("state=tagen"), [mine.id])
         self.assertEqual(ids("kind=mail"), [])
-        body = self.client.get("/api/v2/inkorg?state=tagen").get_json()
+        body = self.client.get("/api/v2/inkorg?scope=alla&state=tagen").get_json()
         self.assertEqual((body["counts"], body["total"]), ({"ny": 2, "tagen": 1}, 1))
         self.assertEqual(self.client.get("/api/v2/inkorg?state=okand").status_code, 400)
 

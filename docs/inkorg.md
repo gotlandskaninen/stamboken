@@ -408,6 +408,8 @@ Kölistan, äldst först (`received_at`).
 
 | Parameter | |
 |---|---|
+| `scope=mina` | poster i de genbanker där anroparen är genbanksansvarig eller hjälpare, och poster utan genbank. Standard för genbanksansvariga och hjälpare |
+| `scope=alla` | alla poster. Standard för admin |
 | `mine=1` | poster där anroparen är handläggare |
 | `untaken=1` | poster utan handläggare |
 | `assigned_to=<user id>` | en viss handläggares poster |
@@ -424,18 +426,24 @@ Kölistan, äldst först (`received_at`).
   "items": [ { "…": "poster i listform" } ],
   "total": 17,
   "counts": {"ny": 9, "tagen": 6, "klar": 2},
-  "interpretation": {"interpreter": "gemma", "waiting": 3, "last_done_at": "2026-11-14T08:01:02+00:00", "alarm": false}
+  "interpretation": {"interpreter": "gemma", "waiting": 3, "last_done_at": "2026-11-14T08:01:02+00:00", "alarm": false},
+  "scope": "mina",
+  "my_genebanks": [1]
 }
 ```
 
-`total` är antalet poster med alla filter. `counts` är antalet per läge med alla filter utom
-`state`, så att flikar per läge kan visa sina antal. Ett läge utan poster saknas i `counts`.
+`scope` är den avgränsning som användes och `my_genebanks` id:na för de genbanker där anroparen är
+genbanksansvarig eller hjälpare (tom för en admin utan sådana roller), oberoende av filtren, så att
+`GET /api/v2/inkorg?limit=1` räcker för att läsa dem. `scope` avgränsar bara listan: alla som arbetar
+i kön kan öppna och läsa varje post, och reglerna för att skriva är desamma. `total` är antalet poster
+med alla filter. `counts` är antalet per läge med alla filter utom `state` (också `scope`), så att
+flikar per läge kan visa sina antal. Ett läge utan poster saknas i `counts`.
 `interpretation` är tolkningens läge, oberoende av filtren: `interpreter` (`av` när den är
 avstängd), `waiting` (intyg i kö), `last_done_at` (när det senaste förslaget blev klart) och
 `alarm`, som är `true` när de tre senast tolkade dokumenten alla misslyckades (till exempel när
 tolkningen inte är igång eller har slut på minne). Se [Tolkning](#tolkning).
 
-**Fel:** 400 för ett okänt läge eller ett id som inte är ett heltal.
+**Fel:** 400 för ett okänt läge, en okänd `scope` eller ett id som inte är ett heltal.
 
 ### `GET /api/v2/inkorg/handlaggare`
 

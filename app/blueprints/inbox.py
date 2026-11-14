@@ -243,7 +243,13 @@ def _user_in_body():
 @_queue_worker
 def queue():
     args = request.args
+    mine = sorted(set(current_user.is_manager or []) | set(current_user.is_helper or []))
+    scope = args.get("scope") or ("alla" if current_user.is_admin else "mina")
+    if scope not in ("mina", "alla"):
+        return problem(400, "Bad Request", "scope är mina eller alla.")
     query = InboxItem.select()
+    if scope == "mina":  # a narrower view only: anyone in the queue may still open any item
+        query = query.where(InboxItem.genebank.in_(mine) | InboxItem.genebank.is_null(True))
     if args.get("mine") in ("1", "true"):
         query = query.where(InboxItem.assigned_to == current_user.id)
     if args.get("untaken") in ("1", "true"):
@@ -273,6 +279,8 @@ def queue():
             "total": query.count(),
             "counts": counts,
             "interpretation": interpreter.status(),
+            "scope": scope,
+            "my_genebanks": mine,
         }
     )
 
