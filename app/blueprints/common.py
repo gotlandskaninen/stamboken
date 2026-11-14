@@ -5,6 +5,7 @@ Blueprints import from here instead of herdbook.py to avoid circular imports.
 See ADR-0007 for details.
 """
 
+import logging
 import re
 from functools import wraps
 
@@ -108,8 +109,13 @@ def json_error(message, status=400):
     return jsonify({"status": "error", "message": message}), status
 
 
+_auth_log = logging.getLogger("herdbook.auth")
+
+
 def problem(status, title, detail, **extra):
     """Return RFC 9457 Problem Details response."""
+    if status in (401, 403):  # denied attempts are security events
+        _auth_log.info("Denied %s: %s user id=%s", status, title, getattr(current_user, "id", None))
     body = {
         "type": "about:blank",
         "title": title,

@@ -84,6 +84,8 @@ from werkzeug.security import (
 from werkzeug.exceptions import HTTPException  # isort:skip
 
 logger = logging.getLogger("herdbook.da")
+# Login and permission events; ids only, never e-mail or username (privacy).
+auth_log = logging.getLogger("herdbook.auth")
 
 
 class ValidationError(HTTPException):
@@ -455,7 +457,7 @@ def register_user(
 
     # Update to make sure to get the correct id
     user = User.select().where(User.email == email).get()
-    logger.info(f"Registered User {user.as_dict()}")
+    auth_log.info("Registered user id=%s", user.id)
 
     # If no password is provided, don't create an authenticator
     if not password:
@@ -495,7 +497,7 @@ def authenticate_user(name, password):
         with DATABASE.atomic():
             user_info = User.select().where((User.email == name) | (User.username == name)).get()
             if user_info and not user_info.is_active:
-                logger.info("Login attempt for inactive account %s", name)
+                auth_log.info("Login refused: inactive account")
                 raise InactiveAccountError()
             if user_info:
                 authenticator = (
@@ -509,7 +511,7 @@ def authenticate_user(name, password):
         # Perform password check regardless of username to prevent timing
         # attacks
         check_password_hash("This-always-fails", password)
-    logger.info("Failed login attempt for %s", name)
+    auth_log.info("Login failed: unknown user or wrong password")
     return None
 
 
@@ -580,7 +582,7 @@ def authenticate_with_credentials(method, ident):
     except DoesNotExist:
         pass
 
-    logger.info("Failed login attempt for service %s persistent id %s", method, ident)
+    auth_log.info("Login failed: service %s, no linked account", method)
     return None
 
 
@@ -613,23 +615,12 @@ def link_account(user, method, ident):
         authenticator = Authenticators(user=user.id, auth=method, auth_data=ident)
         with DATABASE.atomic():
             authenticator.save()
-        logger.info("Linked %s to %s persistent id %s", user.username, method, ident)
+        auth_log.info("Linked user id=%s to service %s", user.id, method)
         return user
     except PeeweeException as auth_except:
-        logger.info(
-            "Error (%s) while linking %s to %s persistent id %s",
-            auth_except,
-            user.username,
-            method,
-            ident,
-        )
+        auth_log.info("Link failed: user id=%s service %s: %s", user.id, method, auth_except)
 
-    logger.info(
-        "Failed link attempt for user %s service %s persistent id %s",
-        user.username,
-        method,
-        ident,
-    )
+    auth_log.info("Link failed: user id=%s service %s", user.id, method)
     return None
 
 
@@ -1681,11 +1672,6 @@ def update_origin_herd_ind(individual, new_herd, user):
     Updates origin_herd + number for the individual and replaces its BIRTH row
     (void + new BIRTH in the new herd) — in one transaction.
     """
-    update_logger = logging.getLogger(f"{individual.current_herd.genebank.name}_update")
-    update_logger.info(
-        f"{user.username},{individual.number},UPDATE origin_herd and number,"
-        f"{individual.origin_herd.herd},{new_herd.herd},"
-    )
     old_number = individual.number
     with DATABASE.atomic():
         individual.origin_herd = new_herd
@@ -1944,9 +1930,6 @@ def add_individual(form, user_uuid):
             except ValueError as exception:
                 raise exception
 
-        logging.getLogger(f"{individual.current_herd.genebank.name}_create").info(
-            f"{user.username},{individual.number},{individual.name},{new_herd.herd},{selling_date}"
-        )
         return {
             "status": "success",
             "message": "Individual Created",
@@ -3041,7 +3024,6 @@ def update_breeding(form, user_uuid):
     # parent change rewrites every kit's BIRTH row and number. Re-checked under the lock below.
     if not user.can_edit(breeding.breeding_herd_id.herd):
         return {"status": "error", "message": "Forbidden"}
-    update_logger = logging.getLogger(f"{breeding.mother.current_herd.genebank.name}_update")
     errors = []
     date_warnings = []
     # `breeding` is the row as this request found it, read before the lock. Legacy PATCHes the
@@ -3058,9 +3040,6 @@ def update_breeding(form, user_uuid):
             mother = Individual.get(Individual.number == form["mother"])
             if old_mother != mother.number:
                 changes["mother"] = mother
-                update_logger.info(
-                    f"{user.username},breeding_id:{breeding.id},changed_mother,{old_mother},{mother.number}"
-                )
         except DoesNotExist:
             errors += ["Unknown mother"]
     if "father" in form:
@@ -3069,9 +3048,6 @@ def update_breeding(form, user_uuid):
             father = Individual.get(Individual.number == form["father"])
             if old_father != father.number:
                 changes["father"] = father
-                update_logger.info(
-                    f"{user.username},breeding_id:{breeding.id},changed_father,{old_father},{father.number}"
-                )
         except DoesNotExist:
             errors += ["Unknown father"]
 
@@ -3080,9 +3056,6 @@ def update_breeding(form, user_uuid):
             try:
                 new_date = validate_date(form[bdate])
                 if getattr(breeding, bdate) != new_date.date():
-                    update_logger.info(
-                        f"{user.username},breeding_id:{breeding.id},changed_{bdate},{getattr(breeding, bdate)},{form[bdate]}"  # noqa: E501
-                    )
                     changes[bdate] = new_date
             except ValueError as error:
                 errors += [str(error)]
@@ -3237,9 +3210,6 @@ def update_breeding(form, user_uuid):
             # Update breeding_herd to new herd ID.
             # Update all Indivuduals in breeding
             if herd_changed:
-                update_logger.info(
-                    f"{user.username},breeding_id:{breeding.id},new_breeding_herd,{stored.breeding_herd_id.herd},{new_herd.herd}"  # noqa: E501
-                )
                 stored.breeding_herd_id = new_herd
                 # Breeding herd id changed
                 for ind in kits.clone():

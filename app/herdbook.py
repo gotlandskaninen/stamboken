@@ -18,7 +18,6 @@ import sys
 import threading
 import time
 import uuid
-from logging.handlers import TimedRotatingFileHandler
 from urllib.parse import urlparse
 
 import apscheduler.schedulers.background
@@ -74,7 +73,7 @@ import utils.external_auth  # isort:skip
 import utils.data_access as da  # isort:skip
 import utils.database as db  # isort:skip
 import utils.settings as settings  # isort:skip
-import utils.genebank_logging as gblogging  # isort:skip
+from utils import app_logging  # isort:skip
 import utils.genetics_service as genetics  # isort:skip
 from utils import number_assets  # isort:skip
 from utils.individual_commands import purge_command_free_text  # isort:skip
@@ -83,6 +82,7 @@ from utils.legacy_compat import is_legacy_host, legacy_classroom_url  # isort:sk
 from utils.redis_retry import reconnect_on_drop  # isort:skip
 
 APP = Flask(__name__, static_folder="/static")
+auth_log = logging.getLogger("herdbook.auth")
 
 
 def _resolve_secret_key() -> str:
@@ -289,17 +289,7 @@ limiter.init_app(APP)
 LOGIN_RATE_LIMIT = "5 per minute"
 LOGIN_RATE_SCOPE = "login"
 
-# pylint: disable=no-member
-APP.logger.setLevel(logging.INFO)
-file_handler = TimedRotatingFileHandler(f"{settings.service.logfolder}/APP.log", when="W6")
-file_handler.setLevel(logging.INFO)
-file_handler.setFormatter(
-    gblogging.RequestFormatter(
-        "[%(asctime)s] %(module)s.%(levelname)s: %(message)s, URL: %(url)s ",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-)
-APP.logger.addHandler(file_handler)
+app_logging.setup()
 utils.external_auth.setup(APP)
 
 Session(APP)
@@ -491,7 +481,7 @@ def load_user_from_request(request):
             return None
 
         if user:
-            APP.logger.info("User %s logged in from request header", user.username)
+            da.auth_log.info("Login ok: header, user id=%s", user.id)
 
             session["user_id"] = user.uuid
             session.modified = True
@@ -506,7 +496,7 @@ def load_user_from_request(request):
 
             return user
 
-        APP.logger.info("Failed login from header for %s", username)
+        da.auth_log.info("Login failed: header")
         _login_rate_limit("hit")
 
     # we are not logged in.
@@ -765,8 +755,12 @@ def manage_user(u_id):
         retval = da.get_user(u_id, session.get("user_id", None))
     if request.method in ("UPDATE", "PATCH"):
         retval = da.update_user(form, session.get("user_id", None))
+        if retval.get("status") != "error":
+            auth_log.info("user updated actor=%s target=%s", current_user.id, u_id)
     if request.method == "POST":
         retval = da.add_user(form, session.get("user_id", None))
+        if retval.get("status") != "error":
+            auth_log.info("user created actor=%s", current_user.id)
     return jsonify(retval)
 
 
@@ -789,6 +783,8 @@ def change_userpassword(u_id):
     if not u_id:
         u_id = current_user.id
     retval = da.change_password(current_user, u_id, form)
+    if retval:
+        auth_log.info("password changed actor=%s target=%s", current_user.id, u_id)
     return jsonify(retval)
 
 
@@ -814,6 +810,8 @@ def manage_roles():
     """
     form = request.json
     status = da.update_role(form, session.get("user_id", None))
+    if status.get("status") != "error":
+        auth_log.info("role changed actor=%s target=%s", current_user.id, form.get("user"))
     return jsonify(status)
 
 
@@ -1254,9 +1252,9 @@ def login_handler():
         # EACH_REQUEST; the authenticated session is unaffected and the orphan
         # expires via TTL. Inherent to sid rotation (cf. Django cycle_key).
         APP.session_interface.regenerate(session)
-        APP.logger.info(f"Logging in user: {user.username} via the admin password interface")
+        da.auth_log.info("Login ok: password, user id=%s", user.id)
     else:
-        APP.logger.warning(f"User name {form.get('username')} is not able to login using admin interface ")
+        da.auth_log.warning("Login failed: password")
         if is_legacy_host():
             # Old contract: a failed login answered 200 with a null body.
             # Legacy's handleLogin treats any JSON body as a user, so the 401
@@ -1340,16 +1338,16 @@ def google_token_login():
         hosted_domain = idinfo.get("hd")
 
         if not email_verified:
-            APP.logger.warning(f"Google login attempt with unverified email: {email}")
+            da.auth_log.warning("Login refused: Google, e-mail not verified")
             return jsonify({"error": "Email not verified"}), 400
 
         # Check if user belongs to the required domain
         if hosted_domain != "gotlandskaninen.se":
-            APP.logger.warning(f"Google login attempt from unauthorized domain: {hosted_domain} ({email})")
+            da.auth_log.warning("Login refused: Google, domain %s", hosted_domain)
             return jsonify({"error": "Access restricted to gotlandskaninen.se domain"}), 403
 
         if not email or not email.endswith("@gotlandskaninen.se"):
-            APP.logger.warning(f"Google login attempt from unauthorized email domain: {email}")
+            da.auth_log.warning("Login refused: Google, e-mail domain")
             return jsonify({"error": "Access restricted to gotlandskaninen.se domain"}), 403
 
         # Try to authenticate user with Google ID
@@ -1357,7 +1355,7 @@ def google_token_login():
 
         if user and not user.is_active:
             # Layer 2 — deactivated account may not log in via Google.
-            APP.logger.warning(f"Google login attempt for inactive account: {user.username or user.email}")
+            da.auth_log.warning("Login refused: Google, inactive account id=%s", user.id)
             return jsonify({"error": "Kontot är inaktiverat. Kontakta styrelsen."}), 403
 
         if user and not user.validated:
@@ -1386,7 +1384,7 @@ def google_token_login():
             session.modified = True
             login_user(user)
             APP.session_interface.regenerate(session)
-            APP.logger.info(f"Google login successful for user: {user.username} ({email})")
+            da.auth_log.info("Login ok: Google, user id=%s", user.id)
             # Phase 8: link a pre-provisioned Member to this OAuth-verified
             # user. get_user() re-fetches from the DB, so a newly granted
             # owner role is visible in this same response.
@@ -1394,7 +1392,7 @@ def google_token_login():
             return get_user()
         else:
             # User doesn't exist with this Google ID
-            APP.logger.warning(f"Google login failed - no user found for Google ID: {google_user_id} ({email})")
+            da.auth_log.warning("Login failed: Google, no such user")
             return jsonify({"error": "User not found or not authorized"}), 401
 
     except ValueError as e:
@@ -1448,15 +1446,7 @@ def external_login_handler(service):
             return _not_validated_response()
 
     if user and user.validated:
-        APP.logger.info(
-            "Logging in user %s (%s - #%d) by persistent id %s for service %s, refferrer is %s",
-            user.username,
-            user.email,
-            user.id,
-            persistent_id,
-            service,
-            request.referrer,
-        )
+        da.auth_log.info("Login ok: %s, user id=%s", service, user.id)
         _stamp_login()
         session["user_id"] = user.uuid
         session.modified = True
@@ -1509,7 +1499,6 @@ def external_login_handler(service):
         return None
 
     accountdetails = utils.external_auth.get_account_details(service)
-    APP.logger.debug(f"Got accountdetails {repr(accountdetails)}")
 
     # Auto-validate users in environments that opt in (e.g. api-test).
     auto_validate = _should_auto_validate_users()
@@ -1527,12 +1516,7 @@ def external_login_handler(service):
     )
 
     if not user:
-        APP.logger.error(
-            "Automatic registering of user with e-mail %s (persistent id %s) for service %s FAILED",
-            accountdetails["email"],
-            persistent_id,
-            service,
-        )
+        da.auth_log.error("Automatic registering of user for service %s FAILED", service)
         return None
 
     # register_user() adopts an existing account with this address. Never hand
@@ -1543,29 +1527,19 @@ def external_login_handler(service):
     # returned, so a concurrent email change cannot slip in between. A
     # brand-new account has no authenticator yet and is linked as before.
     if not user.validated and db.Authenticators.select().where(db.Authenticators.user == user.id).exists():
-        APP.logger.warning("Refusing to link %s to unvalidated existing user #%d", service, user.id)
+        da.auth_log.warning("Refusing to link %s to unvalidated existing user #%d", service, user.id)
         return _not_validated_response()
 
     linked = da.link_account(user, service, persistent_id)
 
     if not linked:
-        APP.logger.error(
-            "Linked of of user with e-mail %s (persistent id %s) for service %s FAILED",
-            accountdetails["email"],
-            persistent_id,
-            service,
-        )
+        da.auth_log.error("Linking user id=%s for service %s FAILED", user.id, service)
         return None
 
     # google_email is the CMS identity; google_details() verified this address.
     db.User.update(google_email=accountdetails["email"]).where(db.User.id == user.id).execute()
 
-    APP.logger.info(
-        "Automatically registered user with e-mail %s (persistent id %s) for service %s",
-        persistent_id,
-        accountdetails["email"],
-        service,
-    )
+    da.auth_log.info("Automatically registered user id=%s for service %s", user.id, service)
 
     # If we got a herd from external, setup ownership
     if "herd" in accountdetails:
@@ -2954,11 +2928,6 @@ def initialize_app():
         APP.logger.info("Scheduler leader — started debounce polling + genetics version poller + memo warm")
     except FileExistsError:
         APP.logger.info("Another worker is scheduler leader, skipping scheduler start")
-
-    # Create loggers depending on Genbanks entry in database
-    with db.DATABASE.atomic():
-        for genebank in db.Genebank.select():
-            gblogging.create_genebank_logs(settings.service.logfolder, genebank.name)
 
 
 # Skip blocking startup code when running tests (pytest imports this module)

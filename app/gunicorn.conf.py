@@ -16,6 +16,8 @@ keepalive = int(os.getenv("GUNICORN_KEEPALIVE", "75"))
 
 # Logging
 accesslog = "-"
+# %(U)s is the path without the query string (%(r)s would include it).
+access_log_format = '%(h)s %(t)s "%(m)s %(U)s" %(s)s %(B)s %(M)s'
 errorlog = "-"
 
 # Scheduler lock file — used by initialize_app() to ensure only one worker
