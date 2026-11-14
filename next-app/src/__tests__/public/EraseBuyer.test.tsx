@@ -1,5 +1,6 @@
 // jest-dom matchers on vitest's expect (this project has no global setup).
 import "@testing-library/jest-dom/vitest";
+import { StrictMode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
@@ -23,9 +24,14 @@ import {
 const PAGE = "/kopare/ta-bort";
 const TOKEN = "17." + "x".repeat(22); // shaped like a link token, built so no scanner flags it
 
+// Strict Mode, as the App Router runs in development: every effect runs twice.
 function open(hash: string) {
   window.history.replaceState(null, "", PAGE + hash);
-  render(<EraseBuyer />);
+  render(
+    <StrictMode>
+      <EraseBuyer />
+    </StrictMode>,
+  );
 }
 
 const button = () =>

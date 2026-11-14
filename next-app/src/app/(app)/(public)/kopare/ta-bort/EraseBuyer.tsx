@@ -30,7 +30,8 @@ export function EraseBuyer() {
   const [pending, startTransition] = useTransition();
 
   useEffect(() => {
-    token.current = takeToken(window.location, window.history);
+    // ??=: Strict Mode runs the effect twice, and the second finds the fragment gone.
+    token.current ??= takeToken(window.location, window.history);
   }, []);
 
   if (result && result !== "error") {
