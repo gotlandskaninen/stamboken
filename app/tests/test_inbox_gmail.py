@@ -297,6 +297,31 @@ class TestSorting(GmailTest):
         (notice,) = db.Notice.select().where(db.Notice.kind == "svar")
         self.assertEqual((notice.user_id, notice.item_id), (self.helper.id, item.id))
 
+    def test_a_reply_to_an_incomplete_item_returns_it_and_restarts_its_year(self):
+        self.holder(self.herds[0])
+        item = self.item(0)
+        inbox.take(item, self.helper, over=False)
+        inbox.change_state(item, self.helper, "ofullstandig", note="Pappersintyget saknas")
+        year_ago = inbox.now() - inbox.months(13)
+        db.InboxItem.update(received_at=year_ago).where(db.InboxItem.id == item.id).execute()
+        (asked,) = db.MailMessage.select().where(db.MailMessage.kind == "inlasning.ofullstandig")
+        files = [("intyg.jpg", JPEG, encoded(photo()))]
+        self.fake.deliver(message(body="Här är det.", files=files, In_Reply_To=mail.message_id(asked.id)))
+        self.read()
+        self.assertEqual(self.items(), [item])
+        self.assertEqual(self.reload(item).state, "tagen")
+        (notice,) = db.Notice.select().where(db.Notice.kind == "svar")
+        self.assertEqual(notice.user_id, self.helper.id)
+
+        item = self.reload(item)
+        inbox.change_state(item, self.helper, "ofullstandig", note="Beviset saknas också")
+        self.assertEqual(purge.purge_incomplete(inbox.now()), 0)  # a year from the answer, not from coming in
+        self.assertEqual(purge.remind_incomplete(inbox.now()), 0)
+        self.assertEqual(len(self.reload(item).documents), 2)  # the photo the sender supplied stays
+        later = inbox.now() + inbox.months(12) + timedelta(days=1)
+        self.assertEqual(purge.remind_incomplete(later), 1)
+        self.assertEqual(purge.purge_incomplete(later), 1)
+
     def test_a_reply_read_twice_gives_one_event_and_one_notice(self):
         self.holder(self.herds[0])
         item = self.waiting()

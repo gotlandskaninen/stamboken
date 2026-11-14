@@ -184,25 +184,35 @@ def purge_sold_proofs(now):  # pylint: disable=unused-argument  # every rule tak
     return remove_originals(paths)
 
 
+def _quiet_since(when):
+    """Items that came in before `when` and have had no answer from their sender since (inbox.incomplete_since)."""
+    answered = InboxEvent.select(InboxEvent.item).where((InboxEvent.kind == "svar") & (InboxEvent.at >= when))
+    return (InboxItem.received_at < when) & InboxItem.id.not_in(answered)
+
+
 def remind_incomplete(now):
-    """inlasning.paminnelse once to the sender of an item still "ofullstandig" 11 months after it came in."""
+    """
+    inlasning.paminnelse once to the sender of an item still "ofullstandig" 11 months after it came in or was last
+    answered (once per such date).
+    """
     old = now - inbox.months(inbox.REMIND_MONTHS)
     queued = 0
     with DB_PROXY.atomic():
-        for item in InboxItem.select().where((InboxItem.state == "ofullstandig") & (InboxItem.received_at < old)):
+        for item in InboxItem.select().where((InboxItem.state == "ofullstandig") & _quiet_since(old)):
             marked = item.events.where((InboxEvent.kind == "lage") & InboxEvent.detail.contains({"to": "ofullstandig"}))
             marked = marked.order_by(InboxEvent.id.desc()).first()
             params = {"item_id": item.id, "event_id": marked.id} if marked else None
-            key = f"inlasning.paminnelse:{item.id}"
+            since = inbox.incomplete_since(item)
+            key = f"inlasning.paminnelse:{item.id}" + (f":{since:%Y-%m-%d}" if since != item.received_at else "")
             if params and inbox.mail_sender(item, "inlasning.paminnelse", params, dedupe_key=key):
                 queued += 1
     return queued
 
 
 def purge_incomplete(now):
-    """An item left "ofullstandig" a year after it came in."""
+    """An item left "ofullstandig" a year after it came in or was last answered."""
     old = now - inbox.months(inbox.INCOMPLETE_MONTHS)
-    return _delete_items((InboxItem.state == "ofullstandig") & (InboxItem.received_at < old))
+    return _delete_items((InboxItem.state == "ofullstandig") & _quiet_since(old))
 
 
 def purge_junk(now):

@@ -115,7 +115,7 @@ bort.
 | `tagen` | `…/lage` | `vantar_foralder`, `ofullstandig` | handläggaren |
 | `tagen` | `…/lage` (öppna igen) | `klar`, `dubblett`, `skrap` | genbanksansvarig för postens genbank, admin; den som öppnar blir handläggare |
 | `tagen` | föräldern sparas (var som helst i Stamboken) | `vantar_foralder` | systemet |
-| `tagen` | svaret på frågan läses in | `vantar_uppfodare` | systemet |
+| `tagen` | ett svar från avsändaren läses in (se [Fråga uppfödaren](#fråga-uppfödaren)) | `vantar_uppfodare`, `ofullstandig` | systemet |
 | `vantar_uppfodare` | `…/fraga` | `tagen` | handläggaren |
 | `vantar_foralder` | `…/lage`; något dokument måste ha `waiting_for` | `tagen` | handläggaren |
 | `hos_genbanksansvarig` | `…/lage`; handläggaren tas bort | `tagen` | handläggaren |
@@ -814,8 +814,9 @@ hunnit raderas. Är frågans text gallrad när mejlet ska gå stoppas det. Poste
 
 Svaret kommer till föreningens brevlåda. Det läggs på posten som händelsen `svar`, med svarets
 foton som nya dokument, bara när Gmail har godkänt avsändarens domän och avsändaren är den som
-fick frågan, postens avsändare eller besättningens innehavare. Posten blir då `tagen` igen och
-handläggaren får notisen `svar`. Annars blir svaret en egen post med `maybe_item` (se
+fick frågan, postens avsändare eller besättningens innehavare. Väntade posten på svaret
+(`vantar_uppfodare`) eller var den `ofullstandig` blir den `tagen` igen, och handläggaren får notisen
+`svar`. Mejlen om en ofullständig post ber avsändaren svara med det som saknas. Annars blir svaret en egen post med `maybe_item` (se
 [Mejlade poster](#mejlade-poster)).
 
 **Svar 200:** posten i listform.
@@ -1050,7 +1051,7 @@ kommandologgen: 12 månader är 366 dagar och 13 månader 396.
 | Händelsen `oppnad` | 13 månader efter händelsen |
 | Ett stängt meddelande (`kind: "meddelande"`) utan dokument | 13 månader efter stängningen |
 | En post i läget `skrap` | 30 dagar efter stängningen |
-| En post i läget `ofullstandig` | 12 månader efter att den kom in; mejl när den markeras och efter 11 månader (se [Mejl](#mejl)) |
+| En post i läget `ofullstandig` | 12 månader efter att den kom in eller efter avsändarens senaste svar på den; mejl när den markeras och efter 11 månader (se [Mejl](#mejl)) |
 | `sender_address` på en stängd post | när inget mejl till avsändaren väntar, senast 30 dagar efter stängningen, också när Gmail-läsningen är avstängd |
 | `gmail_processed` | 60 dagar |
 | Kopian på kaninen och spåret i `inbox_operation` | aldrig |

@@ -460,11 +460,14 @@ def _not_saved(skipped):
 
 
 def _attach_reply(item, text, stored=(), skipped=()):
-    """An answer on the item: an event with its text and new documents, back to the handler if it waited, a notice."""
+    """
+    An answer on the item: an event with its text and new documents, a notice, and back to its handler if it
+    waited for the answer or was incomplete (the mail about it asked the sender to reply with what is missing).
+    """
     documents = _documents(item, stored)
     detail = {"text": text, "documents": [document.id for document in documents], **_not_saved(skipped)}
     InboxEvent.create(item=item, kind="svar", detail=detail)
-    if item.state == "vantar_uppfodare":
+    if item.state in ("vantar_uppfodare", "ofullstandig"):
         inbox._set_state(item, "tagen")  # pylint: disable=protected-access
         item.save()
     if item.assigned_to_id:
