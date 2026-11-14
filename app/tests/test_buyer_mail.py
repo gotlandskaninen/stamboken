@@ -85,12 +85,15 @@ class TestInformationQueued(BuyerMailTest):
         self.assertEqual((row.kind, row.recipient_id), ("kopare.information", sale.holder_contact_id))
 
     def test_a_corrected_sale_does_not_mail_the_buyer_twice(self):
-        sale = self._sale(WITH_EMAIL)
+        sale = self._sale({**WITH_EMAIL, "membership_optin": True})
         contact = db.BuyerContact.get_by_id(sale.holder_contact_id)
         event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", "holder_contact_id": contact.id}
         correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
         queue_buyer_mails(contact, self._latest())  # and if anything queued again, the dedupe_key holds
-        self.assertEqual([row.recipient_id for row in self.mails()], [contact.id])
+        self.assertEqual(
+            [(row.kind, row.recipient_id) for row in self.mails()],
+            [("kopare.information", contact.id), ("kopare.medlemskap", contact.id)],
+        )
 
 
 class TestInformationSent(BuyerMailTest):
@@ -161,3 +164,27 @@ class TestInformationSent(BuyerMailTest):
         buyer_contact.erase_buyer_contact(self.contact_id, self.admin)
         self.assertEqual(self.send(), [])
         self.assertEqual(self.mails()[0].status, "cancelled")
+
+
+class TestMembership(BuyerMailTest):
+    def test_only_with_the_yes_to_membership_contact(self):
+        self._sale(WITH_EMAIL)
+        self.assertEqual(self.mails("kopare.medlemskap"), [])
+
+    def test_the_welcome_with_the_yes_alone(self):
+        contact_id = self._sale({**BUYER, "email": EMAIL, "membership_optin": True}).holder_contact_id
+        (row,) = self.mails("kopare.medlemskap")
+        self.assertEqual((row.recipient_kind, row.recipient_id, row.category), ("buyer_contact", contact_id, "T"))
+        subject, body = self.text("kopare.medlemskap")
+        self.assertEqual(subject, "Välkommen att bli medlem i Föreningen Gotlandskaninen")
+        self.assertTrue(body.startswith(f"Hej {NAME},\n\nnär du köpte Stjärna sa du att"), body)
+        self.assertIn("Läs mer och ansök på gotlandskaninen.se/ansok.\n\nVi sparar ditt ja", body)
+
+    def test_not_sent_once_the_yes_is_gone(self):
+        contact_id = self._sale({**WITH_EMAIL, "membership_optin": True}).holder_contact_id
+        db.BuyerContact.update(membership_optin_at=None).where(db.BuyerContact.id == contact_id).execute()
+        self.assertEqual(
+            [msg["Subject"] for msg in self.send()],
+            ["Din kanin Stjärna (G1-2111) är registrerad hos Föreningen Gotlandskaninen"],
+        )
+        self.assertEqual(self.mails("kopare.medlemskap")[0].status, "cancelled")

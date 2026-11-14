@@ -31,19 +31,23 @@ _MONTHS = (
 
 def queue_buyer_mails(contact, sale):
     """
-    For a buyer just created with `sale` (its TRANSFER row): kopare.information when the buyer gave an e-mail.
-    Once per buyer: a corrected sale keeps its buyer, and the dedupe_key holds if anything queues again.
+    For a buyer just created with `sale` (its TRANSFER row) who gave an e-mail: kopare.information, and
+    kopare.medlemskap with the yes to membership contact. Once each per buyer: a corrected sale keeps its buyer,
+    and the dedupe_key holds if anything queues again.
     """
     if not contact.email:
         return
-    enqueue_mail(
-        "kopare.information",
-        "buyer_contact",
-        contact.id,
-        {"buyer_contact_id": contact.id, "individual_id": sale.individual_id},
-        genebank=sale.herd.genebank_id,
-        dedupe_key=f"kopare.information:{contact.id}",
-    )
+    params = {"buyer_contact_id": contact.id, "individual_id": sale.individual_id}
+    kinds = ("kopare.information", "kopare.medlemskap") if contact.membership_optin_at else ("kopare.information",)
+    for kind in kinds:
+        enqueue_mail(
+            kind,
+            "buyer_contact",
+            contact.id,
+            params,
+            genebank=sale.herd.genebank_id,
+            dedupe_key=f"{kind}:{contact.id}",
+        )
 
 
 def _swedish_date(moment):
@@ -91,3 +95,13 @@ def _information_mail(params):
         "certificate": pdf is not None,
         "attachments": [(f"genbanksintyg-{rabbit.number}.pdf", "application/pdf", pdf)] if pdf else [],
     }
+
+
+@mail_kind("kopare.medlemskap", priority=1, category="T")
+def _membership_mail(params):
+    """The welcome the buyer said yes to; none once the yes or the buyer is gone."""
+    contact = BuyerContact.get_or_none(BuyerContact.id == params["buyer_contact_id"])
+    rabbit = Individual.get_or_none(Individual.id == params["individual_id"])
+    if contact is None or contact.membership_optin_at is None or rabbit is None:
+        return None
+    return {"buyer": contact.name, "rabbit": rabbit.name or rabbit.number}
