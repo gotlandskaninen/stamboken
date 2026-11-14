@@ -993,7 +993,9 @@ så hur säkert ett fält är avgörs av kontrollerna mot registret, aldrig av m
 2. Bara postens genbank söks: kaniner byter aldrig genbank.
 3. En förälder är bekräftad när numret finns och förälderns egna föräldrar i registret stämmer
    med intyget, minst en av dem och ingen emot. Fel kön eller ett annat namn i registret gör
-   föräldern osäker. Far- och morföräldrar föreslås bara under en bekräftad förälder. Står något
+   föräldern osäker. Kullsyskon har samma föräldrar och födelsedatum, och en felläst siffra landar
+   på ett av dem: en förälder med ett kullsyskon av samma kön är bekräftad bara när namnet på
+   intyget är dess eget. Far- och morföräldrar föreslås bara under en bekräftad förälder. Står något
    annat på intyget markeras hela grenen, eftersom det lika gärna kan vara föräldern som är fel
    läst.
 4. Ett nummer ett tecken fel ger registrets nummer som `härlett`, om bara en kanin passar.
@@ -1002,8 +1004,10 @@ så hur säkert ett fält är avgörs av kontrollerna mot registret, aldrig av m
 6. Där intyget och registret skiljer sig blir fältet `avviker`, med båda värdena. Förslaget
    väljer aldrig.
 
-Ett värde som är överstruket eller rättat på intyget är alltid `osäker`. Finns kaninen redan med
-digitalt intyg blir förslaget bara "finns redan med digitalt intyg". Ger tolkningen inte två
+Ett värde som är överstruket eller rättat på intyget är alltid `osäker`. Finns kaninen redan i
+Stamboken prövas den på samma sätt: föräldrarna mot registret, kön och namn, och namnet när kaninen
+har ett kullsyskon av samma kön. Ett annat födelsedatum än kullens gör den `avviker`, utan värde.
+Har den digitalt intyg och går allt igenom blir förslaget bara "finns redan med digitalt intyg". Ger tolkningen inte två
 bekräftade föräldrar hjälper registret: en förälder som hittats, eller uppladdarens besättning när
 ingen förälder gick att läsa, ger sina kullar. En enda kull född det lästa datumet fyller i mor och
 far som `härlett`; annars listas kullarna i `checks`.
