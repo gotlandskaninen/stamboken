@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useTransition } from "react";
-import { noticeHref, type Notice } from "@/lib/inkorg";
+import { formatTime, noticeHref, type Notice } from "@/lib/inkorg";
 import { markNoticesRead } from "./actions";
 import styles from "../inskick/inskick.module.css";
 
@@ -43,9 +43,7 @@ export function NoticeList({
                 {n.text}
                 {n.item_id != null && ` (ärende ${n.item_id})`}
               </Link>
-              <div className="sb-meta">
-                {new Date(n.created_at).toLocaleString("sv-SE")}
-              </div>
+              <div className="sb-meta">{formatTime(n.created_at)}</div>
             </li>
           ))}
         </ul>

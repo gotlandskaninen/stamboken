@@ -254,6 +254,7 @@ interface Props {
   pedigree?: PedigreeNode | null;
   history: HerdTrackingHistory | null;
   auditEntries?: AuditLogEntry[];
+  hasPaperCertificate?: boolean;
   geneticsSlot?: React.ReactNode;
 }
 
@@ -262,6 +263,7 @@ export function IndividualDetail({
   pedigree,
   history,
   auditEntries = [],
+  hasPaperCertificate = false,
   geneticsSlot,
 }: Props) {
   const searchParams = useSearchParams();
@@ -719,7 +721,7 @@ export function IndividualDetail({
                 setCorrectionOpen(true);
               }}
             />
-            {individual.number && (
+            {individual.number && hasPaperCertificate && (
               <PaperCertificate number={individual.number} />
             )}
             <NotesSection

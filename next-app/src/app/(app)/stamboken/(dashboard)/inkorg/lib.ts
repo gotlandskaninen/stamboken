@@ -107,6 +107,8 @@ export interface InboxEvent {
 export interface InboxDetail extends Omit<InboxItem, "documents"> {
   message: string | null;
   sender_address: string | null;
+  /** A mailed item: whether the sender's authentication passed; null for uploads. */
+  sender_authenticated: boolean | null;
   documents: InboxDocument[];
   events: InboxEvent[];
 }
@@ -116,7 +118,23 @@ export interface QueueList {
   total: number;
   counts: Partial<Record<ItemState, number>>;
   interpretation?: InterpretationSummary;
+  /** The scope the server applied, and the genebanks the user manages or helps in. */
+  scope?: QueueScope;
+  my_genebanks?: number[];
 }
+
+export type QueueScope = "mina" | "alla";
+
+/** An item of a genebank the user has no role in: readable, but nothing can be saved. */
+export const lacksRole = (
+  user: QueueUser,
+  genebankId: number | null,
+  myGenebanks: number[] | null,
+) =>
+  !user.is_admin &&
+  genebankId !== null &&
+  myGenebanks !== null &&
+  !myGenebanks.includes(genebankId);
 
 /** An RFC 9457 problem as a server action hands it to the client. */
 export type Problem = {
@@ -234,6 +252,7 @@ export type ItemAction =
   | "ofullstandig"
   | "dubblett"
   | "skrap"
+  | "klar"
   | "oppna";
 
 export const ACTION_LABEL: Record<ItemAction, string> = {
@@ -246,10 +265,14 @@ export const ACTION_LABEL: Record<ItemAction, string> = {
   ofullstandig: "Ofullständig",
   dubblett: "Dubblett",
   skrap: "Skräp",
+  klar: "Klar",
   oppna: "Öppna igen",
 };
 
-type ItemFacts = Pick<InboxItem, "state" | "assigned_to" | "genebank_id">;
+type ItemFacts = Pick<InboxItem, "state" | "assigned_to" | "genebank_id"> & {
+  /** The count (queue list) or the documents themselves (working view). */
+  documents?: number | unknown[];
+};
 
 const isMine = (item: ItemFacts, user: QueueUser) =>
   item.assigned_to?.id === user.id;
@@ -272,6 +295,12 @@ export function itemActions(item: ItemFacts, user: QueueUser): ItemAction[] {
     actions.push("hos_genbanksansvarig", "vantar_foralder", "ofullstandig");
   if (mine && HELD_STATES.includes(item.state))
     actions.push("dubblett", "skrap");
+  // Nothing to save: a message is closed once answered, whatever its kind.
+  const count = Array.isArray(item.documents)
+    ? item.documents.length
+    : item.documents;
+  if (mine && HELD_STATES.includes(item.state) && count === 0)
+    actions.push("klar");
   if (CLOSED_STATES.includes(item.state) && boss) actions.push("oppna");
   return actions;
 }
@@ -511,6 +540,20 @@ export function numberCheckOf(problem: Problem): NumberCheck | null {
     ...(fields as Omit<NumberCheck, "status">),
     status: check_status as NumberCheck["status"],
   };
+}
+
+/** The colour names of the item's genebank (matched by its name, as the list's keys are); empty when unknown. */
+export function colorNamesFor(
+  colors: Record<string, { name: string }[]> | null,
+  genebank: string | null | undefined,
+): string[] {
+  const breed = genebank?.includes("Mellerud")
+    ? "Mellerud"
+    : genebank?.includes("Gotland")
+      ? "Gotland"
+      : null;
+  const key = breed && Object.keys(colors ?? {}).find((k) => k.includes(breed));
+  return (key && colors?.[key]?.map((c) => c.name)) || [];
 }
 
 /** The people a manager can pick: you, everyone the list shows, and `extra`. */

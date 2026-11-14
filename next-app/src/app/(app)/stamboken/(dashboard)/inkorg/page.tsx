@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ApiError, fetchApi } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
+import { formatTime } from "@/lib/inkorg";
 import { fetchHandlers, requireQueueWorker } from "@/lib/inkorg-server";
 import { Masthead } from "@/components/shell/Masthead";
 import { GmailAlarm } from "./GmailAlarm";
@@ -17,6 +18,7 @@ import {
   waited,
   type Person,
   type QueueList,
+  type QueueScope,
 } from "./lib";
 import styles from "./inkorg.module.css";
 
@@ -32,6 +34,7 @@ const FILTER_KEYS = [
   "herd",
   "state",
   "kind",
+  "scope",
 ] as const;
 
 export default async function InkorgPage({
@@ -73,6 +76,11 @@ export default async function InkorgPage({
     const s = q.toString();
     return s ? `${PATH}?${s}` : PATH;
   };
+  // The scope is sent only when chosen; the switch shows the one the server applied.
+  const scopes: [QueueScope, string][] = [
+    ["mina", "Mina genbanker"],
+    ["alla", "Alla genbanker"],
+  ];
   const counts = data?.counts ?? {};
   const reading = data?.interpretation;
   const openCount = OPEN_STATES.reduce((n, s) => n + (counts[s] ?? 0), 0);
@@ -97,6 +105,18 @@ export default async function InkorgPage({
       />
       <div className={styles.container}>
         <GmailAlarm />
+        <nav className={styles.counts} aria-label="Omfattning">
+          {scopes.map(([scope, label]) => (
+            <Link
+              key={scope}
+              href={href({ scope, offset: null })}
+              className={styles.count}
+              aria-current={data?.scope === scope ? "page" : undefined}
+            >
+              {label}
+            </Link>
+          ))}
+        </nav>
         <nav className={styles.counts} aria-label="Lägen">
           {stateTabs.map(([state, label, n]) => (
             <Link
@@ -116,7 +136,7 @@ export default async function InkorgPage({
             Bildtolkning: {reading.waiting}{" "}
             {reading.waiting === 1 ? "foto väntar" : "foton väntar"}
             {reading.last_done_at &&
-              `, senast klar ${new Date(reading.last_done_at).toLocaleString("sv-SE", { timeZone: "Europe/Stockholm" })}`}
+              `, senast klar ${formatTime(reading.last_done_at)}`}
             .
           </p>
         )}
@@ -207,6 +227,7 @@ export default async function InkorgPage({
               </select>
             </label>
             {sp.state && <input type="hidden" name="state" value={sp.state} />}
+            {sp.scope && <input type="hidden" name="scope" value={sp.scope} />}
             <button type="submit" className="sb-btn sb-btn-sm">
               Filtrera
             </button>

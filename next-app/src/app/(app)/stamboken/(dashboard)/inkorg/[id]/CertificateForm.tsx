@@ -24,6 +24,7 @@ import {
   type CertForm,
   type InboxDocument,
   type NumberResolution,
+  type Proposal,
   type ProposedField,
   type SaveMode,
   type Source,
@@ -130,21 +131,42 @@ export function CertificateForm({
   onSaved: (document: InboxDocument) => void;
   onSkip: () => void;
 }) {
-  const proposal = shownProposal(doc);
+  // The reading may finish while the form is open. What the handler has typed
+  // is never replaced: an untouched form takes the proposal, a touched one is
+  // offered it ("Fyll i förslaget").
+  const latest = shownProposal(doc);
+  const [applied, setApplied] = useState(latest !== null);
+  const [touched, setTouched] = useState(false);
+  const proposal = applied ? latest : null;
   const proposed = proposal?.fields ?? {};
   const sources = Object.fromEntries(
     Object.entries(proposed).map(([key, field]) => [key, field?.source]),
   ) as Partial<Record<keyof CertForm, Source>>;
-  const [mode, setMode] = useState<SaveMode>(() => initialSaveMode(proposal));
-  const [form, setForm] = useState<CertForm>(() => initialCertForm(proposal));
+  const [mode, setModeState] = useState<SaveMode>(() =>
+    initialSaveMode(latest),
+  );
+  const [form, setForm] = useState<CertForm>(() => initialCertForm(latest));
   const [errors, setErrors] = useState<Partial<Record<keyof CertForm, string>>>(
     {},
   );
   const [formError, setFormError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<NumberCheck | null>(null);
   const [pending, start] = useTransition();
-  const set = (key: keyof CertForm, value: string) =>
+  const setMode = (value: SaveMode) => {
+    setTouched(true);
+    setModeState(value);
+  };
+  const set = (key: keyof CertForm, value: string) => {
+    setTouched(true);
     setForm((f) => ({ ...f, [key]: value }));
+  };
+  const fill = (p: Proposal) => {
+    setForm(initialCertForm(p));
+    setModeState(initialSaveMode(p));
+    setApplied(true);
+  };
+  if (!latest && applied) setApplied(false);
+  if (latest && !applied && !touched) fill(latest);
 
   const submit = (resolution?: NumberResolution) =>
     start(async () => {
@@ -231,6 +253,18 @@ export function CertificateForm({
         <p className={styles.muted}>
           Fotot gick inte att tolka. Skriv av fälten, eller vrid fotot rätt och
           klicka Tolka igen.
+        </p>
+      )}
+      {latest && !applied && (
+        <p className={styles.note}>
+          Det finns ett förslag från tolkningen.{" "}
+          <button
+            type="button"
+            className="sb-btn sb-btn-secondary sb-btn-sm"
+            onClick={() => fill(latest)}
+          >
+            Fyll i förslaget
+          </button>
         </p>
       )}
       {proposal && (

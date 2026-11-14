@@ -5,9 +5,11 @@ import {
   canEditDocuments,
   canSave,
   CLOSED_STATES,
+  colorNamesFor,
   initialCertForm,
   initialSaveMode,
   itemActions,
+  lacksRole,
   nextOpenDocument,
   numberCheckOf,
   OPEN_STATES,
@@ -156,6 +158,31 @@ describe("itemActions, by docs/inkorg.md", () => {
               expect(CLOSED_STATES).not.toContain(state);
             if (from && action !== "oppna") expect(assigned?.id).toBe(user.id);
           }
+  });
+});
+
+describe("klar for an item without documents", () => {
+  const empty = (state: ItemState, assigned: { id: number; name: string }) => ({
+    ...item(state, assigned),
+    documents: 0,
+  });
+  it("is offered to the handler of a held item, whatever its kind", () => {
+    for (const state of ["tagen", "ofullstandig", "vantar_uppfodare"] as const)
+      expect(itemActions(empty(state, holder(helper)), helper)).toContain(
+        "klar",
+      );
+    // the item arrives with an array of documents in the working view
+    expect(
+      itemActions({ ...item("tagen", holder(helper)), documents: [] }, helper),
+    ).toContain("klar");
+  });
+  it("is not offered with documents, to others, or on a closed item", () => {
+    const withDocs = { ...item("tagen", holder(helper)), documents: 2 };
+    expect(itemActions(withDocs, helper)).not.toContain("klar");
+    expect(itemActions(empty("tagen", someone), helper)).not.toContain("klar");
+    expect(itemActions(empty("klar", holder(helper)), helper)).not.toContain(
+      "klar",
+    );
   });
 });
 
@@ -554,5 +581,32 @@ describe("people", () => {
         (p) => p.id,
       ),
     ).toEqual([8, 7, 3]);
+  });
+});
+
+describe("colorNamesFor", () => {
+  const lists = {
+    Gotlandskanin: [{ name: "Svart" }],
+    Mellerudskanin: [{ name: "Vit" }, { name: "Grå" }],
+  };
+  it("picks the list of the genebank, by its name", () => {
+    expect(colorNamesFor(lists, "Mellerud")).toEqual(["Vit", "Grå"]);
+    expect(colorNamesFor(lists, "Gotland")).toEqual(["Svart"]);
+  });
+  it("is empty when the genebank is unknown", () => {
+    expect(colorNamesFor(lists, undefined)).toEqual([]);
+    expect(colorNamesFor(null, "Mellerud")).toEqual([]);
+  });
+});
+
+describe("lacksRole", () => {
+  it("is true for an item of a genebank the user has no role in", () => {
+    expect(lacksRole(helper, 2, [1])).toBe(true);
+    expect(lacksRole(helper, 1, [1])).toBe(false);
+  });
+  it("is false for an admin, an item without genebank, or unknown genebanks", () => {
+    expect(lacksRole(admin, 2, [1])).toBe(false);
+    expect(lacksRole(helper, null, [1])).toBe(false);
+    expect(lacksRole(helper, 2, null)).toBe(false);
   });
 });

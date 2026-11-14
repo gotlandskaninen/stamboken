@@ -1,6 +1,12 @@
 import "@testing-library/jest-dom/vitest";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 
 vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/actions", () => ({
   lookupRabbit: vi.fn(async () => null),
@@ -58,17 +64,17 @@ const doc = (changes: Partial<InboxDocument> = {}): InboxDocument => ({
   ...changes,
 });
 
-const show = (d: InboxDocument) =>
-  render(
-    <CertificateForm
-      itemId={12}
-      doc={d}
-      colors={["viltgrå"]}
-      canSave
-      onSaved={() => undefined}
-      onSkip={() => undefined}
-    />,
-  );
+const form = (d: InboxDocument) => (
+  <CertificateForm
+    itemId={12}
+    doc={d}
+    colors={["viltgrå"]}
+    canSave
+    onSaved={() => undefined}
+    onSkip={() => undefined}
+  />
+);
+const show = (d: InboxDocument) => render(form(d));
 
 const input = (label: RegExp) => screen.getByLabelText(label);
 const sourceOf = (label: RegExp) =>
@@ -133,5 +139,32 @@ describe("CertificateForm with the image reading's proposal", () => {
     expect(screen.getByText(/Fotot gick inte att tolka/)).toBeInTheDocument();
     expect(input(/^Mor/)).toHaveValue("");
     expect(screen.queryByRole("list", { name: "Kontroller" })).toBeNull();
+  });
+});
+
+describe("CertificateForm when the reading finishes while it is open", () => {
+  const reading = () =>
+    doc({ interpretation_status: "vantar", proposal: null });
+
+  it("never replaces what the handler typed: it offers the proposal", () => {
+    const { rerender } = show(reading());
+    fireEvent.change(input(/^Individnummer på pappret/), {
+      target: { value: "G9001-9999" },
+    });
+    rerender(form(doc()));
+    expect(input(/^Individnummer på pappret/)).toHaveValue("G9001-9999");
+    expect(
+      screen.getByText(/Det finns ett förslag från tolkningen/),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Fyll i förslaget" }));
+    expect(input(/^Individnummer på pappret/)).toHaveValue("G9001-2511");
+    expect(screen.queryByText(/Det finns ett förslag/)).toBeNull();
+  });
+
+  it("fills an untouched form with the proposal at once", () => {
+    const { rerender } = show(reading());
+    rerender(form(doc()));
+    expect(input(/^Individnummer på pappret/)).toHaveValue("G9001-2511");
+    expect(screen.queryByText(/Det finns ett förslag/)).toBeNull();
   });
 });

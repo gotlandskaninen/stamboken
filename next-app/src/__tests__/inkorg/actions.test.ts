@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { revalidatePath } from "next/cache";
 import { ApiError, fetchApi } from "@/lib/api";
 import {
   assignItem,
   changeState,
   confirmMask,
+  saveCertificate,
   takeItem,
   updateDocument,
   waitForParent,
@@ -14,6 +16,7 @@ vi.mock("@/lib/api", async (importOriginal) => {
   return { ...actual, fetchApi: vi.fn() };
 });
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+const revalidated = vi.mocked(revalidatePath);
 
 const api = vi.mocked(fetchApi);
 const body = (call: number) =>
@@ -44,8 +47,13 @@ describe("the queue's server actions", () => {
   });
 
   it("refuse a state …/lage cannot take", async () => {
-    expect((await changeState(12, "klar")).ok).toBe(false);
+    expect((await changeState(12, "ny")).ok).toBe(false);
     expect(api).not.toHaveBeenCalled();
+  });
+
+  it("let a message be closed as klar", async () => {
+    await changeState(12, "klar");
+    expect(body(0)).toEqual({ state: "klar" });
   });
 
   it("pass only the document fields the UI changes", async () => {
@@ -79,9 +87,26 @@ describe("the queue's server actions", () => {
     expect(api).toHaveBeenCalledTimes(1);
   });
 
-  it("send an empty mask list as a list (nothing to hide), never leave it out", async () => {
-    await confirmMask(12, 31, []);
-    expect(body(0)).toEqual({ mask_rects: [] });
+  it("send the rotation together with the rectangles drawn in it", async () => {
+    const rect = { x: 0, y: 0, w: 0.3, h: 1 };
+    await confirmMask(12, 31, 90, [rect]);
+    expect(body(0)).toEqual({ rotation: 90, mask_rects: [rect] });
+  });
+
+  it("need the explicit no_personal_data for an empty list", async () => {
+    expect((await confirmMask(12, 31, 0, [])).ok).toBe(false);
+    expect(api).not.toHaveBeenCalled();
+    await confirmMask(12, 31, 180, [], true);
+    expect(body(0)).toEqual({
+      rotation: 180,
+      mask_rects: [],
+      no_personal_data: true,
+    });
+  });
+
+  it("refuse a rotation that is not a quarter turn", async () => {
+    expect((await confirmMask(12, 31, 45, [])).ok).toBe(false);
+    expect(api).not.toHaveBeenCalled();
   });
 
   it("hand the whole problem back, extensions included", async () => {
@@ -101,6 +126,30 @@ describe("the queue's server actions", () => {
         detail: "…",
         extensions: { stamboken_number: "G9001-2513" },
       },
+    });
+  });
+
+  it("revalidate the item also when the API refuses with 409", async () => {
+    api.mockRejectedValueOnce(
+      new ApiError({ status: 409, title: "Conflict", detail: "Taget." }),
+    );
+    expect((await takeItem(12)).ok).toBe(false);
+    expect(revalidated).toHaveBeenCalledWith("/stamboken/inkorg/12");
+  });
+
+  it("do not revalidate after other refusals", async () => {
+    api.mockRejectedValueOnce(
+      new ApiError({ status: 400, title: "x", detail: "Nej." }),
+    );
+    await takeItem(12);
+    expect(revalidated).not.toHaveBeenCalled();
+  });
+
+  it("answer a dropped connection to the API as a refusal instead of throwing", async () => {
+    api.mockRejectedValueOnce(new TypeError("fetch failed"));
+    expect(await saveCertificate(12, 31, {})).toMatchObject({
+      ok: false,
+      problem: { detail: "Det gick inte att nå servern. Försök igen." },
     });
   });
 });
