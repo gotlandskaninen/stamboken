@@ -3,10 +3,10 @@
 {% block body %}
 Hej!
 
-Vi väntar fortfarande på det som saknas innan vi kan lägga in det du skickade in till Stamboken:
-
+Vi väntar fortfarande på det som saknas innan vi kan lägga in det du skickade in till Stamboken.
+{% if note %}
 {{ note }}
-
+{% endif %}
 Hör vi inget från dig tas inskicket bort efter {{ deadline }}. Svara på det här mejlet med det som saknas och behåll ärendenumret i ämnesraden.
 {% if account %}
 Du ser dina inskick här:

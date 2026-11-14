@@ -885,12 +885,12 @@ def _item_done_mail(params):
 @mail_kind("inlasning.paminnelse", priority=1, category="T")
 @mail_kind("inlasning.ofullstandig", priority=1, category="T")
 def _incomplete_mail(params):
-    """What is missing, in the handler's note read when the mail goes; none once the item moved on or the note went."""
+    """What is missing, in the handler's note read when the mail goes (none left once purged); none once moved on."""
     item = InboxItem.get_or_none(InboxItem.id == params["item_id"])
-    event = InboxEvent.get_or_none((InboxEvent.id == params["event_id"]) & (InboxEvent.item == params["item_id"]))
-    note = (event.detail or {}).get("note") if event else None
-    if item is None or item.state != "ofullstandig" or note is None:
+    if item is None or item.state != "ofullstandig":
         return None
+    event = InboxEvent.get_or_none((InboxEvent.id == params["event_id"]) & (InboxEvent.item == item.id))
+    note = (event.detail or {}).get("note") if event else None
     return {
         "item_id": item.id,
         "note": note,

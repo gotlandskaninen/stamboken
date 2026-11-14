@@ -4,11 +4,13 @@ isort:skip_file
 """
 
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 import utils.database as db  # noqa: E402
 import utils.inbox as inbox  # noqa: E402
 import utils.inbox_purge as purge  # noqa: E402
 import utils.mail as mail  # noqa: E402
+import utils.settings as settings  # noqa: E402
 
 from tests.test_inbox_mail import InboxMailTest  # noqa: E402
 
@@ -66,14 +68,20 @@ class TestIncompleteMail(ReminderTest):
         self.assertEqual(to, ["avsandare@example.org"])
         self.assertNotIn("/stamboken/inskick", body)
 
-    def test_stopped_when_the_item_moved_on_or_the_note_is_gone(self):
+    def test_stopped_when_the_item_moved_on(self):
         moved_on, _ = self.incomplete()
         inbox.change_state(moved_on, self.helper, "tagen")
+        self.assertEqual(self.sent(), [])
+        self.assertEqual([row.status for row in self.mails("inlasning.ofullstandig")], ["cancelled"])
+
+    def test_an_erased_note_leaves_the_mail_without_it(self):
         erased, _ = self.incomplete()
         with db.DB_PROXY.atomic():
             purge.erase_document(inbox.lock_item(erased.id), erased.documents.get(), self.manager)
-        self.assertEqual(self.sent(), [])
-        self.assertEqual({row.status for row in self.mails("inlasning.ofullstandig")}, {"cancelled"})
+        ((subject, _, body),) = self.sent()
+        self.assertEqual(subject, f"Något saknas i ditt inskick (ärende {erased.id})")
+        self.assertNotIn(NOTE, body)
+        self.assertIn("något saknas innan vi kan lägga in det.\n\nSvara", body)
 
     def test_a_rolled_back_marking_queues_nothing(self):
         item = self.item(0)
@@ -107,3 +115,15 @@ class TestReminder(ReminderTest):
         item, _ = self.incomplete(NOW - inbox.months(11) - MINUTE)
         purge.run(NOW)
         self.assertEqual([row.params["item_id"] for row in self.mails("inlasning.paminnelse")], [item.id])
+
+    def test_the_reminder_goes_also_when_the_originals_and_the_note_went_earlier(self):
+        item, _ = self.incomplete(NOW - inbox.months(11) - MINUTE)
+        self.sent()  # the mail from the marking
+        with mock.patch.object(settings.inbox, "original_months", 6):
+            purge.purge_originals(NOW - inbox.months(4))  # a night five months earlier
+            self.assertNotIn(NOTE, str([e.detail for e in self.reload(item).events]))
+            purge.run(NOW)
+        ((subject, _, body),) = self.sent()
+        self.assertEqual(subject, f"Påminnelse: något saknas i ditt inskick (ärende {item.id})")
+        self.assertNotIn(NOTE, body)
+        self.assertIn(f"{item.received_at + inbox.months(12):%Y-%m-%d}", body)

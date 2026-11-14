@@ -925,11 +925,11 @@ Mejlen går genom mejlkön ([mejl.md](mejl.md)) och köas i samma transaktion so
 - **`inlasning.ofullstandig`** till uppladdaren, eller till avsändarens adress för en mejlad post,
   när posten markeras `ofullstandig`. Ämnesraden är "Något saknas i ditt inskick (ärende 12)", och
   mejlet har handläggarens anteckning och datumet då posten tas bort (se [Gallring](#gallring)).
-  Raden i mejlkön har bara postens och händelsens id; anteckningen läses ur händelsen när mejlet går.
-  Mejlet stoppas om posten inte längre är `ofullstandig` eller anteckningen har raderats.
+  Raden i mejlkön har bara postens och händelsens id; anteckningen läses ur händelsen när mejlet går,
+  och är den gallrad går mejlet utan den. Mejlet stoppas om posten inte längre är `ofullstandig`.
 - **`inlasning.paminnelse`** till samma mottagare, en gång, när posten fortfarande är `ofullstandig`
   11 månader efter att den kom in: "Påminnelse: något saknas i ditt inskick (ärende 12)", med samma
-  anteckning och datum. Nattjobbet `inbox_purge` köar det.
+  anteckning, om den finns kvar, och datum. Nattjobbet `inbox_purge` köar det.
 - **`notis.sammandrag`** kl. 07 varje dag till var och en som har olästa notiser som inget
   sammandrag tagit med och som inte stängt av mejlet. Det listar de olästa notiserna med
   ärendenummer och länkar till `/stamboken/inkorg`. Notiser av typen `klar` tas aldrig med:
