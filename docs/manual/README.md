@@ -1,7 +1,11 @@
 # Så underhålls användarmanualen
 
-Manualen är `docs/USER_MANUAL.md`; skärmbilderna ligger här. Tre saker håller den i
-takt med gränssnittet.
+Manualen är `next-app/public/stamboken/manual/USER_MANUAL.md`, och skärmbilderna
+ligger i samma katalog. Hemsidan visar den på `/stamboken-online/manual`: sidan läser
+filen vid varje anrop, så en ändrad manual syns efter nästa release utan något extra
+steg. Länkar inom manualen skrivs som GitHubs rubrikankare (`#logga-in`); ett
+vitest-test (`src/__tests__/lib/headingSlug.test.ts`) kontrollerar att varje sådan
+länk har en rubrik. Tre saker håller manualen i takt med gränssnittet.
 
 ## 1. Täckningsgrind: varje sida har ett avsnitt
 
@@ -40,7 +44,8 @@ stacken seedas om. Ändras ett steg i manualen ändras motsvarande `test.step` h
 ## 3. Skärmbilder
 
 `next-app/e2e/manual/screenshots.spec.ts` tar varje bild vid 375 px (`-mobil.png`)
-och 1280 px (`-desktop.png`) med `playwright.manual-screenshots.config.ts`. Den körs
+och 1280 px (`-desktop.png`) med `playwright.manual-screenshots.config.ts` och skriver
+dem bredvid manualen. Den körs
 aldrig i CI och aldrig mot prod eller demo.gotlandskaninen.se, bara mot den seedade
 stacken ovan. Två krav utöver stacken:
 

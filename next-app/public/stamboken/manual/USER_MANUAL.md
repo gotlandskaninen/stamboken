@@ -4,6 +4,7 @@
 > **Senast kontrollerad mot gränssnittet:** 2026-10-29.
 > Skärmbilderna är tagna i en lokal testmiljö med påhittade kaniner och besättningar.
 
+Är du ny i Stamboken, börja med sidan [Kom igång](https://gotlandskaninen.se/stamboken-online/kom-igang).
 Manualen är indelad efter roll. Läs del 0 först och sedan den del som gäller dig.
 Varje del börjar med **Så gör du** (numrerade steg med knapparnas namn som de står
 på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
@@ -99,7 +100,7 @@ Till höger finns:
 
 - **SV / EN** – byter språk.
 - Klockan **Notiser** – meddelanden från systemet, till exempel bekräftelser och fel.
-- Din avatar (initialer eller bild) – menyn med **Profil**, **Adminpanel** (om du har
+- Din avatar (initialer eller bild) – menyn med **Profil**, **Manual** (den här manualen), **Adminpanel** (om du har
   rollen), **Medlemsansökningar**, **Matrikel** och **Statistik** (om du hanterar
   medlemsregistret), **Byt till testmiljön** / **Byt till riktiga stamboken** och **Logga ut**.
 

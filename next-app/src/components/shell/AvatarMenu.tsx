@@ -142,6 +142,14 @@ export function AvatarMenu() {
         >
           Profil
         </MenuItem>
+        <MenuItem
+          onClick={() => {
+            closeMenu();
+            router.push("/stamboken-online/manual");
+          }}
+        >
+          Manual
+        </MenuItem>
         {user && hasAnyVisible(user) && (
           <MenuItem
             onClick={() => {
