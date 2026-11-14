@@ -16,7 +16,7 @@ const STEP_TITLES = [
 
 test.describe("Bli genbanksbesättning", () => {
   test.beforeEach(async ({ page }) => {
-    await page.goto("/bli-genbank", { waitUntil: "networkidle" });
+    await page.goto("/bli-genbanksbesattning", { waitUntil: "networkidle" });
   });
 
   test("header renders with the page title", async ({ page }) => {
@@ -66,6 +66,31 @@ test.describe("Bli genbanksbesättning", () => {
   });
 });
 
+test("the intro button leads to both breeds' contacts", async ({ page }) => {
+  await page.goto("/bli-genbanksbesattning", { waitUntil: "networkidle" });
+  await page
+    .getByRole("link", { name: "Kontakta genbanksansvarig" })
+    .first()
+    .click();
+  await expect(page).toHaveURL(/#kontakt$/);
+
+  const contact = page.locator("#kontakt");
+  await expect(
+    contact.getByRole("heading", { name: "Hör av dig" }),
+  ).toBeInViewport();
+  for (const address of [
+    "gotlandskanin@gotlandskaninen.se",
+    "mellerudskanin@gotlandskaninen.se",
+  ]) {
+    await expect(contact.locator(`a[href="mailto:${address}"]`)).toBeVisible();
+  }
+});
+
+test("the old address redirects to the page", async ({ page }) => {
+  await page.goto("/bli-genbank");
+  await expect(page).toHaveURL(/\/bli-genbanksbesattning$/);
+});
+
 // ADR-0010 375-px-kravet: no horizontal scroll on any of the three breakpoints.
 test.describe("Bli genbanksbesättning responsive", () => {
   for (const viewport of VIEWPORTS) {
@@ -76,7 +101,7 @@ test.describe("Bli genbanksbesättning responsive", () => {
         width: viewport.width,
         height: viewport.height,
       });
-      await page.goto("/bli-genbank", { waitUntil: "networkidle" });
+      await page.goto("/bli-genbanksbesattning", { waitUntil: "networkidle" });
 
       await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
 

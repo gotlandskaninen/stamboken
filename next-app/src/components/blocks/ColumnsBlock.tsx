@@ -10,6 +10,8 @@ interface Column {
 interface Props {
   layout?: string;
   columns?: Column[];
+  /** The first block on the page starts without a rule above it. */
+  first?: boolean;
 }
 
 const gridMap: Record<string, number[]> = {
@@ -29,7 +31,11 @@ function getImageUrl(
   return null;
 }
 
-export function ColumnsBlockComponent({ layout = "2-equal", columns }: Props) {
+export function ColumnsBlockComponent({
+  layout = "2-equal",
+  columns,
+  first = false,
+}: Props) {
   if (!columns || columns.length === 0) return null;
 
   const sizes = gridMap[layout] || gridMap["2-equal"];
@@ -43,7 +49,16 @@ export function ColumnsBlockComponent({ layout = "2-equal", columns }: Props) {
   if (visibleColumns.length === 0) return null;
 
   return (
-    <Grid container spacing={3} sx={{ my: 3, alignItems: "flex-start" }}>
+    <Grid
+      container
+      columnSpacing={14}
+      rowSpacing={8}
+      sx={{
+        py: { xs: 7, md: 9 },
+        ...(first ? { pt: 0 } : { borderTop: "1px solid var(--sb-line)" }),
+        alignItems: "flex-start",
+      }}
+    >
       {visibleColumns.map(({ col, i, img }) => {
         const size =
           visibleColumns.length === 1
@@ -68,16 +83,17 @@ export function ColumnsBlockComponent({ layout = "2-equal", columns }: Props) {
               <Box
                 sx={{
                   "& p": { mb: 1.5, lineHeight: 1.7 },
+                  // Same face and size as the section headings in RichTextBlock.
                   "& h2": {
-                    mt: 2,
-                    mb: 1,
-                    fontWeight: 600,
-                    fontSize: { xs: "1.4rem", md: "1.6rem" },
-                    borderBottom: "2px solid",
-                    borderColor: "primary.main",
-                    pb: 0.5,
-                    display: "inline-block",
+                    mt: 6,
+                    mb: 3,
+                    fontFamily: "var(--sb-display)",
+                    fontWeight: 400,
+                    fontSize: { xs: "24px", md: "26px" },
+                    lineHeight: 1.15,
+                    letterSpacing: "-0.01em",
                   },
+                  "& > :first-of-type": { mt: 0 },
                   "& h3": {
                     mt: 1.5,
                     mb: 0.5,

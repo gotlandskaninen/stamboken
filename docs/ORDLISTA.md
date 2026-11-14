@@ -14,6 +14,12 @@ Källor och förkortningar:
 - **Nytt UI** – nya Stamboken: nycklar i `next-app/messages/sv.json` (skrivs som `nyckel`) och filer
   under `next-app/src/` (filnamnen är unika).
 - **Kod** – fält eller modell i `app/utils/database.py` eller i koden som nämns.
+- **Handlingsplanen** – Jordbruksverket, "Bevara, nyttja och utveckla – handlingsplan för uthållig
+  förvaltning av svenska husdjursraser 2023–2027", rapport RA22:20
+  ([PDF](https://www2.jordbruksverket.se/download/18.214df7cb1891939c0571de98/1688402181090/ra22_20.pdf)).
+- **FAO** – FAO:s arbetsdefinitioner för husdjursgenetiska resurser
+  ([Working definitions](https://www.fao.org/4/y1100m/y1100m03.htm)) och den globala handlingsplanen
+  ([Global Plan of Action for Animal Genetic Resources](https://www.fao.org/4/a1404e/a1404e.pdf)).
 
 I raden `Kod:` betyder "samma" att gränssnittet använder uppslagsordet och "–" att gränssnittet saknar
 etikett för begreppet. Källhänvisningarna står i inventeringen längre ned.
@@ -45,7 +51,9 @@ Kod: `Individual.foot_ring` · Legacy-manual: – · Legacy: – · Nytt UI: "Fo
 **Besättning / inaktiv besättning**\
 Din del i en genbank: dina registrerade och oregistrerade kaniner, och kontaktuppgifterna som andra
 uppfödare ser. En inaktiv besättning har upphört, tillfälligt eller för gott. GX1 och MX1 räknas
-också som inaktiva besättningar.\
+också som inaktiva besättningar. Kallas också genbanksbesättning, särskilt i text till läsare utanför
+föreningen. Handlingsplanen skriver "besättningar" och "genbanksbesättningar" (insats 21, s. 73).
+På engelska herd; FAO skriver conservation herd.\
 Kod: `Herd` (`Herd.is_active`) · Legacy-manual: "Besättning", "Inaktiv besättning" · Legacy: samma, "Aktiv" · Nytt UI: samma, "Besättningen är aktiv", "Min besättning" (menyn)
 
 **Besättningshistorik**\
@@ -58,6 +66,13 @@ Kod: `HerdTracking` (`kind`: BIRTH, TRANSFER, ATTESTATION, CORRECTION) · Legacy
 Besättningens nummer, till exempel G1274: rasens bokstav (G för gotlandskanin, M för mellerudskanin)
 och medlemsnumret. Det står först i individnumret på varje kanin som föds i besättningen.\
 Kod: `Herd.herd` · Legacy-manual: samma · Legacy: samma, "Besättnings-ID", "Genbanksnummer" · Nytt UI: samma
+
+**Brokig**\
+Vit kanin med färgade fläckar. Färgatlasen använder brokig för hela gruppen, och färgnamnen följer
+den: svartbrokig, gulbrokig, viltgråbrokig. Scheck, mantel och dalmatiner är varianter av brokig
+teckning, inte andra ord för samma sak. Skriv brokig i löptext, inte scheck. Rasramarnas text
+ändras inte.\
+Kod: färgnamnen i `Color` · Legacy-manual: – · Legacy: "Svartbrokig" med flera · Nytt UI: samma
 
 **Chipnummer**\
 Numret i kaninens chip: 15 siffror enligt ISO 11784, i Sverige börjar det på 752. En kanin kan ha
@@ -90,7 +105,11 @@ Kod: `color` (`Color`), `color_note`, `eye_color`, `claw_color`, `belly_color`, 
 
 **Genbank**\
 Alla besättningar och alla kaniner av en ras i föreningens bevarandeprogram. Föreningen har två
-genbanker: gotlandskanin (besättningsnummer på G) och mellerudskanin (M).\
+genbanker: gotlandskanin (besättningsnummer på G) och mellerudskanin (M). En enskild uppfödares
+kaniner är en besättning, inte en genbank. FAO definierar en genbank som en samling av genetiskt
+material, antingen levande djur i bevarandebesättningar eller fryst material; en äldre
+FAO-definition säger uttryckligen att samlingen kan ligga på flera platser. Internationellt och i
+handlingsplanen betyder genbank oftast den frysta samlingen, så skriv live gene bank på engelska.\
 Kod: `Genebank` · Legacy-manual: samma · Legacy: "Genbank", "Genbanker" · Nytt UI: samma
 
 **Genbanksansvarig**\
@@ -283,8 +302,9 @@ Kod: `voided_at`, `IndividualCommand` · Legacy-manual: – · Legacy: – · Ny
 **Årsrapport / årsrapportera**\
 Varje år bekräftar du att varje registrerad kanin finns kvar i din besättning vid årets slut, och
 besättningen lämnar en årsrapport (kullar, födda ungar, avelsdjur) som är grund för genbanksstödet.
-En kanin som inte årsrapporterats inom 13 månader blir inaktiv. I nya Stamboken visar Årsrapportera
-ännu "Kommer snart".\
+En kanin som inte årsrapporterats inom 13 månader blir inaktiv. Årsrapporten lämnas i Stamboken
+Online sedan 2024. I det nya gränssnittet är den inte byggd än: menyvalet Årsrapportera visar
+"Kommer snart".\
 Kod: `YearlyHerdReport`, `HerdTracking` (`kind` ATTESTATION) · Legacy-manual: "Årsrapportering", "Årsrapportera" · Legacy: "Årsrapport", "Årsrapportera" · Nytt UI: samma
 
 **Ändringshistorik**\
@@ -308,7 +328,7 @@ ordet i `scripts/check-ui-terms.sh`, med datum om det beslutades 2026-10-30 (se 
 | Begrepp | Legacy-manual | Legacy | Nytt UI (före 2026-10-29) | Nytt UI (nu) | Beslut |
 | --- | --- | --- | --- | --- | --- |
 | Kaninens nummer | "individnumret" (manual:147), "individ-nummer" (manual:184), "genbanksnummer" (manual:200, 214) | "Individnummer" (individual_form.tsx:177), "Nummer" (filter_table.tsx:222, individual_view.tsx:222) | "Genbanksnummer" (`certificate.individualNumber`, RabbitExplorer.tsx:127, `explorer.search`) | "Individnummer" (samma ställen) | Individnummer |
-| Besättningens nummer | "besättningsnummer" (manual:166, 219) | "Besättningsnummer" (individual_certificate.tsx:439), "Besättnings-ID" (herdForm.tsx:392), "Genbanksnummer" (YearlyReportForm.tsx:384) | "genbanksnummer" (bli-genbank/page.tsx:103), "Besättningsnummer" (CreateHerdForm.tsx:131) | "Besättningsnummer" (bli-genbank/page.tsx:103, CreateHerdForm.tsx:131), "Besättnings-ID" (BesattningsuppgifterCard.tsx:98) | Besättningsnummer |
+| Besättningens nummer | "besättningsnummer" (manual:166, 219) | "Besättningsnummer" (individual_certificate.tsx:439), "Besättnings-ID" (herdForm.tsx:392), "Genbanksnummer" (YearlyReportForm.tsx:384) | "genbanksnummer" (bli-genbanksbesattning/page.tsx:103), "Besättningsnummer" (CreateHerdForm.tsx:131) | "Besättningsnummer" (bli-genbanksbesattning/page.tsx:103, CreateHerdForm.tsx:131), "Besättnings-ID" (BesattningsuppgifterCard.tsx:98) | Besättningsnummer |
 | Intygets nummer | "intygsnummer" (manual:187) | "Intygsnummer" (individual_view.tsx:371, individual_form.tsx:193), "Nummer på pappersintyg" (cert_autocomplete.tsx:104) | "Certifikatnummer" (`certificate.number`), "Certifikatnr" (verifiera/[uuid]/page.tsx:107) | "Intygsnummer" (`certificate.number`, `addRabbit.paperCertificateNumber`, verifiera/[uuid]/page.tsx:107) | Intygsnummer |
 | Dokumentet | "genbanksintyg" (manual:28, 64), "intyg" (manual:30) | "intyg", "genbanksintyg" (YearlyReportForm.tsx:523), "stamtavlor (genbanksintyg)" (static_pages.tsx:210) | "certifikat v2" (`addRabbit.certificateDigitalDisabled`) | "intyg", "genbanksintyg" (`certificate.verified`), "stamtavleintyg" (IndividualCard.tsx:404) | intyg, aldrig certifikat |
 | Intygstyp | "pappersintyg" (manual:116), "digitalt intyg" (manual:165) | "Papper", "Digital", "Inget intyg" (cert_autocomplete.tsx:31–33), "Typ av intyg" (cert_autocomplete.tsx:73) | samma som nu | "Papper", "Digitalt" (`addRabbit.certificatePaper`, `addRabbit.certificateDigital`); "Pappersintyg", "Digitalt intyg" (KaninerTab.tsx:92–93) | Pappersintyg, Digitalt intyg (valet ej ändrat) |
@@ -333,7 +353,7 @@ ordet i `scripts/check-ui-terms.sh`, med datum om det beslutades 2026-10-30 (se 
 | Avkomma | – | "Avkomma", "Avkomma i genbanken" (individual_view.tsx:553–554) | samma som nu | "Avkommor" (`breeding.offspring`) | Öppen fråga |
 | Färgfält | "Färganteckning" (manual:148) | "Färg på buken" (individual_form.tsx:472), "Klofärg(er)" (individual_form.tsx:509), "Avvikande hårlag" (individual_form.tsx:549) | samma som nu | "Bukfärg", "Klofärg", "Avvikande hårlag" (`addRabbit.bellyColor`, `addRabbit.clawColor`, `addRabbit.hairNotes`), "Hårlag" (`individual.edit.hairNotes`) | Öppen fråga |
 | Föräldrar | "mor", "far" (manual:70) | "Mor", "Far" (breeding_form.tsx:720, 755), "Moder", "Fader" (filter_table.tsx:308, 327) | "Moder", "Fader" (`breeding.mother`, `breeding.father`), "Mor", "Far" (PedigreeTree.tsx:171) | "Mor", "Far" (`breeding.mother`, `breeding.father`, RabbitExplorer.tsx:218, 234, PedigreeTree.tsx:171) | Mor, Far (beslut 2026-10-30) |
-| Provparning | "Provparning", "provpara" (manual:68, 61) | "Provparning" (navigation.tsx:194) | samma som nu | "Provparning" (`sidebar.provparning`), "Provpara" (`individual.edit.testMate`), "testparning" (bli-genbank/page.tsx:112, stamboken-online/page.tsx:45) | Öppen fråga |
+| Provparning | "Provparning", "provpara" (manual:68, 61) | "Provparning" (navigation.tsx:194) | samma som nu | "Provparning" (`sidebar.provparning`), "Provpara" (`individual.edit.testMate`), "testparning" (bli-genbanksbesattning/page.tsx:112, stamboken-online/page.tsx:45) | Öppen fråga |
 | Registrera | "registrera/skapa intyg" (manual:145) | "Registrera" (navigation.tsx:248) | samma som nu | "Registrera" (`litterRoster.registerButton`), "Skriv in ungen i stamboken" (`litterRoster.registerTooltip`) | Öppen fråga |
 | Oregistrerade ungar | "Oregistrerade djur" (manual:30), "Skapa oregistrerade kaniner" (manual:141) | "Visa oregistrerade djur" (herd_view.tsx:184), "Skapa oregistrerade kaniner" (breeding_form.tsx:890) | samma som nu | "Kullista" (`litterRoster.title`), "Lägg till ungar" (`litterRoster.add`), "Behålls oreg." (`bunny.fate.kept_unregistered`) | Öppen fråga |
 | Släktskap | "släkt" (manual:61) | "Genomsnittligt släktskap/ Mean Kinship" (individual_view.tsx:255) | samma som nu | "MK — Genomsnittlig medelkinship", "kinship-koefficienten" (GeneticsInfoPanel.tsx:34, 80) | Öppen fråga |
@@ -383,6 +403,9 @@ Projektägaren beslutade 2026-10-30:
 9. **Dödsorsak**, inte dödsnotering eller dödsanteckning.
 10. **Okänt** om kön, eftersom kön är ett t-ord; **Okänd** där ordet gäller ett en-ord, som okänd mor eller okänd kanin.
 11. **Registrerad kanin** är en kanin som skrivits in i stamboken med intyg, pappersintyg eller digitalt intyg, och därmed fått sitt individnummer. Att registrera utan intyg går inte längre.
+12. **Brokig**, inte scheck, om vita kaniner med färgade fläckar, som i färgatlasen och färgnamnen
+    (beslutat 2026-11-12).
+13. Beslutat 2026-11-12: **Besättning** om en enskild uppfödares kaniner, aldrig genbank. **Genbank** är hela rasens bevarade population, och föreningen har två. **Genbanksbesättning** får användas som förtydligande. Orden följer handlingsplanen och FAO, se posterna Besättning och Genbank.
 
 ## Öppna frågor
 
@@ -401,7 +424,6 @@ Inget av detta är beslutat. En rad per fråga med alternativen.
 - **Kullens storlek**: "Antal födda" eller "Kullstorlek"; "Antal vid 6 veckor", "Levande i kullen efter 6 veckor" eller "Kullstorlek 6v".
 - **Färgfält**: "Bukfärg" eller "Färg på buken"; "Klofärg" eller "Klofärg(er)"; "Hårlag" eller "Avvikande hårlag" (nya UI har båda).
 - **Avkomma i genbanken** (legacy) eller **Avkommor** (nya UI).
-- **Provparning** eller **testparning** (publika sidor).
 - **Oregistrerade djur** (manual:30) eller **oregistrerad unge** och **kullista**.
 - **Släktskap**: "Genomsnittligt släktskap", "MK — Genomsnittlig medelkinship" eller "släktskapskoefficient", som inget av gränssnitten använder.
 - **Testmiljön**: "Testsystemet" och "den skarpa sidan" (manual:238–239, navigation.tsx:345) eller "testmiljön" och "riktiga stamboken"; ska admin säga "Demosynkronisering" eller "testmiljö"?

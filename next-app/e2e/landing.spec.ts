@@ -11,13 +11,18 @@ test.describe("Landing page sections", () => {
     await page.goto("/", { waitUntil: "networkidle" });
   });
 
-  test("hero section renders with headline and shortcuts", async ({ page }) => {
+  test("hero section renders with headline, price and member links", async ({
+    page,
+  }) => {
     const h1 = page.getByRole("heading", { level: 1 });
     await expect(h1).toContainText("Vi bevarar");
     await expect(h1).toContainText("gotlandskanin och mellerudskanin");
 
-    // Quick shortcuts card
-    await expect(page.getByText("Snabbgenvägar")).toBeVisible();
+    const hero = page.locator(".landing-hero");
+    await expect(hero.getByText(/200 kr om året/)).toBeVisible();
+    await expect(
+      hero.getByRole("link", { name: "Medlemsforum" }),
+    ).toHaveAttribute("href", "/medlemsforum");
 
     // The "nya Stamboken (beta)" notice is scoped to /stamboken-online and
     // the app; the association's landing page must not show it.
@@ -30,21 +35,15 @@ test.describe("Landing page sections", () => {
     ).toBeVisible();
   });
 
-  test("pillars section renders with 3 cards", async ({ page }) => {
+  test("mission section explains the gene bank and links on", async ({
+    page,
+  }) => {
     await expect(
-      page.getByRole("heading", { level: 2, name: /Vad vi gör/ }),
-    ).toBeVisible();
-
-    // All 3 pillar cards (use .first() where text appears elsewhere on page)
-    await expect(
-      page.getByRole("heading", { name: "Bli medlem" }).first(),
+      page.getByRole("heading", { level: 2, name: /Genbanken finns hemma/ }),
     ).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: "Föreningen" }).first(),
-    ).toBeVisible();
-    await expect(
-      page.getByRole("heading", { name: "Lantraskaninen", exact: true }),
-    ).toBeVisible();
+      page.getByRole("link", { name: /Så fungerar genbanken/ }),
+    ).toHaveAttribute("href", "/foreningen");
   });
 
   test("breeds section renders with both breeds", async ({ page }) => {
@@ -59,34 +58,45 @@ test.describe("Landing page sections", () => {
       page.getByRole("heading", { name: "Mellerudskanin", exact: true }),
     ).toBeVisible();
 
-    // Both breed cards have an endangered badge
-    const breedCards = page.locator("article");
-    await expect(breedCards.first()).toBeVisible();
-    expect(
-      await breedCards.filter({ hasText: "Utrotningshotad" }).count(),
-    ).toBe(2);
-  });
-
-  test("EU section renders with support text and items", async ({ page }) => {
-    const euSection = page.locator("#eu-stod");
-    await expect(euSection).toBeVisible();
-
+    const cards = page.locator(".breed-cards");
     await expect(
-      euSection.getByText(/Föreningen Gotlandskaninen får stöd/),
-    ).toBeVisible();
-
-    // Spot-check a few EU items
-    await expect(euSection.getByText("Genbanksintyg").first()).toBeVisible();
-    await expect(euSection.getByText("Kurser & utbildningar")).toBeVisible();
+      cards.getByRole("link", { name: /Gotlandskanin/ }),
+    ).toHaveAttribute("href", "/gotlandskanin");
+    await expect(
+      cards.getByRole("link", { name: /Mellerudskanin/ }),
+    ).toHaveAttribute("href", "/mellerudskanin");
+    await expect(cards.getByText(/genbanksbesättningar/)).toHaveCount(2);
   });
 
-  test("CTA section renders with membership info", async ({ page }) => {
+  test("EU section renders with the badge and what the support covers", async ({
+    page,
+  }) => {
+    const euSection = page.locator("#eu-stod");
+    await expect(
+      euSection.getByRole("heading", {
+        name: /Föreningen Gotlandskaninen får stöd/,
+      }),
+    ).toBeVisible();
+    await expect(euSection.getByText(/genbanksintyg/)).toBeVisible();
+    await expect(
+      euSection.getByRole("img", {
+        name: "Medfinansieras av Europeiska unionen",
+      }),
+    ).toBeVisible();
+  });
+
+  test("membership section lists what a member gets and ends with the price", async ({
+    page,
+  }) => {
     await expect(
       page.getByRole("heading", { name: /bevarandet/ }),
     ).toBeVisible();
+    const body = page.locator(".member-body");
+    await expect(body.getByRole("listitem")).toHaveCount(3);
+    await expect(body.getByText(/200 kr om året/)).toBeVisible();
     await expect(
-      page.getByRole("heading", { name: /200 kr om året/ }),
-    ).toBeVisible();
+      body.getByRole("link", { name: /Bli medlem/ }),
+    ).toHaveAttribute("href", "/bli-medlem");
   });
 
   test("footer renders with EU logo and footer links", async ({ page }) => {
@@ -104,11 +114,8 @@ test.describe("Landing page sections", () => {
   });
 });
 
-test.describe("Landing page nav CTA above fold", () => {
-  // Hero is tall on mobile (480px+), so "Bli medlem" nav button is above fold
-  // only on tablet/desktop where the nav bar is visible.
-  const aboveFoldViewports = VIEWPORTS.filter((v) => v.width >= 768);
-  for (const viewport of aboveFoldViewports) {
+test.describe("Landing page CTA above fold", () => {
+  for (const viewport of VIEWPORTS) {
     test(`Bli medlem visible above fold at ${viewport.name} (${viewport.width}px)`, async ({
       page,
     }) => {
@@ -118,7 +125,11 @@ test.describe("Landing page nav CTA above fold", () => {
       });
       await page.goto("/", { waitUntil: "networkidle" });
 
-      const cta = page.getByRole("link", { name: /bli medlem/i }).first();
+      // The hero's own button: the nav link is inside a closed drawer on phones.
+      const cta = page
+        .locator("main")
+        .getByRole("link", { name: /bli medlem/i })
+        .first();
       await expect(cta).toBeVisible();
 
       const box = await cta.boundingBox();
@@ -150,6 +161,27 @@ test.describe("Landing page viewport screenshots", () => {
 });
 
 test.describe("Landing page responsive", () => {
+  test("links and buttons in the page body are at least 44px high on phones", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 375, height: 812 });
+    await page.goto("/", { waitUntil: "networkidle" });
+    const small = await page.evaluate(() =>
+      [...document.querySelectorAll("main a, main button")]
+        .map((e) => ({
+          text: (e.textContent ?? "").trim().slice(0, 30),
+          height: Math.round(
+            Math.max(
+              e.getBoundingClientRect().height,
+              ...[...e.children].map((c) => c.getBoundingClientRect().height),
+            ),
+          ),
+        }))
+        .filter((x) => x.height > 0 && x.height < 44),
+    );
+    expect(small).toEqual([]);
+  });
+
   // ADR-0010 375-px-kravet: no horizontal scroll at the mobile breakpoint. Regression
   // for the fixed-56px h2 that let "lantraskaninen." push the page to 428px.
   test("no horizontal overflow at mobile (375px)", async ({ page }) => {
@@ -186,7 +218,7 @@ test.describe("Landing page accessibility", () => {
     const h1Elements = await page.getByRole("heading", { level: 1 }).all();
     expect(h1Elements).toHaveLength(1);
 
-    // Sections: Pillars, Breeds, EU, Members, CTA = at least 4 h2s
+    // Sections: mission, breeds, membership, EU
     const h2Elements = await page.getByRole("heading", { level: 2 }).all();
     expect(h2Elements.length).toBeGreaterThanOrEqual(4);
   });

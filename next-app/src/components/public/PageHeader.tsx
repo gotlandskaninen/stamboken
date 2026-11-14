@@ -1,5 +1,7 @@
 import Link from "next/link";
 import { Box, Typography } from "@mui/material";
+import { LinkButton } from "./LinkButton";
+import styles from "./PageHeader.module.css";
 
 interface PageHeaderImage {
   /** Path under /public, e.g. "/stamboken/hero-kustvandring.jpg". */
@@ -15,11 +17,22 @@ interface PageHeaderProps {
   section: string;
   title: string;
   lede?: string;
+  /** Optional middle breadcrumb step between "Hem" and the section. */
+  parent?: { label: string; href: string };
+  /** Optional button under the lede, for a page whose point is one action. */
+  action?: { label: string; href: string };
   /** Optional photo behind the header — same look as the CMS pages' hero. */
   image?: PageHeaderImage;
 }
 
-export function PageHeader({ section, title, lede, image }: PageHeaderProps) {
+export function PageHeader({
+  section,
+  title,
+  lede,
+  parent,
+  action,
+  image,
+}: PageHeaderProps) {
   return (
     <Box
       component="header"
@@ -68,7 +81,9 @@ export function PageHeader({ section, title, lede, image }: PageHeaderProps) {
               inset: 0,
               background: {
                 xs: "linear-gradient(180deg, rgba(31,51,34,0) 75%, rgba(31,51,34,0.85) 100%)",
-                md: "linear-gradient(180deg, rgba(31,27,22,0.25) 0%, rgba(31,27,22,0.75) 100%)",
+                // Dark behind the text column, which is kept inside the first
+                // 65% below, easing to a clear photo on the right.
+                md: "linear-gradient(90deg, rgba(31,27,22,0.82) 0%, rgba(31,27,22,0.82) 65%, rgba(31,27,22,0.15) 100%)",
               },
             }}
           />
@@ -79,21 +94,40 @@ export function PageHeader({ section, title, lede, image }: PageHeaderProps) {
           position: "relative",
           py: { xs: image ? 8 : 12, md: 14 },
           px: { xs: 6, md: 14 },
+          // Over a photo the text stays on the dark part of the overlay, so
+          // it keeps its contrast whatever the photo; a long title wraps.
+          ...(image && { maxWidth: { md: "65%" } }),
         }}
       >
         <Typography
           variant="mono"
           sx={{
-            // 0.75, not lower: the "Hem" link must keep 4.5:1 on skog (axe).
-            color: "rgba(244,241,234,0.75)",
+            // Full strength: the "Hem" link must keep 4.5:1 over a bright photo.
+            color: "paper.main",
             mb: 4.5,
             display: "block",
           }}
         >
-          <Link href="/" style={{ color: "inherit", textDecoration: "none" }}>
+          <Link
+            href="/"
+            className={styles.crumb}
+            style={{ color: "inherit", textDecoration: "none" }}
+          >
             Hem
           </Link>
           {" / "}
+          {parent && (
+            <>
+              <Link
+                href={parent.href}
+                className={styles.crumb}
+                style={{ color: "inherit", textDecoration: "none" }}
+              >
+                {parent.label}
+              </Link>
+              {" / "}
+            </>
+          )}
           <Box component="strong" sx={{ color: "paper.main" }}>
             {section}
           </Box>
@@ -123,6 +157,21 @@ export function PageHeader({ section, title, lede, image }: PageHeaderProps) {
           >
             {lede}
           </Typography>
+        )}
+        {action && (
+          // Light on dark: the theme's green button would vanish on the header.
+          <LinkButton
+            href={action.href}
+            variant="contained"
+            sx={{
+              mt: 6,
+              bgcolor: "paper.main",
+              color: "skog.main",
+              "&:hover": { bgcolor: "paper.2" },
+            }}
+          >
+            {action.label}
+          </LinkButton>
         )}
         {image?.caption && (
           <Typography

@@ -1,4 +1,4 @@
-import { Box, Typography } from "@mui/material";
+import { Box, Link, Typography } from "@mui/material";
 import { LinkButton } from "@/components/public/LinkButton";
 import { PageHeader } from "@/components/public/PageHeader";
 import GoogleOneTap from "@/components/GoogleOneTap";
@@ -33,26 +33,48 @@ export default function StambokenOnlinePage() {
             maxWidth: 800,
           }}
         >
-          <Typography variant="h2" sx={{ m: 0 }}>
-            Stamboken Online
-          </Typography>
-          <Typography variant="lede" sx={{ mt: 4 }}>
+          <Typography sx={{ fontSize: "17px", lineHeight: 1.65 }}>
             Stamboken Online är vårt digitala register för de två svenska
             lantraskaninerna. Uppfödarna lägger själva in sina individer, kullar
             och härstamningar, och varje kanin som får ett genbanksintyg
             utfärdat hamnar i föreningens centrala register – ett för
             gotlandskanin, ett för mellerudskanin. Uppfödare kan också göra en
-            testparning i registret för att se hur nära släkt två tänkta
+            provparning i registret för att se hur nära släkt två tänkta
             avelsdjur är innan de paras.
           </Typography>
           <Box sx={{ mt: 8, display: "flex", gap: 3, flexWrap: "wrap" }}>
             <LinkButton href="/stamboken/min-besattning" variant="contained">
               Logga in i Stamboken
             </LinkButton>
-            <LinkButton href="/foreningen" variant="outlined">
-              Om föreningen
-            </LinkButton>
           </Box>
+          <Typography
+            sx={{
+              mt: 4,
+              maxWidth: "36rem",
+              fontSize: "15px",
+              lineHeight: 1.65,
+              color: "ink.2",
+            }}
+          >
+            Du loggar in med ditt föreningskonto: en e-postadress på
+            gotlandskaninen.se som föreningen skapar åt dig som medlem. Vi
+            arbetar på att det ska gå att logga in med vanligt lösenord också.
+            Frågor om konton och inloggning besvaras på{" "}
+            <Link
+              href="mailto:admin@gotlandskaninen.se"
+              color="inherit"
+              sx={{
+                "@media (pointer: coarse)": {
+                  display: "inline-block",
+                  minHeight: 44,
+                  lineHeight: "44px",
+                },
+              }}
+            >
+              admin@gotlandskaninen.se
+            </Link>
+            .
+          </Typography>
 
           <Box
             sx={{
@@ -84,6 +106,8 @@ export default function StambokenOnlinePage() {
                   variant="mono"
                   sx={{
                     mt: 1.5,
+                    // ink.2: the mono default (ink.3) is only 3.9:1 on skog.soft
+                    color: "ink.2",
                     fontSize: "11px",
                     textTransform: "uppercase",
                     letterSpacing: "0.12em",
@@ -97,19 +121,16 @@ export default function StambokenOnlinePage() {
           </Box>
 
           <Typography
-            sx={{ mt: 6, fontSize: "15px", lineHeight: 1.65, color: "ink.2" }}
+            sx={{
+              mt: 6,
+              maxWidth: "36rem",
+              fontSize: "15px",
+              lineHeight: 1.65,
+              color: "ink.2",
+            }}
           >
             Med registret på plats går det att följa en kanins anor bakåt, hitta
             kullar och hålla ihop avelsarbetet mellan besättningar.
-          </Typography>
-          <Typography
-            sx={{ mt: 4, fontSize: "15px", lineHeight: 1.65, color: "ink.2" }}
-          >
-            Du loggar in med ditt föreningskonto: en e-postadress på
-            gotlandskaninen.se som föreningen skapar åt dig som medlem. Vi
-            arbetar på att det ska gå att logga in med vanligt lösenord också.
-            Frågor om konton och inloggning besvaras på
-            admin@gotlandskaninen.se.
           </Typography>
         </Box>
       </Box>

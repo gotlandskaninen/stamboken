@@ -57,6 +57,7 @@ export const stambokenTheme = createTheme({
 
     h1: {
       fontFamily: displayFont,
+      textWrap: "balance",
       fontSize: "72px",
       lineHeight: 1.04,
       letterSpacing: "-0.02em",
@@ -67,6 +68,7 @@ export const stambokenTheme = createTheme({
     // the token size, so nothing changes from tablet up. Mirrors tokens.css.
     h2: {
       fontFamily: displayFont,
+      textWrap: "balance",
       fontSize: "clamp(36px, 9.6vw, 56px)",
       lineHeight: 1.06,
       letterSpacing: "-0.018em",
@@ -74,6 +76,7 @@ export const stambokenTheme = createTheme({
     },
     h3: {
       fontFamily: displayFont,
+      textWrap: "balance",
       fontSize: "clamp(28px, 7.5vw, 40px)",
       lineHeight: 1.1,
       letterSpacing: "-0.015em",
@@ -81,6 +84,7 @@ export const stambokenTheme = createTheme({
     },
     h4: {
       fontFamily: displayFont,
+      textWrap: "balance",
       fontSize: "clamp(24px, 6.4vw, 32px)",
       lineHeight: 1.15,
       letterSpacing: "-0.01em",
@@ -98,7 +102,7 @@ export const stambokenTheme = createTheme({
       lineHeight: 1.3,
       fontWeight: 600,
     },
-    body1: { fontSize: "16px", lineHeight: 1.55 },
+    body1: { fontSize: "16px", lineHeight: 1.55, textWrap: "pretty" },
     body2: { fontSize: "14px", lineHeight: 1.55 },
 
     display: {

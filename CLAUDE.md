@@ -44,7 +44,11 @@ publika: inga medlemsnamn, inga besättningsnummer kopplade till personer, ingen
 proddata, inga serverdetaljer. Design-specar, planer, datarättningar och drift
 ligger i föreningens privata driftrepo
 ([ADR-0013](docs/adr/0013-public-code-private-operations.md)); skriv inga specar
-eller planer här, inte heller i `docs/superpowers/`.
+eller planer här, inte heller i `docs/superpowers/`. Issues är den enda kön,
+och projektet "Stamboken" på organisationen samlar issues från båda repona.
+Säkerhetshål som inte är rättade blir issues i driftrepot. Issues härifrån
+läggs till med `gh project item-add`
+([ADR-0018](docs/adr/0018-ett-organisationsprojekt-och-issues-som-ko.md)).
 
 ## Konventioner
 
@@ -91,15 +95,17 @@ eller planer här, inte heller i `docs/superpowers/`.
 
 **Branching:** `main` är huvudbranch och PR-mål; arbetsbrancher
 `feature/*`, `fix/*`, `chore/*`; releaser är taggar `vX.Y.Z` med GitHub Release
-([ADR-0012](docs/adr/0012-release-based-deployment.md)).
+([ADR-0012](docs/adr/0012-release-based-deployment.md)). Tagga bara en
+commit på `main` där alla kontroller är gröna, också Playwright: varje PR
+testas för sig, så körningen på `main` är den enda som testar summan.
 
 ## Tester och verktyg
 
 - **Kör aldrig pytest i dev-containern**, testerna tömmer databasen. Isolerad
   pytest-stack och dess fällor, vitest och Playwright: [TESTING.md](TESTING.md).
-- `scripts/ci-local.sh` (`--quick`, `--only <steg>`) kör samma kontroller som
-  Actions lokalt; när Actions är av mergas ingen PR utan dess `summary.md` i
-  PR-texten. Detaljer i [TESTING.md](TESTING.md).
+- GitHub Actions är grinden för en PR: alla kontroller ska vara gröna före
+  merge. Kör inte `scripts/ci-local.sh` inför en PR. Skriptet finns kvar för
+  felsökning av ett enskilt steg (`--only <steg>`), se [TESTING.md](TESTING.md).
 - Legacy-regression (API-kontrakt + UI-smoke) vid API-ändringar och före
   release: [docs/legacy-regression-testing.md](docs/legacy-regression-testing.md).
 - CMS lokalt från tom databas: [docs/local-cms-testing.md](docs/local-cms-testing.md).

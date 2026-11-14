@@ -4,7 +4,8 @@ on:
   pull_request:
     branches: [main]
   push:
-    branches: ['feature/**']
+    # main: PRs are tested one by one, so this is the only run of what they add up to
+    branches: [main, 'feature/**']
 
 jobs:
   # ═══════════════════════════════════════════════════════════
