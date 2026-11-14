@@ -57,9 +57,8 @@ class ProposalTest(DatabaseTest):
             ("G9002", "G9002-2112", "female"),
         ]
         self.r = {n: make_individual(self.h[h], n, date(2020, 5, 1), sex=s) for h, n, s in founders}
-        self.mother = self.litter(
-            "G9001", "G9004-2112", "G9004-2011", date(2022, 3, 10), [("G9001-2211", "female", "Mira")]
-        )[0]
+        sisters = [("G9001-2211", "female", "Mira"), ("G9001-2212", "female", "Sara")]
+        self.mother = self.litter("G9001", "G9004-2112", "G9004-2011", date(2022, 3, 10), sisters)[0]
         ht_row("BIRTH", herd=self.h["G9001"], individual=self.mother, herd_tracking_date=date(2022, 3, 10))
         siblings = [("G9003-2311", "male", "Max"), ("G9003-2312", "male", "Mats"), ("G9003-2313", "female", "Maja")]
         self.father = self.litter("G9003", "G9003-2112", "G9003-2011", date(2023, 4, 1), siblings)[0]
@@ -192,6 +191,11 @@ class TestPedigree(ProposalTest):
                 proposal = self.propose(reading(far=ancestor("G9003", number, name)))
                 self.assertEqual(self.source(proposal, "father"), ("osäker", None))
                 self.assertNotIn(self.source(proposal, "farfar"), [("läst", "G9003-2011")])
+
+    def test_a_grandparent_near_several_numbers_confirms_nothing(self):
+        # G9000 is one digit from G9002, G9003 and G9004, which all have a 2011.
+        proposal = self.propose(reading(farfar=ancestor("G9000", "2011"), farmor=ancestor()))
+        self.assertEqual(self.source(proposal, "father"), ("osäker", None))
 
 
 class TestNearestMatch(ProposalTest):
@@ -344,6 +348,20 @@ class TestRegistryOnly(ProposalTest):
         proposal = self.propose({**empty, "fodelsedatum": this_year.isoformat()})
         self.assertEqual(self.source(proposal, "mother"), ("härlett", "G9001-2211"))
         self.assertEqual(self.source(proposal, "father"), ("härlett", "G9003-2311"))
+
+    def test_a_parent_the_checks_ruled_out_is_not_taken_back(self):
+        # The mother misread as her sister, whose litter with the father was born that day: still osäker.
+        self.litter("G9001", "G9001-2212", "G9003-2311", date(2025, 5, 10), [], size=5)
+        proposal = self.propose(reading(mor=ancestor("G9001", "2212", "Mira")))
+        self.assertEqual(self.source(proposal, "mother"), ("osäker", None))
+        self.assertEqual(self.source(proposal, "paper_number"), ("osäker", None))
+        self.assertNotIn("Mor och far är hämtade ur Stamboken, ur kullen född 2025-05-10.", self.texts(proposal))
+
+    def test_a_parent_struck_through_is_not_taken_from_the_litter(self):
+        self.litter("G9001", "G9001-2211", "G9003-2311", date(2025, 5, 10), [], size=5)
+        proposal = self.propose(reading(overstruket=["far"]))
+        self.assertEqual(self.source(proposal, "father"), ("osäker", None))
+        self.assertEqual(self.source(proposal, "paper_number"), ("osäker", None))
 
     def test_garbage_from_the_model_is_survived(self):
         for raw in (None, [], {"far": "G9003-2311", "overstruket": "far", "fodelsedatum": 250510}):

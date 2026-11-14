@@ -36,6 +36,7 @@ _NUMBER_CONFLICTS = {"prefix", "year", "litter", "litter_missing", "litter_order
 SAME_LITTER_DAYS = 35  # a litter of the same parents this close is the certificate's, registered on another date
 MAX_LISTED = 5  # litters listed for the handler when nothing read picks one
 _DIGIT_FOR = str.maketrans({"S": "5", "s": "5", "O": "0", "o": "0", "l": "1", "I": "1", "|": "1"})
+_SEVERAL, _NONE = "liknar flera kaniner i Stamboken", "finns inte i Stamboken"  # why a number read was not found
 _SEXES = {"HONA": "female", "HANE": "male"}
 
 
@@ -169,7 +170,7 @@ class _Registry:
         near = [r for r in self._rabbits(Individual.number.endswith(f"-{ind}")) if self._near(r.number, herd, ind)]
         if len(near) == 1:
             return near[0], DERIVED
-        return None, "liknar flera kaniner i Stamboken" if near else "finns inte i Stamboken"
+        return None, _SEVERAL if near else _NONE
 
     @staticmethod
     def _near(number, herd, ind):
@@ -178,18 +179,16 @@ class _Registry:
 
     def compare(self, parsed, expected):
         """
-        How a number read fits the registry's rabbit `expected`: READ, DERIVED, "differs", or None (unknown).
-        One character off fits only when no rabbit has the number as read: a number that exists is what the
-        paper says.
+        How a number read fits the registry's rabbit `expected`: READ or DERIVED when it finds that rabbit (as
+        find does: one character off only when no other rabbit fits), "differs" when it finds another or none,
+        None (unknown) when it cannot be read or fits several.
         """
         if parsed is None or expected is None:
             return None
-        herd, ind, swapped = parsed
-        number = f"{self.letter}{herd}-{ind}"
-        if expected.number == number:
-            return DERIVED if swapped else READ
-        near = self._near(expected.number, herd, ind) and self.rabbit(number) is None
-        return DERIVED if near else "differs"
+        rabbit, how = self.find(parsed)
+        if rabbit is not None:
+            return how if rabbit.id == expected.id else "differs"
+        return None if how == _SEVERAL else "differs"
 
 
 def _branch(registry, raw, struck, role, fields, checks):
@@ -230,15 +229,16 @@ def _branch(registry, raw, struck, role, fields, checks):
         checks.append(
             _check(False, f"{label}: far- och morföräldrarna på intyget är inte registrets för {rabbit.number}.")
         )
-        return None, rabbit
+        return None, None
 
-    doubts = []
+    doubts = []  # its sex and its name rule the rabbit out, also as the anchor of the registry's litters
     if rabbit.sex and rabbit.sex not in sexes:
         doubts.append(f"{rabbit.number} är {'en hona' if rabbit.sex == 'female' else 'en hane'} i Stamboken")
     name = _text(entry.get("namn"))
     if name and rabbit.name and not _same_name(name, rabbit.name):
         doubts.append(f"namnet på intyget är inte registrets ({rabbit.name})")
-    if not any(result in (READ, DERIVED) for *_, result in grandparents):
+    compared = any(result in (READ, DERIVED) for *_, result in grandparents)
+    if not compared:
         doubts.append(f"far- och morföräldrarna går inte att jämföra med registrets för {rabbit.number}")
     if doubts:
         fields[role] = _field(UNSURE, read=text)
@@ -246,7 +246,7 @@ def _branch(registry, raw, struck, role, fields, checks):
             if gp_text:
                 fields[gp_key] = _field(UNSURE, read=gp_text)
         checks.append(_check(False, f"{label}: {'; '.join(doubts)}."))
-        return None, rabbit
+        return None, rabbit if len(doubts) == 1 and not compared else None
 
     fields[role] = _field(how, rabbit.number, read=text)
     for gp_key, gp_text, theirs, result in grandparents:
@@ -267,10 +267,11 @@ def _litter_line(litter):
 
 def _registry_litter(registry, raw, struck, found, birth, herd_id, year, fields, checks):
     """
-    The registry's help when the parents are not both confirmed: a parent found gives its litters, or with no
-    parent read at all, the uploader's herd gives its litters of the year. Only a single litter born on the date
-    read fills the form (härlett), and only where it does not contradict a parent read; otherwise the litters are
-    listed for the handler. Returns the litter that filled it.
+    The registry's help when the parents are not both confirmed: a parent found (one the checks did not rule
+    out) gives its litters, or with no parent read at all, the uploader's herd gives its litters of the year.
+    Only a single litter born on the date read fills the form (härlett), and only where every parent on the
+    certificate fits it: one read otherwise is a disagreement, and one struck through or ruled out by the checks
+    is not taken back here. Otherwise the litters are listed for the handler. Returns the litter that filled it.
     """
     anchor = next(((role, found[role]) for role in ("mother", "father") if found[role] is not None), None)
     if anchor is not None:
@@ -287,23 +288,31 @@ def _registry_litter(registry, raw, struck, found, birth, herd_id, year, fields,
         checks.extend(_litter_line(litter) for litter in query.order_by(Breeding.birth_date.desc()).limit(MAX_LISTED))
         return None
     litter = picked[0]
-    clash = []
+    verdict = {}
     for role in ("mother", "father"):
         theirs, key = getattr(litter, role), _PARENTS[role][0]
         if found[role] is not None:
-            fits = found[role].id == theirs.id
+            verdict[role] = "fits" if found[role].id == theirs.id else "clash"
+        elif key in struck:
+            verdict[role] = "hold"
         else:
-            fits = registry.compare(_parse_number(_entry(raw, key), registry.letter), theirs) != "differs"
-        if not fits:
-            clash.append(role)
-    if clash:
-        for role in clash:
+            parsed = _parse_number(_entry(raw, key), registry.letter)
+            rabbit, how = registry.find(parsed) if parsed else (None, None)
+            if rabbit is not None:
+                verdict[role] = "hold" if rabbit.id == theirs.id else "clash"
+            else:
+                verdict[role] = "clash" if how == _NONE else "fits"
+    if "clash" in verdict.values():
+        for role in (role for role, v in verdict.items() if v == "clash"):
             fields[role] = _field(DEVIATES, read=fields[role].get("read"), registry=getattr(litter, role).number)
         checks.append(_check(False, f"Kullen född {birth} i Stamboken har en annan mor eller far än intyget."))
         return None
+    if "hold" in verdict.values():
+        checks.append(_litter_line(litter))
+        return None
     for role in ("mother", "father"):
         current = fields.get(role)
-        if _PARENTS[role][0] not in struck and (current is None or current["source"] == UNSURE):
+        if current is None or current["source"] == UNSURE:
             fields[role] = _field(DERIVED, getattr(litter, role).number, read=current and current.get("read"))
     checks.append(_check(None, f"Mor och far är hämtade ur Stamboken, ur kullen född {birth}."))
     return litter
