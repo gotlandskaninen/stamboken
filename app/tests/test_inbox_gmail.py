@@ -15,6 +15,7 @@ from email.message import EmailMessage
 from email.utils import make_msgid
 from unittest import mock
 
+import herdbook
 import peewee
 import requests
 import utils.database as db
@@ -912,6 +913,19 @@ class TestSync(GmailTest):
         self.read()
         self.assertTrue(self.done(again))
         self.assertEqual(len(self.items()), 2)
+
+
+class TestJob(GmailTest):
+    def test_the_job_closes_its_threads_connection_and_records_a_failing_sweep(self):
+        with (
+            mock.patch.object(inbox_gmail, "release_senders", side_effect=RuntimeError("sweep failed")),
+            mock.patch.object(herdbook.genetics.ps, "_close_db_connection") as close,
+            mock.patch.object(inbox_gmail.Gmail, "from_settings", return_value=self.gmail),
+            self.assertLogs(herdbook.APP.logger, "ERROR"),
+        ):
+            herdbook._read_gmail()
+        close.assert_called_once()
+        self.assertIn("sweep failed", self.sync().last_error)
 
 
 class TestClient(InboxTest):

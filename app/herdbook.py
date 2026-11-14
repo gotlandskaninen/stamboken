@@ -314,6 +314,8 @@ def _read_gmail():
             inbox_gmail.run()
     except Exception:  # pylint: disable=broad-except
         APP.logger.exception("Reading the Gmail mailbox failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
 
 def _interpret_document():

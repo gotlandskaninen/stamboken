@@ -107,11 +107,11 @@ def run(gmail=None):
     read again too. Closed items' sender addresses are swept first. last_error keeps the alarm on while any
     message is labelled "Fel vid inläsning" (a human handles those).
     """
-    release_senders()
     GmailSync.insert(id=1).on_conflict_ignore().execute()
     sync = GmailSync.get_by_id(1)
-    gmail = gmail or Gmail.from_settings()
     try:
+        release_senders()
+        gmail = gmail or Gmail.from_settings()
         ids, newest = _new_messages(gmail, sync.history_id)
         retries = GmailProcessed.select(GmailProcessed.gmail_message_id).where(GmailProcessed.kind == RETRY)
         ids = list(dict.fromkeys([message_id for (message_id,) in retries.tuples()] + ids))
