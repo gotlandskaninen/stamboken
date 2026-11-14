@@ -241,6 +241,22 @@ class TestStates(InboxTest):
         self.assertEqual(resp.get_json()["duplicate_of"], other.id)
         self.assertIsNotNone(self.reload(item).closed_at)
 
+    def test_a_message_is_closed_as_answered(self):
+        item = self.at("tagen")
+        db.InboxItem.update(kind="meddelande").where(db.InboxItem.id == item.id).execute()
+        self.login("hjalp")
+        resp = self.post(f"/{item.id}/lage", state="klar", note="Besvarat i telefon")
+        self.assertEqual(resp.status_code, 409, resp.get_json())  # a photo that came with an answer is still open
+        db.InboxDocument.delete().where(db.InboxDocument.item == item.id).execute()
+
+        resp = self.post(f"/{item.id}/lage", state="klar", note="Besvarat i telefon")
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["state"], "klar")
+        self.assertIsNotNone(resp.get_json()["closed_at"])
+        event = db.InboxEvent.select().where(db.InboxEvent.kind == "lage").get()
+        self.assertEqual(event.detail, {"from": "tagen", "to": "klar", "note": "Besvarat i telefon"})
+        self.assertFalse(db.MailMessage.select().where(db.MailMessage.kind == "inlasning.klar").exists())
+
     def test_handing_over_to_the_manager(self):
         item = self.at("tagen")
         self.login("hjalp")
