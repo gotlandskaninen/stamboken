@@ -19,6 +19,7 @@ from peewee import (
     JOIN,
     Case,
     DatabaseError,
+    DataError,
     DoesNotExist,
     IntegrityError,
     OperationalError,
@@ -43,8 +44,9 @@ from utils.database import User  # isort: skip
 from utils.database import Weight  # isort: skip
 from utils.database import next_individual_number  # isort: skip
 from utils.database import ACTIVE_WINDOW_DAYS  # isort: skip
+from utils.database import AUDIT_LOG_NO_UPDATE_RULE  # isort: skip
 from utils.database import OUTSIDE_GENEBANK_HERDS  # isort: skip
-from utils.database import PRIVACY_LEVELS  # isort: skip
+from utils.database import BANK_PRIVACY_FIELDS, PRIVACY_LEVELS  # isort: skip
 from utils.database import ht_not_voided  # isort: skip
 from utils.database import ht_order_desc  # isort: skip
 from utils.database import latest_ht_per_individual  # isort: skip
@@ -84,6 +86,8 @@ from werkzeug.security import (
 from werkzeug.exceptions import HTTPException  # isort:skip
 
 logger = logging.getLogger("herdbook.da")
+# Login and permission events; ids only, never e-mail or username (privacy).
+auth_log = logging.getLogger("herdbook.auth")
 
 
 class ValidationError(HTTPException):
@@ -429,19 +433,28 @@ def register_user(
     validated=False,
     privileges=None,
     fullname=None,
+    adopt_existing=True,
 ):
     """
     Creates a new user from an e-mail and password, returning the new user
-    object.
+    object. An account that already has this exact e-mail is returned instead,
+    unless adopt_existing is False: then an account holding the address in any
+    casing raises AddressInUseError, and the user returned is always the row
+    this call inserted. (No unique index on e-mail: a concurrent request can
+    still insert a second account with the address, never hand back this one.)
     """
     if privileges is None:
         privileges = []
 
-    # Don't create a new user if the email exists already
-    try:
-        user = User.select().where(User.email == email).get()
-    except DoesNotExist:
-        # Create user
+    if adopt_existing:
+        # Don't create a new user if the email exists already
+        user = User.select().where(User.email == email).first()
+    else:
+        taken = User.select(User.id).where(fn.LOWER(User.email) == email.lower()).first()
+        if taken:
+            raise AddressInUseError(taken.id)
+        user = None
+    if user is None:
         user = User(
             email=email,
             uuid=uuid.uuid4().hex,
@@ -453,9 +466,9 @@ def register_user(
         with DATABASE.atomic():
             user.save()
 
-    # Update to make sure to get the correct id
-    user = User.select().where(User.email == email).get()
-    logger.info(f"Registered User {user.as_dict()}")
+    # By id, not e-mail: another account may hold the same address.
+    user = User.get_by_id(user.id)
+    auth_log.info("Registered user id=%s", user.id)
 
     # If no password is provided, don't create an authenticator
     if not password:
@@ -483,6 +496,14 @@ class InactiveAccountError(Exception):
     """Login attempt for a deactivated account (layer 1)."""
 
 
+class AddressInUseError(Exception):
+    """register_user(adopt_existing=False): account `user_id` already holds the address."""
+
+    def __init__(self, user_id):
+        super().__init__(user_id)
+        self.user_id = user_id
+
+
 def authenticate_user(name, password):
     """
     Authenticates an email or username and password against the database.
@@ -491,11 +512,12 @@ def authenticate_user(name, password):
     """
     if not name or not password:
         return None
+    user_info = None
     try:
         with DATABASE.atomic():
             user_info = User.select().where((User.email == name) | (User.username == name)).get()
             if user_info and not user_info.is_active:
-                logger.info("Login attempt for inactive account %s", name)
+                auth_log.info("Login refused: inactive account id=%s", user_info.id)
                 raise InactiveAccountError()
             if user_info:
                 authenticator = (
@@ -509,7 +531,7 @@ def authenticate_user(name, password):
         # Perform password check regardless of username to prevent timing
         # attacks
         check_password_hash("This-always-fails", password)
-    logger.info("Failed login attempt for %s", name)
+    auth_log.info("Login failed: %s", f"user id={user_info.id}" if user_info else "unknown user")
     return None
 
 
@@ -580,7 +602,6 @@ def authenticate_with_credentials(method, ident):
     except DoesNotExist:
         pass
 
-    logger.info("Failed login attempt for service %s persistent id %s", method, ident)
     return None
 
 
@@ -592,58 +613,57 @@ def link_account(user, method, ident):
     if not method or not ident or not user:
         return None
 
-    # Allows at most one identity for each method to be linked to this account.
-    unlink_account(user, method)
-
     try:
         with DATABASE.atomic():
-            authenticator = (
-                Authenticators.select()
-                .where((Authenticators.auth == method) & (Authenticators.auth_data == ident))
-                .get()
+            # The account's row first, as unlink_account does, then the identity:
+            # no unique index stops two accounts from taking it at the same time.
+            User.select(User.id).where(User.id == user.id).for_update().get()
+            DATABASE.execute_sql("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"authenticator:{method}:{ident}",))
+            taken = Authenticators.select().where(
+                (Authenticators.auth == method) & (Authenticators.auth_data == ident) & (Authenticators.user != user.id)
             )
-        if authenticator:
-            # Someone else has this identity registered, do not allow the same external identity
-            # for multiple users
-            return None
-    except DoesNotExist:
-        pass
-
-    try:
-        authenticator = Authenticators(user=user.id, auth=method, auth_data=ident)
-        with DATABASE.atomic():
-            authenticator.save()
-        logger.info("Linked %s to %s persistent id %s", user.username, method, ident)
+            if taken.exists():
+                # Someone else has this identity registered, do not allow the same external identity
+                # for multiple users
+                return None
+            # At most one identity for each method. The old one goes in the new
+            # one's transaction: a link that fails leaves the account as it was.
+            Authenticators.delete().where((Authenticators.user == user.id) & (Authenticators.auth == method)).execute()
+            Authenticators.create(user=user.id, auth=method, auth_data=ident)
+        auth_log.info("Linked user id=%s to service %s", user.id, method)
         return user
     except PeeweeException as auth_except:
-        logger.info(
-            "Error (%s) while linking %s to %s persistent id %s",
-            auth_except,
-            user.username,
-            method,
-            ident,
-        )
+        auth_log.info("Link failed: user id=%s service %s: %s", user.id, method, type(auth_except).__name__)
 
-    logger.info(
-        "Failed link attempt for user %s service %s persistent id %s",
-        user.username,
-        method,
-        ident,
-    )
+    auth_log.info("Link failed: user id=%s service %s", user.id, method)
     return None
 
 
 def unlink_account(user, method):
     """
     Removes any linked identities for method method. Return somethings that
-    evaluates to false on failure.
+    evaluates to false on failure. Never the account's last way to sign in:
+    the legacy Google login does not adopt an existing account, so only an
+    admin could let the holder back in.
     """
     if not method or not user:
         return None
     try:
         with DATABASE.atomic():
-            Authenticators.delete().where((Authenticators.user == user.id) & (Authenticators.auth == method)).execute()
+            # The account's row is the lock: two unlinks of different methods wait for each other.
+            User.select(User.id).where(User.id == user.id).for_update().get()
+            others = Authenticators.select().where((Authenticators.user == user.id) & (Authenticators.auth != method))
+            if not others.exists():
+                auth_log.warning("Refusing to unlink %s, the last way to sign in, for user #%d", method, user.id)
+                return None
+            removed = (
+                Authenticators.delete()
+                .where((Authenticators.user == user.id) & (Authenticators.auth == method))
+                .execute()
+            )
 
+        if removed:
+            auth_log.info("Unlinked user id=%s from service %s", user.id, method)
         return True
     except DoesNotExist:
         return None
@@ -817,16 +837,19 @@ def update_user(form, user_uuid=None):
     if not (user.is_admin or user.is_manager) and str(form["id"]) != str(user.id):
         return {"status": "error", "message": "forbidden"}
 
-    if not (user.is_admin or user.is_manager):
-        # Mark user supplied e-mail as false
-        form["validated"] = False
-
-    # check target user
+    # check target user. By primary key: User.get("t") is WHERE 't', the first row of the table.
     try:
         with DATABASE.atomic():
-            target_user = User.get(form["id"])
-    except DoesNotExist:
+            target_user = User.get_by_id(form["id"])
+    except (DoesNotExist, DataError):  # DataError: an id that is no number
         return {"status": "error", "message": "unknown user"}
+
+    if target_user.id == user.id:
+        # An admin's mark that the holder took the web course: the holder can
+        # neither set nor clear it (the legacy frontend's "Ändra e-postadress"
+        # sends validated: false, which locked the member out of it). Decided
+        # on the row read, not on form["id"]: "007" and 7.0 are account 7 too.
+        del form["validated"]
 
     # Managers never edit admin accounts (get_users hides them too); the
     # email is the password-login key, so that edit is a takeover.
@@ -1129,17 +1152,17 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                 has_role = target_user.has_role(operation["role"], operation.get(target))
                 updated = False
                 if has_role and operation["action"] == "remove":
-                    logger.info(
-                        f"User:{user.username} UPDATE: Role remove on user: "
-                        f"{target_user.username} removed: {operation['role']} "
+                    auth_log.info(
+                        f"User:{user.id} UPDATE: Role remove on user: "
+                        f"{target_user.id} removed: {operation['role']} "
                         f"target:{operation.get(target)}"
                     )
                     target_user.remove_role(operation["role"], operation.get(target))
                     updated = True
                 elif not has_role and operation["action"] == "add":
-                    logger.info(
-                        f"User:{user.username} UPDATE: Role added on user: "
-                        f"{target_user.username} added: {operation['role']} "
+                    auth_log.info(
+                        f"User:{user.id} UPDATE: Role added on user: "
+                        f"{target_user.id} added: {operation['role']} "
                         f"target:{operation.get(target)}"
                     )
                     target_user.add_role(operation["role"], operation.get(target))
@@ -1173,7 +1196,7 @@ def edit_genebank(gb, fields, actor):
             gb.name = value.strip()
     with DATABASE.atomic():
         gb.save()
-    logger.info(f"User:{actor.username or actor.email} edited genebank {gb.id}")
+    logger.info(f"User:{actor.id} edited genebank {gb.id}")
     return {"id": gb.id, "name": gb.name}
 
 
@@ -1331,7 +1354,7 @@ def edit_herd(herd, fields, actor):
         # over a membership/genebank change committed since the row was loaded.
         with DATABASE.atomic():
             herd.save(only=changed)
-    logger.info(f"User:{actor.username or actor.email} edited herd {herd.herd} via adminpanel")
+    logger.info(f"User:{actor.id} edited herd {herd.id} via adminpanel")
     return get_herd_for_admin(actor, herd)
 
 
@@ -1519,6 +1542,7 @@ def add_herd(form, user_uuid):
             pass
         if "id" in form:
             del form["id"]
+        form = {k: v for k, v in form.items() if k not in BANK_PRIVACY_FIELDS}  # fixed 'private', issue #33
         bad = invalid_privacy_field(form)
         if bad:
             return {"status": "error", "message": f"Invalid value for {bad}"}
@@ -1530,7 +1554,7 @@ def add_herd(form, user_uuid):
             herd.save(force_insert=True)
         except IntegrityError:
             return {"status": "error", "message": "missing data"}
-        logger.info(f"User:{user.username} Added herd: {herd.short_info()}")
+        logger.info(f"User:{user.id} Added herd: {herd.id}")
         return {"status": "success"}
 
 
@@ -1653,6 +1677,9 @@ def update_herd(form, user_uuid):
             if not user.can_edit(herd.herd):
                 return {"status": "error", "message": "Forbidden"}
 
+            # Bank privacy is fixed at 'private' (issue #33): dropped before validation, so a bad
+            # stored value echoed by the legacy SPA cannot block the save. Response unchanged.
+            form = {k: v for k, v in form.items() if k not in BANK_PRIVACY_FIELDS}
             bad = invalid_privacy_field(form)
             if bad:
                 return {"status": "error", "message": f"Invalid value for {bad}"}
@@ -1668,7 +1695,7 @@ def update_herd(form, user_uuid):
                 # only= : a full-row save would write the stale ownership columns back
                 # over a membership/genebank change committed since the row was loaded.
                 herd.save(only=written)
-        logger.info(f"User:{user.username} Updated herd: {herd.short_info()}")
+        logger.info(f"User:{user.id} Updated herd: {herd.id}")
         return {"status": "updated"}
     except DoesNotExist:
         return {"status": "error", "message": "Unknown herd"}
@@ -1681,11 +1708,6 @@ def update_origin_herd_ind(individual, new_herd, user):
     Updates origin_herd + number for the individual and replaces its BIRTH row
     (void + new BIRTH in the new herd) — in one transaction.
     """
-    update_logger = logging.getLogger(f"{individual.current_herd.genebank.name}_update")
-    update_logger.info(
-        f"{user.username},{individual.number},UPDATE origin_herd and number,"
-        f"{individual.origin_herd.herd},{new_herd.herd},"
-    )
     old_number = individual.number
     with DATABASE.atomic():
         individual.origin_herd = new_herd
@@ -1908,9 +1930,9 @@ def add_individual(form, user_uuid):
             except ValueError as exception:
                 return {"status": "error", "message": f"{exception}"}
         if "weights" in form:
-            update_weights(individual, form["weights"], user.username)
+            update_weights(individual, form["weights"])
         if "bodyfat" in form:
-            update_bodyfat(individual, form["bodyfat"], user.username)
+            update_bodyfat(individual, form["bodyfat"])
 
         individual.save()
 
@@ -1944,9 +1966,6 @@ def add_individual(form, user_uuid):
             except ValueError as exception:
                 raise exception
 
-        logging.getLogger(f"{individual.current_herd.genebank.name}_create").info(
-            f"{user.username},{individual.number},{individual.name},{new_herd.herd},{selling_date}"
-        )
         return {
             "status": "success",
             "message": "Individual Created",
@@ -2035,7 +2054,7 @@ def update_individual(form, user_uuid, issue_digital=False, genebank_change_reas
     except Exception as e:
         if hasattr(e, "individual_stage"):  # today's checks before the lock: legacy 500, v2 400/500
             raise
-        logger.error(f"Expetion in update individual {form.get('id')}, user: {user.username} exception: {e}")
+        logger.error(f"Expetion in update individual {form.get('id')}, user: {user.id} exception: {type(e).__name__}")
         return {"status": "error", "message": "Kunde inte uppdatera individ."}
     return {
         "status": "success",
@@ -2729,7 +2748,7 @@ def register_breeding(form, user_uuid):
             breed_notes=form.get("notes", None),
         )
         breeding.save()
-        logger.info(f"User:{user.username} added breeding: {breeding.as_dict()}")
+        logger.info(f"User:{user.id} added breeding: {breeding.id}")
         result = {"status": "success", "breeding_id": breeding.id}
         if date_warnings:
             result["warnings"] = date_warnings
@@ -2792,9 +2811,9 @@ def delete_breeding(id, user_uuid):
             # the individuals check above already returned for promoted kits.
             bunny_count = Bunny.delete().where(Bunny.breeding == breeding).execute()
             if bunny_count:
-                logger.info(f"User:{user.username} deleted {bunny_count} bunny roster rows with breeding {id}")
+                logger.info(f"User:{user.id} deleted {bunny_count} bunny roster rows with breeding {id}")
             Breeding.delete().where(Breeding.id == id).execute()
-            logger.info(f"User:{user.username} deleted empty breeding: {breeding.as_dict()}")
+            logger.info(f"User:{user.id} deleted empty breeding: {breeding.id}")
             return {"status": "success"}
     except DoesNotExist:
         return {
@@ -2993,7 +3012,7 @@ def register_birth(form, user_uuid):
             for slot in range(1, litter_size + 1):
                 Bunny.create(breeding=breeding, slot_order=slot)
 
-        logger.info(f"User:{user.username} added birth: {breeding.as_dict()}")
+        logger.info(f"User:{user.id} added birth: {breeding.id}")
         result = {"status": "success", "litter_number": assigned_litter_number}
         if litter_conflicts:
             result["litter_number_conflicts"] = litter_conflicts
@@ -3041,7 +3060,6 @@ def update_breeding(form, user_uuid):
     # parent change rewrites every kit's BIRTH row and number. Re-checked under the lock below.
     if not user.can_edit(breeding.breeding_herd_id.herd):
         return {"status": "error", "message": "Forbidden"}
-    update_logger = logging.getLogger(f"{breeding.mother.current_herd.genebank.name}_update")
     errors = []
     date_warnings = []
     # `breeding` is the row as this request found it, read before the lock. Legacy PATCHes the
@@ -3058,9 +3076,6 @@ def update_breeding(form, user_uuid):
             mother = Individual.get(Individual.number == form["mother"])
             if old_mother != mother.number:
                 changes["mother"] = mother
-                update_logger.info(
-                    f"{user.username},breeding_id:{breeding.id},changed_mother,{old_mother},{mother.number}"
-                )
         except DoesNotExist:
             errors += ["Unknown mother"]
     if "father" in form:
@@ -3069,9 +3084,6 @@ def update_breeding(form, user_uuid):
             father = Individual.get(Individual.number == form["father"])
             if old_father != father.number:
                 changes["father"] = father
-                update_logger.info(
-                    f"{user.username},breeding_id:{breeding.id},changed_father,{old_father},{father.number}"
-                )
         except DoesNotExist:
             errors += ["Unknown father"]
 
@@ -3080,9 +3092,6 @@ def update_breeding(form, user_uuid):
             try:
                 new_date = validate_date(form[bdate])
                 if getattr(breeding, bdate) != new_date.date():
-                    update_logger.info(
-                        f"{user.username},breeding_id:{breeding.id},changed_{bdate},{getattr(breeding, bdate)},{form[bdate]}"  # noqa: E501
-                    )
                     changes[bdate] = new_date
             except ValueError as error:
                 errors += [str(error)]
@@ -3237,9 +3246,6 @@ def update_breeding(form, user_uuid):
             # Update breeding_herd to new herd ID.
             # Update all Indivuduals in breeding
             if herd_changed:
-                update_logger.info(
-                    f"{user.username},breeding_id:{breeding.id},new_breeding_herd,{stored.breeding_herd_id.herd},{new_herd.herd}"  # noqa: E501
-                )
                 stored.breeding_herd_id = new_herd
                 # Breeding herd id changed
                 for ind in kits.clone():
@@ -3898,9 +3904,9 @@ def set_v2_prod_access(u_id, enabled):
 
 def set_validated(u_id, validated):
     """
-    Toggle hbuser.validated: the course is done. Google login (redirect and
-    token flows) requires it; session load and password login do not check
-    it. Audited via trigger.
+    Toggle hbuser.validated: the course is done. The legacy Google login
+    requires it, and so do the legacy frontend's functions and the token login
+    when the access rules are off (legacy_compat.refusal). Audited via trigger.
     """
     user = User.get_or_none(User.id == u_id)
     if user is None:
@@ -4098,7 +4104,11 @@ def revert_audit_entry(audit_id, fields=None, is_admin=False):
     set_clauses = []
     params = []
     values = {}
+    bank_ignored = False
     for field in fields:
+        if table_name == "herd" and field in BANK_PRIVACY_FIELDS:  # fixed 'private' (#33): ignored, not an error
+            bank_ignored = True
+            continue
         if field == pk_col:
             continue
         if field not in valid_cols:
@@ -4112,6 +4122,8 @@ def revert_audit_entry(audit_id, fields=None, is_admin=False):
         return {"status": "error", "message": refusal}, 409
 
     if not set_clauses:
+        if bank_ignored:  # only bank privacy was selected (e.g. a migration 40 entry): nothing to write
+            return {"status": "success", "message": "Ändring ångrad"}, 200
         return {"status": "error", "message": "Inga fält att ångra"}, 400
 
     params.append(entry.record_id)
@@ -4172,7 +4184,8 @@ def restore_record(table_name, record_id, audit_id, is_admin=False):
     locked = _audit_undo_locked(table_name, is_admin)
     if table_name == "bunny" and current.get("individual_id") != wanted.get("individual_id"):
         locked = locked | {"fate"}  # the bunny CHECK ties fate to the link, which restore skips
-    values = {field: value for field, value in wanted.items() if field not in locked}
+    bank = set(BANK_PRIVACY_FIELDS) if table_name == "herd" else set()  # fixed 'private' (#33): never restored
+    values = {field: value for field, value in wanted.items() if field not in locked | bank}
     if refusal := _audit_undo_refusal(table_name, values, is_admin):
         return {"status": "error", "message": refusal}, 409
     skipped = sorted(field for field in locked & wanted.keys() if current.get(field) != wanted[field])
@@ -4276,18 +4289,66 @@ def purge_user_audit_pii(user_id: int, username: str, email: str) -> int:
             )
         # Marker row — documents the erasure, not the erased content; only
         # the numeric user_id survives, which IS the pseudonym key.
-        DATABASE.execute_sql(
-            """
-            INSERT INTO audit_log
-                (table_name, record_id, operation, new_data, changed_by)
-            VALUES
-                ('audit_log', %s, 'REDACT',
-                 jsonb_build_object('rows_redacted', %s::int), 'system')
-            """,
-            (marker_id, rows_redacted),
-        )
-        DATABASE.execute_sql("CREATE RULE audit_log_no_update AS ON UPDATE TO audit_log DO INSTEAD NOTHING")
+        _write_redact_marker(marker_id, rows_redacted)
+        DATABASE.execute_sql(AUDIT_LOG_NO_UPDATE_RULE)
     return rows_redacted
+
+
+def _write_redact_marker(record_id, rows_redacted):
+    """A REDACT row in audit_log: when and how many rows were redacted, never which."""
+    DATABASE.execute_sql(
+        """
+        INSERT INTO audit_log
+            (table_name, record_id, operation, new_data, changed_by)
+        VALUES
+            ('audit_log', %s, 'REDACT',
+             jsonb_build_object('rows_redacted', %s::int), 'system')
+        """,
+        (record_id, rows_redacted),
+    )
+
+
+AUDIT_IP_RETENTION = "12 months"  # a PostgreSQL interval: calendar months, as the privacy policy says
+AUDIT_IP_BATCH = 5000
+AUDIT_IP_LOCK_TIMEOUT = "5s"
+
+
+def purge_audit_ip(now, batch=AUDIT_IP_BATCH) -> int:
+    """
+    Removes ip_address from audit_log rows older than AUDIT_IP_RETENTION; the rest of the row stays.
+    Each batch is found without a lock through idx_audit_log_ip_retention, then the no-update rule is lifted
+    only for one short UPDATE of those ids (the purge_user_audit_pii mechanism), which commits together with
+    its REDACT marker row. A lock timeout raises (the scheduler logs it); committed batches stay, and the
+    next run continues. Returns the rows changed.
+    """
+    cutoff = DATABASE.execute_sql("SELECT %s::timestamptz - %s::interval", (now, AUDIT_IP_RETENTION)).fetchone()[0]
+    marker_id = f"purge-ip-{now.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}"
+    total, last = 0, (datetime.min.replace(tzinfo=timezone.utc), 0)
+    while True:
+        rows = DATABASE.execute_sql(
+            """
+            SELECT changed_at, id FROM audit_log
+            WHERE ip_address IS NOT NULL AND changed_at < %s AND (changed_at, id) > (%s, %s)
+            ORDER BY changed_at, id LIMIT %s
+            """,
+            (cutoff, *last, batch),
+        ).fetchall()
+        if not rows:
+            return total
+        with DATABASE.atomic():
+            # DROP RULE locks audit_log exclusively until commit: never queue every audited write behind it.
+            DATABASE.execute_sql("SELECT set_config('lock_timeout', %s, true)", (AUDIT_IP_LOCK_TIMEOUT,))
+            DATABASE.execute_sql("DROP RULE IF EXISTS audit_log_no_update ON audit_log")
+            cursor = DATABASE.execute_sql(
+                "UPDATE audit_log SET ip_address = NULL WHERE id = ANY(%s) AND ip_address IS NOT NULL",
+                ([row[1] for row in rows],),
+            )
+            changed = cursor.rowcount or 0
+            if changed:
+                _write_redact_marker(marker_id, changed)
+            DATABASE.execute_sql(AUDIT_LOG_NO_UPDATE_RULE)
+        total += changed
+        last = rows[-1]
 
 
 # Session-store counter of mass logouts. Outside 'session:*', so the sweep never

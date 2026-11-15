@@ -64,9 +64,26 @@ postgres.user = os.environ.get("POSTGRES_USER", "herdbook")
 postgres.password = os.environ.get("POSTGRES_PASSWORD", "insecure")
 
 service.host = os.environ.get("HERDBOOK_HOST", "https://127.0.0.1:8443")
-service.logfolder = os.environ.get("HERDBOOK_LOGFOLDER", "./")
 # The demo API (api-test): its logins are marked, and production refuses them.
 service.demo_instance = os.environ.get("DEMO_INSTANCE", "false").lower() == "true"
+
+
+def resolve_access_rules():
+    """
+    ACCESS_RULES: "enforce" turns on the access rules (legacy_compat.refusal),
+    "off" leaves them off. Unset or empty means enforce in production and off
+    elsewhere. The demo API is always off: members practise there, and its
+    FLASK_ENV is production too. Any other value refuses to start.
+    """
+    value = (os.environ.get("ACCESS_RULES") or "").lower()
+    if not value:
+        value = "enforce" if os.environ.get("FLASK_ENV") == "production" else "off"
+    if value not in ("off", "enforce"):
+        raise RuntimeError(f"ACCESS_RULES must be off or enforce, not {value!r}")
+    return "off" if service.demo_instance else value
+
+
+service.access_rules = resolve_access_rules()
 
 
 def refuse_auto_validate_outside_demo():

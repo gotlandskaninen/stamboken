@@ -19,12 +19,14 @@ from typing import ClassVar, Protocol
 from peewee import DateField, fn
 
 from utils import number_assets
+from utils.certificate_lifecycle import Event, check
 from utils.database import DB_PROXY as DATABASE
 from utils.database import (
     OUTSIDE_GENEBANK_HERDS,
     Bodyfat,
     Breeding,
     Color,
+    DigitalCertificateV2,
     Herd,
     HerdTracking,
     Individual,
@@ -109,7 +111,6 @@ class WriteContext:
     roles: frozenset[Role]
     state: State
     breeding_after: int | None  # the litter after the request; set before any check runs
-    update_log: logging.Logger  # the genebank's <name>_update CSV log, of the holder before the request
     request_id: uuid.UUID = field(default_factory=uuid.uuid4)  # shared by the log rows of one execute()
     log_rows: list = field(default_factory=list)  # inserted together once every command has run
     number_verified: bool = False  # _verify_number runs once per request, whichever command asks
@@ -243,7 +244,6 @@ def execute(
             roles=roles_for(user, individual),
             state=state_for(individual),
             breeding_after=individual.breeding_id if target is None else target,
-            update_log=logging.getLogger(f"{individual.current_herd.genebank.name}_update"),
         )
         commands = translate(ctx)
         if not any(isinstance(command, MoveToLitter) for command in commands):
@@ -351,14 +351,13 @@ def lock_individual_for_edit(individual_id, breeding_id=None, with_parents=False
     return locked
 
 
-def update_weights(individual, weights, username):
+def update_weights(individual, weights):
     """
     Updates the weight measurements of `individual` to match those in `weights`.
 
     `weights` should be a list formatted like:
     [{weight: <float>, date: 'yyyy-mm-dd'}, [...]]
     """
-    update_logger = logging.getLogger(f"{individual.current_herd.genebank.name}_update")
     with DATABASE.atomic():
         current_weights = Weight.select().where(Weight.individual == individual.id)
         current_list = [(w.weight_date.strftime("%Y-%m-%d"), w.weight) for w in current_weights]
@@ -367,7 +366,6 @@ def update_weights(individual, weights, username):
         # check for current measurements to delete
         for weight in current_list:
             if weight not in new_list:
-                update_logger.info(f"{username},{individual.number},removing weight,{weight[0]},{weight[1]},")
                 Weight.delete().where(
                     Weight.individual == individual,
                     Weight.weight_date == weight[0],
@@ -377,7 +375,6 @@ def update_weights(individual, weights, username):
         # check for new measurements to add
         for weight in new_list:
             if weight not in current_list:
-                update_logger.info(f"{username},{individual.number},adding weight,{weight[0]},{weight[1]},")
                 Weight(
                     individual=individual,
                     weight_date=weight[0],
@@ -385,14 +382,13 @@ def update_weights(individual, weights, username):
                 ).save()
 
 
-def update_bodyfat(individual, bodyfat, username):
+def update_bodyfat(individual, bodyfat):
     """
     Updates the bodufat measurements of `individual` to match those in `bodyfat`.
 
     `bodyfat` should be a list formatted like:
     [{bodyfat: 'low' | 'normal' | 'high', date: 'yyyy-mm-dd'}, [...]]
     """
-    update_logger = logging.getLogger(f"{individual.current_herd.genebank.name}_update")
     with DATABASE.atomic():
         logger.warning("bodyfat: %s", bodyfat)
         current_bodyfat = Bodyfat.select().where(Bodyfat.individual == individual.id)
@@ -402,7 +398,6 @@ def update_bodyfat(individual, bodyfat, username):
         # check for current measurements to delete
         for measure in current_list:
             if measure not in new_list:
-                update_logger.info(f"{username},{individual.number},removing hull,{measure[0]},{measure[1]},")
                 Bodyfat.delete().where(
                     Bodyfat.individual == individual,
                     Bodyfat.bodyfat_date == measure[0],
@@ -415,7 +410,6 @@ def update_bodyfat(individual, bodyfat, username):
                 if measure[1] not in ["low", "normal", "high"]:
                     logger.error("Unknown bodyfat level: %s", measure[1])
                 else:
-                    update_logger.info(f"{username},{individual.number},adding hull,{measure[0]},{measure[1]},")
                     Bodyfat(
                         individual=individual,
                         bodyfat_date=measure[0],
@@ -426,17 +420,9 @@ def update_bodyfat(individual, bodyfat, username):
 @number_assets.finishing
 def update_birth_date_herd_tracking(individual, user, new_date, old_date):
     """Moves the BIRTH row to `new_date` (void + new BIRTH) and fixes the number's year digits."""
-    update_logger = logging.getLogger(f"{individual.current_herd.genebank.name}_update")
-    update_logger.info(
-        f"{user.username},{individual.id}:{individual.number},UPDATE birth tracking date,{old_date},{new_date},"
-    )
     old_number = individual.number
     with DATABASE.atomic():
         if new_date.strftime("%y") != old_date.strftime("%y"):
-            update_logger.info(
-                f"{user.username},{individual.id},UPDATE year in number,"
-                f"{old_date.strftime('%y')},{new_date.strftime('%y')},"
-            )
             individual.number = (
                 individual.number.split("-")[0] + "-" + new_date.strftime("%y") + individual.number.split("-")[1][2:]
             )
@@ -518,17 +504,13 @@ class _FormFields(PolicyCommand):
                 _form_date(value)
 
     def apply(self, ctx):
-        ind, user = ctx.individual, ctx.user.username
+        ind = ctx.individual
         for key, value in self.changes.items():
             if key.endswith("date"):
                 setattr(ind, key, _form_date(value))
-                if isinstance(value, str):  # the parsed date in the old column, every time (IR-50)
-                    ctx.update_log.info(f"{user},{ind.number},{key},{getattr(ind, key)},{value},")
                 continue
             if key == "color":
                 value = known_color(value)
-            if getattr(ind, key) != value:
-                ctx.update_log.info(f"{user},{ind.number},{key},{getattr(ind, key)},{value},")
             setattr(ind, key, value)
 
 
@@ -566,9 +548,9 @@ class SetMeasurements(PolicyCommand):
 
     def apply(self, ctx):
         if self.weights is not MISSING:
-            update_weights(ctx.individual, self.weights, ctx.user.username)
+            update_weights(ctx.individual, self.weights)
         if self.bodyfat is not MISSING:
-            update_bodyfat(ctx.individual, self.bodyfat, ctx.user.username)
+            update_bodyfat(ctx.individual, self.bodyfat)
 
 
 def _target(herd):
@@ -608,8 +590,8 @@ def _genebank_correction(ctx, from_herd, to_herd, reason):
         raise HerdTrackingForbidden("Bara administratör kan flytta en individ till en annan genbank.")
     note = require_reason(reason)
     logger.warning(
-        f"Genebank change by admin {ctx.user.username}: {ctx.stored.number} from {from_herd.genebank.name} "
-        f"({from_herd.herd}) to {to_herd.genebank.name} ({to_herd.herd}): {note}"
+        f"Genebank change by admin {ctx.user.id}: {ctx.stored.number} from {from_herd.genebank.name} "
+        f"({from_herd.herd}) to {to_herd.genebank.name} ({to_herd.herd})"
     )
     return note
 
@@ -707,14 +689,20 @@ class AssignPaperCertificate(PolicyCommand):
     def check_cert_unique(self, ctx):
         value = self.certificate
         # Raw, as today: an int echo of the stored text is a change and finds the rabbit itself (IR-49).
-        if value is None or value == ctx.stored.certificate:
+        # A blank number is stored as NULL (apply), so it is never taken.
+        if value is None or value == "" or value == ctx.stored.certificate:
             return
         if Individual.select().where(Individual.certificate == value).exists():
             logger.warning(
-                f"User: {ctx.user.username} trying to change {ctx.stored.id}:{ctx.stored.number} "
+                f"User: {ctx.user.id} trying to change {ctx.stored.id}:{ctx.stored.number} "
                 f"intyg number already exists {value}"
             )
             raise IndividualRefused("Individual certificate already exists")
+
+    @property
+    def event(self):
+        """Blank is what state_of calls no certificate: the legacy form sends "" to clear the paper number."""
+        return Event.ASSIGN_PAPER if str(self.certificate) else Event.CLEAR_PAPER
 
     def check_quota(self, ctx):
         if self.certificate is not None:
@@ -723,13 +711,19 @@ class AssignPaperCertificate(PolicyCommand):
     def apply(self, ctx):
         if self.certificate is None:
             return
-        ind, user, value = ctx.individual, ctx.user.username, str(self.certificate)
-        if ind.certificate != value:
-            if ind.digital_certificate is not None:
-                ctx.update_log.info(f"{user},{ind.number},digital_certificate,{ind.digital_certificate},'None',")
+        # A cleared number is NULL: the column is unique, so "" would fit one rabbit in the whole registry.
+        ind, value = ctx.individual, str(self.certificate) or None
+        changed = ind.certificate != value
+        if changed:
+            before = ind.cert_state()
+            # Only a paper number replaces the digital one (IR-20); a blank number clears the paper number alone.
+            if self.event is Event.ASSIGN_PAPER and ind.digital_certificate is not None:
                 ind.digital_certificate = None
-            ctx.update_log.info(f"{user},{ind.number},certificate,{ind.certificate},{value},")
+            if ind.digital_certificate is None:
+                DigitalCertificateV2.retire_current(ind)  # else verify and download keep answering for the PDF
         ind.certificate = value
+        if changed:
+            check(before, self.event, ind.cert_state())
 
     def verify(self, ctx):
         if self.certificate:
@@ -753,15 +747,13 @@ class RenameIndividual(PolicyCommand):
     def check_number_unique(self, ctx):
         if Individual.select().where(Individual.number == self.number).exists():
             logger.warning(
-                f"User: {ctx.user.username} trying to update {ctx.stored.id}:{ctx.stored.number} "
+                f"User: {ctx.user.id} trying to update {ctx.stored.id}:{ctx.stored.number} "
                 f"new number already exists {self.number}"
             )
             raise IndividualRefused("Individual number already exists")
 
     def apply(self, ctx):
-        old = ctx.stored.number
         ctx.individual.number = self.number
-        ctx.update_log.info(f"{ctx.user.username},{old},new_number,{old},{self.number},")
 
     def after_save(self, ctx):
         # To the final number: MoveToLitter's birth-year fix may have changed it again since apply.
@@ -802,9 +794,7 @@ class MoveToLitter(PolicyCommand):
             raise IndividualRefused(envelope=dict(CYCLE_PROBLEM))
 
     def apply(self, ctx):
-        ind = ctx.individual
-        ctx.update_log.info(f"{ctx.user.username},{ind.number},breeding,{ind.breeding_id},{self.breeding_id},")
-        ind.breeding = self.breeding_id
+        ctx.individual.breeding = self.breeding_id
 
     def after_save(self, ctx):
         old, new = ctx.stored.breeding.birth_date, ctx.individual.breeding.birth_date
@@ -847,15 +837,11 @@ class ChangeOriginHerd(PolicyCommand):
             super().authorize(ctx)
 
     def apply(self, ctx):
-        ind, new = ctx.individual, self._herd()
-        # The field line form_to_individual's update branch wrote (ids); new_origin_herd follows the save.
-        ctx.update_log.info(f"{ctx.user.username},{ind.number},origin_herd,{ind.origin_herd_id},{new.id},")
-        ind.origin_herd = new
+        ctx.individual.origin_herd = self._herd()
 
     def after_save(self, ctx):
         ind, old = ctx.individual, ctx.stored.origin_herd
         new = ind.origin_herd
-        ctx.update_log.info(f"{ctx.user.username},{ctx.stored.number},new_origin_herd,{old.herd},{new.herd},")
         reason = BIRTH_HERD_CHANGED_REASON
         if new.genebank_id != old.genebank_id:
             # Also a move this request wrote: its TRANSFER rows would still start in the old genebank (IR-56).
@@ -890,14 +876,37 @@ class IssueDigitalCertificate(PolicyCommand):
         _first_certificate(ctx, True)
 
     def apply(self, ctx):
-        ind, user = ctx.individual, ctx.user.username
+        ind = ctx.individual
+        before = ind.cert_state()
         latest = Individual.select(fn.MAX(Individual.digital_certificate)).scalar()
         number = 100000 if latest is None else latest + 1
-        if ind.certificate is not None:
-            ctx.update_log.info(f"{user},{ind.number},certificate,{ind.certificate},'None',")
-            ind.certificate = None
-        ctx.update_log.info(f"{user},{ind.number},digital_certificate,{ind.digital_certificate},{number},")
+        ind.certificate = None
         ind.digital_certificate = number
+        check(before, Event.ISSUE_NUMBER, ind.cert_state())
+
+
+def assign_certificate_number(individual):
+    """Assign the next digital certificate number directly to the individual.
+
+    Scoped write for issuance by the breeder (origin herd) when the rabbit
+    has moved to another herd: can_issue_certificate() authorizes on
+    origin_herd, but update_individual() requires can_edit() on the current
+    herd and would reject the request. Mirrors IssueDigitalCertificate, which
+    update_individual() runs for issue_digital: the next number, and any paper certificate cleared.
+
+    Writes only the certificate columns: `individual` may have been read
+    before the caller's lock, and a full save would restore a death, origin
+    correction or renumber committed since.
+    """
+    before = individual.cert_state()
+    nextval = 100000
+    max_number = Individual.select(fn.MAX(Individual.digital_certificate)).scalar()
+    if max_number is not None:
+        nextval = max_number + 1
+    individual.digital_certificate = nextval
+    individual.certificate = None
+    individual.save(only=[Individual.digital_certificate, Individual.certificate, Individual.updated_at])
+    check(before, Event.ISSUE_NUMBER, individual.cert_state())
 
 
 UNDO_WINDOW = timedelta(days=7)  # as undoing a sale or an attestation in herd-tracking

@@ -1,9 +1,10 @@
 # Användarmanual – Stamboken Online
 
-> **Gäller:** nya Stamboken (Next.js-gränssnittet) på gotlandskaninen.se/stamboken.
+> **Gäller:** nya Stamboken på föreningens webbplats.
 > **Senast kontrollerad mot gränssnittet:** 2026-10-29.
 > Skärmbilderna är tagna i en lokal testmiljö med påhittade kaniner och besättningar.
 
+Är du ny i Stamboken, börja med sidan [Kom igång](https://gotlandskaninen.se/stamboken-online/kom-igang).
 Manualen är indelad efter roll. Läs del 0 först och sedan den del som gäller dig.
 Varje del börjar med **Så gör du** (numrerade steg med knapparnas namn som de står
 på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
@@ -44,7 +45,7 @@ på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
     [Aktiva användare](#aktiva-användare), [Aktivitetslogg](#aktivitetslogg),
     [Demosynkronisering](#demosynkronisering), [Anropsgränser](#anropsgränser)
 - [Bilagor](#bilagor): [felmeddelanden](#felmeddelanden-och-vad-de-betyder), [kontakt](#kontakt),
-  [om manualen](#om-manualen)
+  [vad är på gång](#vad-är-på-gång), [om manualen](#om-manualen)
 
 ---
 
@@ -54,7 +55,8 @@ på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
 
 <!-- route: /auth/sign-in -->
 
-Gå till gotlandskaninen.se/stamboken. Är du inte inloggad kommer du till inloggningssidan.
+Klicka på **Stamboken** uppe till höger på föreningens webbplats och sedan på
+**Logga in i Stamboken**. Är du inte inloggad kommer du till inloggningssidan.
 
 Har du ett föreningskonto (en adress som slutar på @gotlandskaninen.se) loggar du in med Google:
 
@@ -76,6 +78,9 @@ administratören om den inte fungerar. Glömt lösenordet till Stamboken? Klicka
 **administratören** under lösenordsfältet. Den öppnar ett mejl till
 <admin@gotlandskaninen.se>, och du får ett nytt tillfälligt lösenord.
 
+Under formuläret leder länken **Kom igång** till introduktionen för nya användare och
+**Bli medlem** till ansökan om medlemskap.
+
 Felmeddelanden på sidan:
 
 | Text | Betyder |
@@ -86,7 +91,7 @@ Felmeddelanden på sidan:
 | Endast @gotlandskaninen.se-konton kan användas för Google-inloggning. … | Du valde ett privat Google-konto. Välj föreningskontot. |
 | Ditt föreningskonto är inte kopplat till Stamboken än. Kontakta administratören. | Föreningskontot finns men har inget konto i Stamboken. Mejla <admin@gotlandskaninen.se>. |
 
-![Inloggningssidan](manual/logga-in-desktop.png)
+![Inloggningssidan](logga-in-desktop.png)
 
 ### Hitta i Stamboken
 
@@ -99,7 +104,7 @@ Till höger finns:
 
 - **SV / EN** – byter språk.
 - Klockan **Notiser** – meddelanden från systemet, till exempel bekräftelser och fel.
-- Din avatar (initialer eller bild) – menyn med **Profil**, **Adminpanel** (om du har
+- Din avatar (initialer eller bild) – menyn med **Profil**, **Manual** (den här manualen), **Adminpanel** (om du har
   rollen), **Medlemsansökningar**, **Matrikel** och **Statistik** (om du hanterar
   medlemsregistret), **Byt till testmiljön** / **Byt till riktiga stamboken** och **Logga ut**.
 
@@ -192,7 +197,7 @@ Får du "Parningen är redan registrerad" finns samma par med samma datum redan.
 "Honan är redan dräktig under detta datum" betyder att honan har en annan parning
 vars dräktighet överlappar; registrera födseln på den eller ta bort den först.
 
-![Registrera ny parning](manual/ny-parning-mobil.png)
+![Registrera ny parning](ny-parning-mobil.png)
 
 ### Registrera en kull
 
@@ -226,7 +231,7 @@ senare. Knappen **Registrera kull** är grå tills mor, far, datum och antal är
 
 När en unge i kullen har fått intyg kan bara genbanksansvarig ändra kullens föräldrar och födelsedatum. Antal födda och anteckningar kan du fortfarande ändra själv.
 
-![Registrera ny kull](manual/ny-kull-mobil.png)
+![Registrera ny kull](ny-kull-mobil.png)
 
 ### Föra kullistan
 
@@ -257,7 +262,7 @@ födseln.
 Under **Att göra** på fliken **Översikt** påminner Stamboken om kullar som passerat
 sex veckor utan att alla ungar registrerats eller fått ett öde.
 
-![Kullistan](manual/kullista-mobil.png)
+![Kullistan](kullista-mobil.png)
 
 ### Registrera en unge och utfärda intyg
 
@@ -302,7 +307,7 @@ Meddelanden som stoppar registreringen:
 | Kullen är full — max 9 kaniner per kull. | Fler ungar än nio kan inte registreras i samma kull. |
 | Intyget kunde inte skapas: … | Kaninen är registrerad men intyget misslyckades. Försök igen senare eller kontakta genbanksansvarig. |
 
-![Registrera kanin](manual/registrera-kanin-mobil.png)
+![Registrera kanin](registrera-kanin-mobil.png)
 
 ### Lägga till en kanin utan registrerad kull
 
@@ -404,7 +409,7 @@ Vill du ångra: klicka **Avsluta** och sedan **Kasta bort** i frågan "Kasta bor
 ändringar?". Utkast sparas i webbläsaren, så en påbörjad redigering öppnas igen
 nästa gång du besöker sidan.
 
-![Redigera kanin](manual/individ-redigera-mobil.png)
+![Redigera kanin](individ-redigera-mobil.png)
 
 ### Rapportera en kanin som död
 
@@ -418,7 +423,7 @@ nästa gång du besöker sidan.
 Blev det fel: **Fler åtgärder** → **Ångra dödsrapportering**. Kaninen blir levande
 igen direkt, utan fråga.
 
-![Rapportera död](manual/rapportera-dod-mobil.png)
+![Rapportera död](rapportera-dod-mobil.png)
 
 ### Sälja eller flytta en kanin
 
@@ -450,7 +455,7 @@ Efter sju dagar hjälper genbanksansvarig dig.
 Menyvalet **Sälj individ** är grått när du inte får sälja: kaninen är död, du är
 skötare och inte ägare, eller kaninen står redan i GX1/MX1.
 
-![Sälj individ](manual/salj-individ-mobil.png)
+![Sälj individ](salj-individ-mobil.png)
 
 ### Provpara
 
@@ -470,7 +475,7 @@ respektive **Hanen är inte registrerad än** och väljer djurets mor och far i 
 Länken till sidan innehåller ditt val, så du kan skicka den till någon annan.
 Från kaninens sida kommer du hit med **Fler åtgärder** → **Provpara**.
 
-![Provparning](manual/provparning-mobil.png)
+![Provparning](provparning-mobil.png)
 
 ### Uppdatera besättningsuppgifter
 
@@ -487,7 +492,7 @@ Kontaktuppgifterna på Min besättning ser andra uppfödare. Du väljer själv v
 Ändringar här når inte föreningens medlemsmatrikel. Har du flyttat eller bytt e-post
 ändrar du det också under [Min profil](#min-profil) eller meddelar kassören.
 
-![Besättningsuppgifter](manual/besattningsuppgifter-mobil.png)
+![Besättningsuppgifter](besattningsuppgifter-mobil.png)
 
 ### Uppdatera din profil
 
@@ -510,7 +515,7 @@ medlemskapets uppgifter.
 Bara huvudmedlemmen kan ändra medlemskapets uppgifter; familjemedlemmar och skötare
 ser dem och får texten "Endast huvudmedlemmen kan ändra medlemskapets uppgifter."
 
-![Min profil](manual/profil-mobil.png)
+![Min profil](profil-mobil.png)
 
 ### Skärmarna – uppfödare
 
@@ -524,6 +529,12 @@ under rubriken. Sidan har fyra flikar.
 
 **Översikt**
 
+- **Kom igång med din besättning** – visas för ägaren av en aktiv besättning som ännu
+  inte har någon parning: tre steg (ta emot startdjuren, ladda upp ett foto, registrera
+  den första parningen) som bockas av när de är gjorda. Startdjuren räknas som klara när
+  besättningen har en levande, okastrerad hane och hona. Knappen **Ny parning** visas
+  när besättningen har en levande hona; hanen kan vara lånad. **Stäng** döljer rutan i
+  den här webbläsaren, för testmiljön och riktiga stamboken var för sig.
 - Fyra siffror: **Aktiva kaniner**, **Avelsdjur** (aktiva, okastrerade honor och
   hanar), **Utfärdade intyg** och **Kullar i år**.
 - **Pågående dräktigheter** – parningar utan registrerad födsel, med stapel
@@ -536,7 +547,7 @@ under rubriken. Sidan har fyra flikar.
   (inte klar än) och **Registrera ny kanin** (leder till kullistan).
 - **Besättningsuppgifter** – kontaktuppgifter med knappen **Redigera**.
 
-![Min besättning, översikt](manual/min-besattning-oversikt-desktop.png)
+![Min besättning, översikt](min-besattning-oversikt-desktop.png)
 
 **Kaniner**
 
@@ -548,7 +559,7 @@ annan besättning och föräldrarnas nummer. Klicka kortet för kaninens sida.
 **+ Lägg till kanin** registrerar en kanin vars kull inte finns i Stamboken, se
 [Lägga till en kanin utan registrerad kull](#lägga-till-en-kanin-utan-registrerad-kull).
 
-![Min besättning, kaniner](manual/min-besattning-kaniner-mobil.png)
+![Min besättning, kaniner](min-besattning-kaniner-mobil.png)
 
 **Kullar och parningar**
 
@@ -562,7 +573,7 @@ ut kortet med avkommor, kullistan och knapparna **Registrera födsel** (bara par
 **Registrera kanin**, **Redigera** och **Ta bort**. Ta bort går bara när inga kaniner
 registrerats i kullen; annars står det "Kan inte ta bort — N registrerade individer".
 
-![Kullar och parningar](manual/min-besattning-kullar-mobil.png)
+![Kullar och parningar](min-besattning-kullar-mobil.png)
 
 **Släktträd**
 
@@ -570,7 +581,7 @@ Välj en kanin i listan **Välj kanin** så visas föräldrar och far- och morf�
 Länken **Fullständig stamtavla med inavelskoefficient finns på individsidan.** leder
 vidare.
 
-![Släktträd](manual/min-besattning-slakttrad-desktop.png)
+![Släktträd](min-besattning-slakttrad-desktop.png)
 
 #### Kaninens sida
 
@@ -597,9 +608,9 @@ Allt om en kanin. Adressen är /stamboken/individ/ följt av individnumret.
 Sidan visar bara kaniner i genbanker du har tillgång till; annars får du "Sidan kunde
 inte hittas".
 
-![Kaninens sida](manual/individ-mobil.png)
+![Kaninens sida](individ-mobil.png)
 
-![Fler åtgärder](manual/individ-fler-atgarder-mobil.png)
+![Fler åtgärder](individ-fler-atgarder-mobil.png)
 
 #### Alla kaniner
 
@@ -613,7 +624,7 @@ tabell med kolumnerna **Individnummer**, **Namn**, **Kön**, **Födelsedatum**, 
 vilka som syns. På mobilen är det en lista med **Visa fler** längst ned. Klicka en rad
 för kaninens sida.
 
-![Alla kaniner](manual/alla-kaniner-desktop.png)
+![Alla kaniner](alla-kaniner-desktop.png)
 
 #### Provparning
 
@@ -624,7 +635,7 @@ och ett resultatkort per hane. Under korten står gränserna: "Bedömning efter
 avkomman F: bra upp till N %, utred närmare upp till M %, över det hög inavel." Länken
 **Avelsråd** öppnar föreningens avelsråd. Se [Provpara](#provpara).
 
-![Provparning](manual/provparning-desktop.png)
+![Provparning](provparning-desktop.png)
 
 #### Min profil
 
@@ -640,24 +651,26 @@ kopplad till ditt konto." Se [Uppdatera din profil](#uppdatera-din-profil).
 full åtkomst till systemet." med länken **Gå kursen nu**. Med Google kommer du inte in
 alls förrän du är validerad; inloggningssidan visar då adressen till kursen.
 
-![Min profil](manual/profil-desktop.png)
+![Min profil](profil-desktop.png)
 
 #### Verifiera intyg
 
 <!-- route: /stamboken/verifiera/[uuid] -->
 
 Sidan som QR-koden på ett digitalt intyg leder till. Den kräver ingen inloggning och
-visar ett av tre besked:
+visar ett av fyra besked:
 
 - **Äkta genbanksintyg** – intyget är utfärdat i Stamboken och signerat av föreningen.
   Kortet visar **Individnummer**, namn, **Ras**, **Intygsnummer**, **Utfärdat av** och
   **Datum**. **Visa kaninens sida i Stamboken →** kräver inloggning.
 - **Äkta, men ersatt** – ett nyare intyg har utfärdats för kaninen. Be säljaren om
   den senaste versionen.
+- **Äkta, men gäller inte längre** – intyget har ersatts av ett pappersintyg. Be
+  säljaren om kaninens gällande intyg.
 - **Intyget hittades inte** – länken matchar inget intyg. Skanna igen eller kontakta
   föreningen med **Kontakta Föreningen Gotlandskaninen**.
 
-![Verifierat intyg](manual/verifiera-intyg-mobil.png)
+![Verifierat intyg](verifiera-intyg-mobil.png)
 
 ---
 
@@ -706,7 +719,7 @@ värde bredvid). Poster från gamla Stamboken är märkta "Gamla Stamboken".
 Ungarnas ändringar ser du på samma sätt i dialogen **Redigera unge** under
 **Ändringshistorik (N)**.
 
-![Ändringshistorik](manual/individ-andringshistorik-desktop.png)
+![Ändringshistorik](individ-andringshistorik-desktop.png)
 
 ### Numrera om kullar med registrerade kaniner
 
@@ -756,11 +769,11 @@ Rubriken **Genetik** med rullgardinen **Genbank** och flikarna **Översikt**,
 **Prioriteringar** och **Parningsförslag**. Uppfödare utan ansvar för någon genbank ser
 sidan men får ingen genbank att välja. Se [Använda genetiksidan](#använda-genetiksidan).
 
-![Genetik, översikt](manual/genetik-oversikt-desktop.png)
+![Genetik, översikt](genetik-oversikt-desktop.png)
 
-![Genetik, prioriteringar](manual/genetik-prioriteringar-desktop.png)
+![Genetik, prioriteringar](genetik-prioriteringar-desktop.png)
 
-![Genetik, parningsförslag](manual/genetik-parningsforslag-desktop.png)
+![Genetik, parningsförslag](genetik-parningsforslag-desktop.png)
 
 #### Adminpanelen för genbanksansvarig
 
@@ -770,9 +783,9 @@ Gotlandskanin". Besättningslistan visar bara din genbank och saknar filter; på
 genbankssidan kan du bara ändra **Namn**. Flikarna **Användare** och **System** finns
 bara för administratör.
 
-![Adminpanelen för genbanksansvarig](manual/manager-admin-desktop.png)
+![Adminpanelen för genbanksansvarig](manager-admin-desktop.png)
 
-![Besättningar för genbanksansvarig](manual/manager-besattningar-desktop.png)
+![Besättningar för genbanksansvarig](manager-besattningar-desktop.png)
 
 ---
 
@@ -900,7 +913,7 @@ Startsidan med ett kort per avsnitt och antal: **Användare**, **Besättningar**
 Rollraden visar "Inloggad som administratör". Uppfödare som skriver adressen själva
 får "Sidan kunde inte hittas".
 
-![Adminpanel](manual/admin-desktop.png)
+![Adminpanel](admin-desktop.png)
 
 #### Användare
 
@@ -911,7 +924,7 @@ Sökfält, filtren **Roll**, **Konto**, **Riktiga stamboken** och **Webbkurs**, 
 och åtkomst** och **Senast aktiv**. Sidstorlek väljs längst ned. Nya konton skapas inte
 här; de kommer från medlemsansökningarna.
 
-![Användare](manual/admin-anvandare-desktop.png)
+![Användare](admin-anvandare-desktop.png)
 
 #### Användare – redigera
 
@@ -922,7 +935,7 @@ Korten **Profil** (**Användarnamn** låst, **Fullständigt namn**, **E-post**, 
 och **Senaste aktivitet** (de tio senaste ändringarna användaren gjort). En gul ruta
 varnar om en annan administratör ändrat kontot de senaste fem minuterna.
 
-![Användare, redigera](manual/admin-anvandare-detalj-desktop.png)
+![Användare, redigera](admin-anvandare-detalj-desktop.png)
 
 #### Besättningar
 
@@ -932,7 +945,7 @@ Knappen **Ny besättning**, sökfält, filtren **Genbank**, **Status** och **Äg
 tabellen **Besättning**, **Namn**, **Genbank**, **Ägare**, **Status**. Klicka
 besättningsnumret för att redigera.
 
-![Besättningar](manual/admin-besattningar-desktop.png)
+![Besättningar](admin-besattningar-desktop.png)
 
 #### Besättning – redigera
 
@@ -944,7 +957,7 @@ aktiv** och **Spara**. Under **Ägare** länkar till ägarnas användarsidor.
 Besättningsnummer och namn kan inte ändras; en inaktiverad besättning behåller sin
 historik och kan inte tas bort.
 
-![Besättning, redigera](manual/admin-besattning-detalj-desktop.png)
+![Besättning, redigera](admin-besattning-detalj-desktop.png)
 
 #### Ny besättning
 
@@ -953,7 +966,7 @@ historik och kan inte tas bort.
 Formuläret i [Skapa en besättning](#skapa-en-besättning). **Skapa besättning** är grå
 tills genbank och nummer är ifyllda.
 
-![Ny besättning](manual/admin-ny-besattning-desktop.png)
+![Ny besättning](admin-ny-besattning-desktop.png)
 
 #### Genbanker
 
@@ -961,7 +974,7 @@ tills genbank och nummer är ifyllda.
 
 Ett kort per genbank med antal aktiva besättningar och knappen **Redigera**.
 
-![Genbanker](manual/admin-genbanker-desktop.png)
+![Genbanker](admin-genbanker-desktop.png)
 
 #### Genbank – redigera
 
@@ -970,7 +983,7 @@ Ett kort per genbank med antal aktiva besättningar och knappen **Redigera**.
 Fältet **Namn** med **Spara**, listan **Genbanksansvariga** med **Ta bort ansvar**,
 sökfältet **Ny genbanksansvarig** och **Lägg till genbanksansvarig**.
 
-![Genbank, redigera](manual/admin-genbank-detalj-desktop.png)
+![Genbank, redigera](admin-genbank-detalj-desktop.png)
 
 #### Utskick
 
@@ -993,7 +1006,7 @@ på misslyckade och studsade utskick och **Stoppa** på köade. Har utskicket hu
 Korten **Aktiva användare**, **Aktivitetslogg**, **Demosynkronisering** och
 **Anropsgränser**. Undersidorna har raden **Systemsidor** för att hoppa mellan dem.
 
-![System](manual/admin-system-desktop.png)
+![System](admin-system-desktop.png)
 
 #### Aktiva användare
 
@@ -1002,7 +1015,7 @@ Korten **Aktiva användare**, **Aktivitetslogg**, **Demosynkronisering** och
 Vilka som varit aktiva de senaste **1 min**, **5 min** eller **15 min**; uppdateras
 var 30:e sekund. Under listan **Massutloggning** med knappen **Logga ut alla användare**.
 
-![Aktiva användare](manual/admin-aktiva-anvandare-desktop.png)
+![Aktiva användare](admin-aktiva-anvandare-desktop.png)
 
 #### Aktivitetslogg
 
@@ -1012,7 +1025,7 @@ Alla ändringar i databasen med filter och detaljer per rad, se
 [Söka i aktivitetsloggen](#söka-i-aktivitetsloggen). Kan loggen inte läsas visas
 "Kunde inte läsa aktivitetsloggen just nu." med **Försök igen**.
 
-![Aktivitetslogg](manual/admin-aktivitetslogg-desktop.png)
+![Aktivitetslogg](admin-aktivitetslogg-desktop.png)
 
 #### Demosynkronisering
 
@@ -1021,7 +1034,7 @@ Alla ändringar i databasen med filter och detaljer per rad, se
 Status för nattens kopiering till testmiljön: **Startad**, **Avslutad**, **Resultat**
 och **Synkroniserade användare**. Bara läsning; synkroniseringen startar automatiskt.
 
-![Demosynkronisering](manual/admin-demosynk-desktop.png)
+![Demosynkronisering](admin-demosynk-desktop.png)
 
 #### Anropsgränser
 
@@ -1030,7 +1043,7 @@ och **Synkroniserade användare**. Bara läsning; synkroniseringen startar autom
 Om skyddet mot för många anrop är på, vilken lagring som används och gränserna per
 funktion (inloggning, lösenordsåterställning, redigera kanin med flera). Bara läsning.
 
-![Anropsgränser](manual/admin-anropsgranser-desktop.png)
+![Anropsgränser](admin-anropsgranser-desktop.png)
 
 ---
 
@@ -1058,6 +1071,17 @@ funktion (inloggning, lösenordsåterställning, redigera kanin med flera). Bara
 Frågor om stamboken, roller och lösenord: <admin@gotlandskaninen.se>.
 Frågor om registrering, färger och intyg: din genbanksansvarig.
 
+### Vad är på gång?
+
+Vad föreningen arbetar med i Stamboken syns på
+[projekttavlan för Stamboken](https://github.com/orgs/gotlandskaninen/projects/1/views/3) på GitHub, i kolumnerna
+**Att göra**, **Pågår** och **Klart**. Kort med ett hänglås hör till föreningens interna
+arbete och går inte att öppna.
+
+Önskemål mejlar du till <admin@gotlandskaninen.se>, eller lämnar som ett ärende (issue) i
+[gotlandskaninen/stamboken](https://github.com/gotlandskaninen/stamboken/issues) på GitHub. Allt på GitHub är
+offentligt, så skriv inga personuppgifter: inga namn, adresser eller besättningsnummer.
+
 ### Om manualen
 
 Manualen beskriver gränssnittet som det ser ut i källkoden; varje sida i Stamboken har
@@ -1065,4 +1089,6 @@ ett avsnitt här, och ett skript i kodrepot stoppar ändringar som lägger till 
 utan avsnitt. Stegen i [Registrera en kull](#registrera-en-kull), [Registrera en unge
 och utfärda intyg](#registrera-en-unge-och-utfärda-intyg) och [Sälja eller flytta en
 kanin](#sälja-eller-flytta-en-kanin) körs som automatiska tester mot en testdatabas.
-Hur skärmbilder och tester uppdateras står i `docs/manual/README.md`.
+Hur skärmbilder och tester uppdateras står i
+[docs/manual/README.md](https://github.com/gotlandskaninen/stamboken/blob/main/docs/manual/README.md)
+i kodrepot på GitHub.

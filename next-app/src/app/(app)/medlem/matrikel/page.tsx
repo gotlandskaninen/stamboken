@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { FormControl, MenuItem, Select } from "@mui/material";
 import { fetchApi } from "@/lib/api";
 import { getUser } from "@/lib/auth";
+import { MEMBERSHIP_STATUS, MEMBERSHIP_STATUSES } from "@/lib/membershipStatus";
 import { Masthead } from "@/components/shell/Masthead";
 import ds from "@/styles/ds-admin.module.css";
 import styles from "../medlem.module.css";
@@ -89,10 +90,11 @@ export default async function MembershipsListPage({
                 className={styles.statusSelect}
               >
                 <MenuItem value="">Alla</MenuItem>
-                <MenuItem value="active">Aktiv</MenuItem>
-                <MenuItem value="inactive">Inaktiv</MenuItem>
-                <MenuItem value="pending">Väntar</MenuItem>
-                <MenuItem value="friexemplar">Friexemplar</MenuItem>
+                {MEMBERSHIP_STATUSES.map((s) => (
+                  <MenuItem key={s} value={s}>
+                    {MEMBERSHIP_STATUS[s].label}
+                  </MenuItem>
+                ))}
               </Select>
             </FormControl>
             <input type="hidden" name="per_page" value={perPage} />

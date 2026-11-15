@@ -10,7 +10,6 @@ isort:skip_file
 
 import os
 import unittest
-from contextlib import contextmanager
 from datetime import datetime
 from unittest import mock
 
@@ -1356,237 +1355,51 @@ class TestCertificateContracts(FlaskTest):
             response = ctx.get(f"/api/certificates/issue/{self.individuals[3].number}")
             self.assertIn(response.status_code, (400, 404))
 
-    def test_issue_post_returns_pdf(self):
-        """Inventory row: POST /api/certificates/issue/{x} (individual_certificate.tsx:274) — success path.
+    def _store_certificate(self, ind, birth_date="2020-12-01"):
+        """Sign a certificate for `ind` straight into S3 (legacy issue is gone), as the old route stored it.
+        Call inside mock_aws() with the S3 endpoint patched to None. Returns the signed PDF bytes."""
+        from utils.cert_acess import get_certificate, get_certificate_data, sign_data, upload_certificate
 
-        This row was mapped only to the unauthenticated-401
-        rejection test, so a genuine success response was never verified.
-        moto's `mock_aws()` doesn't intercept a boto3 client built with a
-        custom `endpoint_url` (utils/s3.py always passes one from
-        settings.s3.endpoint), so this patches that setting to None for the
-        duration of the mock — `get_s3_client()` builds a fresh client per
-        call, so the patch is picked up without touching production code.
-        """
-        import unittest.mock
+        db.Individual.update(digital_certificate=100000).where(db.Individual.id == ind.id).execute()
+        data = dict(da.get_individual(ind.number, self.admin.uuid), birth_date=birth_date)
+        pdf = sign_data(get_certificate(get_certificate_data(data, self.admin.uuid))).getvalue()
+        upload_certificate(pdf_bytes=pdf, ind_number=ind.number)
+        return pdf
 
+    def test_issue_post_and_update_patch_are_gone(self):
+        """Legacy certificate issue and update answer 410 and change nothing: no S3 object, no row change,
+        and the same answer for a viewer and for an unknown number."""
         import utils.s3 as s3_module
         import utils.settings as settings
 
-        with unittest.mock.patch.object(settings.s3, "endpoint", None), mock_aws():
-            with self.app as ctx:
-                self.login(ctx, self.admin)
-                ind = self.individuals[3]
-                response = ctx.post(
-                    f"/api/certificates/issue/{ind.number}",
-                    json={
-                        "color_id": 1,
-                        "birth_date": "2020-12-01",
-                        "litter_size": 5,
-                        "litter_size6w": 4,
-                    },
-                )
-                self.assertEqual(response.status_code, 200)
-                self.assertEqual(response.headers["Content-Type"], "application/pdf")
-                pdf_bytes = response.get_data()
-                self.assertTrue(pdf_bytes.startswith(b"%PDF"))
-                # the object actually exists in the mocked bucket, not just a 200
-                s3_bytes = s3_module.get_s3_client().get_object(f"{ind.number}/certificate.pdf")
-                self.assertEqual(s3_bytes, pdf_bytes)
-                # the route's own issue_digital still assigns the first number
-                self.assertEqual(db.Individual.get_by_id(ind.id).digital_certificate, 100000)
-
-    def test_issue_is_no_genebank_correction(self):
-        """herd, selling_date and origin_herd are not certificate fields: an admin's genebank change
-        in the issue or update body is ignored, for everyone, and the certificate is signed for the rabbit
-        as stored. PATCH /api/individual corrects the genebank first."""
-        import unittest.mock
-
-        import utils.settings as settings
-
-        number = self.individuals[3].number  # G1-2112: born in G1, uncertified
-        body = {
-            "herd": "M3",
-            "selling_date": "2021-06-01",
-            "origin_herd": {"herd": "M3"},
-            "litter_size": 2,
-            "litter_size6w": 2,
-        }
-        with unittest.mock.patch.object(settings.s3, "endpoint", None), mock_aws():
-            with self.app as ctx:
-                self.login(ctx, self.admin)
-                issued = ctx.post(f"/api/certificates/issue/{number}", json=dict(body))
-                updated = ctx.patch(f"/api/certificates/update/{number}", json=dict(body))
-        self.assertEqual(issued.status_code, 200, issued.data[:200])
-        self.assertEqual(updated.status_code, 200, updated.data[:200])
-        stored = db.Individual.get_by_id(self.individuals[3].id)
-        self.assertEqual(
-            (stored.current_herd.herd, stored.origin_herd.herd, stored.digital_certificate), ("G1", "G1", 100000)
-        )
-
-    def test_issue_body_cannot_point_issuance_at_another_rabbit(self):
-        """Legacy issue is pinned to the URL rabbit; a body id/number cannot hand a number to another one."""
-        import unittest.mock
-
-        import utils.settings as settings
-
-        other = db.Individual.create(origin_herd=self.herds[1], breeding=self.breeding[2], number="G2-2012")
-        ht_row("BIRTH", herd=self.herds[1], individual=other, herd_tracking_date=datetime(2020, 2, 1))
-        ht_row(
-            "TRANSFER",
-            from_herd=self.herds[1],
-            herd=self.herds[0],
-            individual=other,
-            herd_tracking_date=datetime(2020, 6, 1),
-        )
-        body = {
-            "id": other.id,
-            "number": other.number,
-            "breeding": self.breeding[2].id,
-            "origin_herd": {"herd": "G2"},
-            "herd": "G1",
-            "litter_size": 2,  # unchanged: the route calls update_breeding on any difference
-            "litter_size6w": 2,
-        }
-        with unittest.mock.patch.object(settings.s3, "endpoint", None), mock_aws():
-            with self.app as ctx:
-                self.login(ctx, self.owner)
-                ctx.post(f"/api/certificates/issue/{self.individuals[3].number}", json=body)
-        self.assertIsNone(db.Individual.get_by_id(other.id).digital_certificate)
-
-    def test_update_certificate_success_returns_pdf(self):
-        """Inventory row: PATCH /api/certificates/update/{x} (individual_certificate.tsx:321) — success path.
-
-        This row was mapped only to the 404-without-existing-
-        certificate test. An update requires a digital certificate to
-        already exist (herdbook.py:2184-2185: `certificate_exists and
-        present`), so this issues one first, then updates it, within the
-        same mocked S3 bucket.
-        """
-        import unittest.mock
-
-        import utils.s3 as s3_module
-        import utils.settings as settings
-
-        with unittest.mock.patch.object(settings.s3, "endpoint", None), mock_aws():
-            with self.app as ctx:
-                self.login(ctx, self.admin)
-                ind = self.individuals[4]
-                issued = ctx.post(
-                    f"/api/certificates/issue/{ind.number}",
-                    json={"color_id": 1, "birth_date": "2020-12-01", "litter_size": 3, "litter_size6w": 2},
-                )
-                self.assertEqual(issued.status_code, 200)  # precondition: digital cert now exists in S3
-
-                response = ctx.patch(
-                    f"/api/certificates/update/{ind.number}",
-                    json={
-                        "color_id": self.colors[0].id,
-                        "birth_date": "2021-02-01",
-                        "litter_size": 3,
-                        "litter_size6w": 2,
-                    },
-                )
-                self.assertEqual(response.status_code, 200)
-                self.assertEqual(response.headers["Content-Type"], "application/pdf")
-                pdf_bytes = response.get_data()
-                self.assertTrue(pdf_bytes.startswith(b"%PDF"))
-                s3_bytes = s3_module.get_s3_client().get_object(f"{ind.number}/certificate.pdf")
-                self.assertEqual(s3_bytes, pdf_bytes)
-
-    @contextmanager
-    def _committed_before_the_lock(self, individual_id, **values):
-        """Commit `values` between the route's read and its lock: inside certificate_form, which both legacy
-        routes call in that window, outside their transaction."""
-        from utils.cert_service_v2 import certificate_form
-
-        ran = []
-
-        def concurrent(body):
-            ran.append(True)
-            db.Individual.update(**values).where(db.Individual.id == individual_id).execute()
-            return certificate_form(body)
-
-        with mock.patch("herdbook.certificate_form", side_effect=concurrent):
-            yield
-        self.assertTrue(ran, "certificate_form was never reached")
-
-    def test_issue_does_not_overwrite_a_certificate_issued_before_the_lock(self):
-        """Final review (81bdb0c): v2 issues 100000 while a legacy issue waits for the lock. The legacy read saw
-        no certificate; it must not put 100001 over the number the v2 row and PDF carry."""
-        import utils.settings as settings
-
-        ind = self.individuals[3]  # G1-2112: uncertified
+        ind = self.individuals[3]  # uncertified
+        body = {"color_id": 1, "birth_date": "2020-12-01", "litter_size": 5, "litter_size6w": 4}
         with mock.patch.object(settings.s3, "endpoint", None), mock_aws():
-            with self.app as ctx:
-                self.login(ctx, self.owner)
-                with self._committed_before_the_lock(ind.id, digital_certificate=100000):
-                    response = ctx.post(f"/api/certificates/issue/{ind.number}", json={})
-        self.assertEqual(
-            (response.status_code, response.get_json(), db.Individual.get_by_id(ind.id).digital_certificate),
-            (400, {"response": "Certificate already exists"}, 100000),
-        )
+            for user in (self.admin, self.viewer):
+                client = self._client(user)
+                for number in (ind.number, "G1-0000"):
+                    for method, url in (("post", "issue"), ("patch", "update")):
+                        with self.subTest(user=user.email, number=number, route=url):
+                            response = getattr(client, method)(f"/api/certificates/{url}/{number}", json=body)
+                            self.assertEqual(response.status_code, 410)
+                            self.assertEqual(
+                                response.get_json(), {"response": "Intyg utfärdas och ändras nu i nya Stamboken."}
+                            )
+            with self.assertRaises(Exception):  # noqa: B017 - any S3 miss
+                s3_module.get_s3_client().get_object(f"{ind.number}/certificate.pdf")
+        stored = db.Individual.get_by_id(ind.id)
+        self.assertEqual((stored.digital_certificate, stored.color_id), (None, ind.color_id))
 
-    def test_issue_keeps_a_renumber_committed_before_the_lock(self):
-        """Final review (81bdb0c): the pre-lock read went to update_individual, whose stale number renamed the
-        rabbit back (G1-2119 -> G1-2112). The PDF belongs under the current number."""
-        import utils.s3 as s3_module
+    def test_issue_get_still_downloads_a_stored_certificate(self):
         import utils.settings as settings
 
         ind = self.individuals[3]
         with mock.patch.object(settings.s3, "endpoint", None), mock_aws():
-            with self.app as ctx:
-                self.login(ctx, self.manager)
-                with self._committed_before_the_lock(ind.id, number="G1-2119"):
-                    response = ctx.post(f"/api/certificates/issue/{ind.number}", json={})
-            stored = db.Individual.get_by_id(ind.id)
-            self.assertEqual((response.status_code, stored.number), (200, "G1-2119"))
-            self.assertEqual(s3_module.get_s3_client().get_object("G1-2119/certificate.pdf"), response.get_data())
-
-    def test_update_keeps_a_renumber_committed_before_the_lock(self):
-        """Final review (81bdb0c): the same stale read on the update route renamed G1-2118 back to G1-2112."""
-        import utils.settings as settings
-
-        ind = self.individuals[3]
-        with mock.patch.object(settings.s3, "endpoint", None), mock_aws():
-            with self.app as ctx:
-                self.login(ctx, self.manager)
-                issued = ctx.post(f"/api/certificates/issue/{ind.number}", json={})
-                self.assertEqual(issued.status_code, 200)
-                with self._committed_before_the_lock(ind.id, number="G1-2118"):
-                    response = ctx.patch(f"/api/certificates/update/{ind.number}", json={})
-        self.assertEqual((response.status_code, db.Individual.get_by_id(ind.id).number), (200, "G1-2118"))
-
-    def test_upload_holds_the_number_lock(self):
-        """Final review (24a65b0): the legacy certificate upload to {number}/certificate.pdf did not take the
-        number lock a renumber holds while it moves its assets after its commit, so the older PDF could land
-        over the new one. It uploads under the lock now, as a photo upload does."""
-        import herdbook
-        import utils.settings as settings
-        from utils import number_assets
-
-        events = []
-        real_lock, real_upload = number_assets.lock_number, herdbook.upload_certificate
-
-        def lock(number, xact=False):
-            events.append(("lock", number, xact))
-            return real_lock(number, xact=xact)
-
-        def upload(pdf_bytes, ind_number):
-            events.append(("upload", ind_number))
-            return real_upload(pdf_bytes=pdf_bytes, ind_number=ind_number)
-
-        ind = self.individuals[3]
-        with (
-            mock.patch.object(settings.s3, "endpoint", None),
-            mock_aws(),
-            mock.patch.object(number_assets, "lock_number", side_effect=lock),
-            mock.patch.object(herdbook, "upload_certificate", side_effect=upload),
-        ):
-            with self.app as ctx:
-                self.login(ctx, self.manager)
-                response = ctx.post(f"/api/certificates/issue/{ind.number}", json={})
-        self.assertEqual(response.status_code, 200, response.data[:200])
-        self.assertEqual(events[-2:], [("lock", ind.number, True), ("upload", ind.number)])
+            pdf = self._store_certificate(ind)
+            response = self._client(self.admin).get(f"/api/certificates/issue/{ind.number}")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["Content-Type"], "application/pdf")
+        self.assertEqual(response.get_data(), pdf)
 
     def test_preview_returns_pdf_or_503(self):
         with self.app as ctx:
@@ -1616,18 +1429,6 @@ class TestCertificateContracts(FlaskTest):
             self.assertEqual(response.status_code, 200)
             self.assertEqual(response.headers["Content-Type"], "application/pdf")
 
-    def test_update_certificate_without_existing_cert_returns_404(self):
-        """Inventory row: PATCH /api/certificates/update/{x} (individual_certificate.tsx:321)."""
-        with self.app as ctx:
-            self.login(ctx, self.admin)
-            response = ctx.patch(
-                f"/api/certificates/update/{self.individuals[0].number}",
-                json={"color_id": self.colors[0].id, "birth_date": "2021-02-01"},
-            )
-            self.assertEqual(response.status_code, 404)
-            data = response.get_json()
-            self.assertIn("response", data)
-
     def test_verify_with_bad_data_returns_404_not_valid(self):
         """Inventory row: POST /api/certificates/verify/{x} with an unreadable file
         (certificate_verification.tsx:84-101) — OLD contract: 404 JSON "not valid",
@@ -1646,11 +1447,7 @@ class TestCertificateContracts(FlaskTest):
                 ind = self.individuals[4]
                 # A stored certificate must exist: with none in S3 the checksum lookup
                 # raises NoSuchKey and BOTH backends answer 400 (identical code).
-                issued = ctx.post(
-                    f"/api/certificates/issue/{ind.number}",
-                    json={"color_id": 1, "birth_date": "2020-12-01", "litter_size": 3, "litter_size6w": 2},
-                )
-                self.assertEqual(issued.status_code, 200)
+                self._store_certificate(ind)
 
                 response = ctx.post(f"/api/certificates/verify/{ind.number}", data=b"not a real certificate")
                 self.assertEqual(response.status_code, 404)
@@ -1676,23 +1473,14 @@ class TestCertificateContracts(FlaskTest):
             with self.app as ctx:
                 self.login(ctx, self.admin)
                 ind = self.individuals[3]
-                issued = ctx.post(
-                    f"/api/certificates/issue/{ind.number}",
-                    json={"color_id": 1, "birth_date": "2020-12-01", "litter_size": 5, "litter_size6w": 4},
-                )
-                self.assertEqual(issued.status_code, 200)
-                pdf_bytes = issued.get_data()
+                pdf_bytes = self._store_certificate(ind)
 
                 response = ctx.post(f"/api/certificates/verify/{ind.number}", data=pdf_bytes)
                 self.assertEqual(response.status_code, 200)
                 self.assertEqual(response.get_json()["response"], "Certificate is valid")
 
                 # A signed PDF that is not the stored one: signature ok, checksum not → 202 (old contract).
-                reissued = ctx.patch(
-                    f"/api/certificates/update/{ind.number}",
-                    json={"color_id": 1, "birth_date": "2020-12-02", "litter_size": 5, "litter_size6w": 4},
-                )
-                self.assertEqual(reissued.status_code, 200)
+                self._store_certificate(ind, birth_date="2020-12-02")
                 response = ctx.post(f"/api/certificates/verify/{ind.number}", data=pdf_bytes)
                 self.assertEqual(response.status_code, 202)
                 self.assertEqual(response.get_json()["response"], "Certificate valid but file not present")
@@ -1715,13 +1503,9 @@ class TestCertificateContracts(FlaskTest):
             with self.app as ctx:
                 self.login(ctx, self.admin)
                 ind = self.individuals[3]
-                issued = ctx.post(
-                    f"/api/certificates/issue/{ind.number}",
-                    json={"color_id": 1, "birth_date": "2020-12-01", "litter_size": 5, "litter_size6w": 4},
-                )
-                self.assertEqual(issued.status_code, 200)
+                pdf_bytes = self._store_certificate(ind)
 
-                writer = IncrementalPdfFileWriter(io.BytesIO(issued.get_data()), strict=False)
+                writer = IncrementalPdfFileWriter(io.BytesIO(pdf_bytes), strict=False)
                 edited = 0
                 for ref in writer.root["/AcroForm"]["/Fields"]:
                     field = ref.get_object()
@@ -1749,210 +1533,10 @@ class TestCertificateContracts(FlaskTest):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.get_json()["status"], "error")
 
-    # issue/update sign only what the caller may write, rendered from the stored rabbit.
-    # Refusals keep each route's status and shape: issue 400, update 404, {"response": ...}.
-
     def _client(self, user):
         client = self.app.application.test_client(use_cookies=True)
         self.login(client, user)
         return client
-
-    def test_issue_by_a_viewer_is_refused_and_signs_nothing(self):
-        import unittest.mock
-
-        import utils.database as db
-        import utils.s3 as s3_module
-        import utils.settings as settings
-        from utils.cert_acess import sign_data
-
-        target = self.individuals[4]  # M3-2111, Mellerud: the Gotland viewer cannot even read it
-        rabbit = self.individuals[3]  # G1-2112: the viewer can read it, not edit it
-        with unittest.mock.patch.object(settings.s3, "endpoint", None), mock_aws():
-            issued = self._client(self.admin).post(
-                f"/api/certificates/issue/{target.number}", json={"color_id": 1, "litter_size": 2, "litter_size6w": 2}
-            )
-            self.assertEqual(issued.status_code, 200, "precondition: the genuine M3-2111 certificate")
-            s3 = s3_module.get_s3_client()
-            genuine = s3.get_object(f"{target.number}/certificate.pdf")
-            with unittest.mock.patch("herdbook.sign_data", wraps=sign_data) as sign:
-                response = self._client(self.viewer).post(
-                    f"/api/certificates/issue/{rabbit.number}",
-                    json={"name": "FORGED", "number": target.number, "litter_size": 2, "litter_size6w": 2},
-                )
-            self.assertEqual(
-                s3.get_object(f"{target.number}/certificate.pdf"), genuine, "M3-2111's certificate was overwritten"
-            )
-        self.assertEqual((response.status_code, response.get_json()), (400, {"response": "Forbidden"}))
-        sign.assert_not_called()
-        stored = db.Individual.get_by_id(rabbit.id)
-        self.assertEqual((stored.name, stored.digital_certificate), (None, None))
-
-    def test_update_by_a_viewer_is_refused_and_signs_nothing(self):
-        import unittest.mock
-
-        import utils.database as db
-        import utils.s3 as s3_module
-        import utils.settings as settings
-        from utils.cert_acess import sign_data
-
-        rabbit = self.individuals[3]  # G1-2112: the Gotland viewer can read it, not edit it
-        with unittest.mock.patch.object(settings.s3, "endpoint", None), mock_aws():
-            issued = self._client(self.admin).post(
-                f"/api/certificates/issue/{rabbit.number}", json={"color_id": 1, "litter_size": 2, "litter_size6w": 2}
-            )
-            self.assertEqual(issued.status_code, 200, "precondition: G1-2112 has a digital certificate")
-            s3 = s3_module.get_s3_client()
-            genuine = s3.get_object(f"{rabbit.number}/certificate.pdf")
-            with unittest.mock.patch("herdbook.sign_data", wraps=sign_data) as sign:
-                response = self._client(self.viewer).patch(
-                    f"/api/certificates/update/{rabbit.number}",
-                    json={"name": "FORGED", "litter_size": 2, "litter_size6w": 2},
-                )
-            self.assertEqual(
-                s3.get_object(f"{rabbit.number}/certificate.pdf"), genuine, "G1-2112's certificate was overwritten"
-            )
-        self.assertEqual((response.status_code, response.get_json()), (404, {"response": "Forbidden"}))
-        sign.assert_not_called()
-        self.assertIsNone(db.Individual.get_by_id(rabbit.id).name)
-
-    def test_issue_renders_the_stored_rabbit_not_the_body(self):
-        """Fields outside the certificate form (number, parents, birth date, sale) never reach the PDF or S3."""
-        import unittest.mock
-
-        import utils.database as db
-        import utils.s3 as s3_module
-        import utils.settings as settings
-        from utils.cert_acess import get_certificate
-
-        target = self.individuals[4]  # M3-2111
-        rabbit = self.individuals[3]  # G1-2112: mother G1-1911, born 2021-02-01, held by G1
-        body = {
-            "name": "Ny",
-            "litter_size": 2,
-            "litter_size6w": 2,
-            "number": target.number,
-            "digital_certificate": 1,
-            "mother": {"number": "M3-1911"},
-            "birth_date": "1999-01-01",
-            "herd": {"herd": "G2"},
-            "selling_date": "2021-06-01",
-        }
-        with unittest.mock.patch.object(settings.s3, "endpoint", None), mock_aws():
-            admin = self._client(self.admin)
-            self.assertEqual(
-                admin.post(
-                    f"/api/certificates/issue/{target.number}",
-                    json={"color_id": 1, "litter_size": 2, "litter_size6w": 2},
-                ).status_code,
-                200,
-            )
-            s3 = s3_module.get_s3_client()
-            genuine = s3.get_object(f"{target.number}/certificate.pdf")
-            with unittest.mock.patch("herdbook.get_certificate", wraps=get_certificate) as render:
-                response = admin.post(f"/api/certificates/issue/{rabbit.number}", json=body)
-            self.assertEqual(
-                s3.get_object(f"{target.number}/certificate.pdf"), genuine, "the body number redirected the S3 key"
-            )
-            self.assertEqual(response.status_code, 200, response.data[:200])
-            self.assertEqual(s3.get_object(f"{rabbit.number}/certificate.pdf"), response.get_data())
-        stored = db.Individual.get_by_id(rabbit.id)
-        printed = render.call_args.args[0]
-        self.assertEqual(
-            (printed["number"], printed["M_number"], printed["birth_date"], printed["name"]),
-            (rabbit.number, "G1-1911", "2021-02-01", "Ny"),
-        )
-        self.assertEqual(printed["digital_certificate"], stored.digital_certificate)
-        self.assertNotEqual(stored.digital_certificate, 1)
-        self.assertEqual((stored.name, stored.current_herd.herd), ("Ny", "G1"))
-
-    def test_refused_update_signs_and_uploads_nothing(self):
-        """A breeding or individual update that is refused aborts the request: no PDF is signed or uploaded."""
-        import io
-        import unittest.mock
-
-        import utils.database as db
-
-        rabbit, certified = self.individuals[3], self.individuals[4]
-        db.Individual.update(digital_certificate=100500).where(db.Individual.id == certified.id).execute()
-        with (
-            unittest.mock.patch("herdbook.sign_data", side_effect=lambda pdf: io.BytesIO(b"%PDF-fake")) as sign,
-            unittest.mock.patch("herdbook.upload_certificate", return_value=True) as upload,
-            unittest.mock.patch("herdbook.check_certificate_s3", return_value=True),
-        ):
-            client = self._client(self.admin)
-            # update_breeding refuses the litter size; update_individual refuses the colour.
-            issue = client.post(
-                f"/api/certificates/issue/{rabbit.number}", json={"name": "Ny", "litter_size": 0, "litter_size6w": 0}
-            )
-            update = client.patch(
-                f"/api/certificates/update/{certified.number}", json={"name": "Ny", "color": "Ingen sådan färg"}
-            )
-        self.assertEqual(
-            (issue.status_code, issue.get_json()), (400, {"response": "Litter size must be larger than zero."})
-        )
-        self.assertEqual(update.status_code, 404, update.data[:200])
-        self.assertTrue(update.get_json()["response"].startswith("Unknown color"), update.get_json())
-        sign.assert_not_called()
-        upload.assert_not_called()
-        stored = db.Individual.get_by_id(rabbit.id)
-        self.assertEqual((stored.name, stored.digital_certificate), (None, None), "the refused issue committed")
-        self.assertEqual(db.Breeding.get_by_id(rabbit.breeding_id).litter_size, 2)
-        self.assertIsNone(db.Individual.get_by_id(certified.id).name)
-
-    def test_refused_individual_update_rolls_back_the_litter_update(self):
-        """The litter update that already succeeded is rolled back when the individual update is refused."""
-        import io
-        import unittest.mock
-
-        import utils.database as db
-
-        rabbit = self.individuals[2]  # M3-2122, uncertified; its litter has litter_size 2
-        with (
-            unittest.mock.patch("herdbook.sign_data", side_effect=lambda pdf: io.BytesIO(b"%PDF-fake")) as sign,
-            unittest.mock.patch("herdbook.upload_certificate", return_value=True),
-        ):
-            response = self._client(self.admin).post(
-                f"/api/certificates/issue/{rabbit.number}",
-                json={"litter_size": 3, "litter_size6w": 2, "color": "Ingen sådan färg"},
-            )
-        self.assertEqual(
-            db.Breeding.get_by_id(rabbit.breeding_id).litter_size,
-            2,
-            f"issue returned {response.status_code}: the litter size was saved although the request was refused",
-        )
-        self.assertEqual(response.status_code, 400, response.data[:200])
-        self.assertTrue(response.get_json()["response"].startswith("Unknown color"), response.get_json())
-        sign.assert_not_called()
-        self.assertIsNone(db.Individual.get_by_id(rabbit.id).digital_certificate)
-
-    def test_issue_respects_the_litter_quota(self):
-        """A first certificate past 6 weeks takes one of litter_size6w's slots (under the litter lock)."""
-        import unittest.mock
-
-        import utils.database as db
-        from utils.cert_acess import sign_data
-
-        litter = db.Breeding.create(
-            breeding_herd_id=self.herds[0],
-            birth_date=datetime(2025, 1, 10),
-            litter_number=1,
-            litter_size=3,
-            litter_size6w=1,
-            mother=self.parents[0],
-            father=self.parents[1],
-        )
-        db.Individual.create(origin_herd=self.herds[0], breeding=litter, number="G1-2511", certificate="P1")
-        rabbit = db.Individual.create(origin_herd=self.herds[0], breeding=litter, number="G1-2512")
-        with unittest.mock.patch("herdbook.sign_data", wraps=sign_data) as sign:
-            response = self._client(self.admin).post(
-                f"/api/certificates/issue/{rabbit.number}", json={"litter_size": 3, "litter_size6w": 1}
-            )
-        self.assertIsNone(
-            db.Individual.get_by_id(rabbit.id).digital_certificate,
-            f"issue returned {response.status_code}: litter_size6w=1 but a second kit got a certificate",
-        )
-        self.assertEqual((response.status_code, response.get_json()), (400, {"response": "certificate_quota_exceeded"}))
-        sign.assert_not_called()
 
     def test_paper_certificate_via_individual_edit_respects_the_litter_quota(self):
         """An owner's PATCH that sets a first (paper) certificate goes through the same quota."""
@@ -1990,22 +1574,6 @@ class TestCertificateContracts(FlaskTest):
         )
         self.assertEqual((v2_resp.status_code, v2_resp.get_json()["detail"]), (400, "certificate_quota_exceeded"))
 
-    def test_issue_in_a_pre_roster_litter_has_no_quota(self):
-        """Litters without litter_number (before the roster) keep issuing as before."""
-        import unittest.mock
-
-        import utils.database as db
-        import utils.settings as settings
-
-        db.Breeding.update(litter_size6w=1).where(db.Breeding.id == self.breeding[0].id).execute()
-        rabbit = self.individuals[3]  # G1-2112; its sibling G1-2111 is certified, litter_size6w is now 1
-        with unittest.mock.patch.object(settings.s3, "endpoint", None), mock_aws():
-            response = self._client(self.admin).post(
-                f"/api/certificates/issue/{rabbit.number}", json={"color_id": 1, "litter_size": 2, "litter_size6w": 1}
-            )
-        self.assertEqual(response.status_code, 200, response.data[:200])
-        self.assertIsNotNone(db.Individual.get_by_id(rabbit.id).digital_certificate)
-
     def _roster_litter_without_litter_size6w(self):
         import utils.database as db
 
@@ -2018,45 +1586,6 @@ class TestCertificateContracts(FlaskTest):
             mother=self.parents[0],
             father=self.parents[1],
         )
-
-    def test_issue_requires_litter_size6w_and_a_roster_in_sync(self):
-        """A first certificate in a roster litter needs litter_size6w, and a roster that agrees with it."""
-        import unittest.mock
-
-        import utils.database as db
-        from utils.cert_acess import sign_data
-
-        litter = self._roster_litter_without_litter_size6w()
-        rabbit = db.Individual.create(origin_herd=self.herds[0], breeding=litter, number="G1-2511")
-        admin = self._client(self.admin)
-        upload = unittest.mock.patch("herdbook.upload_certificate", return_value=True)
-        with unittest.mock.patch("herdbook.sign_data", wraps=sign_data) as sign, upload:
-            missing = admin.post(f"/api/certificates/issue/{rabbit.number}", json={"litter_size": 3})
-        self.assertIsNone(
-            db.Individual.get_by_id(rabbit.id).digital_certificate,
-            f"issue returned {missing.status_code}: a certificate in a litter without litter_size6w",
-        )
-        self.assertEqual((missing.status_code, missing.get_json()), (400, {"response": "litter_size6w_required"}))
-
-        # The form declares 2 alive at 6 weeks, but the roster has 3 alive (the rabbit is registered).
-        db.Bunny.create(breeding=litter, slot_order=1, fate="registered", individual=rabbit)
-        db.Bunny.create(breeding=litter, slot_order=2)
-        db.Bunny.create(breeding=litter, slot_order=3)
-        with unittest.mock.patch("herdbook.sign_data", wraps=sign_data) as sign, upload:
-            out_of_sync = admin.post(
-                f"/api/certificates/issue/{rabbit.number}", json={"litter_size": 3, "litter_size6w": 2}
-            )
-        self.assertIsNone(
-            db.Individual.get_by_id(rabbit.id).digital_certificate,
-            "3 kits alive in the roster but litter_size6w=2, and a certificate was issued",
-        )
-        # The route's 400 {"response": key} shape, plus the count as a new field (ADR-0006).
-        self.assertEqual(
-            (out_of_sync.status_code, out_of_sync.get_json()),
-            (400, {"response": "roster_alive_exceeds_6w", "must_mark_dead": 1}),
-        )
-        sign.assert_not_called()
-        self.assertIsNone(db.Breeding.get_by_id(litter.id).litter_size6w, "the refused request saved litter_size6w")
 
     def test_paper_certificate_via_individual_edit_requires_litter_size6w_and_a_roster_in_sync(self):
         """An owner's PATCH that sets a first (paper) certificate goes through the same two rules."""

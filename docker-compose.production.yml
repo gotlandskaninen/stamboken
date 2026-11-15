@@ -100,19 +100,11 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - SESSION_REDIS_URL=redis://redis:6379/2
       - RATELIMIT_STORAGE_URL=redis://redis:6379/3
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "20m"
-        max-file: "10"
     volumes:
       - type: bind
         source: ./config
         target: /config
         read_only: true
-      - type: bind
-        source: ./logs
-        target: /logs
       - type: bind
         source: ./uppladdningar
         target: /app/uppladdningar
@@ -171,21 +163,11 @@ services:
       # registration on the demo returns a transient certificate_error instead
       # of a stored PDF. Same S3 dependency the /v2/certificates/issue endpoint
       # already had — enabling the promote-flow digital option only surfaces it.
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "20m"
-        max-file: "10"
     volumes:
       - type: bind
         source: ./config
         target: /config
         read_only: true
-      - type: bind
-        # Own dir: the genebank CSV logs don't record the instance, so demo
-        # edits must not land in production's logs. Create it like ./logs.
-        source: ./logs-test
-        target: /logs
       # Read-only: the demo shares this host dir with the production api, and a
       # photo upload writes the fixed path kaniner/<number>.jpg that nginx serves.
       # So demo uploads (photos, profile pictures) and v2 certificate issuance
@@ -254,7 +236,9 @@ services:
       # Certbot hanterar flera domäner
       - STAGING=${CERTBOT_STAGING:-0}
     volumes:
+      - ./nginx/nginx.main:/etc/nginx/nginx.conf:ro
       - ./nginx/production/herdbook-production.conf:/etc/nginx/user_conf.d/herdbook.conf:ro
+      - ./nginx/production/stamboken-legacy.conf:/etc/nginx/user_conf.d/stamboken-legacy.conf:ro
       - ./nginx/legacy-frontend-prod:/etc/nginx/legacy-frontend-prod:ro
       - ./nginx/legacy-frontend-test:/etc/nginx/legacy-frontend-test:ro
       - ./letsencrypt:/etc/letsencrypt
