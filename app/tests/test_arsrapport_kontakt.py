@@ -517,6 +517,26 @@ class KontaktTest(PaperTest):
         a23 = [(row.recipient_kind, row.recipient_id, row.params["adress"]) for row in self.a23()]
         self.assertEqual(a23, [("member", new_main.id, 1)])
 
+    def test_herd_is_locked_before_the_account_check(self):  # Opus 5, D19: a later account change still wins
+        item = self.form(self.manager)
+        self.login("man")
+        statements, original = [], db.DATABASE.execute_sql
+
+        def spy(sql, *args, **kwargs):
+            statements.append(sql)
+            return original(sql, *args, **kwargs)
+
+        with mock.patch.object(db.DATABASE, "execute_sql", side_effect=spy):
+            self.assertEqual(self.ok(item, self.paper(item, matrikel(konto=NEW_KONTO)))["matrikel"], ["konto"])
+
+        def first(*parts):
+            return next((n for n, sql in enumerate(statements) if all(part in sql for part in parts)), None)
+
+        lock = first('FROM "herd"', "FOR NO KEY UPDATE")
+        self.assertIsNotNone(lock)
+        self.assertLess(lock, first('FROM "audit_log"'))  # later_fields reads the account's changes under it
+        self.assertLess(lock, first('UPDATE "herd"'))
+
     def test_profile_contact_change_is_logged(self):  # D19
         db.Member.update(user=self.owner.id).where(db.Member.id == self.member.id).execute()
         self.login("owner")

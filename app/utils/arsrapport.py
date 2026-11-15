@@ -1780,14 +1780,18 @@ def _contact_event(submission):
 
 def _lock_matrikel(herd):
     """
-    The herd's membership FOR UPDATE, which the matrikel's own writers take first, and its main member read under
-    it: (membership, member), each None when missing. A herd moved to another membership meanwhile is a 409.
+    The herd's membership FOR UPDATE, which the matrikel's own writers take first, then the herd's row, whose account
+    apply_paper_matrikel checks and writes (Opus 5): an account change on the herd page waits, or comes before
+    later_fields reads it. FOR NO KEY UPDATE, as lock_individuals, so rows that refer to the herd are not held up.
+    The main member is read under them: (membership, member), each None when missing. A herd moved to another
+    membership meanwhile is a 409.
     """
     membership_id = Herd.select(Herd.membership).where(Herd.id == herd.id).scalar()
     if membership_id is None:
         return None, None
     membership = Membership.select().where(Membership.id == membership_id).for_update().get()
-    if Herd.select(Herd.membership).where(Herd.id == herd.id).scalar() != membership_id:
+    locked = Herd.select(Herd.membership).where(Herd.id == herd.id).for_update("FOR NO KEY UPDATE")
+    if locked.scalar() != membership_id:
         raise ArsrapportError(409, "Besättningen bytte medlemskap samtidigt. Försök igen.")
     return membership, _main_member(herd)
 
