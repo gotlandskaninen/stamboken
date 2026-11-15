@@ -4,6 +4,7 @@ import {
   countByState,
   filterRows,
   parseFilter,
+  ROW_STATES,
   type RowState,
   type StatusRow,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
@@ -67,6 +68,20 @@ describe("status view filters", () => {
       8,
     );
   });
+  it.each([
+    "avslutar",
+    "inskickad",
+    "blankett_vantar",
+    "blankett_inkommen",
+    "paborjad",
+    "ingen_epost",
+    "ej_rapporterad",
+  ] as const)("filters on the state %s", (state) => {
+    const list = ROW_STATES.map((s, i) => row(`G90${i}`, s));
+    expect(
+      filterRows(list, state, "2027-01-31", "2027-01-01").map((r) => r.state),
+    ).toEqual([state]);
+  });
   it("reads the filter from the URL and falls back to Alla", () => {
     expect(parseFilter("att_ringa")).toBe("att_ringa");
     expect(parseFilter("paborjad")).toBe("paborjad");
@@ -81,7 +96,7 @@ describe("Att ringa", () => {
     expect(callFrom("2027-02-07")).toBe("2027-02-05");
     expect(callFrom("2027-03-01")).toBe("2027-02-27");
   });
-  it("is the herds nobody reported for from deadline minus 2 days, and the herds whose omitted rabbits decide the support", () => {
+  it("is started drafts from deadline minus 2 days, and the herds whose omitted rabbits decide the support", () => {
     // Before the boundary only the support-affecting herd.
     expect(
       herds(filterRows(rows, "att_ringa", "2027-01-31", "2027-01-28")),
@@ -89,7 +104,7 @@ describe("Att ringa", () => {
     // On the boundary, 29 January for the deadline 31 January.
     expect(
       herds(filterRows(rows, "att_ringa", "2027-01-31", "2027-01-29")),
-    ).toEqual(["G9001", "G9002", "G9003", "G9004", "G9007"]);
+    ).toEqual(["G9001", "G9002", "G9007"]);
   });
   it("follows a moved deadline", () => {
     expect(
@@ -100,7 +115,7 @@ describe("Att ringa", () => {
     ).toHaveLength(1);
     expect(
       filterRows(rows, "att_ringa", "2027-02-07", "2027-02-05"),
-    ).toHaveLength(5);
+    ).toHaveLength(3);
   });
   it("leaves a round without a deadline to the support flag", () => {
     expect(herds(filterRows(rows, "att_ringa", null, "2027-12-31"))).toEqual([

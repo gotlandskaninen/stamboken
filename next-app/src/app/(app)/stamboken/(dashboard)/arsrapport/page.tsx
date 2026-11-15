@@ -20,9 +20,7 @@ export default async function ArsrapportIndex() {
 
   // Managers reach the status view of the latest round (a helper's route is the queue).
   const rounds = manages
-    ? await fetchApi<{ rounds: Round[] }>("/v2/arsrapport/rundor")
-        .then((r) => r.rounds)
-        .catch(() => [])
+    ? (await fetchApi<{ rounds: Round[] }>("/v2/arsrapport/rundor")).rounds
     : [];
   const statusYear = rounds[0]?.year ?? Number(todayStockholm().slice(0, 4));
 

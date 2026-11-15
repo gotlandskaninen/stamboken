@@ -874,10 +874,9 @@ export const callFrom = (deadline: string): string =>
     .toISOString()
     .slice(0, 10);
 
-// Herds nobody has reported for: they are phoned from two days before the
-// round's deadline. A herd whose form left out rabbits that decide the support
-// is phoned at any time.
-const NOT_REPORTED: RowState[] = ["ej_rapporterad", "ingen_epost", "paborjad"];
+// Spec 5.14: a herd with a draft is phoned from two days before the round's
+// deadline; a herd whose form left out rabbits that decide the support at any
+// time. Bounced and failed mail join with the mail queue (step 3).
 
 export function toCall(
   row: StatusRow,
@@ -886,9 +885,7 @@ export function toCall(
 ): boolean {
   if (row.flags.ej_angivna_paverkar) return true;
   return (
-    deadline !== null &&
-    NOT_REPORTED.includes(row.state) &&
-    today >= callFrom(deadline)
+    deadline !== null && row.state === "paborjad" && today >= callFrom(deadline)
   );
 }
 

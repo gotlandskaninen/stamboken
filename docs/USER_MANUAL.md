@@ -747,8 +747,8 @@ Därefter står aktiveringen på en rad, och **Ändra datum** öppnar datumen ig
 ändra datum kan bara genbanksansvarig och administratör; hjälpare ser bara listan.
 
 Under det står ett filter per läge med antal (**Att ringa**, **Påbörjade**, **Alla** och de
-andra lägena); valet ligger i adressen. **Att ringa** är besättningar som ingen rapporterat
-för, från två dagar före sista dag för stödet, och besättningar vars blankett lämnade ut
+andra lägena); valet ligger i adressen. **Att ringa** är påbörjade rapporter
+från två dagar före sista dag för stödet, och besättningar vars blankett lämnade ut
 kaniner som avgör stödet. Varje rad visar besättningen (koden öppnar rapporten), läget,
 villkoren för stöd (**Hane**, **Hona**, **Kull**, **I tid**, med bock eller kryss), flaggor som
 **3 ej angivna**, när rapporten togs emot och åtgärder: **Mata in blankett** öppnar inkorgen

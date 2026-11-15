@@ -43,22 +43,22 @@ export function RoundPanel({
     if (error) errorRef.current?.focus();
   }, [error]);
 
-  const changed =
-    round === null || DATES.some(([key]) => dates[key] !== (round[key] ?? ""));
+  const changedKeys = DATES.filter(
+    ([key]) => dates[key] !== "" && dates[key] !== (round?.[key] ?? ""),
+  ).map(([key]) => key);
+  // Dates the server has not filled in yet get its defaults before activation.
+  const incomplete = round === null || DATES.some(([key]) => !round[key]);
 
   async function run(activate: boolean) {
     if (busy) return;
     setBusy(true);
     setError(null);
     try {
-      // Dates not typed are left to the server's defaults.
+      // Only what the user changed is sent; empty dates are left to the server's defaults.
       const body = Object.fromEntries(
-        DATES.filter(([key]) => dates[key] !== "").map(([key]) => [
-          key,
-          dates[key],
-        ]),
+        changedKeys.map((key) => [key, dates[key]]),
       );
-      if (changed) {
+      if (changedKeys.length > 0 || (activate && incomplete)) {
         const saved = await saveRound(year, body, env);
         if (!saved.ok) {
           setError(saved.problem.detail || saved.problem.title);
@@ -156,7 +156,7 @@ export function RoundPanel({
             <button
               type="button"
               className={`sb-btn ${styles.btn}`}
-              disabled={busy || !changed}
+              disabled={busy || changedKeys.length === 0}
               onClick={() => run(false)}
             >
               {busy ? "Sparar …" : "Spara datum"}

@@ -30,9 +30,9 @@ export default async function StatusPage({
   // The genebanks the user may open: admin all, others where they manage or help.
   const [queue, all] = await Promise.all([
     fetchApi<QueueList>("/v2/inkorg?limit=1"),
-    fetchApi<{ genebanks: { id: number; name: string }[] }>("/genebanks")
-      .then((r) => r.genebanks ?? [])
-      .catch(() => []),
+    fetchApi<{ genebanks: { id: number; name: string }[] }>("/genebanks").then(
+      (r) => r.genebanks ?? [],
+    ),
   ]);
   const mine = queue.my_genebanks ?? [];
   const options = user.is_admin
@@ -42,7 +42,10 @@ export default async function StatusPage({
         name: all.find((g) => g.id === id)?.name ?? `Genbank ${id}`,
       }));
   const wanted = Number(sp.genebank_id);
-  const genebank = options.find((g) => g.id === wanted) ?? options[0];
+  // Default: the first genebank the user manages, else the first readable one.
+  const managed = options.find((g) => manages(user, g.id) && !user.is_admin);
+  const genebank =
+    options.find((g) => g.id === wanted) ?? managed ?? options[0];
   if (!genebank) notFound();
   const canEdit = manages(user, genebank.id);
 
@@ -94,7 +97,7 @@ export default async function StatusPage({
       />
       <div className={inkorg.container}>
         <RoundPanel
-          key={`${genebank.id}-${env}`}
+          key={`${genebank.id}-${env}-${view?.round.start_date}-${view?.round.deadline}-${view?.round.end_date}`}
           year={Number(year)}
           genebankId={genebank.id}
           genebankName={genebank.name}
