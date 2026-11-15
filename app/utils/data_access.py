@@ -4329,7 +4329,7 @@ def purge_audit_ip(now, batch=AUDIT_IP_BATCH) -> int:
     next run continues. Returns the rows changed.
     """
     cutoff = DATABASE.execute_sql("SELECT %s::timestamptz - %s::interval", (now, AUDIT_IP_RETENTION)).fetchone()[0]
-    marker_id = "purge-ip-{:%Y%m%dT%H%M%SZ}".format(now.astimezone(timezone.utc))
+    marker_id = f"purge-ip-{now.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}"
     total, last = 0, (datetime.min.replace(tzinfo=timezone.utc), 0)
     while True:
         rows = DATABASE.execute_sql(
