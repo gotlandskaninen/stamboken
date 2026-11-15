@@ -401,6 +401,11 @@ def patch_me_contact():
             m, ms, err = _relock_me(membership_id, person_id)
             if err is not None:
                 return err
+            changed = [f for f, v in membership_updates.items() if getattr(ms, f) != v]
+            changed += [f for f, v in person_updates.items() if getattr(m, f) != v]
+            if changed:  # D19: a paper form signed before this change must not overwrite it; the names only
+                payload = {"person_id": m.id, "fields": changed, "source": "profil"}
+                write_matrikel_audit(current_user, "kontakt_andrad", ms, payload)
             for field, value in person_updates.items():
                 setattr(m, field, value)
             for field, value in membership_updates.items():

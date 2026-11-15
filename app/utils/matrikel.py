@@ -31,6 +31,7 @@ from utils.database import (
     MatrikelAudit,
     Member,
     MemberApplication,
+    MemberChangeRequest,
     MemberNumberCounter,
     Membership,
     User,
@@ -451,6 +452,8 @@ def anonymize_person(member, actor):
         membership = person.membership
         before = user.effective_herd_ids() if user is not None else set()
         redact_person_from_audits(person)
+        # the old and new e-mail of each change (Fable 8); a queued mail to one finds no address and is cancelled
+        MemberChangeRequest.delete().where(MemberChangeRequest.member == person.id).execute()
         now = datetime.now()
         HerdAccessGrant.update(revoked_at=now, updated_at=now).where(
             HerdAccessGrant.member == person,

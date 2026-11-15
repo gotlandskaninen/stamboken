@@ -429,6 +429,21 @@ class Herd(BaseModel):
 PRIVACY_LEVELS = ("public", "authenticated", "private")
 
 
+# shortcut: replaced by #33's account_end at merge
+def account_end(value):
+    """
+    Only the last two digits of a bank account number, for readers who must not see all of it.
+
+    >>> account_end("8327-9, 123 456 789 12")
+    '••12'
+    >>> account_end(None) is None
+    True
+    """
+    if not value:
+        return value
+    return "••" + re.sub(r"\D", "", str(value))[-2:]
+
+
 def remove_fields_by_privacy(data, access_level):
     """
     Removes fields according to a given access level (private, authenticated

@@ -335,6 +335,7 @@ till avsändaren väntar, och senast 30 dagar efter stängningen.
 | `svar` | `{"text": "Ja.", "documents": [33], "not_saved": ["brev.docx"]}`; `user` är `null`, `not_saved` bara när något inte sparades |
 | `tolka_igen` | `{"document": 31}`; handläggaren lade dokumentet i tolkningens kö igen |
 | `original_raderat` | `{"document": 31}`; originalet raderades på begäran (`…/radera-original`) |
+| `matrikel_andrad` | `{"falt": ["konto", "epost"], "hoppade": ["telefon"], "submission_id": 12}`; en årsblankett ändrade uppgifter i matrikeln (`falt`) eller hoppade över dem, eftersom matrikeln ändrats efter blankettens datum (`hoppade`). Bara fältnamnen, aldrig värdena |
 
 När postens text gallras försvinner `text`, `note` och `not_saved` ur `detail`; händelsen står kvar.
 
