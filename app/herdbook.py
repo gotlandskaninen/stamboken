@@ -1693,16 +1693,6 @@ def external_unlink_handler(service):
     if not current_user.is_authenticated:
         return "null"  # FIXME: 403 instead?
 
-    # Never the account's last way to sign in: the legacy Google login no
-    # longer adopts an existing account, so only an admin could let the holder
-    # back in.
-    others = db.Authenticators.select().where(
-        (db.Authenticators.user == current_user.id) & (db.Authenticators.auth != service)
-    )
-    if not others.exists():
-        APP.logger.warning("Refusing to unlink %s, the last way to sign in, for user #%d", service, current_user.id)
-        return "null"
-
     unlinked = da.unlink_account(current_user, service)
     if not unlinked:
         return "null"  # FIXME: Error code instead?

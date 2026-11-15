@@ -611,27 +611,19 @@ def link_account(user, method, ident):
     if not method or not ident or not user:
         return None
 
-    # Allows at most one identity for each method to be linked to this account.
-    unlink_account(user, method)
-
     try:
         with DATABASE.atomic():
-            authenticator = (
-                Authenticators.select()
-                .where((Authenticators.auth == method) & (Authenticators.auth_data == ident))
-                .get()
+            taken = Authenticators.select().where(
+                (Authenticators.auth == method) & (Authenticators.auth_data == ident) & (Authenticators.user != user.id)
             )
-        if authenticator:
-            # Someone else has this identity registered, do not allow the same external identity
-            # for multiple users
-            return None
-    except DoesNotExist:
-        pass
-
-    try:
-        authenticator = Authenticators(user=user.id, auth=method, auth_data=ident)
-        with DATABASE.atomic():
-            authenticator.save()
+            if taken.exists():
+                # Someone else has this identity registered, do not allow the same external identity
+                # for multiple users
+                return None
+            # At most one identity for each method. The old one goes in the new
+            # one's transaction: a link that fails leaves the account as it was.
+            Authenticators.delete().where((Authenticators.user == user.id) & (Authenticators.auth == method)).execute()
+            Authenticators.create(user=user.id, auth=method, auth_data=ident)
         logger.info("Linked %s to %s persistent id %s", user.username, method, ident)
         return user
     except PeeweeException as auth_except:
@@ -655,12 +647,20 @@ def link_account(user, method, ident):
 def unlink_account(user, method):
     """
     Removes any linked identities for method method. Return somethings that
-    evaluates to false on failure.
+    evaluates to false on failure. Never the account's last way to sign in:
+    the legacy Google login does not adopt an existing account, so only an
+    admin could let the holder back in.
     """
     if not method or not user:
         return None
     try:
         with DATABASE.atomic():
+            # The account's row is the lock: two unlinks of different methods wait for each other.
+            User.select(User.id).where(User.id == user.id).for_update().get()
+            others = Authenticators.select().where((Authenticators.user == user.id) & (Authenticators.auth != method))
+            if not others.exists():
+                logger.warning("Refusing to unlink %s, the last way to sign in, for user #%d", method, user.id)
+                return None
             Authenticators.delete().where((Authenticators.user == user.id) & (Authenticators.auth == method)).execute()
 
         return True

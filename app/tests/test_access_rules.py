@@ -3,6 +3,7 @@
 import base64
 import os
 import re
+import threading
 import unittest
 import uuid
 from pathlib import Path
@@ -353,6 +354,45 @@ class TestLegacyGoogleLoginNeverAdopts(DatabaseTest):
             self.assertEqual(client.post("/api/auth/google", json={"credential": "t"}).status_code, 200)
         self.assertEqual(client.post("/api/unlink/google").get_data(as_text=True), "null")
         self.assertTrue(db.Authenticators.select().where(db.Authenticators.user == only_google.id).exists())
+
+    def test_two_unlinks_at_once_leave_one_way_to_sign_in(self):
+        """Two connections, as in test_admin_role_invariant: no locking by the test itself."""
+        both = da.register_user("tva@gotlandskaninen.se", "pass", validated=True)
+        db.Authenticators.create(user=both.id, auth="google", auth_data="sub-tva")
+        barrier = threading.Barrier(2, timeout=10)
+        outcomes = {}
+
+        def unlink(method):
+            try:
+                barrier.wait()
+                outcomes[method] = da.unlink_account(both, method)
+            except Exception as exc:  # fails the assert below
+                outcomes[method] = exc
+            finally:
+                db.DATABASE.close()
+
+        threads = [threading.Thread(target=unlink, args=(method,)) for method in ("google", "password")]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+        self.assertEqual(sorted(outcomes.values(), key=bool), [None, True])
+        self.assertEqual(db.Authenticators.select().where(db.Authenticators.user == both.id).count(), 1)
+
+    def test_a_link_to_an_identity_another_account_holds_keeps_the_old_one(self):
+        mine = da.register_user("min@gotlandskaninen.se", None, validated=True)
+        other = da.register_user("annans@gotlandskaninen.se", None, validated=True)
+        db.Authenticators.create(user=mine.id, auth="google", auth_data="sub-min")
+        db.Authenticators.create(user=other.id, auth="google", auth_data="sub-annans")
+
+        def held():
+            rows = db.Authenticators.select().where(db.Authenticators.user == mine.id)
+            return [row.auth_data for row in rows]
+
+        self.assertIsNone(da.link_account(mine, "google", "sub-annans"))
+        self.assertEqual(held(), ["sub-min"])
+        self.assertTrue(da.link_account(mine, "google", "sub-ny"))  # a free identity replaces the old one
+        self.assertEqual(held(), ["sub-ny"])
 
 
 class TestHolderCannotChangeValidated(DatabaseTest):
