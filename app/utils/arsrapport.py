@@ -1259,6 +1259,25 @@ def receipt(submission) -> dict:
     }
 
 
+def submitted_body(sub: Submission) -> dict:
+    """
+    The submission's data (D10): the body rebuilt from the parsed submission, so only what was validated is kept.
+    Each rabbit keeps its chosen branch alone, and there is no matrikel, buyer, key or revision. _entries reads it
+    back as parsed.
+    """
+    rabbits = {}
+    for rabbit, entry in sub.rabbits.items():
+        stored = {key: value for key, value in asdict(entry).items() if key != "individual_id"}
+        if entry.sald is not None:
+            stored["sald"] = {key: value for key, value in entry.sald.items() if key != "kopare"}
+        rabbits[str(rabbit)] = stored
+    body = {"reason": sub.reason, "rabbits": rabbits} | {key: sub.report[key] for key in BODY_KEYS if key in sub.report}
+    if sub.paper is not None:
+        paper = sub.paper
+        body |= {"inbox_item_id": paper["inbox_item_id"]} | {k: _iso(paper[k]) for k in ("received_on", "signed_on")}
+    return body
+
+
 def _lock_rabbits(ids):
     """The rabbits' litters, then the rabbits, each in ascending order; a rabbit moved to another litter is a 409."""
 
@@ -1331,12 +1350,12 @@ def _cannot(refusals):
     return ArsrapportError(422, "Rapporten kan inte skickas.", refusals=[asdict(refusal) for refusal in refusals])
 
 
-def submit(herd, round_, access, user, sub, body, *, now=None) -> dict:
+def submit(herd, round_, access, user, sub, *, now=None) -> dict:
     """
     Skicka (5.4 points 2–5) in one transaction, under the locks in their order: the same request again gets its
     first receipt; otherwise the revision and check() once more, the report row, each rabbit's writes, the
     submission, the draft deleted and the receipt mail queued. Every refusal raises, so nothing stays written.
-    `body` is the request's JSON, stored without the matrikel and the buyers (D10). Returns the Receipt.
+    Returns the Receipt.
     """
     if sub.key is None:
         raise _bad("submission_key", "Ange submission_key som ett UUID.")
@@ -1392,7 +1411,7 @@ def submit(herd, round_, access, user, sub, body, *, now=None) -> dict:
                 user=user.id,
                 operation_ids=grant.operation_ids,
                 added_measurements=added,
-                data=stored_body(body),
+                data=submitted_body(sub),
                 request_hash=digest,
             )
         except IntegrityError as exc:  # the key, taken meanwhile for another herd, which this lock does not cover

@@ -88,6 +88,13 @@ def _report_target(code, year):
     return herd, round_, access
 
 
+def _submission_body():
+    """The dry run's and Skicka's JSON body, at most as large as a draft may be."""
+    if len(request.get_data()) > arsrapport.DRAFT_MAX_BYTES:
+        raise ArsrapportError(400, "Rapporten är för stor.")
+    return request.get_json(silent=True)
+
+
 # [Next.js] The logged-in user's reports: the herd's rounds the genebank has activated.
 @arsrapport_bp.route("/v2/arsrapport/mina", methods=["GET"])
 @json_login_required
@@ -128,7 +135,7 @@ def save_draft(herd, year):
 @json_login_required
 def dry_run(herd, year):
     herd, round_, access = _report_target(herd, year)
-    sub = arsrapport.parse_submission(request.get_json(silent=True), paper=access.source == "paper")
+    sub = arsrapport.parse_submission(_submission_body(), paper=access.source == "paper")
     report = arsrapport.current_report(herd, round_)
     refusals, warnings = arsrapport.check(herd, round_, access, report, sub, on=arsrapport.today())
     return jsonify(
@@ -140,12 +147,11 @@ def dry_run(herd, year):
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/skicka", methods=["POST"])
 @json_login_required
 def submit(herd, year):
-    body = request.get_json(silent=True)
-    sub = arsrapport.parse_submission(body, paper=request.args.get("post") is not None)  # a 400 before any lookup
+    sub = arsrapport.parse_submission(_submission_body(), paper=request.args.get("post") is not None)  # before lookups
     target, round_ = Herd.get_or_none(Herd.herd == herd), arsrapport.get_round(year)
     if target is not None and round_ is not None:  # before report_access: a retry after the item closed (Fable 5)
         saved = arsrapport.find_submission(sub.key, target, round_, current_user, arsrapport.request_hash(sub))
         if saved is not None:
             return jsonify(arsrapport.receipt(saved))
     target, round_, access = _report_target(herd, year)
-    return jsonify(arsrapport.submit(target, round_, access, current_user, sub, body))
+    return jsonify(arsrapport.submit(target, round_, access, current_user, sub))

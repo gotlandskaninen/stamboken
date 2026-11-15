@@ -315,6 +315,37 @@ class InskickTest(ArsrapportTest):
             self.assertEqual(self.ok(body), first)
             self.assertEqual(self.skicka({**body, "submission_key": str(uuid.uuid4())}).status_code, 403)
 
+    def test_stored_body_keeps_only_the_chosen_branch(self):  # I1: nothing unvalidated is stored
+        kept, moved = self.rabbits(self.h, 2)
+        ht_row("TRANSFER", from_herd=self.h, herd=self.g9002, individual=moved, herd_tracking_date=date(2026, 1, 10))
+        phone = "070-123 45 67"
+        key, entry = self.kvar(kept, vikt="2,8")
+        died = {"ar": 2025, "manad": 5, "dag": None, "slaktad": False, "anteckning": f"Ring {phone}"}
+        sold = {"till": "utanfor", "ar": 2025, "manad": 5, "dag": None, "kopare": BUYER}
+        body = self.body(
+            (key, {**entry, "dod": died, "sald": sold}),  # the details of a choice not taken
+            (str(moved.id), {"val": None, "dod": died}),  # no choice: nothing is stored
+        )
+        self.ok(body)
+        data = db.YearlyReportSubmission.get().data
+        self.assertEqual(
+            data["rabbits"],
+            {key: {"val": "kvar", "vikt": 2.8, "ej_vagd": None, "hull": None, "dod": None, "sald": None}},
+        )
+        view = self.client.get("/api/v2/arsrapport/besattning/G9001/2025").get_json()
+        for text in (json.dumps(data, ensure_ascii=False), json.dumps(view, ensure_ascii=False)):
+            for secret in (phone, BUYER["name"], "kopare"):
+                self.assertNotIn(secret, text)
+
+    def test_oversized_body_is_400(self):  # I1: the draft's cap
+        (a,) = self.rabbits(self.h, 1)
+        body = self.body(self.kvar(a, vikt=2.8), ("999999", {"val": None, "dod": {"anteckning": "x" * 300_000}}))
+        before = self.counts()
+        for path in ("torrkorning", "skicka"):
+            response = self.client.post(f"/api/v2/arsrapport/besattning/G9001/2025/{path}", json=body)
+            self.assertEqual((response.status_code, response.get_json()["detail"]), (400, "Rapporten är för stor."))
+        self.assertEqual(self.counts(), before)
+
     def test_missing_key_is_400(self):
         (a,) = self.rabbits(self.h, 1)
         response = self.skicka(self.body(self.kvar(a, vikt=2.8), submission_key=None))
@@ -470,7 +501,21 @@ class InskickTest(ArsrapportTest):
             (submission.user_id, submission.source, str(submission.submission_key), submission.created_at),
             (self.owner.id, "login", body["submission_key"], NOW),
         )
-        self.assertEqual((submission.operation_ids, submission.data), (ops, arsrapport.stored_body(body)))
+        self.assertEqual(submission.operation_ids, ops)
+        entry = {"val": "kvar", "vikt": 2.8, "ej_vagd": None, "hull": None, "dod": None, "sald": None}
+        self.assertEqual(
+            submission.data,
+            {
+                "reason": None,
+                "rabbits": {str(a.id): entry},
+                "ending_genbank": False,
+                "membership_after_end": None,
+                "health": "inga",
+                "diseases": {},
+                "defects": [],
+                "message": "Allt väl",
+            },
+        )
         self.assertEqual(len(ops), 1)  # the attestation; measurements are logged in added_measurements
         self.assertFalse(db.YearlyReportDraft.select().exists())
 
