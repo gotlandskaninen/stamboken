@@ -21,6 +21,7 @@ for _ in $(seq 20); do docker exec "$name" nginx -t >/dev/null 2>&1 && break; sl
 docker exec "$name" nginx -t
 full=$(docker exec "$name" nginx -T 2>/dev/null)
 grep -q 'log_format access_json' <<<"$full" || { echo "formatet saknas i nginx -T"; exit 1; }
+for _ in $(seq 20); do docker exec "$name" wget -qO- http://127.0.0.1/ >/dev/null 2>&1 && break; sleep 0.5; done
 docker exec "$name" sh -c 'wget -qO- "http://127.0.0.1/a/b?code=HEMLIG" >/dev/null; wget -qO- --header "Host: okant.example" "http://127.0.0.1/c?code=HEMLIG" >/dev/null'
 sleep 1
 logs=$(docker logs "$name" 2>&1)

@@ -583,7 +583,6 @@ def authenticate_with_credentials(method, ident):
     except DoesNotExist:
         pass
 
-    auth_log.info("Login failed: service %s, no linked account", method)
     return None
 
 
@@ -634,9 +633,14 @@ def unlink_account(user, method):
         return None
     try:
         with DATABASE.atomic():
-            Authenticators.delete().where((Authenticators.user == user.id) & (Authenticators.auth == method)).execute()
+            removed = (
+                Authenticators.delete()
+                .where((Authenticators.user == user.id) & (Authenticators.auth == method))
+                .execute()
+            )
 
-        auth_log.info("Unlinked user id=%s from service %s", user.id, method)
+        if removed:
+            auth_log.info("Unlinked user id=%s from service %s", user.id, method)
         return True
     except DoesNotExist:
         return None

@@ -358,6 +358,9 @@ class TestLegacyIndividualWriteCharacterization(FlaskTest):
         self._assert_patch(self._caretaker(), body, expected)
         self.assertEqual(self._count(db.HerdTracking, ind), before)
 
+    def test_date_update(self):
+        self._assert_patch(self.owner, self._body(self.individuals[3], death_date="2024-05-01"), UPDATED)
+
     def _cross_genebank_sale_body(self):
         return self._body(self.individuals[3], herd="M3", selling_date="2021-06-01")
 

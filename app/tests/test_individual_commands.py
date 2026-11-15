@@ -1243,6 +1243,17 @@ class TestLegacyAdapter(IndividualTest, FlaskTest):
         body = self._body(origin_herd={"herd": "G2"}, breeding=None)
         self.assertEqual(da.update_individual(body, self.manager.uuid), error("Unknown breeding event: 'None''"))
 
+    def test_herd_event_date_key(self):
+        """The date comes from selling_date when set, else yearly_report_date; herd as sent or as its object."""
+        owner = self.owner
+        cases = (
+            {"herd": {"herd": "G1"}, "selling_date": "2021-06-01", "yearly_report_date": "2021-07-01"},
+            {"herd": "G2", "selling_date": None, "yearly_report_date": "2021-07-01"},
+        )
+        for fields in cases:
+            with self.subTest(fields=fields):
+                self.assertEqual(da.update_individual(self._body(**fields), owner.uuid), UPDATED)
+
     def test_legacy_rename_moves_the_assets_once(self):
         """IR-23: one record of the move, finished on return although both update_individual and execute finish."""
         db.Individual.update(digital_certificate=100000).where(db.Individual.id == self.ind.id).execute()
