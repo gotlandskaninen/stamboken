@@ -26,6 +26,12 @@ def refused(exc):
     return problem(exc.status, exc.title, exc.detail, **exc.extra)
 
 
+@arsrapport_bp.errorhandler(inbox.InboxError)
+def queue_refused(exc):
+    """The paper path's item checks under its lock (inbox.lock_item, require_handler)."""
+    return problem(exc.status, exc.title, exc.detail)
+
+
 def _dates(*keys):
     """The body's dates among `keys`, from "YYYY-MM-DD"; a missing or null key is left out."""
     body = request.get_json(silent=True) or {}
@@ -136,8 +142,11 @@ def save_draft(herd, year):
 def dry_run(herd, year):
     herd, round_, access = _report_target(herd, year)
     sub = arsrapport.parse_submission(_submission_body(), paper=access.source == "paper")
+    on = arsrapport.today()
+    if access.item is not None:
+        arsrapport.check_paper(sub, access, on)
     report = arsrapport.current_report(herd, round_)
-    refusals, warnings = arsrapport.check(herd, round_, access, report, sub, on=arsrapport.today())
+    refusals, warnings = arsrapport.check(herd, round_, access, report, sub, on=on)
     return jsonify(
         {"ok": not refusals, "refusals": [asdict(r) for r in refusals], "warnings": [asdict(w) for w in warnings]}
     )

@@ -53,6 +53,23 @@ class ArsrapportTest(InboxTest):
             rabbits.append(rabbit)
         return rabbits
 
+    def ej_angiven_case(self, herd):
+        """
+        Case 8, from Task 9 and reused by the status view (U12): twelve adult rabbits in `herd`, the last the only
+        male, and a 2025 litter of the first and the male. Returns (the rabbits, the three a form leaves out).
+        """
+        rabbits = self.rabbits(herd, 12, sexes=("female",) * 11 + ("male",))
+        db.Breeding.create(
+            breeding_herd_id=herd,
+            mother=rabbits[0],
+            father=rabbits[-1],
+            breed_date=date(2025, 4, 1),
+            birth_date=date(2025, 5, 2),
+            litter_size=5,
+            litter_size6w=4,
+        )
+        return rabbits, [rabbits[0], rabbits[1], rabbits[-1]]
+
     def main_member(self, herd, email="g1@example.invalid"):
         """A membership owning `herd`, and its main member; set the member's `user` to make that account the owner."""
         membership = db.Membership.create()

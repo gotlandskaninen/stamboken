@@ -205,26 +205,32 @@ class Access:
         return self.role in ("manager", "admin")
 
 
+def _form_item(item, user, herd):
+    """
+    The paper path's item (5.5): the user's taken item for the herd, not decided in another feature, with an
+    arsblankett document, and never a helper's own upload (P24), as InboxGrant.allows says.
+    """
+    return (
+        item.herd_id == herd.id
+        and item.state == "tagen"
+        and item.assigned_to_id == user.id
+        and item.ref_type is None
+        and not inbox.own_upload(item, user)
+        and item.documents.where(InboxDocument.doc_type == "arsblankett").exists()
+    )
+
+
 def report_access(user, herd, item_id=None):
     """
-    The user's right to the herd's report, or None. On paper (`item_id`): the user's taken item for the herd, with
-    an arsblankett document, and never a helper's own upload (P24), as InboxGrant.allows says. It reads the item
-    without a lock; the writes check it again under inbox.lock_item.
+    The user's right to the herd's report, or None. On paper (`item_id`) only through such an item (_form_item). It
+    reads the item without a lock; Skicka checks it again under inbox.lock_item.
     """
     if herd.herd in OUTSIDE_GENEBANK_HERDS:
         return None
     managed = herd.genebank_id in (user.is_manager or ())
     if item_id is not None:
-        item = InboxItem.get_or_none(
-            (InboxItem.id == item_id)
-            & (InboxItem.herd == herd.id)
-            & (InboxItem.state == "tagen")
-            & (InboxItem.assigned_to == user.id)
-            & InboxItem.ref_type.is_null()
-        )
-        if item is None or inbox.own_upload(item, user):
-            return None
-        if not item.documents.where(InboxDocument.doc_type == "arsblankett").exists():
+        item = InboxItem.get_or_none(InboxItem.id == item_id)
+        if item is None or not _form_item(item, user, herd):
             return None
         helps = herd.genebank_id in (user.is_helper or ())
         role = "admin" if user.is_admin else "manager" if managed else "helper" if helps else None
@@ -1396,7 +1402,10 @@ def apply_diff(report, herd, user, grant, rabbit_id, want: list[Effect], prev_en
     ops, note = frozenset(report_ops(report)), reason or REPORT_UNDO_REASON
     for c in sorted(remove, key=lambda e: order(e, last), reverse=True):
         if c.kind in ROW_KINDS:
-            void_herd_tracking(c.ref, user, note, uuid.uuid4(), report_ops=ops)
+            op = uuid.uuid4()
+            void_herd_tracking(c.ref, user, note, op, report_ops=ops)
+            if grant.inbox_grant is not None:  # void_herd_tracking takes no grant, so its trace is left here
+                grant.inbox_grant.trace(op)
         elif c.kind == "death":
             undo = [Undo(c.ref, note, report_ops=ops)]
             execute(user, rabbit_id, lambda ctx, undo=undo: undo, grant=ReportGrant(grant.inbox_grant, report_ops=ops))
@@ -1431,12 +1440,38 @@ def _mail(kind, herd, user, params, ref):
         )
 
 
+def check_paper(sub, access, on):
+    """5.5 rules 1 and 5, for the dry run and Skicka: the body's item is the route's, and the form came by `on`."""
+    if sub.paper["inbox_item_id"] != access.item.id:
+        raise _bad("inbox_item_id", "Blanketten hör till en annan post i kön.")
+    if sub.paper["received_on"] > on:
+        raise _bad("received_on", "Mottagningsdagen kan inte vara senare än i dag.")
+
+
+def _lock_form(access, user, herd):
+    """
+    5.5 rule 2, under the report's lock: the item locked and checked again as report_access read it, and every
+    other document in it done and waiting for no parent, since the queue's step 1 comes before the form (5.8).
+    Returns the locked item and its arsblankett documents, the form's pages.
+    """
+    item = inbox.lock_item(access.item.id)
+    inbox.require_handler(item, user)  # its 409 says who holds the item now
+    if not _form_item(item, user, herd):
+        raise ArsrapportError(409, "Posten kan inte matas in längre. Öppna den i kön.")
+    others = item.documents.where(InboxDocument.doc_type != "arsblankett")
+    if others.where(InboxDocument.done_at.is_null() | InboxDocument.waiting_for.is_null(False)).exists():
+        raise ArsrapportError(409, "Registrera intygen i posten först.")
+    return item, list(item.documents.where(InboxDocument.doc_type == "arsblankett").order_by(InboxDocument.id))
+
+
 def submit(herd, round_, access, user, sub, *, now=None) -> dict:
     """
     Skicka (5.4 points 2–5) in one transaction, under the locks in their order: the same request again gets its
     first receipt; otherwise the revision and check() once more, the report row, each rabbit's writes, the
     submission, the draft deleted and the receipt mail queued. On a submitted report it is Ändra: the same row moves
     on and each changed rabbit gets apply_diff, with Å8 for the mail. Every refusal raises, so nothing stays written.
+    On paper (5.5) the item is locked and checked after the retry, the writes go through its InboxGrant, and the
+    form's pages are done, their photo purged once the report can no longer be withdrawn, before close_if_done.
     Returns the Receipt.
     """
     if sub.key is None:
@@ -1448,16 +1483,20 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
     with DB_PROXY.atomic():
         lock_report(round_, herd)
         saved = find_submission(sub.key, herd, round_, user, digest)
-        if saved is not None:
+        if saved is not None:  # before any item gate: a retry after the item closed (Codex 5)
             return receipt(saved)
+        if paper:
+            check_paper(sub, access, on)
         report = YearlyHerdReport.select().where(same & (YearlyHerdReport.status == "submitted")).for_update().first()
+        item, pages = _lock_form(access, user, herd) if paper else (None, [])
         _lock_rabbits(sorted(sub.rabbits))
         if sub.revision != (report.revision if report else None):
             raise ArsrapportError(409, "Rapporten har ändrats.")
         refusals, _ = check(herd, round_, access, report, sub, on=on)
         if refusals:
             raise _cannot(refusals)
-        grant, added, change = ReportGrant(), [], report is not None
+        grant = ReportGrant(inbox.InboxGrant(item, user, pages[0]) if paper else None)
+        added, change = [], report is not None
         if change:  # Ändra (D5): the same row, and each changed rabbit gets the diff of the report's effects
             before = _entries(_submissions(report)[-1].data.get("rabbits") or {})
             rows = {row["id"]: row for row in report_list(herd, year, report)}
@@ -1482,6 +1521,8 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
             revision = YearlyHerdReport.select(fn.MAX(YearlyHerdReport.revision)).where(same).scalar() or 0
             voided = same & (YearlyHerdReport.status == "voided")
             received = YearlyHerdReport.select(fn.MIN(YearlyHerdReport.received_at)).where(voided).scalar()
+            if paper and received is None:  # 5.5 rule 5: the day the form came, from midnight in Stockholm
+                received = datetime.combine(sub.paper["received_on"], datetime.min.time(), STOCKHOLM)
             report = YearlyHerdReport.create(
                 herd=herd.id,
                 round=round_.id,
@@ -1516,6 +1557,11 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
             )
         except IntegrityError as exc:  # the key, taken meanwhile for another herd, which this lock does not cover
             raise ArsrapportError(409, KEY_TAKEN) from exc
+        for page in pages:  # every page of the form; the photo goes once the report cannot be withdrawn (fråga 31)
+            page.done_at, page.purge_after = page.done_at or at, at + timedelta(days=WITHDRAW_DAYS)
+            page.save()
+        if paper:  # after the writes: InboxGrant needs the item "tagen"
+            inbox.close_if_done(item, user)
         YearlyReportDraft.delete().where(
             (YearlyReportDraft.herd == herd.id) & (YearlyReportDraft.round == round_.id)
         ).execute()
