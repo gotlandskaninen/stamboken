@@ -1366,7 +1366,7 @@ def _register_refusals(individual_id, entry, remove, add, ops, admin=False, reas
             return [_denied(individual_id, denial)]
         if reason and row.holder_contact_id:  # _void_rows: a buyer is never named in the void's reason
             try:
-                _reject_buyer_name(reason, [row.holder_contact_id])
+                _reject_buyer_name([reason], [individual_id])
             except HerdTrackingInvalid as exc:
                 return [_denied(individual_id, exc.detail)]
         kept.remove(row)
@@ -1943,7 +1943,7 @@ def apply_diff(report, herd, user, grant, rabbit_id, want: list[Effect], prev_en
     for c in sorted(remove, key=lambda e: order(e, last), reverse=True):
         if c.kind in ROW_KINDS:
             op = uuid.uuid4()
-            void_herd_tracking(c.ref, user, note, op, report_ops=ops)
+            void_herd_tracking(c.ref, user, note, op, typed=bool(reason), report_ops=ops)
             if grant.inbox_grant is not None:  # void_herd_tracking takes no grant, so its trace is left here
                 grant.inbox_grant.trace(op)
         elif c.kind == "death":
