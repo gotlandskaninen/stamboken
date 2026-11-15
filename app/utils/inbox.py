@@ -648,6 +648,21 @@ def confirm_mask(item, document, user, rotation, rects, no_personal_data=None):
     close_if_done(item, user)
 
 
+def remove_copy(item, document, user):
+    """
+    DELETE …/kopia: the masked copy comes off the rabbit (a badly masked one, with the original gone, cannot be
+    made again). The caller holds the item's lock, and removes the returned file after the commit.
+    """
+    if not manages(user, item.genebank_id):
+        raise InboxError(403, "Bara genbanksansvarig och admin kan ta bort en kopia.")
+    if document.public_path is None:
+        raise InboxError(409, "Dokumentet har ingen kopia.")
+    path, document.public_path = document.public_path, None
+    document.save()
+    log_event(item, user, "kopia_borttagen", document=document.id)
+    return path
+
+
 def paper_certificate(individual):
     """The rabbit's paper certificate: the newest copy made from an "intyg" document for it, or None."""
     return (

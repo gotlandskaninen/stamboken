@@ -337,6 +337,7 @@ till avsändaren väntar, och senast 30 dagar efter stängningen.
 | `svar` | `{"text": "Ja.", "documents": [33], "not_saved": ["brev.docx"]}`; `user` är `null`, `not_saved` bara när något inte sparades |
 | `tolka_igen` | `{"document": 31}`; handläggaren lade dokumentet i tolkningens kö igen |
 | `original_raderat` | `{"document": 31}`; originalet raderades på begäran (`…/radera-original`) |
+| `kopia_borttagen` | `{"document": 31}`; den maskade kopian togs bort (`…/kopia`) |
 
 När postens text gallras försvinner `text`, `note` och `not_saved` ur `detail`; händelsen står kvar.
 
@@ -1153,6 +1154,20 @@ genbanksansvariga), i alla lägen.
 
 **Fel:** 403 för en hjälpare och för den som inte arbetar i kön; 404 när posten inte finns eller
 dokumentet inte hör till den.
+
+### `DELETE /api/v2/inkorg/{id}/dokument/{dok}/kopia`
+
+Tar bort dokumentets maskade kopia, till exempel när den är dåligt maskad och originalet är raderat,
+så att `…/maskning` inte kan göra om den. Kopian försvinner från kaninens sida och filen raderas efter
+commit. Händelsen `kopia_borttagen` loggas, utan fritext.
+
+**Vem:** genbanksansvarig för postens genbank och admin (en post utan genbank: alla
+genbanksansvariga), i alla lägen.
+
+**Svar 200:** `{"item": <post i listform>, "document": <dokument>}`.
+
+**Fel:** 403 för en hjälpare och för den som inte arbetar i kön; 404 när posten inte finns eller
+dokumentet inte hör till den; 409 när dokumentet inte har någon kopia.
 
 ## Gränser och sådant gränssnittet behöver veta
 
