@@ -41,6 +41,7 @@ SMTP_TIMEOUT = 60  # seconds, per SMTP step
 SEND_DEADLINE = 120
 RECLAIM_AFTER = timedelta(minutes=10)
 PAUSE_AFTER_SYSTEMIC = timedelta(minutes=5)
+REFUSALS_BEFORE_PAUSE = 3  # permanent failures in a row in one run: the relay refuses everything
 STALLED_AFTER = timedelta(minutes=5)  # no sender run for this long: the scheduler is dead
 # After the 1st..6th counted failure; the 7th fails the mail.
 RETRY_DELAYS = (
@@ -264,6 +265,7 @@ class _Relay:
         self.conn = None
         self.dropped = False  # the previous mail lost the connection
         self.timed_out = False
+        self.refused = 0  # permanent failures in a row
 
     def send(self, msg, address):
         """
@@ -459,6 +461,19 @@ def _systemic(row, now, smtp_code, detail):
     return False
 
 
+def _refused_in_a_row(relay, now, result):
+    """
+    A relay that refuses every recipient (quota, policy, our IP) answers each mail with a 5xx at RCPT or DATA.
+    Three permanent failures in a row stop the run and pause the sender like a systemic failure; the three
+    rows stay failed. Returns False when the run stops.
+    """
+    relay.refused = relay.refused + 1 if result == "permanent" else 0
+    if relay.refused < REFUSALS_BEFORE_PAUSE:
+        return True
+    MailSender.update(paused_until=now + PAUSE_AFTER_SYSTEMIC).where(MailSender.id == 1).execute()
+    return False
+
+
 def _allowed(address):
     return any(
         address == entry or (entry.startswith("@") and address.endswith(entry)) for entry in settings.mail.allowlist
@@ -506,15 +521,17 @@ def _send_one(row, relay, now):
         return _systemic(row, now, exc.smtp_code, exc.detail)
     except smtplib.SMTPSenderRefused as exc:  # MAIL FROM: our sender or IP refused, every mail would fail alike...
         # ...except 552, the relay's size limit checked against SIZE=, which is this mail's own failure
-        return _smtp_error(row, now, exc.smtp_code, exc.smtp_error, None, systemic=exc.smtp_code != 552)
+        return _smtp_error(row, now, relay, exc.smtp_code, exc.smtp_error, None, systemic=exc.smtp_code != 552)
     except smtplib.SMTPRecipientsRefused as exc:
         code, text = next(iter(exc.recipients.values()))
-        return _smtp_error(row, now, code, text, address)
+        return _smtp_error(row, now, relay, code, text, address)
     except smtplib.SMTPResponseException as exc:
-        return _smtp_error(row, now, exc.smtp_code, exc.smtp_error, address)
+        return _smtp_error(row, now, relay, exc.smtp_code, exc.smtp_error, address)
     except Exception as exc:  # pylint: disable=broad-except  # disconnect, timeout or anything else on this mail
         relay.close()  # the next mail reconnects; if that fails, it is systemic
+        relay.refused = 0
         return _failed(row, now, "temporary", None, _describe(exc))
+    relay.refused = 0
     return _finish(
         row,
         now,
@@ -527,13 +544,14 @@ def _send_one(row, relay, now):
     )
 
 
-def _smtp_error(row, now, code, text, address, systemic=False):
+def _smtp_error(row, now, relay, code, text, address, systemic=False):
     text = text.decode(errors="replace") if isinstance(text, bytes) else str(text)
     result, smtp_code = _classify(code, text)
     detail = f"{code} {text}"
     if systemic or result == "systemic":
         return _systemic(row, now, smtp_code, detail)
-    return _failed(row, now, result, smtp_code, detail, address)
+    _failed(row, now, result, smtp_code, detail, address)
+    return _refused_in_a_row(relay, now, result)
 
 
 def send_pending(now=None):
@@ -659,7 +677,8 @@ def sender_alarms(now=None):
     )
     last_run_at = sender.last_run_at if sender else None
     alarms = []
-    if last_smtp is not None and last_smtp.result == "systemic":
+    paused = sender is not None and sender.paused_until is not None and sender.paused_until > now
+    if paused or (last_smtp is not None and last_smtp.result == "systemic"):
         alarms.append({"code": "relay_refusing", "message": "Reläet tar inte emot e-post från servern"})
     if last_run_at is None or last_run_at < now - STALLED_AFTER:
         alarms.append({"code": "queue_stalled", "message": "Kön står still"})

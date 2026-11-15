@@ -430,6 +430,25 @@ class TestErrorClasses(MailTest):
         self.assertEqual([_row_id(msg) for msg, _, _ in relay.sent], [second])
         self.assertIsNone(db.MailSender.get_by_id(1).paused_until)
 
+    def test_three_permanent_failures_in_a_row_pause_the_sender(self):
+        """A relay that refuses every recipient must not fail the whole queue: the run stops after three."""
+        ids = [self.queue(f"p{i}@example.org") for i in range(5)]
+        refusal = _refused(552, "5.2.2 mailbox quota exceeded")
+        self.relay(replies=[refusal] * 5)
+        self.assertEqual(mail.send_pending(self.now), 3)
+        self.assertEqual([self.row(i).status for i in ids], ["failed"] * 3 + ["queued"] * 2)
+        self.assertEqual(db.MailSender.get_by_id(1).paused_until, self.now + mail.PAUSE_AFTER_SYSTEMIC)
+        self.assertEqual([a["code"] for a in mail.sender_alarms(self.now)["alarms"]], ["relay_refusing"])
+        self.assertEqual(mail.send_pending(self.now + timedelta(minutes=1)), 0)
+
+    def test_a_mail_that_goes_through_resets_the_refusal_count(self):
+        ids = [self.queue(f"q{i}@example.org") for i in range(5)]
+        refusal = _refused(550, "5.1.1 unknown")
+        self.relay(replies=[refusal, refusal, None, refusal, refusal])
+        self.assertEqual(mail.send_pending(self.now), 5)
+        self.assertEqual([self.row(i).status for i in ids], ["failed", "failed", "sent", "failed", "failed"])
+        self.assertIsNone(db.MailSender.get_by_id(1).paused_until)
+
     def test_size_limit_fails_only_that_mail(self):
         """552 at MAIL FROM (smtplib sends SIZE=) or at DATA is this message's own failure."""
         too_big = b"5.3.4 Message size exceeds fixed maximum message size"

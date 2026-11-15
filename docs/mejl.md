@@ -166,8 +166,12 @@ lokala produktionsstacken låser `MAIL_MODE=log`, också om `api-variables.env`
 | anslutningen nekas, ingen STARTTLS, EHLO nekas, 421, reläet nekar vår avsändare eller vår IP vid MAIL FROM, anslutningen bryts eller tar för lång tid för det andra mejlet i rad i samma körning | `systemic` | felet ligger hos reläet, inte hos mejlet: försöket räknas inte, sändaren vilar 5 minuter och raden väntar till en minut efter pausen, så att mejlen bakom den går först |
 
 Ett avslag vid RCPT eller DATA gäller den mottagaren eller det mejlet, vilken
-kod det än har. Ett relä som nekar alla mottagare fäller därför mejlen ett i
-taget. Får samma rad `systemic` en tredje gång och annan post har gått fram
+kod det än har. Ett relä som nekar alla mottagare (kvot, policy, vår IP)
+skulle därför fälla mejlen ett i taget. Därför stoppas körningen efter tre
+`permanent` i rad: sändaren vilar 5 minuter som vid `systemic`, statusvyn
+visar larmet "Reläet tar inte emot e-post från servern", och de tre raderna
+förblir `failed` ("Försök igen" skickar dem). Ett mejl som går fram nollställer
+räkningen. Får samma rad `systemic` en tredje gång och annan post har gått fram
 mellan gångerna, är felet mejlets eget och raden blir `failed`. "Försök igen"
 börjar räkningen om.
 
