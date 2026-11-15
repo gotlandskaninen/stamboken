@@ -386,6 +386,47 @@ export function incompleteText(e: Entry | undefined): string | null {
   return null;
 }
 
+// Does an edit (patch over `before`) settle a row's refusal? Only when it
+// touches the field the refusal is about, or the row became klar under a local
+// check that covers it. Server-only refusals stay until their field changes.
+export function editClears(
+  code: string,
+  before: Entry,
+  patch: Partial<Entry>,
+  doneAfter: boolean,
+): boolean {
+  const date = (
+    a?: { ar: number; manad: number | null; dag: number | null } | null,
+  ) => (a ? `${a.ar}-${a.manad}-${a.dag}` : "");
+  const dateChanged =
+    ("dod" in patch && date(patch.dod) !== date(before.dod)) ||
+    ("sald" in patch && date(patch.sald) !== date(before.sald));
+  switch (code) {
+    case "dodsdatum_ogiltigt":
+      return dateChanged;
+    case "vikt_saknas":
+    case "vikt_ogiltig":
+      return (
+        ("vikt" in patch && patch.vikt !== before.vikt) ||
+        ("ej_vagd" in patch && patch.ej_vagd !== before.ej_vagd) ||
+        ("val" in patch && patch.val !== before.val)
+      );
+    case "kopare_saknas":
+      return (
+        ("sald" in patch &&
+          (patch.sald?.till !== before.sald?.till ||
+            patch.sald?.kopare !== before.sald?.kopare)) ||
+        ("val" in patch && patch.val !== before.val)
+      );
+    case "inte_klar":
+      return (
+        ("val" in patch && patch.val !== before.val) || dateChanged || doneAfter
+      );
+    default:
+      return false;
+  }
+}
+
 export function isDone(
   r: RabbitView,
   e: Entry | undefined,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   emptyState,
   fromBody,
+  editClears,
   incompleteText,
   isDone,
   keyAfter,
@@ -87,6 +88,46 @@ describe("isDone", () => {
     expect(isDone(rabbit(3, { state: "via_flytt" }), undefined, false)).toBe(
       true,
     );
+  });
+});
+
+describe("editClears", () => {
+  const dod = { ar: 2026, manad: 3, dag: 4, slaktad: false, anteckning: "" };
+  const before = e({ val: "dod", dod });
+  it("keeps a death-date refusal when only the note or Slaktad changes", () => {
+    for (const patch of [
+      { dod: { ...dod, anteckning: "x" } },
+      { dod: { ...dod, slaktad: true } },
+    ])
+      expect(editClears("dodsdatum_ogiltigt", before, patch, true)).toBe(false);
+    expect(
+      editClears(
+        "dodsdatum_ogiltigt",
+        before,
+        { dod: { ...dod, dag: 5 } },
+        true,
+      ),
+    ).toBe(true);
+  });
+  it("clears a weight refusal on a weight edit, keeps register refusals", () => {
+    const kvar = e({ val: "kvar", vikt: "x" });
+    expect(editClears("vikt_ogiltig", kvar, { vikt: "2,8" }, true)).toBe(true);
+    expect(editClears("vikt_ogiltig", kvar, { hull: "normal" }, false)).toBe(
+      false,
+    );
+    expect(editClears("senare_handelse", kvar, { vikt: "2,8" }, true)).toBe(
+      false,
+    );
+  });
+  it("clears inte_klar when the row becomes klar", () => {
+    expect(
+      editClears(
+        "inte_klar",
+        before,
+        { dod: { ...dod, anteckning: "x" } },
+        true,
+      ),
+    ).toBe(true);
   });
 });
 

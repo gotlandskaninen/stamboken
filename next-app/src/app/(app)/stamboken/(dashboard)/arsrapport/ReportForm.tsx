@@ -24,6 +24,7 @@ import {
   paperKey,
   refusalText,
   incompleteText,
+  editClears,
   stockholmDay,
   toBody,
   toDraft,
@@ -610,11 +611,20 @@ export function ReportForm({
 
   const onRow = React.useCallback(
     (id: number, patch: Partial<Entry>) => {
-      // an edited row drops its own error
+      // an edit drops the row's errors that it settles
+      const before = stateRef.current.rabbits[id] ?? EMPTY_ENTRY;
+      const rabbit = viewRef.current.rabbits.find((x) => x.id === id);
+      const after = { ...before, ...patch };
+      const doneAfter =
+        !!rabbit && isDone(rabbit, after, stateRef.current.ending);
       setRefusals((rs) => {
-        if (!rs?.some((r) => r.individual_id === id)) return rs;
-        const left = rs.filter((r) => r.individual_id !== id);
-        return left.length ? left : null;
+        const left = rs?.filter(
+          (r) =>
+            r.individual_id !== id ||
+            !editClears(r.code, before, patch, doneAfter),
+        );
+        if (!rs || left!.length === rs.length) return rs;
+        return left!.length ? left! : null;
       });
       edit((s) => ({
         ...s,
