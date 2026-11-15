@@ -48,9 +48,16 @@ const doc = {
   has_copy: false,
 } as unknown as InboxDocument;
 
-function panel() {
+function panel(saleRegistered = false) {
   render(
-    <SalePanel itemId={12} doc={doc} herds={[]} canSave onDone={vi.fn()} />,
+    <SalePanel
+      itemId={12}
+      doc={doc}
+      herds={[]}
+      canSave
+      saleRegistered={saleRegistered}
+      onDone={vi.fn()}
+    />,
   );
   fireEvent.change(screen.getByLabelText(/Säljdatum/), {
     target: { value: "2026-10-03" },
@@ -107,6 +114,19 @@ describe("SalePanel with a buyer outside the association", () => {
         phone: "0700000000",
       },
     });
+  });
+
+  it("asks for no buyer on a proof of a sale already registered", async () => {
+    registerSale.mockResolvedValue({ ok: true, data: { document: doc } });
+    panel(true);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    );
+    expect(screen.queryByLabelText(/Köparens namn/)).toBeNull();
+    expect(save().disabled).toBe(false);
+    fireEvent.click(save());
+    await waitFor(() => expect(registerSale).toHaveBeenCalledTimes(1));
+    expect(registerSale.mock.calls[0][2]).not.toHaveProperty("buyer");
   });
 
   it("sends no buyer for a herd in the association", async () => {

@@ -64,6 +64,8 @@ export interface InboxDocument {
   interpretation_status: InterpretationStatus;
   proposal: Proposal | null;
   individual: string | null;
+  /** The sale registered from the document (for a proof: the sale it shows). */
+  herd_tracking_id?: number | null;
   has_copy: boolean;
 }
 

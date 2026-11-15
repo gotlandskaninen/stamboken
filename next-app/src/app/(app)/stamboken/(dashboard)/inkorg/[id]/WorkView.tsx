@@ -786,6 +786,12 @@ export function WorkView({
               doc={doc}
               herds={herds}
               canSave={saving}
+              saleRegistered={item.documents.some(
+                (d) =>
+                  d.id !== doc.id &&
+                  d.doc_type !== "bevis" &&
+                  d.herd_tracking_id != null,
+              )}
               onDone={(d) => advance(d)}
             />
           ) : (

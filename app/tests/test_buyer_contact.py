@@ -11,6 +11,7 @@ os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), 
 
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
+import utils.inbox as inbox  # noqa: E402
 import utils.inbox_purge as purge  # noqa: E402
 from herdbook import APP, limiter  # noqa: E402
 from peewee import IntegrityError  # noqa: E402
@@ -656,3 +657,24 @@ class TestQueueSale(ErasureTest):
         self.assertEqual(resp.status_code, 200, resp.get_json())
         sale = db.HerdTracking.get_by_id(resp.get_json()["herd_tracking_id"])
         self.assertEqual(db.BuyerContact.get_by_id(sale.holder_contact_id).name, NAME)
+
+
+class TestQueueProofOfARegisteredSale(ErasureTest):
+    def test_linking_a_proof_to_a_sale_with_a_buyer_reads_no_buyer(self):
+        db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        item = self.item(0, documents=2)
+        inbox.take(item, self.helper, over=False)
+        certificate, proof = list(item.documents.order_by(db.InboxDocument.id))
+        self.login("hjalp")
+        sale = {"individual": "G1-2111", "herd": "GX1", "date": "2021-06-01"}
+        resp = self.post(f"/{item.id}/dokument/{certificate.id}/overlat", **sale, buyer=BUYER)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        sale_id = resp.get_json()["herd_tracking_id"]
+        self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{proof.id}", json={"doc_type": "bevis"})
+
+        resp = self.post(f"/{item.id}/dokument/{proof.id}/overlat", **sale, buyer=OTHER)
+
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["herd_tracking_id"], sale_id)
+        self.assertEqual(db.InboxDocument.get_by_id(proof.id).herd_tracking_id, sale_id)
+        self.assertEqual([c.name for c in db.BuyerContact.select()], [NAME])

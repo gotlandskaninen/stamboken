@@ -680,10 +680,7 @@ def transfer(item_id, document_id):
             latest = current_holder_row(individual.id)
             proven = inbox.proven_sale(item, document, individual, herd, when)
             if proven is not None:  # the proof of a sale registered from another document: nothing to write
-                if buyer is not None:
-                    raise inbox.InboxError(
-                        400, "Försäljningen är redan registrerad. Köparen ändras av genbanksansvarig."
-                    )
+                # Its buyer, if any, came with the sale; a `buyer` sent here is not read.
                 seller = proven.from_herd or individual.origin_herd
                 if not (is_manager_of(user, seller.genebank_id) or grant.allows(user, seller)):
                     raise inbox.InboxError(403, "Du får inte koppla ett bevis till kaninens försäljning.")
