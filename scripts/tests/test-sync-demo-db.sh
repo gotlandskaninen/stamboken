@@ -22,10 +22,22 @@ SKIP_QUEUE_DATA=""
 DROP_BUYERS_SQL=""
 eval "$(grep -E '^(SKIP_QUEUE_DATA|DROP_BUYERS_SQL)=' "$SCRIPT")"
 
-# The buyers go as the next command after the load: the demo API runs through the sync.
+# The load goes into a staging database, its buyers go as the next command, and only then is it
+# renamed to the demo database: the demo API never reads production's buyers. The patterns name
+# the script's own variables, so they stay in single quotes (SC2016 on each line).
 load_end=$(grep -n 'DUMP_LOG:-/dev/null' "$SCRIPT" | cut -d: -f1)
 next_exec=$(awk -v from="$load_end" 'NR > from && /^docker exec/ { print; exit }' "$SCRIPT")
-check "the next command after the load deletes the buyers" 1 "$(grep -c 'DROP_BUYERS_SQL' <<<"$next_exec")"
+# shellcheck disable=SC2016
+check "the load goes into the staging database" 1 "$(grep -c 'psql -U $DB_USER -d $STAGING_DB' "$SCRIPT")"
+check "the next command after the load deletes the buyers there" 1 \
+  "$(grep -c 'STAGING_DB.*DROP_BUYERS_SQL' <<<"$next_exec")"
+# shellcheck disable=SC2016
+drop_line=$(grep -n '"$DROP_BUYERS_SQL"' "$SCRIPT" | cut -d: -f1)
+# shellcheck disable=SC2016
+rename_line=$(grep -n 'ALTER DATABASE $STAGING_DB RENAME TO $TARGET_DB' "$SCRIPT" | cut -d: -f1)
+check "the cleaned copy is renamed to the demo database afterwards" 1 "$((rename_line > drop_line))"
+check "nothing touches the demo database before the rename" 0 \
+  "$(awk -v to="$rename_line" 'NR < to && /-d "\$TARGET_DB"/' "$SCRIPT" | wc -l)"
 
 name="herdbook-sync-demo-test-$$"
 trap 'docker rm -f "$name" >/dev/null 2>&1' EXIT
@@ -37,7 +49,7 @@ for _ in $(seq 60); do
 done
 sql() { docker exec -i "$name" psql -U postgres -v ON_ERROR_STOP=1 -qtA "$@"; }
 
-sql -c "CREATE DATABASE src" -c "CREATE DATABASE dst" || exit 2
+sql -c "CREATE DATABASE src" -c "CREATE DATABASE dst_staging" || exit 2
 sql -d src <<'SQL' || exit 2
 CREATE TABLE mail_message (id int PRIMARY KEY);
 CREATE TABLE mail_attempt (id int PRIMARY KEY, message_id int REFERENCES mail_message ON DELETE CASCADE);
@@ -58,16 +70,18 @@ SQL
 docker exec "$name" bash -c "
 	set -o pipefail
 	pg_dump -U postgres --no-owner --no-privileges $SKIP_QUEUE_DATA src \
-	| psql -U postgres -d dst -q -v ON_ERROR_STOP=1
+	| psql -U postgres -d dst_staging -q -v ON_ERROR_STOP=1
 " >/dev/null
 check "the dump and load succeed" 0 "$?"
+sql -d dst_staging -c "$DROP_BUYERS_SQL" >/dev/null
+check "the buyer step succeeds" 0 "$?"
+sql -c "ALTER DATABASE dst_staging RENAME TO dst"
+check "the rename succeeds" 0 "$?"
 check "mail_message comes over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM mail_message')"
 check "mail_attempt comes over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM mail_attempt')"
 check "notice_setting (a user preference) keeps its rows" 1 "$(sql -d dst -c 'SELECT count(*) FROM notice_setting')"
 check "an ordinary table keeps its rows" 1 "$(sql -d dst -c 'SELECT count(*) FROM hbuser')"
 
-sql -d dst -c "$DROP_BUYERS_SQL" >/dev/null
-check "the buyer step succeeds" 0 "$?"
 check "the demo has no buyers" 0 "$(sql -d dst -c 'SELECT count(*) FROM buyer_contact')"
 check "the sale stays, without its buyer" "1|" "$(sql -d dst -c 'SELECT id, holder_contact_id FROM herd_tracking')"
 sql -d dst -c "DROP TABLE herd_tracking, buyer_contact" -c "$DROP_BUYERS_SQL" >/dev/null

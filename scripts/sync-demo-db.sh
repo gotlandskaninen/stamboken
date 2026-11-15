@@ -37,9 +37,9 @@ usage() {
 
 		Synkroniserar produktionsdatabasen ($SOURCE_DB) till demo-databasen ($TARGET_DB).
 
-		Metod: DROP DATABASE + CREATE DATABASE, sedan pg_dump | psql
-		(non-disruptive för källan; demo-databasen återskapas från scratch —
-		den är helt härledd data)
+		Metod: pg_dump | psql till en tom mellandatabas (${TARGET_DB}_staging),
+		som rensas och sedan byter namn till demo-databasen (non-disruptive för
+		källan; demo-databasen återskapas från scratch — den är helt härledd data)
 
 		Kräver:
 		  - Docker compose-miljö med 'database' service igång
@@ -120,15 +120,17 @@ echo "Source: $SOURCE_DB -> Target: $TARGET_DB"
 SOURCE_USERS=$(docker exec "$CONTAINER" psql -U "$DB_USER" -d "$SOURCE_DB" -tAc \
 	"SELECT count(*) FROM hbuser;")
 
-# Recreate the target DB from scratch. Loading a --clean dump stream into a
-# non-empty database hits FK-ordering errors and silently drops rows (e.g.
-# hbuser) — demo is fully derived data, so dropping is safe. WITH (FORCE)
-# terminates any lingering backends (api-test) before the drop.
-echo "Recreating $TARGET_DB from scratch..."
+# The copy is loaded and cleaned in a staging database that nothing reads, and
+# only then renamed to the demo database: the demo API never sees production's
+# buyers outside the association, not even for a moment (ADR-0016). Loading a
+# --clean dump stream into a non-empty database hits FK-ordering errors and
+# silently drops rows (e.g. hbuser), so the staging database starts empty.
+STAGING_DB="${TARGET_DB}_staging"
+echo "Recreating $STAGING_DB from scratch..."
 docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
-	"DROP DATABASE IF EXISTS $TARGET_DB WITH (FORCE);"
+	"DROP DATABASE IF EXISTS $STAGING_DB WITH (FORCE);"
 docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
-	"CREATE DATABASE $TARGET_DB OWNER $DB_USER;"
+	"CREATE DATABASE $STAGING_DB OWNER $DB_USER;"
 
 # Sync using pg_dump | psql (non-disruptive to source DB). The target is
 # empty, so no --clean is needed. Abort on the first SQL error — a silently
@@ -138,7 +140,7 @@ docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
 # intake items, not even for a moment. A pattern that matches no table (an
 # older schema) is fine; notice_setting, a user preference, is copied.
 SKIP_QUEUE_DATA="--exclude-table-data='mail_*' --exclude-table-data='inbox_*' --exclude-table-data=notice --exclude-table-data='gmail_*'"
-echo "Syncing $SOURCE_DB -> $TARGET_DB via pg_dump..."
+echo "Syncing $SOURCE_DB -> $STAGING_DB via pg_dump..."
 # ON_ERROR_STOP=1 aborts psql on the first SQL error; the
 # outer set -Eeo pipefail then fires the ERR trap so the failure telemetry row
 # is written before the script aborts. tee mirrors the stream to DUMP_LOG for
@@ -146,43 +148,51 @@ echo "Syncing $SOURCE_DB -> $TARGET_DB via pg_dump..."
 docker exec "$CONTAINER" bash -c "
 	set -o pipefail
 	pg_dump -U $DB_USER --no-owner --no-privileges $SKIP_QUEUE_DATA $SOURCE_DB \
-	| psql -U $DB_USER -d $TARGET_DB -q -v ON_ERROR_STOP=1
+	| psql -U $DB_USER -d $STAGING_DB -q -v ON_ERROR_STOP=1
 " 2>&1 | tee "${DUMP_LOG:-/dev/null}" | { grep -v '^$' || true; } | tail -5
 
 # The copy also carries production's buyers outside the association (ADR-0016).
 # Only a genebank's managers and helpers may see them, and every read is logged
-# in production, not in the demo, so they are removed, as the next statement
-# after the load: the demo API runs through it. They cannot be left out
-# with --exclude-table-data as the queue tables are: herd_tracking points at
-# them, and the load's foreign key would fail. One statement, so one
-# transaction: the FK (ON DELETE SET NULL) nulls herd_tracking.holder_contact_id
-# and the sales stay. An older schema without the table is skipped.
+# in production, not in the demo, so they are removed in the staging database,
+# as the next statement after the load. They cannot be left out with
+# --exclude-table-data as the queue tables are: herd_tracking points at them,
+# and the load's foreign key would fail. One statement, so one transaction: the
+# FK (ON DELETE SET NULL) nulls herd_tracking.holder_contact_id and the sales
+# stay. An older schema without the table is skipped.
 DROP_BUYERS_SQL="DO \$\$ BEGIN IF to_regclass('buyer_contact') IS NOT NULL THEN DELETE FROM buyer_contact; END IF; END \$\$;"
-echo "Deleting the buyers outside the association in $TARGET_DB..."
-docker exec "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -v ON_ERROR_STOP=1 -q -c "$DROP_BUYERS_SQL"
+echo "Deleting the buyers outside the association in $STAGING_DB..."
+docker exec "$CONTAINER" psql -U "$DB_USER" -d "$STAGING_DB" -v ON_ERROR_STOP=1 -q -c "$DROP_BUYERS_SQL"
 
 # The copy carries prod's genetics version counter, which can repeat a number
 # api-test already memoized in Redis for the previous demo data: a new epoch
 # retires those memos (audit R043). Same SQL function as `flask genetics
 # rotate-epoch`; a prod database from before the epoch has none, and the
 # migration that adds it on the api-test restart draws a random one.
-HAS_EPOCH=$(docker exec "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -tAc \
+HAS_EPOCH=$(docker exec "$CONTAINER" psql -U "$DB_USER" -d "$STAGING_DB" -tAc \
 	"SELECT to_regprocedure('rotate_genetics_epoch()') IS NOT NULL;")
 if [ "$HAS_EPOCH" = "t" ]; then
-	echo "Rotating the genetics epoch of $TARGET_DB..."
-	docker exec "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -v ON_ERROR_STOP=1 -qtAc \
+	echo "Rotating the genetics epoch of $STAGING_DB..."
+	docker exec "$CONTAINER" psql -U "$DB_USER" -d "$STAGING_DB" -v ON_ERROR_STOP=1 -qtAc \
 		"SELECT rotate_genetics_epoch();"
 fi
+
+# Everyone may try the demo (api-test auto-validates new logins too).
+# Safe only because production refuses sessions minted by api-test.
+echo "Setting all users to validated in $STAGING_DB..."
+docker exec "$CONTAINER" psql -U "$DB_USER" -d "$STAGING_DB" -v ON_ERROR_STOP=1 -c \
+	"UPDATE hbuser SET validated = true WHERE validated = false;"
+
+# Swap the cleaned copy in. WITH (FORCE) terminates any lingering backends
+# (api-test) before the drop; demo is fully derived data, so dropping is safe.
+echo "Replacing $TARGET_DB with $STAGING_DB..."
+docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
+	"DROP DATABASE IF EXISTS $TARGET_DB WITH (FORCE);"
+docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
+	"ALTER DATABASE $STAGING_DB RENAME TO $TARGET_DB;"
 
 echo "Granting permissions..."
 docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
 	"GRANT ALL PRIVILEGES ON DATABASE $TARGET_DB TO $DB_USER;"
-
-# Everyone may try the demo (api-test auto-validates new logins too).
-# Safe only because production refuses sessions minted by api-test.
-echo "Setting all users to validated in $TARGET_DB..."
-docker exec "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -v ON_ERROR_STOP=1 -c \
-	"UPDATE hbuser SET validated = true WHERE validated = false;"
 
 # Verifiera
 TABLES=$(docker exec "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -t -c \
