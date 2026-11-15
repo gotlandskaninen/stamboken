@@ -273,6 +273,10 @@ def _connect(conn):
     conn.ehlo()
 
 
+class _ClaimLost(Exception):
+    """The row is no longer this sender's: reclaimed by another, or its recipient erased. Nothing was sent."""
+
+
 class _Relay:
     """The run's one SMTP connection, opened when the first mail actually goes out."""
 
@@ -282,23 +286,25 @@ class _Relay:
         self.timed_out = False
         self.refused = 0  # permanent failures in a row
 
-    def send(self, msg, address):
+    def send(self, msg, address, still_ours):
         """
         One mail's whole SMTP conversation, connecting included, cut off at SEND_DEADLINE. Per-step socket
-        timeouts alone do not bound it: a relay can drip its replies a byte at a time.
+        timeouts alone do not bound it: a relay can drip its replies a byte at a time. `still_ours` is asked
+        once the connection is up, as late as it gets: connecting can take seconds, and a recipient erased
+        meanwhile gets no mail.
         """
         self.timed_out = False
         timer = threading.Timer(SEND_DEADLINE, self._cut)
         timer.start()
         try:
-            self._send(msg, address)
+            self._send(msg, address, still_ours)
         finally:
             timer.cancel()
             timer.join()
             if self.timed_out:
                 self.close()  # its socket is shut down, also if the reply came just in time
 
-    def _send(self, msg, address):
+    def _send(self, msg, address, still_ours):
         if self.conn is None:
             self.conn = smtplib.SMTP(local_hostname=_hostname(), timeout=SMTP_TIMEOUT)  # set first: _cut reaches it
             try:
@@ -308,6 +314,8 @@ class _Relay:
                 conn.close()
                 code = getattr(exc, "smtp_code", None)
                 raise _Systemic(str(code) if code else None, _describe(self._why(exc))) from exc
+        if not still_ours():
+            raise _ClaimLost
         try:
             self.conn.send_message(msg, from_addr=settings.mail.sender, to_addrs=[address])
         except Exception as exc:
@@ -401,8 +409,9 @@ def _claim(now):
 
 def _renew(row):
     """
-    Restarts the claim's clock just before SMTP, so the row cannot be reclaimed until long after SEND_DEADLINE.
-    False when another sender has taken the row since (this one was slow): it must not send.
+    Restarts the claim's clock just before the mail goes, so the row cannot be reclaimed until long after
+    SEND_DEADLINE. False when another sender has taken the row since (this one was slow) or the recipient has
+    been erased (forget_recipient): it must not send.
     """
     renewed = MailMessage.update(claimed_at=_utcnow()).where(
         (MailMessage.id == row.id) & (MailMessage.claim_token == row.claim_token)
@@ -529,12 +538,11 @@ def _send_one(row, relay, now):
         return _finish(row, now, status="logged", last_error=note)
     if mode == "allowlist" and not _allowed(address):
         return _finish(row, now, status="blocked", last_error="spärrat: adressen finns inte i MAIL_ALLOWLIST")
-    if not _renew(row):
-        logger.warning("Mail %s was reclaimed by another sender; it is not sent", row.id)
-        return True
-
     try:
-        relay.send(msg, address)
+        relay.send(msg, address, lambda: _renew(row))
+    except _ClaimLost:
+        logger.warning("Mail %s was reclaimed by another sender or lost its recipient; it is not sent", row.id)
+        return True
     except _Systemic as exc:
         return _systemic(row, now, exc.smtp_code, exc.detail)
     except smtplib.SMTPSenderRefused as exc:  # MAIL FROM: our sender or IP refused, every mail would fail alike...
