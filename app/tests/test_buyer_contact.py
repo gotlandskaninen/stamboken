@@ -5,6 +5,7 @@ isort:skip_file
 
 import os
 from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest import mock
 from zoneinfo import ZoneInfo
 
@@ -19,6 +20,7 @@ from herdbook import APP, limiter  # noqa: E402
 from peewee import IntegrityError  # noqa: E402
 from utils import buyer_contact  # noqa: E402
 from utils.herd_tracking import (  # noqa: E402
+    ONE_SALE_OUT,
     HerdTrackingConflict,
     HerdTrackingError,
     HerdTrackingInvalid,
@@ -299,12 +301,12 @@ class TestOutsideResale(BuyerBase):
         with self.assertRaises(HerdTrackingConflict):
             undo_herd_tracking_operation(void_op, self.manager, "Ångra")
 
-    def test_a_new_move_outside_in_a_correction_goes_to_the_sell_dialog(self):
-        for kind in ("TRANSFER", "CORRECTION"):
+    def test_a_new_move_outside_in_a_correction_needs_a_buyer_given_with_the_transfer_kind(self):
+        for kind, hint in (("TRANSFER", "ange köparens namn och ort"), ("CORRECTION", "välj Flytt")):
             event = {"kind": kind, "date": "2021-05-01", "herd": "GX1"}
             with self.subTest(kind=kind), self.assertRaises(HerdTrackingInvalid) as raised:
                 correct_herd_tracking(self.rabbit, self.manager, None, [], [event])
-            self.assertIn("Registrera en försäljning ut via säljdialogen", raised.exception.detail)
+            self.assertIn(hint, raised.exception.detail)
         self.assertEqual(self._latest().id, self.first.id)
 
     def test_the_history_reads_the_buyers_once_whatever_the_number_of_resales(self):
@@ -460,44 +462,54 @@ class TestVoid(BuyerBase):
         (written,) = self._correct_date(kind="CORRECTION")[1]
         self.assertEqual(written.holder_contact_id, self.contact_id)
 
-    def test_two_buyers_for_one_event_are_refused(self):
+    def test_two_voided_sales_to_one_herd_outside_are_refused(self):
         second = record_herd_tracking(self.rabbit, self.gx1, "2022-01-01", "TRANSFER", self.manager, buyer=OTHER)
         event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1"}
         with self.assertRaises(HerdTrackingConflict) as raised:
             correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id, second.id], [event], "Fel")
-        self.assertEqual(
-            raised.exception.detail, "Rättelsen gäller flera försäljningar utanför genbanken. Rätta en i taget."
-        )
+        self.assertEqual(raised.exception.detail, ONE_SALE_OUT)
         self.assertEqual(db.BuyerContact.select().count(), 2)
+
+    def test_a_legacy_sale_rewritten_with_a_buyer_and_again_without_one_is_refused(self):
+        record_herd_tracking(self.rabbit, self.herds[1], "2021-12-01", "TRANSFER", self.manager)  # bought back
+        legacy = record_herd_tracking(self.rabbit, self.gx1, "2022-01-01", "TRANSFER", self.manager)  # no buyer
+        events = [
+            {"kind": "TRANSFER", "date": "2022-01-01", "herd": "GX1", "buyer": OTHER},
+            {"kind": "TRANSFER", "date": "2022-02-01", "herd": self.herds[1].herd},
+            {"kind": "TRANSFER", "date": "2022-03-01", "herd": "GX1"},
+        ]
+        with self.assertRaises(HerdTrackingConflict) as raised:
+            correct_herd_tracking(self.rabbit, self.manager, None, [legacy.id], events, "Fel")
+        self.assertEqual(raised.exception.detail, ONE_SALE_OUT)
+        self.assertEqual(self._latest().id, legacy.id)
+
+    def test_a_sale_replaced_by_an_earlier_one_and_carried_to_a_later_one_is_refused(self):
+        events = [
+            {"kind": "TRANSFER", "date": "2021-05-01", "herd": "GX1", "buyer": OTHER},
+            {"kind": "TRANSFER", "date": "2021-05-15", "herd": "G2"},
+            {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1"},  # would take the voided sale's buyer
+        ]
+        with self.assertRaises(HerdTrackingConflict) as raised:
+            correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], events, "Fel")
+        self.assertEqual(raised.exception.detail, ONE_SALE_OUT)
+        self.assertEqual(self._latest().id, self.sale.id)
 
     def test_a_new_sale_outside_in_a_correction_needs_a_buyer_unless_it_rewrites_a_buyerless_one(self):
         event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1"}
         buyer_contact.erase_buyer_contact(self.contact_id, self.admin)  # the sale has no buyer now
         (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [event], "Fel datum")
-        self.assertIsNone(written.holder_contact_id)  # a buyerless sale rewritten as it was
+        self.assertEqual((written.holder_contact_id, written.buyer_removed), (None, True))  # the marker goes along
         later = {"kind": "TRANSFER", "date": "2021-08-01", "herd": "G2"}
         correct_herd_tracking(self.rabbit, self.manager, None, [], [later])
         with self.assertRaises(HerdTrackingInvalid):  # a new one, with nothing to rewrite
             correct_herd_tracking(self.rabbit, self.manager, None, [], [{**event, "date": "2021-09-01"}])
 
     def test_a_carried_buyer_that_went_meanwhile_is_a_409_not_a_500(self):
-        with mock.patch("utils.herd_tracking._carried_buyers", return_value={0: 10**9}):  # deleted before the write
+        gone = SimpleNamespace(holder_contact_id=10**9, buyer_removed=False)  # deleted before the write
+        with mock.patch("utils.herd_tracking._outside_pairs", return_value={0: gone}):
             with self.assertRaises(HerdTrackingConflict) as raised:
                 self._correct_date()
         self.assertEqual(raised.exception.detail, "Köparen raderades under tiden. Försök igen.")
-        self.assertEqual(self._latest().id, self.sale.id)
-
-    def test_one_buyerless_sale_exempts_one_rewrite_only(self):
-        buyer_contact.erase_buyer_contact(self.contact_id, self.admin)  # the sale to GX1 has no buyer now
-        g2 = db.Herd.get(db.Herd.herd == "G2")
-        events = [
-            {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1"},
-            {"kind": "TRANSFER", "date": "2021-08-01", "herd": g2.herd},
-            {"kind": "TRANSFER", "date": "2021-09-01", "herd": "GX1"},  # a second buyerless sale: not exempt
-        ]
-        with self.assertRaises(HerdTrackingInvalid) as raised:
-            correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], events, "Fel datum")
-        self.assertIn("Händelse 3", raised.exception.detail)
         self.assertEqual(self._latest().id, self.sale.id)
 
     def test_the_event_api_takes_no_holder_contact_id(self):

@@ -720,35 +720,34 @@ def _holder_before(individual, rows, when, kind):
     return prior[-1].herd_id if prior else individual.origin_herd_id
 
 
-AMBIGUOUS_BUYERS = "Rättelsen gäller flera försäljningar utanför genbanken. Rätta en i taget."
+BUYER_GONE = "Köparen raderades under tiden. Försök igen."
+ONE_SALE_OUT = "Dela upp rättelsen: högst en försäljning ut till samma besättning per rättelse."
 BUYERLESS_BEFORE_SALE = (
     "En försäljning utanför genbanken utan köpare kan inte läggas före en försäljning till samma besättning."
 )
+MOVES = ("TRANSFER", "CORRECTION")
 
 
-BUYER_GONE = "Köparen raderades under tiden. Försök igen."
-
-
-def _carried_buyers(voided, parsed):
+def _outside_pairs(voided, parsed):
     """
-    The buyer of a voided sale into GX1/MX1 goes to the event (TRANSFER or CORRECTION, without a buyer of its own)
-    the correction writes into the same herd (ADR-0016), and its purge_at follows that event's date; with no such
-    event it goes.
-    Event index -> contact id; 409 when more than one buyer or more than one event could pair up.
+    A correction touches at most one sale into each of GX1/MX1 (409 otherwise): one voided move and one new event,
+    which then replaces it and takes its buyer (ADR-0016). Event index -> the voided row it replaces.
     """
-    carried = {}
-    for herd_id in {r.herd_id for r in voided if r.holder_contact_id and r.herd.herd in OUTSIDE_GENEBANK_HERDS}:
-        buyers = [r.holder_contact_id for r in voided if r.holder_contact_id and r.herd_id == herd_id]
-        into = [
-            i
-            for i, e in enumerate(parsed)
-            if e["kind"] in ("TRANSFER", "CORRECTION") and e["herd"].id == herd_id and e["buyer"] is None
-        ]
-        if into and (len(buyers) > 1 or len(into) > 1):
-            raise HerdTrackingConflict(AMBIGUOUS_BUYERS)
-        if into:
-            carried[into[0]] = buyers[0]
-    return carried
+
+    def outside(herd):
+        return herd.herd in OUTSIDE_GENEBANK_HERDS
+
+    herds = {r.herd_id for r in voided if r.kind in MOVES and outside(r.herd)}
+    herds |= {e["herd"].id for e in parsed if e["kind"] in MOVES and outside(e["herd"])}
+    pairs = {}
+    for herd_id in herds:
+        old = [r for r in voided if r.kind in MOVES and r.herd_id == herd_id]
+        new = [i for i, e in enumerate(parsed) if e["kind"] in MOVES and e["herd"].id == herd_id]
+        if len(old) > 1 or len(new) > 1:
+            raise HerdTrackingConflict(ONE_SALE_OUT)
+        if old and new:
+            pairs[new[0]] = old[0]
+    return pairs
 
 
 def _refuse_buyerless_before_sale(rows, written):
@@ -767,31 +766,17 @@ def _refuse_buyerless_before_sale(rows, written):
             raise HerdTrackingConflict(BUYERLESS_BEFORE_SALE, rows=[_row_ref(later[0])])
 
 
-SELL_OUTSIDE_IN_THE_DIALOG = "Registrera en försäljning ut via säljdialogen, där köparen anges."
-
-
-def _refuse_buyerless_sales_outside(parsed, carried, voided):
+def _refuse_buyerless_sales_outside(parsed, pairs):
     """
-    A TRANSFER or CORRECTION into GX1/MX1 that a correction writes needs a buyer, carried over or new (ADR-0016).
-    The one exception: it rewrites a voided move into the same herd that had none (a legacy sale), and each such
-    row exempts one event only. Anything else goes through the sell dialog, which asks for the buyer.
+    A TRANSFER or CORRECTION into GX1/MX1 that a correction writes needs a buyer, unless it replaces a voided sale
+    into the same herd (_outside_pairs), whose buyer, or lack of one, it takes over.
     """
-    exemptions = [
-        r.herd_id
-        for r in voided
-        if r.holder_contact_id is None
-        and r.kind in ("TRANSFER", "CORRECTION")
-        and r.herd.herd in OUTSIDE_GENEBANK_HERDS
-    ]
     for index, event in enumerate(parsed):
-        if event["kind"] not in ("TRANSFER", "CORRECTION") or event["herd"].herd not in OUTSIDE_GENEBANK_HERDS:
+        if event["kind"] not in MOVES or event["herd"].herd not in OUTSIDE_GENEBANK_HERDS:
             continue
-        if event["buyer"] is not None or index in carried:
-            continue
-        if event["herd"].id in exemptions:
-            exemptions.remove(event["herd"].id)  # consumed: one buyerless row rewrites one buyerless row
-            continue
-        raise HerdTrackingInvalid(f"Händelse {index + 1}: {SELL_OUTSIDE_IN_THE_DIALOG}")
+        if event["buyer"] is None and index not in pairs:
+            hint = "ange köparens namn och ort" if event["kind"] == "TRANSFER" else "välj Flytt, där köparen anges"
+            raise HerdTrackingInvalid(f"Händelse {index + 1}: en försäljning utanför föreningen: {hint}.")
 
 
 def correct_herd_tracking(individual, user, operation_id, void_ids, events, reason=None):
@@ -851,8 +836,11 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
                     if r.kind == "BIRTH"
                 ],
             )
-        carried = _carried_buyers([by_id[v] for v in void_ids], parsed)
-        _refuse_buyerless_sales_outside(parsed, carried, [by_id[v] for v in void_ids])
+        pairs = _outside_pairs([by_id[v] for v in void_ids], parsed)
+        _refuse_buyerless_sales_outside(parsed, pairs)
+        carried = {
+            i: r.holder_contact_id for i, r in pairs.items() if parsed[i]["buyer"] is None and r.holder_contact_id
+        }
         voided = _void_rows([by_id[v] for v in void_ids], user, cleaned, op)
         written, current = [], list(kept)
         for index, event in enumerate(parsed):
@@ -878,6 +866,7 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
                             if event["buyer"]
                             else carried.get(index)
                         ),
+                        buyer_removed=index in pairs and event["buyer"] is None and pairs[index].buyer_removed,
                     )
             except IntegrityError as exc:  # the carried buyer went (a purge or an erasure) after it was read
                 if _violated_constraint(exc) != "herd_tracking_holder_contact_id_fkey":
