@@ -18,6 +18,8 @@ from utils.herd_tracking import (
     delete_buyer_contacts,
     is_manager_of,
     log_buyer_contact,
+    log_buyer_read,
+    sold_on,
 )
 from utils.inbox_purge import remove_originals
 from utils.mail import forget_recipient
@@ -34,20 +36,39 @@ def buyer_genebank(contact_id):
     return row.herd.genebank_id if row is not None and row.herd_id else None
 
 
-def erase_buyer_contact(contact_id, user):
+def _managed_contact(contact_id, user, action):
     """
-    DELETE /api/v2/buyer-contacts/<id>: every detail of the buyer goes, also name and town; the sale and its
-    TRANSFER row stay. Admin, or a manager of the genebank of the row holding the buyer; anyone who may not see the
-    buyer is told it does not exist.
+    The buyer, for admin or a manager of the genebank of the row holding it (ADR-0014): anyone who may not see the
+    buyer is told it does not exist, a helper who may see it is refused.
     """
     contact = BuyerContact.get_or_none(BuyerContact.id == contact_id)
     genebank_id = buyer_genebank(contact_id) if contact else None
     if contact is None or not (user.is_admin or (genebank_id is not None and can_see_buyer(user, genebank_id))):
         raise HerdTrackingNotFound("Köparen finns inte.")
     if not (user.is_admin or is_manager_of(user, genebank_id)):
-        raise HerdTrackingForbidden("Bara genbanksansvarig eller administratör kan radera köparens uppgifter.")
+        raise HerdTrackingForbidden(f"Bara genbanksansvarig eller administratör kan {action} köparens uppgifter.")
+    return contact
+
+
+CONTACT_FIELDS = ("name", "town", "postal_address", "email", "phone", "contact_consent_at", "membership_optin_at")
+
+
+def read_buyer_contact(contact_id, user):
+    """GET /api/v2/buyer-contacts/<id>: every kept field of the buyer, for admin and the genebank's managers; logged."""
+    contact = _managed_contact(contact_id, user, "läsa")
+    log_buyer_read(contact.id, user)
+    values = {name: getattr(contact, name) for name in CONTACT_FIELDS}
+    return {"id": contact.id, **{k: v.isoformat() if hasattr(v, "isoformat") else v for k, v in values.items()}}
+
+
+def erase_buyer_contact(contact_id, user):
+    """
+    DELETE /api/v2/buyer-contacts/<id>: every detail of the buyer goes, also name and town; the sale and its
+    TRANSFER row stay.
+    """
+    _managed_contact(contact_id, user, "radera")
     with DB_PROXY.atomic():
-        _count, paths = delete_buyer_contacts([contact_id], "radering", user)
+        _count, paths = delete_buyer_contacts([contact_id], "radering", user, whole_items=True)
     remove_originals(paths)  # only after the commit: a row never names a removed file
 
 
@@ -77,18 +98,22 @@ def purge_dead(now):  # pylint: disable=unused-argument  # every rule takes the 
 
 def _null_fields(where, changes, action):
     """
-    Nulls `changes` on the buyers matching `where`, one audit_log row each naming the columns, and the mail queue
-    forgets an e-mail address that went; returns how many.
+    Nulls `changes` on the buyers matching `where`, one audit_log row each naming the columns that went (never the
+    values), and the mail queue forgets an e-mail address that went; returns how many.
     """
+    columns = [field.name for field in changes]
     with DB_PROXY.atomic():
-        mailed = BuyerContact.select(BuyerContact.id).where(where & BuyerContact.email.is_null(False))
-        mailed = {contact_id for (contact_id,) in mailed.tuples()}
-        changed = list(
-            BuyerContact.update(changes).where(where).returning(BuyerContact.id, BuyerContact.email).tuples()
-        )
-        for contact_id, email in changed:
-            log_buyer_contact(contact_id, "UPDATE", action, fields=[field.name for field in changes])
-            if email is None and contact_id in mailed:
+        held = BuyerContact.select(BuyerContact.id, *changes).where(where)
+        before = {row[0]: dict(zip(columns, row[1:], strict=True)) for row in held.for_update().tuples()}
+        if not before:
+            return 0
+        query = BuyerContact.update(changes).where(BuyerContact.id.in_(list(before)))
+        changed = list(query.returning(BuyerContact.id, *changes).tuples())
+        for contact_id, *values in changed:
+            after = dict(zip(columns, values, strict=True))
+            gone = [name for name in columns if before[contact_id][name] is not None and after[name] is None]
+            log_buyer_contact(contact_id, "UPDATE", action, fields=gone)
+            if "email" in gone:
                 forget_recipient("buyer_contact", contact_id)
     return len(changed)
 
@@ -99,24 +124,10 @@ def purge_sold_on(now):  # pylint: disable=unused-argument  # every rule takes t
     or another buyer. Address, e-mail and phone go with it; e-mail and phone stay while the membership yes does.
     """
     sale, later = HerdTracking, HerdTracking.alias()
-    sold_on = (
+    moved_on = (
         sale.select(sale.holder_contact)
         .join(later, on=(later.individual == sale.individual))
-        .where(
-            sale.holder_contact.is_null(False)
-            & sale.voided_at.is_null(True)
-            & later.voided_at.is_null(True)
-            & later.kind.in_(("TRANSFER", "CORRECTION"))
-            & (
-                (later.herd != sale.herd)
-                | later.holder_contact.is_null(True)
-                | (later.holder_contact != sale.holder_contact)
-            )
-            & (
-                (later.herd_tracking_date > sale.herd_tracking_date)
-                | ((later.herd_tracking_date == sale.herd_tracking_date) & (later.id > sale.id))
-            )
-        )
+        .where(sale.holder_contact.is_null(False) & sale.voided_at.is_null(True) & sold_on(sale, later))
     )
     no_membership = BuyerContact.membership_optin_at.is_null(True)
     kept = (
@@ -130,7 +141,7 @@ def purge_sold_on(now):  # pylint: disable=unused-argument  # every rule takes t
         BuyerContact.email: Case(None, [(no_membership, None)], BuyerContact.email),
         BuyerContact.phone: Case(None, [(no_membership, None)], BuyerContact.phone),
     }
-    return _null_fields(BuyerContact.id.in_(sold_on) & kept, changes, "gallring_salld_vidare")
+    return _null_fields(BuyerContact.id.in_(moved_on) & kept, changes, "gallring_salld_vidare")
 
 
 def purge_membership_optin(now):

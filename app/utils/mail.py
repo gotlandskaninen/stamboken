@@ -51,6 +51,7 @@ SMTP_TIMEOUT = 60  # seconds, per SMTP step
 SEND_DEADLINE = 120
 RECLAIM_AFTER = timedelta(minutes=10)
 PAUSE_AFTER_SYSTEMIC = timedelta(minutes=5)
+REFUSALS_BEFORE_PAUSE = 3  # permanent failures in a row in one run: the relay refuses everything
 STALLED_AFTER = timedelta(minutes=5)  # no sender run for this long: the scheduler is dead
 # After the 1st..6th counted failure; the 7th fails the mail.
 RETRY_DELAYS = (
@@ -153,6 +154,7 @@ def enqueue_mail(
 
 
 def _mac(message):
+    """One key for three uses, so every input starts with its own prefix: `link:`, `msgid:` or `addr:`."""
     secret = settings.mail.link_secret
     if not secret:
         raise RuntimeError("LINK_SECRET is not set")
@@ -160,11 +162,11 @@ def _mac(message):
 
 
 def _link_mac(purpose, row_id):
-    return base64.urlsafe_b64encode(_mac(f"{purpose}:{row_id}").digest()[:16]).rstrip(b"=").decode()
+    return base64.urlsafe_b64encode(_mac(f"link:{purpose}:{row_id}").digest()[:16]).rstrip(b"=").decode()
 
 
 def link_token(purpose, row_id):
-    """`<row id>.<mac>`, mac = base64url(HMAC-SHA256(LINK_SECRET, "<purpose>:<row id>")) cut to 128 bits."""
+    """`<row id>.<mac>`, mac = base64url(HMAC-SHA256(LINK_SECRET, "link:<purpose>:<row id>")) cut to 128 bits."""
     return f"{row_id}.{_link_mac(purpose, row_id)}"
 
 
@@ -189,12 +191,12 @@ def _hostname():
 
 def message_id(row_id):
     """Unguessable, the same on every attempt, and different per environment (the hostname)."""
-    return f"<mail-{row_id}.{_mac(f'mail:{row_id}').hexdigest()[:16]}@{_hostname()}>"
+    return f"<mail-{row_id}.{_mac(f'msgid:{row_id}').hexdigest()[:16]}@{_hostname()}>"
 
 
 def address_hash(address):
     """HMAC, not a plain hash, which could be looked up against known addresses."""
-    return _mac(_normalize(address) or "").hexdigest()
+    return _mac(f"addr:{_normalize(address) or ''}").hexdigest()
 
 
 _ADDRESS = re.compile(r"[^@\s<>,;\"']+@[^@\s<>,;\"']+")
@@ -276,6 +278,7 @@ class _Relay:
         self.conn = None
         self.dropped = False  # the previous mail lost the connection
         self.timed_out = False
+        self.refused = 0  # permanent failures in a row
 
     def send(self, msg, address):
         """
@@ -471,6 +474,19 @@ def _systemic(row, now, smtp_code, detail):
     return False
 
 
+def _refused_in_a_row(relay, now, result):
+    """
+    A relay that refuses every recipient (quota, policy, our IP) answers each mail with a 5xx at RCPT or DATA.
+    Three permanent failures in a row stop the run and pause the sender like a systemic failure; the three
+    rows stay failed. Returns False when the run stops.
+    """
+    relay.refused = relay.refused + 1 if result == "permanent" else 0
+    if relay.refused < REFUSALS_BEFORE_PAUSE:
+        return True
+    MailSender.update(paused_until=now + PAUSE_AFTER_SYSTEMIC).where(MailSender.id == 1).execute()
+    return False
+
+
 def _allowed(address):
     return any(
         address == entry or (entry.startswith("@") and address.endswith(entry)) for entry in settings.mail.allowlist
@@ -500,8 +516,9 @@ def _send_one(row, relay, now):
         subject, body = render(row.kind, variables)
         msg = None if mode == "log" else _message(row, address, subject, body, attachments)
     except Exception as exc:  # pylint: disable=broad-except  # a bug or a lost database: retried like a 4xx
-        logger.exception("Building mail %s failed", row.id)
-        return _failed(row, now, "temporary", None, f"bygget misslyckades: {_describe(exc)}")
+        detail = f"bygget misslyckades: {_describe(exc)}"
+        logger.error("Building mail %s failed: %s", row.id, _scrub(detail))  # no traceback: it may hold the address
+        return _failed(row, now, "temporary", None, detail)
 
     if mode == "log":
         logger.info("Mail %s (%s) to %s %s logged, not sent", row.id, row.kind, row.recipient_kind, row.recipient_id)
@@ -520,15 +537,17 @@ def _send_one(row, relay, now):
         return _systemic(row, now, exc.smtp_code, exc.detail)
     except smtplib.SMTPSenderRefused as exc:  # MAIL FROM: our sender or IP refused, every mail would fail alike...
         # ...except 552, the relay's size limit checked against SIZE=, which is this mail's own failure
-        return _smtp_error(row, now, exc.smtp_code, exc.smtp_error, None, systemic=exc.smtp_code != 552)
+        return _smtp_error(row, now, relay, exc.smtp_code, exc.smtp_error, None, systemic=exc.smtp_code != 552)
     except smtplib.SMTPRecipientsRefused as exc:
         code, text = next(iter(exc.recipients.values()))
-        return _smtp_error(row, now, code, text, address)
+        return _smtp_error(row, now, relay, code, text, address)
     except smtplib.SMTPResponseException as exc:
-        return _smtp_error(row, now, exc.smtp_code, exc.smtp_error, address)
+        return _smtp_error(row, now, relay, exc.smtp_code, exc.smtp_error, address)
     except Exception as exc:  # pylint: disable=broad-except  # disconnect, timeout or anything else on this mail
         relay.close()  # the next mail reconnects; if that fails, it is systemic
+        relay.refused = 0
         return _failed(row, now, "temporary", None, _describe(exc))
+    relay.refused = 0
     return _finish(
         row,
         now,
@@ -541,13 +560,14 @@ def _send_one(row, relay, now):
     )
 
 
-def _smtp_error(row, now, code, text, address, systemic=False):
+def _smtp_error(row, now, relay, code, text, address, systemic=False):
     text = text.decode(errors="replace") if isinstance(text, bytes) else str(text)
     result, smtp_code = _classify(code, text)
     detail = f"{code} {text}"
     if systemic or result == "systemic":
         return _systemic(row, now, smtp_code, detail)
-    return _failed(row, now, result, smtp_code, detail, address)
+    _failed(row, now, result, smtp_code, detail, address)
+    return _refused_in_a_row(relay, now, result)
 
 
 def send_pending(now=None):
@@ -555,6 +575,7 @@ def send_pending(now=None):
     One run of the scheduler's mail_send job: up to MAX_PER_RUN due rows, one claimed at a time, over one
     SMTP connection. Returns the number of rows taken.
     """
+    settings.refuse_unsafe_mail_settings()  # not only at import: any other mode would fall through to a real send
     fixed = now
     now = now or _utcnow()
     paused_until = _heartbeat(now)
@@ -595,7 +616,7 @@ def record_bounce(message_id_header, diagnostic):
     if match is None or match.group(3).lower() != _hostname().lower():
         return False
     row_id = int(match.group(1))
-    if not hmac.compare_digest(match.group(2), _mac(f"mail:{row_id}").hexdigest()[:16]):
+    if not hmac.compare_digest(match.group(2), _mac(f"msgid:{row_id}").hexdigest()[:16]):
         return False
     detail = _scrub(diagnostic)
     enhanced = _ENHANCED.search(diagnostic or "")
@@ -673,8 +694,15 @@ def sender_alarms(now=None):
     )
     last_run_at = sender.last_run_at if sender else None
     alarms = []
-    if last_smtp is not None and last_smtp.result == "systemic":
+    paused = sender is not None and sender.paused_until is not None and sender.paused_until > now
+    if paused or (last_smtp is not None and last_smtp.result == "systemic"):
         alarms.append({"code": "relay_refusing", "message": "Reläet tar inte emot e-post från servern"})
+    if (
+        settings.mail.mode == "log"
+        and os.environ.get("FLASK_ENV") == "production"
+        and not settings.service.demo_instance
+    ):
+        alarms.append({"code": "log_mode", "message": "Utskicksläget är log: inget mejl skickas på riktigt"})
     if last_run_at is None or last_run_at < now - STALLED_AFTER:
         alarms.append({"code": "queue_stalled", "message": "Kön står still"})
     last_sent = MailMessage.select(MailMessage.sent_at).where(MailMessage.sent_at.is_null(False))

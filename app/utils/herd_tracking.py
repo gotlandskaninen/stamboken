@@ -119,22 +119,37 @@ def _drop_orphan_buyers(contact_ids, action, user):
     return delete_buyer_contacts(orphans, action, user)[1]
 
 
-def _remove_after_commit(paths):
+def _remove_after_commit(paths, files=None):
     """
-    The queue originals a deletion let go of, removed once the void's transaction has committed.
-    shortcut: inside a caller's own transaction (an Undo command) the files wait for inbox_purge.remove_orphans, a
-    day; upgrade with an after-commit hook if such a void ever holds a buyer.
+    The queue originals a deletion let go of: removed now that the void's transaction has committed, or handed to
+    `files` when the caller owns an outer transaction and removes them after its own commit (inbox_purge.
+    remove_originals). Only an outer transaction that passes no list leaves them to remove_orphans; none does.
     """
-    if paths and not DB_PROXY.in_transaction():
+    if files is not None:
+        files.extend(paths)
+    elif paths and not DB_PROXY.in_transaction():
         from utils.inbox_purge import remove_originals  # pylint: disable=import-outside-toplevel  # see below
 
         remove_originals(paths)
+
+
+def lock_buyer_items(individual_ids):
+    """
+    Before a caller that holds its own transaction locks rabbits whose sales it may void (unpromote): the queue's
+    items of the rabbits' sales, when a sale holds a buyer outside the association.
+    """
+    held = HerdTracking.select().where(
+        HerdTracking.individual.in_(individual_ids), ht_not_voided(), HerdTracking.holder_contact.is_null(False)
+    )
+    if held.exists():
+        _lock_inbox_items(individual_ids)
 
 
 def _lock_inbox_items(individual_ids):
     """
     The queue's items with documents of these rabbits or of their sales, locked before the rabbits: the queue's own
     order (it locks its item, then the rabbit), so a void that clears a sale's documents never deadlocks with it.
+    Taken only when a row to void holds a buyer (holder_contact is set when a row is written, so it is read first).
     """
     sales = HerdTracking.select(HerdTracking.id).where(HerdTracking.individual.in_(individual_ids))
     documents = InboxDocument.select(InboxDocument.item).where(
@@ -143,17 +158,20 @@ def _lock_inbox_items(individual_ids):
     list(InboxItem.select(InboxItem.id).where(InboxItem.id.in_(documents)).order_by(InboxItem.id).for_update())
 
 
-def void_all_for_unpromote(individual, user, operation_id=None):
-    """Retire every active row of an un-promoted individual in one operation."""
+def void_all_for_unpromote(individual, user, operation_id=None, files=None):
+    """
+    Retire every active row of an un-promoted individual in one operation. A caller in its own transaction passes
+    `files` and removes them after its commit, having called lock_buyer_items before its own lock on the rabbit.
+    """
     op = new_operation_id(operation_id)
     with DB_PROXY.atomic():
-        _lock_inbox_items([individual.id])
+        lock_buyer_items([individual.id])
         lock_individuals([individual.id])
         rows = list(HerdTracking.select().where(HerdTracking.individual == individual.id, ht_not_voided()))
         if not user.is_admin and _moves_across_genebanks(individual, rows, []):
             raise HerdTrackingForbidden(GENEBANK_CHANGE_ADMIN_ONLY)
         paths = _drop_orphan_buyers(_void_rows(rows, user, UNPROMOTE_REASON, op), VOID_ACTION, user)
-    _remove_after_commit(paths)
+    _remove_after_commit(paths, files)
     return rows
 
 
@@ -315,6 +333,7 @@ def record_herd_tracking(
         done = _operation_rows([individual_id], op)
         if done:
             return next((r for r in done if r.operation_id == op), done[0])
+        _reject_buyer_name([notes], [individual_id], [contact_fields["name"]] if contact_fields else ())
         before = _active_rows(individual_id)
         existing_birth = next((r for r in before if r.kind == "BIRTH"), None)
         if kind == "BIRTH" and existing_birth is not None:
@@ -560,7 +579,8 @@ def void_herd_tracking(ht_id, user, reason, operation_id=None):
     if row is None:
         raise HerdTrackingNotFound("Raden finns inte.")
     with DB_PROXY.atomic():
-        _lock_inbox_items([row.individual_id])
+        if row.holder_contact_id is not None:
+            _lock_inbox_items([row.individual_id])
         lock_individuals([row.individual_id])
         done = _operation_rows([row.individual_id], op)
         if done:
@@ -656,18 +676,47 @@ def _holder_before(individual, rows, when, kind):
     return prior[-1].herd_id if prior else individual.origin_herd_id
 
 
+AMBIGUOUS_BUYERS = "Rättelsen gäller flera försäljningar utanför genbanken. Rätta en i taget."
+BUYERLESS_BEFORE_SALE = (
+    "En försäljning utanför genbanken utan köpare kan inte läggas före en försäljning till samma besättning."
+)
+
+
 def _carried_buyers(voided, parsed):
     """
-    The buyer of a voided sale into GX1/MX1 goes to the one TRANSFER the correction writes into the same herd, so
-    it keeps its purge_at (ADR-0016). Event index -> contact id; none when more than one could take it.
+    The buyer of a voided sale into GX1/MX1 goes to the event (TRANSFER or CORRECTION, without a buyer of its own)
+    the correction writes into the same herd, so it keeps its purge_at (ADR-0016); with no such event it goes.
+    Event index -> contact id; 409 when more than one buyer or more than one event could pair up.
     """
     carried = {}
     for herd_id in {r.herd_id for r in voided if r.holder_contact_id and r.herd.herd in OUTSIDE_GENEBANK_HERDS}:
         buyers = [r.holder_contact_id for r in voided if r.holder_contact_id and r.herd_id == herd_id]
-        into = [i for i, e in enumerate(parsed) if e["kind"] == "TRANSFER" and e["herd"].id == herd_id]
-        if len(buyers) == 1 and len(into) == 1 and parsed[into[0]]["buyer"] is None:
+        into = [
+            i
+            for i, e in enumerate(parsed)
+            if e["kind"] in ("TRANSFER", "CORRECTION") and e["herd"].id == herd_id and e["buyer"] is None
+        ]
+        if into and (len(buyers) > 1 or len(into) > 1):
+            raise HerdTrackingConflict(AMBIGUOUS_BUYERS)
+        if into:
             carried[into[0]] = buyers[0]
     return carried
+
+
+def _refuse_buyerless_before_sale(rows, written):
+    """
+    A buyerless move into GX1/MX1 just before a row in the same herd would make that row's buyer a resale between
+    two buyers outside the association (ADR-0016): refused.
+    """
+    ordered = sorted(rows, key=ht_sort_key)
+    for row in written:
+        if row.holder_contact_id is not None or row.kind not in ("TRANSFER", "CORRECTION"):
+            continue
+        if row.herd.herd not in OUTSIDE_GENEBANK_HERDS:
+            continue
+        later = ordered[ordered.index(row) + 1 :]
+        if later and later[0].herd_id == row.herd_id:
+            raise HerdTrackingConflict(BUYERLESS_BEFORE_SALE, rows=[_row_ref(later[0])])
 
 
 def correct_herd_tracking(individual, user, operation_id, void_ids, events, reason=None):
@@ -689,7 +738,12 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
     cleaned = require_reason(reason) if void_ids else None
     op = new_operation_id(operation_id)
     with DB_PROXY.atomic():
-        _lock_inbox_items([ind_id])
+        if (
+            HerdTracking.select()
+            .where(HerdTracking.id.in_(void_ids), HerdTracking.holder_contact.is_null(False))
+            .exists()
+        ):
+            _lock_inbox_items([ind_id])
         lock_individuals([ind_id])
         ind = Individual.get_by_id(ind_id)
         if _operation_rows([ind_id], op):
@@ -756,6 +810,7 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
             raise HerdTrackingForbidden(GENEBANK_CHANGE_ADMIN_ONLY)
         if any(_changes_genebank(r, ind, current) and not r.notes for r in written):
             raise HerdTrackingInvalid("Ange en anledning i anteckningen för ett genbanksbyte.")
+        _refuse_buyerless_before_sale(current, written)
         _assert_no_new_violations(ind, before, current)
         paths = _drop_orphan_buyers(voided, VOID_ACTION, user)
     _remove_after_commit(paths)
@@ -855,7 +910,10 @@ def undo_herd_tracking_operation(operation_id, user, reason, undo_operation_id=N
     if not ind_ids:
         raise HerdTrackingNotFound("Åtgärden finns inte.")
     with DB_PROXY.atomic():
-        _lock_inbox_items(ind_ids)
+        # The rows this undo may void: those the operation wrote or restored.
+        redone = (HerdTracking.operation_id == op) | (HerdTracking.restored_operation_id == op)
+        if HerdTracking.select().where(redone, HerdTracking.holder_contact.is_null(False)).exists():
+            _lock_inbox_items(ind_ids)
         lock_individuals(ind_ids)
         individuals = {i.id: i for i in Individual.select().where(Individual.id.in_(ind_ids))}
         if any(not is_manager_of(user, i.origin_herd.genebank_id) for i in individuals.values()):
@@ -1011,10 +1069,18 @@ def buyer_contact_fields(buyer):
     return fields
 
 
+def _name_patterns(name):
+    """The whole name, and each word of it with at least three letters, as whole words with a genitive s."""
+    words = re.findall(r"\w+", name)
+    parts = [r"\s+".join(map(re.escape, words))] + [re.escape(w) for w in words if len(w) >= 3]
+    return [re.compile(rf"\b{part}s?\b", re.IGNORECASE) for part in parts if part]
+
+
 def _reject_buyer_name(texts, individual_ids, names=()):
     """
-    No buyer's name in what a user types (it lives forever in audit_log): any word of the name of a buyer the
-    rabbits' rows hold, or of `names`, as a whole word in any case. "Anna" stops "Såld till anna", not "annan".
+    No buyer's name in what a user types (it lives forever in audit_log): the whole name of a buyer the rabbits'
+    rows hold, or of `names`, or a word of it of three letters or more, in any case and also in the genitive.
+    "Anna" stops "Annas köpare", not "annan"; "de" in "Kim de Vries" stops nothing alone.
     """
     texts = [text for text in texts if text]
     if not texts:
@@ -1022,18 +1088,37 @@ def _reject_buyer_name(texts, individual_ids, names=()):
     held = HerdTracking.select(HerdTracking.holder_contact).where(HerdTracking.individual.in_(individual_ids))
     stored = BuyerContact.select(BuyerContact.name).where(BuyerContact.id.in_(held))
     for name in [*names, *(name for (name,) in stored.tuples())]:
-        for word in re.findall(r"\w{2,}", name):
-            if any(re.search(rf"\b{re.escape(word)}\b", text, re.IGNORECASE) for text in texts):
-                raise HerdTrackingInvalid(BUYER_PRIVACY_HELP)
+        if any(pattern.search(text) for pattern in _name_patterns(name) for text in texts):
+            raise HerdTrackingInvalid(BUYER_PRIVACY_HELP)
 
 
-def delete_buyer_contacts(contact_ids, action, user=None):
+def sold_on(sale, later):
+    """
+    SQL: `later` (an alias of HerdTracking) is an active row after `sale` that gives the rabbit another holder: a
+    TRANSFER or CORRECTION to another herd, or to another buyer outside the association.
+    """
+    return (
+        later.voided_at.is_null(True)
+        & later.kind.in_(("TRANSFER", "CORRECTION"))
+        & (
+            (later.herd != sale.herd)
+            | later.holder_contact.is_null(True)
+            | (later.holder_contact != sale.holder_contact)
+        )
+        & (
+            (later.herd_tracking_date > sale.herd_tracking_date)
+            | ((later.herd_tracking_date == sale.herd_tracking_date) & (later.id > sale.id))
+        )
+    )
+
+
+def delete_buyer_contacts(contact_ids, action, user=None, whole_items=False):
     """
     Deletes buyers outside the association, in the caller's transaction: on a void of the sale, an erasure, the
     rabbit's death and the five-year purge. The sale's holder_contact_id goes NULL (ON DELETE SET NULL); the sale
-    stays. Each deletion is one audit_log row without personal data, and every time the sale's documents in the
-    queue are cleared the same way (inbox_purge.erase_buyer_from_inbox). Returns how many went and the paths for
-    inbox_purge.remove_originals after the commit.
+    stays. Each deletion is one audit_log row without personal data, and the sale's documents in the queue are
+    cleared (inbox_purge.erase_buyer_from_inbox; `whole_items` on an erasure on request). Returns how many went and
+    the paths for inbox_purge.remove_originals after the commit.
     """
     # Imported here: inbox_purge imports inbox, which imports individual_number_v2, which imports this module.
     from utils.inbox_purge import erase_buyer_from_inbox  # pylint: disable=import-outside-toplevel
@@ -1044,7 +1129,7 @@ def delete_buyer_contacts(contact_ids, action, user=None):
     paths = []
     # The sales first: the delete nulls their link.
     for (sale_id,) in HerdTracking.select(HerdTracking.id).where(HerdTracking.holder_contact.in_(ids)).tuples():
-        paths += erase_buyer_from_inbox(sale_id)
+        paths += erase_buyer_from_inbox(sale_id, whole_items)
     deleted = BuyerContact.delete().where(BuyerContact.id.in_(ids)).returning(BuyerContact.id).tuples()
     deleted = [contact_id for (contact_id,) in deleted]
     for contact_id in deleted:
@@ -1093,6 +1178,14 @@ def compute_periods(active_rows, herds):
     return periods
 
 
+def _keeps_invariants(individual, before, after):
+    """Pure-Python mirror of the services' delta check (I1-I5), so a hint never promises a 409."""
+    known = {(v.code, v.row_id) for v in check_invariants(individual, before)}
+    if any((v.code, v.row_id) not in known for v in check_invariants(individual, after)):
+        return False
+    return not (any(r.kind == "BIRTH" for r in before) and not any(r.kind == "BIRTH" for r in after))
+
+
 def _operation_undo_hint(operation_id, rows, individual):
     """UI hint only (the undo service re-checks across all individuals): undoable within this individual."""
     written, voided, restored = _operation_effects(rows, operation_id)
@@ -1105,20 +1198,18 @@ def _operation_undo_hint(operation_id, rows, individual):
     op_time = _operation_time(written, voided, restored)
     if any(_row_touched_after(r, operation_id, op_time) for r in rows):
         return False
-    if any(r.kind == "BIRTH" for r in written + voided + restored):  # the service refuses a decoupled BIRTH
-        revoid_ids = {r.id for r in written + restored}
-        after = [r for r in rows if r.voided_at is None and r.id not in revoid_ids] + voided
-        return not _decouples_birth(individual, after)
-    return True
+    revoid_ids = {r.id for r in written + restored}
+    active = [r for r in rows if r.voided_at is None]
+    after = [r for r in active if r.id not in revoid_ids] + voided
+    if not _keeps_invariants(individual, active, after):
+        return False
+    # The service refuses a decoupled BIRTH.
+    return not (any(r.kind == "BIRTH" for r in written + voided + restored) and _decouples_birth(individual, after))
 
 
 def _void_keeps_invariants(individual, active, row):
     """Pure-Python mirror of void_herd_tracking's delta check, so can_void never promises a 409 (I1-I5)."""
-    after = [r for r in active if r.id != row.id]
-    known = {(v.code, v.row_id) for v in check_invariants(individual, active)}
-    if any((v.code, v.row_id) not in known for v in check_invariants(individual, after)):
-        return False
-    return not (row.kind == "BIRTH" and not any(r.kind == "BIRTH" for r in after))
+    return _keeps_invariants(individual, active, [r for r in active if r.id != row.id])
 
 
 def _iso(value):

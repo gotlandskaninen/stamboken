@@ -121,7 +121,7 @@ sorten blir mejlet `cancelled` med ett felmeddelande som säger varför.
 ## Länkar i mejl
 
 `link_token(syfte, rad_id)` ger en länkkod `<rad_id>.<mac>`, där `mac` är
-base64url av HMAC-SHA256(`LINK_SECRET`, `"<syfte>:<rad_id>"`), avkortad till
+base64url av HMAC-SHA256(`LINK_SECRET`, `"link:<syfte>:<rad_id>"`), avkortad till
 128 bitar. Ingen kod och ingen hash av den sparas; byggfunktionen räknar fram
 koden när mejlet skickas, så en påminnelse kan skicka samma länk igen.
 `verify_link(syfte, token)` ger rad-id:t om koden är äkta, annars `None`.
@@ -197,6 +197,7 @@ att koden inte hamnar i appens loggar eller i gunicorns åtkomstlogg.
 
 Starten stoppas om `MAIL_MODE=live` och `DEMO_INSTANCE=true`, om
 `LINK_SECRET` saknas när läget inte är `log`, eller om läget är okänt.
+Samma kontroll görs vid varje körning av `send_pending`, som annars inte skickar.
 Övriga inställningar: `SMTP_HOST`, `SMTP_PORT` och `MAIL_FROM`. Appen har
 inget användarnamn eller lösenord för SMTP. Compose-filerna för dev och den
 lokala produktionsstacken låser `MAIL_MODE=log`, också om `api-variables.env`
@@ -233,8 +234,12 @@ lokala produktionsstacken låser `MAIL_MODE=log`, också om `api-variables.env`
 | anslutningen nekas, ingen STARTTLS, EHLO nekas, 421, reläet nekar vår avsändare eller vår IP vid MAIL FROM, anslutningen bryts eller tar för lång tid för det andra mejlet i rad i samma körning | `systemic` | felet ligger hos reläet, inte hos mejlet: försöket räknas inte, sändaren vilar 5 minuter och raden väntar till en minut efter pausen, så att mejlen bakom den går först |
 
 Ett avslag vid RCPT eller DATA gäller den mottagaren eller det mejlet, vilken
-kod det än har. Ett relä som nekar alla mottagare fäller därför mejlen ett i
-taget. Får samma rad `systemic` en tredje gång och annan post har gått fram
+kod det än har. Ett relä som nekar alla mottagare (kvot, policy, vår IP)
+skulle därför fälla mejlen ett i taget. Därför stoppas körningen efter tre
+`permanent` i rad: sändaren vilar 5 minuter som vid `systemic`, statusvyn
+visar larmet "Reläet tar inte emot e-post från servern", och de tre raderna
+förblir `failed` ("Försök igen" skickar dem). Ett mejl som går fram nollställer
+räkningen. Får samma rad `systemic` en tredje gång och annan post har gått fram
 mellan gångerna, är felet mejlets eget och raden blir `failed`. "Försök igen"
 börjar räkningen om.
 
@@ -252,7 +257,8 @@ genbank):
 - `GET /status?ref_type=…&ref_id=…`: senaste raden per typ för ett ärende.
 - `GET /messages`: listan med filter (`status`, `kind`, `genebank_id`,
   `herd_id`, `from`, `to`, `limit`, `offset`) och larmen: reläet tar inte
-  emot, kön står still (`last_run_at` äldre än 5 minuter), senaste lyckade
+  emot, kön står still (`last_run_at` äldre än 5 minuter), läget är `log` i
+  produktion (ingen demo; raderna blir `logged` för gott), senaste lyckade
   utskick.
-- `POST /messages/<id>/retry`: `failed` eller `bounced` tillbaka till kön.
+- `POST /messages/<id>/retry`: `failed`, `bounced` eller `logged` tillbaka till kön.
 - `POST /messages/<id>/cancel`: stoppar ett köat mejl.

@@ -19,6 +19,7 @@ import {
   buildSalePayload,
   outsideHerd,
   problemField,
+  provenSale,
   type InboxDocument,
   type SaleForm,
 } from "../lib";
@@ -30,15 +31,15 @@ export function SalePanel({
   doc,
   herds,
   canSave,
-  saleRegistered = false,
+  documents = [],
   onDone,
 }: {
   itemId: number;
   doc: InboxDocument;
   herds: GenebankHerd[];
   canSave: boolean;
-  /** A proof of a sale already registered from another document of the item: its buyer came with it. */
-  saleRegistered?: boolean;
+  /** The item's documents: a proof of a sale one of them registered needs no buyer (provenSale). */
+  documents?: InboxDocument[];
   onDone: (document: InboxDocument) => void;
 }) {
   const [form, setForm] = useState<SaleForm>({
@@ -58,6 +59,7 @@ export function SalePanel({
     setForm((f) => ({ ...f, ...changes }));
   const names = new Map(herds.map((h) => [h.herd, h.herd_name]));
   const proof = doc.doc_type === "bevis";
+  const saleRegistered = provenSale(documents, doc, buildSalePayload(form));
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
