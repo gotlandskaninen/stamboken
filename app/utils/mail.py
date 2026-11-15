@@ -524,7 +524,7 @@ def _send_one(row, relay, now):
         logger.info("Mail %s (%s) to %s %s logged, not sent", row.id, row.kind, row.recipient_kind, row.recipient_id)
         if os.environ.get("FLASK_ENV") != "production":
             logger.info("Mail %s:\n%s\n\n%s", row.id, mask_tokens(subject), mask_tokens(body))
-        return _finish(row, now, status="logged")
+        return _finish(row, now, status="logged", last_error=note)
     if mode == "allowlist" and not _allowed(address):
         return _finish(row, now, status="blocked", last_error="spärrat: adressen finns inte i MAIL_ALLOWLIST")
     if not _renew(row):

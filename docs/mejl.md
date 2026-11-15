@@ -103,7 +103,8 @@ av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas.
 veta vilket försök det är (1 vid första), de andra får det inte. Ett fel i
 byggfunktionen räknas som ett tillfälligt fel, men en funktion kan fånga det
 på ett sent försök och ändå bygga mejlet, till exempel utan bilaga. Nyckeln
-`sent_note` bland variablerna sparas i `last_error` när mejlet har skickats.
+`sent_note` bland variablerna sparas i `last_error` när mejlet har skickats
+eller, i läget `log`, loggats.
 
 ## Mottagare
 

@@ -183,6 +183,17 @@ class TestInformationSent(BuyerMailTest):
             (row.status, row.attempts, row.last_error), ("sent", 3, "skickat utan bilaga: intyget kunde inte hämtas")
         )
 
+    def test_log_mode_keeps_the_note_about_a_missing_certificate(self):
+        db.Individual.update(digital_certificate=9001).where(db.Individual.id == self.rabbit.id).execute()
+        db.MailMessage.update(attempts=2).execute()
+        with (
+            mock.patch.object(settings.mail, "mode", "log"),
+            mock.patch("utils.cert_acess.download_certificate_s3", side_effect=OSError("S3 is down")),
+        ):
+            mail.send_pending()
+        (row,) = self.mails()
+        self.assertEqual((row.status, row.last_error), ("logged", "skickat utan bilaga: intyget kunde inte hämtas"))
+
     def test_a_certificate_that_works_leaves_last_error_empty_on_a_late_attempt(self):
         self.certificate()
         db.MailMessage.update(attempts=2).execute()
