@@ -224,6 +224,19 @@ class TestInformationSent(BuyerMailTest):
         self.assertNotIn("byter ägare igen", body)
         self.assertNotIn("Ditt ja kan du ta tillbaka", body)
 
+    def test_names_from_the_seller_stay_on_one_line(self):
+        link = "https://phish.example.org/x"
+        db.Individual.update(name=f"Stjärna\n{link}\r\n  igen").where(db.Individual.id == self.rabbit.id).execute()
+        db.BuyerContact.update(name=f"Zelda\n\n{link}\tEfternamn").where(
+            db.BuyerContact.id == self.contact_id
+        ).execute()
+        subject, body = self.text()
+        self.assertEqual(
+            subject, f"Din kanin Stjärna {link} igen (G1-2111) är registrerad hos Föreningen Gotlandskaninen"
+        )
+        self.assertIn(f"Hej Zelda {link} Efternamn,\n\ndu har köpt kaninen Stjärna {link} igen, G1-2111.", body)
+        self.assertNotIn(f"\n{link}", body)
+
     def test_not_sent_once_the_buyer_is_erased(self):
         buyer_contact.erase_buyer_contact(self.contact_id, self.admin)
         self.assertEqual(self.send(), [])
@@ -245,6 +258,14 @@ class TestMembership(BuyerMailTest):
         self.assertEqual(subject, "Välkommen att bli medlem i Föreningen Gotlandskaninen")
         self.assertTrue(body.startswith(f"Hej {NAME},\n\nnär du köpte Stjärna sa du att"), body)
         self.assertIn("Läs mer och ansök på gotlandskaninen.se/ansok.\n\nVi sparar ditt ja", body)
+
+    def test_names_from_the_seller_stay_on_one_line(self):
+        link = "https://phish.example.org/x"
+        contact_id = self._sale({**WITH_EMAIL, "membership_optin": True}).holder_contact_id
+        db.Individual.update(name=f"Stjärna\n{link}").where(db.Individual.id == self.rabbit.id).execute()
+        db.BuyerContact.update(name=f"Zelda\n{link}").where(db.BuyerContact.id == contact_id).execute()
+        body = self.text("kopare.medlemskap")[1]
+        self.assertTrue(body.startswith(f"Hej Zelda {link},\n\nnär du köpte Stjärna {link} sa du"), body)
 
     def test_not_sent_once_the_yes_is_gone(self):
         contact_id = self._sale({**WITH_EMAIL, "membership_optin": True}).holder_contact_id

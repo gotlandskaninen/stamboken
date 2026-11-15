@@ -60,6 +60,11 @@ def queue_buyer_mails(contact, sale):
         )
 
 
+def _one_line(value):
+    """Free text from the seller goes into the mail on one line, so it cannot add lines of its own."""
+    return " ".join((value or "").split())
+
+
 def _swedish_date(moment):
     day = moment.astimezone(_STOCKHOLM)
     return f"{day.day} {_MONTHS[day.month - 1]} {day.year}"
@@ -107,8 +112,8 @@ def _information_mail(params, attempt=1):
         logger.exception("Certificate for mail to buyer %s unavailable; sent without it", contact.id)
         pdf, note = None, "skickat utan bilaga: intyget kunde inte hämtas"
     return {
-        "buyer": contact.name,
-        "name": rabbit.name,
+        "buyer": _one_line(contact.name),
+        "name": _one_line(rabbit.name),
         "number": rabbit.number,
         "until": _swedish_date(contact.purge_at),
         "token": link_token(ERASE_PURPOSE, contact.id),
@@ -126,7 +131,7 @@ def _membership_mail(params):
     rabbit = Individual.get_or_none(Individual.id == params["individual_id"])
     if contact is None or contact.membership_optin_at is None or rabbit is None:
         return None
-    return {"buyer": contact.name, "rabbit": rabbit.name or rabbit.number}
+    return {"buyer": _one_line(contact.name), "rabbit": _one_line(rabbit.name) or rabbit.number}
 
 
 def erase_by_link(token):
