@@ -479,6 +479,13 @@ class TestVoid(BuyerBase):
         with self.assertRaises(HerdTrackingInvalid):  # a new one, with nothing to rewrite
             correct_herd_tracking(self.rabbit, self.manager, None, [], [{**event, "date": "2021-09-01"}])
 
+    def test_a_carried_buyer_that_went_meanwhile_is_a_409_not_a_500(self):
+        with mock.patch("utils.herd_tracking._carried_buyers", return_value={0: 10**9}):  # deleted before the write
+            with self.assertRaises(HerdTrackingConflict) as raised:
+                self._correct_date()
+        self.assertEqual(raised.exception.detail, "Köparen raderades under tiden. Försök igen.")
+        self.assertEqual(self._latest().id, self.sale.id)
+
     def test_the_event_api_takes_no_holder_contact_id(self):
         event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "G2", "holder_contact_id": self.contact_id}
         (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [event], "Fel köpare")

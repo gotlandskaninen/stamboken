@@ -726,6 +726,9 @@ BUYERLESS_BEFORE_SALE = (
 )
 
 
+BUYER_GONE = "Köparen raderades under tiden. Försök igen."
+
+
 def _carried_buyers(voided, parsed):
     """
     The buyer of a voided sale into GX1/MX1 goes to the event (TRANSFER or CORRECTION, without a buyer of its own)
@@ -842,23 +845,31 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
         for index, event in enumerate(parsed):
             birth = event["kind"] == "BIRTH"
             from_herd = None if birth else _holder_before(ind, current, event["date"], event["kind"])
-            row = HerdTracking.create(
-                individual=ind_id,
-                herd=event["herd"],
-                from_herd=from_herd,
-                signature=user,
-                herd_tracking_date=event["date"],
-                kind=event["kind"],
-                operation_id=op,
-                notes=event["notes"],
-                holder_contact=(
-                    BuyerContact.create(
-                        **event["buyer"], created_by_user=user, purge_at=BuyerContact.purge_at_for(event["date"])
+            try:
+                with DB_PROXY.atomic():
+                    row = HerdTracking.create(
+                        individual=ind_id,
+                        herd=event["herd"],
+                        from_herd=from_herd,
+                        signature=user,
+                        herd_tracking_date=event["date"],
+                        kind=event["kind"],
+                        operation_id=op,
+                        notes=event["notes"],
+                        holder_contact=(
+                            BuyerContact.create(
+                                **event["buyer"],
+                                created_by_user=user,
+                                purge_at=BuyerContact.purge_at_for(event["date"]),
+                            )
+                            if event["buyer"]
+                            else carried.get(index)
+                        ),
                     )
-                    if event["buyer"]
-                    else carried.get(index)
-                ),
-            )
+            except IntegrityError as exc:  # the carried buyer went (a purge or an erasure) after it was read
+                if _violated_constraint(exc) != "herd_tracking_holder_contact_id_fkey":
+                    raise
+                raise HerdTrackingConflict(BUYER_GONE) from exc
             if index in carried:  # a corrected sale's buyer: five years from the sale's corrected date
                 BuyerContact.update(purge_at=BuyerContact.purge_at_for(event["date"])).where(
                     BuyerContact.id == carried[index]
