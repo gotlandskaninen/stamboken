@@ -370,14 +370,14 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
     for a first save) and `revision` the report revision it started from (None when it saw no report). A first save
     needs the submitted report's revision, so a late autosave after Skicka is refused (5.13); a stale version is a
     409 that carries the current draft. Only while the round is open, or after end_date for an editor or a helper on
-    paper (D11, P39c); otherwise a 409 with code runda_stangd.
+    paper (D11, P39c); otherwise a 409 with code rundan_stangd.
     """
     day, end = today(), round_.end_date
     late_ok = access.editor or access.role == "helper"  # a helper's access always comes through the post
     # round_open on end_date itself: the genebank has activated the round and its dates are set
     late = late_ok and end is not None and day > end and round_open(round_, herd.genebank_id, end)
     if not (round_open(round_, herd.genebank_id, day) or late):
-        raise ArsrapportError(409, "Rundan är inte öppen.", code="runda_stangd")
+        raise ArsrapportError(409, "Rundan är inte öppen.", code="rundan_stangd")
     if not isinstance(data, dict):
         raise ArsrapportError(400, "Utkastet ska vara ett objekt.")
     if _holds_private(data):

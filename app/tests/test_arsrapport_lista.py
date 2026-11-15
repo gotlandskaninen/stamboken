@@ -431,7 +431,7 @@ class ListaTest(ArsrapportTest):
 
     def assert_round_closed(self, r):
         self.assertEqual(r.status_code, 409, r.get_data(as_text=True))
-        self.assertEqual((r.json["detail"], r.json["code"]), ("Rundan är inte öppen.", "runda_stangd"))
+        self.assertEqual((r.json["detail"], r.json["code"]), ("Rundan är inte öppen.", "rundan_stangd"))
         self.assertNotIn("draft", r.json)  # the revision conflict carries draft; this one does not
 
     def test_owner_draft_before_activation_is_refused(self):
