@@ -124,7 +124,7 @@ class KontaktTest(ArsrapportTest):
         return [model.select().count() for model in WRITTEN]
 
     def a23(self):
-        return list(db.MailMessage.select().where(db.MailMessage.kind == A23))
+        return list(db.MailMessage.select().where(db.MailMessage.kind == A23).order_by(db.MailMessage.id))
 
     def events(self, item):
         query = db.InboxEvent.select().where(db.InboxEvent.item == item.id, db.InboxEvent.kind == "matrikel_andrad")
@@ -182,12 +182,33 @@ class KontaktTest(ArsrapportTest):
         for secret in ("9420", "4618", "adress", "telefon", "e-post"):
             self.assertNotIn(secret, text)
 
-        # The log: the helper, the item and the field name, never a value; the herd's audit trigger has the account.
+        # The log: the helper, the item and the field name, never a value; the herd's audit trigger has the account,
+        # and the matrikel's row ties it to the submission by its transaction (I1).
         (event,) = self.events(item)
         self.assertEqual(
             (event.user_id, event.detail), (self.helper.id, {"falt": ["konto"], "hoppade": [], "submission_id": sid})
         )
-        self.assertEqual(self.contact_audits(), [])
+        (audit,) = self.contact_audits()
+        (herd_audit,) = db.AuditLog.select().where(
+            db.AuditLog.table_name == "herd",
+            db.AuditLog.record_id == str(self.h.id),
+            db.AuditLog.operation == "UPDATE",
+            db.AuditLog.changed_fields.contains_any("bank_account_number"),
+        )
+        self.assertEqual(
+            (audit.actor_id, audit.payload),
+            (
+                self.helper.id,
+                {
+                    "person_id": self.member.id,
+                    "fields": ["bank_account_number", "bank_name"],
+                    "source": "paper",
+                    "inbox_item_id": item.id,
+                    "submission_id": sid,
+                    "transaction_id": herd_audit.transaction_id,
+                },
+            ),
+        )
         self.assertEqual(self.ok(item, body), receipt)  # the retry reads the same back
         self.assertEqual(len(self.a23()), 1)
 
@@ -307,6 +328,7 @@ class KontaktTest(ArsrapportTest):
                 "fields": ["phone", "email"],
                 "source": "paper",
                 "inbox_item_id": item.id,
+                "submission_id": submission.id,
                 "before": {"email": EMAIL},
                 "after": {"email": "ny@example.invalid"},
             },
@@ -356,13 +378,17 @@ class KontaktTest(ArsrapportTest):
                 self.assertEqual(self.matrikel_rows(self.member), before)
                 self.assertEqual((self.events(item), self.a23(), self.contact_audits()), ([], [], []))
 
-    def test_later_matrikel_change_wins(self):  # Review Focus 5, D19
-        # The real clock: neither matrikel_audit nor audit_log follows at(), and audit_log cannot be backdated.
+    def real_clock(self):
+        """Today on the real clock, the round open around it: neither matrikel_audit nor audit_log follows at()."""
         self.at(datetime.now(timezone.utc))
         today = arsrapport.today()
         db.YearlyReportRound.update(
             start_date=today - timedelta(days=30), deadline=today, end_date=today + timedelta(days=30)
         ).where(db.YearlyReportRound.id == self.round_.id).execute()
+        return today
+
+    def test_later_matrikel_change_wins(self):  # Review Focus 5, D19
+        today = self.real_clock()  # audit_log cannot be backdated
         # A phone through the profile and an account on the herd, both now
         db.Member.update(user=self.owner.id).where(db.Member.id == self.member.id).execute()
         self.login("owner")
@@ -391,6 +417,34 @@ class KontaktTest(ArsrapportTest):
         self.assertEqual((receipt["matrikel"], receipt["warnings"]), (["konto", "telefon"], []))
         member, herd = db.Member.get_by_id(self.member.id), db.Herd.get_by_id(self.h.id)
         self.assertEqual((member.phone, herd.bank_account_number), (NEW_PHONE, "9420-46180377"))
+
+    def test_change_from_paper_corrects_its_own_typo(self):  # I1
+        today = self.real_clock()
+        signed, received = (today - timedelta(days=10)).isoformat(), today.isoformat()
+        item = self.form(self.manager)
+        self.login("man")
+        typo = matrikel(konto={**NEW_KONTO, "konto": "4618 0378"}, telefon="0709-777 889")
+        first = self.ok(item, self.paper(item, typo, received_on=received, signed_on=signed))
+        self.assertEqual(first["matrikel"], ["konto", "telefon"])
+        self.assertEqual(db.Herd.get_by_id(self.h.id).bank_account_number, "9420-46180378")
+
+        # Ändra from paper with the same form's date: the report's own writes are no later change.
+        again = self.form(self.manager)
+        fixed = matrikel(konto=NEW_KONTO, telefon=NEW_PHONE)
+        body = self.paper(again, fixed, received_on=received, signed_on=signed, revision=1, reason="Fel konto")
+        receipt = self.ok(again, body)
+        self.assertEqual((receipt["matrikel"], receipt["warnings"]), (["konto", "telefon"], []))
+        member, herd = db.Member.get_by_id(self.member.id), db.Herd.get_by_id(self.h.id)
+        self.assertEqual((member.phone, herd.bank_account_number), (NEW_PHONE, "9420-46180377"))
+        self.assertEqual([(row.params["konto"], row.params["telefon"]) for row in self.a23()], [(1, 1), (1, 1)])
+
+        # A change from another source after the form's date still wins.
+        db.Herd.update(bank_account_number="1111-2222333").where(db.Herd.id == self.h.id).execute()
+        third = self.form(self.manager)
+        body = self.paper(third, typo, received_on=received, signed_on=signed, revision=2, reason="Fel igen")
+        receipt = self.ok(third, body)
+        self.assertEqual((receipt["matrikel"], receipt["warnings"]), (["telefon"], [later("konto")]))
+        self.assertEqual(db.Herd.get_by_id(self.h.id).bank_account_number, "1111-2222333")
 
     def test_matrikel_is_checked_in_the_dry_run(self):
         item = self.form(self.manager)
@@ -444,13 +498,19 @@ class KontaktTest(ArsrapportTest):
         )
         item = self.form(self.manager)
         self.login("man")
-        body = self.paper(item, matrikel(telefon=NEW_PHONE))
+        body = self.paper(item, matrikel(telefon=NEW_PHONE, adress=NEW_ADRESS))
         self.assertTrue(self.skicka(item, body, route="torrkorning").json["ok"])
         swap_main_member(membership, new_main, db.User.get_by_id(self.admin.id))  # between the dry run and Skicka
-        self.ok(item, body)
-        self.assertEqual(db.Member.get_by_id(new_main.id).phone, NEW_PHONE)
-        self.assertEqual(db.Member.get_by_id(self.member.id).phone, PHONE)
-        self.assertEqual([(row.recipient_kind, row.recipient_id) for row in self.a23()], [("member", new_main.id)])
+        receipt = self.ok(item, body)
+        # I2: the swap came after the form's date, so its phone may be the old main member's and is skipped; the
+        # membership's address is written, and Å23 goes to the main member read under the lock.
+        self.assertEqual((receipt["matrikel"], receipt["warnings"]), (["adress"], [later("telefon")]))
+        self.assertEqual(
+            (db.Member.get_by_id(new_main.id).phone, db.Member.get_by_id(self.member.id).phone), (None, PHONE)
+        )
+        self.assertEqual(db.Membership.get_by_id(membership.id).address, "Nya gatan 2")
+        a23 = [(row.recipient_kind, row.recipient_id, row.params["adress"]) for row in self.a23()]
+        self.assertEqual(a23, [("member", new_main.id, 1)])
 
     def test_profile_contact_change_is_logged(self):  # D19
         db.Member.update(user=self.owner.id).where(db.Member.id == self.member.id).execute()
@@ -495,10 +555,9 @@ class KontaktTest(ArsrapportTest):
             (membership.address, membership.postal_code, membership.city), ("Nya gatan 2", "623 55", "Visby")
         )
         (audit,) = self.contact_audits()
-        fields = ["address", "postal_code", "city"]
-        self.assertEqual(
-            audit.payload, {"person_id": self.member.id, "fields": fields, "source": "paper", "inbox_item_id": item.id}
-        )
+        expected = {"person_id": self.member.id, "fields": ["address", "postal_code", "city"], "source": "paper"}
+        ids = {"inbox_item_id": item.id, "submission_id": receipt["submission_id"]}
+        self.assertEqual(audit.payload, expected | ids)
 
     def test_same_key_other_contact_is_409(self):  # D21
         item = self.form(self.manager)

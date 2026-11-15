@@ -1317,38 +1317,48 @@ def _matrikel_refusals(herd, matrikel):
     return refusals
 
 
-def later_fields(herd, membership, member, signed_on: date) -> set[str]:
+def later_fields(herd, membership, member, signed_on: date, own=frozenset()) -> set[str]:
     """
     D19: the PAPER_FIELDS the matrikel changed after the form's date, that is from the next day in Stockholm: the
     account by the herd's audit_log, the consent by publication_consent_change, and the rest by matrikel_audit, whose
-    created_at is naive server time. Phone and e-mail count only from rows about `member`.
+    created_at is naive server time. Phone and e-mail count only from rows about `member`, and every swap of the main
+    member counts for them (I2). The paper writes of the submissions in `own`, the herd's report for the round, do not
+    count, so that Ändra from paper can correct its own typo (I1): their kontakt_andrad rows, and the herd's audit rows
+    of the same transactions.
     """
     # shortcut: the matrikel importer in cli/members.py leaves no trace, so this misses its changes; log them if it
     # ever runs during a round.
     after = datetime.combine(signed_on + timedelta(days=1), datetime.min.time(), STOCKHOLM)
-    audits = MatrikelAudit.select(MatrikelAudit.payload).where(
+    audits = MatrikelAudit.select(MatrikelAudit.action, MatrikelAudit.payload).where(
         MatrikelAudit.membership == membership.id,
-        MatrikelAudit.action.in_(("membership_updated", "person_updated", "kontakt_andrad")),
+        MatrikelAudit.action.in_(("membership_updated", "person_updated", "kontakt_andrad", "main_member_changed")),
         MatrikelAudit.created_at >= after.astimezone().replace(tzinfo=None),
     )
-    fields = set()
+    fields, transactions = set(), set()
     for audit in audits:
         payload = audit.payload or {}
-        own = payload.get("person_id", member.id) == member.id  # membership_updated names no person
+        if payload.get("submission_id") in own:
+            transactions.add(payload.get("transaction_id"))
+            continue
+        if audit.action == "main_member_changed":  # the form's signer may not be the main member written to
+            fields |= {"telefon", "epost"}
+        mine = payload.get("person_id", member.id) == member.id  # membership_updated names no person
         for column in payload.get("fields") or payload.get("after") or ():
-            if column in COLUMN_FIELDS and (own or COLUMN_FIELDS[column] == "adress"):
+            if column in COLUMN_FIELDS and (mine or COLUMN_FIELDS[column] == "adress"):
                 fields.add(COLUMN_FIELDS[column])
-    account = AuditLog.select().where(
+    account = AuditLog.select(AuditLog.transaction_id).where(
         AuditLog.table_name == "herd",
         AuditLog.record_id == str(herd.id),
         AuditLog.operation == "UPDATE",  # an INSERT lists every column it filled
         AuditLog.changed_at >= after,
         AuditLog.changed_fields.contains_any("bank_account_number", "bank_name"),
     )
+    if any(row.transaction_id not in transactions for row in account):
+        fields.add("konto")
     consent = PublicationConsentChange.select().where(
         PublicationConsentChange.membership == membership.id, PublicationConsentChange.at >= after
     )
-    return fields | ({"konto"} if account.exists() else set()) | ({"publicering"} if consent.exists() else set())
+    return fields | ({"publicering"} if consent.exists() else set())
 
 
 def _same(column, stored, value):
@@ -1359,16 +1369,20 @@ def _same(column, stored, value):
     return (stored.lower() if column == "email" else stored) == value
 
 
-def apply_paper_matrikel(herd, membership, member, item, user, matrikel, signed_on) -> tuple[list[str], list[str]]:
+def apply_paper_matrikel(herd, membership, member, submission, item, user, matrikel, signed_on):
     """
     5.5: the form's contact changes written into the matrikel and never read back: the address to `membership`, phone
     and e-mail to its main `member`, the account to the herd (D8). The caller holds the membership's lock and read both
     under it. Only a value that differs counts, the bank going with a new account, and a field the matrikel changed
-    after `signed_on` is skipped (D19). Each write is save(only=…): a whole row would write back a stale user_id. The
-    address, phone and e-mail get one kontakt_andrad row; the herd's audit trigger records the account. Returns
-    (written, skipped) as PAPER_FIELDS.
+    after `signed_on` is skipped (D19), unless the herd's report for the round wrote it from paper itself (I1). Each
+    write is save(only=…): a whole row would write back a stale user_id. Every write gets one kontakt_andrad row with
+    the column names and `submission_id`, and with the transaction for the account, which ties the herd's audit row to
+    it. Returns (written, skipped) as PAPER_FIELDS.
     """
     stored = Herd.get_by_id(herd.id)  # the account as it is now, not as the route read it
+    report = YearlyHerdReport.get_by_id(submission.report_id)
+    same = (YearlyHerdReport.herd == report.herd_id) & (YearlyHerdReport.round == report.round_id)
+    own = YearlyReportSubmission.select(YearlyReportSubmission.id).join(YearlyHerdReport).where(same)
     rows = {"adress": membership, "telefon": member, "epost": member, "konto": stored}
     changes = {}
     for name, columns in _contact(matrikel)[0].items():
@@ -1382,7 +1396,7 @@ def apply_paper_matrikel(herd, membership, member, item, user, matrikel, signed_
             }
         if differ:
             changes[name] = differ
-    later = later_fields(stored, membership, member, signed_on) if changes else set()
+    later = later_fields(stored, membership, member, signed_on, {row.id for row in own}) if changes else set()
     skipped = [name for name in PAPER_FIELDS if name in changes and name in later]
     written = {name: changes[name] for name in PAPER_FIELDS if name in changes and name not in later}
     old_email = member.email
@@ -1396,9 +1410,16 @@ def apply_paper_matrikel(herd, membership, member, item, user, matrikel, signed_
             setattr(row, column, value)
         if columns:
             row.save(only=[getattr(model, column) for column in columns] + stamp)
-    columns = [column for name in ("adress", "telefon", "epost") for column in written.get(name, {})]
-    if columns:
-        payload = {"person_id": member.id, "fields": columns, "source": "paper", "inbox_item_id": item.id}
+    if written:
+        payload = {
+            "person_id": member.id,
+            "fields": [column for columns in written.values() for column in columns],
+            "source": "paper",
+            "inbox_item_id": item.id,
+            "submission_id": submission.id,
+        }
+        if "konto" in written:  # the herd's audit row has the same transaction_id (txid_current() by default)
+            payload["transaction_id"] = DB_PROXY.execute_sql("SELECT txid_current()").fetchone()[0]
         if "epost" in written:  # as person_updated has it: the login's 7-day rule reads "email" in "after"
             payload |= {"before": {"email": old_email}, "after": {"email": member.email}}
         write_matrikel_audit(user, "kontakt_andrad", membership, payload)
@@ -1822,7 +1843,7 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
             raise ArsrapportError(409, KEY_TAKEN) from exc
         if member is not None:  # check() refused a contact change without one (ingen_huvudmedlem)
             matrikel, signed = sub.paper["matrikel"], sub.paper["signed_on"]
-            fields, skipped = apply_paper_matrikel(herd, membership, member, item, user, matrikel, signed)
+            fields, skipped = apply_paper_matrikel(herd, membership, member, submission, item, user, matrikel, signed)
             log_and_mail_paper_contact(herd, item, submission, user, member, fields, skipped, old_email)
         for page in pages:  # every page of the form; the photo goes once the report cannot be withdrawn (fråga 31)
             page.done_at, page.purge_after = page.done_at or at, at + timedelta(days=WITHDRAW_DAYS)
