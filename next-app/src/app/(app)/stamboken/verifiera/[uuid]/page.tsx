@@ -8,7 +8,7 @@ interface VerificationResponse {
   individual_name: string;
   individual_number: string;
   genebank: string;
-  // null once a paper certificate has replaced the digital one
+  // null once a paper certificate has replaced the digital one, or the number was lost (ADR-0019)
   digital_certificate: number | null;
   issued_by: string;
   issued_at: string;
@@ -76,7 +76,7 @@ export default async function VerifieraPage({
 
   const isIdCard = data.certificate_type === "id_card";
   const superseded = !data.is_current;
-  // No date: no newer digital certificate. A paper one replaced it, or its number was removed.
+  // No date: no newer digital certificate, a paper certificate replaced it.
   const replaced = data.replaced_by_date !== null;
 
   if (superseded) {

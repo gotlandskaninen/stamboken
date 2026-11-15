@@ -94,8 +94,9 @@ def next_state(state: CertState, event: Event) -> CertState:
 def check(before: CertState | None, event: Event, after: CertState | None) -> None:
     """A writer's own check: the state it left must be the one the table gives. A mismatch is a programming error.
 
-    `None` is a combination no state allows (both numbers, from the old backend). The table cannot say where a
-    writer that starts there ends, so it is not judged; a writer that starts in a state must end in one.
+    `None` is a combination no state allows: both numbers (the old backend), or a current PDF row whose number
+    was lost. The table cannot say where a writer that starts there ends, so it is not judged; a writer that
+    starts in a state must end in one.
     """
     if before is not None and (after is None or next_state(before, event) != after):
         raise AssertionError(f"{event} took the certificate from {before} to {after}")

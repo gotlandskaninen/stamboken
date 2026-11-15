@@ -805,7 +805,9 @@ class Individual(BaseModel):
         try:
             return state_of(self.certificate, self.digital_certificate, current.exists())
         except ValueError:
-            return None  # no state allows it (both numbers, from the old backend): check() does not judge it
+            # No state allows it: both numbers (the old backend), or a current PDF row whose number was lost
+            # (migrate_37_to_38 leaves those). check() does not judge a writer that starts here.
+            return None
 
     def as_dict(self):
         """
