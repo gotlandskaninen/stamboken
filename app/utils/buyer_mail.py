@@ -12,7 +12,15 @@ from zoneinfo import ZoneInfo
 from peewee import fn
 
 from utils import settings
-from utils.database import DB_PROXY, BuyerContact, DigitalCertificateV2, Individual, MailMessage
+from utils.database import (
+    DB_PROXY,
+    BuyerContact,
+    DigitalCertificateV2,
+    HerdTracking,
+    Individual,
+    MailMessage,
+    ht_not_voided,
+)
 from utils.mail import address_hash, enqueue_mail, link_token, mail_kind, verify_link
 
 logger = logging.getLogger(__name__)
@@ -36,13 +44,12 @@ _MONTHS = (
 )
 
 
-def queue_buyer_mails(contact, sale, replaces=None):
+def queue_buyer_mails(contact, sale):
     """
     For a buyer just created with `sale` (its TRANSFER row) who gave an e-mail: kopare.information, and
     kopare.medlemskap with the yes to membership contact. A corrected sale keeps its buyer, and the dedupe_key
-    holds if anything queues again; the notice is one per sale, the invitation one per address. `replaces` is
-    the contact this one takes the place of in a correction: that contact is erased with its mails, so its
-    invitation, if it still waits and is to the same address, goes over to this one.
+    holds if anything queues again; the notice is one per sale, the invitation one per address (the contact that
+    holds it may go before it is sent: hand_over_invitations).
     """
     if not contact.email:
         return
@@ -52,18 +59,56 @@ def queue_buyer_mails(contact, sale, replaces=None):
         who = contact.id
         if kind == "kopare.medlemskap" and settings.mail.link_secret:  # the address only as its HMAC
             who = address_hash(contact.email)
-        key = f"{kind}:{who}"
-        queued = enqueue_mail(kind, "buyer_contact", contact.id, params, genebank=sale.herd.genebank_id, dedupe_key=key)
-        if queued is None and kind == "kopare.medlemskap" and replaces:
-            # Only that contact's own, and only while no sender has claimed it: another sale's invitation to
-            # the same address stays with its sale, and one sent or cancelled stays as it is.
-            MailMessage.update(recipient_id=contact.id, params=params).where(
-                (MailMessage.dedupe_key == key)
-                & (MailMessage.recipient_kind == "buyer_contact")
-                & (MailMessage.recipient_id == replaces)
-                & (MailMessage.status == "queued")
-                & MailMessage.claim_token.is_null()
-            ).execute()
+        enqueue_mail(
+            kind,
+            "buyer_contact",
+            contact.id,
+            params,
+            genebank=sale.herd.genebank_id,
+            dedupe_key=f"{kind}:{who}",
+        )
+
+
+def hand_over_invitations(leaving):
+    """
+    Before the buyers `leaving` (ids) are deleted, in the same transaction. The invitation is one per address and
+    names one contact. When that contact goes before it is sent (its sale voided, or corrected with the buyer
+    typed again) while another buyer with the address and a yes to membership contact stays, the invitation goes
+    over to that one, back in the queue: forget_recipient would cancel the only one promised. One being sent
+    right now may then go twice, which is better than never.
+    """
+    waiting = MailMessage.select().where(
+        (MailMessage.kind == "kopare.medlemskap")
+        & (MailMessage.recipient_kind == "buyer_contact")
+        & MailMessage.recipient_id.in_(leaving)
+        & MailMessage.status.in_(("queued", "sending"))
+    )
+    for mail in waiting:
+        gone = BuyerContact.get_or_none(BuyerContact.id == mail.recipient_id)
+        if gone is None or not (gone.email or "").strip():
+            continue
+        sale = (
+            HerdTracking.select()
+            .join(BuyerContact, on=(HerdTracking.holder_contact == BuyerContact.id))
+            .where(
+                (fn.lower(fn.trim(BuyerContact.email)) == gone.email.strip().lower())
+                & BuyerContact.membership_optin_at.is_null(False)
+                & BuyerContact.id.not_in(leaving)
+                & ht_not_voided()
+            )
+            .order_by(HerdTracking.id)
+            .first()
+        )
+        if sale is None:
+            continue
+        MailMessage.update(
+            recipient_id=sale.holder_contact_id,
+            params={"buyer_contact_id": sale.holder_contact_id, "individual_id": sale.individual_id},
+            genebank=sale.herd.genebank_id,
+            status="queued",
+            claim_token=None,
+            claimed_at=None,
+        ).where(MailMessage.id == mail.id).execute()
 
 
 def _one_line(value):

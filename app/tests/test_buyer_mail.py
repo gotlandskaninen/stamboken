@@ -130,6 +130,34 @@ class TestInformationQueued(BuyerMailTest):
         (row,) = self.mails("kopare.medlemskap")
         self.assertEqual((row.status, row.recipient_id), ("queued", first.holder_contact_id))
 
+    def test_the_invitation_goes_over_to_another_sale_when_its_own_buyer_goes(self):
+        optin = {**WITH_EMAIL, "membership_optin": True}
+        first = self._sale(optin)
+        other = self.individuals[1]
+        second = record_herd_tracking(other, self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=optin)
+        delete_buyer_contacts([first.holder_contact_id], "forsaljning_ogiltig", None)
+        (row,) = self.mails("kopare.medlemskap")
+        self.assertEqual((row.status, row.recipient_id), ("queued", second.holder_contact_id))
+        self.assertEqual(row.params, {"buyer_contact_id": second.holder_contact_id, "individual_id": other.id})
+        self.assertEqual(len(self.send()), 2)  # the second sale's notice and the invitation
+
+    def test_a_corrected_address_leaves_the_old_address_its_invitation(self):
+        optin = {**WITH_EMAIL, "membership_optin": True}
+        first = self._sale(optin)
+        second = record_herd_tracking(self.individuals[1], self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=optin)
+        event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", "buyer": {**optin, "email": "ny@example.org"}}
+        (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [first.id], [event], "Fel adress")
+        self.assertEqual(
+            sorted((row.status, row.recipient_id) for row in self.mails("kopare.medlemskap")),
+            sorted([("queued", second.holder_contact_id), ("queued", written.holder_contact_id)]),
+        )
+
+    def test_no_buyer_left_with_the_address_cancels_the_invitation(self):
+        sale = self._sale({**WITH_EMAIL, "membership_optin": True})
+        delete_buyer_contacts([sale.holder_contact_id], "forsaljning_ogiltig", None)
+        (row,) = self.mails("kopare.medlemskap")
+        self.assertEqual(row.status, "cancelled")
+
     def corrected_with_invitation(self, **fields):
         """A sale whose invitation is set to `fields`, then corrected with the buyer typed again."""
         optin = {**WITH_EMAIL, "membership_optin": True}
@@ -140,9 +168,11 @@ class TestInformationQueued(BuyerMailTest):
         (row,) = self.mails("kopare.medlemskap")
         return sale.holder_contact_id, row
 
-    def test_a_correction_leaves_an_invitation_a_sender_has_claimed(self):
+    def test_a_correction_requeues_an_invitation_a_sender_has_claimed(self):
         old, row = self.corrected_with_invitation(status="sending", claim_token=uuid.uuid4())
-        self.assertEqual((row.status, row.recipient_id), ("cancelled", old))  # the old contact's, erased with it
+        self.assertEqual((row.status, row.claim_token), ("queued", None))  # the claim is lost: sent again, not lost
+        self.assertNotEqual(row.recipient_id, old)
+        self.assertEqual(len(self.send()), 2)  # the new contact's notice and the invitation
 
     def test_a_correction_leaves_an_invitation_already_sent(self):
         old, row = self.corrected_with_invitation(status="sent")
