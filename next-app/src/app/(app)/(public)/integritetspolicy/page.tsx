@@ -99,9 +99,9 @@ export default function IntegritetspolicyPage() {
               </li>
               <li>
                 När du loggar in sätts två kakor som tjänsten behöver: en som
-                håller dig inloggad tills du loggar ut, stänger webbläsaren
-                eller har varit inaktiv i 31 dagar, och en som minns om du
-                arbetar i riktiga stamboken eller i testmiljön.
+                håller dig inloggad tills du loggar ut eller har varit inaktiv i
+                31 dagar, och en som minns om du arbetar i riktiga stamboken
+                eller i testmiljön.
               </li>
               <li>
                 Vissa val och utkast sparas i din egen webbläsare, till exempel
@@ -172,7 +172,13 @@ export default function IntegritetspolicyPage() {
               Vi sparar uppgifterna så länge du är medlem. När medlemskapet
               upphör tar vi bort eller anonymiserar uppgifterna inom 12 månader.
               Äldre medlemsförteckningar som finns kvar som filer eller på
-              papper tar vi bort efter två år.
+              papper tar vi bort efter två år.{" "}
+              <mark>
+                [INTE KLART: gallringen efter 12 månader, av ansökningar,
+                medlemmar och avslutade besättningar, och mejlet till den som
+                lagts in av någon annan sköts för hand tills de är byggda.
+                Rutinen ska finnas innan sidan släpps.]
+              </mark>
             </p>
           </Section>
 
@@ -229,12 +235,12 @@ export default function IntegritetspolicyPage() {
               <li>
                 Har du rätt till stöd lägger du in ett bankkonto för
                 utbetalningen. Det visas aldrig för andra medlemmar. Det ses av
-                dig, av genbanksansvarig för rasen och deras hjälpare, av den
-                som administrerar medlemsregistret och betalar ut stödet, och av
-                föreningens systemansvarig.{" "}
+                dig och dem du har gett åtkomst till besättningen, av
+                genbanksansvariga och deras hjälpare, av den som betalar ut
+                stödet, och av föreningens systemansvarig.{" "}
                 <mark>
-                  [INTE KLART: i dag kan bankkontot ställas in som synligt för
-                  andra inloggade. Spärren ska byggas innan sidan släpps.]
+                  [INTE KLART: en spärr för bankkontot ska byggas innan sidan
+                  släpps.]
                 </mark>{" "}
                 Underlaget för utbetalningen sparas så att det kan visas för
                 Jordbruksverket vid en kontroll.
@@ -244,9 +250,11 @@ export default function IntegritetspolicyPage() {
                 loggas med användare, tidpunkt, IP-adress och det gamla och det
                 nya värdet, så att fel kan spåras och rättas (berättigat
                 intresse). IP-adressen tar vi bort efter 12 månader. Resten av
-                loggen sparas så länge uppgiften den gäller finns kvar.{" "}
+                loggen sparas tills vidare och behåller de gamla värdena, också
+                sedan en uppgift har ändrats eller tagits bort.{" "}
                 <mark>
-                  [INTE KLART: gallringen av IP-adresser ur ändringsloggen ska
+                  [INTE KLART: gallringen av IP-adresser, och av
+                  kontaktuppgifter och bankkonton som finns kvar i loggen, ska
                   byggas innan sidan släpps.]
                 </mark>
               </li>
