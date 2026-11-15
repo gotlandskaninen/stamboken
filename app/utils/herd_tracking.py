@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from peewee import Expression, IntegrityError, fn
 
-from utils.buyer_mail import hand_over_invitations, queue_buyer_mails
+from utils.buyer_mail import queue_buyer_mails
 from utils.database import (
     DB_PROXY,
     HOLDER_CHANGING_KINDS,
@@ -1255,7 +1255,6 @@ def delete_buyer_contacts(contact_ids, action, user=None, whole_items=False):
     ids = sorted(set(contact_ids))
     if not ids:
         return 0, []
-    hand_over_invitations(ids)  # while the rows are still there to read the address from
     paths = []
     sales = list(HerdTracking.select().where(HerdTracking.holder_contact.in_(ids)))
     # WHITELISTED in-place UPDATE #4: the sales remember that their buyer was removed, before the FK nulls the link.

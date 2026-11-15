@@ -12,15 +12,7 @@ from zoneinfo import ZoneInfo
 from peewee import fn
 
 from utils import settings
-from utils.database import (
-    DB_PROXY,
-    BuyerContact,
-    DigitalCertificateV2,
-    HerdTracking,
-    Individual,
-    MailMessage,
-    ht_not_voided,
-)
+from utils.database import DB_PROXY, BuyerContact, DigitalCertificateV2, Individual, MailMessage
 from utils.mail import address_hash, enqueue_mail, link_token, mail_kind, verify_link
 
 logger = logging.getLogger(__name__)
@@ -47,68 +39,23 @@ _MONTHS = (
 def queue_buyer_mails(contact, sale):
     """
     For a buyer just created with `sale` (its TRANSFER row) who gave an e-mail: kopare.information, and
-    kopare.medlemskap with the yes to membership contact. A corrected sale keeps its buyer, and the dedupe_key
-    holds if anything queues again; the notice is one per sale, the invitation one per address (the contact that
-    holds it may go before it is sent: hand_over_invitations).
+    kopare.medlemskap with the yes to membership contact. One of each per buyer: a corrected sale keeps its
+    buyer, and the dedupe_key holds if anything queues again. A buyer of several rabbits is one buyer per sale;
+    the invitation then goes once per address, decided when it is sent (_membership_mail).
     """
     if not contact.email:
         return
     params = {"buyer_contact_id": contact.id, "individual_id": sale.individual_id}
     kinds = ("kopare.information", "kopare.medlemskap") if contact.membership_optin_at else ("kopare.information",)
     for kind in kinds:
-        who = contact.id
-        if kind == "kopare.medlemskap" and settings.mail.link_secret:  # the address only as its HMAC
-            who = address_hash(contact.email)
         enqueue_mail(
             kind,
             "buyer_contact",
             contact.id,
             params,
             genebank=sale.herd.genebank_id,
-            dedupe_key=f"{kind}:{who}",
+            dedupe_key=f"{kind}:{contact.id}",
         )
-
-
-def hand_over_invitations(leaving):
-    """
-    Before the buyers `leaving` (ids) are deleted, in the same transaction. The invitation is one per address and
-    names one contact. When that contact goes before it is sent (its sale voided, or corrected with the buyer
-    typed again) while another buyer with the address and a yes to membership contact stays, the invitation goes
-    over to that one, back in the queue: forget_recipient would cancel the only one promised. One being sent
-    right now may then go twice, which is better than never.
-    """
-    waiting = MailMessage.select().where(
-        (MailMessage.kind == "kopare.medlemskap")
-        & (MailMessage.recipient_kind == "buyer_contact")
-        & MailMessage.recipient_id.in_(leaving)
-        & MailMessage.status.in_(("queued", "sending"))
-    )
-    for mail in waiting:
-        gone = BuyerContact.get_or_none(BuyerContact.id == mail.recipient_id)
-        if gone is None or not (gone.email or "").strip():
-            continue
-        sale = (
-            HerdTracking.select()
-            .join(BuyerContact, on=(HerdTracking.holder_contact == BuyerContact.id))
-            .where(
-                (fn.lower(fn.trim(BuyerContact.email)) == gone.email.strip().lower())
-                & BuyerContact.membership_optin_at.is_null(False)
-                & BuyerContact.id.not_in(leaving)
-                & ht_not_voided()
-            )
-            .order_by(HerdTracking.id)
-            .first()
-        )
-        if sale is None:
-            continue
-        MailMessage.update(
-            recipient_id=sale.holder_contact_id,
-            params={"buyer_contact_id": sale.holder_contact_id, "individual_id": sale.individual_id},
-            genebank=sale.herd.genebank_id,
-            status="queued",
-            claim_token=None,
-            claimed_at=None,
-        ).where(MailMessage.id == mail.id).execute()
 
 
 def _one_line(value):
@@ -178,10 +125,19 @@ def _information_mail(params, attempt=1):
 
 @mail_kind("kopare.medlemskap", priority=1, category="T")
 def _membership_mail(params):
-    """The welcome the buyer said yes to; none once the yes or the buyer is gone."""
+    """The welcome the buyer said yes to; none once the yes or the buyer is gone, or the address has had one."""
     contact = BuyerContact.get_or_none(BuyerContact.id == params["buyer_contact_id"])
     rabbit = Individual.get_or_none(Individual.id == params["individual_id"])
     if contact is None or contact.membership_optin_at is None or rabbit is None:
+        return None
+    # Once per address, from the mails that have gone: each buyer holds an invitation of its own, so one buyer's
+    # deletion never cancels the invitation of another with the same address.
+    gone = (
+        (MailMessage.kind == "kopare.medlemskap")
+        & (MailMessage.status == "sent")
+        & (MailMessage.address_hash == address_hash(contact.email))
+    )
+    if settings.mail.link_secret and MailMessage.select().where(gone).exists():
         return None
     return {"buyer": _one_line(contact.name), "rabbit": _one_line(rabbit.name) or rabbit.number}
 
