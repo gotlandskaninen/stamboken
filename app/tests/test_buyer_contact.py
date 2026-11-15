@@ -668,14 +668,21 @@ class TestRetention(BuyerBase):
         rechecked = max(i for i, sql in enumerate(sqls) if 'FROM "buyer_contact"' in sql)
         self.assertLess(items, rechecked)  # the purge took the queue's lock first, and re-read the buyer last
 
-    def test_the_buyer_goes_when_the_rabbit_is_dead(self):
+    def test_the_buyer_goes_30_days_after_the_death_was_recorded(self):
         self.assertEqual(buyer_contact.purge_dead(NOW), 0)
         db.Individual.update(death_date="2022-06-01").where(db.Individual.id == self.rabbit.id).execute()
-        self.assertEqual(buyer_contact.purge_dead(NOW), 1)
+        self.assertEqual(buyer_contact.purge_dead(NOW), 0)  # recorded today: it may be a mistake
+        self.assertEqual(buyer_contact.purge_dead(NOW + timedelta(days=31)), 1)
         self.assertIsNone(self._contact(self.contact_id))
         self.assertIsNotNone(db.HerdTracking.get_by_id(self.sale.id))  # the sale stays
         self.assertEqual([r.new_data for r in self._buyer_log(self.contact_id, "DELETE")], [{"action": "gallring_dod"}])
-        self.assertEqual(buyer_contact.purge_dead(NOW), 0)
+        self.assertEqual(buyer_contact.purge_dead(NOW + timedelta(days=31)), 0)
+
+    def test_a_death_cleared_within_30_days_keeps_the_buyer(self):
+        db.Individual.update(death_date="2022-06-01").where(db.Individual.id == self.rabbit.id).execute()
+        db.Individual.update(death_date=None).where(db.Individual.id == self.rabbit.id).execute()  # a mistake
+        self.assertEqual(buyer_contact.purge_dead(NOW + timedelta(days=31)), 0)
+        self.assertIsNotNone(self._contact(self.contact_id))
 
     def test_the_contact_consent_goes_when_the_rabbit_is_sold_on(self):
         self.assertEqual(buyer_contact.purge_sold_on(NOW), 0)
@@ -808,7 +815,7 @@ class TestQueueDocuments(PurgeTest):
 
     def test_the_rabbits_death_clears_them_too(self):
         db.Individual.update(death_date=date(2026, 6, 1)).where(db.Individual.id == self.rabbit.id).execute()
-        self.assertEqual(buyer_contact.purge_dead(NOW), 1)
+        self.assertEqual(buyer_contact.purge_dead(NOW + timedelta(days=31)), 1)
         self.assertScrubbed([self.certificate, self.photo], [self.proof, self.other])
 
     def test_the_five_year_purge_too(self):

@@ -6,11 +6,11 @@ Registration, visibility and the deletion on a void live with the sale in utils.
 """
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from peewee import Case, fn
 
-from utils.database import DB_PROXY, BuyerContact, HerdTracking, Individual, ht_sort_key, lock_individuals
+from utils.database import DB_PROXY, AuditLog, BuyerContact, HerdTracking, Individual, ht_sort_key, lock_individuals
 from utils.herd_tracking import (
     QUEUE_CHANGED,
     HerdTrackingConflict,
@@ -114,9 +114,40 @@ def purge_expired(now):
     return count
 
 
-def _held_by_dead():
-    """The buyers held by a row of a rabbit recorded as dead."""
+DEATH_SETTLES = timedelta(days=30)  # a death reported by mistake is usually cleared within this
+
+
+def _dead_since(individual_ids, now):
+    """
+    The rabbits among `individual_ids` whose death has stood recorded for DEATH_SETTLES: the latest audit_log row
+    that recorded the death (death_date or death_note set) is at least that old, or, recorded before the audit
+    trigger, the death date is.
+    """
+    recorded = {}
+    entries = AuditLog.select(AuditLog.record_id, AuditLog.changed_at, AuditLog.new_data).where(
+        (AuditLog.table_name == Individual._meta.table_name)
+        & AuditLog.operation.in_(("INSERT", "UPDATE"))
+        & AuditLog.record_id.in_([str(i) for i in individual_ids])
+        & (AuditLog.changed_fields.contains("death_date") | AuditLog.changed_fields.contains("death_note"))
+    )
+    for record_id, changed_at, new in entries.order_by(AuditLog.id).tuples():
+        if (new or {}).get("death_date") or (new or {}).get("death_note"):
+            recorded[int(record_id)] = changed_at
+    settled = set()
+    for individual in Individual.select().where(Individual.id.in_(list(individual_ids))):
+        at = recorded.get(individual.id)
+        if at is None and individual.death_date is not None:
+            at = datetime.combine(individual.death_date, datetime.min.time(), timezone.utc)
+        if at is None or at.replace(tzinfo=at.tzinfo or timezone.utc) <= now - DEATH_SETTLES:
+            settled.add(individual.id)
+    return settled
+
+
+def _held_by_dead(individual_ids=None):
+    """The buyers held by a row of a rabbit recorded as dead (among `individual_ids`, when given)."""
     dead = (Individual.death_date.is_null(False)) | (fn.COALESCE(Individual.death_note, "") != "")
+    if individual_ids is not None:
+        dead &= Individual.id.in_(list(individual_ids))
     return (
         HerdTracking.select(HerdTracking.holder_contact)
         .join(Individual, on=(Individual.id == HerdTracking.individual))
@@ -124,9 +155,16 @@ def _held_by_dead():
     )
 
 
-def purge_dead(now):  # pylint: disable=unused-argument  # every rule takes the clock
-    """Once the association learns the rabbit is dead, its buyers' names and towns go before the five years."""
-    held = BuyerContact.id.in_(_held_by_dead())
+def purge_dead(now):
+    """
+    A rabbit's buyers go before the five years once its death has stood recorded for 30 days: a death reported by
+    mistake and cleared within them keeps its buyers. Rechecked under the locks, so a death cleared meanwhile does too.
+    """
+    candidates = {
+        r.individual_id
+        for r in HerdTracking.select(HerdTracking.individual).where(HerdTracking.holder_contact.in_(_held_by_dead()))
+    }
+    held = BuyerContact.id.in_(_held_by_dead(_dead_since(candidates, now)))
     with DB_PROXY.atomic():
         count, paths = _delete_under_locks(BuyerContact.select(BuyerContact.id).where(held), held, "gallring_dod")
     remove_originals(paths)
