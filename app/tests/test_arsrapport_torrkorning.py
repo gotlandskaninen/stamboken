@@ -410,6 +410,21 @@ class TorrkorningTest(ArsrapportTest):
         self.assertEqual(self.dry(self.body(self.dod(a, 2026, 1, 5)))["refusals"], [refusal])  # lived on 31/12 too
         self.assertTrue(self.dry(self.body(self.kvar(a, vikt=2.8)))["ok"])  # unchanged: writes nothing (P39a)
 
+    def test_death_before_birth_or_after_today_is_refused(self):  # Codex 3; today is 2026-01-15
+        (a,) = self.rabbits(self.h, 1, born=date(2025, 4, 1))
+        refused = [
+            {"individual_id": a.id, "code": "dodsdatum_ogiltigt", "message": arsrapport.REFUSALS["dodsdatum_ogiltigt"]}
+        ]
+        for ar, manad, dag in ((2025, 1, 1), (2025, 3, None), (2026, 1, 16), (2026, 2, None)):
+            with self.subTest(ar=ar, manad=manad, dag=dag):
+                self.assertEqual(self.dry(self.body(self.dod(a, ar, manad, dag)))["refusals"], refused)
+        for ar, manad, dag in ((2025, 4, None), (2025, 4, 1), (2026, 1, None), (2026, 1, 15)):
+            with self.subTest(ar=ar, manad=manad, dag=dag):
+                self.assertTrue(self.dry(self.body(self.dod(a, ar, manad, dag)))["ok"])
+        self.login("owner")
+        response = self.api("POST", "/besattning/G9001/2025/skicka", **self.body(self.dod(a, 2026, 2)))
+        self.assertEqual((response.status_code, response.get_json()["refusals"]), (422, refused))
+
     def test_unknown_rabbit_and_defect(self):
         (a,) = self.rabbits(self.h, 1)
         stranger = self.individuals[0]  # G1's rabbit

@@ -278,6 +278,8 @@ export const REFUSAL_TEXT: Record<string, string> = {
   rundan_stangd:
     "Rundan är stängd. Kontakta genbanksansvarig om något behöver ändras.",
   inte_innehavare: "Kaninen fanns inte i din besättning 31 december.",
+  dodsdatum_ogiltigt:
+    "Dödsdatumet kan inte vara före födelsen eller senare än i dag.",
   skrivning_nekad:
     "Stamboken tog inte emot ändringen för kaninen. Genbanksansvarig kan rätta.",
   senare_handelse:

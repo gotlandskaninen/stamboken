@@ -1299,6 +1299,7 @@ REFUSALS = {  # the copy the client shows (P44)
     "orsak_kravs": "Skriv varför rapporten ändras.",
     "rundan_stangd": "Rundan är stängd.",
     "inte_innehavare": "Kaninen fanns inte i din besättning 31 december.",
+    "dodsdatum_ogiltigt": "Dödsdatumet kan inte vara före födelsen eller senare än i dag.",
     "skrivning_nekad": "Stamboken tog inte emot ändringen för kaninen. Genbanksansvarig kan rätta.",  # _denied
     "ingen_huvudmedlem": "Besättningen saknar huvudmedlem i matrikeln, så ändringen kan inte sparas.",
     "adress_ogiltig": "Kontrollera adressen. Gatuadressen får vara högst 200 tecken och postnumret har fem siffror.",
@@ -1329,6 +1330,19 @@ def _vikt_ovanlig(individual_id, vikt):
     if vikt is None or not 0 < vikt <= 20 or 1.0 <= vikt <= 6.5:
         return None
     return Refusal(individual_id, "vikt_ovanlig", f"Stämmer {format(vikt, 'g').replace('.', ',')} kg?")
+
+
+def _death_possible(dod, birth, on):
+    """
+    Codex 3: the death's resolved date is on or after the birth (`birth`, report_list's ISO date) and not after `on`,
+    today in Stockholm. A month after `on` is refused without its day too, though partial_date takes it back to `on`.
+    """
+    died = partial_date(dod["ar"], dod["manad"], dod["dag"], on)
+    return (
+        (dod["ar"], dod["manad"]) <= (on.year, on.month)
+        and died <= on
+        and not (birth and died < date.fromisoformat(birth))
+    )
 
 
 def _sale_view(individual_id, kept):
@@ -1445,6 +1459,9 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
             continue
         if entry.val == "sald" and not access.can_sell:
             refusals.append(_refusal(rabbit, "forsaljning_skotare"))
+            continue
+        if entry.dod and not _death_possible(entry.dod, row["birth_date"], on):
+            refusals.append(_refusal(rabbit, "dodsdatum_ogiltigt"))
             continue
         if _lived(entry, last, on) and _holder_on(rabbit, last, ops) != herd.id:  # 5.4 point 1, before the attest
             refusals.append(_refusal(rabbit, "inte_innehavare"))
