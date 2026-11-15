@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 
-// Manualens steg som tester (docs/USER_MANUAL.md, del 1 Uppfödare). Varje
+// Manualens steg som tester (next-app/public/stamboken/manual/USER_MANUAL.md, del 1 Uppfödare). Varje
 // test.step heter som steget i manualen; ändras manualen ändras testet.
 // Kör i projektet mutation-tests (filnamnet matchar /mutation-.*/) mot den
 // seedade e2e-stacken: G1274 ägs av test-gk-owner; föräldraparet

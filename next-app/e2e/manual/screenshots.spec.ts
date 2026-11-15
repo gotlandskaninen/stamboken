@@ -2,14 +2,14 @@ import { test, expect, type Page, type BrowserContext } from "@playwright/test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-// Skärmbilder till användarmanualen. Varje post ger två filer i docs/manual/:
+// Skärmbilder till användarmanualen. Varje post ger två filer i public/stamboken/manual/:
 // <namn>-mobil.png (375 px) och <namn>-desktop.png (1280 px). Kräver att
 // mutation-manual-flows.spec.ts körts först (kull med kullista, utfärdat intyg)
 // och att MANUAL_CERT_UUID pekar på ett utfärdat intyg (annars hoppas den bilden).
 
 const OUT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  "../../../docs/manual",
+  "../../public/stamboken/manual",
 );
 const USERS = {
   owner: { username: "test-gk-owner", password: "test-gk-owner-pass" },

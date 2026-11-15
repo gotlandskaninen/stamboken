@@ -32,7 +32,7 @@ class TestHerdTrackingMigration(DatabaseTest):
     def setUp(self):
         super().setUp()
         # Re-applying the idempotent helpers restores the final schema for later tests (cleanups run last first:
-        # migration 41 puts the FK back on the holder_contact_id that v30 re-adds).
+        # migration 44 puts the FK back on the holder_contact_id that v30 re-adds).
         self.addCleanup(db._create_buyer_contact_guards)
         self.addCleanup(db._apply_herd_tracking_v30)
 
@@ -182,7 +182,7 @@ class TestHerdTrackingMigration(DatabaseTest):
         bootstrapped = self._snapshot()
         self._to_v29_shape()
         db._apply_herd_tracking_v30()
-        db._create_buyer_contact_guards()  # migration 41
+        db._create_buyer_contact_guards()  # migration 44
         self.assertEqual(self._snapshot(), bootstrapped)
 
     def test_helper_is_idempotent_on_final_schema(self):

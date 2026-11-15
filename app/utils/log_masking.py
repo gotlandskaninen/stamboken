@@ -1,6 +1,6 @@
 """
 Keeps link tokens (utils.mail.link_token) out of the logs: a token in a URL is a credential, and both the
-request log and gunicorn's access log write the URL.
+app's log (utils.app_logging) and gunicorn's access log write the request path.
 """
 
 import logging
@@ -26,4 +26,6 @@ class TokenMaskFilter(logging.Filter):
         if record.exc_info and not record.exc_text:
             record.exc_text = logging.Formatter().formatException(record.exc_info)
         record.exc_text = mask_tokens(record.exc_text)
+        if hasattr(record, "path"):  # app_logging's request path, set by its filter before this one
+            record.path = mask_tokens(record.path)
         return True

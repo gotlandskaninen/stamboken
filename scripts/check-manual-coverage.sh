@@ -8,7 +8,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-MANUAL="$ROOT/docs/USER_MANUAL.md"
+MANUAL="$ROOT/next-app/public/stamboken/manual/USER_MANUAL.md"
 APP="$ROOT/next-app/src/app/(app)"
 
 missing=0
@@ -24,7 +24,7 @@ while IFS= read -r page; do
 	fi
 done < <(find "$APP/stamboken" "$APP/(auth)/auth/sign-in" -name page.tsx | sort)
 
-echo "Manual-täckning: $((total - missing))/$total routes har avsnitt i docs/USER_MANUAL.md"
+echo "Manual-täckning: $((total - missing))/$total routes har avsnitt i next-app/public/stamboken/manual/USER_MANUAL.md"
 if [ "$missing" -gt 0 ]; then
 	echo "Lägg till ett avsnitt med '<!-- route: … -->' under rubriken för varje route ovan." >&2
 	exit 1

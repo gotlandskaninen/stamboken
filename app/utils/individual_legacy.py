@@ -173,10 +173,8 @@ class LegacyHerdEvent(Command):
     apply_rank = 70
 
     def apply(self, ctx):
-        when = validate_date(self.date)  # a bad date is the generic error, before the target (IR-52)
+        validate_date(self.date)  # a bad date is the generic error, before the target (IR-52)
         code = self.herd.get("herd") if self.herd and isinstance(self.herd, dict) else self.herd
-        old = ctx.stored.current_herd.herd
-        ctx.update_log.info(f"{ctx.user.username},{ctx.individual.number},{self.field},{old},{code},{when}")
         target = resolve_herd(code)
         if target.herd == _holder(ctx).herd and self.buyer is None:
             RecordAttestation(target, self.date).apply(ctx)
