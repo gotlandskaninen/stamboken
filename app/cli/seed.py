@@ -1165,16 +1165,13 @@ def create_arsrapport_seed(verbose):
         if g2:  # 12 adults, one male, a 2025 litter, and a paper form waiting in the queue
             paper = _rabbits(g2, manager, log, 12, date(2024, 5, 1), 11, ("female",) * 11 + ("male",))
             _breeding(g2, date(2025, 5, 2), date(2025, 4, 1), paper[-1], paper[0], 5, 4, log)
-            image = Image.new("RGB", (1200, 1600), (235, 240, 225))
-            ImageDraw.Draw(image).text((100, 100), "Syntetisk årsblankett G9002", fill=(20, 20, 30))
-            path, sha256 = inbox.store_jpeg(image, "original")
-            _, documents = inbox.create_upload(manager, g2, None, [(path, sha256, inbox.measure(image))])
-            InboxDocument.update(doc_type="arsblankett").where(InboxDocument.id == documents[0].id).execute()
-            log("Inbox item: arsblankett for G9002")
+            _paper_form(g2, manager, log)
 
         if g4:  # the largest herd's size, none needing a weight; the owner is a legacy role (one Member per user)
             owner.add_role("owner", g4.id)
             _rabbits(g4, manager, log, 183, date(2025, 4, 1), 100, ("female", "male"))
+
+        _user_types(log)
 
         today = arsrapport.today()
         _get_or_create(
@@ -1194,3 +1191,65 @@ def create_arsrapport_seed(verbose):
     click.echo("  seed-gk-mgr@test.local / seed-gk-pass (activates the round)")
     click.echo("  seed-gk-arsrapport@test.local / seed-gk-arsrapport-pass (owns G9001 and G9004)")
     click.echo("  seed-gk-hjalp@test.local / seed-gk-hjalp-pass (genebank helper, enters G9002's paper form)")
+    click.echo("  seed-mk-uppfodare@test.local / seed-mk-uppfodare-pass (owns M9001-M9004, M9006, M9101)")
+    click.echo("  seed-mk-hjalp@test.local / seed-mk-hjalp-pass (genebank helper, M9005, M9006 and M9102 on paper)")
+
+
+def _paper_form(herd, manager, log):
+    """A synthetic scanned yearly form for `herd`, waiting in the genebank's inbox."""
+    image = Image.new("RGB", (1200, 1600), (235, 240, 225))
+    ImageDraw.Draw(image).text((100, 100), f"Syntetisk årsblankett {herd.herd}", fill=(20, 20, 30))
+    path, sha256 = inbox.store_jpeg(image, "original")
+    _, documents = inbox.create_upload(manager, herd, None, [(path, sha256, inbox.measure(image))])
+    InboxDocument.update(doc_type="arsblankett").where(InboxDocument.id == documents[0].id).execute()
+    log(f"Inbox item: arsblankett for {herd.herd}")
+
+
+def _user_types(log):
+    """
+    Mellerud herds for the user-type e2e tests (e2e/arsrapport-typer.spec.ts), apart from the G round so the two
+    files can run in parallel. Sizes follow old prod's 2025 year-end (2026-11-15): median herd 6 rabbits, 5 of them
+    adults; 90th percentile 30. M9101 and M9102 are identical, one reported in Stamboken and one on paper.
+    """
+    mk = Genebank.get(Genebank.name == "Mellerudskanin")
+    manager = User.get(User.email == "seed-mk-mgr@test.local")
+    _user("seed-mk-hjalp@test.local", "seed-mk-hjalp-pass", "seed-mk-hjalp", "MK Hjälpare", [("helper", mk.id)], log)
+    owner = _user(
+        "seed-mk-uppfodare@test.local", "seed-mk-uppfodare-pass", "seed-mk-uppfodare", "MK Uppfödare", [], log
+    )
+
+    def median(herd):  # 5 adults born 2024 and one 2025 kit
+        _rabbits(herd, manager, log, 5, date(2024, 5, 1), 11, ("female", "male"))
+        _rabbits(herd, manager, log, 1, date(2025, 5, 2), 20, ("female",))
+
+    def large(herd):  # 24 adults and 6 kits; the certificate number is unique per herd, hence 11, 31, 51
+        _rabbits(herd, manager, log, 12, date(2023, 5, 1), 11, ("female", "male"))
+        _rabbits(herd, manager, log, 12, date(2024, 5, 1), 31, ("female", "male"))
+        _rabbits(herd, manager, log, 6, date(2025, 5, 2), 51, ("female", "male"))
+
+    def ending(herd):
+        _rabbits(herd, manager, log, 3, date(2023, 5, 1), 11, ("female", "male"))
+
+    # code, name, phone, owned by seed-mk-uppfodare, paper form in the inbox, rabbits
+    herds = [
+        ("M9001", "Typ A median", None, True, False, median),
+        ("M9002", "Typ B ovan", "0700000002", True, False, median),
+        ("M9003", "Typ C stor", None, True, False, large),
+        ("M9004", "Typ D avslutar", None, True, False, ending),
+        ("M9005", "Typ E papper", "0700000005", False, True, median),
+        ("M9006", "Typ F dubbel", None, True, True, median),
+        ("M9101", "Paritet digital", None, True, False, median),
+        ("M9102", "Paritet papper", None, False, True, median),
+    ]
+    for code, name, phone, owned, on_paper, rabbits in herds:
+        account = owner if code == "M9001" else None  # one Member per user; the other herds get the owner role
+        herd = _member_herd(mk, code, name, f"{code.lower()}@example.invalid", account, (None, None), log)
+        if herd is None:
+            continue
+        if owned and account is None:
+            owner.add_role("owner", herd.id)
+        if phone:
+            Member.update(phone=phone).where(Member.membership == herd.membership).execute()
+        rabbits(herd)
+        if on_paper:
+            _paper_form(herd, manager, log)

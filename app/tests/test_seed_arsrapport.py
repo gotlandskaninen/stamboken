@@ -64,11 +64,21 @@ class SeedArsrapportTest(DatabaseTest):
         self.assertTrue(arsrapport.get_round(2025).deadline <= arsrapport.get_round(2025).end_date)
         self.assertFalse(db.YearlyReportRoundGenebank.select().exists())  # the manager activates it
         self.assertTrue(os.path.isfile(os.path.join(self.folder, arsrapport.BLANK_FORM)))
-        item = db.InboxItem.get()
-        self.assertEqual((item.state, item.herd.herd), ("ny", "G9002"))
+        item = db.InboxItem.get(db.InboxItem.herd == herd("G9002"))
+        self.assertEqual(item.state, "ny")
         self.assertEqual([d.doc_type for d in item.documents], ["arsblankett"])
         for document in item.documents:
             self.assertTrue(os.path.isfile(os.path.join(self.folder, document.original_path)))
+
+        # The Mellerud herds of the user-type tests: median and 90th-percentile sizes, three paper forms.
+        sizes = {code: len(arsrapport.report_list(herd(code), 2025)) for code in ("M9001", "M9003", "M9004", "M9102")}
+        self.assertEqual(sizes, {"M9001": 6, "M9003": 30, "M9004": 3, "M9102": 6})
+        on_paper = sorted(i.herd.herd for i in db.InboxItem.select() if i.herd.herd.startswith("M"))
+        self.assertEqual(on_paper, ["M9005", "M9006", "M9102"])
+        uppfodare = db.User.get(db.User.email == "seed-mk-uppfodare@test.local")
+        codes = ("M9001", "M9002", "M9003", "M9004", "M9005", "M9006", "M9101", "M9102")
+        owned = [code for code in codes if arsrapport.report_access(uppfodare, herd(code))]
+        self.assertEqual(owned, ["M9001", "M9002", "M9003", "M9004", "M9006", "M9101"])
 
     def test_needs_seed_create_first(self):
         result = self.runner.invoke(args=["seed", "arsrapport"])
