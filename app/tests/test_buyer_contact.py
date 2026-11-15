@@ -1001,6 +1001,25 @@ class TestQueueProofOfARegisteredSale(ErasureTest):
         self.login("owner")  # not in the queue
         self.assertEqual(self.client.get(f"/api/v2/inkorg/{item.id}/kanin/G1-2111/forsaljningar").status_code, 403)
 
+    def test_an_erased_buyer_is_never_registered_again_from_a_proof(self):
+        gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        rabbit = db.Individual.get(db.Individual.number == "G1-2111")
+        sale = record_herd_tracking(rabbit, gx1, "2021-06-01", "TRANSFER", self.manager, buyer=BUYER)
+        buyer_contact.erase_buyer_contact(sale.holder_contact_id, self.admin)  # the buyer asked to be erased
+        item = self.item(0, documents=1)
+        inbox.take(item, self.helper, over=False)
+        (proof,) = list(item.documents)
+        self.login("hjalp")
+        self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{proof.id}", json={"doc_type": "bevis"})
+        resp = self.post(
+            f"/{item.id}/dokument/{proof.id}/overlat", individual="G1-2111", herd="GX1", date="2021-06-01", buyer=BUYER
+        )
+        self.assertEqual(resp.status_code, 409, resp.get_json())
+        self.assertEqual(
+            resp.get_json()["detail"], "Köparen har begärt radering eller gallrats; registrera inte på nytt."
+        )
+        self.assertEqual(db.BuyerContact.select().count(), 0)
+
     def test_two_sales_the_same_day_are_a_409_not_a_guess(self):
         gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
         rabbit = db.Individual.get(db.Individual.number == "G1-2111")

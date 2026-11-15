@@ -924,6 +924,20 @@ def _unvoid_rows(rows, operation_id):
     )
 
 
+BUYER_REMOVED = "Köparen har begärt radering eller gallrats; registrera inte på nytt."
+
+
+def _buyer_ever_removed(row_id):
+    """The row once held a buyer that went (erasure, purge, void): its holder_contact_id went NULL in audit_log."""
+    entries = AuditLog.select(AuditLog.changed_fields, AuditLog.new_data).where(
+        (AuditLog.table_name == HerdTracking._meta.table_name)
+        & (AuditLog.operation == "UPDATE")
+        & (AuditLog.record_id == str(row_id))
+        & AuditLog.changed_fields.contains("holder_contact_id")
+    )
+    return any((new or {}).get("holder_contact_id") is None for _fields, new in entries.tuples())
+
+
 def attach_buyer(row, buyer, user):
     """
     WHITELISTED in-place UPDATE #3: a proof shows the buyer outside the association of a sale registered without
@@ -933,6 +947,8 @@ def attach_buyer(row, buyer, user):
     fields = buyer_contact_fields(buyer)
     if row.holder_contact_id is not None:
         raise HerdTrackingConflict("Försäljningen har redan en köpare. Genbanksansvarig ändrar den.")
+    if _buyer_ever_removed(row.id):  # an erased or purged buyer is never registered again from a paper
+        raise HerdTrackingConflict(BUYER_REMOVED)
     if row.voided_at is not None or row.herd.herd not in OUTSIDE_GENEBANK_HERDS:
         raise HerdTrackingInvalid("Köparens namn och ort registreras bara vid försäljning utanför genbanken.")
     contact = BuyerContact.create(
