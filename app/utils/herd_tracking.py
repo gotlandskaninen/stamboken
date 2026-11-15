@@ -80,13 +80,11 @@ def new_operation_id(value=None):
 def _void_rows(rows, user, reason, operation_id):
     """
     WHITELISTED in-place UPDATE #1: set the four void fields on still-active rows. Returns the buyers outside the
-    association those rows held; the caller passes them to _drop_orphan_buyers once its writes are done. A buyer
-    is never named in the reason.
+    association those rows held; the caller passes them to _drop_orphan_buyers once its writes are done.
     """
     ids = [r.id for r in rows]
     if not ids:
         return []
-    _reject_buyer_name(reason, HerdTracking.select(HerdTracking.holder_contact).where(HerdTracking.id.in_(ids)))
     voided = list(
         HerdTracking.update(
             voided_at=_now_utc(),
@@ -543,6 +541,7 @@ def void_herd_tracking(ht_id, user, reason, operation_id=None):
         denial = void_denial(user, row, before, individual)
         if denial:
             raise HerdTrackingForbidden(denial)
+        _reject_buyer_name([cleaned], [individual.id])
         voided = _void_rows([row], user, cleaned, op)
         _assert_no_new_violations(individual, before, [r for r in before if r.id != row.id])
         _drop_orphan_buyers(voided, VOID_ACTION, user)
@@ -671,6 +670,9 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
         if missing:
             raise HerdTrackingConflict("Raderna finns inte eller är redan ångrade.", rows=[{"id": v} for v in missing])
         kept = [r for r in before if r.id not in void_ids]
+        _reject_buyer_name(
+            [cleaned, *(e["notes"] for e in parsed)], [ind_id], [e["buyer"]["name"] for e in parsed if e["buyer"]]
+        )
         for event in parsed:
             same_day = [r for r in kept if r.kind != "BIRTH" and coerce_date(r.herd_tracking_date) == event["date"]]
             if same_day:
@@ -824,6 +826,7 @@ def undo_herd_tracking_operation(operation_id, user, reason, undo_operation_id=N
             return {"undo_operation_id": str(undo_op), "individual_ids": ind_ids}
         if any(i.voided for i in individuals.values()):
             raise HerdTrackingConflict("Kaninen är avpromoverad — åtgärden kan inte ångras här.")
+        _reject_buyer_name([cleaned], ind_ids)
         in_locked_set = HerdTracking.individual.in_(ind_ids)
         touched = list(HerdTracking.select().where(in_locked_set, _touched_by(op)))
         written, unvoid, restored = _operation_effects(touched, op)
@@ -975,13 +978,20 @@ def buyer_contact_fields(buyer):
     return fields
 
 
-def _reject_buyer_name(text, contact_ids):
-    """No buyer's name in free text (it lives forever in audit_log): `contact_ids` is a list or a subquery."""
-    if not text:
+def _reject_buyer_name(texts, individual_ids, names=()):
+    """
+    No buyer's name in what a user types (it lives forever in audit_log): any word of the name of a buyer the
+    rabbits' rows hold, or of `names`, as a whole word in any case. "Anna" stops "Såld till anna", not "annan".
+    """
+    texts = [text for text in texts if text]
+    if not texts:
         return
-    names = BuyerContact.select(BuyerContact.name).where(BuyerContact.id.in_(contact_ids))
-    if any(name.casefold() in text.casefold() for (name,) in names.tuples()):
-        raise HerdTrackingInvalid(BUYER_PRIVACY_HELP)
+    held = HerdTracking.select(HerdTracking.holder_contact).where(HerdTracking.individual.in_(individual_ids))
+    stored = BuyerContact.select(BuyerContact.name).where(BuyerContact.id.in_(held))
+    for name in [*names, *(name for (name,) in stored.tuples())]:
+        for word in re.findall(r"\w{2,}", name):
+            if any(re.search(rf"\b{re.escape(word)}\b", text, re.IGNORECASE) for text in texts):
+                raise HerdTrackingInvalid(BUYER_PRIVACY_HELP)
 
 
 def delete_buyer_contacts(contact_ids, action, user=None, certificates=False):

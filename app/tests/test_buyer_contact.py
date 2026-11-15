@@ -22,6 +22,7 @@ from utils.herd_tracking import (  # noqa: E402
     new_operation_id,
     record_herd_tracking,
     undo_herd_tracking_operation,
+    void_all_for_unpromote,
     void_herd_tracking,
 )
 from utils.individual_commands import record_sale  # noqa: E402
@@ -387,6 +388,23 @@ class TestVoid(BuyerBase):
         with self.assertRaises(HerdTrackingInvalid):
             void_herd_tracking(self.sale.id, self.owner, f"Såld till {NAME.upper()} av misstag")
         self.assertIsNotNone(self._contact(self.contact_id))
+
+    def test_the_name_guard_takes_whole_words_of_typed_text_only(self):
+        db.BuyerContact.update(name="Anna Berg").where(db.BuyerContact.id == self.contact_id).execute()
+        with self.assertRaises(HerdTrackingInvalid):
+            void_herd_tracking(self.sale.id, self.owner, "Såld till Anna")
+        with self.assertRaises(HerdTrackingInvalid):  # a correction's notes too
+            event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", "notes": "köpt av anna"}
+            correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [event], "Fel datum")
+        with self.assertRaises(HerdTrackingInvalid):  # and an undo's reason
+            op, _written = self._correct_date()
+            undo_herd_tracking_operation(op, self.manager, "Anna ville inte")
+        void_herd_tracking(self._latest().id, self.manager, "Såld till annan köpare")  # "annan" is no "Anna"
+
+    def test_a_system_reason_is_never_checked(self):
+        db.BuyerContact.update(name="Avpromoverad").where(db.BuyerContact.id == self.contact_id).execute()
+        void_all_for_unpromote(db.Individual.get_by_id(self.rabbit.id), self.admin)
+        self.assertIsNone(self._latest())
 
 
 class TestErasure(BuyerBase):
