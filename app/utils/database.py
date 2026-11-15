@@ -2199,7 +2199,7 @@ class InboxDocument(BaseModel):
     waiting_for = BinaryJSONField(null=True)  # the parents' numbers; GIN, searched with @> on every registration
     individual = ForeignKeyField(Individual, null=True, on_delete="SET NULL", backref="+")
     # The sale a proof (bevis) belongs to. No FK: herd_tracking rows are never deleted, and one would stop
-    # TRUNCATE herd_tracking, as for its own reserved links (transfer_id, holder_contact_id).
+    # TRUNCATE herd_tracking, as for its reserved link transfer_id (holder_contact_id is a real FK, to buyer_contact).
     herd_tracking_id = IntegerField(null=True)
     purge_after = TimestampTZField(null=True)
     done_at = TimestampTZField(null=True)
