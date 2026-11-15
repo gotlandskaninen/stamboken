@@ -17,7 +17,14 @@ from peewee import IntegrityError
 from utils.csv_safe import csv_safe
 from utils.database import BILLING_FIELDS, DB_PROXY, Herd, HerdAccessGrant, Member, Membership
 from utils.matrikel import AddressValidationError, is_anonymized, parse_postal_fields, write_matrikel_audit
-from utils.members import CONSENT_KEYS, consent_answered, effective_consent, stored_consent
+from utils.members import (
+    CONSENT_KEYS,
+    PROFILE_CONSENT_TEXT_VERSION,
+    consent_answered,
+    effective_consent,
+    set_consent,
+    stored_consent,
+)
 
 from blueprints.common import (
     EMAIL_RE,
@@ -491,10 +498,7 @@ def patch_me_consent():
         # (fail-closed).
         merged = {k: v is True for k, v in stored_consent(ms).items() if k in CONSENT_KEYS}
         merged.update(updates)
-        ms.publication_consent = merged
-        # Consent only — never carry membership_status or the address along
-        # (same rule as the contact route).
-        ms.save(only=[Membership.publication_consent, Membership.updated_at])
+        set_consent(ms, merged, source="profil", text_version=PROFILE_CONSENT_TEXT_VERSION, user=current_user.id)
     return jsonify(_me_response(m))
 
 

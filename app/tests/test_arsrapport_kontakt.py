@@ -64,7 +64,9 @@ def later(field):
     }
 
 
-class KontaktTest(ArsrapportTest):
+class PaperTest(ArsrapportTest):
+    """G9001 with its main member and one rabbit, the clock at NOW, and the helpers to enter a form for it."""
+
     def setUp(self):
         super().setUp()
         self.at(NOW)
@@ -148,6 +150,8 @@ class KontaktTest(ArsrapportTest):
             audits.count(),
         )
 
+
+class KontaktTest(PaperTest):
     # Case 9: the account
 
     def test_helper_saves_a_new_account(self):

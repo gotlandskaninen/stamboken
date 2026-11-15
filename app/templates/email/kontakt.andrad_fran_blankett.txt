@@ -7,6 +7,7 @@ Hej!
 {% endif %}{% if adress %}Din adress har ändrats.
 {% endif %}{% if telefon %}Ditt telefonnummer har ändrats.
 {% endif %}{% if epost %}Din e-postadress har ändrats.
+{% endif %}{% if publicering %}Ditt svar om listan över aktiva genbanker i Koharen har ändrats.
 {% endif %}
 Ändringen gjordes när din årsrapport för {{ herd }} matades in. Stämmer det inte? Kontakta genbanksansvarig genom att svara på det här mejlet.
 {% endblock %}

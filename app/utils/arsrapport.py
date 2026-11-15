@@ -84,6 +84,7 @@ from utils.individual_commands import (
 from utils.individual_policy import Role
 from utils.mail import Recipient, enqueue_mail, mail_kind, recipient_kind
 from utils.matrikel import AddressValidationError, is_anonymized, parse_postal_fields, write_matrikel_audit
+from utils.members import CONSENT_TEXT_VERSION, consent_from_answer, effective_consent, set_consent, stored_consent
 from utils.reference_population import _alive_by_note
 
 STOCKHOLM = ZoneInfo("Europe/Stockholm")
@@ -656,6 +657,7 @@ BODY_KEYS = (
 PAPER_KEYS = ("inbox_item_id", "received_on", "signed_on", "matrikel")
 PAPER_FIELDS = ("konto", "adress", "telefon", "epost", "publicering")  # the form's "Dina uppgifter"
 MATRIKEL_PARTS = {"adress": ("address", "postal_code", "city"), "konto": ("clearing", "konto", "bank")}
+UTOM = ("phone", "email", "address")  # the consent keys a Ja may leave out; the name never
 ENTRY_KEYS = ("val", "vikt", "ej_vagd", "hull", "dod", "sald")
 DISEASES = ("myxomatos", "rvhd", "koccidios", "annat")
 TEXT_LIMITS = {
@@ -835,11 +837,15 @@ def _matrikel(body):
     if value is None:
         return None
     texts = [_keys(value, PAPER_FIELDS, "matrikel").get(key) for key in ("telefon", "epost")]
-    for name, parts in MATRIKEL_PARTS.items():  # publicering is Task 11's
+    for name, parts in MATRIKEL_PARTS.items():
         if value.get(name) is not None:
             texts += _keys(value[name], parts, "matrikel").values()
     if any(text is not None and not isinstance(text, str) for text in texts):
         raise _bad("matrikel", "Fältet ska vara text.")
+    if (answer := value.get("publicering")) is not None:  # Ja or Nej, and at Ja what may not be listed
+        utom = _keys(answer, ("ja", "utom"), "matrikel").get("utom")
+        if not isinstance(answer.get("ja"), bool) or not isinstance(utom, list) or not all(k in UTOM for k in utom):
+            raise _bad("matrikel", "Svara Ja eller Nej om Koharen, och vid Ja vad som inte får stå med.")
     return value
 
 
@@ -1310,9 +1316,9 @@ def _main_member(herd):
 
 
 def _matrikel_refusals(herd, matrikel):
-    """check's refusals of the form's contact changes; any of them needs the herd's main member (5.5)."""
+    """check's refusals of the form's contact changes; any of them, or a Koharen answer, needs the main member."""
     contact, refusals = _contact(matrikel)
-    if (contact or refusals) and _main_member(herd) is None:
+    if (contact or refusals or (matrikel or {}).get("publicering") is not None) and _main_member(herd) is None:
         refusals.insert(0, _refusal(None, "ingen_huvudmedlem"))
     return refusals
 
@@ -1323,8 +1329,8 @@ def later_fields(herd, membership, member, signed_on: date, own=frozenset()) -> 
     account by the herd's audit_log, the consent by publication_consent_change, and the rest by matrikel_audit, whose
     created_at is naive server time. Phone and e-mail count only from rows about `member`, and every swap of the main
     member counts for them (I2). The paper writes of the submissions in `own`, the herd's report for the round, do not
-    count, so that Ändra from paper can correct its own typo (I1): their kontakt_andrad rows, and the herd's audit rows
-    of the same transactions.
+    count, so that Ändra from paper can correct its own typo (I1): their kontakt_andrad rows, the herd's audit rows
+    of the same transactions, and their reports' paper consent rows.
     """
     # shortcut: the matrikel importer in cli/members.py leaves no trace, so this misses its changes; log them if it
     # ever runs during a round.
@@ -1355,8 +1361,10 @@ def later_fields(herd, membership, member, signed_on: date, own=frozenset()) -> 
     )
     if any(row.transaction_id not in transactions for row in account):
         fields.add("konto")
+    reports = YearlyReportSubmission.select(YearlyReportSubmission.report).where(YearlyReportSubmission.id.in_(own))
+    mine = (PublicationConsentChange.source == "paper") & PublicationConsentChange.report.in_(reports)
     consent = PublicationConsentChange.select().where(
-        PublicationConsentChange.membership == membership.id, PublicationConsentChange.at >= after
+        PublicationConsentChange.membership == membership.id, PublicationConsentChange.at >= after, ~mine
     )
     return fields | ({"publicering"} if consent.exists() else set())
 
@@ -1371,13 +1379,15 @@ def _same(column, stored, value):
 
 def apply_paper_matrikel(herd, membership, member, submission, item, user, matrikel, signed_on):
     """
-    5.5: the form's contact changes written into the matrikel and never read back: the address to `membership`, phone
-    and e-mail to its main `member`, the account to the herd (D8). The caller holds the membership's lock and read both
-    under it. Only a value that differs counts, the bank going with a new account, and a field the matrikel changed
-    after `signed_on` is skipped (D19), unless the herd's report for the round wrote it from paper itself (I1). Each
-    write is save(only=…): a whole row would write back a stale user_id. Every write gets one kontakt_andrad row with
-    the column names and `submission_id`, and with the transaction for the account, which ties the herd's audit row to
-    it. Returns (written, skipped) as PAPER_FIELDS.
+    5.5: the form's consent and contact changes written into the matrikel and never read back: the consent first and
+    the address to `membership`, phone and e-mail to its main `member`, the account to the herd (D8). The caller holds
+    the membership's lock and read both under it. Only a value that differs counts, the bank going with a new account,
+    and a field the matrikel changed after `signed_on` is skipped (D19), unless the herd's report for the round wrote
+    it from paper itself (I1). For the consent only what it adds is skipped: a No or fewer details go at once (fråga
+    27). Each write is save(only=…): a whole row would write back a stale user_id. The consent's log is its
+    publication_consent_change row; every contact write gets one kontakt_andrad row with the column names and
+    `submission_id`, and with the transaction for the account, which ties the herd's audit row to it. Returns
+    (written, skipped) as PAPER_FIELDS.
     """
     stored = Herd.get_by_id(herd.id)  # the account as it is now, not as the route read it
     report = YearlyHerdReport.get_by_id(submission.report_id)
@@ -1396,9 +1406,27 @@ def apply_paper_matrikel(herd, membership, member, submission, item, user, matri
             }
         if differ:
             changes[name] = differ
-    later = later_fields(stored, membership, member, signed_on, {row.id for row in own}) if changes else set()
+    answer = (matrikel or {}).get("publicering")
+    consent = consent_from_answer(answer["ja"], answer["utom"]) if answer is not None else None
+    consent = None if consent == stored_consent(membership) else consent
+    asked = changes or consent is not None
+    later = later_fields(stored, membership, member, signed_on, {row.id for row in own}) if asked else set()
     skipped = [name for name in PAPER_FIELDS if name in changes and name in later]
     written = {name: changes[name] for name in PAPER_FIELDS if name in changes and name not in later}
+    if consent is not None and "publicering" in later:  # only what the form adds waits for the member
+        current = effective_consent(membership)
+        narrowed = {key: allowed and current[key] for key, allowed in consent.items()}
+        skipped += ["publicering"] if narrowed != consent else []
+        consent = narrowed if narrowed != current else None  # a stored blob of fewer keys is no reason to write
+    consented = consent is not None and set_consent(
+        membership,
+        consent,
+        source="paper",
+        text_version=CONSENT_TEXT_VERSION,
+        user=user.id,
+        report=submission.report_id,
+        at=submission.created_at,
+    )
     old_email = member.email
     for model, row, names, stamp in (
         (Membership, membership, ("adress",), [Membership.updated_at]),
@@ -1423,7 +1451,7 @@ def apply_paper_matrikel(herd, membership, member, submission, item, user, matri
         if "epost" in written:  # as person_updated has it: the login's 7-day rule reads "email" in "after"
             payload |= {"before": {"email": old_email}, "after": {"email": member.email}}
         write_matrikel_audit(user, "kontakt_andrad", membership, payload)
-    return list(written), skipped
+    return list(written) + (["publicering"] if consented else []), skipped
 
 
 def log_and_mail_paper_contact(herd, item, submission, user, member, fields, skipped, old_email):
