@@ -48,9 +48,13 @@ function renderList(props: Partial<Parameters<typeof OnboardingChecklist>[0]>) {
 }
 
 const TITLE = "Kom igång med din besättning";
+const STÄNG = "Stäng Kom igång med din besättning";
 
 describe("OnboardingChecklist", () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+    document.cookie = "sb_mode=; max-age=0";
+  });
   afterEach(cleanup);
 
   it("shows the steps for an active herd that has not bred", () => {
@@ -71,7 +75,7 @@ describe("OnboardingChecklist", () => {
 
   it("remembers Stäng per herd", () => {
     const { unmount } = renderList({});
-    fireEvent.click(screen.getByRole("button", { name: "Stäng" }));
+    fireEvent.click(screen.getByRole("button", { name: STÄNG }));
     expect(screen.queryByText(TITLE)).toBeNull();
     unmount();
     renderList({});
@@ -81,7 +85,7 @@ describe("OnboardingChecklist", () => {
   });
 
   it("follows the selected herd when the herd switcher re-renders it", () => {
-    localStorage.setItem("sb-onboarding-dismissed-G9998", "1");
+    localStorage.setItem("sb-onboarding-dismissed-demo-G9998", "1");
     const { rerender } = renderList({});
     const props = {
       herd: { is_active: true, individuals: [] },
@@ -93,19 +97,53 @@ describe("OnboardingChecklist", () => {
     expect(screen.queryByText(TITLE)).toBeNull();
     rerender(<OnboardingChecklist {...props} herdNumber="G9999" />);
     expect(screen.getByText(TITLE)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Stäng" }));
+    fireEvent.click(screen.getByRole("button", { name: STÄNG }));
     rerender(<OnboardingChecklist {...props} herdNumber="G9997" />);
     expect(screen.getByText(TITLE)).toBeInTheDocument();
   });
 
-  it("offers Ny parning only once the herd has a buck and a doe", () => {
-    const { unmount } = renderList({});
+  it("offers Ny parning once the herd has a living doe (the buck may be borrowed)", () => {
+    const { unmount } = renderList({
+      herd: { is_active: true, individuals: [hane] },
+    });
     expect(screen.queryByRole("button", { name: "Ny parning" })).toBeNull();
     unmount();
-    renderList({ herd: { is_active: true, individuals: [hane, hona] } });
+    renderList({ herd: { is_active: true, individuals: [hona] } });
     expect(
       screen.getByRole("button", { name: "Ny parning" }),
     ).toBeInTheDocument();
+  });
+
+  it("offers Till Kaniner only when the herd has rabbits", () => {
+    const { unmount } = renderList({});
+    expect(screen.queryByRole("button", { name: "Till Kaniner" })).toBeNull();
+    unmount();
+    renderList({ herd: { is_active: true, individuals: [{ ...hane }] } });
+    expect(
+      screen.getByRole("button", { name: "Till Kaniner" }),
+    ).toBeInTheDocument();
+  });
+
+  it("keeps Stäng apart for the test environment and the real stamboken", () => {
+    const { unmount } = renderList({});
+    fireEvent.click(screen.getByRole("button", { name: STÄNG }));
+    unmount();
+    document.cookie = "sb_mode=prod";
+    renderList({});
+    expect(screen.getByText(TITLE)).toBeInTheDocument();
+  });
+
+  it("links each step to a heading that exists in the manual", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const { headingSlugger } = await import("@/lib/headingSlug");
+    const md = await readFile("public/stamboken/manual/USER_MANUAL.md", "utf8");
+    const slug = headingSlugger();
+    const ids = new Set(
+      [...md.matchAll(/^#{1,6} (.+)$/gm)].map((m) => slug(m[1])),
+    );
+    for (const step of onboardingSteps([], [])) {
+      expect(ids).toContain(step.manual.slice(1));
+    }
   });
 
   it("marks done steps and drops their action", () => {

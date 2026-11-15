@@ -4,6 +4,7 @@ import React from "react";
 import CheckRounded from "@mui/icons-material/CheckRounded";
 import type { Individual } from "@/redux/api/apiSlice";
 import { MANUAL_PATH } from "@/lib/constants";
+import { readModeCookieClient } from "@/lib/mode";
 import { useUser } from "@/lib/user-context";
 import {
   MbCard,
@@ -29,9 +30,10 @@ export function onboardingSteps(
   individuals: Individual[],
   breedings: BreedingRecord[],
 ): OnboardingStep[] {
-  // Breeding stock, as the overview's Avelsdjur figure counts it.
+  // Living, uncastrated breeding stock. Not "Aktiv": that needs a life sign
+  // within 13 months, which a herd that has not bred may lack.
   const stock = individuals.filter(
-    (i) => rabbitStatus(i) === "Aktiv" && !i.castration_date,
+    (i) => rabbitStatus(i) !== "Död" && !i.castration_date,
   );
   return [
     {
@@ -79,7 +81,9 @@ export default function OnboardingChecklist({
   onNewMating: () => void;
 }) {
   const user = useUser();
-  const key = `sb-onboarding-dismissed-${herdNumber}`;
+  // Per mode too: Stäng in the test environment must not hide the list in
+  // the real stamboken (same origin, the mode is a cookie).
+  const key = `sb-onboarding-dismissed-${readModeCookieClient()}-${herdNumber}`;
   // Read per render, not once: the herd switcher changes herdNumber without
   // remounting. Min besättning renders tabs only after hydration, so reading
   // localStorage here cannot cause a markup mismatch.
@@ -97,19 +101,25 @@ export default function OnboardingChecklist({
   if (dismissed || !herd?.is_active || breedings === null) return null;
   if (breedings.length > 0) return null;
 
-  const steps = onboardingSteps(herd.individuals ?? [], breedings);
+  const individuals = herd.individuals ?? [];
+  const steps = onboardingSteps(individuals, breedings);
+  // The mating form needs a doe in the herd; the buck may be borrowed.
+  const hasDoe = individuals.some(
+    (i) => i.sex === "female" && rabbitStatus(i) !== "Död",
+  );
   const actions: Array<React.ReactNode> = [
     null,
-    <button
-      key="kaniner"
-      type="button"
-      className="sb-btn sb-btn-secondary sb-btn-sm"
-      onClick={() => onGoTab("individuals")}
-    >
-      Till Kaniner
-    </button>,
-    // The mating form needs a doe in the herd, so it waits for step one.
-    steps[0].done && (
+    individuals.length > 0 && (
+      <button
+        key="kaniner"
+        type="button"
+        className="sb-btn sb-btn-secondary sb-btn-sm"
+        onClick={() => onGoTab("individuals")}
+      >
+        Till Kaniner
+      </button>
+    ),
+    hasDoe && (
       <button
         key="parning"
         type="button"
@@ -138,13 +148,18 @@ export default function OnboardingChecklist({
           <button
             type="button"
             className="sb-btn sb-btn-ghost sb-btn-sm"
+            aria-label="Stäng Kom igång med din besättning"
             onClick={dismiss}
           >
             Stäng
           </button>
         }
       >
-        <ol className={styles["mb-onboarding-steps"]}>
+        <ol
+          className={styles["mb-onboarding-steps"]}
+          // list-style: none drops list semantics in Safari/VoiceOver.
+          role="list"
+        >
           {steps.map((step, i) => (
             <li key={step.title} data-done={step.done}>
               <span className={styles["mb-onboarding-num"]} aria-hidden>
