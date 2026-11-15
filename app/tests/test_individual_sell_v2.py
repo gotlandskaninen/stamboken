@@ -597,10 +597,8 @@ class TestTransferPermissionsV2(DatabaseTest):
         self.assertEqual(response.get_json()["status"], "success", response.get_json())
         transfer = self._transfer_row(self.individuals[0])
         self.assertEqual((transfer.herd.herd, transfer.notes), ("M3", "Genbanksbyte av admin via legacy"))
-        self.assertTrue(
-            any(all(part in line for part in ("admin", REGISTERED, "Gotland", "Mellerud")) for line in logs.output),
-            logs.output,
-        )
+        ids = (f"user {self.admin.id}", f"individual {self.individuals[0].id}", "genebank 1", "genebank 2")
+        self.assertTrue(any(all(part in line for part in ids) for line in logs.output), logs.output)
         individual, breeding = self._own_breeding_individual()
         legacy = {"id": individual.id, "number": individual.number, "herd": "G1", "breeding": breeding.id}
         response = self.client.patch("/api/individual", json={**legacy, "origin_herd": {"herd": "M3"}})
