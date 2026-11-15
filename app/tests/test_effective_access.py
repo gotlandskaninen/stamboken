@@ -237,6 +237,45 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
         herd = db.Herd.get_by_id(herd.id)
         self.assertEqual((herd.bank_account_number, herd.www), ("1234-5", "new-www"))
 
+    def test_partly_edited_mask_is_refused_and_the_account_kept(self):
+        herd = self.herds[1]
+        herd.bank_account_number = "1234-5"
+        herd.save()
+        for value in ("•45", "••8327-9", "••4"):
+            with self.subTest(value=value):
+                result = da.update_herd({"id": herd.id, "www": "w", "bank_account_number": value}, self.manager.uuid)
+                self.assertEqual(result["status"], "error")
+                self.assertEqual(db.Herd.get_by_id(herd.id).bank_account_number, "1234-5")
+
+    def test_yearly_report_shows_the_whole_account_for_the_readers_own_herd_only(self):
+        a, b = self.herds[0], self.herds[1]
+        for herd in (a, b):
+            herd.bank_account_number = "1234-5"
+            herd.save()
+        rnd = db.YearlyReportRound.create(
+            report_year=2025, start_date=date(2025, 12, 31), end_date=date(2026, 3, 30), created_by=self.admin
+        )
+        for herd in (a, b):
+            db.YearlyHerdReport.create(
+                herd=herd, report_date=date(2026, 1, 1), generated_by=self.manager, name="2025", data="{}",
+                publish=False, publish_tel=False, publish_email=False, publish_address=False, round=rnd,
+            )  # fmt: skip
+        reports = da.get_yearly_reports(rnd.id, a.genebank_id, False, {a.id})
+        accounts = {r["herd"]: r["bank_account"] for r in reports}
+        self.assertEqual(accounts, {a.herd: "1234-5", b.herd: "••45"})
+
+    def test_account_end(self):
+        for value, expected in (
+            ("8327-9, 123 456 789 12", "••12"),
+            ("1234-5", "••45"),
+            ("7", "••7"),
+            ("ingen siffra", "••"),
+            ("", ""),
+            (None, None),
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(db.account_end(value), expected)
+
     def test_add_herd_ignores_bank_privacy(self):
         result = da.add_herd(
             {"herd": "ZZ99", "genebank": self.genebanks[0].id, "bank_name_privacy": "public"},

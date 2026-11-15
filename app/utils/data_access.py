@@ -46,7 +46,7 @@ from utils.database import next_individual_number  # isort: skip
 from utils.database import ACTIVE_WINDOW_DAYS  # isort: skip
 from utils.database import AUDIT_LOG_NO_UPDATE_RULE  # isort: skip
 from utils.database import OUTSIDE_GENEBANK_HERDS  # isort: skip
-from utils.database import ACCOUNT_MASK, BANK_PRIVACY_FIELDS, PRIVACY_LEVELS, account_end  # isort: skip
+from utils.database import BANK_PRIVACY_FIELDS, PRIVACY_LEVELS, account_end  # isort: skip
 from utils.database import ht_not_voided  # isort: skip
 from utils.database import ht_order_desc  # isort: skip
 from utils.database import latest_ht_per_individual  # isort: skip
@@ -1685,8 +1685,11 @@ def update_herd(form, user_uuid):
             form = {k: v for k, v in form.items() if k not in BANK_PRIVACY_FIELDS}
             # A manager reads the account as '••45' and the legacy SPA echoes the herd back: a masked
             # value is never an account number, so it must not overwrite the stored one.
-            if ACCOUNT_MASK in str(form.get("bank_account_number")):
-                del form["bank_account_number"]
+            account = form.get("bank_account_number")
+            if account is not None and "•" in str(account):
+                if account != account_end(herd.bank_account_number):
+                    return {"status": "error", "message": "Invalid value for bank_account_number"}
+                del form["bank_account_number"]  # the unchanged echo
             bad = invalid_privacy_field(form)
             if bad:
                 return {"status": "error", "message": f"Invalid value for {bad}"}
@@ -3413,10 +3416,13 @@ def get_yearly_report_by_round(herd_id, round_id):
         return None
 
 
-def get_yearly_reports(round_id: int, genebank_id: int, full_account: bool = False) -> list[dict]:
+def get_yearly_reports(
+    round_id: int, genebank_id: int, full_account: bool = False, own_herds: frozenset | set = frozenset()
+) -> list[dict]:
     """
     Get all yearly reports for a specific round and genebank. The bank account number is
-    cut to its last two digits unless `full_account` (admin, matrikel_admin).
+    cut to its last two digits unless `full_account` (admin, matrikel_admin) or the herd is one of
+    `own_herds` (the reader's own herds, judged per row).
     """
     try:
         with DATABASE.atomic():
@@ -3498,7 +3504,9 @@ def get_yearly_reports(round_id: int, genebank_id: int, full_account: bool = Fal
                     "phone": (r.herd.mobile_phone if "noPhone" not in allow_publication else None),
                     "address": (r.herd.physical_address if "noAddress" not in allow_publication else None),
                     "bank_account": (
-                        r.herd.bank_account_number if full_account else account_end(r.herd.bank_account_number)
+                        r.herd.bank_account_number
+                        if full_account or r.herd.id in own_herds
+                        else account_end(r.herd.bank_account_number)
                     ),
                     "bank_name": r.herd.bank_name,
                     # Additional fields
@@ -3529,10 +3537,12 @@ def format_disease_cases(diseases: dict) -> str:
     return "; ".join(cases) if cases else "Inga rapporterade sjukdomsfall"
 
 
-def export_yearly_reports_csv(round_id: int, genebank_id: int, full_account: bool = False) -> str:
+def export_yearly_reports_csv(
+    round_id: int, genebank_id: int, full_account: bool = False, own_herds: frozenset | set = frozenset()
+) -> str:
     """Export yearly reports as CSV data."""
     try:
-        reports = get_yearly_reports(round_id, genebank_id, full_account)
+        reports = get_yearly_reports(round_id, genebank_id, full_account, own_herds)
 
         # CSV Headers in Swedish - exactly matching the table view
         headers = [

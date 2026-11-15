@@ -10,7 +10,7 @@ isort:skip_file
 
 import os
 import unittest
-from datetime import datetime
+from datetime import date, datetime
 from unittest import mock
 
 os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), "auth.ini.test"))
@@ -1819,6 +1819,30 @@ class TestYearlyReportAdminContracts(FlaskTest):
             data = response.get_json()
             self.assertEqual(data["status"], "success")
             self.assertIn("reports", data)
+
+    def test_yearly_reports_cut_the_account_for_a_manager_but_not_for_admin(self):
+        """Issue #33 follow-up: the routes pass the reader's role, JSON and CSV alike."""
+        herd = self.herds[0]
+        herd.bank_account_number = "1234-5"
+        herd.save()
+        rnd = db.YearlyReportRound.create(
+            report_year=2019, start_date=date(2019, 1, 1), end_date=date(2019, 12, 31), created_by=self.admin
+        )
+        db.YearlyHerdReport.create(
+            herd=herd, report_date=date(2019, 12, 31), generated_by=self.manager, name="2019", data="{}",
+            publish=False, publish_tel=False, publish_email=False, publish_address=False, round=rnd,
+        )  # fmt: skip
+        url = f"/api/manage/yearly-reports/{rnd.id}/{herd.genebank_id}"
+        for user, account in ((self.manager, "••45"), (self.admin, "1234-5")):
+            with self.app as ctx:
+                ctx.get("/api/logout")  # the client keeps the previous user's session
+                self.login(ctx, user)
+                json_account = ctx.get(url).get_json()["reports"][0]["bank_account"]
+                csv_text = ctx.get(f"{url}/export").data.decode("utf-8")
+            self.assertEqual(json_account, account)
+            self.assertIn(account, csv_text)
+            if account == "••45":
+                self.assertNotIn("1234-5", csv_text)
 
     def test_export_yearly_reports_returns_csv(self):
         """Inventory row: GET /api/manage/yearly-reports/{x}/{x}/export (YearlyReportViewer.tsx:114)."""

@@ -386,6 +386,7 @@ class Herd(BaseModel):
         """
 
         access_level = "public"
+        effective = None  # the user's herd ids, fetched at most once
         if user and user.is_admin:
             access_level = "private"
         elif user:
@@ -423,7 +424,9 @@ class Herd(BaseModel):
         # Bank details: whole for admin, matrikel_admin (who has no genebank role, so only these
         # fields are added, not the other private ones) and the herd's own users. The genebank
         # manager (private level, but none of those) sees the last two digits of the account.
-        if user and (user.is_admin or user.is_matrikel_admin or self.id in user.effective_herd_ids()):
+        if user and effective is None and not (user.is_admin or user.is_matrikel_admin):
+            effective = user.effective_herd_ids()
+        if user and (user.is_admin or user.is_matrikel_admin or self.id in effective):
             data.update({f: raw[f] for f in ("bank_account_number", "bank_name") if f in raw})
         elif "bank_account_number" in data:
             data["bank_account_number"] = account_end(data["bank_account_number"])
