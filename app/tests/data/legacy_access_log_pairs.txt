@@ -1,0 +1,46 @@
+# Method and URL template of every call that got a 2xx or 3xx answer in the
+# old production server's access log (counted 2026-11-15, no counts kept).
+# <x> is one dynamic segment; the templates matched with or without a trailing
+# slash. Unmatched URLs (the line "GET OTHER") are left out.
+# test_access_rules.py checks each pair against legacy_compat.
+GET /api/breeding/<x>
+GET /api/breeding/delete
+GET /api/breeding/id/<x>
+GET /api/certificates/issue/<x>
+GET /api/certificates/preview/<x>
+GET /api/colors
+GET /api/genebank/<x>/individuals
+GET /api/genebanks
+GET /api/herd/<x>
+GET /api/herd/<x>/yearlyreport
+GET /api/individual/<x>
+GET /api/login/<x>
+GET /api/logout
+GET /api/manage/user/<x>
+GET /api/manage/users
+GET /api/manage/yearly_report_rounds
+GET /api/manage/yearly-reports/<x>/<x>
+GET /api/manage/yearly-reports/<x>/<x>/export
+GET /api/user
+PATCH /api/breeding
+PATCH /api/certificates/update/<x>
+PATCH /api/individual
+PATCH /api/manage/herd
+PATCH /api/manage/role
+PATCH /api/manage/user/<x>
+POST /api/birth
+POST /api/breeding
+POST /api/breeding/<x>
+POST /api/breeding/delete
+POST /api/breeding/nextind
+POST /api/certificates/issue/<x>
+POST /api/certificates/preview/<x>
+POST /api/checkindnumber
+POST /api/checkintyg
+POST /api/herd/<x>/yearlyreport
+POST /api/individual
+POST /api/login
+POST /api/manage/herd
+POST /api/manage/setpassword
+POST /api/manage/user/<x>
+POST /api/testbreed

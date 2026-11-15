@@ -1,7 +1,7 @@
 import { defineConfig } from "@playwright/test";
 
 /**
- * Skärmbilder till docs/USER_MANUAL.md (docs/manual/*.png). Körs för hand mot
+ * Skärmbilder till manualen (public/stamboken/manual/). Körs för hand mot
  * den seedade e2e-stacken bakom en nginx-proxy (se docs/manual/README.md),
  * aldrig i CI och aldrig mot prod eller demo:
  *
