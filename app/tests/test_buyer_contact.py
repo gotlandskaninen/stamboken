@@ -860,6 +860,18 @@ class TestQueueDocuments(PurgeTest):
         self.assertIsNone(proof.original_path)
         self.assertEqual(proof.herd_tracking_id, member_sale.id)
 
+    def test_a_proof_of_a_sale_corrected_twice_goes_when_the_rabbit_is_sold_on(self):
+        db.InboxDocument.update(herd_tracking_id=self.sale.id).where(db.InboxDocument.id == self.proof.id).execute()
+        first = {"kind": "TRANSFER", "date": "2026-01-02", "herd": "GX1"}
+        (once,) = correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [first], "Fel datum")
+        second = {"kind": "TRANSFER", "date": "2026-01-03", "herd": "GX1"}
+        correct_herd_tracking(self.rabbit, self.manager, None, [once.id], [second], "Fel datum igen")
+        purge.purge_sold_proofs(NOW)
+        self.assertIsNotNone(db.InboxDocument.get_by_id(self.proof.id).original_path)
+        record_herd_tracking(self.rabbit, self.herds[1], "2026-02-01", "TRANSFER", self.manager)
+        purge.purge_sold_proofs(NOW)
+        self.assertIsNone(db.InboxDocument.get_by_id(self.proof.id).original_path)
+
     def test_a_proof_goes_when_a_correction_moves_the_rabbit_on(self):
         db.InboxDocument.update(herd_tracking_id=self.sale.id).where(db.InboxDocument.id == self.proof.id).execute()
         purge.purge_sold_proofs(NOW)
