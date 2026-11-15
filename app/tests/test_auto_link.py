@@ -351,7 +351,7 @@ class TestOAuthAutoLinkRoutes(FlaskTest):
             client.get("/api/logout")
         self.assertEqual(patch.get_json(), {"status": "updated"})
         eve_now = db.User.get_by_id(eve.id)
-        self.assertEqual((eve_now.email, eve_now.validated), ("anna@gotlandskaninen.se", False))
+        self.assertEqual((eve_now.email, eve_now.validated), ("anna@gotlandskaninen.se", True))
 
         anna_details = {"email": "anna@gotlandskaninen.se", "username": "anna"}
         resp = self._dance_login(None, "anna@gotlandskaninen.se", account_details=anna_details, auto_validate=False)

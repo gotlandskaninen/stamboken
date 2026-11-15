@@ -315,3 +315,47 @@ class TestLegacyGoogleLoginNeverAdopts(DatabaseTest):
             self.assertEqual(evil.get("/api/user").get_json()["id"], attacker.id)
         self.assertFalse(db.Authenticators.select().where(db.Authenticators.user == attacker.id).exists())
         self.assertIsNone(db.Member.get_by_id(member.id).user_id)
+
+
+class TestHolderCannotChangeValidated(DatabaseTest):
+    """validated marks the web course; the legacy "Ändra e-postadress" call must not clear it."""
+
+    def setUp(self):
+        # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
+        APP.config["TESTING"] = True
+        super().setUp()
+
+    def patch(self, actor, url, body):
+        client = APP.test_client(use_cookies=True)
+        client.post("/api/login", json={"username": actor.email, "password": "pass"})
+        return client.patch(url, json=body).get_json()
+
+    def validated(self, user):
+        return db.User.get_by_id(user.id).validated
+
+    def test_the_legacy_change_email_call_leaves_validated_alone(self):
+        for user in (self.viewer, self.manager, self.admin):
+            with self.subTest(user.email):
+                db.User.update(validated=True).where(db.User.id == user.id).execute()
+                body = {"email": f"ny-{user.email}@example.org", "validated": False}
+                self.assertEqual(self.patch(user, "/api/manage/user/", body), {"status": "updated"})
+                self.assertTrue(self.validated(user))
+
+    def test_a_manager_cannot_validate_their_own_account(self):
+        body = {"id": self.manager.id, "email": self.manager.email, "validated": True}
+        self.assertEqual(self.patch(self.manager, f"/api/manage/user/{self.manager.id}", body), {"status": "unchanged"})
+        self.assertFalse(self.validated(self.manager))
+
+    def test_admin_and_manager_still_set_validated_on_another_account(self):
+        for actor, value in ((self.admin, True), (self.manager, False)):
+            with self.subTest(actor.email):
+                body = {"id": self.viewer.id, "email": self.viewer.email, "validated": value}
+                self.assertEqual(self.patch(actor, f"/api/manage/user/{self.viewer.id}", body), {"status": "updated"})
+                self.assertEqual(self.validated(self.viewer), value)
+
+    def test_a_member_still_cannot_send_validated_true(self):
+        body = {"email": self.viewer.email, "validated": True}
+        self.assertEqual(
+            self.patch(self.viewer, "/api/manage/user/", body), {"status": "error", "message": "forbidden"}
+        )
+        self.assertFalse(self.validated(self.viewer))

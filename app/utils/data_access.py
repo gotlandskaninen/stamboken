@@ -835,9 +835,11 @@ def update_user(form, user_uuid=None):
     if not (user.is_admin or user.is_manager) and str(form["id"]) != str(user.id):
         return {"status": "error", "message": "forbidden"}
 
-    if not (user.is_admin or user.is_manager):
-        # Mark user supplied e-mail as false
-        form["validated"] = False
+    if str(form["id"]) == str(user.id):
+        # An admin's mark that the holder took the web course: the holder can
+        # neither set nor clear it (the legacy frontend's "Ändra e-postadress"
+        # sends validated: false, which locked the member out of it).
+        del form["validated"]
 
     # check target user
     try:
