@@ -624,6 +624,28 @@ class TestRetention(BuyerBase):
             [r.new_data for r in self._buyer_log(self.contact_id, "DELETE")], [{"action": "gallring_fem_ar"}]
         )
 
+    def test_a_purge_rechecks_under_the_corrections_locks_and_keeps_a_buyer_whose_date_moved(self):
+        now = db.BuyerContact.purge_at_for(SALE_DATE) + timedelta(days=1)  # the buyer is a candidate
+        real_lock = buyer_contact.lock_individuals
+
+        def correction_commits_first(ids):
+            # A correction moving the sale ten years on commits just before the purge gets the rabbit's lock.
+            moved = db.BuyerContact.purge_at_for("2031-06-01")
+            db.BuyerContact.update(purge_at=moved).where(db.BuyerContact.id == self.contact_id).execute()
+            return real_lock(ids)
+
+        with (
+            mock.patch("utils.buyer_contact.lock_individuals", side_effect=correction_commits_first) as lock,
+            capture_sql() as statements,
+        ):
+            self.assertEqual(buyer_contact.purge_expired(now), 0)
+        lock.assert_called_once()
+        self.assertIsNotNone(self._contact(self.contact_id))
+        sqls = [sql for sql, _params in statements]
+        items = next(i for i, sql in enumerate(sqls) if 'FROM "inbox_item"' in sql and "FOR UPDATE" in sql)
+        rechecked = max(i for i, sql in enumerate(sqls) if 'FROM "buyer_contact"' in sql)
+        self.assertLess(items, rechecked)  # the purge took the queue's lock first, and re-read the buyer last
+
     def test_the_buyer_goes_when_the_rabbit_is_dead(self):
         self.assertEqual(buyer_contact.purge_dead(NOW), 0)
         db.Individual.update(death_date="2022-06-01").where(db.Individual.id == self.rabbit.id).execute()

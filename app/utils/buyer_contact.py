@@ -81,26 +81,54 @@ def erase_buyer_contact(contact_id, user):
     remove_originals(paths)  # only after the commit: a row never names a removed file
 
 
+def _delete_under_locks(candidates, eligible, action):
+    """
+    Deletes the buyers among `candidates` (a query of ids) that are still `eligible` (a condition on BuyerContact)
+    under a correction's locks, in its order: the queue's items, then the rabbits, both in id order. What was
+    read before the locks only picks the candidates; a correction that moved a sale's date, and its purge_at, or
+    cleared a death in the meantime keeps its buyer. Items that appeared under the rabbit lock leave the run to
+    the next night rather than lock out of order. Returns how many went and the paths for remove_originals.
+    """
+    ids = [contact_id for (contact_id,) in candidates.tuples()]
+    if not ids:
+        return 0, []
+    holding = list(HerdTracking.select().where(HerdTracking.holder_contact.in_(ids)))
+    items = buyer_items(holding, lock=True)
+    lock_individuals({r.individual_id for r in holding})
+    holding = list(HerdTracking.select().where(HerdTracking.holder_contact.in_(ids)))
+    if not buyer_items(holding) <= items:
+        logger.warning("Buyer purge %s: the queue changed under the locks; the next run takes it", action)
+        return 0, []
+    still = BuyerContact.select(BuyerContact.id).where(BuyerContact.id.in_(ids) & eligible)
+    return delete_buyer_contacts([contact_id for (contact_id,) in still.tuples()], action)
+
+
 def purge_expired(now):
-    """Name and town five years after they were entered: the buyer goes."""
+    """Name and town five years after the sale: the buyer goes."""
+    expired = BuyerContact.purge_at <= now
     with DB_PROXY.atomic():
-        expired = BuyerContact.select(BuyerContact.id).where(BuyerContact.purge_at <= now)
-        count, paths = delete_buyer_contacts([contact_id for (contact_id,) in expired.tuples()], "gallring_fem_ar")
+        count, paths = _delete_under_locks(
+            BuyerContact.select(BuyerContact.id).where(expired), expired, "gallring_fem_ar"
+        )
     remove_originals(paths)
     return count
 
 
+def _held_by_dead():
+    """The buyers held by a row of a rabbit recorded as dead."""
+    dead = (Individual.death_date.is_null(False)) | (fn.COALESCE(Individual.death_note, "") != "")
+    return (
+        HerdTracking.select(HerdTracking.holder_contact)
+        .join(Individual, on=(Individual.id == HerdTracking.individual))
+        .where(HerdTracking.holder_contact.is_null(False) & dead)
+    )
+
+
 def purge_dead(now):  # pylint: disable=unused-argument  # every rule takes the clock
     """Once the association learns the rabbit is dead, its buyers' names and towns go before the five years."""
-    dead = (Individual.death_date.is_null(False)) | (fn.COALESCE(Individual.death_note, "") != "")
+    held = BuyerContact.id.in_(_held_by_dead())
     with DB_PROXY.atomic():
-        held = (
-            HerdTracking.select(HerdTracking.holder_contact)
-            .join(Individual, on=(Individual.id == HerdTracking.individual))
-            .where(HerdTracking.holder_contact.is_null(False) & dead)
-            .distinct()
-        )
-        count, paths = delete_buyer_contacts([contact_id for (contact_id,) in held.tuples()], "gallring_dod")
+        count, paths = _delete_under_locks(BuyerContact.select(BuyerContact.id).where(held), held, "gallring_dod")
     remove_originals(paths)
     return count
 
