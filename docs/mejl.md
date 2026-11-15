@@ -49,7 +49,10 @@ mejlet går då till den adress som är aktuell just då.
 - `address_hash` (HMAC med `LINK_SECRET`) visar vilken adress ett skickat mejl
   gick till, så att en studs kan kopplas till adressen. Jobb som raderar en
   mottagares rad anropar `forget_recipient(kind, id)`, som tömmer fältet och
-  `dedupe_key`.
+  `dedupe_key` och avbryter mejl till mottagaren som inte har gått (`cancelled`,
+  "mottagaren är raderad"). Ett mejl som håller på att byggas eller skickas
+  just då förlorar sitt anspråk på raden, så sändaren skickar det inte och
+  skriver inte tillbaka någon adresshash.
 - Den publika ansökan tar emot vilken adress som helst, så kvittot
   `ansokan.mottagen` går högst en gång per adress och dag: `dedupe_key` är
   adressens HMAC och datumet, aldrig adressen.
@@ -112,8 +115,10 @@ sorten blir mejlet `cancelled` med ett felmeddelande som säger varför.
 ## Länkar i mejl
 
 `link_token(syfte, rad_id)` ger en länkkod `<rad_id>.<mac>`, där `mac` är
-base64url av HMAC-SHA256(`LINK_SECRET`, `"link:<syfte>:<rad_id>"`), avkortad till
-128 bitar. Ingen kod och ingen hash av den sparas; byggfunktionen räknar fram
+base64url av HMAC-SHA256(`LINK_SECRET`, `"link:<värdnamn>:<syfte>:<rad_id>"`),
+avkortad till 128 bitar. Värdnamnet (ur `HERDBOOK_HOST`) binder länken till sin
+miljö: demon är en kopia av produktionen med samma rad-id, och en länk från den
+ena gäller inte i den andra, inte heller om de skulle dela `LINK_SECRET`. Ingen kod och ingen hash av den sparas; byggfunktionen räknar fram
 koden när mejlet skickas, så en påminnelse kan skicka samma länk igen.
 `verify_link(syfte, token)` ger rad-id:t om koden är äkta, annars `None`.
 Funktionen som tar emot länken hämtar raden och kontrollerar själv
