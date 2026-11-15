@@ -236,13 +236,12 @@ jobs:
 
       # The demo API has its own database (herdbook_demo), empty after the schema
       # step. The access rules test signs in on the new frontend in demo mode,
-      # which needs the account and some data there. Same seed, same order, so
-      # the user ids match the ones in the production database.
-      - name: Seed demo API
-        continue-on-error: true  # a failed seed fails the access rules test below, never the legacy suite
-        run: |
-          docker compose -f docker-compose.local-production.yml exec -T api-test flask seed create --verbose
-          docker compose -f docker-compose.local-production.yml exec -T api-test python3 -m cli.create_test_users
+      # which needs the same account there: a session names the account by its
+      # uuid, and a separate seed would give every account a new one. So the
+      # database is copied, with the script production runs every night.
+      - name: Copy the database to the demo API
+        continue-on-error: true  # a failed copy fails the access rules test below, never the legacy suite
+        run: COMPOSE_FILE=docker-compose.local-production.yml ./scripts/sync-demo-db.sh
 
       # --- Install Playwright ---
       - uses: actions/setup-node@v4
