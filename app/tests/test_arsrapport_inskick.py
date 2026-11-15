@@ -457,12 +457,16 @@ class InskickTest(ArsrapportTest):
         subject, text = mail.render("arsrapport.kvitto", arsrapport._kvitto(row.params))
         self.assertEqual(subject, "Årsrapporten för G9001 är inskickad")
         for line in (
-            "Årsrapporten för besättning G9001 kom in den 2026-01-15. Du rapporterade 1 kaniner som finns kvar, "
-            "1 döda och 1 sålda.",
+            "Årsrapporten för besättning G9001 kom in den 2026-01-15. Du rapporterade 1 kanin som finns kvar, "
+            "1 död och 1 såld.",
             "Du kan ändra den så länge rundan är öppen, till och med 2026-03-30.",
             "Var det inte du? Kontakta genbanksansvarig genom att svara på det här mejlet.",
         ):
             self.assertIn(line, text)
+        _, plural = mail.render(
+            "arsrapport.kvitto", {**arsrapport._kvitto(row.params), "kvar": 2, "doda": 0, "salda": 3}
+        )
+        self.assertIn("Du rapporterade 2 kaniner som finns kvar, 0 döda och 3 sålda.", plural)
         self.assertIsNone(arsrapport._kvitto({"submission_id": sid + 1}))
 
         # no mail without a main member with an e-mail address

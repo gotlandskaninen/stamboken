@@ -3,7 +3,7 @@
 {% block body %}
 Hej!
 
-Årsrapporten för besättning {{ herd }} kom in den {{ datum }}. Du rapporterade {{ kvar }} kaniner som finns kvar, {{ doda }} döda och {{ salda }} sålda.
+Årsrapporten för besättning {{ herd }} kom in den {{ datum }}. Du rapporterade {{ kvar }} {{ "kanin" if kvar == 1 else "kaniner" }} som finns kvar, {{ doda }} {{ "död" if doda == 1 else "döda" }} och {{ salda }} {{ "såld" if salda == 1 else "sålda" }}.
 
 Du kan ändra den så länge rundan är öppen, till och med {{ end_date }}.
 
