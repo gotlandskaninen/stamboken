@@ -183,6 +183,8 @@ def rate_limited(exc):
 @limiter.limit(
     "20 per hour", key_func=lambda: str(current_user.id), deduct_when=lambda response: response.status_code == 201
 )
+# Every request counts here, refused or not: a refused upload is decoded all the same.
+@limiter.limit("60 per hour", key_func=lambda: str(current_user.id))
 def upload():
     # Set before the body is read: the same limit as nginx's, so a larger upload never half reaches Flask.
     request.max_content_length = MAX_REQUEST

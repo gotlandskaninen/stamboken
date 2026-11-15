@@ -901,6 +901,17 @@ class TestSync(GmailTest):
         self.read()
         self.assertIsNone(self.sync().last_error)
 
+    def test_a_message_that_kills_the_reader_is_given_up_on_after_the_runs(self):
+        bad = self.fake.deliver(message(subject="Dödar"))
+        with mock.patch.object(inbox_gmail, "read_message", side_effect=SystemExit):  # no exception to count
+            for run in (1, 2, 3):
+                with self.assertRaises(SystemExit):
+                    self.read()
+                self.assertEqual(db.GmailProcessed.get_by_id(bad).failures, run)
+        self.read()  # the fourth run does not read it
+        self.assertEqual((db.GmailProcessed.get_by_id(bad).kind, self.items()), ("failed", []))
+        self.assertTrue(self.fake.labelled(bad, "Fel vid inläsning"))
+
     def test_a_message_that_fails_once_is_read_by_the_next_run(self):
         gmail_id = self.fake.deliver(message())
         poison, _ = self.flaky(gmail_id, UnicodeError("trasig teckenkodning"))
@@ -941,7 +952,8 @@ class TestSync(GmailTest):
                     self.read()
                 self.assertEqual(self.sync().history_id, before)
                 self.assertFalse(self.fake.labelled(gmail_id, "Fel vid inläsning"))
-                self.assertIsNone(db.GmailProcessed.get_or_none(db.GmailProcessed.gmail_message_id == gmail_id))
+                row = db.GmailProcessed.get_by_id(gmail_id)  # only the run is counted, nothing is set aside
+                self.assertEqual((row.kind, row.failures), ("retry", 1))
                 self.read()
                 self.assertTrue(self.done(gmail_id))
 

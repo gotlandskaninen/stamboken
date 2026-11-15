@@ -77,8 +77,9 @@ kommer hit. Brevlådan ska därför vara samma adress som `MAIL_FROM`.
 - **Fel.** Ett fel i databasen, filsystemet eller Gmail avbryter körningen utan etikett och utan
   att `historyId` flyttas fram, så att nästa körning läser samma mejl igen. Ett fel i ett mejls
   innehåll räknas i `gmail_processed` (`kind` `retry`, `failures`), och mejlet läses igen vid
-  nästa körning också när `historyId` har flyttats fram. Efter tre körningar i rad med fel får
-  det etiketten "Fel vid inläsning", raden blir `failed` och mejlet läses inte mer. Ett mejl kan
+  nästa körning också när `historyId` har flyttats fram. Körningen räknas innan bilagorna läses, så
+  ett mejl som dödar processen (en PDF som kraschar renderaren) ger upp efter samma tre körningar.
+  Efter tre körningar i rad med fel får det etiketten "Fel vid inläsning", raden blir `failed` och mejlet läses inte mer. Ett mejl kan
   aldrig stoppa de andra. Texten sparas utan NUL-tecken.
 - **Sorteringen**, i den här ordningen:
   1. En leveransrapport (`multipart/report; report-type=delivery-status`) går till mejlkön,

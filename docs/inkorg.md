@@ -347,7 +347,8 @@ När postens text gallras försvinner `text`, `note` och `not_saved` ur `detail`
 
 **Vem:** inloggad ägare eller skötare av besättningen (den finns bland användarens besättningar),
 eller vem som helst som arbetar i kön, för vilken besättning som helst. Högst 20 sparade inskick i
-timmen per användare (429 efter det); ett anrop som nekas, också 409 nedan, räknas inte.
+timmen per användare (429 efter det); ett anrop som nekas, också 409 nedan, räknas inte där. Alla
+anrop till uppladdningen, nekade också, räknas i en andra gräns på 60 i timmen per användare.
 
 **Begäran:** `multipart/form-data`:
 
