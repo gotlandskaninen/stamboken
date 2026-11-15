@@ -1447,7 +1447,6 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
         (access.source == "paper" and report is not None) or (late and (access.editor or access.role == "helper"))
     ):
         refusals.append(_refusal(None, "orsak_kravs"))
-    refusals += _reason_refusals(sub.reason, list(sub.rabbits), _typed_buyers(sub))
     # A null in the latest submission came from paper, or an editor kept it there (case 8 by phone).
     kept_null = access.editor and latest is not None and latest.get("health") is None
     ending = sub.report["ending_genbank"]  # 5.7, fråga 18: an ending needs neither choices nor a health answer
@@ -1457,6 +1456,9 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
     strangers = [rabbit for rabbit in sub.rabbits if rabbit not in rows]
     strangers += [d["individual_id"] for d in sub.report["defects"] if d["individual_id"] not in rows]
     refusals += [_refusal(rabbit, "okand_kanin") for rabbit in strangers]
+    # Only the report's own rabbits: another herd's rabbit would make the refusal an oracle on its buyer's name.
+    own = [rabbit for rabbit in sub.rabbits if rabbit in rows]
+    refusals += _reason_refusals(sub.reason, own, _typed_buyers(sub))
     for rabbit, row in rows.items():
         entry, before = sub.rabbits.get(rabbit), before_entries.get(rabbit)
         if entry is None:

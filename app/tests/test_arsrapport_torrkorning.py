@@ -437,6 +437,21 @@ class TorrkorningTest(ArsrapportTest):
             [(r["individual_id"], r["code"]) for r in self.dry(body)["refusals"]], [(stranger.id, "okand_kanin")] * 2
         )
 
+    def test_reason_is_never_checked_against_a_foreign_rabbits_buyer(self):  # Codex re-review 1: no name oracle
+        (a,) = self.rabbits(self.h, 1)
+        (foreign,) = self.rabbits(self.g9002, 1)
+        buyer = db.BuyerContact.create(
+            name="Anna Berg", town="Visby", created_by_user=self.admin, purge_at=datetime(2030, 1, 1)
+        )
+        gx1 = db.Herd.get(db.Herd.herd == "GX1")
+        sold = {"individual": foreign, "herd_tracking_date": date(2025, 6, 1), "holder_contact": buyer}
+        ht_row("TRANSFER", from_herd=self.g9002, herd=gx1, **sold)
+        for reason in ("Anna", "Berg", "Ingen alls"):
+            with self.subTest(reason=reason):
+                body = self.body(self.kvar(a, vikt=2.8), self.kvar(foreign, vikt=2.8), reason=reason)
+                refusals = [(r["individual_id"], r["code"]) for r in self.dry(body)["refusals"]]
+                self.assertEqual(refusals, [(foreign.id, "okand_kanin")])
+
     # check: the report
 
     def test_message_with_a_phone_number_is_refused(self):
