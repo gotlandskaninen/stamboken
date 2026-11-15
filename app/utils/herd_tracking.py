@@ -762,7 +762,8 @@ def _refuse_buyerless_before_sale(rows, written):
     """
     ordered = sorted(rows, key=ht_sort_key)
     for row in written:
-        if row.holder_contact_id is not None or row.kind not in ("TRANSFER", "CORRECTION"):
+        # A removed buyer was a real one: the row after it is a resale between two buyers, as before.
+        if row.holder_contact_id is not None or row.buyer_removed or row.kind not in ("TRANSFER", "CORRECTION"):
             continue
         if row.herd.herd not in OUTSIDE_GENEBANK_HERDS:
             continue

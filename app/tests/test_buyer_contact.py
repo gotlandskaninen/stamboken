@@ -521,6 +521,14 @@ class TestVoid(BuyerBase):
         )
         self.assertEqual((self._latest().id, db.BuyerContact.select().count()), (self.sale.id, 0))
 
+    def test_a_sale_whose_buyer_went_may_be_corrected_before_a_resale(self):
+        resale = record_herd_tracking(self.rabbit, self.gx1, "2022-01-01", "TRANSFER", self.manager, buyer=OTHER)
+        buyer_contact.erase_buyer_contact(self.contact_id, self.admin)  # a removed buyer was a real one
+        event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1"}
+        (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [event], "Fel datum")
+        self.assertEqual((written.holder_contact_id, written.buyer_removed), (None, True))
+        self.assertEqual(self._latest().id, resale.id)
+
     def test_the_event_api_takes_no_holder_contact_id(self):
         event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "G2", "holder_contact_id": self.contact_id}
         (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [event], "Fel köpare")
