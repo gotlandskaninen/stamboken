@@ -721,6 +721,16 @@ det. Efter sparandet har dokumentet
 
 ## Registrera en försäljning
 
+### `GET /api/v2/inkorg/{id}/kanin/{nummer}/forsaljningar`
+
+Kaninens aktiva flyttar (`TRANSFER`, `CORRECTION`), för panelen: visar beviset en försäljning som redan
+är registrerad, och har den köparen? Bara ja eller nej (`has_buyer`), aldrig namn eller ort. För den som
+arbetar i kön och får läsa kaninen; 404 annars.
+
+```json
+{"sales": [{"herd": "GX1", "date": "2026-10-03", "kind": "TRANSFER", "has_buyer": true}]}
+```
+
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/overlat`
 
 Registrerar att kaninen sålts, med samma regler som försäljningen på kaninens sida.

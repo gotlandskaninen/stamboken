@@ -355,6 +355,19 @@ def item_detail(item_id):
     return jsonify(inbox.item_detail(item))
 
 
+# [Next.js] The rabbit's active sales, for the sale panel: does the proof show a sale already registered, and
+# has that sale its buyer outside the association? A yes or no only, never a name (ADR-0016).
+@inbox_bp.route("/inkorg/<int:item_id>/kanin/<number>/forsaljningar", methods=["GET"])
+@json_login_required
+@_queue_worker
+def rabbit_sales(item_id, number):
+    item = InboxItem.get_or_none(InboxItem.id == item_id)
+    individual = da.get_individual(number, current_user.uuid) if item is not None else None
+    if individual is None:
+        return problem(404, "Hittades inte", "Posten eller kaninen finns inte.")
+    return jsonify({"sales": inbox.active_sales(individual["id"])})
+
+
 @inbox_bp.route("/inkorg/<int:item_id>/ta", methods=["POST"])
 @json_login_required
 @_queue_worker

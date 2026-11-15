@@ -9,10 +9,10 @@ import {
 } from "@testing-library/react";
 
 const registerSale = vi.fn();
-const lookupRabbit = vi.fn();
+const rabbitSales = vi.fn();
 vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/actions", () => ({
   registerSale: (...args: unknown[]) => registerSale(...args),
-  lookupRabbit: (...args: unknown[]) => lookupRabbit(...args),
+  rabbitSales: (...args: unknown[]) => rabbitSales(...args),
 }));
 
 import { SalePanel } from "@/app/(app)/stamboken/(dashboard)/inkorg/[id]/SalePanel";
@@ -25,7 +25,7 @@ beforeAll(async () => {
 afterEach(() => {
   cleanup();
   registerSale.mockReset();
-  lookupRabbit.mockReset();
+  rabbitSales.mockReset();
 });
 
 const CONSENT =
@@ -52,16 +52,17 @@ const doc = {
 } as unknown as InboxDocument;
 
 // G9001-2511's sale to GX1 on 2026-10-03, registered anywhere (the sell dialog or the item).
-const registered = {
-  name: null,
-  color: null,
-  mother: null,
-  father: null,
-  herd_tracking: [{ herd: "GX1", date: "2026-10-03", kind: "TRANSFER" }],
+const sale = {
+  herd: "GX1",
+  date: "2026-10-03",
+  kind: "TRANSFER",
+  has_buyer: true,
 };
+const found = (...sales: object[]) => ({ ok: true, data: { sales } });
+const registered = found(sale);
 
-function panel(rabbit: object | null = null) {
-  lookupRabbit.mockResolvedValue(rabbit);
+function panel(answer: object = found()) {
+  rabbitSales.mockResolvedValue(answer);
   render(
     <SalePanel itemId={12} doc={doc} herds={[]} canSave onDone={vi.fn()} />,
   );
@@ -105,7 +106,7 @@ describe("SalePanel with a buyer outside the association", () => {
     type(/^Ort/, "Visby");
     fireEvent.click(screen.getByRole("checkbox", { name: OPTIN }));
     type(/^Telefon/, "0700000000");
-    expect(save().disabled).toBe(false);
+    await waitFor(() => expect(save().disabled).toBe(false)); // once the lookup says it is a new sale
     fireEvent.click(save());
     await waitFor(() => expect(registerSale).toHaveBeenCalledTimes(1));
     expect(registerSale).toHaveBeenCalledWith(12, 31, {
@@ -131,7 +132,7 @@ describe("SalePanel with a buyer outside the association", () => {
     await waitFor(() =>
       expect(screen.queryByLabelText(/Köparens namn/)).toBeNull(),
     );
-    expect(lookupRabbit).toHaveBeenCalledWith("G9001-2511");
+    expect(rabbitSales).toHaveBeenCalledWith(12, "G9001-2511");
     expect(save().disabled).toBe(false);
     fireEvent.click(save());
     await waitFor(() => expect(registerSale).toHaveBeenCalledTimes(1));
@@ -139,7 +140,7 @@ describe("SalePanel with a buyer outside the association", () => {
   });
 
   it("never hides the buyer on the previous rabbit's sales, and looks up once typing pauses", async () => {
-    lookupRabbit.mockResolvedValueOnce(registered); // G9001-2511 has the sale
+    rabbitSales.mockResolvedValueOnce(registered); // G9001-2511 has the sale
     render(
       <SalePanel itemId={12} doc={doc} herds={[]} canSave onDone={vi.fn()} />,
     );
@@ -152,26 +153,53 @@ describe("SalePanel with a buyer outside the association", () => {
     await waitFor(() =>
       expect(screen.queryByLabelText(/Köparens namn/)).toBeNull(),
     );
-    lookupRabbit.mockClear();
-    lookupRabbit.mockResolvedValue(null);
+    rabbitSales.mockClear();
+    rabbitSales.mockResolvedValue(found());
     type(/Individnummer/, "G9001-251");
     type(/Individnummer/, "G9001-2512"); // another rabbit, typed quickly
     expect(screen.getByLabelText(/Köparens namn/)).toBeInTheDocument(); // at once, before any answer
-    await waitFor(() => expect(lookupRabbit).toHaveBeenCalledTimes(1));
-    expect(lookupRabbit).toHaveBeenCalledWith("G9001-2512");
+    await waitFor(() => expect(rabbitSales).toHaveBeenCalledTimes(1));
+    expect(rabbitSales).toHaveBeenCalledWith(12, "G9001-2512");
   });
 
   it("asks for the buyer when the rabbit's sale is another one", async () => {
-    const other = {
-      ...registered,
-      herd_tracking: [{ herd: "GX1", date: "2026-10-04", kind: "TRANSFER" }],
-    };
-    panel(other);
+    panel(found({ ...sale, date: "2026-10-04" }));
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
     );
-    await waitFor(() => expect(lookupRabbit).toHaveBeenCalled());
+    await waitFor(() => expect(rabbitSales).toHaveBeenCalled());
     expect(screen.getByLabelText(/Köparens namn/)).toBeInTheDocument();
+  });
+
+  it("asks for and sends the buyer of a registered sale that has none", async () => {
+    registerSale.mockResolvedValue({ ok: true, data: { document: doc } });
+    panel(found({ ...sale, has_buyer: false })); // the legacy form registered it without one
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    );
+    await waitFor(() => expect(rabbitSales).toHaveBeenCalled());
+    type(/Köparens namn/, "Anna Köpare");
+    type(/^Ort/, "Visby");
+    await waitFor(() => expect(save().disabled).toBe(false));
+    fireEvent.click(save());
+    await waitFor(() => expect(registerSale).toHaveBeenCalledTimes(1));
+    expect(registerSale.mock.calls[0][2].buyer).toMatchObject({
+      name: "Anna Köpare",
+      town: "Visby",
+    });
+  });
+
+  it("says so and saves nothing when the rabbit's sales cannot be read", async () => {
+    panel({ ok: false, problem: { status: 404, title: "", detail: "" } });
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    );
+    expect(
+      await screen.findByText(/Kunde inte läsa kaninens försäljningar/),
+    ).toBeInTheDocument();
+    type(/Köparens namn/, "Anna Köpare");
+    type(/^Ort/, "Visby");
+    expect(save().disabled).toBe(true);
   });
 
   it("sends no buyer for a herd in the association", async () => {

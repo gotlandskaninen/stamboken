@@ -985,6 +985,22 @@ class TestQueueProofOfARegisteredSale(ErasureTest):
         )
         self.assertTrue(any("holder_contact_id" in (a.changed_fields or []) for a in audit))
 
+    def test_a_helper_reads_the_rabbits_sales_and_whether_they_have_a_buyer_never_who(self):
+        gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        rabbit = db.Individual.get(db.Individual.number == "G1-2111")
+        record_herd_tracking(rabbit, gx1, "2021-06-01", "TRANSFER", self.manager, buyer=BUYER)
+        item = self.item(0, documents=1)
+        self.login("hjalp")  # a helper, not a manager
+        resp = self.client.get(f"/api/v2/inkorg/{item.id}/kanin/G1-2111/forsaljningar")
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(
+            resp.get_json()["sales"], [{"herd": "GX1", "date": "2021-06-01", "kind": "TRANSFER", "has_buyer": True}]
+        )
+        self.assertNotIn(NAME, resp.get_data(as_text=True))
+        self.assertEqual(self.client.get(f"/api/v2/inkorg/{item.id}/kanin/G1-9999/forsaljningar").status_code, 404)
+        self.login("owner")  # not in the queue
+        self.assertEqual(self.client.get(f"/api/v2/inkorg/{item.id}/kanin/G1-2111/forsaljningar").status_code, 403)
+
     def test_two_sales_the_same_day_are_a_409_not_a_guess(self):
         gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
         rabbit = db.Individual.get(db.Individual.number == "G1-2111")
