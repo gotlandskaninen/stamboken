@@ -552,6 +552,7 @@ class TestErasure(BuyerBase):
         self._login("man")
         resp = self.client.get(f"/api/v2/buyer-contacts/{self.contact_id}")
         self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.headers["Cache-Control"], "no-store")
         body = resp.get_json()
         self.assertEqual((body["name"], body["town"], body["email"]), (NAME, "Visby", "z@example.org"))
         self.assertIsNotNone(body["contact_consent_at"])
