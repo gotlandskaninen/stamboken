@@ -37,8 +37,15 @@ describe("paperKey", () => {
     expect(press(at("val"), "1", "Tab", "Tab", "Enter").field).toBe("number");
   });
 
-  it("Enter in the last field of a dead or sold row starts the next row", () => {
-    expect(press(at("val"), "2", "Enter").field).toBe("number");
+  it("after Död, Enter walks month, day, Slaktad, Anteckning, then the next row", () => {
+    const keys = ["2", "Enter", "Enter", "Enter", "Enter"];
+    const fields = [];
+    let st = at("val");
+    for (const k of keys) {
+      st = paperKey(st, k);
+      fields.push(st.field);
+    }
+    expect(fields).toEqual(["month", "day", "slaktad", "note", "number"]);
     expect(paperKey(at("sold", "sald"), "Enter").field).toBe("number");
   });
 

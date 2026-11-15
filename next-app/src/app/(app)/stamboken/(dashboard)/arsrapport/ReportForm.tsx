@@ -304,6 +304,8 @@ export function ReportForm({
 
   // A copy the server never confirmed (closed tab, lost connection) wins.
   React.useEffect(() => {
+    // behind the member-draft gate nothing is adopted: the choice comes first
+    if (gateOf(viewRef.current, isPaper) === "draft") return;
     const local = readLocal(env, herd.herd, year);
     if (local) {
       const s = fromBody(local);
@@ -313,7 +315,7 @@ export function ReportForm({
       setLocalCopy(true);
       setVersion((v) => v + 1);
     }
-  }, [env, herd.herd, year]);
+  }, [env, herd.herd, year, isPaper]);
 
   // The server's draft replaces the whole editing state: form, mode and key.
   const adoptDraft = (d: ServerDraft) => {
@@ -544,6 +546,9 @@ export function ReportForm({
         ej_vagd: `ejvagd-${id}`,
         hull: `hull-${id}`,
         month: `month-${id}`,
+        day: `dag-${id}`,
+        slaktad: `slaktad-${id}-ja`,
+        note: `note-${id}`,
         sold: null, // the dialog takes the focus
       }[next.field],
     );
@@ -891,6 +896,8 @@ export function ReportForm({
                   const s = fromBody(view.draft!.data);
                   setState(s);
                   setEntered(enteredFrom(rabbits, s));
+                  writeLocal(env, herd.herd, year, null);
+                  setLocalCopy(false);
                   setGate(null);
                 }}
               >
@@ -899,7 +906,13 @@ export function ReportForm({
               <button
                 type="button"
                 className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
-                onClick={() => setGate(null)}
+                onClick={() => {
+                  setState(emptyState());
+                  setEntered([]);
+                  writeLocal(env, herd.herd, year, null);
+                  setLocalCopy(false);
+                  setGate(null);
+                }}
               >
                 Börja från blanketten
               </button>
@@ -1035,11 +1048,14 @@ export function ReportForm({
   // register that the form does not mention.
   const noop = () => undefined;
   const enteredSet = new Set(entered);
+  const shownIds = new Set(visible.map((r) => r.id)); // the filter of the error box
+  const onFilter = (id: number) => filter === "alla" || shownIds.has(id);
   const enteredRabbits = entered.flatMap((id) => byId.get(id) ?? []);
-  const restRabbits = rabbits.filter(
+  const allRest = rabbits.filter(
     (r) => r.state === "att_valja" && !enteredSet.has(r.id),
   );
-  const unchosen = restRabbits.filter((r) => !state.rabbits[r.id]?.val).length;
+  const restRabbits = allRest.filter((r) => onFilter(r.id));
+  const unchosen = allRest.filter((r) => !state.rabbits[r.id]?.val).length;
 
   return (
     <div
@@ -1264,22 +1280,24 @@ export function ReportForm({
               <>
                 <div className="sb-card-flat" onKeyDown={onPaperKey}>
                   <div className={styles.list}>
-                    {enteredRabbits.map((r) => (
-                      <RabbitRow
-                        key={r.id}
-                        r={r}
-                        paper
-                        entry={state.rabbits[r.id]}
-                        ending={state.ending}
-                        year={year}
-                        canSell={view.can_sell}
-                        done={!!done.get(r.id)}
-                        error={rowErrors.get(r.id)}
-                        onChange={onRow}
-                        onSell={onSell}
-                        onNextWeight={noop}
-                      />
-                    ))}
+                    {enteredRabbits
+                      .filter((r) => onFilter(r.id))
+                      .map((r) => (
+                        <RabbitRow
+                          key={r.id}
+                          r={r}
+                          paper
+                          entry={state.rabbits[r.id]}
+                          ending={state.ending}
+                          year={year}
+                          canSell={view.can_sell}
+                          done={!!done.get(r.id)}
+                          error={rowErrors.get(r.id)}
+                          onChange={onRow}
+                          onSell={onSell}
+                          onNextWeight={noop}
+                        />
+                      ))}
                     <NumberRow
                       herd={herd.herd}
                       year={year}

@@ -93,9 +93,9 @@ function RabbitRowImpl({
   const kvarOpen = e.val === "kvar";
   const quiet = r.state !== "att_valja" && !e.val;
   const meta = [
-    sexText(r),
+    paper ? null : sexText(r),
     r.castrated ? "kastrerad" : null,
-    r.color,
+    paper ? null : r.color,
     ageText(r, year),
     r.last_reported
       ? `senast rapporterad ${r.last_reported.slice(0, 4)}`
@@ -112,8 +112,10 @@ function RabbitRowImpl({
       aria-describedby={error ? errId : undefined}
     >
       <legend>
+        {paper && <span className={styles.meta}>{sexText(r)} </span>}
         <span className={styles.num}>{r.number}</span>
         <span className={styles.name}>{r.name}</span>
+        {paper && r.color && <span className={styles.meta}> {r.color}</span>}
         {done && <span className={styles.klar}>✓ Klar</span>}
       </legend>
       <p className={styles.meta}>{meta}</p>
@@ -352,7 +354,8 @@ function RabbitRowImpl({
             <label className={styles.label}>
               Dag (frivillig)
               <input
-                data-paper-field="month"
+                id={`dag-${r.id}`}
+                data-paper-field="day"
                 className={styles.field}
                 style={{ width: "100%", boxSizing: "border-box" }}
                 inputMode="numeric"
@@ -374,6 +377,8 @@ function RabbitRowImpl({
                   >
                     <input
                       type="radio"
+                      id={`slaktad-${r.id}-${v ? "ja" : "nej"}`}
+                      data-paper-field="slaktad"
                       name={`slaktad-${r.id}`}
                       checked={e.dod!.slaktad === v}
                       onChange={() => set({ dod: { ...e.dod!, slaktad: v } })}
@@ -387,6 +392,8 @@ function RabbitRowImpl({
           <label className={styles.label}>
             Anteckning
             <textarea
+              id={`note-${r.id}`}
+              data-paper-field="note"
               className={styles.field}
               maxLength={500}
               rows={2}

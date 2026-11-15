@@ -736,6 +736,9 @@ export type PaperField =
   | "ej_vagd"
   | "hull"
   | "month"
+  | "day"
+  | "slaktad"
+  | "note"
   | "sold";
 export interface PaperState {
   field: PaperField;
@@ -758,8 +761,14 @@ export function paperKey(state: PaperState, key: string): PaperState {
       return { ...state, field: "val" };
     if (field === "vikt") return { ...state, field: "ej_vagd" };
     if (field === "ej_vagd") return { ...state, field: "hull" };
+    // a dead rabbit: month, day, Slaktad, Anteckning, then the next row
+    if (key === "Enter" && field === "month") return { ...state, field: "day" };
+    if (key === "Enter" && field === "day")
+      return { ...state, field: "slaktad" };
+    if (key === "Enter" && field === "slaktad")
+      return { ...state, field: "note" };
     // the last field of a row: Enter starts the next row
-    if (key === "Enter" && ["hull", "month", "sold"].includes(field))
+    if (key === "Enter" && ["hull", "note", "sold"].includes(field))
       return { ...state, field: "number" };
   }
   return state;

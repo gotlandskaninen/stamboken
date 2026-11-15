@@ -27,7 +27,9 @@ export function NumberRow({
   const pick = () => {
     const typed = value.trim().toUpperCase();
     if (!typed) return;
-    const number = typed.startsWith(`${herd}-`) ? typed : `${herd}-${typed}`;
+    // a full number is taken as written (the register selects by holding, so
+    // a rabbit numbered in another herd is valid); a bare part gets the prefix
+    const number = typed.includes("-") ? typed : `${herd}-${typed}`;
     const hit = rabbits.find((r) => r.number.toUpperCase() === number);
     if (!hit) {
       setProblem(

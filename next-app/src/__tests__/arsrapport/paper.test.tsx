@@ -145,6 +145,74 @@ describe("ReportForm on paper", () => {
     );
   });
 
+  it("takes a full number from another herd as written", () => {
+    renderPaper(
+      paperView({ rabbits: [rabbit(1), rabbit(2, { number: "G9002-77" })] }),
+    );
+    const input = screen.getByLabelText("Nummer efter G9001-");
+    fireEvent.change(input, { target: { value: "g9002-77" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(screen.getByRole("group", { name: /G9002-77/ })).toBeTruthy();
+  });
+
+  it("walks a dead rabbit's fields with Enter before the next row", () => {
+    renderPaper();
+    typeNumber("2");
+    fireEvent.keyDown(within(row(2)).getByLabelText("Finns kvar"), {
+      key: "2",
+    });
+    const month = within(row(2)).getByLabelText("Månad");
+    expect(document.activeElement).toBe(month);
+    const step = (label: RegExp | string, tag?: string) => {
+      fireEvent.keyDown(document.activeElement!, { key: "Enter" });
+      void tag;
+      expect(document.activeElement).toBe(
+        typeof label === "string"
+          ? document.getElementById(label)
+          : within(row(2)).getByLabelText(label),
+      );
+    };
+    step(/^Dag/);
+    step("slaktad-2-ja");
+    step("note-2");
+    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
+    expect(document.activeElement).toBe(
+      screen.getByLabelText("Nummer efter G9001-"),
+    );
+  });
+
+  it("does not adopt a local copy behind the member-draft gate, and Börja clears it", async () => {
+    window.localStorage.setItem(
+      "arsrapport:demo:G9001:2026",
+      JSON.stringify({ rabbits: { "1": { val: "kvar", vikt: 2 } } }),
+    );
+    const a = actions();
+    renderPaper(
+      paperView({
+        draft: {
+          data: {} as never,
+          updated_at: "2027-01-02T09:00:00+00:00",
+          submission_key: null,
+          own: false,
+        },
+      }),
+      a,
+    );
+    expect(
+      screen.getAllByText(/Medlemmen har påbörjat rapporten/).length,
+    ).toBeGreaterThan(0);
+    expect(a.saveDraft).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Börja från blanketten" }),
+    );
+    expect(
+      window.localStorage.getItem("arsrapport:demo:G9001:2026"),
+    ).toBeNull();
+    expect(
+      (within(row(1)).getByLabelText("Finns kvar") as HTMLInputElement).checked,
+    ).toBe(false);
+  });
+
   it("says when a number is not there or was entered already", () => {
     renderPaper();
     typeNumber("2399");

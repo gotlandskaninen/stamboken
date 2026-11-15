@@ -105,7 +105,8 @@ export function PaperEntry({
         paper={{
           documentIds: formDocumentIds(item),
           intygPending: intygPending(item),
-          archive: (id) => updateDocument(item.id, id, { dismissed: true }),
+          archive: (id) =>
+            updateDocument(item.id, id, { dismissed: true }, env),
           leave: (message) => {
             showSnackbar(message);
             router.push("/stamboken/inkorg");
