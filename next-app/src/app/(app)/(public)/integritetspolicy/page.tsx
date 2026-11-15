@@ -175,9 +175,8 @@ export default function IntegritetspolicyPage() {
               papper tar vi bort efter två år.{" "}
               <mark>
                 [INTE KLART: gallringen efter 12 månader, av ansökningar,
-                medlemmar och avslutade besättningar, och mejlet till den som
-                lagts in av någon annan sköts för hand tills de är byggda.
-                Rutinen ska finnas innan sidan släpps.]
+                medlemmar och avslutade besättningar, ska vara byggd innan sidan
+                släpps.]
               </mark>
             </p>
           </Section>
@@ -247,11 +246,7 @@ export default function IntegritetspolicyPage() {
                 nya värdet, så att fel kan spåras och rättas (berättigat
                 intresse). IP-adressen tar vi bort efter 12 månader. Resten av
                 loggen sparas tills vidare och behåller de gamla värdena, också
-                sedan en uppgift har ändrats eller tagits bort.{" "}
-                <mark>
-                  [INTE KLART: gallringen av kontaktuppgifter och bankkonton som
-                  finns kvar i loggen ska byggas innan sidan släpps.]
-                </mark>
+                sedan en uppgift har ändrats eller tagits bort.
               </li>
               <li>
                 Testmiljön är en kopia av den riktiga stamboken, så att du kan
