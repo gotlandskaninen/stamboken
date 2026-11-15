@@ -619,7 +619,7 @@ def link_account(user, method, ident):
         auth_log.info("Linked user id=%s to service %s", user.id, method)
         return user
     except PeeweeException as auth_except:
-        auth_log.info("Link failed: user id=%s service %s: %s", user.id, method, auth_except)
+        auth_log.info("Link failed: user id=%s service %s: %s", user.id, method, type(auth_except).__name__)
 
     auth_log.info("Link failed: user id=%s service %s", user.id, method)
     return None
@@ -2020,7 +2020,7 @@ def update_individual(form, user_uuid, issue_digital=False, genebank_change_reas
     except Exception as e:
         if hasattr(e, "individual_stage"):  # today's checks before the lock: legacy 500, v2 400/500
             raise
-        logger.error(f"Expetion in update individual {form.get('id')}, user: {user.id} exception: {e}")
+        logger.error(f"Expetion in update individual {form.get('id')}, user: {user.id} exception: {type(e).__name__}")
         return {"status": "error", "message": "Kunde inte uppdatera individ."}
     return {
         "status": "success",

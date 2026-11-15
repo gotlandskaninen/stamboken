@@ -25,7 +25,6 @@ class TestSchedulerLeaderElection(DatabaseTest):
             patch.object(ci, "start_pubsub_listener"),
             patch.object(ci, "set_cache_and_functions"),
             patch.object(herdbook, "_warm_genetics_in_background"),
-            patch.object(herdbook.gblogging, "create_genebank_logs"),
             patch.object(herdbook.apscheduler.schedulers.background, "BackgroundScheduler") as scheduler_cls,
         ):
             herdbook.initialize_app()  # the replacement worker gunicorn forks

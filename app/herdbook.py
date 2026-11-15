@@ -506,7 +506,8 @@ def load_user_from_request(request):
 @APP.after_request
 def _log_denied(response):
     if response.status_code in (403, 429):
-        auth_log.info("Denied %s user id=%s", response.status_code, getattr(current_user, "id", None))
+        # Only an already loaded user: current_user would run the loader again, and abort(429) in it raises here.
+        auth_log.info("Denied %s user id=%s", response.status_code, getattr(g.get("_login_user"), "id", None))
     return response
 
 
@@ -1347,7 +1348,7 @@ def google_token_login():
 
         # Check if user belongs to the required domain
         if hosted_domain != "gotlandskaninen.se":
-            da.auth_log.warning("Login refused: Google, domain %s", hosted_domain)
+            da.auth_log.warning("Login refused: Google, domain")
             return jsonify({"error": "Access restricted to gotlandskaninen.se domain"}), 403
 
         if not email or not email.endswith("@gotlandskaninen.se"):

@@ -26,7 +26,7 @@ http {
 
     log_format access_json escape=json
         '{"time":"$time_iso8601","ip":"$remote_addr","host":"$host",'
-        '"method":"$request_method","path":"$log_path","status":$status,'
+        '"method":"$request_method","path":"$log_path","status":"$status",'
         '"bytes":$body_bytes_sent,"request_time":$request_time,'
         '"user_agent":"$http_user_agent"}';
 

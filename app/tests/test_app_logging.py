@@ -112,7 +112,9 @@ class TestAppLogging(DatabaseTest):
         self.assertEqual(resp.status_code, 403)
         denied = [line for line in self.out.getvalue().splitlines() if line.startswith("herdbook.auth INFO Denied 403")]
         self.assertEqual(len(denied), 1, self.out.getvalue())
+        self.assertRegex(denied[0], r"user id=\d+")
         self.assertNotIn("HEMLIG", self.out.getvalue())
+        self.assertNotIn("man@", self.out.getvalue())
 
     def test_invalid_google_token_text_is_not_logged(self):
         with mock.patch("google.oauth2.id_token.verify_oauth2_token", side_effect=ValueError("token HEMLIG-TOKEN")):
