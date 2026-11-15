@@ -19,6 +19,7 @@ from peewee import IntegrityError  # noqa: E402
 from utils import buyer_contact  # noqa: E402
 from utils.herd_tracking import (  # noqa: E402
     HerdTrackingConflict,
+    HerdTrackingError,
     HerdTrackingInvalid,
     correct_herd_tracking,
     herd_tracking_history,
@@ -298,7 +299,7 @@ class TestOutsideResale(BuyerBase):
             undo_herd_tracking_operation(void_op, self.manager, "Ångra")
 
     def test_a_buyerless_move_cannot_go_in_before_a_sale_into_the_same_herd(self):
-        event = {"kind": "TRANSFER", "date": "2021-05-01", "herd": "GX1"}
+        event = {"kind": "CORRECTION", "date": "2021-05-01", "herd": "GX1"}
         with self.assertRaises(HerdTrackingConflict) as raised:
             correct_herd_tracking(self.rabbit, self.manager, None, [], [event])
         self.assertIn("utan köpare", raised.exception.detail)
@@ -321,7 +322,7 @@ class TestOutsideResale(BuyerBase):
 
     def test_a_correction_cannot_write_it(self):
         event = {"kind": "TRANSFER", "date": "2022-01-01", "herd": "GX1"}
-        with self.assertRaises(HerdTrackingConflict):
+        with self.assertRaises(HerdTrackingError):
             correct_herd_tracking(self.rabbit, self.manager, None, [], [event])
         self.assertEqual(self._latest().id, self.first.id)
 
@@ -465,6 +466,16 @@ class TestVoid(BuyerBase):
             raised.exception.detail, "Rättelsen gäller flera försäljningar utanför genbanken. Rätta en i taget."
         )
         self.assertEqual(db.BuyerContact.select().count(), 2)
+
+    def test_a_new_sale_outside_in_a_correction_needs_a_buyer_unless_it_rewrites_a_buyerless_one(self):
+        event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1"}
+        buyer_contact.erase_buyer_contact(self.contact_id, self.admin)  # the sale has no buyer now
+        (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [event], "Fel datum")
+        self.assertIsNone(written.holder_contact_id)  # a buyerless sale rewritten as it was
+        later = {"kind": "TRANSFER", "date": "2021-08-01", "herd": "G2"}
+        correct_herd_tracking(self.rabbit, self.manager, None, [], [later])
+        with self.assertRaises(HerdTrackingInvalid):  # a new one, with nothing to rewrite
+            correct_herd_tracking(self.rabbit, self.manager, None, [], [{**event, "date": "2021-09-01"}])
 
     def test_the_event_api_takes_no_holder_contact_id(self):
         event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "G2", "holder_contact_id": self.contact_id}

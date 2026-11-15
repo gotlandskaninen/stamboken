@@ -1984,7 +1984,7 @@ LEGACY_GENEBANK_CHANGE_NOTE = "Genbanksbyte av admin via legacy"
 
 @number_assets.finishing  # inside a caller's transaction, teardown_request finishes instead
 def update_individual(
-    form, user_uuid, issue_digital=False, genebank_change_reason=None, clear_nulls=False, buyer=None, legacy=True
+    form, user_uuid, issue_digital=False, genebank_change_reason=None, clear_nulls=False, buyer=None, legacy=False
 ):
     """
     Updates the individual `form["id"]` by the values in `form`, if the user identified by `user_uuid`
@@ -1994,8 +1994,8 @@ def update_individual(
     required note for an admin's move into another genebank (legacy PATCH passes
     LEGACY_GENEBANK_CHANGE_NOTE, the v2 certificate routes the body's reason; the legacy certificate
     routes pass none, and their form drops herd). `clear_nulls` (v2) clears the death and castration
-    fields sent as null. `buyer` (v2) is the buyer outside the association on a sale to GX1/MX1, which v2
-    (`legacy` False) requires; the legacy form cannot send one.
+    fields sent as null. `buyer` (v2) is the buyer outside the association on a sale to GX1/MX1, which every
+    caller requires except the legacy app's two routes (`legacy`), whose forms cannot send one.
     """
     user = fetch_user_info(user_uuid)
     if user is None:

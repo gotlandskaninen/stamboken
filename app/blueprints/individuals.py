@@ -357,7 +357,6 @@ def update_individual_v2(number):
                 genebank_change_reason=form.pop("reason", None),
                 clear_nulls=True,
                 buyer=buyer,
-                legacy=False,
             )
             if result is None or result.get("status") == "error":
                 msg = (result or {}).get("message", "Unknown error")

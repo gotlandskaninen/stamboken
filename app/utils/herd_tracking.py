@@ -755,6 +755,20 @@ def _refuse_buyerless_before_sale(rows, written):
             raise HerdTrackingConflict(BUYERLESS_BEFORE_SALE, rows=[_row_ref(later[0])])
 
 
+def _refuse_buyerless_sales_outside(parsed, carried, voided):
+    """
+    A TRANSFER into GX1/MX1 that a correction writes needs a buyer, carried over or new (ADR-0016), unless it
+    replaces a voided sale into the same herd that had none (a legacy sale, rewritten as it was).
+    """
+    buyerless = {r.herd_id for r in voided if r.holder_contact_id is None and r.herd.herd in OUTSIDE_GENEBANK_HERDS}
+    for index, event in enumerate(parsed):
+        outside = event["kind"] == "TRANSFER" and event["herd"].herd in OUTSIDE_GENEBANK_HERDS
+        if outside and event["buyer"] is None and index not in carried and event["herd"].id not in buyerless:
+            raise HerdTrackingInvalid(
+                f"Händelse {index + 1}: ange köparens namn och ort (buyer) för en försäljning utanför föreningen."
+            )
+
+
 def correct_herd_tracking(individual, user, operation_id, void_ids, events, reason=None):
     """
     Privileged correction: void `void_ids` and write `events` in the given
@@ -811,6 +825,7 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
                 ],
             )
         carried = _carried_buyers([by_id[v] for v in void_ids], parsed)
+        _refuse_buyerless_sales_outside(parsed, carried, [by_id[v] for v in void_ids])
         voided = _void_rows([by_id[v] for v in void_ids], user, cleaned, op)
         written, current = [], list(kept)
         for index, event in enumerate(parsed):
