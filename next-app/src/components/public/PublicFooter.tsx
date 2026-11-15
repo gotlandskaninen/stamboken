@@ -249,7 +249,12 @@ export function PublicFooter() {
               sx={{
                 display: "inline-block",
                 py: { xs: 3, md: 0 },
-                "@media (pointer: coarse)": { py: 3 },
+                "@media (pointer: coarse)": {
+                  display: "inline-flex",
+                  alignItems: "center",
+                  minHeight: 44,
+                  py: 0,
+                },
               }}
             >
               Integritetspolicy

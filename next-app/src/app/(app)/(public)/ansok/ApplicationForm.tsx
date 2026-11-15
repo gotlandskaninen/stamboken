@@ -231,8 +231,8 @@ export function ApplicationForm() {
               }}
             >
               integritetspolicyn
-            </Link>
-            .
+            </Link>{" "}
+            (öppnas i ny flik).
           </>
         }
       />
