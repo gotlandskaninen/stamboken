@@ -1110,6 +1110,41 @@ class TestDatabaseMigration(DatabaseTest):
             self.assertEqual((current(replaced), current(digital), current(blanked)), (False, True, True))
             self.assertIn("1 current rows without a number", db.SchemaHistory.get_by_id(38).comment)
 
+    def test_replay_39_to_40_resets_bank_privacy(self):
+        """A database stamped at 39 gets every stored bank privacy level reset to private."""
+        self.addCleanup(db.check_migrations)
+        gb = db.Genebank.create(name="Replay40")
+        herd = db.Herd.create(
+            genebank=gb, herd="R40", bank_account_number_privacy="public", bank_name_privacy="Public "
+        )
+        null_herd = db.Herd.create(
+            genebank=gb, herd="R40N", bank_account_number_privacy=None, bank_name_privacy="public"
+        )  # one NULL next to one non-private column: only the non-NULL one is reset
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 40).execute()
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        herd = db.Herd.get_by_id(herd.id)
+        self.assertEqual(herd.bank_account_number_privacy, "private")
+        self.assertEqual(herd.bank_name_privacy, "private")
+        null_herd = db.Herd.get_by_id(null_herd.id)
+        self.assertIsNone(null_herd.bank_account_number_privacy)  # NULL is left alone
+        self.assertEqual(null_herd.bank_name_privacy, "private")
+        # The reset writes no audit row (the trigger copies the account number) and the trigger is back on.
+
+        def updates():
+            return (
+                db.AuditLog.select()
+                .where(db.AuditLog.table_name == "herd", db.AuditLog.record_id == str(herd.id))
+                .where(db.AuditLog.operation == "UPDATE")
+                .count()
+            )
+
+        self.assertEqual(updates(), 0)
+        db.Herd.update(www="x").where(db.Herd.id == herd.id).execute()
+        self.assertEqual(updates(), 1)
+
     def test_replay_32_to_33_adds_the_history_algorithm_version(self):
         """
         A database stamped at 32 gets genetics_history_state.algorithm_version,

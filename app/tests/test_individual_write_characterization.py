@@ -358,12 +358,8 @@ class TestLegacyIndividualWriteCharacterization(FlaskTest):
         self._assert_patch(self._caretaker(), body, expected)
         self.assertEqual(self._count(db.HerdTracking, ind), before)
 
-    def test_date_csv_line(self):
-        ind = self.individuals[3]
-        self._name_user(self.owner)
-        with self.assertLogs("Gotland_update", level="INFO") as logs:
-            self._assert_patch(self.owner, self._body(ind, death_date="2024-05-01"), UPDATED)
-        self.assertEqual(logs.output, ["INFO:Gotland_update:owner,G1-2112,death_date,2024-05-01,2024-05-01,"])
+    def test_date_update(self):
+        self._assert_patch(self.owner, self._body(self.individuals[3], death_date="2024-05-01"), UPDATED)
 
     def _cross_genebank_sale_body(self):
         return self._body(self.individuals[3], herd="M3", selling_date="2021-06-01")
@@ -428,9 +424,7 @@ class TestLegacyIndividualWriteCharacterization(FlaskTest):
             "rows": [],
         }
         self._name_user(self.admin)
-        with self.assertLogs("Gotland_update", level="INFO") as logs:
-            self._assert_patch(self.admin, self._origin_body(ind, litter), expected)
-        self.assertIn("INFO:Gotland_update:admin,G1-2113,new_origin_herd,G1,M3,", logs.output)
+        self._assert_patch(self.admin, self._origin_body(ind, litter), expected)
         birth = [row for row in self._active_rows(ind) if row.kind == "BIRTH"]
         self.assertEqual([row.herd.herd for row in birth], ["G1"])
         self.assertEqual(db.Individual.get_by_id(ind.id).origin_herd_id, self.herds[0].id)

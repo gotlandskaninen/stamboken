@@ -6,6 +6,7 @@ utils/matrikel.py. All mutations require admin or matrikel_admin,
 write matrikel_audit rows, and answer RFC 9457 problem+json on errors.
 """
 
+import logging
 from datetime import date
 
 from flask import Blueprint, jsonify, request
@@ -47,6 +48,7 @@ from blueprints.common import (
 )
 
 memberships_bp = Blueprint("memberships", __name__, url_prefix="/api")
+auth_log = logging.getLogger("herdbook.auth")
 
 VALID_MEMBERSHIP_STATUSES = tuple(Status)
 
@@ -641,6 +643,7 @@ def link_person_user(person_id: int):
         )
     except LinkError as err:
         return problem(err.status, err.title, err.detail, **err.extensions)
+    auth_log.info("account linked actor=%s person=%s target=%s", current_user.id, person_id, user_id)
     return jsonify(_person_to_dict(person))
 
 
@@ -655,6 +658,7 @@ def unlink_person_user(person_id: int):
         person, _lost = unlink_member_user(person_id, actor=current_user)
     except LinkError as err:
         return problem(err.status, err.title, err.detail, **err.extensions)
+    auth_log.info("account unlinked actor=%s person=%s", current_user.id, person_id)
     return jsonify(_person_to_dict(person))
 
 
@@ -727,6 +731,7 @@ def create_person_grant(person_id: int):
         grant = create_grant(person, herd, valid_until, current_user)
     except ValueError as err:
         return problem(409, "Ogiltigt tillstånd", str(err))
+    auth_log.info("grant created actor=%s person=%s grant=%s", current_user.id, person_id, grant.id)
     return jsonify(_grant_to_dict(grant)), 201
 
 
@@ -741,6 +746,7 @@ def renew_person_grant(grant_id: int):
         grant = renew_grant(grant, current_user)
     except ValueError as err:
         return problem(409, "Kan inte förnyas", str(err))
+    auth_log.info("grant renewed actor=%s grant=%s", current_user.id, grant_id)
     return jsonify(_grant_to_dict(grant))
 
 
@@ -752,6 +758,7 @@ def revoke_person_grant(grant_id: int):
     if grant is None:
         return problem(404, "Hittades inte", f"Tillståndet {grant_id} finns inte")
     grant = revoke_grant(grant, current_user)
+    auth_log.info("grant revoked actor=%s grant=%s", current_user.id, grant_id)
     return jsonify(_grant_to_dict(grant))
 
 
@@ -926,6 +933,7 @@ def my_membership_create_grant(person_id: int):
             grant = create_grant(person, herd, valid_until, current_user)
         except ValueError as verr:
             return problem(409, "Ogiltigt tillstånd", str(verr))
+        auth_log.info("grant created actor=%s person=%s grant=%s self-service", current_user.id, person_id, grant.id)
         return jsonify(_grant_to_dict(grant)), 201
 
 
@@ -961,6 +969,7 @@ def my_membership_renew_grant(grant_id: int):
             grant = renew_grant(grant, current_user)
         except ValueError as verr:
             return problem(409, "Kan inte förnyas", str(verr))
+        auth_log.info("grant renewed actor=%s grant=%s self-service", current_user.id, grant_id)
         return jsonify(_grant_to_dict(grant))
 
 
@@ -975,4 +984,5 @@ def my_membership_revoke_grant(grant_id: int):
         if err is not None:
             return err
         grant = revoke_grant(grant, current_user)
+        auth_log.info("grant revoked actor=%s grant=%s self-service", current_user.id, grant_id)
         return jsonify(_grant_to_dict(grant))

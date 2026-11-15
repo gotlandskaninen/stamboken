@@ -30,6 +30,19 @@ describe("HealthSection", () => {
     expect(screen.getByText("Normal")).toBeDefined();
   });
 
+  it("labels hull as on the paper form", () => {
+    const withBodyfat = (bodyfat: "low" | "high") =>
+      ({
+        weights: [],
+        bodyfat: [{ date: "2024-03-15", bodyfat }],
+      }) as unknown as Individual;
+    renderWithTheme(<HealthSection individual={withBodyfat("low")} />);
+    expect(screen.getByText("Mager")).toBeDefined();
+    cleanup();
+    renderWithTheme(<HealthSection individual={withBodyfat("high")} />);
+    expect(screen.getByText("Fet")).toBeDefined();
+  });
+
   it("shows expand button when history exists", () => {
     renderWithTheme(<HealthSection individual={mockIndividual} />);
     expect(screen.getByText("Visa alla mätvärden")).toBeDefined();

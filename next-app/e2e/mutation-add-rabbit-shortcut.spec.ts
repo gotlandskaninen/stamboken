@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 
-// Manualens "Lägga till en kanin utan registrerad kull" (docs/USER_MANUAL.md, del 1)
+// Manualens "Lägga till en kanin utan registrerad kull" (next-app/public/stamboken/manual/USER_MANUAL.md, del 1)
 // mot den seedade e2e-stacken. Filnamnet matchar inget mutation-/public-mönster, så
 // specen körs i projektet owner-tests (test-gk-owner, äger G1274).
 // Föräldrarna Visby Vera × Visby Test-04 används inte av någon annan spec. G1274:s
