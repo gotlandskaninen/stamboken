@@ -137,11 +137,16 @@ def buyer_items(rows, lock=False):
     """
     The queue's items whose documents may show the buyers of `rows`, the rows a caller is about to void: the items
     with documents of the rabbits or of their sales, when a row holds a buyer outside the association, else none.
-    holder_contact is set when a row is written, so it is read before any lock. With `lock`, they are locked in
-    the queue's own order (it locks its item, then the rabbit): call before lock_individuals.
+    The buyers are read afresh, never from rows or a query a caller read earlier (attach_buyer may have set one
+    since). With `lock`, they are locked in the queue's own order (it locks its item, then the rabbit): call
+    before lock_individuals.
     """
     rows = list(rows)
-    if not any(r.holder_contact_id for r in rows):
+    if (
+        not HerdTracking.select()
+        .where(HerdTracking.id.in_([r.id for r in rows]), HerdTracking.holder_contact.is_null(False))
+        .exists()
+    ):
         return set()
     individual_ids = {r.individual_id for r in rows}
     sales = HerdTracking.select(HerdTracking.id).where(HerdTracking.individual.in_(individual_ids))
@@ -162,6 +167,15 @@ def lock_buyer_items(individual_ids):
 
 
 QUEUE_CHANGED = "Inkorgen ändrades under tiden. Försök igen."
+
+
+def _require_same_items(rows, items):
+    """
+    Under the rabbit lock: the rows to void hold no buyer whose queue items were not locked before it (a proof
+    linked, or attach_buyer, in between). Otherwise 409, never a lock taken out of order.
+    """
+    if not buyer_items(rows) <= items:
+        raise HerdTrackingConflict(QUEUE_CHANGED)
 
 
 def void_all_for_unpromote(individual, user, operation_id=None, files=None, items=None):
@@ -616,12 +630,13 @@ def void_herd_tracking(ht_id, user, reason, operation_id=None, typed=True):
     if row is None:
         raise HerdTrackingNotFound("Raden finns inte.")
     with DB_PROXY.atomic():
-        buyer_items([row], lock=True)
+        items = buyer_items([row], lock=True)
         lock_individuals([row.individual_id])
         done = _operation_rows([row.individual_id], op)
         if done:
             return next((r for r in done if r.voided_operation_id == op), done[0])
         row = HerdTracking.get_by_id(ht_id)
+        _require_same_items([row], items)
         if row.voided_at is not None:
             return row
         individual = Individual.get_by_id(row.individual_id)
@@ -713,32 +728,34 @@ def _holder_before(individual, rows, when, kind):
     return prior[-1].herd_id if prior else individual.origin_herd_id
 
 
-AMBIGUOUS_BUYERS = "Rättelsen gäller flera försäljningar utanför genbanken. Rätta en i taget."
+BUYER_GONE = "Köparen raderades under tiden. Försök igen."
+ONE_SALE_OUT = "Dela upp rättelsen: högst en försäljning ut till samma besättning per rättelse."
 BUYERLESS_BEFORE_SALE = (
     "En försäljning utanför genbanken utan köpare kan inte läggas före en försäljning till samma besättning."
 )
+MOVES = ("TRANSFER", "CORRECTION")
 
 
-def _carried_buyers(voided, parsed):
+def _outside_pairs(voided, parsed):
     """
-    The buyer of a voided sale into GX1/MX1 goes to the event (TRANSFER or CORRECTION, without a buyer of its own)
-    the correction writes into the same herd (ADR-0016), and its purge_at follows that event's date; with no such
-    event it goes.
-    Event index -> contact id; 409 when more than one buyer or more than one event could pair up.
+    A correction touches at most one sale into each of GX1/MX1 (409 otherwise): one voided move and one new event,
+    which then replaces it and takes its buyer (ADR-0016). Event index -> the voided row it replaces.
     """
-    carried = {}
-    for herd_id in {r.herd_id for r in voided if r.holder_contact_id and r.herd.herd in OUTSIDE_GENEBANK_HERDS}:
-        buyers = [r.holder_contact_id for r in voided if r.holder_contact_id and r.herd_id == herd_id]
-        into = [
-            i
-            for i, e in enumerate(parsed)
-            if e["kind"] in ("TRANSFER", "CORRECTION") and e["herd"].id == herd_id and e["buyer"] is None
-        ]
-        if into and (len(buyers) > 1 or len(into) > 1):
-            raise HerdTrackingConflict(AMBIGUOUS_BUYERS)
-        if into:
-            carried[into[0]] = buyers[0]
-    return carried
+
+    def outside(herd):
+        return herd.herd in OUTSIDE_GENEBANK_HERDS
+
+    herds = {r.herd_id for r in voided if r.kind in MOVES and outside(r.herd)}
+    herds |= {e["herd"].id for e in parsed if e["kind"] in MOVES and outside(e["herd"])}
+    pairs = {}
+    for herd_id in herds:
+        old = [r for r in voided if r.kind in MOVES and r.herd_id == herd_id]
+        new = [i for i, e in enumerate(parsed) if e["kind"] in MOVES and e["herd"].id == herd_id]
+        if len(old) > 1 or len(new) > 1:
+            raise HerdTrackingConflict(ONE_SALE_OUT)
+        if old and new:
+            pairs[new[0]] = old[0]
+    return pairs
 
 
 def _refuse_buyerless_before_sale(rows, written):
@@ -757,18 +774,17 @@ def _refuse_buyerless_before_sale(rows, written):
             raise HerdTrackingConflict(BUYERLESS_BEFORE_SALE, rows=[_row_ref(later[0])])
 
 
-def _refuse_buyerless_sales_outside(parsed, carried, voided):
+def _refuse_buyerless_sales_outside(parsed, pairs):
     """
-    A TRANSFER into GX1/MX1 that a correction writes needs a buyer, carried over or new (ADR-0016), unless it
-    replaces a voided sale into the same herd that had none (a legacy sale, rewritten as it was).
+    A TRANSFER or CORRECTION into GX1/MX1 that a correction writes needs a buyer, unless it replaces a voided sale
+    into the same herd (_outside_pairs), whose buyer, or lack of one, it takes over.
     """
-    buyerless = {r.herd_id for r in voided if r.holder_contact_id is None and r.herd.herd in OUTSIDE_GENEBANK_HERDS}
     for index, event in enumerate(parsed):
-        outside = event["kind"] == "TRANSFER" and event["herd"].herd in OUTSIDE_GENEBANK_HERDS
-        if outside and event["buyer"] is None and index not in carried and event["herd"].id not in buyerless:
-            raise HerdTrackingInvalid(
-                f"Händelse {index + 1}: ange köparens namn och ort (buyer) för en försäljning utanför föreningen."
-            )
+        if event["kind"] not in MOVES or event["herd"].herd not in OUTSIDE_GENEBANK_HERDS:
+            continue
+        if event["buyer"] is None and index not in pairs:
+            hint = "ange köparens namn och ort" if event["kind"] == "TRANSFER" else "välj Flytt, där köparen anges"
+            raise HerdTrackingInvalid(f"Händelse {index + 1}: en försäljning utanför föreningen: {hint}.")
 
 
 def correct_herd_tracking(individual, user, operation_id, void_ids, events, reason=None):
@@ -790,8 +806,10 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
     cleaned = require_reason(reason) if void_ids else None
     op = new_operation_id(operation_id)
     with DB_PROXY.atomic():
-        buyer_items(HerdTracking.select().where(HerdTracking.id.in_(void_ids)), lock=True)
+        to_void = HerdTracking.select().where(HerdTracking.id.in_(void_ids))
+        items = buyer_items(to_void, lock=True)
         lock_individuals([ind_id])
+        _require_same_items(to_void, items)
         ind = Individual.get_by_id(ind_id)
         if _operation_rows([ind_id], op):
             return list(
@@ -826,30 +844,42 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
                     if r.kind == "BIRTH"
                 ],
             )
-        carried = _carried_buyers([by_id[v] for v in void_ids], parsed)
-        _refuse_buyerless_sales_outside(parsed, carried, [by_id[v] for v in void_ids])
+        pairs = _outside_pairs([by_id[v] for v in void_ids], parsed)
+        _refuse_buyerless_sales_outside(parsed, pairs)
+        carried = {
+            i: r.holder_contact_id for i, r in pairs.items() if parsed[i]["buyer"] is None and r.holder_contact_id
+        }
         voided = _void_rows([by_id[v] for v in void_ids], user, cleaned, op)
         written, current = [], list(kept)
         for index, event in enumerate(parsed):
             birth = event["kind"] == "BIRTH"
             from_herd = None if birth else _holder_before(ind, current, event["date"], event["kind"])
-            row = HerdTracking.create(
-                individual=ind_id,
-                herd=event["herd"],
-                from_herd=from_herd,
-                signature=user,
-                herd_tracking_date=event["date"],
-                kind=event["kind"],
-                operation_id=op,
-                notes=event["notes"],
-                holder_contact=(
-                    BuyerContact.create(
-                        **event["buyer"], created_by_user=user, purge_at=BuyerContact.purge_at_for(event["date"])
+            try:
+                with DB_PROXY.atomic():
+                    row = HerdTracking.create(
+                        individual=ind_id,
+                        herd=event["herd"],
+                        from_herd=from_herd,
+                        signature=user,
+                        herd_tracking_date=event["date"],
+                        kind=event["kind"],
+                        operation_id=op,
+                        notes=event["notes"],
+                        holder_contact=(
+                            BuyerContact.create(
+                                **event["buyer"],
+                                created_by_user=user,
+                                purge_at=BuyerContact.purge_at_for(event["date"]),
+                            )
+                            if event["buyer"]
+                            else carried.get(index)
+                        ),
+                        buyer_removed=index in pairs and event["buyer"] is None and pairs[index].buyer_removed,
                     )
-                    if event["buyer"]
-                    else carried.get(index)
-                ),
-            )
+            except IntegrityError as exc:  # the carried buyer went (a purge or an erasure) after it was read
+                if _violated_constraint(exc) != "herd_tracking_holder_contact_id_fkey":
+                    raise
+                raise HerdTrackingConflict(BUYER_GONE) from exc
             if event["buyer"]:
                 queue_buyer_mails(row.holder_contact, row)
             if index in carried:  # a corrected sale's buyer: five years from the sale's corrected date
@@ -893,6 +923,9 @@ def _unvoid_rows(rows, operation_id):
     )
 
 
+BUYER_REMOVED = "Köparen har begärt radering eller gallrats; registrera inte på nytt."
+
+
 def attach_buyer(row, buyer, user):
     """
     WHITELISTED in-place UPDATE #3: a proof shows the buyer outside the association of a sale registered without
@@ -902,6 +935,8 @@ def attach_buyer(row, buyer, user):
     fields = buyer_contact_fields(buyer)
     if row.holder_contact_id is not None:
         raise HerdTrackingConflict("Försäljningen har redan en köpare. Genbanksansvarig ändrar den.")
+    if row.buyer_removed:  # an erased or purged buyer is never registered again from a paper
+        raise HerdTrackingConflict(BUYER_REMOVED)
     if row.voided_at is not None or row.herd.herd not in OUTSIDE_GENEBANK_HERDS:
         raise HerdTrackingInvalid("Köparens namn och ort registreras bara vid försäljning utanför genbanken.")
     contact = BuyerContact.create(
@@ -987,8 +1022,9 @@ def undo_herd_tracking_operation(operation_id, user, reason, undo_operation_id=N
     with DB_PROXY.atomic():
         # The rows this undo may void: those the operation wrote or restored.
         redone = (HerdTracking.operation_id == op) | (HerdTracking.restored_operation_id == op)
-        buyer_items(HerdTracking.select().where(redone), lock=True)
+        items = buyer_items(HerdTracking.select().where(redone), lock=True)
         lock_individuals(ind_ids)
+        _require_same_items(HerdTracking.select().where(redone), items)
         individuals = {i.id: i for i in Individual.select().where(Individual.id.in_(ind_ids))}
         if any(not is_manager_of(user, i.origin_herd.genebank_id) for i in individuals.values()):
             raise HerdTrackingForbidden("Bara genbanksansvarig eller administratör kan ångra en åtgärd.")
@@ -1005,9 +1041,6 @@ def undo_herd_tracking_operation(operation_id, user, reason, undo_operation_id=N
         stale = _effects_changed_later(written, restored)
         if stale:
             raise HerdTrackingConflict("En senare åtgärd har redan ändrat raderna.", rows=[_row_ref(r) for r in stale])
-        lost = _buyer_deleted([r.id for r in unvoid])
-        if lost:  # the buyer went with the void (ADR-0016): the sale is registered again, with its buyer
-            raise HerdTrackingConflict(BUYER_DELETED, rows=[_row_ref(r) for r in unvoid if r.id in lost])
         op_time = _operation_time(written, unvoid, restored)
         later = list(HerdTracking.select().where(in_locked_set, _touched_after(op, op_time)))
         if later:
@@ -1221,6 +1254,8 @@ def delete_buyer_contacts(contact_ids, action, user=None, whole_items=False):
         return 0, []
     paths = []
     sales = list(HerdTracking.select().where(HerdTracking.holder_contact.in_(ids)))
+    # WHITELISTED in-place UPDATE #4: the sales remember that their buyer was removed, before the FK nulls the link.
+    HerdTracking.update(buyer_removed=True).where(HerdTracking.holder_contact.in_(ids)).execute()
     # Every queue item the erasures below touch, locked at once in id order (the queue's order): one sale after
     # another would lock them out of order, and the nightly purge could deadlock with a correction.
     buyer_items(sales, lock=True)
@@ -1274,34 +1309,6 @@ def compute_periods(active_rows, herds):
     return periods
 
 
-BUYER_DELETED = "Köparen är raderad; registrera försäljningen på nytt."
-
-
-def _buyer_deleted(row_ids):
-    """
-    The voided rows among `row_ids` whose buyer outside the association was deleted with or after their void: the
-    herd_tracking audit trigger records, by id, the void and then holder_contact_id going NULL (audit_log ids
-    rise with each write, also within a transaction). A buyer erased while the sale was still active is no reason
-    to refuse undoing a later void. An undo must not restore such a sale without its buyer.
-    """
-    if not row_ids:
-        return set()
-    entries = AuditLog.select(AuditLog.id, AuditLog.record_id, AuditLog.changed_fields, AuditLog.new_data).where(
-        (AuditLog.table_name == HerdTracking._meta.table_name)
-        & (AuditLog.operation == "UPDATE")
-        & AuditLog.record_id.in_([str(i) for i in row_ids])
-        & (AuditLog.changed_fields.contains("holder_contact_id") | AuditLog.changed_fields.contains("voided_at"))
-    )
-    voids, nulled = {}, {}
-    for audit_id, record_id, fields, new in entries.order_by(AuditLog.id).tuples():
-        new = new or {}
-        if "voided_at" in fields and new.get("voided_at") is not None:
-            voids[record_id] = audit_id  # the latest void of the row
-        if "holder_contact_id" in fields and new.get("holder_contact_id") is None:
-            nulled[record_id] = audit_id
-    return {int(r) for r, audit_id in nulled.items() if r in voids and audit_id > voids[r]}
-
-
 def _keeps_invariants(individual, before, after, known=None, buyer_keys=None):
     """
     Pure-Python mirror of the services' delta check (I1-I5), so a hint never promises a 409. `known`: the
@@ -1314,15 +1321,10 @@ def _keeps_invariants(individual, before, after, known=None, buyer_keys=None):
     return not (any(r.kind == "BIRTH" for r in before) and not any(r.kind == "BIRTH" for r in after))
 
 
-def _operation_undo_hint(operation_id, rows, individual, known=None, buyer_keys=None, lost=None):
-    """
-    UI hint only (the undo service re-checks across all individuals): undoable within this individual. `lost`:
-    the rows whose buyer was deleted (_buyer_deleted), which no undo restores.
-    """
+def _operation_undo_hint(operation_id, rows, individual, known=None, buyer_keys=None):
+    """UI hint only (the undo service re-checks across all individuals): undoable within this individual."""
     written, voided, restored = _operation_effects(rows, operation_id)
     if not written and not voided and not restored:
-        return False
-    if any(r.id in (lost if lost is not None else _buyer_deleted([v.id for v in voided])) for r in voided):
         return False
     if _effects_changed_later(written, restored):
         return False
@@ -1367,7 +1369,6 @@ def herd_tracking_history(individual, user, include_voided=None):
     latest_id = active[-1].id if active else None
     buyer_keys = _buyer_keys(rows)  # once per call, as the invariants of the active rows
     known = {(v.code, v.row_id) for v in check_invariants(individual, active, buyer_keys)}
-    lost = _buyer_deleted([r.id for r in rows if r.voided_at is not None])
     out = []
     for row in rows:
         if row.voided_at is not None and not show_voided:
@@ -1403,7 +1404,7 @@ def herd_tracking_history(individual, user, include_voided=None):
                 "can_undo_operation": bool(
                     can_manage
                     and not individual.voided
-                    and _operation_undo_hint(undo_target, rows, individual, known, buyer_keys, lost)
+                    and _operation_undo_hint(undo_target, rows, individual, known, buyer_keys)
                 ),
             }
         )

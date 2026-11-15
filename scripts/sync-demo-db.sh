@@ -185,7 +185,7 @@ docker exec "$CONTAINER" bash -c "
 # and the load's foreign key would fail. One statement, so one transaction: the
 # FK (ON DELETE SET NULL) nulls herd_tracking.holder_contact_id and the sales
 # stay. An older schema without the table is skipped.
-DROP_BUYERS_SQL="DO \$\$ BEGIN IF to_regclass('buyer_contact') IS NOT NULL THEN DELETE FROM buyer_contact; END IF; END \$\$;"
+DROP_BUYERS_SQL="DO \$\$ BEGIN IF to_regclass('buyer_contact') IS NOT NULL THEN UPDATE herd_tracking SET buyer_removed = true WHERE holder_contact_id IS NOT NULL; DELETE FROM buyer_contact; END IF; END \$\$;"
 echo "Deleting the buyers outside the association in $STAGING_DB..."
 docker exec "$CONTAINER" psql -U "$DB_USER" -d "$STAGING_DB" -v ON_ERROR_STOP=1 -q -c "$DROP_BUYERS_SQL"
 

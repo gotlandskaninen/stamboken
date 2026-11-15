@@ -175,47 +175,57 @@ def purge_due(now):
     return remove_originals(paths)
 
 
+def _current_sale(row):
+    """
+    The active row a proof's sale became: the row itself, or, for one a correction voided, the move into the same
+    herd that the correction wrote for the rabbit (the first; one only into GX1/MX1, _outside_pairs), followed through
+    later corrections. None when the chain ends without an active row, or loops (a nightly job never spins).
+    """
+    seen = set()
+    while row is not None and row.voided_at is not None:
+        if row.id in seen:
+            return None
+        seen.add(row.id)
+        row = (
+            HerdTracking.select()
+            .where(
+                (HerdTracking.operation_id == row.voided_operation_id)
+                & (HerdTracking.individual == row.individual_id)
+                & (HerdTracking.herd == row.herd_id)
+                & HerdTracking.kind.in_(("TRANSFER", "CORRECTION"))
+            )
+            .order_by(HerdTracking.id)
+            .first()
+        )
+    return row
+
+
 def purge_sold_proofs(now):  # pylint: disable=unused-argument  # every rule takes the clock
     """
     A proof's original once its rabbit is sold on (herd_tracking.sold_on, as for the buyer's contact details). A
-    proof of a sale later corrected still names the voided row: the sale is then the active row that carries the
-    same buyer (a correction carries it over), or, for a sale without a buyer (to a member), the move into the
-    same herd that the correction which voided it wrote for the rabbit. The document's link stays as it is.
+    proof of a sale later corrected still names the voided row: the sale is then the row the corrections made of it
+    (_current_sale). The document's link stays as it is.
     """
-    sale, later, linked = HerdTracking, HerdTracking.alias(), HerdTracking.alias()
     proofs = InboxDocument.select(InboxDocument.herd_tracking_id).where(
-        (InboxDocument.doc_type == "bevis") & InboxDocument.original_path.is_null(False)
+        (InboxDocument.doc_type == "bevis")
+        & InboxDocument.original_path.is_null(False)
+        & InboxDocument.herd_tracking_id.is_null(False)
     )
-    rows = (
-        linked.select(linked.id, sale.id)
-        .join(
-            sale,
-            on=(
-                (sale.id == linked.id)
-                | ((sale.holder_contact == linked.holder_contact) & (sale.id != linked.id))
-                | (
-                    linked.holder_contact.is_null(True)
-                    & (sale.operation_id == linked.voided_operation_id)
-                    & (sale.individual == linked.individual)
-                    & (sale.herd == linked.herd)
-                    & sale.kind.in_(("TRANSFER", "CORRECTION"))
-                )
-            ),
+    sale, later = HerdTracking.alias(), HerdTracking.alias()
+    named = []
+    for linked in HerdTracking.select().where(HerdTracking.id.in_(proofs)):
+        current = _current_sale(linked)
+        if current is None:
+            continue
+        moved_on = (
+            sale.select()
+            .join(later, on=(later.individual == sale.individual))
+            .where((sale.id == current.id) & sold_on(sale, later))
         )
-        .where(linked.id.in_(proofs) & sale.voided_at.is_null(True))
-    )
-    carried = {}  # active sale -> the rows the proofs name
-    for linked_id, sale_id in rows.tuples():
-        carried.setdefault(sale_id, []).append(linked_id)
-    if not carried:
+        if moved_on.exists():
+            named.append(linked.id)
+    if not named:
         return 0
-    moved_on = (
-        sale.select(sale.id)
-        .join(later, on=(later.individual == sale.individual))
-        .where(sale.id.in_(list(carried)) & sold_on(sale, later))
-        .distinct()
-    )
-    named = [linked_id for (sale_id,) in moved_on.tuples() for linked_id in carried[sale_id]]
     with DB_PROXY.atomic():
         paths = _null_originals((InboxDocument.doc_type == "bevis") & InboxDocument.herd_tracking_id.in_(named))
     return remove_originals(paths)

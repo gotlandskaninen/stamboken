@@ -934,6 +934,38 @@ def require_same_rabbit(document, individual=None):
         raise InboxError(409, f"Dokumentet gäller {number}. Det som sparas genom det måste gälla samma kanin.")
 
 
+def active_sales(individual_id):
+    """
+    The rabbit's active moves (TRANSFER, CORRECTION), each with its buyer as "present", "none" or "removed"
+    (erased or purged: never asked for again); no name, no town.
+    """
+    rows = (
+        HerdTracking.select(
+            HerdTracking.herd_tracking_date,
+            HerdTracking.kind,
+            HerdTracking.holder_contact,
+            HerdTracking.buyer_removed,
+            Herd.herd,
+        )
+        .join(Herd, on=(HerdTracking.herd == Herd.id))
+        .where(
+            (HerdTracking.individual == individual_id)
+            & HerdTracking.kind.in_(("TRANSFER", "CORRECTION"))
+            & HerdTracking.voided_at.is_null(True)
+        )
+        .order_by(HerdTracking.id)
+    )
+    return [
+        {
+            "herd": herd,
+            "date": _iso(day),
+            "kind": kind,
+            "buyer": "present" if contact is not None else "removed" if removed else "none",
+        }
+        for day, kind, contact, removed, herd in rows.tuples()
+    ]
+
+
 SALES_THE_SAME_DAY = "Flera försäljningar samma dag; registrera beviset via rätt försäljning."
 
 

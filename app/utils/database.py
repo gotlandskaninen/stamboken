@@ -1658,6 +1658,8 @@ class HerdTracking(BaseModel):
     holder_contact = ForeignKeyField(
         BuyerContact, null=True, on_delete="SET NULL", column_name="holder_contact_id", backref="+"
     )
+    # The sale's buyer was removed (erasure, purge, void): never asked for or registered again. No personal data.
+    buyer_removed = BooleanField(default=False, constraints=[SQL("DEFAULT false")])
 
     class Meta:  # pylint: disable=too-few-public-methods
         """
@@ -3929,6 +3931,9 @@ def _create_buyer_contact_guards():
     )
     DATABASE.execute_sql(
         'CREATE INDEX IF NOT EXISTS "herdtracking_holder_contact_id" ON "herd_tracking" ("holder_contact_id")'
+    )
+    DATABASE.execute_sql(
+        'ALTER TABLE "herd_tracking" ADD COLUMN IF NOT EXISTS "buyer_removed" BOOLEAN NOT NULL DEFAULT false'
     )
 
 

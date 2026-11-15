@@ -81,7 +81,7 @@ INSERT INTO mail_attempt VALUES (1, 1);
 INSERT INTO notice_setting VALUES (1);
 INSERT INTO hbuser VALUES (1);
 CREATE TABLE buyer_contact (id int PRIMARY KEY);
-CREATE TABLE herd_tracking (id int PRIMARY KEY, holder_contact_id int REFERENCES buyer_contact ON DELETE SET NULL);
+CREATE TABLE herd_tracking (id int PRIMARY KEY, holder_contact_id int REFERENCES buyer_contact ON DELETE SET NULL, buyer_removed boolean NOT NULL DEFAULT false);
 INSERT INTO buyer_contact VALUES (1);
 INSERT INTO herd_tracking VALUES (1, 1);
 SQL
@@ -107,7 +107,7 @@ check "notice_setting (a user preference) keeps its rows" 1 "$(sql -d dst -c 'SE
 check "an ordinary table keeps its rows" 1 "$(sql -d dst -c 'SELECT count(*) FROM hbuser')"
 
 check "the demo has no buyers" 0 "$(sql -d dst -c 'SELECT count(*) FROM buyer_contact')"
-check "the sale stays, without its buyer" "1|" "$(sql -d dst -c 'SELECT id, holder_contact_id FROM herd_tracking')"
+check "the sale stays, without its buyer, marked as removed" "1||t" "$(sql -d dst -c 'SELECT id, holder_contact_id, buyer_removed FROM herd_tracking')"
 sql -d dst -c "DROP TABLE herd_tracking, buyer_contact" -c "$DROP_BUYERS_SQL" >/dev/null
 check "an older schema without buyers is skipped" 0 "$?"
 

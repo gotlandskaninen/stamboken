@@ -14,7 +14,7 @@ import {
   buyerComplete,
   buyerPayload,
 } from "@/components/individual/BuyerFields";
-import { lookupRabbit, registerSale, type RegistrySale } from "../actions";
+import { rabbitSales, registerSale, type RegistrySale } from "../actions";
 import {
   buildSalePayload,
   outsideHerd,
@@ -59,31 +59,34 @@ export function SalePanel({
     setForm((f) => ({ ...f, ...changes }));
   const names = new Map(herds.map((h) => [h.herd, h.herd_name]));
   const proof = doc.doc_type === "bevis";
-  // The rabbit's active rows: a proof of a sale already registered asks for no buyer (provenSale).
-  // Kept with the number they belong to: another number's rows never hide the buyer fields.
-  const [sales, setSales] = useState<{ number: string; rows: RegistrySale[] }>({
-    number: "",
-    rows: [],
-  });
+  // The rabbit's active sales, read through the item: a proof of a sale already registered asks for no buyer
+  // unless that sale has none (provenSale). Kept with the number they belong to, so another number's rows never
+  // hide the buyer fields; `rows` null means the lookup failed, and the panel says so rather than guess.
+  const [sales, setSales] = useState<{
+    number: string;
+    rows: RegistrySale[] | null;
+  }>({ number: "", rows: [] });
   const number = buildSalePayload(form).individual;
   useEffect(() => {
     if (!proof || !number) return;
     let current = true;
     const timer = setTimeout(() => {
-      lookupRabbit(number).then((rabbit) => {
-        if (current) setSales({ number, rows: rabbit?.herd_tracking ?? [] });
+      rabbitSales(itemId, number).then((res) => {
+        if (current) setSales({ number, rows: res.ok ? res.data.sales : null });
       });
     }, LOOKUP_DELAY_MS);
     return () => {
       current = false;
       clearTimeout(timer);
     };
-  }, [proof, number]);
-  const saleRegistered = provenSale(
-    doc,
-    buildSalePayload(form),
-    sales.number === number ? sales.rows : [],
-  );
+  }, [proof, itemId, number]);
+  const lookedUp = proof && !!number && sales.number === number;
+  const lookupFailed = lookedUp && sales.rows === null;
+  const registered = lookedUp
+    ? provenSale(doc, buildSalePayload(form), sales.rows ?? [])
+    : null;
+  // The buyer is asked for unless the registered sale has one, or had one that was removed.
+  const saleRegistered = !!registered && registered.buyer !== "none";
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -187,6 +190,12 @@ export function SalePanel({
           )}
         </div>
       </div>
+      {form.outside && lookupFailed && (
+        <p role="alert" className={styles.error}>
+          Kunde inte läsa kaninens försäljningar, så det går inte att veta om
+          köparen redan är registrerad. Kontrollera individnumret.
+        </p>
+      )}
       {formError && (
         <p role="alert" className={styles.error}>
           {formError}
@@ -204,7 +213,8 @@ export function SalePanel({
           disabled={
             !canSave ||
             pending ||
-            (form.outside && !saleRegistered && !buyerComplete(buyer))
+            (form.outside && !saleRegistered && !buyerComplete(buyer)) ||
+            (form.outside && (lookupFailed || (proof && !lookedUp)))
           }
         >
           {pending
