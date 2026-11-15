@@ -779,6 +779,8 @@ def _refuse_buyerless_sales_outside(parsed, pairs):
     for index, event in enumerate(parsed):
         if event["kind"] not in MOVES or event["herd"].herd not in OUTSIDE_GENEBANK_HERDS:
             continue
+        if event["buyer"] is not None and index in pairs and pairs[index].buyer_removed:
+            raise HerdTrackingConflict(BUYER_REMOVED)  # never registered again, as in attach_buyer
         if event["buyer"] is None and index not in pairs:
             hint = "ange köparens namn och ort" if event["kind"] == "TRANSFER" else "välj Flytt, där köparen anges"
             raise HerdTrackingInvalid(f"Händelse {index + 1}: en försäljning utanför föreningen: {hint}.")
@@ -871,7 +873,7 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
                             if event["buyer"]
                             else carried.get(index)
                         ),
-                        buyer_removed=index in pairs and event["buyer"] is None and pairs[index].buyer_removed,
+                        buyer_removed=index in pairs and pairs[index].buyer_removed,
                     )
             except IntegrityError as exc:  # the carried buyer went (a purge or an erasure) after it was read
                 if _violated_constraint(exc) != "herd_tracking_holder_contact_id_fkey":

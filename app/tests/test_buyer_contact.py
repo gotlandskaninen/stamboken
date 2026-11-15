@@ -511,6 +511,16 @@ class TestVoid(BuyerBase):
         self.assertEqual(raised.exception.detail, "Köparen raderades under tiden. Försök igen.")
         self.assertEqual(self._latest().id, self.sale.id)
 
+    def test_a_sale_whose_buyer_went_takes_no_new_buyer_in_a_correction(self):
+        buyer_contact.erase_buyer_contact(self.contact_id, self.admin)
+        event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", "buyer": OTHER}
+        with self.assertRaises(HerdTrackingConflict) as raised:
+            correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [event], "Fel datum")
+        self.assertEqual(
+            raised.exception.detail, "Köparen har begärt radering eller gallrats; registrera inte på nytt."
+        )
+        self.assertEqual((self._latest().id, db.BuyerContact.select().count()), (self.sale.id, 0))
+
     def test_the_event_api_takes_no_holder_contact_id(self):
         event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "G2", "holder_contact_id": self.contact_id}
         (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [event], "Fel köpare")
