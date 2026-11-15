@@ -683,6 +683,12 @@ def sender_alarms(now=None):
     paused = sender is not None and sender.paused_until is not None and sender.paused_until > now
     if paused or (last_smtp is not None and last_smtp.result == "systemic"):
         alarms.append({"code": "relay_refusing", "message": "Reläet tar inte emot e-post från servern"})
+    if (
+        settings.mail.mode == "log"
+        and os.environ.get("FLASK_ENV") == "production"
+        and not settings.service.demo_instance
+    ):
+        alarms.append({"code": "log_mode", "message": "Utskicksläget är log: inget mejl skickas på riktigt"})
     if last_run_at is None or last_run_at < now - STALLED_AFTER:
         alarms.append({"code": "queue_stalled", "message": "Kön står still"})
     last_sent = MailMessage.select(MailMessage.sent_at).where(MailMessage.sent_at.is_null(False))

@@ -290,6 +290,13 @@ class TestModes(MailTest):
                     mail.send_pending(self.now)
         self.assertEqual((relay.sent, self.row(row_id).status), ([], "queued"))
 
+    def test_empty_smtp_settings_fall_back_to_the_defaults(self):
+        env = {**os.environ, "SMTP_PORT": "", "SMTP_HOST": "", "MAIL_FROM": ""}
+        probe = "import utils.settings as s; print(s.mail.smtp_port, s.mail.smtp_host, s.mail.sender)"
+        app_dir = Path(__file__).resolve().parent.parent
+        p = subprocess.run([sys.executable, "-c", probe], cwd=app_dir, env=env, capture_output=True, text=True)
+        self.assertEqual(p.stdout.strip(), "587 smtp-relay.gmail.com stamboken@gotlandskaninen.se", p.stderr)
+
     def test_app_import_refuses_live_mail_on_the_demo(self):
         """The guard runs when the app is imported: a demo with MAIL_MODE=live never comes up."""
         env = {**os.environ, "MAIL_MODE": "live", "DEMO_INSTANCE": "true", "LINK_SECRET": "guard-test-only"}

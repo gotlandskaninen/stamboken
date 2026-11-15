@@ -189,7 +189,8 @@ genbank):
 - `GET /status?ref_type=…&ref_id=…`: senaste raden per typ för ett ärende.
 - `GET /messages`: listan med filter (`status`, `kind`, `genebank_id`,
   `herd_id`, `from`, `to`, `limit`, `offset`) och larmen: reläet tar inte
-  emot, kön står still (`last_run_at` äldre än 5 minuter), senaste lyckade
+  emot, kön står still (`last_run_at` äldre än 5 minuter), läget är `log` i
+  produktion (ingen demo; raderna blir `logged` för gott), senaste lyckade
   utskick.
-- `POST /messages/<id>/retry`: `failed` eller `bounced` tillbaka till kön.
+- `POST /messages/<id>/retry`: `failed`, `bounced` eller `logged` tillbaka till kön.
 - `POST /messages/<id>/cancel`: stoppar ett köat mejl.
