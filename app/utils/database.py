@@ -3685,13 +3685,21 @@ def migrate_38_to_39():
 def migrate_39_to_40():
     """Issue #33: the bank details are always private, so reset any stored level."""
     with DATABASE.atomic():
-        # NULL stays NULL (reads treat it as private): fewer rows touched, fewer audit rows.
+        # The audit trigger would copy every account number into a new audit row without a user.
+        audited = not isinstance(DATABASE, SqliteDatabase) and DATABASE.execute_sql(
+            "SELECT 1 FROM pg_trigger WHERE tgrelid = 'herd'::regclass AND tgname = 'audit_trigger'"
+        ).fetchone()
+        if audited:
+            DATABASE.execute_sql('ALTER TABLE "herd" DISABLE TRIGGER "audit_trigger"')
+        # NULL stays NULL (reads treat it as private).
         DATABASE.execute_sql(
             "UPDATE herd SET"
             " bank_account_number_privacy = CASE WHEN bank_account_number_privacy IS NULL THEN NULL ELSE 'private' END,"
             " bank_name_privacy = CASE WHEN bank_name_privacy IS NULL THEN NULL ELSE 'private' END"
             " WHERE bank_account_number_privacy <> 'private' OR bank_name_privacy <> 'private'"
         )
+        if audited:
+            DATABASE.execute_sql('ALTER TABLE "herd" ENABLE TRIGGER "audit_trigger"')
         SchemaHistory.insert(  # pylint: disable=E1120
             version=40, comment="herd bank privacy reset to private", applied=datetime.now()
         ).execute()
