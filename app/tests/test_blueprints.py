@@ -1300,6 +1300,20 @@ class TestAuditBlueprint(DatabaseTest):
                 self.assertIn("name_privacy", resp.get_json()["message"])
         self.assertNotEqual(db.Herd.get_by_id(herd.id).herd_name, "Gammalt namn")
 
+    def test_revert_and_restore_never_write_bank_privacy(self):
+        """Issue #33: bank *_privacy stays 'private'. An old audit value ('public', or a dirty one) is
+        skipped by revert and restore, and does not block the other fields."""
+        herd = self.herds[0]
+        db.Herd.update(bank_name_privacy="Public ").where(db.Herd.id == herd.id).execute()
+        entry = self._audit_update("herd", herd.id, bank_account_number_privacy="public", www="old")
+        self._login_as("man")
+        self.assertEqual(self._revert(entry).status_code, 200)
+        db.Herd.update(bank_name_privacy="private").where(db.Herd.id == herd.id).execute()
+        resp = self._restore("herd", herd.id, entry)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        row = db.Herd.get_by_id(herd.id)
+        self.assertEqual((row.bank_account_number_privacy, row.bank_name_privacy), ("private", "private"))
+
     def test_restore_does_not_overwrite_a_privacy_correction_made_after_its_read(self):
         """A correction of the invalid value between restore's read of the row and its UPDATE (a concurrent
         update_herd) must not be overwritten with the invalid snapshot value."""

@@ -60,7 +60,7 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # medlem/profil (29: structured postal address, member.user_id unique link) +
 # Phase 999.5 herd tracking kind/void (30) + Phase 999.8 genetics version (31) + genetics history (32) +
 # history algorithm version (33) + genetics epoch (34) + the individual command log (35) +
-# Individual.microchip (36) + billing address on membership and member_application (37).
+# Individual.microchip (36) + billing address on membership and member_application (37) + herd bank privacy reset (38).
 CURRENT_SCHEMA_VERSION = 38
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
@@ -505,7 +505,7 @@ def remove_fields_by_privacy(data, access_level):
     # prune data according to access level
     for field in [f for f in data.keys() if f.endswith("_privacy")]:
         # remove values if access_level is less than required
-        field_level = "private" if field in BANK_PRIVACY_FIELDS else data[field] or "private"
+        field_level = data[field] or "private"
         if field_level not in levels:  # unknown stored value: fail closed instead of raising
             field_level = "private"
         if levels.index(access_level) < levels.index(field_level):
@@ -521,6 +521,12 @@ def remove_fields_by_privacy(data, access_level):
         # remove the access level value if the user doesn't have private access
         if access_level != "private":
             del data[field]
+
+    # Bank details: only for private access, whatever the stored level says (issue #33). Dropped
+    # here and not via the *_privacy keys, so a row loaded without them cannot let them through.
+    if access_level != "private":
+        data.pop("bank_account_number", None)
+        data.pop("bank_name", None)
 
     return data
 
@@ -3599,10 +3605,13 @@ def migrate_36_to_37():
 def migrate_37_to_38():
     """Issue #33: the bank details are always private, so reset any stored level."""
     with DATABASE.atomic():
-        for field in BANK_PRIVACY_FIELDS:
-            Herd.update({field: "private"}).where(
-                Herd._meta.fields[field].is_null(True) | (Herd._meta.fields[field] != "private")
-            ).execute()
+        # NULL stays NULL (reads treat it as private): fewer rows touched, fewer audit rows.
+        DATABASE.execute_sql(
+            "UPDATE herd SET"
+            " bank_account_number_privacy = CASE WHEN bank_account_number_privacy IS NULL THEN NULL ELSE 'private' END,"
+            " bank_name_privacy = CASE WHEN bank_name_privacy IS NULL THEN NULL ELSE 'private' END"
+            " WHERE bank_account_number_privacy <> 'private' OR bank_name_privacy <> 'private'"
+        )
         SchemaHistory.insert(  # pylint: disable=E1120
             version=38, comment="herd bank privacy reset to private", applied=datetime.now()
         ).execute()
