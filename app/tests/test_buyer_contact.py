@@ -696,6 +696,14 @@ class TestQueueDocuments(PurgeTest):
         for document_id in (self.certificate.id, self.proof.id, self.other.id):
             self.assertEqual(after[document_id].original_path, before[document_id].original_path)
 
+    def test_a_proof_of_a_buyerless_sale_goes_when_a_buyer_resells_in_the_same_herd(self):
+        db.InboxDocument.update(herd_tracking_id=self.sale.id).where(db.InboxDocument.id == self.proof.id).execute()
+        db.BuyerContact.delete().where(db.BuyerContact.id == self.sale.holder_contact_id).execute()  # erased later
+        gx1 = db.Herd.get(db.Herd.herd == "GX1")
+        record_herd_tracking(self.rabbit, gx1, "2026-02-01", "TRANSFER", self.manager, buyer=OTHER)
+        purge.purge_sold_proofs(NOW)
+        self.assertIsNone(db.InboxDocument.get_by_id(self.proof.id).original_path)
+
     def test_a_proof_goes_when_a_correction_moves_the_rabbit_on(self):
         db.InboxDocument.update(herd_tracking_id=self.sale.id).where(db.InboxDocument.id == self.proof.id).execute()
         purge.purge_sold_proofs(NOW)

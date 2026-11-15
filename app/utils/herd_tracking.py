@@ -12,7 +12,7 @@ from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from peewee import IntegrityError, fn
+from peewee import Expression, IntegrityError, fn
 
 from utils.database import (
     DB_PROXY,
@@ -1103,7 +1103,8 @@ def sold_on(sale, later):
         & (
             (later.herd != sale.herd)
             | later.holder_contact.is_null(True)
-            | (later.holder_contact != sale.holder_contact)
+            # IS DISTINCT FROM: a buyerless sale (NULL) followed by a resale with a buyer is sold on too.
+            | Expression(later.holder_contact, "IS DISTINCT FROM", sale.holder_contact)
         )
         & (
             (later.herd_tracking_date > sale.herd_tracking_date)
