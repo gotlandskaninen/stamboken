@@ -73,11 +73,14 @@ Next.js, så [ADR-0006](0006-api-compatibility-during-migration.md) berörs inte
 Finns en familjemedlem kvar går medlemskapet att öppna igen genom att utse
 den till huvudmedlem.
 
-Ett tomt intygsnummer tar bort ett pappersintyg, som förut, men nekas på en
-kanin med digitalt intyg. Förut tog det bort det digitala numret.
+Ett tomt intygsnummer tar bort ett pappersintyg, som förut, och rör aldrig
+ett digitalt intyg. Förut tog det bort det digitala numret. Det tömda
+numret sparas som NULL: kolumnen är unik, så en tom sträng hade bara kunnat
+tömma en kanin i hela registret.
 
-Rader som redan låg i det otillåtna läget, pappersintyg med en gällande
-PDF-rad, rättas en gång av `migrate_37_to_38`. Den ändrar bara data.
+En gällande PDF-rad kräver ett digitalt nummer. Rader som redan bröt mot det,
+där ett pappersintyg eller ett tomt nummer hade tagit bort det digitala
+numret, rättas en gång av `migrate_37_to_38`. Den ändrar bara data.
 
 ### Konsekvenser
 
@@ -114,4 +117,4 @@ Genomgången av övriga maskiner finns i föreningens interna dokumentation.
 |-------|------------|------------|
 | 2026-11-11 | Jonas | Skapad |
 | 2026-11-14 | Jonas | Tomt intygsnummer, vad som prövas i drift, sökningens gräns |
-| 2026-11-15 | Jonas | Datamigration för redan ersatta intyg |
+| 2026-11-15 | Jonas | Datamigration för redan ersatta intyg; tömt nummer sparas som NULL |
