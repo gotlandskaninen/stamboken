@@ -747,10 +747,10 @@ En hjälpare får sälja kaniner i sin genbank som en ägare får.
 
 **Bevis.** Är dokumentet ett överlåtelsebevis (`doc_type: "bevis"`) blir det klart och kopplas
 till försäljningens rad (`herd_tracking_id`). Annars registreras försäljningen ändå, och posten
-får `missing_proof: true` ("bevis saknas"). Kommer beviset senare till samma post skickas det med
-`…/overlat` med samma kanin, köpare och datum: det kopplas då till försäljningen som redan finns,
-utan att den registreras igen, och `missing_proof` blir `false` när ingen försäljning i posten
-längre saknar bevis. Den som kopplar måste få sälja kaninen, som för en försäljning.
+får `missing_proof: true` ("bevis saknas"). Kommer beviset senare, eller är försäljningen redan
+registrerad någon annanstans (till exempel på kaninens sida), skickas det med `…/overlat` med samma
+kanin, köpare och datum: det kopplas då till den aktiva försäljningen som redan finns, utan att den
+registreras igen, och `missing_proof` blir `false` när ingen försäljning i posten längre saknar bevis. Den som kopplar måste få sälja kaninen, som för en försäljning.
 
 **Korrigering.** Ligger datumet före kaninens senaste händelse är det en korrigering. Den gör
 bara genbanksansvarig för kaninens genbank och admin, och anropet skriver då in försäljningen på
