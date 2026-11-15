@@ -6,6 +6,9 @@ the error classes, two senders at once and a reclaimed claim, cancelling builder
 erasure, retention, bounces by Message-ID, and that no row holds an address. Synthetic data only.
 """
 
+import base64
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -860,6 +863,16 @@ class TestLinks(MailTest):
         self.assertNotEqual(token, mail.link_token("other", 7))
         with mock.patch.object(settings.mail, "link_secret", ""), self.assertRaises(RuntimeError):
             mail.link_token("test", 7)
+
+    def test_the_three_uses_of_the_key_are_domain_separated(self):
+        def mac(text):
+            return hmac.new(SECRET.encode(), text.encode(), hashlib.sha256)
+
+        self.assertEqual(mail.message_id(5), f"<mail-5.{mac('msgid:5').hexdigest()[:16]}@{HOST}>")
+        self.assertEqual(mail.address_hash("A@Example.org"), mac("addr:a@example.org").hexdigest())
+        token_mac = base64.urlsafe_b64encode(mac("link:mail:5").digest()[:16]).rstrip(b"=").decode()
+        self.assertEqual(mail.link_token("mail", 5), f"5.{token_mac}")
+        self.assertNotEqual(mail.message_id(5).split(".")[1][:16], mac("mail:5").hexdigest()[:16])
 
     def test_verify_link(self):
         token = mail.link_token("test", 42)

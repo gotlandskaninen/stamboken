@@ -142,6 +142,7 @@ def enqueue_mail(
 
 
 def _mac(message):
+    """One key for three uses, so every input starts with its own prefix: `link:`, `msgid:` or `addr:`."""
     secret = settings.mail.link_secret
     if not secret:
         raise RuntimeError("LINK_SECRET is not set")
@@ -149,11 +150,11 @@ def _mac(message):
 
 
 def _link_mac(purpose, row_id):
-    return base64.urlsafe_b64encode(_mac(f"{purpose}:{row_id}").digest()[:16]).rstrip(b"=").decode()
+    return base64.urlsafe_b64encode(_mac(f"link:{purpose}:{row_id}").digest()[:16]).rstrip(b"=").decode()
 
 
 def link_token(purpose, row_id):
-    """`<row id>.<mac>`, mac = base64url(HMAC-SHA256(LINK_SECRET, "<purpose>:<row id>")) cut to 128 bits."""
+    """`<row id>.<mac>`, mac = base64url(HMAC-SHA256(LINK_SECRET, "link:<purpose>:<row id>")) cut to 128 bits."""
     return f"{row_id}.{_link_mac(purpose, row_id)}"
 
 
@@ -178,12 +179,12 @@ def _hostname():
 
 def message_id(row_id):
     """Unguessable, the same on every attempt, and different per environment (the hostname)."""
-    return f"<mail-{row_id}.{_mac(f'mail:{row_id}').hexdigest()[:16]}@{_hostname()}>"
+    return f"<mail-{row_id}.{_mac(f'msgid:{row_id}').hexdigest()[:16]}@{_hostname()}>"
 
 
 def address_hash(address):
     """HMAC, not a plain hash, which could be looked up against known addresses."""
-    return _mac(_normalize(address) or "").hexdigest()
+    return _mac(f"addr:{_normalize(address) or ''}").hexdigest()
 
 
 _ADDRESS = re.compile(r"[^@\s<>,;\"']+@[^@\s<>,;\"']+")
@@ -601,7 +602,7 @@ def record_bounce(message_id_header, diagnostic):
     if match is None or match.group(3).lower() != _hostname().lower():
         return False
     row_id = int(match.group(1))
-    if not hmac.compare_digest(match.group(2), _mac(f"mail:{row_id}").hexdigest()[:16]):
+    if not hmac.compare_digest(match.group(2), _mac(f"msgid:{row_id}").hexdigest()[:16]):
         return False
     detail = _scrub(diagnostic)
     enhanced = _ENHANCED.search(diagnostic or "")

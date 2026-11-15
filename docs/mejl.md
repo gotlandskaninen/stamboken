@@ -112,7 +112,7 @@ sorten blir mejlet `cancelled` med ett felmeddelande som säger varför.
 ## Länkar i mejl
 
 `link_token(syfte, rad_id)` ger en länkkod `<rad_id>.<mac>`, där `mac` är
-base64url av HMAC-SHA256(`LINK_SECRET`, `"<syfte>:<rad_id>"`), avkortad till
+base64url av HMAC-SHA256(`LINK_SECRET`, `"link:<syfte>:<rad_id>"`), avkortad till
 128 bitar. Ingen kod och ingen hash av den sparas; byggfunktionen räknar fram
 koden när mejlet skickas, så en påminnelse kan skicka samma länk igen.
 `verify_link(syfte, token)` ger rad-id:t om koden är äkta, annars `None`.
