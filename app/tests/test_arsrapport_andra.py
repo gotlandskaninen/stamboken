@@ -205,7 +205,7 @@ class AndraTest(ArsrapportTest):
         before = self.counts()
         response = self.withdraw(2)
         self.assertEqual(response.status_code, 403, response.get_data(as_text=True))
-        until = self.submissions(rid)[0].created_at + timedelta(days=7)
+        until = self.report(rid).received_at + timedelta(days=7)
         self.assertEqual(response.get_json()["withdraw_until"], until.isoformat())
         self.assertEqual(self.counts(), before)
 
@@ -445,7 +445,7 @@ class AndraTest(ArsrapportTest):
             (HerdTrackingForbidden(REPORT_LATER_ROW), "senare_handelse", LATER),
             (HerdTrackingConflict(DATE_BEFORE_LATEST), "senare_handelse", LATER),
             (HerdTrackingInvalid("Ange en anledning."), "skrivning_nekad", "Ange en anledning."),
-            (IndividualRefused("Forbidden"), "skrivning_nekad", arsrapport.REFUSALS["nekad"]),
+            (IndividualRefused("Forbidden"), "skrivning_nekad", arsrapport.REFUSALS["skrivning_nekad"]),
         ):
 
             def flaky(ht_id, *args, exc=exc, **kwargs):
@@ -491,14 +491,17 @@ class AndraTest(ArsrapportTest):
         before = self.counts()
         self.ok(self.body(self.sald(a, "utanfor", 2025, 11, 20), revision=2))  # without kopare: nothing
         self.assertEqual(self.counts()[:5], before[:5])
-        # a reason naming the buyer is refused for that rabbit (kopare's privacy rule)
+        # a reason naming the buyer is refused for that rabbit (kopare's privacy rule), in the dry run too (I3)
+        named = [{"individual_id": a.id, "code": "skrivning_nekad", "message": BUYER_PRIVACY_HELP}]
+        body = self.body(self.kvar(a, vikt=2.8), revision=3, reason="Annan Köpare ångrade sig")
+        dry = self.api("POST", "/besattning/G9001/2025/torrkorning", **body).get_json()
+        self.assertEqual(dry["refusals"], named)
+        response = self.skicka(body)
+        self.assertEqual((response.status_code, response.get_json()["refusals"]), (422, named))
         self.login("man")
         response = self.withdraw(3, "Annan Köpare ångrade sig")
-        self.assertEqual(response.status_code, 422, response.get_data(as_text=True))
-        self.assertEqual(
-            response.get_json()["refusals"],
-            [{"individual_id": a.id, "code": "skrivning_nekad", "message": BUYER_PRIVACY_HELP}],
-        )
+        self.assertEqual((response.status_code, response.get_json()["refusals"]), (422, named))
+        self.assertEqual(self.counts()[:5], before[:5])
 
     def test_receipt_is_fixed_per_submission(self):  # Codex 5
         a, b = self.rabbits(self.h, 2)
@@ -587,6 +590,68 @@ class AndraTest(ArsrapportTest):
         # Measured 2026-11-15: 0 and 61 per rabbit (a void, a delete and a RecordDeath; Skicka's first: 56).
         self.assertEqual(unchanged, 0, counts)
         self.assertLessEqual(changed, 68, counts)
+
+    def test_caretaker_cannot_change_or_withdraw_a_sale(self):  # I1, D12: sales are the owner's
+        kept, december, outside = self.rabbits(self.h, 3)
+        entries = (
+            self.kvar(kept, vikt=2.8),
+            self.sald(december, "G9002", 2025, 12, 10),
+            self.sald(outside, "utanfor", 2025, 11, 20, kopare=BUYER),
+        )
+        rid = self.ok(self.body(*entries))["report_id"]
+        self.caretaker()
+        self.login("skotare")
+        before = self.counts()
+        refused = {
+            "code": "forsaljning_skotare",
+            "message": "Försäljningen registreras av ägaren eller genbanksansvarig.",
+        }
+        stored = (*entries[:2], self.sald(outside, "utanfor", 2025, 11, 20))  # as submitted: no buyer
+        for changed in (self.kvar(december, vikt=2.8), self.dod(outside, 2025, 11, 10)):  # sald→kvar, sald→dod
+            body = self.body(*[changed if changed[0] == e[0] else e for e in stored], revision=1)
+            dry = self.api("POST", "/besattning/G9001/2025/torrkorning", **body).get_json()
+            self.assertEqual(dry["refusals"], [{"individual_id": int(changed[0]), **refused}])
+            response = self.skicka(body)
+            self.assertEqual(response.status_code, 422, response.get_data(as_text=True))
+            self.assertEqual(response.get_json()["refusals"], [{"individual_id": int(changed[0]), **refused}])
+        response = self.withdraw(1)
+        self.assertEqual(response.status_code, 422, response.get_data(as_text=True))
+        self.assertEqual(
+            response.get_json()["refusals"],
+            [{"individual_id": december.id, **refused}, {"individual_id": outside.id, **refused}],
+        )
+        self.assertEqual(self.counts(), before)
+        self.assertEqual([(c.name, c.town) for c in db.BuyerContact.select()], [(BUYER["name"], BUYER["town"])])
+        self.assertEqual(self.report(rid).status, "submitted")
+        # a change that leaves the sales alone is still the caretaker's
+        self.ok(self.body(self.kvar(kept, vikt=3.0), *stored[1:], revision=1))
+
+    def test_withdraw_window_counts_from_the_rounds_first_submission(self):  # I2: no new 7 days per report row
+        (a,) = self.rabbits(self.h, 1)
+        self.ok(self.body(self.kvar(a, vikt=2.8)))
+        self.day(2)
+        self.withdrawn(1)
+        self.day(3)
+        rid = self.ok(self.body(self.kvar(a, vikt=2.8)))["report_id"]
+        until = noon(DAY0) + timedelta(days=7)
+        self.assertEqual(self.report(rid).received_at, noon(DAY0))
+        view = self.client.get("/api/v2/arsrapport/besattning/G9001/2025").get_json()
+        self.assertEqual(datetime.fromisoformat(view["report"]["withdraw_until"]), until)
+        self.day(8)
+        response = self.withdraw(2)
+        self.assertEqual(response.status_code, 403, response.get_data(as_text=True))
+        self.assertEqual(datetime.fromisoformat(response.get_json()["withdraw_until"]), until)
+        self.assertEqual(self.report(rid).status, "submitted")
+
+    def test_ej_angiven_still_meets_the_register(self):  # M1: a paper change takes the attestation off
+        (a,) = self.rabbits(self.h, 1)
+        self.ok(self.body(self.kvar(a, vikt=2.8)))
+        ht_row("CORRECTION", herd=self.g9002, individual=a, herd_tracking_date=date(2026, 1, 3))  # not a life sign
+        body = self.body(self.ej_angiven(a), revision=1, reason="Blanketten", inbox_item_id=1, received_on="2026-01-12")
+        sub = arsrapport.parse_submission(body, paper=True)
+        access = arsrapport.Access("manager", self.item())
+        refusals, _ = arsrapport.check(self.h, self.round_, access, self.report(), sub, on=DAY0)
+        self.assertEqual(refusals, [arsrapport.Refusal(a.id, "senare_handelse", LATER)])
 
     # The mails
 

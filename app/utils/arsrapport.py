@@ -54,6 +54,7 @@ from utils.herd_tracking import (
     REPORT_LATER_ROW,
     HerdTrackingError,
     HerdTrackingInvalid,
+    _reject_buyer_name,
     buyer_contact_fields,
     latest_death_op,
     reject_contact_details,
@@ -459,17 +460,20 @@ def on_time(report, round_):
     return bool(received and round_.deadline and received.astimezone(STOCKHOLM).date() <= round_.deadline)
 
 
-def withdraw_until(report, access, submissions=None):
-    """An owner's or caretaker's last instant for Dra tillbaka: the first submission + 7 days; None for the others."""
+def withdraw_until(report, access):
+    """
+    An owner's or caretaker's last instant for Dra tillbaka: the round's first submission (received_at, which a
+    report after a withdrawal inherits) + 7 days, so withdrawing and sending again never restarts it; None for the
+    others.
+    """
     if access.role not in ("owner", "caretaker"):
         return None
-    submissions = _submissions(report) if submissions is None else submissions
-    return submissions[0].created_at + timedelta(days=WITHDRAW_DAYS) if submissions else None
+    return report.received_at + timedelta(days=WITHDRAW_DAYS)
 
 
 def _report_json(report, round_, access, is_open):
     submissions = _submissions(report)
-    until = withdraw_until(report, access, submissions)
+    until = withdraw_until(report, access)
     if access.editor:
         can_withdraw = True
     else:
@@ -1043,7 +1047,7 @@ REFUSALS = {  # the copy the client shows (P44)
     "orsak_kravs": "Skriv varför rapporten ändras.",
     "rundan_stangd": "Rundan är stängd.",
     "inte_innehavare": "Kaninen fanns inte i din besättning 31 december.",
-    "nekad": "Stamboken tog inte emot ändringen för kaninen. Genbanksansvarig kan rätta.",  # an execute refusal
+    "skrivning_nekad": "Stamboken tog inte emot ändringen för kaninen. Genbanksansvarig kan rätta.",  # _denied
 }
 # _validate_sale's user: the report never sells into another genebank, since TransferIndividual needs a reason there.
 _NOT_ADMIN = SimpleNamespace(is_admin=False)
@@ -1054,10 +1058,13 @@ def _refusal(individual_id, code, message=None):
 
 
 def _denied(individual_id, detail):
-    """U8: a void or a write refused for a later row is senare_handelse; any other refusal keeps its own text."""
+    """
+    U8, for every Skicka and Dra tillbaka: a void or a write refused for a later row is senare_handelse; any other
+    refusal is skrivning_nekad with its own text, or the table's when it has none (IndividualRefused's are English).
+    """
     if detail in (REPORT_LATER_ROW, DATE_BEFORE_LATEST):
         return _refusal(individual_id, "senare_handelse")
-    return _refusal(individual_id, "skrivning_nekad", detail or REFUSALS["nekad"])  # IndividualRefused's are English
+    return _refusal(individual_id, "skrivning_nekad", detail)
 
 
 def _vikt_ovanlig(individual_id, vikt):
@@ -1080,11 +1087,12 @@ def _sale_view(individual_id, kept):
     }
 
 
-def _register_refusals(individual_id, entry, remove, add, ops, admin=False):
+def _register_refusals(individual_id, entry, remove, add, ops, admin=False, reason=None):
     """
-    What the writes would meet in the register: each void under report_void_denial, latest first as apply_diff
-    runs them, then a row behind a later one (DATE_BEFORE_LATEST), then each new sale under _validate_sale and the
-    buyer rules. A row behind a later one is senare_handelse; any other denial keeps its text (U8).
+    What the writes would meet in the register: each void under report_void_denial and its check of `reason`
+    against the sale's buyer, latest first as apply_diff runs them, then a row behind a later one
+    (DATE_BEFORE_LATEST), then each new sale under _validate_sale and the buyer rules. A row behind a later one is
+    senare_handelse; any other denial keeps its text (U8).
     """
     if not any(e.kind in ROW_KINDS for e in remove + add):
         return []
@@ -1099,6 +1107,11 @@ def _register_refusals(individual_id, entry, remove, add, ops, admin=False):
     for row in voided:
         if denial := report_void_denial(user, row, kept, rabbit, ops):
             return [_denied(individual_id, denial)]
+        if reason and row.holder_contact_id:  # _void_rows: a buyer is never named in the void's reason
+            try:
+                _reject_buyer_name(reason, [row.holder_contact_id])
+            except HerdTrackingInvalid as exc:
+                return [_denied(individual_id, exc.detail)]
         kept.remove(row)
     if kept and any(e.date < coerce_date(kept[-1].herd_tracking_date) for e in add if e.kind in ROW_KINDS):
         return [_refusal(individual_id, "senare_handelse")]
@@ -1166,7 +1179,9 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
         if row["state"] != "att_valja":
             refusals.append(_refusal(rabbit, "senare_handelse"))
             continue
-        if entry.val == "ej_angiven":
+        if entry.val == "ej_angiven":  # it writes nothing, but what it takes off still meets the register (M1)
+            remove, add = diff(current(report, rabbit), [], last, before, entry)
+            refusals += _register_refusals(rabbit, entry, remove, add, ops, access.role == "admin", sub.reason)
             continue
         if entry.val == "sald" and not access.can_sell:
             refusals.append(_refusal(rabbit, "forsaljning_skotare"))
@@ -1187,7 +1202,10 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
         ):
             refusals.append(_refusal(rabbit, "vikt_saknas"))
         remove, add = diff(current(report, rabbit), wanted(entry, row, report, herd, year, on), last, before, entry)
-        refusals += _register_refusals(rabbit, entry, remove, add, ops, access.role == "admin")
+        if not access.can_sell and any(e.kind == "transfer" for e in remove + add):  # D12: sales are the owner's
+            refusals.append(_refusal(rabbit, "forsaljning_skotare"))
+            continue
+        refusals += _register_refusals(rabbit, entry, remove, add, ops, access.role == "admin", sub.reason)
     return refusals, warnings
 
 
@@ -1483,8 +1501,7 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
                 try:
                     added += _write(user, rabbit, effects, herd, report, entry, grant, last)
                 except (IndividualRefused, HerdTrackingError) as exc:
-                    message = str(exc) if isinstance(exc, HerdTrackingError) else None  # IndividualRefused: English
-                    raise _cannot([_refusal(rabbit, "nekad", message)]) from exc
+                    raise _cannot([_written(rabbit, exc)]) from exc
         try:
             submission = YearlyReportSubmission.create(
                 report=report.id,
@@ -1541,20 +1558,20 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
         if report is None or revision != report.revision:
             raise ArsrapportError(409, "Rapporten har ändrats.")
         submissions = _submissions(report)
-        until = withdraw_until(report, access, submissions)
+        until = withdraw_until(report, access)
         if not access.editor and not (round_open(round_, herd.genebank_id, on) and at <= until):
             raise ArsrapportError(403, WITHDRAW_LATE, withdraw_until=_iso(until))
         # every rabbit of every submission: one an unchanged later submission left out keeps its effects (P39a)
         rabbits = sorted({int(key) for submission in submissions for key in submission.data.get("rabbits") or {}})
         _lock_rabbits(rabbits)
         ops = {str(op) for submission in submissions for op in submission.operation_ids}
-        refusals = [
-            refusal
-            for rabbit in rabbits
-            for refusal in _register_refusals(
-                rabbit, None, diff(current(report, rabbit), [], last)[0], [], ops, access.role == "admin"
-            )
-        ]
+        refusals = []
+        for rabbit in rabbits:
+            remove = diff(current(report, rabbit), [], last)[0]
+            if not access.can_sell and any(e.kind == "transfer" for e in remove):  # D12: sales are the owner's
+                refusals.append(_refusal(rabbit, "forsaljning_skotare"))
+            else:
+                refusals += _register_refusals(rabbit, None, remove, [], ops, access.role == "admin", reason)
         if refusals:
             raise _cannot(refusals, "Rapporten kan inte dras tillbaka.")
         grant = ReportGrant()

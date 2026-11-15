@@ -22,8 +22,8 @@ import utils.mail as mail
 from herdbook import APP
 from utils.arsrapport_statistik import innehav
 from utils.database import coerce_date
-from utils.herd_tracking import HerdTrackingConflict
-from utils.individual_commands import RecordDeath, execute
+from utils.herd_tracking import DATE_BEFORE_LATEST, HerdTrackingConflict
+from utils.individual_commands import IndividualRefused, RecordDeath, execute
 
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.ht_helpers import count_queries, ht_row
@@ -374,25 +374,30 @@ class InskickTest(ArsrapportTest):
         self.assertIn(b.id, [refusal["individual_id"] for refusal in response.get_json()["refusals"]])
         self.assertEqual(self.counts(), before)
 
-    def test_write_refusal_is_422_for_that_rabbit(self):
+    def test_write_refusal_is_422_for_that_rabbit(self):  # U8's codes, as at Ändra
         a, b = self.rabbits(self.h, 2)
-        refused = HerdTrackingConflict("Kaninen ändrades samtidigt. Försök igen.")
         real = arsrapport.execute
+        later = "Kaninen har en senare händelse i Stamboken. Genbanksansvarig kan rätta."
+        for refused, code, message in (
+            (HerdTrackingConflict("Kaninen ändrades samtidigt. Försök igen."), "skrivning_nekad", None),
+            (HerdTrackingConflict(DATE_BEFORE_LATEST), "senare_handelse", later),
+            (IndividualRefused("Forbidden"), "skrivning_nekad", arsrapport.REFUSALS["skrivning_nekad"]),
+        ):
 
-        def flaky(user, individual_id, translate, **kwargs):
-            if individual_id == b.id:
-                raise refused
-            return real(user, individual_id, translate, **kwargs)
+            def flaky(user, individual_id, translate, refused=refused, **kwargs):
+                if individual_id == b.id:
+                    raise refused
+                return real(user, individual_id, translate, **kwargs)
 
-        before = self.counts()
-        with mock.patch.object(arsrapport, "execute", side_effect=flaky):
-            response = self.skicka(self.body(self.kvar(a, vikt=2.8), self.kvar(b, vikt=2.8)))
-        self.assertEqual(response.status_code, 422, response.get_data(as_text=True))
-        self.assertEqual(
-            response.get_json()["refusals"],
-            [{"individual_id": b.id, "code": "nekad", "message": "Kaninen ändrades samtidigt. Försök igen."}],
-        )
-        self.assertEqual(self.counts(), before)
+            before = self.counts()
+            with mock.patch.object(arsrapport, "execute", side_effect=flaky):
+                response = self.skicka(self.body(self.kvar(a, vikt=2.8), self.kvar(b, vikt=2.8)))
+            self.assertEqual(response.status_code, 422, response.get_data(as_text=True))
+            self.assertEqual(
+                response.get_json()["refusals"],
+                [{"individual_id": b.id, "code": code, "message": message or str(refused)}],
+            )
+            self.assertEqual(self.counts(), before)
 
     def test_queries_per_rabbit(self):  # case 3: an N+1 beyond execute's own fails here, on no clock (I2)
         counts = {}
