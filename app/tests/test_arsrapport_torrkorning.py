@@ -393,6 +393,23 @@ class TorrkorningTest(ArsrapportTest):
             ],
         )
 
+    def test_kvar_for_a_rabbit_not_held_on_new_years_eve_is_refused(self):  # spec 5.4 point 1
+        (a,) = self.rabbits(self.h, 1)
+        self.reported(self.h, self.kvar(a, vikt=2.8))
+        # F28: the manager voids the attestation and registers the December sale it hid
+        _void(
+            db.HerdTracking.get(db.HerdTracking.individual == a.id, db.HerdTracking.kind == "ATTESTATION"), self.admin
+        )
+        ht_row("TRANSFER", from_herd=self.h, herd=self.g9002, individual=a, herd_tracking_date=date(2025, 12, 20))
+        refusal = {
+            "individual_id": a.id,
+            "code": "inte_innehavare",
+            "message": "Kaninen fanns inte i din besättning 31 december.",
+        }
+        self.assertEqual(self.dry(self.body(self.kvar(a, vikt=3.0)))["refusals"], [refusal])
+        self.assertEqual(self.dry(self.body(self.dod(a, 2026, 1, 5)))["refusals"], [refusal])  # lived on 31/12 too
+        self.assertTrue(self.dry(self.body(self.kvar(a, vikt=2.8)))["ok"])  # unchanged: writes nothing (P39a)
+
     def test_unknown_rabbit_and_defect(self):
         (a,) = self.rabbits(self.h, 1)
         stranger = self.individuals[0]  # G1's rabbit

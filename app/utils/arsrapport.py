@@ -864,6 +864,12 @@ def _sale_code(herd, till):
     return outside.scalar()
 
 
+def _lived(entry, last, on):
+    """The entry says the rabbit lived on 31/12: kvar, or a death or a sale after it (5.3)."""
+    when = entry.dod or entry.sald
+    return entry.val == "kvar" or (when is not None and partial_date(when["ar"], when["manad"], when["dag"], on) > last)
+
+
 def wanted(entry, rabbit_row, report, herd, year, on) -> list[Effect]:
     """
     The effects `entry` asks of the register (5.4 point 3); `rabbit_row` is the rabbit's report_list row, whose
@@ -877,7 +883,7 @@ def wanted(entry, rabbit_row, report, herd, year, on) -> list[Effect]:
     died = dod and partial_date(dod["ar"], dod["manad"], dod["dag"], on)
     sold = sald and partial_date(sald["ar"], sald["manad"], sald["dag"], on)
     effects = []
-    if not ((died and died <= last) or (sold and sold <= last)):  # it lived on 31/12: what kvar gives
+    if _lived(entry, last, on):  # what kvar gives
         if rabbit_row["state"] == "att_valja" and _holder_on(rabbit, last, ops) == herd.id:
             effects.append(Effect("attest", last, ()))
         if entry.vikt is not None:
@@ -998,6 +1004,7 @@ REFUSALS = {  # the copy the client shows (P44)
     "halsa_saknas": "Välj Inga sjukdomsfall eller defekter, eller Ja.",
     "orsak_kravs": "Skriv varför rapporten ändras.",
     "rundan_stangd": "Rundan är stängd.",
+    "inte_innehavare": "Kaninen fanns inte i din besättning 31 december.",
 }
 # _validate_sale's user: the report never sells into another genebank, since TransferIndividual needs a reason there.
 _NOT_ADMIN = SimpleNamespace(is_admin=False)
@@ -1074,6 +1081,7 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
     submissions = _submissions(report) if report is not None else []
     latest = submissions[-1].data if submissions else None
     before_entries = _entries(latest.get("rabbits") or {}) if latest else {}
+    ops = {str(op) for submission in submissions for op in submission.operation_ids}
     refusals, warnings = [], []
     if not sub.reason and (
         (access.source == "paper" and report is not None) or (late and (access.editor or access.role == "helper"))
@@ -1106,6 +1114,9 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
             continue
         if entry.val == "sald" and not access.can_sell:
             refusals.append(_refusal(rabbit, "forsaljning_skotare"))
+            continue
+        if _lived(entry, last, on) and _holder_on(rabbit, last, ops) != herd.id:  # 5.4 point 1, before the attest
+            refusals.append(_refusal(rabbit, "inte_innehavare"))
             continue
         if entry.vikt is not None and not 0 < entry.vikt <= 20:
             refusals.append(_refusal(rabbit, "vikt_ogiltig"))
