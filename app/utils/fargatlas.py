@@ -59,7 +59,8 @@ def seed_colors(gotland, mellerud):
         if other or (stored and (stored.name, stored.genebank_id) != (name, genebank.id)):
             raise ValueError(
                 f"Colour {id_} {name!r} does not match the colours already in the database; "
-                "its ids must be the atlas numbers. Recreate the database: docker compose down -v"
+                "its ids must be the atlas numbers. Recreate the database: docker compose down -v and remove "
+                "postgres-data/ (a bind mount that down -v leaves alone; see README)"
             )
         colors[(code, name)] = stored or Color.create(id=id_, name=name, comment=comment, genebank=genebank)
     DATABASE.execute_sql(

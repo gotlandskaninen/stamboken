@@ -1373,7 +1373,7 @@ def get_colors():
         return {
             genebank.name: [
                 {"id": color.id, "name": color.name, "comment": color.comment}
-                for color in Color.select().where(Color.genebank == genebank)
+                for color in Color.select().where(Color.genebank == genebank).order_by(Color.id)
             ]
             for genebank in Genebank.select()
         }

@@ -44,3 +44,9 @@ class TestColorNumberInResponseAndCertificate(DatabaseTest):
         ind.color = None
         ind.save()
         self.assertEqual(self._cert_code(ind), "")
+
+    def test_color_code_tom_for_annan_genbanks_farg(self):
+        ind = self.individuals[2]  # in M3, Mellerud
+        ind.color = self.colors[0]  # Gotland's
+        ind.save()
+        self.assertEqual(self._cert_code(ind), "")

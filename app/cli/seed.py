@@ -14,7 +14,8 @@ Creates data mirroring production patterns:
 - litter_number on every seeded litter that has been born (seeded rows bypass
   both real assignment paths — see _assign_litter_numbers)
 
-Idempotent — safe to run multiple times (skips existing data).
+Idempotent — safe to run multiple times (skips existing data), except that a database whose colours
+have other ids than the atlas numbers (seeded before they were fixed) makes the seed stop: recreate it.
 """
 
 import logging

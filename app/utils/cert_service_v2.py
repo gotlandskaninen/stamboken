@@ -73,7 +73,10 @@ def build_cert_data(individual, ind_data, user_id):
     cert_data["color_note"] = raw_color_note
     cert_data["foot_ring"] = ind_data.get("foot_ring") or ""
     # The colour's id is its atlas number; the template skips the chip when empty.
-    cert_data["color_code"] = str(ind_data["color_id"]) if ind_data.get("color_id") is not None else ""
+    # Another genebank's colour (wrong data from before the genebank-scoped lookup) prints no number.
+    color = individual.color
+    own = color is not None and color.genebank_id == individual.current_herd.genebank_id
+    cert_data["color_code"] = str(color.id) if own else ""
     cert_data["issue_date"] = date.today().isoformat()
     cert_data["public_url"] = f"gotlandskaninen.se/stamboken/individ/{individual.number}"
     cert_data["digital_certificate"] = individual.digital_certificate
