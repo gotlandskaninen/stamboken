@@ -221,6 +221,13 @@ function Row({
           {row.herd}
         </Link>
         {row.herd_name && <div className={inkorg.muted}>{row.herd_name}</div>}
+        {row.telefon && (
+          <div>
+            <a href={`tel:${row.telefon.replace(/[^\d+]/g, "")}`}>
+              {row.telefon}
+            </a>
+          </div>
+        )}
       </td>
       <td data-label="Läge">
         <span className={`sb-badge ${BADGE[row.state] ?? ""}`}>

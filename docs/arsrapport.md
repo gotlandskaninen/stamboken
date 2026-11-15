@@ -21,7 +21,7 @@ som PDF. Reglerna finns i `app/utils/arsrapport.py` och endpointsen i
 ```
 {round, genebank_id, activated, counts: {läge: antal},
  rows: [{herd, herd_name, state, source, membership_after_end, received_at, on_time_override,
-         inbox_item_id, flags: {ej_angivna, ej_angivna_paverkar},
+         inbox_item_id, telefon (bara för genbanksansvariga och administratör), flags: {ej_angivna, ej_angivna_paverkar},
          villkor: {hane, hona, kull, i_tid},
          statistik: {kullar, ungar, levande_6v, honor, hanar}}]}
 ```

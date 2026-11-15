@@ -753,7 +753,8 @@ kaniner som avgör stödet. Varje rad visar besättningen (koden öppnar rapport
 villkoren för stöd (**Hane**, **Hona**, **Kull**, **I tid**, med bock eller kryss), flaggor som
 **3 ej angivna**, när rapporten togs emot och åtgärder: **Mata in blankett** öppnar inkorgen
 för besättningen, och genbanksansvarig kan välja **I tid** (**Räknas**, **Ja** eller **Nej**)
-på en rad med rapport.
+på en rad med rapport. Genbanksansvariga ser också huvudmedlemmens telefonnummer på raden, så att de kan ringa;
+hjälpare ser det inte.
 
 #### Notiser
 

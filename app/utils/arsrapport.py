@@ -758,11 +758,12 @@ def _row_states(herds, round_):
     return items, drafts, emails
 
 
-def status_view(round_, genebank_id):
+def status_view(round_, genebank_id, with_phone=False):
     """
     StatusView (5.14): a row per active herd of the genebank, and per herd with any report in the round (a withdrawn
     one too), with its state (the first that holds of STATES), the support conditions and the register statistics.
-    A fixed number of queries however many herds there are.
+    A fixed number of queries however many herds there are. `with_phone` adds the main member's phone to each row
+    (`telefon`, null without one); without it the key is absent.
     """
     year, last = round_.report_year, date(round_.report_year, 12, 31)
     in_round = list(
@@ -797,6 +798,16 @@ def status_view(round_, genebank_id):
             Individual.id.in_(unstated)
         )
     }
+    phones = {}
+    if with_phone:
+        for row in (  # the first main member, as in _row_states
+            Member.select(Herd.id.alias("herd_id"), Member.phone)
+            .join(Herd, on=(Herd.membership == Member.membership))
+            .where(Herd.id.in_([h.id for h in herds]), Member.role == "huvudmedlem", Member.end_date.is_null(True))
+            .order_by(Member.id)
+            .dicts()
+        ):
+            phones.setdefault(row["herd_id"], row["phone"] or None)
     rows = []
     for herd in herds:
         report, body, item = reports.get(herd.id), data.get(herd.id, {}), items.get(herd.id)
@@ -845,6 +856,7 @@ def status_view(round_, genebank_id):
                     "honor": stat.honor if stat else 0,
                     "hanar": stat.hanar if stat else 0,
                 },
+                **({"telefon": phones.get(herd.id)} if with_phone else {}),
             }
         )
     counts = Counter(row["state"] for row in rows)

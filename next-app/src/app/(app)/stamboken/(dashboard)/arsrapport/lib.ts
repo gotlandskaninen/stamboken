@@ -831,6 +831,7 @@ export interface StatusRow {
   received_at: string | null;
   on_time_override: boolean | null;
   inbox_item_id: number | null;
+  telefon?: string | null; // only for genebank managers
   flags: { ej_angivna: number; ej_angivna_paverkar: boolean };
   villkor: Villkor;
   statistik: {

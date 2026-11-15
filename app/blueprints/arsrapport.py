@@ -215,7 +215,9 @@ def status(year):
     round_ = arsrapport.get_round(year)
     if round_ is None or Genebank.get_or_none(Genebank.id == genebank_id) is None:
         raise ArsrapportError(404, f"Rundan för {year} eller genbanken finns inte.")
-    return jsonify(arsrapport.status_view(round_, genebank_id))
+    # The phone is for calling; helpers do not get it.
+    with_phone = check_genebank_access(genebank_id) is None
+    return jsonify(arsrapport.status_view(round_, genebank_id, with_phone=with_phone))
 
 
 # [Next.js] The blank årsblankett as a PDF, put on the private volume by ops (docs/arsrapport.md).

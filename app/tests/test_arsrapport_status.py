@@ -249,6 +249,15 @@ class StatusTest(ArsrapportTest):
         self.assertEqual(denied.status_code, 403)
         self.assertIsNone(db.YearlyHerdReport.get(db.YearlyHerdReport.herd == self.h.id).on_time_override)
 
+    def test_phone_only_for_the_manager(self):
+        db.Member.update(phone="070-000 00 00").where(db.Member.membership == self.h.membership).execute()
+        other = self.herd("G9002")  # a main member without a phone
+        self.assertEqual(self.rows("man")["G9001"]["telefon"], "070-000 00 00")
+        self.assertEqual(self.rows("admin")["G9001"]["telefon"], "070-000 00 00")
+        self.assertIsNone(self.rows("man")[other.herd]["telefon"])
+        for row in self.rows("hjalp").values():
+            self.assertNotIn("telefon", row)
+
     def test_status_row_does_not_expose_the_account(self):
         db.Herd.update(bank_account_number="12345678901").where(db.Herd.id == self.h.id).execute()
         self.reported(self.h)

@@ -87,6 +87,21 @@ describe("StatusTable", () => {
       screen.getAllByText("Mata in blankett")[0].getAttribute("href"),
     ).toBe("/stamboken/inkorg?herd=G9001");
   });
+  it("shows a tel link only on a row with a phone", () => {
+    render(
+      <StatusTable
+        view={view([base, { ...sent, telefon: "070-000 00 00" }])}
+        year={2026}
+        genebankId={1}
+        filter="alla"
+        canEdit
+        env="demo"
+      />,
+    );
+    const phone = screen.getByText("070-000 00 00");
+    expect(phone.getAttribute("href")).toBe("tel:0700000000");
+    expect(document.querySelectorAll('a[href^="tel:"]')).toHaveLength(1);
+  });
   it("shows no payment control", () => {
     show(true);
     expect(document.body.textContent).not.toMatch(/Nordea|pain|betalning/i);
