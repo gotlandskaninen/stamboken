@@ -5,13 +5,14 @@ Thin route handlers — business logic belongs in utils/arsrapport.py.
 See ADR-0007 for blueprint conventions.
 """
 
+import os
 import uuid
 from dataclasses import asdict
 from datetime import date, datetime
 
 import utils.arsrapport as arsrapport
 import utils.inbox as inbox
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, send_file
 from flask_login import current_user
 from utils.arsrapport import ArsrapportError
 from utils.database import OUTSIDE_GENEBANK_HERDS, Genebank, Herd, YearlyReportRound
@@ -179,3 +180,49 @@ def withdraw(herd, year):
         raise ArsrapportError(400, "Ange revisionen som ett heltal.", field="revision")
     view = arsrapport.withdraw(herd, round_, access, current_user, revision=revision, reason=body.get("reason"))
     return jsonify(view)
+
+
+# [Next.js] "I tid" for a submitted report: body {on_time: true | false | null}; the genebank's manager or admin.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/i-tid", methods=["POST"])
+@json_login_required
+def on_time(herd, year):
+    target = Herd.get_or_none(Herd.herd == herd)
+    if target is None or target.herd in OUTSIDE_GENEBANK_HERDS:
+        raise ArsrapportError(404, "Besättningen finns inte.")
+    denied = check_genebank_access(target.genebank_id)
+    if denied:
+        return denied
+    round_ = arsrapport.get_round(year)
+    report = arsrapport.current_report(target, round_) if round_ else None
+    if report is None:
+        raise ArsrapportError(404, "Besättningen har ingen inskickad rapport för året.")
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict) or not isinstance(body.get("on_time", ""), bool | None):
+        raise ArsrapportError(400, "Ange on_time som true, false eller null.", field="on_time")
+    report = arsrapport.set_on_time(report, current_user, body["on_time"])
+    return jsonify({"on_time_override": report.on_time_override})
+
+
+# [Next.js] The status view of one genebank: admin, its manager or its helper (inbox.can_handle).
+@arsrapport_bp.route("/v2/arsrapport/<int:year>/status", methods=["GET"])
+@json_login_required
+def status(year):
+    genebank_id = request.args.get("genebank_id", type=int)
+    if genebank_id is None:
+        raise ArsrapportError(400, "Ange genebank_id som ett nummer.", field="genebank_id")
+    if not inbox.can_handle(current_user, genebank_id):
+        return problem(403, "Åtkomst nekad", "Du saknar behörighet för denna genbank.")
+    round_ = arsrapport.get_round(year)
+    if round_ is None or Genebank.get_or_none(Genebank.id == genebank_id) is None:
+        raise ArsrapportError(404, f"Rundan för {year} eller genbanken finns inte.")
+    return jsonify(arsrapport.status_view(round_, genebank_id))
+
+
+# [Next.js] The blank årsblankett as a PDF, put on the private volume by ops (docs/arsrapport.md).
+@arsrapport_bp.route("/v2/arsrapport/blankett.pdf", methods=["GET"])
+@json_login_required
+def blank_form():
+    path = inbox.private_path(arsrapport.BLANK_FORM)
+    if not os.path.isfile(path):
+        return problem(404, "Hittades inte", "Blanketten finns inte på servern än.")
+    return send_file(path, mimetype="application/pdf", max_age=0)

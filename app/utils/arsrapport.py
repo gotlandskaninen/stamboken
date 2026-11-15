@@ -21,6 +21,7 @@ from flask import current_app
 from peewee import JOIN, IntegrityError, fn
 
 import utils.inbox as inbox
+from utils.arsrapport_statistik import SEXES, Kanin, innehav, statistik
 from utils.database import (
     DB_PROXY,
     LIFE_SIGN_KINDS,
@@ -41,6 +42,7 @@ from utils.database import (
     MemberChangeRequest,
     Membership,
     PublicationConsentChange,
+    SaleProposal,
     Weight,
     YearlyHerdReport,
     YearlyReportDraft,
@@ -88,6 +90,8 @@ from utils.members import CONSENT_TEXT_VERSION, consent_from_answer, effective_c
 from utils.reference_population import _alive_by_note
 
 STOCKHOLM = ZoneInfo("Europe/Stockholm")
+BLANK_FORM = "arsrapport/arsblankett.pdf"  # under settings.service.private_upload_folder (D14)
+STATES = ("avslutar", "inskickad", "blankett_vantar", "blankett_inkommen", "paborjad", "ingen_epost", "ej_rapporterad")
 DATE_FIELDS = ("start_date", "deadline", "end_date")
 DRAFT_MAX_BYTES = 256 * 1024
 WITHDRAW_DAYS = 7  # fråga 15: owners and caretakers withdraw until 7 days after the first submission
@@ -469,12 +473,63 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
         )
 
 
-def on_time(report, round_):
-    """i_tid: the manager's override if set, else the Stockholm date of received_at on or before the deadline."""
+def _on_time(report, deadline):
     if report.on_time_override is not None:
         return report.on_time_override
     received = report.received_at
-    return bool(received and round_.deadline and received.astimezone(STOCKHOLM).date() <= round_.deadline)
+    return bool(received and deadline and received.astimezone(STOCKHOLM).date() <= deadline)
+
+
+def on_time(report, round_):
+    """i_tid: the manager's override if set, else the Stockholm date of received_at on or before the deadline."""
+    return _on_time(report, round_.deadline)
+
+
+def set_on_time(report, user, value):
+    """
+    The manager's "i tid" override (True, False, or None for the date's own answer), under Skicka's advisory lock;
+    received_at is never touched, so the override holds after a later change (case 5). Returns the fresh row.
+    """
+    with DB_PROXY.atomic():
+        lock_report(report.round, report.herd)
+        report = YearlyHerdReport.get_or_none(
+            (YearlyHerdReport.id == report.id) & (YearlyHerdReport.status == "submitted")
+        )
+        if report is None:
+            raise ArsrapportError(409, "Rapporten har ändrats.")
+        report.on_time_override, report.on_time_set_by = value, user.id
+        report.save(only=[YearlyHerdReport.on_time_override, YearlyHerdReport.on_time_set_by])
+    return report
+
+
+def support_conditions(held, stat, report, deadline):
+    """
+    The four support conditions of one herd (spec 8): an uncastrated male and female among `held` (the herd's
+    `innehav` rows), a litter with a kit born (`stat`), and the report in time. Castrated rabbits do not count.
+    """
+    breeders = {kanin.sex for kanin in held if not kanin.kastrerad}
+    return {
+        "hane": "male" in breeders,
+        "hona": "female" in breeders,
+        "kull": stat is not None and stat.kullar_med_ungar >= 1,
+        "i_tid": report is not None and _on_time(report, deadline),
+    }
+
+
+def _pending_sales(last):
+    """The rabbits with a pending sale proposal dated on or before `last`: they are no holding for the support."""
+    query = SaleProposal.select(SaleProposal.individual).where(
+        SaleProposal.state == "foreslagen", SaleProposal.sale_date <= last
+    )
+    return {proposal.individual_id for proposal in query}
+
+
+def herd_conditions(herd, round_, report):
+    """One herd's villkor: the same rule as the status view, read from the genebank's `innehav` and `statistik`."""
+    year, genebank_id = round_.report_year, herd.genebank_id
+    pending = _pending_sales(date(year, 12, 31))
+    held = [kanin for kanin in innehav(genebank_id, year).get(herd.id, []) if kanin.individual_id not in pending]
+    return support_conditions(held, statistik(genebank_id, year).get(herd.id), report, round_.deadline)
 
 
 def withdraw_until(report, access):
@@ -517,7 +572,7 @@ def account_end(herd):
 
 
 def report_view(herd, round_, access, user):
-    """ReportView for the herd and the round's year, as `access` sees it (the villkor come in Task 12)."""
+    """ReportView for the herd and the round's year, as `access` sees it ."""
     year = round_.report_year
     first, last = date(year, 1, 1), date(year, 12, 31)
     activated = _activations(round_).where(YearlyReportRoundGenebank.genebank == herd.genebank_id).exists()
@@ -593,7 +648,9 @@ def report_view(herd, round_, access, user):
         "litters": [{**row, "birth_date": _iso(row["birth_date"])} for row in litters.dicts()],
         "sales": [{**row, "date": _iso(row["date"])} for row in sales.dicts()],
         "herds": sorted(row.herd for row in others),
-        "report": _report_json(report, round_, access, is_open) if report else None,
+        "report": {**_report_json(report, round_, access, is_open), "villkor": herd_conditions(herd, round_, report)}
+        if report
+        else None,
         "draft": draft_json(draft, user) if draft else None,
         "item": {
             "id": item.id,
@@ -637,6 +694,133 @@ def my_reports(user):
         if row.genebank_id == herd.genebank_id
     ]
     return sorted(reports, key=lambda report: (-report["year"], report["herd"]))
+
+
+def _row_states(herds, round_):
+    """Each herd's item, draft and e-mail facts in one query apiece, for status_view's state."""
+    ids = [herd.id for herd in herds]
+    form = InboxDocument.select(InboxDocument.item).where(InboxDocument.doc_type == "arsblankett")
+    items = {}
+    for item in (
+        InboxItem.select(InboxItem.id, InboxItem.herd, InboxItem.state)
+        .where(InboxItem.herd.in_(ids), InboxItem.state.in_(inbox.OPEN_STATES), InboxItem.id.in_(form))
+        .order_by(InboxItem.id)
+    ):
+        kept = items.get(item.herd_id)
+        if kept is None or (item.state == "vantar_uppfodare" and kept.state != "vantar_uppfodare"):
+            items[item.herd_id] = item
+    drafts = {
+        draft.herd_id
+        for draft in YearlyReportDraft.select(YearlyReportDraft.herd).where(
+            YearlyReportDraft.round == round_.id, YearlyReportDraft.herd.in_(ids)
+        )
+    }
+    emails = {}
+    holders = (
+        Member.select(Herd.id.alias("herd_id"), Member.email)
+        .join(Herd, on=(Herd.membership == Member.membership))
+        .where(Herd.id.in_(ids), Member.role == "huvudmedlem", Member.end_date.is_null(True))
+        .order_by(Member.id)
+    )
+    for row in holders.dicts():  # the first main member, as inbox.herd_holder
+        emails.setdefault(row["herd_id"], row["email"])
+    return items, drafts, emails
+
+
+def status_view(round_, genebank_id):
+    """
+    StatusView (5.14): a row per active herd of the genebank, and per herd with a report in the round, with its
+    state (the first that holds of STATES), the support conditions and the register statistics. A fixed number of
+    queries however many herds there are.
+    """
+    year, last = round_.report_year, date(round_.report_year, 12, 31)
+    reports = {
+        report.herd_id: report
+        for report in YearlyHerdReport.select()
+        .join(Herd)
+        .where(
+            YearlyHerdReport.round == round_.id, YearlyHerdReport.status == "submitted", Herd.genebank == genebank_id
+        )
+    }
+    herds = list(
+        Herd.select()
+        .where(
+            Herd.genebank == genebank_id,
+            Herd.herd.not_in(OUTSIDE_GENEBANK_HERDS),
+            (Herd.is_active == True) | Herd.id.in_(list(reports)),  # noqa: E712
+        )
+        .order_by(Herd.herd)
+    )
+    items, drafts, emails = _row_states(herds, round_)
+    held, stats, pending = innehav(genebank_id, year), statistik(genebank_id, year), _pending_sales(last)
+    data = {herd_id: json.loads(report.data) for herd_id, report in reports.items()}
+    unstated = sorted({int(i) for body in data.values() for i in body.get("not_stated") or ()})
+    extra = {
+        row.id: Kanin(
+            row.id, SEXES.get(row.sex), row.sex == "eunuch" or bool(row.castration_date and row.castration_date <= last)
+        )
+        for row in Individual.select(Individual.id, Individual.sex, Individual.castration_date).where(
+            Individual.id.in_(unstated)
+        )
+    }
+    rows = []
+    for herd in herds:
+        report, body, item = reports.get(herd.id), data.get(herd.id, {}), items.get(herd.id)
+        if report and body.get("ending_genbank"):
+            state = "avslutar"
+        elif report:
+            state = "inskickad"
+        elif item and item.state == "vantar_uppfodare":
+            state = "blankett_vantar"
+        elif item:
+            state = "blankett_inkommen"
+        elif herd.id in drafts:
+            state = "paborjad"
+        elif not emails.get(herd.id):
+            state = "ingen_epost"
+        else:
+            state = "ej_rapporterad"
+        counted = [kanin for kanin in held.get(herd.id, []) if kanin.individual_id not in pending]
+        stat = stats.get(herd.id)
+        villkor = support_conditions(counted, stat, report, round_.deadline)
+        not_stated = body.get("not_stated") or []
+        # U12: set when the four conditions hold only if the rabbits the form left out are counted
+        listed = {kanin.individual_id for kanin in counted}
+        more = [extra[i] for i in not_stated if i in extra and i not in listed and i not in pending]
+        affects = bool(
+            not_stated
+            and not all(villkor.values())
+            and all(support_conditions(counted + more, stat, report, round_.deadline).values())
+        )
+        rows.append(
+            {
+                "herd": herd.herd,
+                "herd_name": herd.herd_name,
+                "state": state,
+                "source": report.source if report else None,
+                "membership_after_end": body.get("membership_after_end"),
+                "received_at": _iso(report.received_at) if report else None,
+                "on_time_override": report.on_time_override if report else None,
+                "inbox_item_id": (report.inbox_item_id if report else None) or (item.id if item else None),
+                "flags": {"ej_angivna": len(not_stated), "ej_angivna_paverkar": affects},
+                "villkor": villkor,
+                "statistik": {
+                    "kullar": stat.kullar if stat else 0,
+                    "ungar": stat.ungar if stat else 0,
+                    "levande_6v": stat.levande_6v if stat else 0,
+                    "honor": stat.honor if stat else 0,
+                    "hanar": stat.hanar if stat else 0,
+                },
+            }
+        )
+    counts = Counter(row["state"] for row in rows)
+    return {
+        "round": round_json(round_),
+        "genebank_id": genebank_id,
+        "activated": _activations(round_).where(YearlyReportRoundGenebank.genebank == genebank_id).exists(),
+        "counts": {state: counts[state] for state in STATES},
+        "rows": rows,
+    }
 
 
 # The submission (the plan's body shape; section 6 for `report`)
