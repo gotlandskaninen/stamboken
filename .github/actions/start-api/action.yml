@@ -79,7 +79,9 @@ runs:
       shell: bash
       env:
         CONTAINER_NAME: ${{ inputs.container-name }}
-      run: docker exec "$CONTAINER_NAME" flask seed create --verbose
+      run: |
+        docker exec "$CONTAINER_NAME" flask seed create --verbose
+        docker exec "$CONTAINER_NAME" flask seed arsrapport --verbose
 
     - name: Create test users
       shell: bash

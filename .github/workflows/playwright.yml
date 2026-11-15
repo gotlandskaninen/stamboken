@@ -223,6 +223,7 @@ jobs:
       - name: Seed test data
         run: |
           docker compose -f docker-compose.local-production.yml exec -T api flask seed create --verbose
+          docker compose -f docker-compose.local-production.yml exec -T api flask seed arsrapport --verbose
 
       - name: Create legacy test users
         run: |
