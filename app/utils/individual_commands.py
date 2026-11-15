@@ -453,12 +453,22 @@ def known_litter(breeding_id):
     return litter
 
 
-def known_color(name):
-    """The first colour so named, of any genebank."""
-    color = Color.get_or_none(Color.name == name)
+def known_color(name, genebank_id):
+    """The colour so named in the genebank: two genebanks may name one alike (Albino)."""
+    color = Color.get_or_none(Color.name == name, Color.genebank == genebank_id)
     if color is None:
         raise IndividualRefused(f"Unknown color: '{name}''")
     return color
+
+
+def _color_of(name, individual):
+    """The colour within the rabbit's genebank; a stored colour sent back unchanged stays (legacy always sends it)."""
+    try:
+        return known_color(name, individual.current_herd.genebank_id)
+    except IndividualRefused:
+        if individual.color_id is not None and individual.color.name == name:
+            return individual.color
+        raise
 
 
 def known_origin_herd(code):
@@ -496,7 +506,7 @@ class _FormFields(PolicyCommand):
 
     def check_color(self, ctx):
         if "color" in self.changes:
-            known_color(self.changes["color"])
+            _color_of(self.changes["color"], ctx.individual)
 
     def check_dates(self, ctx):
         for key, value in self.changes.items():
@@ -510,7 +520,7 @@ class _FormFields(PolicyCommand):
                 setattr(ind, key, _form_date(value))
                 continue
             if key == "color":
-                value = known_color(value)
+                value = _color_of(value, ind)
             setattr(ind, key, value)
 
 
