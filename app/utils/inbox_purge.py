@@ -179,9 +179,13 @@ def _current_sale(row):
     """
     The active row a proof's sale became: the row itself, or, for one a correction voided, the move into the same
     herd that the correction wrote for the rabbit (the first; one only into GX1/MX1, _outside_pairs), followed through
-    later corrections. None when the chain ends without an active row. It cannot loop: each step is a newer row.
+    later corrections. None when the chain ends without an active row, or loops (a nightly job never spins).
     """
+    seen = set()
     while row is not None and row.voided_at is not None:
+        if row.id in seen:
+            return None
+        seen.add(row.id)
         row = (
             HerdTracking.select()
             .where(
