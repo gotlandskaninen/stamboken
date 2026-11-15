@@ -120,6 +120,17 @@ echo "Source: $SOURCE_DB -> Target: $TARGET_DB"
 SOURCE_USERS=$(docker exec "$CONTAINER" psql -U "$DB_USER" -d "$SOURCE_DB" -tAc \
 	"SELECT count(*) FROM hbuser;")
 
+# The demo's own mail id sequence: the dump leaves the mail tables empty and carries no setval, so the new
+# database would count from 1 again and repeat Message-IDs (a pure function of the id) of mail already sent.
+# Read from the old demo before the swap, set on the staging copy after its buyers are gone. Empty when the
+# database or the sequence does not exist yet.
+MAIL_SEQ_SQL="SELECT CASE WHEN to_regclass('mail_message_id_seq') IS NOT NULL THEN (SELECT last_value FROM mail_message_id_seq) END;"
+SET_MAIL_SEQ_SQL="SELECT CASE WHEN to_regclass('mail_message_id_seq') IS NOT NULL THEN setval('mail_message_id_seq', GREATEST(%s, (SELECT last_value FROM mail_message_id_seq))) END;"
+MAIL_SEQ=$(docker exec "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -tAc "$MAIL_SEQ_SQL" 2>/dev/null || true)
+if ! [[ "$MAIL_SEQ" =~ ^[0-9]+$ ]]; then
+	MAIL_SEQ=""
+fi
+
 # The copy is loaded and cleaned in a staging database that nothing reads, and
 # only then renamed to the demo database: the demo API never sees production's
 # buyers outside the association, not even for a moment (ADR-0016). Loading a
@@ -162,6 +173,12 @@ docker exec "$CONTAINER" bash -c "
 DROP_BUYERS_SQL="DO \$\$ BEGIN IF to_regclass('buyer_contact') IS NOT NULL THEN DELETE FROM buyer_contact; END IF; END \$\$;"
 echo "Deleting the buyers outside the association in $STAGING_DB..."
 docker exec "$CONTAINER" psql -U "$DB_USER" -d "$STAGING_DB" -v ON_ERROR_STOP=1 -q -c "$DROP_BUYERS_SQL"
+
+if [ -n "$MAIL_SEQ" ]; then
+	# shellcheck disable=SC2059  # the SQL template is the format
+	docker exec "$CONTAINER" psql -U "$DB_USER" -d "$STAGING_DB" -v ON_ERROR_STOP=1 -qtAc \
+		"$(printf "$SET_MAIL_SEQ_SQL" "$MAIL_SEQ")" >/dev/null
+fi
 
 # The copy carries prod's genetics version counter, which can repeat a number
 # api-test already memoized in Redis for the previous demo data: a new epoch

@@ -6,6 +6,7 @@ isort:skip_file
 import os
 import smtplib
 from datetime import timedelta
+from unittest import mock
 
 os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), "auth.ini.test"))
 
@@ -97,6 +98,12 @@ class TestStatusApi(MailTest):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual((resp.get_json()["status"], resp.get_json()["attempts"]), ("queued", 0))
 
+    def test_a_logged_mail_can_be_retried(self):
+        self.login("admin")
+        db.MailMessage.update(status="logged").where(db.MailMessage.id == self.mellerud).execute()
+        resp = self.client.post(f"/api/v2/mail/messages/{self.mellerud}/retry")
+        self.assertEqual((resp.status_code, resp.get_json()["status"]), (200, "queued"))
+
     def test_status_gives_the_latest_row_per_kind(self):
         a = db.MemberApplication.get()
         newer = mail.enqueue_mail(
@@ -123,6 +130,22 @@ class TestSenderAlarms(MailTest):
         status = mail.sender_alarms(later)
         self.assertEqual(status["alarms"], [])
         self.assertEqual(status["last_sent_at"], later.isoformat())
+
+    def test_log_mode_in_production_is_an_alarm_but_not_on_the_demo(self):
+        mail.send_pending(self.now)
+        for env, demo, mode, expected in (
+            ("production", False, "log", ["log_mode"]),
+            ("production", True, "log", []),
+            ("production", False, "live", []),
+            ("development", False, "log", []),
+        ):
+            with (
+                self.subTest(env=env, demo=demo, mode=mode),
+                mock.patch.dict(os.environ, {"FLASK_ENV": env}),
+                mock.patch.multiple(settings.mail, mode=mode),
+                mock.patch.object(settings.service, "demo_instance", demo),
+            ):
+                self.assertEqual([a["code"] for a in mail.sender_alarms(self.now)["alarms"]], expected)
 
     def test_queue_stalled_when_the_sender_has_not_run(self):
         self.assertEqual([a["code"] for a in mail.sender_alarms(self.now)["alarms"]], ["queue_stalled"])

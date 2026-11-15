@@ -40,7 +40,8 @@ class _TokenMaskFilter(logging.Filter):
 def on_starting(server):
     """Clean up stale scheduler lock from previous runs."""
     # Before the workers fork, so every worker's access log is masked.
-    logging.getLogger("gunicorn.access").addFilter(_TokenMaskFilter())
+    for name in ("gunicorn.access", "gunicorn.error"):
+        logging.getLogger(name).addFilter(_TokenMaskFilter())
     try:
         os.unlink(SCHEDULER_LOCK)
     except FileNotFoundError:
