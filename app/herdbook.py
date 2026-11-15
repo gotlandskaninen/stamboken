@@ -57,17 +57,9 @@ from utils.cert_acess import (
     download_certificate_s3,
     get_certificate,
     get_certificate_data,
-    sign_data,
-    upload_certificate,
     verify_certificate_checksum,
     verify_signature,
 )
-from utils.cert_service_v2 import (
-    certificate_form,
-    certificate_update,
-    update_breeding_if_changed,
-)
-from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
@@ -2462,102 +2454,16 @@ def breeding_suggestions(g_id):
         return jsonify({"error": "Error calculating breeding suggestions"}), 500
 
 
-class _CertificateRefused(Exception):
-    """A refused legacy certificate request, raised inside its transaction so nothing commits."""
-
-    def __init__(self, message, result=None):
-        super().__init__(message)
-        # roster_alive_exceeds_6w: how many kits the breeder must mark dead (a new field, ADR-0006)
-        self.extra = {key: result[key] for key in ("must_mark_dead",) if key in (result or {})}
-
-
-def _sign_stored_certificate(ind_data, user_id, form, issue_digital=False):
-    """
-    Apply the certificate form, then sign and upload a PDF rendered from the re-read rabbit, all
-    in one transaction: a refused breeding or individual update, a failed signing or a
-    failed upload commits nothing, and the body never reaches the PDF or the S3 key.
-    Returns (signed pdf, re-read individual dict). Raises _CertificateRefused.
-    """
-    with db.DATABASE.atomic():
-        # Global lock order: Breeding, then the rabbit + the litter's parents (update_breeding locks them).
-        da.lock_individual_for_edit(ind_data["id"], None, with_parents=True)
-        # The route read the rabbit before the lock: a certificate issued by another route or a renumber
-        # committed since must not be overwritten by that read. Re-read it and decide on that row;
-        # update_individual re-checks the edit right and refuses a voided rabbit under this lock.
-        locked = db.Individual.get_by_id(ind_data["id"])
-        if issue_digital and (locked.certificate or locked.digital_certificate):
-            raise _CertificateRefused("Certificate already exists")
-        if not issue_digital and locked.digital_certificate is None:
-            raise _CertificateRefused("Certificate was not updated")
-        ind_data = locked.as_dict()
-        result = update_breeding_if_changed(ind_data, form, user_id)
-        if result and result.get("status") == "error":
-            raise _CertificateRefused(result["message"])
-        # update_individual also refuses a first certificate past the litter quota.
-        result = da.update_individual(certificate_update(ind_data, form), user_id, issue_digital=issue_digital)
-        if result.get("status") == "error":
-            raise _CertificateRefused(result["message"], result)
-        ind_data = da.get_individual(locked.number, user_id)
-        pdf_bytes = get_certificate(get_certificate_data(dict(ind_data), user_id))
-        signed_data = sign_data(pdf_bytes)
-        # The S3 key is the number: wait for a renumber still moving its assets (as a photo upload does).
-        number_assets.lock_number(ind_data["number"], xact=True)
-        if not upload_certificate(pdf_bytes=signed_data.getvalue(), ind_number=ind_data["number"]):
-            raise _CertificateRefused("Certificate could not be uploaded")
-    return signed_data, ind_data
+def _certificate_gone():
+    """Certificates are issued and changed in the new Stamboken only."""
+    return jsonify({"response": "Intyg utfärdas och ändras nu i nya Stamboken."}), 410
 
 
 @APP.route("/api/certificates/update/<i_number>", methods=["PATCH"])
 @login_required
 def update_certificate(i_number):
-    """
-    Returns an updated pdf of the individual given by `i_number`.
-    """
-    user_id = session.get("user_id", None)
-    ind_data = da.get_individual(i_number, user_id)
-    # get_individual currently returns a dict, not an individual
-    if ind_data is None:
-        return jsonify({"response": "Individual not found"}), 404
-    # Read access is not enough to sign; 404 is this route's refusal status.
-    if not da.fetch_user_info(user_id).can_edit(ind_data["id"]):
-        return jsonify({"response": "Forbidden"}), 404
-
-    certificate_exists = ind_data.get("digital_certificate", None)
-    uploaded = False
-
-    try:
-        present = check_certificate_s3(ind_number=ind_data["number"])
-        if certificate_exists and present:
-            signed_data, ind_data = _sign_stored_certificate(ind_data, user_id, certificate_form(request.json))
-            uploaded = True
-    except _CertificateRefused as exc:
-        return jsonify({"response": str(exc), **exc.extra}), 404
-    except da.HerdTrackingError as exc:  # e.g. the rabbit changed before the lock
-        return jsonify({"response": exc.detail}), 404
-    except HTTPException:
-        raise
-    except Exception as ex:  # pylint: disable=broad-except
-        APP.logger.error("Unexpected error while updating certificate: " + str(ex))
-        return jsonify({"response": "Error processing your request"}), 404
-
-    # Invalidate caches after certificate update
-    try:
-        from utils.cache_invalidation import get_genebank_id_for_herd, trigger_invalidation
-
-        origin_herd = ind_data.get("origin_herd", {})
-        herd_code = origin_herd.get("herd", "") if isinstance(origin_herd, dict) else str(origin_herd)
-        for gid in get_genebank_id_for_herd(herd_code):
-            trigger_invalidation(gid)
-    except Exception as e:
-        APP.logger.warning(f"Cache invalidation failed after update_certificate: {e}")
-
-    if uploaded:
-        return create_pdf_response(
-            pdf_bytes=signed_data.getvalue(),
-            obj_name=f"{ind_data['certificate']}.pdf",
-        )
-
-    return jsonify({"response": "Certificate was not updated"}), 404
+    """Gone: re-issuing a certificate is done in the new Stamboken."""
+    return _certificate_gone()
 
 
 @APP.route("/api/certificates/issue/<i_number>", methods=["GET", "POST"])
@@ -2566,6 +2472,9 @@ def issue_certificate(i_number):
     """
     Returns an issued pdf certificate of the individual given by `i_number`.
     """
+    if request.method == "POST":
+        return _certificate_gone()
+
     user_id = session.get("user_id", None)
     ind_data = da.get_individual(i_number, user_id)
     # get_individual currently returns a dict, not an individual
@@ -2573,7 +2482,6 @@ def issue_certificate(i_number):
         return jsonify({"response": "Individual not found"}), 404
 
     certificate_exists = ind_data.get("digital_certificate", None)
-    paper_certificate_exists = ind_data.get("certificate", None)
 
     if request.method == "GET":
         try:
@@ -2584,42 +2492,6 @@ def issue_certificate(i_number):
         except Exception as ex:  # pylint: disable=broad-except
             print(ex)
             return jsonify({"response": "Error processing your request"}), 400
-
-    elif request.method == "POST":
-        if certificate_exists or paper_certificate_exists:
-            return jsonify({"response": "Certificate already exists"}), 400
-        # Read access is not enough to sign; 400 is this route's refusal status.
-        if not da.fetch_user_info(user_id).can_edit(ind_data["id"]):
-            return jsonify({"response": "Forbidden"}), 400
-
-        try:
-            signed_data, ind_data = _sign_stored_certificate(
-                ind_data, user_id, certificate_form(request.json), issue_digital=True
-            )
-        except _CertificateRefused as exc:
-            return jsonify({"response": str(exc), **exc.extra}), 400
-        except da.HerdTrackingError as exc:  # e.g. the rabbit changed before the lock
-            return jsonify({"response": exc.detail}), 400
-        except HTTPException:
-            raise
-        except Exception as ex:  # pylint: disable=broad-except
-            print(ex)
-            return jsonify({"response": "Error processing your request"}), 400
-
-        # Invalidate caches after certificate issuance
-        try:
-            from utils.cache_invalidation import get_genebank_id_for_herd, trigger_invalidation
-
-            origin_herd = ind_data.get("origin_herd", {})
-            herd_code = origin_herd.get("herd", "") if isinstance(origin_herd, dict) else str(origin_herd)
-            for gid in get_genebank_id_for_herd(herd_code):
-                trigger_invalidation(gid)
-        except Exception as e:
-            APP.logger.warning(f"Cache invalidation failed after issue_certificate: {e}")
-
-        cert_number = ind_data["digital_certificate"]
-        APP.logger.info(f"Digital certificate for {ind_data['number']} was created with number {cert_number}")
-        return create_pdf_response(pdf_bytes=signed_data.getvalue(), obj_name=f"{cert_number}.pdf")
 
 
 @APP.route("/api/certificates/preview/<i_number>", methods=["POST", "GET"])
