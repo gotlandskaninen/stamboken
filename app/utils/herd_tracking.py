@@ -444,7 +444,7 @@ def replace_birth_row(individual, user, *, herd=None, date=None, reason, operati
             new_date is None or new_date == coerce_date(birth.herd_tracking_date)
         ):
             return birth  # nothing to replace: no void, no new row
-        voided = _void_rows([birth], user, reason, op)
+        _void_rows([birth], user, reason, op)  # a BIRTH row never holds a buyer
         new_birth = HerdTracking.create(
             individual=ind.id,
             herd=new_herd if new_herd is not None else birth.herd_id,
@@ -459,8 +459,6 @@ def replace_birth_row(individual, user, *, herd=None, date=None, reason, operati
         if not user.is_admin and _moves_across_genebanks(ind, before, after):
             raise HerdTrackingForbidden(GENEBANK_CHANGE_ADMIN_ONLY)
         _assert_no_new_violations(ind, before, after)
-        paths = _drop_orphan_buyers(voided, VOID_ACTION, user)
-    _remove_after_commit(paths)
     return new_birth
 
 
