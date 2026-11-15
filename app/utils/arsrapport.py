@@ -925,12 +925,13 @@ def current(report, individual_id) -> list[Effect]:
     rabbit = None
     for command in (command for command in deaths if str(command.operation_id) in ops):
         rabbit = rabbit or Individual.get_by_id(individual_id)
-        # P39b: the log has the changed columns only; the others are the rabbit's
         stored = {"death_date": _iso(rabbit.death_date), "butchered": rabbit.butchered, "death_note": rabbit.death_note}
-        after = stored | (command.after or {})
-        if after["death_date"] is not None:
-            day = coerce_date(after["death_date"])
-            value = (day, bool(after["butchered"]), after["death_note"] or None)
+        # Undo's own test: an editor replaced or cleared the death on the rabbit page, so it is no longer there
+        if any(stored.get(key) != value for key, value in (command.after or {}).items()):
+            continue
+        if stored["death_date"] is not None:  # P39b: the log has the changed columns only, the rabbit has them all
+            day = coerce_date(stored["death_date"])
+            value = (day, bool(stored["butchered"]), stored["death_note"] or None)
             effects.append(Effect("death", day, value, ref=command.operation_id))
     added = [m for submission in submissions for m in submission.added_measurements]
     listed = [m for m in added if m["individual_id"] == individual_id]

@@ -14,7 +14,7 @@ import utils.arsrapport as arsrapport
 import utils.database as db
 from utils.arsrapport import ArsrapportError, Effect, order, partial_date
 from utils.herd_tracking import CONTACT_CONSENT_NEEDED
-from utils.individual_commands import Undo, execute
+from utils.individual_commands import ClearFields, RecordDeath, Undo, execute
 
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.ht_helpers import _void, ht_row
@@ -187,6 +187,36 @@ class TorrkorningTest(ArsrapportTest):
         execute(db.User.get_by_id(self.admin.id), dead.id, lambda ctx: [Undo(death_op, reason="Fel kanin")])
         self.assertEqual(arsrapport.current(report, kept.id), [Effect("weight", LAST, (2.8,))])
         self.assertEqual(arsrapport.current(report, dead.id), [])
+
+    def test_death_an_editor_replaced_or_cleared_is_not_current(self):  # review Important 1
+        replaced, cleared, other = self.rabbits(self.h, 3)
+        report = self.reported(
+            self.h, self.dod(replaced, 2025, 11), self.dod(cleared, 2025, 10), self.kvar(other, vikt=2.8)
+        )
+        admin = db.User.get_by_id(self.admin.id)
+        execute(admin, replaced.id, lambda ctx: [RecordDeath({"death_date": "2025-11-12"})])  # the exact date
+        execute(admin, cleared.id, lambda ctx: [ClearFields(frozenset({"death_date", "death_note", "butchered"}))])
+        self.assertEqual(arsrapport.current(report, replaced.id), [])
+        self.assertEqual(arsrapport.current(report, cleared.id), [])
+        # The owner changes another rabbit: nothing tries to undo the deaths.
+        body = self.body(self.dod(replaced, 2025, 11), self.dod(cleared, 2025, 10), self.kvar(other, vikt=3.0))
+        self.assertTrue(self.dry(body)["ok"])
+        # A changed entry for them does not undo the stale death either: the editor's date stands, and a cleared
+        # death is written again.
+        sub = self.parse(self.dod(replaced, 2025, 11, slaktad=True), self.dod(cleared, 2025, 10, slaktad=True))
+        before = self.parse(self.dod(replaced, 2025, 11), self.dod(cleared, 2025, 10)).rabbits
+        rows = {row["id"]: row for row in arsrapport.report_list(self.h, 2025, report)}
+
+        def diff(ind):
+            entry = sub.rabbits[ind.id]
+            want = arsrapport.wanted(entry, rows[ind.id], report, self.h, 2025, date(2026, 1, 15))
+            return arsrapport.diff(arsrapport.current(report, ind.id), want, LAST, before[ind.id], entry)
+
+        self.assertEqual(diff(replaced), ([], []))
+        october = date(2025, 10, 31)
+        self.assertEqual(diff(cleared), ([], [Effect("death", october, (october, True, None))]))
+        changed = (self.dod(replaced, 2025, 11, slaktad=True), self.dod(cleared, 2025, 10, slaktad=True))
+        self.assertTrue(self.dry(self.body(*changed, self.kvar(other, vikt=2.8)))["ok"])
 
     def test_diff(self):
         a, b = self.rabbits(self.h, 2)
