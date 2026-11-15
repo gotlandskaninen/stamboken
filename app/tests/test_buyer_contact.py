@@ -708,6 +708,12 @@ class TestQueueSale(ErasureTest):
         self.assertEqual(db.BuyerContact.select().count(), 0)
         self.assertIsNone(db.InboxDocument.get_by_id(self.document.id).herd_tracking_id)
 
+    def test_a_new_sale_outside_without_a_buyer_is_400(self):
+        resp = self._sale(buyer=None)
+        self.assertEqual(resp.status_code, 400, resp.get_json())
+        self.assertIn("köparens namn och ort", resp.get_json()["detail"])
+        self.assertIsNone(db.InboxDocument.get_by_id(self.document.id).herd_tracking_id)
+
     def test_a_buyer_for_a_herd_in_the_association_is_400(self):
         resp = self._sale(herd="G2")
         self.assertEqual(resp.status_code, 400, resp.get_json())

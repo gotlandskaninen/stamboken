@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSalePayload,
+  provenSale,
   buildSavePayload,
   canEditDocuments,
   canSave,
@@ -18,6 +19,7 @@ import {
   problemText,
   waited,
   type CertForm,
+  type InboxDocument,
   type InboxItem,
   type ItemAction,
   type ItemState,
@@ -608,5 +610,41 @@ describe("lacksRole", () => {
     expect(lacksRole(admin, 2, [1])).toBe(false);
     expect(lacksRole(helper, null, [1])).toBe(false);
     expect(lacksRole(helper, 2, null)).toBe(false);
+  });
+});
+
+describe("provenSale, the work view's rule for a proof of a registered sale", () => {
+  const sale = { individual: "G9001-2511", herd: "GX1", date: "2026-10-03" };
+  const proof = { id: 2, doc_type: "bevis" } as unknown as InboxDocument;
+  const certificate = (changes: object = {}) =>
+    ({
+      id: 1,
+      doc_type: "intyg",
+      sale: { ...sale, active: true, ...changes },
+    }) as unknown as InboxDocument;
+
+  it("is the same rabbit, buyer herd and date, on another document, still active", () => {
+    expect(provenSale([certificate(), proof], proof, sale)).toBe(true);
+  });
+  it("is not another rabbit's, herd's or date's sale, nor a voided one", () => {
+    for (const changes of [
+      { individual: "G9001-2512" },
+      { herd: "G9002" },
+      { date: "2026-10-04" },
+      { active: false },
+    ]) {
+      expect(provenSale([certificate(changes), proof], proof, sale)).toBe(
+        false,
+      );
+    }
+  });
+  it("is only for a proof, and never its own sale", () => {
+    const linked = {
+      ...proof,
+      sale: { ...sale, active: true },
+    } as unknown as InboxDocument;
+    expect(provenSale([linked], linked, sale)).toBe(false);
+    const other = { id: 3, doc_type: "intyg" } as unknown as InboxDocument;
+    expect(provenSale([certificate(), other], other, sale)).toBe(false);
   });
 });
