@@ -3,14 +3,15 @@
 import React from "react";
 import CheckRounded from "@mui/icons-material/CheckRounded";
 import type { Individual } from "@/redux/api/apiSlice";
+import { MANUAL_PATH } from "@/lib/constants";
+import { useUser } from "@/lib/user-context";
 import {
   MbCard,
+  rabbitStatus,
   type BreedingRecord,
   type TabValue,
 } from "./min-besattning-ui";
 import styles from "./min-besattning.module.css";
-
-const MANUAL = "/stamboken-online/manual";
 
 export interface OnboardingStep {
   title: string;
@@ -28,13 +29,17 @@ export function onboardingSteps(
   individuals: Individual[],
   breedings: BreedingRecord[],
 ): OnboardingStep[] {
+  // Breeding stock, as the overview's Avelsdjur figure counts it.
+  const stock = individuals.filter(
+    (i) => rabbitStatus(i) === "Aktiv" && !i.castration_date,
+  );
   return [
     {
       title: "Ta emot dina startdjur",
       text: "När du har köpt dina startdjur säljer uppfödaren dem till din besättning i Stamboken. De syns sedan under Kaniner. Du behöver minst en hane och en hona.",
       done:
-        individuals.some((i) => i.sex === "male") &&
-        individuals.some((i) => i.sex === "female"),
+        stock.some((i) => i.sex === "male") &&
+        stock.some((i) => i.sex === "female"),
       manual: "#sälja-eller-flytta-en-kanin",
       more: "Så säljer uppfödaren",
     },
@@ -73,6 +78,7 @@ export default function OnboardingChecklist({
   onGoTab: (tab: TabValue) => void;
   onNewMating: () => void;
 }) {
+  const user = useUser();
   const key = `sb-onboarding-dismissed-${herdNumber}`;
   // Read per render, not once: the herd switcher changes herdNumber without
   // remounting. Min besättning renders tabs only after hydration, so reading
@@ -85,7 +91,9 @@ export default function OnboardingChecklist({
     // unavailable storage: only this visit's Stäng counts
   }
 
-  // A herd that has bred is not new; a failed fetch shows nothing.
+  // Only the owner gets "your start animals"; a herd that has bred is not
+  // new; a failed fetch shows nothing.
+  if (!user?.is_owner?.includes(herdNumber)) return null;
   if (dismissed || !herd?.is_active || breedings === null) return null;
   if (breedings.length > 0) return null;
 
@@ -100,14 +108,17 @@ export default function OnboardingChecklist({
     >
       Till Kaniner
     </button>,
-    <button
-      key="parning"
-      type="button"
-      className="sb-btn sb-btn-secondary sb-btn-sm"
-      onClick={onNewMating}
-    >
-      Ny parning
-    </button>,
+    // The mating form needs a doe in the herd, so it waits for step one.
+    steps[0].done && (
+      <button
+        key="parning"
+        type="button"
+        className="sb-btn sb-btn-secondary sb-btn-sm"
+        onClick={onNewMating}
+      >
+        Ny parning
+      </button>
+    ),
   ];
 
   const dismiss = () => {
@@ -149,7 +160,7 @@ export default function OnboardingChecklist({
                 <p>{step.text}</p>
                 <div className={styles["mb-onboarding-links"]}>
                   {!step.done && actions[i]}
-                  <a href={MANUAL + step.manual}>{step.more}</a>
+                  <a href={MANUAL_PATH + step.manual}>{step.more}</a>
                 </div>
               </div>
             </li>

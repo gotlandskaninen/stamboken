@@ -529,9 +529,11 @@ under rubriken. Sidan har fyra flikar.
 
 **Översikt**
 
-- **Kom igång med din besättning** – visas bara i en aktiv besättning som ännu inte har
-  någon parning: tre steg (ta emot startdjuren, ladda upp ett foto, registrera den första
-  parningen) som bockas av när de är gjorda. **Stäng** döljer rutan i den här webbläsaren.
+- **Kom igång med din besättning** – visas för ägaren av en aktiv besättning som ännu
+  inte har någon parning: tre steg (ta emot startdjuren, ladda upp ett foto, registrera
+  den första parningen) som bockas av när de är gjorda. Startdjuren räknas som klara när
+  besättningen har en levande, okastrerad hane och hona; först då visas knappen
+  **Ny parning**. **Stäng** döljer rutan i den här webbläsaren.
 - Fyra siffror: **Aktiva kaniner**, **Avelsdjur** (aktiva, okastrerade honor och
   hanar), **Utfärdade intyg** och **Kullar i år**.
 - **Pågående dräktigheter** – parningar utan registrerad födsel, med stapel
