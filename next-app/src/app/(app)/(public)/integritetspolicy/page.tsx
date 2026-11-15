@@ -253,9 +253,8 @@ export default function IntegritetspolicyPage() {
                 loggen sparas tills vidare och behåller de gamla värdena, också
                 sedan en uppgift har ändrats eller tagits bort.{" "}
                 <mark>
-                  [INTE KLART: gallringen av IP-adresser, och av
-                  kontaktuppgifter och bankkonton som finns kvar i loggen, ska
-                  byggas innan sidan släpps.]
+                  [INTE KLART: gallringen av kontaktuppgifter och bankkonton
+                  som finns kvar i loggen ska byggas innan sidan släpps.]
                 </mark>
               </li>
               <li>
