@@ -1,0 +1,11 @@
+{% block subject %}Årsrapporten för {{ herd }} är inskickad{% endblock %}
+
+{% block body %}
+Hej!
+
+Årsrapporten för besättning {{ herd }} kom in den {{ datum }}. Du rapporterade {{ kvar }} kaniner som finns kvar, {{ doda }} döda och {{ salda }} sålda.
+
+Du kan ändra den så länge rundan är öppen, till och med {{ end_date }}.
+
+Var det inte du? Kontakta genbanksansvarig genom att svara på det här mejlet.
+{% endblock %}

@@ -134,3 +134,18 @@ def dry_run(herd, year):
     return jsonify(
         {"ok": not refusals, "refusals": [asdict(r) for r in refusals], "warnings": [asdict(w) for w in warnings]}
     )
+
+
+# [Next.js] Skicka: the submission in one transaction and its Receipt; the same request again gets the same one.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/skicka", methods=["POST"])
+@json_login_required
+def submit(herd, year):
+    body = request.get_json(silent=True)
+    sub = arsrapport.parse_submission(body, paper=request.args.get("post") is not None)  # a 400 before any lookup
+    target, round_ = Herd.get_or_none(Herd.herd == herd), arsrapport.get_round(year)
+    if target is not None and round_ is not None:  # before report_access: a retry after the item closed (Fable 5)
+        saved = arsrapport.find_submission(sub.key, target, round_, current_user, arsrapport.request_hash(sub))
+        if saved is not None:
+            return jsonify(arsrapport.receipt(saved))
+    target, round_, access = _report_target(herd, year)
+    return jsonify(arsrapport.submit(target, round_, access, current_user, sub, body))

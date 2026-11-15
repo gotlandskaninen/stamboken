@@ -5,15 +5,19 @@ The routes are in blueprints/arsrapport.py (ADR-0007).
 """
 
 import calendar
+import hashlib
+import hmac
 import json
 import re
 import uuid
-from dataclasses import dataclass, field
+from collections import Counter
+from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
-from peewee import JOIN, IntegrityError
+from flask import current_app
+from peewee import JOIN, IntegrityError, fn
 
 import utils.inbox as inbox
 from utils.database import (
@@ -40,9 +44,27 @@ from utils.database import (
     ht_order_desc,
     ht_sort_key,
     latest_ht_per_individual,
+    lock_breedings,
+    lock_individuals,
     not_voided,
 )
-from utils.herd_tracking import HerdTrackingInvalid, buyer_contact_fields, latest_death_op, reject_contact_details
+from utils.herd_tracking import (
+    HerdTrackingError,
+    HerdTrackingInvalid,
+    buyer_contact_fields,
+    latest_death_op,
+    reject_contact_details,
+)
+from utils.individual_commands import (
+    IndividualRefused,
+    RecordAttestation,
+    RecordDeath,
+    SetMeasurements,
+    TransferIndividual,
+    execute,
+)
+from utils.individual_policy import Role
+from utils.mail import enqueue_mail, mail_kind
 from utils.reference_population import _alive_by_note
 
 STOCKHOLM = ZoneInfo("Europe/Stockholm")
@@ -55,7 +77,13 @@ _REPORT_LOCK = 0x48424152  # "HBAR": classid of the advisory lock on a herd's re
 class ArsrapportError(Exception):
     """A refusal with its HTTP status; the blueprint turns it into problem(status, title, detail, **extra)."""
 
-    TITLES = {400: "Ogiltig begäran", 403: "Åtkomst nekad", 404: "Hittades inte", 409: "Konflikt"}
+    TITLES = {
+        400: "Ogiltig begäran",
+        403: "Åtkomst nekad",
+        404: "Hittades inte",
+        409: "Konflikt",
+        422: "Kan inte sparas",
+    }
 
     def __init__(self, status, detail, **extra):
         super().__init__(detail)
@@ -1005,6 +1033,7 @@ REFUSALS = {  # the copy the client shows (P44)
     "orsak_kravs": "Skriv varför rapporten ändras.",
     "rundan_stangd": "Rundan är stängd.",
     "inte_innehavare": "Kaninen fanns inte i din besättning 31 december.",
+    "nekad": "Stamboken tog inte emot ändringen för kaninen. Genbanksansvarig kan rätta.",  # an execute refusal
 }
 # _validate_sale's user: the report never sells into another genebank, since TransferIndividual needs a reason there.
 _NOT_ADMIN = SimpleNamespace(is_admin=False)
@@ -1012,6 +1041,13 @@ _NOT_ADMIN = SimpleNamespace(is_admin=False)
 
 def _refusal(individual_id, code, message=None):
     return Refusal(individual_id, code, message or REFUSALS[code])
+
+
+def _vikt_ovanlig(individual_id, vikt):
+    """D17: a valid weight outside 1,0–6,5 kg warns and never blocks; None for any other weight."""
+    if vikt is None or not 0 < vikt <= 20 or 1.0 <= vikt <= 6.5:
+        return None
+    return Refusal(individual_id, "vikt_ovanlig", f"Stämmer {format(vikt, 'g').replace('.', ',')} kg?")
 
 
 def _sale_view(individual_id, kept):
@@ -1120,8 +1156,8 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
             continue
         if entry.vikt is not None and not 0 < entry.vikt <= 20:
             refusals.append(_refusal(rabbit, "vikt_ogiltig"))
-        elif entry.vikt is not None and not 1.0 <= entry.vikt <= 6.5:
-            warnings.append(Refusal(rabbit, "vikt_ovanlig", f"Stämmer {format(entry.vikt, 'g').replace('.', ',')} kg?"))
+        elif warning := _vikt_ovanlig(rabbit, entry.vikt):
+            warnings.append(warning)
         if (
             entry.val == "kvar"
             and row["adult"]
@@ -1133,3 +1169,267 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
         remove, add = diff(current(report, rabbit), wanted(entry, row, report, herd, year, on), last, before, entry)
         refusals += _register_refusals(rabbit, entry, remove, add)
     return refusals, warnings
+
+
+# Skicka (5.4 points 2–5): the submission in one transaction, its key and its fixed receipt
+
+KEY_TAKEN = "Rapporten är redan skickad med den här nyckeln. Ladda om sidan."
+MEASUREMENTS = ("weight", "bodyfat")
+
+
+class ReportGrant:
+    """
+    individual_commands.Grant for a report's writes, which collects the operation ids every execute logged. Logged
+    in it gives no role, since roles_for does, so the can_edit guard applies. On paper the item's InboxGrant gives a
+    helper HANDLAGGARE and leaves everyone's trace. `report_ops` (the report's own operations) gives RAPPORT, for
+    the backouts of Ändra; Undo checks them.
+    """
+
+    def __init__(self, inbox_grant=None, report_ops=frozenset()):
+        self.inbox_grant, self.report_ops = inbox_grant, frozenset(report_ops)
+        self.operation_ids = []
+
+    def roles(self, user, individual):
+        held = self.inbox_grant.roles(user, individual) if self.inbox_grant is not None else frozenset()
+        return held | ({Role.RAPPORT} if self.report_ops else frozenset())
+
+    def record(self, ctx):
+        self.operation_ids += [str(row["operation_id"]) for row in ctx.log_rows]
+        if self.inbox_grant is not None:
+            self.inbox_grant.record(ctx)
+
+
+def request_hash(sub: Submission) -> str:
+    """
+    D21: HMAC-SHA256 with the app's SECRET_KEY over the parsed submission without its key and revision, with the
+    matrikel and every buyer. Nothing in it depends on today, so a retry from an old tab matches.
+    """
+    fields = {name: value for name, value in asdict(sub).items() if name not in ("key", "revision")}
+    canonical = json.dumps(fields, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+    return hmac.new(current_app.secret_key.encode(), canonical.encode(), hashlib.sha256).hexdigest()
+
+
+def find_submission(key, herd, round_, user, request_hash):
+    """
+    The submission whose receipt a retry gets: the key's, when the same user sent it for the herd and round, its
+    report is still submitted and the request hash is equal (D21). Any other use of the key is a 409; an unknown
+    key is None. The route asks before report_access, so a retry after the item closed gets its receipt.
+    """
+    if key is None:
+        return None
+    saved = (
+        YearlyReportSubmission.select(YearlyReportSubmission, YearlyHerdReport)
+        .join(YearlyHerdReport)
+        .where(YearlyReportSubmission.submission_key == key)
+        .first()
+    )
+    if saved is None:
+        return None
+    report = saved.report
+    if (
+        saved.user_id == user.id
+        and (report.herd_id, report.round_id, report.status) == (herd.id, round_.id, "submitted")
+        and hmac.compare_digest(saved.request_hash, request_hash)
+    ):
+        return saved
+    raise ArsrapportError(409, KEY_TAKEN)
+
+
+def receipt(submission) -> dict:
+    """
+    Receipt, from the submission row alone, so every retry gets the same one, also after a later change (D21): the
+    summary and the weight warnings come from its data.
+    """
+    entries = _entries(submission.data.get("rabbits") or {})
+    chosen = Counter(entry.val for entry in entries.values())
+    warnings = (_vikt_ovanlig(rabbit, entry.vikt) for rabbit, entry in sorted(entries.items()))
+    return {
+        "submission_id": submission.id,
+        "report_id": submission.report_id,
+        "created_at": submission.created_at.astimezone(timezone.utc).isoformat(),
+        "source": submission.source,
+        "summary": {
+            "kvar": chosen["kvar"],
+            "doda": chosen["dod"],
+            "salda": chosen["sald"],
+            "ej_angivna": chosen["ej_angiven"],
+        },
+        "matrikel": [],
+        "warnings": [asdict(warning) for warning in warnings if warning],
+    }
+
+
+def _lock_rabbits(ids):
+    """The rabbits' litters, then the rabbits, each in ascending order; a rabbit moved to another litter is a 409."""
+
+    def litters():
+        return dict(Individual.select(Individual.id, Individual.breeding).where(Individual.id.in_(ids)).tuples())
+
+    before = litters()
+    lock_breedings(litter for litter in before.values() if litter is not None)
+    lock_individuals(ids)
+    if litters() != before:
+        raise ArsrapportError(409, "Kaninen ändrades samtidigt. Försök igen.")
+
+
+def _measured(effect, rabbit):
+    """The ids of the rabbit's stored measurements with the effect's date and value (weights to two decimals)."""
+    if effect.kind == "weight":
+        rows = Weight.select().where(Weight.individual == rabbit, Weight.weight_date == effect.date)
+        return [row.id for row in rows if round(row.weight, 2) == effect.value[0]]
+    rows = Bodyfat.select().where(
+        Bodyfat.individual == rabbit, Bodyfat.bodyfat_date == effect.date, Bodyfat.bodyfat == effect.value[0]
+    )
+    return [row.id for row in rows]
+
+
+def _command(effect, rabbit, herd, report, entry):
+    """The command that writes `effect`; SetMeasurements gets the stored list as stored, so nothing is replaced."""
+    day = effect.date.isoformat()
+    if effect.kind == "attest":
+        return RecordAttestation(herd.herd, day, report=report.id)
+    if effect.kind == "death":
+        return RecordDeath({"death_date": day, "butchered": effect.value[1], "death_note": effect.value[2]})
+    if effect.kind == "transfer":
+        return TransferIndividual(effect.value[0], day, buyer=entry.sald["kopare"])
+    if effect.kind == "weight":
+        stored = [{"weight": w.weight, "date": w.weight_date.isoformat()} for w in Weight.filter(individual=rabbit)]
+        return SetMeasurements(weights=[*stored, {"weight": effect.value[0], "date": day}])
+    stored = [{"bodyfat": b.bodyfat, "date": b.bodyfat_date.isoformat()} for b in Bodyfat.filter(individual=rabbit)]
+    return SetMeasurements(bodyfat=[*stored, {"bodyfat": effect.value[0], "date": day}])
+
+
+def _write(user, rabbit, effects, herd, report, entry, grant, last):
+    """
+    The rabbit's `effects` through execute in `order` (5.4 point 3): once for those up to 31 December, then once
+    for those after it. A measurement already stored with its date and value is skipped. The caller holds the
+    rabbit's lock, so what is read here stays as read. Returns the added measurements, with the ids read back.
+    """
+    effects = sorted(effects, key=lambda e: order(e, last))
+    effects = [e for e in effects if e.kind not in MEASUREMENTS or not _measured(e, rabbit)]
+    added = []
+    for batch in ([e for e in effects if e.date <= last], [e for e in effects if e.date > last]):
+        if not batch:
+            continue
+        commands = [_command(e, rabbit, herd, report, entry) for e in batch]
+        execute(user, rabbit, lambda ctx, commands=commands: commands, grant=grant)
+        added += [
+            {
+                "individual_id": rabbit,
+                "kind": e.kind,
+                "id": max(_measured(e, rabbit)),  # the newest: the rabbit is locked until commit
+                "date": e.date.isoformat(),
+                "value": e.value[0],
+            }
+            for e in batch
+            if e.kind in MEASUREMENTS
+        ]
+    return added
+
+
+def _cannot(refusals):
+    return ArsrapportError(422, "Rapporten kan inte skickas.", refusals=[asdict(refusal) for refusal in refusals])
+
+
+def submit(herd, round_, access, user, sub, body, *, now=None) -> dict:
+    """
+    Skicka (5.4 points 2–5) in one transaction, under the locks in their order: the same request again gets its
+    first receipt; otherwise the revision and check() once more, the report row, each rabbit's writes, the
+    submission, the draft deleted and the receipt mail queued. Every refusal raises, so nothing stays written.
+    `body` is the request's JSON, stored without the matrikel and the buyers (D10). Returns the Receipt.
+    """
+    if sub.key is None:
+        raise _bad("submission_key", "Ange submission_key som ett UUID.")
+    at = now or globals()["now"]()  # the parameter hides the module's clock, which the tests patch
+    on, year = at.astimezone(STOCKHOLM).date(), round_.report_year
+    last, digest, paper = date(year, 12, 31), request_hash(sub), access.source == "paper"
+    same = (YearlyHerdReport.herd == herd.id) & (YearlyHerdReport.round == round_.id)
+    with DB_PROXY.atomic():
+        lock_report(round_, herd)
+        saved = find_submission(sub.key, herd, round_, user, digest)
+        if saved is not None:
+            return receipt(saved)
+        report = YearlyHerdReport.select().where(same & (YearlyHerdReport.status == "submitted")).for_update().first()
+        _lock_rabbits(sorted(sub.rabbits))
+        if sub.revision != (report.revision if report else None):
+            raise ArsrapportError(409, "Rapporten har ändrats.")
+        refusals, _ = check(herd, round_, access, report, sub, on=on)
+        if refusals:
+            raise _cannot(refusals)
+        if report is not None:  # shortcut: a change of a submitted report waits for Ändra (apply_diff)
+            raise ArsrapportError(409, "Rapporten är redan inskickad.")
+        revision = YearlyHerdReport.select(fn.MAX(YearlyHerdReport.revision)).where(same).scalar() or 0
+        voided = same & (YearlyHerdReport.status == "voided")
+        received = YearlyHerdReport.select(fn.MIN(YearlyHerdReport.received_at)).where(voided).scalar()
+        report = YearlyHerdReport.create(
+            herd=herd.id,
+            round=round_.id,
+            report_date=on,
+            data=json.dumps(sub.report),
+            status="submitted",
+            source=access.source,
+            generated_by=None if paper else user.id,
+            entered_by=user.id if paper else None,
+            inbox_item_id=access.item.id if paper else None,
+            revision=revision + 1,  # voided rows count too, so an old tab never matches a new row
+            received_at=received or at,  # 5.13: the round's first submission
+        )
+        grant, added = ReportGrant(), []
+        rows = {row["id"]: row for row in report_list(herd, year)}
+        for rabbit, entry in sorted(sub.rabbits.items()):
+            effects = wanted(entry, rows[rabbit], None, herd, year, on)
+            try:
+                added += _write(user, rabbit, effects, herd, report, entry, grant, last)
+            except (IndividualRefused, HerdTrackingError) as exc:
+                message = str(exc) if isinstance(exc, HerdTrackingError) else None  # IndividualRefused's are English
+                raise _cannot([_refusal(rabbit, "nekad", message)]) from exc
+        try:
+            submission = YearlyReportSubmission.create(
+                report=report.id,
+                submission_key=sub.key,
+                created_at=at,
+                source=access.source,
+                user=user.id,
+                operation_ids=grant.operation_ids,
+                added_measurements=added,
+                data=stored_body(body),
+                request_hash=digest,
+            )
+        except IntegrityError as exc:  # the key, taken meanwhile for another herd, which this lock does not cover
+            raise ArsrapportError(409, KEY_TAKEN) from exc
+        YearlyReportDraft.delete().where(
+            (YearlyReportDraft.herd == herd.id) & (YearlyReportDraft.round == round_.id)
+        ).execute()
+        member = inbox.herd_holder(herd.id)
+        if member is not None and member.email:
+            enqueue_mail(
+                "arsrapport.kvitto",
+                "member",
+                member.id,
+                {"submission_id": submission.id},
+                ref=("yearly_report_submission", submission.id),
+                herd=herd,
+                genebank=herd.genebank_id,
+                dedupe_key=f"arsrapport.kvitto:{submission.id}",
+                created_by=user.id,
+            )
+        return receipt(submission)
+
+
+@mail_kind("arsrapport.kvitto", priority=0, category="T")
+def _kvitto(params):
+    """
+    Å7 to the herd's main member: what the submission sent, from its row, so a later kvitto still says what was
+    sent (5.4 point 5). Only end_date is the round's when the mail goes (fråga 32: texts read the round's dates).
+    """
+    submission = YearlyReportSubmission.get_or_none(YearlyReportSubmission.id == params["submission_id"])
+    if submission is None:
+        return None
+    report = YearlyHerdReport.get_by_id(submission.report_id)
+    received = submission.data.get("received_on") if submission.source == "paper" else None
+    return {
+        "herd": report.herd.herd,
+        "datum": received or f"{submission.created_at.astimezone(STOCKHOLM):%Y-%m-%d}",
+        **receipt(submission)["summary"],
+        "end_date": f"{report.round.end_date:%Y-%m-%d}",
+    }
