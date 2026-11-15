@@ -878,6 +878,33 @@ describe("ReportForm", () => {
     ).toBeTruthy();
   });
 
+  it("leaves focus alone when an edit clears one of several errors", async () => {
+    const a = actions();
+    a.dryRun.mockImplementation(() =>
+      ok({
+        ok: false,
+        refusals: [
+          { individual_id: 1, code: "vikt_saknas", message: "x" },
+          { individual_id: 2, code: "vikt_saknas", message: "x" },
+        ],
+        warnings: [],
+      }),
+    );
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    choose(2, "Finns kvar");
+    send();
+    const box = (await screen.findByText("2 kaniner är inte klara")).closest(
+      "div",
+    )!;
+    await waitFor(() => expect(document.activeElement).toBe(box));
+    const weight = within(row(1)).getByLabelText("Vikt");
+    weight.focus();
+    fireEvent.change(weight, { target: { value: "3" } });
+    expect(screen.getByText("1 kanin är inte klara")).toBeTruthy();
+    expect(document.activeElement).toBe(weight);
+  });
+
   it("shows Dragen tillbaka after a withdrawal and locks the confirmation while it runs", async () => {
     const a = actions();
     let release: (v: unknown) => void = () => {};

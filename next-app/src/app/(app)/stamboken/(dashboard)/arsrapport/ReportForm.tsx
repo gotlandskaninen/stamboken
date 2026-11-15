@@ -263,6 +263,9 @@ export function ReportForm({
   );
   const [phase, setPhase] = React.useState<Phase>("idle");
   const [refusals, setRefusals] = React.useState<Refusal[] | null>(null);
+  // counts failed Skicka attempts: the error box takes focus then, never when
+  // an edit clears some of its errors
+  const [failTick, setFailTick] = React.useState(0);
   const [receipt, setReceipt] = React.useState<ReceiptData | null>(null);
   const [withdrawn, setWithdrawn] = React.useState<string | null>(null);
   const [withdrawing, setWithdrawing] = React.useState(false);
@@ -537,8 +540,8 @@ export function ReportForm({
   }, [mode, lastId, lastShown]);
 
   React.useEffect(() => {
-    if (refusals) boxRef.current?.focus();
-  }, [refusals]);
+    if (failTick) boxRef.current?.focus();
+  }, [failTick]);
 
   // An error link or Enter on a search hit: show the rabbit, then focus.
   const reveal = (id: number) => {
@@ -659,16 +662,20 @@ export function ReportForm({
   const soldRabbit = rabbits.find((r) => r.id === soldFor);
 
   // ---- Skicka -------------------------------------------------------------
+  const showRefusals = (rs: Refusal[]) => {
+    setRefusals(rs);
+    setFailTick((t) => t + 1);
+  };
   const fail = (message: string) =>
-    setRefusals([{ individual_id: null, code: "fel", message }]);
+    showRefusals([{ individual_id: null, code: "fel", message }]);
 
   const handle = (p: Problem) => {
     const ext = p.extensions ?? {};
     if (p.status === 401) setSaveState("loggedout");
     else if (p.status === 422 && Array.isArray(ext.refusals))
-      setRefusals(ext.refusals as Refusal[]);
+      showRefusals(ext.refusals as Refusal[]);
     else if (p.status === 409 && ext.code === "rundan_stangd")
-      setRefusals([
+      showRefusals([
         { individual_id: null, code: "rundan_stangd", message: p.detail },
       ]);
     else if (p.status === 409) {
@@ -744,7 +751,7 @@ export function ReportForm({
       return handle(dry.problem);
     }
     if (!dry.data.ok) {
-      setRefusals(dry.data.refusals);
+      showRefusals(dry.data.refusals);
       return setPhase("idle");
     }
     await send(body);
