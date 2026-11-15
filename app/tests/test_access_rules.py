@@ -352,6 +352,7 @@ class TestLegacyGoogleLoginNeverAdopts(DatabaseTest):
         client = APP.test_client(use_cookies=True)
         with mock.patch("google.oauth2.id_token.verify_oauth2_token", return_value=token):
             self.assertEqual(client.post("/api/auth/google", json={"credential": "t"}).status_code, 200)
+        self.assertEqual(client.get("/api/user").get_json()["id"], only_google.id)  # "null" also answers no session
         self.assertEqual(client.post("/api/unlink/google").get_data(as_text=True), "null")
         self.assertTrue(db.Authenticators.select().where(db.Authenticators.user == only_google.id).exists())
 
