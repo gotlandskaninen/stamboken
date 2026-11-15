@@ -59,14 +59,17 @@ class ListaTest(ArsrapportTest):
         query = f"?post={post}" if post is not None else ""
         return self.api("GET", f"/besattning/{herd}/{year}{query}")
 
-    def put_draft(self, data=None, updated_at=None, submission_key=None, revision=None, client=None, year=2025):
+    def put_draft(
+        self, data=None, updated_at=None, submission_key=None, revision=None, client=None, year=2025, post=None
+    ):
         body = {
             "data": {"rabbits": {}, "message": "hej"} if data is None else data,
             "updated_at": updated_at,
             "submission_key": submission_key,
             "revision": revision,
         }
-        return (client or self.client).put(f"/api/v2/arsrapport/besattning/G1/{year}/utkast", json=body)
+        query = f"?post={post}" if post is not None else ""
+        return (client or self.client).put(f"/api/v2/arsrapport/besattning/G1/{year}/utkast{query}", json=body)
 
     # The list (5.2)
 
@@ -428,7 +431,8 @@ class ListaTest(ArsrapportTest):
 
     def assert_round_closed(self, r):
         self.assertEqual(r.status_code, 409, r.get_data(as_text=True))
-        self.assertEqual(r.json["detail"], "Rundan är inte öppen.")
+        self.assertEqual((r.json["detail"], r.json["code"]), ("Rundan är inte öppen.", "runda_stangd"))
+        self.assertNotIn("draft", r.json)  # the revision conflict carries draft; this one does not
 
     def test_owner_draft_before_activation_is_refused(self):
         round_ = self.round(2026, activate=())
@@ -452,6 +456,21 @@ class ListaTest(ArsrapportTest):
         r = self.put_draft()
         self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
         self.assertEqual(db.YearlyReportDraft.get().updated_by_user_id, self.manager.id)
+
+    def test_helper_draft_on_paper_after_end_date_is_allowed(self):
+        # P39c: a helper enters a late paper form through the taken item
+        item = self.item(0)
+        db.InboxDocument.update(doc_type="arsblankett").where(db.InboxDocument.item == item.id).execute()
+        inbox.take(item, self.helper, over=False)
+        self.at(date(2026, 3, 31))
+        self.login("hjalp")
+        r = self.put_draft(post=item.id)
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertEqual(db.YearlyReportDraft.get().updated_by_user_id, self.helper.id)
+
+        db.YearlyReportDraft.delete().execute()  # not for a genebank that has not activated the round
+        db.YearlyReportRoundGenebank.delete().execute()
+        self.assert_round_closed(self.put_draft(post=item.id))
 
     # Mina
 
