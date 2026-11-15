@@ -2478,6 +2478,7 @@ class PublicationConsentChange(BaseModel):
     source = TextField()
     user = ForeignKeyField(User, null=True, on_delete="SET NULL", backref="+")
     report = ForeignKeyField(YearlyHerdReport, null=True, backref="+")
+    submission_id = IntegerField(null=True)  # the report's submission that wrote it; no FK, as for the demo sync
 
     class Meta:
         table_name = "publication_consent_change"
@@ -4190,6 +4191,7 @@ def _create_arsrapport_schema():
     DATABASE.create_tables(ARSRAPPORT_MODELS, safe=True)
     sql = DATABASE.execute_sql
     sql('ALTER TABLE "yearlyreportround" ADD COLUMN IF NOT EXISTS "deadline" DATE')
+    sql('ALTER TABLE "publication_consent_change" ADD COLUMN IF NOT EXISTS "submission_id" INTEGER')  # Task 11
     sql('ALTER TABLE "breeding" ADD COLUMN IF NOT EXISTS "litter_size6w_preliminary" BOOLEAN NOT NULL DEFAULT false')
     sql(
         'ALTER TABLE "yearlyherdreport" '

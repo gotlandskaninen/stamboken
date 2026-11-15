@@ -8,7 +8,7 @@ Synthetic herds and members only.
 isort:skip_file
 """
 
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from datetime import time as clock
 
 import utils.arsrapport as arsrapport
@@ -21,7 +21,6 @@ from tests.test_arsrapport_kontakt import (
     NEW_KONTO,
     NEW_PHONE,
     NO_MEMBER,
-    NOW,
     REPORT,
     PaperTest,
     later,
@@ -78,8 +77,8 @@ class MatrikelTest(PaperTest):
                     (ms.id, NONE, "paper", "2026-11"),
                 )
                 self.assertEqual(
-                    (change.user_id, change.report_id, change.at),
-                    (self.helper.id, rid, db.YearlyReportSubmission.get_by_id(sid).created_at),
+                    (change.user_id, change.report_id, change.submission_id, change.at),
+                    (self.helper.id, rid, sid, db.YearlyReportSubmission.get_by_id(sid).created_at),
                 )
                 (event,) = self.events(item)
                 self.assertEqual(event.detail, {"falt": ["publicering"], "hoppade": [], "submission_id": sid})
@@ -184,8 +183,7 @@ class MatrikelTest(PaperTest):
         receipt = self.both(newer, NEJ, NEW_PHONE, received_on="2026-01-12", signed_on="2026-01-10")
         self.assertEqual(receipt["matrikel"], ["telefon", "publicering"])
 
-        # Ändra with an older form signed 2 January, entered an hour later: the newer form's writes are later changes
-        self.at(NOW + timedelta(hours=1))
+        # Ändra with an older form signed 2 January: the newer form's writes are later changes
         older = self.form(self.manager)
         fields = {"received_on": "2026-01-12", "signed_on": "2026-01-02", "revision": 1, "reason": "Gammal blankett"}
         receipt = self.both(older, JA, "0709-333 444", **fields)
@@ -199,7 +197,6 @@ class MatrikelTest(PaperTest):
         typo = self.both(first, NEJ, "0709-777 889", signed_on="2026-01-05")
         self.assertEqual(typo["matrikel"], ["telefon", "publicering"])
 
-        self.at(NOW + timedelta(hours=1))  # its own time, so the consent row is told apart by its submission
         fixed = self.form(self.manager)
         receipt = self.both(fixed, JA, NEW_PHONE, signed_on="2026-01-05", revision=1, reason="Fel ruta")
         self.assertEqual((receipt["matrikel"], receipt["warnings"]), (["telefon", "publicering"], []))
@@ -263,15 +260,16 @@ class MatrikelTest(PaperTest):
             response = self.client.patch("/api/v2/members/me/consent", json=consent)
             self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         rows = [
-            (change.membership_id, change.value, change.source, change.text_version, change.user_id, change.report_id)
+            (change.membership_id, change.value, change.source, change.text_version, change.user_id)
+            + (change.report_id, change.submission_id)
             for change in self.changes()
         ]
         membership = self.member.membership_id
         self.assertEqual(
             rows,
             [  # the unchanged second answer adds none
-                (membership, {"phone": True}, "profil", "profil-2025", self.owner.id, None),
-                (membership, {"phone": False, "name": True}, "profil", "profil-2025", self.owner.id, None),
+                (membership, {"phone": True}, "profil", "profil-2025", self.owner.id, None, None),
+                (membership, {"phone": False, "name": True}, "profil", "profil-2025", self.owner.id, None, None),
             ],
         )
 

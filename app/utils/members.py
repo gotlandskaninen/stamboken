@@ -73,11 +73,11 @@ def consent_from_answer(ja: bool, utom: list[str]) -> dict[str, bool]:
     return {key: ja and key not in utom for key in CONSENT_KEYS}
 
 
-def set_consent(membership, value, *, source, text_version, user=None, report=None, at=None) -> bool:
+def set_consent(membership, value, *, source, text_version, user=None, report=None, submission=None, at=None) -> bool:
     """
     Writes `value` as the membership's publication consent, with one publication_consent_change row (D9, art. 7.1),
-    when it differs from the stored value, `{}` included. Consent only: never the whole row. The caller holds the
-    membership's lock. Returns whether it wrote.
+    when it differs from the stored value, `{}` included. Consent only: never the whole row. A report's write names its
+    `report` and `submission` ids. The caller holds the membership's lock. Returns whether it wrote.
     """
     if value == stored_consent(membership):
         return False
@@ -91,6 +91,7 @@ def set_consent(membership, value, *, source, text_version, user=None, report=No
         source=source,
         user=user,
         report=report,
+        submission_id=submission,
     )
     return True
 
