@@ -737,7 +737,7 @@ En köpare utanför föreningen:
 | `individual` | kaninens nummer |
 | `herd` | köparens besättningsnummer. En köpare utanför föreningen: genbankens besättning för kaniner sålda utanför genbanken, `GX1` (gotlandskanin) eller `MX1` (mellerudskanin). |
 | `date` | försäljningsdatumet |
-| `buyer` | valfritt, bara till GX1/MX1: köparen utanför föreningen ([ADR-0016](adr/0016-agarbyte-flytt-dag-0-och-berattigat-intresse.md)). `name` och `town` krävs; `postal_address` bara med `contact_consent: true`, `email` och `phone` med `contact_consent` eller `membership_optin`. Annars 400. Med `buyer` går också GX1 till GX1, för genbanksansvarig och admin. Nekas (400) när beviset kopplas till en försäljning som redan finns |
+| `buyer` | valfritt, bara till GX1/MX1: köparen utanför föreningen ([ADR-0016](adr/0016-agarbyte-flytt-dag-0-och-berattigat-intresse.md)). `name` och `town` krävs; `postal_address` bara med `contact_consent: true`, `email` och `phone` med `contact_consent` eller `membership_optin`. Annars 400. Med `buyer` går också GX1 till GX1, för genbanksansvarig och admin. Läses inte när beviset kopplas till en försäljning som redan finns: köparen kom med försäljningen |
 
 **Vem:** handläggaren, med samma krav på posten som för `…/spara` men för alla dokumenttyper.
 En hjälpare får sälja kaniner i sin genbank som en ägare får.
@@ -1054,7 +1054,9 @@ så hur säkert ett fält är avgörs av kontrollerna mot registret, aldrig av m
 6. Där intyget och registret skiljer sig blir fältet `avviker`, med båda värdena. Förslaget
    väljer aldrig.
 
-Ett värde som är överstruket eller rättat på intyget är alltid `osäker`. Finns kaninen redan i
+Tolkningen säger inte vilka värden som är överstrukna eller rättade på intyget. En lista över
+dem prövades och togs bort 2026-11-15: modellen fyllde den med upprepningar tills svaret klipptes.
+Modellen ombeds läsa det som gäller, och kontrollerna mot registret avgör. Finns kaninen redan i
 Stamboken prövas den på samma sätt: föräldrarna mot registret, kön och namn, och namnet när kaninen
 har ett kullsyskon av samma kön. Ett annat födelsedatum än kullens gör den `avviker`, utan värde.
 Har den digitalt intyg och går allt igenom blir förslaget bara "finns redan med digitalt intyg". Ger tolkningen inte två
@@ -1100,6 +1102,7 @@ kommandologgen: 12 månader är 366 dagar och 13 månader 396.
 | Vad | Gallras |
 |---|---|
 | Originalet till ett intyg eller bevis (`doc_type` `intyg`, `bevis`) | `INLASNING_ORIGINAL_MANADER` månader (standard 12) efter att posten kom in, i alla lägen |
+| Originalet till ett dokument med `purge_after` satt, av vilken typ som helst | när tidpunkten har passerat, också före månaderna. Årsrapporten sätter den på en årsblankett när blanketten matas in, eftersom fotot visar bankkonto och underskrift. Tolkningen och förslaget går med originalet |
 | Bevisets original | också när kaninen sålts vidare: en senare `TRANSFER` från köparens besättning som inte är makulerad. Försäljningens rad i besättningshistoriken står kvar |
 | Postens text: `message` och `text`, `note` och `not_saved` i händelserna | samtidigt som originalen, för en post som har dokument. Händelserna står kvar med typ, tid och person |
 | Händelsen `oppnad` | 13 månader efter händelsen |

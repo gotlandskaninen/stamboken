@@ -46,15 +46,17 @@ _OWN = (
     "fodda_i_kullen",
     "levande_efter_6_veckor",
 )
-# The trial's schema, plus the certificate number and the fields the model saw struck through or corrected.
+# The trial's schema, plus the certificate number. A list of the fields struck through on the paper was tried
+# and taken out (2026-11-15): Gemma repeated one field name in it until the answer was cut, on 3 photos of 7,
+# and listed fields that were not struck on the others.
+# shortcut: inbox_proposal still treats "overstruket" as unsure if an interpreter sends it; none does.
 SCHEMA = {
     "type": "object",
     "properties": {
         **{key: {"type": "string"} for key in _OWN},
         **{key: _ANCESTOR for key in ANCESTORS},
-        "overstruket": {"type": "array", "items": {"type": "string", "enum": [*_OWN, *ANCESTORS]}},
     },
-    "required": [*_OWN, *ANCESTORS, "overstruket"],
+    "required": [*_OWN, *ANCESTORS],
 }
 PROMPT = (
     "Fotot visar ett svenskt genbanksintyg för en kanin, gotlandskanin eller mellerudskanin. Skriv av fälten "
@@ -63,7 +65,7 @@ PROMPT = (
     "födelsedatum, kön (Hona eller Hane), namn, färg, antal födda i kullen och antal levande efter 6 veckor. "
     "Härstamningen: far och mor, farfar och farmor (fars föräldrar, till vänster), morfar och mormor (mors "
     "föräldrar, till höger), var och en med genbanksnr, år/kull/individ och namn. Är något överstruket eller "
-    "rättat: skriv det som gäller och lägg fältets namn i overstruket. Gissa aldrig: lämna en tom sträng när "
+    "rättat: skriv det som gäller. Gissa aldrig: lämna en tom sträng när "
     "fältet är tomt eller oläsligt. Säljarens och köparens uppgifter ska inte skrivas av."
 )
 
@@ -83,9 +85,6 @@ def conform(value, schema):
     if kind == "object" and isinstance(value, dict):
         kept = {key: conform(value.get(key), sub) for key, sub in schema["properties"].items()}
         return {key: item for key, item in kept.items() if item is not None}
-    if kind == "array" and isinstance(value, list):
-        kept = [conform(item, schema["items"]) for item in value[: len(schema["items"].get("enum", value))]]
-        return [item for item in kept if item is not None]
     if kind == "string" and isinstance(value, str):
         text = value.replace("\x00", "").encode("utf-8", "ignore").decode()[:MAX_STRING]
         return text if text in schema.get("enum", [text]) else None

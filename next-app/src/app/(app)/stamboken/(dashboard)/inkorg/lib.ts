@@ -64,6 +64,15 @@ export interface InboxDocument {
   interpretation_status: InterpretationStatus;
   proposal: Proposal | null;
   individual: string | null;
+  /** The sale registered from the document (for a proof: the sale it shows). */
+  herd_tracking_id?: number | null;
+  /** That sale's rabbit, buyer herd and date, and whether it is still active. */
+  sale?: {
+    individual: string;
+    herd: string;
+    date: string;
+    active: boolean;
+  } | null;
   has_copy: boolean;
 }
 
@@ -459,6 +468,30 @@ export function buildSalePayload(form: SaleForm) {
       : number(form.herd.trim().split(/\s/)[0]),
     date: form.date,
   };
+}
+
+/**
+ * The rule of the API's proven_sale: a proof shows a sale another document of
+ * the item has registered, the same rabbit, buyer herd and date, still active.
+ * Its buyer came with that sale, so the panel does not ask for it again.
+ */
+export function provenSale(
+  documents: InboxDocument[],
+  doc: InboxDocument,
+  payload: { individual: string; herd: string; date: string },
+): boolean {
+  return (
+    doc.doc_type === "bevis" &&
+    documents.some(
+      (d) =>
+        d.id !== doc.id &&
+        d.doc_type !== "bevis" &&
+        !!d.sale?.active &&
+        d.sale.individual === payload.individual &&
+        d.sale.herd === payload.herd &&
+        d.sale.date === payload.date,
+    )
+  );
 }
 
 // ---------------------------------------------------------------------------

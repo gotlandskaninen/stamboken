@@ -6,9 +6,11 @@ from unittest.mock import patch
 
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
+import utils.mail as mail  # noqa: E402
 import utils.matrikel as matrikel  # noqa: E402
 from blueprints import memberships as memberships_routes  # noqa: E402
 from herdbook import APP, limiter  # noqa: E402
+from utils.mail import queue_application_mails  # noqa: E402
 
 from tests.database_test import DatabaseTest  # noqa: E402
 
@@ -111,6 +113,29 @@ class TestMatrikelDomainFunctions(DatabaseTest):
         self.assertIsNotNone(person.end_date)
         self.assertIsNotNone(db.HerdAccessGrant.get_by_id(grant.id).revoked_at)
         self.assertTrue(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_anonymized").exists())
+
+    def test_anonymize_clears_the_mail_queue_traces(self):
+        application = db.MemberApplication.create(
+            first_name="Frank",
+            last_name="Familjesson",
+            email="frank@example.com",
+            gdpr_consented_at=datetime.now(),
+            created_member=self.family,
+        )
+        with patch.object(mail.settings.mail, "link_secret", "test-link-secret"):
+            queue_application_mails(application.id, application.email)
+        mail.enqueue_mail("ansokan.godkand", "member", self.family.id, {"member_id": self.family.id})
+        db.MailMessage.update(address_hash="0" * 64).execute()  # as if sent
+        self.assertTrue(db.MailMessage.select().where(db.MailMessage.dedupe_key.is_null(False)).exists())
+        matrikel.anonymize_person(self.family, self.admin)
+        mine = db.MailMessage.select().where(
+            ((db.MailMessage.recipient_kind == "application") & (db.MailMessage.recipient_id == application.id))
+            | ((db.MailMessage.recipient_kind == "member") & (db.MailMessage.recipient_id == self.family.id))
+        )
+        self.assertEqual(mine.count(), 2)
+        for row in mine:
+            self.assertIsNone(row.address_hash)
+            self.assertIsNone(row.dedupe_key)
 
     def test_anonymize_clears_household_address_only_with_the_last_active_person(self):
         """The address stays while someone is active in the household and goes

@@ -132,6 +132,21 @@ class TestOriginals(PurgeTest):
                 self.assertEqual(self.exists(path), not goes)
                 self.assertNotIn(PHONE, self.text(item))  # the text goes with the item's year all the same
 
+    def test_a_document_goes_at_its_own_purge_after_whatever_its_type(self):
+        cases = {"due": (NOW - MINUTE, True), "not yet": (NOW + MINUTE, False), "unset": (None, False)}
+        for name, (purge_after, goes) in cases.items():
+            with self.subTest(name):
+                item = self.make(NOW, doc_type="arsblankett")  # no months have passed
+                db.InboxDocument.update(purge_after=purge_after, interpretation={"namn": "x"}).where(
+                    db.InboxDocument.item == item.id
+                ).execute()
+                path = self.document(item).original_path
+                purge.purge_due(NOW)
+                document = self.document(item)
+                self.assertEqual((document.original_path is None, document.interpretation is None), (goes, goes))
+                self.assertEqual(self.exists(path), not goes)
+        self.assertIdempotent(purge.purge_due)
+
     def test_an_item_without_documents_keeps_its_text(self):
         item = self.make(self.limit - MINUTE, kind="meddelande", documents=0)
         purge.purge_originals(NOW)

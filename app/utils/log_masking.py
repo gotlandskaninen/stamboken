@@ -15,8 +15,15 @@ def mask_tokens(text):
 
 
 class TokenMaskFilter(logging.Filter):
-    """Masks tokens in the finished message, so arguments (gunicorn's request line) are covered too."""
+    """Masks tokens in the finished message and in the exception text, so arguments and tracebacks are covered."""
 
     def filter(self, record):
-        record.msg, record.args = mask_tokens(record.getMessage()), None
+        try:
+            message = record.getMessage()
+        except Exception:  # pylint: disable=broad-except  # mismatched arguments must not raise out of a log call
+            message = f"{record.msg} {record.args}"
+        record.msg, record.args = mask_tokens(message), None
+        if record.exc_info and not record.exc_text:
+            record.exc_text = logging.Formatter().formatException(record.exc_info)
+        record.exc_text = mask_tokens(record.exc_text)
         return True

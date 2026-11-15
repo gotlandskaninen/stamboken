@@ -14,7 +14,7 @@ import utils.settings as settings  # noqa: E402
 
 from tests.inbox_fixtures import InboxTest, encoded, photo  # noqa: E402
 
-READING = {"genbanksnr": "G1", "ar_kull_individ": "2111", "namn": "Testa", "overstruket": []}
+READING = {"genbanksnr": "G1", "ar_kull_individ": "2111", "namn": "Testa"}
 
 
 class InterpretationTest(InboxTest):

@@ -19,6 +19,7 @@ import {
   buildSalePayload,
   outsideHerd,
   problemField,
+  provenSale,
   type InboxDocument,
   type SaleForm,
 } from "../lib";
@@ -30,12 +31,15 @@ export function SalePanel({
   doc,
   herds,
   canSave,
+  documents = [],
   onDone,
 }: {
   itemId: number;
   doc: InboxDocument;
   herds: GenebankHerd[];
   canSave: boolean;
+  /** The item's documents: a proof of a sale one of them registered needs no buyer (provenSale). */
+  documents?: InboxDocument[];
   onDone: (document: InboxDocument) => void;
 }) {
   const [form, setForm] = useState<SaleForm>({
@@ -55,6 +59,7 @@ export function SalePanel({
     setForm((f) => ({ ...f, ...changes }));
   const names = new Map(herds.map((h) => [h.herd, h.herd_name]));
   const proof = doc.doc_type === "bevis";
+  const saleRegistered = provenSale(documents, doc, buildSalePayload(form));
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -65,7 +70,9 @@ export function SalePanel({
       const res = await registerSale(
         itemId,
         doc.id,
-        form.outside ? { ...payload, buyer: buyerPayload(buyer) } : payload,
+        form.outside && !saleRegistered
+          ? { ...payload, buyer: buyerPayload(buyer) }
+          : payload,
       );
       if (res.ok) {
         setSaved(true);
@@ -129,7 +136,9 @@ export function SalePanel({
               <p className={styles.muted}>
                 Sparas på {outsideHerd(form.individual) ?? "GX1 eller MX1"}.
               </p>
-              <BuyerFields value={buyer} onChange={setBuyer} size="small" />
+              {!saleRegistered && (
+                <BuyerFields value={buyer} onChange={setBuyer} size="small" />
+              )}
             </>
           ) : (
             <Autocomplete
@@ -169,7 +178,9 @@ export function SalePanel({
           type="submit"
           className="sb-btn"
           disabled={
-            !canSave || pending || (form.outside && !buyerComplete(buyer))
+            !canSave ||
+            pending ||
+            (form.outside && !saleRegistered && !buyerComplete(buyer))
           }
         >
           {pending

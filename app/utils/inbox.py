@@ -668,6 +668,20 @@ def documents_json(documents):
     if individual_ids:
         query = Individual.select(Individual.id, Individual.number).where(Individual.id.in_(individual_ids))
         numbers = dict(query.tuples())
+    sales = {}  # the sale a document registered or proves, so the work view can tell a proof of it (proven_sale)
+    sale_ids = {d.herd_tracking_id for d in documents if d.herd_tracking_id}
+    if sale_ids:
+        query = (
+            HerdTracking.select(
+                HerdTracking.id, Individual.number, Herd.herd, HerdTracking.herd_tracking_date, HerdTracking.voided_at
+            )
+            .join(Herd, on=(HerdTracking.herd == Herd.id))
+            .switch(HerdTracking)
+            .join(Individual, on=(HerdTracking.individual == Individual.id))
+            .where(HerdTracking.id.in_(sale_ids))
+        )
+        for row_id, number, herd, day, voided_at in query.tuples():
+            sales[row_id] = {"individual": number, "herd": herd, "date": _iso(day), "active": voided_at is None}
     same = {}  # the same image (sha256) anywhere in the queue: a duplicate warning
     shas = {d.sha256 for d in documents}
     if shas:
@@ -692,6 +706,7 @@ def documents_json(documents):
             "proposal": d.proposal,
             "individual": numbers.get(d.individual_id),
             "herd_tracking_id": d.herd_tracking_id,
+            "sale": sales.get(d.herd_tracking_id),
             "has_original": d.original_path is not None,
             "has_copy": d.public_path is not None,
             "done_at": _iso(d.done_at),

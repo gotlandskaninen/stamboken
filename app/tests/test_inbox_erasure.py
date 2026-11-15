@@ -64,8 +64,14 @@ class ErasureTest(PurgeTest):
         """The upload as a proof of G1-2111's sale to `herd`."""
         item, document = self.uploaded()
         self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{document.id}", json={"doc_type": "bevis"})
+        # A sale outside the association needs its buyer (ADR-0016).
+        buyer = {"name": "Köpare Test", "town": "Visby"} if herd in ("GX1", "MX1") else None
         resp = self.post(
-            f"/{item.id}/dokument/{document.id}/overlat", individual="G1-2111", herd=herd, date=date.today().isoformat()
+            f"/{item.id}/dokument/{document.id}/overlat",
+            individual="G1-2111",
+            herd=herd,
+            date=date.today().isoformat(),
+            buyer=buyer,
         )
         self.assertEqual(resp.status_code, 200, resp.get_json())
         return item, db.InboxDocument.get_by_id(document.id)

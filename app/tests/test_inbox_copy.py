@@ -207,7 +207,10 @@ class TestCopyIsFixed(CopyTest):
         self.post(f"/{item.id}/ta")
         self.patch(item, document, doc_type="bevis")
         today = datetime.date.today().isoformat()
-        resp = self.post(f"/{item.id}/dokument/{document.id}/overlat", individual="G1-2111", herd="GX1", date=today)
+        buyer = {"name": "Köpare Test", "town": "Visby"}  # a sale outside the association needs its buyer (ADR-0016)
+        resp = self.post(
+            f"/{item.id}/dokument/{document.id}/overlat", individual="G1-2111", herd="GX1", date=today, buyer=buyer
+        )
         self.assertEqual(resp.status_code, 200, resp.get_json())
         self.login("man")
         self.post(f"/{item.id}/lage", state="tagen")

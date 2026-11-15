@@ -48,9 +48,30 @@ const doc = {
   has_copy: false,
 } as unknown as InboxDocument;
 
-function panel() {
+// The certificate of the same item registered G9001-2511's sale to GX1 on 2026-10-03.
+const certificate = {
+  ...doc,
+  id: 30,
+  doc_type: "intyg",
+  herd_tracking_id: 7,
+  sale: {
+    individual: "G9001-2511",
+    herd: "GX1",
+    date: "2026-10-03",
+    active: true,
+  },
+} as unknown as InboxDocument;
+
+function panel(documents: InboxDocument[] = []) {
   render(
-    <SalePanel itemId={12} doc={doc} herds={[]} canSave onDone={vi.fn()} />,
+    <SalePanel
+      itemId={12}
+      doc={doc}
+      herds={[]}
+      canSave
+      documents={[...documents, doc]}
+      onDone={vi.fn()}
+    />,
   );
   fireEvent.change(screen.getByLabelText(/Säljdatum/), {
     target: { value: "2026-10-03" },
@@ -107,6 +128,31 @@ describe("SalePanel with a buyer outside the association", () => {
         phone: "0700000000",
       },
     });
+  });
+
+  it("asks for no buyer on a proof of a sale already registered", async () => {
+    registerSale.mockResolvedValue({ ok: true, data: { document: doc } });
+    panel([certificate]);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    );
+    expect(screen.queryByLabelText(/Köparens namn/)).toBeNull();
+    expect(save().disabled).toBe(false);
+    fireEvent.click(save());
+    await waitFor(() => expect(registerSale).toHaveBeenCalledTimes(1));
+    expect(registerSale.mock.calls[0][2]).not.toHaveProperty("buyer");
+  });
+
+  it("asks for the buyer when the registered sale is another one", () => {
+    const voided = {
+      ...certificate,
+      sale: { ...certificate.sale!, active: false },
+    };
+    panel([voided]);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    );
+    expect(screen.getByLabelText(/Köparens namn/)).toBeInTheDocument();
   });
 
   it("sends no buyer for a herd in the association", async () => {

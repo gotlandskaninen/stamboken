@@ -6,6 +6,9 @@ the error classes, two senders at once and a reclaimed claim, cancelling builder
 erasure, retention, bounces by Message-ID, and that no row holds an address. Synthetic data only.
 """
 
+import base64
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -274,6 +277,26 @@ class TestModes(MailTest):
                 else:
                     settings.refuse_unsafe_mail_settings()
 
+    def test_send_pending_refuses_an_unknown_mode_and_live_on_the_demo(self):
+        row_id = self.queue()
+        relay = self.relay()
+        for mode, demo in (("skarpt", False), ("live", True)):
+            with (
+                self.subTest(mode=mode, demo=demo),
+                mock.patch.object(settings.mail, "mode", mode),
+                mock.patch.object(settings.service, "demo_instance", demo),
+            ):
+                with self.assertRaises(RuntimeError):
+                    mail.send_pending(self.now)
+        self.assertEqual((relay.sent, self.row(row_id).status), ([], "queued"))
+
+    def test_empty_smtp_settings_fall_back_to_the_defaults(self):
+        env = {**os.environ, "SMTP_PORT": "", "SMTP_HOST": "", "MAIL_FROM": ""}
+        probe = "import utils.settings as s; print(s.mail.smtp_port, s.mail.smtp_host, s.mail.sender)"
+        app_dir = Path(__file__).resolve().parent.parent
+        p = subprocess.run([sys.executable, "-c", probe], cwd=app_dir, env=env, capture_output=True, text=True)
+        self.assertEqual(p.stdout.strip(), "587 smtp-relay.gmail.com stamboken@gotlandskaninen.se", p.stderr)
+
     def test_app_import_refuses_live_mail_on_the_demo(self):
         """The guard runs when the app is imported: a demo with MAIL_MODE=live never comes up."""
         env = {**os.environ, "MAIL_MODE": "live", "DEMO_INSTANCE": "true", "LINK_SECRET": "guard-test-only"}
@@ -325,7 +348,7 @@ class TestSending(MailTest):
         self.assertEqual([_row_id(msg) for msg, _, _ in relay.sent], [urgent, bulk])
 
     def test_subject_cannot_inject_headers(self):
-        env = Environment(
+        env = Environment(  # nosemgrep
             loader=DictLoader(
                 {
                     "x.txt": "{% block subject %}Hej {{ name }}{% endblock %}{% block body %}Text{% endblock %}",
@@ -428,6 +451,25 @@ class TestErrorClasses(MailTest):
         self.assertEqual((self.row(first).status, self.row(first).attempts), ("failed", 1))
         self.assertEqual([(a.result, a.smtp_code) for a in self.attempts(first)], [("permanent", "5.7.1")])
         self.assertEqual([_row_id(msg) for msg, _, _ in relay.sent], [second])
+        self.assertIsNone(db.MailSender.get_by_id(1).paused_until)
+
+    def test_three_permanent_failures_in_a_row_pause_the_sender(self):
+        """A relay that refuses every recipient must not fail the whole queue: the run stops after three."""
+        ids = [self.queue(f"p{i}@example.org") for i in range(5)]
+        refusal = _refused(552, "5.2.2 mailbox quota exceeded")
+        self.relay(replies=[refusal] * 5)
+        self.assertEqual(mail.send_pending(self.now), 3)
+        self.assertEqual([self.row(i).status for i in ids], ["failed"] * 3 + ["queued"] * 2)
+        self.assertEqual(db.MailSender.get_by_id(1).paused_until, self.now + mail.PAUSE_AFTER_SYSTEMIC)
+        self.assertEqual([a["code"] for a in mail.sender_alarms(self.now)["alarms"]], ["relay_refusing"])
+        self.assertEqual(mail.send_pending(self.now + timedelta(minutes=1)), 0)
+
+    def test_a_mail_that_goes_through_resets_the_refusal_count(self):
+        ids = [self.queue(f"q{i}@example.org") for i in range(5)]
+        refusal = _refused(550, "5.1.1 unknown")
+        self.relay(replies=[refusal, refusal, None, refusal, refusal])
+        self.assertEqual(mail.send_pending(self.now), 5)
+        self.assertEqual([self.row(i).status for i in ids], ["failed", "failed", "sent", "failed", "failed"])
         self.assertIsNone(db.MailSender.get_by_id(1).paused_until)
 
     def test_size_limit_fails_only_that_mail(self):
@@ -599,11 +641,16 @@ class TestCancel(MailTest):
     def test_builder_crash_is_a_counted_temporary_failure(self):
         row_id = self.queue()
         build = mock.Mock(side_effect=ValueError("no data for sokande@example.org"))
-        with mock.patch.dict(mail.MAIL_KINDS, {"ansokan.mottagen": mail.MailKind(1, "T", build)}):
+        with (
+            mock.patch.dict(mail.MAIL_KINDS, {"ansokan.mottagen": mail.MailKind(1, "T", build)}),
+            self.assertLogs("herdbook.mail", "ERROR") as logs,
+        ):
             mail.send_pending(self.now)
         row = self.row(row_id)
         self.assertEqual((row.status, row.attempts), ("queued", 1))
         self.assertEqual(row.last_error, "bygget misslyckades: ValueError: no data for <adress>")
+        self.assertNotIn("@", "\n".join(logs.output))
+        self.assertTrue(all(r.exc_info is None for r in logs.records))
 
 
 class TestConcurrentSenders(MailTest):
@@ -747,8 +794,13 @@ class TestPrivacy(MailTest):
         self.queue()
         a = self.application()
         mail.enqueue_mail("ansokan.mottagen", "user", self.admin.id, {"application_id": a.id, "example": True})
-        for row in db.MailMessage.select():
-            text = json.dumps(row.params)
+        mail.queue_application_mails(a.id, "sokande@example.org")  # a dedupe_key built from the address
+        self.relay(replies=[_refused(550, "5.1.1 <sokande@example.org> unknown")])
+        mail.send_pending(self.now)  # fills last_error
+        rows = list(db.MailMessage.select())
+        self.assertTrue(any(r.dedupe_key for r in rows) and any(r.last_error for r in rows))
+        for row in rows:
+            text = json.dumps([row.params, row.dedupe_key, row.last_error])
             self.assertNotIn("@", text)
             self.assertNotIn(mail.link_token("mail", row.id), text)
             self.assertTrue(all(v is None or isinstance(v, int) for v in row.params.values()))
@@ -823,6 +875,16 @@ class TestLinks(MailTest):
         self.assertNotEqual(token, mail.link_token("other", 7))
         with mock.patch.object(settings.mail, "link_secret", ""), self.assertRaises(RuntimeError):
             mail.link_token("test", 7)
+
+    def test_the_three_uses_of_the_key_are_domain_separated(self):
+        def mac(text):
+            return hmac.new(SECRET.encode(), text.encode(), hashlib.sha256)
+
+        self.assertEqual(mail.message_id(5), f"<mail-5.{mac('msgid:5').hexdigest()[:16]}@{HOST}>")
+        self.assertEqual(mail.address_hash("A@Example.org"), mac("addr:a@example.org").hexdigest())
+        token_mac = base64.urlsafe_b64encode(mac("link:mail:5").digest()[:16]).rstrip(b"=").decode()
+        self.assertEqual(mail.link_token("mail", 5), f"5.{token_mac}")
+        self.assertNotEqual(mail.message_id(5).split(".")[1][:16], mac("mail:5").hexdigest()[:16])
 
     def test_verify_link(self):
         token = mail.link_token("test", 42)

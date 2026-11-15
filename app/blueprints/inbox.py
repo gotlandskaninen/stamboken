@@ -25,6 +25,7 @@ from peewee import fn
 from PIL import Image, ImageOps
 from utils.database import (
     DB_PROXY,
+    OUTSIDE_GENEBANK_HERDS,
     Herd,
     HerdTracking,
     InboxItem,
@@ -680,14 +681,14 @@ def transfer(item_id, document_id):
             latest = current_holder_row(individual.id)
             proven = inbox.proven_sale(item, document, individual, herd, when)
             if proven is not None:  # the proof of a sale registered from another document: nothing to write
-                if buyer is not None:
-                    raise inbox.InboxError(
-                        400, "Försäljningen är redan registrerad. Köparen ändras av genbanksansvarig."
-                    )
+                # Its buyer, if any, came with the sale; a `buyer` sent here is not read.
                 seller = proven.from_herd or individual.origin_herd
                 if not (is_manager_of(user, seller.genebank_id) or grant.allows(user, seller)):
                     raise inbox.InboxError(403, "Du får inte koppla ett bevis till kaninens försäljning.")
                 row = proven
+            elif herd in OUTSIDE_GENEBANK_HERDS and buyer is None:
+                # A new sale outside the association needs its buyer (ADR-0016); a proof of one registered does not.
+                raise inbox.InboxError(400, "Ange köparens namn och ort för en försäljning utanför föreningen.")
             elif (
                 latest
                 and when < coerce_date(latest.herd_tracking_date)

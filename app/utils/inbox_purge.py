@@ -28,6 +28,7 @@ from utils.database import (
     InboxOperation,
     MailMessage,
 )
+from utils.herd_tracking import sold_on
 from utils.mail import forget_recipient
 
 logger = logging.getLogger("herdbook.inbox_purge")
@@ -158,29 +159,29 @@ def purge_originals(now):
     return remove_originals(paths)
 
 
+def purge_due(now):
+    """
+    A document's original once its own purge_after has passed, whatever its type and before the months: the
+    yearly report sets it on a form that shows a bank account and a signature, when the form is typed in.
+    """
+    with DB_PROXY.atomic():
+        paths = _null_originals(InboxDocument.purge_after < now)
+    return remove_originals(paths)
+
+
 def purge_sold_proofs(now):  # pylint: disable=unused-argument  # every rule takes the clock
-    """A proof's original once its rabbit is sold on: a later active TRANSFER from the buyer's herd. The sale stays."""
+    """A proof's original once its rabbit is sold on (herd_tracking.sold_on, as for the buyer's contact details)."""
     sale, later = HerdTracking, HerdTracking.alias()
     proofs = InboxDocument.select(InboxDocument.herd_tracking_id).where(
         (InboxDocument.doc_type == "bevis") & InboxDocument.original_path.is_null(False)
     )
-    sold_on = (
+    moved_on = (
         sale.select(sale.id)
         .join(later, on=(later.individual == sale.individual))
-        .where(
-            sale.id.in_(proofs)
-            & sale.voided_at.is_null(True)
-            & later.voided_at.is_null(True)
-            & (later.kind == "TRANSFER")
-            & (later.from_herd == sale.herd)
-            & (
-                (later.herd_tracking_date > sale.herd_tracking_date)
-                | ((later.herd_tracking_date == sale.herd_tracking_date) & (later.id > sale.id))
-            )
-        )
+        .where(sale.id.in_(proofs) & sale.voided_at.is_null(True) & sold_on(sale, later))
     )
     with DB_PROXY.atomic():
-        paths = _null_originals((InboxDocument.doc_type == "bevis") & InboxDocument.herd_tracking_id.in_(sold_on))
+        paths = _null_originals((InboxDocument.doc_type == "bevis") & InboxDocument.herd_tracking_id.in_(moved_on))
     return remove_originals(paths)
 
 
@@ -287,6 +288,7 @@ RULES = (
     inbox_gmail.release_senders,
     remind_incomplete,
     purge_originals,
+    purge_due,
     purge_sold_proofs,
     purge_incomplete,
     purge_junk,
@@ -355,18 +357,27 @@ def erase_document(item, document, user):
     return paths
 
 
-def erase_buyer_from_inbox(herd_tracking_id, certificates=True):
+def erase_buyer_from_inbox(herd_tracking_id, whole_items=False):
     """
-    A buyer outside the association is deleted (utils.herd_tracking.delete_buyer_contacts): the documents of the
-    sale (inbox_document.herd_tracking_id) lose their originals, as for a member in erase_person_from_inbox. On an
-    erasure (`certificates`) a certificate the sale was registered from keeps only its masked copy, and the items
-    lose their text; on a void or the five-year purge only the proof (bevis) goes. A buyer has no member row, so
-    buyer_member never names one. In the caller's transaction; returns the paths for remove_originals after the
-    commit (remove_orphans takes any the caller leaves). Nothing to do once the originals are purged.
+    A buyer outside the association is deleted (utils.herd_tracking.delete_buyer_contacts): the documents linked to
+    the sale (herd_tracking_id, any type) lose what shows the buyer, as for a member in erase_person_from_inbox. On
+    an erasure on request (`whole_items`) so do the other proofs and certificates of the same items for the rabbit,
+    linked or not. The original goes (a certificate keeps only its masked copy), with the model's reading and
+    proposal, and the items lose their text. A buyer has no member row, so buyer_member never names one. In the
+    caller's transaction; returns the paths for remove_originals after the commit. Nothing to do once the originals
+    are purged.
     """
+    sale = HerdTracking.get_or_none(HerdTracking.id == herd_tracking_id)
+    if sale is None:
+        return []
     shown = InboxDocument.herd_tracking_id == herd_tracking_id
-    if not certificates:
-        return _null_originals(shown & (InboxDocument.doc_type == "bevis"))
+    if whole_items:
+        items = InboxDocument.select(InboxDocument.item).where(shown)
+        shown |= (
+            InboxDocument.item.in_(items)
+            & (InboxDocument.individual == sale.individual_id)
+            & InboxDocument.doc_type.in_(ORIGINAL_TYPES)
+        )
     paths = _null_originals(shown)
     _clear_text(InboxDocument.select(InboxDocument.item).where(shown))
     return paths
