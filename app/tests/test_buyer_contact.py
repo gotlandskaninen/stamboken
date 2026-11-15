@@ -696,6 +696,24 @@ class TestRetention(BuyerBase):
         self.assertEqual(buyer_contact.purge_dead(NOW + timedelta(days=31)), 0)
         self.assertIsNotNone(self._contact(self.contact_id))
 
+    def test_the_death_is_read_again_under_the_lock(self):
+        # A death cleared and recorded anew while the purge waited starts its 30 days over. audit_log takes no
+        # UPDATE, so the age cannot be staged: the test checks that the age is read after the rabbits' lock.
+        db.Individual.update(death_date="2022-06-01").where(db.Individual.id == self.rabbit.id).execute()
+        calls = []
+        real_lock, real_dead_since = buyer_contact.lock_individuals, buyer_contact._dead_since
+        with (
+            mock.patch(
+                "utils.buyer_contact.lock_individuals", side_effect=lambda ids: calls.append("lock") or real_lock(ids)
+            ),
+            mock.patch(
+                "utils.buyer_contact._dead_since",
+                side_effect=lambda ids, now: calls.append("age") or real_dead_since(ids, now),
+            ),
+        ):
+            self.assertEqual(buyer_contact.purge_dead(NOW + timedelta(days=31)), 1)
+        self.assertEqual(calls[-2:], ["lock", "age"])
+
     def test_the_contact_consent_goes_when_the_rabbit_is_sold_on(self):
         self.assertEqual(buyer_contact.purge_sold_on(NOW), 0)
         record_herd_tracking(self.rabbit, self.herds[1], "2022-01-01", "TRANSFER", self.manager)  # buyback

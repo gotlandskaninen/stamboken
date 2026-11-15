@@ -83,11 +83,12 @@ def erase_buyer_contact(contact_id, user):
 
 def _delete_under_locks(candidates, eligible, action):
     """
-    Deletes the buyers among `candidates` (a query of ids) that are still `eligible` (a condition on BuyerContact)
-    under a correction's locks, in its order: the queue's items, then the rabbits, both in id order. What was
-    read before the locks only picks the candidates; a correction that moved a sale's date, and its purge_at, or
-    cleared a death in the meantime keeps its buyer. Items that appeared under the rabbit lock leave the run to
-    the next night rather than lock out of order. Returns how many went and the paths for remove_originals.
+    Deletes the buyers among `candidates` (a query of ids) that are still `eligible` (a function giving a condition
+    on BuyerContact, called under the locks) under a correction's locks, in its order: the queue's items, then the
+    rabbits, both in id order. What was read before the locks only picks the candidates; a correction that moved a
+    sale's date, and its purge_at, or cleared a death in the meantime keeps its buyer. Items that appeared under the
+    rabbit lock leave the run to the next night rather than lock out of order. Returns how many went and the paths
+    for remove_originals.
     """
     ids = [contact_id for (contact_id,) in candidates.tuples()]
     if not ids:
@@ -99,7 +100,7 @@ def _delete_under_locks(candidates, eligible, action):
     if not buyer_items(holding) <= items:
         logger.warning("Buyer purge %s: the queue changed under the locks; the next run takes it", action)
         return 0, []
-    still = BuyerContact.select(BuyerContact.id).where(BuyerContact.id.in_(ids) & eligible)
+    still = BuyerContact.select(BuyerContact.id).where(BuyerContact.id.in_(ids) & eligible())
     return delete_buyer_contacts([contact_id for (contact_id,) in still.tuples()], action)
 
 
@@ -108,7 +109,7 @@ def purge_expired(now):
     expired = BuyerContact.purge_at <= now
     with DB_PROXY.atomic():
         count, paths = _delete_under_locks(
-            BuyerContact.select(BuyerContact.id).where(expired), expired, "gallring_fem_ar"
+            BuyerContact.select(BuyerContact.id).where(expired), lambda: expired, "gallring_fem_ar"
         )
     remove_originals(paths)
     return count
@@ -164,9 +165,12 @@ def purge_dead(now):
         r.individual_id
         for r in HerdTracking.select(HerdTracking.individual).where(HerdTracking.holder_contact.in_(_held_by_dead()))
     }
-    held = BuyerContact.id.in_(_held_by_dead(_dead_since(candidates, now)))
+
+    def held():  # read again under the locks: a death cleared and recorded anew meanwhile starts its 30 days over
+        return BuyerContact.id.in_(_held_by_dead(_dead_since(candidates, now)))
+
     with DB_PROXY.atomic():
-        count, paths = _delete_under_locks(BuyerContact.select(BuyerContact.id).where(held), held, "gallring_dod")
+        count, paths = _delete_under_locks(BuyerContact.select(BuyerContact.id).where(held()), held, "gallring_dod")
     remove_originals(paths)
     return count
 
