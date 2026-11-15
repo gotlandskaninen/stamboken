@@ -46,6 +46,12 @@ export default function StambokenOnlinePage() {
             <LinkButton href="/stamboken/min-besattning" variant="contained">
               Logga in i Stamboken
             </LinkButton>
+            <LinkButton href="/stamboken-online/kom-igang" variant="outlined">
+              Kom igång
+            </LinkButton>
+            <LinkButton href="/stamboken-online/manual" variant="outlined">
+              Manual
+            </LinkButton>
           </Box>
           <Typography
             sx={{
@@ -57,8 +63,8 @@ export default function StambokenOnlinePage() {
             }}
           >
             Du loggar in med ditt föreningskonto: en e-postadress på
-            gotlandskaninen.se som föreningen skapar åt dig som medlem. Vi
-            arbetar på att det ska gå att logga in med vanligt lösenord också.
+            gotlandskaninen.se som föreningen skapar åt dig som medlem. Har du
+            användarnamn och lösenord från gamla Stamboken fungerar de också.
             Frågor om konton och inloggning besvaras på{" "}
             <Link
               href="mailto:admin@gotlandskaninen.se"

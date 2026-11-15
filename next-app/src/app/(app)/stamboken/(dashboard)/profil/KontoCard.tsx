@@ -7,9 +7,7 @@ import { useNotifications } from "@/contexts/NotificationContext";
 import type { UserContext } from "@/lib/user-context";
 import { updateProfilePicture, updateSettings } from "./actions";
 import styles from "./profil.module.css";
-
-const COURSE_URL =
-  "https://classroom.google.com/c/NjE3MDI1MzY2OTAz?cjc=27x3zpg";
+import { COURSE_URL } from "@/lib/constants";
 
 export function KontoCard({ user }: { user: UserContext }) {
   const { showSnackbar } = useSnackbar();
