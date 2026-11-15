@@ -130,6 +130,7 @@ att fungera.
 
 Starten stoppas om `MAIL_MODE=live` och `DEMO_INSTANCE=true`, om
 `LINK_SECRET` saknas när läget inte är `log`, eller om läget är okänt.
+Samma kontroll görs vid varje körning av `send_pending`, som annars inte skickar.
 Övriga inställningar: `SMTP_HOST`, `SMTP_PORT` och `MAIL_FROM`. Appen har
 inget användarnamn eller lösenord för SMTP. Compose-filerna för dev och den
 lokala produktionsstacken låser `MAIL_MODE=log`, också om `api-variables.env`

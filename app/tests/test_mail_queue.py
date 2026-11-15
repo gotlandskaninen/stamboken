@@ -274,6 +274,19 @@ class TestModes(MailTest):
                 else:
                     settings.refuse_unsafe_mail_settings()
 
+    def test_send_pending_refuses_an_unknown_mode_and_live_on_the_demo(self):
+        row_id = self.queue()
+        relay = self.relay()
+        for mode, demo in (("skarpt", False), ("live", True)):
+            with (
+                self.subTest(mode=mode, demo=demo),
+                mock.patch.object(settings.mail, "mode", mode),
+                mock.patch.object(settings.service, "demo_instance", demo),
+            ):
+                with self.assertRaises(RuntimeError):
+                    mail.send_pending(self.now)
+        self.assertEqual((relay.sent, self.row(row_id).status), ([], "queued"))
+
     def test_app_import_refuses_live_mail_on_the_demo(self):
         """The guard runs when the app is imported: a demo with MAIL_MODE=live never comes up."""
         env = {**os.environ, "MAIL_MODE": "live", "DEMO_INSTANCE": "true", "LINK_SECRET": "guard-test-only"}

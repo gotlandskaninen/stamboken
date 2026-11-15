@@ -559,6 +559,7 @@ def send_pending(now=None):
     One run of the scheduler's mail_send job: up to MAX_PER_RUN due rows, one claimed at a time, over one
     SMTP connection. Returns the number of rows taken.
     """
+    settings.refuse_unsafe_mail_settings()  # not only at import: any other mode would fall through to a real send
     fixed = now
     now = now or _utcnow()
     paused_until = _heartbeat(now)
