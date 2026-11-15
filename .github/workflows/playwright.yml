@@ -239,6 +239,7 @@ jobs:
       # which needs the account and some data there. Same seed, same order, so
       # the user ids match the ones in the production database.
       - name: Seed demo API
+        continue-on-error: true  # a failed seed fails the access rules test below, never the legacy suite
         run: |
           docker compose -f docker-compose.local-production.yml exec -T api-test flask seed create --verbose
           docker compose -f docker-compose.local-production.yml exec -T api-test python3 -m cli.create_test_users
