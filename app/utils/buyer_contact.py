@@ -18,6 +18,7 @@ from utils.herd_tracking import (
     delete_buyer_contacts,
     is_manager_of,
     log_buyer_contact,
+    sold_on,
 )
 from utils.inbox_purge import remove_originals
 from utils.mail import forget_recipient
@@ -47,7 +48,7 @@ def erase_buyer_contact(contact_id, user):
     if not (user.is_admin or is_manager_of(user, genebank_id)):
         raise HerdTrackingForbidden("Bara genbanksansvarig eller administratör kan radera köparens uppgifter.")
     with DB_PROXY.atomic():
-        _count, paths = delete_buyer_contacts([contact_id], "radering", user)
+        _count, paths = delete_buyer_contacts([contact_id], "radering", user, whole_items=True)
     remove_originals(paths)  # only after the commit: a row never names a removed file
 
 
@@ -99,24 +100,10 @@ def purge_sold_on(now):  # pylint: disable=unused-argument  # every rule takes t
     or another buyer. Address, e-mail and phone go with it; e-mail and phone stay while the membership yes does.
     """
     sale, later = HerdTracking, HerdTracking.alias()
-    sold_on = (
+    moved_on = (
         sale.select(sale.holder_contact)
         .join(later, on=(later.individual == sale.individual))
-        .where(
-            sale.holder_contact.is_null(False)
-            & sale.voided_at.is_null(True)
-            & later.voided_at.is_null(True)
-            & later.kind.in_(("TRANSFER", "CORRECTION"))
-            & (
-                (later.herd != sale.herd)
-                | later.holder_contact.is_null(True)
-                | (later.holder_contact != sale.holder_contact)
-            )
-            & (
-                (later.herd_tracking_date > sale.herd_tracking_date)
-                | ((later.herd_tracking_date == sale.herd_tracking_date) & (later.id > sale.id))
-            )
-        )
+        .where(sale.holder_contact.is_null(False) & sale.voided_at.is_null(True) & sold_on(sale, later))
     )
     no_membership = BuyerContact.membership_optin_at.is_null(True)
     kept = (
@@ -130,7 +117,7 @@ def purge_sold_on(now):  # pylint: disable=unused-argument  # every rule takes t
         BuyerContact.email: Case(None, [(no_membership, None)], BuyerContact.email),
         BuyerContact.phone: Case(None, [(no_membership, None)], BuyerContact.phone),
     }
-    return _null_fields(BuyerContact.id.in_(sold_on) & kept, changes, "gallring_salld_vidare")
+    return _null_fields(BuyerContact.id.in_(moved_on) & kept, changes, "gallring_salld_vidare")
 
 
 def purge_membership_optin(now):

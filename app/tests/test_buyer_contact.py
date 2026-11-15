@@ -4,7 +4,7 @@ isort:skip_file
 """
 
 import os
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 
 os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), "auth.ini.test"))
@@ -360,7 +360,7 @@ class TestVoid(BuyerBase):
     def test_undoing_the_sale_deletes_the_buyer(self):
         with mock.patch("utils.inbox_purge.erase_buyer_from_inbox", return_value=[]) as inbox:
             void_herd_tracking(self.sale.id, self.owner, "Fel kanin")
-        inbox.assert_called_once_with(self.sale.id)
+        inbox.assert_called_once_with(self.sale.id, False)
         self.assertIsNone(self._contact(self.contact_id))
         self.assertEqual(
             [r.new_data for r in self._buyer_log(self.contact_id, "DELETE")], [{"action": "forsaljning_ogiltig"}]
@@ -462,7 +462,7 @@ class TestErasure(BuyerBase):
         ):
             response = self._erase("man")
         self.assertEqual(response.status_code, 204, response.get_data(as_text=True))
-        inbox.assert_called_once_with(self.sale.id)
+        inbox.assert_called_once_with(self.sale.id, True)
         forget.assert_called_once_with("buyer_contact", self.contact_id)
         self.assertIsNone(self._contact(self.contact_id))
         sale = db.HerdTracking.get_by_id(self.sale.id)
@@ -503,7 +503,7 @@ class TestRetention(BuyerBase):
         self.assertEqual(buyer_contact.purge_expired(NOW), 0)
         with mock.patch("utils.inbox_purge.erase_buyer_from_inbox", return_value=[]) as inbox:
             self.assertEqual(buyer_contact.purge_expired(NOW + timedelta(days=5 * 366)), 1)
-        inbox.assert_called_once_with(self.sale.id)
+        inbox.assert_called_once_with(self.sale.id, False)
         self.assertIsNone(self._contact(self.contact_id))
         self.assertIsNone(db.HerdTracking.get_by_id(self.sale.id).holder_contact_id)
         self.assertEqual(
@@ -593,12 +593,12 @@ class TestQueueDocuments(PurgeTest):
         gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
         self.rabbit = db.Individual.get(db.Individual.number == "G1-2112")
         self.sale = record_herd_tracking(self.rabbit, gx1, "2026-01-01", "TRANSFER", self.manager, buyer=BUYER)
-        self.item = self.make(documents=3)
+        self.item = self.make(documents=4)
         db.InboxItem.update(message=f"Köpare {NAME}").where(db.InboxItem.id == self.item.id).execute()
-        self.certificate, self.proof, self.other = list(self.item.documents.order_by(db.InboxDocument.id))
+        self.certificate, self.proof, self.other, self.photo = list(self.item.documents.order_by(db.InboxDocument.id))
         reading = {"kopare": NAME}
         db.InboxDocument.update(interpretation=reading, proposal={"fields": reading}).where(
-            db.InboxDocument.id.in_([self.certificate.id, self.proof.id])
+            db.InboxDocument.id != self.other.id
         ).execute()
         db.InboxDocument.update(  # the certificate the sale was registered from, with its masked copy
             herd_tracking_id=self.sale.id,
@@ -606,7 +606,10 @@ class TestQueueDocuments(PurgeTest):
             public_path=self.write(f"inkorg/kopia/{self.certificate.id}.jpg"),
             mask_rects=[],
         ).where(db.InboxDocument.id == self.certificate.id).execute()
-        # A proof of the same rabbit that never got linked to the sale, and another rabbit's certificate.
+        # Another photo linked to the sale, a proof of the rabbit never linked to it, another rabbit's certificate.
+        db.InboxDocument.update(herd_tracking_id=self.sale.id, doc_type="annat").where(
+            db.InboxDocument.id == self.photo.id
+        ).execute()
         db.InboxDocument.update(doc_type="bevis", individual=self.rabbit).where(
             db.InboxDocument.id == self.proof.id
         ).execute()
@@ -615,39 +618,59 @@ class TestQueueDocuments(PurgeTest):
         ).execute()
         self.certificate = db.InboxDocument.get_by_id(self.certificate.id)
 
-    def assertScrubbed(self):  # pylint: disable=invalid-name
-        certificate, proof, other = (
-            db.InboxDocument.get_by_id(d.id) for d in (self.certificate, self.proof, self.other)
-        )
-        for document, before in ((certificate, self.certificate), (proof, self.proof)):
+    def assertScrubbed(self, scrubbed, kept):  # pylint: disable=invalid-name
+        for before in scrubbed:
+            document = db.InboxDocument.get_by_id(before.id)
             self.assertEqual((document.original_path, document.interpretation, document.proposal), (None,) * 3)
             self.assertFalse(self.exists(before.original_path))  # removed after the commit
+        for before in kept:
+            self.assertEqual(db.InboxDocument.get_by_id(before.id).original_path, before.original_path)
+            self.assertTrue(self.exists(before.original_path))
+        certificate = db.InboxDocument.get_by_id(self.certificate.id)
         self.assertEqual(certificate.public_path, self.certificate.public_path)  # only the masked copy is left
         self.assertTrue(self.exists(certificate.public_path))
-        self.assertEqual(other.original_path, self.other.original_path)  # another rabbit's certificate stays
         self.assertNotIn(NAME, self.text(self.item))
+
+    def test_an_erasure_takes_the_buyers_name_out_of_the_items(self):
+        buyer_contact.erase_buyer_contact(self.sale.holder_contact_id, self.manager)
+        self.assertScrubbed([self.certificate, self.photo, self.proof], [self.other])
         found = db.DATABASE.execute_sql(
             "SELECT count(*) FROM inbox_document d WHERE d::text ILIKE %s", (f"%{NAME}%",)
         ).fetchone()[0]
         self.assertEqual(found, 0)
 
-    def test_an_erasure_takes_the_buyers_name_out_of_the_queue(self):
-        buyer_contact.erase_buyer_contact(self.sale.holder_contact_id, self.manager)
-        self.assertScrubbed()
-
-    def test_a_void_takes_it_out_the_same_way(self):
+    def test_a_void_clears_the_documents_linked_to_the_sale(self):
         void_herd_tracking(self.sale.id, self.manager, "Fel kanin")
-        self.assertScrubbed()
+        self.assertScrubbed([self.certificate, self.photo], [self.proof, self.other])
+
+    def test_the_rabbits_death_clears_them_too(self):
+        db.Individual.update(death_date=date(2026, 6, 1)).where(db.Individual.id == self.rabbit.id).execute()
+        self.assertEqual(buyer_contact.purge_dead(NOW), 1)
+        self.assertScrubbed([self.certificate, self.photo], [self.proof, self.other])
 
     def test_the_five_year_purge_too(self):
         buyer_contact.purge_expired(NOW + timedelta(days=5 * 366))
-        self.assertScrubbed()
+        self.assertScrubbed([self.certificate, self.photo], [self.proof, self.other])
 
-    def test_nothing_to_do_once_the_originals_are_purged(self):
-        purge.purge_originals(PURGE_NOW + timedelta(days=400))
-        before = list(db.InboxDocument.select().order_by(db.InboxDocument.id).tuples())
+    def test_after_the_originals_purge_only_what_is_left_is_cleared(self):
+        purge.purge_originals(PURGE_NOW + timedelta(days=400))  # certificates and proofs, not other photos
+        before = {d.id: d for d in db.InboxDocument.select()}
         self.assertEqual(buyer_contact.purge_expired(NOW + timedelta(days=5 * 366)), 1)
-        self.assertEqual(list(db.InboxDocument.select().order_by(db.InboxDocument.id).tuples()), before)
+        after = {d.id: d for d in db.InboxDocument.select()}
+        self.assertIsNotNone(before[self.photo.id].original_path)
+        self.assertIsNone(after[self.photo.id].original_path)
+        for document_id in (self.certificate.id, self.proof.id, self.other.id):
+            self.assertEqual(after[document_id].original_path, before[document_id].original_path)
+
+    def test_a_proof_goes_when_a_correction_moves_the_rabbit_on(self):
+        db.InboxDocument.update(herd_tracking_id=self.sale.id).where(db.InboxDocument.id == self.proof.id).execute()
+        purge.purge_sold_proofs(NOW)
+        self.assertIsNotNone(db.InboxDocument.get_by_id(self.proof.id).original_path)
+        correct_herd_tracking(
+            self.rabbit, self.manager, None, [], [{"kind": "CORRECTION", "date": "2026-02-01", "herd": "G2"}]
+        )
+        purge.purge_sold_proofs(NOW)
+        self.assertIsNone(db.InboxDocument.get_by_id(self.proof.id).original_path)
 
 
 class TestQueueSale(ErasureTest):

@@ -1087,13 +1087,33 @@ def _reject_buyer_name(texts, individual_ids, names=()):
             raise HerdTrackingInvalid(BUYER_PRIVACY_HELP)
 
 
-def delete_buyer_contacts(contact_ids, action, user=None):
+def sold_on(sale, later):
+    """
+    SQL: `later` (an alias of HerdTracking) is an active row after `sale` that gives the rabbit another holder: a
+    TRANSFER or CORRECTION to another herd, or to another buyer outside the association.
+    """
+    return (
+        later.voided_at.is_null(True)
+        & later.kind.in_(("TRANSFER", "CORRECTION"))
+        & (
+            (later.herd != sale.herd)
+            | later.holder_contact.is_null(True)
+            | (later.holder_contact != sale.holder_contact)
+        )
+        & (
+            (later.herd_tracking_date > sale.herd_tracking_date)
+            | ((later.herd_tracking_date == sale.herd_tracking_date) & (later.id > sale.id))
+        )
+    )
+
+
+def delete_buyer_contacts(contact_ids, action, user=None, whole_items=False):
     """
     Deletes buyers outside the association, in the caller's transaction: on a void of the sale, an erasure, the
     rabbit's death and the five-year purge. The sale's holder_contact_id goes NULL (ON DELETE SET NULL); the sale
-    stays. Each deletion is one audit_log row without personal data, and every time the sale's documents in the
-    queue are cleared the same way (inbox_purge.erase_buyer_from_inbox). Returns how many went and the paths for
-    inbox_purge.remove_originals after the commit.
+    stays. Each deletion is one audit_log row without personal data, and the sale's documents in the queue are
+    cleared (inbox_purge.erase_buyer_from_inbox; `whole_items` on an erasure on request). Returns how many went and
+    the paths for inbox_purge.remove_originals after the commit.
     """
     # Imported here: inbox_purge imports inbox, which imports individual_number_v2, which imports this module.
     from utils.inbox_purge import erase_buyer_from_inbox  # pylint: disable=import-outside-toplevel
@@ -1104,7 +1124,7 @@ def delete_buyer_contacts(contact_ids, action, user=None):
     paths = []
     # The sales first: the delete nulls their link.
     for (sale_id,) in HerdTracking.select(HerdTracking.id).where(HerdTracking.holder_contact.in_(ids)).tuples():
-        paths += erase_buyer_from_inbox(sale_id)
+        paths += erase_buyer_from_inbox(sale_id, whole_items)
     deleted = BuyerContact.delete().where(BuyerContact.id.in_(ids)).returning(BuyerContact.id).tuples()
     deleted = [contact_id for (contact_id,) in deleted]
     for contact_id in deleted:
