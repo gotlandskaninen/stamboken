@@ -179,7 +179,8 @@ def purge_sold_proofs(now):  # pylint: disable=unused-argument  # every rule tak
     """
     A proof's original once its rabbit is sold on (herd_tracking.sold_on, as for the buyer's contact details). A
     proof of a sale later corrected still names the voided row: the sale is then the active row that carries the
-    same buyer (a correction carries it over). The document's link stays as it is.
+    same buyer (a correction carries it over), or, for a sale without a buyer (to a member), the move into the
+    same herd that the correction which voided it wrote for the rabbit. The document's link stays as it is.
     """
     sale, later, linked = HerdTracking, HerdTracking.alias(), HerdTracking.alias()
     proofs = InboxDocument.select(InboxDocument.herd_tracking_id).where(
@@ -189,7 +190,17 @@ def purge_sold_proofs(now):  # pylint: disable=unused-argument  # every rule tak
         linked.select(linked.id, sale.id)
         .join(
             sale,
-            on=((sale.id == linked.id) | ((sale.holder_contact == linked.holder_contact) & (sale.id != linked.id))),
+            on=(
+                (sale.id == linked.id)
+                | ((sale.holder_contact == linked.holder_contact) & (sale.id != linked.id))
+                | (
+                    linked.holder_contact.is_null(True)
+                    & (sale.operation_id == linked.voided_operation_id)
+                    & (sale.individual == linked.individual)
+                    & (sale.herd == linked.herd)
+                    & sale.kind.in_(("TRANSFER", "CORRECTION"))
+                )
+            ),
         )
         .where(linked.id.in_(proofs) & sale.voided_at.is_null(True))
     )

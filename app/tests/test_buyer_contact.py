@@ -801,6 +801,20 @@ class TestQueueDocuments(PurgeTest):
         self.assertIsNone(proof.original_path)
         self.assertEqual(proof.herd_tracking_id, self.sale.id)  # the provenance link stays
 
+    def test_a_proof_of_a_corrected_member_sale_goes_when_the_rabbit_is_sold_on(self):
+        g2 = db.Herd.get(db.Herd.herd == "G2")
+        member_sale = record_herd_tracking(self.rabbit, g2, "2026-01-05", "TRANSFER", self.manager)  # no buyer
+        db.InboxDocument.update(herd_tracking_id=member_sale.id).where(db.InboxDocument.id == self.proof.id).execute()
+        event = {"kind": "TRANSFER", "date": "2026-01-06", "herd": "G2"}
+        correct_herd_tracking(self.rabbit, self.manager, None, [member_sale.id], [event], "Fel datum")
+        purge.purge_sold_proofs(NOW)
+        self.assertIsNotNone(db.InboxDocument.get_by_id(self.proof.id).original_path)
+        record_herd_tracking(self.rabbit, self.herds[0], "2026-02-01", "TRANSFER", self.manager)  # sold on
+        purge.purge_sold_proofs(NOW)
+        proof = db.InboxDocument.get_by_id(self.proof.id)
+        self.assertIsNone(proof.original_path)
+        self.assertEqual(proof.herd_tracking_id, member_sale.id)
+
     def test_a_proof_goes_when_a_correction_moves_the_rabbit_on(self):
         db.InboxDocument.update(herd_tracking_id=self.sale.id).where(db.InboxDocument.id == self.proof.id).execute()
         purge.purge_sold_proofs(NOW)
