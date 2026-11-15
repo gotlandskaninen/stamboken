@@ -1330,11 +1330,24 @@ def later_fields(herd, membership, member, signed_on: date, own=frozenset()) -> 
     created_at is naive server time. Phone and e-mail count only from rows about `member`, and every swap of the main
     member counts for them (I2). The paper writes of the submissions in `own`, the herd's report for the round, do not
     count, so that Ändra from paper can correct its own typo (I1): their kontakt_andrad rows, the herd's audit rows
-    of the same transactions, and their reports' paper consent rows.
+    of the same transactions, and their paper consent rows. That holds only for a form not withdrawn and signed on or
+    before `signed_on`: a newer signed form's write still wins over an older form entered after it.
     """
     # shortcut: the matrikel importer in cli/members.py leaves no trace, so this misses its changes; log them if it
     # ever runs during a round.
     after = datetime.combine(signed_on + timedelta(days=1), datetime.min.time(), STOCKHOLM)
+    own = [
+        submission
+        for submission in YearlyReportSubmission.select()
+        .join(YearlyHerdReport)
+        .where(
+            YearlyReportSubmission.id.in_(own),
+            YearlyReportSubmission.source == "paper",
+            YearlyHerdReport.status != "voided",
+        )
+        if date.fromisoformat(submission.data["signed_on"]) <= signed_on
+    ]
+    own_ids = {submission.id for submission in own}
     audits = MatrikelAudit.select(MatrikelAudit.action, MatrikelAudit.payload).where(
         MatrikelAudit.membership == membership.id,
         MatrikelAudit.action.in_(("membership_updated", "person_updated", "kontakt_andrad", "main_member_changed")),
@@ -1343,7 +1356,7 @@ def later_fields(herd, membership, member, signed_on: date, own=frozenset()) -> 
     fields, transactions = set(), set()
     for audit in audits:
         payload = audit.payload or {}
-        if payload.get("submission_id") in own:
+        if payload.get("submission_id") in own_ids:
             transactions.add(payload.get("transaction_id"))
             continue
         if audit.action == "main_member_changed":  # the form's signer may not be the main member written to
@@ -1361,12 +1374,14 @@ def later_fields(herd, membership, member, signed_on: date, own=frozenset()) -> 
     )
     if any(row.transaction_id not in transactions for row in account):
         fields.add("konto")
-    reports = YearlyReportSubmission.select(YearlyReportSubmission.report).where(YearlyReportSubmission.id.in_(own))
-    mine = (PublicationConsentChange.source == "paper") & PublicationConsentChange.report.in_(reports)
+    # a paper consent row is its submission's by report and time: apply_paper_matrikel writes it at created_at
+    own_rows = {(submission.report_id, submission.created_at) for submission in own}
     consent = PublicationConsentChange.select().where(
-        PublicationConsentChange.membership == membership.id, PublicationConsentChange.at >= after, ~mine
+        PublicationConsentChange.membership == membership.id, PublicationConsentChange.at >= after
     )
-    return fields | ({"publicering"} if consent.exists() else set())
+    if any(row.source != "paper" or (row.report_id, row.at) not in own_rows for row in consent):
+        fields.add("publicering")
+    return fields
 
 
 def _same(column, stored, value):

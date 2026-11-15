@@ -8,7 +8,7 @@ Synthetic herds and members only.
 isort:skip_file
 """
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from datetime import time as clock
 
 import utils.arsrapport as arsrapport
@@ -21,6 +21,7 @@ from tests.test_arsrapport_kontakt import (
     NEW_KONTO,
     NEW_PHONE,
     NO_MEMBER,
+    NOW,
     REPORT,
     PaperTest,
     later,
@@ -168,6 +169,55 @@ class MatrikelTest(PaperTest):
         third = self.form(self.manager)
         receipt = self.answer(third, JA, revision=2, reason="Fel igen")
         self.assertEqual((self.stored(), receipt["warnings"]), (NONE, [later("publicering")]))
+
+    def both(self, item, publicering, telefon, **fields):
+        """A form that answers about Koharen and gives a phone number."""
+        body = self.paper(item, matrikel(publicering=publicering, telefon=telefon), **fields)
+        return self.ok(item, body)
+
+    def phone(self):
+        return db.Member.get_by_id(self.member.id).phone
+
+    def test_older_form_does_not_undo_a_newer_one(self):  # review Important 1, ruling (b)
+        self.login("man")
+        newer = self.form(self.manager)
+        receipt = self.both(newer, NEJ, NEW_PHONE, received_on="2026-01-12", signed_on="2026-01-10")
+        self.assertEqual(receipt["matrikel"], ["telefon", "publicering"])
+
+        # Ändra with an older form signed 2 January, entered an hour later: the newer form's writes are later changes
+        self.at(NOW + timedelta(hours=1))
+        older = self.form(self.manager)
+        fields = {"received_on": "2026-01-12", "signed_on": "2026-01-02", "revision": 1, "reason": "Gammal blankett"}
+        receipt = self.both(older, JA, "0709-333 444", **fields)
+        self.assertEqual((receipt["matrikel"], receipt["warnings"]), ([], [later("telefon"), later("publicering")]))
+        self.assertEqual((self.stored(), self.phone()), (NONE, NEW_PHONE))
+        self.assertEqual([change.value for change in self.changes()], [NONE])
+
+    def test_typo_fix_with_the_same_date_still_goes_through(self):  # I1 under ruling (b)
+        self.login("man")
+        first = self.form(self.manager)
+        typo = self.both(first, NEJ, "0709-777 889", signed_on="2026-01-05")
+        self.assertEqual(typo["matrikel"], ["telefon", "publicering"])
+
+        self.at(NOW + timedelta(hours=1))  # its own time, so the consent row is told apart by its submission
+        fixed = self.form(self.manager)
+        receipt = self.both(fixed, JA, NEW_PHONE, signed_on="2026-01-05", revision=1, reason="Fel ruta")
+        self.assertEqual((receipt["matrikel"], receipt["warnings"]), (["telefon", "publicering"], []))
+        self.assertEqual((self.stored(), self.phone()), (ALL, NEW_PHONE))
+
+    def test_a_withdrawn_reports_writes_are_not_its_own(self):  # ruling (b)
+        self.login("man")
+        first = self.form(self.manager)
+        self.assertEqual(self.both(first, NEJ, NEW_PHONE)["matrikel"], ["telefon", "publicering"])
+        path = REPORT.format(herd="G9001")
+        withdrawn = self.client.post(f"{path}/dra-tillbaka", json={"revision": 1, "reason": "Fel besättning"})
+        self.assertEqual(withdrawn.status_code, 200, withdrawn.get_data(as_text=True))
+
+        # A new report with a form of the same date: the withdrawn report's writes count as later changes
+        second = self.form(self.manager)
+        receipt = self.both(second, JA, "0709-333 444")
+        self.assertEqual((receipt["matrikel"], receipt["warnings"]), ([], [later("telefon"), later("publicering")]))
+        self.assertEqual((self.stored(), self.phone()), (NONE, NEW_PHONE))
 
     def test_one_event_and_one_mail_for_the_whole_form(self):
         self.login("man")
