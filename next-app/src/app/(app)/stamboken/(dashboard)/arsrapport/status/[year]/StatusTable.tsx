@@ -165,7 +165,7 @@ export function StatusTable({
         </p>
       ) : (
         <section className="sb-card">
-          <table className={inkorg.table}>
+          <table className={`${inkorg.table} ${styles.statusTable}`}>
             <thead>
               <tr>
                 <th>Besättning</th>

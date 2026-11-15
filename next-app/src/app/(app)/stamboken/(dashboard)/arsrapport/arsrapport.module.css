@@ -612,3 +612,8 @@ button.confirmDanger:hover:not(:disabled) {
   outline: 2px solid var(--sb-danger);
   outline-offset: 2px;
 }
+
+/* The queue's table header is 10 px; the status table reads at the small label size. */
+table.statusTable th {
+  font-size: var(--sb-fs-xs);
+}
