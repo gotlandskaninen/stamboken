@@ -401,6 +401,18 @@ def erase_document(item, document, user):
     return paths
 
 
+def erase_buyer_from_document(document_id):
+    """
+    One proof linked to a sale whose buyer was removed: it loses its original, the model's reading and proposal, and
+    its item its text. Only that document's item is locked, which the caller already holds, so no lock is taken
+    after the rabbit's. In the caller's transaction; returns the paths for remove_originals after the commit.
+    """
+    shown = InboxDocument.id == document_id
+    paths = _null_originals(shown)
+    _clear_text(InboxDocument.select(InboxDocument.item).where(shown))
+    return paths
+
+
 def erase_buyer_from_inbox(herd_tracking_id, whole_items=False):
     """
     A buyer outside the association is deleted (utils.herd_tracking.delete_buyer_contacts): the documents linked to

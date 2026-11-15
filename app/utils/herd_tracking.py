@@ -742,8 +742,8 @@ def _outside_pairs(voided, parsed):
     which then replaces it and takes its buyer (ADR-0016). Event index -> the voided row it replaces.
     """
 
-    def outside(herd):
-        return herd.herd in OUTSIDE_GENEBANK_HERDS
+    def outside(herd):  # a legacy move may have no herd
+        return herd is not None and herd.herd in OUTSIDE_GENEBANK_HERDS
 
     herds = {r.herd_id for r in voided if r.kind in MOVES and outside(r.herd)}
     herds |= {e["herd"].id for e in parsed if e["kind"] in MOVES and outside(e["herd"])}
@@ -765,7 +765,8 @@ def _refuse_buyerless_before_sale(rows, written):
     """
     ordered = sorted(rows, key=ht_sort_key)
     for row in written:
-        if row.holder_contact_id is not None or row.kind not in ("TRANSFER", "CORRECTION"):
+        # A removed buyer was a real one: the row after it is a resale between two buyers, as before.
+        if row.holder_contact_id is not None or row.buyer_removed or row.kind not in ("TRANSFER", "CORRECTION"):
             continue
         if row.herd.herd not in OUTSIDE_GENEBANK_HERDS:
             continue
@@ -782,6 +783,8 @@ def _refuse_buyerless_sales_outside(parsed, pairs):
     for index, event in enumerate(parsed):
         if event["kind"] not in MOVES or event["herd"].herd not in OUTSIDE_GENEBANK_HERDS:
             continue
+        if event["buyer"] is not None and index in pairs and pairs[index].buyer_removed:
+            raise HerdTrackingConflict(BUYER_REMOVED)  # never registered again, as in attach_buyer
         if event["buyer"] is None and index not in pairs:
             hint = "ange köparens namn och ort" if event["kind"] == "TRANSFER" else "välj Flytt, där köparen anges"
             raise HerdTrackingInvalid(f"Händelse {index + 1}: en försäljning utanför föreningen: {hint}.")
@@ -874,7 +877,7 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
                             if event["buyer"]
                             else carried.get(index)
                         ),
-                        buyer_removed=index in pairs and event["buyer"] is None and pairs[index].buyer_removed,
+                        buyer_removed=index in pairs and pairs[index].buyer_removed,
                     )
             except IntegrityError as exc:  # the carried buyer went (a purge or an erasure) after it was read
                 if _violated_constraint(exc) != "herd_tracking_holder_contact_id_fkey":

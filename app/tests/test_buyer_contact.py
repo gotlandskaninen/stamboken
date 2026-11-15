@@ -511,6 +511,28 @@ class TestVoid(BuyerBase):
         self.assertEqual(raised.exception.detail, "Köparen raderades under tiden. Försök igen.")
         self.assertEqual(self._latest().id, self.sale.id)
 
+    def test_a_sale_whose_buyer_went_takes_no_new_buyer_in_a_correction(self):
+        buyer_contact.erase_buyer_contact(self.contact_id, self.admin)
+        event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", "buyer": OTHER}
+        with self.assertRaises(HerdTrackingConflict) as raised:
+            correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [event], "Fel datum")
+        self.assertEqual(
+            raised.exception.detail, "Köparen har begärt radering eller gallrats; registrera inte på nytt."
+        )
+        self.assertEqual((self._latest().id, db.BuyerContact.select().count()), (self.sale.id, 0))
+
+    def test_a_sale_whose_buyer_went_may_be_corrected_before_a_resale(self):
+        resale = record_herd_tracking(self.rabbit, self.gx1, "2022-01-01", "TRANSFER", self.manager, buyer=OTHER)
+        buyer_contact.erase_buyer_contact(self.contact_id, self.admin)  # a removed buyer was a real one
+        event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1"}
+        (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [event], "Fel datum")
+        self.assertEqual((written.holder_contact_id, written.buyer_removed), (None, True))
+        self.assertEqual(self._latest().id, resale.id)
+
+    def test_a_legacy_move_without_a_herd_is_not_outside(self):
+        legacy = SimpleNamespace(kind="TRANSFER", herd=None, herd_id=None)
+        self.assertEqual(herd_tracking_module._outside_pairs([legacy], []), {})
+
     def test_the_event_api_takes_no_holder_contact_id(self):
         event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "G2", "holder_contact_id": self.contact_id}
         (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [event], "Fel köpare")
@@ -1071,10 +1093,20 @@ class TestQueueProofOfARegisteredSale(ErasureTest):
         # The panel reads the sale as one whose buyer was removed, and links the proof without a buyer.
         sales = self.client.get(f"/api/v2/inkorg/{item.id}/kanin/G1-2111/forsaljningar").get_json()["sales"]
         self.assertEqual([s["buyer"] for s in sales], ["removed"])
-        resp = self.post(f"/{item.id}/dokument/{proof.id}/overlat", individual="G1-2111", herd="GX1", date="2021-06-01")
+        db.InboxDocument.update(interpretation={"read": "x"}, proposal={"buyer": "x"}).where(
+            db.InboxDocument.id == proof.id
+        ).execute()
+        with mock.patch("utils.inbox_purge.remove_originals") as removed:
+            resp = self.post(
+                f"/{item.id}/dokument/{proof.id}/overlat", individual="G1-2111", herd="GX1", date="2021-06-01"
+            )
         self.assertEqual(resp.status_code, 200, resp.get_json())
         self.assertEqual(resp.get_json()["herd_tracking_id"], sale.id)
         self.assertEqual(db.BuyerContact.select().count(), 0)
+        # The proof shows the removed buyer: it loses its original, after the commit, and the model's reading.
+        linked = db.InboxDocument.get_by_id(proof.id)
+        self.assertEqual((linked.original_path, linked.interpretation, linked.proposal), (None, None, None))
+        removed.assert_called_once_with([proof.original_path])
 
     def test_two_sales_the_same_day_are_a_409_not_a_guess(self):
         gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")

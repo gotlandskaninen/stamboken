@@ -682,6 +682,7 @@ def transfer(item_id, document_id):
     if bad or when is None:
         detail = "Ange köparens besättning (herd) och datum (date, ÅÅÅÅ-MM-DD)."
         return problem(400, "Ogiltig begäran", detail, field=bad or "date")
+    paths = []
     try:
         with DB_PROXY.atomic():
             item = inbox.lock_item(item_id)
@@ -726,6 +727,9 @@ def transfer(item_id, document_id):
                 record_sale(user, individual.id, herd, date, buyer=buyer, grant=grant)
                 row = current_holder_row(individual.id)
             inbox.transferred(item, document, user, individual, row, linked=proven is not None)
+            if proven is not None and proven.buyer_removed:  # the proof shows a buyer that was erased or purged
+                paths = inbox_purge.erase_buyer_from_document(document.id)  # its other documents went with the buyer
+                document = inbox.document_of(item, document_id)
             answer = {
                 "individual": Individual.get_by_id(individual.id).as_dict(),
                 "herd_tracking_id": row.id,
@@ -738,6 +742,7 @@ def transfer(item_id, document_id):
         return _placed(problem(exc.status, exc.title, exc.detail))
     except (IndividualRefused, HerdTrackingError) as exc:
         return _placed(_command_problem(exc))
+    inbox_purge.remove_originals(paths)
     _invalidate(individual)
     return jsonify(answer), 200
 
