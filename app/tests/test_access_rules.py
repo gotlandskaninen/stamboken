@@ -359,3 +359,51 @@ class TestHolderCannotChangeValidated(DatabaseTest):
             self.patch(self.viewer, "/api/manage/user/", body), {"status": "error", "message": "forbidden"}
         )
         self.assertFalse(self.validated(self.viewer))
+
+
+class TestCourseRequirement(DatabaseTest):
+    """The web course gates the legacy frontend; /api/auth/google demands it only without the access rules."""
+
+    def setUp(self):
+        # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
+        APP.config["TESTING"] = True
+        super().setUp()
+        for patcher in (
+            mock.patch("herdbook._should_auto_validate_users", return_value=False),
+            mock.patch.dict(os.environ),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        os.environ.pop("LEGACY_HOSTS", None)
+
+    def as_viewer(self, method, ident):
+        return db.User.get_by_id(self.viewer.id)
+
+    def test_token_login_lets_an_unvalidated_account_in_under_enforce(self):
+        client = APP.test_client(use_cookies=True)
+        with mock.patch.object(settings.service, "access_rules", "enforce"):
+            self.assertEqual(token_login(client, self.as_viewer).status_code, 200)
+            self.assertEqual(client.get("/api/user").status_code, 200)
+            refused = client.get("/api/v2/my-membership")
+            self.assertEqual((refused.status_code, refused.get_json()["message"]), (403, NOT_PROMOTED))
+            # The same session on a legacy host: the legacy frontend's functions need the course.
+            name = APP.config["SESSION_COOKIE_NAME"]
+            client.set_cookie(name, client.get_cookie(name).value, domain=urlparse(LEGACY).hostname)
+            legacy = client.get(f"/api/individual/{self.individuals[0].number}", base_url=LEGACY)
+            self.assertEqual((legacy.status_code, legacy.get_json()["message"]), (403, course_message()))
+        self.assertFalse(db.User.get_by_id(self.viewer.id).validated)
+
+    def test_token_login_demands_the_course_with_the_rules_off(self):
+        client = APP.test_client(use_cookies=True)
+        with mock.patch.object(settings.service, "access_rules", "off"):
+            resp = token_login(client, self.as_viewer)
+        self.assertEqual((resp.status_code, resp.get_json()["error"]), (401, course_message()))
+        self.assertEqual(client.get("/api/user").status_code, 401)
+
+    def test_the_legacy_google_login_demands_the_course_either_way(self):
+        for rules in ("off", "enforce"):
+            with self.subTest(rules), mock.patch.object(settings.service, "access_rules", rules):
+                client = APP.test_client(use_cookies=True)
+                resp = redirect_login(client, self.as_viewer)
+                self.assertIn("bli validerad", resp.get_data(as_text=True))
+                self.assertEqual(client.get("/api/user").status_code, 401)

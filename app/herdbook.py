@@ -1397,7 +1397,10 @@ def google_token_login():
             if _should_auto_validate_users():
                 user.validated = True
                 user.save(only=[db.User.validated])  # see _GOOGLE_PROFILE_COLUMNS
-            else:
+            elif settings.service.access_rules != "enforce":
+                # The course belongs to the legacy frontend, and the access rules
+                # keep an unvalidated account out of it and off production; without
+                # them the course is the only gate a new account meets.
                 # 401, not 403: the Next.js caller maps 403 to the domain-restriction text.
                 return jsonify({"error": course_message()}), 401
 
