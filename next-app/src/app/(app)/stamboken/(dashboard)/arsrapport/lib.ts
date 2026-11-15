@@ -290,6 +290,7 @@ export const REFUSAL_TEXT: Record<string, string> = {
   halsa_saknas: "Välj Inga sjukdomsfall eller defekter, eller Ja.",
   ej_angiven_digitalt: "Ej angiven finns bara när en blankett matas in.",
   orsak_kravs: "Skriv varför rapporten ändras.",
+  orsak_kopare: "Skriv inte köparens namn i orsaken.",
 };
 export const CONFLICT_TEXT = "Rapporten har ändrats på en annan enhet";
 export const TIMEOUT_TEXT =

@@ -17,7 +17,6 @@ import utils.database as db
 import utils.mail as mail
 from utils.database import coerce_date
 from utils.herd_tracking import (
-    BUYER_PRIVACY_HELP,
     DATE_BEFORE_LATEST,
     REPORT_LATER_ROW,
     HerdTrackingConflict,
@@ -36,6 +35,7 @@ BUYER = {"name": "Test Köpare", "town": "Visby"}
 OTHER_BUYER = {"name": "Annan Köpare", "town": "Slite"}
 KEY_TAKEN = "Rapporten är redan skickad med den här nyckeln. Ladda om sidan."
 LATER = "Kaninen har en senare händelse i Stamboken. Genbanksansvarig kan rätta."
+NAMED = [{"individual_id": None, "code": "orsak_kopare", "message": "Skriv inte köparens namn i orsaken."}]
 WRITTEN = (
     db.HerdTracking,
     db.IndividualCommand,
@@ -518,8 +518,8 @@ class AndraTest(ArsrapportTest):
         before = self.counts()
         self.ok(self.body(self.sald(a, "utanfor", 2025, 11, 20), revision=2))  # without kopare: nothing
         self.assertEqual(self.counts()[:5], before[:5])
-        # a reason naming the buyer is refused for that rabbit (kopare's privacy rule), in the dry run too (I3)
-        named = [{"individual_id": a.id, "code": "skrivning_nekad", "message": BUYER_PRIVACY_HELP}]
+        # a reason naming the buyer is refused for the report (kopare's privacy rule), in the dry run too (I3)
+        named = NAMED
         body = self.body(self.kvar(a, vikt=2.8), revision=3, reason="Annan Köpare ångrade sig")
         dry = self.api("POST", "/besattning/G9001/2025/torrkorning", **body).get_json()
         self.assertEqual(dry["refusals"], named)
@@ -529,6 +529,40 @@ class AndraTest(ArsrapportTest):
         response = self.withdraw(3, "Annan Köpare ångrade sig")
         self.assertEqual((response.status_code, response.get_json()["refusals"]), (422, named))
         self.assertEqual(self.counts()[:5], before[:5])
+
+    def test_reason_naming_a_typed_buyer_is_refused(self):  # Opus 1: the dry run and Skicka alike
+        (a,) = self.rabbits(self.h, 1)
+        self.ok(self.body(self.kvar(a, vikt=2.8)))
+        before = self.counts()
+        body = self.body(
+            self.sald(a, "utanfor", 2025, 11, 20, kopare=BUYER), revision=1, reason="Test Köpare köpte den"
+        )
+        dry = self.api("POST", "/besattning/G9001/2025/torrkorning", **body).get_json()
+        self.assertEqual(dry["refusals"], NAMED)
+        response = self.skicka(body)
+        self.assertEqual((response.status_code, response.get_json()["refusals"]), (422, NAMED))
+        self.assertEqual(self.counts(), before)
+
+    def test_reason_naming_an_earlier_buyer_is_refused_in_the_dry_run(self):  # Opus 4: a void without a buyer
+        (a,) = self.rabbits(self.h, 1)
+        gx1 = db.Herd.get(db.Herd.herd == "GX1")
+        buyer = db.BuyerContact.create(
+            name="Anna Berg", town="Visby", created_by_user=self.admin, purge_at=noon(date(2029, 6, 1))
+        )
+        sold = {"individual": a, "herd_tracking_date": date(2024, 6, 1), "holder_contact": buyer}
+        ht_row("TRANSFER", from_herd=self.h, herd=gx1, **sold)
+        ht_row("TRANSFER", from_herd=gx1, herd=self.h, individual=a, herd_tracking_date=date(2024, 8, 1))  # back
+        self.ok(self.body(self.kvar(a, vikt=2.8)))
+        before = self.counts()
+        self.login("man")
+        body = self.body(self.dod(a, 2025, 11, 20), revision=1, reason="Anna Berg ringde")  # voids the attestation
+        dry = self.api("POST", "/besattning/G9001/2025/torrkorning", **body).get_json()
+        self.assertEqual(dry["refusals"], NAMED)
+        response = self.skicka(body)
+        self.assertEqual((response.status_code, response.get_json()["refusals"]), (422, NAMED))
+        response = self.withdraw(1, "Anna Berg ringde")
+        self.assertEqual((response.status_code, response.get_json()["refusals"]), (422, NAMED))
+        self.assertEqual(self.counts(), before)
 
     def test_receipt_is_fixed_per_submission(self):  # Codex 5
         a, b = self.rabbits(self.h, 2)

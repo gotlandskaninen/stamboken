@@ -1297,6 +1297,7 @@ REFUSALS = {  # the copy the client shows (P44)
     "okand_kanin": "Kaninen finns inte i listan för besättningen.",
     "halsa_saknas": "Välj Inga sjukdomsfall eller defekter, eller Ja.",
     "orsak_kravs": "Skriv varför rapporten ändras.",
+    "orsak_kopare": "Skriv inte köparens namn i orsaken.",
     "rundan_stangd": "Rundan är stängd.",
     "inte_innehavare": "Kaninen fanns inte i din besättning 31 december.",
     "dodsdatum_ogiltigt": "Dödsdatumet kan inte vara före födelsen eller senare än i dag.",
@@ -1358,12 +1359,12 @@ def _sale_view(individual_id, kept):
     }
 
 
-def _register_refusals(individual_id, entry, remove, add, ops, admin=False, reason=None):
+def _register_refusals(individual_id, entry, remove, add, ops, admin=False):
     """
-    What the writes would meet in the register: each void under report_void_denial and its check of `reason`
-    against the sale's buyer, latest first as apply_diff runs them, then a row behind a later one
-    (DATE_BEFORE_LATEST), then each new sale under _validate_sale and the buyer rules. A row behind a later one is
-    senare_handelse; any other denial keeps its text (U8).
+    What the writes would meet in the register: each void under report_void_denial, latest first as apply_diff
+    runs them, then a row behind a later one (DATE_BEFORE_LATEST), then each new sale under _validate_sale and the
+    buyer rules. A row behind a later one is senare_handelse; any other denial keeps its text (U8). The reason's
+    check against the buyers is _reason_refusals', once for the report.
     """
     if not any(e.kind in ROW_KINDS for e in remove + add):
         return []
@@ -1378,11 +1379,6 @@ def _register_refusals(individual_id, entry, remove, add, ops, admin=False, reas
     for row in voided:
         if denial := report_void_denial(user, row, kept, rabbit, ops):
             return [_denied(individual_id, denial)]
-        if reason and row.holder_contact_id:  # _void_rows: a buyer is never named in the void's reason
-            try:
-                _reject_buyer_name([reason], [individual_id])
-            except HerdTrackingInvalid as exc:
-                return [_denied(individual_id, exc.detail)]
         kept.remove(row)
     if kept and any(e.date < coerce_date(kept[-1].herd_tracking_date) for e in add if e.kind in ROW_KINDS):
         return [_refusal(individual_id, "senare_handelse")]
@@ -1401,6 +1397,25 @@ def _register_refusals(individual_id, entry, remove, add, ops, admin=False, reas
             except HerdTrackingInvalid as exc:
                 refusals.append(_refusal(individual_id, "kopare", str(exc)))
     return refusals
+
+
+def _reason_refusals(reason, rabbit_ids, names=()):
+    """
+    Opus 1, 4: a typed reason that names a buyer of the rabbits' rows, or one of `names`, the buyers the submission
+    types, is refused once for the report. void_herd_tracking checks the same rows per rabbit, so a dry run that
+    passes here never meets that 422; the reason is stored in the submission and on the voided rows.
+    """
+    try:
+        _reject_buyer_name([reason], rabbit_ids, names=names)
+    except HerdTrackingInvalid:
+        return [_refusal(None, "orsak_kopare")]
+    return []
+
+
+def _typed_buyers(sub):
+    """The buyer names the submission types; kopare is checked later, so here only a name that is text counts."""
+    buyers = (entry.sald["kopare"] for entry in sub.rabbits.values() if entry.sald)
+    return [buyer["name"] for buyer in buyers if isinstance(buyer, dict) and isinstance(buyer.get("name"), str)]
 
 
 def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal], list[Refusal]]:
@@ -1427,6 +1442,7 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
         (access.source == "paper" and report is not None) or (late and (access.editor or access.role == "helper"))
     ):
         refusals.append(_refusal(None, "orsak_kravs"))
+    refusals += _reason_refusals(sub.reason, list(sub.rabbits), _typed_buyers(sub))
     # A null in the latest submission came from paper, or an editor kept it there (case 8 by phone).
     kept_null = access.editor and latest is not None and latest.get("health") is None
     ending = sub.report["ending_genbank"]  # 5.7, fråga 18: an ending needs neither choices nor a health answer
@@ -1455,7 +1471,7 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
             continue
         if entry.val == "ej_angiven":  # it writes nothing, but what it takes off still meets the register (M1)
             remove, add = diff(current(report, rabbit), [], last, before, entry)
-            refusals += _register_refusals(rabbit, entry, remove, add, ops, access.role == "admin", sub.reason)
+            refusals += _register_refusals(rabbit, entry, remove, add, ops, access.role == "admin")
             continue
         if entry.val == "sald" and not access.can_sell:
             refusals.append(_refusal(rabbit, "forsaljning_skotare"))
@@ -1482,7 +1498,7 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
         if not access.can_sell and any(e.kind == "transfer" for e in remove + add):  # D12: sales are the owner's
             refusals.append(_refusal(rabbit, "forsaljning_skotare"))
             continue
-        refusals += _register_refusals(rabbit, entry, remove, add, ops, access.role == "admin", sub.reason)
+        refusals += _register_refusals(rabbit, entry, remove, add, ops, access.role == "admin")
     if access.source == "paper":
         refusals += _matrikel_refusals(herd, sub.paper["matrikel"])
     return refusals, warnings
@@ -2180,13 +2196,13 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
         rabbits = sorted({int(key) for submission in submissions for key in submission.data.get("rabbits") or {}})
         _lock_rabbits(rabbits)
         ops = {str(op) for submission in submissions for op in submission.operation_ids}
-        refusals = []
+        refusals = _reason_refusals(reason, rabbits)
         for rabbit in rabbits:
             remove = diff(current(report, rabbit), [], last)[0]
             if not access.can_sell and any(e.kind == "transfer" for e in remove):  # D12: sales are the owner's
                 refusals.append(_refusal(rabbit, "forsaljning_skotare"))
             else:
-                refusals += _register_refusals(rabbit, None, remove, [], ops, access.role == "admin", reason)
+                refusals += _register_refusals(rabbit, None, remove, [], ops, access.role == "admin")
         if refusals:
             raise _cannot(refusals, "Rapporten kan inte dras tillbaka.")
         grant = ReportGrant()
