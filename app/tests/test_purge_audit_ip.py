@@ -163,7 +163,7 @@ class TestPurgeAuditIp(DatabaseTest):
     def test_migration_creates_the_partial_index(self):
         self.addCleanup(db.check_migrations)
         db.DATABASE.execute_sql("DROP INDEX IF EXISTS idx_audit_log_ip_retention")
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 38).execute()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 39).execute()
         db.check_migrations()
         indexdef = db.DATABASE.execute_sql(
             "SELECT indexdef FROM pg_indexes WHERE indexname = 'idx_audit_log_ip_retention'"
