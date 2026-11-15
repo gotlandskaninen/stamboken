@@ -52,7 +52,10 @@ mejlet går då till den adress som är aktuell just då.
   `dedupe_key` och avbryter mejl till mottagaren som inte har gått (`cancelled`,
   "mottagaren är raderad"). Ett mejl som håller på att byggas eller skickas
   just då förlorar sitt anspråk på raden, så sändaren skickar det inte och
-  skriver inte tillbaka någon adresshash.
+  skriver inte tillbaka någon adresshash. Sändaren frågar efter anspråket när
+  anslutningen till reläet är uppe, omedelbart före själva mejlet. Raderas
+  mottagaren medan mejlet lämnas över till reläet går det ändå: det är redan
+  på väg, som ett mejl som skickades sekunden innan.
 - Den publika ansökan tar emot vilken adress som helst, så kvittot
   `ansokan.mottagen` går högst en gång per adress och dag: `dedupe_key` är
   adressens HMAC och datumet, aldrig adressen.

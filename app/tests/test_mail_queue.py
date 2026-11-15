@@ -831,6 +831,22 @@ class TestPrivacy(MailTest):
         row = self.row(row_id)
         self.assertEqual((row.status, row.address_hash, row.claim_token), ("cancelled", None, None))
 
+    def test_forgetting_a_recipient_while_the_sender_connects_stops_the_mail(self):
+        a = self.application("a@example.org")
+        row_id = mail.enqueue_mail("ansokan.mottagen", "application", a.id, {"application_id": a.id})
+        relay = self.relay()
+        connect = mail._connect
+
+        def erased_meanwhile(conn):  # the erasure lands during the connection and its TLS, after the build
+            connect(conn)
+            mail.forget_recipient("application", a.id)
+
+        with mock.patch.object(mail, "_connect", erased_meanwhile):
+            mail.send_pending(self.now)
+        self.assertEqual((len(relay.opened), relay.sent), (1, []))
+        row = self.row(row_id)
+        self.assertEqual((row.status, row.address_hash, row.claim_token), ("cancelled", None, None))
+
     def test_a_link_from_another_environment_is_refused(self):
         token = mail.link_token("test", 7)
         self.assertEqual(mail.verify_link("test", token), 7)
