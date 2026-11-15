@@ -201,8 +201,10 @@ class RundorTest(ArsrapportTest):
         elsewhere = self.form(self.helper)
         db.InboxItem.update(ref_type="kontroll", ref_id=1).where(db.InboxItem.id == elsewhere.id).execute()
         self.assertIsNone(role(self.helper, elsewhere.id))  # decided in another feature
-        self.assertIsNone(role(self.mellerud_helper, self.form(self.mellerud_helper).id))  # another genebank
-        self.assertIsNone(role(nobody, self.form(nobody).id))
+        with self.assertRaises(inbox.InboxError):  # another genebank: the queue refuses the take itself (7145d2e)
+            self.form(self.mellerud_helper)
+        with self.assertRaises(inbox.InboxError):  # no genebank role: the take itself is refused
+            self.form(nobody)
         self.assertIsNone(role(self.helper, 999999))
 
         # A helper decides her own upload, as a manager decides his (Jonas 2026-11-15, the queue's 49e666b).
