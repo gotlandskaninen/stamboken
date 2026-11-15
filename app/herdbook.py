@@ -80,7 +80,7 @@ import utils.genetics_service as genetics  # isort:skip
 from utils import number_assets  # isort:skip
 from utils.individual_commands import purge_command_free_text  # isort:skip
 from utils.members import try_auto_link_member  # isort:skip
-from utils.legacy_compat import is_legacy_host, legacy_classroom_url  # isort:skip
+from utils.legacy_compat import course_message, is_legacy_host, legacy_classroom_url, legacy_hosts, refusal  # isort:skip
 from utils.redis_retry import reconnect_on_drop  # isort:skip
 
 APP = Flask(__name__, static_folder="/static")
@@ -310,6 +310,7 @@ file_handler.setFormatter(
     )
 )
 APP.logger.addHandler(file_handler)
+APP.logger.info("ACCESS_RULES=%s, legacy hosts: %s", settings.service.access_rules, ", ".join(sorted(legacy_hosts())))
 utils.external_auth.setup(APP)
 
 Session(APP)
@@ -410,6 +411,28 @@ def before_request():
             )
         except Exception:
             APP.logger.warning("Failed to set audit context", exc_info=True)
+
+
+@APP.before_request
+def enforce_access_rules():
+    """
+    The access rules (ACCESS_RULES, legacy_compat.refusal) for a logged-in
+    request. A 404, 405 or trailing-slash redirect has no endpoint and passes;
+    OPTIONS only lists the allowed methods.
+    """
+    if settings.service.access_rules != "enforce" or request.endpoint is None or request.method == "OPTIONS":
+        return None
+    if current_user.is_authenticated:
+        user = current_user
+    elif session.get("user_id"):
+        # The older routes read session["user_id"] without flask-login.
+        user = da.fetch_user_info(session["user_id"])
+    else:
+        user = None
+    message = refusal(request.endpoint, request.method, user) if user else None
+    if message:
+        return jsonify({"status": "error", "message": message}), 403
+    return None
 
 
 @APP.teardown_request
@@ -1376,11 +1399,7 @@ def google_token_login():
                 user.save(only=[db.User.validated])  # see _GOOGLE_PROFILE_COLUMNS
             else:
                 # 401, not 403: the Next.js caller maps 403 to the domain-restriction text.
-                msg = (
-                    f"Du behöver gå webbkursen och bli validerad först: {legacy_classroom_url()} "
-                    "Frågor: admin@gotlandskaninen.se"
-                )
-                return jsonify({"error": msg}), 401
+                return jsonify({"error": course_message()}), 401
 
         if user:
             # Update user with Google profile data in database
