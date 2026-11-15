@@ -889,6 +889,13 @@ class TestLockOrder(PurgeTest):
                 run()
             self.assertTrue(_items_locked_before_the_rabbit(statements), name)
 
+    def test_an_erasure_locks_the_items_before_the_rabbit(self):
+        rabbit = db.Individual.get(db.Individual.number == "G1-2112")
+        sale, _document = self._sale_with_a_document(rabbit, "2026-01-01")
+        with capture_sql() as statements:
+            buyer_contact.erase_buyer_contact(sale.holder_contact_id, self.manager)
+        self.assertTrue(_items_locked_before_the_rabbit(statements))
+
     def test_unpromote_refuses_an_item_that_appeared_after_its_lock(self):
         rabbit = db.Individual.get(db.Individual.number == "G1-2112")
         self._sale_with_a_document(rabbit, "2026-01-01")
