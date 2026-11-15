@@ -1,5 +1,8 @@
 import type { BrowserContext, Page } from "@playwright/test";
 
+// E2E_API_URL points a local run at a stack whose Flask is not on :9090.
+const API_URL = process.env.E2E_API_URL ?? "http://localhost:9090";
+
 export const TEST_USERS = {
   owner: { username: "test-gk-owner", password: "test-gk-owner-pass" },
   admin: { username: "test-admin", password: "test-admin-pass" },
@@ -21,7 +24,7 @@ export async function loginAndSaveState(
   context: BrowserContext,
   role: TestRole,
   statePath: string,
-  apiBaseURL = "http://localhost:9090",
+  apiBaseURL = API_URL,
 ): Promise<void> {
   const { username, password } = TEST_USERS[role];
   const response = await page.request.post(`${apiBaseURL}/api/login`, {
@@ -63,7 +66,7 @@ export async function loginInline(
   page: Page,
   context: BrowserContext,
   credentials: { username: string; password: string },
-  apiBaseURL = "http://localhost:9090",
+  apiBaseURL = API_URL,
 ): Promise<void> {
   await context.clearCookies();
   const response = await page.request.post(`${apiBaseURL}/api/login`, {
