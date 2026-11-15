@@ -47,10 +47,14 @@ _LINK_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])(\d{1,19})\.[A-Za-z0-9_-]{22}(?![A-
 
 
 class _TokenMaskFilter(logging.Filter):
-    """Keeps link tokens in the request line out of the access log."""
+    """Keeps link tokens in the request line out of the access log, and out of the error log's tracebacks."""
 
     def filter(self, record):
         record.msg, record.args = _LINK_TOKEN.sub(r"\1.***", record.getMessage()), None
+        if record.exc_info and not record.exc_text:
+            record.exc_text = logging.Formatter().formatException(record.exc_info)
+        if record.exc_text:
+            record.exc_text = _LINK_TOKEN.sub(r"\1.***", record.exc_text)
         return True
 
 

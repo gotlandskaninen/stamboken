@@ -56,6 +56,16 @@ class TestLogMasking(unittest.TestCase):
             conf.on_starting(None)
             for logger in loggers:
                 self.assertTrue(any(type(f).__name__ == "_TokenMaskFilter" for f in logger.filters), logger.name)
+            try:
+                raise ValueError(f"bad link /x/{TOKEN}")
+            except ValueError:
+                record = logging.LogRecord(
+                    "gunicorn.error", logging.ERROR, "", 0, "GET /x/%s", (TOKEN,), sys.exc_info()
+                )
+            loggers[1].filter(record)
+            text = logging.Formatter().format(record)
+            self.assertIn("bad link /x/4711.***", text)  # the traceback, not only the message
+            self.assertNotIn(TOKEN, text)
         finally:
             for logger in loggers:
                 logger.filters.clear()

@@ -49,7 +49,7 @@ describe("rowAction", () => {
     ["sending", null],
     ["sent", null],
     ["blocked", null],
-    ["logged", null],
+    ["logged", "retry"],
     ["cancelled", null],
   ])("%s -> %s", (status, action) => {
     expect(rowAction(status)).toBe(action);
