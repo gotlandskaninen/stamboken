@@ -455,16 +455,24 @@ class TestErasure(BuyerBase):
         self.assertEqual([(r.new_data, r.changed_by) for r in log], [({"action": "radering"}, "man")])
         self.assertEqual(self._erase("man").status_code, 404)
 
-    def test_only_admin_or_a_manager_of_the_rabbits_genebank(self):
+    def test_only_admin_or_a_manager_of_the_genebank_holding_the_buyer(self):
         other = da.register_user("othermgr", "pass")
         other.add_role("manager", self.genebanks[1].id)
         helper = da.register_user("helper", "pass")
         helper.add_role("helper", self.genebanks[0].id)
-        for username in ("owner", "helper", "othermgr"):
+        # 404 for who may not see the buyer, 403 for a helper who may.
+        for username, status in (("owner", 404), ("othermgr", 404), ("helper", 403)):
             with self.subTest(username=username):
-                self.assertEqual(self._erase(username).status_code, 403)
+                self.assertEqual(self._erase(username).status_code, status)
         self.assertIsNotNone(self._contact(self.contact_id))
         self.assertEqual(self._erase("admin").status_code, 204)
+
+    def test_the_row_holding_the_buyer_decides_not_the_current_herd(self):
+        record_herd_tracking(self.rabbit, self.herds[2], "2022-01-01", "TRANSFER", self.admin)  # now in Mellerud
+        other = da.register_user("othermgr", "pass")
+        other.add_role("manager", self.genebanks[1].id)
+        self.assertEqual(self._erase("othermgr").status_code, 404)
+        self.assertEqual(self._erase("man").status_code, 204)
 
 
 class TestRetention(BuyerBase):
