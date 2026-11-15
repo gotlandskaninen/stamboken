@@ -1089,6 +1089,7 @@ class TestDatabaseMigration(DatabaseTest):
         herd = db.Herd.create(
             genebank=gb, herd="R38", bank_account_number_privacy="public", bank_name_privacy="Public "
         )
+        null_herd = db.Herd.create(genebank=gb, herd="R38N", bank_account_number_privacy=None, bank_name_privacy="private")
         db.SchemaHistory.delete().where(db.SchemaHistory.version >= 38).execute()
 
         db.check_migrations()
@@ -1097,6 +1098,7 @@ class TestDatabaseMigration(DatabaseTest):
         herd = db.Herd.get_by_id(herd.id)
         self.assertEqual(herd.bank_account_number_privacy, "private")
         self.assertEqual(herd.bank_name_privacy, "private")
+        self.assertIsNone(db.Herd.get_by_id(null_herd.id).bank_account_number_privacy)  # NULL is left alone
 
     def test_replay_32_to_33_adds_the_history_algorithm_version(self):
         """

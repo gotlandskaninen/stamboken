@@ -4103,7 +4103,7 @@ def revert_audit_entry(audit_id, fields=None, is_admin=False):
     params = []
     values = {}
     for field in fields:
-        if field == pk_col:
+        if field == pk_col or (table_name == "herd" and field in BANK_PRIVACY_FIELDS):  # fixed 'private' (#33)
             continue
         if field not in valid_cols:
             return {"status": "error", "message": f"Ogiltigt fält: {field}"}, 400
@@ -4176,7 +4176,8 @@ def restore_record(table_name, record_id, audit_id, is_admin=False):
     locked = _audit_undo_locked(table_name, is_admin)
     if table_name == "bunny" and current.get("individual_id") != wanted.get("individual_id"):
         locked = locked | {"fate"}  # the bunny CHECK ties fate to the link, which restore skips
-    values = {field: value for field, value in wanted.items() if field not in locked}
+    bank = set(BANK_PRIVACY_FIELDS) if table_name == "herd" else set()  # fixed 'private' (#33): never restored
+    values = {field: value for field, value in wanted.items() if field not in locked | bank}
     if refusal := _audit_undo_refusal(table_name, values, is_admin):
         return {"status": "error", "message": refusal}, 409
     skipped = sorted(field for field in locked & wanted.keys() if current.get(field) != wanted[field])
