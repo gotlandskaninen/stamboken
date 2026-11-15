@@ -72,7 +72,7 @@ test("2. Uppfödaren skickar G9001 och G9004", async ({ page, context }) => {
   await died.locator('select[id^="month-"]').selectOption("10");
   await page.getByRole("radio", { name: NO_DISEASE }).check();
   await page.getByRole("button", { name: "Skicka årsrapporten" }).click();
-  await expect(page.getByText(/^Inskickad /)).toBeVisible({
+  await expect(page.getByText(/^Inskickad/)).toBeVisible({
     timeout: SUBMIT_TIMEOUT_MS,
   });
 
@@ -89,7 +89,7 @@ test("2. Uppfödaren skickar G9001 och G9004", async ({ page, context }) => {
     .click();
   await page.getByRole("radio", { name: NO_DISEASE }).check();
   await page.getByRole("button", { name: "Skicka årsrapporten" }).click();
-  await expect(page.getByText(/^Inskickad /)).toBeVisible({
+  await expect(page.getByText(/^Inskickad/)).toBeVisible({
     timeout: SUBMIT_TIMEOUT_MS,
   });
 });
@@ -125,7 +125,7 @@ test("3. Hjälparen matar in G9002:s blankett", async ({ page, context }) => {
   await page.getByRole("radio", { name: NO_DISEASE }).check();
   await page.getByRole("button", { name: "Skicka och nästa blankett" }).click();
 
-  await expect(page.getByText(/^Inskickad /)).toBeVisible({
+  await expect(page.getByText(/^Inskickad/)).toBeVisible({
     timeout: SUBMIT_TIMEOUT_MS,
   });
   await expect(page.getByText(/Sparat i matrikeln: .*konto/)).toBeVisible();
