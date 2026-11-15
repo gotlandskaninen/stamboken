@@ -258,6 +258,17 @@ class StatusTest(ArsrapportTest):
         for row in self.rows("hjalp").values():
             self.assertNotIn("telefon", row)
 
+    def test_phone_is_per_genebank_for_a_mixed_role_user(self):
+        self.user("blandad", ("manager", self.gotland.id), ("helper", self.mellerud.id))
+        self.main_member(db.Herd.create(genebank=self.mellerud, herd="M9001", is_active=True), "m@example.invalid")
+        db.Member.update(phone="070-000 00 00").execute()
+        self.assertIn("telefon", self.rows("blandad")["G9001"])
+        response = self.status("blandad", genebank=self.mellerud)
+        self.assertEqual(response.status_code, 200)
+        rows = response.get_json()["rows"]
+        self.assertIn("M9001", {row["herd"] for row in rows})
+        self.assertTrue(all("telefon" not in row for row in rows))
+
     def test_status_row_does_not_expose_the_account(self):
         db.Herd.update(bank_account_number="12345678901").where(db.Herd.id == self.h.id).execute()
         self.reported(self.h)
