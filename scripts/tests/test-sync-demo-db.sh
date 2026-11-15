@@ -16,8 +16,8 @@ check() { # desc expected actual
   else echo "FAIL - $1 (expected '$2', got '$3')"; fail=$((fail + 1)); fi
 }
 
-SKIP_QUEUE_DATA=""
-eval "$(grep -E '^SKIP_QUEUE_DATA=' "$SCRIPT")"
+SKIP_QUEUE_DATA="" MAIL_SEQ_SQL="" SET_MAIL_SEQ_SQL=""
+eval "$(grep -E '^(SKIP_QUEUE_DATA|MAIL_SEQ_SQL|SET_MAIL_SEQ_SQL)=' "$SCRIPT")"
 
 name="herdbook-sync-demo-test-$$"
 trap 'docker rm -f "$name" >/dev/null 2>&1' EXIT
@@ -30,12 +30,17 @@ done
 sql() { docker exec -i "$name" psql -U postgres -v ON_ERROR_STOP=1 -qtA "$@"; }
 
 sql -c "CREATE DATABASE src" -c "CREATE DATABASE dst" || exit 2
+# The demo's own sequence value, as the script reads it before dropping the old demo database.
+sql -d dst -c "CREATE TABLE mail_message (id serial PRIMARY KEY)" -c "SELECT setval('mail_message_id_seq', 41)" >/dev/null || exit 2
+seq=$(sql -d dst -c "$MAIL_SEQ_SQL")
+check "the demo's sequence value is read before the drop" 41 "$seq"
+sql -c "DROP DATABASE dst" -c "CREATE DATABASE dst" || exit 2
 sql -d src <<'SQL' || exit 2
-CREATE TABLE mail_message (id int PRIMARY KEY);
+CREATE TABLE mail_message (id serial PRIMARY KEY);
 CREATE TABLE mail_attempt (id int PRIMARY KEY, message_id int REFERENCES mail_message ON DELETE CASCADE);
 CREATE TABLE notice_setting (id int PRIMARY KEY);
 CREATE TABLE hbuser (id int PRIMARY KEY);
-INSERT INTO mail_message VALUES (1);
+INSERT INTO mail_message DEFAULT VALUES;
 INSERT INTO mail_attempt VALUES (1, 1);
 INSERT INTO notice_setting VALUES (1);
 INSERT INTO hbuser VALUES (1);
@@ -51,6 +56,9 @@ docker exec "$name" bash -c "
 check "the dump and load succeed" 0 "$?"
 check "mail_message comes over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM mail_message')"
 check "mail_attempt comes over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM mail_attempt')"
+check "the dump carries no sequence value: the new database counts from 1" 1 "$(sql -d dst -c "SELECT nextval('mail_message_id_seq')")"
+sql -d dst -c "$(printf "$SET_MAIL_SEQ_SQL" "$seq")" >/dev/null
+check "the demo's sequence value survives, so Message-IDs do not repeat" 42 "$(sql -d dst -c "SELECT nextval('mail_message_id_seq')")"
 check "notice_setting (a user preference) keeps its rows" 1 "$(sql -d dst -c 'SELECT count(*) FROM notice_setting')"
 check "an ordinary table keeps its rows" 1 "$(sql -d dst -c 'SELECT count(*) FROM hbuser')"
 
