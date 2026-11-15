@@ -224,6 +224,7 @@
     "promoteTitleWithNumber": "Register rabbit — {{number}}",
     "promoteSuccess": "{{number}} registered",
     "promoteError": "Could not register rabbit",
+    "suggestionError": "Could not fetch a suggested number",
     "certificateError": "Certificate could not be created: {{error}}",
     "registerAnother": "Register another in the litter",
     "allAdded": "All {{count}} kits have been added to the litter list.",

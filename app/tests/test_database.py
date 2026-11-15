@@ -1078,9 +1078,72 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertEqual(db.Membership.get_by_id(ms.id).billing_name, "Djurparken i Exempelby")
 
         # Running it again on the migrated schema changes nothing.
-        db.SchemaHistory.delete().where(db.SchemaHistory.version == 37).execute()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 37).execute()
         db.check_migrations()
         self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+
+    def test_replay_37_to_38_retires_the_pdf_of_a_replaced_digital_certificate(self):
+        """
+        Before ADR-0019 a paper certificate removed the digital number and left the PDF row current: retired.
+        A blank number removed it too, but nothing replaced that certificate: its row stays current and is
+        counted. A digital certificate keeps its row.
+        """
+        self.addCleanup(db.check_migrations)
+        replaced, digital, blanked = self.individuals[0], self.individuals[1], self.individuals[2]
+        db.Individual.update(certificate="", digital_certificate=None).where(db.Individual.id == blanked.id).execute()
+        db.Individual.update(certificate="98765", digital_certificate=None).where(
+            db.Individual.id == replaced.id
+        ).execute()
+        db.Individual.update(certificate=None, digital_certificate=100000).where(
+            db.Individual.id == digital.id
+        ).execute()
+        for ind in (replaced, digital, blanked):
+            db.DigitalCertificateV2.create(individual=ind, issued_by=self.admin, file_path="x.pdf", checksum="0" * 64)
+
+        def current(ind):
+            return db.DigitalCertificateV2.get(db.DigitalCertificateV2.individual == ind.id).is_current
+
+        for _ in range(2):  # a second run on the repaired rows changes nothing
+            db.SchemaHistory.delete().where(db.SchemaHistory.version >= 38).execute()
+            db.check_migrations()
+            self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+            self.assertEqual((current(replaced), current(digital), current(blanked)), (False, True, True))
+            self.assertIn("1 current rows without a number", db.SchemaHistory.get_by_id(38).comment)
+
+    def test_replay_39_to_40_resets_bank_privacy(self):
+        """A database stamped at 39 gets every stored bank privacy level reset to private."""
+        self.addCleanup(db.check_migrations)
+        gb = db.Genebank.create(name="Replay40")
+        herd = db.Herd.create(
+            genebank=gb, herd="R40", bank_account_number_privacy="public", bank_name_privacy="Public "
+        )
+        null_herd = db.Herd.create(
+            genebank=gb, herd="R40N", bank_account_number_privacy=None, bank_name_privacy="public"
+        )  # one NULL next to one non-private column: only the non-NULL one is reset
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 40).execute()
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        herd = db.Herd.get_by_id(herd.id)
+        self.assertEqual(herd.bank_account_number_privacy, "private")
+        self.assertEqual(herd.bank_name_privacy, "private")
+        null_herd = db.Herd.get_by_id(null_herd.id)
+        self.assertIsNone(null_herd.bank_account_number_privacy)  # NULL is left alone
+        self.assertEqual(null_herd.bank_name_privacy, "private")
+        # The reset writes no audit row (the trigger copies the account number) and the trigger is back on.
+
+        def updates():
+            return (
+                db.AuditLog.select()
+                .where(db.AuditLog.table_name == "herd", db.AuditLog.record_id == str(herd.id))
+                .where(db.AuditLog.operation == "UPDATE")
+                .count()
+            )
+
+        self.assertEqual(updates(), 0)
+        db.Herd.update(www="x").where(db.Herd.id == herd.id).execute()
+        self.assertEqual(updates(), 1)
 
     def test_replay_32_to_33_adds_the_history_algorithm_version(self):
         """
@@ -1162,8 +1225,8 @@ class TestDatabaseMigration(DatabaseTest):
         db.check_migrations()
         self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
 
-    def test_replay_37_to_38_creates_the_mail_queue(self):
-        """A database stamped at 37 gets the three mail tables, with a fresh bootstrap's indexes, unaudited."""
+    def test_replay_40_to_41_creates_the_mail_queue(self):
+        """A database stamped at 40 gets the three mail tables, with a fresh bootstrap's indexes, unaudited."""
         if not isinstance(db.DATABASE, db.PostgresqlDatabase):
             self.skipTest("index introspection requires PostgreSQL")
         self.addCleanup(db.check_migrations)
@@ -1173,7 +1236,7 @@ class TestDatabaseMigration(DatabaseTest):
             return {(i.table, i.name, tuple(i.columns), i.unique) for t in tables for i in db.DATABASE.get_indexes(t)}
 
         fresh = indexes()
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 38).execute()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 41).execute()
         db.DATABASE.execute_sql("DROP TABLE mail_attempt, mail_message, mail_sender")
 
         db.check_migrations()
@@ -1192,8 +1255,8 @@ class TestDatabaseMigration(DatabaseTest):
         )
         self.assertTrue(set(tables).isdisjoint(db.AUDITED_TABLES))
 
-    def test_replay_38_to_39_creates_the_intake_queue(self):
-        """A database stamped at 38 gets the queue's tables with a fresh bootstrap's indexes, unaudited."""
+    def test_replay_41_to_42_creates_the_intake_queue(self):
+        """A database stamped at 41 gets the queue's tables with a fresh bootstrap's indexes, unaudited."""
         if not isinstance(db.DATABASE, db.PostgresqlDatabase):
             self.skipTest("index introspection requires PostgreSQL")
         self.addCleanup(db.check_migrations)
@@ -1203,7 +1266,7 @@ class TestDatabaseMigration(DatabaseTest):
             return {(i.table, i.name, tuple(i.columns), i.unique) for t in tables for i in db.DATABASE.get_indexes(t)}
 
         fresh = indexes()
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 39).execute()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 42).execute()
         db.DATABASE.execute_sql(f"DROP TABLE {', '.join(tables)} CASCADE")
 
         db.check_migrations()
@@ -1213,8 +1276,8 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertIn(("inbox_item", "inboxitem_gmail_message_id", ("gmail_message_id",), True), fresh)
         self.assertTrue(set(tables).isdisjoint(db.AUDITED_TABLES))
 
-    def test_replay_39_to_40_lets_an_original_go_and_records_seller_and_buyer(self):
-        """A database stamped at 39 gets a nullable original and the two member columns, as a fresh bootstrap."""
+    def test_replay_42_to_43_lets_an_original_go_and_records_seller_and_buyer(self):
+        """A database stamped at 42 gets a nullable original and the two member columns, as a fresh bootstrap."""
         if not isinstance(db.DATABASE, db.PostgresqlDatabase):
             self.skipTest("column introspection requires PostgreSQL")
         self.addCleanup(db.check_migrations)
@@ -1230,7 +1293,7 @@ class TestDatabaseMigration(DatabaseTest):
             return columns, indexes, keys
 
         fresh = shape()
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 40).execute()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 43).execute()
         db.DATABASE.execute_sql(
             "ALTER TABLE inbox_document DROP COLUMN seller_member_id, DROP COLUMN buyer_member_id, "
             "ALTER COLUMN original_path SET NOT NULL"

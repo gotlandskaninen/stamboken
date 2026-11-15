@@ -13,6 +13,7 @@ ADR-0007: this module must never import herdbook.py — the shared rate
 limiter comes from app/extensions.py.
 """
 
+import logging
 import os
 from datetime import datetime
 
@@ -28,6 +29,7 @@ from peewee import OperationalError
 from blueprints.common import admin_required, problem
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/v2/admin")
+auth_log = logging.getLogger("herdbook.auth")
 
 
 @admin_bp.route("/role", methods=["POST"])
@@ -273,7 +275,9 @@ def update_user_admin(u_id):
             type="invalid-value",
         )
     try:
-        return jsonify(da.edit_admin_user(u_id, body)), 200
+        result = da.edit_admin_user(u_id, body)
+        auth_log.info("user profile changed actor=%s target=%s", current_user.id, u_id)
+        return jsonify(result), 200
     except ValueError as exc:
         if str(exc) == "user-not-found":
             return problem(
@@ -298,7 +302,9 @@ def set_v2_prod_access(u_id):
             type="invalid-enabled",
         )
     try:
-        return jsonify(da.set_v2_prod_access(u_id, body["enabled"])), 200
+        result = da.set_v2_prod_access(u_id, body["enabled"])
+        auth_log.info("v2 access=%s actor=%s target=%s", body["enabled"], current_user.id, u_id)
+        return jsonify(result), 200
     except ValueError as exc:
         if str(exc) == "user-not-found":
             return problem(
@@ -327,7 +333,9 @@ def set_validated(u_id):
             type="invalid-validated",
         )
     try:
-        return jsonify(da.set_validated(u_id, body["validated"])), 200
+        result = da.set_validated(u_id, body["validated"])
+        auth_log.info("account validated=%s actor=%s target=%s", body["validated"], current_user.id, u_id)
+        return jsonify(result), 200
     except ValueError as exc:
         if str(exc) == "user-not-found":
             return problem(
@@ -383,6 +391,7 @@ def set_active(u_id):
                 type="user-not-found",
             )
         raise
+    auth_log.info("account active=%s actor=%s target=%s", body["active"], current_user.id, u_id)
     return jsonify(result), 200
 
 
@@ -441,6 +450,7 @@ def admin_reset_password(u_id):
             "change_password returnerade fel.",
             type="password-reset-failed",
         )
+    auth_log.info("password reset actor=%s target=%s", current_user.id, u_id)
     return "", 204
 
 
