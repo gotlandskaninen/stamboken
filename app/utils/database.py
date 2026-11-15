@@ -3585,18 +3585,32 @@ def migrate_36_to_37():
 
 def migrate_37_to_38():
     """
-    Data only (ADR-0019): a current PDF row needs a digital number. Before AssignPaperCertificate retired the
-    row, a paper certificate (or a blank number) removed the digital number and left the row current, so verify
-    and download kept answering for it. Retires every current row whose rabbit has no digital number.
+    Data only (ADR-0019): before AssignPaperCertificate retired the row, a paper certificate replacing a digital
+    one left the PDF row current, so verify and download kept answering for it. Retires those rows.
+
+    A current row whose rabbit has no number at all is left alone and counted: the old code also removed the
+    digital number on a blank paper number, and that certificate was never replaced. Its number is restored by
+    hand from the history, not withdrawn here.
     """
     with DATABASE.atomic():
+        lost = 0
         if "digitalcertificatev2" in DATABASE.get_tables():
             DATABASE.execute_sql(
                 "UPDATE digitalcertificatev2 SET is_current = FALSE WHERE is_current AND individual_id IN "
-                "(SELECT individual_id FROM individual WHERE digital_certificate IS NULL)"
+                "(SELECT individual_id FROM individual "
+                "WHERE digital_certificate IS NULL AND coalesce(certificate, '') <> '')"
             )
+            lost = DATABASE.execute_sql(
+                "SELECT count(*) FROM digitalcertificatev2 WHERE is_current AND individual_id IN "
+                "(SELECT individual_id FROM individual "
+                "WHERE digital_certificate IS NULL AND coalesce(certificate, '') = '')"
+            ).fetchone()[0]
+            if lost:
+                logger.warning("migrate_37_to_38: %s current certificate PDF rows have lost their number", lost)
         SchemaHistory.insert(  # pylint: disable=E1120
-            version=38, comment="retire PDF rows of replaced digital certificates", applied=datetime.now()
+            version=38,
+            comment=f"retire PDF rows of replaced digital certificates; {lost} current rows without a number left",
+            applied=datetime.now(),
         ).execute()
 
 

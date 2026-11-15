@@ -79,9 +79,12 @@ bort det digitala numret. Det tömda
 numret sparas som NULL: kolumnen är unik, så en tom sträng hade bara kunnat
 tömma en kanin i hela registret.
 
-En gällande PDF-rad kräver ett digitalt nummer. Rader som redan bröt mot det,
-där ett pappersintyg eller ett tomt nummer hade tagit bort det digitala
-numret, rättas en gång av `migrate_37_to_38`. Den ändrar bara data.
+Rader där ett pappersintyg redan hade ersatt ett digitalt intyg men lämnat
+PDF-raden som gällande rättas en gång av `migrate_37_to_38`. Den ändrar bara
+data. En gällande PDF-rad vars kanin helt saknar nummer lämnas orörd och
+räknas i `SchemaHistory`: den gamla koden tog bort det digitala numret också
+vid tomt intygsnummer, och det intyget är aldrig ersatt. Numret återställs
+för hand ur historiken.
 
 ### Konsekvenser
 
@@ -119,3 +122,4 @@ Genomgången av övriga maskiner finns i föreningens interna dokumentation.
 | 2026-11-11 | Jonas | Skapad |
 | 2026-11-14 | Jonas | Tomt intygsnummer, vad som prövas i drift, sökningens gräns |
 | 2026-11-15 | Jonas | Datamigration för redan ersatta intyg; tömt nummer sparas som NULL |
+| 2026-11-15 | Jonas | Migrationen drar bara in intyg som ett pappersintyg har ersatt |

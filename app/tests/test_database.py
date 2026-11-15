@@ -1084,8 +1084,9 @@ class TestDatabaseMigration(DatabaseTest):
 
     def test_replay_37_to_38_retires_the_pdf_of_a_replaced_digital_certificate(self):
         """
-        A current PDF row needs a digital number. Before ADR-0019 a paper certificate, or a blank number, removed
-        the number and left the row current; a digital certificate keeps its row.
+        Before ADR-0019 a paper certificate removed the digital number and left the PDF row current: retired.
+        A blank number removed it too, but nothing replaced that certificate: its row stays current and is
+        counted. A digital certificate keeps its row.
         """
         self.addCleanup(db.check_migrations)
         replaced, digital, blanked = self.individuals[0], self.individuals[1], self.individuals[2]
@@ -1106,7 +1107,8 @@ class TestDatabaseMigration(DatabaseTest):
             db.SchemaHistory.delete().where(db.SchemaHistory.version >= 38).execute()
             db.check_migrations()
             self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
-            self.assertEqual((current(replaced), current(digital), current(blanked)), (False, True, False))
+            self.assertEqual((current(replaced), current(digital), current(blanked)), (False, True, True))
+            self.assertIn("1 current rows without a number", db.SchemaHistory.get_by_id(38).comment)
 
     def test_replay_32_to_33_adds_the_history_algorithm_version(self):
         """
