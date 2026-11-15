@@ -33,7 +33,9 @@ class TestAppLogging(DatabaseTest):
         lines = self.out.getvalue().splitlines()
         auth = [line for line in lines if line.startswith("herdbook.auth ")]
         self.assertTrue(auth, lines)
-        self.assertIn("ip=", auth[0])
+        self.assertRegex(auth[0], r"ip=\S+")
+        self.assertNotIn("ip=-", auth[0])
+        self.assertIn("user id=", auth[0])  # admin exists: the line says which account
         self.assertIn("path=/api/login", auth[0])
         self.assertNotIn("HEMLIG", self.out.getvalue())
 
@@ -94,3 +96,32 @@ class TestAppLogging(DatabaseTest):
     def test_newline_in_a_message_cannot_forge_a_log_line(self):
         logging.getLogger("herdbook.test").info("Unknown level: %s", "x\nherdbook.auth INFO Login ok")
         self.assertEqual(len(self.out.getvalue().splitlines()), 1)
+
+    def test_gunicorn_config_uses_the_quoting_logger(self):
+        spec = importlib.util.spec_from_file_location("gunicorn_conf2", os.path.join(_APP_DIR, "gunicorn.conf.py"))
+        conf = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(conf)
+        self.assertIs(conf.logger_class, conf.QuotingLogger)
+        self.assertEqual(conf.accesslog, "-")
+
+    def test_denied_request_is_logged_with_the_user_id_only(self):
+        self.client.post("/api/login", json={"username": "man", "password": "pass"})
+        self.out.truncate(0)
+        self.out.seek(0)
+        resp = self.client.get("/api/v2/admin/users?code=HEMLIG")
+        self.assertEqual(resp.status_code, 403)
+        denied = [line for line in self.out.getvalue().splitlines() if line.startswith("herdbook.auth INFO Denied 403")]
+        self.assertEqual(len(denied), 1, self.out.getvalue())
+        self.assertNotIn("HEMLIG", self.out.getvalue())
+
+    def test_invalid_google_token_text_is_not_logged(self):
+        with mock.patch("google.oauth2.id_token.verify_oauth2_token", side_effect=ValueError("token HEMLIG-TOKEN")):
+            resp = self.client.post("/api/auth/google", json={"credential": "x"})
+        self.assertEqual(resp.status_code, 401, resp.get_data(as_text=True))
+        self.assertIn("herdbook.auth ERROR Invalid Google token: ValueError", self.out.getvalue())
+        self.assertNotIn("HEMLIG", self.out.getvalue())
+
+    def test_failed_login_is_one_auth_line(self):
+        self.client.post("/api/login", json={"username": "admin", "password": "wrong"})
+        failed = [line for line in self.out.getvalue().splitlines() if "Login failed" in line]
+        self.assertEqual(len(failed), 1, self.out.getvalue())

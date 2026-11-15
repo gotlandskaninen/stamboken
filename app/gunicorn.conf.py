@@ -25,7 +25,7 @@ class QuotingLogger(Logger):
 
     def atoms(self, resp, req, environ, request_time):
         atoms = super().atoms(resp, req, environ, request_time)
-        atoms["U"] = quote(atoms["U"] or "")
+        atoms["U"] = quote(atoms["U"] or "", encoding="latin-1")  # PATH_INFO is latin-1 text
         return atoms
 
 

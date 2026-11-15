@@ -93,7 +93,6 @@ def admin_grant_role():
             result.get("message", "okänt fel"),
             type="role-update-failed",
         )
-    auth_log.info("role changed actor=%s target=%s op=%s level=%s", current_user.id, user_id, operation, entry["level"])
     return jsonify(result), 200
 
 

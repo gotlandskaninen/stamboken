@@ -100,11 +100,6 @@ services:
       - CERT_DEMO_WATERMARK=true
     ports:
       - "127.0.0.1:9090:9090"
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "20m"
-        max-file: "10"
     volumes:
       - type: bind
         source: ./app
@@ -162,11 +157,6 @@ services:
       - S3_BUCKET=test
       - S3_ACCESSKEY=accesskeytest
       - S3_SECRETKEY=secretkeytest
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "20m"
-        max-file: "10"
     volumes:
       - type: bind
         source: ./app

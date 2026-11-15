@@ -493,11 +493,12 @@ def authenticate_user(name, password):
     """
     if not name or not password:
         return None
+    user_info = None
     try:
         with DATABASE.atomic():
             user_info = User.select().where((User.email == name) | (User.username == name)).get()
             if user_info and not user_info.is_active:
-                auth_log.info("Login refused: inactive account")
+                auth_log.info("Login refused: inactive account id=%s", user_info.id)
                 raise InactiveAccountError()
             if user_info:
                 authenticator = (
@@ -511,7 +512,7 @@ def authenticate_user(name, password):
         # Perform password check regardless of username to prevent timing
         # attacks
         check_password_hash("This-always-fails", password)
-    auth_log.info("Login failed: unknown user or wrong password")
+    auth_log.info("Login failed: %s", f"user id={user_info.id}" if user_info else "unknown user")
     return None
 
 
@@ -635,6 +636,7 @@ def unlink_account(user, method):
         with DATABASE.atomic():
             Authenticators.delete().where((Authenticators.user == user.id) & (Authenticators.auth == method)).execute()
 
+        auth_log.info("Unlinked user id=%s from service %s", user.id, method)
         return True
     except DoesNotExist:
         return None
@@ -1894,9 +1896,9 @@ def add_individual(form, user_uuid):
             except ValueError as exception:
                 return {"status": "error", "message": f"{exception}"}
         if "weights" in form:
-            update_weights(individual, form["weights"], user.username)
+            update_weights(individual, form["weights"])
         if "bodyfat" in form:
-            update_bodyfat(individual, form["bodyfat"], user.username)
+            update_bodyfat(individual, form["bodyfat"])
 
         individual.save()
 

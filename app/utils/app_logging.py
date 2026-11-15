@@ -35,4 +35,5 @@ def setup():
     root = logging.getLogger()
     root.setLevel(logging.INFO)
     root.handlers[:] = [HANDLER]  # also drops the basicConfig() stderr handler settings.py triggers
-    logging.getLogger("apscheduler").setLevel(logging.WARNING)  # a job every 5 s at INFO
+    for noisy in ("apscheduler", "weasyprint", "fontTools", "botocore", "urllib3", "PIL"):
+        logging.getLogger(noisy).setLevel(logging.WARNING)  # chatty at INFO

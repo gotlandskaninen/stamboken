@@ -349,7 +349,7 @@ def lock_individual_for_edit(individual_id, breeding_id=None, with_parents=False
     return locked
 
 
-def update_weights(individual, weights, username):
+def update_weights(individual, weights):
     """
     Updates the weight measurements of `individual` to match those in `weights`.
 
@@ -380,7 +380,7 @@ def update_weights(individual, weights, username):
                 ).save()
 
 
-def update_bodyfat(individual, bodyfat, username):
+def update_bodyfat(individual, bodyfat):
     """
     Updates the bodufat measurements of `individual` to match those in `bodyfat`.
 
@@ -546,9 +546,9 @@ class SetMeasurements(PolicyCommand):
 
     def apply(self, ctx):
         if self.weights is not MISSING:
-            update_weights(ctx.individual, self.weights, ctx.user.username)
+            update_weights(ctx.individual, self.weights)
         if self.bodyfat is not MISSING:
-            update_bodyfat(ctx.individual, self.bodyfat, ctx.user.username)
+            update_bodyfat(ctx.individual, self.bodyfat)
 
 
 def _target(herd):

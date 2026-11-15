@@ -496,11 +496,17 @@ def load_user_from_request(request):
 
             return user
 
-        da.auth_log.info("Login failed: header")
         _login_rate_limit("hit")
 
     # we are not logged in.
     return None
+
+
+@APP.after_request
+def _log_denied(response):
+    if response.status_code in (403, 429):
+        auth_log.info("Denied %s user id=%s", response.status_code, getattr(current_user, "id", None))
+    return response
 
 
 @APP.after_request
@@ -635,7 +641,7 @@ def user_profile():
                     profile_picture_url = unique_filename
                     APP.logger.info("Profile picture uploaded")
                 except Exception as e:
-                    APP.logger.error(f"Error uploading file: {e}")
+                    APP.logger.error("Error uploading file: %s", type(e).__name__)  # e carries the path
                     return jsonify({"status": "error", "message": "Failed to upload image"})
 
         # Get settings from JSON or form data
@@ -664,7 +670,7 @@ def user_profile():
             return jsonify({"status": "updated", "message": "Profile updated successfully"})
 
         except Exception as e:
-            APP.logger.error(f"Error updating profile: {e}")
+            APP.logger.error("Error updating profile: %s", type(e).__name__)
             return jsonify({"status": "error", "message": "Failed to update profile"})
 
 
@@ -732,7 +738,7 @@ def manage_user(u_id):
                 profile_picture_url = unique_filename  # Only filename, not full URL
                 APP.logger.info("Profile picture uploaded")
             except Exception as e:
-                APP.logger.error(f"Error uploading file: {e}")
+                APP.logger.error("Error uploading file: %s", type(e).__name__)  # e carries the path
                 return jsonify({"status": "error", "message": "Failed to upload image"})
 
     # Get form data (could be JSON or form data depending on upload)
@@ -755,7 +761,7 @@ def manage_user(u_id):
         retval = da.get_user(u_id, session.get("user_id", None))
     if request.method in ("UPDATE", "PATCH"):
         retval = da.update_user(form, session.get("user_id", None))
-        if retval.get("status") != "error":
+        if retval.get("status") == "updated":
             auth_log.info("user updated actor=%s target=%s", current_user.id, form.get("id", u_id))
     if request.method == "POST":
         retval = da.add_user(form, session.get("user_id", None))
@@ -810,8 +816,6 @@ def manage_roles():
     """
     form = request.json
     status = da.update_role(form, session.get("user_id", None))
-    if status.get("status") != "error":
-        auth_log.info("role changed actor=%s target=%s", current_user.id, form.get("user"))
     return jsonify(status)
 
 
@@ -1254,7 +1258,6 @@ def login_handler():
         APP.session_interface.regenerate(session)
         da.auth_log.info("Login ok: password, user id=%s", user.id)
     else:
-        da.auth_log.warning("Login failed: password")
         if is_legacy_host():
             # Old contract: a failed login answered 200 with a null body.
             # Legacy's handleLogin treats any JSON body as a user, so the 401
@@ -1397,10 +1400,10 @@ def google_token_login():
 
     except ValueError as e:
         # Invalid token
-        da.auth_log.error("Invalid Google token: %s", e)
+        da.auth_log.error("Invalid Google token: %s", type(e).__name__)  # e carries the token text
         return jsonify({"error": "Invalid Google token"}), 401
     except Exception as e:
-        APP.logger.error(f"Google login error: {str(e)}")
+        da.auth_log.error("Google login error: %s", type(e).__name__)
         return jsonify({"error": "Authentication failed"}), 500
 
 

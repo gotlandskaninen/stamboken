@@ -60,9 +60,6 @@ services:
         source: ./config
         target: /config
       - type: bind
-        source: ./logs
-        target: /logs
-      - type: bind
         source: ./uppladdningar
         target: /app/uppladdningar
     depends_on:
