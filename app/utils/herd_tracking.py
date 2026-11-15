@@ -174,27 +174,42 @@ def check_invariants(individual, rows):
     for extra in births[1:]:
         found.add(Violation("I1", extra.id, "Kaninen har mer än en aktiv födelserad."))
     birth_date = coerce_date(births[0].herd_tracking_date) if births else None
-    holder = individual.origin_herd_id
+    holder, holder_contact = individual.origin_herd_id, None
     for row in ordered:
         day = coerce_date(row.herd_tracking_date)
         if birth_date and day < birth_date:
             found.add(Violation("I3", row.id, f"Händelsen {day} ligger före födelseraden {birth_date}."))
         if row.kind == "ATTESTATION" and row.herd_id != holder:
             found.add(Violation("I2", row.id, "En årsrapport måste gälla besättningen som har kaninen vid datumet."))
-        if row.kind in ("TRANSFER", "CORRECTION") and row.herd_id == holder and not _outside_resale(row):
+        if (
+            row.kind in ("TRANSFER", "CORRECTION")
+            and row.herd_id == holder
+            and not _outside_resale(row, holder_contact)
+        ):
             found.add(Violation("I4", row.id, "En flytt måste gå till en annan besättning än den som har kaninen."))
         if row.kind in HOLDER_CHANGING_KINDS:
-            holder = row.herd_id
+            holder, holder_contact = row.herd_id, row.holder_contact_id
     return found
 
 
-def _outside_resale(row):
+def _buyer_key(contact_id):
+    contact = BuyerContact.get_or_none(BuyerContact.id == contact_id) if contact_id else None
+    return (contact.name.casefold(), contact.town.casefold()) if contact else None
+
+
+def _outside_resale(row, previous_contact):
     """
-    ADR-0016's one exception to I4: a TRANSFER within GX1/MX1, a buyer outside the association selling to another.
-    Kept when the buyers are erased later, so the herd decides, not holder_contact_id; record_herd_tracking writes
-    one only with a new buyer.
+    ADR-0016's one exception to I4: a TRANSFER within GX1/MX1 holding a new buyer, another person (name and town)
+    than the one before it. A buyer erased later turns the row into a violation the delta check tolerates.
     """
-    return row.kind == "TRANSFER" and row.herd_id is not None and row.herd.herd in OUTSIDE_GENEBANK_HERDS
+    return (
+        row.kind == "TRANSFER"
+        and row.herd_id is not None
+        and row.herd.herd in OUTSIDE_GENEBANK_HERDS
+        and row.holder_contact_id is not None
+        and row.holder_contact_id != previous_contact
+        and _buyer_key(row.holder_contact_id) != _buyer_key(previous_contact)
+    )
 
 
 def _assert_no_new_violations(individual, before, after):
@@ -585,14 +600,9 @@ def _parse_events(events, individual):
             raise HerdTrackingInvalid(f"Händelse {number}: anteckningen måste vara text.")
         notes = (raw_notes or "").strip() or None
         reject_contact_details(notes)
-        # The sale's buyer outside the association: one kept from a row voided here, or a new one (the queue).
-        contact, buyer = event.get("holder_contact_id"), event.get("buyer")
-        if (contact is not None or buyer is not None) and (
-            (contact is not None and (not isinstance(contact, int) or isinstance(contact, bool)))
-            or (contact is not None and buyer is not None)
-            or kind != "TRANSFER"
-            or herd.herd not in OUTSIDE_GENEBANK_HERDS
-        ):
+        # A new buyer outside the association (the queue's late sale); a rewritten sale's buyer is carried over.
+        buyer = event.get("buyer")
+        if buyer is not None and (kind != "TRANSFER" or herd.herd not in OUTSIDE_GENEBANK_HERDS):
             raise HerdTrackingInvalid(f"Händelse {number}: en köpare hör bara till en försäljning utanför genbanken.")
         parsed.append(
             {
@@ -600,7 +610,6 @@ def _parse_events(events, individual):
                 "herd": herd,
                 "kind": kind,
                 "notes": notes,
-                "holder_contact_id": contact,
                 "buyer": buyer_contact_fields(buyer) if buyer is not None else None,
             }
         )
@@ -613,6 +622,20 @@ def _holder_before(individual, rows, when, kind):
     key = (when, 0 if kind == "BIRTH" else 1, float("inf"))
     prior = [r for r in sorted(rows, key=ht_sort_key) if ht_sort_key(r) < key]
     return prior[-1].herd_id if prior else individual.origin_herd_id
+
+
+def _carried_buyers(voided, parsed):
+    """
+    The buyer of a voided sale into GX1/MX1 goes to the one TRANSFER the correction writes into the same herd, so
+    it keeps its purge_at (ADR-0016). Event index -> contact id; none when more than one could take it.
+    """
+    carried = {}
+    for herd_id in {r.herd_id for r in voided if r.holder_contact_id and r.herd.herd in OUTSIDE_GENEBANK_HERDS}:
+        buyers = [r.holder_contact_id for r in voided if r.holder_contact_id and r.herd_id == herd_id]
+        into = [i for i, e in enumerate(parsed) if e["kind"] == "TRANSFER" and e["herd"].id == herd_id]
+        if len(buyers) == 1 and len(into) == 1 and parsed[into[0]]["buyer"] is None:
+            carried[into[0]] = buyers[0]
+    return carried
 
 
 def correct_herd_tracking(individual, user, operation_id, void_ids, events, reason=None):
@@ -666,25 +689,12 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
                     if r.kind == "BIRTH"
                 ],
             )
-        # A rewritten sale keeps its buyer, with the original purge_at: only one a row voided here held.
-        released = {by_id[v].holder_contact_id for v in void_ids} - {None}
-        if any(e["holder_contact_id"] not in released for e in parsed if e["holder_contact_id"] is not None):
-            raise HerdTrackingInvalid("En köpare kan bara flyttas från en rad som ångras i samma korrigering.")
+        carried = _carried_buyers([by_id[v] for v in void_ids], parsed)
         voided = _void_rows([by_id[v] for v in void_ids], user, cleaned, op)
         written, current = [], list(kept)
-        for event in parsed:
+        for index, event in enumerate(parsed):
             birth = event["kind"] == "BIRTH"
             from_herd = None if birth else _holder_before(ind, current, event["date"], event["kind"])
-            # GX1 to GX1 only with a new buyer (record_herd_tracking); elsewhere I4 below answers.
-            if (
-                event["kind"] == "TRANSFER"
-                and from_herd == event["herd"].id
-                and event["herd"].herd in OUTSIDE_GENEBANK_HERDS
-                and event["holder_contact_id"] is None
-                and event["buyer"] is None
-            ):
-                detail = "En flytt måste gå till en annan besättning än den som har kaninen."
-                raise HerdTrackingConflict(detail, rows=[{"id": None, "code": "I4", "detail": detail}])
             row = HerdTracking.create(
                 individual=ind_id,
                 herd=event["herd"],
@@ -697,7 +707,7 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
                 holder_contact=(
                     BuyerContact.create(**event["buyer"], created_by_user=user)
                     if event["buyer"]
-                    else event["holder_contact_id"]
+                    else carried.get(index)
                 ),
             )
             written.append(row)
