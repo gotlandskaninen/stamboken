@@ -23,6 +23,8 @@ from utils.database import (
     BuyerContact,
     Herd,
     HerdTracking,
+    InboxDocument,
+    InboxItem,
     Individual,
     coerce_date,
     ht_not_voided,
@@ -117,10 +119,23 @@ def _drop_orphan_buyers(contact_ids, action, user):
     return delete_buyer_contacts(orphans, action, user)[0]
 
 
+def _lock_inbox_items(individual_ids):
+    """
+    The queue's items with documents of these rabbits or of their sales, locked before the rabbits: the queue's own
+    order (it locks its item, then the rabbit), so a void that clears a sale's documents never deadlocks with it.
+    """
+    sales = HerdTracking.select(HerdTracking.id).where(HerdTracking.individual.in_(individual_ids))
+    documents = InboxDocument.select(InboxDocument.item).where(
+        InboxDocument.individual.in_(individual_ids) | InboxDocument.herd_tracking_id.in_(sales)
+    )
+    list(InboxItem.select(InboxItem.id).where(InboxItem.id.in_(documents)).order_by(InboxItem.id).for_update())
+
+
 def void_all_for_unpromote(individual, user, operation_id=None):
     """Retire every active row of an un-promoted individual in one operation."""
     op = new_operation_id(operation_id)
     with DB_PROXY.atomic():
+        _lock_inbox_items([individual.id])
         lock_individuals([individual.id])
         rows = list(HerdTracking.select().where(HerdTracking.individual == individual.id, ht_not_voided()))
         if not user.is_admin and _moves_across_genebanks(individual, rows, []):
@@ -529,6 +544,7 @@ def void_herd_tracking(ht_id, user, reason, operation_id=None):
     if row is None:
         raise HerdTrackingNotFound("Raden finns inte.")
     with DB_PROXY.atomic():
+        _lock_inbox_items([row.individual_id])
         lock_individuals([row.individual_id])
         done = _operation_rows([row.individual_id], op)
         if done:
@@ -656,6 +672,7 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
     cleaned = require_reason(reason) if void_ids else None
     op = new_operation_id(operation_id)
     with DB_PROXY.atomic():
+        _lock_inbox_items([ind_id])
         lock_individuals([ind_id])
         ind = Individual.get_by_id(ind_id)
         if _operation_rows([ind_id], op):
@@ -818,6 +835,7 @@ def undo_herd_tracking_operation(operation_id, user, reason, undo_operation_id=N
     if not ind_ids:
         raise HerdTrackingNotFound("Åtgärden finns inte.")
     with DB_PROXY.atomic():
+        _lock_inbox_items(ind_ids)
         lock_individuals(ind_ids)
         individuals = {i.id: i for i in Individual.select().where(Individual.id.in_(ind_ids))}
         if any(not is_manager_of(user, i.origin_herd.genebank_id) for i in individuals.values()):

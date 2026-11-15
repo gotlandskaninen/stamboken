@@ -17,6 +17,7 @@ from peewee import IntegrityError  # noqa: E402
 from utils import buyer_contact  # noqa: E402
 from utils.herd_tracking import (  # noqa: E402
     HerdTrackingConflict,
+    HerdTrackingError,
     HerdTrackingInvalid,
     correct_herd_tracking,
     new_operation_id,
@@ -347,6 +348,26 @@ class TestVoid(BuyerBase):
         self.assertEqual(
             [r.new_data for r in self._buyer_log(self.contact_id, "DELETE")], [{"action": "forsaljning_ogiltig"}]
         )
+
+    def test_the_queue_items_are_locked_before_the_rabbit_as_the_queue_does(self):
+        def record(name):
+            return lambda ids: calls.append(name)
+
+        for run in (
+            lambda: void_herd_tracking(self.sale.id, self.owner, "Fel kanin"),
+            lambda: self._correct_date(),
+            lambda: undo_herd_tracking_operation(self._latest().operation_id, self.manager, "Fel"),
+        ):
+            calls = []
+            with (
+                mock.patch("utils.herd_tracking._lock_inbox_items", side_effect=record("items")),
+                mock.patch("utils.herd_tracking.lock_individuals", side_effect=record("rabbit")),
+            ):
+                try:
+                    run()
+                except HerdTrackingError:
+                    pass
+            self.assertEqual(calls[:2], ["items", "rabbit"])
 
     def test_undoing_the_operation_deletes_the_buyer(self):
         undo_herd_tracking_operation(self.sale.operation_id, self.manager, "Fel kanin")
