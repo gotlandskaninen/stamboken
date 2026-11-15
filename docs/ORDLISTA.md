@@ -283,7 +283,7 @@ eller att intyget inte hittades. I gamla Stamboken laddade du upp PDF-filen på 
 Kod: `DigitalCertificateV2` (uuid) · Legacy-manual: "verifiera" · Legacy: "Verifiera intyg", "Verifiera" · Nytt UI: "Verifiera Genbanksintyg", "Äkta genbanksintyg"
 
 **Vikt / hull**\
-Kaninens vikt i kilo och dess hull, alltså hur fet eller mager den är (låg, normal eller hög), med
+Kaninens vikt i kilo och dess hull, alltså hur fet eller mager den är (mager, normal eller fet, som på pappersblanketten), med
 mätdatum. I gamla Stamboken rapporterades vikt och hull före årsrapporten. Nya Stamboken visar de
 senaste värdena på kaninens sida men har ännu ingen knapp för att lägga till nya.\
 Kod: `Weight`, `Bodyfat` · Legacy-manual: "vikt och hull" · Legacy: "Vikt", "Hull" · Nytt UI: "Senaste vikt", "Senaste hull"
@@ -431,6 +431,6 @@ Inget av detta är beslutat. En rad per fråga med alternativen.
 - **Administration** eller **Administrera**.
 - **Matrikel**, **medlemsmatrikel** eller **medlemsregistret** (manual:91).
 - **GX1/MX1**: gamla manualen säger kaniner "som sålts med intyg" (manual:25); båda UI säger att en kanin utan intyg bara kan säljas dit (individual_sell.tsx:178, `individual.sell.unregisteredInfo`).
-- **Hullskala**: "Låg/Normal/Hög" (individual_weighthull.tsx:178–180, HealthSection.tsx:20–22) eller "Under/Normal/Över" (BatchRabbitUpdateForm.tsx:468–478).
+- **Hullskala**: "Låg/Normal/Hög" (individual_weighthull.tsx:178–180), "Mager/Normal/Fet" (HealthSection.tsx:20–22, som pappersblanketten) eller "Under/Normal/Över" (BatchRabbitUpdateForm.tsx:468–478).
 - **Rasnamn och stavning i gamla manualen**: versal i löptext (manual:62, 150, 219) och stavfel "genbaksansvarig" (manual:84, 119), "genbaknsansvarig" (manual:116), "innavelskoefficient" (manual:65), "Gotlandkanin" (manual:219).
 - **DEVELOPMENT_GUIDE.md** kallar kaninens nummer "Genbanksnummer" (rad 95 och 115), mot kanoniska Individnummer.
