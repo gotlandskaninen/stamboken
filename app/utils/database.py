@@ -11,6 +11,7 @@ import re
 import sys
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from flask_login import UserMixin
 from peewee import (
@@ -1577,6 +1578,9 @@ class YearlyHerdReport(BaseModel):
     round = ForeignKeyField(YearlyReportRound, null=True)
 
 
+BUYER_CONTACT_YEARS = 5
+
+
 class BuyerContact(BaseModel):
     """
     A buyer outside the association, on a sale to GX1/MX1 (ADR-0016): name and town always, the contact details
@@ -1591,10 +1595,20 @@ class BuyerContact(BaseModel):
     phone = TextField(null=True)
     contact_consent_at = TimestampTZField(null=True)  # may keep address, e-mail and phone while the buyer has it
     membership_optin_at = TimestampTZField(null=True)  # may be contacted about membership
-    # Set by the database in one statement, so purge_at is exactly five years after created_at.
     created_at = TimestampTZField(constraints=[SQL("DEFAULT now()")])
     created_by_user = ForeignKeyField(User, column_name="created_by_user_id", backref="+")
-    purge_at = TimestampTZField(constraints=[SQL("DEFAULT (now() + interval '5 years')")])
+    # Five years from the sale's date (purge_at_for), set by the writer and again when a correction moves the sale.
+    purge_at = TimestampTZField()
+
+    @staticmethod
+    def purge_at_for(sale_date):
+        """Midnight in Stockholm five years after `sale_date` (a 29 February sale goes on 28 February)."""
+        day = coerce_date(sale_date)
+        try:
+            day = day.replace(year=day.year + BUYER_CONTACT_YEARS)
+        except ValueError:
+            day = day.replace(year=day.year + BUYER_CONTACT_YEARS, day=28)
+        return datetime(day.year, day.month, day.day, tzinfo=ZoneInfo("Europe/Stockholm"))
 
     class Meta:  # pylint: disable=too-few-public-methods
         table_name = "buyer_contact"

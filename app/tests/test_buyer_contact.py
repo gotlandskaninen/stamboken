@@ -6,6 +6,7 @@ isort:skip_file
 import os
 from datetime import date, datetime, timedelta, timezone
 from unittest import mock
+from zoneinfo import ZoneInfo
 
 os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), "auth.ini.test"))
 
@@ -44,6 +45,7 @@ NAME = "Zelda Uniquebuyer"  # ASCII, so a text search of audit_log finds every t
 BUYER = {"name": NAME, "town": "Visby"}
 OTHER = {"name": "Other Buyer", "town": "Slite"}
 NOW = datetime.now(timezone.utc)
+PURGE = NOW + timedelta(days=5 * 365)
 
 
 class BuyerBase(DatabaseTest):
@@ -112,29 +114,48 @@ class TestSchema(BuyerBase):
         self.assertTrue({"buyer_contact_address_needs_consent", "buyer_contact_email_phone_need_consent"} <= checks)
         db.check_migrations()  # replay-safe
 
-    def test_purge_at_is_five_years_after_created_at(self):
-        contact = db.BuyerContact.create(name=NAME, town="Visby", created_by_user=self.owner)
-        contact = self._contact(contact.id)
-        self.assertEqual(contact.purge_at.replace(year=contact.purge_at.year - 5), contact.created_at)
+    def test_purge_at_is_five_years_after_a_backdated_sale(self):
+        contact = self._contact(self._sale().holder_contact_id)  # sold on SALE_DATE, entered today
+        self.assertEqual(contact.purge_at, datetime(2026, 6, 1, tzinfo=ZoneInfo("Europe/Stockholm")))
+        self.assertEqual(db.BuyerContact.purge_at_for("2024-02-29").date(), date(2029, 2, 28))
 
     def test_address_needs_the_contact_consent(self):
         with self.assertRaises(IntegrityError), db.DATABASE.atomic():
-            db.BuyerContact.create(name=NAME, town="Visby", postal_address="Väg 1", created_by_user=self.owner)
+            db.BuyerContact.create(
+                name=NAME, town="Visby", purge_at=PURGE, postal_address="Väg 1", created_by_user=self.owner
+            )
         with self.assertRaises(IntegrityError), db.DATABASE.atomic():
             db.BuyerContact.create(
-                name=NAME, town="Visby", postal_address="Väg 1", membership_optin_at=NOW, created_by_user=self.owner
+                name=NAME,
+                town="Visby",
+                postal_address="Väg 1",
+                membership_optin_at=NOW,
+                created_by_user=self.owner,
+                purge_at=PURGE,
             )
         db.BuyerContact.create(
-            name=NAME, town="Visby", postal_address="Väg 1", contact_consent_at=NOW, created_by_user=self.owner
+            name=NAME,
+            town="Visby",
+            postal_address="Väg 1",
+            contact_consent_at=NOW,
+            created_by_user=self.owner,
+            purge_at=PURGE,
         )
 
     def test_email_and_phone_need_a_consent_or_the_membership_optin(self):
         for field in ("email", "phone"):
             with self.subTest(field=field):
                 with self.assertRaises(IntegrityError), db.DATABASE.atomic():
-                    db.BuyerContact.create(name=NAME, town="Visby", created_by_user=self.owner, **{field: "x"})
+                    db.BuyerContact.create(
+                        name=NAME, town="Visby", purge_at=PURGE, created_by_user=self.owner, **{field: "x"}
+                    )
                 db.BuyerContact.create(
-                    name=NAME, town="Visby", membership_optin_at=NOW, created_by_user=self.owner, **{field: "x"}
+                    name=NAME,
+                    town="Visby",
+                    membership_optin_at=NOW,
+                    created_by_user=self.owner,
+                    purge_at=PURGE,
+                    **{field: "x"},
                 )
 
     def test_deleting_a_contact_nulls_the_sale_through_the_herd_tracking_triggers(self):
@@ -379,11 +400,10 @@ class TestVoid(BuyerBase):
         sale_event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", **event}
         return op, correct_herd_tracking(self.rabbit, self.manager, op, [self.sale.id], [sale_event], "Fel datum")
 
-    def test_a_correction_of_the_sale_keeps_the_buyer_and_its_purge_date(self):
-        purge_at = self._contact(self.contact_id).purge_at
+    def test_a_correction_of_the_sale_keeps_the_buyer_and_moves_its_purge_date(self):
         _op, (written,) = self._correct_date()  # the dialog sends no buyer: the server carries it over
         self.assertEqual(written.holder_contact_id, self.contact_id)
-        self.assertEqual(self._contact(self.contact_id).purge_at, purge_at)
+        self.assertEqual(self._contact(self.contact_id).purge_at, db.BuyerContact.purge_at_for("2021-07-01"))
         self.assertEqual(self._buyer_log(self.contact_id, "DELETE"), [])
 
     def test_undoing_that_correction_restores_the_old_sale_with_its_buyer(self):
@@ -532,10 +552,11 @@ class TestRetention(BuyerBase):
         )
         self.contact_id = self.sale.holder_contact_id
 
-    def test_five_years_after_entry_the_buyer_goes(self):
-        self.assertEqual(buyer_contact.purge_expired(NOW), 0)
+    def test_five_years_after_the_sale_the_buyer_goes(self):
+        purge_at = db.BuyerContact.purge_at_for(SALE_DATE)  # a sale entered late goes five years after its date
+        self.assertEqual(buyer_contact.purge_expired(purge_at - timedelta(minutes=1)), 0)
         with mock.patch("utils.inbox_purge.erase_buyer_from_inbox", return_value=[]) as inbox:
-            self.assertEqual(buyer_contact.purge_expired(NOW + timedelta(days=5 * 366)), 1)
+            self.assertEqual(buyer_contact.purge_expired(purge_at), 1)
         inbox.assert_called_once_with(self.sale.id, False)
         self.assertIsNone(self._contact(self.contact_id))
         self.assertIsNone(db.HerdTracking.get_by_id(self.sale.id).holder_contact_id)
@@ -607,10 +628,14 @@ class TestRetention(BuyerBase):
 
 class TestNoTraceInAuditLog(BuyerBase):
     def test_after_erasure_and_purge_the_name_is_nowhere_in_audit_log(self):
-        sale = self._sale({**BUYER, "email": "z@example.org", "contact_consent": True, "membership_optin": True})
+        buyer = {**BUYER, "email": "z@example.org", "contact_consent": True, "membership_optin": True}
+        today = date.today()
+        response = self._sell(buyer=buyer, date=(today - timedelta(days=20)).isoformat())  # within five years
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        sale = self._latest()
         self._login("man")
         self.client.get(f"/api/v2/individual/{RABBIT}/herd-tracking")
-        record_herd_tracking(self.rabbit, self.herds[1], "2022-01-01", "TRANSFER", self.manager)
+        record_herd_tracking(self.rabbit, self.herds[1], today - timedelta(days=10), "TRANSFER", self.manager)
         buyer_contact.run(NOW + timedelta(days=366))
         buyer_contact.erase_buyer_contact(sale.holder_contact_id, self.manager)
         self.assertGreater(len(self._buyer_log(sale.holder_contact_id)), 2)

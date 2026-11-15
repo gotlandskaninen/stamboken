@@ -351,7 +351,11 @@ def record_herd_tracking(
                 f"Kaninen finns redan i {target.herd}. En ny köpare utanför föreningen registreras av "
                 "genbanksansvarig, med köparens namn och ort."
             )
-        contact = BuyerContact.create(**contact_fields, created_by_user=user) if contact_fields else None
+        contact = (
+            BuyerContact.create(**contact_fields, created_by_user=user, purge_at=BuyerContact.purge_at_for(when))
+            if contact_fields
+            else None
+        )
         try:
             with DB_PROXY.atomic():
                 row = HerdTracking.create(
@@ -794,11 +798,17 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
                 operation_id=op,
                 notes=event["notes"],
                 holder_contact=(
-                    BuyerContact.create(**event["buyer"], created_by_user=user)
+                    BuyerContact.create(
+                        **event["buyer"], created_by_user=user, purge_at=BuyerContact.purge_at_for(event["date"])
+                    )
                     if event["buyer"]
                     else carried.get(index)
                 ),
             )
+            if index in carried:  # a corrected sale's buyer: five years from the sale's corrected date
+                BuyerContact.update(purge_at=BuyerContact.purge_at_for(event["date"])).where(
+                    BuyerContact.id == carried[index]
+                ).execute()
             written.append(row)
             current.append(row)
         # Admin only (rolled back). An event's herd is in the origin genebank, but the holder before it may
