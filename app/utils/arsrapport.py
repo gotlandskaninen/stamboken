@@ -729,17 +729,20 @@ def _row_states(herds, round_):
 
 def status_view(round_, genebank_id):
     """
-    StatusView (5.14): a row per active herd of the genebank, and per herd with a report in the round, with its
-    state (the first that holds of STATES), the support conditions and the register statistics. A fixed number of
-    queries however many herds there are.
+    StatusView (5.14): a row per active herd of the genebank, and per herd with any report in the round (a withdrawn
+    one too), with its state (the first that holds of STATES), the support conditions and the register statistics.
+    A fixed number of queries however many herds there are.
     """
     year, last = round_.report_year, date(round_.report_year, 12, 31)
+    in_round = list(
+        YearlyHerdReport.select(YearlyHerdReport.id, YearlyHerdReport.herd, YearlyHerdReport.status)
+        .join(Herd)
+        .where(YearlyHerdReport.round == round_.id, Herd.genebank == genebank_id)
+    )
     reports = {
         report.herd_id: report
-        for report in YearlyHerdReport.select()
-        .join(Herd)
-        .where(
-            YearlyHerdReport.round == round_.id, YearlyHerdReport.status == "submitted", Herd.genebank == genebank_id
+        for report in YearlyHerdReport.select().where(
+            YearlyHerdReport.id.in_([r.id for r in in_round if r.status == "submitted"])
         )
     }
     herds = list(
@@ -747,7 +750,7 @@ def status_view(round_, genebank_id):
         .where(
             Herd.genebank == genebank_id,
             Herd.herd.not_in(OUTSIDE_GENEBANK_HERDS),
-            (Herd.is_active == True) | Herd.id.in_(list(reports)),  # noqa: E712
+            (Herd.is_active == True) | Herd.id.in_({r.herd_id for r in in_round}),  # noqa: E712
         )
         .order_by(Herd.herd)
     )

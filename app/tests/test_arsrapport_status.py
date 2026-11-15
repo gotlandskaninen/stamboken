@@ -107,6 +107,16 @@ class StatusTest(ArsrapportTest):
         self.assertEqual({"G9107", "G9001"} & set(self.rows()), {"G9107", "G9001"})
         self.assertNotIn("G9108", self.rows())
 
+    def test_inactive_herd_with_only_a_withdrawn_report_gets_a_row(self):
+        old = self.herd("G9109")
+        report = self.reported(old)
+        db.YearlyHerdReport.update(status="voided", voided_at=NOW, voided_by_user=self.owner.id).where(
+            db.YearlyHerdReport.id == report.id
+        ).execute()
+        db.Herd.update(is_active=False).where(db.Herd.id == old.id).execute()
+        row = self.rows()["G9109"]
+        self.assertEqual((row["state"], row["source"], row["received_at"]), ("ej_rapporterad", None, None))
+
     def test_support_conditions(self):
         a, b = self.rabbits(self.h, 2)
         cases = {}
@@ -132,7 +142,9 @@ class StatusTest(ArsrapportTest):
         report.received_at = datetime.combine(date(2026, 1, 31), clock(23, 30), arsrapport.STOCKHOLM)
         report.save()
         self.assertTrue(self.rows()["G9001"]["villkor"]["i_tid"])  # the Stockholm date, not UTC
-        report.received_at = datetime.combine(date(2026, 2, 1), clock(0, 30), arsrapport.STOCKHOLM)
+        report.received_at = datetime.combine(date(2026, 2, 1), clock(0, 30), arsrapport.STOCKHOLM)  # 31 Jan in UTC
+        report.save()
+        self.assertFalse(self.rows()["G9001"]["villkor"]["i_tid"])  # the Swedish day is 1 February
         report.on_time_override = True
         report.save()
         self.assertTrue(self.rows()["G9001"]["villkor"]["i_tid"])
