@@ -37,7 +37,9 @@ function open(hash: string) {
 const button = () =>
   screen.getByRole("button", { name: "Ta bort mina uppgifter" });
 
-beforeEach(() => eraseBuyerMock.mockReset());
+beforeEach(() => {
+  eraseBuyerMock.mockReset(); // not returned: vitest would run a returned mock as cleanup
+});
 afterEach(cleanup);
 
 describe("takeToken", () => {
@@ -97,6 +99,16 @@ describe("EraseBuyer", () => {
       await screen.findByText(/Länken gäller inte längre/),
     ).toBeInTheDocument();
     expect(eraseBuyerMock).not.toHaveBeenCalled();
+  });
+
+  it("shows the retry message when the call itself fails", async () => {
+    eraseBuyerMock.mockRejectedValue(new Error("network"));
+    open(`#${TOKEN}`);
+    fireEvent.click(button());
+    expect(
+      await screen.findByText("Något gick fel. Försök igen om en stund."),
+    ).toBeInTheDocument();
+    await waitFor(() => expect(button()).toBeEnabled());
   });
 
   it("keeps the button after an error", async () => {

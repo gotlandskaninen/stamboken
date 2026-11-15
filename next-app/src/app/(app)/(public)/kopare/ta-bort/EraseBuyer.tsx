@@ -63,7 +63,12 @@ export function EraseBuyer() {
         onClick={() =>
           startTransition(async () => {
             const found = token.current;
-            setResult(found ? await eraseBuyer(found) : "invalid");
+            if (!found) return setResult("invalid");
+            try {
+              setResult(await eraseBuyer(found));
+            } catch {
+              setResult("error"); // a dropped connection or a deploy in between: the retry message
+            }
           })
         }
       >
