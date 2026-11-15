@@ -1013,6 +1013,19 @@ class TestLockOrder(PurgeTest):
             buyer_contact.erase_buyer_contact(sale.holder_contact_id, self.manager)
         self.assertTrue(_items_locked_before_the_rabbit(statements))
 
+    def test_an_erasure_refuses_an_item_that_appeared_after_its_lock(self):
+        rabbit = db.Individual.get(db.Individual.number == "G1-2112")
+        sale, document = self._sale_with_a_document(rabbit, "2026-01-01")
+        # The item appears between the item lock (none yet) and the rabbit lock.
+        seen = iter([set(), {document.item_id}])
+        with (
+            mock.patch("utils.buyer_contact.buyer_items", side_effect=lambda rows, lock=False: next(seen)),
+            self.assertRaises(HerdTrackingConflict) as raised,
+        ):
+            buyer_contact.erase_buyer_contact(sale.holder_contact_id, self.manager)
+        self.assertIn("Försök igen", raised.exception.detail)
+        self.assertIsNotNone(db.BuyerContact.get_or_none(db.BuyerContact.id == sale.holder_contact_id))
+
     def test_unpromote_refuses_an_item_that_appeared_after_its_lock(self):
         rabbit = db.Individual.get(db.Individual.number == "G1-2112")
         self._sale_with_a_document(rabbit, "2026-01-01")
