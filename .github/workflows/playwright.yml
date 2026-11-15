@@ -240,7 +240,8 @@ jobs:
       # uuid, and a separate seed would give every account a new one. So the
       # database is copied, with the script production runs every night.
       - name: Copy the database to the demo API
-        continue-on-error: true  # a failed copy fails the access rules test below, never the legacy suite
+        id: demo_copy
+        continue-on-error: true  # never stops the legacy suite; reported by a step of its own below
         run: COMPOSE_FILE=docker-compose.local-production.yml ./scripts/sync-demo-db.sh
 
       # --- Install Playwright ---
@@ -284,6 +285,13 @@ jobs:
         if: ${{ !cancelled() }}
         run: pnpm exec playwright test --config=playwright.access.config.ts --reporter=github
         working-directory: next-app
+
+      # The copy may fail late, after the data is in place, and the tests still pass.
+      - name: Report a failed demo database copy
+        if: ${{ always() && steps.demo_copy.outcome == 'failure' }}
+        run: |
+          echo "::error::Copying the database to the demo API failed (scripts/sync-demo-db.sh)."
+          exit 1
 
       - name: Upload test report
         uses: actions/upload-artifact@v4
