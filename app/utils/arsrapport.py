@@ -1009,6 +1009,9 @@ def diff(cur, want, last, prev_entry=None, entry=None) -> tuple[list[Effect], li
         return [e for e in effects if e.kind in ("attest", "death", "transfer")]
 
     gone = [c for c in rows(cur) if c not in want or (fixed and c.kind == "transfer")]
+    # A 31/12 measurement is written while the herd holds the rabbit, so the report's later sale comes off first.
+    if any((e in cur) != (e in want) for e in cur + want if e.kind in ("weight", "bodyfat")):
+        gone += [c for c in cur if c.kind == "transfer" and c.date > last]
     cut = min((order(c, last) for c in gone), default=None)
     remove = [c for c in rows(cur) if cut is not None and order(c, last) >= cut]
     add = [w for w in rows(want) if w not in cur or (cut is not None and order(w, last) >= cut)]

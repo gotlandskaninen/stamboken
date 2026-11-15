@@ -7,15 +7,24 @@ isort:skip_file
 """
 
 import json
+import uuid
 from datetime import date, datetime, timedelta
 from datetime import time as clock
+from unittest import mock
 
 import utils.arsrapport as arsrapport
 import utils.database as db
 import utils.mail as mail
 from utils.database import coerce_date
-from utils.herd_tracking import BUYER_PRIVACY_HELP
-from utils.individual_commands import REPORT_UNDO_REASON
+from utils.herd_tracking import (
+    BUYER_PRIVACY_HELP,
+    DATE_BEFORE_LATEST,
+    REPORT_LATER_ROW,
+    HerdTrackingConflict,
+    HerdTrackingForbidden,
+    HerdTrackingInvalid,
+)
+from utils.individual_commands import REPORT_UNDO_REASON, IndividualRefused
 
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.ht_helpers import count_queries, ht_row
@@ -406,6 +415,55 @@ class AndraTest(ArsrapportTest):
             self.submissions(rid)[-1].added_measurements,
             [{"individual_id": a.id, "kind": "weight", "id": new.id, "date": "2025-12-31", "value": 3.0}],
         )
+
+    def test_measurement_change_after_a_january_sale(self):  # the sale comes off and goes back after the weight
+        (a,) = self.rabbits(self.h, 1)
+        key, sold = self.sald(a, "G9002", 2026, 1, 3)
+        self.ok(self.body((key, {**sold, "vikt": 2.8})))
+        (attestation,) = rows_of(a, "ATTESTATION")
+        for revision, change in ((1, {"vikt": 3.0}), (2, {"vikt": 3.0, "hull": "normal"})):  # a weight, then hull
+            body = self.body((key, {**sold, **change}), revision=revision)
+            dry = self.api("POST", "/besattning/G9001/2025/torrkorning", **body).get_json()
+            self.assertEqual((dry["ok"], dry["refusals"]), (True, []))
+            self.ok(body)
+        sales = rows_of(a, "TRANSFER")
+        self.assertEqual([sale.voided_at is None for sale in sales], [False, False, True])
+        self.assertEqual(
+            (coerce_date(sales[-1].herd_tracking_date), sales[-1].herd_id), (date(2026, 1, 3), self.g9002.id)
+        )
+        self.assertEqual([(row.id, row.voided_at) for row in rows_of(a, "ATTESTATION")], [(attestation.id, None)])
+        weights = [(coerce_date(w.weight_date), round(w.weight, 2)) for w in db.Weight.filter(individual=a)]
+        self.assertEqual(weights, [(LAST, 3.0)])
+        self.assertEqual([b.bodyfat for b in db.Bodyfat.filter(individual=a)], ["normal"])
+
+    def test_refused_write_at_andra_rolls_back(self):  # U8 at Skicka, for what the dry run cannot see
+        a, b = self.rabbits(self.h, 2)
+        rid = self.ok(self.body(self.kvar(a, vikt=2.8), self.kvar(b, vikt=2.8)))["report_id"]
+        (b_attestation,) = rows_of(b, "ATTESTATION")
+        real = arsrapport.void_herd_tracking
+        for exc, code, message in (
+            (HerdTrackingForbidden(REPORT_LATER_ROW), "senare_handelse", LATER),
+            (HerdTrackingConflict(DATE_BEFORE_LATEST), "senare_handelse", LATER),
+            (HerdTrackingInvalid("Ange en anledning."), "skrivning_nekad", "Ange en anledning."),
+            (IndividualRefused("Forbidden"), "skrivning_nekad", arsrapport.REFUSALS["nekad"]),
+        ):
+
+            def flaky(ht_id, *args, exc=exc, **kwargs):
+                if ht_id == b_attestation.id:
+                    raise exc
+                return real(ht_id, *args, **kwargs)
+
+            before = self.counts()
+            body = self.body(self.dod(a, 2025, 11, 20), self.dod(b, 2025, 11, 20), revision=1)
+            with mock.patch.object(arsrapport, "void_herd_tracking", side_effect=flaky):
+                response = self.skicka({**body, "submission_key": str(uuid.uuid4())})
+            self.assertEqual(response.status_code, 422, response.get_data(as_text=True))
+            self.assertEqual(
+                response.get_json()["refusals"], [{"individual_id": b.id, "code": code, "message": message}]
+            )
+            self.assertEqual(self.counts(), before)
+            self.assertEqual(self.report(rid).revision, 1)
+            self.assertIsNone(rows_of(a, "ATTESTATION")[0].voided_at)  # a, changed first, is rolled back
 
     def test_changed_sale_is_checked_at_andra(self):  # Codex 2
         (a,) = self.rabbits(self.h, 1, born=date(2025, 10, 1))
