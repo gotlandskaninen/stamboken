@@ -208,21 +208,33 @@ class TestInformationSent(BuyerMailTest):
         self.assertIn("du har köpt kaninen G1-2111. Säljaren", body)
 
     def test_the_retention_sentence_follows_the_consent_the_address_was_given_under(self):
-        consent = "sparar vi bara för att du har sagt ja till det, och bara tills kaninen byter ägare igen. Ditt ja kan"
+        consent = "sparar vi bara för att du har sagt ja till det, och bara tills kaninen byter ägare igen."
         membership = (
-            "Din e-postadress sparar vi bara för att du har sagt ja till att vi hör av oss om medlemskap, "
-            "och i högst 12 månader."
+            "sparar vi bara för att du har sagt ja till att vi hör av oss om medlemskap, och i högst 12 månader."
         )
-        self.assertIn(consent, self.text()[1])
-        self.assertNotIn(membership, self.text()[1])
-        db.BuyerContact.update(contact_consent_at=None, membership_optin_at=datetime.now(timezone.utc)).where(
-            db.BuyerContact.id == self.contact_id
-        ).execute()
-        body = self.text()[1]
-        self.assertIn(f"Uppgifterna kommer från säljaren. {membership}\n\nUppgifterna ses av", body)
-        self.assertIn(membership, body)
-        self.assertNotIn("byter ägare igen", body)
-        self.assertNotIn("Ditt ja kan du ta tillbaka", body)
+        both = "E-postadress och telefon kan vi ändå spara för att höra av oss om medlemskap, i högst 12 månader från"
+        takeback = "Ditt ja kan du ta tillbaka när du vill."
+        now = datetime.now(timezone.utc)
+        cases = (  # consent_at, membership_at, sentences that are there, sentences that are not
+            (now, None, [consent, takeback], [membership, both]),
+            (
+                None,
+                now,
+                [f"Din e-postadress, och telefon om du har lämnat den, {membership}"],
+                [consent, both, takeback],
+            ),
+            (now, now, [consent, both, takeback], [membership]),
+        )
+        for consent_at, membership_at, there, absent in cases:
+            with self.subTest(consent=consent_at is not None, membership=membership_at is not None):
+                db.BuyerContact.update(contact_consent_at=consent_at, membership_optin_at=membership_at).where(
+                    db.BuyerContact.id == self.contact_id
+                ).execute()
+                body = self.text()[1]
+                for sentence in there:
+                    self.assertIn(sentence, body)
+                for sentence in absent:
+                    self.assertNotIn(sentence, body)
 
     def test_names_from_the_seller_stay_on_one_line(self):
         link = "https://phish.example.org/x"
