@@ -10,6 +10,7 @@ import base64
 import binascii
 import contextlib
 import datetime
+import fcntl
 import hashlib
 import logging
 import os
@@ -249,6 +250,15 @@ def _purge_command_free_text():
     try:
         count = purge_command_free_text(datetime.datetime.now(datetime.timezone.utc))
         APP.logger.info("Purged free text from %s command log rows", count)
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _purge_audit_ip():
+    """Nightly leader job beside _purge_command_free_text: IP addresses leave audit_log after 12 months."""
+    try:
+        count = da.purge_audit_ip(datetime.datetime.now(datetime.timezone.utc))
+        APP.logger.info("Removed the IP address from %s audit log rows", count)
     finally:
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
@@ -2857,8 +2867,9 @@ def _warm_genetics_in_background():
     threading.Thread(target=run, daemon=True, name="genetics-warmup").start()
 
 
-# Must match SCHEDULER_LOCK in gunicorn.conf.py (its on_starting hook removes a stale lock).
+# Must match SCHEDULER_LOCK in gunicorn.conf.py. The leader holds a flock on it for its lifetime.
 SCHEDULER_LOCK_PATH = "/tmp/herdbook_scheduler.lock"
+_SCHEDULER_LOCK_FD = None
 
 
 def initialize_app():
@@ -2900,10 +2911,16 @@ def initialize_app():
     _warm_genetics_in_background()
 
     # Only the scheduler leader runs debounce polling and the version poller.
-    # The lock file is cleaned by gunicorn's on_starting hook in gunicorn.conf.py.
+    # The leader keeps a flock on the lock file; the kernel releases it if the leader dies.
     try:
-        fd = os.open(SCHEDULER_LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.close(fd)
+        global _SCHEDULER_LOCK_FD  # pylint: disable=global-statement
+        fd = os.open(SCHEDULER_LOCK_PATH, os.O_CREAT | os.O_WRONLY)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            raise FileExistsError(SCHEDULER_LOCK_PATH) from None
+        _SCHEDULER_LOCK_FD = fd
         scheduler = apscheduler.schedulers.background.BackgroundScheduler()
 
         # Poll debounce keys every 5s
@@ -2942,6 +2959,17 @@ def initialize_app():
             hour=3,
             minute=30,
             id="command_free_text_purge",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        scheduler.add_job(
+            _purge_audit_ip,
+            "cron",
+            hour=3,
+            minute=45,
+            id="audit_ip_purge",
             max_instances=1,
             coalesce=True,
             misfire_grace_time=3600,

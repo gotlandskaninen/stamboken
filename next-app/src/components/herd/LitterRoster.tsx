@@ -89,14 +89,19 @@ export function LitterRoster({ breeding, herdId }: LitterRosterProps) {
   const fetchRoster = useCallback(async () => {
     setIsLoading(true);
     setFetchError(null);
-    const result = await getLitterRoster(breeding.id);
-    setIsLoading(false);
-    if (result.success) {
-      setRoster(result.data);
-    } else {
-      setFetchError(result.error);
+    try {
+      const result = await getLitterRoster(breeding.id);
+      if (result.success) {
+        setRoster(result.data);
+      } else {
+        setFetchError(result.error);
+      }
+    } catch {
+      setFetchError(t("litterRoster.errorFetch"));
+    } finally {
+      setIsLoading(false);
     }
-  }, [breeding.id]);
+  }, [breeding.id, t]);
 
   useEffect(() => {
     fetchRoster();

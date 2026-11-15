@@ -50,6 +50,9 @@ export function rowTitle(tableName: string, recordId: string): string {
   if (recordId.startsWith("purge-user-")) {
     return "Gallring av användardata";
   }
+  if (recordId.startsWith("purge-ip-")) {
+    return "Gallring av IP-adresser";
+  }
   return `${tableLabel(tableName)} #${recordId}`;
 }
 

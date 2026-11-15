@@ -43,6 +43,7 @@ from utils.database import User  # isort: skip
 from utils.database import Weight  # isort: skip
 from utils.database import next_individual_number  # isort: skip
 from utils.database import ACTIVE_WINDOW_DAYS  # isort: skip
+from utils.database import AUDIT_LOG_NO_UPDATE_RULE  # isort: skip
 from utils.database import OUTSIDE_GENEBANK_HERDS  # isort: skip
 from utils.database import ACCOUNT_MASK, BANK_PRIVACY_FIELDS, PRIVACY_LEVELS, account_end  # isort: skip
 from utils.database import ht_not_voided  # isort: skip
@@ -4290,18 +4291,66 @@ def purge_user_audit_pii(user_id: int, username: str, email: str) -> int:
             )
         # Marker row — documents the erasure, not the erased content; only
         # the numeric user_id survives, which IS the pseudonym key.
-        DATABASE.execute_sql(
-            """
-            INSERT INTO audit_log
-                (table_name, record_id, operation, new_data, changed_by)
-            VALUES
-                ('audit_log', %s, 'REDACT',
-                 jsonb_build_object('rows_redacted', %s::int), 'system')
-            """,
-            (marker_id, rows_redacted),
-        )
-        DATABASE.execute_sql("CREATE RULE audit_log_no_update AS ON UPDATE TO audit_log DO INSTEAD NOTHING")
+        _write_redact_marker(marker_id, rows_redacted)
+        DATABASE.execute_sql(AUDIT_LOG_NO_UPDATE_RULE)
     return rows_redacted
+
+
+def _write_redact_marker(record_id, rows_redacted):
+    """A REDACT row in audit_log: when and how many rows were redacted, never which."""
+    DATABASE.execute_sql(
+        """
+        INSERT INTO audit_log
+            (table_name, record_id, operation, new_data, changed_by)
+        VALUES
+            ('audit_log', %s, 'REDACT',
+             jsonb_build_object('rows_redacted', %s::int), 'system')
+        """,
+        (record_id, rows_redacted),
+    )
+
+
+AUDIT_IP_RETENTION = "12 months"  # a PostgreSQL interval: calendar months, as the privacy policy says
+AUDIT_IP_BATCH = 5000
+AUDIT_IP_LOCK_TIMEOUT = "5s"
+
+
+def purge_audit_ip(now, batch=AUDIT_IP_BATCH) -> int:
+    """
+    Removes ip_address from audit_log rows older than AUDIT_IP_RETENTION; the rest of the row stays.
+    Each batch is found without a lock through idx_audit_log_ip_retention, then the no-update rule is lifted
+    only for one short UPDATE of those ids (the purge_user_audit_pii mechanism), which commits together with
+    its REDACT marker row. A lock timeout raises (the scheduler logs it); committed batches stay, and the
+    next run continues. Returns the rows changed.
+    """
+    cutoff = DATABASE.execute_sql("SELECT %s::timestamptz - %s::interval", (now, AUDIT_IP_RETENTION)).fetchone()[0]
+    marker_id = "purge-ip-{:%Y%m%dT%H%M%SZ}".format(now.astimezone(timezone.utc))
+    total, last = 0, (datetime.min.replace(tzinfo=timezone.utc), 0)
+    while True:
+        rows = DATABASE.execute_sql(
+            """
+            SELECT changed_at, id FROM audit_log
+            WHERE ip_address IS NOT NULL AND changed_at < %s AND (changed_at, id) > (%s, %s)
+            ORDER BY changed_at, id LIMIT %s
+            """,
+            (cutoff, *last, batch),
+        ).fetchall()
+        if not rows:
+            return total
+        with DATABASE.atomic():
+            # DROP RULE locks audit_log exclusively until commit: never queue every audited write behind it.
+            DATABASE.execute_sql("SELECT set_config('lock_timeout', %s, true)", (AUDIT_IP_LOCK_TIMEOUT,))
+            DATABASE.execute_sql("DROP RULE IF EXISTS audit_log_no_update ON audit_log")
+            cursor = DATABASE.execute_sql(
+                "UPDATE audit_log SET ip_address = NULL WHERE id = ANY(%s) AND ip_address IS NOT NULL",
+                ([row[1] for row in rows],),
+            )
+            changed = cursor.rowcount or 0
+            if changed:
+                _write_redact_marker(marker_id, changed)
+            DATABASE.execute_sql(AUDIT_LOG_NO_UPDATE_RULE)
+        total += changed
+        last = rows[-1]
 
 
 # Session-store counter of mass logouts. Outside 'session:*', so the sweep never
