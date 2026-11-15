@@ -488,6 +488,8 @@ _EMAIL = re.compile(r"[^@\s]+@[^@\s]+\.[A-Za-z]{2,}")
 _PHONE = re.compile(r"(?:\+|(?<![\w-]))\(?(?:46[\s.()/-]*(?:\(0\)\s*)?|0)[1-9][\d\s./()-]*\d")
 # 9+ digits: every real number (08-123 45 67) has them; a DD MM YYYY date ("01 10 2025") has 8.
 _PHONE_MIN_DIGITS = 9
+# A link: a scheme, "www." or a host such as "example.se" (a lower-case top domain, so "St.Olof" is none).
+_URL = re.compile(r"(?i:[a-z][a-z0-9+.-]*://|www\.)|\b[\w-]+\.[a-z]{2,}\b")
 
 
 def reject_contact_details(text):
@@ -1174,6 +1176,14 @@ def buyer_contact_fields(buyer):
         fields[key] = value or None
     if not fields["name"] or not fields["town"]:
         raise HerdTrackingInvalid("Ange köparens namn och ort.")
+    for key in ("name", "town"):  # the name goes into a mail from the association: never a link or a contact
+        message = f"{BUYER_TEXT_FIELDS[key]} får inte innehålla en länk, en e-postadress eller ett telefonnummer."
+        if _URL.search(fields[key]):
+            raise HerdTrackingInvalid(message)
+        try:
+            reject_contact_details(fields[key])
+        except HerdTrackingInvalid:
+            raise HerdTrackingInvalid(message) from None
     consent, optin = buyer.get("contact_consent", False), buyer.get("membership_optin", False)
     if not isinstance(consent, bool) or not isinstance(optin, bool):
         raise HerdTrackingInvalid("Köparens kryss ska vara ja eller nej.")

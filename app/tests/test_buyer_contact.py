@@ -211,6 +211,20 @@ class TestRegistration(BuyerBase):
         self.assertEqual(contact.created_by_user_id, self.owner.id)
         self.assertEqual(sale.kind, "TRANSFER")
 
+    def test_a_name_or_town_with_a_link_or_contact_details_is_400(self):
+        for field, value in (
+            ("name", "Anna https://example.se"),
+            ("name", "Anna www.example"),
+            ("name", "anna@example.org"),
+            ("town", "Visby 070-123 45 67"),
+        ):
+            with self.subTest(value=value):
+                response = self._sell(buyer={**BUYER, field: value})
+                self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+                self.assertIn("får inte innehålla en länk", response.get_json()["detail"])
+        self.assertEqual(db.BuyerContact.select().count(), 0)
+        self.assertEqual(self._sale({**BUYER, "name": "Anna-Lena O'Neil", "town": "St.Olof"}).kind, "TRANSFER")
+
     def test_contact_fields_without_the_matching_yes_are_400_and_nothing_is_written(self):
         cases = (
             {**BUYER, "postal_address": "Väg 1", "membership_optin": True},
