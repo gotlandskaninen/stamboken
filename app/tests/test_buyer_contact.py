@@ -313,6 +313,12 @@ class TestOutsideResale(BuyerBase):
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         self.assertEqual(sum('FROM "buyer_contact"' in sql for sql, _params in statements), 1)
 
+    def test_a_correction_of_the_resale_carries_its_buyer(self):
+        second = record_herd_tracking(self.rabbit, self.gx1, "2022-01-01", "TRANSFER", self.manager, buyer=OTHER)
+        event = {"kind": "CORRECTION", "date": "2022-01-02", "herd": "GX1"}
+        (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [second.id], [event], "Fel datum")
+        self.assertEqual(written.holder_contact_id, second.holder_contact_id)
+
     def test_a_correction_cannot_write_it(self):
         event = {"kind": "TRANSFER", "date": "2022-01-01", "herd": "GX1"}
         with self.assertRaises(HerdTrackingConflict):

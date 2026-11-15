@@ -274,11 +274,11 @@ def _buyer_keys(rows):
 
 def _outside_resale(row, previous_contact, buyer_keys=None):
     """
-    ADR-0016's one exception to I4: a TRANSFER within GX1/MX1 holding a new buyer, another person (name and town)
-    than the one before it. A buyer erased later turns the row into a violation the delta check tolerates.
+    ADR-0016's one exception to I4: a TRANSFER (or a CORRECTION that carries one's buyer) within GX1/MX1 holding a
+    new buyer, another person (name and town) than the one before it. A buyer erased later turns the row into a violation the delta check tolerates.
     """
     return (
-        row.kind == "TRANSFER"
+        row.kind in ("TRANSFER", "CORRECTION")
         and row.herd_id is not None
         and row.herd.herd in OUTSIDE_GENEBANK_HERDS
         and row.holder_contact_id is not None
