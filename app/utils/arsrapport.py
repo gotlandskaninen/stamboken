@@ -1415,7 +1415,8 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
         refusals.append(_refusal(None, "orsak_kravs"))
     # A null in the latest submission came from paper, or an editor kept it there (case 8 by phone).
     kept_null = access.editor and latest is not None and latest.get("health") is None
-    if access.source != "paper" and sub.report["health"] is None and not kept_null:
+    ending = sub.report["ending_genbank"]  # 5.7, fråga 18: an ending needs neither choices nor a health answer
+    if access.source != "paper" and sub.report["health"] is None and not kept_null and not ending:
         refusals.append(_refusal(None, "halsa_saknas"))
     rows = {row["id"]: row for row in report_list(herd, year, report)}
     strangers = [rabbit for rabbit in sub.rabbits if rabbit not in rows]

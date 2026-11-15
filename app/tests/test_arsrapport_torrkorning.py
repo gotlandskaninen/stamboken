@@ -454,6 +454,16 @@ class TorrkorningTest(ArsrapportTest):
         self.assertEqual(codes(self.dry(self.body(self.kvar(a, 2.8), health=None))), {"halsa_saknas"})
         self.assertTrue(self.dry(self.paper_body(self.kvar(a, 2.8), health=None), role="manager", paper=True)["ok"])
 
+    def test_ending_needs_no_choices_and_no_health(self):  # Codex 5, spec 5.7, fråga 18
+        self.rabbits(self.h, 1)
+        self.assertTrue(self.dry(self.body(health=None, ending_genbank=True))["ok"])
+        voluntary = self.body(health="ja", diseases={"rvhd": {"antal": 1, "alder": None}}, ending_genbank=True)
+        self.assertTrue(self.dry(voluntary)["ok"])
+        self.login("owner")
+        response = self.api("POST", "/besattning/G9001/2025/skicka", **self.body(health=None, ending_genbank=True))
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertIsNotNone(arsrapport.current_report(self.h, self.round_))
+
     def test_closed_round_and_reason(self):
         (a,) = self.rabbits(self.h, 1)
         body, late = self.body(self.kvar(a, 2.8)), date(2026, 3, 31)
