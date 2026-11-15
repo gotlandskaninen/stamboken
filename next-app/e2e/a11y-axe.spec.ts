@@ -187,7 +187,7 @@ test("axe över alla sidor (rådgivande)", async ({ page, context }) => {
               user: await firstId(page, "/v2/admin/users?per_page=1"),
               herd: await firstId(page, "/manage/herd?per_page=1"),
               gb: await firstId(page, "/genebanks"),
-              membership: await firstId(page, "/v2/memberships?per_page=1"),
+              membership: await firstId(page, "/v2/members?per_page=1"),
             };
         }
         if (typeof target === "function") {
