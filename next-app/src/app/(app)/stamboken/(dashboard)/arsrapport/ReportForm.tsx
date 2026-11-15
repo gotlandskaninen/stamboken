@@ -3,8 +3,10 @@
 import React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { readModeCookieClient } from "@/lib/mode";
 import { MbCard } from "../min-besattning/min-besattning-ui";
 import type * as Actions from "./actions";
+import type { ActionResult } from "../inkorg/actions";
 import {
   CONFLICT_TEXT,
   DISEASES,
@@ -19,6 +21,7 @@ import {
   refusalText,
   toBody,
   toDraft,
+  todayStockholm,
   type DraftData,
   type Entry,
   type FormState,
@@ -54,13 +57,36 @@ type Problem = {
   detail: string;
   extensions?: Record<string, unknown>;
 };
+type ServerDraft = {
+  data: DraftData;
+  updated_at: string;
+  submission_key: string | null;
+};
 
 const AUTOSAVE_MS = 2000;
 const BIG_LIST = 30;
+const NET_TEXT = "Det gick inte att nå servern. Försök igen.";
 
-// localStorage holds what the server has not confirmed yet. It never gets a
-// buyer or a matrikel: toDraft strips them.
-const localKey = (herd: string, year: number) => `arsrapport:${herd}:${year}`;
+// A server action can reject when the browser loses the connection to the
+// Next server: that becomes the same 502 as a dropped API connection.
+async function safe<T>(
+  call: Promise<ActionResult<T>>,
+): Promise<ActionResult<T>> {
+  try {
+    return await call;
+  } catch {
+    return {
+      ok: false,
+      problem: { status: 502, title: "Bad Gateway", detail: NET_TEXT },
+    };
+  }
+}
+
+// localStorage holds what the server has not confirmed yet, apart per data
+// environment (demo and prod answer from different databases). It never gets
+// a buyer or a matrikel: toDraft strips them.
+const localKey = (herd: string, year: number) =>
+  `arsrapport:${readModeCookieClient()}:${herd}:${year}`;
 const readLocal = (herd: string, year: number): DraftData | null => {
   try {
     const raw = window.localStorage.getItem(localKey(herd, year));
@@ -79,6 +105,18 @@ const writeLocal = (herd: string, year: number, data: DraftData | null) => {
   }
 };
 
+// Focus the first control on a rabbit's row that still needs input.
+function focusRow(id: number): boolean {
+  const row = document.getElementById(`rabbit-${id}`);
+  if (!row) return false;
+  const target =
+    row.querySelector<HTMLElement>("[data-need]") ??
+    row.querySelector<HTMLElement>("input, select, button") ??
+    row;
+  target.focus();
+  target.scrollIntoView?.({ block: "center" });
+  return true;
+}
 const focusId = (id: string) => {
   const el = document.getElementById(id);
   if (!el) return;
@@ -93,7 +131,10 @@ const ProfileCard = (
     <p style={{ margin: "0 0 12px" }}>
       Adress, telefon och svaret om Koharen ändrar du i din profil.
     </p>
-    <Link href="/stamboken/profil" className="sb-btn sb-btn-secondary">
+    <Link
+      href="/stamboken/profil"
+      className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+    >
       Gå till profilen
     </Link>
   </MbCard>
@@ -113,10 +154,6 @@ export function ReportForm({
   post?: number;
 }) {
   const router = useRouter();
-  const routerRef = React.useRef(router);
-  routerRef.current = router;
-  const actionsRef = React.useRef(actions);
-  actionsRef.current = actions;
   const { herd, year, round } = view;
   const editor = view.access === "manager" || view.access === "admin";
   const canEdit = round.open || (editor && round.activated);
@@ -135,9 +172,9 @@ export function ReportForm({
   );
   const [phase, setPhase] = React.useState<Phase>("idle");
   const [refusals, setRefusals] = React.useState<Refusal[] | null>(null);
-  const [notice, setNotice] = React.useState<string | null>(null);
   const [receipt, setReceipt] = React.useState<ReceiptData | null>(null);
   const [withdrawn, setWithdrawn] = React.useState<string | null>(null);
+  const [withdrawing, setWithdrawing] = React.useState(false);
   const [localCopy, setLocalCopy] = React.useState(false);
   const [filter, setFilter] = React.useState<Filter>("alla");
   const [snapshot, setSnapshot] = React.useState<Set<number>>(new Set());
@@ -145,13 +182,22 @@ export function ReportForm({
   const [soldFor, setSoldFor] = React.useState<number | null>(null);
   const [seenEnd, setSeenEnd] = React.useState(false);
   const [askRest, setAskRest] = React.useState(false);
+  const [focusTick, setFocusTick] = React.useState(0);
 
+  // Latest values for callbacks that outlive a render. Kept in effects, never
+  // written during render.
   const stateRef = React.useRef(state);
-  stateRef.current = state;
   const viewRef = React.useRef(view);
-  viewRef.current = view;
   const versionRef = React.useRef(0);
-  versionRef.current = version;
+  const routerRef = React.useRef(router);
+  const actionsRef = React.useRef(actions);
+  React.useEffect(() => {
+    stateRef.current = state;
+    viewRef.current = view;
+    versionRef.current = version;
+    routerRef.current = router;
+    actionsRef.current = actions;
+  });
   const keyRef = React.useRef<string | null>(null);
   if (keyRef.current === null)
     keyRef.current = view.draft?.submission_key ?? newKey();
@@ -159,8 +205,11 @@ export function ReportForm({
   const frozen = React.useRef<Submission | null>(null);
   const visibleIds = React.useRef<number[]>([]);
   const boxRef = React.useRef<HTMLDivElement>(null);
-  const endRef = React.useRef<HTMLDivElement>(null);
   const stopped = React.useRef(false);
+  const saving = React.useRef(false);
+  const again = React.useRef(false);
+  const resync = React.useRef(false);
+  const pendingFocus = React.useRef<number | null>(null);
 
   const edit = React.useCallback((fn: (s: FormState) => FormState) => {
     setState(fn);
@@ -171,81 +220,117 @@ export function ReportForm({
   React.useEffect(() => {
     const local = readLocal(herd.herd, year);
     if (local) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage exists only after hydration
       setState(fromBody(local));
       setLocalCopy(true);
       setVersion((v) => v + 1);
     }
   }, [herd.herd, year]);
 
+  // The server's draft replaces the whole editing state: form, mode and key.
+  const adoptDraft = (d: ServerDraft) => {
+    setState(fromBody(d.data));
+    updatedAt.current = d.updated_at;
+    if (d.submission_key) keyRef.current = d.submission_key;
+    setSavedAt(fmtTime(d.updated_at));
+    writeLocal(herd.herd, year, null);
+    setLocalCopy(false);
+    setMode("form");
+    setVersion(0);
+  };
+  // A conflict with no draft to adopt (a report was submitted meanwhile): load
+  // ReportView again and reset everything from it when it arrives.
+  const reload = () => {
+    resync.current = true;
+    stopped.current = true;
+    router.refresh();
+  };
+  React.useEffect(() => {
+    if (!resync.current) return;
+    resync.current = false;
+    stopped.current = false;
+    const base = view.draft?.data ?? view.report?.submitted ?? {};
+    setState(fromBody(base));
+    setMode(view.report ? "receipt" : "form");
+    setVersion(0);
+    setReceipt(null);
+    setPhase("idle");
+    setLocalCopy(false);
+    keyRef.current = view.draft?.submission_key ?? newKey();
+    updatedAt.current = view.draft?.updated_at ?? null;
+    frozen.current = null;
+    writeLocal(view.herd.herd, view.year, null);
+  }, [view]);
+
+  // One save in flight at a time: a change made meanwhile is sent after it
+  // has been answered, with the version it returned.
+  const flush = async () => {
+    if (saving.current) {
+      again.current = true;
+      return;
+    }
+    saving.current = true;
+    try {
+      do {
+        again.current = false;
+        const mine = versionRef.current;
+        const slow = setTimeout(() => setSaveState("saving"), 1000);
+        const res = await safe(
+          actionsRef.current.saveDraft(
+            herd.herd,
+            year,
+            toDraft(stateRef.current),
+            updatedAt.current,
+            keyRef.current!,
+            viewRef.current.report?.revision ?? null,
+            post,
+          ),
+        );
+        clearTimeout(slow);
+        if (res.ok) {
+          updatedAt.current = res.data.updated_at;
+          setSavedAt(fmtTime(res.data.updated_at));
+          setSaveState("saved");
+          if (versionRef.current === mine) writeLocal(herd.herd, year, null);
+          continue;
+        }
+        const p = res.problem;
+        const ext = p.extensions ?? {};
+        if (p.status === 409 && "draft" in ext) {
+          if (ext.draft) adoptDraft(ext.draft as ServerDraft);
+          else reload();
+          setSaveState("conflict");
+        } else if (p.status === 409 && ext.code === "rundan_stangd") {
+          stopped.current = true;
+          setSaveState("closed");
+        } else if (p.status === 401) setSaveState("loggedout");
+        else {
+          setSaveState("offline");
+          setTimeout(() => setRetry((n) => n + 1), 5000); // the page tries again
+        }
+        again.current = false;
+      } while (again.current);
+    } finally {
+      saving.current = false;
+    }
+  };
+  const flushRef = React.useRef(flush);
+  React.useEffect(() => {
+    flushRef.current = flush;
+  });
+
   // Autosave: 2 s after the last change, from the revision the page started from.
   React.useEffect(() => {
     if (version === 0 || mode !== "form" || !canEdit || stopped.current) return;
     writeLocal(herd.herd, year, toDraft(stateRef.current));
-    const mine = version;
-    const t = setTimeout(async () => {
-      const slow = setTimeout(() => setSaveState("saving"), 1000);
-      const res = await actionsRef.current.saveDraft(
-        herd.herd,
-        year,
-        toDraft(stateRef.current),
-        updatedAt.current,
-        keyRef.current!,
-        viewRef.current.report?.revision ?? null,
-        post,
-      );
-      clearTimeout(slow);
-      if (res.ok) {
-        updatedAt.current = res.data.updated_at;
-        setSavedAt(fmtTime(res.data.updated_at));
-        setSaveState("saved");
-        if (versionRef.current === mine) writeLocal(herd.herd, year, null);
-        return;
-      }
-      const p = res.problem;
-      const ext = p.extensions ?? {};
-      if (p.status === 409 && "draft" in ext) {
-        const d = ext.draft as {
-          data: DraftData;
-          updated_at: string;
-          submission_key: string | null;
-        } | null;
-        if (d) {
-          setState(fromBody(d.data));
-          updatedAt.current = d.updated_at;
-          if (d.submission_key) keyRef.current = d.submission_key;
-          setSavedAt(fmtTime(d.updated_at));
-          writeLocal(herd.herd, year, null);
-        } else routerRef.current.refresh(); // already submitted elsewhere: show its receipt
-        setSaveState("conflict");
-      } else if (p.status === 409 && ext.code === "rundan_stangd") {
-        stopped.current = true;
-        setSaveState("closed");
-      } else if (p.status === 401) setSaveState("loggedout");
-      else {
-        setSaveState("offline");
-        setTimeout(() => setRetry((n) => n + 1), 5000); // the page tries again
-      }
-    }, AUTOSAVE_MS);
+    const t = setTimeout(() => void flushRef.current(), AUTOSAVE_MS);
     return () => clearTimeout(t);
-  }, [version, retry, mode, canEdit, herd.herd, year, post]);
-
-  // The "Markera resten" button waits until the last row has been seen.
-  React.useEffect(() => {
-    if (typeof IntersectionObserver === "undefined") return setSeenEnd(true);
-    const el = endRef.current;
-    if (!el) return;
-    const io = new IntersectionObserver((entries) => {
-      if (entries.some((e) => e.isIntersecting)) setSeenEnd(true);
-    });
-    io.observe(el);
-    return () => io.disconnect();
-  }, [mode]);
-
-  React.useEffect(() => {
-    if (refusals) boxRef.current?.focus();
-  }, [refusals]);
+  }, [version, retry, mode, canEdit, herd.herd, year]);
 
   const rabbits = view.rabbits;
+  const lastId = rabbits.length ? rabbits[rabbits.length - 1].id : null;
+  const lastVisible = React.useRef(false);
+
   const done = React.useMemo(() => {
     const m = new Map<number, boolean>();
     for (const r of rabbits)
@@ -281,7 +366,44 @@ export function ReportForm({
     if (filter === "inte_klara") return snapshot.has(r.id);
     return state.rabbits[r.id]?.val === filter;
   });
-  visibleIds.current = visible.map((r) => r.id);
+  const lastShown = lastId !== null && visible.some((r) => r.id === lastId);
+  React.useEffect(() => {
+    visibleIds.current = visible.map((r) => r.id);
+    lastVisible.current = lastShown;
+  });
+
+  // "Markera resten" waits until the real last row has been on screen.
+  React.useEffect(() => {
+    if (mode !== "form" || lastId === null || !lastShown) return;
+    if (typeof IntersectionObserver === "undefined") {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- no observer in this browser
+      setSeenEnd(true);
+      return;
+    }
+    const el = document.getElementById(`rabbit-${lastId}`);
+    if (!el) return;
+    const io = new IntersectionObserver((entries) => {
+      if (entries.some((e) => e.isIntersecting)) setSeenEnd(true);
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [mode, lastId, lastShown]);
+
+  React.useEffect(() => {
+    if (refusals) boxRef.current?.focus();
+  }, [refusals]);
+
+  // An error link or Enter on a search hit: show the rabbit, then focus.
+  const reveal = (id: number) => {
+    setSearch("");
+    setFilter("alla");
+    pendingFocus.current = id;
+    setFocusTick((t) => t + 1);
+  };
+  React.useEffect(() => {
+    const id = pendingFocus.current;
+    if (id !== null && focusRow(id)) pendingFocus.current = null;
+  }, [focusTick]);
 
   const onRow = React.useCallback(
     (id: number, patch: Partial<Entry>) =>
@@ -330,6 +452,9 @@ export function ReportForm({
   const soldRabbit = rabbits.find((r) => r.id === soldFor);
 
   // ---- Skicka -------------------------------------------------------------
+  const fail = (message: string) =>
+    setRefusals([{ individual_id: null, code: "fel", message }]);
+
   const handle = (p: Problem) => {
     const ext = p.extensions ?? {};
     if (p.status === 401) setSaveState("loggedout");
@@ -340,15 +465,18 @@ export function ReportForm({
         { individual_id: null, code: "rundan_stangd", message: p.detail },
       ]);
     else if (p.status === 409) {
-      setNotice(`${CONFLICT_TEXT}. Vi har läst in den senaste.`);
-      router.refresh();
-    } else setNotice(p.detail || "Det gick inte att skicka. Försök igen.");
+      // Someone changed or sent the report: show the current one.
+      setSaveState("conflict");
+      reload();
+    } else fail(p.detail || NET_TEXT);
     setPhase("idle");
   };
 
   const send = async (body: Submission) => {
     setPhase("sending");
-    const res = await actions.submitReport(herd.herd, year, body, post);
+    const res = await safe(
+      actionsRef.current.submitReport(herd.herd, year, body, post),
+    );
     if (res.ok) {
       keyRef.current = keyAfter("ok", keyRef.current!);
       frozen.current = null;
@@ -372,16 +500,18 @@ export function ReportForm({
   const skicka = async () => {
     if (phase !== "idle") return;
     setRefusals(null);
-    setNotice(null);
     const body = toBody(state, keyRef.current!, view.report?.revision ?? null);
     frozen.current = body; // never stored: it may hold a buyer
     setPhase("checking");
-    const dry = await actions.dryRun(herd.herd, year, body, post);
+    const dry = await safe(
+      actionsRef.current.dryRun(herd.herd, year, body, post),
+    );
     if (!dry.ok) {
-      if (dry.problem.status === 408 || dry.problem.status === 502)
-        setNotice("Det gick inte att nå servern. Försök igen.");
-      else handle(dry.problem);
-      return setPhase("idle");
+      if (dry.problem.status === 408 || dry.problem.status === 502) {
+        fail(NET_TEXT);
+        return setPhase("idle");
+      }
+      return handle(dry.problem);
     }
     if (!dry.data.ok) {
       setRefusals(dry.data.refusals);
@@ -391,13 +521,17 @@ export function ReportForm({
   };
 
   const withdraw = async (reason?: string): Promise<string | null> => {
-    const res = await actions.withdrawReport(
-      herd.herd,
-      year,
-      view.report!.revision,
-      reason,
-      post,
+    setWithdrawing(true);
+    const res = await safe(
+      actionsRef.current.withdrawReport(
+        herd.herd,
+        year,
+        view.report!.revision,
+        reason,
+        post,
+      ),
     );
+    setWithdrawing(false);
     if (res.ok) {
       keyRef.current = keyAfter("withdrawn", keyRef.current!);
       const d = res.data.draft;
@@ -408,6 +542,7 @@ export function ReportForm({
       setWithdrawn(fmtDate(new Date().toISOString()));
       setReceipt(null);
       setMode("form");
+      setVersion(0); // so that "Dragen tillbaka" shows until the next edit
       router.refresh();
       return null;
     }
@@ -417,7 +552,7 @@ export function ReportForm({
     if (res.problem.status === 409) return `${CONFLICT_TEXT}. Ladda om sidan.`;
     if (Array.isArray(ext.refusals))
       return refusalText((ext.refusals as Refusal[])[0]);
-    return res.problem.detail;
+    return res.problem.status === 502 ? NET_TEXT : res.problem.detail;
   };
 
   const startChange = () => {
@@ -457,7 +592,7 @@ export function ReportForm({
                     ? { kind: "saving" }
                     : { kind: "saved", at: savedAt, changing: !!view.report };
   const deadline = round.deadline
-    ? round.deadline < new Date().toISOString().slice(0, 10)
+    ? round.deadline < todayStockholm()
       ? ({ kind: "late", deadline: fmtDate(round.deadline) } as const)
       : ({ kind: "deadline", deadline: fmtDate(round.deadline) } as const)
     : null;
@@ -486,7 +621,7 @@ export function ReportForm({
           view={view}
           receipt={receipt}
           hasDraft={!!view.draft || localCopy}
-          busy={false}
+          busy={withdrawing}
           onChange={startChange}
           onWithdraw={withdraw}
         />
@@ -508,7 +643,11 @@ export function ReportForm({
   const lower = <ReportStatus status={status} />;
 
   return (
-    <div className={styles.root} style={root}>
+    <div
+      className={`${styles.root} ${closedText ? "" : styles.wide}`}
+      style={root}
+      data-report-root={stickyTop === 0 ? "bare" : "shell"}
+    >
       {heading}
       <p className={styles.lead}>
         Gäller kaninerna i {herd.herd} den 31 december {year}.
@@ -517,90 +656,79 @@ export function ReportForm({
       {closedText ? (
         <ReportStatus status={{ kind: "closed" }} />
       ) : (
-        <>
-          <ReportStatus status={status} />
-          {deadline && <ReportStatus status={deadline} />}
-          {notice && (
-            <p className={styles.errorText} role="alert">
-              {notice}
-            </p>
-          )}
-
-          {refusals && (
-            <div
-              ref={boxRef}
-              tabIndex={-1}
-              role="alert"
-              className={styles.errorBox}
-              id="felruta"
-            >
-              <h2>
-                {rabbitErrors.length > 0
-                  ? `${rabbitErrors.length} ${rabbitErrors.length === 1 ? "kanin är" : "kaniner är"} inte klara`
-                  : "Rapporten kan inte skickas"}
-              </h2>
-              <ul>
-                {rabbitErrors.map((id) => {
-                  const r = byId.get(id!);
-                  const text = rowErrors.get(id!);
-                  return (
-                    <li key={id}>
-                      <a
-                        href={`#rabbit-${id}`}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          focusId(`rabbit-${id}`);
-                        }}
-                      >
-                        {r ? `${r.number} ${r.name ?? ""}` : `Kanin ${id}`}
-                      </a>
-                      : {text}
-                    </li>
-                  );
-                })}
-                {lonely.map((r, i) => (
-                  <li key={i}>
-                    {r.code === "halsa_saknas" || r.code === "orsak_kravs" ? (
-                      <a
-                        href={r.code === "halsa_saknas" ? "#halsa" : "#reason"}
-                        onClick={(e) => {
-                          e.preventDefault();
-                          focusId(
-                            r.code === "halsa_saknas" ? "halsa" : "reason",
-                          );
-                        }}
-                      >
-                        {refusalText(r)}
-                      </a>
-                    ) : (
-                      refusalText(r)
-                    )}
-                  </li>
-                ))}
-              </ul>
-              {rabbitErrors.length > 0 && (
-                <button
-                  type="button"
-                  className={`sb-btn sb-btn-secondary ${styles.btn}`}
-                  onClick={() => chooseFilter("inte_klara")}
+        <div className={styles.layout}>
+          <div className={styles.side}>
+            <div className={styles.sideStatus}>
+              <ReportStatus status={status} />
+              {deadline && <ReportStatus status={deadline} />}
+              {refusals && (
+                <div
+                  ref={boxRef}
+                  tabIndex={-1}
+                  role="alert"
+                  className={styles.errorBox}
+                  id="felruta"
                 >
-                  Visa bara dem som inte är klara
-                </button>
+                  <h2>
+                    {rabbitErrors.length > 0
+                      ? `${rabbitErrors.length} ${rabbitErrors.length === 1 ? "kanin är" : "kaniner är"} inte klara`
+                      : "Rapporten kan inte skickas"}
+                  </h2>
+                  <ul>
+                    {rabbitErrors.map((id) => {
+                      const r = byId.get(id!);
+                      const text = rowErrors.get(id!);
+                      return (
+                        <li key={id}>
+                          <a
+                            href={`#rabbit-${id}`}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              reveal(id!);
+                            }}
+                          >
+                            {r ? `${r.number} ${r.name ?? ""}` : `Kanin ${id}`}
+                          </a>
+                          : {text}
+                        </li>
+                      );
+                    })}
+                    {lonely.map((r, i) => (
+                      <li key={i}>
+                        {r.code === "halsa_saknas" ||
+                        r.code === "orsak_kravs" ? (
+                          <a
+                            href={
+                              r.code === "halsa_saknas" ? "#halsa" : "#reason"
+                            }
+                            onClick={(e) => {
+                              e.preventDefault();
+                              focusId(
+                                r.code === "halsa_saknas" ? "halsa" : "reason",
+                              );
+                            }}
+                          >
+                            {refusalText(r)}
+                          </a>
+                        ) : (
+                          refusalText(r)
+                        )}
+                      </li>
+                    ))}
+                  </ul>
+                  {rabbitErrors.length > 0 && (
+                    <button
+                      type="button"
+                      className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+                      onClick={() => chooseFilter("inte_klara")}
+                    >
+                      Visa bara dem som inte är klara
+                    </button>
+                  )}
+                </div>
               )}
             </div>
-          )}
-
-          <fieldset
-            disabled={phase !== "idle"}
-            style={{
-              border: 0,
-              padding: 0,
-              margin: 0,
-              minWidth: 0,
-              display: "contents",
-            }}
-          >
-            <div className={styles.sticky}>
+            <div className={`${styles.sticky} ${styles.sideBar}`}>
               <div className={styles.stickyRow}>
                 <input
                   type="search"
@@ -612,11 +740,7 @@ export function ReportForm({
                   onKeyDown={(e) => {
                     if (e.key !== "Enter" || visible.length !== 1) return;
                     e.preventDefault();
-                    const id = visible[0].id;
-                    (
-                      document.getElementById(`vikt-${id}`) ??
-                      document.querySelector<HTMLElement>(`#rabbit-${id} input`)
-                    )?.focus();
+                    focusRow(visible[0].id);
                   }}
                 />
                 <span className={styles.counter} aria-live="polite">
@@ -631,7 +755,11 @@ export function ReportForm({
               />
             </div>
 
-            <div className={styles.filters} role="group" aria-label="Visa">
+            <div
+              className={`${styles.filters} ${styles.sideFilters}`}
+              role="group"
+              aria-label="Visa"
+            >
               {(
                 [
                   ["inte_klara", `Inte klara (${notDone.length})`],
@@ -653,6 +781,29 @@ export function ReportForm({
               ))}
             </div>
 
+            <div className={styles.sideSend}>
+              {lower}
+              {phase === "timeout" ? (
+                <button
+                  type="button"
+                  className={`sb-btn ${styles.btn}`}
+                  onClick={() => send(frozen.current!)}
+                >
+                  Försök igen
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className={`sb-btn ${styles.btn}`}
+                  onClick={skicka}
+                  disabled={sending}
+                >
+                  {sending ? "Skickar…" : buttonText}
+                </button>
+              )}
+            </div>
+          </div>
+          <fieldset disabled={phase !== "idle"} className={styles.main}>
             {rabbits.length === 0 ? (
               <p>
                 Stamboken har inga kaniner registrerade i {herd.herd} den 31
@@ -685,7 +836,6 @@ export function ReportForm({
                 </div>
               </div>
             )}
-            <div ref={endRef} />
             {rabbits.length > BIG_LIST && seenEnd && restCount > 0 && (
               <div className={styles.detail}>
                 {askRest ? (
@@ -707,7 +857,7 @@ export function ReportForm({
                     </button>
                     <button
                       type="button"
-                      className={`sb-btn sb-btn-secondary ${styles.btn}`}
+                      className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
                       onClick={() => setAskRest(false)}
                     >
                       Avbryt
@@ -1044,27 +1194,7 @@ export function ReportForm({
               </MbCard>
             )}
           </fieldset>
-
-          {lower}
-          {phase === "timeout" ? (
-            <button
-              type="button"
-              className={`sb-btn ${styles.btn}`}
-              onClick={() => send(frozen.current!)}
-            >
-              Försök igen
-            </button>
-          ) : (
-            <button
-              type="button"
-              className={`sb-btn ${styles.btn}`}
-              onClick={skicka}
-              disabled={sending}
-            >
-              {sending ? "Skickar…" : buttonText}
-            </button>
-          )}
-        </>
+        </div>
       )}
 
       <SoldDialog

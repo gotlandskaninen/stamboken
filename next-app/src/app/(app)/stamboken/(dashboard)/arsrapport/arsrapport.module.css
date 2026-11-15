@@ -10,8 +10,13 @@
   flex-direction: column;
   gap: 16px;
 }
-:global(html:has(.root)) {
+/* The module class cannot be named inside :global, so the root carries a data
+   attribute: with the dashboard shell (topbar and sticky row) and without it. */
+:global(html:has([data-report-root="shell"])) {
   scroll-padding-top: 128px;
+}
+:global(html:has([data-report-root="bare"])) {
+  scroll-padding-top: 72px;
 }
 .title {
   font-family: var(--sb-display);
@@ -112,8 +117,53 @@ textarea.field {
   min-height: 48px;
   font-size: 16px;
 }
-.secondary {
+/* Specific enough to beat the global .sb-btn-secondary border (1,95:1). */
+button.secondary,
+a.secondary {
   border-color: var(--sb-ink-3);
+}
+.root :global(.sb-btn) {
+  min-height: 48px;
+  font-size: 16px;
+}
+.root :global(.sb-btn-secondary) {
+  border-color: var(--sb-ink-3);
+}
+
+/* Mobile order: state, search and counter, filters, list, then Skicka. From
+   980 px the first three and Skicka become a sticky side column. */
+.layout {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.side {
+  display: contents;
+}
+.sideStatus {
+  order: 1;
+}
+.sideBar {
+  order: 2;
+}
+.sideFilters {
+  order: 3;
+}
+.main {
+  order: 4;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.sideSend {
+  order: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
 }
 .danger {
   color: var(--sb-danger);
@@ -369,5 +419,36 @@ textarea.field {
 @media (prefers-reduced-motion: no-preference) {
   .status {
     transition: background-color 160ms;
+  }
+}
+
+@media (min-width: 980px) {
+  .wide {
+    max-width: 1160px;
+  }
+  .layout {
+    display: grid;
+    grid-template-columns: minmax(0, 720px) 360px;
+    gap: 24px;
+    align-items: start;
+  }
+  .main {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .side {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    grid-column: 2;
+    grid-row: 1;
+    position: sticky;
+    top: calc(var(--report-sticky-top) + 16px);
+    max-height: calc(100vh - var(--report-sticky-top) - 32px);
+    overflow-y: auto;
+  }
+  .sticky {
+    position: static;
+    backdrop-filter: none;
   }
 }

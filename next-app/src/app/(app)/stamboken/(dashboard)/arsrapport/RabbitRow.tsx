@@ -104,6 +104,7 @@ function RabbitRowImpl({
   return (
     <fieldset
       id={`rabbit-${r.id}`}
+      tabIndex={-1}
       className={`${styles.row} ${quiet ? styles.quiet : ""} ${error ? styles.rowError : ""}`}
       aria-describedby={error ? errId : undefined}
     >
@@ -141,6 +142,7 @@ function RabbitRowImpl({
                     name={`val-${r.id}`}
                     value={val}
                     checked={e.val === val}
+                    data-need={!e.val || undefined}
                     aria-disabled={sellBlocked || undefined}
                     onChange={() => choose(val)}
                   />
@@ -163,6 +165,9 @@ function RabbitRowImpl({
               id={`vikt-${r.id}`}
               className={`${styles.field} ${styles.weight}`}
               inputMode="decimal"
+              data-need={
+                (r.adult && !e.vikt.trim() && !e.ej_vagd?.trim()) || undefined
+              }
               enterKeyHint="next"
               autoComplete="off"
               value={e.vikt}
@@ -196,7 +201,7 @@ function RabbitRowImpl({
               Menade du {kgText(w.gramsHint)} kg?
               <button
                 type="button"
-                className={`sb-btn sb-btn-secondary ${styles.btn}`}
+                className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
                 onClick={() => set({ vikt: kgText(w.gramsHint!) })}
               >
                 Ja, {kgText(w.gramsHint)} kg
@@ -208,7 +213,7 @@ function RabbitRowImpl({
               Stämmer {kgText(w.kg)} kg?
               <button
                 type="button"
-                className={`sb-btn sb-btn-secondary ${styles.btn}`}
+                className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
                 onClick={() => setViktOk(e.vikt)}
               >
                 Ja, det stämmer
@@ -305,6 +310,7 @@ function RabbitRowImpl({
               <select
                 className={styles.field}
                 style={{ width: "100%" }}
+                data-need={e.dod.manad === null || undefined}
                 value={e.dod.manad ?? ""}
                 onChange={(ev) =>
                   set({

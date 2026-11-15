@@ -149,6 +149,25 @@ describe("draft and body", () => {
   });
 });
 
+describe("an unfinished draft", () => {
+  it("round-trips a death without a month and a disease without a count", () => {
+    const s = emptyState();
+    s.rabbits[1] = e({
+      val: "dod",
+      dod: {
+        ar: 2026,
+        manad: null,
+        dag: null,
+        slaktad: false,
+        anteckning: "x",
+      },
+    });
+    s.health = "ja";
+    s.diseases.rvhd = { antal: "", alder: "unga", namn: "" };
+    expect(fromBody(toDraft(s))).toEqual(s);
+  });
+});
+
 describe("keyAfter", () => {
   it("keeps the key after a timeout and renews it otherwise", () => {
     const k = "11111111-1111-4111-8111-111111111111";

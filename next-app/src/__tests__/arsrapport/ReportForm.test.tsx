@@ -66,6 +66,26 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const local = () => {
+  const key = Object.keys(window.localStorage).find((k) =>
+    k.startsWith("arsrapport:"),
+  );
+  return key ? window.localStorage.getItem(key) : null;
+};
+const submittedReport = () => ({
+  id: 1,
+  status: "submitted",
+  source: "login",
+  revision: 0,
+  received_at: "2027-01-03T13:32:00+00:00",
+  report_date: "2027-01-03",
+  on_time: true,
+  submitted: { rabbits: { "1": { val: "kvar", vikt: 2.8 } } as never },
+  can_change: true,
+  can_withdraw: true,
+  withdraw_until: "2027-01-10T13:32:00+00:00",
+  villkor: { hane: true, hona: true, kull: false, i_tid: true },
+});
 const row = (n: number) =>
   screen.getByRole("group", { name: new RegExp(`G9001-${n}\\b`) });
 const choose = (n: number, label: string) =>
@@ -166,9 +186,7 @@ describe("ReportForm", () => {
     expect(
       within(row(1)).getByText(/Såld till utanför genbanken, juni 2026/),
     ).toBeTruthy();
-    expect(window.localStorage.getItem("arsrapport:G9001:2026")).not.toMatch(
-      /Ola|kopare/,
-    );
+    expect(local()).not.toMatch(/Ola|kopare/);
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2100);
     });
@@ -176,7 +194,7 @@ describe("ReportForm", () => {
     const [, , data] = a.saveDraft.mock.calls[0];
     expect(JSON.stringify(data)).not.toMatch(/Ola|Visby|kopare/);
     expect(data.rabbits["1"].sald.till).toBe("utanfor");
-    expect(window.localStorage.getItem("arsrapport:G9001:2026")).toBeNull(); // the server confirmed
+    expect(local()).toBeNull(); // the server confirmed
   });
 
   it("shows 'Markera resten' on a long list only once the last row has been seen", () => {
@@ -433,5 +451,173 @@ describe("ReportForm", () => {
     expect(
       screen.queryByRole("button", { name: "Skicka årsrapporten" }),
     ).toBeNull();
+  });
+
+  it("serialises autosaves: the second goes out only after the first is answered, with the version it returned", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    let release: (v: unknown) => void = () => {};
+    a.saveDraft
+      .mockImplementationOnce(() => new Promise((r) => (release = r)))
+      .mockImplementationOnce(() =>
+        ok({ updated_at: "2026-12-31T10:00:02+00:00", submission_key: null }),
+      );
+    render(<ReportForm view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    choose(2, "Finns kvar"); // while the first save is in flight
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      release({
+        ok: true,
+        data: { updated_at: "2026-12-31T10:00:01+00:00", submission_key: null },
+      });
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(2);
+    expect(a.saveDraft.mock.calls[1][3]).toBe("2026-12-31T10:00:01+00:00");
+    expect(a.saveDraft.mock.calls[1][2].rabbits["2"]).toBeTruthy();
+  });
+
+  it("keeps a half-filled death and a disease without a count in the draft", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    render(<ReportForm view={view()} actions={a} />);
+    choose(1, "Död eller slaktad"); // no month yet
+    fireEvent.click(screen.getByLabelText("Ja, fyll i"));
+    fireEvent.change(screen.getByLabelText("Annat, vad"), {
+      target: { value: "Förkylning" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    const data = a.saveDraft.mock.calls[0][2];
+    expect(data.form.rabbits["1"].val).toBe("dod");
+    expect(data.form.diseases.annat.namn).toBe("Förkylning");
+  });
+
+  it("after a 409 with no draft reloads the view and shows the current receipt", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    a.saveDraft.mockImplementationOnce(() => fail(409, { draft: null }));
+    const { rerender } = render(<ReportForm view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(refresh).toHaveBeenCalled();
+    rerender(
+      <ReportForm view={view({ report: submittedReport() })} actions={a} />,
+    );
+    expect(
+      screen.getByText(/Klart\. Årsrapporten för G9001 kom in/),
+    ).toBeTruthy();
+  });
+
+  it("treats a rejected server action as an error box on the dry run, and as a timeout on Skicka", async () => {
+    const a = actions();
+    a.dryRun.mockImplementationOnce(() => Promise.reject(new Error("network")));
+    render(<ReportForm view={view()} actions={a} />);
+    fillAll();
+    send();
+    expect(
+      await screen.findByText("Det gick inte att nå servern. Försök igen."),
+    ).toBeTruthy();
+    a.submitReport
+      .mockImplementationOnce(() => Promise.reject(new Error("network")))
+      .mockImplementationOnce(() => ok(receipt));
+    send();
+    await screen.findAllByText(/Vi vet inte om rapporten kom fram/);
+    fireEvent.click(screen.getByRole("button", { name: "Försök igen" }));
+    expect(
+      await screen.findByText(/Klart\. Årsrapporten för G9001 kom in/),
+    ).toBeTruthy();
+    const [first, second] = a.submitReport.mock.calls.map((c) => c[2]);
+    expect(second).toEqual(first);
+  });
+
+  it("keeps the local copy apart per data environment", async () => {
+    vi.useFakeTimers();
+    render(<ReportForm view={view()} actions={actions()} />);
+    choose(1, "Finns kvar");
+    expect(Object.keys(window.localStorage)).toEqual([
+      "arsrapport:demo:G9001:2026",
+    ]);
+    cleanup();
+    document.cookie = "sb_mode=prod";
+    render(<ReportForm view={view()} actions={actions()} />);
+    expect(
+      (within(row(1)).getByLabelText("Finns kvar") as HTMLInputElement).checked,
+    ).toBe(false);
+    document.cookie = "sb_mode=; max-age=0";
+  });
+
+  it("an error link clears the search and filter and focuses the control that needs input", async () => {
+    const a = actions();
+    a.dryRun.mockImplementation(() =>
+      ok({
+        ok: false,
+        refusals: [{ individual_id: 2, code: "vikt_saknas", message: "x" }],
+        warnings: [],
+      }),
+    );
+    render(<ReportForm view={view()} actions={a} />);
+    choose(2, "Finns kvar");
+    send();
+    const link = await screen.findByRole("link", { name: /G9001-2/ });
+    fireEvent.change(screen.getByLabelText("Sök nummer eller namn"), {
+      target: { value: "Kanin1" },
+    });
+    expect(screen.queryByRole("group", { name: /G9001-2\b/ })).toBeNull();
+    fireEvent.click(link);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        within(row(2)).getByLabelText("Vikt"),
+      ),
+    );
+    expect(
+      (screen.getByLabelText("Sök nummer eller namn") as HTMLInputElement)
+        .value,
+    ).toBe("");
+  });
+
+  it("shows Dragen tillbaka after a withdrawal and locks the confirmation while it runs", async () => {
+    const a = actions();
+    let release: (v: unknown) => void = () => {};
+    a.withdrawReport.mockImplementation(
+      () => new Promise((r) => (release = r)),
+    );
+    render(
+      <ReportForm view={view({ report: submittedReport() })} actions={a} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Dra tillbaka" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Dra tillbaka rapporten" }),
+    );
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Dra tillbaka rapporten",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    await act(async () => {
+      release({
+        ok: true,
+        data: {
+          draft: {
+            data: { rabbits: {} },
+            updated_at: "2026-12-31T10:00:03+00:00",
+          },
+        },
+      });
+    });
+    expect(
+      await screen.findAllByText(/Dragen tillbaka .* Inte inskickad/),
+    ).not.toHaveLength(0);
   });
 });

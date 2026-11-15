@@ -190,7 +190,7 @@ export function Receipt({
         <DialogActions>
           <button
             type="button"
-            className={`sb-btn sb-btn-secondary ${styles.btn}`}
+            className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
             onClick={() => setAsking(false)}
           >
             Avbryt

@@ -53,6 +53,10 @@ export interface Receipt {
 }
 
 export interface DraftData {
+  // The whole form, incomplete values included (the server stores a draft's
+  // data as it is). The body-shaped keys below stay for a draft the server
+  // writes itself, after Dra tillbaka.
+  form?: FormState;
   reason: string | null;
   rabbits: Record<string, BodyEntry>;
   ending_genbank: boolean;
@@ -456,7 +460,16 @@ export function toDraft(state: FormState): DraftData {
   void revision;
   for (const e of Object.values(draft.rabbits))
     if (e.sald) delete e.sald.kopare; // the buyer stays in memory
-  return draft;
+  const form: FormState = { ...state, rabbits: {} };
+  for (const [id, e] of Object.entries(state.rabbits)) {
+    const { kopare, ...sald } = e.sald ?? { kopare: null };
+    void kopare;
+    form.rabbits[Number(id)] = {
+      ...e,
+      sald: e.sald ? (sald as SaldState) : null,
+    };
+  }
+  return { ...draft, form };
 }
 
 function fromEntry(b: Partial<BodyEntry> & { val?: Val | null }): Entry {
@@ -496,6 +509,22 @@ function fromEntry(b: Partial<BodyEntry> & { val?: Val | null }): Entry {
 
 // A draft, or report.submitted, back into the form. The buyers are gone.
 export function fromBody(data: Partial<DraftData>): FormState {
+  if (data.form) {
+    const base = emptyState();
+    const rabbits: FormState["rabbits"] = {};
+    for (const [id, e] of Object.entries(data.form.rabbits ?? {}))
+      rabbits[Number(id)] = {
+        ...EMPTY_ENTRY,
+        ...e,
+        sald: e.sald ? { ...e.sald, kopare: null } : null,
+      };
+    return {
+      ...base,
+      ...data.form,
+      rabbits,
+      diseases: { ...base.diseases, ...data.form.diseases },
+    };
+  }
   const state = emptyState();
   for (const [id, raw] of Object.entries(data.rabbits ?? {}))
     state.rabbits[Number(id)] = fromEntry(raw);
@@ -526,6 +555,9 @@ export const fmtDate = (iso: string): string =>
     year: "numeric",
     timeZone: iso.length > 10 ? STOCKHOLM : "UTC",
   }).format(new Date(iso));
+// Today's calendar date in Stockholm, "YYYY-MM-DD" (sv-SE formats that way).
+export const todayStockholm = (): string =>
+  new Intl.DateTimeFormat("sv-SE", { timeZone: STOCKHOLM }).format(new Date());
 export const fmtTime = (iso: string): string =>
   new Intl.DateTimeFormat("sv-SE", {
     hour: "2-digit",
