@@ -150,11 +150,13 @@ def _mac(message):
 
 
 def _link_mac(purpose, row_id):
-    return base64.urlsafe_b64encode(_mac(f"link:{purpose}:{row_id}").digest()[:16]).rstrip(b"=").decode()
+    # The hostname binds a link to its environment: the demo is a copy of production with the same row ids.
+    message = f"link:{_hostname()}:{purpose}:{row_id}"
+    return base64.urlsafe_b64encode(_mac(message).digest()[:16]).rstrip(b"=").decode()
 
 
 def link_token(purpose, row_id):
-    """`<row id>.<mac>`, mac = base64url(HMAC-SHA256(LINK_SECRET, "link:<purpose>:<row id>")) cut to 128 bits."""
+    """`<row id>.<mac>`, mac = base64url(HMAC-SHA256(LINK_SECRET, "link:<host>:<purpose>:<row id>")) cut to 128 bits."""
     return f"{row_id}.{_link_mac(purpose, row_id)}"
 
 
@@ -624,12 +626,17 @@ def record_bounce(message_id_header, diagnostic):
 
 
 def forget_recipient(kind, recipient_id):
-    """Called by the jobs that delete a recipient source: no trace of the address stays in the queue."""
-    return (
-        MailMessage.update(address_hash=None, dedupe_key=None)  # a dedupe_key may hold the address's HMAC
-        .where((MailMessage.recipient_kind == kind) & (MailMessage.recipient_id == recipient_id))
-        .execute()
-    )
+    """
+    Called by the jobs that delete a recipient source: no trace of the address stays in the queue, and mail not
+    yet sent is cancelled. One being built or sent right now loses its claim, so the sender does not send it
+    (_renew) and does not write the address hash back (_finish). Returns the number of rows.
+    """
+    rows = (MailMessage.recipient_kind == kind) & (MailMessage.recipient_id == recipient_id)
+    MailMessage.update(status="cancelled", claim_token=None, claimed_at=None, last_error="mottagaren är raderad").where(
+        rows & MailMessage.status.in_(("queued", "sending"))
+    ).execute()
+    # a dedupe_key may hold the address's HMAC
+    return MailMessage.update(address_hash=None, dedupe_key=None).where(rows).execute()
 
 
 def purge_old_mail(now):
