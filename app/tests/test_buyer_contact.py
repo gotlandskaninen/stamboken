@@ -878,6 +878,23 @@ class TestQueueProofOfARegisteredSale(ErasureTest):
         self.assertEqual(db.InboxDocument.get_by_id(proof.id).herd_tracking_id, sale_id)
         self.assertEqual([c.name for c in db.BuyerContact.select()], [NAME])
 
+    def test_two_sales_the_same_day_are_a_409_not_a_guess(self):
+        gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        rabbit = db.Individual.get(db.Individual.number == "G1-2111")
+        record_herd_tracking(rabbit, gx1, "2021-06-01", "TRANSFER", self.manager, buyer=BUYER)
+        record_herd_tracking(rabbit, gx1, "2021-06-01", "TRANSFER", self.manager, buyer=OTHER)  # resold that day
+        item = self.item(0, documents=1)
+        inbox.take(item, self.helper, over=False)
+        (proof,) = list(item.documents)
+        self.login("hjalp")
+        self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{proof.id}", json={"doc_type": "bevis"})
+        resp = self.post(f"/{item.id}/dokument/{proof.id}/overlat", individual="G1-2111", herd="GX1", date="2021-06-01")
+        self.assertEqual(resp.status_code, 409, resp.get_json())
+        self.assertEqual(
+            resp.get_json()["detail"], "Flera försäljningar samma dag; registrera beviset via rätt försäljning."
+        )
+        self.assertIsNone(db.InboxDocument.get_by_id(proof.id).herd_tracking_id)
+
     def test_a_proof_of_a_sale_registered_in_the_sell_dialog_links_to_it(self):
         db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
         self.login("man")  # the sale goes in from the rabbit's page, with its buyer
