@@ -46,18 +46,21 @@ export function EmbedBlockComponent({ url }: Props) {
     <Box
       sx={{
         my: 4,
-        position: "relative",
-        paddingTop: "56.25%", // 16:9
         borderRadius: 2,
         overflow: "hidden",
         bgcolor: "background.paper",
         border: 1,
         borderColor: "line.main",
+        // 16:9 only for the player: the notice before it must be free to
+        // grow on narrow screens and with enlarged text.
+        ...(show && { position: "relative", paddingTop: "56.25%" }),
       }}
     >
       {show ? (
         <Box
           component="iframe"
+          // The button that had focus is gone; move focus to the player.
+          ref={(el: HTMLIFrameElement | null) => el?.focus()}
           src={embed.src}
           title={`Film från ${embed.provider}`}
           allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
@@ -67,13 +70,13 @@ export function EmbedBlockComponent({ url }: Props) {
       ) : (
         <Box
           sx={{
-            ...fill,
             display: "flex",
             flexDirection: "column",
             alignItems: "center",
             justifyContent: "center",
             gap: 3,
-            p: 4,
+            px: 4,
+            py: 8,
             textAlign: "center",
           }}
         >
