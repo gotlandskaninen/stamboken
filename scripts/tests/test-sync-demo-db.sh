@@ -57,7 +57,7 @@ check "the dump and load succeed" 0 "$?"
 check "mail_message comes over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM mail_message')"
 check "mail_attempt comes over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM mail_attempt')"
 check "the dump carries no sequence value: the new database counts from 1" 1 "$(sql -d dst -c "SELECT nextval('mail_message_id_seq')")"
-sql -d dst -c "$(printf "$SET_MAIL_SEQ_SQL" "$seq")" >/dev/null
+sql -d dst -c "${SET_MAIL_SEQ_SQL//%s/$seq}" >/dev/null
 check "the demo's sequence value survives, so Message-IDs do not repeat" 42 "$(sql -d dst -c "SELECT nextval('mail_message_id_seq')")"
 check "notice_setting (a user preference) keeps its rows" 1 "$(sql -d dst -c 'SELECT count(*) FROM notice_setting')"
 check "an ordinary table keeps its rows" 1 "$(sql -d dst -c 'SELECT count(*) FROM hbuser')"
