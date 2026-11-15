@@ -794,8 +794,13 @@ class TestPrivacy(MailTest):
         self.queue()
         a = self.application()
         mail.enqueue_mail("ansokan.mottagen", "user", self.admin.id, {"application_id": a.id, "example": True})
-        for row in db.MailMessage.select():
-            text = json.dumps(row.params)
+        mail.queue_application_mails(a.id, "sokande@example.org")  # a dedupe_key built from the address
+        self.relay(replies=[_refused(550, "5.1.1 <sokande@example.org> unknown")])
+        mail.send_pending(self.now)  # fills last_error
+        rows = list(db.MailMessage.select())
+        self.assertTrue(any(r.dedupe_key for r in rows) and any(r.last_error for r in rows))
+        for row in rows:
+            text = json.dumps([row.params, row.dedupe_key, row.last_error])
             self.assertNotIn("@", text)
             self.assertNotIn(mail.link_token("mail", row.id), text)
             self.assertTrue(all(v is None or isinstance(v, int) for v in row.params.values()))
