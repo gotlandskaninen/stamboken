@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   emptyState,
   fromBody,
+  incompleteText,
   isDone,
   keyAfter,
   parseWeight,
@@ -86,6 +87,31 @@ describe("isDone", () => {
     expect(isDone(rabbit(3, { state: "via_flytt" }), undefined, false)).toBe(
       true,
     );
+  });
+});
+
+describe("incompleteText", () => {
+  const dod = {
+    ar: 2026,
+    manad: null,
+    dag: null,
+    slaktad: false,
+    anteckning: "",
+  };
+  it("names what a half-filled death or sale lacks", () => {
+    expect(incompleteText(e({ val: "dod", dod }))).toBe("Välj månad.");
+    expect(
+      incompleteText(e({ val: "sald", sald: { till: "", manad: 3 } as never })),
+    ).toBe("Ange köparen.");
+    expect(
+      incompleteText(
+        e({ val: "sald", sald: { till: "Anna, Visby", manad: null } as never }),
+      ),
+    ).toBe("Välj månad.");
+    expect(incompleteText(e({ val: "kvar" }))).toBeNull();
+    expect(
+      incompleteText(e({ val: "dod", dod: { ...dod, manad: 3 } })),
+    ).toBeNull();
   });
 });
 

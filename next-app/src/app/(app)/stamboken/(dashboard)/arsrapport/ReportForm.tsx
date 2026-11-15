@@ -23,6 +23,7 @@ import {
   newKey,
   paperKey,
   refusalText,
+  incompleteText,
   stockholmDay,
   toBody,
   toDraft,
@@ -485,9 +486,14 @@ export function ReportForm({
     const m = new Map<number, string>();
     for (const r of refusals ?? [])
       if (r.individual_id !== null && !m.has(r.individual_id))
-        m.set(r.individual_id, refusalText(r));
+        m.set(
+          r.individual_id,
+          (r.code === "inte_klar" &&
+            incompleteText(state.rabbits[r.individual_id])) ||
+            refusalText(r),
+        );
     return m;
-  }, [refusals]);
+  }, [refusals, state.rabbits]);
 
   const chooseFilter = (f: Filter) => {
     if (f === "inte_klara")
@@ -600,14 +606,21 @@ export function ReportForm({
   };
 
   const onRow = React.useCallback(
-    (id: number, patch: Partial<Entry>) =>
+    (id: number, patch: Partial<Entry>) => {
+      // an edited row drops its own error
+      setRefusals((rs) => {
+        if (!rs?.some((r) => r.individual_id === id)) return rs;
+        const left = rs.filter((r) => r.individual_id !== id);
+        return left.length ? left : null;
+      });
       edit((s) => ({
         ...s,
         rabbits: {
           ...s.rabbits,
           [id]: { ...(s.rabbits[id] ?? EMPTY_ENTRY), ...patch },
         },
-      })),
+      }));
+    },
     [edit],
   );
   const onSell = React.useCallback((id: number) => setSoldFor(id), []);

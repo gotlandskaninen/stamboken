@@ -377,6 +377,15 @@ const complete = (e: Entry) =>
       ? !!e.sald?.till && e.sald.manad != null
       : e.val !== null;
 
+// What a half-filled choice still lacks, for the row error (null when nothing
+// specific is missing).
+export function incompleteText(e: Entry | undefined): string | null {
+  if (!e || complete(e)) return null;
+  if (e.val === "sald" && !e.sald?.till) return "Ange köparen.";
+  if (e.val === "dod" || e.val === "sald") return "Välj månad.";
+  return null;
+}
+
 export function isDone(
   r: RabbitView,
   e: Entry | undefined,

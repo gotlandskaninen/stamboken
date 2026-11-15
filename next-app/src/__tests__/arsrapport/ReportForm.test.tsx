@@ -821,6 +821,28 @@ describe("ReportForm", () => {
     ).toBe("");
   });
 
+  it("says what a half-filled death lacks and drops the row error when the row is edited", async () => {
+    const a = actions();
+    a.dryRun.mockImplementation(() =>
+      ok({
+        ok: false,
+        refusals: [{ individual_id: 2, code: "inte_klar", message: "x" }],
+        warnings: [],
+      }),
+    );
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(2, "Död eller slaktad");
+    send();
+    const box = (await screen.findByText("1 kanin är inte klara")).closest(
+      "div",
+    )!;
+    expect(box.textContent).toContain("Välj månad.");
+    expect(within(row(2)).getByText("Välj månad.")).toBeTruthy();
+    choose(2, "Finns kvar");
+    expect(screen.queryByText("1 kanin är inte klara")).toBeNull();
+    expect(within(row(2)).queryByText("Välj månad.")).toBeNull();
+  });
+
   it("shows Dragen tillbaka after a withdrawal and locks the confirmation while it runs", async () => {
     const a = actions();
     let release: (v: unknown) => void = () => {};
