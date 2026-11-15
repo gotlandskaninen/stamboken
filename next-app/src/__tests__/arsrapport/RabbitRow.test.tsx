@@ -26,7 +26,7 @@ const props = (over: Partial<RabbitRowProps> = {}): RabbitRowProps => ({
 describe("RabbitRow", () => {
   it("is a fieldset whose legend has the number and the name, with three unchosen radios", () => {
     render(<RabbitRow {...props()} />);
-    const group = screen.getByRole("group", { name: /G9001-1\s*Kanin1/ });
+    const group = screen.getByRole("group", { name: "G9001-1 Kanin1" });
     expect(group.tagName).toBe("FIELDSET");
     const radios = screen.getAllByRole("radio") as HTMLInputElement[];
     expect(radios.map((r) => r.parentElement?.textContent)).toEqual([

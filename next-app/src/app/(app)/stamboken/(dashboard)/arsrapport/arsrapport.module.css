@@ -203,7 +203,7 @@ a.secondary {
 }
 .num {
   font-weight: 500;
-  margin-right: 8px;
+  margin-right: 4px;
 }
 .name {
   font-family: var(--sb-display);

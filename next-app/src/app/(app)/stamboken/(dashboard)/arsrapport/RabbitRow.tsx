@@ -113,7 +113,7 @@ function RabbitRowImpl({
     >
       <legend>
         {paper && <span className={styles.meta}>{sexText(r)} </span>}
-        <span className={styles.num}>{r.number}</span>
+        <span className={styles.num}>{r.number}</span>{" "}
         <span className={styles.name}>{r.name}</span>
         {paper && r.color && <span className={styles.meta}> {r.color}</span>}
         {done && <span className={styles.klar}>✓ Klar</span>}
