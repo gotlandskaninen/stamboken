@@ -17,7 +17,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════
   playwright-nextjs:
     name: Playwright — Next.js
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # Playwright has no Chromium build for ubuntu-26.04 yet
     timeout-minutes: 30
 
     services:
@@ -124,7 +124,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════
   playwright-legacy:
     name: Playwright — Legacy (advisory)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04  # Playwright has no Chromium build for ubuntu-26.04 yet
     timeout-minutes: 15
     continue-on-error: true
 
