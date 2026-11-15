@@ -1,6 +1,8 @@
 "use server";
 
+import { cookies } from "next/headers";
 import { fetchApi, ApiError } from "@/lib/api";
+import { MODE_COOKIE, parseMode, type Mode } from "@/lib/mode";
 import type { ActionResult } from "../inkorg/actions";
 import {
   SUBMIT_TIMEOUT_MS,
@@ -29,13 +31,18 @@ function path(herd: string, year: number, tail: string, post?: number) {
   return `/v2/arsrapport/besattning/${herd}/${year}${tail}${q}`;
 }
 
+// A call queued before an environment switch must not write into the other
+// environment: the caller says which one it expects, the cookie must agree.
 async function call<T>(
+  env: Mode,
   url: string | null,
   method: string,
   body: unknown,
   timeout?: number,
 ): Promise<ActionResult<T>> {
   if (url === null) return refused("Ogiltig besättning, år eller post.");
+  if (parseMode((await cookies()).get(MODE_COOKIE)?.value) !== env)
+    return refused("Miljön har bytts. Ladda om sidan.");
   try {
     const data = await fetchApi<T>(url, {
       method,
@@ -73,9 +80,11 @@ export async function saveDraft(
   updatedAt: string | null,
   key: string,
   revision: number | null,
+  env: Mode,
   post?: number,
 ) {
   return call<{ updated_at: string; submission_key: string | null }>(
+    env,
     path(herd, year, "/utkast", post),
     "PUT",
     { data, updated_at: updatedAt, submission_key: key, revision },
@@ -86,9 +95,11 @@ export async function dryRun(
   herd: string,
   year: number,
   body: Submission,
+  env: Mode,
   post?: number,
 ) {
   return call<{ ok: boolean; refusals: Refusal[]; warnings: Refusal[] }>(
+    env,
     path(herd, year, "/torrkorning", post),
     "POST",
     body,
@@ -100,9 +111,11 @@ export async function submitReport(
   herd: string,
   year: number,
   body: Submission,
+  env: Mode,
   post?: number,
 ) {
   return call<Receipt>(
+    env,
     path(herd, year, "/skicka", post),
     "POST",
     body,
@@ -114,10 +127,12 @@ export async function withdrawReport(
   herd: string,
   year: number,
   revision: number,
-  reason?: string,
+  reason: string | undefined,
+  env: Mode,
   post?: number,
 ) {
   return call<ReportView>(
+    env,
     path(herd, year, "/dra-tillbaka", post),
     "POST",
     { revision, reason: reason ?? null },

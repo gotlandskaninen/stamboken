@@ -464,6 +464,8 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
         raise ArsrapportError(409, "Rundan är inte öppen.", code="rundan_stangd")
     if not isinstance(data, dict):
         raise ArsrapportError(400, "Utkastet ska vara ett objekt.")
+    if "form" in data and not isinstance(data["form"], dict):
+        raise ArsrapportError(400, "Utkastets formulärkopia ska vara ett objekt.")
     if _holds_private(data):
         raise ArsrapportError(400, "Utkastet sparar inte dina uppgifter eller köparens uppgifter.")
     stored = stored_body(data)

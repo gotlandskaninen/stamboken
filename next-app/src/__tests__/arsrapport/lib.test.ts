@@ -202,6 +202,22 @@ describe("the stored form is an allow-list", () => {
   });
 });
 
+describe("a malformed stored draft", () => {
+  it("never throws and falls back to a usable form", () => {
+    expect(() => fromBody({ form: { defects: {} } } as never)).not.toThrow();
+    expect(fromBody({ form: { defects: {} } } as never).defects).toEqual([]);
+    const bad = {
+      form: "text",
+      defects: {},
+      rabbits: "x",
+      diseases: 3,
+    } as never;
+    expect(fromBody(bad)).toEqual(emptyState());
+    expect(fromBody({ form: [] } as never)).toEqual(emptyState());
+    expect(fromBody(null as never)).toEqual(emptyState());
+  });
+});
+
 describe("keyAfter", () => {
   it("keeps the key after a timeout and renews it otherwise", () => {
     const k = "11111111-1111-4111-8111-111111111111";

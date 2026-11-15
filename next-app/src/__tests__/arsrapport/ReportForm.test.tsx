@@ -645,9 +645,39 @@ describe("ReportForm", () => {
     rerender(<ReportForm env="demo" view={view()} actions={a} />);
     expect(screen.queryByText("Hämtar senaste versionen…")).toBeNull();
     expect(
-      (within(row(1)).getByLabelText("Finns kvar") as HTMLInputElement)
-        .disabled,
+      within(row(1)).getByLabelText("Finns kvar").matches(":disabled"),
     ).toBe(false);
+  });
+
+  it("closes the sale dialog when a reload starts, and after 10 s stays locked with a full-reload button; a late view still syncs", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    a.saveDraft.mockImplementationOnce(() => fail(409, { draft: null }));
+    const { rerender } = render(
+      <ReportForm env="demo" view={view()} actions={a} />,
+    );
+    choose(1, "Finns kvar");
+    choose(2, "Såld"); // the dialog opens while the first save is on its way
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10_000);
+    });
+    expect(screen.getByRole("button", { name: "Ladda om sidan" })).toBeTruthy();
+    expect(
+      within(row(1)).getByLabelText("Finns kvar").matches(":disabled"),
+    ).toBe(true);
+    rerender(<ReportForm env="demo" view={view()} actions={a} />); // the late answer
+    expect(screen.queryByRole("button", { name: "Ladda om sidan" })).toBeNull();
+    expect(
+      within(row(1)).getByLabelText("Finns kvar").matches(":disabled"),
+    ).toBe(false);
+    expect(
+      (within(row(1)).getByLabelText("Finns kvar") as HTMLInputElement).checked,
+    ).toBe(false); // reset from the reloaded view
   });
 
   it("an error link clears the search and filter and focuses the control that needs input", async () => {

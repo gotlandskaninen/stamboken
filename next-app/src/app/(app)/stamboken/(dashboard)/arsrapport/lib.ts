@@ -455,16 +455,18 @@ export function toBody(
 
 // Only these fields ever leave the form state or enter it from a stored draft:
 // an unknown key (a matrikel, a buyer) is dropped, never copied on.
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
 const num = (v: unknown): number | null =>
   typeof v === "number" && Number.isFinite(v) ? v : null;
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
-function pickEntry(raw: Partial<Entry>): Entry {
-  const e = raw ?? {};
+function pickEntry(raw: unknown): Entry {
+  const e = (isObj(raw) ? raw : {}) as Partial<Entry>;
   const val = (["kvar", "dod", "sald", "ej_angiven"] as const).find(
     (v) => v === e.val,
   );
-  const dod = e.dod;
-  const sald = e.sald;
+  const dod = isObj(e.dod) ? e.dod : null;
+  const sald = isObj(e.sald) ? e.sald : null;
   return {
     val: val ?? null,
     vikt: str(e.vikt),
@@ -491,23 +493,29 @@ function pickEntry(raw: Partial<Entry>): Entry {
       : null,
   };
 }
-export function pickForm(f: Partial<FormState>): FormState {
+export function pickForm(raw: unknown): FormState {
+  const f = (isObj(raw) ? raw : {}) as Partial<FormState>;
   const state = emptyState();
-  for (const [id, e] of Object.entries(f.rabbits ?? {}))
+  for (const [id, e] of Object.entries(isObj(f.rabbits) ? f.rabbits : {}))
     state.rabbits[Number(id)] = pickEntry(e);
   for (const { key } of DISEASES) {
-    const d = f.diseases?.[key];
-    if (d)
+    const d = isObj(f.diseases) ? f.diseases[key] : null;
+    if (isObj(d))
       state.diseases[key] = {
         antal: str(d.antal),
         alder: str(d.alder),
         namn: str(d.namn),
       };
   }
-  state.defects = (f.defects ?? []).flatMap((d) =>
-    num(d?.individual_id) === null
+  state.defects = (Array.isArray(f.defects) ? f.defects : []).flatMap((d) =>
+    !isObj(d) || num(d.individual_id) === null
       ? []
-      : [{ individual_id: d.individual_id, beskrivning: str(d.beskrivning) }],
+      : [
+          {
+            individual_id: d.individual_id as number,
+            beskrivning: str(d.beskrivning),
+          },
+        ],
   );
   state.ending = !!f.ending;
   state.membership =
@@ -570,10 +578,18 @@ function fromEntry(b: Partial<BodyEntry> & { val?: Val | null }): Entry {
 }
 
 // A draft, or report.submitted, back into the form. The buyers are gone.
+// A stored draft is data the server accepted as it was: it never throws. A
+// malformed `form` falls back to the body shape, and that to an empty form.
 export function fromBody(data: Partial<DraftData>): FormState {
-  if (data.form) {
-    return pickForm(data.form);
+  if (isObj(data?.form)) return pickForm(data.form);
+  try {
+    return fromShape(isObj(data) ? data : {});
+  } catch {
+    return emptyState();
   }
+}
+
+function fromShape(data: Partial<DraftData>): FormState {
   const state = emptyState();
   for (const [id, raw] of Object.entries(data.rabbits ?? {}))
     state.rabbits[Number(id)] = fromEntry(raw);

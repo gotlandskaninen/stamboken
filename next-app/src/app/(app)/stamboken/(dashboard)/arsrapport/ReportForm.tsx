@@ -196,6 +196,8 @@ export function ReportForm({
   const [askRest, setAskRest] = React.useState(false);
   const [focusTick, setFocusTick] = React.useState(0);
   const [syncing, setSyncing] = React.useState(false);
+  const [syncTimeout, setSyncTimeout] = React.useState(false);
+  const syncTimer = React.useRef<ReturnType<typeof setTimeout>>(undefined);
 
   // Latest values for callbacks that outlive a render. Kept in effects, never
   // written during render.
@@ -257,26 +259,20 @@ export function ReportForm({
   const reload = () => {
     resync.current = true;
     stopped.current = true;
+    setSoldFor(null); // a sale dialog cannot save into a state about to be replaced
     setSyncing(true); // editing and Skicka wait for the answer
     router.refresh();
-    setTimeout(() => {
-      if (!resync.current) return;
-      resync.current = false;
-      stopped.current = false;
-      setSyncing(false);
-      setRefusals([
-        {
-          individual_id: null,
-          code: "fel",
-          message: "Det gick inte att hämta senaste versionen. Ladda om sidan.",
-        },
-      ]);
-    }, 10000);
+    clearTimeout(syncTimer.current);
+    // No answer after 10 s: stay locked and offer a full reload. A late
+    // answer still syncs the form (the effect below).
+    syncTimer.current = setTimeout(() => setSyncTimeout(true), 10000);
   };
   React.useEffect(() => {
     if (!resync.current) return;
     resync.current = false;
     stopped.current = false;
+    clearTimeout(syncTimer.current);
+    setSyncTimeout(false);
     setSyncing(false);
     const base = view.draft?.data ?? view.report?.submitted ?? {};
     setState(fromBody(base));
@@ -316,6 +312,7 @@ export function ReportForm({
             updatedAt.current,
             keyRef.current!,
             viewRef.current.report?.revision ?? null,
+            env,
             post,
           ),
         );
@@ -511,7 +508,7 @@ export function ReportForm({
     if (readModeCookieClient() !== env) return fail(ENV_TEXT);
     setPhase("sending");
     const res = await safe(
-      actionsRef.current.submitReport(herd.herd, year, body, post),
+      actionsRef.current.submitReport(herd.herd, year, body, env, post),
     );
     if (res.ok) {
       keyRef.current = keyAfter("ok", keyRef.current!);
@@ -541,7 +538,7 @@ export function ReportForm({
     frozen.current = body; // never stored: it may hold a buyer
     setPhase("checking");
     const dry = await safe(
-      actionsRef.current.dryRun(herd.herd, year, body, post),
+      actionsRef.current.dryRun(herd.herd, year, body, env, post),
     );
     if (!dry.ok) {
       if (dry.problem.status === 408 || dry.problem.status === 502) {
@@ -566,6 +563,7 @@ export function ReportForm({
         year,
         view.report!.revision,
         reason,
+        env,
         post,
       ),
     );
@@ -700,6 +698,18 @@ export function ReportForm({
             <div className={styles.sideStatus}>
               <ReportStatus status={status} />
               {deadline && <ReportStatus status={deadline} />}
+              {syncTimeout && (
+                <div role="alert" className={styles.errorBox}>
+                  <h2>Det gick inte att hämta senaste versionen</h2>
+                  <button
+                    type="button"
+                    className={`sb-btn ${styles.btn}`}
+                    onClick={() => window.location.reload()}
+                  >
+                    Ladda om sidan
+                  </button>
+                </div>
+              )}
               {refusals && (
                 <div
                   ref={boxRef}
@@ -1240,7 +1250,7 @@ export function ReportForm({
       )}
 
       <SoldDialog
-        open={soldFor !== null}
+        open={soldFor !== null && !syncing}
         number={soldRabbit?.number ?? ""}
         year={year}
         herds={view.herds}
@@ -1249,6 +1259,7 @@ export function ReportForm({
           soldFor !== null ? (state.rabbits[soldFor]?.sald ?? null) : null
         }
         onSave={(s: SaldState) => {
+          if (syncing) return;
           onRow(soldFor!, { val: "sald", sald: s });
           setSoldFor(null);
         }}

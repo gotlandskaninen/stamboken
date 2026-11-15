@@ -445,7 +445,13 @@ class ListaTest(ArsrapportTest):
         [rabbit] = self.rabbits(self.g1, 1)
         buyer = {"name": "Test Köpare", "town": "Visby"}
         sold = {"1": {"val": "sald", "sald": {"till": "utanfor", "ar": 2025, "manad": 6, "kopare": buyer}}}
-        for form in ({"rabbits": sold}, {"matrikel": {"telefon": "0700000000"}}, {"deep": [{"kopare": buyer}]}):
+        for form in (
+            {"rabbits": sold},
+            {"matrikel": {"telefon": "0700000000"}},
+            {"deep": [{"kopare": buyer}]},
+            ["inte", "ett", "objekt"],
+            "text",
+        ):
             r = self.put_draft({"rabbits": {}, "form": form})
             self.assertEqual(r.status_code, 400, (form, r.get_data(as_text=True)))
         self.assertEqual(db.YearlyReportDraft.select().count(), 0)

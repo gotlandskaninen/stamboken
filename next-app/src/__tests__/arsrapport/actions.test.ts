@@ -1,6 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const fetchApi = vi.fn();
+let modeCookie: string | undefined = "demo";
+vi.mock("next/headers", () => ({
+  cookies: async () => ({
+    get: () => (modeCookie ? { value: modeCookie } : undefined),
+  }),
+}));
 vi.mock("@/lib/api", () => ({
   fetchApi: (...a: unknown[]) => fetchApi(...a),
   ApiError: class extends Error {
@@ -26,15 +32,16 @@ import {
 const body = toBody(emptyState(), "k", null);
 
 beforeEach(() => {
+  modeCookie = "demo";
   fetchApi.mockReset();
   fetchApi.mockResolvedValue({});
 });
 
 describe("arsrapport actions", () => {
   it("gives dryRun, submitReport and withdrawReport the long timeout", async () => {
-    await dryRun("G9001", 2026, body);
-    await submitReport("G9001", 2026, body);
-    await withdrawReport("G9001", 2026, 1, "skäl");
+    await dryRun("G9001", 2026, body, "demo");
+    await submitReport("G9001", 2026, body, "demo");
+    await withdrawReport("G9001", 2026, 1, "skäl", "demo");
     for (const call of fetchApi.mock.calls)
       expect(call[1]).toMatchObject({ timeout: SUBMIT_TIMEOUT_MS });
   });
@@ -46,6 +53,7 @@ describe("arsrapport actions", () => {
       null,
       "k",
       null,
+      "demo",
       12,
     );
     expect(fetchApi.mock.calls[0][0]).toBe(
@@ -55,16 +63,36 @@ describe("arsrapport actions", () => {
   });
   it("refuses a herd, year or post that does not belong in a URL", async () => {
     for (const r of [
-      await dryRun("../x", 2026, body),
-      await dryRun("G9001", 20.5, body),
-      await submitReport("G9001", 2026, body, -1),
+      await dryRun("../x", 2026, body, "demo"),
+      await dryRun("G9001", 20.5, body, "demo"),
+      await submitReport("G9001", 2026, body, "demo", -1),
     ])
       expect(r.ok).toBe(false);
     expect(fetchApi).not.toHaveBeenCalled();
   });
   it("answers a dropped connection as a 502 the form can show", async () => {
     fetchApi.mockRejectedValue(new Error("fetch failed"));
-    const r = await submitReport("G9001", 2026, body);
+    const r = await submitReport("G9001", 2026, body, "demo");
     expect(r).toMatchObject({ ok: false, problem: { status: 502 } });
+  });
+  it("refuses every write whose expected environment is not the cookie's, before calling the API", async () => {
+    modeCookie = "prod"; // switched after the call was queued
+    const results = [
+      await saveDraft(
+        "G9001",
+        2026,
+        toBody(emptyState(), "", null),
+        null,
+        "k",
+        null,
+        "demo",
+      ),
+      await dryRun("G9001", 2026, body, "demo"),
+      await submitReport("G9001", 2026, body, "demo"),
+      await withdrawReport("G9001", 2026, 1, undefined, "demo"),
+    ];
+    for (const r of results)
+      expect(r).toMatchObject({ ok: false, problem: { status: 400 } });
+    expect(fetchApi).not.toHaveBeenCalled();
   });
 });
