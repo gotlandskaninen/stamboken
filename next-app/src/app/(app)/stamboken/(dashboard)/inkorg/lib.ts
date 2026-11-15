@@ -66,13 +66,6 @@ export interface InboxDocument {
   individual: string | null;
   /** The sale registered from the document (for a proof: the sale it shows). */
   herd_tracking_id?: number | null;
-  /** That sale's rabbit, buyer herd and date, and whether it is still active. */
-  sale?: {
-    individual: string;
-    herd: string;
-    date: string;
-    active: boolean;
-  } | null;
   has_copy: boolean;
 }
 
@@ -479,25 +472,23 @@ export function buildSalePayload(form: SaleForm) {
 }
 
 /**
- * The rule of the API's proven_sale: a proof shows a sale another document of
- * the item has registered, the same rabbit, buyer herd and date, still active.
- * Its buyer came with that sale, so the panel does not ask for it again.
+ * The rule of the API's proven_sale: a proof shows a sale already registered,
+ * from the item or anywhere else, an active move of the rabbit (its active
+ * rows, `sales`) to the same herd on the same date. Its buyer came with that
+ * sale, so the panel does not ask for it again.
  */
 export function provenSale(
-  documents: InboxDocument[],
   doc: InboxDocument,
-  payload: { individual: string; herd: string; date: string },
+  payload: { herd: string; date: string },
+  sales: { herd: string; date: string | null; kind: string }[],
 ): boolean {
   return (
     doc.doc_type === "bevis" &&
-    documents.some(
-      (d) =>
-        d.id !== doc.id &&
-        d.doc_type !== "bevis" &&
-        !!d.sale?.active &&
-        d.sale.individual === payload.individual &&
-        d.sale.herd === payload.herd &&
-        d.sale.date === payload.date,
+    sales.some(
+      (s) =>
+        (s.kind === "TRANSFER" || s.kind === "CORRECTION") &&
+        s.herd === payload.herd &&
+        s.date === payload.date,
     )
   );
 }

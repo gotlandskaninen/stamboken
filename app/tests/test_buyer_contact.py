@@ -862,6 +862,26 @@ def _items_locked_before_the_rabbit(statements):
                 first.setdefault(table, index)
     return "inbox_item" in first and first["inbox_item"] < first.get("individual", len(statements))
 
+    def test_a_proof_of_a_sale_registered_in_the_sell_dialog_links_to_it(self):
+        db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        self.login("man")  # the sale goes in from the rabbit's page, with its buyer
+        resp = self.client.patch(
+            "/api/individual/G1-2111", json={"herd": "GX1", "selling_date": "2021-06-01", "buyer": BUYER}
+        )
+        self.assertEqual(resp.status_code, 200, resp.get_data(as_text=True))
+        sale = db.HerdTracking.get((db.HerdTracking.kind == "TRANSFER") & db.HerdTracking.voided_at.is_null(True))
+        item = self.item(0, documents=1)
+        inbox.take(item, self.helper, over=False)
+        (proof,) = list(item.documents)
+        self.login("hjalp")
+        self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{proof.id}", json={"doc_type": "bevis"})
+
+        resp = self.post(f"/{item.id}/dokument/{proof.id}/overlat", individual="G1-2111", herd="GX1", date="2021-06-01")
+
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["herd_tracking_id"], sale.id)
+        self.assertEqual(db.BuyerContact.select().count(), 1)  # no second buyer
+
 
 class TestLockOrder(PurgeTest):
     """A void that clears a sale's queue documents locks the items before the rabbit, as the queue does."""

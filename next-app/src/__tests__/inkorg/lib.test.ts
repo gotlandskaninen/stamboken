@@ -625,38 +625,32 @@ describe("lacksRole", () => {
   });
 });
 
-describe("provenSale, the work view's rule for a proof of a registered sale", () => {
-  const sale = { individual: "G9001-2511", herd: "GX1", date: "2026-10-03" };
+describe("provenSale, the panel's rule for a proof of a registered sale", () => {
+  const sale = { herd: "GX1", date: "2026-10-03" };
   const proof = { id: 2, doc_type: "bevis" } as unknown as InboxDocument;
-  const certificate = (changes: object = {}) =>
-    ({
-      id: 1,
-      doc_type: "intyg",
-      sale: { ...sale, active: true, ...changes },
-    }) as unknown as InboxDocument;
+  const rows = (changes: object = {}) => [
+    { herd: "G9001", date: "2025-06-01", kind: "BIRTH" },
+    { herd: "GX1", date: "2026-10-03", kind: "TRANSFER", ...changes },
+  ];
 
-  it("is the same rabbit, buyer herd and date, on another document, still active", () => {
-    expect(provenSale([certificate(), proof], proof, sale)).toBe(true);
+  it("is an active move of the rabbit to the same herd on the same date, wherever it was registered", () => {
+    expect(provenSale(proof, sale, rows())).toBe(true);
+    expect(provenSale(proof, sale, rows({ kind: "CORRECTION" }))).toBe(true);
   });
-  it("is not another rabbit's, herd's or date's sale, nor a voided one", () => {
+  it("is not another herd's or date's row, nor a yearly report", () => {
     for (const changes of [
-      { individual: "G9001-2512" },
       { herd: "G9002" },
       { date: "2026-10-04" },
-      { active: false },
+      { kind: "ATTESTATION" },
     ]) {
-      expect(provenSale([certificate(changes), proof], proof, sale)).toBe(
-        false,
-      );
+      expect(provenSale(proof, sale, rows(changes))).toBe(false);
     }
   });
-  it("is only for a proof, and never its own sale", () => {
-    const linked = {
-      ...proof,
-      sale: { ...sale, active: true },
+  it("is only for a proof", () => {
+    const certificate = {
+      id: 3,
+      doc_type: "intyg",
     } as unknown as InboxDocument;
-    expect(provenSale([linked], linked, sale)).toBe(false);
-    const other = { id: 3, doc_type: "intyg" } as unknown as InboxDocument;
-    expect(provenSale([certificate(), other], other, sale)).toBe(false);
+    expect(provenSale(certificate, sale, rows())).toBe(false);
   });
 });
