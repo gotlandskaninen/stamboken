@@ -30,12 +30,15 @@ export function SalePanel({
   doc,
   herds,
   canSave,
+  saleRegistered = false,
   onDone,
 }: {
   itemId: number;
   doc: InboxDocument;
   herds: GenebankHerd[];
   canSave: boolean;
+  /** A proof of a sale already registered from another document of the item: its buyer came with it. */
+  saleRegistered?: boolean;
   onDone: (document: InboxDocument) => void;
 }) {
   const [form, setForm] = useState<SaleForm>({
@@ -65,7 +68,9 @@ export function SalePanel({
       const res = await registerSale(
         itemId,
         doc.id,
-        form.outside ? { ...payload, buyer: buyerPayload(buyer) } : payload,
+        form.outside && !saleRegistered
+          ? { ...payload, buyer: buyerPayload(buyer) }
+          : payload,
       );
       if (res.ok) {
         setSaved(true);
@@ -129,7 +134,9 @@ export function SalePanel({
               <p className={styles.muted}>
                 Sparas på {outsideHerd(form.individual) ?? "GX1 eller MX1"}.
               </p>
-              <BuyerFields value={buyer} onChange={setBuyer} size="small" />
+              {!saleRegistered && (
+                <BuyerFields value={buyer} onChange={setBuyer} size="small" />
+              )}
             </>
           ) : (
             <Autocomplete
@@ -169,7 +176,9 @@ export function SalePanel({
           type="submit"
           className="sb-btn"
           disabled={
-            !canSave || pending || (form.outside && !buyerComplete(buyer))
+            !canSave ||
+            pending ||
+            (form.outside && !saleRegistered && !buyerComplete(buyer))
           }
         >
           {pending

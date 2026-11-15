@@ -736,7 +736,7 @@ En köpare utanför föreningen:
 | `individual` | kaninens nummer |
 | `herd` | köparens besättningsnummer. En köpare utanför föreningen: genbankens besättning för kaniner sålda utanför genbanken, `GX1` (gotlandskanin) eller `MX1` (mellerudskanin). |
 | `date` | försäljningsdatumet |
-| `buyer` | valfritt, bara till GX1/MX1: köparen utanför föreningen ([ADR-0016](adr/0016-agarbyte-flytt-dag-0-och-berattigat-intresse.md)). `name` och `town` krävs; `postal_address` bara med `contact_consent: true`, `email` och `phone` med `contact_consent` eller `membership_optin`. Annars 400. Med `buyer` går också GX1 till GX1, för genbanksansvarig och admin. Nekas (400) när beviset kopplas till en försäljning som redan finns |
+| `buyer` | valfritt, bara till GX1/MX1: köparen utanför föreningen ([ADR-0016](adr/0016-agarbyte-flytt-dag-0-och-berattigat-intresse.md)). `name` och `town` krävs; `postal_address` bara med `contact_consent: true`, `email` och `phone` med `contact_consent` eller `membership_optin`. Annars 400. Med `buyer` går också GX1 till GX1, för genbanksansvarig och admin. Läses inte när beviset kopplas till en försäljning som redan finns: köparen kom med försäljningen |
 
 **Vem:** handläggaren, med samma krav på posten som för `…/spara` men för alla dokumenttyper.
 En hjälpare får sälja kaniner i sin genbank som en ägare får.

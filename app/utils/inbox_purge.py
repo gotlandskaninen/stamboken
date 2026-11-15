@@ -355,18 +355,23 @@ def erase_document(item, document, user):
     return paths
 
 
-def erase_buyer_from_inbox(herd_tracking_id, certificates=True):
+def erase_buyer_from_inbox(herd_tracking_id):
     """
-    A buyer outside the association is deleted (utils.herd_tracking.delete_buyer_contacts): the documents of the
-    sale (inbox_document.herd_tracking_id) lose their originals, as for a member in erase_person_from_inbox. On an
-    erasure (`certificates`) a certificate the sale was registered from keeps only its masked copy, and the items
-    lose their text; on a void or the five-year purge only the proof (bevis) goes. A buyer has no member row, so
+    A buyer outside the association is deleted (utils.herd_tracking.delete_buyer_contacts: an erasure, a void of
+    the sale, the rabbit's death, five years): the proofs and certificates of the sale lose what shows the buyer, as
+    for a member in erase_person_from_inbox. That is every bevis and intyg on the sale (herd_tracking_id) and the
+    others of the same items for the rabbit, linked or not. The original goes (a certificate keeps only its masked
+    copy), with the model's reading and proposal, and the items lose their text. A buyer has no member row, so
     buyer_member never names one. In the caller's transaction; returns the paths for remove_originals after the
-    commit (remove_orphans takes any the caller leaves). Nothing to do once the originals are purged.
+    commit. Nothing to do once the originals are purged.
     """
-    shown = InboxDocument.herd_tracking_id == herd_tracking_id
-    if not certificates:
-        return _null_originals(shown & (InboxDocument.doc_type == "bevis"))
+    sale = HerdTracking.get_or_none(HerdTracking.id == herd_tracking_id)
+    if sale is None:
+        return []
+    on_sale = InboxDocument.herd_tracking_id == herd_tracking_id
+    items = InboxDocument.select(InboxDocument.item).where(on_sale)
+    same_rabbit = InboxDocument.item.in_(items) & (InboxDocument.individual == sale.individual_id)
+    shown = InboxDocument.doc_type.in_(ORIGINAL_TYPES) & (on_sale | same_rabbit)
     paths = _null_originals(shown)
     _clear_text(InboxDocument.select(InboxDocument.item).where(shown))
     return paths
