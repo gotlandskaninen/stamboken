@@ -805,7 +805,7 @@ class Individual(BaseModel):
         try:
             return state_of(self.certificate, self.digital_certificate, current.exists())
         except ValueError:
-            return None  # a row written before the table existed: a writer may leave this, never enter it
+            return None  # no state allows it (both numbers, from the old backend): check() does not judge it
 
     def as_dict(self):
         """

@@ -168,20 +168,20 @@ class TestCertificateStateMachine(CertV2Mixin, FlaskTest):
         self.assertEqual((kit.certificate, kit.name), (None, "Agnes"))
 
     def test_a_row_with_both_numbers_keeps_its_digital_certificate_and_can_be_reissued(self):
-        """The old backend could create such a row. No state allows it, and no writer may crash on it."""
+        """The old backend could create such a row. No state allows it; a blank number is its way to a legal one."""
         self._stub_pdf()
         kit = self.individuals[3]
         db.Individual.update(certificate="PAP-0", digital_certificate=500000).where(
             db.Individual.id == kit.id
         ).execute()
-        body = self._manager_patch(certificate="")
-        self.assertEqual(body["status"], "error")
-        self.assertIn("digitalt intyg", body["message"])
         admin = self.app.application.test_client(use_cookies=True)
         admin.post("/api/login", json={"username": self.admin.email, "password": "pass"})
-        response = admin.patch(f"/api/v2/certificates/update/{kit.number}", json={})
-        self.assertEqual(response.status_code, 200, response.get_json(silent=True))
-        self.assertEqual(db.Individual.get_by_id(kit.id).digital_certificate, 500000)
+        url = f"/api/v2/certificates/update/{kit.number}"
+        self.assertEqual(admin.patch(url, json={}).status_code, 200)  # as on main: not a crash
+        self.assertEqual(self._manager_patch(certificate="").get("status", "success"), "success")
+        after = db.Individual.get_by_id(kit.id)
+        self.assertEqual((after.certificate, after.digital_certificate), (None, 500000))
+        self.assertIs(after.cert_state(), CertState.DIGITAL)  # the PDF row of the re-issue is still current
 
     def test_a_blank_number_does_not_remove_a_digital_certificate(self):
         kit = self.individuals[3]

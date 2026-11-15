@@ -19,7 +19,7 @@ from typing import ClassVar, Protocol
 from peewee import DateField, fn
 
 from utils import number_assets
-from utils.certificate_lifecycle import Event, check, next_state
+from utils.certificate_lifecycle import Event, check
 from utils.database import DB_PROXY as DATABASE
 from utils.database import (
     OUTSIDE_GENEBANK_HERDS,
@@ -724,19 +724,6 @@ class AssignPaperCertificate(PolicyCommand):
         """Blank is what state_of calls no certificate: the legacy form sends "" to clear the paper number."""
         return Event.ASSIGN_PAPER if str(self.certificate) else Event.CLEAR_PAPER
 
-    def check_cert_auth(self, ctx):
-        """Asks the table before anything is written, so a transition without a row is a refusal, not a crash."""
-        if self.certificate is None or (str(self.certificate) or None) == ctx.stored.certificate:
-            return
-        before = ctx.stored.cert_state()
-        try:
-            if before is not None:
-                next_state(before, self.event)
-            elif self.event is Event.CLEAR_PAPER and ctx.stored.digital_certificate is not None:
-                raise ValueError  # a row in no state (both numbers) keeps its digital number too
-        except ValueError:
-            raise IndividualRefused("Ett digitalt intyg kan inte tas bort genom att tömma intygsnumret") from None
-
     def check_quota(self, ctx):
         if self.certificate is not None:
             _first_certificate(ctx, str(self.certificate))
@@ -749,10 +736,12 @@ class AssignPaperCertificate(PolicyCommand):
         changed = ind.certificate != value
         if changed:
             before = ind.cert_state()
-            if ind.digital_certificate is not None:
+            # Only a paper number replaces the digital one (IR-20); a blank number clears the paper number alone.
+            if self.event is Event.ASSIGN_PAPER and ind.digital_certificate is not None:
                 ctx.update_log.info(f"{user},{ind.number},digital_certificate,{ind.digital_certificate},'None',")
                 ind.digital_certificate = None
-            DigitalCertificateV2.retire_current(ind)  # else verify and download keep answering for the PDF
+            if ind.digital_certificate is None:
+                DigitalCertificateV2.retire_current(ind)  # else verify and download keep answering for the PDF
             ctx.update_log.info(f"{user},{ind.number},certificate,{ind.certificate},{value},")
         ind.certificate = value
         if changed:

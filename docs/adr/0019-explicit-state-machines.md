@@ -74,7 +74,8 @@ Finns en familjemedlem kvar går medlemskapet att öppna igen genom att utse
 den till huvudmedlem.
 
 Ett tomt intygsnummer tar bort ett pappersintyg, som förut, och rör aldrig
-ett digitalt intyg. Förut tog det bort det digitala numret. Det tömda
+ett digitalt intyg, inte heller på en rad som har båda numren. Förut tog det
+bort det digitala numret. Det tömda
 numret sparas som NULL: kolumnen är unik, så en tom sträng hade bara kunnat
 tömma en kanin i hela registret.
 

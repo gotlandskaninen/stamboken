@@ -54,7 +54,10 @@ EVENTS = {
         "`AssignPaperCertificate` (PATCH /api/individual, PATCH /api/individual/{number})",
         "manager, admin; ägare bara utan intyg",
     ),
-    Event.CLEAR_PAPER: ("`AssignPaperCertificate` med tomt nummer (samma anrop)", "manager, admin"),
+    Event.CLEAR_PAPER: (
+        "`AssignPaperCertificate` med tomt nummer (samma anrop)",
+        "manager, admin; ägare bara utan intyg",
+    ),
     Event.ISSUE_NUMBER: (
         "`IssueDigitalCertificate`, `assign_certificate_number`",
         "den som får utfärda intyg (uppfödaren, manager, admin)",
