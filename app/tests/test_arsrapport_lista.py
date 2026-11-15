@@ -440,6 +440,27 @@ class ListaTest(ArsrapportTest):
         self.assertNotIn("kopare", data["rabbits"][str(rabbit.id)]["sald"])
         self.assertIn("kopare", body["rabbits"][str(rabbit.id)]["sald"])  # stored_body copies, never mutates
 
+    def test_draft_refuses_private_keys_under_form(self):  # the client's whole-form copy
+        self.login("owner")
+        [rabbit] = self.rabbits(self.g1, 1)
+        buyer = {"name": "Test Köpare", "town": "Visby"}
+        sold = {"1": {"val": "sald", "sald": {"till": "utanfor", "ar": 2025, "manad": 6, "kopare": buyer}}}
+        for form in ({"rabbits": sold}, {"matrikel": {"telefon": "0700000000"}}, {"deep": [{"kopare": buyer}]}):
+            r = self.put_draft({"rabbits": {}, "form": form})
+            self.assertEqual(r.status_code, 400, (form, r.get_data(as_text=True)))
+        self.assertEqual(db.YearlyReportDraft.select().count(), 0)
+        # a null is only stripped, and the rest of the form is kept
+        clean = {
+            "rabbits": {str(rabbit.id): {"val": "sald", "sald": {"till": "utanfor", "kopare": None}}},
+            "matrikel": None,
+        }
+        r = self.put_draft({"rabbits": {}, "form": clean})
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        form = db.YearlyReportDraft.get().data["form"]
+        self.assertNotIn("matrikel", form)
+        self.assertNotIn("kopare", form["rabbits"][str(rabbit.id)]["sald"])
+        self.assertEqual(form["rabbits"][str(rabbit.id)]["sald"]["till"], "utanfor")
+
     def assert_round_closed(self, r):
         self.assertEqual(r.status_code, 409, r.get_data(as_text=True))
         self.assertEqual((r.json["detail"], r.json["code"]), ("Rundan är inte öppen.", "rundan_stangd"))

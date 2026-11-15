@@ -384,8 +384,29 @@ def report_list(herd, year, report=None):
     return list(rows.values())
 
 
+PRIVATE_KEYS = ("matrikel", "kopare")  # never stored in a draft, at any depth under `form`
+
+
+def _has_private(value):
+    """A non-null matrikel or kopare anywhere inside `value` (a null is only stripped)."""
+    if isinstance(value, dict):
+        return any((k in PRIVATE_KEYS and v is not None) or _has_private(v) for k, v in value.items())
+    if isinstance(value, list):
+        return any(_has_private(v) for v in value)
+    return False
+
+
+def _without_private(value):
+    if isinstance(value, dict):
+        return {k: _without_private(v) for k, v in value.items() if k not in PRIVATE_KEYS}
+    if isinstance(value, list):
+        return [_without_private(v) for v in value]
+    return value
+
+
 def stored_body(body: dict) -> dict:
-    """D10: the body without matrikel, every buyer (kopare), submission_key and revision; a copy, never mutated."""
+    """D10: the body without matrikel, every buyer (kopare), submission_key and revision; a copy, never mutated.
+    The client's whole-form copy (`form`) is stripped the same way, at any depth."""
     stored = {key: value for key, value in body.items() if key not in ("matrikel", "submission_key", "revision")}
     if isinstance(body.get("rabbits"), dict):
         stored["rabbits"] = {
@@ -394,16 +415,22 @@ def stored_body(body: dict) -> dict:
             else entry
             for key, entry in body["rabbits"].items()
         }
+    if "form" in body:
+        stored["form"] = _without_private(body["form"])
     return stored
 
 
 def _holds_private(body):
-    """A matrikel or a buyer in the body: never stored in a draft (section 6). A null is only stripped."""
+    """A matrikel or a buyer in the body or in its `form`: never stored in a draft (section 6)."""
     rabbits = body.get("rabbits")
     entries = rabbits.values() if isinstance(rabbits, dict) else ()
-    return body.get("matrikel") is not None or any(
-        isinstance(entry, dict) and isinstance(entry.get("sald"), dict) and entry["sald"].get("kopare") is not None
-        for entry in entries
+    return (
+        body.get("matrikel") is not None
+        or any(
+            isinstance(entry, dict) and isinstance(entry.get("sald"), dict) and entry["sald"].get("kopare") is not None
+            for entry in entries
+        )
+        or _has_private(body.get("form"))
     )
 
 
