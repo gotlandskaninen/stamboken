@@ -728,7 +728,7 @@ def transfer(item_id, document_id):
                 row = current_holder_row(individual.id)
             inbox.transferred(item, document, user, individual, row, linked=proven is not None)
             if proven is not None and proven.buyer_removed:  # the proof shows a buyer that was erased or purged
-                paths = inbox_purge.erase_buyer_from_inbox(proven.id)
+                paths = inbox_purge.erase_buyer_from_document(document.id)  # the sale's other documents went with the buyer
                 document = inbox.document_of(item, document_id)
             answer = {
                 "individual": Individual.get_by_id(individual.id).as_dict(),
