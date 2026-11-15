@@ -852,16 +852,6 @@ class TestQueueProofOfARegisteredSale(ErasureTest):
         self.assertEqual(db.InboxDocument.get_by_id(proof.id).herd_tracking_id, sale_id)
         self.assertEqual([c.name for c in db.BuyerContact.select()], [NAME])
 
-
-def _items_locked_before_the_rabbit(statements):
-    """The first lock on inbox_item comes before the first lock on individual (the queue's order)."""
-    first = {}
-    for index, (sql, _params) in enumerate(statements):
-        for table, lock in (("inbox_item", "FOR UPDATE"), ("individual", "FOR NO KEY UPDATE")):
-            if f'FROM "{table}"' in sql and lock in sql:
-                first.setdefault(table, index)
-    return "inbox_item" in first and first["inbox_item"] < first.get("individual", len(statements))
-
     def test_a_proof_of_a_sale_registered_in_the_sell_dialog_links_to_it(self):
         db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
         self.login("man")  # the sale goes in from the rabbit's page, with its buyer
@@ -869,7 +859,12 @@ def _items_locked_before_the_rabbit(statements):
             "/api/individual/G1-2111", json={"herd": "GX1", "selling_date": "2021-06-01", "buyer": BUYER}
         )
         self.assertEqual(resp.status_code, 200, resp.get_data(as_text=True))
-        sale = db.HerdTracking.get((db.HerdTracking.kind == "TRANSFER") & db.HerdTracking.voided_at.is_null(True))
+        rabbit = db.Individual.get(db.Individual.number == "G1-2111")
+        sale = db.HerdTracking.get(
+            (db.HerdTracking.individual == rabbit.id)
+            & (db.HerdTracking.kind == "TRANSFER")
+            & db.HerdTracking.voided_at.is_null(True)
+        )
         item = self.item(0, documents=1)
         inbox.take(item, self.helper, over=False)
         (proof,) = list(item.documents)
@@ -881,6 +876,16 @@ def _items_locked_before_the_rabbit(statements):
         self.assertEqual(resp.status_code, 200, resp.get_json())
         self.assertEqual(resp.get_json()["herd_tracking_id"], sale.id)
         self.assertEqual(db.BuyerContact.select().count(), 1)  # no second buyer
+
+
+def _items_locked_before_the_rabbit(statements):
+    """The first lock on inbox_item comes before the first lock on individual (the queue's order)."""
+    first = {}
+    for index, (sql, _params) in enumerate(statements):
+        for table, lock in (("inbox_item", "FOR UPDATE"), ("individual", "FOR NO KEY UPDATE")):
+            if f'FROM "{table}"' in sql and lock in sql:
+                first.setdefault(table, index)
+    return "inbox_item" in first and first["inbox_item"] < first.get("individual", len(statements))
 
 
 class TestLockOrder(PurgeTest):
