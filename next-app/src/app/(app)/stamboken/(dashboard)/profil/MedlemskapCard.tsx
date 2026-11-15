@@ -1,23 +1,17 @@
 import Link from "next/link";
 import type { Me, MyHerd } from "./types";
-import { ROLE_LABELS, STATUS_BADGE } from "./types";
+import { statusBadge } from "@/lib/membershipStatus";
+import { ROLE_LABELS } from "./types";
 import styles from "./profil.module.css";
 
 export function MedlemskapCard({ me, herds }: { me: Me; herds: MyHerd[] }) {
   const ms = me.membership;
-  const badge = STATUS_BADGE[ms.membership_status] ?? {
-    label: ms.membership_status,
-    className: "sb-badge",
-  };
-  const className = badge.className.replace(
-    "badgeWarning",
-    styles.badgeWarning,
-  );
+  const badge = statusBadge(ms.membership_status, styles.badgeWarning);
   return (
     <section className="sb-card">
       <div className={styles.cardHead}>
         <h3 className={`sb-h6 ${styles.cardTitle}`}>Medlemskap</h3>
-        <span className={className}>{badge.label}</span>
+        <span className={badge.className}>{badge.label}</span>
       </div>
       <div className={styles.cardBody}>
         <dl className={styles.kv}>

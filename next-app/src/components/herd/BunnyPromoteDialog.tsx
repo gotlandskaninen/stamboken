@@ -42,6 +42,7 @@ import {
   NumberConflictDialog,
   PAPER_NUMBER,
 } from "@/components/herd/NumberConflictDialog";
+import { renumberView, type RenumberFlow } from "./renumberFlow";
 
 const LitterNumberConflictDialog = dynamic(
   () =>
@@ -145,9 +146,9 @@ export function BunnyPromoteDialog({
   // Outcome state
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<SuccessState | null>(null);
-  const [conflictData, setConflictData] = useState<ConflictState | null>(null);
-  const [isRenumbering, setIsRenumbering] = useState(false);
-  const [renumberError, setRenumberError] = useState<string | null>(null);
+  const [renumber, setRenumber] = useState<RenumberFlow<ConflictState>>({
+    phase: "closed",
+  });
 
   // Re-init prefills if bunny changes (e.g. dialog reused for another bunny)
   useEffect(() => {
@@ -280,9 +281,12 @@ export function BunnyPromoteDialog({
       const year = new Date(breeding.birth_date).getFullYear();
       const orderResult = await checkLitterOrder(herdId, year);
       if (orderResult.success && !orderResult.data.consistent) {
-        setConflictData({
-          conflicts: orderResult.data.conflicts as ConflictState["conflicts"],
-          year,
+        setRenumber({
+          phase: "conflict",
+          data: {
+            conflicts: orderResult.data.conflicts as ConflictState["conflicts"],
+            year,
+          },
         });
         return false;
       }
@@ -299,22 +303,29 @@ export function BunnyPromoteDialog({
   };
 
   const handleRenumberConfirm = async () => {
-    if (!conflictData) return;
-    setIsRenumbering(true);
-    setRenumberError(null);
-    const result = await renumberLitters(herdId, conflictData.year, true);
-    setIsRenumbering(false);
-    if (result.success) {
-      setConflictData(null);
+    if (renumber.phase !== "conflict") return;
+    const { data } = renumber;
+    setRenumber({ phase: "renumbering", data });
+    let result;
+    try {
+      result = await renumberLitters(herdId, data.year, true);
+    } catch {
+      result = null; // dropped connection: back to the dialog with an error
+    }
+    if (result?.success) {
+      setRenumber({ phase: "closed" });
       startTransition(async () => {
         await doPromote();
       });
     } else {
-      setRenumberError(
-        result.errorStatus === 403
-          ? t("addRabbit.conflict.renumberManagerRequired")
-          : t("addRabbit.conflict.renumberFailed"),
-      );
+      setRenumber({
+        phase: "conflict",
+        data,
+        error:
+          result?.errorStatus === 403
+            ? t("addRabbit.conflict.renumberManagerRequired")
+            : t("addRabbit.conflict.renumberFailed"),
+      });
     }
   };
 
@@ -339,8 +350,7 @@ export function BunnyPromoteDialog({
     setLitterSize6w("");
     setError(null);
     setSuccess(null);
-    setConflictData(null);
-    setRenumberError(null);
+    setRenumber({ phase: "closed" });
   };
 
   const handleClose = () => {
@@ -758,17 +768,13 @@ export function BunnyPromoteDialog({
         />
       )}
       {/* Conflict resolution dialog */}
-      {conflictData && (
+      {renumber.phase !== "closed" && (
         <LitterNumberConflictDialog
           open
-          conflicts={conflictData.conflicts}
+          conflicts={renumber.data.conflicts}
           onConfirm={handleRenumberConfirm}
-          onClose={() => {
-            setConflictData(null);
-            setRenumberError(null);
-          }}
-          isRenumbering={isRenumbering}
-          error={renumberError}
+          onClose={() => setRenumber({ phase: "closed" })}
+          {...renumberView(renumber)}
         />
       )}
     </>

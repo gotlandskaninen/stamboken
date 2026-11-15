@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { fetchApi } from "@/lib/api";
+import type { MembershipStatus } from "@/lib/membershipStatus";
 import type { BillingAddress } from "./types";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
@@ -11,7 +12,7 @@ export type AddPersonResult =
   | { ok: false; error: string };
 
 export type MembershipPatch = Partial<BillingAddress> & {
-  membership_status?: string;
+  membership_status?: MembershipStatus;
   member_number?: number;
   address?: string | null;
   postal_code?: string | null;
@@ -36,7 +37,7 @@ export type MembershipCreateInput = {
   address?: string | null;
   postal_code?: string | null;
   city?: string | null;
-  membership_status?: string;
+  membership_status?: MembershipStatus;
   allocate?: boolean;
 };
 

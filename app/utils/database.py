@@ -44,6 +44,7 @@ from playhouse.postgres_ext import ArrayField, BinaryJSONField
 from playhouse.shortcuts import ReconnectMixin
 
 import utils.settings as settings
+from utils.certificate_lifecycle import state_of
 from utils.postal import format_postal_address, split_postal_address
 
 
@@ -60,8 +61,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # medlem/profil (29: structured postal address, member.user_id unique link) +
 # Phase 999.5 herd tracking kind/void (30) + Phase 999.8 genetics version (31) + genetics history (32) +
 # history algorithm version (33) + genetics epoch (34) + the individual command log (35) +
-# Individual.microchip (36) + billing address on membership and member_application (37).
-CURRENT_SCHEMA_VERSION = 37
+# Individual.microchip (36) + billing address on membership and member_application (37) +
+# retiring the PDF rows of digital certificates that a paper certificate replaced (38).
+CURRENT_SCHEMA_VERSION = 38
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -794,6 +796,18 @@ class Individual(BaseModel):
         """
         is_alive = not self.death_date and not self.death_note
         return is_alive
+
+    def cert_state(self):
+        """The certificate state (utils/certificate_lifecycle.py) of this instance's columns and the stored rows."""
+        current = DigitalCertificateV2.select().where(
+            DigitalCertificateV2.individual == self.id, DigitalCertificateV2.is_current
+        )
+        try:
+            return state_of(self.certificate, self.digital_certificate, current.exists())
+        except ValueError:
+            # No state allows it: both numbers (the old backend), or a current PDF row whose number was lost
+            # (migrate_37_to_38 leaves those). check() does not judge a writer that starts here.
+            return None
 
     def as_dict(self):
         """
@@ -1809,6 +1823,17 @@ class DigitalCertificateV2(BaseModel):
 
     class Meta:
         table_name = "digitalcertificatev2"
+
+    @classmethod
+    def retire_current(cls, individual):
+        """The only place is_current is turned off: the individual no longer has a current digital certificate."""
+        cls.update(is_current=False).where(cls.individual == individual, cls.is_current).execute()
+
+    @classmethod
+    def issue_current(cls, individual, **fields):
+        """The only place a current row is created: the previous one is retired first (one current per individual)."""
+        cls.retire_current(individual)
+        return cls.create(individual=individual, is_current=True, **fields)
 
 
 # At most one current certificate per individual — a concurrent re-issue race
@@ -3560,6 +3585,37 @@ def migrate_36_to_37():
         ).execute()
 
 
+def migrate_37_to_38():
+    """
+    Data only (ADR-0019): before AssignPaperCertificate retired the row, a paper certificate replacing a digital
+    one left the PDF row current, so verify and download kept answering for it. Retires those rows.
+
+    A current row whose rabbit has no number at all is left alone and counted: the old code also removed the
+    digital number on a blank paper number, and that certificate was never replaced. Its number is restored by
+    hand from the history, not withdrawn here.
+    """
+    with DATABASE.atomic():
+        lost = 0
+        if "digitalcertificatev2" in DATABASE.get_tables():
+            DATABASE.execute_sql(
+                "UPDATE digitalcertificatev2 SET is_current = FALSE WHERE is_current AND individual_id IN "
+                "(SELECT individual_id FROM individual "
+                "WHERE digital_certificate IS NULL AND coalesce(certificate, '') <> '')"
+            )
+            lost = DATABASE.execute_sql(
+                "SELECT count(*) FROM digitalcertificatev2 WHERE is_current AND individual_id IN "
+                "(SELECT individual_id FROM individual "
+                "WHERE digital_certificate IS NULL AND coalesce(certificate, '') = '')"
+            ).fetchone()[0]
+            if lost:
+                logger.warning("migrate_37_to_38: %s current certificate PDF rows have lost their number", lost)
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=38,
+            comment=f"retire PDF rows of replaced digital certificates; {lost} current rows without a number left",
+            applied=datetime.now(),
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4034,6 +4090,7 @@ MIGRATIONS = {
     (34, 35): migrate_34_to_35,  # ADR-0017 command log
     (35, 36): migrate_35_to_36,  # Individual.microchip
     (36, 37): migrate_36_to_37,  # billing address
+    (37, 38): migrate_37_to_38,  # ADR-0019 retire replaced certificate PDFs
 }
 
 
