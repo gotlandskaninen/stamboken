@@ -44,7 +44,7 @@ from utils.database import Weight  # isort: skip
 from utils.database import next_individual_number  # isort: skip
 from utils.database import ACTIVE_WINDOW_DAYS  # isort: skip
 from utils.database import OUTSIDE_GENEBANK_HERDS  # isort: skip
-from utils.database import BANK_PRIVACY_FIELDS, PRIVACY_LEVELS, account_end  # isort: skip
+from utils.database import ACCOUNT_MASK, BANK_PRIVACY_FIELDS, PRIVACY_LEVELS, account_end  # isort: skip
 from utils.database import ht_not_voided  # isort: skip
 from utils.database import ht_order_desc  # isort: skip
 from utils.database import latest_ht_per_individual  # isort: skip
@@ -1657,6 +1657,10 @@ def update_herd(form, user_uuid):
             # Bank privacy is fixed at 'private' (issue #33): dropped before validation, so a bad
             # stored value echoed by the legacy SPA cannot block the save. Response unchanged.
             form = {k: v for k, v in form.items() if k not in BANK_PRIVACY_FIELDS}
+            # A manager reads the account as '••45' and the legacy SPA echoes the herd back: a masked
+            # value is never an account number, so it must not overwrite the stored one.
+            if ACCOUNT_MASK in str(form.get("bank_account_number")):
+                del form["bank_account_number"]
             bad = invalid_privacy_field(form)
             if bad:
                 return {"status": "error", "message": f"Invalid value for {bad}"}
@@ -3467,7 +3471,9 @@ def get_yearly_reports(round_id: int, genebank_id: int, full_account: bool = Fal
                     "email": (r.herd.email if "noEmail" not in allow_publication else None),
                     "phone": (r.herd.mobile_phone if "noPhone" not in allow_publication else None),
                     "address": (r.herd.physical_address if "noAddress" not in allow_publication else None),
-                    "bank_account": r.herd.bank_account_number if full_account else account_end(r.herd.bank_account_number),
+                    "bank_account": (
+                        r.herd.bank_account_number if full_account else account_end(r.herd.bank_account_number)
+                    ),
                     "bank_name": r.herd.bank_name,
                     # Additional fields
                     "eligible_for_support": form_data.get("eligibleForSupport", False),

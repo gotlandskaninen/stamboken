@@ -603,9 +603,13 @@ class TestAuditBlueprint(DatabaseTest):
             self.login(username)
             response = self.client.get(f"/api/audit-log/herd/{herd.id}")
             self.assertEqual(response.status_code, 200)
-            seen = [e["new_data"].get("bank_account_number") for e in response.get_json()["data"] if e["new_data"]]
-            self.assertIn(expected, seen)
-            self.assertNotIn("1234-5" if expected != "1234-5" else "never", seen)
+            data = response.get_json()["data"]
+            new_values = [e["new_data"].get("bank_account_number") for e in data if e["new_data"]]
+            self.assertIn(expected, new_values)
+            if username == "man":
+                for entry in data:
+                    for snapshot in (entry["old_data"], entry["new_data"]):
+                        self.assertNotEqual((snapshot or {}).get("bank_account_number"), "1234-5")
 
     def test_get_audit_history_omits_editor_ip_address(self):
         """The editor's IP is PII (purge_user_audit_pii NULLs it, the admin reader

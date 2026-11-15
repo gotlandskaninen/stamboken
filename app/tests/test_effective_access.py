@@ -225,6 +225,18 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
         self.assertEqual(result, {"status": "updated"})
         self.assertEqual(db.Herd.get(herd.id).www, "w")
 
+    def test_manager_echoing_the_masked_account_does_not_overwrite_it(self):
+        """The legacy SPA PATCHes back what it read: '••45' must not replace the stored account."""
+        herd = self.herds[1]
+        herd.bank_account_number = "1234-5"
+        herd.save()
+        echoed = herd.filtered_dict(self.manager)
+        self.assertEqual(echoed["bank_account_number"], "••45")
+        echoed.update(www="new-www", id=herd.id)
+        self.assertEqual(da.update_herd(echoed, self.manager.uuid), {"status": "updated"})
+        herd = db.Herd.get_by_id(herd.id)
+        self.assertEqual((herd.bank_account_number, herd.www), ("1234-5", "new-www"))
+
     def test_add_herd_ignores_bank_privacy(self):
         result = da.add_herd(
             {"herd": "ZZ99", "genebank": self.genebanks[0].id, "bank_name_privacy": "public"},

@@ -441,6 +441,9 @@ PRIVACY_LEVELS = ("public", "authenticated", "private")
 BANK_PRIVACY_FIELDS = ("bank_account_number_privacy", "bank_name_privacy")
 
 
+ACCOUNT_MASK = "••"
+
+
 def account_end(value):
     """
     Only the last two digits of a bank account number, for readers who must not see all of it.
@@ -452,7 +455,7 @@ def account_end(value):
     """
     if not value:
         return value
-    return "••" + re.sub(r"\D", "", str(value))[-2:]
+    return ACCOUNT_MASK + re.sub(r"\D", "", str(value))[-2:]
 
 
 def remove_fields_by_privacy(data, access_level):
