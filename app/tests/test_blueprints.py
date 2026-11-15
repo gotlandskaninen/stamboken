@@ -1295,11 +1295,22 @@ class TestAuditBlueprint(DatabaseTest):
         entry = self._audit_update("herd", herd.id, bank_account_number_privacy="public", www="old")
         self._login_as("man")
         self.assertEqual(self._revert(entry).status_code, 200)
+        self.assertEqual(db.Herd.get_by_id(herd.id).www, "old")
         db.Herd.update(bank_name_privacy="private").where(db.Herd.id == herd.id).execute()
         resp = self._restore("herd", herd.id, entry)
         self.assertEqual(resp.status_code, 200, resp.get_json())
         row = db.Herd.get_by_id(herd.id)
         self.assertEqual((row.bank_account_number_privacy, row.bank_name_privacy), ("private", "private"))
+        self.assertEqual(row.www, "old")  # the other field was restored
+
+    def test_revert_of_a_bank_privacy_only_entry_is_a_silent_success(self):
+        """A migration 40 style entry that changed only bank privacy: nothing to write, no 400."""
+        herd = self.herds[0]
+        entry = self._audit_update("herd", herd.id, bank_account_number_privacy="public")
+        self._login_as("man")
+        resp = self._revert(entry)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(db.Herd.get_by_id(herd.id).bank_account_number_privacy, "private")
 
     def test_restore_does_not_overwrite_a_privacy_correction_made_after_its_read(self):
         """A correction of the invalid value between restore's read of the row and its UPDATE (a concurrent

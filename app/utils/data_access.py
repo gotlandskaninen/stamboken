@@ -4103,8 +4103,12 @@ def revert_audit_entry(audit_id, fields=None, is_admin=False):
     set_clauses = []
     params = []
     values = {}
+    bank_ignored = False
     for field in fields:
-        if field == pk_col or (table_name == "herd" and field in BANK_PRIVACY_FIELDS):  # fixed 'private' (#33)
+        if table_name == "herd" and field in BANK_PRIVACY_FIELDS:  # fixed 'private' (#33): ignored, not an error
+            bank_ignored = True
+            continue
+        if field == pk_col:
             continue
         if field not in valid_cols:
             return {"status": "error", "message": f"Ogiltigt fält: {field}"}, 400
@@ -4117,6 +4121,8 @@ def revert_audit_entry(audit_id, fields=None, is_admin=False):
         return {"status": "error", "message": refusal}, 409
 
     if not set_clauses:
+        if bank_ignored:  # only bank privacy was selected (e.g. a migration 40 entry): nothing to write
+            return {"status": "success", "message": "Ändring ångrad"}, 200
         return {"status": "error", "message": "Inga fält att ångra"}, 400
 
     params.append(entry.record_id)
