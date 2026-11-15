@@ -5,12 +5,14 @@ Synthetic herds, rabbits and addresses only.
 isort:skip_file
 """
 
+import json
 import uuid
 from datetime import date, datetime, time, timedelta
 from unittest import mock
 
 import utils.arsrapport as arsrapport
 import utils.database as db
+from utils.individual_commands import RecordAttestation, RecordDeath, SetMeasurements, TransferIndividual, execute
 
 from tests.ht_helpers import ht_row
 from tests.inbox_fixtures import InboxTest
@@ -69,8 +71,12 @@ class ArsrapportTest(InboxTest):
         self.addCleanup(patcher.stop)
 
     @staticmethod
-    def kvar(ind, vikt=None, hull=None):
-        return _entry(ind, "kvar", vikt=vikt, hull=hull)
+    def kvar(ind, vikt=None, hull=None, ej_vagd=None):
+        return _entry(ind, "kvar", vikt=vikt, hull=hull, ej_vagd=ej_vagd)
+
+    @staticmethod
+    def ej_angiven(ind):
+        return _entry(ind, "ej_angiven")
 
     @staticmethod
     def dod(ind, ar, manad, dag=None, slaktad=False):
@@ -100,3 +106,77 @@ class ArsrapportTest(InboxTest):
     def api(self, method, path, **json):
         """`method` on /api/v2/arsrapport`path`, with `json` as the body."""
         return self.client.open(f"/api/v2/arsrapport{path}", method=method, json=json)
+
+    def reported(self, herd, *entries, source="login", year=2025, **report_fields):
+        """
+        A submitted report for `herd` whose one submission wrote the entries' effects through execute, as the admin,
+        with Task 7's operation_ids and added_measurements; built by hand until submit exists.
+        """
+        admin = db.User.get_by_id(self.admin.id)
+        body = self.body(*entries, **report_fields)
+        sub = arsrapport.parse_submission(body, paper=False)
+        rows = {row["id"]: row for row in arsrapport.report_list(herd, year)}
+        report = db.YearlyHerdReport.create(
+            herd=herd,
+            round=arsrapport.get_round(year),
+            report_date=arsrapport.today(),
+            data=json.dumps(sub.report),
+            status="submitted",
+            source=source,
+            revision=1,
+            received_at=arsrapport.now(),
+        )
+        last, start = date(year, 12, 31), db.IndividualCommand.select(db.fn.MAX(db.IndividualCommand.id)).scalar()
+        added = []
+        for rabbit, entry in sub.rabbits.items():
+            effects = arsrapport.wanted(entry, rows[rabbit], None, herd, year, arsrapport.today())
+            for effect in sorted(effects, key=lambda e: arsrapport.order(e, last)):
+                command = self._command(effect, rabbit, herd, report, entry)
+                execute(admin, rabbit, lambda ctx, command=command: [command])
+                if effect.kind in ("weight", "bodyfat"):
+                    model = db.Weight if effect.kind == "weight" else db.Bodyfat
+                    # the newest row: weight is a real column, so 2.8 does not match it exactly (D17)
+                    row = model.filter(individual=rabbit).order_by(model.id.desc()).first()
+                    added.append(
+                        {
+                            "individual_id": rabbit,
+                            "kind": effect.kind,
+                            "id": row.id,
+                            "date": effect.date.isoformat(),
+                            "value": effect.value[0],
+                        }
+                    )
+        commands = db.IndividualCommand.select(db.IndividualCommand.operation_id).where(
+            db.IndividualCommand.id > (start or 0)
+        )
+        db.YearlyReportSubmission.create(
+            report=report,
+            submission_key=sub.key or uuid.uuid4(),
+            created_at=arsrapport.now(),
+            source=source,
+            user=admin,
+            operation_ids=[str(op) for (op,) in commands.tuples()],
+            added_measurements=added,
+            data=arsrapport.stored_body(body),
+            request_hash="test",
+        )
+        return report
+
+    @staticmethod
+    def _command(effect, rabbit, herd, report, entry):
+        when = effect.date.isoformat()
+        if effect.kind == "attest":
+            return RecordAttestation(herd.herd, when, report=report.id)
+        if effect.kind == "death":
+            return RecordDeath({"death_date": when, "butchered": effect.value[1], "death_note": effect.value[2]})
+        if effect.kind == "transfer":
+            return TransferIndividual(effect.value[0], when, buyer=entry.sald["kopare"])
+        if effect.kind == "weight":
+            stored = [
+                {"weight": w.weight, "date": w.weight_date.isoformat()} for w in db.Weight.filter(individual=rabbit)
+            ]
+            return SetMeasurements(weights=[*stored, {"weight": effect.value[0], "date": when}])
+        stored = [
+            {"bodyfat": b.bodyfat, "date": b.bodyfat_date.isoformat()} for b in db.Bodyfat.filter(individual=rabbit)
+        ]
+        return SetMeasurements(bodyfat=[*stored, {"bodyfat": effect.value[0], "date": when}])

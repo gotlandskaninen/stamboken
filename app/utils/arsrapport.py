@@ -1,12 +1,16 @@
 """
 The yearly report v2 (årsrapport): rounds, their activation per genebank, who may report for a herd, the herd's
-list (5.2), the report view and the server draft. The routes are in blueprints/arsrapport.py (ADR-0007).
+list (5.2), the report view, the server draft, the submission and its effects on the register, and the dry run.
+The routes are in blueprints/arsrapport.py (ADR-0007).
 """
 
+import calendar
 import json
 import re
-from dataclasses import dataclass
+import uuid
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from peewee import JOIN, IntegrityError
@@ -16,6 +20,7 @@ from utils.database import (
     DB_PROXY,
     LIFE_SIGN_KINDS,
     OUTSIDE_GENEBANK_HERDS,
+    Bodyfat,
     Breeding,
     Color,
     Herd,
@@ -23,15 +28,21 @@ from utils.database import (
     InboxDocument,
     InboxItem,
     Individual,
+    IndividualCommand,
+    Weight,
     YearlyHerdReport,
     YearlyReportDraft,
     YearlyReportRound,
     YearlyReportRoundGenebank,
     YearlyReportSubmission,
+    coerce_date,
     ht_not_voided,
+    ht_order_desc,
+    ht_sort_key,
     latest_ht_per_individual,
     not_voided,
 )
+from utils.herd_tracking import HerdTrackingInvalid, buyer_contact_fields, latest_death_op, reject_contact_details
 from utils.reference_population import _alive_by_note
 
 STOCKHOLM = ZoneInfo("Europe/Stockholm")
@@ -570,3 +581,543 @@ def my_reports(user):
         if row.genebank_id == herd.genebank_id
     ]
     return sorted(reports, key=lambda report: (-report["year"], report["herd"]))
+
+
+# The submission (the plan's body shape; section 6 for `report`)
+
+CHOICES = ("kvar", "dod", "sald", "ej_angiven")
+BODY_KEYS = (
+    "submission_key",
+    "revision",
+    "reason",
+    "rabbits",
+    "ending_genbank",
+    "membership_after_end",
+    "health",
+    "diseases",
+    "defects",
+    "message",
+)
+PAPER_KEYS = ("inbox_item_id", "received_on", "signed_on", "matrikel")
+ENTRY_KEYS = ("val", "vikt", "ej_vagd", "hull", "dod", "sald")
+DISEASES = ("myxomatos", "rvhd", "koccidios", "annat")
+TEXT_LIMITS = {
+    "reason": 500,
+    "anteckning": 500,
+    "beskrivning": 500,
+    "annat.namn": 100,
+    "alder": 50,
+    "ej_vagd": 200,
+    "message": 2000,
+}
+_VIKT = re.compile(r"-?\d+(?:[.,]\d+)?")
+
+
+@dataclass(frozen=True)
+class RabbitEntry:
+    individual_id: int
+    val: str
+    vikt: float | None
+    ej_vagd: str | None
+    hull: str | None
+    dod: dict | None  # {ar, manad, dag, slaktad, anteckning}
+    sald: dict | None  # {till, ar, manad, dag, kopare}: kopare is kopare's buyer object or None
+
+
+@dataclass(frozen=True)
+class Submission:
+    key: uuid.UUID | None
+    revision: int | None
+    reason: str | None
+    rabbits: dict[int, RabbitEntry]
+    report: dict  # yearlyherdreport.data (section 6); not_weighed and not_stated come from the rabbits
+    paper: dict | None  # inbox_item_id, received_on, signed_on (default received_on), matrikel
+
+
+def _bad(field_, detail):
+    return ArsrapportError(400, detail, field=field_)
+
+
+def _is_int(value):
+    return type(value) is int  # True is an int too
+
+
+def _keys(value, allowed, field_):
+    """`value` as an object without keys outside `allowed`."""
+    if not isinstance(value, dict):
+        raise _bad(field_, "Fältet ska vara ett objekt.")
+    if unknown := sorted(map(str, set(value) - set(allowed))):
+        raise _bad(field_, f"Okända fält: {', '.join(unknown)}.")
+    return value
+
+
+def _text(value, field_):
+    """Free text, stripped, within its limit and without phone numbers or e-mail addresses; blank is None."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise _bad(field_, "Fältet ska vara text.")
+    value = value.strip()
+    if len(value) > TEXT_LIMITS[field_]:
+        raise _bad(field_, f"Texten får vara högst {TEXT_LIMITS[field_]} tecken.")
+    try:
+        reject_contact_details(value)
+    except HerdTrackingInvalid as exc:
+        raise _bad(field_, "Skriv inga telefonnummer eller e-postadresser här.") from exc
+    return value or None
+
+
+def _vikt(value):
+    """D17: "2,8", "2.8" or a number, as a float; its range is check's (vikt_ogiltig)."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, str) and _VIKT.fullmatch(value.strip()):  # float() alone takes "nan" and "1e3"
+        return float(value.strip().replace(",", "."))
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and abs(value) < 1e6:  # not nan, inf, 10**400
+        return float(value)
+    raise _bad("vikt", "Ange vikten i kilo, till exempel 2,8.")
+
+
+def _month(value, field_, extra):
+    """{ar, manad, dag|null} of a real date, the day optional (5.3); the keys of `extra` are the caller's."""
+    value = _keys(value, ("ar", "manad", "dag", *extra), field_)
+    ar, manad, dag = value.get("ar"), value.get("manad"), value.get("dag")
+    try:
+        if not (_is_int(ar) and _is_int(manad) and (dag is None or _is_int(dag))):
+            raise ValueError
+        date(ar, manad, 1 if dag is None else dag)
+    except (ValueError, OverflowError) as exc:
+        raise _bad(field_, "Ange år och månad, och dagen om den är känd.") from exc
+    return {"ar": ar, "manad": manad, "dag": dag}
+
+
+def _entry(key, raw):
+    """One rabbit's answer, or None without a choice: the body's and a stored submission's alike (P39a)."""
+    if not (isinstance(key, str) and key.isdecimal()):
+        raise _bad("rabbits", "Ange kaninerna med sitt id.")
+    raw = _keys(raw, ENTRY_KEYS, "rabbits")
+    val, hull = raw.get("val"), raw.get("hull")
+    if val is None:
+        return None
+    if val not in CHOICES:
+        raise _bad("val", "Välj Finns kvar, Död eller slaktad eller Såld.")
+    if hull not in (None, "low", "normal", "high"):
+        raise _bad("hull", "Hullet är mager, normal eller fet.")
+    dod = sald = None  # the details of another choice are left behind
+    if val == "dod":
+        dod = _month(raw.get("dod"), "dod", ("slaktad", "anteckning"))
+        slaktad = raw["dod"].get("slaktad", False)
+        if not isinstance(slaktad, bool):
+            raise _bad("dod", "Slaktad är ja eller nej.")
+        dod |= {"slaktad": slaktad, "anteckning": _text(raw["dod"].get("anteckning"), "anteckning")}
+    if val == "sald":
+        sald = _month(raw.get("sald"), "sald", ("till", "kopare"))
+        till, kopare = raw["sald"].get("till"), raw["sald"].get("kopare")
+        if not isinstance(till, str) or not till:
+            raise _bad("sald", "Ange köparens besättning, eller utanför genbanken.")
+        if kopare is not None and (till != "utanfor" or not isinstance(kopare, dict)):
+            raise _bad("kopare", "Köparens namn och ort anges bara vid försäljning utanför genbanken.")
+        sald = {"till": till, **sald, "kopare": kopare}
+    return RabbitEntry(int(key), val, _vikt(raw.get("vikt")), _text(raw.get("ej_vagd"), "ej_vagd"), hull, dod, sald)
+
+
+def _entries(rabbits):
+    if not isinstance(rabbits, dict):
+        raise _bad("rabbits", "Fältet ska vara ett objekt.")
+    entries = (_entry(key, raw) for key, raw in rabbits.items())
+    return {entry.individual_id: entry for entry in entries if entry is not None}
+
+
+def _diseases(value):
+    diseases = {}
+    for name, raw in _keys(value or {}, DISEASES, "diseases").items():
+        raw = _keys(raw, ("namn", "antal", "alder") if name == "annat" else ("antal", "alder"), "diseases")
+        antal = raw.get("antal")
+        if not (_is_int(antal) and 0 <= antal <= 1000):
+            raise _bad("antal", "Ange antalet som ett heltal från 0 till 1000.")
+        diseases[name] = {"antal": antal, "alder": _text(raw.get("alder"), "alder")}
+        if name == "annat":
+            diseases[name] = {"namn": _text(raw.get("namn"), "annat.namn"), **diseases[name]}
+    return diseases
+
+
+def _defects(value):
+    if not isinstance(value or [], list):
+        raise _bad("defects", "Defekterna ska vara en lista.")
+    defects = []
+    for raw in value or []:
+        raw = _keys(raw, ("individual_id", "beskrivning", "foto"), "defects")
+        if not _is_int(raw.get("individual_id")) or raw.get("foto") is not None:  # D16: photos come in step 4
+            raise _bad("defects", "Ange kaninen med sitt id, utan foto.")
+        beskrivning = _text(raw.get("beskrivning"), "beskrivning")
+        defects.append({"individual_id": raw["individual_id"], "beskrivning": beskrivning, "foto": None})
+    return defects
+
+
+def _day(value, field_):
+    try:
+        return date.fromisoformat(value)
+    except (TypeError, ValueError) as exc:
+        raise _bad(field_, "Ange datumet som ÅÅÅÅ-MM-DD.") from exc
+
+
+def _paper(body):
+    item_id = body.get("inbox_item_id")
+    if not _is_int(item_id):
+        raise _bad("inbox_item_id", "Ange posten som ett nummer.")
+    received = _day(body.get("received_on"), "received_on")  # P40: required, the client always sends it
+    signed = _day(body["signed_on"], "signed_on") if body.get("signed_on") is not None else received
+    if signed > received:
+        raise _bad("signed_on", "Blankettens datum kan inte vara senare än dagen den kom in.")
+    if body.get("matrikel") is not None and not isinstance(body["matrikel"], dict):
+        raise _bad("matrikel", "Fältet ska vara ett objekt.")
+    return {"inbox_item_id": item_id, "received_on": received, "signed_on": signed, "matrikel": body.get("matrikel")}
+
+
+def parse_submission(body: dict, *, paper: bool) -> Submission:
+    """
+    The submission body, or a 400 that names the field. It reads neither the database nor the clock, so equal
+    bodies parse equal (D21). Free text passes reject_contact_details here, so that require_reason at write time
+    never turns it into a 422 on some rabbit.
+    """
+    _keys(body, BODY_KEYS + (PAPER_KEYS if paper else ()), "body")
+    try:
+        key = uuid.UUID(body["submission_key"]) if body.get("submission_key") is not None else None
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise _bad("submission_key", "Ange submission_key som ett UUID.") from exc
+    revision = body.get("revision")
+    if revision is not None and not _is_int(revision):
+        raise _bad("revision", "Ange revisionen som ett heltal.")
+    ending, membership, health = (body.get(k) for k in ("ending_genbank", "membership_after_end", "health"))
+    if ending is not None and not isinstance(ending, bool):
+        raise _bad("ending_genbank", "Fältet är ja eller nej.")
+    if membership not in (None, "kvar_utan_genbank", "avsluta_medlemskap"):
+        raise _bad("membership_after_end", "Välj vad som händer med medlemskapet.")
+    if health not in (None, "inga", "ja"):
+        raise _bad("health", "Välj Inga sjukdomsfall eller defekter, eller Ja.")
+    rabbits = _entries(body.get("rabbits") or {})
+    report = {
+        "ending_genbank": bool(ending),
+        "membership_after_end": membership,
+        "not_weighed": {str(rabbit): entry.ej_vagd for rabbit, entry in rabbits.items() if entry.ej_vagd},
+        "health": health,
+        "diseases": _diseases(body.get("diseases")),
+        "defects": _defects(body.get("defects")),
+        "not_stated": sorted(rabbit for rabbit, entry in rabbits.items() if entry.val == "ej_angiven"),
+        "message": _text(body.get("message"), "message") or "",
+    }
+    reason = _text(body.get("reason"), "reason")
+    return Submission(key, revision, reason, rabbits, report, _paper(body) if paper else None)
+
+
+def partial_date(ar, manad, dag, on: date) -> date:
+    """A death's or a sale's date (5.3): without the day, the month's last day, or `on` when that is earlier."""
+    if dag is not None:
+        return date(ar, manad, dag)
+    return min(date(ar, manad, calendar.monthrange(ar, manad)[1]), on)
+
+
+# The effects on the register: what a submission wants, what the report wrote, and the difference (5.4, 8, D5)
+
+RANK = {"death": 0, "transfer": 0, "weight": 1, "bodyfat": 1, "attest": 2}
+ROW_KINDS = ("attest", "transfer")  # the effects that are herd-tracking rows
+
+
+@dataclass(frozen=True)
+class Effect:
+    kind: str  # attest | death | transfer | weight | bodyfat
+    date: date
+    value: tuple  # attest (); death (death_date, butchered, note); transfer (herd_code,); weight (kg,); bodyfat (lvl,)
+    ref: object = field(default=None, compare=False)  # current effects: ht id, operation id or measurement row id
+
+
+def order(e: Effect, last: date) -> tuple:
+    """
+    The write order (5.4 point 3): by date, and on one day deaths and sales, then measurements, then the
+    attestation. A rabbit's effects up to `last` thus come before those after it.
+    """
+    return (e.date, RANK[e.kind])
+
+
+def _holder_on(individual_id, day, ops):
+    """The herd holding the rabbit on `day` by its active rows outside `ops` (D3b), else its origin herd."""
+    rows = (
+        HerdTracking.select(HerdTracking.herd, HerdTracking.operation_id)
+        .where(HerdTracking.individual == individual_id, ht_not_voided(), HerdTracking.herd_tracking_date <= day)
+        .order_by(*ht_order_desc())
+    )
+    holder = next((row.herd_id for row in rows if str(row.operation_id) not in ops), None)
+    return holder or Individual.select(Individual.origin_herd).where(Individual.id == individual_id).scalar()
+
+
+def _registered_death(individual_id, ops):
+    """The register has a death date the report did not write: RecordDeath never overwrites it with a month."""
+    died = Individual.select(Individual.death_date).where(Individual.id == individual_id).scalar()
+    return died is not None and str(latest_death_op(individual_id)) not in ops
+
+
+def _sale_code(herd, till):
+    """The buyer's herd code: "utanfor" is the genebank's GX1 or MX1."""
+    if till != "utanfor":
+        return till
+    outside = Herd.select(Herd.herd).where(Herd.genebank == herd.genebank_id, Herd.herd.in_(OUTSIDE_GENEBANK_HERDS))
+    return outside.scalar()
+
+
+def wanted(entry, rabbit_row, report, herd, year, on) -> list[Effect]:
+    """
+    The effects `entry` asks of the register (5.4 point 3); `rabbit_row` is the rabbit's report_list row, whose
+    state already leaves the report's own rows out (D3b), as the holder here does. The buyer is not part of a
+    transfer's value: the write passes kopare along.
+    """
+    last, ops = date(year, 12, 31), report_ops(report) if report is not None else set()
+    rabbit, dod, sald = entry.individual_id, entry.dod, entry.sald
+    if entry.val == "ej_angiven":
+        return []
+    died = dod and partial_date(dod["ar"], dod["manad"], dod["dag"], on)
+    sold = sald and partial_date(sald["ar"], sald["manad"], sald["dag"], on)
+    effects = []
+    if not ((died and died <= last) or (sold and sold <= last)):  # it lived on 31/12: what kvar gives
+        if rabbit_row["state"] == "att_valja" and _holder_on(rabbit, last, ops) == herd.id:
+            effects.append(Effect("attest", last, ()))
+        if entry.vikt is not None:
+            effects.append(Effect("weight", last, (round(entry.vikt, 2),)))
+        if entry.hull is not None:
+            effects.append(Effect("bodyfat", last, (entry.hull,)))
+    if died and not _registered_death(rabbit, ops):
+        effects.append(Effect("death", died, (died, dod["slaktad"], dod["anteckning"])))
+    if sold:
+        effects.append(Effect("transfer", sold, (_sale_code(herd, sald["till"]),)))
+    return effects
+
+
+def current(report, individual_id) -> list[Effect]:
+    """The effects the report's submissions wrote on the rabbit that are still in the register, with refs."""
+    if report is None:
+        return []
+    submissions = _submissions(report)
+    ops = {str(op) for submission in submissions for op in submission.operation_ids}
+    rows = (
+        HerdTracking.select(HerdTracking, Herd)
+        .join(Herd, on=(HerdTracking.herd == Herd.id))
+        .where(
+            HerdTracking.individual == individual_id,
+            ht_not_voided(),
+            ((HerdTracking.kind == "ATTESTATION") & (HerdTracking.yearly_herd_report == report.id))
+            | (HerdTracking.kind == "TRANSFER"),
+        )
+    )
+    effects = []
+    for row in rows:
+        day = coerce_date(row.herd_tracking_date)
+        if row.kind == "ATTESTATION":
+            effects.append(Effect("attest", day, (), ref=row.id))
+        elif str(row.operation_id) in ops:
+            effects.append(Effect("transfer", day, (row.herd.herd,), ref=row.id))
+    undone = IndividualCommand.select(IndividualCommand.undoes).where(
+        IndividualCommand.individual == individual_id, IndividualCommand.undoes.is_null(False)
+    )
+    deaths = IndividualCommand.select(IndividualCommand.operation_id, IndividualCommand.after).where(
+        IndividualCommand.individual == individual_id,
+        IndividualCommand.command == "RecordDeath",
+        IndividualCommand.operation_id.not_in(undone),
+    )
+    rabbit = None
+    for command in (command for command in deaths if str(command.operation_id) in ops):
+        rabbit = rabbit or Individual.get_by_id(individual_id)
+        # P39b: the log has the changed columns only; the others are the rabbit's
+        stored = {"death_date": _iso(rabbit.death_date), "butchered": rabbit.butchered, "death_note": rabbit.death_note}
+        after = stored | (command.after or {})
+        if after["death_date"] is not None:
+            day = coerce_date(after["death_date"])
+            value = (day, bool(after["butchered"]), after["death_note"] or None)
+            effects.append(Effect("death", day, value, ref=command.operation_id))
+    added = [m for submission in submissions for m in submission.added_measurements]
+    listed = [m for m in added if m["individual_id"] == individual_id]
+    ids = {kind: [m["id"] for m in listed if m["kind"] == kind] for kind in ("weight", "bodyfat")}
+    effects += [
+        Effect("weight", coerce_date(row.weight_date), (round(row.weight, 2),), ref=row.id)
+        for row in Weight.select().where(Weight.id.in_(ids["weight"]))
+    ]
+    effects += [
+        Effect("bodyfat", coerce_date(row.bodyfat_date), (row.bodyfat,), ref=row.id)
+        for row in Bodyfat.select().where(Bodyfat.id.in_(ids["bodyfat"]))
+    ]
+    return effects
+
+
+def same_sale(a, b) -> bool:
+    """The same sale as given (buyer herd and date); a buyer given again is a correction of it, not another sale."""
+    return bool(a and b) and all(a[key] == b[key] for key in ("till", "ar", "manad", "dag"))
+
+
+def diff(cur, want, last, prev_entry=None, entry=None) -> tuple[list[Effect], list[Effect]]:
+    """
+    (remove, add): what a change voids, undoes or deletes, and what it writes, given the rabbit's entry in the
+    latest submission as `prev_entry` (always with `entry`). Pure. Once a row goes, every later one comes off too,
+    so that each void hits the latest row, and the wanted ones from there on are written again.
+    """
+    if prev_entry and prev_entry.dod == entry.dod:  # same raw input: do not re-resolve the death date
+        want = [next((c for c in cur if c.kind == "death"), w) if w.kind == "death" else w for w in want]
+    fixed = bool(entry and entry.sald and entry.sald.get("kopare"))  # a buyer given again corrects it (Codex 8)
+    if prev_entry and same_sale(prev_entry.sald, entry.sald):  # a correction keeps the date
+        want = [next((c for c in cur if c.kind == "transfer"), w) if w.kind == "transfer" else w for w in want]
+
+    def rows(effects):
+        return [e for e in effects if e.kind in ("attest", "death", "transfer")]
+
+    gone = [c for c in rows(cur) if c not in want or (fixed and c.kind == "transfer")]
+    cut = min((order(c, last) for c in gone), default=None)
+    remove = [c for c in rows(cur) if cut is not None and order(c, last) >= cut]
+    add = [w for w in rows(want) if w not in cur or (cut is not None and order(w, last) >= cut)]
+    remove += [c for c in cur if c.kind in ("weight", "bodyfat") and c not in want]
+    add += [w for w in want if w.kind in ("weight", "bodyfat") and w not in cur]
+    return remove, add
+
+
+# The dry run (5.4 point 1)
+
+
+@dataclass(frozen=True)
+class Refusal:
+    individual_id: int | None
+    code: str
+    message: str
+
+
+REFUSALS = {  # the copy the client shows (P44)
+    "inte_klar": "Välj Finns kvar, Död eller slaktad eller Såld.",
+    "vikt_saknas": "Vuxna kaniner behöver vikt eller Ej vägd.",
+    "vikt_ogiltig": "Ange vikten i kilo, till exempel 2,8.",
+    "ej_angiven_digitalt": "Ej angiven finns bara när en blankett matas in.",
+    "forsaljning_skotare": "Försäljningen registreras av ägaren eller genbanksansvarig.",
+    "kopare_saknas": "Skriv köparens namn och ort.",
+    "senare_handelse": "Kaninen har en senare händelse i Stamboken. Genbanksansvarig kan rätta.",
+    "okand_kanin": "Kaninen finns inte i listan för besättningen.",
+    "halsa_saknas": "Välj Inga sjukdomsfall eller defekter, eller Ja.",
+    "orsak_kravs": "Skriv varför rapporten ändras.",
+    "rundan_stangd": "Rundan är stängd.",
+}
+# _validate_sale's user: the report never sells into another genebank, since TransferIndividual needs a reason there.
+_NOT_ADMIN = SimpleNamespace(is_admin=False)
+
+
+def _refusal(individual_id, code, message=None):
+    return Refusal(individual_id, code, message or REFUSALS[code])
+
+
+def _sale_view(individual_id, kept):
+    """_validate_sale's view of the rabbit on the rows `kept` (P38: built here, as as_dict needs a litter)."""
+    rabbit = Individual.get_by_id(individual_id)
+    holder = kept[-1].herd if kept else rabbit.origin_herd
+    return {
+        "herd": holder.herd,
+        "genebank_id": holder.genebank_id,
+        "is_registered": bool(rabbit.certificate or rabbit.digital_certificate),
+        "birth_date": _iso(rabbit.breeding.birth_date) if rabbit.breeding_id else None,
+        "herd_tracking": [{"date": _iso(coerce_date(row.herd_tracking_date))} for row in kept],
+    }
+
+
+def _register_refusals(individual_id, entry, remove, add):
+    """
+    What the writes would meet in the register: a void that is not the latest row (report_void_denial) or a row
+    behind a later one (DATE_BEFORE_LATEST), then each new sale under _validate_sale and the buyer rules.
+    """
+    if not any(e.kind in ROW_KINDS for e in remove + add):
+        return []
+    rows = list(
+        HerdTracking.select(HerdTracking, Herd)
+        .join(Herd, on=(HerdTracking.herd == Herd.id))
+        .where(HerdTracking.individual == individual_id, ht_not_voided())
+    )
+    gone = {e.ref for e in remove if e.kind in ROW_KINDS}
+    kept = sorted((row for row in rows if row.id not in gone), key=ht_sort_key)
+    if kept and (
+        any(ht_sort_key(row) < ht_sort_key(kept[-1]) for row in rows if row.id in gone)
+        or any(e.date < coerce_date(kept[-1].herd_tracking_date) for e in add if e.kind in ROW_KINDS)
+    ):
+        return [_refusal(individual_id, "senare_handelse")]
+    from blueprints.individuals import _validate_sale  # pylint: disable=import-outside-toplevel  # it imports utils
+
+    refusals = []
+    for sale in (e for e in add if e.kind == "transfer"):
+        kopare, form = entry.sald["kopare"], {"selling_date": sale.date.isoformat(), "herd": sale.value[0]}
+        if error := _validate_sale(_sale_view(individual_id, kept), form, _NOT_ADMIN, kopare):
+            refusals.append(_refusal(individual_id, "forsaljning", error.replace("Försäljningsdatumet", "Säljdatumet")))
+        if sale.value[0] in OUTSIDE_GENEBANK_HERDS and kopare is None:
+            refusals.append(_refusal(individual_id, "kopare_saknas"))
+        elif sale.value[0] in OUTSIDE_GENEBANK_HERDS:
+            try:
+                buyer_contact_fields(kopare)
+            except HerdTrackingInvalid as exc:
+                refusals.append(_refusal(individual_id, "kopare", str(exc)))
+    return refusals
+
+
+def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal], list[Refusal]]:
+    """
+    The dry run (5.4 point 1): (refusals, warnings) for the submission `sub` on the herd's current `report`, as of
+    `on`. It takes no lock and writes nothing; Skicka runs it again under the locks.
+    """
+    year, end = round_.report_year, round_.end_date
+    last, late = date(year, 12, 31), end is not None and on > end
+    # D11, P39c: after end_date an editor, and a helper's first entry, both with a reason
+    late_ok = (
+        late
+        and round_open(round_, herd.genebank_id, end)
+        and (access.editor or (access.role == "helper" and report is None))
+    )
+    if not (round_open(round_, herd.genebank_id, on) or late_ok):
+        return [_refusal(None, "rundan_stangd")], []
+    submissions = _submissions(report) if report is not None else []
+    latest = submissions[-1].data if submissions else None
+    before_entries = _entries(latest.get("rabbits") or {}) if latest else {}
+    refusals, warnings = [], []
+    if not sub.reason and (
+        (access.source == "paper" and report is not None) or (late and (access.editor or access.role == "helper"))
+    ):
+        refusals.append(_refusal(None, "orsak_kravs"))
+    # A null in the latest submission came from paper, or an editor kept it there (case 8 by phone).
+    kept_null = access.editor and latest is not None and latest.get("health") is None
+    if access.source != "paper" and sub.report["health"] is None and not kept_null:
+        refusals.append(_refusal(None, "halsa_saknas"))
+    rows = {row["id"]: row for row in report_list(herd, year, report)}
+    strangers = [rabbit for rabbit in sub.rabbits if rabbit not in rows]
+    strangers += [d["individual_id"] for d in sub.report["defects"] if d["individual_id"] not in rows]
+    refusals += [_refusal(rabbit, "okand_kanin") for rabbit in strangers]
+    for rabbit, row in rows.items():
+        entry, before = sub.rabbits.get(rabbit), before_entries.get(rabbit)
+        if entry is None:
+            if row["state"] == "att_valja":
+                refusals.append(_refusal(rabbit, "inte_klar"))
+            continue
+        kept = access.editor and before is not None and before.val == "ej_angiven"
+        if entry.val == "ej_angiven" and access.source != "paper" and not kept:
+            refusals.append(_refusal(rabbit, "ej_angiven_digitalt"))
+            continue
+        if entry == before:  # P39a: an unchanged choice writes nothing and is not refused
+            continue
+        if row["state"] != "att_valja":
+            refusals.append(_refusal(rabbit, "senare_handelse"))
+            continue
+        if entry.val == "ej_angiven":
+            continue
+        if entry.val == "sald" and not access.can_sell:
+            refusals.append(_refusal(rabbit, "forsaljning_skotare"))
+            continue
+        if entry.vikt is not None and not 0 < entry.vikt <= 20:
+            refusals.append(_refusal(rabbit, "vikt_ogiltig"))
+        elif entry.vikt is not None and not 1.0 <= entry.vikt <= 6.5:
+            warnings.append(Refusal(rabbit, "vikt_ovanlig", f"Stämmer {format(entry.vikt, 'g').replace('.', ',')} kg?"))
+        if (
+            entry.val == "kvar"
+            and row["adult"]
+            and entry.vikt is None
+            and not entry.ej_vagd
+            and not sub.report["ending_genbank"]
+        ):
+            refusals.append(_refusal(rabbit, "vikt_saknas"))
+        remove, add = diff(current(report, rabbit), wanted(entry, row, report, herd, year, on), last, before, entry)
+        refusals += _register_refusals(rabbit, entry, remove, add)
+    return refusals, warnings

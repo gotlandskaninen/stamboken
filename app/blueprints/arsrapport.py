@@ -6,6 +6,7 @@ See ADR-0007 for blueprint conventions.
 """
 
 import uuid
+from dataclasses import asdict
 from datetime import date, datetime
 
 import utils.arsrapport as arsrapport
@@ -120,3 +121,16 @@ def save_draft(herd, year):
         raise ArsrapportError(400, "Ange updated_at som en tidpunkt och submission_key som ett UUID.") from exc
     draft = arsrapport.save_draft(herd, round_, access, current_user, body.get("data"), updated_at, key, revision)
     return jsonify({"updated_at": draft.updated_at.isoformat(), "submission_key": str(key) if key else None})
+
+
+# [Next.js] The dry run before Skicka: every refusal per rabbit, and the warnings; nothing is written.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/torrkorning", methods=["POST"])
+@json_login_required
+def dry_run(herd, year):
+    herd, round_, access = _report_target(herd, year)
+    sub = arsrapport.parse_submission(request.get_json(silent=True), paper=access.source == "paper")
+    report = arsrapport.current_report(herd, round_)
+    refusals, warnings = arsrapport.check(herd, round_, access, report, sub, on=arsrapport.today())
+    return jsonify(
+        {"ok": not refusals, "refusals": [asdict(r) for r in refusals], "warnings": [asdict(w) for w in warnings]}
+    )
