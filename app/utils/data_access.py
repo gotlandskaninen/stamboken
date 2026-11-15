@@ -962,14 +962,15 @@ def _count_current_admins(locked_rows, exclude_user_id=None):
     )
 
 
-def _is_deadlock(exc):
-    """SQLSTATE 40P01 detection through the peewee wrapper. psycopg2 sets
+def _has_pgcode(exc, pgcode):
+    """SQLSTATE detection through the peewee wrapper. psycopg2 sets
     .pgcode on the ORIGINAL exception; peewee re-raises its own
     OperationalError with the original chained (__cause__/__context__)."""
-    for candidate in (exc, exc.__cause__, exc.__context__):
-        if candidate is not None and getattr(candidate, "pgcode", None) == "40P01":
-            return True
-    return False
+    return any(getattr(c, "pgcode", None) == pgcode for c in (exc, exc.__cause__, exc.__context__) if c is not None)
+
+
+def _is_deadlock(exc):
+    return _has_pgcode(exc, "40P01")
 
 
 def set_account_active(u_id, active, actor_user_id=None):
@@ -4277,28 +4278,28 @@ def purge_user_audit_pii(user_id: int, username: str, email: str) -> int:
             )
         # Marker row — documents the erasure, not the erased content; only
         # the numeric user_id survives, which IS the pseudonym key.
-        DATABASE.execute_sql(
-            """
-            INSERT INTO audit_log
-                (table_name, record_id, operation, new_data, changed_by)
-            VALUES
-                ('audit_log', %s, 'REDACT',
-                 jsonb_build_object('rows_redacted', %s::int), 'system')
-            """,
-            (marker_id, rows_redacted),
-        )
+        _write_redact_marker(marker_id, rows_redacted)
         DATABASE.execute_sql(AUDIT_LOG_NO_UPDATE_RULE)
     return rows_redacted
+
+
+def _write_redact_marker(record_id, rows_redacted):
+    """A REDACT row in audit_log: when and how many rows were redacted, never which."""
+    DATABASE.execute_sql(
+        """
+        INSERT INTO audit_log
+            (table_name, record_id, operation, new_data, changed_by)
+        VALUES
+            ('audit_log', %s, 'REDACT',
+             jsonb_build_object('rows_redacted', %s::int), 'system')
+        """,
+        (record_id, rows_redacted),
+    )
 
 
 AUDIT_IP_RETENTION = "12 months"  # a PostgreSQL interval: calendar months, as the privacy policy says
 AUDIT_IP_BATCH = 5000
 AUDIT_IP_LOCK_TIMEOUT = "5s"
-
-
-def _is_lock_timeout(exc):
-    """SQLSTATE 55P03 (lock_not_available) through the peewee wrapper, as _is_deadlock."""
-    return any(getattr(c, "pgcode", None) == "55P03" for c in (exc, exc.__cause__, exc.__context__) if c is not None)
 
 
 def purge_audit_ip(now, batch=AUDIT_IP_BATCH) -> int:
@@ -4331,22 +4332,20 @@ def purge_audit_ip(now, batch=AUDIT_IP_BATCH) -> int:
                     "UPDATE audit_log SET ip_address = NULL WHERE id = ANY(%s) AND ip_address IS NOT NULL",
                     ([row[1] for row in rows],),
                 )
-                total += cursor.rowcount or 0
+                changed = cursor.rowcount or 0
                 DATABASE.execute_sql(AUDIT_LOG_NO_UPDATE_RULE)
+            total += changed  # only once the batch has committed
             last = rows[-1]
     except OperationalError as exc:
-        if not _is_lock_timeout(exc):
+        if not _has_pgcode(exc, "55P03"):  # lock_not_available
             raise
-        logger.warning("purge_audit_ip: audit_log stayed locked after %s rows; the next run continues", total)
+        logger.error("purge_audit_ip: audit_log stayed locked after %s rows; the next run continues", total)
     finally:
-        if total:  # marker row: when and how many, never which
-            DATABASE.execute_sql(
-                """
-                INSERT INTO audit_log (table_name, record_id, operation, new_data, changed_by)
-                VALUES ('audit_log', %s, 'REDACT', jsonb_build_object('rows_redacted', %s::int), 'system')
-                """,
-                ("purge-ip-{:%Y%m%dT%H%M%SZ}".format(now.astimezone(timezone.utc)), total),
-            )
+        if total:
+            try:
+                _write_redact_marker("purge-ip-{:%Y%m%dT%H%M%SZ}".format(now.astimezone(timezone.utc)), total)
+            except Exception:  # pylint: disable=broad-except  # never hide the error that ended the run
+                logger.exception("purge_audit_ip: no marker row for %s rows", total)
     return total
 
 

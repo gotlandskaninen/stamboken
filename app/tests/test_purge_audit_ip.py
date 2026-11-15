@@ -123,6 +123,26 @@ class TestPurgeAuditIp(DatabaseTest):
         self.assertEqual(_row(row_id)["ip_address"], "192.0.2.7")
         self.assertEqual(_markers(), [])
 
+    def test_a_failed_batch_rolls_back_restores_the_rule_and_is_not_counted(self):
+        first, second = _seed(NOW - timedelta(days=401)), _seed(NOW - timedelta(days=400))
+        real = db.DB_PROXY.obj.execute_sql
+        creates = []
+
+        def fail_second_create(sql, params=None, *args, **kwargs):
+            if sql == db.AUDIT_LOG_NO_UPDATE_RULE:
+                creates.append(sql)
+                if len(creates) == 2:
+                    raise RuntimeError("connection lost")
+            return real(sql, params, *args, **kwargs)
+
+        with mock.patch.object(db.DB_PROXY.obj, "execute_sql", side_effect=fail_second_create):
+            with self.assertRaises(RuntimeError):
+                da.purge_audit_ip(NOW, batch=1)
+        self.assertEqual(_rule_exists(), 1)
+        self.assertIsNone(_row(first)["ip_address"])
+        self.assertEqual(_row(second)["ip_address"], "192.0.2.7")
+        self.assertEqual(_markers(), [("purge-ip-20261114T034500Z", {"rows_redacted": 1})])
+
     def test_migration_creates_the_partial_index(self):
         self.addCleanup(db.check_migrations)
         db.DATABASE.execute_sql("DROP INDEX IF EXISTS idx_audit_log_ip_retention")
@@ -138,7 +158,9 @@ class TestPurgeAuditIp(DatabaseTest):
             mock.patch.object(da, "purge_audit_ip", return_value=3) as purge,
             mock.patch.object(herdbook.genetics.ps, "_close_db_connection") as close,
         ):
-            herdbook._purge_audit_ip()
+            with self.assertLogs(herdbook.APP.logger, "INFO") as logs:
+                herdbook._purge_audit_ip()
+            self.assertIn("from 3 audit log rows", logs.output[0])
             self.assertIsNotNone(purge.call_args.args[0].tzinfo)
             purge.side_effect = RuntimeError("database gone")
             with self.assertRaises(RuntimeError):
