@@ -66,6 +66,24 @@ describe("OnboardingChecklist", () => {
     expect(screen.getByText(TITLE)).toBeInTheDocument();
   });
 
+  it("follows the selected herd when the herd switcher re-renders it", () => {
+    localStorage.setItem("sb-onboarding-dismissed-G9998", "1");
+    const { rerender } = renderList({});
+    const props = {
+      herd: { is_active: true, individuals: [] },
+      breedings: [],
+      onGoTab: vi.fn(),
+      onNewMating: vi.fn(),
+    };
+    rerender(<OnboardingChecklist {...props} herdNumber="G9998" />);
+    expect(screen.queryByText(TITLE)).toBeNull();
+    rerender(<OnboardingChecklist {...props} herdNumber="G9999" />);
+    expect(screen.getByText(TITLE)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Stäng" }));
+    rerender(<OnboardingChecklist {...props} herdNumber="G9997" />);
+    expect(screen.getByText(TITLE)).toBeInTheDocument();
+  });
+
   it("marks done steps and drops their action", () => {
     renderList({ herd: { is_active: true, individuals: [hane, hona] } });
     expect(screen.getAllByText("Klart")).toHaveLength(2);

@@ -74,15 +74,16 @@ export default function OnboardingChecklist({
   onNewMating: () => void;
 }) {
   const key = `sb-onboarding-dismissed-${herdNumber}`;
-  // Min besättning renders tabs only after hydration, so reading
+  // Read per render, not once: the herd switcher changes herdNumber without
+  // remounting. Min besättning renders tabs only after hydration, so reading
   // localStorage here cannot cause a markup mismatch.
-  const [dismissed, setDismissed] = React.useState(() => {
-    try {
-      return localStorage.getItem(key) === "1";
-    } catch {
-      return false;
-    }
-  });
+  const [closedKey, setClosedKey] = React.useState<string | null>(null);
+  let dismissed = closedKey === key;
+  try {
+    dismissed ||= localStorage.getItem(key) === "1";
+  } catch {
+    // unavailable storage: only this visit's Stäng counts
+  }
 
   // A herd that has bred is not new; a failed fetch shows nothing.
   if (dismissed || !herd?.is_active || breedings === null) return null;
@@ -115,7 +116,7 @@ export default function OnboardingChecklist({
     } catch {
       // unavailable storage: closed for this visit only
     }
-    setDismissed(true);
+    setClosedKey(key);
   };
 
   return (
