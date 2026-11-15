@@ -181,10 +181,17 @@ describe("SellRabbitDialog", () => {
       });
     });
 
-    it("offers GX1 again for a rabbit already in GX1", async () => {
-      render(dialog({ currentHerd: { herd: "GX1", herd_name: null } }));
-      const options = await openHerdOptions();
-      expect(options[0].textContent).toBe("GX1 – Utanför genbanken");
+    it("offers GX1 again for a rabbit already in GX1, to a manager only", async () => {
+      const inGx1 = { currentHerd: { herd: "GX1", herd_name: null } };
+      const { unmount } = render(dialog(inGx1));
+      expect((await openHerdOptions()).map((o) => o.textContent)).not.toContain(
+        "GX1 – Utanför genbanken",
+      );
+      unmount();
+      render(dialog({ ...inGx1, canResellOutside: true }));
+      expect((await openHerdOptions())[0].textContent).toBe(
+        "GX1 – Utanför genbanken",
+      );
     });
   });
 

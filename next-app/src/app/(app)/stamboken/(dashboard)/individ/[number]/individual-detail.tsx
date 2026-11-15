@@ -828,6 +828,9 @@ export function IndividualDetail({
         birthDate={individual.birth_date}
         herdTracking={individual.herd_tracking}
         isRegistered={individual.is_registered}
+        canResellOutside={
+          !!user.is_admin || !!user.is_manager?.includes(individual.genebank_id)
+        }
         isSaving={isPending}
         error={sellError}
       />

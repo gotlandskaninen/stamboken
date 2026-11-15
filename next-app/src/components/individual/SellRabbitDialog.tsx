@@ -70,6 +70,8 @@ interface SellRabbitDialogProps {
   birthDate: string | null | undefined;
   herdTracking: { date: string | null }[] | null | undefined;
   isRegistered: boolean;
+  /** Admin or a manager of the rabbit's genebank: only they may sell on from GX1 to GX1 (ADR-0016). */
+  canResellOutside?: boolean;
   isSaving: boolean;
   /** Problem detail from the last failed attempt; shown inline (the snackbar sits behind the modal). */
   error?: string | null;
@@ -111,6 +113,7 @@ function SellRabbitDialogContent({
   birthDate,
   herdTracking,
   isRegistered,
+  canResellOutside = false,
   isSaving,
   error,
 }: SellRabbitDialogProps) {
@@ -152,8 +155,9 @@ function SellRabbitDialogContent({
       (herds ?? [])
         .filter(
           (h) =>
-            // GX1 to GX1 too: a buyer outside the association sells to another.
-            (h.herd !== currentHerd.herd || isOutsideGenebankHerd(h.herd)) &&
+            // GX1 to GX1 too, for a manager: a buyer outside the association sells to another.
+            (h.herd !== currentHerd.herd ||
+              (canResellOutside && isOutsideGenebankHerd(h.herd))) &&
             (isRegistered || isOutsideGenebankHerd(h.herd)),
         )
         // The outside-genebank herd first: it is the common choice.
@@ -163,7 +167,7 @@ function SellRabbitDialogContent({
               Number(isOutsideGenebankHerd(a.herd)) ||
             a.herd.localeCompare(b.herd, "sv", { numeric: true }),
         ),
-    [herds, currentHerd.herd, isRegistered],
+    [herds, currentHerd.herd, isRegistered, canResellOutside],
   );
 
   const dateProblem = validateSaleDate(date, minDate, today);
