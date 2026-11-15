@@ -355,29 +355,65 @@ class TestLegacyGoogleLoginNeverAdopts(DatabaseTest):
         self.assertEqual(client.post("/api/unlink/google").get_data(as_text=True), "null")
         self.assertTrue(db.Authenticators.select().where(db.Authenticators.user == only_google.id).exists())
 
-    def test_two_unlinks_at_once_leave_one_way_to_sign_in(self):
-        """Two connections, as in test_admin_role_invariant: no locking by the test itself."""
-        both = da.register_user("tva@gotlandskaninen.se", "pass", validated=True)
-        db.Authenticators.create(user=both.id, auth="google", auth_data="sub-tva")
-        barrier = threading.Barrier(2, timeout=10)
-        outcomes = {}
+    def at_once(self, *calls):
+        """Each call on its own connection, as in test_admin_role_invariant; what they returned, falsy first."""
+        barrier = threading.Barrier(len(calls), timeout=10)
+        outcomes = []
 
-        def unlink(method):
+        def run(call):
             try:
                 barrier.wait()
-                outcomes[method] = da.unlink_account(both, method)
-            except Exception as exc:  # fails the assert below
-                outcomes[method] = exc
+                outcomes.append(call())
+            except Exception as exc:  # fails the caller's assert
+                outcomes.append(exc)
             finally:
                 db.DATABASE.close()
 
-        threads = [threading.Thread(target=unlink, args=(method,)) for method in ("google", "password")]
+        threads = [threading.Thread(target=run, args=(call,)) for call in calls]
         for thread in threads:
             thread.start()
         for thread in threads:
             thread.join(timeout=15)
-        self.assertEqual(sorted(outcomes.values(), key=bool), [None, True])
+        return sorted(
+            (bool(outcome) if not isinstance(outcome, Exception) else outcome for outcome in outcomes), key=str
+        )
+
+    def identities(self, **where):
+        rows = db.Authenticators.select().where(*(getattr(db.Authenticators, k) == v for k, v in where.items()))
+        return sorted(row.auth_data for row in rows if row.auth == "google")
+
+    def test_two_unlinks_at_once_leave_one_way_to_sign_in(self):
+        both = da.register_user("tva@gotlandskaninen.se", "pass", validated=True)
+        db.Authenticators.create(user=both.id, auth="google", auth_data="sub-tva")
+        done = self.at_once(lambda: da.unlink_account(both, "google"), lambda: da.unlink_account(both, "password"))
+        self.assertEqual(done, [False, True])
         self.assertEqual(db.Authenticators.select().where(db.Authenticators.user == both.id).count(), 1)
+
+    def test_two_accounts_linking_one_identity_at_once_give_it_to_one(self):
+        first = da.register_user("ett@gotlandskaninen.se", "pass", validated=True)
+        second = da.register_user("tva@gotlandskaninen.se", "pass", validated=True)
+        done = self.at_once(
+            lambda: da.link_account(first, "google", "sub-delad"),
+            lambda: da.link_account(second, "google", "sub-delad"),
+        )
+        self.assertEqual(done, [False, True])
+        self.assertEqual(self.identities(auth_data="sub-delad"), ["sub-delad"])
+
+    def test_two_links_to_one_account_at_once_leave_one_identity(self):
+        account = da.register_user("ett@gotlandskaninen.se", "pass", validated=True)
+        done = self.at_once(
+            lambda: da.link_account(account, "google", "sub-a"), lambda: da.link_account(account, "google", "sub-b")
+        )
+        self.assertEqual(done, [True, True])
+        self.assertEqual(len(self.identities(user=account.id)), 1)
+
+    def test_a_first_login_whose_link_fails_leaves_no_account(self):
+        client = APP.test_client(use_cookies=True)
+        with mock.patch.object(da, "link_account", return_value=None):
+            self.assertEqual(self.first_login(client).status_code, 500)
+        self.assertFalse(db.User.select().where(db.User.email == self.ADDRESS).exists())
+        self.first_login(client)  # and the next attempt is not refused for the address
+        self.assertEqual(client.get("/api/user").get_json()["email"], self.ADDRESS)
 
     def test_a_link_to_an_identity_another_account_holds_keeps_the_old_one(self):
         mine = da.register_user("min@gotlandskaninen.se", None, validated=True)

@@ -1548,45 +1548,49 @@ def external_login_handler(service):
     # holds the address: anyone can set their own User.email to the address of
     # a member who has not signed in yet and capture that login. The holder of
     # an existing account signs in as usual and links Google there.
-    try:
-        user = da.register_user(
-            accountdetails["email"],
-            None,
-            username=accountdetails["username"],
-            validated=auto_validate,
-            fullname=accountdetails["fullname"] if "fullname" in accountdetails else None,
-            privileges=[
-                {"level": "viewer", "genebank": 1},
-                {"level": "viewer", "genebank": 2},
-            ],
-            adopt_existing=False,
-        )
-    except da.AddressInUseError as taken:
-        APP.logger.warning("Refusing %s login: account #%d already holds the address", service, taken.user_id)
-        return (
-            "Det finns redan ett konto med den här e-postadressen. Logga in på det som vanligt och koppla "
-            "Google under ditt konto, eller kontakta admin@gotlandskaninen.se"
-        )
+    with db.DATABASE.atomic() as creation:
+        try:
+            user = da.register_user(
+                accountdetails["email"],
+                None,
+                username=accountdetails["username"],
+                validated=auto_validate,
+                fullname=accountdetails["fullname"] if "fullname" in accountdetails else None,
+                privileges=[
+                    {"level": "viewer", "genebank": 1},
+                    {"level": "viewer", "genebank": 2},
+                ],
+                adopt_existing=False,
+            )
+        except da.AddressInUseError as taken:
+            APP.logger.warning("Refusing %s login: account #%d already holds the address", service, taken.user_id)
+            return (
+                "Det finns redan ett konto med den här e-postadressen. Logga in på det som vanligt och koppla "
+                "Google under ditt konto, eller kontakta admin@gotlandskaninen.se"
+            )
 
-    if not user:
-        APP.logger.error(
-            "Automatic registering of user with e-mail %s (persistent id %s) for service %s FAILED",
-            accountdetails["email"],
-            persistent_id,
-            service,
-        )
-        return None
+        if not user:
+            APP.logger.error(
+                "Automatic registering of user with e-mail %s (persistent id %s) for service %s FAILED",
+                accountdetails["email"],
+                persistent_id,
+                service,
+            )
+            return None
 
-    linked = da.link_account(user, service, persistent_id)
+        linked = da.link_account(user, service, persistent_id)
 
-    if not linked:
-        APP.logger.error(
-            "Linked of of user with e-mail %s (persistent id %s) for service %s FAILED",
-            accountdetails["email"],
-            persistent_id,
-            service,
-        )
-        return None
+        if not linked:
+            # Without its identity the new account has no way in, and its address
+            # would refuse the next attempt.
+            creation.rollback()
+            APP.logger.error(
+                "Linked of of user with e-mail %s (persistent id %s) for service %s FAILED",
+                accountdetails["email"],
+                persistent_id,
+                service,
+            )
+            return "Inloggningen gick inte att slutföra. Försök igen, eller kontakta admin@gotlandskaninen.se", 500
 
     # google_email is the CMS identity; google_details() verified this address.
     db.User.update(google_email=accountdetails["email"]).where(db.User.id == user.id).execute()

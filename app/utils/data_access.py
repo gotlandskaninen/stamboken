@@ -613,6 +613,10 @@ def link_account(user, method, ident):
 
     try:
         with DATABASE.atomic():
+            # The account's row first, as unlink_account does, then the identity:
+            # no unique index stops two accounts from taking it at the same time.
+            User.select(User.id).where(User.id == user.id).for_update().get()
+            DATABASE.execute_sql("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"authenticator:{method}:{ident}",))
             taken = Authenticators.select().where(
                 (Authenticators.auth == method) & (Authenticators.auth_data == ident) & (Authenticators.user != user.id)
             )
