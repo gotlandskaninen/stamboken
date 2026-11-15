@@ -739,8 +739,8 @@ def _outside_pairs(voided, parsed):
     which then replaces it and takes its buyer (ADR-0016). Event index -> the voided row it replaces.
     """
 
-    def outside(herd):
-        return herd.herd in OUTSIDE_GENEBANK_HERDS
+    def outside(herd):  # a legacy move may have no herd
+        return herd is not None and herd.herd in OUTSIDE_GENEBANK_HERDS
 
     herds = {r.herd_id for r in voided if r.kind in MOVES and outside(r.herd)}
     herds |= {e["herd"].id for e in parsed if e["kind"] in MOVES and outside(e["herd"])}

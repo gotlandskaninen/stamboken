@@ -529,6 +529,10 @@ class TestVoid(BuyerBase):
         self.assertEqual((written.holder_contact_id, written.buyer_removed), (None, True))
         self.assertEqual(self._latest().id, resale.id)
 
+    def test_a_legacy_move_without_a_herd_is_not_outside(self):
+        legacy = SimpleNamespace(kind="TRANSFER", herd=None, herd_id=None)
+        self.assertEqual(herd_tracking_module._outside_pairs([legacy], []), {})
+
     def test_the_event_api_takes_no_holder_contact_id(self):
         event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "G2", "holder_contact_id": self.contact_id}
         (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [event], "Fel köpare")
