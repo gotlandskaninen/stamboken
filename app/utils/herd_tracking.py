@@ -767,18 +767,31 @@ def _refuse_buyerless_before_sale(rows, written):
             raise HerdTrackingConflict(BUYERLESS_BEFORE_SALE, rows=[_row_ref(later[0])])
 
 
+SELL_OUTSIDE_IN_THE_DIALOG = "Registrera en försäljning ut via säljdialogen, där köparen anges."
+
+
 def _refuse_buyerless_sales_outside(parsed, carried, voided):
     """
-    A TRANSFER into GX1/MX1 that a correction writes needs a buyer, carried over or new (ADR-0016), unless it
-    replaces a voided sale into the same herd that had none (a legacy sale, rewritten as it was).
+    A TRANSFER or CORRECTION into GX1/MX1 that a correction writes needs a buyer, carried over or new (ADR-0016).
+    The one exception: it rewrites a voided move into the same herd that had none (a legacy sale), and each such
+    row exempts one event only. Anything else goes through the sell dialog, which asks for the buyer.
     """
-    buyerless = {r.herd_id for r in voided if r.holder_contact_id is None and r.herd.herd in OUTSIDE_GENEBANK_HERDS}
+    exemptions = [
+        r.herd_id
+        for r in voided
+        if r.holder_contact_id is None
+        and r.kind in ("TRANSFER", "CORRECTION")
+        and r.herd.herd in OUTSIDE_GENEBANK_HERDS
+    ]
     for index, event in enumerate(parsed):
-        outside = event["kind"] == "TRANSFER" and event["herd"].herd in OUTSIDE_GENEBANK_HERDS
-        if outside and event["buyer"] is None and index not in carried and event["herd"].id not in buyerless:
-            raise HerdTrackingInvalid(
-                f"Händelse {index + 1}: ange köparens namn och ort (buyer) för en försäljning utanför föreningen."
-            )
+        if event["kind"] not in ("TRANSFER", "CORRECTION") or event["herd"].herd not in OUTSIDE_GENEBANK_HERDS:
+            continue
+        if event["buyer"] is not None or index in carried:
+            continue
+        if event["herd"].id in exemptions:
+            exemptions.remove(event["herd"].id)  # consumed: one buyerless row rewrites one buyerless row
+            continue
+        raise HerdTrackingInvalid(f"Händelse {index + 1}: {SELL_OUTSIDE_IN_THE_DIALOG}")
 
 
 def correct_herd_tracking(individual, user, operation_id, void_ids, events, reason=None):
