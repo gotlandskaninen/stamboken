@@ -247,27 +247,28 @@ def check_invariants(individual, rows, buyer_keys=None):
 
 
 def _buyer_key(contact_id, cache=None):
-    """The buyer as a person (name and town, any case); `cache` (a dict) is filled and read when given."""
+    """
+    The buyer as a person (name and town, any case). `cache` (from _buyer_keys) holds the (name, town) as stored
+    by id; it is filled and read when given.
+    """
     if cache is not None and contact_id in cache:
-        return cache[contact_id]
-    contact = BuyerContact.get_or_none(BuyerContact.id == contact_id) if contact_id else None
-    key = (contact.name.casefold(), contact.town.casefold()) if contact else None
-    if cache is not None:
-        cache[contact_id] = key
-    return key
+        stored = cache[contact_id]
+    else:
+        contact = BuyerContact.get_or_none(BuyerContact.id == contact_id) if contact_id else None
+        stored = (contact.name, contact.town) if contact else None
+        if cache is not None:
+            cache[contact_id] = stored
+    return (stored[0].casefold(), stored[1].casefold()) if stored else None
 
 
 def _buyer_keys(rows):
-    """_buyer_key for every buyer `rows` hold, in one query: the cache herd_tracking_history passes around."""
+    """(name, town) of every buyer `rows` hold, in one query: the cache herd_tracking_history passes around."""
     ids = {r.holder_contact_id for r in rows if r.holder_contact_id}
     keys = dict.fromkeys(ids)
     if ids:
-        for contact_id, name, town in (
-            BuyerContact.select(BuyerContact.id, BuyerContact.name, BuyerContact.town)
-            .where(BuyerContact.id.in_(list(ids)))
-            .tuples()
-        ):
-            keys[contact_id] = (name.casefold(), town.casefold())
+        query = BuyerContact.select(BuyerContact.id, BuyerContact.name, BuyerContact.town)
+        for contact_id, name, town in query.where(BuyerContact.id.in_(list(ids))).tuples():
+            keys[contact_id] = (name, town)
     keys[None] = None
     return keys
 
@@ -1050,16 +1051,22 @@ def can_see_buyer(user, genebank_id):
     return is_manager_of(user, genebank_id) or genebank_id in (user.is_helper or [])
 
 
-def _load_buyer_contact(contact_id):
-    """{"id", "name", "town"} for a BuyerContact id, never its contact details; None once erased."""
+def _load_buyer_contact(contact_id, buyer_keys=None):
+    """
+    {"id", "name", "town"} for a BuyerContact id, never its contact details; None once erased. From `buyer_keys`
+    (_buyer_keys) when the caller has them.
+    """
+    if buyer_keys is not None and contact_id in buyer_keys:
+        stored = buyer_keys[contact_id]
+        return {"id": contact_id, "name": stored[0], "town": stored[1]} if stored else None
     contact = BuyerContact.get_or_none(BuyerContact.id == contact_id)
     return {"id": contact.id, "name": contact.name, "town": contact.town} if contact else None
 
 
-def resolve_buyer(row, user, genebank_id):
+def resolve_buyer(row, user, genebank_id, buyer_keys=None):
     if row.holder_contact_id is None or not can_see_buyer(user, genebank_id):
         return None
-    contact = _load_buyer_contact(row.holder_contact_id)
+    contact = _load_buyer_contact(row.holder_contact_id, buyer_keys)
     if contact is not None:
         log_buyer_read(contact["id"], user)
     return contact
@@ -1384,7 +1391,7 @@ def herd_tracking_history(individual, user, include_voided=None):
                 "created_at": _iso(row.created_at),
                 "confirmed": None if row.transfer_id is None else _transfer_confirmed(row.transfer_id),
                 "notes": row.notes,
-                "buyer": resolve_buyer(row, user, row_genebank),
+                "buyer": resolve_buyer(row, user, row_genebank, buyer_keys),
                 "can_void": can_void,
                 "can_undo_sale": bool(
                     can_void and row.kind == "TRANSFER" and row.transfer_id is None and row.id == latest_id

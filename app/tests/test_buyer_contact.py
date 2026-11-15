@@ -308,11 +308,12 @@ class TestOutsideResale(BuyerBase):
     def test_the_history_reads_the_buyers_once_whatever_the_number_of_resales(self):
         for day, buyer in (("2022-01-01", OTHER), ("2022-02-01", {"name": "Third", "town": "Klintehamn"})):
             record_herd_tracking(self.rabbit, self.gx1, day, "TRANSFER", self.manager, buyer=buyer)
-        self._login("owner")  # sees no buyer: every buyer_contact read is the invariants'
-        with capture_sql() as statements:
-            response = self.client.get(f"/api/v2/individual/{RABBIT}/herd-tracking")
-        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
-        self.assertEqual(sum('FROM "buyer_contact"' in sql for sql, _params in statements), 1)
+        for username in ("owner", "man"):  # the manager also sees the buyers: from the same one read
+            self._login(username)
+            with capture_sql() as statements:
+                response = self.client.get(f"/api/v2/individual/{RABBIT}/herd-tracking")
+            self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+            self.assertEqual(sum('FROM "buyer_contact"' in sql for sql, _params in statements), 1, username)
 
     def test_a_correction_of_the_resale_carries_its_buyer(self):
         second = record_herd_tracking(self.rabbit, self.gx1, "2022-01-01", "TRANSFER", self.manager, buyer=OTHER)
