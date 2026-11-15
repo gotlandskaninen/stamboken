@@ -503,18 +503,36 @@ class TestRetention(BuyerBase):
         self.assertEqual([r.new_data for r in self._buyer_log(self.contact_id, "DELETE")], [{"action": "gallring_dod"}])
         self.assertEqual(buyer_contact.purge_dead(NOW), 0)
 
-    def test_contact_details_go_when_the_rabbit_is_sold_on(self):
+    def test_the_contact_consent_goes_when_the_rabbit_is_sold_on(self):
         self.assertEqual(buyer_contact.purge_sold_on(NOW), 0)
         record_herd_tracking(self.rabbit, self.herds[1], "2022-01-01", "TRANSFER", self.manager)  # buyback
         self.assertEqual(buyer_contact.purge_sold_on(NOW), 1)
         contact = self._contact(self.contact_id)
         self.assertEqual((contact.name, contact.town), (NAME, "Visby"))
-        self.assertEqual(
-            (contact.postal_address, contact.email, contact.phone, contact.contact_consent_at), (None, None, None, None)
-        )
+        self.assertEqual((contact.postal_address, contact.contact_consent_at), (None, None))
+        self.assertEqual(contact.phone, "070123")  # kept while the membership yes holds
         self.assertIsNotNone(contact.membership_optin_at)
         self.assertEqual(buyer_contact.purge_sold_on(NOW), 0)  # one audit row, not one a night
         self.assertEqual(len(self._buyer_log(self.contact_id, "UPDATE")), 1)
+        buyer_contact.purge_membership_optin(NOW + timedelta(days=366))
+        contact = self._contact(self.contact_id)
+        self.assertEqual((contact.phone, contact.membership_optin_at), (None, None))
+
+    def test_without_the_membership_yes_e_mail_and_phone_go_and_the_queue_forgets_the_address(self):
+        db.BuyerContact.update(membership_optin_at=None, email="z@example.org").where(
+            db.BuyerContact.id == self.contact_id
+        ).execute()
+        record_herd_tracking(self.rabbit, self.herds[1], "2022-01-01", "TRANSFER", self.manager)
+        with mock.patch("utils.buyer_contact.forget_recipient") as forget:
+            buyer_contact.purge_sold_on(NOW)
+        forget.assert_called_once_with("buyer_contact", self.contact_id)
+        contact = self._contact(self.contact_id)
+        self.assertEqual((contact.email, contact.phone), (None, None))
+
+    def test_a_correction_moving_the_rabbit_on_counts_as_sold_on(self):
+        event = {"kind": "CORRECTION", "date": "2022-01-01", "herd": "G2"}
+        correct_herd_tracking(self.rabbit, self.manager, None, [], [event])
+        self.assertEqual(buyer_contact.purge_sold_on(NOW), 1)
 
     def test_a_voided_later_sale_does_not_count(self):
         later = record_herd_tracking(self.rabbit, self.herds[1], "2022-01-01", "TRANSFER", self.manager)

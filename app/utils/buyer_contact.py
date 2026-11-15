@@ -20,6 +20,7 @@ from utils.herd_tracking import (
     log_buyer_contact,
 )
 from utils.inbox_purge import remove_originals
+from utils.mail import forget_recipient
 
 logger = logging.getLogger("herdbook.buyer_contact")
 
@@ -75,17 +76,28 @@ def purge_dead(now):  # pylint: disable=unused-argument  # every rule takes the 
 
 
 def _null_fields(where, changes, action):
-    """Nulls `changes` on the buyers matching `where`, one audit_log row each naming the columns; returns how many."""
+    """
+    Nulls `changes` on the buyers matching `where`, one audit_log row each naming the columns, and the mail queue
+    forgets an e-mail address that went; returns how many.
+    """
     with DB_PROXY.atomic():
-        changed = BuyerContact.update(changes).where(where).returning(BuyerContact.id).tuples()
-        ids = [contact_id for (contact_id,) in changed]
-        for contact_id in ids:
+        mailed = BuyerContact.select(BuyerContact.id).where(where & BuyerContact.email.is_null(False))
+        mailed = {contact_id for (contact_id,) in mailed.tuples()}
+        changed = list(
+            BuyerContact.update(changes).where(where).returning(BuyerContact.id, BuyerContact.email).tuples()
+        )
+        for contact_id, email in changed:
             log_buyer_contact(contact_id, "UPDATE", action, fields=[field.name for field in changes])
-    return len(ids)
+            if email is None and contact_id in mailed:
+                forget_recipient("buyer_contact", contact_id)
+    return len(changed)
 
 
 def purge_sold_on(now):  # pylint: disable=unused-argument  # every rule takes the clock
-    """Address, e-mail and phone once the rabbit is sold on: a later active TRANSFER than the buyer's sale."""
+    """
+    The contact consent once the rabbit has another holder: a later active TRANSFER or CORRECTION to another herd
+    or another buyer. Address, e-mail and phone go with it; e-mail and phone stay while the membership yes does.
+    """
     sale, later = HerdTracking, HerdTracking.alias()
     sold_on = (
         sale.select(sale.holder_contact)
@@ -94,24 +106,29 @@ def purge_sold_on(now):  # pylint: disable=unused-argument  # every rule takes t
             sale.holder_contact.is_null(False)
             & sale.voided_at.is_null(True)
             & later.voided_at.is_null(True)
-            & (later.kind == "TRANSFER")
+            & later.kind.in_(("TRANSFER", "CORRECTION"))
+            & (
+                (later.herd != sale.herd)
+                | later.holder_contact.is_null(True)
+                | (later.holder_contact != sale.holder_contact)
+            )
             & (
                 (later.herd_tracking_date > sale.herd_tracking_date)
                 | ((later.herd_tracking_date == sale.herd_tracking_date) & (later.id > sale.id))
             )
         )
     )
+    no_membership = BuyerContact.membership_optin_at.is_null(True)
     kept = (
         BuyerContact.postal_address.is_null(False)
-        | BuyerContact.email.is_null(False)
-        | BuyerContact.phone.is_null(False)
         | BuyerContact.contact_consent_at.is_null(False)
+        | (no_membership & (BuyerContact.email.is_null(False) | BuyerContact.phone.is_null(False)))
     )
     changes = {
         BuyerContact.postal_address: None,
-        BuyerContact.email: None,
-        BuyerContact.phone: None,
         BuyerContact.contact_consent_at: None,
+        BuyerContact.email: Case(None, [(no_membership, None)], BuyerContact.email),
+        BuyerContact.phone: Case(None, [(no_membership, None)], BuyerContact.phone),
     }
     return _null_fields(BuyerContact.id.in_(sold_on) & kept, changes, "gallring_salld_vidare")
 
