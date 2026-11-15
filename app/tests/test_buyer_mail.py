@@ -9,7 +9,7 @@ import subprocess
 import sys
 import textwrap
 import uuid
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from unittest import mock
 
 os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), "auth.ini.test"))
@@ -106,7 +106,7 @@ class TestInformationQueued(BuyerMailTest):
         for email in ("ZELDA@example.org ", EMAIL):  # one contact per sale, the address as the buyer typed it
             contact = db.BuyerContact.create(
                 name=NAME, town="Visby", email=email, membership_optin_at=datetime.now(timezone.utc),
-                created_by_user=self.manager,
+                created_by_user=self.manager, purge_at=db.BuyerContact.purge_at_for(date.today()),
             )  # fmt: skip
             queue_buyer_mails(contact, sale)
         self.assertEqual(
@@ -360,7 +360,7 @@ class TestEraseLink(PurgeTest):
         def contact(email):
             return db.BuyerContact.create(
                 name="Zelda", town="Visby", email=email, contact_consent_at=datetime.now(timezone.utc),
-                created_by_user=self.manager,
+                created_by_user=self.manager, purge_at=db.BuyerContact.purge_at_for(date.today()),
             ).id  # fmt: skip
 
         same, other = contact(" Zelda@Example.ORG "), contact("link@example.org")
