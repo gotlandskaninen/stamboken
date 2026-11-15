@@ -20,7 +20,12 @@ import utils.settings as settings  # noqa: E402
 from herdbook import limiter  # noqa: E402
 from utils import buyer_contact  # noqa: E402
 from utils.buyer_mail import ERASE_PURPOSE, queue_buyer_mails  # noqa: E402
-from utils.herd_tracking import correct_herd_tracking, delete_buyer_contacts, record_herd_tracking  # noqa: E402
+from utils.herd_tracking import (  # noqa: E402
+    attach_buyer,
+    correct_herd_tracking,
+    delete_buyer_contacts,
+    record_herd_tracking,
+)
 
 from tests.test_buyer_contact import BUYER, NAME, SALE_DATE, BuyerBase  # noqa: E402
 from tests.test_inbox_purge import PurgeTest  # noqa: E402
@@ -96,6 +101,27 @@ class TestInformationQueued(BuyerMailTest):
         correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
         self.assertEqual(self._latest().holder_contact_id, contact.id)  # the correction kept the buyer
         queue_buyer_mails(contact, self._latest())  # and if anything queued again, the dedupe_key holds
+        self.assertEqual(
+            [(row.kind, row.recipient_id) for row in self.mails()],
+            [("kopare.information", contact.id), ("kopare.medlemskap", contact.id)],
+        )
+
+    def test_a_correction_that_replaces_the_buyer_keeps_the_one_invitation(self):
+        optin = {**WITH_EMAIL, "membership_optin": True}
+        sale = self._sale(optin)
+        event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", "buyer": optin}  # the buyer typed again
+        (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
+        self.assertNotEqual(written.holder_contact_id, sale.holder_contact_id)
+        self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == sale.holder_contact_id))
+        (row,) = self.mails("kopare.medlemskap")  # the old contact's erasure did not cancel it
+        self.assertEqual((row.status, row.recipient_id), ("queued", written.holder_contact_id))
+        self.assertEqual(row.params["buyer_contact_id"], written.holder_contact_id)
+        self.assertEqual(len(self.send()), 2)  # the new contact's notice and the invitation
+
+    def test_a_buyer_a_proof_adds_to_a_sale_registered_without_one_is_mailed(self):
+        sale = record_herd_tracking(self.rabbit, self.gx1, SALE_DATE, "TRANSFER", self.manager)  # the legacy form
+        with db.DB_PROXY.atomic():
+            contact = attach_buyer(sale, {**WITH_EMAIL, "membership_optin": True}, self.manager)
         self.assertEqual(
             [(row.kind, row.recipient_id) for row in self.mails()],
             [("kopare.information", contact.id), ("kopare.medlemskap", contact.id)],

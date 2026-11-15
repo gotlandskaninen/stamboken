@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 from peewee import fn
 
 from utils import settings
-from utils.database import DB_PROXY, BuyerContact, DigitalCertificateV2, Individual
+from utils.database import DB_PROXY, BuyerContact, DigitalCertificateV2, Individual, MailMessage
 from utils.mail import address_hash, enqueue_mail, link_token, mail_kind, verify_link
 
 logger = logging.getLogger(__name__)
@@ -50,14 +50,12 @@ def queue_buyer_mails(contact, sale):
         who = contact.id
         if kind == "kopare.medlemskap" and settings.mail.link_secret:  # the address only as its HMAC
             who = address_hash(contact.email)
-        enqueue_mail(
-            kind,
-            "buyer_contact",
-            contact.id,
-            params,
-            genebank=sale.herd.genebank_id,
-            dedupe_key=f"{kind}:{who}",
-        )
+        key = f"{kind}:{who}"
+        queued = enqueue_mail(kind, "buyer_contact", contact.id, params, genebank=sale.herd.genebank_id, dedupe_key=key)
+        if queued is None and kind == "kopare.medlemskap":
+            # The one invitation follows the newest contact with the address: a correction that replaces the
+            # buyer erases the old contact, and forget_recipient would cancel the invitation with it.
+            MailMessage.update(recipient_id=contact.id, params=params).where(MailMessage.dedupe_key == key).execute()
 
 
 def _one_line(value):

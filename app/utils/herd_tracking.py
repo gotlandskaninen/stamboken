@@ -910,6 +910,7 @@ def attach_buyer(row, buyer, user):
     HerdTracking.update(holder_contact=contact).where(
         HerdTracking.id == row.id, HerdTracking.holder_contact.is_null(True)
     ).execute()
+    queue_buyer_mails(contact, row)
     return contact
 
 
