@@ -160,9 +160,8 @@ docker exec "$CONTAINER" bash -c "
 " 2>&1 | tee "${DUMP_LOG:-/dev/null}" | { grep -v '^$' || true; } | tail -5
 
 if [ -n "$MAIL_SEQ" ]; then
-	# shellcheck disable=SC2059  # the SQL template is the format
 	docker exec "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -v ON_ERROR_STOP=1 -qtAc \
-		"$(printf "$SET_MAIL_SEQ_SQL" "$MAIL_SEQ")" >/dev/null
+		"${SET_MAIL_SEQ_SQL//%s/$MAIL_SEQ}" >/dev/null
 fi
 
 # The copy carries prod's genetics version counter, which can repeat a number
