@@ -28,7 +28,7 @@ from utils.herd_tracking import (  # noqa: E402
     record_herd_tracking,
 )
 
-from tests.test_buyer_contact import BUYER, NAME, SALE_DATE, BuyerBase  # noqa: E402
+from tests.test_buyer_contact import BUYER, NAME, OLD, SALE_DATE, BuyerBase, on  # noqa: E402
 from tests.test_inbox_purge import PurgeTest  # noqa: E402
 from tests.test_mail_queue import HOST, SECRET, FakeRelay  # noqa: E402
 
@@ -100,7 +100,7 @@ class TestInformationQueued(BuyerMailTest):
         self.assertEqual((self.mails(), db.BuyerContact.select().count()), ([], 0))
 
     def test_a_late_sale_entered_as_a_correction_mails_its_buyer(self):
-        record_herd_tracking(self.rabbit, self.herds[1], "2022-01-01", "TRANSFER", self.manager)
+        record_herd_tracking(self.rabbit, self.herds[1], on(214), "TRANSFER", self.manager)
         event = {"kind": "TRANSFER", "date": SALE_DATE, "herd": "GX1", "buyer": WITH_EMAIL}
         (sale,) = correct_herd_tracking(self.rabbit, self.manager, None, [], [event])
         (row,) = self.mails()
@@ -109,7 +109,7 @@ class TestInformationQueued(BuyerMailTest):
     def test_a_corrected_sale_does_not_mail_the_buyer_twice(self):
         sale = self._sale({**WITH_EMAIL, "membership_optin": True})
         contact = db.BuyerContact.get_by_id(sale.holder_contact_id)
-        event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1"}  # no buyer: the sale's own is carried over
+        event = {"kind": "TRANSFER", "date": on(30), "herd": "GX1"}  # no buyer: the sale's own is carried over
         correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
         self.assertEqual(self._latest().holder_contact_id, contact.id)  # the correction kept the buyer
         queue_buyer_mails(contact, self._latest())  # and if anything queued again, the dedupe_key holds
@@ -124,7 +124,7 @@ class TestInformationQueued(BuyerMailTest):
     def test_a_correction_that_replaces_the_buyer_sends_one_invitation(self):
         optin = {**WITH_EMAIL, "membership_optin": True}
         sale = self._sale(optin)
-        event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", "buyer": optin}  # the buyer typed again
+        event = {"kind": "TRANSFER", "date": on(30), "herd": "GX1", "buyer": optin}  # the buyer typed again
         (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
         self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == sale.holder_contact_id))
         self.assertEqual(self.invitations("cancelled"), [sale.holder_contact_id])  # the old buyer's, erased with it
@@ -153,7 +153,7 @@ class TestInformationQueued(BuyerMailTest):
         optin = {**WITH_EMAIL, "membership_optin": True}
         first = self._sale(optin)
         second = record_herd_tracking(self.individuals[1], self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=optin)
-        event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", "buyer": {**optin, "email": "ny@example.org"}}
+        event = {"kind": "TRANSFER", "date": on(30), "herd": "GX1", "buyer": {**optin, "email": "ny@example.org"}}
         (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [first.id], [event], "Fel adress")
         self.assertEqual(self.invitations("queued"), [second.holder_contact_id, written.holder_contact_id])
 
@@ -162,7 +162,7 @@ class TestInformationQueued(BuyerMailTest):
         sale = self._sale(optin)
         claimed = db.MailMessage.update(status="sending", claim_token=uuid.uuid4())
         claimed.where(db.MailMessage.kind == "kopare.medlemskap").execute()
-        event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", "buyer": optin}
+        event = {"kind": "TRANSFER", "date": on(30), "herd": "GX1", "buyer": optin}
         (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
         self.assertEqual(self.invitations("cancelled"), [sale.holder_contact_id])  # lost its claim: not sent
         self.assertEqual(self.invitations("queued"), [written.holder_contact_id])
@@ -172,7 +172,7 @@ class TestInformationQueued(BuyerMailTest):
         optin = {**WITH_EMAIL, "membership_optin": True}
         sale = self._sale(optin)
         self.assertEqual(len(self.send()), 2)
-        event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", "buyer": optin}
+        event = {"kind": "TRANSFER", "date": on(30), "herd": "GX1", "buyer": optin}
         correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
         self.assertEqual(len(self.send()), 2)  # both mails again, as for any new buyer
 
@@ -180,10 +180,21 @@ class TestInformationQueued(BuyerMailTest):
         sale = self._sale(WITH_EMAIL)
         delete_buyer_contacts([sale.holder_contact_id], "invandning", None)
         mails = len(self.mails())
-        event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", "buyer": WITH_EMAIL}
+        event = {"kind": "TRANSFER", "date": on(30), "herd": "GX1", "buyer": WITH_EMAIL}
         with self.assertRaises(HerdTrackingConflict):
             correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
         self.assertEqual((len(self.mails()), db.BuyerContact.select().count()), (mails, 0))
+
+    def test_a_sale_past_its_five_years_stores_and_mails_no_buyer(self):
+        event = {"kind": "TRANSFER", "date": OLD, "herd": "GX1", "buyer": {**WITH_EMAIL, "membership_optin": True}}
+        (sale,) = correct_herd_tracking(self.rabbit, self.manager, None, [], [event])  # through a correction
+        self.assertEqual((sale.holder_contact_id, sale.buyer_removed, self.mails()), (None, True, []))
+
+    def test_a_proof_of_a_sale_past_its_five_years_stores_and_mails_no_buyer(self):
+        sale = record_herd_tracking(self.rabbit, self.gx1, OLD, "TRANSFER", self.manager)
+        with db.DB_PROXY.atomic():
+            self.assertIsNone(attach_buyer(sale, WITH_EMAIL, self.manager))
+        self.assertEqual((self.mails(), db.BuyerContact.select().count()), ([], 0))
 
     def test_a_buyer_a_proof_adds_to_a_sale_registered_without_one_is_mailed(self):
         sale = record_herd_tracking(self.rabbit, self.gx1, SALE_DATE, "TRANSFER", self.manager)  # the legacy form

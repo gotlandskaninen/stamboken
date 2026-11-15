@@ -31,7 +31,7 @@ export default function SessionExpiredModal() {
     const returnTo = encodeURIComponent(
       window.location.pathname + window.location.search,
     );
-    window.location.href = `/api/login/google?return_to=${returnTo}`;
+    window.location.href = `/auth/sign-in?return_to=${returnTo}`;
   };
 
   return (

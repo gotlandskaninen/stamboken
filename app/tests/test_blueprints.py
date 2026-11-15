@@ -26,8 +26,8 @@ from blueprints.common import (  # noqa: E402
 from flask import Flask  # noqa: E402
 from flask_login import LoginManager, UserMixin  # noqa: E402
 from herdbook import APP, limiter  # noqa: E402
-from utils.cert_service_v2 import assign_certificate_number  # noqa: E402
 from utils.herd_tracking import BIRTH_HERD_CHANGED_REASON, replace_birth_row  # noqa: E402
+from utils.individual_commands import assign_certificate_number  # noqa: E402
 from utils.individual_number_v2 import renumber_litters  # noqa: E402
 
 from tests.database_test import DatabaseTest  # noqa: E402
@@ -1286,6 +1286,31 @@ class TestAuditBlueprint(DatabaseTest):
                 self.assertEqual(resp.status_code, 409, resp.get_json())
                 self.assertIn("name_privacy", resp.get_json()["message"])
         self.assertNotEqual(db.Herd.get_by_id(herd.id).herd_name, "Gammalt namn")
+
+    def test_revert_and_restore_never_write_bank_privacy(self):
+        """Issue #33: bank *_privacy stays 'private'. An old audit value ('public', or a dirty one) is
+        skipped by revert and restore, and does not block the other fields."""
+        herd = self.herds[0]
+        db.Herd.update(bank_name_privacy="Public ").where(db.Herd.id == herd.id).execute()
+        entry = self._audit_update("herd", herd.id, bank_account_number_privacy="public", www="old")
+        self._login_as("man")
+        self.assertEqual(self._revert(entry).status_code, 200)
+        self.assertEqual(db.Herd.get_by_id(herd.id).www, "old")
+        db.Herd.update(bank_name_privacy="private").where(db.Herd.id == herd.id).execute()
+        resp = self._restore("herd", herd.id, entry)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        row = db.Herd.get_by_id(herd.id)
+        self.assertEqual((row.bank_account_number_privacy, row.bank_name_privacy), ("private", "private"))
+        self.assertEqual(row.www, "old")  # the other field was restored
+
+    def test_revert_of_a_bank_privacy_only_entry_is_a_silent_success(self):
+        """A migration 40 style entry that changed only bank privacy: nothing to write, no 400."""
+        herd = self.herds[0]
+        entry = self._audit_update("herd", herd.id, bank_account_number_privacy="public")
+        self._login_as("man")
+        resp = self._revert(entry)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(db.Herd.get_by_id(herd.id).bank_account_number_privacy, "private")
 
     def test_restore_does_not_overwrite_a_privacy_correction_made_after_its_read(self):
         """A correction of the invalid value between restore's read of the row and its UPDATE (a concurrent

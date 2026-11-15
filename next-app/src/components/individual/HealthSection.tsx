@@ -17,9 +17,9 @@ interface HealthSectionProps {
 }
 
 const bodyfatLabels: Record<string, string> = {
-  low: "Låg",
+  low: "Mager",
   normal: "Normal",
-  high: "Hög",
+  high: "Fet",
 };
 
 export function HealthSection({ individual }: HealthSectionProps) {

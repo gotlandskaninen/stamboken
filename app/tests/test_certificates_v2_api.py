@@ -819,7 +819,7 @@ class TestCertificateV2Preview(CertV2Mixin, FlaskTest):
         self.assertEqual(observed, {"v2_kit_of_voided_mother": 200, "v2_founder": 200, "legacy_founder": 200})
 
     def test_founder_can_be_issued_a_certificate(self):
-        """Issuance for a rabbit with unknown parents works too, legacy and v2 (no 500, no "Invalid parents")."""
+        """Issuance for a rabbit with unknown parents works too in v2 (no 500, no "Invalid parents")."""
         self._start_mock_aws()
 
         def status(request):
@@ -828,18 +828,13 @@ class TestCertificateV2Preview(CertV2Mixin, FlaskTest):
             except Exception as exc:  # TESTING=True propagates an unhandled error (a 500 in production)
                 return f"unhandled {type(exc).__name__}: {exc}"
 
-        legacy, v2 = self.parents[0], self.parents[1]  # G1-1911, G2-1711: founders, litters without parents
+        v2 = self.parents[1]  # G2-1711: a founder, litter without parents
         with self.app as context:
             context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
             observed = {
-                "legacy_issue": status(
-                    lambda: context.post(
-                        f"/api/certificates/issue/{legacy.number}", json={"litter_size": 2, "litter_size6w": 2}
-                    )
-                ),
                 "v2_issue": status(lambda: context.post(f"/api/v2/certificates/issue/{v2.number}", json={})),
             }
-        self.assertEqual(observed, {"legacy_issue": 200, "v2_issue": 201})
+        self.assertEqual(observed, {"v2_issue": 201})
 
 
 class TestCertificateV2Verify(CertV2Mixin, FlaskTest):

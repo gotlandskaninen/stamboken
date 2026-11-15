@@ -45,6 +45,7 @@ from playhouse.postgres_ext import ArrayField, BinaryJSONField
 from playhouse.shortcuts import ReconnectMixin
 
 import utils.settings as settings
+from utils.certificate_lifecycle import state_of
 from utils.postal import format_postal_address, split_postal_address
 
 
@@ -61,9 +62,11 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # medlem/profil (29: structured postal address, member.user_id unique link) +
 # Phase 999.5 herd tracking kind/void (30) + Phase 999.8 genetics version (31) + genetics history (32) +
 # history algorithm version (33) + genetics epoch (34) + the individual command log (35) +
-# Individual.microchip (36) + billing address on membership and member_application (37) + the mail queue (38) +
-# the intake queue (39).
-CURRENT_SCHEMA_VERSION = 41
+# Individual.microchip (36) + billing address on membership and member_application (37) +
+# retiring the PDF rows of digital certificates that a paper certificate replaced (38) +
+# audit_log IP retention index (39) + herd bank privacy reset (40) + the mail queue (41) +
+# the intake queue (42) and its retention (43) + buyer_contact (44).
+CURRENT_SCHEMA_VERSION = 44
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -429,6 +432,10 @@ class Herd(BaseModel):
 
 PRIVACY_LEVELS = ("public", "authenticated", "private")
 
+# The bank details are only for support payouts: never shown to other members,
+# whatever the stored level says (issue #33).
+BANK_PRIVACY_FIELDS = ("bank_account_number_privacy", "bank_name_privacy")
+
 
 def remove_fields_by_privacy(data, access_level):
     """
@@ -449,6 +456,15 @@ def remove_fields_by_privacy(data, access_level):
     {'mid': 4, 'low': 5}
     >>> remove_fields_by_privacy(test_data, 'public')
     {'low': 5}
+
+    The bank details are always private, whatever level is stored.
+
+    >>> test_data = {
+    ...     'bank_name': 'B',
+    ...     'bank_name_privacy': 'public',
+    ... }
+    >>> remove_fields_by_privacy(test_data, 'public')
+    {}
 
     The privacy level of the fields 'latitude' and 'longitude' are
     under 'coordinates_privacy'.
@@ -487,6 +503,12 @@ def remove_fields_by_privacy(data, access_level):
         # remove the access level value if the user doesn't have private access
         if access_level != "private":
             del data[field]
+
+    # Bank details: only for private access, whatever the stored level says (issue #33). Dropped
+    # here and not via the *_privacy keys, so a row loaded without them cannot let them through.
+    if access_level != "private":
+        data.pop("bank_account_number", None)
+        data.pop("bank_name", None)
 
     return data
 
@@ -805,6 +827,18 @@ class Individual(BaseModel):
         """
         is_alive = not self.death_date and not self.death_note
         return is_alive
+
+    def cert_state(self):
+        """The certificate state (utils/certificate_lifecycle.py) of this instance's columns and the stored rows."""
+        current = DigitalCertificateV2.select().where(
+            DigitalCertificateV2.individual == self.id, DigitalCertificateV2.is_current
+        )
+        try:
+            return state_of(self.certificate, self.digital_certificate, current.exists())
+        except ValueError:
+            # No state allows it: both numbers (the old backend), or a current PDF row whose number was lost
+            # (migrate_37_to_38 leaves those). check() does not judge a writer that starts here.
+            return None
 
     def as_dict(self):
         """
@@ -1390,10 +1424,16 @@ class User(BaseModel, UserMixin):
             "google_name": self.google_name,
             "google_email": self.google_email,
             "use_google_picture": self.use_google_picture,
-            # Admins are implicitly promoted to v2 prod; the stored flag is the
-            # per-user promotion mechanism for everyone else (Phase 999.2).
-            "v2_prod_access": self.v2_prod_access or self.is_admin,
+            "v2_prod_access": self.v2_promoted,
         }
+
+    @property
+    def v2_promoted(self):
+        """
+        Admins are implicitly promoted to v2 prod; the stored flag is the
+        per-user promotion mechanism for everyone else (Phase 999.2).
+        """
+        return self.v2_prod_access or self.is_admin
 
     def get_genebanks(self):
         """
@@ -1883,6 +1923,17 @@ class DigitalCertificateV2(BaseModel):
 
     class Meta:
         table_name = "digitalcertificatev2"
+
+    @classmethod
+    def retire_current(cls, individual):
+        """The only place is_current is turned off: the individual no longer has a current digital certificate."""
+        cls.update(is_current=False).where(cls.individual == individual, cls.is_current).execute()
+
+    @classmethod
+    def issue_current(cls, individual, **fields):
+        """The only place a current row is created: the previous one is retired first (one current per individual)."""
+        cls.retire_current(individual)
+        return cls.create(individual=individual, is_current=True, **fields)
 
 
 # At most one current certificate per individual — a concurrent re-issue race
@@ -2965,6 +3016,16 @@ AUDITED_TABLES = {
 }
 
 
+# Append-only audit_log (NFR-S8), re-created by every path that lifts it (migration 28 keeps its own literal).
+AUDIT_LOG_NO_UPDATE_RULE = "CREATE RULE audit_log_no_update AS ON UPDATE TO audit_log DO INSTEAD NOTHING"
+
+# Only rows still holding an IP address, so the nightly purge reads one day of rows once it has caught up.
+AUDIT_IP_INDEX_SQL = """
+    CREATE INDEX IF NOT EXISTS idx_audit_log_ip_retention
+        ON audit_log (changed_at, id) WHERE ip_address IS NOT NULL
+"""
+
+
 def _create_audit_table_and_triggers():
     """
     Create the audit_log table (if missing) via raw SQL DDL, then create or
@@ -2999,12 +3060,12 @@ def _create_audit_table_and_triggers():
         CREATE INDEX IF NOT EXISTS idx_audit_log_changed_by
             ON audit_log (changed_by);
     """)
+    DATABASE.execute_sql(AUDIT_IP_INDEX_SQL)
 
     # Append-only: block UPDATE/DELETE on audit_log (NFR-S8)
-    DATABASE.execute_sql("""
+    DATABASE.execute_sql(f"""
         DO $$ BEGIN
-            CREATE RULE audit_log_no_update AS ON UPDATE TO audit_log
-                DO INSTEAD NOTHING;
+            {AUDIT_LOG_NO_UPDATE_RULE};
         EXCEPTION WHEN duplicate_object THEN NULL;
         END $$;
     """)
@@ -3873,24 +3934,91 @@ def migrate_36_to_37():
 
 
 def migrate_37_to_38():
-    """The outgoing mail queue (docs/mejl.md). Not audited: no addresses or texts, purged after 13 months."""
+    """
+    Data only (ADR-0019): before AssignPaperCertificate retired the row, a paper certificate replacing a digital
+    one left the PDF row current, so verify and download kept answering for it. Retires those rows.
+
+    A current row whose rabbit has no number at all is left alone and counted: the old code also removed the
+    digital number on a blank paper number, and that certificate was never replaced. Its number is restored by
+    hand from the history, not withdrawn here.
+    """
     with DATABASE.atomic():
-        DATABASE.create_tables([MailMessage, MailAttempt, MailSender], safe=True)
+        lost = 0
+        if "digitalcertificatev2" in DATABASE.get_tables():
+            DATABASE.execute_sql(
+                "UPDATE digitalcertificatev2 SET is_current = FALSE WHERE is_current AND individual_id IN "
+                "(SELECT individual_id FROM individual "
+                "WHERE digital_certificate IS NULL AND coalesce(certificate, '') <> '')"
+            )
+            lost = DATABASE.execute_sql(
+                "SELECT count(*) FROM digitalcertificatev2 WHERE is_current AND individual_id IN "
+                "(SELECT individual_id FROM individual "
+                "WHERE digital_certificate IS NULL AND coalesce(certificate, '') = '')"
+            ).fetchone()[0]
+            if lost:
+                logger.warning("migrate_37_to_38: %s current certificate PDF rows have lost their number", lost)
         SchemaHistory.insert(  # pylint: disable=E1120
-            version=38, comment="mail queue: mail_message, mail_attempt, mail_sender", applied=datetime.now()
+            version=38,
+            comment=f"retire PDF rows of replaced digital certificates; {lost} current rows without a number left",
+            applied=datetime.now(),
         ).execute()
 
 
 def migrate_38_to_39():
-    """The intake queue (docs/inkorg.md), and the Gmail reader's tables for a later part of it. Not audited."""
+    """Partial index for the nightly removal of audit_log IP addresses older than 12 months (purge_audit_ip)."""
     with DATABASE.atomic():
-        DATABASE.create_tables(INBOX_MODELS, safe=True)
+        if not isinstance(DATABASE, SqliteDatabase) and "audit_log" in DATABASE.get_tables():
+            DATABASE.execute_sql(AUDIT_IP_INDEX_SQL)
         SchemaHistory.insert(  # pylint: disable=E1120
-            version=39, comment="intake queue: inbox_*, notice, notice_setting, gmail_*", applied=datetime.now()
+            version=39, comment="audit_log IP retention index", applied=datetime.now()
         ).execute()
 
 
 def migrate_39_to_40():
+    """Issue #33: the bank details are always private, so reset any stored level."""
+    with DATABASE.atomic():
+        # The audit trigger would copy every account number into a new audit row without a user.
+        audited = (
+            not isinstance(DATABASE, SqliteDatabase)
+            and DATABASE.execute_sql(
+                "SELECT 1 FROM pg_trigger WHERE tgrelid = 'herd'::regclass AND tgname = 'audit_trigger'"
+            ).fetchone()
+        )
+        if audited:
+            DATABASE.execute_sql('ALTER TABLE "herd" DISABLE TRIGGER "audit_trigger"')
+        # NULL stays NULL (reads treat it as private).
+        DATABASE.execute_sql(
+            "UPDATE herd SET"
+            " bank_account_number_privacy = CASE WHEN bank_account_number_privacy IS NULL THEN NULL ELSE 'private' END,"
+            " bank_name_privacy = CASE WHEN bank_name_privacy IS NULL THEN NULL ELSE 'private' END"
+            " WHERE bank_account_number_privacy <> 'private' OR bank_name_privacy <> 'private'"
+        )
+        if audited:
+            DATABASE.execute_sql('ALTER TABLE "herd" ENABLE TRIGGER "audit_trigger"')
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=40, comment="herd bank privacy reset to private", applied=datetime.now()
+        ).execute()
+
+
+def migrate_40_to_41():
+    """The outgoing mail queue (docs/mejl.md). Not audited: no addresses or texts, purged after 13 months."""
+    with DATABASE.atomic():
+        DATABASE.create_tables([MailMessage, MailAttempt, MailSender], safe=True)
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=41, comment="mail queue: mail_message, mail_attempt, mail_sender", applied=datetime.now()
+        ).execute()
+
+
+def migrate_41_to_42():
+    """The intake queue (docs/inkorg.md), and the Gmail reader's tables for a later part of it. Not audited."""
+    with DATABASE.atomic():
+        DATABASE.create_tables(INBOX_MODELS, safe=True)
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=42, comment="intake queue: inbox_*, notice, notice_setting, gmail_*", applied=datetime.now()
+        ).execute()
+
+
+def migrate_42_to_43():
     """The intake queue's retention (docs/inkorg.md, "Gallring"): an original can be gone, and a document records the
     members it shows (seller and buyer), so an erasure finds it. A mailed item records whether Gmail authenticated
     its sender, the only one mail goes back to. The Gmail reader counts the runs a message failed in."""
@@ -3907,7 +4035,7 @@ def migrate_39_to_40():
             )
         InboxDocument._schema.create_indexes(safe=True)  # same names as a fresh bootstrap
         SchemaHistory.insert(  # pylint: disable=E1120
-            version=40,
+            version=43,
             comment="inbox_document: original_path nullable, seller and buyer members; "
             "inbox_item.sender_authenticated; gmail_processed.failures",
             applied=datetime.now(),
@@ -3917,7 +4045,7 @@ def migrate_39_to_40():
 def _create_buyer_contact_guards():
     """
     Idempotent: the buyer_contact table and herd_tracking.holder_contact_id as its FK, ON DELETE SET NULL, with the
-    names a fresh bootstrap gives them. Called from init() and migrate_40_to_41. Skipped on SQLite.
+    names a fresh bootstrap gives them. Called from init() and migrate_43_to_44. Skipped on SQLite.
     """
     if isinstance(DATABASE, SqliteDatabase):
         return
@@ -3937,12 +4065,12 @@ def _create_buyer_contact_guards():
     )
 
 
-def migrate_40_to_41():
+def migrate_43_to_44():
     """ADR-0016: buyer_contact, the buyer outside the association, and holder_contact_id becomes its FK."""
     with DATABASE.atomic():
         _create_buyer_contact_guards()
         SchemaHistory.insert(  # pylint: disable=E1120
-            version=41, comment="buyer_contact; herd_tracking.holder_contact_id FK", applied=datetime.now()
+            version=44, comment="buyer_contact; herd_tracking.holder_contact_id FK", applied=datetime.now()
         ).execute()
 
 
@@ -4420,10 +4548,13 @@ MIGRATIONS = {
     (34, 35): migrate_34_to_35,  # ADR-0017 command log
     (35, 36): migrate_35_to_36,  # Individual.microchip
     (36, 37): migrate_36_to_37,  # billing address
-    (37, 38): migrate_37_to_38,  # mail queue
-    (38, 39): migrate_38_to_39,  # intake queue
-    (39, 40): migrate_39_to_40,  # intake queue retention
-    (40, 41): migrate_40_to_41,  # buyer contact
+    (37, 38): migrate_37_to_38,  # ADR-0019 retire replaced certificate PDFs
+    (38, 39): migrate_38_to_39,  # audit_log IP retention index
+    (39, 40): migrate_39_to_40,  # bank privacy reset
+    (40, 41): migrate_40_to_41,  # mail queue
+    (41, 42): migrate_41_to_42,  # intake queue
+    (42, 43): migrate_42_to_43,  # intake queue retention
+    (43, 44): migrate_43_to_44,  # buyer contact
 }
 
 

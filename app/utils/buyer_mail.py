@@ -51,7 +51,7 @@ def queue_buyer_mails(contact, sale):
     buyer, and the dedupe_key holds if anything queues again. A buyer of several rabbits is one buyer per sale;
     the invitation then goes once per address, decided when it is sent (_membership_mail).
     """
-    if not contact.email:
+    if contact is None or not contact.email:  # None: a sale older than five years stores no buyer
         return
     params = {"buyer_contact_id": contact.id, "individual_id": sale.individual_id}
     kinds = ("kopare.information", "kopare.medlemskap") if contact.membership_optin_at else ("kopare.information",)

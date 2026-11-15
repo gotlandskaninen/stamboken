@@ -292,6 +292,7 @@
     "promoteTitleWithNumber": "Registrera kanin — {{number}}",
     "promoteSuccess": "{{number}} registrerad",
     "promoteError": "Kunde inte registrera kanin",
+    "suggestionError": "Kunde inte hämta förslag på nummer",
     "certificateError": "Intyget kunde inte skapas: {{error}}",
     "registerAnother": "Registrera en till i kullen",
     "allAdded": "Alla {{count}} ungar är tillagda i kullistan.",
