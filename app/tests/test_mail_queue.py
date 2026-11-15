@@ -814,6 +814,29 @@ class TestPrivacy(MailTest):
         self.assertEqual(mail.forget_recipient("application", a.id), 2)
         self.assertEqual([self.row(i).address_hash is None for i in ids], [True, True, False])
 
+    def test_forgetting_a_recipient_stops_a_mail_being_built_for_them(self):
+        a = self.application("a@example.org")
+        row_id = mail.enqueue_mail("ansokan.mottagen", "application", a.id, {"application_id": a.id})
+        relay = self.relay()
+        kind = mail.MAIL_KINDS["ansokan.mottagen"]
+
+        def erased_meanwhile(params):  # the erasure lands while the mail is built (a slow attachment)
+            variables = kind.build(params)
+            mail.forget_recipient("application", a.id)
+            return variables
+
+        with mock.patch.dict(mail.MAIL_KINDS, {"ansokan.mottagen": kind._replace(build=erased_meanwhile)}):
+            mail.send_pending(self.now)
+        self.assertEqual(relay.sent, [])
+        row = self.row(row_id)
+        self.assertEqual((row.status, row.address_hash, row.claim_token), ("cancelled", None, None))
+
+    def test_a_link_from_another_environment_is_refused(self):
+        token = mail.link_token("test", 7)
+        self.assertEqual(mail.verify_link("test", token), 7)
+        with mock.patch.object(settings.service, "host", "https://demo.example.org"):
+            self.assertIsNone(mail.verify_link("test", token))
+
     def test_purge_takes_rows_older_than_396_days(self):
         old, edge, fresh = self.queue("old@example.org"), self.queue("edge@example.org"), self.queue()
         db.MailMessage.update(created_at=self.now - timedelta(days=397)).where(db.MailMessage.id == old).execute()
@@ -882,7 +905,7 @@ class TestLinks(MailTest):
 
         self.assertEqual(mail.message_id(5), f"<mail-5.{mac('msgid:5').hexdigest()[:16]}@{HOST}>")
         self.assertEqual(mail.address_hash("A@Example.org"), mac("addr:a@example.org").hexdigest())
-        token_mac = base64.urlsafe_b64encode(mac("link:mail:5").digest()[:16]).rstrip(b"=").decode()
+        token_mac = base64.urlsafe_b64encode(mac(f"link:{HOST}:mail:5").digest()[:16]).rstrip(b"=").decode()
         self.assertEqual(mail.link_token("mail", 5), f"5.{token_mac}")
         self.assertNotEqual(mail.message_id(5).split(".")[1][:16], mac("mail:5").hexdigest()[:16])
 

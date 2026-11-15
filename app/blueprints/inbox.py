@@ -184,6 +184,8 @@ def rate_limited(exc):
 @limiter.limit(
     "20 per hour", key_func=lambda: str(current_user.id), deduct_when=lambda response: response.status_code == 201
 )
+# Every request counts here, refused or not: a refused upload is decoded all the same.
+@limiter.limit("60 per hour", key_func=lambda: str(current_user.id))
 def upload():
     # Set before the body is read: the same limit as nginx's, so a larger upload never half reaches Flask.
     request.max_content_length = MAX_REQUEST
@@ -777,6 +779,23 @@ def erase_original(item_id, document_id):
     except inbox.InboxError as exc:
         return problem(exc.status, exc.title, exc.detail)
     inbox_purge.remove_originals(paths)
+    return jsonify(answer)
+
+
+# [Next.js] Take a badly masked copy off the rabbit when it cannot be remade. Managers and admins.
+@inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/kopia", methods=["DELETE"])
+@json_login_required
+@_queue_worker
+def remove_copy(item_id, document_id):
+    try:
+        with DB_PROXY.atomic():
+            item = inbox.lock_item(item_id)
+            path = inbox.remove_copy(item, inbox.document_of(item, document_id), current_user)
+            document = inbox.document_of(item, document_id)
+            answer = {"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]}
+    except inbox.InboxError as exc:
+        return problem(exc.status, exc.title, exc.detail)
+    inbox.remove_files([path])
     return jsonify(answer)
 
 

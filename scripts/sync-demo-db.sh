@@ -175,9 +175,8 @@ echo "Deleting the buyers outside the association in $STAGING_DB..."
 docker exec "$CONTAINER" psql -U "$DB_USER" -d "$STAGING_DB" -v ON_ERROR_STOP=1 -q -c "$DROP_BUYERS_SQL"
 
 if [ -n "$MAIL_SEQ" ]; then
-	# shellcheck disable=SC2059  # the SQL template is the format
 	docker exec "$CONTAINER" psql -U "$DB_USER" -d "$STAGING_DB" -v ON_ERROR_STOP=1 -qtAc \
-		"$(printf "$SET_MAIL_SEQ_SQL" "$MAIL_SEQ")" >/dev/null
+		"${SET_MAIL_SEQ_SQL//%s/$MAIL_SEQ}" >/dev/null
 fi
 
 # The copy carries prod's genetics version counter, which can repeat a number

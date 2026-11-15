@@ -60,7 +60,9 @@ Alla datum är `ÅÅÅÅ-MM-DD`.
 | Ägare och skötare | sina egna inskick | laddar upp för sina besättningar |
 
 "Arbetar i kön" betyder admin, genbanksansvarig eller genbankshjälpare i någon genbank. Alla tre
-ser hela kön, också den andra genbankens poster. `GET /api/v2/inkorg/notiser/antal` svarar
+ser hela kön, också den andra genbankens poster, men arbetar bara med poster i genbanker där hen har
+en roll, och med poster utan genbank. Att ta, ta över eller arbeta vidare på en annan genbanks post
+ger 403 (admin undantagen). `GET /api/v2/inkorg/notiser/antal` svarar
 `works_in_queue` så att gränssnittet vet om kön ska visas.
 
 Rollen genbankshjälpare delas ut som andra roller: `POST /api/v2/admin/role` med
@@ -110,7 +112,7 @@ bort.
 | Till | Hur | Från | Vem |
 |---|---|---|---|
 | `ny` | posten kommer in | – | – |
-| `tagen` | `…/ta`, `…/ta-over` | alla öppna lägen | alla i kön |
+| `tagen` | `…/ta`, `…/ta-over` | alla öppna lägen | den som arbetar i postens genbank, admin; vem som helst i kön när posten saknar genbank |
 | `tagen` | `…/tilldela` | `ny`, `hos_genbanksansvarig`, `tagen` (de väntande lägena behåller sitt läge och byter bara handläggare) | genbanksansvarig för postens genbank, admin |
 | `tagen` | `…/lage` | `vantar_foralder`, `ofullstandig` | handläggaren |
 | `tagen` | `…/lage` (öppna igen) | `klar`, `dubblett`, `skrap` | genbanksansvarig för postens genbank, admin; den som öppnar blir handläggare |
@@ -335,6 +337,7 @@ till avsändaren väntar, och senast 30 dagar efter stängningen.
 | `svar` | `{"text": "Ja.", "documents": [33], "not_saved": ["brev.docx"]}`; `user` är `null`, `not_saved` bara när något inte sparades |
 | `tolka_igen` | `{"document": 31}`; handläggaren lade dokumentet i tolkningens kö igen |
 | `original_raderat` | `{"document": 31}`; originalet raderades på begäran (`…/radera-original`) |
+| `kopia_borttagen` | `{"document": 31}`; den maskade kopian togs bort (`…/kopia`) |
 
 När postens text gallras försvinner `text`, `note` och `not_saved` ur `detail`; händelsen står kvar.
 
@@ -344,7 +347,8 @@ När postens text gallras försvinner `text`, `note` och `not_saved` ur `detail`
 
 **Vem:** inloggad ägare eller skötare av besättningen (den finns bland användarens besättningar),
 eller vem som helst som arbetar i kön, för vilken besättning som helst. Högst 20 sparade inskick i
-timmen per användare (429 efter det); ett anrop som nekas, också 409 nedan, räknas inte.
+timmen per användare (429 efter det); ett anrop som nekas, också 409 nedan, räknas inte där. Alla
+anrop till uppladdningen, nekade också, räknas i en andra gräns på 60 i timmen per användare.
 
 **Begäran:** `multipart/form-data`:
 
@@ -800,7 +804,8 @@ stängd eller någon annan har den, så att en felaktig kopia kan rättas. Dokum
 sparat intyg (`individual` satt).
 
 Dokumentet blir klart (`status: "klar"`, `has_copy: true`). Är alla dokument i posten klara
-eller avfärdade blir posten `klar`, uppladdaren får notisen `klar` och mejlet `inlasning.klar`.
+eller avfärdade blir posten `klar`, uppladdaren får notisen `klar` och mejlet `inlasning.klar`, en gång per post: en post som öppnas igen och
+stängs på nytt berättar inte igen.
 Varje anrop loggas som händelsen `kopia`.
 
 **Svar 200:** `{"item": <post>, "document": <dokument>}`.
@@ -1004,7 +1009,7 @@ Mejlen går genom mejlkön ([mejl.md](mejl.md)) och köas i samma transaktion so
   Raden i mejlkön har bara postens och händelsens id; anteckningen läses ur händelsen när mejlet går,
   och är den gallrad går mejlet utan den. Mejlet stoppas om posten inte längre är `ofullstandig`.
 - **`inlasning.paminnelse`** till samma mottagare, en gång, när posten fortfarande är `ofullstandig`
-  11 månader efter att den kom in: "Påminnelse: något saknas i ditt inskick (ärende 12)", med samma
+  11 månader efter postens gallringsstart: "Påminnelse: något saknas i ditt inskick (ärende 12)", med samma
   anteckning, om den finns kvar, och datum. Nattjobbet `inbox_purge` köar det.
 - **`notis.sammandrag`** kl. 07 varje dag till var och en som har olästa notiser som inget
   sammandrag tagit med och som inte stängt av mejlet. Det listar de olästa notiserna med
@@ -1098,16 +1103,20 @@ Varje regel körs för sig, så att en regel som fallerar inte hoppar över de a
 igen ändrar ingenting. En månad är 365,25/12 dagar avrundat uppåt till hela dagar, som i
 kommandologgen: 12 månader är 366 dagar och 13 månader 396.
 
+**Gallringsstart.** Originalen, texten och `ofullstandig` räknar från den senaste av tre tidpunkter:
+när posten kom in, avsändarens senaste svar på den (händelsen `svar`, som också lägger till bilder och
+text på en gammal post) och när posten senast markerades `ofullstandig`.
+
 | Vad | Gallras |
 |---|---|
-| Originalet till ett intyg eller bevis (`doc_type` `intyg`, `bevis`) | `INLASNING_ORIGINAL_MANADER` månader (standard 12) efter att posten kom in, i alla lägen |
+| Originalet till ett intyg eller bevis (`doc_type` `intyg`, `bevis`) | `INLASNING_ORIGINAL_MANADER` månader (standard 12) efter postens gallringsstart (se nedan), i alla lägen |
 | Originalet till ett dokument med `purge_after` satt, av vilken typ som helst | när tidpunkten har passerat, också före månaderna. Årsrapporten sätter den på en årsblankett när blanketten matas in, eftersom fotot visar bankkonto och underskrift. Tolkningen och förslaget går med originalet |
 | Bevisets original | också när kaninen sålts vidare: en senare `TRANSFER` från köparens besättning som inte är makulerad. Försäljningens rad i besättningshistoriken står kvar |
 | Postens text: `message` och `text`, `note` och `not_saved` i händelserna | samtidigt som originalen, för en post som har dokument. Händelserna står kvar med typ, tid och person |
 | Händelsen `oppnad` | 13 månader efter händelsen |
 | Ett stängt meddelande (`kind: "meddelande"`) utan dokument | 13 månader efter stängningen |
 | En post i läget `skrap` | 30 dagar efter stängningen |
-| En post i läget `ofullstandig` | 12 månader efter att den kom in eller efter avsändarens senaste svar på den; mejl när den markeras och efter 11 månader (se [Mejl](#mejl)) |
+| En post i läget `ofullstandig` | 12 månader efter postens gallringsstart; mejl när den markeras och efter 11 månader (se [Mejl](#mejl)) |
 | `sender_address` på en stängd post | när inget mejl till avsändaren väntar, senast 30 dagar efter stängningen, också när Gmail-läsningen är avstängd |
 | `gmail_processed` | 60 dagar |
 | Kopian på kaninen och spåret i `inbox_operation` | aldrig |
@@ -1158,6 +1167,20 @@ genbanksansvariga), i alla lägen.
 
 **Fel:** 403 för en hjälpare och för den som inte arbetar i kön; 404 när posten inte finns eller
 dokumentet inte hör till den.
+
+### `DELETE /api/v2/inkorg/{id}/dokument/{dok}/kopia`
+
+Tar bort dokumentets maskade kopia, till exempel när den är dåligt maskad och originalet är raderat,
+så att `…/maskning` inte kan göra om den. Kopian försvinner från kaninens sida och filen raderas efter
+commit. Händelsen `kopia_borttagen` loggas, utan fritext.
+
+**Vem:** genbanksansvarig för postens genbank och admin (en post utan genbank: alla
+genbanksansvariga), i alla lägen.
+
+**Svar 200:** `{"item": <post i listform>, "document": <dokument>}`.
+
+**Fel:** 403 för en hjälpare och för den som inte arbetar i kön; 404 när posten inte finns eller
+dokumentet inte hör till den; 409 när dokumentet inte har någon kopia.
 
 ## Gränser och sådant gränssnittet behöver veta
 

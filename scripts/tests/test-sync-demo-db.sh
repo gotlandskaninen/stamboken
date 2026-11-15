@@ -79,8 +79,7 @@ check "the dump and load succeed" 0 "$?"
 sql -d dst_staging -c "$DROP_BUYERS_SQL" >/dev/null
 check "the buyer step succeeds" 0 "$?"
 check "the dump carries no sequence value: the new database counts from 1" 1 "$(sql -d dst_staging -c "SELECT nextval('mail_message_id_seq')")"
-# shellcheck disable=SC2059  # the SQL template is the format
-sql -d dst_staging -c "$(printf "$SET_MAIL_SEQ_SQL" "$seq")" >/dev/null
+sql -d dst_staging -c "${SET_MAIL_SEQ_SQL//%s/$seq}" >/dev/null
 sql -c "DROP DATABASE dst" -c "ALTER DATABASE dst_staging RENAME TO dst"
 check "the rename succeeds" 0 "$?"
 check "mail_message comes over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM mail_message')"

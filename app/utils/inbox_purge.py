@@ -148,14 +148,20 @@ def _delete_items(where):
     return len(gone)
 
 
+def _older_than(items, when):
+    """The ids of those `items` (a query) whose retention_start is before `when`; the rows are few, so in Python."""
+    return [item.id for item in items.where(InboxItem.received_at < when) if inbox.retention_start(item) < when]
+
+
 def purge_originals(now):
-    """Originals of certificates and proofs some months after their item came in, and the item's text with them."""
-    old = InboxItem.select(InboxItem.id).where(
-        InboxItem.received_at < now - inbox.months(settings.inbox.original_months)
-    )
+    """Originals of certificates and proofs some months after their item's retention start, and its text with them."""
+    old = _older_than(InboxItem.select(), now - inbox.months(settings.inbox.original_months))
     with DB_PROXY.atomic():
         paths = _null_originals(InboxDocument.item.in_(old) & InboxDocument.doc_type.in_(ORIGINAL_TYPES))
-        _clear_text(old.where(InboxItem.id.in_(InboxDocument.select(InboxDocument.item))))  # a message keeps its own
+        has_documents = InboxItem.id.in_(InboxDocument.select(InboxDocument.item))
+        _clear_text(
+            InboxItem.select(InboxItem.id).where(InboxItem.id.in_(old) & has_documents)
+        )  # a message keeps its own
     return remove_originals(paths)
 
 
@@ -185,25 +191,23 @@ def purge_sold_proofs(now):  # pylint: disable=unused-argument  # every rule tak
     return remove_originals(paths)
 
 
-def _quiet_since(when):
-    """Items that came in before `when` and have had no answer from their sender since (inbox.incomplete_since)."""
-    answered = InboxEvent.select(InboxEvent.item).where((InboxEvent.kind == "svar") & (InboxEvent.at >= when))
-    return (InboxItem.received_at < when) & InboxItem.id.not_in(answered)
+def _incomplete():
+    return InboxItem.select().where(InboxItem.state == "ofullstandig")
 
 
 def remind_incomplete(now):
     """
-    inlasning.paminnelse once to the sender of an item still "ofullstandig" 11 months after it came in or was last
-    answered (once per such date).
+    inlasning.paminnelse once to the sender of an item still "ofullstandig" 11 months after its retention start
+    (once per such date).
     """
     old = now - inbox.months(inbox.REMIND_MONTHS)
     queued = 0
     with DB_PROXY.atomic():
-        for item in InboxItem.select().where((InboxItem.state == "ofullstandig") & _quiet_since(old)):
+        for item in InboxItem.select().where(InboxItem.id.in_(_older_than(_incomplete(), old))):
             marked = item.events.where((InboxEvent.kind == "lage") & InboxEvent.detail.contains({"to": "ofullstandig"}))
             marked = marked.order_by(InboxEvent.id.desc()).first()
             params = {"item_id": item.id, "event_id": marked.id} if marked else None
-            since = inbox.incomplete_since(item)
+            since = inbox.retention_start(item)
             key = f"inlasning.paminnelse:{item.id}" + (f":{since:%Y-%m-%d}" if since != item.received_at else "")
             if params and inbox.mail_sender(item, "inlasning.paminnelse", params, dedupe_key=key):
                 queued += 1
@@ -211,9 +215,9 @@ def remind_incomplete(now):
 
 
 def purge_incomplete(now):
-    """An item left "ofullstandig" a year after it came in or was last answered."""
-    old = now - inbox.months(inbox.INCOMPLETE_MONTHS)
-    return _delete_items((InboxItem.state == "ofullstandig") & _quiet_since(old))
+    """An item left "ofullstandig" a year after its retention start."""
+    old = _older_than(_incomplete(), now - inbox.months(inbox.INCOMPLETE_MONTHS))
+    return _delete_items((InboxItem.state == "ofullstandig") & InboxItem.id.in_(old))
 
 
 def purge_junk(now):

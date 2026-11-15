@@ -80,7 +80,7 @@ NOTICE_TEXTS = {
 DOC_TYPES = ("intyg", "bevis", "arsblankett", "annat")
 CERT_FORMATS = ("handskrivet", "datorskrivet", "v1_pdf", "intyg_b", "digitalt_v2")
 OPENED_EVERY = timedelta(hours=1)
-# An item left "ofullstandig" is deleted this long after it came in or was last answered (utils/inbox_purge.py),
+# An item left "ofullstandig" is deleted this long after its retention_start (utils/inbox_purge.py),
 # and its sender is reminded after REMIND_MONTHS.
 INCOMPLETE_MONTHS = 12
 REMIND_MONTHS = 11
@@ -337,8 +337,15 @@ def document_of(item, document_id):
     return document
 
 
+def require_worker_of(item, user):
+    """Everyone in the queue sees all of it, but works only the items of their own genebanks (and those without)."""
+    if not can_handle(user, item.genebank_id):
+        raise InboxError(403, "Du arbetar inte i postens genbank, så du kan se den men inte arbeta med den.")
+
+
 def require_handler(item, user):
     """Only the item's handler changes it or writes through it: anyone else takes it over first."""
+    require_worker_of(item, user)
     if item.state in HELD_STATES and item.assigned_to_id == user.id:
         return
     if item.state in CLOSED_STATES:
@@ -358,6 +365,7 @@ def _set_state(item, state):
 
 def take(item, user, *, over):
     """ "Jag tar den", or with `over` "Ta över": the item becomes the user's, in "tagen"."""
+    require_worker_of(item, user)
     if item.state in CLOSED_STATES:
         raise InboxError(409, "Posten är stängd.")
     previous = item.assigned_to_id
@@ -397,6 +405,8 @@ def assign(item, by, to):
 def change_state(item, user, state, *, note=None, duplicate_of=None):
     """POST …/lage, by TRANSITIONS, and "klar" for a message or an item without documents (MESSAGE_DONE_FROM)."""
     answered = item.kind == "meddelande" or not item.documents.exists()
+    if not isinstance(state, str):
+        raise InboxError(400, f"state är en av {', '.join(TRANSITIONS)}.")
     allowed = MESSAGE_DONE_FROM if state == "klar" and answered else TRANSITIONS.get(state)
     if allowed is None:
         raise InboxError(400, f"state är en av {', '.join(TRANSITIONS)}.")
@@ -477,16 +487,32 @@ def close_if_done(item, user):
     _set_state(item, "klar")
     item.save()
     log_event(item, user, "lage", **{"from": previous, "to": "klar"})
-    if item.sender_user_id is not None:
-        notify(item.sender_user_id, "klar", item, mailed=True)
-    mail_sender(item, "inlasning.klar", {"item_id": item.id})
+    # Once per item: a reopened and closed item does not tell its sender again (a cancelled mail did not tell).
+    told = MailMessage.select().where(
+        (MailMessage.kind == "inlasning.klar")
+        & (MailMessage.ref_type == "inbox_item")
+        & (MailMessage.ref_id == item.id)
+        & (MailMessage.status != "cancelled")
+    )
+    if not told.exists():
+        if (
+            item.sender_user_id is not None
+            and not Notice.select().where((Notice.item == item.id) & (Notice.kind == "klar")).exists()
+        ):
+            notify(item.sender_user_id, "klar", item, mailed=True)
+        mail_sender(item, "inlasning.klar", {"item_id": item.id})
     release_sender(item)
 
 
-def incomplete_since(item):
-    """What an incomplete item's months count from: when it came in, or the sender's latest answer on it."""
-    answered = item.events.select(fn.MAX(InboxEvent.at)).where(InboxEvent.kind == "svar").scalar()
-    return max(item.received_at, answered) if answered else item.received_at
+def retention_start(item):
+    """
+    What the retention months of an item count from: when it came in, or when the sender last answered on it, or
+    when it was last marked "ofullstandig", whichever is latest (a reply adds photos and text to an old item).
+    """
+    events = item.events.select(fn.MAX(InboxEvent.at))
+    answered = events.where(InboxEvent.kind == "svar").scalar()
+    marked = events.where((InboxEvent.kind == "lage") & InboxEvent.detail.contains({"to": "ofullstandig"})).scalar()
+    return max(when for when in (item.received_at, answered, marked) if when)
 
 
 def mail_sender(item, kind, params, **options):
@@ -638,6 +664,21 @@ def confirm_mask(item, document, user, rotation, rects, no_personal_data=None):
     document.save()
     log_event(item, user, "kopia", document=document.id, rects=len(rects), rotation=rotation)
     close_if_done(item, user)
+
+
+def remove_copy(item, document, user):
+    """
+    DELETE …/kopia: the masked copy comes off the rabbit (a badly masked one, with the original gone, cannot be
+    made again). The caller holds the item's lock, and removes the returned file after the commit.
+    """
+    if not manages(user, item.genebank_id):
+        raise InboxError(403, "Bara genbanksansvarig och admin kan ta bort en kopia.")
+    if document.public_path is None:
+        raise InboxError(409, "Dokumentet har ingen kopia.")
+    path, document.public_path = document.public_path, None
+    document.save()
+    log_event(item, user, "kopia_borttagen", document=document.id)
+    return path
 
 
 def paper_certificate(individual):
@@ -1068,7 +1109,7 @@ def _incomplete_mail(params):
     return {
         "item_id": item.id,
         "note": note,
-        "deadline": f"{incomplete_since(item) + months(INCOMPLETE_MONTHS):%Y-%m-%d}",
+        "deadline": f"{retention_start(item) + months(INCOMPLETE_MONTHS):%Y-%m-%d}",
         "account": item.sender_user_id is not None,
     }
 
