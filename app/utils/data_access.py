@@ -19,6 +19,7 @@ from peewee import (
     JOIN,
     Case,
     DatabaseError,
+    DataError,
     DoesNotExist,
     IntegrityError,
     OperationalError,
@@ -835,18 +836,19 @@ def update_user(form, user_uuid=None):
     if not (user.is_admin or user.is_manager) and str(form["id"]) != str(user.id):
         return {"status": "error", "message": "forbidden"}
 
-    if str(form["id"]) == str(user.id):
-        # An admin's mark that the holder took the web course: the holder can
-        # neither set nor clear it (the legacy frontend's "Ändra e-postadress"
-        # sends validated: false, which locked the member out of it).
-        del form["validated"]
-
-    # check target user
+    # check target user. By primary key: User.get("t") is WHERE 't', the first row of the table.
     try:
         with DATABASE.atomic():
-            target_user = User.get(form["id"])
-    except DoesNotExist:
+            target_user = User.get_by_id(form["id"])
+    except (DoesNotExist, DataError):  # DataError: an id that is no number
         return {"status": "error", "message": "unknown user"}
+
+    if target_user.id == user.id:
+        # An admin's mark that the holder took the web course: the holder can
+        # neither set nor clear it (the legacy frontend's "Ändra e-postadress"
+        # sends validated: false, which locked the member out of it). Decided
+        # on the row read, not on form["id"]: "007" and 7.0 are account 7 too.
+        del form["validated"]
 
     # Managers never edit admin accounts (get_users hides them too); the
     # email is the password-login key, so that edit is a takeover.
@@ -3918,9 +3920,9 @@ def set_v2_prod_access(u_id, enabled):
 
 def set_validated(u_id, validated):
     """
-    Toggle hbuser.validated: the course is done. Google login (redirect and
-    token flows) requires it; session load and password login do not check
-    it. Audited via trigger.
+    Toggle hbuser.validated: the course is done. The legacy Google login
+    requires it, and so do the legacy frontend's functions and the token login
+    when the access rules are off (legacy_compat.refusal). Audited via trigger.
     """
     user = User.get_or_none(User.id == u_id)
     if user is None:

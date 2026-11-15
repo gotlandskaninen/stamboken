@@ -229,7 +229,34 @@ class TestLegacyList(unittest.TestCase):
         self.assertEqual(len(pairs), 41)
         for method, template in pairs:
             with self.subTest(f"{method} {template}"):
-                self.assertIn(resolve(method, template), LEGACY_ENDPOINTS | EXEMPT_ENDPOINTS)
+                pair = resolve(method, template)
+                self.assertNotEqual(pair[0], "main")  # the catch-all: the route is gone
+                self.assertIn(pair, LEGACY_ENDPOINTS | EXEMPT_ENDPOINTS)
+
+    def test_the_exemptions_are_exactly_these(self):
+        """An exemption is open to every logged-in account: adding one is a decision, not a side effect."""
+        self.assertEqual(
+            EXEMPT_ENDPOINTS,
+            {
+                ("get_user", "GET"),
+                ("logout", "GET"),
+                ("login_handler", "POST"),
+                ("google_token_login", "POST"),
+                ("external_login_handler", "GET"),
+                ("external_login_handler", "POST"),
+                ("google.login", "GET"),
+                ("google.authorized", "GET"),
+                ("external_link_handler", "GET"),
+                ("external_link_handler", "POST"),
+                ("certificates_v2.verify_certificate_get", "GET"),
+                ("certificates_v2.verify_certificate_post", "POST"),
+                ("member_applications.create_application", "POST"),
+                ("member_applications.list_public_genebanks", "GET"),
+                ("health_check", "GET"),
+                ("main", "GET"),
+                ("static", "GET"),
+            },
+        )
 
     def test_legacy_hosts_cover_every_legacy_server_name_in_nginx(self):
         names = set()
@@ -285,8 +312,8 @@ class TestLegacyGoogleLoginNeverAdopts(DatabaseTest):
         self.assertEqual(google.user_id, me["id"])
 
     def test_a_self_set_address_never_captures_the_members_google_login(self):
-        """An account with only Google unlinks it and takes the address of a member
-        who has never signed in, then the member signs in with Google both ways."""
+        """An account unlinks Google and takes the address of a member who has never
+        signed in, then the member signs in with Google both ways."""
         member = db.Member.create(
             membership=db.Membership.create(membership_status="active"),
             first_name="Ny",
@@ -294,7 +321,7 @@ class TestLegacyGoogleLoginNeverAdopts(DatabaseTest):
             role="huvudmedlem",
             workspace_email=self.ADDRESS,
         )
-        attacker = da.register_user("annan@gotlandskaninen.se", None, validated=True)
+        attacker = da.register_user("annan@gotlandskaninen.se", "pass", validated=True)
         db.User.update(v2_prod_access=True).where(db.User.id == attacker.id).execute()
         db.Authenticators.create(user=attacker.id, auth="google", auth_data="sub-annan")
         own_token = {**ID_TOKEN, "sub": "sub-annan", "email": "annan@gotlandskaninen.se"}
@@ -313,8 +340,19 @@ class TestLegacyGoogleLoginNeverAdopts(DatabaseTest):
             self.assertEqual(victim.get("/api/user").status_code, 401)
 
             self.assertEqual(evil.get("/api/user").get_json()["id"], attacker.id)
-        self.assertFalse(db.Authenticators.select().where(db.Authenticators.user == attacker.id).exists())
+        held = db.Authenticators.select().where(db.Authenticators.user == attacker.id)
+        self.assertEqual([row.auth for row in held], ["password"])
         self.assertIsNone(db.Member.get_by_id(member.id).user_id)
+
+    def test_the_last_way_to_sign_in_cannot_be_unlinked(self):
+        only_google = da.register_user("bara-google@gotlandskaninen.se", None, validated=True)
+        db.Authenticators.create(user=only_google.id, auth="google", auth_data="sub-bara")
+        token = {**ID_TOKEN, "sub": "sub-bara", "email": only_google.email}
+        client = APP.test_client(use_cookies=True)
+        with mock.patch("google.oauth2.id_token.verify_oauth2_token", return_value=token):
+            self.assertEqual(client.post("/api/auth/google", json={"credential": "t"}).status_code, 200)
+        self.assertEqual(client.post("/api/unlink/google").get_data(as_text=True), "null")
+        self.assertTrue(db.Authenticators.select().where(db.Authenticators.user == only_google.id).exists())
 
 
 class TestHolderCannotChangeValidated(DatabaseTest):
@@ -345,6 +383,22 @@ class TestHolderCannotChangeValidated(DatabaseTest):
         body = {"id": self.manager.id, "email": self.manager.email, "validated": True}
         self.assertEqual(self.patch(self.manager, f"/api/manage/user/{self.manager.id}", body), {"status": "unchanged"})
         self.assertFalse(self.validated(self.manager))
+
+    def test_another_spelling_of_the_own_id_changes_nothing(self):
+        for actor in (self.manager, self.admin):
+            for value in (True, False):
+                db.User.update(validated=not value).where(db.User.id == actor.id).execute()
+                for own_id in (f"00{actor.id}", float(actor.id), str(actor.id)):
+                    with self.subTest(actor=actor.email, value=value, id=own_id):
+                        body = {"id": own_id, "email": actor.email, "validated": value}
+                        answer = self.patch(actor, f"/api/manage/user/{actor.id}", body)
+                        self.assertEqual(answer, {"status": "unchanged"})
+                        self.assertEqual(self.validated(actor), not value)
+
+    def test_an_id_that_is_no_number_is_no_account(self):
+        body = {"id": "t", "email": "ny@example.org", "validated": True}
+        answer = self.patch(self.manager, f"/api/manage/user/{self.manager.id}", body)
+        self.assertEqual(answer, {"status": "error", "message": "unknown user"})
 
     def test_admin_and_manager_still_set_validated_on_another_account(self):
         for actor, value in ((self.admin, True), (self.manager, False)):

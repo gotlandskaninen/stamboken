@@ -108,8 +108,11 @@ EXEMPT_ENDPOINTS = frozenset(
         # The public certificate verification (QR) page.
         ("certificates_v2.verify_certificate_get", "GET"),
         ("certificates_v2.verify_certificate_post", "POST"),
-        # The public membership application (not its listing, which is GET).
+        # The public membership application (not its listing, which is GET)
+        # and the genebank names its form shows.
         ("member_applications.create_application", "POST"),
+        ("member_applications.list_public_genebanks", "GET"),
+        ("health_check", "GET"),
         # No data: the SPA shell, which also answers every unknown GET with 404.
         ("main", "GET"),
         ("static", "GET"),
