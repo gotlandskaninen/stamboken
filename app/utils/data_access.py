@@ -86,6 +86,8 @@ from werkzeug.security import (
 from werkzeug.exceptions import HTTPException  # isort:skip
 
 logger = logging.getLogger("herdbook.da")
+# Login and permission events; ids only, never e-mail or username (privacy).
+auth_log = logging.getLogger("herdbook.auth")
 
 
 class ValidationError(HTTPException):
@@ -466,7 +468,7 @@ def register_user(
 
     # By id, not e-mail: another account may hold the same address.
     user = User.get_by_id(user.id)
-    logger.info(f"Registered User {user.as_dict()}")
+    auth_log.info("Registered user id=%s", user.id)
 
     # If no password is provided, don't create an authenticator
     if not password:
@@ -510,11 +512,12 @@ def authenticate_user(name, password):
     """
     if not name or not password:
         return None
+    user_info = None
     try:
         with DATABASE.atomic():
             user_info = User.select().where((User.email == name) | (User.username == name)).get()
             if user_info and not user_info.is_active:
-                logger.info("Login attempt for inactive account %s", name)
+                auth_log.info("Login refused: inactive account id=%s", user_info.id)
                 raise InactiveAccountError()
             if user_info:
                 authenticator = (
@@ -528,7 +531,7 @@ def authenticate_user(name, password):
         # Perform password check regardless of username to prevent timing
         # attacks
         check_password_hash("This-always-fails", password)
-    logger.info("Failed login attempt for %s", name)
+    auth_log.info("Login failed: %s", f"user id={user_info.id}" if user_info else "unknown user")
     return None
 
 
@@ -599,7 +602,6 @@ def authenticate_with_credentials(method, ident):
     except DoesNotExist:
         pass
 
-    logger.info("Failed login attempt for service %s persistent id %s", method, ident)
     return None
 
 
@@ -628,23 +630,12 @@ def link_account(user, method, ident):
             # one's transaction: a link that fails leaves the account as it was.
             Authenticators.delete().where((Authenticators.user == user.id) & (Authenticators.auth == method)).execute()
             Authenticators.create(user=user.id, auth=method, auth_data=ident)
-        logger.info("Linked %s to %s persistent id %s", user.username, method, ident)
+        auth_log.info("Linked user id=%s to service %s", user.id, method)
         return user
     except PeeweeException as auth_except:
-        logger.info(
-            "Error (%s) while linking %s to %s persistent id %s",
-            auth_except,
-            user.username,
-            method,
-            ident,
-        )
+        auth_log.info("Link failed: user id=%s service %s: %s", user.id, method, type(auth_except).__name__)
 
-    logger.info(
-        "Failed link attempt for user %s service %s persistent id %s",
-        user.username,
-        method,
-        ident,
-    )
+    auth_log.info("Link failed: user id=%s service %s", user.id, method)
     return None
 
 
@@ -663,10 +654,16 @@ def unlink_account(user, method):
             User.select(User.id).where(User.id == user.id).for_update().get()
             others = Authenticators.select().where((Authenticators.user == user.id) & (Authenticators.auth != method))
             if not others.exists():
-                logger.warning("Refusing to unlink %s, the last way to sign in, for user #%d", method, user.id)
+                auth_log.warning("Refusing to unlink %s, the last way to sign in, for user #%d", method, user.id)
                 return None
-            Authenticators.delete().where((Authenticators.user == user.id) & (Authenticators.auth == method)).execute()
+            removed = (
+                Authenticators.delete()
+                .where((Authenticators.user == user.id) & (Authenticators.auth == method))
+                .execute()
+            )
 
+        if removed:
+            auth_log.info("Unlinked user id=%s from service %s", user.id, method)
         return True
     except DoesNotExist:
         return None
@@ -1155,17 +1152,17 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                 has_role = target_user.has_role(operation["role"], operation.get(target))
                 updated = False
                 if has_role and operation["action"] == "remove":
-                    logger.info(
-                        f"User:{user.username} UPDATE: Role remove on user: "
-                        f"{target_user.username} removed: {operation['role']} "
+                    auth_log.info(
+                        f"User:{user.id} UPDATE: Role remove on user: "
+                        f"{target_user.id} removed: {operation['role']} "
                         f"target:{operation.get(target)}"
                     )
                     target_user.remove_role(operation["role"], operation.get(target))
                     updated = True
                 elif not has_role and operation["action"] == "add":
-                    logger.info(
-                        f"User:{user.username} UPDATE: Role added on user: "
-                        f"{target_user.username} added: {operation['role']} "
+                    auth_log.info(
+                        f"User:{user.id} UPDATE: Role added on user: "
+                        f"{target_user.id} added: {operation['role']} "
                         f"target:{operation.get(target)}"
                     )
                     target_user.add_role(operation["role"], operation.get(target))
@@ -1199,7 +1196,7 @@ def edit_genebank(gb, fields, actor):
             gb.name = value.strip()
     with DATABASE.atomic():
         gb.save()
-    logger.info(f"User:{actor.username or actor.email} edited genebank {gb.id}")
+    logger.info(f"User:{actor.id} edited genebank {gb.id}")
     return {"id": gb.id, "name": gb.name}
 
 
@@ -1357,7 +1354,7 @@ def edit_herd(herd, fields, actor):
         # over a membership/genebank change committed since the row was loaded.
         with DATABASE.atomic():
             herd.save(only=changed)
-    logger.info(f"User:{actor.username or actor.email} edited herd {herd.herd} via adminpanel")
+    logger.info(f"User:{actor.id} edited herd {herd.id} via adminpanel")
     return get_herd_for_admin(actor, herd)
 
 
@@ -1557,7 +1554,7 @@ def add_herd(form, user_uuid):
             herd.save(force_insert=True)
         except IntegrityError:
             return {"status": "error", "message": "missing data"}
-        logger.info(f"User:{user.username} Added herd: {herd.short_info()}")
+        logger.info(f"User:{user.id} Added herd: {herd.id}")
         return {"status": "success"}
 
 
@@ -1698,7 +1695,7 @@ def update_herd(form, user_uuid):
                 # only= : a full-row save would write the stale ownership columns back
                 # over a membership/genebank change committed since the row was loaded.
                 herd.save(only=written)
-        logger.info(f"User:{user.username} Updated herd: {herd.short_info()}")
+        logger.info(f"User:{user.id} Updated herd: {herd.id}")
         return {"status": "updated"}
     except DoesNotExist:
         return {"status": "error", "message": "Unknown herd"}
@@ -1711,11 +1708,6 @@ def update_origin_herd_ind(individual, new_herd, user):
     Updates origin_herd + number for the individual and replaces its BIRTH row
     (void + new BIRTH in the new herd) — in one transaction.
     """
-    update_logger = logging.getLogger(f"{individual.current_herd.genebank.name}_update")
-    update_logger.info(
-        f"{user.username},{individual.number},UPDATE origin_herd and number,"
-        f"{individual.origin_herd.herd},{new_herd.herd},"
-    )
     old_number = individual.number
     with DATABASE.atomic():
         individual.origin_herd = new_herd
@@ -1938,9 +1930,9 @@ def add_individual(form, user_uuid):
             except ValueError as exception:
                 return {"status": "error", "message": f"{exception}"}
         if "weights" in form:
-            update_weights(individual, form["weights"], user.username)
+            update_weights(individual, form["weights"])
         if "bodyfat" in form:
-            update_bodyfat(individual, form["bodyfat"], user.username)
+            update_bodyfat(individual, form["bodyfat"])
 
         individual.save()
 
@@ -1974,9 +1966,6 @@ def add_individual(form, user_uuid):
             except ValueError as exception:
                 raise exception
 
-        logging.getLogger(f"{individual.current_herd.genebank.name}_create").info(
-            f"{user.username},{individual.number},{individual.name},{new_herd.herd},{selling_date}"
-        )
         return {
             "status": "success",
             "message": "Individual Created",
@@ -2065,7 +2054,7 @@ def update_individual(form, user_uuid, issue_digital=False, genebank_change_reas
     except Exception as e:
         if hasattr(e, "individual_stage"):  # today's checks before the lock: legacy 500, v2 400/500
             raise
-        logger.error(f"Expetion in update individual {form.get('id')}, user: {user.username} exception: {e}")
+        logger.error(f"Expetion in update individual {form.get('id')}, user: {user.id} exception: {type(e).__name__}")
         return {"status": "error", "message": "Kunde inte uppdatera individ."}
     return {
         "status": "success",
@@ -2759,7 +2748,7 @@ def register_breeding(form, user_uuid):
             breed_notes=form.get("notes", None),
         )
         breeding.save()
-        logger.info(f"User:{user.username} added breeding: {breeding.as_dict()}")
+        logger.info(f"User:{user.id} added breeding: {breeding.id}")
         result = {"status": "success", "breeding_id": breeding.id}
         if date_warnings:
             result["warnings"] = date_warnings
@@ -2822,9 +2811,9 @@ def delete_breeding(id, user_uuid):
             # the individuals check above already returned for promoted kits.
             bunny_count = Bunny.delete().where(Bunny.breeding == breeding).execute()
             if bunny_count:
-                logger.info(f"User:{user.username} deleted {bunny_count} bunny roster rows with breeding {id}")
+                logger.info(f"User:{user.id} deleted {bunny_count} bunny roster rows with breeding {id}")
             Breeding.delete().where(Breeding.id == id).execute()
-            logger.info(f"User:{user.username} deleted empty breeding: {breeding.as_dict()}")
+            logger.info(f"User:{user.id} deleted empty breeding: {breeding.id}")
             return {"status": "success"}
     except DoesNotExist:
         return {
@@ -3023,7 +3012,7 @@ def register_birth(form, user_uuid):
             for slot in range(1, litter_size + 1):
                 Bunny.create(breeding=breeding, slot_order=slot)
 
-        logger.info(f"User:{user.username} added birth: {breeding.as_dict()}")
+        logger.info(f"User:{user.id} added birth: {breeding.id}")
         result = {"status": "success", "litter_number": assigned_litter_number}
         if litter_conflicts:
             result["litter_number_conflicts"] = litter_conflicts
@@ -3071,7 +3060,6 @@ def update_breeding(form, user_uuid):
     # parent change rewrites every kit's BIRTH row and number. Re-checked under the lock below.
     if not user.can_edit(breeding.breeding_herd_id.herd):
         return {"status": "error", "message": "Forbidden"}
-    update_logger = logging.getLogger(f"{breeding.mother.current_herd.genebank.name}_update")
     errors = []
     date_warnings = []
     # `breeding` is the row as this request found it, read before the lock. Legacy PATCHes the
@@ -3088,9 +3076,6 @@ def update_breeding(form, user_uuid):
             mother = Individual.get(Individual.number == form["mother"])
             if old_mother != mother.number:
                 changes["mother"] = mother
-                update_logger.info(
-                    f"{user.username},breeding_id:{breeding.id},changed_mother,{old_mother},{mother.number}"
-                )
         except DoesNotExist:
             errors += ["Unknown mother"]
     if "father" in form:
@@ -3099,9 +3084,6 @@ def update_breeding(form, user_uuid):
             father = Individual.get(Individual.number == form["father"])
             if old_father != father.number:
                 changes["father"] = father
-                update_logger.info(
-                    f"{user.username},breeding_id:{breeding.id},changed_father,{old_father},{father.number}"
-                )
         except DoesNotExist:
             errors += ["Unknown father"]
 
@@ -3110,9 +3092,6 @@ def update_breeding(form, user_uuid):
             try:
                 new_date = validate_date(form[bdate])
                 if getattr(breeding, bdate) != new_date.date():
-                    update_logger.info(
-                        f"{user.username},breeding_id:{breeding.id},changed_{bdate},{getattr(breeding, bdate)},{form[bdate]}"  # noqa: E501
-                    )
                     changes[bdate] = new_date
             except ValueError as error:
                 errors += [str(error)]
@@ -3267,9 +3246,6 @@ def update_breeding(form, user_uuid):
             # Update breeding_herd to new herd ID.
             # Update all Indivuduals in breeding
             if herd_changed:
-                update_logger.info(
-                    f"{user.username},breeding_id:{breeding.id},new_breeding_herd,{stored.breeding_herd_id.herd},{new_herd.herd}"  # noqa: E501
-                )
                 stored.breeding_herd_id = new_herd
                 # Breeding herd id changed
                 for ind in kits.clone():

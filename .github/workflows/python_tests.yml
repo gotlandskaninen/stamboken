@@ -60,6 +60,14 @@ jobs:
             -f .docker/api \
             .
 
+      - name: Check nginx access log format
+        run: scripts/check-nginx-log-format.sh
+
+      - name: Check nginx config with the real vhosts
+        run: |
+          scripts/check-nginx-prod-config.sh
+          scripts/check-nginx-prod-config.sh nginx/herdbook-local-production.conf
+
       - name: Run tests in container
         run: |
           docker run \

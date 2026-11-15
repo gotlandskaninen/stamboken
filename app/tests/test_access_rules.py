@@ -1,6 +1,7 @@
 """The access rules (ACCESS_RULES): which logged-in account may use which function on which host."""
 
 import base64
+import io
 import os
 import re
 import threading
@@ -14,6 +15,7 @@ import utils.data_access as da
 import utils.database as db
 import utils.settings as settings
 from herdbook import APP, limiter
+from utils import app_logging
 from utils.legacy_compat import DEFAULT_LEGACY_HOSTS, EXEMPT_ENDPOINTS, LEGACY_ENDPOINTS, NOT_PROMOTED, course_message
 from werkzeug.routing import RequestRedirect
 
@@ -100,6 +102,20 @@ class TestAccessRules(DatabaseTest):
         self.assertEqual(
             logs.output, ["WARNING:utils.legacy_compat:Access rules refused PATCH individuals.update_individual_v2"]
         )
+
+    def test_refusal_is_one_denied_line_without_query_string_or_address(self):
+        self.set(self.viewer, validated=True)
+        client = self.login(self.viewer, LEGACY)
+        out = io.StringIO()
+        with mock.patch.object(app_logging.HANDLER, "stream", out):
+            self.assertRefused(
+                client.patch(f"/api/individual/{self.number}?q=HEMLIG", json={"name": "Ny"}, base_url=LEGACY)
+            )
+        denied = [line for line in out.getvalue().splitlines() if line.startswith("herdbook.auth INFO Denied 403")]
+        self.assertEqual(len(denied), 1, out.getvalue())
+        self.assertRegex(denied[0], rf"user id={self.viewer.id} ")
+        self.assertNotIn("HEMLIG", out.getvalue())
+        self.assertNotIn(self.viewer.email, out.getvalue())
 
     def test_admin_and_promoted_pass(self):
         self.set(self.viewer, v2_prod_access=True)

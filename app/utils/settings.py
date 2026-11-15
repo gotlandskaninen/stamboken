@@ -64,7 +64,6 @@ postgres.user = os.environ.get("POSTGRES_USER", "herdbook")
 postgres.password = os.environ.get("POSTGRES_PASSWORD", "insecure")
 
 service.host = os.environ.get("HERDBOOK_HOST", "https://127.0.0.1:8443")
-service.logfolder = os.environ.get("HERDBOOK_LOGFOLDER", "./")
 # The demo API (api-test): its logins are marked, and production refuses them.
 service.demo_instance = os.environ.get("DEMO_INSTANCE", "false").lower() == "true"
 
