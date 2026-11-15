@@ -586,8 +586,9 @@ button.confirmDanger:hover:not(:disabled) {
 }
 .roundCard details summary {
   min-height: 44px;
-  display: flex;
-  align-items: center;
+  display: list-item; /* flex would drop the expand arrow */
+  padding: 10px 0;
+  box-sizing: border-box;
   cursor: pointer;
 }
 .dates {

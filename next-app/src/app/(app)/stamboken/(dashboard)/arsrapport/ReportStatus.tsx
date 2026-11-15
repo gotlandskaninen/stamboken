@@ -15,7 +15,7 @@ export type StatusKind =
   | { kind: "syncing" }
   | { kind: "timeout" }
   | { kind: "withdrawn"; date: string }
-  | { kind: "closed" }
+  | { kind: "closed"; opens?: string }
   | { kind: "late"; deadline: string }
   | { kind: "deadline"; deadline: string }
   | { kind: "editor"; herd: string }
@@ -68,6 +68,7 @@ function text(s: StatusKind): React.ReactNode {
     case "withdrawn":
       return `Dragen tillbaka ${s.date}. Inte inskickad. Det du fyllt i är sparat.`;
     case "closed":
+      if (s.opens) return `Rundan öppnar ${s.opens}.`;
       return "Rundan är stängd. Kontakta genbanksansvarig om något behöver ändras.";
     case "late":
       return `Sista dag för stödet var ${s.deadline}. Rapportera ändå, så räknas dina kaniner.`;

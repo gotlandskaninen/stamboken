@@ -105,6 +105,15 @@ const renderPaper = (v = paperView(), a = actions(), p = paperProps()) => {
 };
 
 describe("ReportForm on paper", () => {
+  it("shows the entered and remaining counter and the key help", () => {
+    renderPaper();
+    expect(screen.getByText("0 inmatade, 3 kvar")).toBeTruthy();
+    expect(
+      screen.getByText("Enter går vidare. 1 Finns kvar, 2 Död, 3 Såld."),
+    ).toBeTruthy();
+    typeNumber("1");
+    expect(screen.getByText("1 inmatade, 2 kvar")).toBeTruthy();
+  });
   it("names the item and defaults both dates to the day it came in", () => {
     renderPaper();
     expect(

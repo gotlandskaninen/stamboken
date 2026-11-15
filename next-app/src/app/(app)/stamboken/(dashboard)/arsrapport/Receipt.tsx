@@ -111,8 +111,8 @@ export function Receipt({
       </div>
       {v && (
         <p className={styles.line}>
-          {mark(v.hane, "Hane")} {mark(v.hona, "Hona")} {mark(v.kull, "Kull")}{" "}
-          {mark(v.i_tid, "I tid")}
+          Villkor för stödet: {mark(v.hane, "Hane")} {mark(v.hona, "Hona")}{" "}
+          {mark(v.kull, "Kull")} {mark(v.i_tid, "I tid")}
         </p>
       )}
       {receipt && receipt.warnings.length > 0 && (

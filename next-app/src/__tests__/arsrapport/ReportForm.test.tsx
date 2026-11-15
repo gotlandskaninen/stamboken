@@ -497,6 +497,25 @@ describe("ReportForm", () => {
     ).toBeNull();
   });
 
+  it("says when the round opens instead of that it is closed", () => {
+    render(
+      <ReportForm
+        env="demo"
+        view={view({
+          round: {
+            start_date: "2999-12-31",
+            deadline: null,
+            end_date: null,
+            activated: true,
+            open: false,
+          },
+        })}
+        actions={actions()}
+      />,
+    );
+    expect(screen.getByText("Rundan öppnar 31 december 2999.")).toBeTruthy();
+  });
+
   it("serialises autosaves: the second goes out only after the first is answered, with the version it returned", async () => {
     vi.useFakeTimers();
     const a = actions();

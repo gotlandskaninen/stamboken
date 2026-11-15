@@ -1170,11 +1170,19 @@ export function ReportForm({
       )}
       {olderNotice}
       {closedText ? (
-        <ReportStatus status={{ kind: "closed" }} />
+        <ReportStatus
+          status={{
+            kind: "closed",
+            opens:
+              round.start_date && round.start_date > todayStockholm()
+                ? fmtDate(round.start_date)
+                : undefined,
+          }}
+        />
       ) : (
         <div className={styles.layout}>
           <div className={styles.side}>
-            <div className={styles.sideStatus}>
+            <div>
               {deadline && <ReportStatus status={deadline} />}
               {syncTimeout && (
                 <div role="alert" className={styles.errorBox}>
@@ -1255,9 +1263,16 @@ export function ReportForm({
                 </div>
               )}
             </div>
+            {isPaper && (
+              <div className={styles.sticky}>
+                <span className={styles.counter} aria-live="polite">
+                  {entered.length} inmatade, {allRest.length} kvar
+                </span>
+              </div>
+            )}
             {!isPaper && (
               <>
-                <div className={`${styles.sticky} ${styles.sideBar}`}>
+                <div className={styles.sticky}>
                   <div className={styles.stickyRow}>
                     <input
                       type="search"
@@ -1289,11 +1304,7 @@ export function ReportForm({
                   />
                 </div>
 
-                <div
-                  className={`${styles.filters} ${styles.sideFilters}`}
-                  role="group"
-                  aria-label="Visa"
-                >
+                <div className={styles.filters} role="group" aria-label="Visa">
                   {(
                     [
                       ["inte_klara", `Inte klara (${notDone.length})`],

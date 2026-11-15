@@ -74,6 +74,19 @@ describe("StatusTable", () => {
     expect(within(done).getByLabelText(/I tid/)).toBeTruthy();
     expect(within(done).getByText(/3 ej angivna/)).toBeTruthy();
   });
+  it("offers Mata in blankett only on rows that are not submitted", () => {
+    show(true);
+    expect(
+      within(screen.getByText("G9002").closest("tr")!).queryByText(
+        "Mata in blankett",
+      ),
+    ).toBeNull();
+    expect(
+      within(screen.getByText("G9001").closest("tr")!).getByText(
+        "Mata in blankett",
+      ),
+    ).toBeTruthy();
+  });
   it("hides I tid for a helper", () => {
     show(false);
     expect(screen.queryByLabelText(/I tid/)).toBeNull();

@@ -78,7 +78,11 @@ export function NumberRow({
           id="paper-number"
           data-paper-field="number"
           aria-label={`Nummer efter ${herd}-`}
-          aria-describedby={problem ? "paper-number-problem" : undefined}
+          aria-describedby={
+            problem
+              ? "paper-number-help paper-number-problem"
+              : "paper-number-help"
+          }
           inputMode="numeric"
           autoComplete="off"
           value={value}
@@ -93,6 +97,9 @@ export function NumberRow({
           }}
         />
       </div>
+      <p id="paper-number-help" className={styles.meta}>
+        Enter går vidare. 1 Finns kvar, 2 Död, 3 Såld.
+      </p>
       {problem && (
         <p id="paper-number-problem" className={styles.errorText} role="alert">
           {problem}

@@ -136,7 +136,7 @@ export function StatusTable({
             key={f}
             href={href(f)}
             className={`${inkorg.count} ${
-              f === "att_ringa" ? styles.callTone : ""
+              f === "att_ringa" && n ? styles.callTone : ""
             }`}
             aria-current={filter === f ? "page" : undefined}
           >
@@ -170,7 +170,7 @@ export function StatusTable({
               <tr>
                 <th>Besättning</th>
                 <th>Läge</th>
-                <th>Villkor</th>
+                <th>Villkor för stödet</th>
                 <th>Flaggor</th>
                 <th>Mottagen</th>
                 <th>Åtgärd</th>
@@ -242,7 +242,7 @@ function Row({
           </div>
         )}
       </td>
-      <td data-label="Villkor">
+      <td data-label="Villkor för stödet">
         {reported
           ? CONDITIONS.map(([key, label]) => (
               <span key={key} style={{ marginRight: 8, whiteSpace: "nowrap" }}>
@@ -275,12 +275,14 @@ function Row({
       </td>
       <td>
         <div className={inkorg.rowActions}>
-          <Link
-            href={`/stamboken/inkorg?herd=${row.herd}`}
-            className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
-          >
-            Mata in blankett
-          </Link>
+          {row.state !== "inskickad" && (
+            <Link
+              href={`/stamboken/inkorg?herd=${row.herd}`}
+              className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+            >
+              Mata in blankett
+            </Link>
+          )}
           {canEdit && reported && (
             <label>
               I tid{" "}
