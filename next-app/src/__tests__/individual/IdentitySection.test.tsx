@@ -56,6 +56,25 @@ describe("IdentitySection", () => {
     expect(screen.getByText("22 Viltgrå")).toBeDefined();
   });
 
+  it("redigeringsläget visar den sparade färgen även när listan saknas", () => {
+    renderWithTheme(
+      <IdentitySection
+        individual={{
+          ...mockIndividual,
+          color: "Viltgrå",
+          color_id: 22,
+          herd: "G1",
+        }}
+        isEditing={true}
+        formData={{}}
+        onFieldChange={() => {}}
+      />,
+    );
+    expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe(
+      "22 Viltgrå",
+    );
+  });
+
   it("shows empty fields with dash", () => {
     const emptyIndividual = {
       ...mockIndividual,

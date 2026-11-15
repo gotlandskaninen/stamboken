@@ -131,6 +131,7 @@ export function RegisterRabbitDialog({
   const [sex, setSex] = useState<string>("female");
   const [color, setColor] = useState("");
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
+  const [colorsLoading, setColorsLoading] = useState(true);
   const [name, setName] = useState("");
   const [colorNote, setColorNote] = useState("");
   const [eyeColor, setEyeColor] = useState("");
@@ -228,9 +229,19 @@ export function RegisterRabbitDialog({
   // Official colour list; empty (free text) if it cannot be loaded
   useEffect(() => {
     if (!open) return;
-    getColors().then((all) =>
-      setColorOptions(colorsFor(all, undefined, herdId)),
-    );
+    getColors()
+      .then((all) => {
+        const options = colorsFor(all, undefined, herdId);
+        setColorOptions(options);
+        // Text typed in the free-text fallback while loading must be on the list
+        setColor((prev) =>
+          options.length && prev && !options.some((o) => o.name === prev)
+            ? ""
+            : prev,
+        );
+      })
+      .catch(() => setColorOptions([]))
+      .finally(() => setColorsLoading(false));
   }, [open, herdId]);
 
   // Paper: Stamboken's number for what the paper says (the dry run), shown once it is typed
@@ -780,6 +791,7 @@ export function RegisterRabbitDialog({
             >
               <ColorPicker
                 options={colorOptions}
+                loading={colorsLoading}
                 value={color}
                 onChange={setColor}
                 genebank={

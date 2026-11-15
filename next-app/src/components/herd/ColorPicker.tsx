@@ -1,7 +1,13 @@
 "use client";
 
 import React from "react";
-import { Autocomplete, Box, TextField, Typography } from "@mui/material";
+import {
+  Autocomplete,
+  Box,
+  createFilterOptions,
+  TextField,
+  Typography,
+} from "@mui/material";
 import type { ColorOption } from "@/app/(app)/stamboken/(dashboard)/min-besattning/actions";
 
 interface ColorPickerProps {
@@ -9,6 +15,10 @@ interface ColorPickerProps {
   /** The colour NAME; the backend resolves it within the genebank. */
   value: string;
   onChange: (name: string) => void;
+  /** The stored colour's number, shown when the name is not on the list. */
+  valueId?: number | null;
+  /** The list is still loading: show the combobox, not the free-text fallback. */
+  loading?: boolean;
   genebank: string;
   label?: string;
   required?: boolean;
@@ -29,18 +39,26 @@ export function colorsFor(
   return all[key] ?? [];
 }
 
-const optionLabel = (c: ColorOption) => `${c.id} ${c.name}`;
+const optionLabel = (c: ColorOption) =>
+  c.id != null ? `${c.id} ${c.name}` : c.name;
+
+// Search the comment too (synonyms such as havanna, hargrå, tricolor).
+const filter = createFilterOptions<ColorOption>({
+  stringify: (c) => `${optionLabel(c)} ${c.comment ?? ""}`,
+});
 
 export function ColorPicker({
   options,
   value,
   onChange,
+  valueId,
+  loading,
   genebank,
   label = "Färg",
   required,
 }: ColorPickerProps) {
   // Free text when no official list could be loaded; the backend validates either way.
-  if (options.length === 0) {
+  if (options.length === 0 && !loading) {
     return (
       <TextField
         label={label}
@@ -53,13 +71,25 @@ export function ColorPicker({
     );
   }
 
+  // A stored colour that is not on this list stays selected instead of vanishing.
+  const found = options.find((o) => o.name === value);
+  const selected =
+    found ??
+    (value
+      ? ({ id: valueId, name: value, comment: null } as unknown as ColorOption)
+      : null);
+  const shown = !found && selected ? [selected, ...options] : options;
+
   return (
     <Autocomplete
-      options={options}
-      value={options.find((o) => o.name === value) ?? null}
-      onChange={(_, v) => onChange(v?.name ?? "")}
+      options={shown}
+      value={selected as ColorOption}
+      disableClearable
+      loading={loading}
+      filterOptions={filter}
+      onChange={(_, v) => onChange(v.name)}
       getOptionLabel={optionLabel}
-      isOptionEqualToValue={(a, b) => a.id === b.id}
+      isOptionEqualToValue={(a, b) => a.name === b.name}
       size="small"
       fullWidth
       data-genebank={genebank}

@@ -86,19 +86,23 @@ export function IdentitySection({
   onFieldChange,
 }: IdentitySectionProps) {
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
+  const [colorsLoading, setColorsLoading] = useState(true);
   useEffect(() => {
     if (!isEditing) return;
-    getColors().then((all) =>
-      setColorOptions(
-        colorsFor(
-          all,
-          individual.genebank,
-          typeof individual.herd === "string"
-            ? individual.herd
-            : individual.herd.herd,
+    getColors()
+      .then((all) =>
+        setColorOptions(
+          colorsFor(
+            all,
+            individual.genebank,
+            typeof individual.herd === "string"
+              ? individual.herd
+              : individual.herd.herd,
+          ),
         ),
-      ),
-    );
+      )
+      .catch(() => setColorOptions([]))
+      .finally(() => setColorsLoading(false));
   }, [isEditing, individual.genebank, individual.herd]);
 
   const colorName = "color" in formData ? formData.color : individual.color;
@@ -115,11 +119,15 @@ export function IdentitySection({
         </Typography>
 
         <Grid container spacing={isEditing ? 2 : 1}>
-          <Grid size={{ xs: 6, sm: 4 }}>
+          <Grid size={{ xs: isEditing ? 12 : 6, sm: 4 }}>
             {isEditing ? (
               <ColorPicker
                 options={colorOptions}
+                loading={colorsLoading}
                 value={colorName ?? ""}
+                valueId={
+                  colorName === individual.color ? individual.color_id : null
+                }
                 onChange={(name) => onFieldChange("color", name)}
                 genebank={individual.genebank ?? ""}
               />

@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useTransition } from "react";
 import {
   Alert,
-  Autocomplete,
   Box,
   Button,
   Dialog,
@@ -166,17 +165,19 @@ export function BunnyPromoteDialog({
   // observed_color prefill is free text — keep it only if it is official.
   useEffect(() => {
     if (!open || colorOptions !== null) return;
-    getColors().then((all) => {
-      if (!all) {
-        setColorOptions([]);
-        return;
-      }
-      const options = colorsFor(all, undefined, herdId);
-      setColorOptions(options);
-      setColor((prev) =>
-        prev && !options.some((o) => o.name === prev) ? "" : prev,
-      );
-    });
+    getColors()
+      .then((all) => {
+        if (!all) {
+          setColorOptions([]);
+          return;
+        }
+        const options = colorsFor(all, undefined, herdId);
+        setColorOptions(options);
+        setColor((prev) =>
+          prev && !options.some((o) => o.name === prev) ? "" : prev,
+        );
+      })
+      .catch(() => setColorOptions([]));
   }, [open, colorOptions, herdId]);
 
   // Paper: Stamboken's number for what the paper says (the dry run), once it is typed
@@ -545,6 +546,7 @@ export function BunnyPromoteDialog({
               {/* Color — official genebank color list */}
               <ColorPicker
                 options={colorOptions ?? []}
+                loading={colorOptions === null}
                 value={color}
                 onChange={setColor}
                 genebank={
