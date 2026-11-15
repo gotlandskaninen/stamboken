@@ -1268,6 +1268,8 @@ def delete_buyer_contacts(contact_ids, action, user=None, whole_items=False):
         return 0, []
     paths = []
     sales = list(HerdTracking.select().where(HerdTracking.holder_contact.in_(ids)))
+    # WHITELISTED in-place UPDATE #4: the sales remember that their buyer was removed, before the FK nulls the link.
+    HerdTracking.update(buyer_removed=True).where(HerdTracking.holder_contact.in_(ids)).execute()
     # Every queue item the erasures below touch, locked at once in id order (the queue's order): one sale after
     # another would lock them out of order, and the nightly purge could deadlock with a correction.
     buyer_items(sales, lock=True)

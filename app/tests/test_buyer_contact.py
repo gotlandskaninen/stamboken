@@ -586,6 +586,7 @@ class TestErasure(BuyerBase):
         self.assertIsNone(self._contact(self.contact_id))
         sale = db.HerdTracking.get_by_id(self.sale.id)
         self.assertEqual((sale.voided_at, sale.holder_contact_id, sale.herd.herd), (None, None, "GX1"))
+        self.assertTrue(sale.buyer_removed)  # the sale remembers, without any personal data
         log = self._buyer_log(self.contact_id, "DELETE")
         self.assertEqual([(r.new_data, r.changed_by) for r in log], [({"action": "radering"}, "man")])
         self.assertEqual(self._erase("man").status_code, 404)
