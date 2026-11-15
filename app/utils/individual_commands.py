@@ -562,8 +562,25 @@ class EditDescription(_FormFields):
     apply_rank = 10
 
 
+def _guard_report_death(ctx):
+    """
+    The rabbit's death, written by a submitted yearly report, is changed on the rabbit page only by an editor:
+    the page leads to Ändra (spec 8). The report's own writes come with RAPPORT and pass.
+    """
+    if ctx.stored.death_date is None or ctx.roles & {Role.MANAGER_CURRENT, Role.ADMIN, Role.RAPPORT}:
+        return
+    if report_owners([latest_death_op(ctx.individual.id)]):
+        raise HerdTrackingForbidden(REPORT_ROW)
+
+
 class RecordDeath(_FormFields):
     apply_rank = 10
+
+    def verify(self, ctx):
+        # A change, not an echo (as _log_changes sees it): it would become the latest RecordDeath and free
+        # "Ångra död" of the report's death in a second request.
+        if any(_column_value(ctx.stored, c) != _column_value(ctx.individual, c) for c in self.changes):
+            _guard_report_death(ctx)
 
 
 @dataclass(frozen=True)
@@ -583,10 +600,8 @@ class ClearFields(PolicyCommand):
 
     def check_reauth(self, ctx):
         """The rabbit page's "Ångra död" of a death the yearly report wrote leads to Ändra (spec 8)."""
-        clears_death = any(getattr(ctx.stored, f) for f in self.fields & set(COMMAND_FIELDS["RecordDeath"]))
-        if clears_death and not ctx.roles & {Role.MANAGER_CURRENT, Role.ADMIN}:
-            if report_owners([latest_death_op(ctx.individual.id)]):
-                raise HerdTrackingForbidden(REPORT_ROW)
+        if any(getattr(ctx.stored, f) for f in self.fields & set(COMMAND_FIELDS["RecordDeath"])):
+            _guard_report_death(ctx)
 
 
 @dataclass(frozen=True)

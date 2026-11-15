@@ -279,6 +279,34 @@ class TestRabbitPage(ReportRightTest, FlaskTest):
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         self.assertIsNone(self._stored(self.dead).death_date)
 
+    def test_the_owner_cannot_move_the_reports_death_out_of_the_way(self):
+        """Review Important 1: a changed death would be the latest RecordDeath and free "Ångra död" in a second
+        request, so the first is refused. An echo changes nothing and still passes."""
+        owner = self._client(self.owner)
+        for change in ({"death_note": "Sjuk"}, {"death_date": "2025-12-21"}, {"butchered": True}):
+            with self.subTest(change=str(change)):
+                response = owner.patch(f"/api/individual/{self.dead.number}", json={**change, "herd": "G1"})
+                self.assertEqual((response.status_code, response.get_json()["detail"]), (403, REPORT_ROW))
+        stored = self._stored(self.dead)
+        self.assertEqual((stored.death_date, stored.death_note, stored.butchered), (date(2025, 12, 20), None, False))
+        echo = owner.patch(f"/api/individual/{self.dead.number}", json={"death_date": "2025-12-20", "herd": "G1"})
+        self.assertEqual(echo.status_code, 200, echo.get_data(as_text=True))
+        self.assertEqual(owner.patch(f"/api/individual/{self.dead.number}", json=UNDO_DEATH).status_code, 403)
+
+    def test_the_manager_changes_the_reports_death(self):
+        response = self._client(self.manager).patch(
+            f"/api/individual/{self.dead.number}", json={"death_date": "2025-12-21", "herd": "G1"}
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(self._stored(self.dead).death_date, date(2025, 12, 21))
+
+    def test_the_reports_own_change_of_its_death_still_writes(self):
+        """Ändra writes through the report's right (ReportGrant gives RAPPORT); without it the owner is refused."""
+        change = RecordDeath({"death_date": "2025-12-22"})
+        self._refusal(self.owner, change, ind=self.dead, error=HerdTrackingForbidden)
+        self._run(self.owner, change, ind=self.dead, grant=Vouch())
+        self.assertEqual(self._stored(self.dead).death_date, date(2025, 12, 22))
+
     def test_history_query_count_does_not_grow_with_report_rows(self):
         """Pre-flight ruling: one report_owners call per history, not one per row."""
 
