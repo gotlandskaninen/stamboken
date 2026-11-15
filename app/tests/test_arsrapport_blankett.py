@@ -340,6 +340,23 @@ class BlankettTest(ArsrapportTest):
         self.assertTrue(set(submission.operation_ids) <= traced)
         self.assertEqual(self.state(item), "klar")
 
+    def test_helper_changes_a_digital_report_through_the_item(self):  # the void and the Undo under her grant
+        a, b = self.rabbits(self.h, 2)
+        self.logged_in(self.body(self.kvar(a, vikt=2.8), self.dod(b, 2025, 11)))
+        item = self.form(self.helper)
+        self.login("hjalp")
+        body = self.paper(item, self.dod(a, 2025, 11), self.kvar(b, vikt=2.8), revision=1, reason="Blanketten")
+        receipt = self.ok(item, body)
+        self.assertIsNotNone(db.Individual.get_by_id(a.id).death_date)
+        self.assertIsNone(db.Individual.get_by_id(b.id).death_date)  # the report's death undone
+        voided = db.HerdTracking.get(db.HerdTracking.individual == a.id, db.HerdTracking.kind == "ATTESTATION")
+        undo = db.IndividualCommand.get(db.IndividualCommand.individual == b.id, db.IndividualCommand.command == "Undo")
+        self.assertEqual((voided.voided_by_user_id, undo.actor_id), (self.helper.id, self.helper.id))
+        operations = db.YearlyReportSubmission.get_by_id(receipt["submission_id"]).operation_ids
+        traces = {str(trace.operation_id): trace.user_id for trace in db.InboxOperation.select()}
+        for op in (*operations, str(voided.voided_operation_id), str(undo.operation_id)):
+            self.assertEqual(traces.get(op), self.helper.id, op)
+
     def test_received_on_cannot_be_in_the_future(self):
         (a,) = self.rabbits(self.h, 1)
         item = self.form(self.manager)
