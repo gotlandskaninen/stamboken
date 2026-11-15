@@ -501,8 +501,9 @@ def _send_one(row, relay, now):
         subject, body = render(row.kind, variables)
         msg = None if mode == "log" else _message(row, address, subject, body, attachments)
     except Exception as exc:  # pylint: disable=broad-except  # a bug or a lost database: retried like a 4xx
-        logger.exception("Building mail %s failed", row.id)
-        return _failed(row, now, "temporary", None, f"bygget misslyckades: {_describe(exc)}")
+        detail = f"bygget misslyckades: {_describe(exc)}"
+        logger.error("Building mail %s failed: %s", row.id, _scrub(detail))  # no traceback: it may hold the address
+        return _failed(row, now, "temporary", None, detail)
 
     if mode == "log":
         logger.info("Mail %s (%s) to %s %s logged, not sent", row.id, row.kind, row.recipient_kind, row.recipient_id)

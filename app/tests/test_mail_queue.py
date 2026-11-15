@@ -631,11 +631,16 @@ class TestCancel(MailTest):
     def test_builder_crash_is_a_counted_temporary_failure(self):
         row_id = self.queue()
         build = mock.Mock(side_effect=ValueError("no data for sokande@example.org"))
-        with mock.patch.dict(mail.MAIL_KINDS, {"ansokan.mottagen": mail.MailKind(1, "T", build)}):
+        with (
+            mock.patch.dict(mail.MAIL_KINDS, {"ansokan.mottagen": mail.MailKind(1, "T", build)}),
+            self.assertLogs("herdbook.mail", "ERROR") as logs,
+        ):
             mail.send_pending(self.now)
         row = self.row(row_id)
         self.assertEqual((row.status, row.attempts), ("queued", 1))
         self.assertEqual(row.last_error, "bygget misslyckades: ValueError: no data for <adress>")
+        self.assertNotIn("@", "\n".join(logs.output))
+        self.assertTrue(all(r.exc_info is None for r in logs.records))
 
 
 class TestConcurrentSenders(MailTest):
