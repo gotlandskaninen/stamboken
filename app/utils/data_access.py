@@ -4351,6 +4351,27 @@ def purge_audit_ip(now, batch=AUDIT_IP_BATCH) -> int:
         last = rows[-1]
 
 
+APPLICATION_RETENTION = "12 months"  # a PostgreSQL interval: calendar months, as the privacy policy says
+
+
+def purge_member_applications(now) -> int:
+    """
+    Deletes member_application rows that never led to membership: rejected ones 12 calendar months after the
+    decision (reviewed_at, created_at if missing), pending ones 12 months after submission. Approved rows stay.
+    The table is not in AUDITED_TABLES, so audit_log holds no copy; matrikel_audit has no row for these.
+    Returns the rows deleted.
+    """
+    cursor = DATABASE.execute_sql(
+        """
+        DELETE FROM member_application
+        WHERE (status = 'rejected' AND COALESCE(reviewed_at, created_at) < %s::timestamptz - %s::interval)
+           OR (status = 'pending' AND created_at < %s::timestamptz - %s::interval)
+        """,
+        (now, APPLICATION_RETENTION, now, APPLICATION_RETENTION),
+    )
+    return cursor.rowcount or 0
+
+
 # Session-store counter of mass logouts. Outside 'session:*', so the sweep never
 # deletes it, and without a TTL: it must outlive every session issued before it.
 LOGOUT_EPOCH_KEY = "logout-epoch"
