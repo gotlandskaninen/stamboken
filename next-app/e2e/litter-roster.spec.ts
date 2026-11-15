@@ -144,7 +144,8 @@ test.describe.skip("Litter Roster — bulk-add, reorder and promote", () => {
     }
 
     // Fill the required color field ("Färg") and submit.
-    await dialog.getByLabel("Färg").fill("Grå");
+    await dialog.getByRole("combobox", { name: /^Färg/ }).fill("Viltgrå");
+    await page.getByRole("option", { name: /^\d+ Viltgrå(\s|$)/ }).click();
     await dialog.getByRole("button", { name: "Registrera" }).click();
 
     // Success alert — contains the minted individual number.

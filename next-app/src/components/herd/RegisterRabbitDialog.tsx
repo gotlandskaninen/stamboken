@@ -46,8 +46,11 @@ import {
   NumberConflictDialog,
   PAPER_NUMBER,
 } from "@/components/herd/NumberConflictDialog";
+import { ColorPicker, colorsFor } from "@/components/herd/ColorPicker";
 import {
   checkIndividualNumber,
+  getColors,
+  type ColorOption,
   registerIndividual,
   suggestIndividualNumber,
   type IndividualNumberSuggestion,
@@ -127,6 +130,7 @@ export function RegisterRabbitDialog({
   // Form state
   const [sex, setSex] = useState<string>("female");
   const [color, setColor] = useState("");
+  const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
   const [name, setName] = useState("");
   const [colorNote, setColorNote] = useState("");
   const [eyeColor, setEyeColor] = useState("");
@@ -220,6 +224,14 @@ export function RegisterRabbitDialog({
       fetchSuggestion();
     }
   }, [open, success, fetchSuggestion]);
+
+  // Official colour list; empty (free text) if it cannot be loaded
+  useEffect(() => {
+    if (!open) return;
+    getColors().then((all) =>
+      setColorOptions(colorsFor(all, undefined, herdId)),
+    );
+  }, [open, herdId]);
 
   // Paper: Stamboken's number for what the paper says (the dry run), shown once it is typed
   useEffect(() => {
@@ -766,12 +778,14 @@ export function RegisterRabbitDialog({
                 alignItems: "flex-start",
               }}
             >
-              <TextField
-                label={t("addRabbit.color")}
+              <ColorPicker
+                options={colorOptions}
                 value={color}
-                onChange={(e) => setColor(e.target.value)}
-                size="small"
-                fullWidth
+                onChange={setColor}
+                genebank={
+                  herdId.startsWith("M") ? "Mellerudskanin" : "Gotlandskanin"
+                }
+                label={t("addRabbit.color")}
                 required
               />
               <FieldInfo

@@ -26,6 +26,7 @@ import { useTranslation } from "react-i18next";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useMode } from "@/lib/mode-context";
+import { ColorPicker, colorsFor } from "@/components/herd/ColorPicker";
 import {
   promoteBunny,
   checkIndividualNumber,
@@ -170,12 +171,7 @@ export function BunnyPromoteDialog({
         setColorOptions([]);
         return;
       }
-      const wantMellerud = herdId.startsWith("M");
-      const key =
-        Object.keys(all).find((k) =>
-          wantMellerud ? k.includes("Mellerud") : k.includes("Gotland"),
-        ) ?? Object.keys(all)[0];
-      const options = all[key] ?? [];
+      const options = colorsFor(all, undefined, herdId);
       setColorOptions(options);
       setColor((prev) =>
         prev && !options.some((o) => o.name === prev) ? "" : prev,
@@ -547,25 +543,15 @@ export function BunnyPromoteDialog({
               </FormControl>
 
               {/* Color — official genebank color list */}
-              <Autocomplete
-                options={(colorOptions ?? []).map((c) => c.name)}
-                value={color || null}
-                onChange={(_, v) => setColor(v ?? "")}
-                freeSolo={!colorOptions || colorOptions.length === 0}
-                onInputChange={
-                  !colorOptions || colorOptions.length === 0
-                    ? (_, v) => setColor(v)
-                    : undefined
+              <ColorPicker
+                options={colorOptions ?? []}
+                value={color}
+                onChange={setColor}
+                genebank={
+                  herdId.startsWith("M") ? "Mellerudskanin" : "Gotlandskanin"
                 }
-                size="small"
-                fullWidth
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label={t("addRabbit.color")}
-                    required
-                  />
-                )}
+                label={t("addRabbit.color")}
+                required
               />
 
               {/* Name */}

@@ -1,9 +1,13 @@
 import React from "react";
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, vi } from "vitest";
 import { render, screen, cleanup } from "@testing-library/react";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { IdentitySection } from "@/components/individual/IdentitySection";
 import type { Individual } from "@/redux/api/apiSlice";
+
+vi.mock("@/app/(app)/stamboken/(dashboard)/min-besattning/actions", () => ({
+  getColors: vi.fn().mockResolvedValue(null),
+}));
 
 const theme = createTheme();
 
@@ -38,6 +42,18 @@ describe("IdentitySection", () => {
     );
     expect(screen.getAllByText("Svart")).toHaveLength(2); // color + claw_color
     expect(screen.getByText("Vit bröstfläck")).toBeDefined();
+  });
+
+  it("IdentitySection visar numret före namnet", () => {
+    renderWithTheme(
+      <IdentitySection
+        individual={{ ...mockIndividual, color: "Viltgrå", color_id: 22 }}
+        isEditing={false}
+        formData={{}}
+        onFieldChange={() => {}}
+      />,
+    );
+    expect(screen.getByText("22 Viltgrå")).toBeDefined();
   });
 
   it("shows empty fields with dash", () => {
