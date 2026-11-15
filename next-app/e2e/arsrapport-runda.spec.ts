@@ -144,6 +144,7 @@ test("4. Genbanksansvarig ser alla tre som inskickade", async ({
   }
   const paper = row(page, "G9002");
   await expect(paper).toContainText("Inskickad");
+  await expect(paper).toContainText(/Inskickad\s*blankett/);
   await expect(paper).toContainText("3 ej angivna (påverkar stödet)");
   await expect(row(page, "G9003")).toContainText("Ingen e-post");
 });

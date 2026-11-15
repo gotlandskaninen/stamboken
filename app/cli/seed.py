@@ -28,7 +28,7 @@ from typing import NamedTuple
 import click
 from flask.cli import AppGroup
 from PIL import Image, ImageDraw
-from utils import arsrapport, inbox
+from utils import arsrapport, inbox, settings
 from utils import data_access as da
 from utils.database import (
     DATABASE,
@@ -1110,16 +1110,41 @@ def _rabbits(herd, manager, log, count, born, first, sexes, litter=None):
     ]
 
 
+SEED_HERDS = ("G9001", "G9002", "G9003", "G9004")
+
+
+def _refuse_foreign_herds():
+    """Abort before any write when G9001-G9004 or a rabbit numbered under them was not made by this seed."""
+    made = {
+        herd.herd
+        for herd in Herd.select().where(Herd.herd.in_(SEED_HERDS), Herd.membership.is_null(False))
+        if Member.select()
+        .where(Member.membership == herd.membership, Member.last_name == f"Huvudmedlem {herd.herd}")
+        .exists()
+    }
+    foreign = {h.herd for h in Herd.select().where(Herd.herd.in_(SEED_HERDS))} - made
+    for herd in SEED_HERDS:
+        numbered = Individual.select().join(Herd, on=(Individual.origin_herd == Herd.id))
+        if numbered.where(Individual.number.startswith(f"{herd}-"), ~(Herd.herd.in_(made))).exists():
+            foreign.add(herd)
+    if foreign:
+        raise click.ClickException(
+            f"{', '.join(sorted(foreign))} exist but were not made by this seed; refusing to touch real data."
+        )
+
+
 @seed_cli.command("arsrapport")
 @click.option("--verbose", "-v", is_flag=True, help="Print detailed output")
 def create_arsrapport_seed(verbose):
     """Seed a yearly report round for the trial run (synthetic herds G9001-G9004). Run `seed create` first."""
-    if os.environ.get("FLASK_ENV") == "production":
-        raise click.ClickException("refusing to seed test data with public passwords in production.")
+    # The demo is a copy of real data, so it is refused as production is. (`seed create` has the same gap.)
+    if os.environ.get("FLASK_ENV") == "production" or settings.service.demo_instance:
+        raise click.ClickException("refusing to seed test data with public passwords in production or the demo.")
     gk = Genebank.get_or_none(Genebank.name == "Gotlandskanin")
     manager = User.get_or_none(User.email == "seed-gk-mgr@test.local")
     if gk is None or manager is None:
         raise click.ClickException("run `flask seed create` first.")
+    _refuse_foreign_herds()
     stats = {"created": 0, "existing": 0}
 
     def log(msg, created=True):
@@ -1155,8 +1180,13 @@ def create_arsrapport_seed(verbose):
         b = _rabbits(g1, manager, log, 5, date(2024, 5, 1), 15, ("female", "male"))
         litter = _breeding(g1, date(2025, 5, 2), date(2025, 4, 1), a[1], a[0], 6, 5, log)  # 6 born, 5 alive at 6 weeks
         _rabbits(g1, manager, log, 5, date(2025, 5, 2), 20, ("female", "male"), litter)
-        Individual.update(castration_date=date(2024, 6, 1)).where(Individual.id == a[3].id).execute()  # a male
-        Individual.update(death_date=date(2025, 8, 15), death_note="Sjuk").where(Individual.id == b[3].id).execute()
+        # Initial values only: a rerun never overwrites a row.
+        Individual.update(castration_date=date(2024, 6, 1)).where(
+            Individual.id == a[3].id, Individual.castration_date.is_null()
+        ).execute()  # a male
+        Individual.update(death_date=date(2025, 8, 15), death_note="Sjuk").where(
+            Individual.id == b[3].id, Individual.death_date.is_null()
+        ).execute()
         for rabbit in a + b:
             _track(rabbit, g1, None, manager, date(2024, 12, 31), "ATTESTATION", log)
         _transfer(b[2], g2, g1, manager, date(2026, 1, 10), log)

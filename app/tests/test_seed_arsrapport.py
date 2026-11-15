@@ -80,3 +80,32 @@ class SeedArsrapportTest(DatabaseTest):
         self.assertNotEqual(result.exit_code, 0, result.output)
         self.assertIn("production", result.output)
         self.assertFalse(db.Herd.select().where(db.Herd.herd == "G9001").exists())
+
+    def test_refuses_in_the_demo(self):
+        self.seed("create")
+        with mock.patch.object(settings.service, "demo_instance", True):
+            result = self.runner.invoke(args=["seed", "arsrapport"])
+        self.assertNotEqual(result.exit_code, 0, result.output)
+        self.assertIn("demo", result.output)
+        self.assertFalse(db.Herd.select().where(db.Herd.herd == "G9001").exists())
+
+    def test_refuses_a_herd_the_seed_did_not_make(self):
+        self.seed("create")
+        gk = db.Genebank.get(db.Genebank.name == "Gotlandskanin")
+        db.Herd.create(genebank=gk, herd="G9001", herd_name="Riktig", is_active=True)
+        before = self.counts()
+        result = self.runner.invoke(args=["seed", "arsrapport"])
+        self.assertNotEqual(result.exit_code, 0, result.output)
+        self.assertIn("G9001", result.output)
+        self.assertEqual(self.counts(), before)
+        self.assertFalse(db.Herd.select().where(db.Herd.herd == "G9004").exists())
+
+    def test_refuses_a_foreign_rabbit_under_a_seed_number(self):
+        self.seed("create")
+        self.seed()
+        herd = db.Herd.get(db.Herd.herd == "G1274")
+        db.Individual.create(origin_herd=herd, number="G9001-9999", sex="female")
+        before = self.counts()
+        result = self.runner.invoke(args=["seed", "arsrapport"])
+        self.assertNotEqual(result.exit_code, 0, result.output)
+        self.assertEqual(self.counts(), before)
