@@ -407,9 +407,9 @@ test("5. Typ C: stor besättning med döda och sålda", async ({
   expect((await storedReport(page, "M9003")).report).toBeNull();
   await shot(page, "typ-c-dragen-tillbaka");
   await expect(rows(page)).toHaveCount(30);
-  // shortcut: this asserts a defect found 2026-11-15, not the wanted behaviour. The buyer outside the genebank is
-  // never stored in a draft, so the withdrawn form ("Det du fyllt i finns kvar") has five sales without a buyer and
-  // Skicka refuses them. When the draft keeps the buyer, Skicka must go through at once: drop the re-entry below.
+  // shortcut: this asserts today's behaviour, which contradicts the withdraw text ("Det du fyllt i finns kvar"):
+  // a buyer outside the genebank is not kept in a draft (the buyer-data rule), so the withdrawn form has five
+  // sales without a buyer and Skicka refuses them. Open for Jonas 2026-11-15; update this step when it is decided.
   await page.getByRole("button", { name: SEND }).click();
   await expect(box).toContainText("5 kaniner är inte klara");
   await expect(box).toContainText("Skriv köparens namn och ort.");
