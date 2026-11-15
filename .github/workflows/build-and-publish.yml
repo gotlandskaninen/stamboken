@@ -177,12 +177,12 @@ jobs:
       - name: Checkout this repo (for build scripts)
         uses: actions/checkout@v6
 
-      - name: Checkout legacy frontend (production branch)
+      - name: Checkout legacy frontend (production + banner om nya Stamboken, legacy-PR #7)
         uses: actions/checkout@v6
         with:
           repository: gotlandskaninen/stamboken-legacy
           path: legacy-src
-          ref: 51fc2b03b426e2f715fb9140cad639b5f2ada45a
+          ref: 49e403d3410c5720f3412db2be041b30bfe46bc9
           fetch-depth: 0
 
       - name: Get latest legacy release tag

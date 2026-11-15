@@ -57,17 +57,9 @@ from utils.cert_acess import (
     download_certificate_s3,
     get_certificate,
     get_certificate_data,
-    sign_data,
-    upload_certificate,
     verify_certificate_checksum,
     verify_signature,
 )
-from utils.cert_service_v2 import (
-    certificate_form,
-    certificate_update,
-    update_breeding_if_changed,
-)
-from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
@@ -80,7 +72,7 @@ import utils.genetics_service as genetics  # isort:skip
 from utils import number_assets  # isort:skip
 from utils.individual_commands import purge_command_free_text  # isort:skip
 from utils.members import try_auto_link_member  # isort:skip
-from utils.legacy_compat import is_legacy_host, legacy_classroom_url  # isort:skip
+from utils.legacy_compat import course_message, is_legacy_host, legacy_classroom_url, legacy_hosts, refusal  # isort:skip
 from utils.redis_retry import reconnect_on_drop  # isort:skip
 
 APP = Flask(__name__, static_folder="/static")
@@ -310,6 +302,13 @@ file_handler.setFormatter(
     )
 )
 APP.logger.addHandler(file_handler)
+APP.logger.info("ACCESS_RULES=%s, legacy hosts: %s", settings.service.access_rules, ", ".join(sorted(legacy_hosts())))
+if (
+    settings.service.access_rules == "off"
+    and os.getenv("FLASK_ENV") == "production"
+    and not settings.service.demo_instance
+):
+    APP.logger.warning("ACCESS_RULES is off in production: every logged-in account reaches every function")
 utils.external_auth.setup(APP)
 
 Session(APP)
@@ -410,6 +409,28 @@ def before_request():
             )
         except Exception:
             APP.logger.warning("Failed to set audit context", exc_info=True)
+
+
+@APP.before_request
+def enforce_access_rules():
+    """
+    The access rules (ACCESS_RULES, legacy_compat.refusal) for a logged-in
+    request. A 404, 405 or trailing-slash redirect has no endpoint and passes;
+    OPTIONS only lists the allowed methods.
+    """
+    if settings.service.access_rules != "enforce" or request.endpoint is None or request.method == "OPTIONS":
+        return None
+    if current_user.is_authenticated:
+        user = current_user
+    elif session.get("user_id"):
+        # The older routes read session["user_id"] without flask-login.
+        user = da.fetch_user_info(session["user_id"])
+    else:
+        user = None
+    message = refusal(request.endpoint, request.method, user) if user else None
+    if message:
+        return jsonify({"status": "error", "message": message}), 403
+    return None
 
 
 @APP.teardown_request
@@ -1374,13 +1395,12 @@ def google_token_login():
             if _should_auto_validate_users():
                 user.validated = True
                 user.save(only=[db.User.validated])  # see _GOOGLE_PROFILE_COLUMNS
-            else:
+            elif settings.service.access_rules != "enforce":
+                # The course belongs to the legacy frontend, and the access rules
+                # keep an unvalidated account out of it and off production; without
+                # them the course is the only gate a new account meets.
                 # 401, not 403: the Next.js caller maps 403 to the domain-restriction text.
-                msg = (
-                    f"Du behöver gå webbkursen och bli validerad först: {legacy_classroom_url()} "
-                    "Frågor: admin@gotlandskaninen.se"
-                )
-                return jsonify({"error": msg}), 401
+                return jsonify({"error": course_message()}), 401
 
         if user:
             # Update user with Google profile data in database
@@ -1524,48 +1544,53 @@ def external_login_handler(service):
     # Auto-validate users in environments that opt in (e.g. api-test).
     auto_validate = _should_auto_validate_users()
 
-    user = da.register_user(
-        accountdetails["email"],
-        None,
-        username=accountdetails["username"],
-        validated=auto_validate,
-        fullname=accountdetails["fullname"] if "fullname" in accountdetails else None,
-        privileges=[
-            {"level": "viewer", "genebank": 1},
-            {"level": "viewer", "genebank": 2},
-        ],
-    )
+    # Only a brand-new account gets this Google identity, never one that already
+    # holds the address: anyone can set their own User.email to the address of
+    # a member who has not signed in yet and capture that login. The holder of
+    # an existing account signs in as usual and links Google there.
+    with db.DATABASE.atomic() as creation:
+        try:
+            user = da.register_user(
+                accountdetails["email"],
+                None,
+                username=accountdetails["username"],
+                validated=auto_validate,
+                fullname=accountdetails["fullname"] if "fullname" in accountdetails else None,
+                privileges=[
+                    {"level": "viewer", "genebank": 1},
+                    {"level": "viewer", "genebank": 2},
+                ],
+                adopt_existing=False,
+            )
+        except da.AddressInUseError as taken:
+            APP.logger.warning("Refusing %s login: account #%d already holds the address", service, taken.user_id)
+            return (
+                "Det finns redan ett konto med den här e-postadressen. Logga in på det som vanligt och koppla "
+                "Google under ditt konto, eller kontakta admin@gotlandskaninen.se"
+            )
 
-    if not user:
-        APP.logger.error(
-            "Automatic registering of user with e-mail %s (persistent id %s) for service %s FAILED",
-            accountdetails["email"],
-            persistent_id,
-            service,
-        )
-        return None
+        if not user:
+            APP.logger.error(
+                "Automatic registering of user with e-mail %s (persistent id %s) for service %s FAILED",
+                accountdetails["email"],
+                persistent_id,
+                service,
+            )
+            return None
 
-    # register_user() adopts an existing account with this address. Never hand
-    # this Google identity to one that someone can already sign in to while no
-    # admin has validated it: anyone can set their own User.email to the address
-    # of a member who has not signed in yet (update_user then clears validated)
-    # and capture that login. Decided on the account register_user
-    # returned, so a concurrent email change cannot slip in between. A
-    # brand-new account has no authenticator yet and is linked as before.
-    if not user.validated and db.Authenticators.select().where(db.Authenticators.user == user.id).exists():
-        APP.logger.warning("Refusing to link %s to unvalidated existing user #%d", service, user.id)
-        return _not_validated_response()
+        linked = da.link_account(user, service, persistent_id)
 
-    linked = da.link_account(user, service, persistent_id)
-
-    if not linked:
-        APP.logger.error(
-            "Linked of of user with e-mail %s (persistent id %s) for service %s FAILED",
-            accountdetails["email"],
-            persistent_id,
-            service,
-        )
-        return None
+        if not linked:
+            # Without its identity the new account has no way in, and its address
+            # would refuse the next attempt.
+            creation.rollback()
+            APP.logger.error(
+                "Linked of of user with e-mail %s (persistent id %s) for service %s FAILED",
+                accountdetails["email"],
+                persistent_id,
+                service,
+            )
+            return "Inloggningen gick inte att slutföra. Försök igen, eller kontakta admin@gotlandskaninen.se", 500
 
     # google_email is the CMS identity; google_details() verified this address.
     db.User.update(google_email=accountdetails["email"]).where(db.User.id == user.id).execute()
@@ -2462,102 +2487,16 @@ def breeding_suggestions(g_id):
         return jsonify({"error": "Error calculating breeding suggestions"}), 500
 
 
-class _CertificateRefused(Exception):
-    """A refused legacy certificate request, raised inside its transaction so nothing commits."""
-
-    def __init__(self, message, result=None):
-        super().__init__(message)
-        # roster_alive_exceeds_6w: how many kits the breeder must mark dead (a new field, ADR-0006)
-        self.extra = {key: result[key] for key in ("must_mark_dead",) if key in (result or {})}
-
-
-def _sign_stored_certificate(ind_data, user_id, form, issue_digital=False):
-    """
-    Apply the certificate form, then sign and upload a PDF rendered from the re-read rabbit, all
-    in one transaction: a refused breeding or individual update, a failed signing or a
-    failed upload commits nothing, and the body never reaches the PDF or the S3 key.
-    Returns (signed pdf, re-read individual dict). Raises _CertificateRefused.
-    """
-    with db.DATABASE.atomic():
-        # Global lock order: Breeding, then the rabbit + the litter's parents (update_breeding locks them).
-        da.lock_individual_for_edit(ind_data["id"], None, with_parents=True)
-        # The route read the rabbit before the lock: a certificate issued by another route or a renumber
-        # committed since must not be overwritten by that read. Re-read it and decide on that row;
-        # update_individual re-checks the edit right and refuses a voided rabbit under this lock.
-        locked = db.Individual.get_by_id(ind_data["id"])
-        if issue_digital and (locked.certificate or locked.digital_certificate):
-            raise _CertificateRefused("Certificate already exists")
-        if not issue_digital and locked.digital_certificate is None:
-            raise _CertificateRefused("Certificate was not updated")
-        ind_data = locked.as_dict()
-        result = update_breeding_if_changed(ind_data, form, user_id)
-        if result and result.get("status") == "error":
-            raise _CertificateRefused(result["message"])
-        # update_individual also refuses a first certificate past the litter quota.
-        result = da.update_individual(certificate_update(ind_data, form), user_id, issue_digital=issue_digital)
-        if result.get("status") == "error":
-            raise _CertificateRefused(result["message"], result)
-        ind_data = da.get_individual(locked.number, user_id)
-        pdf_bytes = get_certificate(get_certificate_data(dict(ind_data), user_id))
-        signed_data = sign_data(pdf_bytes)
-        # The S3 key is the number: wait for a renumber still moving its assets (as a photo upload does).
-        number_assets.lock_number(ind_data["number"], xact=True)
-        if not upload_certificate(pdf_bytes=signed_data.getvalue(), ind_number=ind_data["number"]):
-            raise _CertificateRefused("Certificate could not be uploaded")
-    return signed_data, ind_data
+def _certificate_gone():
+    """Certificates are issued and changed in the new Stamboken only."""
+    return jsonify({"response": "Intyg utfärdas och ändras nu i nya Stamboken."}), 410
 
 
 @APP.route("/api/certificates/update/<i_number>", methods=["PATCH"])
 @login_required
 def update_certificate(i_number):
-    """
-    Returns an updated pdf of the individual given by `i_number`.
-    """
-    user_id = session.get("user_id", None)
-    ind_data = da.get_individual(i_number, user_id)
-    # get_individual currently returns a dict, not an individual
-    if ind_data is None:
-        return jsonify({"response": "Individual not found"}), 404
-    # Read access is not enough to sign; 404 is this route's refusal status.
-    if not da.fetch_user_info(user_id).can_edit(ind_data["id"]):
-        return jsonify({"response": "Forbidden"}), 404
-
-    certificate_exists = ind_data.get("digital_certificate", None)
-    uploaded = False
-
-    try:
-        present = check_certificate_s3(ind_number=ind_data["number"])
-        if certificate_exists and present:
-            signed_data, ind_data = _sign_stored_certificate(ind_data, user_id, certificate_form(request.json))
-            uploaded = True
-    except _CertificateRefused as exc:
-        return jsonify({"response": str(exc), **exc.extra}), 404
-    except da.HerdTrackingError as exc:  # e.g. the rabbit changed before the lock
-        return jsonify({"response": exc.detail}), 404
-    except HTTPException:
-        raise
-    except Exception as ex:  # pylint: disable=broad-except
-        APP.logger.error("Unexpected error while updating certificate: " + str(ex))
-        return jsonify({"response": "Error processing your request"}), 404
-
-    # Invalidate caches after certificate update
-    try:
-        from utils.cache_invalidation import get_genebank_id_for_herd, trigger_invalidation
-
-        origin_herd = ind_data.get("origin_herd", {})
-        herd_code = origin_herd.get("herd", "") if isinstance(origin_herd, dict) else str(origin_herd)
-        for gid in get_genebank_id_for_herd(herd_code):
-            trigger_invalidation(gid)
-    except Exception as e:
-        APP.logger.warning(f"Cache invalidation failed after update_certificate: {e}")
-
-    if uploaded:
-        return create_pdf_response(
-            pdf_bytes=signed_data.getvalue(),
-            obj_name=f"{ind_data['certificate']}.pdf",
-        )
-
-    return jsonify({"response": "Certificate was not updated"}), 404
+    """Gone: re-issuing a certificate is done in the new Stamboken."""
+    return _certificate_gone()
 
 
 @APP.route("/api/certificates/issue/<i_number>", methods=["GET", "POST"])
@@ -2566,6 +2505,9 @@ def issue_certificate(i_number):
     """
     Returns an issued pdf certificate of the individual given by `i_number`.
     """
+    if request.method == "POST":
+        return _certificate_gone()
+
     user_id = session.get("user_id", None)
     ind_data = da.get_individual(i_number, user_id)
     # get_individual currently returns a dict, not an individual
@@ -2573,7 +2515,6 @@ def issue_certificate(i_number):
         return jsonify({"response": "Individual not found"}), 404
 
     certificate_exists = ind_data.get("digital_certificate", None)
-    paper_certificate_exists = ind_data.get("certificate", None)
 
     if request.method == "GET":
         try:
@@ -2584,42 +2525,6 @@ def issue_certificate(i_number):
         except Exception as ex:  # pylint: disable=broad-except
             print(ex)
             return jsonify({"response": "Error processing your request"}), 400
-
-    elif request.method == "POST":
-        if certificate_exists or paper_certificate_exists:
-            return jsonify({"response": "Certificate already exists"}), 400
-        # Read access is not enough to sign; 400 is this route's refusal status.
-        if not da.fetch_user_info(user_id).can_edit(ind_data["id"]):
-            return jsonify({"response": "Forbidden"}), 400
-
-        try:
-            signed_data, ind_data = _sign_stored_certificate(
-                ind_data, user_id, certificate_form(request.json), issue_digital=True
-            )
-        except _CertificateRefused as exc:
-            return jsonify({"response": str(exc), **exc.extra}), 400
-        except da.HerdTrackingError as exc:  # e.g. the rabbit changed before the lock
-            return jsonify({"response": exc.detail}), 400
-        except HTTPException:
-            raise
-        except Exception as ex:  # pylint: disable=broad-except
-            print(ex)
-            return jsonify({"response": "Error processing your request"}), 400
-
-        # Invalidate caches after certificate issuance
-        try:
-            from utils.cache_invalidation import get_genebank_id_for_herd, trigger_invalidation
-
-            origin_herd = ind_data.get("origin_herd", {})
-            herd_code = origin_herd.get("herd", "") if isinstance(origin_herd, dict) else str(origin_herd)
-            for gid in get_genebank_id_for_herd(herd_code):
-                trigger_invalidation(gid)
-        except Exception as e:
-            APP.logger.warning(f"Cache invalidation failed after issue_certificate: {e}")
-
-        cert_number = ind_data["digital_certificate"]
-        APP.logger.info(f"Digital certificate for {ind_data['number']} was created with number {cert_number}")
-        return create_pdf_response(pdf_bytes=signed_data.getvalue(), obj_name=f"{cert_number}.pdf")
 
 
 @APP.route("/api/certificates/preview/<i_number>", methods=["POST", "GET"])

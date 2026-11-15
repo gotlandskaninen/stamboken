@@ -264,6 +264,29 @@ function SignIn() {
           color: "ink.2",
         }}
       >
+        Ny i Stamboken?{" "}
+        <Link
+          component={NextLink}
+          href="/stamboken-online/kom-igang"
+          sx={{
+            color: "ink.main",
+            fontWeight: 500,
+            textDecorationColor: "lera.main",
+          }}
+        >
+          Kom igång →
+        </Link>
+      </Typography>
+
+      <Typography
+        sx={{
+          mt: "8px",
+          textAlign: "center",
+          fontFamily: FONT_BODY,
+          fontSize: 14,
+          color: "ink.2",
+        }}
+      >
         Inte medlem än?{" "}
         <Link
           component={NextLink}

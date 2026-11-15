@@ -1427,10 +1427,16 @@ class User(BaseModel, UserMixin):
             "google_name": self.google_name,
             "google_email": self.google_email,
             "use_google_picture": self.use_google_picture,
-            # Admins are implicitly promoted to v2 prod; the stored flag is the
-            # per-user promotion mechanism for everyone else (Phase 999.2).
-            "v2_prod_access": self.v2_prod_access or self.is_admin,
+            "v2_prod_access": self.v2_promoted,
         }
+
+    @property
+    def v2_promoted(self):
+        """
+        Admins are implicitly promoted to v2 prod; the stored flag is the
+        per-user promotion mechanism for everyone else (Phase 999.2).
+        """
+        return self.v2_prod_access or self.is_admin
 
     def get_genebanks(self):
         """

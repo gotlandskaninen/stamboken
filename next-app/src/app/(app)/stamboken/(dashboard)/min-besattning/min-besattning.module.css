@@ -652,8 +652,15 @@
    wins over the 32px rules above. */
 @media (pointer: coarse) {
   .mb-herd-chip,
-  .mb-kit-actions :global(.sb-btn-sm) {
+  .mb-kit-actions :global(.sb-btn-sm),
+  .mb-onboarding-links :global(.sb-btn-sm),
+  .mb-onboarding-links a,
+  .mb-onboarding :global(.sb-btn-ghost) {
     min-height: 44px;
+  }
+  .mb-onboarding-links a {
+    display: inline-flex;
+    align-items: center;
   }
 
   /* 16px mono capitals shout; read like the other 16px fields instead. */
@@ -684,5 +691,74 @@
     min-width: 44px;
     min-height: 44px;
     margin: 0 -6px 0 -14px;
+  }
+}
+
+/* Getting-started checklist on the overview (OnboardingChecklist.tsx) */
+.mb-onboarding {
+  margin-bottom: 24px;
+}
+.mb-onboarding-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 16px;
+}
+.mb-onboarding-steps li {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+.mb-onboarding-steps li[data-done="true"] p {
+  color: var(--sb-ink-3);
+}
+.mb-onboarding-steps h3 {
+  margin: 4px 0 0;
+  font-size: 16px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+.mb-onboarding-steps p {
+  margin: 6px 0 0;
+  font-size: 14px;
+  color: var(--sb-ink-2);
+  line-height: 1.5;
+}
+.mb-onboarding-num {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--sb-skog-soft);
+  color: var(--sb-skog);
+  font-weight: 600;
+}
+.mb-onboarding-links {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 10px;
+  font-size: 14px;
+}
+.mb-onboarding-links a {
+  color: var(--sb-ink);
+  text-decoration-color: var(--sb-line-strong);
+  text-underline-offset: 3px;
+}
+.mb-onboarding-links a:hover {
+  text-decoration-color: var(--sb-lera);
+}
+/* Wide screens (the file's two-column breakpoint): the steps side by side */
+@media (min-width: 980px) {
+  .mb-onboarding-steps {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 28px;
   }
 }
