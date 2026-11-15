@@ -486,6 +486,18 @@ class TestVoid(BuyerBase):
             with self.subTest(reason=reason), self.assertRaises(HerdTrackingInvalid):
                 void_herd_tracking(self.sale.id, self.owner, reason)
 
+    def test_short_words_of_the_name_are_ordinary_words_and_apostrophes_join_it(self):
+        db.BuyerContact.update(name="Per Ström").where(db.BuyerContact.id == self.contact_id).execute()
+        with self.assertRaises(HerdTrackingInvalid):
+            void_herd_tracking(self.sale.id, self.owner, "Ströms kanin")
+        db.BuyerContact.update(name="O'Neil").where(db.BuyerContact.id == self.contact_id).execute()
+        for reason in ("Såld till O'Neil", "o’neils kanin"):
+            with self.subTest(reason=reason), self.assertRaises(HerdTrackingInvalid):
+                void_herd_tracking(self.sale.id, self.owner, reason)
+        db.BuyerContact.update(name="Per Ström").where(db.BuyerContact.id == self.contact_id).execute()
+        void_herd_tracking(self.sale.id, self.owner, "Intyget skickat per post")  # "per" alone is a word
+        self.assertIsNotNone(db.HerdTracking.get_by_id(self.sale.id).voided_at)
+
     def test_the_undo_commands_own_reason_is_never_checked(self):
         db.BuyerContact.update(name="Van Den Berg").where(db.BuyerContact.id == self.contact_id).execute()
         attest = execute(self.manager, self.rabbit.id, lambda ctx: [RecordAttestation("GX1", "2021-07-01")])
@@ -495,8 +507,8 @@ class TestVoid(BuyerBase):
         # "Ångrad av den som registrerade den": "den" is a word of the buyer's name, but the text is the system's.
         execute(self.manager, self.rabbit.id, lambda ctx: [Undo(op)])
         self.assertEqual(self._latest().id, self.sale.id)
-        with self.assertRaises(HerdTrackingInvalid):  # typed by a user, the same word is refused
-            void_herd_tracking(self.sale.id, self.owner, "den köparen ångrade sig")
+        with self.assertRaises(HerdTrackingInvalid):  # typed by a user, a word of the name is refused
+            void_herd_tracking(self.sale.id, self.owner, "Bergs köpare ångrade sig")
 
     def test_a_system_reason_is_never_checked(self):
         db.BuyerContact.update(name="Avpromoverad").where(db.BuyerContact.id == self.contact_id).execute()

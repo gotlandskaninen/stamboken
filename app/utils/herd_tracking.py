@@ -1106,19 +1106,20 @@ def buyer_contact_fields(buyer):
 
 def _name_patterns(name):
     """
-    The whole name, its parts joined by spaces or hyphens as written ("Li-Bo", "Li Bo"), and each word of it with
-    at least three letters, all as whole words with a genitive s.
+    The whole name, its parts joined by spaces, hyphens or apostrophes as written ("Li-Bo", "O'Neil"), and each
+    word of it of four letters or more ("per" in "Per Ström" is an ordinary word), all as whole words, also in
+    the genitive.
     """
     words = re.findall(r"\w+", name)
-    parts = [r"[\s-]+".join(map(re.escape, words))] + [re.escape(w) for w in words if len(w) >= 3]
+    parts = [r"[\s'’-]+".join(map(re.escape, words))] + [re.escape(w) for w in words if len(w) >= 4]
     return [re.compile(rf"(?<!\w){part}s?(?!\w)", re.IGNORECASE) for part in parts if part]
 
 
 def _reject_buyer_name(texts, individual_ids, names=()):
     """
     No buyer's name in what a user types (it lives forever in audit_log): the whole name of a buyer the rabbits'
-    rows hold, or of `names`, or a word of it of three letters or more, in any case and also in the genitive.
-    "Anna" stops "Annas köpare", not "annan"; "de" in "Kim de Vries" stops nothing alone.
+    rows hold, or of `names`, or a word of it of four letters or more, in any case and also in the genitive.
+    "Anna" stops "Annas köpare", not "annan"; "per" in "Per Ström" stops nothing alone.
     """
     texts = [text for text in texts if text]
     if not texts:
