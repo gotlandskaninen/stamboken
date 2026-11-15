@@ -2084,6 +2084,8 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
             received = YearlyHerdReport.select(fn.MIN(YearlyHerdReport.received_at)).where(voided).scalar()
             if paper and received is None:  # 5.5 rule 5: the day the form came, from midnight in Stockholm
                 received = datetime.combine(sub.paper["received_on"], datetime.min.time(), STOCKHOLM)
+            # Codex 2: the manager's current "i tid" decision, a cleared one too, goes with it as received_at does
+            decided = YearlyHerdReport.select().where(voided).order_by(YearlyHerdReport.revision.desc()).first()
             report = YearlyHerdReport.create(
                 herd=herd.id,
                 round=round_.id,
@@ -2096,6 +2098,8 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
                 inbox_item_id=access.item.id if paper else None,
                 revision=revision + 1,  # voided rows count too, so an old tab never matches a new row
                 received_at=received or at,  # 5.13: the round's first submission
+                on_time_override=decided.on_time_override if decided else None,
+                on_time_set_by=decided.on_time_set_by_id if decided else None,
             )
             rows = {row["id"]: row for row in report_list(herd, year)}
             for rabbit, entry in sorted(sub.rabbits.items()):

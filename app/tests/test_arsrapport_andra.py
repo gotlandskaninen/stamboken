@@ -325,6 +325,33 @@ class AndraTest(ArsrapportTest):
         new = self.ok(self.body(self.kvar(a, vikt=3.0)))["report_id"]
         self.assertEqual(self.report(new).received_at, noon(date(2026, 1, 30)))
 
+    def test_on_time_decision_survives_a_resubmit(self):  # Codex 2: the latest decision, a cleared one too
+        manager = db.User.get_by_id(self.manager.id)
+        g9003 = db.Herd.create(genebank=self.gotland, herd="G9003", is_active=True)
+        self.owner.add_role("owner", g9003.id)
+        for herd, received, decisions in (
+            (self.h, date(2026, 2, 2), (True, None)),
+            (g9003, date(2026, 1, 20), (False,)),
+        ):
+            (a,) = self.rabbits(herd, 1)
+            path = f"/besattning/{herd.herd}/2025"
+            self.at(received)
+
+            def send(path=path, a=a):
+                response = self.api("POST", f"{path}/skicka", **self.body(self.kvar(a, vikt=2.8)))
+                self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+                return self.report(response.get_json()["report_id"])
+
+            report = send()
+            for value in decisions:
+                arsrapport.set_on_time(report, manager, value)
+                response = self.api("POST", f"{path}/dra-tillbaka", revision=report.revision)
+                self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+                report = send()
+                self.assertEqual((report.on_time_override, report.on_time_set_by_id), (value, self.manager.id))
+                expected = received <= self.round_.deadline if value is None else value
+                self.assertEqual(arsrapport.on_time(report, self.round_), expected)
+
     def test_withdraw_after_a_january_sale(self):  # case 6
         (a,) = self.rabbits(self.h, 1)
         self.ok(self.body(self.sald(a, "G9002", 2026, 1, 3)))
