@@ -1191,7 +1191,7 @@ def create_arsrapport_seed(verbose):
     click.echo("  seed-gk-mgr@test.local / seed-gk-pass (activates the round)")
     click.echo("  seed-gk-arsrapport@test.local / seed-gk-arsrapport-pass (owns G9001 and G9004)")
     click.echo("  seed-gk-hjalp@test.local / seed-gk-hjalp-pass (genebank helper, enters G9002's paper form)")
-    click.echo("  seed-mk-uppfodare@test.local / seed-mk-uppfodare-pass (owns M9001-M9004, M9006, M9101)")
+    click.echo("  seed-mk-uppfodare@test.local / seed-mk-uppfodare-pass (owns M9001-M9004, M9006, M9007, M9101)")
     click.echo("  seed-mk-hjalp@test.local / seed-mk-hjalp-pass (genebank helper, M9005, M9006 and M9102 on paper)")
 
 
@@ -1230,18 +1230,22 @@ def _user_types(log):
     def ending(herd):
         _rabbits(herd, manager, log, 3, date(2023, 5, 1), 11, ("female", "male"))
 
-    # code, name, phone, owned by seed-mk-uppfodare, paper form in the inbox, rabbits
+    def pair(herd):  # the only male and the only female: a death or sale at the year-end decides the support
+        _rabbits(herd, manager, log, 2, date(2024, 5, 1), 11, ("male", "female"))
+
+    # code, name, phone, owned by seed-mk-uppfodare, paper forms in the inbox, rabbits. M9006 sent two forms.
     herds = [
-        ("M9001", "Typ A median", None, True, False, median),
-        ("M9002", "Typ B ovan", "0700000002", True, False, median),
-        ("M9003", "Typ C stor", None, True, False, large),
-        ("M9004", "Typ D avslutar", None, True, False, ending),
-        ("M9005", "Typ E papper", "0700000005", False, True, median),
-        ("M9006", "Typ F dubbel", None, True, True, median),
-        ("M9101", "Paritet digital", None, True, False, median),
-        ("M9102", "Paritet papper", None, False, True, median),
+        ("M9001", "Typ A median", None, True, 0, median),
+        ("M9002", "Typ B ovan", "0700000002", True, 0, median),
+        ("M9003", "Typ C stor", None, True, 0, large),
+        ("M9004", "Typ D avslutar", None, True, 0, ending),
+        ("M9005", "Typ E papper", "0700000005", False, 1, median),
+        ("M9006", "Typ F dubbel", None, True, 2, median),
+        ("M9007", "Typ G årsskiftet", None, True, 0, pair),
+        ("M9101", "Paritet digital", None, True, 0, median),
+        ("M9102", "Paritet papper", None, False, 1, median),
     ]
-    for code, name, phone, owned, on_paper, rabbits in herds:
+    for code, name, phone, owned, forms, rabbits in herds:
         account = owner if code == "M9001" else None  # one Member per user; the other herds get the owner role
         herd = _member_herd(mk, code, name, f"{code.lower()}@example.invalid", account, (None, None), log)
         if herd is None:
@@ -1251,5 +1255,5 @@ def _user_types(log):
         if phone:
             Member.update(phone=phone).where(Member.membership == herd.membership).execute()
         rabbits(herd)
-        if on_paper:
+        for _ in range(forms):
             _paper_form(herd, manager, log)
