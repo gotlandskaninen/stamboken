@@ -6,6 +6,7 @@ isort:skip_file
 import os
 from datetime import date, datetime, timedelta, timezone
 from unittest import mock
+from zoneinfo import ZoneInfo
 
 os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), "auth.ini.test"))
 
@@ -27,7 +28,7 @@ from utils.herd_tracking import (  # noqa: E402
     void_all_for_unpromote,
     void_herd_tracking,
 )
-from utils.individual_commands import record_sale  # noqa: E402
+from utils.individual_commands import RecordAttestation, Undo, execute, record_sale  # noqa: E402
 
 from tests.database_test import DatabaseTest  # noqa: E402
 from tests.test_bunny_v2_api import _old_litter, _promote_without_certificate
@@ -44,6 +45,7 @@ NAME = "Zelda Uniquebuyer"  # ASCII, so a text search of audit_log finds every t
 BUYER = {"name": NAME, "town": "Visby"}
 OTHER = {"name": "Other Buyer", "town": "Slite"}
 NOW = datetime.now(timezone.utc)
+PURGE = NOW + timedelta(days=5 * 365)
 
 
 class BuyerBase(DatabaseTest):
@@ -112,29 +114,48 @@ class TestSchema(BuyerBase):
         self.assertTrue({"buyer_contact_address_needs_consent", "buyer_contact_email_phone_need_consent"} <= checks)
         db.check_migrations()  # replay-safe
 
-    def test_purge_at_is_five_years_after_created_at(self):
-        contact = db.BuyerContact.create(name=NAME, town="Visby", created_by_user=self.owner)
-        contact = self._contact(contact.id)
-        self.assertEqual(contact.purge_at.replace(year=contact.purge_at.year - 5), contact.created_at)
+    def test_purge_at_is_five_years_after_a_backdated_sale(self):
+        contact = self._contact(self._sale().holder_contact_id)  # sold on SALE_DATE, entered today
+        self.assertEqual(contact.purge_at, datetime(2026, 6, 1, tzinfo=ZoneInfo("Europe/Stockholm")))
+        self.assertEqual(db.BuyerContact.purge_at_for("2024-02-29").date(), date(2029, 2, 28))
 
     def test_address_needs_the_contact_consent(self):
         with self.assertRaises(IntegrityError), db.DATABASE.atomic():
-            db.BuyerContact.create(name=NAME, town="Visby", postal_address="Väg 1", created_by_user=self.owner)
+            db.BuyerContact.create(
+                name=NAME, town="Visby", purge_at=PURGE, postal_address="Väg 1", created_by_user=self.owner
+            )
         with self.assertRaises(IntegrityError), db.DATABASE.atomic():
             db.BuyerContact.create(
-                name=NAME, town="Visby", postal_address="Väg 1", membership_optin_at=NOW, created_by_user=self.owner
+                name=NAME,
+                town="Visby",
+                postal_address="Väg 1",
+                membership_optin_at=NOW,
+                created_by_user=self.owner,
+                purge_at=PURGE,
             )
         db.BuyerContact.create(
-            name=NAME, town="Visby", postal_address="Väg 1", contact_consent_at=NOW, created_by_user=self.owner
+            name=NAME,
+            town="Visby",
+            postal_address="Väg 1",
+            contact_consent_at=NOW,
+            created_by_user=self.owner,
+            purge_at=PURGE,
         )
 
     def test_email_and_phone_need_a_consent_or_the_membership_optin(self):
         for field in ("email", "phone"):
             with self.subTest(field=field):
                 with self.assertRaises(IntegrityError), db.DATABASE.atomic():
-                    db.BuyerContact.create(name=NAME, town="Visby", created_by_user=self.owner, **{field: "x"})
+                    db.BuyerContact.create(
+                        name=NAME, town="Visby", purge_at=PURGE, created_by_user=self.owner, **{field: "x"}
+                    )
                 db.BuyerContact.create(
-                    name=NAME, town="Visby", membership_optin_at=NOW, created_by_user=self.owner, **{field: "x"}
+                    name=NAME,
+                    town="Visby",
+                    membership_optin_at=NOW,
+                    created_by_user=self.owner,
+                    purge_at=PURGE,
+                    **{field: "x"},
                 )
 
     def test_deleting_a_contact_nulls_the_sale_through_the_herd_tracking_triggers(self):
@@ -158,10 +179,11 @@ class TestSchema(BuyerBase):
 
 
 class TestRegistration(BuyerBase):
-    def test_sale_without_buyer_is_unchanged(self):
-        sale = self._sale(buyer=None)
-        self.assertEqual(sale.herd.herd, "GX1")
-        self.assertIsNone(sale.holder_contact_id)
+    def test_a_sale_outside_without_a_buyer_is_400(self):
+        response = self._sell(buyer=None)
+        self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+        self.assertIn("köparens namn och ort", response.get_json()["detail"])
+        self.assertEqual(self._latest().kind, "BIRTH")
         self.assertEqual(db.BuyerContact.select().count(), 0)
 
     def test_sale_with_buyer_stores_the_contact_on_the_transfer(self):
@@ -282,6 +304,15 @@ class TestOutsideResale(BuyerBase):
         self.assertIn("utan köpare", raised.exception.detail)
         self.assertEqual(self._latest().id, self.first.id)
 
+    def test_the_history_reads_the_buyers_once_whatever_the_number_of_resales(self):
+        for day, buyer in (("2022-01-01", OTHER), ("2022-02-01", {"name": "Third", "town": "Klintehamn"})):
+            record_herd_tracking(self.rabbit, self.gx1, day, "TRANSFER", self.manager, buyer=buyer)
+        self._login("owner")  # sees no buyer: every buyer_contact read is the invariants'
+        with capture_sql() as statements:
+            response = self.client.get(f"/api/v2/individual/{RABBIT}/herd-tracking")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(sum('FROM "buyer_contact"' in sql for sql, _params in statements), 1)
+
     def test_a_correction_cannot_write_it(self):
         event = {"kind": "TRANSFER", "date": "2022-01-01", "herd": "GX1"}
         with self.assertRaises(HerdTrackingConflict):
@@ -366,6 +397,17 @@ class TestVoid(BuyerBase):
             [r.new_data for r in self._buyer_log(self.contact_id, "DELETE")], [{"action": "forsaljning_ogiltig"}]
         )
 
+    def test_undoing_the_void_of_a_sale_whose_buyer_went_is_refused_and_not_offered(self):
+        void_herd_tracking(self.sale.id, self.owner, "Fel kanin")  # deletes the buyer
+        void_op = db.HerdTracking.get_by_id(self.sale.id).voided_operation_id
+        history = herd_tracking_history(db.Individual.get_by_id(self.rabbit.id), self.manager)
+        (row,) = [r for r in history["rows"] if r["id"] == self.sale.id]
+        self.assertFalse(row["can_undo_operation"])
+        with self.assertRaises(HerdTrackingConflict) as raised:
+            undo_herd_tracking_operation(void_op, self.manager, "Ångra")
+        self.assertEqual(raised.exception.detail, "Köparen är raderad; registrera försäljningen på nytt.")
+        self.assertIsNotNone(db.HerdTracking.get_by_id(self.sale.id).voided_at)
+
     def test_undoing_the_operation_deletes_the_buyer(self):
         undo_herd_tracking_operation(self.sale.operation_id, self.manager, "Fel kanin")
         self.assertIsNone(self._contact(self.contact_id))
@@ -379,11 +421,10 @@ class TestVoid(BuyerBase):
         sale_event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", **event}
         return op, correct_herd_tracking(self.rabbit, self.manager, op, [self.sale.id], [sale_event], "Fel datum")
 
-    def test_a_correction_of_the_sale_keeps_the_buyer_and_its_purge_date(self):
-        purge_at = self._contact(self.contact_id).purge_at
+    def test_a_correction_of_the_sale_keeps_the_buyer_and_moves_its_purge_date(self):
         _op, (written,) = self._correct_date()  # the dialog sends no buyer: the server carries it over
         self.assertEqual(written.holder_contact_id, self.contact_id)
-        self.assertEqual(self._contact(self.contact_id).purge_at, purge_at)
+        self.assertEqual(self._contact(self.contact_id).purge_at, db.BuyerContact.purge_at_for("2021-07-01"))
         self.assertEqual(self._buyer_log(self.contact_id, "DELETE"), [])
 
     def test_undoing_that_correction_restores_the_old_sale_with_its_buyer(self):
@@ -439,6 +480,24 @@ class TestVoid(BuyerBase):
         void_herd_tracking(latest, self.manager, "Såld till annan köpare, de ville inte")
         self.assertIsNotNone(db.HerdTracking.get_by_id(latest).voided_at)
 
+    def test_a_hyphenated_name_is_matched_as_written(self):
+        db.BuyerContact.update(name="Li-Bo").where(db.BuyerContact.id == self.contact_id).execute()
+        for reason in ("Såld till Li-Bo", "Li-Bos kanin", "li bo"):
+            with self.subTest(reason=reason), self.assertRaises(HerdTrackingInvalid):
+                void_herd_tracking(self.sale.id, self.owner, reason)
+
+    def test_the_undo_commands_own_reason_is_never_checked(self):
+        db.BuyerContact.update(name="Van Den Berg").where(db.BuyerContact.id == self.contact_id).execute()
+        attest = execute(self.manager, self.rabbit.id, lambda ctx: [RecordAttestation("GX1", "2021-07-01")])
+        op = db.IndividualCommand.get(
+            (db.IndividualCommand.individual == attest.id) & (db.IndividualCommand.command == "RecordAttestation")
+        ).operation_id
+        # "Ångrad av den som registrerade den": "den" is a word of the buyer's name, but the text is the system's.
+        execute(self.manager, self.rabbit.id, lambda ctx: [Undo(op)])
+        self.assertEqual(self._latest().id, self.sale.id)
+        with self.assertRaises(HerdTrackingInvalid):  # typed by a user, the same word is refused
+            void_herd_tracking(self.sale.id, self.owner, "den köparen ångrade sig")
+
     def test_a_system_reason_is_never_checked(self):
         db.BuyerContact.update(name="Avpromoverad").where(db.BuyerContact.id == self.contact_id).execute()
         void_all_for_unpromote(db.Individual.get_by_id(self.rabbit.id), self.admin)
@@ -493,6 +552,7 @@ class TestErasure(BuyerBase):
         self._login("man")
         resp = self.client.get(f"/api/v2/buyer-contacts/{self.contact_id}")
         self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.headers["Cache-Control"], "no-store")
         body = resp.get_json()
         self.assertEqual((body["name"], body["town"], body["email"]), (NAME, "Visby", "z@example.org"))
         self.assertIsNotNone(body["contact_consent_at"])
@@ -514,10 +574,11 @@ class TestRetention(BuyerBase):
         )
         self.contact_id = self.sale.holder_contact_id
 
-    def test_five_years_after_entry_the_buyer_goes(self):
-        self.assertEqual(buyer_contact.purge_expired(NOW), 0)
+    def test_five_years_after_the_sale_the_buyer_goes(self):
+        purge_at = db.BuyerContact.purge_at_for(SALE_DATE)  # a sale entered late goes five years after its date
+        self.assertEqual(buyer_contact.purge_expired(purge_at - timedelta(minutes=1)), 0)
         with mock.patch("utils.inbox_purge.erase_buyer_from_inbox", return_value=[]) as inbox:
-            self.assertEqual(buyer_contact.purge_expired(NOW + timedelta(days=5 * 366)), 1)
+            self.assertEqual(buyer_contact.purge_expired(purge_at), 1)
         inbox.assert_called_once_with(self.sale.id, False)
         self.assertIsNone(self._contact(self.contact_id))
         self.assertIsNone(db.HerdTracking.get_by_id(self.sale.id).holder_contact_id)
@@ -589,10 +650,14 @@ class TestRetention(BuyerBase):
 
 class TestNoTraceInAuditLog(BuyerBase):
     def test_after_erasure_and_purge_the_name_is_nowhere_in_audit_log(self):
-        sale = self._sale({**BUYER, "email": "z@example.org", "contact_consent": True, "membership_optin": True})
+        buyer = {**BUYER, "email": "z@example.org", "contact_consent": True, "membership_optin": True}
+        today = date.today()
+        response = self._sell(buyer=buyer, date=(today - timedelta(days=20)).isoformat())  # within five years
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        sale = self._latest()
         self._login("man")
         self.client.get(f"/api/v2/individual/{RABBIT}/herd-tracking")
-        record_herd_tracking(self.rabbit, self.herds[1], "2022-01-01", "TRANSFER", self.manager)
+        record_herd_tracking(self.rabbit, self.herds[1], today - timedelta(days=10), "TRANSFER", self.manager)
         buyer_contact.run(NOW + timedelta(days=366))
         buyer_contact.erase_buyer_contact(sale.holder_contact_id, self.manager)
         self.assertGreater(len(self._buyer_log(sale.holder_contact_id)), 2)
@@ -677,6 +742,27 @@ class TestQueueDocuments(PurgeTest):
         self.assertIsNone(after[self.photo.id].original_path)
         for document_id in (self.certificate.id, self.proof.id, self.other.id):
             self.assertEqual(after[document_id].original_path, before[document_id].original_path)
+
+    def test_a_proof_of_a_buyerless_sale_goes_when_a_buyer_resells_in_the_same_herd(self):
+        db.InboxDocument.update(herd_tracking_id=self.sale.id).where(db.InboxDocument.id == self.proof.id).execute()
+        db.BuyerContact.delete().where(db.BuyerContact.id == self.sale.holder_contact_id).execute()  # erased later
+        gx1 = db.Herd.get(db.Herd.herd == "GX1")
+        record_herd_tracking(self.rabbit, gx1, "2026-02-01", "TRANSFER", self.manager, buyer=OTHER)
+        purge.purge_sold_proofs(NOW)
+        self.assertIsNone(db.InboxDocument.get_by_id(self.proof.id).original_path)
+
+    def test_a_proof_of_a_corrected_sale_goes_when_the_rabbit_is_sold_on(self):
+        db.InboxDocument.update(herd_tracking_id=self.sale.id).where(db.InboxDocument.id == self.proof.id).execute()
+        event = {"kind": "TRANSFER", "date": "2026-01-02", "herd": "GX1"}
+        (carried,) = correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [event], "Fel datum")
+        self.assertEqual(carried.holder_contact_id, self.sale.holder_contact_id)  # the buyer went over
+        purge.purge_sold_proofs(NOW)
+        self.assertIsNotNone(db.InboxDocument.get_by_id(self.proof.id).original_path)
+        record_herd_tracking(self.rabbit, self.herds[1], "2026-02-01", "TRANSFER", self.manager)
+        purge.purge_sold_proofs(NOW)
+        proof = db.InboxDocument.get_by_id(self.proof.id)
+        self.assertIsNone(proof.original_path)
+        self.assertEqual(proof.herd_tracking_id, self.sale.id)  # the provenance link stays
 
     def test_a_proof_goes_when_a_correction_moves_the_rabbit_on(self):
         db.InboxDocument.update(herd_tracking_id=self.sale.id).where(db.InboxDocument.id == self.proof.id).execute()
@@ -776,6 +862,26 @@ def _items_locked_before_the_rabbit(statements):
                 first.setdefault(table, index)
     return "inbox_item" in first and first["inbox_item"] < first.get("individual", len(statements))
 
+    def test_a_proof_of_a_sale_registered_in_the_sell_dialog_links_to_it(self):
+        db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        self.login("man")  # the sale goes in from the rabbit's page, with its buyer
+        resp = self.client.patch(
+            "/api/individual/G1-2111", json={"herd": "GX1", "selling_date": "2021-06-01", "buyer": BUYER}
+        )
+        self.assertEqual(resp.status_code, 200, resp.get_data(as_text=True))
+        sale = db.HerdTracking.get((db.HerdTracking.kind == "TRANSFER") & db.HerdTracking.voided_at.is_null(True))
+        item = self.item(0, documents=1)
+        inbox.take(item, self.helper, over=False)
+        (proof,) = list(item.documents)
+        self.login("hjalp")
+        self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{proof.id}", json={"doc_type": "bevis"})
+
+        resp = self.post(f"/{item.id}/dokument/{proof.id}/overlat", individual="G1-2111", herd="GX1", date="2021-06-01")
+
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["herd_tracking_id"], sale.id)
+        self.assertEqual(db.BuyerContact.select().count(), 1)  # no second buyer
+
 
 class TestLockOrder(PurgeTest):
     """A void that clears a sale's queue documents locks the items before the rabbit, as the queue does."""
@@ -803,6 +909,23 @@ class TestLockOrder(PurgeTest):
             with self.subTest(name), capture_sql() as statements:
                 run()
             self.assertTrue(_items_locked_before_the_rabbit(statements), name)
+
+    def test_an_erasure_locks_the_items_before_the_rabbit(self):
+        rabbit = db.Individual.get(db.Individual.number == "G1-2112")
+        sale, _document = self._sale_with_a_document(rabbit, "2026-01-01")
+        with capture_sql() as statements:
+            buyer_contact.erase_buyer_contact(sale.holder_contact_id, self.manager)
+        self.assertTrue(_items_locked_before_the_rabbit(statements))
+
+    def test_unpromote_refuses_an_item_that_appeared_after_its_lock(self):
+        rabbit = db.Individual.get(db.Individual.number == "G1-2112")
+        self._sale_with_a_document(rabbit, "2026-01-01")
+        with self.assertRaises(HerdTrackingConflict) as raised:  # the caller locked no items: one has appeared
+            void_all_for_unpromote(rabbit, self.admin, items=set())
+        self.assertIn("Försök igen", raised.exception.detail)
+        self.assertIsNone(
+            db.HerdTracking.get(db.HerdTracking.individual == rabbit.id, db.HerdTracking.kind == "TRANSFER").voided_at
+        )
 
     def test_unpromote_locks_them_in_its_own_transaction_and_removes_the_files_after_it(self):
         bunny = db.Bunny.create(

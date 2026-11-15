@@ -80,7 +80,7 @@ NOTICE_TEXTS = {
 DOC_TYPES = ("intyg", "bevis", "arsblankett", "annat")
 CERT_FORMATS = ("handskrivet", "datorskrivet", "v1_pdf", "intyg_b", "digitalt_v2")
 OPENED_EVERY = timedelta(hours=1)
-# An item left "ofullstandig" is deleted this long after it came in or was last answered (utils/inbox_purge.py),
+# An item left "ofullstandig" is deleted this long after its retention_start (utils/inbox_purge.py),
 # and its sender is reminded after REMIND_MONTHS.
 INCOMPLETE_MONTHS = 12
 REMIND_MONTHS = 11
@@ -337,8 +337,15 @@ def document_of(item, document_id):
     return document
 
 
+def require_worker_of(item, user):
+    """Everyone in the queue sees all of it, but works only the items of their own genebanks (and those without)."""
+    if not can_handle(user, item.genebank_id):
+        raise InboxError(403, "Du arbetar inte i postens genbank, så du kan se den men inte arbeta med den.")
+
+
 def require_handler(item, user):
     """Only the item's handler changes it or writes through it: anyone else takes it over first."""
+    require_worker_of(item, user)
     if item.state in HELD_STATES and item.assigned_to_id == user.id:
         return
     if item.state in CLOSED_STATES:
@@ -358,6 +365,7 @@ def _set_state(item, state):
 
 def take(item, user, *, over):
     """ "Jag tar den", or with `over` "Ta över": the item becomes the user's, in "tagen"."""
+    require_worker_of(item, user)
     if item.state in CLOSED_STATES:
         raise InboxError(409, "Posten är stängd.")
     previous = item.assigned_to_id
@@ -397,6 +405,8 @@ def assign(item, by, to):
 def change_state(item, user, state, *, note=None, duplicate_of=None):
     """POST …/lage, by TRANSITIONS, and "klar" for a message or an item without documents (MESSAGE_DONE_FROM)."""
     answered = item.kind == "meddelande" or not item.documents.exists()
+    if not isinstance(state, str):
+        raise InboxError(400, f"state är en av {', '.join(TRANSITIONS)}.")
     allowed = MESSAGE_DONE_FROM if state == "klar" and answered else TRANSITIONS.get(state)
     if allowed is None:
         raise InboxError(400, f"state är en av {', '.join(TRANSITIONS)}.")
@@ -477,16 +487,32 @@ def close_if_done(item, user):
     _set_state(item, "klar")
     item.save()
     log_event(item, user, "lage", **{"from": previous, "to": "klar"})
-    if item.sender_user_id is not None:
-        notify(item.sender_user_id, "klar", item, mailed=True)
-    mail_sender(item, "inlasning.klar", {"item_id": item.id})
+    # Once per item: a reopened and closed item does not tell its sender again (a cancelled mail did not tell).
+    told = MailMessage.select().where(
+        (MailMessage.kind == "inlasning.klar")
+        & (MailMessage.ref_type == "inbox_item")
+        & (MailMessage.ref_id == item.id)
+        & (MailMessage.status != "cancelled")
+    )
+    if not told.exists():
+        if (
+            item.sender_user_id is not None
+            and not Notice.select().where((Notice.item == item.id) & (Notice.kind == "klar")).exists()
+        ):
+            notify(item.sender_user_id, "klar", item, mailed=True)
+        mail_sender(item, "inlasning.klar", {"item_id": item.id})
     release_sender(item)
 
 
-def incomplete_since(item):
-    """What an incomplete item's months count from: when it came in, or the sender's latest answer on it."""
-    answered = item.events.select(fn.MAX(InboxEvent.at)).where(InboxEvent.kind == "svar").scalar()
-    return max(item.received_at, answered) if answered else item.received_at
+def retention_start(item):
+    """
+    What the retention months of an item count from: when it came in, or when the sender last answered on it, or
+    when it was last marked "ofullstandig", whichever is latest (a reply adds photos and text to an old item).
+    """
+    events = item.events.select(fn.MAX(InboxEvent.at))
+    answered = events.where(InboxEvent.kind == "svar").scalar()
+    marked = events.where((InboxEvent.kind == "lage") & InboxEvent.detail.contains({"to": "ofullstandig"})).scalar()
+    return max(when for when in (item.received_at, answered, marked) if when)
 
 
 def mail_sender(item, kind, params, **options):
@@ -640,6 +666,21 @@ def confirm_mask(item, document, user, rotation, rects, no_personal_data=None):
     close_if_done(item, user)
 
 
+def remove_copy(item, document, user):
+    """
+    DELETE …/kopia: the masked copy comes off the rabbit (a badly masked one, with the original gone, cannot be
+    made again). The caller holds the item's lock, and removes the returned file after the commit.
+    """
+    if not manages(user, item.genebank_id):
+        raise InboxError(403, "Bara genbanksansvarig och admin kan ta bort en kopia.")
+    if document.public_path is None:
+        raise InboxError(409, "Dokumentet har ingen kopia.")
+    path, document.public_path = document.public_path, None
+    document.save()
+    log_event(item, user, "kopia_borttagen", document=document.id)
+    return path
+
+
 def paper_certificate(individual):
     """The rabbit's paper certificate: the newest copy made from an "intyg" document for it, or None."""
     return (
@@ -668,20 +709,6 @@ def documents_json(documents):
     if individual_ids:
         query = Individual.select(Individual.id, Individual.number).where(Individual.id.in_(individual_ids))
         numbers = dict(query.tuples())
-    sales = {}  # the sale a document registered or proves, so the work view can tell a proof of it (proven_sale)
-    sale_ids = {d.herd_tracking_id for d in documents if d.herd_tracking_id}
-    if sale_ids:
-        query = (
-            HerdTracking.select(
-                HerdTracking.id, Individual.number, Herd.herd, HerdTracking.herd_tracking_date, HerdTracking.voided_at
-            )
-            .join(Herd, on=(HerdTracking.herd == Herd.id))
-            .switch(HerdTracking)
-            .join(Individual, on=(HerdTracking.individual == Individual.id))
-            .where(HerdTracking.id.in_(sale_ids))
-        )
-        for row_id, number, herd, day, voided_at in query.tuples():
-            sales[row_id] = {"individual": number, "herd": herd, "date": _iso(day), "active": voided_at is None}
     same = {}  # the same image (sha256) anywhere in the queue: a duplicate warning
     shas = {d.sha256 for d in documents}
     if shas:
@@ -706,7 +733,6 @@ def documents_json(documents):
             "proposal": d.proposal,
             "individual": numbers.get(d.individual_id),
             "herd_tracking_id": d.herd_tracking_id,
-            "sale": sales.get(d.herd_tracking_id),
             "has_original": d.original_path is not None,
             "has_copy": d.public_path is not None,
             "done_at": _iso(d.done_at),
@@ -908,22 +934,20 @@ def require_same_rabbit(document, individual=None):
         raise InboxError(409, f"Dokumentet gäller {number}. Det som sparas genom det måste gälla samma kanin.")
 
 
-def proven_sale(item, document, individual, herd, date):
+def proven_sale(item, document, individual, herd, date):  # pylint: disable=unused-argument  # the item: kept
     """
-    The sale a proof (bevis) shows when it is already registered from another document of the item, without proof:
-    the same rabbit, buyer and date. The proof is then linked to it rather than registering it again.
+    The sale a proof (bevis) shows when it is already registered, from another document of the item or anywhere
+    else (the sell dialog): an active move of the same rabbit to the same herd on the same date. The proof is then
+    linked to it rather than registering it again, and asks for no buyer: one came with the sale.
     """
     if document.doc_type != "bevis":
         return None
-    sales = item.documents.select(InboxDocument.herd_tracking_id).where(
-        (InboxDocument.doc_type != "bevis") & InboxDocument.herd_tracking_id.is_null(False)
-    )
     return (
         HerdTracking.select()
         .join(Herd, on=(HerdTracking.herd == Herd.id))
         .where(
-            HerdTracking.id.in_(sales)
-            & (HerdTracking.individual == individual.id)
+            (HerdTracking.individual == individual.id)
+            & HerdTracking.kind.in_(("TRANSFER", "CORRECTION"))
             & (Herd.herd == herd)
             & (HerdTracking.herd_tracking_date == date)
             & HerdTracking.voided_at.is_null(True)
@@ -1068,7 +1092,7 @@ def _incomplete_mail(params):
     return {
         "item_id": item.id,
         "note": note,
-        "deadline": f"{incomplete_since(item) + months(INCOMPLETE_MONTHS):%Y-%m-%d}",
+        "deadline": f"{retention_start(item) + months(INCOMPLETE_MONTHS):%Y-%m-%d}",
         "account": item.sender_user_id is not None,
     }
 

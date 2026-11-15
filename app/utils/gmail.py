@@ -62,14 +62,22 @@ class Gmail:
         return self._call("GET", "profile")["historyId"]
 
     def added_since(self, history_id):
-        """(ids of the messages added to INBOX since `history_id`, oldest first; the newest historyId)."""
-        params = {"startHistoryId": history_id, "historyTypes": "messageAdded", "labelId": "INBOX"}
+        """
+        (ids of the messages added to INBOX since `history_id`, oldest first; the newest historyId): delivered
+        there, or moved there by a label change (out of spam, say).
+        """
+        params = {"startHistoryId": history_id, "historyTypes": ["messageAdded", "labelAdded"], "labelId": "INBOX"}
         ids, newest = [], history_id
         try:
             for page in self._pages("history", params):
                 newest = page.get("historyId", newest)
                 for record in page.get("history", []):
                     ids += [added["message"]["id"] for added in record.get("messagesAdded", [])]
+                    ids += [
+                        added["message"]["id"]
+                        for added in record.get("labelsAdded", [])
+                        if "INBOX" in added.get("labelIds", [])
+                    ]
         except requests.HTTPError as exc:
             if exc.response is not None and exc.response.status_code == 404:
                 raise HistoryTooOld(history_id) from exc

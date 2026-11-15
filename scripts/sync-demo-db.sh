@@ -137,9 +137,16 @@ fi
 # --clean dump stream into a non-empty database hits FK-ordering errors and
 # silently drops rows (e.g. hbuser), so the staging database starts empty.
 STAGING_DB="${TARGET_DB}_staging"
+# A run that stops before the rename leaves no copy of production behind: the
+# staging database still holds its buyers, and nothing else ever drops it.
+DROP_STAGING_SQL="DROP DATABASE IF EXISTS $STAGING_DB WITH (FORCE);"
+drop_staging() {
+	[ -n "${STAGING_RENAMED:-}" ] && return 0
+	docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -q -c "$DROP_STAGING_SQL" >/dev/null 2>&1 || true
+}
+trap 'drop_staging; rm -f "$DUMP_LOG"' EXIT
 echo "Recreating $STAGING_DB from scratch..."
-docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
-	"DROP DATABASE IF EXISTS $STAGING_DB WITH (FORCE);"
+docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c "$DROP_STAGING_SQL"
 docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
 	"CREATE DATABASE $STAGING_DB OWNER $DB_USER;"
 
@@ -178,9 +185,8 @@ echo "Deleting the buyers outside the association in $STAGING_DB..."
 docker exec "$CONTAINER" psql -U "$DB_USER" -d "$STAGING_DB" -v ON_ERROR_STOP=1 -q -c "$DROP_BUYERS_SQL"
 
 if [ -n "$MAIL_SEQ" ]; then
-	# shellcheck disable=SC2059  # the SQL template is the format
 	docker exec "$CONTAINER" psql -U "$DB_USER" -d "$STAGING_DB" -v ON_ERROR_STOP=1 -qtAc \
-		"$(printf "$SET_MAIL_SEQ_SQL" "$MAIL_SEQ")" >/dev/null
+		"${SET_MAIL_SEQ_SQL//%s/$MAIL_SEQ}" >/dev/null
 fi
 
 # The copy carries prod's genetics version counter, which can repeat a number
@@ -209,6 +215,7 @@ docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
 	"DROP DATABASE IF EXISTS $TARGET_DB WITH (FORCE);"
 docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
 	"ALTER DATABASE $STAGING_DB RENAME TO $TARGET_DB;"
+STAGING_RENAMED=1
 
 echo "Granting permissions..."
 docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \

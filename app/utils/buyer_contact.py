@@ -10,10 +10,11 @@ from datetime import timedelta
 
 from peewee import Case, fn
 
-from utils.database import DB_PROXY, BuyerContact, HerdTracking, Individual, ht_sort_key
+from utils.database import DB_PROXY, BuyerContact, HerdTracking, Individual, ht_sort_key, lock_individuals
 from utils.herd_tracking import (
     HerdTrackingForbidden,
     HerdTrackingNotFound,
+    buyer_items,
     can_see_buyer,
     delete_buyer_contacts,
     is_manager_of,
@@ -68,6 +69,10 @@ def erase_buyer_contact(contact_id, user):
     """
     _managed_contact(contact_id, user, "radera")
     with DB_PROXY.atomic():
+        # The locks a correction takes, in its order (the queue's items, then the rabbits), so the two queue up.
+        holding = list(HerdTracking.select().where(HerdTracking.holder_contact == contact_id))
+        buyer_items(holding, lock=True)
+        lock_individuals([r.individual_id for r in holding])
         _count, paths = delete_buyer_contacts([contact_id], "radering", user, whole_items=True)
     remove_originals(paths)  # only after the commit: a row never names a removed file
 

@@ -789,7 +789,6 @@ export function WorkView({
               doc={doc}
               herds={herds}
               canSave={saving}
-              documents={item.documents}
               onDone={(d) => advance(d)}
             />
           ) : doc.doc_type === "arsblankett" &&

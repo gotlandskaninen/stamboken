@@ -28,8 +28,9 @@ class ReminderTest(InboxMailTest):
             item = self.reload(item)
         inbox.take(item, self.helper, over=False)
         inbox.change_state(item, self.helper, "ofullstandig", note=NOTE)
-        if received_at:
+        if received_at:  # it came in then and was marked then
             db.InboxItem.update(received_at=received_at).where(db.InboxItem.id == item.id).execute()
+            db.InboxEvent.update(at=received_at).where(db.InboxEvent.item == item.id).execute()
         return self.reload(item), item.events.where(db.InboxEvent.kind == "lage").get()
 
     def sent(self):

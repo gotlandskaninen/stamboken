@@ -208,7 +208,10 @@ export type RegistryRabbit = {
   color: string | null;
   mother: { number: string; name: string | null } | null;
   father: { number: string; name: string | null } | null;
+  /** The rabbit's active herd-tracking rows: a proof of one of its sales needs no buyer (provenSale). */
+  herd_tracking?: RegistrySale[];
 };
+export type RegistrySale = { herd: string; date: string | null; kind: string };
 
 /** The registry's record of a parent, to compare with the photo; null when not found. */
 export async function lookupRabbit(
@@ -223,7 +226,17 @@ export async function lookupRabbit(
     const r = await fetchApi<RegistryRabbit>(
       `/v2/individual/${encodeURIComponent(number.trim().toUpperCase())}`,
     );
-    return { name: r.name, color: r.color, mother: r.mother, father: r.father };
+    return {
+      name: r.name,
+      color: r.color,
+      mother: r.mother,
+      father: r.father,
+      herd_tracking: (r.herd_tracking ?? []).map(({ herd, date, kind }) => ({
+        herd,
+        date,
+        kind,
+      })),
+    };
   } catch (e) {
     if (e instanceof ApiError) return null;
     throw e;

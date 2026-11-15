@@ -154,7 +154,9 @@ class TestReinterpret(InterpretationTest):
         item, (document,) = self.uploaded()
         inbox.take(item, self.helper, over=False)
         self.login("mhjalp")
-        self.assertEqual(self.reinterpret(item, document).status_code, 409)
+        self.assertEqual(self.reinterpret(item, document).status_code, 403)  # not their genebank
+        self.login("man")
+        self.assertEqual(self.reinterpret(item, document).status_code, 409)  # their genebank, held by another
         self.login("owner")
         self.assertEqual(self.reinterpret(item, document).status_code, 403)
         self.assertEqual(self.doc(document).attempts, 0)

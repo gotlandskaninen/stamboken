@@ -65,6 +65,20 @@ class TestItemDoneMail(InboxMailTest):
         self.assertEqual(self.mails("inlasning.klar"), [])
         self.assertEqual(self.reload(item).state, "tagen")
 
+    def test_an_item_closed_again_does_not_tell_its_sender_twice(self):
+        item, document = self.done_but_last()
+        inbox.update_document(item, document, self.helper, {"dismissed": True})
+        self.relay()
+        mail.send_pending()  # sent, then reopened and closed again
+        inbox.change_state(self.reload(item), self.manager, "tagen")
+        reopened = self.reload(item)
+        inbox.update_document(reopened, document, self.manager, {"dismissed": False})
+        inbox.update_document(reopened, document, self.manager, {"dismissed": True})
+        self.assertEqual(self.reload(item).state, "klar")
+        self.assertEqual([row.status for row in self.mails("inlasning.klar")], ["sent"])
+        klar = db.Notice.select().where((db.Notice.item == item.id) & (db.Notice.kind == "klar"))
+        self.assertEqual(klar.count(), 1)
+
     def test_a_reopened_item_stops_its_mail(self):
         item, document = self.done_but_last()
         inbox.update_document(item, document, self.helper, {"dismissed": True})

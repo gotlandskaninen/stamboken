@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import {
   Autocomplete,
   Checkbox,
@@ -14,7 +14,7 @@ import {
   buyerComplete,
   buyerPayload,
 } from "@/components/individual/BuyerFields";
-import { registerSale } from "../actions";
+import { lookupRabbit, registerSale, type RegistrySale } from "../actions";
 import {
   buildSalePayload,
   outsideHerd,
@@ -31,15 +31,12 @@ export function SalePanel({
   doc,
   herds,
   canSave,
-  documents = [],
   onDone,
 }: {
   itemId: number;
   doc: InboxDocument;
   herds: GenebankHerd[];
   canSave: boolean;
-  /** The item's documents: a proof of a sale one of them registered needs no buyer (provenSale). */
-  documents?: InboxDocument[];
   onDone: (document: InboxDocument) => void;
 }) {
   const [form, setForm] = useState<SaleForm>({
@@ -59,7 +56,20 @@ export function SalePanel({
     setForm((f) => ({ ...f, ...changes }));
   const names = new Map(herds.map((h) => [h.herd, h.herd_name]));
   const proof = doc.doc_type === "bevis";
-  const saleRegistered = provenSale(documents, doc, buildSalePayload(form));
+  // The rabbit's active rows: a proof of a sale already registered asks for no buyer (provenSale).
+  const [sales, setSales] = useState<RegistrySale[]>([]);
+  const number = buildSalePayload(form).individual;
+  useEffect(() => {
+    if (!proof || !number) return;
+    let current = true;
+    lookupRabbit(number).then((rabbit) => {
+      if (current) setSales(rabbit?.herd_tracking ?? []);
+    });
+    return () => {
+      current = false;
+    };
+  }, [proof, number]);
+  const saleRegistered = provenSale(doc, buildSalePayload(form), sales);
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();

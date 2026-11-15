@@ -125,9 +125,11 @@ def delete_buyer_contact(contact_id):
 @json_login_required
 def get_buyer_contact(contact_id):
     try:
-        return jsonify(read_buyer_contact(contact_id, _actor())), 200
+        response = jsonify(read_buyer_contact(contact_id, _actor()))
     except ht.HerdTrackingError as exc:
         return _error(exc)
+    response.headers["Cache-Control"] = "no-store"  # personal data: never kept by a browser or a proxy
+    return response, 200
 
 
 # [Next.js] Manager correction command.

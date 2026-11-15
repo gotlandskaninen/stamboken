@@ -260,7 +260,11 @@ export default async function InkorgPage({
               </thead>
               <tbody>
                 {data.items.map((item) => {
-                  const actions = itemActions(item, user);
+                  const actions = itemActions(
+                    item,
+                    user,
+                    data.my_genebanks ?? null,
+                  );
                   return (
                     <tr key={item.id}>
                       <td>
