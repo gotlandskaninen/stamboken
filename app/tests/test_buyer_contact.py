@@ -300,7 +300,8 @@ class TestVisibility(BuyerBase):
         return row["buyer"]
 
     def test_admin_manager_and_helper_see_name_town_and_kept_contact(self):
-        expected = {"id": self.sale.holder_contact_id, "name": NAME, "town": "Visby", "email": "z@example.org"}
+        # Name and town only: the address, e-mail and phone the buyer gave never reach the history.
+        expected = {"id": self.sale.holder_contact_id, "name": NAME, "town": "Visby"}
         for username in ("admin", "man", "helper"):
             with self.subTest(username=username):
                 self.assertEqual(self._buyer_seen_by(username), expected)

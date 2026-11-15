@@ -910,16 +910,10 @@ def can_see_buyer(user, genebank_id):
     return is_manager_of(user, genebank_id) or genebank_id in (user.is_helper or [])
 
 
-BUYER_SHOWN = ("name", "town", "postal_address", "email", "phone")
-
-
 def _load_buyer_contact(contact_id):
-    """{"id", "name", "town"} and the contact details that are kept, for a BuyerContact id; None once erased."""
+    """{"id", "name", "town"} for a BuyerContact id, never its contact details; None once erased."""
     contact = BuyerContact.get_or_none(BuyerContact.id == contact_id)
-    if contact is None:
-        return None
-    shown = {key: getattr(contact, key) for key in BUYER_SHOWN if getattr(contact, key) is not None}
-    return {"id": contact.id, **shown}
+    return {"id": contact.id, "name": contact.name, "town": contact.town} if contact else None
 
 
 def resolve_buyer(row, user, genebank_id):
