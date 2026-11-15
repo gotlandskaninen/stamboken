@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { fetchApi } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
 import { Masthead } from "@/components/shell/Masthead";
-import { fmtDate, type MyReport } from "./lib";
+import { fmtDate, todayStockholm, type MyReport, type Round } from "./lib";
 import styles from "./arsrapport.module.css";
 
 export const dynamic = "force-dynamic";
@@ -18,10 +18,26 @@ export default async function ArsrapportIndex() {
   if (reports.length === 1 && !manages)
     redirect(`/stamboken/arsrapport/${reports[0].herd}/${reports[0].year}`);
 
+  // Managers reach the status view of the latest round (a helper's route is the queue).
+  const rounds = manages
+    ? await fetchApi<{ rounds: Round[] }>("/v2/arsrapport/rundor")
+        .then((r) => r.rounds)
+        .catch(() => [])
+    : [];
+  const statusYear = rounds[0]?.year ?? Number(todayStockholm().slice(0, 4));
+
   return (
     <>
       <Masthead eyebrow="Min besättning" title="Årsrapport" />
       <div className={styles.root}>
+        {manages && (
+          <Link
+            className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+            href={`/stamboken/arsrapport/status/${statusYear}`}
+          >
+            Status för genbanken, runda {statusYear}
+          </Link>
+        )}
         {reports.length === 0 ? (
           <p>Ingen årsrapport är öppen för dina besättningar ännu.</p>
         ) : (

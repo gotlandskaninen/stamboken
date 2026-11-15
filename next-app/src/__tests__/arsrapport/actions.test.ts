@@ -18,8 +18,11 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import {
+  activateGenebank,
   dryRun,
   saveDraft,
+  saveRound,
+  setOnTime,
   submitReport,
   withdrawReport,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/actions";
@@ -92,6 +95,35 @@ describe("arsrapport actions", () => {
       await withdrawReport("G9001", 2026, 1, undefined, "demo"),
     ];
     for (const r of results)
+      expect(r).toMatchObject({ ok: false, problem: { status: 400 } });
+    expect(fetchApi).not.toHaveBeenCalled();
+  });
+  it("sends the round and status writes to their routes and refuses a stale environment", async () => {
+    await saveRound(2026, { deadline: "2027-02-07" }, "demo");
+    await activateGenebank(2026, 3, "demo");
+    await setOnTime("G9001", 2026, null, "demo");
+    expect(
+      fetchApi.mock.calls.map((c) => [c[0], c[1].method, c[1].body]),
+    ).toEqual([
+      ["/v2/arsrapport/rundor/2026", "PUT", '{"deadline":"2027-02-07"}'],
+      ["/v2/arsrapport/rundor/2026/genbanker/3/aktivera", "POST", "{}"],
+      [
+        "/v2/arsrapport/besattning/G9001/2026/i-tid",
+        "POST",
+        '{"on_time":null}',
+      ],
+    ]);
+    fetchApi.mockClear();
+    expect((await saveRound(2026, { deadline: "31 jan" }, "demo")).ok).toBe(
+      false,
+    );
+    expect((await activateGenebank(2026, 0, "demo")).ok).toBe(false);
+    modeCookie = "prod";
+    for (const r of [
+      await saveRound(2026, {}, "demo"),
+      await activateGenebank(2026, 3, "demo"),
+      await setOnTime("G9001", 2026, true, "demo"),
+    ])
       expect(r).toMatchObject({ ok: false, problem: { status: 400 } });
     expect(fetchApi).not.toHaveBeenCalled();
   });

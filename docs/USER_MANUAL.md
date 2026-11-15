@@ -734,6 +734,27 @@ Orsak krävs också när blanketten kommer efter sista dagen. **Skicka och näst
 går tillbaka till inkorgen; kvittot stannar kvar när matrikeln ändrades eller när en
 ändring hoppades över för att matrikeln ändrats efter blankettens datum.
 
+#### Status för årsrapporten
+
+<!-- route: /stamboken/arsrapport/status/[year] -->
+
+Genbanksansvarig, administratör och genbankshjälpare ser hur rundan går i en genbank; länken
+**Status för genbanken** finns på **Årsrapport** för genbanksansvariga. Överst väljer du
+genbank (om du har flera) och kan **Skriv ut tom blankett**. Är rundan inte aktiverad för
+genbanken visar sidan de tre datumen (**Öppnar**, **Sista dag för stödet**, **Stänger**) och
+**Aktivera**; datumen gäller alla genbanker. Inbjudningar skickas när utskicket är byggt.
+Därefter står aktiveringen på en rad, och **Ändra datum** öppnar datumen igen. Aktivera och
+ändra datum kan bara genbanksansvarig och administratör; hjälpare ser bara listan.
+
+Under det står ett filter per läge med antal (**Att ringa**, **Påbörjade**, **Alla** och de
+andra lägena); valet ligger i adressen. **Att ringa** är besättningar som ingen rapporterat
+för, från två dagar före sista dag för stödet, och besättningar vars blankett lämnade ut
+kaniner som avgör stödet. Varje rad visar besättningen (koden öppnar rapporten), läget,
+villkoren för stöd (**Hane**, **Hona**, **Kull**, **I tid**, med bock eller kryss), flaggor som
+**3 ej angivna**, när rapporten togs emot och åtgärder: **Mata in blankett** öppnar inkorgen
+för besättningen, och genbanksansvarig kan välja **I tid** (**Räknas**, **Ja** eller **Nej**)
+på en rad med rapport.
+
 #### Notiser
 
 <!-- route: /stamboken/notiser -->

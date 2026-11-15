@@ -531,3 +531,63 @@ a.secondary {
     overflow: visible;
   }
 }
+
+/* Status view (Task 15): the table and filters are the queue's (inkorg.module.css). */
+.herdLink {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  font-weight: 600;
+  color: var(--sb-ink);
+}
+.callTone {
+  border-color: var(--sb-warning);
+  background: var(--sb-warning-soft);
+}
+.badgeInfo {
+  background: var(--sb-himmel-soft);
+  color: var(--sb-ink);
+}
+.badgeDone {
+  background: var(--sb-skog-soft);
+  color: var(--sb-skog);
+}
+.roundCard {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px;
+  font-size: 16px;
+}
+.roundCard h2 {
+  margin: 0;
+  font-size: 20px;
+}
+.roundCard details summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  cursor: pointer;
+}
+.dates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+.dates label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: var(--sb-ink-2);
+  font-weight: 500;
+}
+.tableError {
+  color: var(--sb-danger);
+  font-size: 16px;
+  margin: 0;
+}
+.tableError:focus {
+  outline: 2px solid var(--sb-danger);
+  outline-offset: 2px;
+}

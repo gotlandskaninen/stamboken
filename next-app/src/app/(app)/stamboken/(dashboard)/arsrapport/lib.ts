@@ -773,3 +773,142 @@ export function paperKey(state: PaperState, key: string): PaperState {
   }
   return state;
 }
+
+// ---- Status view (Task 15) --------------------------------------------------
+
+export type RowState =
+  | "avslutar"
+  | "inskickad"
+  | "blankett_vantar"
+  | "blankett_inkommen"
+  | "paborjad"
+  | "ingen_epost"
+  | "ej_rapporterad";
+
+export const ROW_STATES: RowState[] = [
+  "paborjad",
+  "ej_rapporterad",
+  "ingen_epost",
+  "blankett_inkommen",
+  "blankett_vantar",
+  "inskickad",
+  "avslutar",
+];
+
+export const ROW_STATE_TEXT: Record<RowState, string> = {
+  avslutar: "Avslutar",
+  inskickad: "Inskickad",
+  blankett_vantar: "Blankett väntar på svar",
+  blankett_inkommen: "Blankett inkommen",
+  paborjad: "Påbörjad",
+  ingen_epost: "Ingen e-post",
+  ej_rapporterad: "Ej rapporterad",
+};
+
+// The filter labels use the plural ("Påbörjade 12").
+export const ROW_STATE_FILTER: Record<RowState, string> = {
+  avslutar: "Avslutar",
+  inskickad: "Inskickade",
+  blankett_vantar: "Blankett väntar på svar",
+  blankett_inkommen: "Blankett inkommen",
+  paborjad: "Påbörjade",
+  ingen_epost: "Ingen e-post",
+  ej_rapporterad: "Ej rapporterade",
+};
+
+export interface StatusRow {
+  herd: string;
+  herd_name: string | null;
+  state: RowState;
+  source: "login" | "link" | "paper" | null;
+  membership_after_end: Membership | null;
+  received_at: string | null;
+  on_time_override: boolean | null;
+  inbox_item_id: number | null;
+  flags: { ej_angivna: number; ej_angivna_paverkar: boolean };
+  villkor: Villkor;
+  statistik: {
+    kullar: number;
+    ungar: number;
+    levande_6v: number;
+    honor: number;
+    hanar: number;
+  };
+}
+
+export interface RoundGenebank {
+  genebank_id: number;
+  activated_at: string;
+  activated_by: { id: number; name: string };
+  send_at: string | null;
+  sent_at: string | null;
+}
+
+export interface Round {
+  year: number;
+  start_date: string | null;
+  deadline: string | null;
+  end_date: string | null;
+  is_active: boolean;
+  genebanks: RoundGenebank[];
+}
+
+export interface StatusView {
+  round: Round;
+  genebank_id: number;
+  activated: boolean;
+  counts: Record<RowState, number>;
+  rows: StatusRow[];
+}
+
+export type StatusFilter = "att_ringa" | "alla" | RowState;
+
+export const parseFilter = (v: string | undefined): StatusFilter =>
+  v === "att_ringa" || ROW_STATES.includes(v as RowState)
+    ? (v as StatusFilter)
+    : "alla";
+
+// Calendar arithmetic on "YYYY-MM-DD" in UTC, so no daylight-saving hour moves a date.
+export const callFrom = (deadline: string): string =>
+  new Date(Date.parse(`${deadline.slice(0, 10)}T00:00:00Z`) - 2 * 86_400_000)
+    .toISOString()
+    .slice(0, 10);
+
+// Herds nobody has reported for: they are phoned from two days before the
+// round's deadline. A herd whose form left out rabbits that decide the support
+// is phoned at any time.
+const NOT_REPORTED: RowState[] = ["ej_rapporterad", "ingen_epost", "paborjad"];
+
+export function toCall(
+  row: StatusRow,
+  deadline: string | null,
+  today: string,
+): boolean {
+  if (row.flags.ej_angivna_paverkar) return true;
+  return (
+    deadline !== null &&
+    NOT_REPORTED.includes(row.state) &&
+    today >= callFrom(deadline)
+  );
+}
+
+export function filterRows(
+  rows: StatusRow[],
+  filter: StatusFilter,
+  deadline: string | null,
+  today: string = todayStockholm(),
+): StatusRow[] {
+  if (filter === "alla") return rows;
+  if (filter === "att_ringa")
+    return rows.filter((r) => toCall(r, deadline, today));
+  return rows.filter((r) => r.state === filter);
+}
+
+export function countByState(rows: StatusRow[]): Record<RowState, number> {
+  const counts = Object.fromEntries(ROW_STATES.map((s) => [s, 0])) as Record<
+    RowState,
+    number
+  >;
+  for (const r of rows) counts[r.state] += 1;
+  return counts;
+}

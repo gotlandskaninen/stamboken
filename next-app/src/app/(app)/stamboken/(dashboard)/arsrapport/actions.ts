@@ -10,6 +10,7 @@ import {
   type Receipt,
   type ReportView,
   type Refusal,
+  type Round,
   type Submission,
 } from "./lib";
 
@@ -137,5 +138,60 @@ export async function withdrawReport(
     "POST",
     { revision, reason: reason ?? null },
     SUBMIT_TIMEOUT_MS,
+  );
+}
+
+const DATE = /^\d{4}-\d{2}-\d{2}$/;
+const isYear = (y: number) => Number.isInteger(y) && y >= 2000 && y <= 2100;
+
+// Create the year's round, or move its dates. Only the dates given are sent.
+export async function saveRound(
+  year: number,
+  dates: { start_date?: string; deadline?: string; end_date?: string },
+  env: Mode,
+) {
+  const body: Record<string, string> = {};
+  for (const key of ["start_date", "deadline", "end_date"] as const) {
+    const value = dates[key];
+    if (value === undefined) continue;
+    if (!DATE.test(value)) return refused("Ange datumen som ÅÅÅÅ-MM-DD.");
+    body[key] = value;
+  }
+  return call<Round>(
+    env,
+    isYear(year) ? `/v2/arsrapport/rundor/${year}` : null,
+    "PUT",
+    body,
+  );
+}
+
+// The server sets send_at to the round's first day (the invitations come in step 3).
+export async function activateGenebank(
+  year: number,
+  genebankId: number,
+  env: Mode,
+) {
+  return call<Round>(
+    env,
+    isYear(year) && Number.isSafeInteger(genebankId) && genebankId > 0
+      ? `/v2/arsrapport/rundor/${year}/genbanker/${genebankId}/aktivera`
+      : null,
+    "POST",
+    {},
+  );
+}
+
+// true = Ja, false = Nej, null = Räknas (the date of the report decides).
+export async function setOnTime(
+  herd: string,
+  year: number,
+  onTime: boolean | null,
+  env: Mode,
+) {
+  return call<{ on_time_override: boolean | null }>(
+    env,
+    path(herd, year, "/i-tid"),
+    "POST",
+    { on_time: onTime },
   );
 }
