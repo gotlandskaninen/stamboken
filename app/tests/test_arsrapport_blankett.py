@@ -120,12 +120,12 @@ class BlankettTest(ArsrapportTest):
 
         def spy(sql, *args, **kwargs):
             if 'FROM "inbox_item"' in sql and "FOR UPDATE" in sql:
-                locks.append((" IN (" in sql, list(args[0] if args else kwargs.get("params") or ())))
+                locks.append((" IN (" in sql, "ORDER BY" in sql, list(args[0] if args else kwargs.get("params") or ())))
             return original(sql, *args, **kwargs)
 
         with mock.patch.object(db.DATABASE, "execute_sql", side_effect=spy):
             self.ok(item, self.paper(item, self.kvar(a, vikt=2.8)))
-        self.assertEqual(locks[0], (True, [older.id, item.id]))  # one pass, ascending, before any other item lock
+        self.assertEqual(locks[0], (True, True, [older.id, item.id]))  # one ordered pass, before any other item lock
 
     def test_manager_enters_a_paper_form(self):
         a, b = self.rabbits(self.h, 2)
