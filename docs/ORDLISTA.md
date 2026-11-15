@@ -278,7 +278,8 @@ Kod: `owner` · Legacy-manual: "vanlig användare" · Legacy: "Owner" · Nytt UI
 
 **Verifiera intyg**\
 Kontrollera att ett digitalt intyg är äkta och det senaste. I nya Stamboken skannar du QR-koden eller
-öppnar länken på intyget; sidan visar Äkta genbanksintyg, Äkta men ersatt (det finns ett nyare intyg)
+öppnar länken på intyget; sidan visar Äkta genbanksintyg, Äkta men ersatt (det finns ett nyare intyg),
+Äkta men gäller inte längre (ersatt av ett pappersintyg)
 eller att intyget inte hittades. I gamla Stamboken laddade du upp PDF-filen på kaninens sida.\
 Kod: `DigitalCertificateV2` (uuid) · Legacy-manual: "verifiera" · Legacy: "Verifiera intyg", "Verifiera" · Nytt UI: "Verifiera Genbanksintyg", "Äkta genbanksintyg"
 

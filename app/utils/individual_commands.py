@@ -19,12 +19,14 @@ from typing import ClassVar, Protocol
 from peewee import DateField, fn
 
 from utils import number_assets
+from utils.certificate_lifecycle import Event, check
 from utils.database import DB_PROXY as DATABASE
 from utils.database import (
     OUTSIDE_GENEBANK_HERDS,
     Bodyfat,
     Breeding,
     Color,
+    DigitalCertificateV2,
     Herd,
     HerdTracking,
     Individual,
@@ -687,7 +689,8 @@ class AssignPaperCertificate(PolicyCommand):
     def check_cert_unique(self, ctx):
         value = self.certificate
         # Raw, as today: an int echo of the stored text is a change and finds the rabbit itself (IR-49).
-        if value is None or value == ctx.stored.certificate:
+        # A blank number is stored as NULL (apply), so it is never taken.
+        if value is None or value == "" or value == ctx.stored.certificate:
             return
         if Individual.select().where(Individual.certificate == value).exists():
             logger.warning(
@@ -696,6 +699,11 @@ class AssignPaperCertificate(PolicyCommand):
             )
             raise IndividualRefused("Individual certificate already exists")
 
+    @property
+    def event(self):
+        """Blank is what state_of calls no certificate: the legacy form sends "" to clear the paper number."""
+        return Event.ASSIGN_PAPER if str(self.certificate) else Event.CLEAR_PAPER
+
     def check_quota(self, ctx):
         if self.certificate is not None:
             _first_certificate(ctx, str(self.certificate))
@@ -703,10 +711,19 @@ class AssignPaperCertificate(PolicyCommand):
     def apply(self, ctx):
         if self.certificate is None:
             return
-        ind, value = ctx.individual, str(self.certificate)
-        if ind.certificate != value and ind.digital_certificate is not None:
-            ind.digital_certificate = None
+        # A cleared number is NULL: the column is unique, so "" would fit one rabbit in the whole registry.
+        ind, value = ctx.individual, str(self.certificate) or None
+        changed = ind.certificate != value
+        if changed:
+            before = ind.cert_state()
+            # Only a paper number replaces the digital one (IR-20); a blank number clears the paper number alone.
+            if self.event is Event.ASSIGN_PAPER and ind.digital_certificate is not None:
+                ind.digital_certificate = None
+            if ind.digital_certificate is None:
+                DigitalCertificateV2.retire_current(ind)  # else verify and download keep answering for the PDF
         ind.certificate = value
+        if changed:
+            check(before, self.event, ind.cert_state())
 
     def verify(self, ctx):
         if self.certificate:
@@ -860,10 +877,36 @@ class IssueDigitalCertificate(PolicyCommand):
 
     def apply(self, ctx):
         ind = ctx.individual
+        before = ind.cert_state()
         latest = Individual.select(fn.MAX(Individual.digital_certificate)).scalar()
         number = 100000 if latest is None else latest + 1
         ind.certificate = None
         ind.digital_certificate = number
+        check(before, Event.ISSUE_NUMBER, ind.cert_state())
+
+
+def assign_certificate_number(individual):
+    """Assign the next digital certificate number directly to the individual.
+
+    Scoped write for issuance by the breeder (origin herd) when the rabbit
+    has moved to another herd: can_issue_certificate() authorizes on
+    origin_herd, but update_individual() requires can_edit() on the current
+    herd and would reject the request. Mirrors IssueDigitalCertificate, which
+    update_individual() runs for issue_digital: the next number, and any paper certificate cleared.
+
+    Writes only the certificate columns: `individual` may have been read
+    before the caller's lock, and a full save would restore a death, origin
+    correction or renumber committed since.
+    """
+    before = individual.cert_state()
+    nextval = 100000
+    max_number = Individual.select(fn.MAX(Individual.digital_certificate)).scalar()
+    if max_number is not None:
+        nextval = max_number + 1
+    individual.digital_certificate = nextval
+    individual.certificate = None
+    individual.save(only=[Individual.digital_certificate, Individual.certificate, Individual.updated_at])
+    check(before, Event.ISSUE_NUMBER, individual.cert_state())
 
 
 UNDO_WINDOW = timedelta(days=7)  # as undoing a sale or an attestation in herd-tracking
