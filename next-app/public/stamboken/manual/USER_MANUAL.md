@@ -652,13 +652,15 @@ alls förrän du är validerad; inloggningssidan visar då adressen till kursen.
 <!-- route: /stamboken/verifiera/[uuid] -->
 
 Sidan som QR-koden på ett digitalt intyg leder till. Den kräver ingen inloggning och
-visar ett av tre besked:
+visar ett av fyra besked:
 
 - **Äkta genbanksintyg** – intyget är utfärdat i Stamboken och signerat av föreningen.
   Kortet visar **Individnummer**, namn, **Ras**, **Intygsnummer**, **Utfärdat av** och
   **Datum**. **Visa kaninens sida i Stamboken →** kräver inloggning.
 - **Äkta, men ersatt** – ett nyare intyg har utfärdats för kaninen. Be säljaren om
   den senaste versionen.
+- **Äkta, men gäller inte längre** – intyget har ersatts av ett pappersintyg. Be
+  säljaren om kaninens gällande intyg.
 - **Intyget hittades inte** – länken matchar inget intyg. Skanna igen eller kontakta
   föreningen med **Kontakta Föreningen Gotlandskaninen**.
 

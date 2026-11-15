@@ -1,3 +1,5 @@
+import type { MembershipStatus } from "@/lib/membershipStatus";
+
 export type Consent = Record<"name" | "phone" | "email" | "address", boolean>;
 
 // Contracts of GET /api/v2/members/me and GET /api/v2/my-membership as the
@@ -13,7 +15,7 @@ export type Me = {
   membership: {
     id: number;
     member_number: number | null;
-    membership_status: string;
+    membership_status: MembershipStatus;
     address: string | null;
     postal_code: string | null;
     city: string | null;
@@ -52,7 +54,7 @@ export type MyMembership = {
   membership: {
     id: number;
     member_number: number | null;
-    membership_status: string;
+    membership_status: MembershipStatus;
     persons: MyPerson[];
     herds: MyHerd[];
   };
@@ -62,15 +64,4 @@ export const ROLE_LABELS: Record<MyPerson["role"], string> = {
   huvudmedlem: "Huvudmedlem",
   familjemedlem: "Familjemedlem",
   skotare: "Skötare",
-};
-
-// skog Aktiv / default Inaktiv / warning Väntar / himmel Friexemplar
-export const STATUS_BADGE: Record<
-  string,
-  { label: string; className: string }
-> = {
-  active: { label: "Aktiv", className: "sb-badge sb-badge-skog" },
-  inactive: { label: "Inaktiv", className: "sb-badge" },
-  pending: { label: "Väntar", className: "sb-badge badgeWarning" },
-  friexemplar: { label: "Friexemplar", className: "sb-badge sb-badge-himmel" },
 };
