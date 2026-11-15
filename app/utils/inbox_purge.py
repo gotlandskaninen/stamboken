@@ -158,6 +158,16 @@ def purge_originals(now):
     return remove_originals(paths)
 
 
+def purge_due(now):
+    """
+    A document's original once its own purge_after has passed, whatever its type and before the months: the
+    yearly report sets it on a form that shows a bank account and a signature, when the form is typed in.
+    """
+    with DB_PROXY.atomic():
+        paths = _null_originals(InboxDocument.purge_after < now)
+    return remove_originals(paths)
+
+
 def purge_sold_proofs(now):  # pylint: disable=unused-argument  # every rule takes the clock
     """A proof's original once its rabbit is sold on: a later active TRANSFER from the buyer's herd. The sale stays."""
     sale, later = HerdTracking, HerdTracking.alias()
@@ -287,6 +297,7 @@ RULES = (
     inbox_gmail.release_senders,
     remind_incomplete,
     purge_originals,
+    purge_due,
     purge_sold_proofs,
     purge_incomplete,
     purge_junk,
