@@ -1,6 +1,7 @@
 """
 The yearly report v2 (årsrapport): rounds, their activation per genebank, who may report for a herd, the herd's
-list (5.2), the report view, the server draft, the submission and its effects on the register, and the dry run.
+list (5.2), the report view, the server draft, the submission and its effects on the register, the dry run,
+Ändra and Dra tillbaka.
 The routes are in blueprints/arsrapport.py (ADR-0007).
 """
 
@@ -49,18 +50,24 @@ from utils.database import (
     not_voided,
 )
 from utils.herd_tracking import (
+    DATE_BEFORE_LATEST,
+    REPORT_LATER_ROW,
     HerdTrackingError,
     HerdTrackingInvalid,
     buyer_contact_fields,
     latest_death_op,
     reject_contact_details,
+    report_void_denial,
+    void_herd_tracking,
 )
 from utils.individual_commands import (
+    REPORT_UNDO_REASON,
     IndividualRefused,
     RecordAttestation,
     RecordDeath,
     SetMeasurements,
     TransferIndividual,
+    Undo,
     execute,
 )
 from utils.individual_policy import Role
@@ -1043,6 +1050,13 @@ def _refusal(individual_id, code, message=None):
     return Refusal(individual_id, code, message or REFUSALS[code])
 
 
+def _denied(individual_id, detail):
+    """U8: a void or a write refused for a later row is senare_handelse; any other refusal keeps its own text."""
+    if detail in (REPORT_LATER_ROW, DATE_BEFORE_LATEST):
+        return _refusal(individual_id, "senare_handelse")
+    return _refusal(individual_id, "skrivning_nekad", detail or REFUSALS["nekad"])  # IndividualRefused's are English
+
+
 def _vikt_ovanlig(individual_id, vikt):
     """D17: a valid weight outside 1,0–6,5 kg warns and never blocks; None for any other weight."""
     if vikt is None or not 0 < vikt <= 20 or 1.0 <= vikt <= 6.5:
@@ -1063,10 +1077,11 @@ def _sale_view(individual_id, kept):
     }
 
 
-def _register_refusals(individual_id, entry, remove, add):
+def _register_refusals(individual_id, entry, remove, add, ops, admin=False):
     """
-    What the writes would meet in the register: a void that is not the latest row (report_void_denial) or a row
-    behind a later one (DATE_BEFORE_LATEST), then each new sale under _validate_sale and the buyer rules.
+    What the writes would meet in the register: each void under report_void_denial, latest first as apply_diff
+    runs them, then a row behind a later one (DATE_BEFORE_LATEST), then each new sale under _validate_sale and the
+    buyer rules. A row behind a later one is senare_handelse; any other denial keeps its text (U8).
     """
     if not any(e.kind in ROW_KINDS for e in remove + add):
         return []
@@ -1075,12 +1090,14 @@ def _register_refusals(individual_id, entry, remove, add):
         .join(Herd, on=(HerdTracking.herd == Herd.id))
         .where(HerdTracking.individual == individual_id, ht_not_voided())
     )
-    gone = {e.ref for e in remove if e.kind in ROW_KINDS}
-    kept = sorted((row for row in rows if row.id not in gone), key=ht_sort_key)
-    if kept and (
-        any(ht_sort_key(row) < ht_sort_key(kept[-1]) for row in rows if row.id in gone)
-        or any(e.date < coerce_date(kept[-1].herd_tracking_date) for e in add if e.kind in ROW_KINDS)
-    ):
+    kept, gone = sorted(rows, key=ht_sort_key), {e.ref for e in remove if e.kind in ROW_KINDS}
+    voided = sorted((row for row in rows if row.id in gone), key=ht_sort_key, reverse=True)
+    rabbit, user = Individual.get_by_id(individual_id) if voided else None, SimpleNamespace(is_admin=admin)
+    for row in voided:
+        if denial := report_void_denial(user, row, kept, rabbit, ops):
+            return [_denied(individual_id, denial)]
+        kept.remove(row)
+    if kept and any(e.date < coerce_date(kept[-1].herd_tracking_date) for e in add if e.kind in ROW_KINDS):
         return [_refusal(individual_id, "senare_handelse")]
     from blueprints.individuals import _validate_sale  # pylint: disable=import-outside-toplevel  # it imports utils
 
@@ -1167,7 +1184,7 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
         ):
             refusals.append(_refusal(rabbit, "vikt_saknas"))
         remove, add = diff(current(report, rabbit), wanted(entry, row, report, herd, year, on), last, before, entry)
-        refusals += _register_refusals(rabbit, entry, remove, add)
+        refusals += _register_refusals(rabbit, entry, remove, add, ops, access.role == "admin")
     return refusals, warnings
 
 
@@ -1346,15 +1363,59 @@ def _write(user, rabbit, effects, herd, report, entry, grant, last):
     return added
 
 
-def _cannot(refusals):
-    return ArsrapportError(422, "Rapporten kan inte skickas.", refusals=[asdict(refusal) for refusal in refusals])
+def apply_diff(report, herd, user, grant, rabbit_id, want: list[Effect], prev_entry, entry, last, *, reason=None):
+    """
+    Ändra for one rabbit (D5): the report's current effects that `want` lacks come off, the latest first (a January
+    sale before the attestation), then what is missing is written as Skicka writes it. The voids and the Undo go
+    through the report's right (report_ops) with `reason`, else REPORT_UNDO_REASON. A voided sale outside the
+    genebank takes its buyer with it (kopare's _drop_orphan_buyers). Refusals raise; the caller holds the locks.
+    Returns the added measurements, as _write does.
+    """
+    remove, add = diff(current(report, rabbit_id), want, last, prev_entry, entry)
+    ops, note = frozenset(report_ops(report)), reason or REPORT_UNDO_REASON
+    for c in sorted(remove, key=lambda e: order(e, last), reverse=True):
+        if c.kind in ROW_KINDS:
+            void_herd_tracking(c.ref, user, note, uuid.uuid4(), report_ops=ops)
+        elif c.kind == "death":
+            undo = [Undo(c.ref, note, report_ops=ops)]
+            execute(user, rabbit_id, lambda ctx, undo=undo: undo, grant=ReportGrant(grant.inbox_grant, report_ops=ops))
+        else:
+            (Weight if c.kind == "weight" else Bodyfat).delete_by_id(c.ref)
+    return _write(user, rabbit_id, add, herd, report, entry, grant, last)
+
+
+def _cannot(refusals, detail="Rapporten kan inte skickas."):
+    return ArsrapportError(422, detail, refusals=[asdict(refusal) for refusal in refusals])
+
+
+def _written(rabbit, exc):
+    """A refused void or write in Ändra or Dra tillbaka, as the 422 refusal for that rabbit (U8)."""
+    return _denied(rabbit, exc.detail if isinstance(exc, HerdTrackingError) else None)
+
+
+def _mail(kind, herd, user, params, ref):
+    """Å7–Å9 to the herd's main member, in the caller's transaction; none without an e-mail address."""
+    member = inbox.herd_holder(herd.id)
+    if member is not None and member.email:
+        enqueue_mail(
+            kind,
+            "member",
+            member.id,
+            params,
+            ref=ref,
+            herd=herd,
+            genebank=herd.genebank_id,
+            dedupe_key=f"{kind}:{ref[1]}",
+            created_by=user.id,
+        )
 
 
 def submit(herd, round_, access, user, sub, *, now=None) -> dict:
     """
     Skicka (5.4 points 2–5) in one transaction, under the locks in their order: the same request again gets its
     first receipt; otherwise the revision and check() once more, the report row, each rabbit's writes, the
-    submission, the draft deleted and the receipt mail queued. Every refusal raises, so nothing stays written.
+    submission, the draft deleted and the receipt mail queued. On a submitted report it is Ändra: the same row moves
+    on and each changed rabbit gets apply_diff, with Å8 for the mail. Every refusal raises, so nothing stays written.
     Returns the Receipt.
     """
     if sub.key is None:
@@ -1375,33 +1436,52 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         refusals, _ = check(herd, round_, access, report, sub, on=on)
         if refusals:
             raise _cannot(refusals)
-        if report is not None:  # shortcut: a change of a submitted report waits for Ändra (apply_diff)
-            raise ArsrapportError(409, "Rapporten är redan inskickad.")
-        revision = YearlyHerdReport.select(fn.MAX(YearlyHerdReport.revision)).where(same).scalar() or 0
-        voided = same & (YearlyHerdReport.status == "voided")
-        received = YearlyHerdReport.select(fn.MIN(YearlyHerdReport.received_at)).where(voided).scalar()
-        report = YearlyHerdReport.create(
-            herd=herd.id,
-            round=round_.id,
-            report_date=on,
-            data=json.dumps(sub.report),
-            status="submitted",
-            source=access.source,
-            generated_by=None if paper else user.id,
-            entered_by=user.id if paper else None,
-            inbox_item_id=access.item.id if paper else None,
-            revision=revision + 1,  # voided rows count too, so an old tab never matches a new row
-            received_at=received or at,  # 5.13: the round's first submission
-        )
-        grant, added = ReportGrant(), []
-        rows = {row["id"]: row for row in report_list(herd, year)}
-        for rabbit, entry in sorted(sub.rabbits.items()):
-            effects = wanted(entry, rows[rabbit], None, herd, year, on)
-            try:
-                added += _write(user, rabbit, effects, herd, report, entry, grant, last)
-            except (IndividualRefused, HerdTrackingError) as exc:
-                message = str(exc) if isinstance(exc, HerdTrackingError) else None  # IndividualRefused's are English
-                raise _cannot([_refusal(rabbit, "nekad", message)]) from exc
+        grant, added, change = ReportGrant(), [], report is not None
+        if change:  # Ändra (D5): the same row, and each changed rabbit gets the diff of the report's effects
+            before = _entries(_submissions(report)[-1].data.get("rabbits") or {})
+            rows = {row["id"]: row for row in report_list(herd, year, report)}
+            report.source, report.report_date, report.revision = access.source, on, report.revision + 1
+            report.data = json.dumps(sub.report)
+            if paper:
+                report.entered_by, report.inbox_item_id = user.id, access.item.id
+            elif report.generated_by_id is None:  # the first login submission sets it; nothing clears it
+                report.generated_by = user.id
+            report.save()
+            for rabbit, entry in sorted(sub.rabbits.items()):
+                if entry == before.get(rabbit):  # P39a: an unchanged choice writes nothing
+                    continue
+                want = wanted(entry, rows[rabbit], report, herd, year, on)
+                try:
+                    added += apply_diff(
+                        report, herd, user, grant, rabbit, want, before.get(rabbit), entry, last, reason=sub.reason
+                    )
+                except (IndividualRefused, HerdTrackingError) as exc:
+                    raise _cannot([_written(rabbit, exc)]) from exc
+        else:
+            revision = YearlyHerdReport.select(fn.MAX(YearlyHerdReport.revision)).where(same).scalar() or 0
+            voided = same & (YearlyHerdReport.status == "voided")
+            received = YearlyHerdReport.select(fn.MIN(YearlyHerdReport.received_at)).where(voided).scalar()
+            report = YearlyHerdReport.create(
+                herd=herd.id,
+                round=round_.id,
+                report_date=on,
+                data=json.dumps(sub.report),
+                status="submitted",
+                source=access.source,
+                generated_by=None if paper else user.id,
+                entered_by=user.id if paper else None,
+                inbox_item_id=access.item.id if paper else None,
+                revision=revision + 1,  # voided rows count too, so an old tab never matches a new row
+                received_at=received or at,  # 5.13: the round's first submission
+            )
+            rows = {row["id"]: row for row in report_list(herd, year)}
+            for rabbit, entry in sorted(sub.rabbits.items()):
+                effects = wanted(entry, rows[rabbit], None, herd, year, on)
+                try:
+                    added += _write(user, rabbit, effects, herd, report, entry, grant, last)
+                except (IndividualRefused, HerdTrackingError) as exc:
+                    message = str(exc) if isinstance(exc, HerdTrackingError) else None  # IndividualRefused: English
+                    raise _cannot([_refusal(rabbit, "nekad", message)]) from exc
         try:
             submission = YearlyReportSubmission.create(
                 report=report.id,
@@ -1419,27 +1499,87 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         YearlyReportDraft.delete().where(
             (YearlyReportDraft.herd == herd.id) & (YearlyReportDraft.round == round_.id)
         ).execute()
-        member = inbox.herd_holder(herd.id)
-        if member is not None and member.email:
-            enqueue_mail(
-                "arsrapport.kvitto",
-                "member",
-                member.id,
-                {"submission_id": submission.id},
-                ref=("yearly_report_submission", submission.id),
-                herd=herd,
-                genebank=herd.genebank_id,
-                dedupe_key=f"arsrapport.kvitto:{submission.id}",
-                created_by=user.id,
-            )
+        kind = "arsrapport.andrad" if change else "arsrapport.kvitto"
+        _mail(kind, herd, user, {"submission_id": submission.id}, ("yearly_report_submission", submission.id))
         return receipt(submission)
 
 
+WITHDRAW_LATE = (
+    "Rapporten kan dras tillbaka i 7 dagar efter första inskicket, medan rundan är öppen. Kontakta genbanksansvarig."
+)
+
+
+def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> dict:
+    """
+    Dra tillbaka (fråga 15, 5.13) in one transaction under Skicka's locks: owners and caretakers while the round is
+    open and until withdraw_until, editors at any time with a reason, helpers never. Every rabbit the report touched
+    loses its current effects as in apply_diff, after one dry run of them all; the row is voided, the draft keeps
+    what was filled in without its key (P31), and Å9 is queued. Returns the ReportView.
+    """
+    if access.role == "helper":
+        raise ArsrapportError(403, "Genbankshjälpare kan inte dra tillbaka en rapport.")
+    reason = _text(reason, "reason")
+    if access.editor and not reason:
+        raise _bad("reason", "Skriv varför rapporten dras tillbaka.")
+    at = now or globals()["now"]()  # the parameter hides the module's clock, which the tests patch
+    on, last = at.astimezone(STOCKHOLM).date(), date(round_.report_year, 12, 31)
+    with DB_PROXY.atomic():
+        lock_report(round_, herd)
+        report = (
+            YearlyHerdReport.select()
+            .where(
+                (YearlyHerdReport.herd == herd.id)
+                & (YearlyHerdReport.round == round_.id)
+                & (YearlyHerdReport.status == "submitted")
+            )
+            .for_update()
+            .first()
+        )
+        if report is None or revision != report.revision:
+            raise ArsrapportError(409, "Rapporten har ändrats.")
+        submissions = _submissions(report)
+        until = withdraw_until(report, access, submissions)
+        if not access.editor and not (round_open(round_, herd.genebank_id, on) and at <= until):
+            raise ArsrapportError(403, WITHDRAW_LATE, withdraw_until=_iso(until))
+        # every rabbit of every submission: one an unchanged later submission left out keeps its effects (P39a)
+        rabbits = sorted({int(key) for submission in submissions for key in submission.data.get("rabbits") or {}})
+        _lock_rabbits(rabbits)
+        ops = {str(op) for submission in submissions for op in submission.operation_ids}
+        refusals = [
+            refusal
+            for rabbit in rabbits
+            for refusal in _register_refusals(
+                rabbit, None, diff(current(report, rabbit), [], last)[0], [], ops, access.role == "admin"
+            )
+        ]
+        if refusals:
+            raise _cannot(refusals, "Rapporten kan inte dras tillbaka.")
+        grant = ReportGrant()
+        for rabbit in rabbits:
+            try:
+                apply_diff(report, herd, user, grant, rabbit, [], None, None, last, reason=reason)
+            except (IndividualRefused, HerdTrackingError) as exc:
+                raise _cannot([_written(rabbit, exc)], "Rapporten kan inte dras tillbaka.") from exc
+        report.status, report.voided_at, report.voided_by_user, report.void_reason = "voided", at, user.id, reason
+        report.save()
+        draft, stamp = _draft(herd, round_), at.astimezone(timezone.utc)
+        if draft is None:  # D10: the submission's data is already stored_body
+            YearlyReportDraft.create(
+                herd=herd.id, round=round_.id, data=submissions[-1].data, updated_at=stamp, updated_by_user=user.id
+            )
+        else:  # the version moves on, so an old tab's autosave cannot bring the key back
+            draft.submission_key, draft.updated_at = None, max(stamp, draft.updated_at + timedelta(microseconds=1))
+            draft.save()
+        _mail("arsrapport.angrad", herd, user, {"report_id": report.id}, ("yearlyherdreport", report.id))
+    return report_view(herd, round_, access, user)
+
+
+@mail_kind("arsrapport.andrad", priority=0, category="T")
 @mail_kind("arsrapport.kvitto", priority=0, category="T")
 def _kvitto(params):
     """
-    Å7 to the herd's main member: what the submission sent, from its row, so a later kvitto still says what was
-    sent (5.4 point 5). Only end_date is the round's when the mail goes (fråga 32: texts read the round's dates).
+    Å7 and Å8 to the herd's main member: what the submission sent, from its row, so a later mail still says what
+    was sent (5.4 point 5). Only end_date is the round's when the mail goes (fråga 32: texts read the round's dates).
     """
     submission = YearlyReportSubmission.get_or_none(YearlyReportSubmission.id == params["submission_id"])
     if submission is None:
@@ -1452,3 +1592,12 @@ def _kvitto(params):
         **receipt(submission)["summary"],
         "end_date": f"{report.round.end_date:%Y-%m-%d}",
     }
+
+
+@mail_kind("arsrapport.angrad", priority=0, category="T")
+def _angrad(params):
+    """Å9 to the herd's main member: the report was withdrawn, on the day it was voided."""
+    report = YearlyHerdReport.get_or_none(YearlyHerdReport.id == params["report_id"])
+    if report is None or report.voided_at is None:
+        return None
+    return {"herd": report.herd.herd, "datum": f"{report.voided_at.astimezone(STOCKHOLM):%Y-%m-%d}"}

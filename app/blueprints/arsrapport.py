@@ -155,3 +155,18 @@ def submit(herd, year):
             return jsonify(arsrapport.receipt(saved))
     target, round_, access = _report_target(herd, year)
     return jsonify(arsrapport.submit(target, round_, access, current_user, sub))
+
+
+# [Next.js] Dra tillbaka: the whole report backed out; body {revision, reason}, the reason required of an editor.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/dra-tillbaka", methods=["POST"])
+@json_login_required
+def withdraw(herd, year):
+    herd, round_, access = _report_target(herd, year)
+    body = _submission_body()
+    if not isinstance(body, dict):
+        raise ArsrapportError(400, "Skicka revision och orsak som JSON.")
+    revision = body.get("revision")
+    if type(revision) is not int:  # True is an int too
+        raise ArsrapportError(400, "Ange revisionen som ett heltal.", field="revision")
+    view = arsrapport.withdraw(herd, round_, access, current_user, revision=revision, reason=body.get("reason"))
+    return jsonify(view)

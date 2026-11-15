@@ -483,6 +483,7 @@ def _moves_across_genebanks(individual, before, after):
 
 
 REPORT_ROW = "Raden kommer från årsrapporten. Ändra årsrapporten i stället."
+REPORT_LATER_ROW = "Något har registrerats på kaninen efter årsrapporten. Genbanksansvarig kan rätta."
 BIRTH_NOT_VOIDABLE = "En födelserad kan inte ångras — den kan bara ersättas."
 
 
@@ -561,7 +562,7 @@ def report_void_denial(user, row, active_rows, individual, report_ops):
     if not user.is_admin and _moves_across_genebanks(individual, active_rows, [r for r in active_rows if r != row]):
         return GENEBANK_CHANGE_ADMIN_ONLY
     if not active_rows or active_rows[-1].id != row.id:
-        return "Något har registrerats på kaninen efter årsrapporten. Genbanksansvarig kan rätta."
+        return REPORT_LATER_ROW
     if row.kind == "TRANSFER":  # the seller's rules that do not depend on who or when (sale_undo_denial)
         if row.transfer_id is not None:
             return f"Överlåtelsen avbryts i överlåtelseflödet. {CONTACT_MANAGER}"
