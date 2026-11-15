@@ -477,6 +477,16 @@ def known_color(name, genebank_id):
     return color
 
 
+def _color_of(name, individual):
+    """The colour within the rabbit's genebank; a stored colour sent back unchanged stays (legacy always sends it)."""
+    try:
+        return known_color(name, individual.current_herd.genebank_id)
+    except IndividualRefused:
+        if individual.color_id is not None and individual.color.name == name:
+            return individual.color
+        raise
+
+
 def known_origin_herd(code):
     """A ValueError when unknown: on PATCH it goes on raw (IR-27)."""
     herd = Herd.get_or_none(Herd.herd == code)
@@ -512,7 +522,7 @@ class _FormFields(PolicyCommand):
 
     def check_color(self, ctx):
         if "color" in self.changes:
-            known_color(self.changes["color"], ctx.individual.current_herd.genebank_id)
+            _color_of(self.changes["color"], ctx.individual)
 
     def check_dates(self, ctx):
         for key, value in self.changes.items():
@@ -528,7 +538,7 @@ class _FormFields(PolicyCommand):
                     ctx.update_log.info(f"{user},{ind.number},{key},{getattr(ind, key)},{value},")
                 continue
             if key == "color":
-                value = known_color(value, ind.current_herd.genebank_id)
+                value = _color_of(value, ind)
             if getattr(ind, key) != value:
                 ctx.update_log.info(f"{user},{ind.number},{key},{getattr(ind, key)},{value},")
             setattr(ind, key, value)
