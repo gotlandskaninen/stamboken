@@ -203,12 +203,12 @@ export type RegistryRabbit = {
   father: { number: string; name: string | null } | null;
 };
 
-/** An active move of a rabbit, and whether it holds its buyer outside the association (yes or no only). */
+/** An active move of a rabbit, and its buyer outside the association: there, none, or removed (never asked again). */
 export type RegistrySale = {
   herd: string;
   date: string | null;
   kind: string;
-  has_buyer: boolean;
+  buyer: "present" | "none" | "removed";
 };
 
 /** The rabbit's active sales, read through the queue item (helpers too); an error when it cannot be read. */

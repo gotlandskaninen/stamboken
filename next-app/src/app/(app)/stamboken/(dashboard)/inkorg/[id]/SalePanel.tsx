@@ -85,8 +85,8 @@ export function SalePanel({
   const registered = lookedUp
     ? provenSale(doc, buildSalePayload(form), sales.rows ?? [])
     : null;
-  // The buyer is asked for unless the registered sale has one.
-  const saleRegistered = !!registered?.has_buyer;
+  // The buyer is asked for unless the registered sale has one, or had one that was removed.
+  const saleRegistered = !!registered && registered.buyer !== "none";
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();

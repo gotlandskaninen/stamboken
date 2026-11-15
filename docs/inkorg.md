@@ -724,11 +724,12 @@ det. Efter sparandet har dokumentet
 ### `GET /api/v2/inkorg/{id}/kanin/{nummer}/forsaljningar`
 
 Kaninens aktiva flyttar (`TRANSFER`, `CORRECTION`), för panelen: visar beviset en försäljning som redan
-är registrerad, och har den köparen? Bara ja eller nej (`has_buyer`), aldrig namn eller ort. För den som
+är registrerad, och har den köparen? `buyer` är `present`, `none` eller `removed` (köparen raderad eller
+gallrad: panelen frågar inte efter den igen), aldrig namn eller ort. För den som
 arbetar i kön och får läsa kaninen; 404 annars.
 
 ```json
-{"sales": [{"herd": "GX1", "date": "2026-10-03", "kind": "TRANSFER", "has_buyer": true}]}
+{"sales": [{"herd": "GX1", "date": "2026-10-03", "kind": "TRANSFER", "buyer": "present"}]}
 ```
 
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/overlat`

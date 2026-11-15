@@ -56,7 +56,7 @@ const sale = {
   herd: "GX1",
   date: "2026-10-03",
   kind: "TRANSFER",
-  has_buyer: true,
+  buyer: "present",
 };
 const found = (...sales: object[]) => ({ ok: true, data: { sales } });
 const registered = found(sale);
@@ -173,7 +173,7 @@ describe("SalePanel with a buyer outside the association", () => {
 
   it("asks for and sends the buyer of a registered sale that has none", async () => {
     registerSale.mockResolvedValue({ ok: true, data: { document: doc } });
-    panel(found({ ...sale, has_buyer: false })); // the legacy form registered it without one
+    panel(found({ ...sale, buyer: "none" })); // the legacy form registered it without one
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
     );
@@ -187,6 +187,20 @@ describe("SalePanel with a buyer outside the association", () => {
       name: "Anna Köpare",
       town: "Visby",
     });
+  });
+
+  it("links the proof without a buyer when the sale's buyer was removed", async () => {
+    registerSale.mockResolvedValue({ ok: true, data: { document: doc } });
+    panel(found({ ...sale, buyer: "removed" })); // erased or purged: never asked for again
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByLabelText(/Köparens namn/)).toBeNull(),
+    );
+    fireEvent.click(save());
+    await waitFor(() => expect(registerSale).toHaveBeenCalledTimes(1));
+    expect(registerSale.mock.calls[0][2]).not.toHaveProperty("buyer");
   });
 
   it("says so and saves nothing when the rabbit's sales cannot be read", async () => {

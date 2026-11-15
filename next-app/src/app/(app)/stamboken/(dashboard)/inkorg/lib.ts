@@ -475,7 +475,7 @@ export function buildSalePayload(form: SaleForm) {
  * The rule of the API's proven_sale: the sale a proof shows when it is already
  * registered, from the item or anywhere else, an active move of the rabbit (its
  * active rows, `sales`) to the same herd on the same date; null when there is
- * none. Its buyer came with that sale, unless it has none (`has_buyer`).
+ * none. Its buyer came with that sale, unless it has none (`buyer`).
  */
 export function provenSale<
   S extends { herd: string; date: string | null; kind: string },

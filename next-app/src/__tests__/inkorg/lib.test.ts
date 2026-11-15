@@ -629,23 +629,23 @@ describe("provenSale, the panel's rule for a proof of a registered sale", () => 
   const sale = { herd: "GX1", date: "2026-10-03" };
   const proof = { id: 2, doc_type: "bevis" } as unknown as InboxDocument;
   const rows = (changes: object = {}) => [
-    { herd: "G9001", date: "2025-06-01", kind: "BIRTH", has_buyer: false },
+    { herd: "G9001", date: "2025-06-01", kind: "BIRTH", buyer: "none" },
     {
       herd: "GX1",
       date: "2026-10-03",
       kind: "TRANSFER",
-      has_buyer: true,
+      buyer: "present",
       ...changes,
     },
   ];
 
   it("is the active move of the rabbit to the same herd on the same date, wherever it was registered", () => {
-    expect(provenSale(proof, sale, rows())).toMatchObject({ has_buyer: true });
+    expect(provenSale(proof, sale, rows())).toMatchObject({ buyer: "present" });
     expect(
       provenSale(proof, sale, rows({ kind: "CORRECTION" })),
     ).not.toBeNull();
-    expect(provenSale(proof, sale, rows({ has_buyer: false }))).toMatchObject({
-      has_buyer: false,
+    expect(provenSale(proof, sale, rows({ buyer: "none" }))).toMatchObject({
+      buyer: "none",
     });
   });
   it("is not another herd's or date's row, nor a yearly report", () => {

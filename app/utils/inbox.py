@@ -935,9 +935,18 @@ def require_same_rabbit(document, individual=None):
 
 
 def active_sales(individual_id):
-    """The rabbit's active moves (TRANSFER, CORRECTION), each with whether it holds a buyer; no name, no town."""
+    """
+    The rabbit's active moves (TRANSFER, CORRECTION), each with its buyer as "present", "none" or "removed"
+    (erased or purged: never asked for again); no name, no town.
+    """
     rows = (
-        HerdTracking.select(HerdTracking.herd_tracking_date, HerdTracking.kind, HerdTracking.holder_contact, Herd.herd)
+        HerdTracking.select(
+            HerdTracking.herd_tracking_date,
+            HerdTracking.kind,
+            HerdTracking.holder_contact,
+            HerdTracking.buyer_removed,
+            Herd.herd,
+        )
         .join(Herd, on=(HerdTracking.herd == Herd.id))
         .where(
             (HerdTracking.individual == individual_id)
@@ -947,8 +956,13 @@ def active_sales(individual_id):
         .order_by(HerdTracking.id)
     )
     return [
-        {"herd": herd, "date": _iso(day), "kind": kind, "has_buyer": contact is not None}
-        for day, kind, contact, herd in rows.tuples()
+        {
+            "herd": herd,
+            "date": _iso(day),
+            "kind": kind,
+            "buyer": "present" if contact is not None else "removed" if removed else "none",
+        }
+        for day, kind, contact, removed, herd in rows.tuples()
     ]
 
 

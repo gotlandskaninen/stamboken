@@ -916,17 +916,6 @@ def _unvoid_rows(rows, operation_id):
 BUYER_REMOVED = "Köparen har begärt radering eller gallrats; registrera inte på nytt."
 
 
-def _buyer_ever_removed(row_id):
-    """The row once held a buyer that went (erasure, purge, void): its holder_contact_id went NULL in audit_log."""
-    entries = AuditLog.select(AuditLog.changed_fields, AuditLog.new_data).where(
-        (AuditLog.table_name == HerdTracking._meta.table_name)
-        & (AuditLog.operation == "UPDATE")
-        & (AuditLog.record_id == str(row_id))
-        & AuditLog.changed_fields.contains("holder_contact_id")
-    )
-    return any((new or {}).get("holder_contact_id") is None for _fields, new in entries.tuples())
-
-
 def attach_buyer(row, buyer, user):
     """
     WHITELISTED in-place UPDATE #3: a proof shows the buyer outside the association of a sale registered without
@@ -936,7 +925,7 @@ def attach_buyer(row, buyer, user):
     fields = buyer_contact_fields(buyer)
     if row.holder_contact_id is not None:
         raise HerdTrackingConflict("Försäljningen har redan en köpare. Genbanksansvarig ändrar den.")
-    if _buyer_ever_removed(row.id):  # an erased or purged buyer is never registered again from a paper
+    if row.buyer_removed:  # an erased or purged buyer is never registered again from a paper
         raise HerdTrackingConflict(BUYER_REMOVED)
     if row.voided_at is not None or row.herd.herd not in OUTSIDE_GENEBANK_HERDS:
         raise HerdTrackingInvalid("Köparens namn och ort registreras bara vid försäljning utanför genbanken.")
@@ -1041,9 +1030,6 @@ def undo_herd_tracking_operation(operation_id, user, reason, undo_operation_id=N
         stale = _effects_changed_later(written, restored)
         if stale:
             raise HerdTrackingConflict("En senare åtgärd har redan ändrat raderna.", rows=[_row_ref(r) for r in stale])
-        lost = _buyer_deleted([r.id for r in unvoid])
-        if lost:  # the buyer went with the void (ADR-0016): the sale is registered again, with its buyer
-            raise HerdTrackingConflict(BUYER_DELETED, rows=[_row_ref(r) for r in unvoid if r.id in lost])
         op_time = _operation_time(written, unvoid, restored)
         later = list(HerdTracking.select().where(in_locked_set, _touched_after(op, op_time)))
         if later:
@@ -1312,34 +1298,6 @@ def compute_periods(active_rows, herds):
     return periods
 
 
-BUYER_DELETED = "Köparen är raderad; registrera försäljningen på nytt."
-
-
-def _buyer_deleted(row_ids):
-    """
-    The voided rows among `row_ids` whose buyer outside the association was deleted with or after their void: the
-    herd_tracking audit trigger records, by id, the void and then holder_contact_id going NULL (audit_log ids
-    rise with each write, also within a transaction). A buyer erased while the sale was still active is no reason
-    to refuse undoing a later void. An undo must not restore such a sale without its buyer.
-    """
-    if not row_ids:
-        return set()
-    entries = AuditLog.select(AuditLog.id, AuditLog.record_id, AuditLog.changed_fields, AuditLog.new_data).where(
-        (AuditLog.table_name == HerdTracking._meta.table_name)
-        & (AuditLog.operation == "UPDATE")
-        & AuditLog.record_id.in_([str(i) for i in row_ids])
-        & (AuditLog.changed_fields.contains("holder_contact_id") | AuditLog.changed_fields.contains("voided_at"))
-    )
-    voids, nulled = {}, {}
-    for audit_id, record_id, fields, new in entries.order_by(AuditLog.id).tuples():
-        new = new or {}
-        if "voided_at" in fields and new.get("voided_at") is not None:
-            voids[record_id] = audit_id  # the latest void of the row
-        if "holder_contact_id" in fields and new.get("holder_contact_id") is None:
-            nulled[record_id] = audit_id
-    return {int(r) for r, audit_id in nulled.items() if r in voids and audit_id > voids[r]}
-
-
 def _keeps_invariants(individual, before, after, known=None, buyer_keys=None):
     """
     Pure-Python mirror of the services' delta check (I1-I5), so a hint never promises a 409. `known`: the
@@ -1352,15 +1310,10 @@ def _keeps_invariants(individual, before, after, known=None, buyer_keys=None):
     return not (any(r.kind == "BIRTH" for r in before) and not any(r.kind == "BIRTH" for r in after))
 
 
-def _operation_undo_hint(operation_id, rows, individual, known=None, buyer_keys=None, lost=None):
-    """
-    UI hint only (the undo service re-checks across all individuals): undoable within this individual. `lost`:
-    the rows whose buyer was deleted (_buyer_deleted), which no undo restores.
-    """
+def _operation_undo_hint(operation_id, rows, individual, known=None, buyer_keys=None):
+    """UI hint only (the undo service re-checks across all individuals): undoable within this individual."""
     written, voided, restored = _operation_effects(rows, operation_id)
     if not written and not voided and not restored:
-        return False
-    if any(r.id in (lost if lost is not None else _buyer_deleted([v.id for v in voided])) for r in voided):
         return False
     if _effects_changed_later(written, restored):
         return False
@@ -1405,7 +1358,6 @@ def herd_tracking_history(individual, user, include_voided=None):
     latest_id = active[-1].id if active else None
     buyer_keys = _buyer_keys(rows)  # once per call, as the invariants of the active rows
     known = {(v.code, v.row_id) for v in check_invariants(individual, active, buyer_keys)}
-    lost = _buyer_deleted([r.id for r in rows if r.voided_at is not None])
     out = []
     for row in rows:
         if row.voided_at is not None and not show_voided:
@@ -1441,7 +1393,7 @@ def herd_tracking_history(individual, user, include_voided=None):
                 "can_undo_operation": bool(
                     can_manage
                     and not individual.voided
-                    and _operation_undo_hint(undo_target, rows, individual, known, buyer_keys, lost)
+                    and _operation_undo_hint(undo_target, rows, individual, known, buyer_keys)
                 ),
             }
         )

@@ -24,6 +24,7 @@ from utils.herd_tracking import (  # noqa: E402
     HerdTrackingConflict,
     HerdTrackingError,
     HerdTrackingInvalid,
+    attach_buyer,
     correct_herd_tracking,
     herd_tracking_history,
     new_operation_id,
@@ -409,16 +410,14 @@ class TestVoid(BuyerBase):
             [r.new_data for r in self._buyer_log(self.contact_id, "DELETE")], [{"action": "forsaljning_ogiltig"}]
         )
 
-    def test_undoing_the_void_of_a_sale_whose_buyer_went_is_refused_and_not_offered(self):
+    def test_undoing_the_void_restores_the_sale_as_one_whose_buyer_was_removed(self):
         void_herd_tracking(self.sale.id, self.owner, "Fel kanin")  # deletes the buyer
         void_op = db.HerdTracking.get_by_id(self.sale.id).voided_operation_id
-        history = herd_tracking_history(db.Individual.get_by_id(self.rabbit.id), self.manager)
-        (row,) = [r for r in history["rows"] if r["id"] == self.sale.id]
-        self.assertFalse(row["can_undo_operation"])
-        with self.assertRaises(HerdTrackingConflict) as raised:
-            undo_herd_tracking_operation(void_op, self.manager, "Ångra")
-        self.assertEqual(raised.exception.detail, "Köparen är raderad; registrera försäljningen på nytt.")
-        self.assertIsNotNone(db.HerdTracking.get_by_id(self.sale.id).voided_at)
+        undo_herd_tracking_operation(void_op, self.manager, "Ångra")
+        sale = db.HerdTracking.get_by_id(self.sale.id)
+        self.assertEqual((sale.voided_at, sale.holder_contact_id, sale.buyer_removed), (None, None, True))
+        with self.assertRaises(HerdTrackingConflict):  # so no paper registers a buyer on it again
+            attach_buyer(sale, BUYER, self.manager)
 
     def test_a_buyer_erased_before_the_void_does_not_block_its_undo(self):
         buyer_contact.erase_buyer_contact(self.contact_id, self.admin)  # erased while the sale was active
@@ -1026,7 +1025,7 @@ class TestQueueProofOfARegisteredSale(ErasureTest):
         resp = self.client.get(f"/api/v2/inkorg/{item.id}/kanin/G1-2111/forsaljningar")
         self.assertEqual(resp.status_code, 200, resp.get_json())
         self.assertEqual(
-            resp.get_json()["sales"], [{"herd": "GX1", "date": "2021-06-01", "kind": "TRANSFER", "has_buyer": True}]
+            resp.get_json()["sales"], [{"herd": "GX1", "date": "2021-06-01", "kind": "TRANSFER", "buyer": "present"}]
         )
         self.assertNotIn(NAME, resp.get_data(as_text=True))
         self.assertEqual(self.client.get(f"/api/v2/inkorg/{item.id}/kanin/G1-9999/forsaljningar").status_code, 404)
