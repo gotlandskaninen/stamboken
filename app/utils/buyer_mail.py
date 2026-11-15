@@ -138,6 +138,6 @@ def erase_by_link(token):
     from utils.inbox_purge import remove_originals  # pylint: disable=import-outside-toplevel
 
     with DB_PROXY.atomic():
-        count, paths = delete_buyer_contacts([contact_id], "invandning", certificates=True)
+        count, paths = delete_buyer_contacts([contact_id], "invandning")
     remove_originals(paths)  # after the commit, as utils.buyer_contact.erase_buyer_contact
     return "removed" if count else "already_removed"

@@ -279,7 +279,7 @@ class TestEraseLink(PurgeTest):
             response = self.erase(self.token)
         self.assertEqual((response.status_code, response.get_json()), (200, {"result": "removed"}))
         self.assertPrivate(response)
-        erasure.assert_called_once_with([self.contact_id], "invandning", certificates=True)
+        erasure.assert_called_once_with([self.contact_id], "invandning")
         self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == self.contact_id))
         sale = db.HerdTracking.get_by_id(self.sale.id)
         self.assertEqual((sale.voided_at, sale.holder_contact_id, sale.herd.herd), (None, None, "GX1"))
