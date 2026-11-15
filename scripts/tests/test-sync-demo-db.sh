@@ -18,8 +18,19 @@ check() { # desc expected actual
   else echo "FAIL - $1 (expected '$2', got '$3')"; fail=$((fail + 1)); fi
 }
 
-SKIP_QUEUE_DATA="" DROP_BUYERS_SQL="" MAIL_SEQ_SQL="" SET_MAIL_SEQ_SQL=""
-eval "$(grep -E '^(SKIP_QUEUE_DATA|DROP_BUYERS_SQL|MAIL_SEQ_SQL|SET_MAIL_SEQ_SQL)=' "$SCRIPT")"
+SKIP_QUEUE_DATA="" DROP_BUYERS_SQL="" MAIL_SEQ_SQL="" SET_MAIL_SEQ_SQL="" STAGING_DB="" DROP_STAGING_SQL=""
+# shellcheck disable=SC2034  # read by the STAGING_DB line taken from the script
+TARGET_DB=dst
+eval "$(grep -E '^(SKIP_QUEUE_DATA|DROP_BUYERS_SQL|MAIL_SEQ_SQL|SET_MAIL_SEQ_SQL|STAGING_DB|DROP_STAGING_SQL)=' "$SCRIPT")"
+
+# A run that stops before the rename drops the staging database on exit: the EXIT trap names drop_staging, it is
+# set before the staging database is made, and the rename marks it done.
+# shellcheck disable=SC2016
+trap_line=$(grep -n "^trap 'drop_staging" "$SCRIPT" | cut -d: -f1)
+# shellcheck disable=SC2016
+create_line=$(grep -n 'CREATE DATABASE $STAGING_DB' "$SCRIPT" | cut -d: -f1)
+check "the exit trap drops the staging database, set before it is made" 1 "$((trap_line > 0 && trap_line < create_line))"
+check "the rename turns the trap off" 1 "$(grep -c '^STAGING_RENAMED=1$' "$SCRIPT")"
 
 # The load goes into a staging database, its buyers go as the next command, and only then is it
 # renamed to the demo database: the demo API never reads production's buyers. The patterns name
@@ -92,6 +103,12 @@ check "the demo has no buyers" 0 "$(sql -d dst -c 'SELECT count(*) FROM buyer_co
 check "the sale stays, without its buyer" "1|" "$(sql -d dst -c 'SELECT id, holder_contact_id FROM herd_tracking')"
 sql -d dst -c "DROP TABLE herd_tracking, buyer_contact" -c "$DROP_BUYERS_SQL" >/dev/null
 check "an older schema without buyers is skipped" 0 "$?"
+
+# A run stopped between the load and the rename: the trap's statement removes the copy it left.
+sql -c "CREATE DATABASE $STAGING_DB" >/dev/null || exit 2
+sql -c "$DROP_STAGING_SQL" >/dev/null
+check "the exit trap's statement drops a leftover staging database" 0 \
+  "$(sql -c "SELECT count(*) FROM pg_database WHERE datname = '$STAGING_DB'")"
 
 echo ""
 echo "passed: $pass, failed: $fail"
