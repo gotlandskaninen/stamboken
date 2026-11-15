@@ -709,7 +709,8 @@ class AssignPaperCertificate(PolicyCommand):
     def check_cert_unique(self, ctx):
         value = self.certificate
         # Raw, as today: an int echo of the stored text is a change and finds the rabbit itself (IR-49).
-        if value is None or value == ctx.stored.certificate:
+        # A blank number is stored as NULL (apply), so it is never taken.
+        if value is None or value == "" or value == ctx.stored.certificate:
             return
         if Individual.select().where(Individual.certificate == value).exists():
             logger.warning(
@@ -725,11 +726,14 @@ class AssignPaperCertificate(PolicyCommand):
 
     def check_cert_auth(self, ctx):
         """Asks the table before anything is written, so a transition without a row is a refusal, not a crash."""
-        before = ctx.stored.cert_state()
-        if self.certificate is None or str(self.certificate) == ctx.stored.certificate or before is None:
+        if self.certificate is None or (str(self.certificate) or None) == ctx.stored.certificate:
             return
+        before = ctx.stored.cert_state()
         try:
-            next_state(before, self.event)
+            if before is not None:
+                next_state(before, self.event)
+            elif self.event is Event.CLEAR_PAPER and ctx.stored.digital_certificate is not None:
+                raise ValueError  # a row in no state (both numbers) keeps its digital number too
         except ValueError:
             raise IndividualRefused("Ett digitalt intyg kan inte tas bort genom att tömma intygsnumret") from None
 
@@ -740,7 +744,8 @@ class AssignPaperCertificate(PolicyCommand):
     def apply(self, ctx):
         if self.certificate is None:
             return
-        ind, user, value = ctx.individual, ctx.user.username, str(self.certificate)
+        # A cleared number is NULL: the column is unique, so "" would fit one rabbit in the whole registry.
+        ind, user, value = ctx.individual, ctx.user.username, str(self.certificate) or None
         changed = ind.certificate != value
         if changed:
             before = ind.cert_state()

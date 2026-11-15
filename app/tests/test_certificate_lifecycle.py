@@ -65,12 +65,11 @@ class TestCertificateLifecycle(unittest.TestCase):
         with self.assertRaises(AssertionError):
             check(CertState.DIGITAL, Event.ASSIGN_PAPER, CertState.DIGITAL)
 
-    def test_check_lets_a_writer_leave_an_illegal_combination_but_never_enter_one(self):
+    def test_check_does_not_judge_a_writer_that_starts_in_no_state_but_none_may_enter_one(self):
         check(None, Event.ISSUE_NUMBER, CertState.DIGITAL)  # a row from before the table
+        check(None, Event.ISSUE_PDF, None)  # both numbers stay both numbers: as it was, not a crash
         with self.assertRaises(AssertionError):
             check(CertState.DIGITAL, Event.ASSIGN_PAPER, None)
-        with self.assertRaises(AssertionError):
-            check(None, Event.ASSIGN_PAPER, None)
 
     def test_state_of(self):
         self.assertEqual(state_of(None, None, False), CertState.NONE)

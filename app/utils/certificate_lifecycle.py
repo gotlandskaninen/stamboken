@@ -38,9 +38,9 @@ S = CertState
 TRANSITIONS: tuple[Transition, ...] = (
     Transition(S.NONE, Event.REGISTER_WITH_PAPER, S.PAPER),
     *[Transition(s, Event.ASSIGN_PAPER, S.PAPER) for s in S],
-    # A blank number never removes a digital certificate: no row from the digital states.
-    Transition(S.NONE, Event.CLEAR_PAPER, S.NONE),
+    # A blank number removes a paper number and nothing else: a digital certificate stays as it is.
     Transition(S.PAPER, Event.CLEAR_PAPER, S.NONE),
+    *[Transition(s, Event.CLEAR_PAPER, s) for s in (S.NONE, S.DIGITAL_NUMBER, S.DIGITAL)],
     Transition(S.NONE, Event.ISSUE_NUMBER, S.DIGITAL_NUMBER),
     Transition(S.PAPER, Event.ISSUE_NUMBER, S.DIGITAL_NUMBER),
     Transition(S.DIGITAL_NUMBER, Event.ISSUE_PDF, S.DIGITAL),
@@ -50,8 +50,11 @@ TRANSITIONS: tuple[Transition, ...] = (
 # Event -> (what writes it, who may trigger it), for the rendered document.
 EVENTS = {
     Event.REGISTER_WITH_PAPER: ("POST /api/v2/individual med pappersintyg", "den som registrerar kaninen"),
-    Event.ASSIGN_PAPER: ("`AssignPaperCertificate` (PATCH /api/individual)", "manager, admin; ägare bara utan intyg"),
-    Event.CLEAR_PAPER: ("`AssignPaperCertificate` med tomt nummer (PATCH /api/individual)", "manager, admin"),
+    Event.ASSIGN_PAPER: (
+        "`AssignPaperCertificate` (PATCH /api/individual, PATCH /api/individual/{number})",
+        "manager, admin; ägare bara utan intyg",
+    ),
+    Event.CLEAR_PAPER: ("`AssignPaperCertificate` med tomt nummer (samma anrop)", "manager, admin"),
     Event.ISSUE_NUMBER: (
         "`IssueDigitalCertificate`, `assign_certificate_number`",
         "den som får utfärda intyg (uppfödaren, manager, admin)",
@@ -88,10 +91,10 @@ def next_state(state: CertState, event: Event) -> CertState:
 def check(before: CertState | None, event: Event, after: CertState | None) -> None:
     """A writer's own check: the state it left must be the one the table gives. A mismatch is a programming error.
 
-    `None` is a combination no state allows. Rows written before this table may be in one, so a writer may
-    start there (the table cannot say where it ends), but it must never end there.
+    `None` is a combination no state allows (both numbers, from the old backend). The table cannot say where a
+    writer that starts there ends, so it is not judged; a writer that starts in a state must end in one.
     """
-    if after is None or (before is not None and next_state(before, event) != after):
+    if before is not None and (after is None or next_state(before, event) != after):
         raise AssertionError(f"{event} took the certificate from {before} to {after}")
 
 

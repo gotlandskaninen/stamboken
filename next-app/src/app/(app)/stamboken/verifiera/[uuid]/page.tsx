@@ -87,15 +87,20 @@ export default async function VerifieraPage({
           </span>
           <h1>Äkta, men ersatt</h1>
           <p className="sub">
-            Intyget är äkta och utfärdat i Stamboken, men ett{" "}
-            <strong>nyare intyg</strong> har utfärdats för denna kanin
-            {data.replaced_by_date && (
+            {/* No date: no newer digital certificate, a paper one replaced it or the number was removed. */}
+            {data.replaced_by_date ? (
               <>
-                {" "}
-                <strong>{svDate(data.replaced_by_date)}</strong>
+                Intyget är äkta och utfärdat i Stamboken, men ett{" "}
+                <strong>nyare intyg</strong> har utfärdats för denna kanin{" "}
+                <strong>{svDate(data.replaced_by_date)}</strong>.
               </>
-            )}
-            . Det här dokumentet är inte längre den aktuella versionen.
+            ) : (
+              <>
+                Intyget är äkta och utfärdat i Stamboken, men det{" "}
+                <strong>gäller inte längre</strong> för denna kanin.
+              </>
+            )}{" "}
+            Det här dokumentet är inte längre den aktuella versionen.
           </p>
           <div className="ind-card">
             <div className="num">{data.individual_number}</div>

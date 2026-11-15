@@ -67,6 +67,9 @@ def make_machine(case, clients, stats, covered):
             response = call(clients[actor])
             ok = response.status_code in successes and response.get_json().get("status", "success") == "success"
             want = actor != "viewer" and after is not None
+            # A refusal is a typed answer: a crash is a 500, or the legacy PATCH's generic error.
+            case.assertLess(response.status_code, 500, f"{name} by {actor} from {self.model}")
+            case.assertNotEqual(response.get_json().get("message"), "Kunde inte uppdatera individ.")
             case.assertEqual(ok, want, f"{name} by {actor} from {self.model}: {response.status_code} {response.json}")
             stats[f"{name} {self.model} -> {'ok' if ok else 'nekad'}"] += 1
             if ok:
@@ -89,10 +92,10 @@ def make_machine(case, clients, stats, covered):
             self._step(name, actor, events, lambda c: c.patch("/api/individual", json=body), successes=(200,))
 
         @precondition(lambda self: self.model == CertState.DIGITAL_NUMBER)
-        @rule()
-        def paper_over_v1(self):
-            """Its own rule: assign_paper alone reaches this row too rarely for the coverage assertion."""
-            self.assign_paper(actor="manager", blank=False)
+        @rule(blank=st.booleans())
+        def paper_over_v1(self, blank):
+            """Its own rule: assign_paper alone reaches these rows too rarely for the coverage assertion."""
+            self.assign_paper(actor="manager", blank=blank)
 
         # The POST endpoint refuses a paper-certified rabbit (convert via update), which the table would allow.
         @precondition(lambda self: self.model != CertState.PAPER)
@@ -113,10 +116,7 @@ def make_machine(case, clients, stats, covered):
         def legacy_v1(self):
             """Data from before the PDF rows: a digital number and no row."""
             number = 500000 + next(NUMBERS)
-            # No paper number, not even a cleared "": issuing a digital number always nulls it.
-            db.Individual.update(digital_certificate=number, certificate=None).where(
-                db.Individual.id == kit.id
-            ).execute()
+            db.Individual.update(digital_certificate=number).where(db.Individual.id == kit.id).execute()
             self.model = CertState.DIGITAL_NUMBER
             stats["legacy v1"] += 1
 
@@ -137,36 +137,8 @@ def make_machine(case, clients, stats, covered):
 
 @unittest.skipUnless(_USE_POSTGRES, "needs Postgres")
 class TestCertificateStateMachine(CertV2Mixin, FlaskTest):
-    def _manager_patch(self, **fields):
-        client = self.app.application.test_client(use_cookies=True)
-        client.post("/api/login", json={"username": self.manager.email, "password": "pass"})
-        kit = self.individuals[3]
-        body = {"id": kit.id, "number": kit.number, "herd": "G1", **fields}
-        return client.patch("/api/individual", json=body).get_json()
-
-    def test_a_blank_number_clears_a_paper_certificate_and_keeps_the_other_edits(self):
-        kit = self.individuals[3]
-        db.Individual.update(certificate="PAP-0").where(db.Individual.id == kit.id).execute()
-        self.assertEqual(self._manager_patch(certificate="", name="Agnes").get("status", "success"), "success")
-        kit = db.Individual.get_by_id(kit.id)
-        self.assertEqual((kit.certificate, kit.name), ("", "Agnes"))
-
-    def test_a_blank_number_does_not_remove_a_digital_certificate(self):
-        kit = self.individuals[3]
-        db.Individual.update(digital_certificate=500000).where(db.Individual.id == kit.id).execute()
-        body = self._manager_patch(certificate="", name="Agnes")
-        self.assertEqual(body["status"], "error")
-        self.assertIn("digitalt intyg", body["message"])
-        after = db.Individual.get_by_id(kit.id)
-        self.assertEqual((after.digital_certificate, after.name), (500000, kit.name))
-
-    def test_random_sequences(self):
-        clients = {}
-        for name, user in (("admin", self.admin), ("manager", self.manager), ("viewer", self.viewer)):
-            clients[name] = self.app.application.test_client(use_cookies=True)
-            clients[name].post("/api/login", json={"username": user.email, "password": "pass"})
-        stats, covered = Counter(), set()
-        examples = int(os.environ.get("CERT_EXAMPLES", "50"))
+    def _stub_pdf(self):
+        """PDF generation, signing and S3 stubbed: these tests are about state."""
         stubs = (
             patch.object(cert_service._generator, "generate_pedigree", return_value=b"%PDF-1.4 stub"),
             patch.object(cert_service, "sign_pdf", side_effect=lambda pdf, **kw: pdf),
@@ -177,6 +149,56 @@ class TestCertificateStateMachine(CertV2Mixin, FlaskTest):
         for stub in stubs:
             stub.start()
             self.addCleanup(stub.stop)
+
+    def _manager_patch(self, **fields):
+        client = self.app.application.test_client(use_cookies=True)
+        client.post("/api/login", json={"username": self.manager.email, "password": "pass"})
+        kit = self.individuals[3]
+        body = {"id": kit.id, "number": kit.number, "herd": "G1", **fields}
+        return client.patch("/api/individual", json=body).get_json()
+
+    def test_a_blank_number_clears_a_paper_certificate_and_keeps_the_other_edits(self):
+        kit = self.individuals[3]
+        db.Individual.update(certificate="PAP-0").where(db.Individual.id == kit.id).execute()
+        # Another rabbit already holds "", as one does in production: the column is unique, so the cleared
+        # number is stored as NULL or only one rabbit in the registry could ever be cleared.
+        db.Individual.update(certificate="").where(db.Individual.id == self.individuals[0].id).execute()
+        self.assertEqual(self._manager_patch(certificate="", name="Agnes").get("status", "success"), "success")
+        kit = db.Individual.get_by_id(kit.id)
+        self.assertEqual((kit.certificate, kit.name), (None, "Agnes"))
+
+    def test_a_row_with_both_numbers_keeps_its_digital_certificate_and_can_be_reissued(self):
+        """The old backend could create such a row. No state allows it, and no writer may crash on it."""
+        self._stub_pdf()
+        kit = self.individuals[3]
+        db.Individual.update(certificate="PAP-0", digital_certificate=500000).where(
+            db.Individual.id == kit.id
+        ).execute()
+        body = self._manager_patch(certificate="")
+        self.assertEqual(body["status"], "error")
+        self.assertIn("digitalt intyg", body["message"])
+        admin = self.app.application.test_client(use_cookies=True)
+        admin.post("/api/login", json={"username": self.admin.email, "password": "pass"})
+        response = admin.patch(f"/api/v2/certificates/update/{kit.number}", json={})
+        self.assertEqual(response.status_code, 200, response.get_json(silent=True))
+        self.assertEqual(db.Individual.get_by_id(kit.id).digital_certificate, 500000)
+
+    def test_a_blank_number_does_not_remove_a_digital_certificate(self):
+        kit = self.individuals[3]
+        db.Individual.update(digital_certificate=500000).where(db.Individual.id == kit.id).execute()
+        # Nothing to clear, so the rest of the edit is saved. On main this request removed the digital number.
+        self.assertEqual(self._manager_patch(certificate="", name="Agnes").get("status", "success"), "success")
+        after = db.Individual.get_by_id(kit.id)
+        self.assertEqual((after.digital_certificate, after.certificate, after.name), (500000, None, "Agnes"))
+
+    def test_random_sequences(self):
+        clients = {}
+        for name, user in (("admin", self.admin), ("manager", self.manager), ("viewer", self.viewer)):
+            clients[name] = self.app.application.test_client(use_cookies=True)
+            clients[name].post("/api/login", json={"username": user.email, "password": "pass"})
+        stats, covered = Counter(), set()
+        examples = int(os.environ.get("CERT_EXAMPLES", "50"))
+        self._stub_pdf()
         run_state_machine_as_test(
             make_machine(self, clients, stats, covered),
             settings=settings(
