@@ -1013,6 +1013,21 @@ class TestLockOrder(PurgeTest):
             buyer_contact.erase_buyer_contact(sale.holder_contact_id, self.manager)
         self.assertTrue(_items_locked_before_the_rabbit(statements))
 
+    def test_the_nightly_purge_locks_every_item_at_once_before_it_clears_any(self):
+        first = db.Individual.get(db.Individual.number == "G1-2112")
+        second = db.Individual.get(db.Individual.number == "G1-2111")
+        self._sale_with_a_document(first, "2026-01-01")
+        self._sale_with_a_document(second, "2026-02-01")
+        with capture_sql() as statements:
+            self.assertEqual(buyer_contact.purge_expired(NOW + timedelta(days=10 * 366)), 2)
+        sqls = [sql for sql, _params in statements]
+        first_lock = next(i for i, sql in enumerate(sqls) if 'FROM "inbox_item"' in sql and "FOR UPDATE" in sql)
+        first_clear = next(i for i, sql in enumerate(sqls) if sql.startswith('UPDATE "inbox_document"'))
+        self.assertLess(first_lock, first_clear)
+        self.assertIn('ORDER BY "t1"."id"', sqls[first_lock])
+        # It is the one lock over every sale's items (it reads the sales), not the first sale's own.
+        self.assertIn('FROM "herd_tracking"', sqls[first_lock])
+
     def test_an_erasure_refuses_an_item_that_appeared_after_its_lock(self):
         rabbit = db.Individual.get(db.Individual.number == "G1-2112")
         sale, document = self._sale_with_a_document(rabbit, "2026-01-01")

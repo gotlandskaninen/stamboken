@@ -1209,9 +1209,12 @@ def delete_buyer_contacts(contact_ids, action, user=None, whole_items=False):
     if not ids:
         return 0, []
     paths = []
-    # The sales first: the delete nulls their link.
-    for (sale_id,) in HerdTracking.select(HerdTracking.id).where(HerdTracking.holder_contact.in_(ids)).tuples():
-        paths += erase_buyer_from_inbox(sale_id, whole_items)
+    sales = list(HerdTracking.select().where(HerdTracking.holder_contact.in_(ids)))
+    # Every queue item the erasures below touch, locked at once in id order (the queue's order): one sale after
+    # another would lock them out of order, and the nightly purge could deadlock with a correction.
+    buyer_items(sales, lock=True)
+    for sale in sales:  # the sales first: the delete nulls their link
+        paths += erase_buyer_from_inbox(sale.id, whole_items)
     deleted = BuyerContact.delete().where(BuyerContact.id.in_(ids)).returning(BuyerContact.id).tuples()
     deleted = [contact_id for (contact_id,) in deleted]
     for contact_id in deleted:
