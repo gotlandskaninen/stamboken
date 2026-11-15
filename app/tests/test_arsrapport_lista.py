@@ -329,6 +329,17 @@ class ListaTest(ArsrapportTest):
         report = self.view().json["report"]
         self.assertEqual((report["can_change"], report["can_withdraw"], report["withdraw_until"]), (True, True, None))
 
+    def test_helper_after_end_date_cannot_change(self):
+        # P39c: a change voids the report's rows, which only an editor may do once the round has closed
+        self.submitted()
+        item = self.item(0)
+        db.InboxDocument.update(doc_type="arsblankett").where(db.InboxDocument.item == item.id).execute()
+        inbox.take(item, self.helper, over=False)
+        self.login("hjalp")
+        self.assertTrue(self.view(post=item.id).json["report"]["can_change"])
+        self.at(date(2026, 3, 31))  # the day after end_date
+        self.assertFalse(self.view(post=item.id).json["report"]["can_change"])
+
     # The draft
 
     def test_draft_version_conflict(self):

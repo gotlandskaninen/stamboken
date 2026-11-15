@@ -448,8 +448,8 @@ def _report_json(report, round_, access, is_open):
         "report_date": _iso(report.report_date),
         "on_time": on_time(report, round_),
         "submitted": submissions[-1].data if submissions else None,
-        # fråga 16: after end_date owners and caretakers read the report only
-        "can_change": is_open or access.editor or access.role == "helper",
+        # fråga 16, P39c: after end_date only an editor changes the report; the others read it
+        "can_change": is_open or access.editor,
         "can_withdraw": can_withdraw,
         "withdraw_until": _iso(until),
     }
