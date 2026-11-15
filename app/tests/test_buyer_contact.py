@@ -397,6 +397,17 @@ class TestVoid(BuyerBase):
             [r.new_data for r in self._buyer_log(self.contact_id, "DELETE")], [{"action": "forsaljning_ogiltig"}]
         )
 
+    def test_undoing_the_void_of_a_sale_whose_buyer_went_is_refused_and_not_offered(self):
+        void_herd_tracking(self.sale.id, self.owner, "Fel kanin")  # deletes the buyer
+        void_op = db.HerdTracking.get_by_id(self.sale.id).voided_operation_id
+        history = herd_tracking_history(db.Individual.get_by_id(self.rabbit.id), self.manager)
+        (row,) = [r for r in history["rows"] if r["id"] == self.sale.id]
+        self.assertFalse(row["can_undo_operation"])
+        with self.assertRaises(HerdTrackingConflict) as raised:
+            undo_herd_tracking_operation(void_op, self.manager, "Ångra")
+        self.assertEqual(raised.exception.detail, "Köparen är raderad; registrera försäljningen på nytt.")
+        self.assertIsNotNone(db.HerdTracking.get_by_id(self.sale.id).voided_at)
+
     def test_undoing_the_operation_deletes_the_buyer(self):
         undo_herd_tracking_operation(self.sale.operation_id, self.manager, "Fel kanin")
         self.assertIsNone(self._contact(self.contact_id))

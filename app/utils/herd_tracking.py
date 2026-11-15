@@ -12,7 +12,7 @@ from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from peewee import Expression, IntegrityError, fn
+from peewee import SQL, Expression, IntegrityError, fn
 
 from utils.database import (
     DB_PROXY,
@@ -959,6 +959,9 @@ def undo_herd_tracking_operation(operation_id, user, reason, undo_operation_id=N
         stale = _effects_changed_later(written, restored)
         if stale:
             raise HerdTrackingConflict("En senare åtgärd har redan ändrat raderna.", rows=[_row_ref(r) for r in stale])
+        lost = _buyer_deleted([r.id for r in unvoid])
+        if lost:  # the buyer went with the void (ADR-0016): the sale is registered again, with its buyer
+            raise HerdTrackingConflict(BUYER_DELETED, rows=[_row_ref(r) for r in unvoid if r.id in lost])
         op_time = _operation_time(written, unvoid, restored)
         later = list(HerdTracking.select().where(in_locked_set, _touched_after(op, op_time)))
         if later:
@@ -1210,6 +1213,26 @@ def compute_periods(active_rows, herds):
     return periods
 
 
+BUYER_DELETED = "Köparen är raderad; registrera försäljningen på nytt."
+
+
+def _buyer_deleted(row_ids):
+    """
+    The rows among `row_ids` whose buyer outside the association was deleted (their holder_contact_id went NULL,
+    which the herd_tracking audit trigger records by id). An undo must not restore such a sale without its buyer.
+    """
+    if not row_ids:
+        return set()
+    found = AuditLog.select(AuditLog.record_id).where(
+        (AuditLog.table_name == HerdTracking._meta.table_name)
+        & (AuditLog.operation == "UPDATE")
+        & AuditLog.record_id.in_([str(i) for i in row_ids])
+        & AuditLog.changed_fields.contains("holder_contact_id")
+        & SQL("new_data ->> 'holder_contact_id' IS NULL")
+    )
+    return {int(record_id) for (record_id,) in found.tuples()}
+
+
 def _keeps_invariants(individual, before, after, known=None, buyer_keys=None):
     """
     Pure-Python mirror of the services' delta check (I1-I5), so a hint never promises a 409. `known`: the
@@ -1222,10 +1245,15 @@ def _keeps_invariants(individual, before, after, known=None, buyer_keys=None):
     return not (any(r.kind == "BIRTH" for r in before) and not any(r.kind == "BIRTH" for r in after))
 
 
-def _operation_undo_hint(operation_id, rows, individual, known=None, buyer_keys=None):
-    """UI hint only (the undo service re-checks across all individuals): undoable within this individual."""
+def _operation_undo_hint(operation_id, rows, individual, known=None, buyer_keys=None, lost=None):
+    """
+    UI hint only (the undo service re-checks across all individuals): undoable within this individual. `lost`:
+    the rows whose buyer was deleted (_buyer_deleted), which no undo restores.
+    """
     written, voided, restored = _operation_effects(rows, operation_id)
     if not written and not voided and not restored:
+        return False
+    if any(r.id in (lost if lost is not None else _buyer_deleted([v.id for v in voided])) for r in voided):
         return False
     if _effects_changed_later(written, restored):
         return False
@@ -1270,6 +1298,7 @@ def herd_tracking_history(individual, user, include_voided=None):
     latest_id = active[-1].id if active else None
     buyer_keys = _buyer_keys(rows)  # once per call, as the invariants of the active rows
     known = {(v.code, v.row_id) for v in check_invariants(individual, active, buyer_keys)}
+    lost = _buyer_deleted([r.id for r in rows if r.voided_at is not None])
     out = []
     for row in rows:
         if row.voided_at is not None and not show_voided:
@@ -1305,7 +1334,7 @@ def herd_tracking_history(individual, user, include_voided=None):
                 "can_undo_operation": bool(
                     can_manage
                     and not individual.voided
-                    and _operation_undo_hint(undo_target, rows, individual, known, buyer_keys)
+                    and _operation_undo_hint(undo_target, rows, individual, known, buyer_keys, lost)
                 ),
             }
         )
