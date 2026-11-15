@@ -3585,8 +3585,9 @@ def migrate_36_to_37():
 
 def migrate_37_to_38():
     """
-    Data only (ADR-0019): before AssignPaperCertificate retired it, a paper certificate replacing a digital
-    one left the PDF row current, so verify and download kept answering for it. Retires those rows.
+    Data only (ADR-0019): a current PDF row needs a digital number. Before AssignPaperCertificate retired the
+    row, a paper certificate (or a blank number) removed the digital number and left the row current, so verify
+    and download kept answering for it. Retires every current row whose rabbit has no digital number.
     """
     with DATABASE.atomic():
         if "digitalcertificatev2" in DATABASE.get_tables():

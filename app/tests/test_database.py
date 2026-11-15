@@ -1083,16 +1083,20 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
 
     def test_replay_37_to_38_retires_the_pdf_of_a_replaced_digital_certificate(self):
-        """A paper certificate from before ADR-0019 left the PDF row current; a digital certificate keeps its row."""
+        """
+        A current PDF row needs a digital number. Before ADR-0019 a paper certificate, or a blank number, removed
+        the number and left the row current; a digital certificate keeps its row.
+        """
         self.addCleanup(db.check_migrations)
-        replaced, digital = self.individuals[0], self.individuals[1]
+        replaced, digital, blanked = self.individuals[0], self.individuals[1], self.individuals[2]
+        db.Individual.update(certificate="", digital_certificate=None).where(db.Individual.id == blanked.id).execute()
         db.Individual.update(certificate="98765", digital_certificate=None).where(
             db.Individual.id == replaced.id
         ).execute()
         db.Individual.update(certificate=None, digital_certificate=100000).where(
             db.Individual.id == digital.id
         ).execute()
-        for ind in (replaced, digital):
+        for ind in (replaced, digital, blanked):
             db.DigitalCertificateV2.create(individual=ind, issued_by=self.admin, file_path="x.pdf", checksum="0" * 64)
 
         def current(ind):
@@ -1102,7 +1106,7 @@ class TestDatabaseMigration(DatabaseTest):
             db.SchemaHistory.delete().where(db.SchemaHistory.version >= 38).execute()
             db.check_migrations()
             self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
-            self.assertEqual((current(replaced), current(digital)), (False, True))
+            self.assertEqual((current(replaced), current(digital), current(blanked)), (False, True, False))
 
     def test_replay_32_to_33_adds_the_history_algorithm_version(self):
         """
