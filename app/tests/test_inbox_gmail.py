@@ -64,6 +64,7 @@ class FakeGmail:
         self.messages = {}  # id -> {"raw": bytes, "labelIds": [...], "internalDate": str}
         self.labels = {"INBOX": "INBOX", "TRASH": "TRASH", "SPAM": "SPAM"}  # name -> id
         self.history = []  # (history id, message id), messageAdded to INBOX
+        self.label_history = []  # (history id, message id, label ids added), labelAdded
         self.history_id = 1000
         self.oldest_history = 0  # a startHistoryId below this is too old: 404
         self.failures = []  # (method, path suffix): the next matching call fails with 500
@@ -78,6 +79,12 @@ class FakeGmail:
         if "INBOX" in labels:
             self.history.append((self.history_id, message_id))
         return message_id
+
+    def move_to_inbox(self, message_id):
+        """A message already here (in spam, say) gets the INBOX label: a labelAdded record, no messageAdded."""
+        self.history_id += 1
+        self.messages[message_id]["labelIds"] = ["INBOX"]
+        self.label_history.append((self.history_id, message_id, ["INBOX"]))
 
     def labelled(self, message_id, name):
         return self.labels.get(name) in self.messages[message_id]["labelIds"]
@@ -96,7 +103,15 @@ class FakeGmail:
             start = int(params["startHistoryId"])
             if start < self.oldest_history:
                 return _Response(404, {"error": "too old"})
+            types = params["historyTypes"]
             added = [{"messagesAdded": [{"message": {"id": m}}]} for h, m in self.history if h > start]
+            added = added if "messageAdded" in types else []
+            if "labelAdded" in types:
+                added += [
+                    {"labelsAdded": [{"message": {"id": m}, "labelIds": labels}]}
+                    for h, m, labels in self.label_history
+                    if h > start
+                ]
             return _Response(200, {"history": added, "historyId": str(self.history_id)})
         if path == "messages":
             label, hidden = params["labelIds"], {"SPAM", "TRASH"}
@@ -598,9 +613,9 @@ class TestSenderAddress(GmailTest):
                 self.assertIs(listed["sender_authenticated"], expected)
                 inbox.take(item, self.helper, over=False)
                 inbox.change_state(item, self.helper, "ofullstandig", note="Pappersintyget saknas")
-                db.InboxItem.update(received_at=inbox.now() - inbox.months(12)).where(
-                    db.InboxItem.id == item.id
-                ).execute()
+                long_ago = inbox.now() - inbox.months(12)  # it came in and was marked then
+                db.InboxItem.update(received_at=long_ago).where(db.InboxItem.id == item.id).execute()
+                db.InboxEvent.update(at=long_ago).where(db.InboxEvent.item == item.id).execute()
                 purge.remind_incomplete(inbox.now())
                 inbox.change_state(item, self.helper, "tagen")
                 inbox.update_document(item, item.documents.get(), self.helper, {"dismissed": True})
@@ -799,6 +814,19 @@ class TestSync(GmailTest):
         sync = self.sync()
         self.assertEqual((sync.history_id, sync.last_error), (str(self.fake.history_id), None))
         self.assertIsNotNone(sync.last_run_at)
+
+    def test_a_message_moved_into_the_inbox_later_is_read_once(self):
+        self.read()  # the history starts here
+        gmail_id = self.fake.deliver(message(), labels=("SPAM",))
+        self.read()
+        self.assertEqual(self.items(), [])  # in spam: not read
+        self.fake.move_to_inbox(gmail_id)
+        both = self.fake.deliver(message(), labels=("SPAM",))
+        self.fake.move_to_inbox(both)
+        self.fake.history.append((self.fake.history_id, both))  # seen both ways in one batch
+        self.read()
+        self.read()
+        self.assertEqual(sorted(i.gmail_message_id for i in self.items()), [gmail_id, both])
 
     def test_the_same_message_read_twice_gives_one_item(self):
         gmail_id = self.fake.deliver(message())

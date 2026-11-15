@@ -65,7 +65,9 @@ kommer hit. Brevlådan ska därför vara samma adress som `MAIL_FROM`.
 
 - **Hämtningen.** Jobbet läser de meddelanden som har kommit till inkorgen sedan senaste
   `historyId` (`users.history.list`). Har Gmail inte kvar den historiken läses hela inkorgen,
-  utom det som redan har etiketten "Inläst". Bara INBOX läses, aldrig skräpposten.
+  utom det som redan har etiketten "Inläst". Bara INBOX läses, aldrig skräpposten. Ett mejl som flyttas
+  in i inkorgen efteråt, till exempel från skräpposten, läses också (historiken frågas efter
+  `messageAdded` och `labelAdded` med INBOX); ett mejl som syns på båda sätten behandlas en gång.
 - **En gång per mejl.** Varje behandlat mejl får en rad i `gmail_processed` i samma
   transaktion som posten, svaret eller studsen och mejlen de köar. Efter commit får mejlet
   etiketten "Inläst" och läggs i papperskorgen, som Gmail tömmer efter 30 dagar. Dör jobbet
