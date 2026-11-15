@@ -1068,6 +1068,13 @@ class TestQueueProofOfARegisteredSale(ErasureTest):
             resp.get_json()["detail"], "Köparen har begärt radering eller gallrats; registrera inte på nytt."
         )
         self.assertEqual(db.BuyerContact.select().count(), 0)
+        # The panel reads the sale as one whose buyer was removed, and links the proof without a buyer.
+        sales = self.client.get(f"/api/v2/inkorg/{item.id}/kanin/G1-2111/forsaljningar").get_json()["sales"]
+        self.assertEqual([s["buyer"] for s in sales], ["removed"])
+        resp = self.post(f"/{item.id}/dokument/{proof.id}/overlat", individual="G1-2111", herd="GX1", date="2021-06-01")
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["herd_tracking_id"], sale.id)
+        self.assertEqual(db.BuyerContact.select().count(), 0)
 
     def test_two_sales_the_same_day_are_a_409_not_a_guess(self):
         gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
