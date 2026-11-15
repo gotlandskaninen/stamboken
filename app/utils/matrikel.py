@@ -479,9 +479,9 @@ def anonymize_person(member, actor):
                 address=None, postal_code=None, city=None, notes=None, **dict.fromkeys(BILLING_FIELDS), updated_at=now
             ).where(Membership.id == membership.id).execute()
             redact_household_from_audits(membership)
-        application_ids = [a.id for a in MemberApplication.select(MemberApplication.id).where(applications_to_redact)]
-        applications_redacted = (
-            MemberApplication.update(
+        application_ids = [
+            row.id
+            for row in MemberApplication.update(
                 first_name=ANONYMIZED_FIRST_NAME,
                 last_name=ANONYMIZED_LAST_NAME,
                 email="[borttagen]",
@@ -498,8 +498,12 @@ def anonymize_person(member, actor):
                 status=Case(None, [(MemberApplication.status == "pending", "rejected")], MemberApplication.status),
             )
             .where(applications_to_redact)
+            # the rows this statement redacted, not a list read before it: an application committed in between
+            # is redacted here too, and its mail must be forgotten with it
+            .returning(MemberApplication.id)
             .execute()
-        )
+        ]
+        applications_redacted = len(application_ids)
         forget_recipient("member", person.id)  # the queue keeps no address hash or dedupe key of the erased
         for application_id in application_ids:
             forget_recipient("application", application_id)
