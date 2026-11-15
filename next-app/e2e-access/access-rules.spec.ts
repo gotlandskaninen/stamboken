@@ -10,8 +10,8 @@ import { test, expect, type Page } from "@playwright/test";
 
 const OWNER = { username: "test-gk-owner", password: "test-gk-owner-pass" };
 const ADMIN = { username: "test-admin", password: "test-admin-pass" };
-const BANNER_TEXT =
-  "TESTMILJÖ — här kan du öva fritt. Allt återställs varje natt.";
+// The banner's first word: DemoBanner.client.tsx writes the rest with an en dash.
+const BANNER_TEXT = /TESTMILJÖ/;
 const NOT_PROMOTED = "Ditt konto har inte tillgång till riktiga Stamboken än";
 
 /** Sign in through the real form, so loginWithPassword sets session and sb_mode. */
