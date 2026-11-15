@@ -325,7 +325,7 @@ class TestSending(MailTest):
         self.assertEqual([_row_id(msg) for msg, _, _ in relay.sent], [urgent, bulk])
 
     def test_subject_cannot_inject_headers(self):
-        env = Environment(
+        env = Environment(  # nosemgrep
             loader=DictLoader(
                 {
                     "x.txt": "{% block subject %}Hej {{ name }}{% endblock %}{% block body %}Text{% endblock %}",
