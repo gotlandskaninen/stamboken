@@ -653,18 +653,47 @@ def _holder_before(individual, rows, when, kind):
     return prior[-1].herd_id if prior else individual.origin_herd_id
 
 
+AMBIGUOUS_BUYERS = "Rättelsen gäller flera försäljningar utanför genbanken. Rätta en i taget."
+BUYERLESS_BEFORE_SALE = (
+    "En försäljning utanför genbanken utan köpare kan inte läggas före en försäljning till samma besättning."
+)
+
+
 def _carried_buyers(voided, parsed):
     """
-    The buyer of a voided sale into GX1/MX1 goes to the one TRANSFER the correction writes into the same herd, so
-    it keeps its purge_at (ADR-0016). Event index -> contact id; none when more than one could take it.
+    The buyer of a voided sale into GX1/MX1 goes to the event (TRANSFER or CORRECTION, without a buyer of its own)
+    the correction writes into the same herd, so it keeps its purge_at (ADR-0016); with no such event it goes.
+    Event index -> contact id; 409 when more than one buyer or more than one event could pair up.
     """
     carried = {}
     for herd_id in {r.herd_id for r in voided if r.holder_contact_id and r.herd.herd in OUTSIDE_GENEBANK_HERDS}:
         buyers = [r.holder_contact_id for r in voided if r.holder_contact_id and r.herd_id == herd_id]
-        into = [i for i, e in enumerate(parsed) if e["kind"] == "TRANSFER" and e["herd"].id == herd_id]
-        if len(buyers) == 1 and len(into) == 1 and parsed[into[0]]["buyer"] is None:
+        into = [
+            i
+            for i, e in enumerate(parsed)
+            if e["kind"] in ("TRANSFER", "CORRECTION") and e["herd"].id == herd_id and e["buyer"] is None
+        ]
+        if into and (len(buyers) > 1 or len(into) > 1):
+            raise HerdTrackingConflict(AMBIGUOUS_BUYERS)
+        if into:
             carried[into[0]] = buyers[0]
     return carried
+
+
+def _refuse_buyerless_before_sale(rows, written):
+    """
+    A buyerless move into GX1/MX1 just before a row in the same herd would make that row's buyer a resale between
+    two buyers outside the association (ADR-0016): refused.
+    """
+    ordered = sorted(rows, key=ht_sort_key)
+    for row in written:
+        if row.holder_contact_id is not None or row.kind not in ("TRANSFER", "CORRECTION"):
+            continue
+        if row.herd.herd not in OUTSIDE_GENEBANK_HERDS:
+            continue
+        later = ordered[ordered.index(row) + 1 :]
+        if later and later[0].herd_id == row.herd_id:
+            raise HerdTrackingConflict(BUYERLESS_BEFORE_SALE, rows=[_row_ref(later[0])])
 
 
 def correct_herd_tracking(individual, user, operation_id, void_ids, events, reason=None):
@@ -751,6 +780,7 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
             raise HerdTrackingForbidden(GENEBANK_CHANGE_ADMIN_ONLY)
         if any(_changes_genebank(r, ind, current) and not r.notes for r in written):
             raise HerdTrackingInvalid("Ange en anledning i anteckningen för ett genbanksbyte.")
+        _refuse_buyerless_before_sale(current, written)
         _assert_no_new_violations(ind, before, current)
         paths = _drop_orphan_buyers(voided, VOID_ACTION, user)
     _remove_after_commit(paths)
@@ -1088,6 +1118,14 @@ def compute_periods(active_rows, herds):
     return periods
 
 
+def _keeps_invariants(individual, before, after):
+    """Pure-Python mirror of the services' delta check (I1-I5), so a hint never promises a 409."""
+    known = {(v.code, v.row_id) for v in check_invariants(individual, before)}
+    if any((v.code, v.row_id) not in known for v in check_invariants(individual, after)):
+        return False
+    return not (any(r.kind == "BIRTH" for r in before) and not any(r.kind == "BIRTH" for r in after))
+
+
 def _operation_undo_hint(operation_id, rows, individual):
     """UI hint only (the undo service re-checks across all individuals): undoable within this individual."""
     written, voided, restored = _operation_effects(rows, operation_id)
@@ -1100,20 +1138,18 @@ def _operation_undo_hint(operation_id, rows, individual):
     op_time = _operation_time(written, voided, restored)
     if any(_row_touched_after(r, operation_id, op_time) for r in rows):
         return False
-    if any(r.kind == "BIRTH" for r in written + voided + restored):  # the service refuses a decoupled BIRTH
-        revoid_ids = {r.id for r in written + restored}
-        after = [r for r in rows if r.voided_at is None and r.id not in revoid_ids] + voided
-        return not _decouples_birth(individual, after)
-    return True
+    revoid_ids = {r.id for r in written + restored}
+    active = [r for r in rows if r.voided_at is None]
+    after = [r for r in active if r.id not in revoid_ids] + voided
+    if not _keeps_invariants(individual, active, after):
+        return False
+    # The service refuses a decoupled BIRTH.
+    return not (any(r.kind == "BIRTH" for r in written + voided + restored) and _decouples_birth(individual, after))
 
 
 def _void_keeps_invariants(individual, active, row):
     """Pure-Python mirror of void_herd_tracking's delta check, so can_void never promises a 409 (I1-I5)."""
-    after = [r for r in active if r.id != row.id]
-    known = {(v.code, v.row_id) for v in check_invariants(individual, active)}
-    if any((v.code, v.row_id) not in known for v in check_invariants(individual, after)):
-        return False
-    return not (row.kind == "BIRTH" and not any(r.kind == "BIRTH" for r in after))
+    return _keeps_invariants(individual, active, [r for r in active if r.id != row.id])
 
 
 def _iso(value):

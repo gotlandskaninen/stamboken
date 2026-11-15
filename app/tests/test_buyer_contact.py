@@ -21,6 +21,7 @@ from utils.herd_tracking import (  # noqa: E402
     HerdTrackingError,
     HerdTrackingInvalid,
     correct_herd_tracking,
+    herd_tracking_history,
     new_operation_id,
     record_herd_tracking,
     undo_herd_tracking_operation,
@@ -257,15 +258,28 @@ class TestOutsideResale(BuyerBase):
         self.assertEqual(self._latest().id, self.first.id)
         self.assertEqual(db.BuyerContact.select().count(), 1)
 
-    def test_a_resale_whose_buyer_is_erased_tolerates_later_writes_but_not_a_restore(self):
-        second = record_herd_tracking(
-            self.rabbit, self.gx1, "2022-01-01", "TRANSFER", self.manager, buyer={"name": "B", "town": "Slite"}
-        )
+    def test_a_resale_whose_buyer_is_erased_tolerates_later_writes(self):
+        second = record_herd_tracking(self.rabbit, self.gx1, "2022-01-01", "TRANSFER", self.manager, buyer=OTHER)
+        buyer_contact.erase_buyer_contact(second.holder_contact_id, self.admin)  # now a buyerless GX1 to GX1
+        buyback = record_herd_tracking(self.rabbit, self.herds[1], "2022-02-01", "TRANSFER", self.manager)
+        self.assertEqual(self._latest().id, buyback.id)
+
+    def test_a_voided_resale_is_not_restored_without_its_buyer_nor_offered_for_it(self):
+        second = record_herd_tracking(self.rabbit, self.gx1, "2022-01-01", "TRANSFER", self.manager, buyer=OTHER)
         void_herd_tracking(second.id, self.manager, "Fel rad")  # deletes its buyer
-        with self.assertRaises(HerdTrackingConflict):  # restored without a buyer it is no resale
-            undo_herd_tracking_operation(
-                db.HerdTracking.get_by_id(second.id).voided_operation_id, self.manager, "Ångra"
-            )
+        void_op = db.HerdTracking.get_by_id(second.id).voided_operation_id
+        history = herd_tracking_history(db.Individual.get_by_id(self.rabbit.id), self.manager)
+        (row,) = [r for r in history["rows"] if r["id"] == second.id]
+        self.assertFalse(row["can_undo_operation"])  # the hint runs the same I4 check
+        with self.assertRaises(HerdTrackingConflict):
+            undo_herd_tracking_operation(void_op, self.manager, "Ångra")
+
+    def test_a_buyerless_move_cannot_go_in_before_a_sale_into_the_same_herd(self):
+        event = {"kind": "TRANSFER", "date": "2021-05-01", "herd": "GX1"}
+        with self.assertRaises(HerdTrackingConflict) as raised:
+            correct_herd_tracking(self.rabbit, self.manager, None, [], [event])
+        self.assertIn("utan köpare", raised.exception.detail)
+        self.assertEqual(self._latest().id, self.first.id)
 
     def test_a_correction_cannot_write_it(self):
         event = {"kind": "TRANSFER", "date": "2022-01-01", "herd": "GX1"}
@@ -401,6 +415,20 @@ class TestVoid(BuyerBase):
     def test_a_correction_that_moves_the_sale_elsewhere_deletes_the_buyer(self):
         self._correct_date(herd="G2")
         self.assertIsNone(self._contact(self.contact_id))
+
+    def test_a_correction_event_may_take_the_buyer(self):
+        (written,) = self._correct_date(kind="CORRECTION")[1]
+        self.assertEqual(written.holder_contact_id, self.contact_id)
+
+    def test_two_buyers_for_one_event_are_refused(self):
+        second = record_herd_tracking(self.rabbit, self.gx1, "2022-01-01", "TRANSFER", self.manager, buyer=OTHER)
+        event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1"}
+        with self.assertRaises(HerdTrackingConflict) as raised:
+            correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id, second.id], [event], "Fel")
+        self.assertEqual(
+            raised.exception.detail, "Rättelsen gäller flera försäljningar utanför genbanken. Rätta en i taget."
+        )
+        self.assertEqual(db.BuyerContact.select().count(), 2)
 
     def test_the_event_api_takes_no_holder_contact_id(self):
         event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "G2", "holder_contact_id": self.contact_id}
