@@ -234,6 +234,15 @@ jobs:
         run: |
           docker compose -f docker-compose.local-production.yml exec -T api python3 -m cli.create_test_users
 
+      # The demo API has its own database (herdbook_demo), empty after the schema
+      # step. The access rules test signs in on the new frontend in demo mode,
+      # which needs the account and some data there. Same seed, same order, so
+      # the user ids match the ones in the production database.
+      - name: Seed demo API
+        run: |
+          docker compose -f docker-compose.local-production.yml exec -T api-test flask seed create --verbose
+          docker compose -f docker-compose.local-production.yml exec -T api-test python3 -m cli.create_test_users
+
       # --- Install Playwright ---
       - uses: actions/setup-node@v4
         with:
@@ -266,6 +275,14 @@ jobs:
       # --- Run legacy tests ---
       - name: Run legacy regression tests
         run: pnpm exec playwright test --config=playwright.legacy.config.ts --reporter=github,html
+        working-directory: next-app
+
+      # The new frontend (https://localhost) with the rules on and the demo API
+      # present. Its own step, so a failure shows as this step; it runs even
+      # when the legacy suite above failed.
+      - name: Run access rules test (new frontend, ACCESS_RULES=enforce)
+        if: ${{ !cancelled() }}
+        run: pnpm exec playwright test --config=playwright.access.config.ts --reporter=github
         working-directory: next-app
 
       - name: Upload test report
