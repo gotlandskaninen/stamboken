@@ -62,7 +62,8 @@ class TestWriterParity(unittest.TestCase):
         allowed = sum(
             1
             for fn in ast.walk(tree)
-            if isinstance(fn, ast.FunctionDef) and fn.name in {"_void_rows", "_unvoid_rows"}
+            # attach_buyer: the buyer a proof shows, on a sale registered without one (ADR-0016)
+            if isinstance(fn, ast.FunctionDef) and fn.name in {"_void_rows", "_unvoid_rows", "attach_buyer"}
             for node in ast.walk(fn)
             if is_update(node)
         )

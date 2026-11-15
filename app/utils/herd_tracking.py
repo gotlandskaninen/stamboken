@@ -874,6 +874,26 @@ def _unvoid_rows(rows, operation_id):
     )
 
 
+def attach_buyer(row, buyer, user):
+    """
+    WHITELISTED in-place UPDATE #3: a proof shows the buyer outside the association of a sale registered without
+    one (the legacy form): a BuyerContact is made, five years from the sale's date, and set on the row. The audit
+    trigger records the id on the row. Never on a row that has a buyer or that is not a sale into GX1/MX1.
+    """
+    fields = buyer_contact_fields(buyer)
+    if row.holder_contact_id is not None:
+        raise HerdTrackingConflict("Försäljningen har redan en köpare. Genbanksansvarig ändrar den.")
+    if row.voided_at is not None or row.herd.herd not in OUTSIDE_GENEBANK_HERDS:
+        raise HerdTrackingInvalid("Köparens namn och ort registreras bara vid försäljning utanför genbanken.")
+    contact = BuyerContact.create(
+        **fields, created_by_user=user, purge_at=BuyerContact.purge_at_for(row.herd_tracking_date)
+    )
+    HerdTracking.update(holder_contact=contact).where(
+        HerdTracking.id == row.id, HerdTracking.holder_contact.is_null(True)
+    ).execute()
+    return contact
+
+
 def operation_individual_ids(operation_id):
     """Ids of every individual an operation wrote, voided or restored rows for (ascending)."""
     op = new_operation_id(operation_id)

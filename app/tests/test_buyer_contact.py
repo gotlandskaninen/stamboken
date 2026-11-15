@@ -859,24 +859,61 @@ class TestQueueSale(ErasureTest):
 
 
 class TestQueueProofOfARegisteredSale(ErasureTest):
-    def test_linking_a_proof_to_a_sale_with_a_buyer_reads_no_buyer(self):
-        db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+    def _two_documents(self):
         item = self.item(0, documents=2)
         inbox.take(item, self.helper, over=False)
         certificate, proof = list(item.documents.order_by(db.InboxDocument.id))
         self.login("hjalp")
+        return item, certificate, proof
+
+    def test_linking_a_proof_without_a_buyer_to_a_sale_with_one(self):
+        db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        item, certificate, proof = self._two_documents()
         sale = {"individual": "G1-2111", "herd": "GX1", "date": "2021-06-01"}
         resp = self.post(f"/{item.id}/dokument/{certificate.id}/overlat", **sale, buyer=BUYER)
         self.assertEqual(resp.status_code, 200, resp.get_json())
         sale_id = resp.get_json()["herd_tracking_id"]
         self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{proof.id}", json={"doc_type": "bevis"})
 
-        resp = self.post(f"/{item.id}/dokument/{proof.id}/overlat", **sale, buyer=OTHER)
+        resp = self.post(f"/{item.id}/dokument/{proof.id}/overlat", **sale)
 
         self.assertEqual(resp.status_code, 200, resp.get_json())
         self.assertEqual(resp.get_json()["herd_tracking_id"], sale_id)
         self.assertEqual(db.InboxDocument.get_by_id(proof.id).herd_tracking_id, sale_id)
         self.assertEqual([c.name for c in db.BuyerContact.select()], [NAME])
+
+    def test_another_buyer_for_a_sale_that_has_one_is_a_409_never_ignored(self):
+        db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        item, certificate, proof = self._two_documents()
+        sale = {"individual": "G1-2111", "herd": "GX1", "date": "2021-06-01"}
+        self.post(f"/{item.id}/dokument/{certificate.id}/overlat", **sale, buyer=BUYER)
+        self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{proof.id}", json={"doc_type": "bevis"})
+        resp = self.post(f"/{item.id}/dokument/{proof.id}/overlat", **sale, buyer=OTHER)
+        self.assertEqual(resp.status_code, 409, resp.get_json())
+        self.assertEqual([c.name for c in db.BuyerContact.select()], [NAME])
+
+    def test_the_buyer_on_the_proof_goes_on_a_sale_registered_without_one(self):
+        gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        rabbit = db.Individual.get(db.Individual.number == "G1-2111")
+        sale = record_herd_tracking(rabbit, gx1, "2021-06-01", "TRANSFER", self.manager)  # the legacy form
+        item = self.item(0, documents=1)
+        inbox.take(item, self.helper, over=False)
+        (proof,) = list(item.documents)
+        self.login("hjalp")
+        self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{proof.id}", json={"doc_type": "bevis"})
+
+        resp = self.post(
+            f"/{item.id}/dokument/{proof.id}/overlat", individual="G1-2111", herd="GX1", date="2021-06-01", buyer=BUYER
+        )
+
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertEqual(resp.get_json()["herd_tracking_id"], sale.id)
+        contact = db.BuyerContact.get_by_id(db.HerdTracking.get_by_id(sale.id).holder_contact_id)
+        self.assertEqual((contact.name, contact.purge_at), (NAME, db.BuyerContact.purge_at_for("2021-06-01")))
+        audit = db.AuditLog.select().where(
+            (db.AuditLog.table_name == "herd_tracking") & (db.AuditLog.record_id == str(sale.id))
+        )
+        self.assertTrue(any("holder_contact_id" in (a.changed_fields or []) for a in audit))
 
     def test_two_sales_the_same_day_are_a_409_not_a_guess(self):
         gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")

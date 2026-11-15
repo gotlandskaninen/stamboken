@@ -35,7 +35,7 @@ from utils.database import (
     current_holder_row,
     not_voided,
 )
-from utils.herd_tracking import HerdTrackingError, correct_herd_tracking, is_manager_of
+from utils.herd_tracking import HerdTrackingError, attach_buyer, correct_herd_tracking, is_manager_of
 from utils.individual_commands import (
     AssignPaperCertificate,
     IndividualRefused,
@@ -682,11 +682,12 @@ def transfer(item_id, document_id):
             lock_individual_for_edit(individual.id)
             latest = current_holder_row(individual.id)
             proven = inbox.proven_sale(item, document, individual, herd, when)
-            if proven is not None:  # the proof of a sale registered from another document: nothing to write
-                # Its buyer, if any, came with the sale; a `buyer` sent here is not read.
+            if proven is not None:  # the proof of a sale registered before: nothing to write but its buyer
                 seller = proven.from_herd or individual.origin_herd
                 if not (is_manager_of(user, seller.genebank_id) or grant.allows(user, seller)):
                     raise inbox.InboxError(403, "Du får inte koppla ett bevis till kaninens försäljning.")
+                if buyer is not None:  # a sale registered without its buyer gets the one the proof shows
+                    attach_buyer(proven, buyer, user)
                 row = proven
             elif herd in OUTSIDE_GENEBANK_HERDS and buyer is None:
                 # A new sale outside the association needs its buyer (ADR-0016); a proof of one registered does not.
