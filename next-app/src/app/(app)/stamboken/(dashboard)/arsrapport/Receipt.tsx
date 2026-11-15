@@ -83,7 +83,7 @@ export function Receipt({
   return (
     <>
       <ReportStatus
-        status={{ kind: "submitted", text: `Inskickad ${when}${changed}` }}
+        status={{ kind: "submitted", text: `Inskickad${changed}` }}
       />
       <h2 className={styles.headline}>
         Klart. Årsrapporten för {view.herd.herd} kom in {when}.

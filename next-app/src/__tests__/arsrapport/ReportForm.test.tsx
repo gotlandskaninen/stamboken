@@ -411,6 +411,9 @@ describe("ReportForm", () => {
       ),
     ).toBeTruthy();
     expect(screen.getByText("✗ Kull")).toBeTruthy();
+    expect(screen.getByRole("status", { name: "" }).textContent).toBe(
+      "Inskickad",
+    ); // the time is in the heading only
     expect(screen.getByRole("button", { name: "Dra tillbaka" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Ändra" }));
     expect(
