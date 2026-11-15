@@ -100,6 +100,22 @@ class TestInformationQueued(BuyerMailTest):
             [("kopare.information", contact.id), ("kopare.medlemskap", contact.id)],
         )
 
+    def test_a_buyer_of_several_rabbits_gets_one_invitation_and_a_notice_for_each(self):
+        sale = self._sale({**WITH_EMAIL, "membership_optin": True})
+        for email in ("ZELDA@example.org ", EMAIL):  # one contact per sale, the address as the buyer typed it
+            contact = db.BuyerContact.create(
+                name=NAME, town="Visby", email=email, membership_optin_at=datetime.now(timezone.utc),
+                created_by_user=self.manager,
+            )  # fmt: skip
+            queue_buyer_mails(contact, sale)
+        self.assertEqual(
+            [row.kind for row in self.mails()],
+            ["kopare.information", "kopare.medlemskap", "kopare.information", "kopare.information"],
+        )
+        (row,) = self.mails("kopare.medlemskap")
+        self.assertEqual(row.dedupe_key, f"kopare.medlemskap:{mail.address_hash(EMAIL)}")
+        self.assertNotIn(EMAIL, row.dedupe_key)
+
 
 class TestInformationSent(BuyerMailTest):
     def setUp(self):

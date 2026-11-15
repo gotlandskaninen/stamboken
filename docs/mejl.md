@@ -137,8 +137,10 @@ två mejl. `utils/buyer_mail.py` köar dem i samma transaktion som köparen
 skapas, från försäljningen (`record_herd_tracking`) och från en korrigering
 som skriver in en ny köpare (`correct_herd_tracking`), och bara när köparen
 har lämnat sin e-post. En korrigering som behåller köparen köar inget, och
-`dedupe_key` (`<typ>:<köparens id>`) gör att samma köpare aldrig får samma
-mejl två gånger. Är köparen raderad när mejlet ska gå blir det `cancelled`.
+`dedupe_key` gör att samma köpare aldrig får samma mejl två gånger:
+`kopare.information` går en gång per försäljning (`<typ>:<köparens id>`),
+`kopare.medlemskap` en gång per adress (`<typ>:<HMAC av adressen>`, som
+`forget_recipient` rensar), också när köparen har köpt flera kaniner. Är köparen raderad när mejlet ska gå blir det `cancelled`.
 
 - **`kopare.information`** berättar vad föreningen sparar om köparen och
   varför, och till vilket datum namn och ort sparas: radens `purge_at` som

@@ -11,8 +11,9 @@ from zoneinfo import ZoneInfo
 
 from peewee import fn
 
+from utils import settings
 from utils.database import DB_PROXY, BuyerContact, DigitalCertificateV2, Individual
-from utils.mail import enqueue_mail, link_token, mail_kind, verify_link
+from utils.mail import address_hash, enqueue_mail, link_token, mail_kind, verify_link
 
 logger = logging.getLogger(__name__)
 
@@ -38,21 +39,24 @@ _MONTHS = (
 def queue_buyer_mails(contact, sale):
     """
     For a buyer just created with `sale` (its TRANSFER row) who gave an e-mail: kopare.information, and
-    kopare.medlemskap with the yes to membership contact. Once each per buyer: a corrected sale keeps its buyer,
-    and the dedupe_key holds if anything queues again.
+    kopare.medlemskap with the yes to membership contact. A corrected sale keeps its buyer, and the dedupe_key
+    holds if anything queues again; the notice is one per sale, the invitation one per address.
     """
     if not contact.email:
         return
     params = {"buyer_contact_id": contact.id, "individual_id": sale.individual_id}
     kinds = ("kopare.information", "kopare.medlemskap") if contact.membership_optin_at else ("kopare.information",)
     for kind in kinds:
+        who = contact.id
+        if kind == "kopare.medlemskap" and settings.mail.link_secret:  # the address only as its HMAC
+            who = address_hash(contact.email)
         enqueue_mail(
             kind,
             "buyer_contact",
             contact.id,
             params,
             genebank=sale.herd.genebank_id,
-            dedupe_key=f"{kind}:{contact.id}",
+            dedupe_key=f"{kind}:{who}",
         )
 
 
