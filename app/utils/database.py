@@ -63,8 +63,8 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # history algorithm version (33) + genetics epoch (34) + the individual command log (35) +
 # Individual.microchip (36) + billing address on membership and member_application (37) +
 # retiring the PDF rows of digital certificates that a paper certificate replaced (38) +
-# audit_log IP retention index (39).
-CURRENT_SCHEMA_VERSION = 39
+# audit_log IP retention index (39) + herd bank privacy reset (40).
+CURRENT_SCHEMA_VERSION = 40
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -430,6 +430,10 @@ class Herd(BaseModel):
 
 PRIVACY_LEVELS = ("public", "authenticated", "private")
 
+# The bank details are only for support payouts: never shown to other members,
+# whatever the stored level says (issue #33).
+BANK_PRIVACY_FIELDS = ("bank_account_number_privacy", "bank_name_privacy")
+
 
 def remove_fields_by_privacy(data, access_level):
     """
@@ -450,6 +454,15 @@ def remove_fields_by_privacy(data, access_level):
     {'mid': 4, 'low': 5}
     >>> remove_fields_by_privacy(test_data, 'public')
     {'low': 5}
+
+    The bank details are always private, whatever level is stored.
+
+    >>> test_data = {
+    ...     'bank_name': 'B',
+    ...     'bank_name_privacy': 'public',
+    ... }
+    >>> remove_fields_by_privacy(test_data, 'public')
+    {}
 
     The privacy level of the fields 'latitude' and 'longitude' are
     under 'coordinates_privacy'.
@@ -488,6 +501,12 @@ def remove_fields_by_privacy(data, access_level):
         # remove the access level value if the user doesn't have private access
         if access_level != "private":
             del data[field]
+
+    # Bank details: only for private access, whatever the stored level says (issue #33). Dropped
+    # here and not via the *_privacy keys, so a row loaded without them cannot let them through.
+    if access_level != "private":
+        data.pop("bank_account_number", None)
+        data.pop("bank_name", None)
 
     return data
 
@@ -3643,6 +3662,29 @@ def migrate_38_to_39():
         ).execute()
 
 
+def migrate_39_to_40():
+    """Issue #33: the bank details are always private, so reset any stored level."""
+    with DATABASE.atomic():
+        # The audit trigger would copy every account number into a new audit row without a user.
+        audited = not isinstance(DATABASE, SqliteDatabase) and DATABASE.execute_sql(
+            "SELECT 1 FROM pg_trigger WHERE tgrelid = 'herd'::regclass AND tgname = 'audit_trigger'"
+        ).fetchone()
+        if audited:
+            DATABASE.execute_sql('ALTER TABLE "herd" DISABLE TRIGGER "audit_trigger"')
+        # NULL stays NULL (reads treat it as private).
+        DATABASE.execute_sql(
+            "UPDATE herd SET"
+            " bank_account_number_privacy = CASE WHEN bank_account_number_privacy IS NULL THEN NULL ELSE 'private' END,"
+            " bank_name_privacy = CASE WHEN bank_name_privacy IS NULL THEN NULL ELSE 'private' END"
+            " WHERE bank_account_number_privacy <> 'private' OR bank_name_privacy <> 'private'"
+        )
+        if audited:
+            DATABASE.execute_sql('ALTER TABLE "herd" ENABLE TRIGGER "audit_trigger"')
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=40, comment="herd bank privacy reset to private", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4119,6 +4161,7 @@ MIGRATIONS = {
     (36, 37): migrate_36_to_37,  # billing address
     (37, 38): migrate_37_to_38,  # ADR-0019 retire replaced certificate PDFs
     (38, 39): migrate_38_to_39,  # audit_log IP retention index
+    (39, 40): migrate_39_to_40,  # bank privacy reset
 }
 
 

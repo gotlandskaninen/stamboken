@@ -46,7 +46,7 @@ from utils.database import next_individual_number  # isort: skip
 from utils.database import ACTIVE_WINDOW_DAYS  # isort: skip
 from utils.database import AUDIT_LOG_NO_UPDATE_RULE  # isort: skip
 from utils.database import OUTSIDE_GENEBANK_HERDS  # isort: skip
-from utils.database import PRIVACY_LEVELS  # isort: skip
+from utils.database import BANK_PRIVACY_FIELDS, PRIVACY_LEVELS  # isort: skip
 from utils.database import ht_not_voided  # isort: skip
 from utils.database import ht_order_desc  # isort: skip
 from utils.database import latest_ht_per_individual  # isort: skip
@@ -1545,6 +1545,7 @@ def add_herd(form, user_uuid):
             pass
         if "id" in form:
             del form["id"]
+        form = {k: v for k, v in form.items() if k not in BANK_PRIVACY_FIELDS}  # fixed 'private', issue #33
         bad = invalid_privacy_field(form)
         if bad:
             return {"status": "error", "message": f"Invalid value for {bad}"}
@@ -1679,6 +1680,9 @@ def update_herd(form, user_uuid):
             if not user.can_edit(herd.herd):
                 return {"status": "error", "message": "Forbidden"}
 
+            # Bank privacy is fixed at 'private' (issue #33): dropped before validation, so a bad
+            # stored value echoed by the legacy SPA cannot block the save. Response unchanged.
+            form = {k: v for k, v in form.items() if k not in BANK_PRIVACY_FIELDS}
             bad = invalid_privacy_field(form)
             if bad:
                 return {"status": "error", "message": f"Invalid value for {bad}"}
@@ -4124,7 +4128,11 @@ def revert_audit_entry(audit_id, fields=None, is_admin=False):
     set_clauses = []
     params = []
     values = {}
+    bank_ignored = False
     for field in fields:
+        if table_name == "herd" and field in BANK_PRIVACY_FIELDS:  # fixed 'private' (#33): ignored, not an error
+            bank_ignored = True
+            continue
         if field == pk_col:
             continue
         if field not in valid_cols:
@@ -4138,6 +4146,8 @@ def revert_audit_entry(audit_id, fields=None, is_admin=False):
         return {"status": "error", "message": refusal}, 409
 
     if not set_clauses:
+        if bank_ignored:  # only bank privacy was selected (e.g. a migration 40 entry): nothing to write
+            return {"status": "success", "message": "Ändring ångrad"}, 200
         return {"status": "error", "message": "Inga fält att ångra"}, 400
 
     params.append(entry.record_id)
@@ -4198,7 +4208,8 @@ def restore_record(table_name, record_id, audit_id, is_admin=False):
     locked = _audit_undo_locked(table_name, is_admin)
     if table_name == "bunny" and current.get("individual_id") != wanted.get("individual_id"):
         locked = locked | {"fate"}  # the bunny CHECK ties fate to the link, which restore skips
-    values = {field: value for field, value in wanted.items() if field not in locked}
+    bank = set(BANK_PRIVACY_FIELDS) if table_name == "herd" else set()  # fixed 'private' (#33): never restored
+    values = {field: value for field, value in wanted.items() if field not in locked | bank}
     if refusal := _audit_undo_refusal(table_name, values, is_admin):
         return {"status": "error", "message": refusal}, 409
     skipped = sorted(field for field in locked & wanted.keys() if current.get(field) != wanted[field])
