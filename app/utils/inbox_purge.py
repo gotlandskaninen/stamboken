@@ -176,18 +176,37 @@ def purge_due(now):
 
 
 def purge_sold_proofs(now):  # pylint: disable=unused-argument  # every rule takes the clock
-    """A proof's original once its rabbit is sold on (herd_tracking.sold_on, as for the buyer's contact details)."""
-    sale, later = HerdTracking, HerdTracking.alias()
+    """
+    A proof's original once its rabbit is sold on (herd_tracking.sold_on, as for the buyer's contact details). A
+    proof of a sale later corrected still names the voided row: the sale is then the active row that carries the
+    same buyer (a correction carries it over). The document's link stays as it is.
+    """
+    sale, later, linked = HerdTracking, HerdTracking.alias(), HerdTracking.alias()
     proofs = InboxDocument.select(InboxDocument.herd_tracking_id).where(
         (InboxDocument.doc_type == "bevis") & InboxDocument.original_path.is_null(False)
     )
+    rows = (
+        linked.select(linked.id, sale.id)
+        .join(
+            sale,
+            on=((sale.id == linked.id) | ((sale.holder_contact == linked.holder_contact) & (sale.id != linked.id))),
+        )
+        .where(linked.id.in_(proofs) & sale.voided_at.is_null(True))
+    )
+    carried = {}  # active sale -> the rows the proofs name
+    for linked_id, sale_id in rows.tuples():
+        carried.setdefault(sale_id, []).append(linked_id)
+    if not carried:
+        return 0
     moved_on = (
         sale.select(sale.id)
         .join(later, on=(later.individual == sale.individual))
-        .where(sale.id.in_(proofs) & sale.voided_at.is_null(True) & sold_on(sale, later))
+        .where(sale.id.in_(list(carried)) & sold_on(sale, later))
+        .distinct()
     )
+    named = [linked_id for (sale_id,) in moved_on.tuples() for linked_id in carried[sale_id]]
     with DB_PROXY.atomic():
-        paths = _null_originals((InboxDocument.doc_type == "bevis") & InboxDocument.herd_tracking_id.in_(moved_on))
+        paths = _null_originals((InboxDocument.doc_type == "bevis") & InboxDocument.herd_tracking_id.in_(named))
     return remove_originals(paths)
 
 

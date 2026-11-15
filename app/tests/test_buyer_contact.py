@@ -704,6 +704,19 @@ class TestQueueDocuments(PurgeTest):
         purge.purge_sold_proofs(NOW)
         self.assertIsNone(db.InboxDocument.get_by_id(self.proof.id).original_path)
 
+    def test_a_proof_of_a_corrected_sale_goes_when_the_rabbit_is_sold_on(self):
+        db.InboxDocument.update(herd_tracking_id=self.sale.id).where(db.InboxDocument.id == self.proof.id).execute()
+        event = {"kind": "TRANSFER", "date": "2026-01-02", "herd": "GX1"}
+        (carried,) = correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [event], "Fel datum")
+        self.assertEqual(carried.holder_contact_id, self.sale.holder_contact_id)  # the buyer went over
+        purge.purge_sold_proofs(NOW)
+        self.assertIsNotNone(db.InboxDocument.get_by_id(self.proof.id).original_path)
+        record_herd_tracking(self.rabbit, self.herds[1], "2026-02-01", "TRANSFER", self.manager)
+        purge.purge_sold_proofs(NOW)
+        proof = db.InboxDocument.get_by_id(self.proof.id)
+        self.assertIsNone(proof.original_path)
+        self.assertEqual(proof.herd_tracking_id, self.sale.id)  # the provenance link stays
+
     def test_a_proof_goes_when_a_correction_moves_the_rabbit_on(self):
         db.InboxDocument.update(herd_tracking_id=self.sale.id).where(db.InboxDocument.id == self.proof.id).execute()
         purge.purge_sold_proofs(NOW)
