@@ -797,7 +797,8 @@ stängd eller någon annan har den, så att en felaktig kopia kan rättas. Dokum
 sparat intyg (`individual` satt).
 
 Dokumentet blir klart (`status: "klar"`, `has_copy: true`). Är alla dokument i posten klara
-eller avfärdade blir posten `klar`, uppladdaren får notisen `klar` och mejlet `inlasning.klar`.
+eller avfärdade blir posten `klar`, uppladdaren får notisen `klar` och mejlet `inlasning.klar`, en gång per post: en post som öppnas igen och
+stängs på nytt berättar inte igen.
 Varje anrop loggas som händelsen `kopia`.
 
 **Svar 200:** `{"item": <post>, "document": <dokument>}`.

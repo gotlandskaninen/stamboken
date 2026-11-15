@@ -405,6 +405,8 @@ def assign(item, by, to):
 def change_state(item, user, state, *, note=None, duplicate_of=None):
     """POST …/lage, by TRANSITIONS, and "klar" for a message or an item without documents (MESSAGE_DONE_FROM)."""
     answered = item.kind == "meddelande" or not item.documents.exists()
+    if not isinstance(state, str):
+        raise InboxError(400, f"state är en av {', '.join(TRANSITIONS)}.")
     allowed = MESSAGE_DONE_FROM if state == "klar" and answered else TRANSITIONS.get(state)
     if allowed is None:
         raise InboxError(400, f"state är en av {', '.join(TRANSITIONS)}.")
@@ -485,9 +487,20 @@ def close_if_done(item, user):
     _set_state(item, "klar")
     item.save()
     log_event(item, user, "lage", **{"from": previous, "to": "klar"})
-    if item.sender_user_id is not None:
-        notify(item.sender_user_id, "klar", item, mailed=True)
-    mail_sender(item, "inlasning.klar", {"item_id": item.id})
+    # Once per item: a reopened and closed item does not tell its sender again (a cancelled mail did not tell).
+    told = MailMessage.select().where(
+        (MailMessage.kind == "inlasning.klar")
+        & (MailMessage.ref_type == "inbox_item")
+        & (MailMessage.ref_id == item.id)
+        & (MailMessage.status != "cancelled")
+    )
+    if not told.exists():
+        if (
+            item.sender_user_id is not None
+            and not Notice.select().where((Notice.item == item.id) & (Notice.kind == "klar")).exists()
+        ):
+            notify(item.sender_user_id, "klar", item, mailed=True)
+        mail_sender(item, "inlasning.klar", {"item_id": item.id})
     release_sender(item)
 
 

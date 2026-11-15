@@ -277,6 +277,14 @@ class TestStates(InboxTest):
         self.login("hjalp")
         self.assertEqual(self.post(f"/{item.id}/lage", state="skrap").status_code, 200)
 
+    def test_a_state_that_is_not_text_is_a_bad_request(self):
+        item = self.at("tagen")
+        self.login("hjalp")
+        for state in (["skrap"], {"a": 1}, 7, None):
+            with self.subTest(state=state):
+                self.assertEqual(self.post(f"/{item.id}/lage", state=state).status_code, 400)
+        self.assertEqual(self.reload(item).state, "tagen")
+
     def test_the_rules_of_each_state(self):
         other = self.item(1)
         self.login("hjalp")
