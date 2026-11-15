@@ -114,6 +114,22 @@ class TestOriginals(PurgeTest):
         )
         self.assertIdempotent(purge.purge_originals)
 
+    def test_an_answer_or_a_marking_restarts_the_months(self):
+        old = self.limit - MINUTE
+        answered, marked, untouched = self.make(old), self.make(old, state="ofullstandig"), self.make(old)
+        recent = NOW - inbox.months(6)
+        inbox.log_event(answered, None, "svar", text="Här är bilderna.", documents=[])
+        inbox.log_event(marked, self.helper, "lage", **{"from": "tagen", "to": "ofullstandig"})
+        db.InboxEvent.update(at=recent).where(db.InboxEvent.kind.in_(("svar", "lage"))).execute()
+
+        purge.purge_originals(NOW)
+
+        self.assertIsNotNone(self.document(answered).original_path)
+        self.assertIsNotNone(self.document(marked).original_path)
+        self.assertIsNone(self.document(untouched).original_path)
+        self.assertIn(PHONE, self.text(answered))
+        self.assertIdempotent(purge.purge_originals)
+
     def test_the_setting_gives_the_months(self):
         item = self.make(NOW - inbox.months(6) - MINUTE)
         purge.purge_originals(NOW)
@@ -279,6 +295,19 @@ class TestDeletedItems(PurgeTest):
         self.assertDeleted(gone, paths)
         self.assertTrue(self.exists(self.document(kept).original_path))
         self.assertIsNone(db.MailMessage.get_by_id(row_id).address_hash)
+        self.assertIdempotent(purge.purge_incomplete)
+
+    def test_an_item_marked_incomplete_late_is_kept_a_year_from_the_marking(self):
+        old = NOW - inbox.months(12) - MINUTE
+        late = self.make(old, state="ofullstandig")
+        marking = inbox.log_event(late, self.helper, "lage", **{"from": "tagen", "to": "ofullstandig"})
+        db.InboxEvent.update(at=NOW - inbox.months(6)).where(db.InboxEvent.id == marking.id).execute()
+        gone = self.make(old, state="ofullstandig")
+
+        self.assertEqual(purge.purge_incomplete(NOW), 1)
+
+        self.assertIsNotNone(db.InboxItem.get_or_none(db.InboxItem.id == late.id))
+        self.assertIsNone(db.InboxItem.get_or_none(db.InboxItem.id == gone.id))
         self.assertIdempotent(purge.purge_incomplete)
 
     def test_a_closed_message_goes_13_months_after_it_closed(self):

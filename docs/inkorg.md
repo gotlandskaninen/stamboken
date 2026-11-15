@@ -1000,7 +1000,7 @@ Mejlen går genom mejlkön ([mejl.md](mejl.md)) och köas i samma transaktion so
   Raden i mejlkön har bara postens och händelsens id; anteckningen läses ur händelsen när mejlet går,
   och är den gallrad går mejlet utan den. Mejlet stoppas om posten inte längre är `ofullstandig`.
 - **`inlasning.paminnelse`** till samma mottagare, en gång, när posten fortfarande är `ofullstandig`
-  11 månader efter att den kom in: "Påminnelse: något saknas i ditt inskick (ärende 12)", med samma
+  11 månader efter postens gallringsstart: "Påminnelse: något saknas i ditt inskick (ärende 12)", med samma
   anteckning, om den finns kvar, och datum. Nattjobbet `inbox_purge` köar det.
 - **`notis.sammandrag`** kl. 07 varje dag till var och en som har olästa notiser som inget
   sammandrag tagit med och som inte stängt av mejlet. Det listar de olästa notiserna med
@@ -1094,16 +1094,20 @@ Varje regel körs för sig, så att en regel som fallerar inte hoppar över de a
 igen ändrar ingenting. En månad är 365,25/12 dagar avrundat uppåt till hela dagar, som i
 kommandologgen: 12 månader är 366 dagar och 13 månader 396.
 
+**Gallringsstart.** Originalen, texten och `ofullstandig` räknar från den senaste av tre tidpunkter:
+när posten kom in, avsändarens senaste svar på den (händelsen `svar`, som också lägger till bilder och
+text på en gammal post) och när posten senast markerades `ofullstandig`.
+
 | Vad | Gallras |
 |---|---|
-| Originalet till ett intyg eller bevis (`doc_type` `intyg`, `bevis`) | `INLASNING_ORIGINAL_MANADER` månader (standard 12) efter att posten kom in, i alla lägen |
+| Originalet till ett intyg eller bevis (`doc_type` `intyg`, `bevis`) | `INLASNING_ORIGINAL_MANADER` månader (standard 12) efter postens gallringsstart (se nedan), i alla lägen |
 | Originalet till ett dokument med `purge_after` satt, av vilken typ som helst | när tidpunkten har passerat, också före månaderna. Årsrapporten sätter den på en årsblankett när blanketten matas in, eftersom fotot visar bankkonto och underskrift. Tolkningen och förslaget går med originalet |
 | Bevisets original | också när kaninen sålts vidare: en senare `TRANSFER` från köparens besättning som inte är makulerad. Försäljningens rad i besättningshistoriken står kvar |
 | Postens text: `message` och `text`, `note` och `not_saved` i händelserna | samtidigt som originalen, för en post som har dokument. Händelserna står kvar med typ, tid och person |
 | Händelsen `oppnad` | 13 månader efter händelsen |
 | Ett stängt meddelande (`kind: "meddelande"`) utan dokument | 13 månader efter stängningen |
 | En post i läget `skrap` | 30 dagar efter stängningen |
-| En post i läget `ofullstandig` | 12 månader efter att den kom in eller efter avsändarens senaste svar på den; mejl när den markeras och efter 11 månader (se [Mejl](#mejl)) |
+| En post i läget `ofullstandig` | 12 månader efter postens gallringsstart; mejl när den markeras och efter 11 månader (se [Mejl](#mejl)) |
 | `sender_address` på en stängd post | när inget mejl till avsändaren väntar, senast 30 dagar efter stängningen, också när Gmail-läsningen är avstängd |
 | `gmail_processed` | 60 dagar |
 | Kopian på kaninen och spåret i `inbox_operation` | aldrig |

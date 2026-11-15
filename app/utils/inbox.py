@@ -80,7 +80,7 @@ NOTICE_TEXTS = {
 DOC_TYPES = ("intyg", "bevis", "arsblankett", "annat")
 CERT_FORMATS = ("handskrivet", "datorskrivet", "v1_pdf", "intyg_b", "digitalt_v2")
 OPENED_EVERY = timedelta(hours=1)
-# An item left "ofullstandig" is deleted this long after it came in or was last answered (utils/inbox_purge.py),
+# An item left "ofullstandig" is deleted this long after its retention_start (utils/inbox_purge.py),
 # and its sender is reminded after REMIND_MONTHS.
 INCOMPLETE_MONTHS = 12
 REMIND_MONTHS = 11
@@ -491,10 +491,15 @@ def close_if_done(item, user):
     release_sender(item)
 
 
-def incomplete_since(item):
-    """What an incomplete item's months count from: when it came in, or the sender's latest answer on it."""
-    answered = item.events.select(fn.MAX(InboxEvent.at)).where(InboxEvent.kind == "svar").scalar()
-    return max(item.received_at, answered) if answered else item.received_at
+def retention_start(item):
+    """
+    What the retention months of an item count from: when it came in, or when the sender last answered on it, or
+    when it was last marked "ofullstandig", whichever is latest (a reply adds photos and text to an old item).
+    """
+    events = item.events.select(fn.MAX(InboxEvent.at))
+    answered = events.where(InboxEvent.kind == "svar").scalar()
+    marked = events.where((InboxEvent.kind == "lage") & InboxEvent.detail.contains({"to": "ofullstandig"})).scalar()
+    return max(when for when in (item.received_at, answered, marked) if when)
 
 
 def mail_sender(item, kind, params, **options):
@@ -1076,7 +1081,7 @@ def _incomplete_mail(params):
     return {
         "item_id": item.id,
         "note": note,
-        "deadline": f"{incomplete_since(item) + months(INCOMPLETE_MONTHS):%Y-%m-%d}",
+        "deadline": f"{retention_start(item) + months(INCOMPLETE_MONTHS):%Y-%m-%d}",
         "account": item.sender_user_id is not None,
     }
 
