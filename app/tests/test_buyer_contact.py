@@ -889,6 +889,16 @@ class TestLockOrder(PurgeTest):
                 run()
             self.assertTrue(_items_locked_before_the_rabbit(statements), name)
 
+    def test_unpromote_refuses_an_item_that_appeared_after_its_lock(self):
+        rabbit = db.Individual.get(db.Individual.number == "G1-2112")
+        self._sale_with_a_document(rabbit, "2026-01-01")
+        with self.assertRaises(HerdTrackingConflict) as raised:  # the caller locked no items: one has appeared
+            void_all_for_unpromote(rabbit, self.admin, items=set())
+        self.assertIn("Försök igen", raised.exception.detail)
+        self.assertIsNone(
+            db.HerdTracking.get(db.HerdTracking.individual == rabbit.id, db.HerdTracking.kind == "TRANSFER").voided_at
+        )
+
     def test_unpromote_locks_them_in_its_own_transaction_and_removes_the_files_after_it(self):
         bunny = db.Bunny.create(
             breeding=_old_litter(self.herds[0]), slot_order=1, observed_sex="female", observed_color="bleighe"

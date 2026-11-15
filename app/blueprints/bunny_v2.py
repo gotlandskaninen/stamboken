@@ -516,8 +516,7 @@ def unpromote_bunny(bunny_id):
 
     with DATABASE.atomic():
         # The queue's lock order, item before rabbit, when a sale holds a buyer (the bunny is re-read below).
-        if bunny.individual_id is not None:
-            lock_buyer_items([bunny.individual_id])
+        items = lock_buyer_items([bunny.individual_id]) if bunny.individual_id is not None else set()
         try:
             breeding = Breeding.select().where(Breeding.id == breeding_id).for_update().get()
         except DoesNotExist as exc:
@@ -554,7 +553,7 @@ def unpromote_bunny(bunny_id):
         individual.save()
 
         try:
-            void_all_for_unpromote(individual, User.get_by_id(current_user.id), files=files)
+            void_all_for_unpromote(individual, User.get_by_id(current_user.id), files=files, items=items)
         except HerdTrackingError as exc:  # e.g. an admin's genebank correction: rolled back with the void above
             raise RosterActionError(exc.status, exc.title, exc.detail) from exc
 

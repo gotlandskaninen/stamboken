@@ -132,41 +132,52 @@ def _remove_after_commit(paths, files=None):
         remove_originals(paths)
 
 
-def lock_buyer_items(individual_ids):
+def _buyer_items(rows, lock=False):
     """
-    Before a caller that holds its own transaction locks rabbits whose sales it may void (unpromote): the queue's
-    items of the rabbits' sales, when a sale holds a buyer outside the association.
+    The queue's items whose documents may show the buyers of `rows`, the rows a caller is about to void: the items
+    with documents of the rabbits or of their sales, when a row holds a buyer outside the association, else none.
+    holder_contact is set when a row is written, so it is read before any lock. With `lock`, they are locked in
+    the queue's own order (it locks its item, then the rabbit): call before lock_individuals.
     """
-    held = HerdTracking.select().where(
-        HerdTracking.individual.in_(individual_ids), ht_not_voided(), HerdTracking.holder_contact.is_null(False)
-    )
-    if held.exists():
-        _lock_inbox_items(individual_ids)
-
-
-def _lock_inbox_items(individual_ids):
-    """
-    The queue's items with documents of these rabbits or of their sales, locked before the rabbits: the queue's own
-    order (it locks its item, then the rabbit), so a void that clears a sale's documents never deadlocks with it.
-    Taken only when a row to void holds a buyer (holder_contact is set when a row is written, so it is read first).
-    """
+    rows = list(rows)
+    if not any(r.holder_contact_id for r in rows):
+        return set()
+    individual_ids = {r.individual_id for r in rows}
     sales = HerdTracking.select(HerdTracking.id).where(HerdTracking.individual.in_(individual_ids))
     documents = InboxDocument.select(InboxDocument.item).where(
         InboxDocument.individual.in_(individual_ids) | InboxDocument.herd_tracking_id.in_(sales)
     )
-    list(InboxItem.select(InboxItem.id).where(InboxItem.id.in_(documents)).order_by(InboxItem.id).for_update())
+    query = InboxItem.select(InboxItem.id).where(InboxItem.id.in_(documents)).order_by(InboxItem.id)
+    return {item_id for (item_id,) in (query.for_update() if lock else query).tuples()}
 
 
-def void_all_for_unpromote(individual, user, operation_id=None, files=None):
+def lock_buyer_items(individual_ids):
+    """
+    For a caller that holds its own transaction and voids the rabbits' active rows (unpromote): the items, locked
+    before the caller's own lock on the rabbits. Returns them for void_all_for_unpromote to revalidate.
+    """
+    rows = HerdTracking.select().where(HerdTracking.individual.in_(list(individual_ids)), ht_not_voided())
+    return _buyer_items(rows, lock=True)
+
+
+QUEUE_CHANGED = "Inkorgen ändrades under tiden. Försök igen."
+
+
+def void_all_for_unpromote(individual, user, operation_id=None, files=None, items=None):
     """
     Retire every active row of an un-promoted individual in one operation. A caller in its own transaction passes
-    `files` and removes them after its commit, having called lock_buyer_items before its own lock on the rabbit.
+    `files` and removes them after its commit, and `items`, what lock_buyer_items locked before its own lock on
+    the rabbit; without them this locks the items itself. An item that has appeared since is a 409, never a lock
+    taken out of order.
     """
     op = new_operation_id(operation_id)
     with DB_PROXY.atomic():
-        lock_buyer_items([individual.id])
+        if items is None:
+            items = lock_buyer_items([individual.id])
         lock_individuals([individual.id])
         rows = list(HerdTracking.select().where(HerdTracking.individual == individual.id, ht_not_voided()))
+        if not _buyer_items(rows) <= items:
+            raise HerdTrackingConflict(QUEUE_CHANGED)
         if not user.is_admin and _moves_across_genebanks(individual, rows, []):
             raise HerdTrackingForbidden(GENEBANK_CHANGE_ADMIN_ONLY)
         paths = _drop_orphan_buyers(_void_rows(rows, user, UNPROMOTE_REASON, op), VOID_ACTION, user)
@@ -602,8 +613,7 @@ def void_herd_tracking(ht_id, user, reason, operation_id=None, typed=True):
     if row is None:
         raise HerdTrackingNotFound("Raden finns inte.")
     with DB_PROXY.atomic():
-        if row.holder_contact_id is not None:
-            _lock_inbox_items([row.individual_id])
+        _buyer_items([row], lock=True)
         lock_individuals([row.individual_id])
         done = _operation_rows([row.individual_id], op)
         if done:
@@ -762,12 +772,7 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
     cleaned = require_reason(reason) if void_ids else None
     op = new_operation_id(operation_id)
     with DB_PROXY.atomic():
-        if (
-            HerdTracking.select()
-            .where(HerdTracking.id.in_(void_ids), HerdTracking.holder_contact.is_null(False))
-            .exists()
-        ):
-            _lock_inbox_items([ind_id])
+        _buyer_items(HerdTracking.select().where(HerdTracking.id.in_(void_ids)), lock=True)
         lock_individuals([ind_id])
         ind = Individual.get_by_id(ind_id)
         if _operation_rows([ind_id], op):
@@ -940,8 +945,7 @@ def undo_herd_tracking_operation(operation_id, user, reason, undo_operation_id=N
     with DB_PROXY.atomic():
         # The rows this undo may void: those the operation wrote or restored.
         redone = (HerdTracking.operation_id == op) | (HerdTracking.restored_operation_id == op)
-        if HerdTracking.select().where(redone, HerdTracking.holder_contact.is_null(False)).exists():
-            _lock_inbox_items(ind_ids)
+        _buyer_items(HerdTracking.select().where(redone), lock=True)
         lock_individuals(ind_ids)
         individuals = {i.id: i for i in Individual.select().where(Individual.id.in_(ind_ids))}
         if any(not is_manager_of(user, i.origin_herd.genebank_id) for i in individuals.values()):
