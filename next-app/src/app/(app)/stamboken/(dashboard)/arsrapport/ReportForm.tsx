@@ -621,7 +621,7 @@ export function ReportForm({
         const left = rs?.filter(
           (r) =>
             r.individual_id !== id ||
-            !editClears(r.code, before, patch, doneAfter),
+            !editClears(r.code, before, patch, doneAfter, rabbit?.birth_date),
         );
         if (!rs || left!.length === rs.length) return rs;
         return left!.length ? left! : null;

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   emptyState,
   fromBody,
+  deathDateOk,
   editClears,
   incompleteText,
   isDone,
@@ -108,6 +109,31 @@ describe("editClears", () => {
         true,
       ),
     ).toBe(true);
+  });
+  it("keeps a death-date refusal while the new date is still before the birth", () => {
+    const born = "2026-06-10";
+    const moved = { dod: { ...dod, dag: 5 } };
+    expect(editClears("dodsdatum_ogiltigt", before, moved, true, born)).toBe(
+      false,
+    );
+    const fixed = { dod: { ...dod, manad: 7, dag: 1 } };
+    expect(editClears("dodsdatum_ogiltigt", before, fixed, true, born)).toBe(
+      true,
+    );
+  });
+  it("judges a death date like the server", () => {
+    const d = (ar: number, manad: number, dag: number | null) => ({
+      ar,
+      manad,
+      dag,
+    });
+    expect(deathDateOk(d(2026, 12, null), null, "2026-11-15")).toBe(false);
+    expect(deathDateOk(d(2026, 11, null), null, "2026-11-15")).toBe(true);
+    expect(deathDateOk(d(2026, 11, 20), null, "2026-11-15")).toBe(false);
+    expect(deathDateOk(d(2026, 5, null), "2026-05-31", "2026-11-15")).toBe(
+      true,
+    );
+    expect(deathDateOk(d(2026, 5, 2), "2026-05-31", "2026-11-15")).toBe(false);
   });
   it("clears a weight refusal on a weight edit, keeps register refusals", () => {
     const kvar = e({ val: "kvar", vikt: "x" });

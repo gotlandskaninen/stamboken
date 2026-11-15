@@ -389,11 +389,31 @@ export function incompleteText(e: Entry | undefined): string | null {
 // Does an edit (patch over `before`) settle a row's refusal? Only when it
 // touches the field the refusal is about, or the row became klar under a local
 // check that covers it. Server-only refusals stay until their field changes.
+// A death date the server would accept: not after today (Stockholm), not before the birth. Without a day the
+// server takes the month's last day, or today if earlier.
+export function deathDateOk(
+  d: { ar: number; manad: number | null; dag: number | null } | null,
+  birth: string | null | undefined,
+  today: string = todayStockholm(),
+): boolean {
+  if (!d || d.manad == null) return true;
+  const ym = `${d.ar}-${String(d.manad).padStart(2, "0")}`;
+  if (ym > today.slice(0, 7)) return false;
+  const last = new Date(Date.UTC(d.ar, d.manad, 0)).getUTCDate();
+  let iso = `${ym}-${String(d.dag ?? last).padStart(2, "0")}`;
+  if (iso > today) {
+    if (d.dag) return false;
+    iso = today;
+  }
+  return !birth || iso >= birth.slice(0, 10);
+}
+
 export function editClears(
   code: string,
   before: Entry,
   patch: Partial<Entry>,
   doneAfter: boolean,
+  birth?: string | null,
 ): boolean {
   const date = (
     a?: { ar: number; manad: number | null; dag: number | null } | null,
@@ -403,7 +423,9 @@ export function editClears(
     ("sald" in patch && date(patch.sald) !== date(before.sald));
   switch (code) {
     case "dodsdatum_ogiltigt":
-      return dateChanged;
+      return (
+        dateChanged && deathDateOk({ ...before, ...patch }.dod ?? null, birth)
+      );
     case "vikt_saknas":
     case "vikt_ogiltig":
       return (
@@ -438,6 +460,8 @@ export function isDone(
   if (!complete(e)) return false;
   // a weight over 20 kg waits for the fix button, the server refuses it
   if (e.val === "kvar" && parseWeight(e.vikt).gramsHint !== null) return false;
+  // a death before the birth or in the future waits too, the server refuses it
+  if (e.val === "dod" && !deathDateOk(e.dod, r.birth_date)) return false;
   if (e.val === "kvar" && r.adult)
     return e.vikt.trim() !== "" || !!e.ej_vagd?.trim();
   return true;
