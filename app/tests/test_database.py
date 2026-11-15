@@ -1082,6 +1082,28 @@ class TestDatabaseMigration(DatabaseTest):
         db.check_migrations()
         self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
 
+    def test_replay_37_to_38_retires_the_pdf_of_a_replaced_digital_certificate(self):
+        """A paper certificate from before ADR-0019 left the PDF row current; a digital certificate keeps its row."""
+        self.addCleanup(db.check_migrations)
+        replaced, digital = self.individuals[0], self.individuals[1]
+        db.Individual.update(certificate="98765", digital_certificate=None).where(
+            db.Individual.id == replaced.id
+        ).execute()
+        db.Individual.update(certificate=None, digital_certificate=100000).where(
+            db.Individual.id == digital.id
+        ).execute()
+        for ind in (replaced, digital):
+            db.DigitalCertificateV2.create(individual=ind, issued_by=self.admin, file_path="x.pdf", checksum="0" * 64)
+
+        def current(ind):
+            return db.DigitalCertificateV2.get(db.DigitalCertificateV2.individual == ind.id).is_current
+
+        for _ in range(2):  # a second run on the repaired rows changes nothing
+            db.SchemaHistory.delete().where(db.SchemaHistory.version >= 38).execute()
+            db.check_migrations()
+            self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+            self.assertEqual((current(replaced), current(digital)), (False, True))
+
     def test_replay_32_to_33_adds_the_history_algorithm_version(self):
         """
         A database stamped at 32 gets genetics_history_state.algorithm_version,

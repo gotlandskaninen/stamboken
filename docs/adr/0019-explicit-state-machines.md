@@ -1,6 +1,6 @@
 ---
 status: "proposed"
-date: 2026-11-14
+date: 2026-11-15
 decision-makers: Jonas
 ---
 
@@ -76,6 +76,9 @@ den till huvudmedlem.
 Ett tomt intygsnummer tar bort ett pappersintyg, som förut, men nekas på en
 kanin med digitalt intyg. Förut tog det bort det digitala numret.
 
+Rader som redan låg i det otillåtna läget, pappersintyg med en gällande
+PDF-rad, rättas en gång av `migrate_37_to_38`. Den ändrar bara data.
+
 ### Konsekvenser
 
 * Bra, eftersom de två hålen är stängda och regeln står på ett ställe i
@@ -111,3 +114,4 @@ Genomgången av övriga maskiner finns i föreningens interna dokumentation.
 |-------|------------|------------|
 | 2026-11-11 | Jonas | Skapad |
 | 2026-11-14 | Jonas | Tomt intygsnummer, vad som prövas i drift, sökningens gräns |
+| 2026-11-15 | Jonas | Datamigration för redan ersatta intyg |
