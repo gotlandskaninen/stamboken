@@ -322,7 +322,8 @@ export function keyAfter(
 
 export const kgText = (kg: number) => String(kg).replace(".", ",");
 
-// "2,8" and "2.8" are kilos; above 100 the user probably typed grams.
+// "2,8" and "2.8" are kilos; above 100 the user probably typed grams, and
+// above 20 (the server's limit) probably a missing decimal comma.
 export function parseWeight(text: string): {
   kg: number | null;
   gramsHint: number | null;
@@ -332,10 +333,10 @@ export function parseWeight(text: string): {
   if (!/^\d+(\.\d+)?$/.test(t))
     return { kg: null, gramsHint: null, unusual: false };
   const n = Number(t);
-  if (n > 100)
+  if (n > 20)
     return {
       kg: null,
-      gramsHint: Number((n / 1000).toFixed(3)),
+      gramsHint: Number((n / (n > 100 ? 1000 : 10)).toFixed(3)),
       unusual: false,
     };
   return { kg: n, gramsHint: null, unusual: n < 1 || n > 6.5 };
@@ -385,6 +386,8 @@ export function isDone(
   if (!e || e.val === null) return r.state !== "att_valja";
   if (e.val === "ej_angiven") return true; // P44: kept from a paper submission
   if (!complete(e)) return false;
+  // a weight over 20 kg waits for the fix button, the server refuses it
+  if (e.val === "kvar" && parseWeight(e.vikt).gramsHint !== null) return false;
   if (e.val === "kvar" && r.adult)
     return e.vikt.trim() !== "" || !!e.ej_vagd?.trim();
   return true;

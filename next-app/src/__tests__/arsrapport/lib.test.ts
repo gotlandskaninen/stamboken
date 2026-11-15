@@ -34,6 +34,14 @@ describe("parseWeight", () => {
       unusual: false,
     });
   });
+  it("reads 20 to 100 as a missing decimal comma", () => {
+    expect(parseWeight("72")).toEqual({
+      kg: null,
+      gramsHint: 7.2,
+      unusual: false,
+    });
+    expect(parseWeight("20").kg).toBe(20);
+  });
   it("flags weights outside 1,0 to 6,5 and ignores empty text", () => {
     expect(parseWeight("7,2").unusual).toBe(true);
     expect(parseWeight("0,5").unusual).toBe(true);
@@ -53,6 +61,11 @@ describe("isDone", () => {
       isDone(adult, e({ val: "kvar", ej_vagd: "Har ingen våg" }), false),
     ).toBe(true);
     expect(isDone(young, e({ val: "kvar" }), false)).toBe(true);
+  });
+  it("does not count a weight the server refuses until it is fixed", () => {
+    for (const vikt of ["72", "2800"])
+      expect(isDone(adult, e({ val: "kvar", vikt }), false)).toBe(false);
+    expect(isDone(adult, e({ val: "kvar", vikt: "7,2" }), false)).toBe(true);
   });
   it("needs a month for a death and a sale", () => {
     const dod = {

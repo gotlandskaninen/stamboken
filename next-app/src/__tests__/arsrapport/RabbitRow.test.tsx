@@ -65,6 +65,19 @@ describe("RabbitRow", () => {
     cleanup();
     render(
       <RabbitRow
+        {...props({
+          onChange,
+          entry: { ...EMPTY_ENTRY, val: "kvar", vikt: "72" },
+        })}
+      />,
+    );
+    expect(screen.getByText("Menade du 7,2 kg?")).toBeTruthy();
+    expect(screen.queryByText("Stämmer 72 kg?")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Ja, 7,2 kg" }));
+    expect(onChange).toHaveBeenLastCalledWith(1, { vikt: "7,2" });
+    cleanup();
+    render(
+      <RabbitRow
         {...props({ entry: { ...EMPTY_ENTRY, val: "kvar", vikt: "7,2" } })}
       />,
     );
