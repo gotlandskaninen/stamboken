@@ -72,9 +72,8 @@ def build_cert_data(individual, ind_data, user_id):
     cert_data["notes"] = raw_notes
     cert_data["color_note"] = raw_color_note
     cert_data["foot_ring"] = ind_data.get("foot_ring") or ""
-    # Color-code system (herdbookcolors) is not in the DB yet — the template
-    # skips the chip when empty.
-    cert_data["color_code"] = ""
+    # The colour's id is its atlas number; the template skips the chip when empty.
+    cert_data["color_code"] = str(ind_data["color_id"]) if ind_data.get("color_id") is not None else ""
     cert_data["issue_date"] = date.today().isoformat()
     cert_data["public_url"] = f"gotlandskaninen.se/stamboken/individ/{individual.number}"
     cert_data["digital_certificate"] = individual.digital_certificate
