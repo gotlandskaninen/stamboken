@@ -7,6 +7,7 @@ isort:skip_file
 """
 
 import json
+import os
 import threading
 import time
 import uuid
@@ -14,6 +15,7 @@ from datetime import date, datetime, timedelta, timezone
 from datetime import time as clock
 from unittest import mock
 
+import pytest
 import utils.arsrapport as arsrapport
 import utils.database as db
 import utils.mail as mail
@@ -24,7 +26,7 @@ from utils.herd_tracking import HerdTrackingConflict
 from utils.individual_commands import RecordDeath, execute
 
 from tests.arsrapport_fixtures import ArsrapportTest
-from tests.ht_helpers import ht_row
+from tests.ht_helpers import count_queries, ht_row
 
 LAST = date(2025, 12, 31)
 NOW = datetime.combine(date(2026, 1, 15), clock(12), arsrapport.STOCKHOLM)
@@ -78,6 +80,13 @@ class InskickTest(ArsrapportTest):
 
     def counts(self):
         return [model.select().count() for model in WRITTEN]
+
+    def queries(self, call):
+        """The SQL statements one request runs; it must answer 200."""
+        with count_queries() as counter:
+            response = call()
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        return counter["n"]
 
     def kvitton(self):
         return list(db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.kvitto"))
@@ -385,9 +394,27 @@ class InskickTest(ArsrapportTest):
         )
         self.assertEqual(self.counts(), before)
 
+    def test_queries_per_rabbit(self):  # case 3: an N+1 beyond execute's own fails here, on no clock (I2)
+        counts = {}
+        for code, n in (("G9003", 10), ("G9004", 20)):
+            herd = self.herd(code)
+            body = self.body(*[self.kvar(rabbit, vikt=2.8) for rabbit in self.rabbits(herd, n)])  # adults: weights
+            path = f"/api/v2/arsrapport/besattning/{code}/2025"
+            counts[n] = [
+                self.queries(lambda: self.client.post(f"{path}/torrkorning", json=body)),  # noqa: B023
+                self.queries(lambda: self.skicka(body, code)),  # noqa: B023
+                self.queries(lambda: self.client.get(path)),  # noqa: B023
+            ]
+        dry, sent, view = ((large - small) / 10 for small, large in zip(counts[10], counts[20], strict=True))
+        # Measured 2026-11-15: 3, 56 (about 47 of them inside execute) and 0 per rabbit.
+        self.assertLessEqual(dry, 4, counts)
+        self.assertLessEqual(sent, 62, counts)
+        self.assertEqual(view, 0, counts)
+
+    @pytest.mark.slow
+    @pytest.mark.skipif(os.environ.get("RUN_SLOW") != "1", reason="set RUN_SLOW=1 to run measurements")
     def test_183_rabbits(self):  # case 3: a third of SUBMIT_TIMEOUT_MS (30 s) and of fetchApi's default (10 s)
-        rabbits = self.rabbits(self.h, 183, born=date(2025, 4, 1))
-        body = self.body(*[self.kvar(rabbit) for rabbit in rabbits])
+        body = self.body(*[self.kvar(rabbit, vikt=2.8) for rabbit in self.rabbits(self.h, 183)])
 
         def timed(limit, call):
             start = time.monotonic()
