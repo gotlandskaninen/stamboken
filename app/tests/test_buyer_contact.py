@@ -439,6 +439,12 @@ class TestVoid(BuyerBase):
         void_herd_tracking(latest, self.manager, "Såld till annan köpare, de ville inte")
         self.assertIsNotNone(db.HerdTracking.get_by_id(latest).voided_at)
 
+    def test_a_hyphenated_name_is_matched_as_written(self):
+        db.BuyerContact.update(name="Li-Bo").where(db.BuyerContact.id == self.contact_id).execute()
+        for reason in ("Såld till Li-Bo", "Li-Bos kanin", "li bo"):
+            with self.subTest(reason=reason), self.assertRaises(HerdTrackingInvalid):
+                void_herd_tracking(self.sale.id, self.owner, reason)
+
     def test_a_system_reason_is_never_checked(self):
         db.BuyerContact.update(name="Avpromoverad").where(db.BuyerContact.id == self.contact_id).execute()
         void_all_for_unpromote(db.Individual.get_by_id(self.rabbit.id), self.admin)

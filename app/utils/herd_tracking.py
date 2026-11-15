@@ -1065,10 +1065,13 @@ def buyer_contact_fields(buyer):
 
 
 def _name_patterns(name):
-    """The whole name, and each word of it with at least three letters, as whole words with a genitive s."""
+    """
+    The whole name, its parts joined by spaces or hyphens as written ("Li-Bo", "Li Bo"), and each word of it with
+    at least three letters, all as whole words with a genitive s.
+    """
     words = re.findall(r"\w+", name)
-    parts = [r"\s+".join(map(re.escape, words))] + [re.escape(w) for w in words if len(w) >= 3]
-    return [re.compile(rf"\b{part}s?\b", re.IGNORECASE) for part in parts if part]
+    parts = [r"[\s-]+".join(map(re.escape, words))] + [re.escape(w) for w in words if len(w) >= 3]
+    return [re.compile(rf"(?<!\w){part}s?(?!\w)", re.IGNORECASE) for part in parts if part]
 
 
 def _reject_buyer_name(texts, individual_ids, names=()):
