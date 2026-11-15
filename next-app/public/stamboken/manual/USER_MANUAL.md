@@ -45,7 +45,7 @@ på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
     [Aktiva användare](#aktiva-användare), [Aktivitetslogg](#aktivitetslogg),
     [Demosynkronisering](#demosynkronisering), [Anropsgränser](#anropsgränser)
 - [Bilagor](#bilagor): [felmeddelanden](#felmeddelanden-och-vad-de-betyder), [kontakt](#kontakt),
-  [om manualen](#om-manualen)
+  [vad är på gång](#vad-är-på-gång), [om manualen](#om-manualen)
 
 ---
 
@@ -1048,6 +1048,17 @@ funktion (inloggning, lösenordsåterställning, redigera kanin med flera). Bara
 
 Frågor om stamboken, roller och lösenord: <admin@gotlandskaninen.se>.
 Frågor om registrering, färger och intyg: din genbanksansvarig.
+
+### Vad är på gång?
+
+Vad föreningen arbetar med i Stamboken syns på
+[projekttavlan för Stamboken](https://github.com/orgs/gotlandskaninen/projects/1/views/3) på GitHub, i kolumnerna
+**Att göra**, **Pågår** och **Klart**. Kort med ett hänglås hör till föreningens interna
+arbete och går inte att öppna.
+
+Önskemål mejlar du till <admin@gotlandskaninen.se>, eller lämnar som ett ärende (issue) i
+[gotlandskaninen/stamboken](https://github.com/gotlandskaninen/stamboken/issues) på GitHub. Allt på GitHub är
+offentligt, så skriv inga personuppgifter: inga namn, adresser eller besättningsnummer.
 
 ### Om manualen
 

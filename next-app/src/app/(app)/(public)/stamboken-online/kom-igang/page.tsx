@@ -196,6 +196,34 @@ export default function KomIgangPage() {
             </a>
             .
           </Typography>
+          <Typography
+            variant="h4"
+            component="h3"
+            sx={{ mt: 8, fontSize: { xs: "22px", md: "26px" } }}
+          >
+            Vad är på gång?
+          </Typography>
+          <Typography
+            sx={{ mt: 3, color: "ink.2", fontSize: "15px", lineHeight: 1.65 }}
+          >
+            Vad föreningen arbetar med i Stamboken syns på{" "}
+            <a
+              href="https://github.com/orgs/gotlandskaninen/projects/1/views/3"
+              style={linkStyle}
+            >
+              projekttavlan för Stamboken
+            </a>{" "}
+            på GitHub. Önskemål mejlar du till admin@gotlandskaninen.se, eller
+            lämnar som ett ärende i{" "}
+            <a
+              href="https://github.com/gotlandskaninen/stamboken/issues"
+              style={linkStyle}
+            >
+              gotlandskaninen/stamboken
+            </a>
+            . Allt på GitHub är offentligt, så skriv inga personuppgifter: inga
+            namn, adresser eller besättningsnummer.
+          </Typography>
           <Box sx={{ mt: 7, display: "flex", gap: 3, flexWrap: "wrap" }}>
             <LinkButton href={MANUAL_PATH} variant="contained">
               Läs manualen

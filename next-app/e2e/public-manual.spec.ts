@@ -67,6 +67,13 @@ test("getting started lists the steps and links to the manual", async ({
   ).toBeVisible();
   await expect(page.locator("main ol > li")).toHaveCount(6);
 
+  await expect(
+    page.getByRole("link", { name: "projekttavlan för Stamboken" }),
+  ).toHaveAttribute(
+    "href",
+    "https://github.com/orgs/gotlandskaninen/projects/1/views/3",
+  );
+
   await page.getByRole("link", { name: "Logga in steg för steg →" }).click();
   await expect(page).toHaveURL(/\/stamboken-online\/manual#logga-in$/);
   await expect(page.locator("h3#logga-in")).toBeInViewport();
