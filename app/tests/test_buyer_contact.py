@@ -103,13 +103,13 @@ class TestSchema(BuyerBase):
         sql('ALTER TABLE herd_tracking DROP CONSTRAINT "herd_tracking_holder_contact_id_fkey"')
         sql('DROP INDEX "herdtracking_holder_contact_id"')
         sql("DROP TABLE buyer_contact")
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 41).execute()
-        if db.SchemaHistory.get_or_none(db.SchemaHistory.version == 40) is None:
-            db.SchemaHistory.insert(version=40, comment="test seed", applied=datetime.now()).execute()  # pylint: disable=E1120
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 44).execute()
+        if db.SchemaHistory.get_or_none(db.SchemaHistory.version == 43) is None:
+            db.SchemaHistory.insert(version=43, comment="test seed", applied=datetime.now()).execute()  # pylint: disable=E1120
 
         db.check_migrations()
 
-        self.assertEqual(db.SchemaHistory.select(db.fn.MAX(db.SchemaHistory.version)).scalar(), 41)  # pylint: disable=E1120
+        self.assertEqual(db.SchemaHistory.select(db.fn.MAX(db.SchemaHistory.version)).scalar(), 44)  # pylint: disable=E1120
         self.assertIn("buyer_contact", db.DATABASE.get_tables())
         delete_rule = sql(
             "SELECT confdeltype FROM pg_constraint WHERE conname = 'herd_tracking_holder_contact_id_fkey'"
