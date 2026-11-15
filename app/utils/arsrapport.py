@@ -71,7 +71,6 @@ from utils.herd_tracking import (
     buyer_contact_fields,
     buyer_items,
     latest_death_op,
-    lock_buyer_items,
     reject_contact_details,
     report_void_denial,
     void_herd_tracking,
@@ -1907,18 +1906,31 @@ def submitted_body(sub: Submission) -> dict:
     return body
 
 
-def _lock_rabbits(ids):
+def _lock_items(ids, form_id=None):
     """
-    The queue's items that may show the buyers of the rabbits' sales (lock_buyer_items), then the rabbits' litters,
-    then the rabbits, each in ascending order: the queue's own order (item, litters, rabbits), so the voids of Ändra
-    and Dra tillbaka lock only items already held (Codex 4, Opus 3). A rabbit moved to another litter, or an item
-    that has appeared since, is a 409.
+    The queue's items that may show the buyers of the rabbits' sales (buyer_items), and the paper form's own item,
+    locked in one ascending pass before any litter or rabbit: the order of the queue (item, litters, rabbits) and of
+    its bulk assignment, so the voids of Ändra and Dra tillbaka lock only items already held and no cycle forms
+    (Codex 4, Opus 3, Codex re-review 2). Returns their ids: _lock_form checks the form's item again under it, and
+    _lock_rabbits the buyers' set.
+    """
+    rows = HerdTracking.select().where(HerdTracking.individual.in_(ids), ht_not_voided())
+    wanted = sorted(buyer_items(rows) | ({form_id} if form_id is not None else set()))
+    if not wanted:
+        return set()
+    query = InboxItem.select(InboxItem.id).where(InboxItem.id.in_(wanted)).order_by(InboxItem.id).for_update()
+    return {item_id for (item_id,) in query.tuples()}
+
+
+def _lock_rabbits(ids, items):
+    """
+    The rabbits' litters, then the rabbits, each in ascending order, once _lock_items holds `items`. A rabbit moved
+    to another litter, or a buyer's item that has appeared since, is a 409.
     """
 
     def litters():
         return dict(Individual.select(Individual.id, Individual.breeding).where(Individual.id.in_(ids)).tuples())
 
-    items = lock_buyer_items(ids)
     before = litters()
     lock_breedings(litter for litter in before.values() if litter is not None)
     lock_individuals(ids)
@@ -2105,8 +2117,9 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         membership, member = _lock_matrikel(herd) if paper and sub.paper["matrikel"] is not None else (None, None)
         old_email = member.email if member is not None else None
         report = YearlyHerdReport.select().where(same & (YearlyHerdReport.status == "submitted")).for_update().first()
+        items = _lock_items(sorted(sub.rabbits), access.item.id if paper else None)
         item, pages = _lock_form(access, user, herd) if paper else (None, [])
-        _lock_rabbits(sorted(sub.rabbits))
+        _lock_rabbits(sorted(sub.rabbits), items)
         if sub.revision != (report.revision if report else None):
             raise ArsrapportError(409, "Rapporten har ändrats.")
         refusals, _ = check(herd, round_, access, report, sub, on=on)
@@ -2234,7 +2247,7 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
             raise ArsrapportError(403, WITHDRAW_LATE, withdraw_until=_iso(until))
         # every rabbit of every submission: one an unchanged later submission left out keeps its effects (P39a)
         rabbits = sorted({int(key) for submission in submissions for key in submission.data.get("rabbits") or {}})
-        _lock_rabbits(rabbits)
+        _lock_rabbits(rabbits, _lock_items(rabbits))
         ops = {str(op) for submission in submissions for op in submission.operation_ids}
         refusals = _reason_refusals(reason, rabbits)
         for rabbit in rabbits:

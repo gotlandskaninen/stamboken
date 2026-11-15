@@ -20,6 +20,7 @@ from herdbook import APP
 from utils.individual_policy import Role
 
 from tests.arsrapport_fixtures import ArsrapportTest
+from tests.ht_helpers import ht_row
 from tests.inbox_fixtures import QUALITY
 
 NOW = datetime.combine(date(2026, 1, 15), clock(12), arsrapport.STOCKHOLM)
@@ -100,6 +101,31 @@ class BlankettTest(ArsrapportTest):
         return db.InboxItem.get_by_id(item.id).state
 
     # The entry
+
+    def test_form_and_buyer_items_are_locked_in_one_ascending_pass(self):  # Codex re-review 2: as tilldela does
+        (a,) = self.rabbits(self.h, 1)
+        gx1 = db.Herd.get(db.Herd.herd == "GX1")
+        buyer = db.BuyerContact.create(
+            name="Anna Berg", town="Visby", created_by_user=self.admin, purge_at=NOW + timedelta(days=1000)
+        )
+        sold = {"individual": a, "herd_tracking_date": date(2024, 6, 1), "holder_contact": buyer}
+        ht_row("TRANSFER", from_herd=self.h, herd=gx1, **sold)
+        ht_row("TRANSFER", from_herd=gx1, herd=self.h, individual=a, herd_tracking_date=date(2024, 8, 1))  # back
+        older = self.item()  # an open item with a document of the rabbit, older than the form
+        db.InboxDocument.update(individual=a).where(db.InboxDocument.item == older.id).execute()
+        item = self.form(self.manager)
+        self.assertLess(older.id, item.id)
+        self.login("man")
+        locks, original = [], db.DATABASE.execute_sql
+
+        def spy(sql, *args, **kwargs):
+            if 'FROM "inbox_item"' in sql and "FOR UPDATE" in sql:
+                locks.append((" IN (" in sql, list(args[0] if args else kwargs.get("params") or ())))
+            return original(sql, *args, **kwargs)
+
+        with mock.patch.object(db.DATABASE, "execute_sql", side_effect=spy):
+            self.ok(item, self.paper(item, self.kvar(a, vikt=2.8)))
+        self.assertEqual(locks[0], (True, [older.id, item.id]))  # one pass, ascending, before any other item lock
 
     def test_manager_enters_a_paper_form(self):
         a, b = self.rabbits(self.h, 2)
