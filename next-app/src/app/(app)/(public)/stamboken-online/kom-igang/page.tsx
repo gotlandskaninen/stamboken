@@ -3,7 +3,7 @@ import { Box, Typography } from "@mui/material";
 import type { Metadata } from "next";
 import { LinkButton } from "@/components/public/LinkButton";
 import { PageHeader } from "@/components/public/PageHeader";
-import { COURSE_URL } from "@/lib/constants";
+import { COURSE_URL, MANUAL_PATH } from "@/lib/constants";
 
 export const metadata: Metadata = {
   title: "Kom igång med Stamboken",
@@ -11,14 +11,12 @@ export const metadata: Metadata = {
     "Från medlemskap till första kullen i Stamboken Online: föreningskonto, webbkurs, inloggning, testmiljön och de första stegen.",
 };
 
-const MANUAL = "/stamboken-online/manual";
-
 // Plain style object, not MUI sx with component={Link}: see the note in
 // bli-genbanksbesattning/page.tsx (an unserializable prop 500s the prod build).
 const linkStyle = {
-  color: "#1F1B16",
+  color: "var(--sb-ink)",
   textDecoration: "underline",
-  textDecorationColor: "#B8AE99",
+  textDecorationColor: "var(--sb-line-strong)",
   textUnderlineOffset: "3px",
 };
 
@@ -48,13 +46,13 @@ const STEPS: Array<{
   {
     title: "Logga in",
     text: "Gå till gotlandskaninen.se/stamboken och klicka på Logga in med ditt föreningskonto (Google). Välj föreningskontot i Googles kontoväljare, inte ett privat Gmail-konto. Har du inget föreningskonto loggar du in med användarnamn och lösenord.",
-    link: { href: `${MANUAL}#logga-in`, label: "Logga in steg för steg" },
+    link: { href: `${MANUAL_PATH}#logga-in`, label: "Logga in steg för steg" },
   },
   {
     title: "Öva i testmiljön",
     text: "Nya användare börjar i testmiljön, en kopia av stamboken som återställs varje natt. Där kan du prova allt utan att något sparas på riktigt. När administratören har gett dig tillgång byter du till riktiga stamboken i menyn under din bild.",
     link: {
-      href: `${MANUAL}#testmiljön-och-riktiga-stamboken`,
+      href: `${MANUAL_PATH}#testmiljön-och-riktiga-stamboken`,
       label: "Om testmiljön",
     },
   },
@@ -62,7 +60,7 @@ const STEPS: Array<{
     title: "Registrera din första kull",
     text: "Under Min besättning ser du dina kaniner. Där registrerar du parningar och kullar, för kullistan och utfärdar digitala intyg till ungarna.",
     link: {
-      href: `${MANUAL}#del-1--uppfödare`,
+      href: `${MANUAL_PATH}#del-1--uppfödare`,
       label: "Manualen för uppfödare",
     },
   },
@@ -123,7 +121,7 @@ export default function KomIgangPage() {
                   display: "inline-flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  fontFamily: "'Source Serif 4', Georgia, serif",
+                  fontFamily: "var(--sb-display)",
                   fontSize: { xs: "20px", md: "26px" },
                   lineHeight: 1,
                 }}
@@ -199,7 +197,7 @@ export default function KomIgangPage() {
             .
           </Typography>
           <Box sx={{ mt: 7, display: "flex", gap: 3, flexWrap: "wrap" }}>
-            <LinkButton href={MANUAL} variant="contained">
+            <LinkButton href={MANUAL_PATH} variant="contained">
               Läs manualen
             </LinkButton>
             <LinkButton href="/stamboken/min-besattning" variant="outlined">

@@ -77,6 +77,9 @@ administratören om den inte fungerar. Glömt lösenordet till Stamboken? Klicka
 **administratören** under lösenordsfältet. Den öppnar ett mejl till
 <admin@gotlandskaninen.se>, och du får ett nytt tillfälligt lösenord.
 
+Under formuläret leder länken **Kom igång** till introduktionen för nya användare och
+**Bli medlem** till ansökan om medlemskap.
+
 Felmeddelanden på sidan:
 
 | Text | Betyder |
@@ -1052,4 +1055,6 @@ ett avsnitt här, och ett skript i kodrepot stoppar ändringar som lägger till 
 utan avsnitt. Stegen i [Registrera en kull](#registrera-en-kull), [Registrera en unge
 och utfärda intyg](#registrera-en-unge-och-utfärda-intyg) och [Sälja eller flytta en
 kanin](#sälja-eller-flytta-en-kanin) körs som automatiska tester mot en testdatabas.
-Hur skärmbilder och tester uppdateras står i `docs/manual/README.md`.
+Hur skärmbilder och tester uppdateras står i
+[docs/manual/README.md](https://github.com/gotlandskaninen/stamboken/blob/main/docs/manual/README.md)
+i kodrepot på GitHub.

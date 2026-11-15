@@ -22,6 +22,11 @@ test("the manual renders with working anchors and screenshots", async ({
     .poll(() => shot.evaluate((img: HTMLImageElement) => img.naturalWidth))
     .toBeGreaterThan(0);
 
+  // Tables that scroll sideways can be reached with the keyboard.
+  const tables = page.getByRole("region", { name: /^Tabell/ });
+  await expect(tables).toHaveCount(4);
+  await expect(tables.first()).toHaveAttribute("tabindex", "0");
+
   // 375-px requirement (ADR-0010): wide tables scroll in their box.
   const scrollWidth = await page.evaluate(
     () => document.documentElement.scrollWidth,

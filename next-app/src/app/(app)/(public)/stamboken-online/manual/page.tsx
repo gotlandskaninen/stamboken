@@ -58,7 +58,10 @@ async function pngSize(name: string): Promise<Size> {
 function parts(markdown: string) {
   const slug = headingSlugger();
   return [...markdown.matchAll(/^(#{1,4}) (.+)$/gm)]
-    .map((m) => ({ level: m[1].length, text: m[2], id: slug(m[2]) }))
+    .map((m) => {
+      const text = m[2].replace(/[*`]/g, "");
+      return { level: m[1].length, text, id: slug(text) };
+    })
     .filter((h) => h.level === 2 && h.id !== "innehåll");
 }
 
@@ -95,9 +98,15 @@ function components(imageSizes: Map<string, Size>): Components {
         />
       );
     },
-    // Wide tables scroll inside their box, not the page (ADR-0010).
+    // Wide tables scroll inside their box, not the page (ADR-0010). The box
+    // takes focus so a keyboard can scroll it too.
     table: ({ children }) => (
-      <div className="table-scroll">
+      <div
+        className="table-scroll"
+        role="region"
+        aria-label="Tabell, går att scrolla i sidled"
+        tabIndex={0}
+      >
         <table>{children}</table>
       </div>
     ),

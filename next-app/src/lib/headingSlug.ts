@@ -10,8 +10,15 @@ export function headingSlugger() {
       .toLowerCase()
       .replace(/[^\p{L}\p{M}\p{N}\p{Pc} -]/gu, "")
       .replace(/ /g, "-");
-    const n = seen.get(base) ?? 0;
-    seen.set(base, n + 1);
-    return n ? `${base}-${n}` : base;
+    // Like github-slugger: count repeats of the base, and skip a numbered
+    // slug that an earlier heading already took ("Steg 1", "Steg", "Steg").
+    let slug = base;
+    while (seen.has(slug)) {
+      const n = (seen.get(base) ?? 0) + 1;
+      seen.set(base, n);
+      slug = `${base}-${n}`;
+    }
+    seen.set(slug, 0);
+    return slug;
   };
 }
