@@ -176,6 +176,37 @@ class TestEraseEndpoint(ErasureTest):
         self.assertIn(PHONE, self.text(item))
 
 
+class TestRemoveCopy(ErasureTest):
+    def remove(self, item, document):
+        return self.client.delete(f"/api/v2/inkorg/{item.id}/dokument/{document.id}/kopia")
+
+    def test_a_manager_removes_a_copy_that_cannot_be_remade(self):
+        item, document = self.certified()
+        self.login("man")
+        self.assertEqual(self.post(f"/{item.id}/dokument/{document.id}/radera-original").status_code, 200)
+        self.assertEqual(self.certificate_served(), 200)
+        self.login("man")
+        resp = self.remove(item, document)
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertFalse(resp.get_json()["document"]["has_copy"])
+        self.assertFalse(self.exists(document.public_path))
+        self.assertIsNone(db.InboxDocument.get_by_id(document.id).public_path)
+        self.assertEqual(self.certificate_served(), 404)
+        (event,) = self.reload(item).events.where(db.InboxEvent.kind == "kopia_borttagen")
+        self.assertEqual((event.user_id, event.detail), (self.manager.id, {"document": document.id}))
+        self.assertEqual(self.remove(item, document).status_code, 409)  # nothing left
+
+    def test_refused_to_a_helper_another_genebank_and_a_missing_document(self):
+        item, document = self.certified()
+        for username in ("hjalp", "mhjalp", "owner"):
+            with self.subTest(username):
+                self.login(username)
+                self.assertEqual(self.remove(item, document).status_code, 403)
+        self.assertTrue(self.exists(document.public_path))
+        self.login("man")
+        self.assertEqual(self.remove(item, db.InboxDocument(id=document.id + 99)).status_code, 404)
+
+
 class TestEraseWhatThePersonSent(ErasureTest):
     def mailed(self, member):
         """A mail from the member, matched to them, with one photo and a queued mail to its address."""

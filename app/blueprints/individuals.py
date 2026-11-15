@@ -352,7 +352,11 @@ def update_individual_v2(number):
 
             # clear_nulls: the death and castration fields sent as null are cleared (undo death, IR-51).
             result = da.update_individual(
-                form, user_uuid, genebank_change_reason=form.pop("reason", None), clear_nulls=True, buyer=buyer
+                form,
+                user_uuid,
+                genebank_change_reason=form.pop("reason", None),
+                clear_nulls=True,
+                buyer=buyer,
             )
             if result is None or result.get("status") == "error":
                 msg = (result or {}).get("message", "Unknown error")

@@ -630,24 +630,30 @@ def _genebank_correction(ctx, from_herd, to_herd, reason):
     if not allowed("GenebankCorrection", ctx.roles, ctx.state):
         raise HerdTrackingForbidden("Bara administratör kan flytta en individ till en annan genbank.")
     note = require_reason(reason)
+    # Ids only: the reason is free text that could name a buyer before the herd-tracking guard has read it.
     logger.warning(
-        f"Genebank change by admin {ctx.user.username}: {ctx.stored.number} from {from_herd.genebank.name} "
-        f"({from_herd.herd}) to {to_herd.genebank.name} ({to_herd.herd}): {note}"
+        f"Genebank change by admin user {ctx.user.id}: individual {ctx.stored.id} from herd {from_herd.id} "
+        f"(genebank {from_herd.genebank_id}) to herd {to_herd.id} (genebank {to_herd.genebank_id})"
     )
     return note
+
+
+BUYER_REQUIRED = "Ange köparens namn och ort för en försäljning utanför föreningen."
 
 
 @dataclass(frozen=True)
 class TransferIndividual(PolicyCommand):
     """
     A sale or move out of the holder's herd; into another genebank an admin's correction (IR-32, IR-54). On a sale
-    to GX1/MX1, `buyer` is the buyer outside the association (herd_tracking.buyer_contact_fields), never logged.
+    to GX1/MX1, `buyer` is the buyer outside the association (herd_tracking.buyer_contact_fields), never logged,
+    and required (ADR-0016), except on the legacy app's form, which cannot send one (`legacy`).
     """
 
     herd: object
     date: str
     reason: str | None = None
     buyer: dict | None = None
+    legacy: bool = False
     apply_rank = 70
     policy_stage = None  # asked in apply, after the measurements are written (IR-52)
 
@@ -659,6 +665,8 @@ class TransferIndividual(PolicyCommand):
         target = _target(self.herd)
         self.authorize(ctx)
         holder = _holder(ctx)
+        if target.herd in OUTSIDE_GENEBANK_HERDS and self.buyer is None and not self.legacy:
+            raise HerdTrackingInvalid(BUYER_REQUIRED)
         note = None
         if target.genebank_id != holder.genebank_id:
             note = _genebank_correction(ctx, holder, target, self.reason)
@@ -1007,7 +1015,7 @@ class Undo(Command):
         if entry.command == "RecordAttestation":
             undo_op = ctx.record("Undo", None, None, undoes=entry.operation_id, reason=note)
             for row in _active_attestation_rows(entry):  # herd-tracking's void rules apply unchanged
-                void_herd_tracking(row.id, ctx.user, note, operation_id=undo_op)
+                void_herd_tracking(row.id, ctx.user, note, operation_id=undo_op, typed=note != UNDO_REASON)
             return
         changed = sorted(key for key, value in entry.after.items() if _column_value(ctx.individual, key) != value)
         if changed:

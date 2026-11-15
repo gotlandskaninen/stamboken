@@ -1872,8 +1872,8 @@ def edit_individual():
     retval = None
     try:
         if request.method == "PATCH":
-            retval = da.update_individual(
-                form, session.get("user_id", None), genebank_change_reason=da.LEGACY_GENEBANK_CHANGE_NOTE
+            retval = da.update_individual(  # the legacy form has no buyer fields (ADR-0016)
+                form, session.get("user_id", None), genebank_change_reason=da.LEGACY_GENEBANK_CHANGE_NOTE, legacy=True
             )
         if request.method == "POST":
             retval = da.add_individual(form, session.get("user_id", None))
@@ -2595,7 +2595,9 @@ def _sign_stored_certificate(ind_data, user_id, form, issue_digital=False):
         if result and result.get("status") == "error":
             raise _CertificateRefused(result["message"])
         # update_individual also refuses a first certificate past the litter quota.
-        result = da.update_individual(certificate_update(ind_data, form), user_id, issue_digital=issue_digital)
+        result = da.update_individual(
+            certificate_update(ind_data, form), user_id, issue_digital=issue_digital, legacy=True
+        )
         if result.get("status") == "error":
             raise _CertificateRefused(result["message"], result)
         ind_data = da.get_individual(locked.number, user_id)

@@ -148,14 +148,20 @@ def _delete_items(where):
     return len(gone)
 
 
+def _older_than(items, when):
+    """The ids of those `items` (a query) whose retention_start is before `when`; the rows are few, so in Python."""
+    return [item.id for item in items.where(InboxItem.received_at < when) if inbox.retention_start(item) < when]
+
+
 def purge_originals(now):
-    """Originals of certificates and proofs some months after their item came in, and the item's text with them."""
-    old = InboxItem.select(InboxItem.id).where(
-        InboxItem.received_at < now - inbox.months(settings.inbox.original_months)
-    )
+    """Originals of certificates and proofs some months after their item's retention start, and its text with them."""
+    old = _older_than(InboxItem.select(), now - inbox.months(settings.inbox.original_months))
     with DB_PROXY.atomic():
         paths = _null_originals(InboxDocument.item.in_(old) & InboxDocument.doc_type.in_(ORIGINAL_TYPES))
-        _clear_text(old.where(InboxItem.id.in_(InboxDocument.select(InboxDocument.item))))  # a message keeps its own
+        has_documents = InboxItem.id.in_(InboxDocument.select(InboxDocument.item))
+        _clear_text(
+            InboxItem.select(InboxItem.id).where(InboxItem.id.in_(old) & has_documents)
+        )  # a message keeps its own
     return remove_originals(paths)
 
 
@@ -170,40 +176,68 @@ def purge_due(now):
 
 
 def purge_sold_proofs(now):  # pylint: disable=unused-argument  # every rule takes the clock
-    """A proof's original once its rabbit is sold on (herd_tracking.sold_on, as for the buyer's contact details)."""
-    sale, later = HerdTracking, HerdTracking.alias()
+    """
+    A proof's original once its rabbit is sold on (herd_tracking.sold_on, as for the buyer's contact details). A
+    proof of a sale later corrected still names the voided row: the sale is then the active row that carries the
+    same buyer (a correction carries it over), or, for a sale without a buyer (to a member), the move into the
+    same herd that the correction which voided it wrote for the rabbit. The document's link stays as it is.
+    """
+    sale, later, linked = HerdTracking, HerdTracking.alias(), HerdTracking.alias()
     proofs = InboxDocument.select(InboxDocument.herd_tracking_id).where(
         (InboxDocument.doc_type == "bevis") & InboxDocument.original_path.is_null(False)
     )
+    rows = (
+        linked.select(linked.id, sale.id)
+        .join(
+            sale,
+            on=(
+                (sale.id == linked.id)
+                | ((sale.holder_contact == linked.holder_contact) & (sale.id != linked.id))
+                | (
+                    linked.holder_contact.is_null(True)
+                    & (sale.operation_id == linked.voided_operation_id)
+                    & (sale.individual == linked.individual)
+                    & (sale.herd == linked.herd)
+                    & sale.kind.in_(("TRANSFER", "CORRECTION"))
+                )
+            ),
+        )
+        .where(linked.id.in_(proofs) & sale.voided_at.is_null(True))
+    )
+    carried = {}  # active sale -> the rows the proofs name
+    for linked_id, sale_id in rows.tuples():
+        carried.setdefault(sale_id, []).append(linked_id)
+    if not carried:
+        return 0
     moved_on = (
         sale.select(sale.id)
         .join(later, on=(later.individual == sale.individual))
-        .where(sale.id.in_(proofs) & sale.voided_at.is_null(True) & sold_on(sale, later))
+        .where(sale.id.in_(list(carried)) & sold_on(sale, later))
+        .distinct()
     )
+    named = [linked_id for (sale_id,) in moved_on.tuples() for linked_id in carried[sale_id]]
     with DB_PROXY.atomic():
-        paths = _null_originals((InboxDocument.doc_type == "bevis") & InboxDocument.herd_tracking_id.in_(moved_on))
+        paths = _null_originals((InboxDocument.doc_type == "bevis") & InboxDocument.herd_tracking_id.in_(named))
     return remove_originals(paths)
 
 
-def _quiet_since(when):
-    """Items that came in before `when` and have had no answer from their sender since (inbox.incomplete_since)."""
-    answered = InboxEvent.select(InboxEvent.item).where((InboxEvent.kind == "svar") & (InboxEvent.at >= when))
-    return (InboxItem.received_at < when) & InboxItem.id.not_in(answered)
+def _incomplete():
+    return InboxItem.select().where(InboxItem.state == "ofullstandig")
 
 
 def remind_incomplete(now):
     """
-    inlasning.paminnelse once to the sender of an item still "ofullstandig" 11 months after it came in or was last
-    answered (once per such date).
+    inlasning.paminnelse once to the sender of an item still "ofullstandig" 11 months after its retention start
+    (once per such date).
     """
     old = now - inbox.months(inbox.REMIND_MONTHS)
     queued = 0
     with DB_PROXY.atomic():
-        for item in InboxItem.select().where((InboxItem.state == "ofullstandig") & _quiet_since(old)):
+        for item in InboxItem.select().where(InboxItem.id.in_(_older_than(_incomplete(), old))):
             marked = item.events.where((InboxEvent.kind == "lage") & InboxEvent.detail.contains({"to": "ofullstandig"}))
             marked = marked.order_by(InboxEvent.id.desc()).first()
             params = {"item_id": item.id, "event_id": marked.id} if marked else None
-            since = inbox.incomplete_since(item)
+            since = inbox.retention_start(item)
             key = f"inlasning.paminnelse:{item.id}" + (f":{since:%Y-%m-%d}" if since != item.received_at else "")
             if params and inbox.mail_sender(item, "inlasning.paminnelse", params, dedupe_key=key):
                 queued += 1
@@ -211,9 +245,9 @@ def remind_incomplete(now):
 
 
 def purge_incomplete(now):
-    """An item left "ofullstandig" a year after it came in or was last answered."""
-    old = now - inbox.months(inbox.INCOMPLETE_MONTHS)
-    return _delete_items((InboxItem.state == "ofullstandig") & _quiet_since(old))
+    """An item left "ofullstandig" a year after its retention start."""
+    old = _older_than(_incomplete(), now - inbox.months(inbox.INCOMPLETE_MONTHS))
+    return _delete_items((InboxItem.state == "ofullstandig") & InboxItem.id.in_(old))
 
 
 def purge_junk(now):

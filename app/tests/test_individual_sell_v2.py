@@ -25,6 +25,14 @@ limiter.enabled = False
 REGISTERED = "G1-2111"
 UNREGISTERED = "G1-2112"
 VALID_DATE = "2021-06-01"
+BUYER = {"name": "Köpare Test", "town": "Visby"}  # synthetic
+
+
+def with_buyer(body):
+    """A v2 sale to GX1/MX1 carries its buyer outside the association (ADR-0016)."""
+    if body.get("herd") in ("GX1", "MX1") and body.get("selling_date") and "buyer" not in body:
+        return {**body, "buyer": BUYER}
+    return body
 
 
 class TestSellIndividualV2(DatabaseTest):
@@ -41,7 +49,15 @@ class TestSellIndividualV2(DatabaseTest):
         return self.client.post("/api/login", json={"username": username, "password": password})
 
     def _sell(self, number, herd, selling_date):
-        return self.client.patch(f"/api/individual/{number}", json={"herd": herd, "selling_date": selling_date})
+        body = with_buyer({"herd": herd, "selling_date": selling_date})
+        return self.client.patch(f"/api/individual/{number}", json=body)
+
+    def test_a_sale_outside_without_a_buyer_is_400(self):
+        self._login()
+        response = self.client.patch(f"/api/individual/{REGISTERED}", json={"herd": "GX1", "selling_date": VALID_DATE})
+        self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+        self.assertIn("köparens namn och ort", response.get_json()["detail"])
+        self._assert_unchanged(REGISTERED)
 
     def _assert_unchanged(self, number, herd="G1"):
         ind = db.Individual.get(db.Individual.number == number)
@@ -214,7 +230,7 @@ class TestTransferPermissionsV2(DatabaseTest):
         return self.client.post("/api/login", json={"username": username, "password": "pass"})
 
     def _patch(self, body, number=REGISTERED):
-        return self.client.patch(f"/api/individual/{number}", json=body)
+        return self.client.patch(f"/api/individual/{number}", json=with_buyer(body))
 
     def _tracking_count(self, individual_index=0):
         return db.HerdTracking.select().where(db.HerdTracking.individual == self.individuals[individual_index]).count()
@@ -597,10 +613,8 @@ class TestTransferPermissionsV2(DatabaseTest):
         self.assertEqual(response.get_json()["status"], "success", response.get_json())
         transfer = self._transfer_row(self.individuals[0])
         self.assertEqual((transfer.herd.herd, transfer.notes), ("M3", "Genbanksbyte av admin via legacy"))
-        self.assertTrue(
-            any(all(part in line for part in ("admin", REGISTERED, "Gotland", "Mellerud")) for line in logs.output),
-            logs.output,
-        )
+        ids = (f"user {self.admin.id}", f"individual {self.individuals[0].id}", "genebank 1", "genebank 2")
+        self.assertTrue(any(all(part in line for part in ids) for line in logs.output), logs.output)
         individual, breeding = self._own_breeding_individual()
         legacy = {"id": individual.id, "number": individual.number, "herd": "G1", "breeding": breeding.id}
         response = self.client.patch("/api/individual", json={**legacy, "origin_herd": {"herd": "M3"}})
@@ -707,7 +721,7 @@ class TestProtectedFieldsV2(DatabaseTest):
     def _patch_as(self, username, number, body):
         client = APP.test_client(use_cookies=True)
         client.post("/api/login", json={"username": username, "password": "pass"})
-        return client.patch(f"/api/individual/{number}", json=body)
+        return client.patch(f"/api/individual/{number}", json=with_buyer(body))
 
     def test_owner_cannot_set_digital_certificate_number(self):
         """Digital numbers come only from issuance (signed PDF + v2 row), never from a PATCH body."""
@@ -783,7 +797,7 @@ class TestUndoDeathV2(DatabaseTest):
         self.client.post("/api/login", json={"username": "owner", "password": "pass"})
 
     def _patch(self, body):
-        return self.client.patch(f"/api/individual/{REGISTERED}", json=body)
+        return self.client.patch(f"/api/individual/{REGISTERED}", json=with_buyer(body))
 
     def _death(self):
         stored = db.Individual.get_by_id(self.ind.id)

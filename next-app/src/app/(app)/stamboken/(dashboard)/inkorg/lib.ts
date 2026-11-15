@@ -66,13 +66,6 @@ export interface InboxDocument {
   individual: string | null;
   /** The sale registered from the document (for a proof: the sale it shows). */
   herd_tracking_id?: number | null;
-  /** That sale's rabbit, buyer herd and date, and whether it is still active. */
-  sale?: {
-    individual: string;
-    herd: string;
-    date: string;
-    active: boolean;
-  } | null;
   has_copy: boolean;
 }
 
@@ -290,14 +283,22 @@ const isMine = (item: ItemFacts, user: QueueUser) =>
  * The actions the transition table allows this user on this item. "Arbeta
  * vidare" is …/ta by the handler of a waiting item: it becomes "tagen" again.
  */
-export function itemActions(item: ItemFacts, user: QueueUser): ItemAction[] {
+export function itemActions(
+  item: ItemFacts,
+  user: QueueUser,
+  myGenebanks: number[] | null = null,
+): ItemAction[] {
   const actions: ItemAction[] = [];
+  // Seen by the whole queue, taken only by those with a role in its genebank.
+  const mayTake = !lacksRole(user, item.genebank_id, myGenebanks);
   const mine = isMine(item, user);
   const boss = manages(user, item.genebank_id);
   if (OPEN_STATES.includes(item.state)) {
-    if (!item.assigned_to) actions.push("ta");
-    else if (!mine) actions.push("ta_over");
-    else if (item.state !== "tagen") actions.push("arbeta_vidare");
+    if (!item.assigned_to) {
+      if (mayTake) actions.push("ta");
+    } else if (!mine) {
+      if (mayTake) actions.push("ta_over");
+    } else if (item.state !== "tagen") actions.push("arbeta_vidare");
     if (boss) actions.push("tilldela");
   }
   if (mine && item.state === "tagen")
@@ -471,25 +472,23 @@ export function buildSalePayload(form: SaleForm) {
 }
 
 /**
- * The rule of the API's proven_sale: a proof shows a sale another document of
- * the item has registered, the same rabbit, buyer herd and date, still active.
- * Its buyer came with that sale, so the panel does not ask for it again.
+ * The rule of the API's proven_sale: a proof shows a sale already registered,
+ * from the item or anywhere else, an active move of the rabbit (its active
+ * rows, `sales`) to the same herd on the same date. Its buyer came with that
+ * sale, so the panel does not ask for it again.
  */
 export function provenSale(
-  documents: InboxDocument[],
   doc: InboxDocument,
-  payload: { individual: string; herd: string; date: string },
+  payload: { herd: string; date: string },
+  sales: { herd: string; date: string | null; kind: string }[],
 ): boolean {
   return (
     doc.doc_type === "bevis" &&
-    documents.some(
-      (d) =>
-        d.id !== doc.id &&
-        d.doc_type !== "bevis" &&
-        !!d.sale?.active &&
-        d.sale.individual === payload.individual &&
-        d.sale.herd === payload.herd &&
-        d.sale.date === payload.date,
+    sales.some(
+      (s) =>
+        (s.kind === "TRANSFER" || s.kind === "CORRECTION") &&
+        s.herd === payload.herd &&
+        s.date === payload.date,
     )
   );
 }

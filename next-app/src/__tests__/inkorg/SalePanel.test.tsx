@@ -9,8 +9,10 @@ import {
 } from "@testing-library/react";
 
 const registerSale = vi.fn();
+const lookupRabbit = vi.fn();
 vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/actions", () => ({
   registerSale: (...args: unknown[]) => registerSale(...args),
+  lookupRabbit: (...args: unknown[]) => lookupRabbit(...args),
 }));
 
 import { SalePanel } from "@/app/(app)/stamboken/(dashboard)/inkorg/[id]/SalePanel";
@@ -23,6 +25,7 @@ beforeAll(async () => {
 afterEach(() => {
   cleanup();
   registerSale.mockReset();
+  lookupRabbit.mockReset();
 });
 
 const CONSENT =
@@ -48,30 +51,19 @@ const doc = {
   has_copy: false,
 } as unknown as InboxDocument;
 
-// The certificate of the same item registered G9001-2511's sale to GX1 on 2026-10-03.
-const certificate = {
-  ...doc,
-  id: 30,
-  doc_type: "intyg",
-  herd_tracking_id: 7,
-  sale: {
-    individual: "G9001-2511",
-    herd: "GX1",
-    date: "2026-10-03",
-    active: true,
-  },
-} as unknown as InboxDocument;
+// G9001-2511's sale to GX1 on 2026-10-03, registered anywhere (the sell dialog or the item).
+const registered = {
+  name: null,
+  color: null,
+  mother: null,
+  father: null,
+  herd_tracking: [{ herd: "GX1", date: "2026-10-03", kind: "TRANSFER" }],
+};
 
-function panel(documents: InboxDocument[] = []) {
+function panel(rabbit: object | null = null) {
+  lookupRabbit.mockResolvedValue(rabbit);
   render(
-    <SalePanel
-      itemId={12}
-      doc={doc}
-      herds={[]}
-      canSave
-      documents={[...documents, doc]}
-      onDone={vi.fn()}
-    />,
+    <SalePanel itemId={12} doc={doc} herds={[]} canSave onDone={vi.fn()} />,
   );
   fireEvent.change(screen.getByLabelText(/Säljdatum/), {
     target: { value: "2026-10-03" },
@@ -130,28 +122,55 @@ describe("SalePanel with a buyer outside the association", () => {
     });
   });
 
-  it("asks for no buyer on a proof of a sale already registered", async () => {
+  it("asks for no buyer on a proof of a sale already registered, wherever it was", async () => {
     registerSale.mockResolvedValue({ ok: true, data: { document: doc } });
-    panel([certificate]);
+    panel(registered);
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
     );
-    expect(screen.queryByLabelText(/Köparens namn/)).toBeNull();
+    await waitFor(() =>
+      expect(screen.queryByLabelText(/Köparens namn/)).toBeNull(),
+    );
+    expect(lookupRabbit).toHaveBeenCalledWith("G9001-2511");
     expect(save().disabled).toBe(false);
     fireEvent.click(save());
     await waitFor(() => expect(registerSale).toHaveBeenCalledTimes(1));
     expect(registerSale.mock.calls[0][2]).not.toHaveProperty("buyer");
   });
 
-  it("asks for the buyer when the registered sale is another one", () => {
-    const voided = {
-      ...certificate,
-      sale: { ...certificate.sale!, active: false },
-    };
-    panel([voided]);
+  it("never hides the buyer on the previous rabbit's sales, and looks up once typing pauses", async () => {
+    lookupRabbit.mockResolvedValueOnce(registered); // G9001-2511 has the sale
+    render(
+      <SalePanel itemId={12} doc={doc} herds={[]} canSave onDone={vi.fn()} />,
+    );
+    fireEvent.change(screen.getByLabelText(/Säljdatum/), {
+      target: { value: "2026-10-03" },
+    });
     fireEvent.click(
       screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
     );
+    await waitFor(() =>
+      expect(screen.queryByLabelText(/Köparens namn/)).toBeNull(),
+    );
+    lookupRabbit.mockClear();
+    lookupRabbit.mockResolvedValue(null);
+    type(/Individnummer/, "G9001-251");
+    type(/Individnummer/, "G9001-2512"); // another rabbit, typed quickly
+    expect(screen.getByLabelText(/Köparens namn/)).toBeInTheDocument(); // at once, before any answer
+    await waitFor(() => expect(lookupRabbit).toHaveBeenCalledTimes(1));
+    expect(lookupRabbit).toHaveBeenCalledWith("G9001-2512");
+  });
+
+  it("asks for the buyer when the rabbit's sale is another one", async () => {
+    const other = {
+      ...registered,
+      herd_tracking: [{ herd: "GX1", date: "2026-10-04", kind: "TRANSFER" }],
+    };
+    panel(other);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    );
+    await waitFor(() => expect(lookupRabbit).toHaveBeenCalled());
     expect(screen.getByLabelText(/Köparens namn/)).toBeInTheDocument();
   });
 

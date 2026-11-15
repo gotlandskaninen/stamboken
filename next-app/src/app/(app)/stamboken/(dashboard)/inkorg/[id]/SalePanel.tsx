@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import {
   Autocomplete,
   Checkbox,
@@ -14,7 +14,7 @@ import {
   buyerComplete,
   buyerPayload,
 } from "@/components/individual/BuyerFields";
-import { registerSale } from "../actions";
+import { lookupRabbit, registerSale, type RegistrySale } from "../actions";
 import {
   buildSalePayload,
   outsideHerd,
@@ -25,21 +25,21 @@ import {
 } from "../lib";
 import styles from "../inkorg.module.css";
 
+/** The rabbit is looked up once typing pauses, not on every key. */
+export const LOOKUP_DELAY_MS = 300;
+
 /** A sale the document shows, saved with …/overlat. */
 export function SalePanel({
   itemId,
   doc,
   herds,
   canSave,
-  documents = [],
   onDone,
 }: {
   itemId: number;
   doc: InboxDocument;
   herds: GenebankHerd[];
   canSave: boolean;
-  /** The item's documents: a proof of a sale one of them registered needs no buyer (provenSale). */
-  documents?: InboxDocument[];
   onDone: (document: InboxDocument) => void;
 }) {
   const [form, setForm] = useState<SaleForm>({
@@ -59,7 +59,31 @@ export function SalePanel({
     setForm((f) => ({ ...f, ...changes }));
   const names = new Map(herds.map((h) => [h.herd, h.herd_name]));
   const proof = doc.doc_type === "bevis";
-  const saleRegistered = provenSale(documents, doc, buildSalePayload(form));
+  // The rabbit's active rows: a proof of a sale already registered asks for no buyer (provenSale).
+  // Kept with the number they belong to: another number's rows never hide the buyer fields.
+  const [sales, setSales] = useState<{ number: string; rows: RegistrySale[] }>({
+    number: "",
+    rows: [],
+  });
+  const number = buildSalePayload(form).individual;
+  useEffect(() => {
+    if (!proof || !number) return;
+    let current = true;
+    const timer = setTimeout(() => {
+      lookupRabbit(number).then((rabbit) => {
+        if (current) setSales({ number, rows: rabbit?.herd_tracking ?? [] });
+      });
+    }, LOOKUP_DELAY_MS);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [proof, number]);
+  const saleRegistered = provenSale(
+    doc,
+    buildSalePayload(form),
+    sales.number === number ? sales.rows : [],
+  );
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();

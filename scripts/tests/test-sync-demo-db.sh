@@ -18,8 +18,19 @@ check() { # desc expected actual
   else echo "FAIL - $1 (expected '$2', got '$3')"; fail=$((fail + 1)); fi
 }
 
-SKIP_QUEUE_DATA="" DROP_BUYERS_SQL="" MAIL_SEQ_SQL="" SET_MAIL_SEQ_SQL=""
-eval "$(grep -E '^(SKIP_QUEUE_DATA|DROP_BUYERS_SQL|MAIL_SEQ_SQL|SET_MAIL_SEQ_SQL)=' "$SCRIPT")"
+SKIP_QUEUE_DATA="" DROP_BUYERS_SQL="" MAIL_SEQ_SQL="" SET_MAIL_SEQ_SQL="" STAGING_DB="" DROP_STAGING_SQL=""
+# shellcheck disable=SC2034  # read by the STAGING_DB line taken from the script
+TARGET_DB=dst
+eval "$(grep -E '^(SKIP_QUEUE_DATA|DROP_BUYERS_SQL|MAIL_SEQ_SQL|SET_MAIL_SEQ_SQL|STAGING_DB|DROP_STAGING_SQL)=' "$SCRIPT")"
+
+# A run that stops before the rename drops the staging database on exit: the EXIT trap names drop_staging, it is
+# set before the staging database is made, and the rename marks it done.
+# shellcheck disable=SC2016
+trap_line=$(grep -n "^trap 'drop_staging" "$SCRIPT" | cut -d: -f1)
+# shellcheck disable=SC2016
+create_line=$(grep -n 'CREATE DATABASE $STAGING_DB' "$SCRIPT" | cut -d: -f1)
+check "the exit trap drops the staging database, set before it is made" 1 "$((trap_line > 0 && trap_line < create_line))"
+check "the rename turns the trap off" 1 "$(grep -c '^STAGING_RENAMED=1$' "$SCRIPT")"
 
 # The load goes into a staging database, its buyers go as the next command, and only then is it
 # renamed to the demo database: the demo API never reads production's buyers. The patterns name
@@ -37,6 +48,13 @@ rename_line=$(grep -n 'ALTER DATABASE $STAGING_DB RENAME TO $TARGET_DB' "$SCRIPT
 check "the cleaned copy is renamed to the demo database afterwards" 1 "$((rename_line > drop_line))"
 check "nothing but the sequence read touches the demo database before the rename" 0 \
   "$(awk -v to="$rename_line" 'NR < to && /-d "\$TARGET_DB"/ && !/MAIL_SEQ_SQL/' "$SCRIPT" | wc -l)"
+
+# Two runs never overlap: with the lock held, the script stops before it touches anything.
+lock=$(mktemp)
+held=$(flock -n "$lock" bash -c "SYNC_DEMO_LOCK='$lock' bash '$SCRIPT' 2>&1; echo \"exit \$?\"")
+rm -f "$lock"
+check "a second run stops at once while the first holds the lock" 1 "$(grep -c 'Another demo sync is running' <<<"$held")"
+check "and exits 1" 1 "$(grep -c '^exit 1$' <<<"$held")"
 
 name="herdbook-sync-demo-test-$$"
 trap 'docker rm -f "$name" >/dev/null 2>&1' EXIT
@@ -79,8 +97,7 @@ check "the dump and load succeed" 0 "$?"
 sql -d dst_staging -c "$DROP_BUYERS_SQL" >/dev/null
 check "the buyer step succeeds" 0 "$?"
 check "the dump carries no sequence value: the new database counts from 1" 1 "$(sql -d dst_staging -c "SELECT nextval('mail_message_id_seq')")"
-# shellcheck disable=SC2059  # the SQL template is the format
-sql -d dst_staging -c "$(printf "$SET_MAIL_SEQ_SQL" "$seq")" >/dev/null
+sql -d dst_staging -c "${SET_MAIL_SEQ_SQL//%s/$seq}" >/dev/null
 sql -c "DROP DATABASE dst" -c "ALTER DATABASE dst_staging RENAME TO dst"
 check "the rename succeeds" 0 "$?"
 check "mail_message comes over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM mail_message')"
@@ -93,6 +110,12 @@ check "the demo has no buyers" 0 "$(sql -d dst -c 'SELECT count(*) FROM buyer_co
 check "the sale stays, without its buyer" "1|" "$(sql -d dst -c 'SELECT id, holder_contact_id FROM herd_tracking')"
 sql -d dst -c "DROP TABLE herd_tracking, buyer_contact" -c "$DROP_BUYERS_SQL" >/dev/null
 check "an older schema without buyers is skipped" 0 "$?"
+
+# A run stopped between the load and the rename: the trap's statement removes the copy it left.
+sql -c "CREATE DATABASE $STAGING_DB" >/dev/null || exit 2
+sql -c "$DROP_STAGING_SQL" >/dev/null
+check "the exit trap's statement drops a leftover staging database" 0 \
+  "$(sql -c "SELECT count(*) FROM pg_database WHERE datname = '$STAGING_DB'")"
 
 echo ""
 echo "passed: $pass, failed: $fail"

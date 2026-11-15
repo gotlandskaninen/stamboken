@@ -15,6 +15,7 @@ from tests.ht_helpers import age_row, ht_row  # noqa: E402
 limiter.enabled = False
 REGISTERED = "G1-2111"  # individuals[0]: born 2021-02-01 in G1, BIRTH row on that date
 SALE_DATE = "2021-06-01"
+BUYER = {"name": "Köpare Test", "town": "Visby"}  # synthetic
 
 
 class MutationBase(DatabaseTest):
@@ -104,7 +105,15 @@ class TestCorrectionApi(MutationBase):
             {
                 "operation_id": str(uuid.uuid4()),
                 "void_ids": [],
-                "events": [{"date": "2021-09-30", "herd": "GX1", "kind": "TRANSFER", "notes": "Såld på marknad"}],
+                "events": [
+                    {
+                        "date": "2021-09-30",
+                        "herd": "GX1",
+                        "kind": "TRANSFER",
+                        "buyer": BUYER,
+                        "notes": "Såld på marknad",
+                    }
+                ],
             }
         )
         self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
@@ -112,7 +121,9 @@ class TestCorrectionApi(MutationBase):
 
     def test_owner_is_403(self):
         self._login("owner")
-        response = self._correct({"events": [{"date": "2021-09-30", "herd": "GX1", "kind": "TRANSFER"}]})
+        response = self._correct(
+            {"events": [{"date": "2021-09-30", "herd": "GX1", "kind": "TRANSFER", "buyer": BUYER}]}
+        )
         self.assertEqual(response.status_code, 403)
 
     def test_birth_alone_never_triggers_the_same_day_rule(self):
@@ -140,7 +151,10 @@ class TestUndoOperationApi(MutationBase):
         op = str(uuid.uuid4())
         self.client.post(
             f"/api/v2/individual/{REGISTERED}/herd-tracking/corrections",
-            json={"operation_id": op, "events": [{"date": "2021-09-30", "herd": "GX1", "kind": "TRANSFER"}]},
+            json={
+                "operation_id": op,
+                "events": [{"date": "2021-09-30", "herd": "GX1", "kind": "TRANSFER", "buyer": BUYER}],
+            },
         )
         response = self.client.post(f"/api/v2/herd-tracking/operations/{op}/undo", json={"reason": "Fel kanin"})
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
@@ -312,7 +326,7 @@ class TestAccessGateBeforeServices(MutationBase):
         self._login("man2")
         response = self.client.post(
             f"/api/v2/individual/{REGISTERED}/herd-tracking/corrections",
-            json={"events": [{"date": "2021-09-30", "herd": "GX1", "kind": "TRANSFER"}]},
+            json={"events": [{"date": "2021-09-30", "herd": "GX1", "kind": "TRANSFER", "buyer": BUYER}]},
         )
         self.assertEqual(response.status_code, 404)
 
@@ -321,7 +335,10 @@ class TestAccessGateBeforeServices(MutationBase):
         op = str(uuid.uuid4())
         self.client.post(
             f"/api/v2/individual/{REGISTERED}/herd-tracking/corrections",
-            json={"operation_id": op, "events": [{"date": "2021-09-30", "herd": "GX1", "kind": "TRANSFER"}]},
+            json={
+                "operation_id": op,
+                "events": [{"date": "2021-09-30", "herd": "GX1", "kind": "TRANSFER", "buyer": BUYER}],
+            },
         )
         self._login("man2")
         response = self.client.post(f"/api/v2/herd-tracking/operations/{op}/undo", json={"reason": "x"})
@@ -334,7 +351,10 @@ class TestFieldTypesAndUndoEdges(MutationBase):
         op = str(uuid.uuid4())
         self.client.post(
             f"/api/v2/individual/{REGISTERED}/herd-tracking/corrections",
-            json={"operation_id": op, "events": [{"date": "2021-09-30", "herd": "GX1", "kind": "TRANSFER"}]},
+            json={
+                "operation_id": op,
+                "events": [{"date": "2021-09-30", "herd": "GX1", "kind": "TRANSFER", "buyer": BUYER}],
+            },
         )
         return op
 
@@ -354,7 +374,7 @@ class TestFieldTypesAndUndoEdges(MutationBase):
         self._login("man")
         response = self.client.post(
             f"/api/v2/individual/{REGISTERED}/herd-tracking/corrections",
-            json={"events": [{"date": "2021-09-30", "herd": "GX1", "kind": "TRANSFER", "notes": 5}]},
+            json={"events": [{"date": "2021-09-30", "herd": "GX1", "kind": "TRANSFER", "buyer": BUYER, "notes": 5}]},
         )
         self.assertEqual(response.status_code, 400)
 

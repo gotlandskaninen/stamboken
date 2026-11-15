@@ -1063,6 +1063,22 @@ class TestCertificateV2Authorization(CertV2Mixin, FlaskTest):
         transfer = db.HerdTracking.get(db.HerdTracking.individual == individual, db.HerdTracking.kind == "TRANSFER")
         self.assertEqual(transfer.notes, "Fel")
 
+    def test_a_sale_outside_via_certificate_issue_needs_a_buyer_the_route_cannot_take(self):
+        """The certificate form has no buyer fields, so a sale to GX1 through it is refused (ADR-0016)."""
+        self._start_mock_aws()
+        import utils.database as db
+
+        db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        individual = self.individuals[3]  # G1-2112: born in G1, uncertified
+        body = {"herd": "GX1", "selling_date": "2021-06-01", "litter_size": 2, "litter_size6w": 2}
+        with self.app as context:
+            context.post("/api/login", json={"username": self.manager.email, "password": "pass"})
+            response = context.post(f"/api/v2/certificates/issue/{individual.number}", json=dict(body))
+        self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+        self.assertIn("köparens namn och ort", response.get_json()["detail"])
+        self.assertEqual(db.Individual.get_by_id(individual.id).current_herd.herd, "G1")
+        self.assertEqual(db.DigitalCertificateV2.select().count(), 0)
+
     def test_viewer_cannot_issue(self):
         """User who is not admin/manager/origin-owner gets 403."""
         individual = self.individuals[3]

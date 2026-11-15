@@ -114,11 +114,21 @@ class TestExecuteWithGrant(GrantTest):
         self.assertFalse(db.InboxOperation.select().exists())
 
     def test_a_helper_of_the_other_genebank_is_refused(self):
-        item, document = self.taken(self.mellerud_helper)  # an item may hold rabbits of any herd
+        item, document = self.taken(self.mellerud_helper, herd=2)  # an item may hold rabbits of any herd
         with self.assertRaises(IndividualRefused):
             self.certify(self.mellerud_helper, item, document)
         with self.assertRaises(IndividualRefused):  # nor a grant made out to someone else
             self.certify(self.helper, item, document)
+
+    def test_a_helper_is_refused_on_a_rabbit_in_the_special_herds(self):
+        outside = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken", is_active=True)
+        rabbit = self.rabbit("G1-2112")
+        ht_row("ATTESTATION", herd=outside, individual=rabbit, herd_tracking_date=date.today() - timedelta(days=1))
+        self.assertEqual(db.Individual.get_by_id(rabbit.id).current_herd.herd, "GX1")
+        item, document = self.taken(self.helper)  # the helper of its genebank, holding the item
+        with self.assertRaises(IndividualRefused):
+            self.certify(self.helper, item, document)
+        self.assertIsNone(self.rabbit("G1-2112").certificate)
 
     def test_a_helper_cannot_correct_but_a_manager_can(self):
         # The buyer's yearly report came in first: the sale goes before the rabbit's latest row.

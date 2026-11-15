@@ -35,7 +35,7 @@ from utils.database import (
     current_holder_row,
     not_voided,
 )
-from utils.herd_tracking import HerdTrackingError, correct_herd_tracking, is_manager_of
+from utils.herd_tracking import HerdTrackingError, attach_buyer, correct_herd_tracking, is_manager_of
 from utils.individual_commands import (
     AssignPaperCertificate,
     IndividualRefused,
@@ -184,6 +184,8 @@ def rate_limited(exc):
 @limiter.limit(
     "20 per hour", key_func=lambda: str(current_user.id), deduct_when=lambda response: response.status_code == 201
 )
+# Every request counts here, refused or not: a refused upload is decoded all the same.
+@limiter.limit("60 per hour", key_func=lambda: str(current_user.id))
 def upload():
     # Set before the body is read: the same limit as nginx's, so a larger upload never half reaches Flask.
     request.max_content_length = MAX_REQUEST
@@ -680,11 +682,12 @@ def transfer(item_id, document_id):
             lock_individual_for_edit(individual.id)
             latest = current_holder_row(individual.id)
             proven = inbox.proven_sale(item, document, individual, herd, when)
-            if proven is not None:  # the proof of a sale registered from another document: nothing to write
-                # Its buyer, if any, came with the sale; a `buyer` sent here is not read.
+            if proven is not None:  # the proof of a sale registered before: nothing to write but its buyer
                 seller = proven.from_herd or individual.origin_herd
                 if not (is_manager_of(user, seller.genebank_id) or grant.allows(user, seller)):
                     raise inbox.InboxError(403, "Du får inte koppla ett bevis till kaninens försäljning.")
+                if buyer is not None:  # a sale registered without its buyer gets the one the proof shows
+                    attach_buyer(proven, buyer, user)
                 row = proven
             elif herd in OUTSIDE_GENEBANK_HERDS and buyer is None:
                 # A new sale outside the association needs its buyer (ADR-0016); a proof of one registered does not.
@@ -777,6 +780,23 @@ def erase_original(item_id, document_id):
     except inbox.InboxError as exc:
         return problem(exc.status, exc.title, exc.detail)
     inbox_purge.remove_originals(paths)
+    return jsonify(answer)
+
+
+# [Next.js] Take a badly masked copy off the rabbit when it cannot be remade. Managers and admins.
+@inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/kopia", methods=["DELETE"])
+@json_login_required
+@_queue_worker
+def remove_copy(item_id, document_id):
+    try:
+        with DB_PROXY.atomic():
+            item = inbox.lock_item(item_id)
+            path = inbox.remove_copy(item, inbox.document_of(item, document_id), current_user)
+            document = inbox.document_of(item, document_id)
+            answer = {"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]}
+    except inbox.InboxError as exc:
+        return problem(exc.status, exc.title, exc.detail)
+    inbox.remove_files([path])
     return jsonify(answer)
 
 

@@ -216,3 +216,11 @@ class TestUploadRateLimit(InboxTest):
         self.assertEqual(resp.get_json()["type"], "rate-limit-exceeded")
         self.login("man")  # another user has an hour of their own
         self.assertEqual(self.upload(small, accept_warnings="1").status_code, 201)
+
+    def test_sixty_requests_an_hour_per_user_whatever_their_answer(self):
+        small = ("x.jpg", encoded(photo((200, 200))))
+        self.login("owner")
+        self.assertEqual([self.upload(small).status_code for _ in range(60)], [409] * 60)
+        self.assertEqual(self.upload(small).status_code, 429)
+        self.login("man")
+        self.assertEqual(self.upload(small).status_code, 409)
