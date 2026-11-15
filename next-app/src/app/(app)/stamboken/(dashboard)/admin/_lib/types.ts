@@ -27,7 +27,7 @@ export interface AdminUserDetail extends AdminUserListItem {
 export type PrivilegeEntry =
   | { level: "admin" }
   | { level: "matrikel_admin" }
-  | { level: "manager" | "viewer"; genebank: number }
+  | { level: "manager" | "helper" | "viewer"; genebank: number }
   | { level: "owner"; herd: number };
 
 export interface SyncStatus {

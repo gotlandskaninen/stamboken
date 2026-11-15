@@ -1,0 +1,9 @@
+{% block subject %}Din ansökan om medlemskap är godkänd{% endblock %}
+
+{% block body %}
+Hej!
+
+Din ansökan om medlemskap i Föreningen Gotlandskaninen är godkänd. Välkommen som medlem!
+
+Föreningen hör av sig till dig om hur du får tillgång till Stamboken och medlemsregistret.
+{% endblock %}

@@ -28,7 +28,7 @@ import { apiSlice } from "@/redux/api/apiSlice";
 import { usePendingMemberApplicationCountQuery } from "@/redux/api/memberApplicationsEndpoints";
 import { useAppDispatch } from "@/hooks/useAppDispatch";
 
-export function AvatarMenu() {
+export function AvatarMenu({ unread = 0 }: { unread?: number }) {
   const [anchor, setAnchor] = React.useState<null | HTMLElement>(null);
   const [modeDialogOpen, setModeDialogOpen] = React.useState(false);
   const router = useRouter();
@@ -141,6 +141,14 @@ export function AvatarMenu() {
           }}
         >
           Profil
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            closeMenu();
+            router.push("/stamboken/notiser");
+          }}
+        >
+          {unread > 0 ? `Notiser (${unread})` : "Notiser"}
         </MenuItem>
         {user && hasAnyVisible(user) && (
           <MenuItem

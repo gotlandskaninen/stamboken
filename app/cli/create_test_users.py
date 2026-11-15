@@ -110,6 +110,14 @@ def create_test_users():
             "roles": [("manager", mk.id if mk else None)],
         },
         {
+            # A genebank helper: works in the intake queue (inläsningskön) with no rabbits of their own.
+            "email": "test-gk-helper@example.org",
+            "password": "test-gk-helper-pass",
+            "username": "test-gk-helper",
+            "fullname": "Test GK Hjälpare",
+            "roles": [("helper", gk.id if gk else None)],
+        },
+        {
             "email": "test-gk-owner@test.local",
             "password": "test-gk-owner-pass",
             "username": "test-gk-owner",

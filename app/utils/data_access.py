@@ -58,6 +58,7 @@ from utils.database import AUDITED_TABLES  # isort: skip
 from utils.database import IndividualDisease  # isort: skip
 
 from utils.database import YearlyReportRound  # isort:skip
+from utils.database import YearlyReportRoundGenebank  # isort:skip
 from utils.csv_safe import csv_cell  # isort:skip
 from utils.herd_tracking import BIRTH_HERD_CHANGED_REASON  # isort:skip
 from utils.herd_tracking import HerdTrackingError  # isort:skip
@@ -860,7 +861,7 @@ def update_user(form, user_uuid=None):
     return {"status": "unchanged"}
 
 
-_ALLOWED_LEVELS = ("admin", "matrikel_admin", "manager", "viewer", "owner")
+_ALLOWED_LEVELS = ("admin", "matrikel_admin", "manager", "helper", "viewer", "owner")
 
 
 def validate_privileges(privileges):
@@ -871,6 +872,7 @@ def validate_privileges(privileges):
     - {"level": "admin"}
     - {"level": "matrikel_admin"}
     - {"level": "manager", "genebank": <int>}
+    - {"level": "helper",  "genebank": <int>}
     - {"level": "viewer",  "genebank": <int>}
     - {"level": "owner",   "herd":     <int>}   # numeric Herd.id
 
@@ -907,7 +909,7 @@ def validate_privileges(privileges):
                 raise ValueError(f"Nivå {level!r} får inte ha extra fält (fick {sorted(extra_keys)}).")
             validated.append({"level": level})
 
-        elif level in ("manager", "viewer"):
+        elif level in ("manager", "helper", "viewer"):
             if "genebank" not in entry:
                 raise ValueError(f"Nivå {level!r} kräver 'genebank'.")
             gb = entry["genebank"]
@@ -1025,7 +1027,7 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
 
     The input data should be formatted like:
         {action: add | remove,
-         role: owner | manager | viewer | admin | matrikel_admin,
+         role: owner | manager | helper | viewer | admin | matrikel_admin,
          user: <id>,
          herd | genebank: <id>
         }
@@ -1060,9 +1062,9 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
     ):
         valid = False
     elif (
-        operation.get("role", {}) not in ["owner", "manager", "viewer", "admin", "matrikel_admin"]
+        operation.get("role", {}) not in ["owner", "manager", "helper", "viewer", "admin", "matrikel_admin"]
         or (
-            operation["role"] in ["manager", "viewer"]
+            operation["role"] in ["manager", "helper", "viewer"]
             and not (operation.get("genebank") and _is_int_id(operation["genebank"]))
         )
         or (operation["role"] == "owner" and not (operation.get("herd") and _is_int_id(operation["herd"])))
@@ -1576,6 +1578,17 @@ def save_yearly_report(herd_id, form_data, user):
                     "message": "Report year does not match report round year",
                 }
 
+            # Legacy closes for a genebank once v2 activated it for the year, whatever the round's flags say
+            if (
+                YearlyReportRoundGenebank.select()
+                .where(
+                    (YearlyReportRoundGenebank.round == report_round.id)
+                    & (YearlyReportRoundGenebank.genebank == herd.genebank_id)
+                )
+                .exists()
+            ):
+                return {"status": "error", "message": "Årsrapporten för den här genbanken lämnas i nya Stamboken."}
+
             # Validate that no other report exists for this herd in this year
             existing_reports = (
                 YearlyHerdReport.select()
@@ -1584,6 +1597,7 @@ def save_yearly_report(herd_id, form_data, user):
                     (YearlyHerdReport.herd == herd_id)
                     & (YearlyReportRound.report_year == report_year)
                     & (YearlyHerdReport.round != report_round_id)
+                    & (YearlyHerdReport.status == "legacy")
                 )
             )
             if existing_reports.exists():
@@ -1600,7 +1614,11 @@ def save_yearly_report(herd_id, form_data, user):
         # Check if a report already exists for this herd and round
         existing_report = (
             YearlyHerdReport.select()
-            .where((YearlyHerdReport.herd == herd_id) & (YearlyHerdReport.round == report_round_id))
+            .where(
+                (YearlyHerdReport.herd == herd_id)
+                & (YearlyHerdReport.round == report_round_id)
+                & (YearlyHerdReport.status == "legacy")
+            )
             .first()
         )
 
@@ -1982,7 +2000,7 @@ LEGACY_GENEBANK_CHANGE_NOTE = "Genbanksbyte av admin via legacy"
 
 
 @number_assets.finishing  # inside a caller's transaction, teardown_request finishes instead
-def update_individual(form, user_uuid, issue_digital=False, genebank_change_reason=None, clear_nulls=False):
+def update_individual(form, user_uuid, issue_digital=False, genebank_change_reason=None, clear_nulls=False, buyer=None):
     """
     Updates the individual `form["id"]` by the values in `form`, if the user identified by `user_uuid`
     may: translate (utils.individual_legacy) turns the form into write commands, which execute runs under
@@ -1991,7 +2009,7 @@ def update_individual(form, user_uuid, issue_digital=False, genebank_change_reas
     required note for an admin's move into another genebank (legacy PATCH passes
     LEGACY_GENEBANK_CHANGE_NOTE, the v2 certificate routes the body's reason; the legacy certificate
     routes pass none, and their form drops herd). `clear_nulls` (v2) clears the death and castration
-    fields sent as null.
+    fields sent as null. `buyer` (v2) is the buyer outside the association on a sale to GX1/MX1.
     """
     user = fetch_user_info(user_uuid)
     if user is None:
@@ -2017,6 +2035,7 @@ def update_individual(form, user_uuid, issue_digital=False, genebank_change_reas
                 issue_digital=issue_digital,
                 clear_nulls=clear_nulls,
                 genebank_change_reason=genebank_change_reason,
+                buyer=buyer,
             ),
             target_breeding=form.get("breeding"),
         )
@@ -3330,7 +3349,7 @@ def get_yearly_report_rounds_with_counts(user_uuid=None):
             .join(
                 YearlyHerdReport,
                 JOIN.LEFT_OUTER,
-                on=(YearlyHerdReport.round == YearlyReportRound.id),
+                on=((YearlyHerdReport.round == YearlyReportRound.id) & (YearlyHerdReport.status == "legacy")),
             )
             .group_by(YearlyReportRound, User.username)
             .dicts()
@@ -3368,7 +3387,11 @@ def get_yearly_report_by_round(herd_id, round_id):
     try:
         report = (
             YearlyHerdReport.select()
-            .where((YearlyHerdReport.herd == herd_id) & (YearlyHerdReport.round == round_id))
+            .where(
+                (YearlyHerdReport.herd == herd_id)
+                & (YearlyHerdReport.round == round_id)
+                & (YearlyHerdReport.status == "legacy")
+            )
             .get()
         )
         report_data = report.as_dict()
@@ -3386,7 +3409,11 @@ def get_yearly_reports(round_id: int, genebank_id: int) -> list[dict]:
             reports = (
                 YearlyHerdReport.select(YearlyHerdReport, Herd)
                 .join(Herd)
-                .where((YearlyHerdReport.round == round_id) & (Herd.genebank == genebank_id))
+                .where(
+                    (YearlyHerdReport.round == round_id)
+                    & (Herd.genebank == genebank_id)
+                    & (YearlyHerdReport.status == "legacy")
+                )
             )
 
             formatted_reports = []
@@ -3738,7 +3765,7 @@ def _genebank_letters():
 def _role_summary(user, letters):
     """
     Short computed role label:
-    "admin" | "manager(G,M)" | "viewer(G)" | "owner(2 besättningar)" |
+    "admin" | "manager(G,M)" | "helper(G)" | "viewer(G)" | "owner(2 besättningar)" |
     "ingen roll". Precedence: admin > manager > viewer > owner.
     matrikel_admin is no studbook role and is never hidden by that
     precedence: it is appended ("manager(G) + matrikel_admin") or stands
@@ -3754,7 +3781,7 @@ def _role_summary(user, letters):
 def _studbook_role_summary(privs, letters):
     if any(p.get("level") == "admin" for p in privs):
         return "admin"
-    for level in ("manager", "viewer"):
+    for level in ("manager", "helper", "viewer"):
         ids = [p.get("genebank") for p in privs if p.get("level") == level]
         if ids:
             return f"{level}({','.join(letters.get(i, '?') for i in ids)})"

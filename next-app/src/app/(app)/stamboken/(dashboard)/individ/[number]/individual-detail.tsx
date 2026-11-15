@@ -42,9 +42,11 @@ import { PedigreeSection } from "@/components/individual/PedigreeSection";
 import { HealthSection } from "@/components/individual/HealthSection";
 import { HerdHistorySection } from "@/components/individual/HerdHistorySection";
 import { NotesSection } from "@/components/individual/NotesSection";
+import { PaperCertificate } from "@/components/individual/PaperCertificate";
 import { EditSaveBar } from "@/components/individual/EditSaveBar";
 import { ReportDeathDialog } from "@/components/individual/ReportDeathDialog";
 import { SellRabbitDialog } from "@/components/individual/SellRabbitDialog";
+import type { SaleBuyer } from "@/components/individual/BuyerFields";
 import { isOutsideGenebankHerd } from "@/utils/saleRules";
 import {
   saveFormData,
@@ -253,6 +255,7 @@ interface Props {
   pedigree?: PedigreeNode | null;
   history: HerdTrackingHistory | null;
   auditEntries?: AuditLogEntry[];
+  hasPaperCertificate?: boolean;
   geneticsSlot?: React.ReactNode;
 }
 
@@ -261,6 +264,7 @@ export function IndividualDetail({
   pedigree,
   history,
   auditEntries = [],
+  hasPaperCertificate = false,
   geneticsSlot,
 }: Props) {
   const searchParams = useSearchParams();
@@ -531,12 +535,13 @@ export function IndividualDetail({
     });
   };
 
-  const handleSell = (herd: string, sellingDate: string) => {
+  const handleSell = (herd: string, sellingDate: string, buyer?: SaleBuyer) => {
     setSellError(null);
     startTransition(async () => {
       const result = await updateIndividual(individual.number || "", {
         herd,
         selling_date: sellingDate,
+        ...(buyer ? { buyer } : {}),
       });
       if (result.success) {
         setSellDialogOpen(false);
@@ -718,6 +723,9 @@ export function IndividualDetail({
                 setCorrectionOpen(true);
               }}
             />
+            {individual.number && hasPaperCertificate && (
+              <PaperCertificate number={individual.number} />
+            )}
             <NotesSection
               individual={individual}
               isEditing={isEditing}

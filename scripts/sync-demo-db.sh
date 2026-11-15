@@ -133,6 +133,14 @@ docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
 # Sync using pg_dump | psql (non-disruptive to source DB). The target is
 # empty, so no --clean is needed. Abort on the first SQL error — a silently
 # broken sync locks recently-registered users out of v2 (demo is the default).
+# The queue tables come over without their data: the demo API keeps running
+# through the load, and its sender must never see production's mail queue or
+# intake items, not even for a moment. A pattern that matches no table (an
+# older schema) is fine; notice_setting, a user preference, is copied. The
+# yearly report's drafts, change requests and sale proposals are left out too:
+# no FK points at them, and they hold contact values, buyers or unsent text.
+# Its submissions are copied, purged after 13 months like the report rows.
+SKIP_QUEUE_DATA="--exclude-table-data='mail_*' --exclude-table-data='inbox_*' --exclude-table-data=notice --exclude-table-data='gmail_*' --exclude-table-data=yearly_report_draft --exclude-table-data=member_change_request --exclude-table-data=sale_proposal"
 echo "Syncing $SOURCE_DB -> $TARGET_DB via pg_dump..."
 # ON_ERROR_STOP=1 aborts psql on the first SQL error; the
 # outer set -Eeo pipefail then fires the ERR trap so the failure telemetry row
@@ -140,7 +148,7 @@ echo "Syncing $SOURCE_DB -> $TARGET_DB via pg_dump..."
 # record_sync_failure's detail.
 docker exec "$CONTAINER" bash -c "
 	set -o pipefail
-	pg_dump -U $DB_USER --no-owner --no-privileges $SOURCE_DB \
+	pg_dump -U $DB_USER --no-owner --no-privileges $SKIP_QUEUE_DATA $SOURCE_DB \
 	| psql -U $DB_USER -d $TARGET_DB -q -v ON_ERROR_STOP=1
 " 2>&1 | tee "${DUMP_LOG:-/dev/null}" | { grep -v '^$' || true; } | tail -5
 
@@ -166,6 +174,17 @@ docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
 echo "Setting all users to validated in $TARGET_DB..."
 docker exec "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -v ON_ERROR_STOP=1 -c \
 	"UPDATE hbuser SET validated = true WHERE validated = false;"
+
+# The copy also carries production's buyers outside the association (ADR-0016).
+# Only a genebank's managers and helpers may see them, and every read is logged
+# in production, not in the demo, so they are removed. They cannot be left out
+# with --exclude-table-data as the queue tables are: herd_tracking points at
+# them, and the load's foreign key would fail. One statement, so one
+# transaction: the FK (ON DELETE SET NULL) nulls herd_tracking.holder_contact_id
+# and the sales stay. An older schema without the table is skipped.
+DROP_BUYERS_SQL="DO \$\$ BEGIN IF to_regclass('buyer_contact') IS NOT NULL THEN DELETE FROM buyer_contact; END IF; END \$\$;"
+echo "Deleting the buyers outside the association in $TARGET_DB..."
+docker exec "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -v ON_ERROR_STOP=1 -q -c "$DROP_BUYERS_SQL"
 
 # Verifiera
 TABLES=$(docker exec "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -t -c \

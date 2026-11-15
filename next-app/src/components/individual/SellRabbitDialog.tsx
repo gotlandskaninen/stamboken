@@ -23,6 +23,14 @@ import {
 } from "@mui/x-date-pickers/hooks";
 import { useTranslation } from "react-i18next";
 import {
+  BuyerFields,
+  EMPTY_BUYER,
+  buyerComplete,
+  buyerPayload,
+  type BuyerDraft,
+  type SaleBuyer,
+} from "./BuyerFields";
+import {
   type GenebankHerd,
   isOutsideGenebankHerd,
   minSaleDate,
@@ -54,7 +62,7 @@ type LoadHerdsResult =
 interface SellRabbitDialogProps {
   open: boolean;
   onClose: () => void;
-  onConfirm: (herd: string, sellingDate: string) => void;
+  onConfirm: (herd: string, sellingDate: string, buyer?: SaleBuyer) => void;
   loadHerds: () => Promise<LoadHerdsResult>;
   individualName: string;
   individualNumber: string;
@@ -123,6 +131,7 @@ function SellRabbitDialogContent({
   const [target, setTarget] = React.useState<GenebankHerd | null>(null);
   const [date, setDate] = React.useState<Date | null>(() => stockholmToday());
   const [acknowledged, setAcknowledged] = React.useState(false);
+  const [buyer, setBuyer] = React.useState<BuyerDraft>(EMPTY_BUYER);
 
   // Load the herd list when the dialog opens (picker data is not needed earlier).
   React.useEffect(() => {
@@ -143,7 +152,8 @@ function SellRabbitDialogContent({
       (herds ?? [])
         .filter(
           (h) =>
-            h.herd !== currentHerd.herd &&
+            // GX1 to GX1 too: a buyer outside the association sells to another.
+            (h.herd !== currentHerd.herd || isOutsideGenebankHerd(h.herd)) &&
             (isRegistered || isOutsideGenebankHerd(h.herd)),
         )
         // The outside-genebank herd first: it is the common choice.
@@ -159,7 +169,12 @@ function SellRabbitDialogContent({
   const dateProblem = validateSaleDate(date, minDate, today);
   const outsideCode = options.find((h) => isOutsideGenebankHerd(h.herd))?.herd;
   const targetOutside = target ? isOutsideGenebankHerd(target.herd) : false;
-  const canSubmit = !!target && !dateProblem && acknowledged && !isSaving;
+  const canSubmit =
+    !!target &&
+    !dateProblem &&
+    acknowledged &&
+    (!targetOutside || buyerComplete(buyer)) &&
+    !isSaving;
 
   const optionLabel = (h: GenebankHerd) =>
     herdText(
@@ -182,7 +197,11 @@ function SellRabbitDialogContent({
     if (!target || !date || validateSaleDate(date, minDate, stockholmToday())) {
       return;
     }
-    onConfirm(target.herd, toIsoDate(date));
+    if (!targetOutside) {
+      onConfirm(target.herd, toIsoDate(date));
+      return;
+    }
+    onConfirm(target.herd, toIsoDate(date), buyerPayload(buyer));
   };
 
   const displayName = individualName || individualNumber;
@@ -334,6 +353,12 @@ function SellRabbitDialogContent({
             slots={{ actionBar: StockholmTodayActionBar }}
           />
         </Box>
+
+        {targetOutside && (
+          <Box sx={{ mt: 2.5 }}>
+            <BuyerFields value={buyer} onChange={setBuyer} />
+          </Box>
+        )}
 
         {target && !dateProblem && date && (
           <Box

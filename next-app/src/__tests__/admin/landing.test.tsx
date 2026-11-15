@@ -43,6 +43,7 @@ const CARD_TITLES: Record<string, string> = {
   ANVÄNDARE: "Användare",
   BESÄTTNINGAR: "Besättningar",
   GENBANKER: "Genbanker",
+  UTSKICK: "Utskick",
   SYSTEM: "System",
 };
 
@@ -73,7 +74,7 @@ describe("AdminLandingPage", () => {
     const admin = makeUser({ is_admin: true });
     getUserMock.mockResolvedValue(admin);
     render(await AdminLandingPage());
-    expect(expectedTitles(admin)).toHaveLength(4); // all groups visible
+    expect(expectedTitles(admin)).toHaveLength(5); // all groups visible
     for (const title of expectedTitles(admin)) {
       expect(screen.getByRole("heading", { name: title })).toBeInTheDocument();
     }

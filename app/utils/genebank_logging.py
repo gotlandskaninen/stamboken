@@ -8,13 +8,15 @@ from logging.handlers import TimedRotatingFileHandler
 
 from flask import has_request_context, request
 
+from utils.log_masking import mask_tokens
+
 Glogger = logging.getLogger("herdbook.genbanklogging")
 
 
 class RequestFormatter(logging.Formatter):
     def format(self, record):
         if has_request_context():
-            record.url = request.url
+            record.url = mask_tokens(request.url)
             record.remote_addr = request.remote_addr
         else:
             record.url = None

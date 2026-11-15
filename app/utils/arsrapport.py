@@ -1,0 +1,2009 @@
+"""
+The yearly report v2 (årsrapport): rounds, their activation per genebank, who may report for a herd, the herd's
+list (5.2), the report view, the server draft, the submission and its effects on the register, the dry run,
+Ändra and Dra tillbaka.
+The routes are in blueprints/arsrapport.py (ADR-0007).
+"""
+
+import calendar
+import hashlib
+import hmac
+import json
+import re
+import uuid
+from collections import Counter
+from dataclasses import asdict, dataclass, field
+from datetime import date, datetime, timedelta, timezone
+from types import SimpleNamespace
+from zoneinfo import ZoneInfo
+
+from flask import current_app
+from peewee import JOIN, IntegrityError, fn
+
+import utils.inbox as inbox
+from utils.database import (
+    DB_PROXY,
+    LIFE_SIGN_KINDS,
+    OUTSIDE_GENEBANK_HERDS,
+    AuditLog,
+    Bodyfat,
+    Breeding,
+    Color,
+    Herd,
+    HerdTracking,
+    InboxDocument,
+    InboxEvent,
+    InboxItem,
+    Individual,
+    IndividualCommand,
+    MatrikelAudit,
+    Member,
+    MemberChangeRequest,
+    Membership,
+    PublicationConsentChange,
+    Weight,
+    YearlyHerdReport,
+    YearlyReportDraft,
+    YearlyReportRound,
+    YearlyReportRoundGenebank,
+    YearlyReportSubmission,
+    coerce_date,
+    ht_not_voided,
+    ht_order_desc,
+    ht_sort_key,
+    latest_ht_per_individual,
+    lock_breedings,
+    lock_individuals,
+    not_voided,
+)
+from utils.database import (
+    account_end as masked_account,
+)
+from utils.herd_tracking import (
+    DATE_BEFORE_LATEST,
+    REPORT_LATER_ROW,
+    HerdTrackingError,
+    HerdTrackingInvalid,
+    _reject_buyer_name,
+    buyer_contact_fields,
+    latest_death_op,
+    reject_contact_details,
+    report_void_denial,
+    void_herd_tracking,
+)
+from utils.individual_commands import (
+    REPORT_UNDO_REASON,
+    IndividualRefused,
+    RecordAttestation,
+    RecordDeath,
+    SetMeasurements,
+    TransferIndividual,
+    Undo,
+    execute,
+)
+from utils.individual_policy import Role
+from utils.mail import Recipient, enqueue_mail, mail_kind, recipient_kind
+from utils.matrikel import AddressValidationError, is_anonymized, parse_postal_fields, write_matrikel_audit
+from utils.members import CONSENT_TEXT_VERSION, consent_from_answer, effective_consent, set_consent, stored_consent
+from utils.reference_population import _alive_by_note
+
+STOCKHOLM = ZoneInfo("Europe/Stockholm")
+DATE_FIELDS = ("start_date", "deadline", "end_date")
+DRAFT_MAX_BYTES = 256 * 1024
+WITHDRAW_DAYS = 7  # fråga 15: owners and caretakers withdraw until 7 days after the first submission
+_REPORT_LOCK = 0x48424152  # "HBAR": classid of the advisory lock on a herd's report in a round
+
+
+class ArsrapportError(Exception):
+    """A refusal with its HTTP status; the blueprint turns it into problem(status, title, detail, **extra)."""
+
+    TITLES = {
+        400: "Ogiltig begäran",
+        403: "Åtkomst nekad",
+        404: "Hittades inte",
+        409: "Konflikt",
+        422: "Kan inte sparas",
+    }
+
+    def __init__(self, status, detail, **extra):
+        super().__init__(detail)
+        self.status, self.title, self.detail, self.extra = status, self.TITLES[status], detail, extra
+
+
+def now():
+    return datetime.now(timezone.utc)
+
+
+def today():
+    return now().astimezone(STOCKHOLM).date()
+
+
+def default_dates(year):
+    """Fråga 7: the round opens 31 December, the support deadline is 31 January, and it closes 30 March."""
+    return {"start_date": date(year, 12, 31), "deadline": date(year + 1, 1, 31), "end_date": date(year + 1, 3, 30)}
+
+
+def get_round(year):
+    return YearlyReportRound.get_or_none(YearlyReportRound.report_year == year)
+
+
+def save_round(year, user, **dates):
+    """
+    The year's round with `dates` applied: a new round, or a legacy round's missing dates, get the defaults first.
+    Only the dates that change are saved, so legacy's is_active is never written (D3) and the genetics trigger
+    sees end_date only when it moves.
+    """
+    if abs(year - today().year) > 1:
+        raise ArsrapportError(400, f"Året ska vara {today().year - 1}, {today().year} eller {today().year + 1}.")
+    round_ = get_round(year) or YearlyReportRound(report_year=year, created_by=user)
+    wanted = {key: getattr(round_, key) or default for key, default in default_dates(year).items()} | dates
+    if not wanted["start_date"] <= wanted["deadline"] <= wanted["end_date"]:
+        raise ArsrapportError(400, "Rundan öppnar först, sedan kommer sista dagen för stödet och sist stängningen.")
+    changed = [key for key in DATE_FIELDS if getattr(round_, key) != wanted[key]]
+    for key in changed:
+        setattr(round_, key, wanted[key])
+    if round_.id is None:
+        round_.save()
+    elif changed:
+        round_.save(only=[getattr(YearlyReportRound, key) for key in changed])
+    return round_
+
+
+def activate(round_, genebank_id, user, send_at=None):
+    """
+    The genebank's activation of the round; again, the first one, unchanged. `send_at` defaults to the round's
+    first day. The round's is_active is never set: it would open legacy's form for the other genebank (D3).
+    """
+    send_at = send_at or round_.start_date or default_dates(round_.report_year)["start_date"]
+    YearlyReportRoundGenebank.insert(
+        round=round_.id, genebank=genebank_id, activated_by=user.id, activated_at=now(), send_at=send_at
+    ).on_conflict_ignore().execute()
+    return YearlyReportRoundGenebank.get(
+        (YearlyReportRoundGenebank.round == round_.id) & (YearlyReportRoundGenebank.genebank == genebank_id)
+    )
+
+
+def _activations(round_):
+    return YearlyReportRoundGenebank.select().where(YearlyReportRoundGenebank.round == round_.id)
+
+
+def round_open(round_, genebank_id, on):
+    """D11: the genebank has activated the round and `on` is within its dates; a round without dates is never open."""
+    if not (round_.start_date and round_.end_date and round_.start_date <= on <= round_.end_date):
+        return False
+    return _activations(round_).where(YearlyReportRoundGenebank.genebank == genebank_id).exists()
+
+
+def _iso(value):
+    return value.isoformat() if value is not None else None
+
+
+def round_json(round_):
+    """Round. is_active means some genebank has activated it (P5), not legacy's column."""
+    rows = list(_activations(round_).order_by(YearlyReportRoundGenebank.genebank))
+    names = inbox.person_names([row.activated_by_id for row in rows])
+    return {
+        "year": round_.report_year,
+        **{key: _iso(getattr(round_, key)) for key in DATE_FIELDS},
+        "is_active": bool(rows),
+        "genebanks": [
+            {
+                "genebank_id": row.genebank_id,
+                "activated_at": _iso(row.activated_at),
+                "activated_by": {"id": row.activated_by_id, "name": names[row.activated_by_id]},
+                "send_at": _iso(row.send_at),
+                "sent_at": _iso(row.sent_at),
+            }
+            for row in rows
+        ],
+    }
+
+
+@dataclass(frozen=True)
+class Access:
+    role: str  # owner | caretaker | manager | admin | helper
+    item: InboxItem | None = None  # paper only: the taken item with an arsblankett document
+
+    @property
+    def source(self):
+        return "paper" if self.item else "login"
+
+    @property
+    def can_sell(self):
+        return self.role != "caretaker"  # D12
+
+    @property
+    def editor(self):
+        return self.role in ("manager", "admin")
+
+
+def _form_item(item, user, herd):
+    """
+    The paper path's item (5.5): the user's taken item for the herd, not decided in another feature, with an
+    arsblankett document. A helper's own upload counts like any other (Jonas 2026-11-15).
+    """
+    return (
+        item.herd_id == herd.id
+        and item.state == "tagen"
+        and item.assigned_to_id == user.id
+        and item.ref_type is None
+        and item.documents.where(InboxDocument.doc_type == "arsblankett").exists()
+    )
+
+
+def report_access(user, herd, item_id=None):
+    """
+    The user's right to the herd's report, or None. On paper (`item_id`) only through such an item (_form_item). It
+    reads the item without a lock; Skicka checks it again under inbox.lock_item.
+    """
+    if herd.herd in OUTSIDE_GENEBANK_HERDS:
+        return None
+    managed = herd.genebank_id in (user.is_manager or ())
+    if item_id is not None:
+        item = InboxItem.get_or_none(InboxItem.id == item_id)
+        if item is None or not _form_item(item, user, herd):
+            return None
+        helps = herd.genebank_id in (user.is_helper or ())
+        role = "admin" if user.is_admin else "manager" if managed else "helper" if helps else None
+        return Access(role, item) if role else None
+    if user.is_admin:
+        return Access("admin")
+    if managed:
+        return Access("manager")
+    if herd.id in user.transfer_herd_ids():
+        return Access("owner")
+    if herd.id in user.effective_herd_ids():
+        return Access("caretaker")
+    return None
+
+
+def lock_report(round_, herd):
+    """The advisory lock on (round, herd): every write to the report or the draft takes it first, in a transaction."""
+    DB_PROXY.execute_sql("SELECT pg_advisory_xact_lock(%s, hashtext(%s))", (_REPORT_LOCK, f"{round_.id}/{herd.id}"))
+
+
+def current_report(herd, round_):
+    return YearlyHerdReport.get_or_none(
+        (YearlyHerdReport.herd == herd.id)
+        & (YearlyHerdReport.round == round_.id)
+        & (YearlyHerdReport.status == "submitted")
+    )
+
+
+def _submissions(report):
+    """The report's submissions, oldest first."""
+    query = YearlyReportSubmission.select().where(YearlyReportSubmission.report == report.id)
+    return list(query.order_by(YearlyReportSubmission.created_at, YearlyReportSubmission.id))
+
+
+def report_ops(report):
+    """The operation ids (str) the report's submissions wrote: the report's own rows (D3b, D4)."""
+    return {str(op) for submission in _submissions(report) for op in submission.operation_ids}
+
+
+def _listed_5_2(herd, last):
+    """
+    Spec 5.2's list for `herd` on `last` (31 December), with innehav's filters: H holds the rabbit then, it has a
+    certificate (an empty paper number is none), is not voided, and is not dead on `last` by date or by note.
+    """
+    in_herd = HerdTracking.select(HerdTracking.individual).where(HerdTracking.herd == herd.id)
+    # Limited to the rabbits that were ever in H before the window function runs, as innehav limits to the genebank.
+    holder = latest_ht_per_individual(as_of=last).where(HerdTracking.individual.in_(in_herd)).alias("holder")
+    rows = (
+        Individual.select(Individual.id, Individual.death_date, Individual.death_note, Breeding.birth_date)
+        .join(holder, on=((holder.c.i_id == Individual.id) & (holder.c.rank == 1)))
+        .switch(Individual)
+        .join(Breeding, JOIN.LEFT_OUTER, on=(Individual.breeding == Breeding.id))
+        .where(
+            holder.c.herd == herd.id,
+            not_voided(),
+            (Individual.certificate.is_null(False) & (Individual.certificate != ""))
+            | Individual.digital_certificate.is_null(False),
+            Individual.death_date.is_null() | (Individual.death_date > last),
+        )
+    )
+    return {row["id"] for row in rows.dicts() if _alive_by_note(row, last)}
+
+
+def report_list(herd, year, report=None):
+    """
+    ReportView.rabbits, sorted on number: the 5.2 list plus every rabbit in the report's latest submission (D3b).
+    Only rows outside the report's own operations make a rabbit "redan_rapporterad" (an active ATTESTATION dated
+    31/12 in H) or "via_flytt" (an active life sign after 31/12, the first of them in `later`).
+    """
+    last = date(year, 12, 31)
+    ids, ops = _listed_5_2(herd, last), set()
+    if report is not None:
+        submissions = _submissions(report)
+        ops = {str(op) for submission in submissions for op in submission.operation_ids}
+        ids |= {int(key) for key in (submissions[-1].data.get("rabbits") or {})} if submissions else set()
+    rabbits = (
+        Individual.select(
+            Individual.id,
+            Individual.number,
+            Individual.name,
+            Individual.sex,
+            Individual.castration_date,
+            Individual.death_date,
+            Color.name.alias("color"),
+            Breeding.birth_date,
+        )
+        .join(Breeding, JOIN.LEFT_OUTER, on=(Individual.breeding == Breeding.id))
+        .switch(Individual)
+        .join(Color, JOIN.LEFT_OUTER, on=(Individual.color == Color.id))
+        .where(Individual.id.in_(sorted(ids)))
+        .order_by(Individual.number)
+    )
+    rows = {}
+    for rabbit in rabbits.dicts():
+        birth, castration, death = rabbit["birth_date"], rabbit["castration_date"], rabbit["death_date"]
+        rows[rabbit["id"]] = {
+            "id": rabbit["id"],
+            "number": rabbit["number"],
+            "name": rabbit["name"],
+            "sex": rabbit["sex"],
+            "color": rabbit["color"],
+            "birth_date": _iso(birth),
+            "castrated": rabbit["sex"] == "eunuch" or (castration is not None and castration <= last),
+            "adult": birth is None or birth < date(year, 1, 1),
+            "last_reported": None,
+            "death_date": _iso(death) if death is not None and death > last else None,
+            "state": "att_valja",
+            "later": None,
+        }
+    signs = (
+        HerdTracking.select(
+            HerdTracking.individual,
+            HerdTracking.herd,
+            HerdTracking.kind,
+            HerdTracking.herd_tracking_date,
+            HerdTracking.operation_id,
+        )
+        .where(
+            HerdTracking.individual.in_(sorted(rows)),
+            ht_not_voided(),
+            (HerdTracking.kind == "ATTESTATION")
+            | (HerdTracking.kind.in_(LIFE_SIGN_KINDS) & (HerdTracking.herd_tracking_date > last)),
+        )
+        .order_by(HerdTracking.herd_tracking_date, HerdTracking.id)
+    )
+    for sign in signs.dicts():  # oldest first: the last attestation wins last_reported, the first later sign wins
+        row, when = rows[sign["individual"]], sign["herd_tracking_date"]
+        if sign["kind"] == "ATTESTATION":
+            row["last_reported"] = _iso(when)
+        if str(sign["operation_id"]) in ops:
+            continue
+        if sign["kind"] == "ATTESTATION" and when == last and sign["herd"] == herd.id:
+            row["state"], row["later"] = "redan_rapporterad", None
+        elif when > last and row["state"] == "att_valja":
+            row["state"], row["later"] = "via_flytt", {"kind": sign["kind"], "date": _iso(when)}
+    return list(rows.values())
+
+
+def stored_body(body: dict) -> dict:
+    """D10: the body without matrikel, every buyer (kopare), submission_key and revision; a copy, never mutated."""
+    stored = {key: value for key, value in body.items() if key not in ("matrikel", "submission_key", "revision")}
+    if isinstance(body.get("rabbits"), dict):
+        stored["rabbits"] = {
+            key: {**entry, "sald": {k: v for k, v in entry["sald"].items() if k != "kopare"}}
+            if isinstance(entry, dict) and isinstance(entry.get("sald"), dict)
+            else entry
+            for key, entry in body["rabbits"].items()
+        }
+    return stored
+
+
+def _holds_private(body):
+    """A matrikel or a buyer in the body: never stored in a draft (section 6). A null is only stripped."""
+    rabbits = body.get("rabbits")
+    entries = rabbits.values() if isinstance(rabbits, dict) else ()
+    return body.get("matrikel") is not None or any(
+        isinstance(entry, dict) and isinstance(entry.get("sald"), dict) and entry["sald"].get("kopare") is not None
+        for entry in entries
+    )
+
+
+def _draft(herd, round_):
+    return YearlyReportDraft.get_or_none((YearlyReportDraft.herd == herd.id) & (YearlyReportDraft.round == round_.id))
+
+
+def draft_json(draft, user):
+    """ReportView.draft; `own` says whether the asking user saved it last (P59b)."""
+    return {
+        "data": draft.data,
+        "updated_at": _iso(draft.updated_at),
+        "submission_key": str(draft.submission_key) if draft.submission_key else None,
+        "own": draft.updated_by_user_id == user.id,
+    }
+
+
+def save_draft(herd, round_, access, user, data, updated_at, submission_key, revision):
+    """
+    The herd's server draft (5.1), saved under the report's lock. `updated_at` is the version the client saw (None
+    for a first save) and `revision` the report revision it started from (None when it saw no report). A first save
+    needs the submitted report's revision, so a late autosave after Skicka is refused (5.13); a stale version is a
+    409 that carries the current draft. Only while the round is open, or after end_date for an editor or a helper on
+    paper (D11, P39c); otherwise a 409 with code rundan_stangd.
+    """
+    day, end = today(), round_.end_date
+    late_ok = access.editor or access.role == "helper"  # a helper's access always comes through the post
+    # round_open on end_date itself: the genebank has activated the round and its dates are set
+    late = late_ok and end is not None and day > end and round_open(round_, herd.genebank_id, end)
+    if not (round_open(round_, herd.genebank_id, day) or late):
+        raise ArsrapportError(409, "Rundan är inte öppen.", code="rundan_stangd")
+    if not isinstance(data, dict):
+        raise ArsrapportError(400, "Utkastet ska vara ett objekt.")
+    if _holds_private(data):
+        raise ArsrapportError(400, "Utkastet sparar inte dina uppgifter eller köparens uppgifter.")
+    stored = stored_body(data)
+    if len(json.dumps(stored, ensure_ascii=False).encode()) > DRAFT_MAX_BYTES:
+        raise ArsrapportError(400, "Utkastet är för stort.")
+    with DB_PROXY.atomic():
+        lock_report(round_, herd)
+        draft = _draft(herd, round_)
+        report = current_report(herd, round_)
+        if draft is None and updated_at is None and revision == (report.revision if report else None):
+            try:
+                with DB_PROXY.atomic():  # a savepoint: a racing first save leaves the transaction usable
+                    return YearlyReportDraft.create(
+                        herd=herd.id,
+                        round=round_.id,
+                        data=stored,
+                        submission_key=submission_key,
+                        updated_at=now().astimezone(timezone.utc),
+                        updated_by_user=user.id,
+                    )
+            except IntegrityError:
+                draft = _draft(herd, round_)
+        elif draft is not None and draft.updated_at == updated_at:
+            # The version always moves on, also when the clock does not.
+            draft.updated_at = max(now(), draft.updated_at + timedelta(microseconds=1)).astimezone(timezone.utc)
+            draft.data, draft.submission_key, draft.updated_by_user = stored, submission_key, user.id
+            draft.updated_by_access_code = None
+            draft.save()
+            return draft
+        if report is not None and draft is None:
+            raise ArsrapportError(409, "Rapporten är redan inskickad.", draft=None)
+        raise ArsrapportError(
+            409, "Rapporten har ändrats på en annan enhet.", draft=draft_json(draft, user) if draft else None
+        )
+
+
+def on_time(report, round_):
+    """i_tid: the manager's override if set, else the Stockholm date of received_at on or before the deadline."""
+    if report.on_time_override is not None:
+        return report.on_time_override
+    received = report.received_at
+    return bool(received and round_.deadline and received.astimezone(STOCKHOLM).date() <= round_.deadline)
+
+
+def withdraw_until(report, access):
+    """
+    An owner's or caretaker's last instant for Dra tillbaka: the round's first submission (received_at, which a
+    report after a withdrawal inherits) + 7 days, so withdrawing and sending again never restarts it; None for the
+    others.
+    """
+    if access.role not in ("owner", "caretaker"):
+        return None
+    return report.received_at + timedelta(days=WITHDRAW_DAYS)
+
+
+def _report_json(report, round_, access, is_open):
+    submissions = _submissions(report)
+    until = withdraw_until(report, access)
+    if access.editor:
+        can_withdraw = True
+    else:
+        can_withdraw = access.role != "helper" and is_open and until is not None and now() <= until
+    return {
+        "id": report.id,
+        "status": report.status,
+        "source": report.source,
+        "revision": report.revision,
+        "received_at": _iso(report.received_at),
+        "report_date": _iso(report.report_date),
+        "on_time": on_time(report, round_),
+        "submitted": submissions[-1].data if submissions else None,
+        # fråga 16, P39c: after end_date only an editor changes the report; the others read it
+        "can_change": is_open or access.editor,
+        "can_withdraw": can_withdraw,
+        "withdraw_until": _iso(until),
+    }
+
+
+def account_end(herd):
+    """The stored account's last two digits ("12"): the only account data paper entry reads (fråga 34)."""
+    return (masked_account(herd.bank_account_number) or "").removeprefix("••") or None
+
+
+def report_view(herd, round_, access, user):
+    """ReportView for the herd and the round's year, as `access` sees it (the villkor come in Task 12)."""
+    year = round_.report_year
+    first, last = date(year, 1, 1), date(year, 12, 31)
+    activated = _activations(round_).where(YearlyReportRoundGenebank.genebank == herd.genebank_id).exists()
+    is_open = round_open(round_, herd.genebank_id, today())
+    report = current_report(herd, round_)
+    draft = _draft(herd, round_)
+    Mother, Father = Individual.alias(), Individual.alias()
+    litters = (
+        Breeding.select(
+            Breeding.id,
+            Breeding.litter_number,
+            Breeding.birth_date,
+            Mother.number.alias("mother"),
+            Father.number.alias("father"),
+            Breeding.litter_size,
+            Breeding.litter_size6w,
+        )
+        .join(Mother, JOIN.LEFT_OUTER, on=(Breeding.mother == Mother.id))
+        .switch(Breeding)
+        .join(Father, JOIN.LEFT_OUTER, on=(Breeding.father == Father.id))
+        .where(Breeding.breeding_herd_id == herd.id, Breeding.birth_date.between(first, last))
+        .order_by(Breeding.birth_date, Breeding.id)
+    )
+    ToHerd = Herd.alias()
+    # shortcut: a sale is found by from_herd, which older rows may lack; read the holder before it if they matter.
+    sales = (
+        HerdTracking.select(
+            HerdTracking.individual.alias("individual_id"),
+            Individual.number,
+            ToHerd.herd.alias("to_herd"),
+            HerdTracking.herd_tracking_date.alias("date"),
+        )
+        .join(Individual)
+        .switch(HerdTracking)
+        .join(ToHerd, on=(HerdTracking.herd == ToHerd.id))
+        .where(
+            HerdTracking.from_herd == herd.id,
+            HerdTracking.kind == "TRANSFER",
+            ht_not_voided(),
+            HerdTracking.herd_tracking_date.between(first, last),
+        )
+        .order_by(HerdTracking.herd_tracking_date, HerdTracking.id)
+    )
+    others = Herd.select(Herd.herd).where(
+        Herd.genebank == herd.genebank_id,
+        Herd.is_active == True,  # noqa: E712
+        Herd.id != herd.id,
+        Herd.herd.not_in(OUTSIDE_GENEBANK_HERDS),
+    )
+    # 5.7: the membership choices are hidden when the main member's membership has another active herd
+    other_active = (
+        herd.membership_id is not None
+        and Herd.select()
+        .where(Herd.membership == herd.membership_id, Herd.id != herd.id, Herd.is_active == True)  # noqa: E712
+        .exists()
+    )
+    item = access.item
+    return {
+        "herd": {
+            "id": herd.id,
+            "herd": herd.herd,
+            "name": herd.herd_name,
+            "genebank_id": herd.genebank_id,
+            "genebank": herd.genebank.name,
+        },
+        "year": year,
+        "round": {**{key: _iso(getattr(round_, key)) for key in DATE_FIELDS}, "activated": activated, "open": is_open},
+        "access": access.role,
+        "source": access.source,
+        "can_sell": access.can_sell,
+        "other_active_herd": other_active,
+        "rabbits": report_list(herd, year, report),
+        "litters": [{**row, "birth_date": _iso(row["birth_date"])} for row in litters.dicts()],
+        "sales": [{**row, "date": _iso(row["date"])} for row in sales.dicts()],
+        "herds": sorted(row.herd for row in others),
+        "report": _report_json(report, round_, access, is_open) if report else None,
+        "draft": draft_json(draft, user) if draft else None,
+        "item": {
+            "id": item.id,
+            "received_at": _iso(item.received_at),
+            "state": item.state,
+            "account_end": account_end(herd),
+        }
+        if item
+        else None,
+    }
+
+
+def my_reports(user):
+    """The rounds the genebanks of the user's own herds have activated, newest year first, with the report's status."""
+    herds = list(
+        Herd.select().where(Herd.id.in_(sorted(user.effective_herd_ids())), Herd.herd.not_in(OUTSIDE_GENEBANK_HERDS))
+    )
+    activations = list(
+        YearlyReportRoundGenebank.select(YearlyReportRoundGenebank, YearlyReportRound)
+        .join(YearlyReportRound)
+        .where(YearlyReportRoundGenebank.genebank.in_(sorted({herd.genebank_id for herd in herds})))
+    )
+    submitted = {
+        (report.herd_id, report.round_id)
+        for report in YearlyHerdReport.select(YearlyHerdReport.herd, YearlyHerdReport.round).where(
+            YearlyHerdReport.herd.in_([herd.id for herd in herds]), YearlyHerdReport.status == "submitted"
+        )
+    }
+    day = today()
+    reports = [
+        {
+            "herd": herd.herd,
+            "year": row.round.report_year,
+            "open": round_open(row.round, herd.genebank_id, day),
+            "status": "submitted" if (herd.id, row.round_id) in submitted else None,
+            "deadline": _iso(row.round.deadline),
+            "end_date": _iso(row.round.end_date),
+        }
+        for herd in herds
+        for row in activations
+        if row.genebank_id == herd.genebank_id
+    ]
+    return sorted(reports, key=lambda report: (-report["year"], report["herd"]))
+
+
+# The submission (the plan's body shape; section 6 for `report`)
+
+CHOICES = ("kvar", "dod", "sald", "ej_angiven")
+BODY_KEYS = (
+    "submission_key",
+    "revision",
+    "reason",
+    "rabbits",
+    "ending_genbank",
+    "membership_after_end",
+    "health",
+    "diseases",
+    "defects",
+    "message",
+)
+PAPER_KEYS = ("inbox_item_id", "received_on", "signed_on", "matrikel")
+PAPER_FIELDS = ("konto", "adress", "telefon", "epost", "publicering")  # the form's "Dina uppgifter"
+MATRIKEL_PARTS = {"adress": ("address", "postal_code", "city"), "konto": ("clearing", "konto", "bank")}
+UTOM = ("phone", "email", "address")  # the consent keys a Ja may leave out; the name never
+ENTRY_KEYS = ("val", "vikt", "ej_vagd", "hull", "dod", "sald")
+DISEASES = ("myxomatos", "rvhd", "koccidios", "annat")
+TEXT_LIMITS = {
+    "reason": 500,
+    "anteckning": 500,
+    "beskrivning": 500,
+    "annat.namn": 100,
+    "alder": 50,
+    "ej_vagd": 200,
+    "message": 2000,
+}
+_VIKT = re.compile(r"-?\d+(?:[.,]\d+)?")
+
+
+@dataclass(frozen=True)
+class RabbitEntry:
+    individual_id: int
+    val: str
+    vikt: float | None
+    ej_vagd: str | None
+    hull: str | None
+    dod: dict | None  # {ar, manad, dag, slaktad, anteckning}
+    sald: dict | None  # {till, ar, manad, dag, kopare}: kopare is kopare's buyer object or None
+
+
+@dataclass(frozen=True)
+class Submission:
+    key: uuid.UUID | None
+    revision: int | None
+    reason: str | None
+    rabbits: dict[int, RabbitEntry]
+    report: dict  # yearlyherdreport.data (section 6); not_weighed and not_stated come from the rabbits
+    paper: dict | None  # inbox_item_id, received_on, signed_on (default received_on), matrikel
+
+
+def _bad(field_, detail):
+    return ArsrapportError(400, detail, field=field_)
+
+
+def _is_int(value):
+    return type(value) is int  # True is an int too
+
+
+def _keys(value, allowed, field_):
+    """`value` as an object without keys outside `allowed`."""
+    if not isinstance(value, dict):
+        raise _bad(field_, "Fältet ska vara ett objekt.")
+    if unknown := sorted(map(str, set(value) - set(allowed))):
+        raise _bad(field_, f"Okända fält: {', '.join(unknown)}.")
+    return value
+
+
+def _text(value, field_):
+    """Free text, stripped, within its limit and without phone numbers or e-mail addresses; blank is None."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise _bad(field_, "Fältet ska vara text.")
+    value = value.strip()
+    if len(value) > TEXT_LIMITS[field_]:
+        raise _bad(field_, f"Texten får vara högst {TEXT_LIMITS[field_]} tecken.")
+    try:
+        reject_contact_details(value)
+    except HerdTrackingInvalid as exc:
+        raise _bad(field_, "Skriv inga telefonnummer eller e-postadresser här.") from exc
+    return value or None
+
+
+def _vikt(value):
+    """D17: "2,8", "2.8" or a number, as a float; its range is check's (vikt_ogiltig)."""
+    if value is None or value == "":
+        return None
+    if isinstance(value, str) and _VIKT.fullmatch(value.strip()):  # float() alone takes "nan" and "1e3"
+        return float(value.strip().replace(",", "."))
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and abs(value) < 1e6:  # not nan, inf, 10**400
+        return float(value)
+    raise _bad("vikt", "Ange vikten i kilo, till exempel 2,8.")
+
+
+def _month(value, field_, extra):
+    """{ar, manad, dag|null} of a real date, the day optional (5.3); the keys of `extra` are the caller's."""
+    value = _keys(value, ("ar", "manad", "dag", *extra), field_)
+    ar, manad, dag = value.get("ar"), value.get("manad"), value.get("dag")
+    try:
+        if not (_is_int(ar) and _is_int(manad) and (dag is None or _is_int(dag))):
+            raise ValueError
+        date(ar, manad, 1 if dag is None else dag)
+    except (ValueError, OverflowError) as exc:
+        raise _bad(field_, "Ange år och månad, och dagen om den är känd.") from exc
+    return {"ar": ar, "manad": manad, "dag": dag}
+
+
+def _entry(key, raw):
+    """One rabbit's answer, or None without a choice: the body's and a stored submission's alike (P39a)."""
+    if not (isinstance(key, str) and key.isdecimal()):
+        raise _bad("rabbits", "Ange kaninerna med sitt id.")
+    raw = _keys(raw, ENTRY_KEYS, "rabbits")
+    val, hull = raw.get("val"), raw.get("hull")
+    if val is None:
+        return None
+    if val not in CHOICES:
+        raise _bad("val", "Välj Finns kvar, Död eller slaktad eller Såld.")
+    if hull not in (None, "low", "normal", "high"):
+        raise _bad("hull", "Hullet är mager, normal eller fet.")
+    dod = sald = None  # the details of another choice are left behind
+    if val == "dod":
+        dod = _month(raw.get("dod"), "dod", ("slaktad", "anteckning"))
+        slaktad = raw["dod"].get("slaktad", False)
+        if not isinstance(slaktad, bool):
+            raise _bad("dod", "Slaktad är ja eller nej.")
+        dod |= {"slaktad": slaktad, "anteckning": _text(raw["dod"].get("anteckning"), "anteckning")}
+    if val == "sald":
+        sald = _month(raw.get("sald"), "sald", ("till", "kopare"))
+        till, kopare = raw["sald"].get("till"), raw["sald"].get("kopare")
+        if not isinstance(till, str) or not till:
+            raise _bad("sald", "Ange köparens besättning, eller utanför genbanken.")
+        if kopare is not None and (till != "utanfor" or not isinstance(kopare, dict)):
+            raise _bad("kopare", "Köparens namn och ort anges bara vid försäljning utanför genbanken.")
+        sald = {"till": till, **sald, "kopare": kopare}
+    return RabbitEntry(int(key), val, _vikt(raw.get("vikt")), _text(raw.get("ej_vagd"), "ej_vagd"), hull, dod, sald)
+
+
+def _entries(rabbits):
+    if not isinstance(rabbits, dict):
+        raise _bad("rabbits", "Fältet ska vara ett objekt.")
+    entries = (_entry(key, raw) for key, raw in rabbits.items())
+    return {entry.individual_id: entry for entry in entries if entry is not None}
+
+
+def _diseases(value):
+    diseases = {}
+    for name, raw in _keys(value or {}, DISEASES, "diseases").items():
+        raw = _keys(raw, ("namn", "antal", "alder") if name == "annat" else ("antal", "alder"), "diseases")
+        antal = raw.get("antal")
+        if not (_is_int(antal) and 0 <= antal <= 1000):
+            raise _bad("antal", "Ange antalet som ett heltal från 0 till 1000.")
+        diseases[name] = {"antal": antal, "alder": _text(raw.get("alder"), "alder")}
+        if name == "annat":
+            diseases[name] = {"namn": _text(raw.get("namn"), "annat.namn"), **diseases[name]}
+    return diseases
+
+
+def _defects(value):
+    if not isinstance(value or [], list):
+        raise _bad("defects", "Defekterna ska vara en lista.")
+    defects = []
+    for raw in value or []:
+        raw = _keys(raw, ("individual_id", "beskrivning", "foto"), "defects")
+        if not _is_int(raw.get("individual_id")) or raw.get("foto") is not None:  # D16: photos come in step 4
+            raise _bad("defects", "Ange kaninen med sitt id, utan foto.")
+        beskrivning = _text(raw.get("beskrivning"), "beskrivning")
+        defects.append({"individual_id": raw["individual_id"], "beskrivning": beskrivning, "foto": None})
+    return defects
+
+
+def _day(value, field_):
+    try:
+        return date.fromisoformat(value)
+    except (TypeError, ValueError) as exc:
+        raise _bad(field_, "Ange datumet som ÅÅÅÅ-MM-DD.") from exc
+
+
+def _paper(body):
+    item_id = body.get("inbox_item_id")
+    if not _is_int(item_id):
+        raise _bad("inbox_item_id", "Ange posten som ett nummer.")
+    received = _day(body.get("received_on"), "received_on")  # P40: required, the client always sends it
+    signed = _day(body["signed_on"], "signed_on") if body.get("signed_on") is not None else received
+    if signed > received:
+        raise _bad("signed_on", "Blankettens datum kan inte vara senare än dagen den kom in.")
+    return {"inbox_item_id": item_id, "received_on": received, "signed_on": signed, "matrikel": _matrikel(body)}
+
+
+def _matrikel(body):
+    """The form's "Dina uppgifter", its shape only: check refuses a bad value, so that the dry run lists it."""
+    value = body.get("matrikel")
+    if value is None:
+        return None
+    texts = [_keys(value, PAPER_FIELDS, "matrikel").get(key) for key in ("telefon", "epost")]
+    for name, parts in MATRIKEL_PARTS.items():
+        if value.get(name) is not None:
+            texts += _keys(value[name], parts, "matrikel").values()
+    if any(text is not None and not isinstance(text, str) for text in texts):
+        raise _bad("matrikel", "Fältet ska vara text.")
+    if (answer := value.get("publicering")) is not None:  # Ja or Nej, and at Ja what may not be listed
+        utom = _keys(answer, ("ja", "utom"), "matrikel").get("utom")
+        if not isinstance(answer.get("ja"), bool) or not isinstance(utom, list) or not all(k in UTOM for k in utom):
+            raise _bad("matrikel", "Svara Ja eller Nej om Koharen, och vid Ja vad som inte får stå med.")
+    return value
+
+
+def parse_submission(body: dict, *, paper: bool) -> Submission:
+    """
+    The submission body, or a 400 that names the field. It reads neither the database nor the clock, so equal
+    bodies parse equal (D21). Free text passes reject_contact_details here, so that require_reason at write time
+    never turns it into a 422 on some rabbit.
+    """
+    _keys(body, BODY_KEYS + (PAPER_KEYS if paper else ()), "body")
+    try:
+        key = uuid.UUID(body["submission_key"]) if body.get("submission_key") is not None else None
+    except (AttributeError, TypeError, ValueError) as exc:
+        raise _bad("submission_key", "Ange submission_key som ett UUID.") from exc
+    revision = body.get("revision")
+    if revision is not None and not _is_int(revision):
+        raise _bad("revision", "Ange revisionen som ett heltal.")
+    ending, membership, health = (body.get(k) for k in ("ending_genbank", "membership_after_end", "health"))
+    if ending is not None and not isinstance(ending, bool):
+        raise _bad("ending_genbank", "Fältet är ja eller nej.")
+    if membership not in (None, "kvar_utan_genbank", "avsluta_medlemskap"):
+        raise _bad("membership_after_end", "Välj vad som händer med medlemskapet.")
+    if health not in (None, "inga", "ja"):
+        raise _bad("health", "Välj Inga sjukdomsfall eller defekter, eller Ja.")
+    rabbits = _entries(body.get("rabbits") or {})
+    report = {
+        "ending_genbank": bool(ending),
+        "membership_after_end": membership,
+        "not_weighed": {str(rabbit): entry.ej_vagd for rabbit, entry in rabbits.items() if entry.ej_vagd},
+        "health": health,
+        "diseases": _diseases(body.get("diseases")),
+        "defects": _defects(body.get("defects")),
+        "not_stated": sorted(rabbit for rabbit, entry in rabbits.items() if entry.val == "ej_angiven"),
+        "message": _text(body.get("message"), "message") or "",
+    }
+    reason = _text(body.get("reason"), "reason")
+    return Submission(key, revision, reason, rabbits, report, _paper(body) if paper else None)
+
+
+def partial_date(ar, manad, dag, on: date) -> date:
+    """A death's or a sale's date (5.3): without the day, the month's last day, or `on` when that is earlier."""
+    if dag is not None:
+        return date(ar, manad, dag)
+    return min(date(ar, manad, calendar.monthrange(ar, manad)[1]), on)
+
+
+# The effects on the register: what a submission wants, what the report wrote, and the difference (5.4, 8, D5)
+
+RANK = {"death": 0, "transfer": 0, "weight": 1, "bodyfat": 1, "attest": 2}
+ROW_KINDS = ("attest", "transfer")  # the effects that are herd-tracking rows
+
+
+@dataclass(frozen=True)
+class Effect:
+    kind: str  # attest | death | transfer | weight | bodyfat
+    date: date
+    value: tuple  # attest (); death (death_date, butchered, note); transfer (herd_code,); weight (kg,); bodyfat (lvl,)
+    ref: object = field(default=None, compare=False)  # current effects: ht id, operation id or measurement row id
+
+
+def order(e: Effect, last: date) -> tuple:
+    """
+    The write order (5.4 point 3): by date, and on one day deaths and sales, then measurements, then the
+    attestation. A rabbit's effects up to `last` thus come before those after it.
+    """
+    return (e.date, RANK[e.kind])
+
+
+def _holder_on(individual_id, day, ops):
+    """The herd holding the rabbit on `day` by its active rows outside `ops` (D3b), else its origin herd."""
+    rows = (
+        HerdTracking.select(HerdTracking.herd, HerdTracking.operation_id)
+        .where(HerdTracking.individual == individual_id, ht_not_voided(), HerdTracking.herd_tracking_date <= day)
+        .order_by(*ht_order_desc())
+    )
+    holder = next((row.herd_id for row in rows if str(row.operation_id) not in ops), None)
+    return holder or Individual.select(Individual.origin_herd).where(Individual.id == individual_id).scalar()
+
+
+def _registered_death(individual_id, ops):
+    """The register has a death date the report did not write: RecordDeath never overwrites it with a month."""
+    died = Individual.select(Individual.death_date).where(Individual.id == individual_id).scalar()
+    return died is not None and str(latest_death_op(individual_id)) not in ops
+
+
+def _sale_code(herd, till):
+    """The buyer's herd code: "utanfor" is the genebank's GX1 or MX1."""
+    if till != "utanfor":
+        return till
+    outside = Herd.select(Herd.herd).where(Herd.genebank == herd.genebank_id, Herd.herd.in_(OUTSIDE_GENEBANK_HERDS))
+    return outside.scalar()
+
+
+def _lived(entry, last, on):
+    """The entry says the rabbit lived on 31/12: kvar, or a death or a sale after it (5.3)."""
+    when = entry.dod or entry.sald
+    return entry.val == "kvar" or (when is not None and partial_date(when["ar"], when["manad"], when["dag"], on) > last)
+
+
+def wanted(entry, rabbit_row, report, herd, year, on) -> list[Effect]:
+    """
+    The effects `entry` asks of the register (5.4 point 3); `rabbit_row` is the rabbit's report_list row, whose
+    state already leaves the report's own rows out (D3b), as the holder here does. The buyer is not part of a
+    transfer's value: the write passes kopare along.
+    """
+    last, ops = date(year, 12, 31), report_ops(report) if report is not None else set()
+    rabbit, dod, sald = entry.individual_id, entry.dod, entry.sald
+    if entry.val == "ej_angiven":
+        return []
+    died = dod and partial_date(dod["ar"], dod["manad"], dod["dag"], on)
+    sold = sald and partial_date(sald["ar"], sald["manad"], sald["dag"], on)
+    effects = []
+    if _lived(entry, last, on):  # what kvar gives
+        if rabbit_row["state"] == "att_valja" and _holder_on(rabbit, last, ops) == herd.id:
+            effects.append(Effect("attest", last, ()))
+        if entry.vikt is not None:
+            effects.append(Effect("weight", last, (round(entry.vikt, 2),)))
+        if entry.hull is not None:
+            effects.append(Effect("bodyfat", last, (entry.hull,)))
+    if died and not _registered_death(rabbit, ops):
+        effects.append(Effect("death", died, (died, dod["slaktad"], dod["anteckning"])))
+    if sold:
+        effects.append(Effect("transfer", sold, (_sale_code(herd, sald["till"]),)))
+    return effects
+
+
+def current(report, individual_id) -> list[Effect]:
+    """The effects the report's submissions wrote on the rabbit that are still in the register, with refs."""
+    if report is None:
+        return []
+    submissions = _submissions(report)
+    ops = {str(op) for submission in submissions for op in submission.operation_ids}
+    rows = (
+        HerdTracking.select(HerdTracking, Herd)
+        .join(Herd, on=(HerdTracking.herd == Herd.id))
+        .where(
+            HerdTracking.individual == individual_id,
+            ht_not_voided(),
+            ((HerdTracking.kind == "ATTESTATION") & (HerdTracking.yearly_herd_report == report.id))
+            | (HerdTracking.kind == "TRANSFER"),
+        )
+    )
+    effects = []
+    for row in rows:
+        day = coerce_date(row.herd_tracking_date)
+        if row.kind == "ATTESTATION":
+            effects.append(Effect("attest", day, (), ref=row.id))
+        elif str(row.operation_id) in ops:
+            effects.append(Effect("transfer", day, (row.herd.herd,), ref=row.id))
+    undone = IndividualCommand.select(IndividualCommand.undoes).where(
+        IndividualCommand.individual == individual_id, IndividualCommand.undoes.is_null(False)
+    )
+    deaths = IndividualCommand.select(IndividualCommand.operation_id, IndividualCommand.after).where(
+        IndividualCommand.individual == individual_id,
+        IndividualCommand.command == "RecordDeath",
+        IndividualCommand.operation_id.not_in(undone),
+    )
+    rabbit = None
+    for command in (command for command in deaths if str(command.operation_id) in ops):
+        rabbit = rabbit or Individual.get_by_id(individual_id)
+        stored = {"death_date": _iso(rabbit.death_date), "butchered": rabbit.butchered, "death_note": rabbit.death_note}
+        # Undo's own test: an editor replaced or cleared the death on the rabbit page, so it is no longer there
+        if any(stored.get(key) != value for key, value in (command.after or {}).items()):
+            continue
+        if stored["death_date"] is not None:  # P39b: the log has the changed columns only, the rabbit has them all
+            day = coerce_date(stored["death_date"])
+            value = (day, bool(stored["butchered"]), stored["death_note"] or None)
+            effects.append(Effect("death", day, value, ref=command.operation_id))
+    added = [m for submission in submissions for m in submission.added_measurements]
+    listed = [m for m in added if m["individual_id"] == individual_id]
+    ids = {kind: [m["id"] for m in listed if m["kind"] == kind] for kind in ("weight", "bodyfat")}
+    effects += [
+        Effect("weight", coerce_date(row.weight_date), (round(row.weight, 2),), ref=row.id)
+        for row in Weight.select().where(Weight.id.in_(ids["weight"]))
+    ]
+    effects += [
+        Effect("bodyfat", coerce_date(row.bodyfat_date), (row.bodyfat,), ref=row.id)
+        for row in Bodyfat.select().where(Bodyfat.id.in_(ids["bodyfat"]))
+    ]
+    return effects
+
+
+def same_sale(a, b) -> bool:
+    """The same sale as given (buyer herd and date); a buyer given again is a correction of it, not another sale."""
+    return bool(a and b) and all(a[key] == b[key] for key in ("till", "ar", "manad", "dag"))
+
+
+def diff(cur, want, last, prev_entry=None, entry=None) -> tuple[list[Effect], list[Effect]]:
+    """
+    (remove, add): what a change voids, undoes or deletes, and what it writes, given the rabbit's entry in the
+    latest submission as `prev_entry` (always with `entry`). Pure. Once a row goes, every later one comes off too,
+    so that each void hits the latest row, and the wanted ones from there on are written again.
+    """
+    if prev_entry and prev_entry.dod == entry.dod:  # same raw input: do not re-resolve the death date
+        want = [next((c for c in cur if c.kind == "death"), w) if w.kind == "death" else w for w in want]
+    fixed = bool(entry and entry.sald and entry.sald.get("kopare"))  # a buyer given again corrects it (Codex 8)
+    if prev_entry and same_sale(prev_entry.sald, entry.sald):  # a correction keeps the date
+        want = [next((c for c in cur if c.kind == "transfer"), w) if w.kind == "transfer" else w for w in want]
+
+    def rows(effects):
+        return [e for e in effects if e.kind in ("attest", "death", "transfer")]
+
+    gone = [c for c in rows(cur) if c not in want or (fixed and c.kind == "transfer")]
+    # A 31/12 measurement is written while the herd holds the rabbit, so the report's later sale comes off first.
+    if any((e in cur) != (e in want) for e in cur + want if e.kind in ("weight", "bodyfat")):
+        gone += [c for c in cur if c.kind == "transfer" and c.date > last]
+    cut = min((order(c, last) for c in gone), default=None)
+    remove = [c for c in rows(cur) if cut is not None and order(c, last) >= cut]
+    add = [w for w in rows(want) if w not in cur or (cut is not None and order(w, last) >= cut)]
+    remove += [c for c in cur if c.kind in ("weight", "bodyfat") and c not in want]
+    add += [w for w in want if w.kind in ("weight", "bodyfat") and w not in cur]
+    return remove, add
+
+
+# The dry run (5.4 point 1)
+
+
+@dataclass(frozen=True)
+class Refusal:
+    individual_id: int | None
+    code: str
+    message: str
+
+
+REFUSALS = {  # the copy the client shows (P44)
+    "inte_klar": "Välj Finns kvar, Död eller slaktad eller Såld.",
+    "vikt_saknas": "Vuxna kaniner behöver vikt eller Ej vägd.",
+    "vikt_ogiltig": "Ange vikten i kilo, till exempel 2,8.",
+    "ej_angiven_digitalt": "Ej angiven finns bara när en blankett matas in.",
+    "forsaljning_skotare": "Försäljningen registreras av ägaren eller genbanksansvarig.",
+    "kopare_saknas": "Skriv köparens namn och ort.",
+    "senare_handelse": "Kaninen har en senare händelse i Stamboken. Genbanksansvarig kan rätta.",
+    "okand_kanin": "Kaninen finns inte i listan för besättningen.",
+    "halsa_saknas": "Välj Inga sjukdomsfall eller defekter, eller Ja.",
+    "orsak_kravs": "Skriv varför rapporten ändras.",
+    "rundan_stangd": "Rundan är stängd.",
+    "inte_innehavare": "Kaninen fanns inte i din besättning 31 december.",
+    "skrivning_nekad": "Stamboken tog inte emot ändringen för kaninen. Genbanksansvarig kan rätta.",  # _denied
+    "ingen_huvudmedlem": "Besättningen saknar huvudmedlem i matrikeln, så ändringen kan inte sparas.",
+    "adress_ogiltig": "Kontrollera adressen. Gatuadressen får vara högst 200 tecken och postnumret har fem siffror.",
+    "telefon_ogiltig": "Telefonnumret får vara högst 50 tecken.",
+    "epost_ogiltig": "Kontrollera e-postadressen.",
+    "konto_ogiltigt": "Clearingnumret har 4–5 siffror och kontonumret 5–12 siffror.",
+}
+# _validate_sale's user: the report never sells into another genebank, since TransferIndividual needs a reason there.
+_NOT_ADMIN = SimpleNamespace(is_admin=False)
+
+
+def _refusal(individual_id, code, message=None):
+    return Refusal(individual_id, code, message or REFUSALS[code])
+
+
+def _denied(individual_id, detail):
+    """
+    U8, for every Skicka and Dra tillbaka: a void or a write refused for a later row is senare_handelse; any other
+    refusal is skrivning_nekad with its own text, or the table's when it has none (IndividualRefused's are English).
+    """
+    if detail in (REPORT_LATER_ROW, DATE_BEFORE_LATEST):
+        return _refusal(individual_id, "senare_handelse")
+    return _refusal(individual_id, "skrivning_nekad", detail)
+
+
+def _vikt_ovanlig(individual_id, vikt):
+    """D17: a valid weight outside 1,0–6,5 kg warns and never blocks; None for any other weight."""
+    if vikt is None or not 0 < vikt <= 20 or 1.0 <= vikt <= 6.5:
+        return None
+    return Refusal(individual_id, "vikt_ovanlig", f"Stämmer {format(vikt, 'g').replace('.', ',')} kg?")
+
+
+def _sale_view(individual_id, kept):
+    """_validate_sale's view of the rabbit on the rows `kept` (P38: built here, as as_dict needs a litter)."""
+    rabbit = Individual.get_by_id(individual_id)
+    holder = kept[-1].herd if kept else rabbit.origin_herd
+    return {
+        "herd": holder.herd,
+        "genebank_id": holder.genebank_id,
+        "is_registered": bool(rabbit.certificate or rabbit.digital_certificate),
+        "birth_date": _iso(rabbit.breeding.birth_date) if rabbit.breeding_id else None,
+        "herd_tracking": [{"date": _iso(coerce_date(row.herd_tracking_date))} for row in kept],
+    }
+
+
+def _register_refusals(individual_id, entry, remove, add, ops, admin=False, reason=None):
+    """
+    What the writes would meet in the register: each void under report_void_denial and its check of `reason`
+    against the sale's buyer, latest first as apply_diff runs them, then a row behind a later one
+    (DATE_BEFORE_LATEST), then each new sale under _validate_sale and the buyer rules. A row behind a later one is
+    senare_handelse; any other denial keeps its text (U8).
+    """
+    if not any(e.kind in ROW_KINDS for e in remove + add):
+        return []
+    rows = list(
+        HerdTracking.select(HerdTracking, Herd)
+        .join(Herd, on=(HerdTracking.herd == Herd.id))
+        .where(HerdTracking.individual == individual_id, ht_not_voided())
+    )
+    kept, gone = sorted(rows, key=ht_sort_key), {e.ref for e in remove if e.kind in ROW_KINDS}
+    voided = sorted((row for row in rows if row.id in gone), key=ht_sort_key, reverse=True)
+    rabbit, user = Individual.get_by_id(individual_id) if voided else None, SimpleNamespace(is_admin=admin)
+    for row in voided:
+        if denial := report_void_denial(user, row, kept, rabbit, ops):
+            return [_denied(individual_id, denial)]
+        if reason and row.holder_contact_id:  # _void_rows: a buyer is never named in the void's reason
+            try:
+                _reject_buyer_name(reason, [row.holder_contact_id])
+            except HerdTrackingInvalid as exc:
+                return [_denied(individual_id, exc.detail)]
+        kept.remove(row)
+    if kept and any(e.date < coerce_date(kept[-1].herd_tracking_date) for e in add if e.kind in ROW_KINDS):
+        return [_refusal(individual_id, "senare_handelse")]
+    from blueprints.individuals import _validate_sale  # pylint: disable=import-outside-toplevel  # it imports utils
+
+    refusals = []
+    for sale in (e for e in add if e.kind == "transfer"):
+        kopare, form = entry.sald["kopare"], {"selling_date": sale.date.isoformat(), "herd": sale.value[0]}
+        if error := _validate_sale(_sale_view(individual_id, kept), form, _NOT_ADMIN, kopare):
+            refusals.append(_refusal(individual_id, "forsaljning", error.replace("Försäljningsdatumet", "Säljdatumet")))
+        if sale.value[0] in OUTSIDE_GENEBANK_HERDS and kopare is None:
+            refusals.append(_refusal(individual_id, "kopare_saknas"))
+        elif sale.value[0] in OUTSIDE_GENEBANK_HERDS:
+            try:
+                buyer_contact_fields(kopare)
+            except HerdTrackingInvalid as exc:
+                refusals.append(_refusal(individual_id, "kopare", str(exc)))
+    return refusals
+
+
+def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal], list[Refusal]]:
+    """
+    The dry run (5.4 point 1): (refusals, warnings) for the submission `sub` on the herd's current `report`, as of
+    `on`. It takes no lock and writes nothing; Skicka runs it again under the locks.
+    """
+    year, end = round_.report_year, round_.end_date
+    last, late = date(year, 12, 31), end is not None and on > end
+    # D11, P39c: after end_date an editor, and a helper's first entry, both with a reason
+    late_ok = (
+        late
+        and round_open(round_, herd.genebank_id, end)
+        and (access.editor or (access.role == "helper" and report is None))
+    )
+    if not (round_open(round_, herd.genebank_id, on) or late_ok):
+        return [_refusal(None, "rundan_stangd")], []
+    submissions = _submissions(report) if report is not None else []
+    latest = submissions[-1].data if submissions else None
+    before_entries = _entries(latest.get("rabbits") or {}) if latest else {}
+    ops = {str(op) for submission in submissions for op in submission.operation_ids}
+    refusals, warnings = [], []
+    if not sub.reason and (
+        (access.source == "paper" and report is not None) or (late and (access.editor or access.role == "helper"))
+    ):
+        refusals.append(_refusal(None, "orsak_kravs"))
+    # A null in the latest submission came from paper, or an editor kept it there (case 8 by phone).
+    kept_null = access.editor and latest is not None and latest.get("health") is None
+    if access.source != "paper" and sub.report["health"] is None and not kept_null:
+        refusals.append(_refusal(None, "halsa_saknas"))
+    rows = {row["id"]: row for row in report_list(herd, year, report)}
+    strangers = [rabbit for rabbit in sub.rabbits if rabbit not in rows]
+    strangers += [d["individual_id"] for d in sub.report["defects"] if d["individual_id"] not in rows]
+    refusals += [_refusal(rabbit, "okand_kanin") for rabbit in strangers]
+    for rabbit, row in rows.items():
+        entry, before = sub.rabbits.get(rabbit), before_entries.get(rabbit)
+        if entry is None:
+            if row["state"] == "att_valja":
+                refusals.append(_refusal(rabbit, "inte_klar"))
+            continue
+        kept = access.editor and before is not None and before.val == "ej_angiven"
+        if entry.val == "ej_angiven" and access.source != "paper" and not kept:
+            refusals.append(_refusal(rabbit, "ej_angiven_digitalt"))
+            continue
+        if entry == before:  # P39a: an unchanged choice writes nothing and is not refused
+            continue
+        if row["state"] != "att_valja":
+            refusals.append(_refusal(rabbit, "senare_handelse"))
+            continue
+        if entry.val == "ej_angiven":  # it writes nothing, but what it takes off still meets the register (M1)
+            remove, add = diff(current(report, rabbit), [], last, before, entry)
+            refusals += _register_refusals(rabbit, entry, remove, add, ops, access.role == "admin", sub.reason)
+            continue
+        if entry.val == "sald" and not access.can_sell:
+            refusals.append(_refusal(rabbit, "forsaljning_skotare"))
+            continue
+        if _lived(entry, last, on) and _holder_on(rabbit, last, ops) != herd.id:  # 5.4 point 1, before the attest
+            refusals.append(_refusal(rabbit, "inte_innehavare"))
+            continue
+        if entry.vikt is not None and not 0 < entry.vikt <= 20:
+            refusals.append(_refusal(rabbit, "vikt_ogiltig"))
+        elif warning := _vikt_ovanlig(rabbit, entry.vikt):
+            warnings.append(warning)
+        if (
+            entry.val == "kvar"
+            and row["adult"]
+            and entry.vikt is None
+            and not entry.ej_vagd
+            and not sub.report["ending_genbank"]
+        ):
+            refusals.append(_refusal(rabbit, "vikt_saknas"))
+        remove, add = diff(current(report, rabbit), wanted(entry, row, report, herd, year, on), last, before, entry)
+        if not access.can_sell and any(e.kind == "transfer" for e in remove + add):  # D12: sales are the owner's
+            refusals.append(_refusal(rabbit, "forsaljning_skotare"))
+            continue
+        refusals += _register_refusals(rabbit, entry, remove, add, ops, access.role == "admin", sub.reason)
+    if access.source == "paper":
+        refusals += _matrikel_refusals(herd, sub.paper["matrikel"])
+    return refusals, warnings
+
+
+# Contact changes from paper (5.5, fråga 25 and 34, D7, D8, D19): written without reading
+
+A23 = "kontakt.andrad_fran_blankett"
+FIELD_LABELS = dict(zip(PAPER_FIELDS, ("konto", "adress", "telefon", "e-post", "publicering"), strict=True))
+# U10: the columns the matrikel's logs name, as the form's fields
+COLUMN_FIELDS = {
+    "address": "adress",
+    "postal_code": "adress",
+    "city": "adress",
+    "phone": "telefon",
+    "email": "epost",
+    "bank_account_number": "konto",
+    "bank_name": "konto",
+}
+
+
+def _contact(matrikel) -> tuple[dict, list[Refusal]]:
+    """
+    The form's contact changes as {field: {column: value}}, each value as the matrikel stores it, and the dry run's
+    refusals of the rest (5.5). A blank part is no change: paper never clears the matrikel.
+    """
+    from blueprints.common import EMAIL_RE  # pylint: disable=import-outside-toplevel  # as _validate_sale
+
+    given, contact, refusals = matrikel or {}, {}, []
+    adress = {part: text.strip() for part, text in (given.get("adress") or {}).items() if text and text.strip()}
+    if adress:
+        try:
+            postal = parse_postal_fields({part: text for part, text in adress.items() if part != "address"})
+        except AddressValidationError:
+            postal = None
+        if postal is None or len(adress.get("address", "")) > 200:
+            refusals.append(_refusal(None, "adress_ogiltig"))
+        else:  # as patch_me_contact writes it (Codex 13)
+            parts = [part for part in MATRIKEL_PARTS["adress"] if part in adress]
+            contact["adress"] = {part: postal.get(part, adress[part]) for part in parts}
+    telefon = (given.get("telefon") or "").strip()
+    if len(telefon) > 50:  # R029
+        refusals.append(_refusal(None, "telefon_ogiltig"))
+    elif telefon:
+        contact["telefon"] = {"phone": telefon}
+    epost = (given.get("epost") or "").strip().lower()
+    if epost and (len(epost) > 255 or not EMAIL_RE.match(epost)):
+        refusals.append(_refusal(None, "epost_ogiltig"))
+    elif epost:
+        contact["epost"] = {"email": epost}
+    konto = given.get("konto") or {}
+    clearing, number = (re.sub(r"[\s.-]", "", konto.get(part) or "") for part in ("clearing", "konto"))
+    bank = (konto.get("bank") or "").strip() or None
+    if clearing or number:  # D8: digits only, the clearing 4–5 and the account 5–12
+        if not (re.fullmatch("[0-9]{4,5}", clearing) and re.fullmatch("[0-9]{5,12}", number)) or len(bank or "") > 100:
+            refusals.append(_refusal(None, "konto_ogiltigt"))
+        else:
+            # shortcut: the account lives on the herd, migration 44 moves it to the membership; write it there then
+            contact["konto"] = {"bank_account_number": f"{clearing}-{number}", "bank_name": bank}
+    return contact, refusals
+
+
+def _main_member(herd):
+    """The herd's active main member per the matrikel (inbox.herd_holder), never an erased one."""
+    member = inbox.herd_holder(herd.id)
+    return member if member is not None and not is_anonymized(member) else None
+
+
+def _matrikel_refusals(herd, matrikel):
+    """check's refusals of the form's contact changes; any of them, or a Koharen answer, needs the main member."""
+    contact, refusals = _contact(matrikel)
+    if (contact or refusals or (matrikel or {}).get("publicering") is not None) and _main_member(herd) is None:
+        refusals.insert(0, _refusal(None, "ingen_huvudmedlem"))
+    return refusals
+
+
+def later_fields(herd, membership, member, signed_on: date, own=frozenset()) -> set[str]:
+    """
+    D19: the PAPER_FIELDS the matrikel changed after the form's date, that is from the next day in Stockholm: the
+    account by the herd's audit_log, the consent by publication_consent_change, and the rest by matrikel_audit, whose
+    created_at is naive server time. Phone and e-mail count only from rows about `member`, and every swap of the main
+    member counts for them (I2). The paper writes of the submissions in `own`, the herd's report for the round, do not
+    count, so that Ändra from paper can correct its own typo (I1): their kontakt_andrad rows, the herd's audit rows
+    of the same transactions, and their reports' paper consent rows.
+    """
+    # shortcut: the matrikel importer in cli/members.py leaves no trace, so this misses its changes; log them if it
+    # ever runs during a round.
+    after = datetime.combine(signed_on + timedelta(days=1), datetime.min.time(), STOCKHOLM)
+    audits = MatrikelAudit.select(MatrikelAudit.action, MatrikelAudit.payload).where(
+        MatrikelAudit.membership == membership.id,
+        MatrikelAudit.action.in_(("membership_updated", "person_updated", "kontakt_andrad", "main_member_changed")),
+        MatrikelAudit.created_at >= after.astimezone().replace(tzinfo=None),
+    )
+    fields, transactions = set(), set()
+    for audit in audits:
+        payload = audit.payload or {}
+        if payload.get("submission_id") in own:
+            transactions.add(payload.get("transaction_id"))
+            continue
+        if audit.action == "main_member_changed":  # the form's signer may not be the main member written to
+            fields |= {"telefon", "epost"}
+        mine = payload.get("person_id", member.id) == member.id  # membership_updated names no person
+        for column in payload.get("fields") or payload.get("after") or ():
+            if column in COLUMN_FIELDS and (mine or COLUMN_FIELDS[column] == "adress"):
+                fields.add(COLUMN_FIELDS[column])
+    account = AuditLog.select(AuditLog.transaction_id).where(
+        AuditLog.table_name == "herd",
+        AuditLog.record_id == str(herd.id),
+        AuditLog.operation == "UPDATE",  # an INSERT lists every column it filled
+        AuditLog.changed_at >= after,
+        AuditLog.changed_fields.contains_any("bank_account_number", "bank_name"),
+    )
+    if any(row.transaction_id not in transactions for row in account):
+        fields.add("konto")
+    reports = YearlyReportSubmission.select(YearlyReportSubmission.report).where(YearlyReportSubmission.id.in_(own))
+    mine = (PublicationConsentChange.source == "paper") & PublicationConsentChange.report.in_(reports)
+    consent = PublicationConsentChange.select().where(
+        PublicationConsentChange.membership == membership.id, PublicationConsentChange.at >= after, ~mine
+    )
+    return fields | ({"publicering"} if consent.exists() else set())
+
+
+def _same(column, stored, value):
+    """The matrikel already holds `value`: the account by its digits (D8), the e-mail in any case."""
+    if column == "bank_account_number":
+        return re.sub(r"\D", "", stored or "") == re.sub(r"\D", "", value)
+    stored = (stored or "").strip()
+    return (stored.lower() if column == "email" else stored) == value
+
+
+def apply_paper_matrikel(herd, membership, member, submission, item, user, matrikel, signed_on):
+    """
+    5.5: the form's consent and contact changes written into the matrikel and never read back: the consent first and
+    the address to `membership`, phone and e-mail to its main `member`, the account to the herd (D8). The caller holds
+    the membership's lock and read both under it. Only a value that differs counts, the bank going with a new account,
+    and a field the matrikel changed after `signed_on` is skipped (D19), unless the herd's report for the round wrote
+    it from paper itself (I1). For the consent only what it adds is skipped: a No or fewer details go at once (fråga
+    27). Each write is save(only=…): a whole row would write back a stale user_id. The consent's log is its
+    publication_consent_change row; every contact write gets one kontakt_andrad row with the column names and
+    `submission_id`, and with the transaction for the account, which ties the herd's audit row to it. Returns
+    (written, skipped) as PAPER_FIELDS.
+    """
+    stored = Herd.get_by_id(herd.id)  # the account as it is now, not as the route read it
+    report = YearlyHerdReport.get_by_id(submission.report_id)
+    same = (YearlyHerdReport.herd == report.herd_id) & (YearlyHerdReport.round == report.round_id)
+    own = YearlyReportSubmission.select(YearlyReportSubmission.id).join(YearlyHerdReport).where(same)
+    rows = {"adress": membership, "telefon": member, "epost": member, "konto": stored}
+    changes = {}
+    for name, columns in _contact(matrikel)[0].items():
+        row = rows[name]
+        if name == "konto":
+            moved = not _same("bank_account_number", row.bank_account_number, columns["bank_account_number"])
+            differ = columns if moved else {}
+        else:
+            differ = {
+                column: value for column, value in columns.items() if not _same(column, getattr(row, column), value)
+            }
+        if differ:
+            changes[name] = differ
+    answer = (matrikel or {}).get("publicering")
+    consent = consent_from_answer(answer["ja"], answer["utom"]) if answer is not None else None
+    consent = None if consent == stored_consent(membership) else consent
+    asked = changes or consent is not None
+    later = later_fields(stored, membership, member, signed_on, {row.id for row in own}) if asked else set()
+    skipped = [name for name in PAPER_FIELDS if name in changes and name in later]
+    written = {name: changes[name] for name in PAPER_FIELDS if name in changes and name not in later}
+    if consent is not None and "publicering" in later:  # only what the form adds waits for the member
+        current = effective_consent(membership)
+        narrowed = {key: allowed and current[key] for key, allowed in consent.items()}
+        skipped += ["publicering"] if narrowed != consent else []
+        consent = narrowed if narrowed != current else None  # a stored blob of fewer keys is no reason to write
+    consented = consent is not None and set_consent(
+        membership,
+        consent,
+        source="paper",
+        text_version=CONSENT_TEXT_VERSION,
+        user=user.id,
+        report=submission.report_id,
+        at=submission.created_at,
+    )
+    old_email = member.email
+    for model, row, names, stamp in (
+        (Membership, membership, ("adress",), [Membership.updated_at]),
+        (Member, member, ("telefon", "epost"), [Member.updated_at]),
+        (Herd, stored, ("konto",), []),
+    ):
+        columns = {column: value for name in names for column, value in written.get(name, {}).items()}
+        for column, value in columns.items():
+            setattr(row, column, value)
+        if columns:
+            row.save(only=[getattr(model, column) for column in columns] + stamp)
+    if written:
+        payload = {
+            "person_id": member.id,
+            "fields": [column for columns in written.values() for column in columns],
+            "source": "paper",
+            "inbox_item_id": item.id,
+            "submission_id": submission.id,
+        }
+        if "konto" in written:  # the herd's audit row has the same transaction_id (txid_current() by default)
+            payload["transaction_id"] = DB_PROXY.execute_sql("SELECT txid_current()").fetchone()[0]
+        if "epost" in written:  # as person_updated has it: the login's 7-day rule reads "email" in "after"
+            payload |= {"before": {"email": old_email}, "after": {"email": member.email}}
+        write_matrikel_audit(user, "kontakt_andrad", membership, payload)
+    return list(written) + (["publicering"] if consented else []), skipped
+
+
+def log_and_mail_paper_contact(herd, item, submission, user, member, fields, skipped, old_email):
+    """
+    The paper path's log and Å23 (5.5, 5.10). The item's event names the fields, never a value (D7), and receipt()
+    reads it back. Å23 goes to the matrikel's e-mail as it was before the change: when the e-mail changed, through an
+    already confirmed member_change_request, since "member" reads the new one when the mail goes. Without an old
+    e-mail no mail goes and the log is all (an SMS may come with an SMS service, spec 16).
+    """
+    if not (fields or skipped):
+        return
+    inbox.log_event(item, user, "matrikel_andrad", falt=fields, hoppade=skipped, submission_id=submission.id)
+    if not (fields and old_email):
+        return
+    recipient = ("member", member.id)
+    if "epost" in fields:
+        at = submission.created_at
+        request = MemberChangeRequest.create(
+            member=member.id,
+            submission=submission.id,
+            kind="epost",
+            value={"old": old_email, "new": member.email},
+            access_code=None,
+            created_at=at,
+            old_confirmed_at=at,
+            confirmed_at=at,
+        )
+        recipient = ("email_change_old", request.id)
+    enqueue_mail(
+        A23,
+        *recipient,
+        {"submission_id": submission.id} | {field: int(field in fields) for field in PAPER_FIELDS},
+        ref=("yearly_report_submission", submission.id),
+        herd=herd,
+        genebank=herd.genebank_id,
+        dedupe_key=f"{A23}:{submission.id}",
+        created_by=user.id,
+    )
+
+
+def _later_change(name):
+    message = f"Matrikeln har ändrats efter blankettens datum ({FIELD_LABELS[name]}). Fråga medlemmen."
+    return Refusal(None, "senare_andring", message)
+
+
+def _contact_event(submission):
+    """The paper submission's matrikel_andrad event, so that every retry's receipt names the same fields."""
+    item_id = submission.data.get("inbox_item_id")
+    if item_id is None:
+        return {}
+    events = InboxEvent.select(InboxEvent.detail).where(
+        InboxEvent.item == item_id, InboxEvent.kind == "matrikel_andrad"
+    )
+    return next((event.detail for event in events if event.detail["submission_id"] == submission.id), {})
+
+
+def _lock_matrikel(herd):
+    """
+    The herd's membership FOR UPDATE, which the matrikel's own writers take first, and its main member read under
+    it: (membership, member), each None when missing. A herd moved to another membership meanwhile is a 409.
+    """
+    membership_id = Herd.select(Herd.membership).where(Herd.id == herd.id).scalar()
+    if membership_id is None:
+        return None, None
+    membership = Membership.select().where(Membership.id == membership_id).for_update().get()
+    if Herd.select(Herd.membership).where(Herd.id == herd.id).scalar() != membership_id:
+        raise ArsrapportError(409, "Besättningen bytte medlemskap samtidigt. Försök igen.")
+    return membership, _main_member(herd)
+
+
+# Skicka (5.4 points 2–5): the submission in one transaction, its key and its fixed receipt
+
+KEY_TAKEN = "Rapporten är redan skickad med den här nyckeln. Ladda om sidan."
+MEASUREMENTS = ("weight", "bodyfat")
+
+
+class ReportGrant:
+    """
+    individual_commands.Grant for a report's writes, which collects the operation ids every execute logged. Logged
+    in it gives no role, since roles_for does, so the can_edit guard applies. On paper the item's InboxGrant gives a
+    helper HANDLAGGARE and leaves everyone's trace. `report_ops` (the report's own operations) gives RAPPORT, for
+    the backouts of Ändra; Undo checks them.
+    """
+
+    def __init__(self, inbox_grant=None, report_ops=frozenset()):
+        self.inbox_grant, self.report_ops = inbox_grant, frozenset(report_ops)
+        self.operation_ids = []
+
+    def roles(self, user, individual):
+        held = self.inbox_grant.roles(user, individual) if self.inbox_grant is not None else frozenset()
+        return held | ({Role.RAPPORT} if self.report_ops else frozenset())
+
+    def record(self, ctx):
+        self.operation_ids += [str(row["operation_id"]) for row in ctx.log_rows]
+        if self.inbox_grant is not None:
+            self.inbox_grant.record(ctx)
+
+
+def request_hash(sub: Submission) -> str:
+    """
+    D21: HMAC-SHA256 with the app's SECRET_KEY over the parsed submission without its key and revision, with the
+    matrikel and every buyer. Nothing in it depends on today, so a retry from an old tab matches.
+    """
+    fields = {name: value for name, value in asdict(sub).items() if name not in ("key", "revision")}
+    canonical = json.dumps(fields, sort_keys=True, separators=(",", ":"), ensure_ascii=False, default=str)
+    return hmac.new(current_app.secret_key.encode(), canonical.encode(), hashlib.sha256).hexdigest()
+
+
+def find_submission(key, herd, round_, user, request_hash):
+    """
+    The submission whose receipt a retry gets: the key's, when the same user sent it for the herd and round, its
+    report is still submitted and the request hash is equal (D21). Any other use of the key is a 409; an unknown
+    key is None. The route asks before report_access, so a retry after the item closed gets its receipt.
+    """
+    if key is None:
+        return None
+    saved = (
+        YearlyReportSubmission.select(YearlyReportSubmission, YearlyHerdReport)
+        .join(YearlyHerdReport)
+        .where(YearlyReportSubmission.submission_key == key)
+        .first()
+    )
+    if saved is None:
+        return None
+    report = saved.report
+    if (
+        saved.user_id == user.id
+        and (report.herd_id, report.round_id, report.status) == (herd.id, round_.id, "submitted")
+        and hmac.compare_digest(saved.request_hash, request_hash)
+    ):
+        return saved
+    raise ArsrapportError(409, KEY_TAKEN)
+
+
+def receipt(submission) -> dict:
+    """
+    Receipt, from the submission row and its events alone, so every retry gets the same one, also after a later change
+    (D21): the summary and the weight warnings come from its data, the matrikel's fields and warnings from its
+    matrikel_andrad event.
+    """
+    entries, event = _entries(submission.data.get("rabbits") or {}), _contact_event(submission)
+    chosen = Counter(entry.val for entry in entries.values())
+    warnings = [_vikt_ovanlig(rabbit, entry.vikt) for rabbit, entry in sorted(entries.items())]
+    warnings += [_later_change(field) for field in event.get("hoppade", [])]
+    return {
+        "submission_id": submission.id,
+        "report_id": submission.report_id,
+        "created_at": submission.created_at.astimezone(timezone.utc).isoformat(),
+        "source": submission.source,
+        "summary": {
+            "kvar": chosen["kvar"],
+            "doda": chosen["dod"],
+            "salda": chosen["sald"],
+            "ej_angivna": chosen["ej_angiven"],
+        },
+        "matrikel": event.get("falt", []),
+        "warnings": [asdict(warning) for warning in warnings if warning],
+    }
+
+
+def submitted_body(sub: Submission) -> dict:
+    """
+    The submission's data (D10): the body rebuilt from the parsed submission, so only what was validated is kept.
+    Each rabbit keeps its chosen branch alone, and there is no matrikel, buyer, key or revision. _entries reads it
+    back as parsed.
+    """
+    rabbits = {}
+    for rabbit, entry in sub.rabbits.items():
+        stored = {key: value for key, value in asdict(entry).items() if key != "individual_id"}
+        if entry.sald is not None:
+            stored["sald"] = {key: value for key, value in entry.sald.items() if key != "kopare"}
+        rabbits[str(rabbit)] = stored
+    body = {"reason": sub.reason, "rabbits": rabbits} | {key: sub.report[key] for key in BODY_KEYS if key in sub.report}
+    if sub.paper is not None:
+        paper = sub.paper
+        body |= {"inbox_item_id": paper["inbox_item_id"]} | {k: _iso(paper[k]) for k in ("received_on", "signed_on")}
+    return body
+
+
+def _lock_rabbits(ids):
+    """The rabbits' litters, then the rabbits, each in ascending order; a rabbit moved to another litter is a 409."""
+
+    def litters():
+        return dict(Individual.select(Individual.id, Individual.breeding).where(Individual.id.in_(ids)).tuples())
+
+    before = litters()
+    lock_breedings(litter for litter in before.values() if litter is not None)
+    lock_individuals(ids)
+    if litters() != before:
+        raise ArsrapportError(409, "Kaninen ändrades samtidigt. Försök igen.")
+
+
+def _measured(effect, rabbit):
+    """The ids of the rabbit's stored measurements with the effect's date and value (weights to two decimals)."""
+    if effect.kind == "weight":
+        rows = Weight.select().where(Weight.individual == rabbit, Weight.weight_date == effect.date)
+        return [row.id for row in rows if round(row.weight, 2) == effect.value[0]]
+    rows = Bodyfat.select().where(
+        Bodyfat.individual == rabbit, Bodyfat.bodyfat_date == effect.date, Bodyfat.bodyfat == effect.value[0]
+    )
+    return [row.id for row in rows]
+
+
+def _command(effect, rabbit, herd, report, entry):
+    """The command that writes `effect`; SetMeasurements gets the stored list as stored, so nothing is replaced."""
+    day = effect.date.isoformat()
+    if effect.kind == "attest":
+        return RecordAttestation(herd.herd, day, report=report.id)
+    if effect.kind == "death":
+        return RecordDeath({"death_date": day, "butchered": effect.value[1], "death_note": effect.value[2]})
+    if effect.kind == "transfer":
+        return TransferIndividual(effect.value[0], day, buyer=entry.sald["kopare"])
+    if effect.kind == "weight":
+        stored = [{"weight": w.weight, "date": w.weight_date.isoformat()} for w in Weight.filter(individual=rabbit)]
+        return SetMeasurements(weights=[*stored, {"weight": effect.value[0], "date": day}])
+    stored = [{"bodyfat": b.bodyfat, "date": b.bodyfat_date.isoformat()} for b in Bodyfat.filter(individual=rabbit)]
+    return SetMeasurements(bodyfat=[*stored, {"bodyfat": effect.value[0], "date": day}])
+
+
+def _write(user, rabbit, effects, herd, report, entry, grant, last):
+    """
+    The rabbit's `effects` through execute in `order` (5.4 point 3): once for those up to 31 December, then once
+    for those after it. A measurement already stored with its date and value is skipped. The caller holds the
+    rabbit's lock, so what is read here stays as read. Returns the added measurements, with the ids read back.
+    """
+    effects = sorted(effects, key=lambda e: order(e, last))
+    effects = [e for e in effects if e.kind not in MEASUREMENTS or not _measured(e, rabbit)]
+    added = []
+    for batch in ([e for e in effects if e.date <= last], [e for e in effects if e.date > last]):
+        if not batch:
+            continue
+        commands = [_command(e, rabbit, herd, report, entry) for e in batch]
+        execute(user, rabbit, lambda ctx, commands=commands: commands, grant=grant)
+        added += [
+            {
+                "individual_id": rabbit,
+                "kind": e.kind,
+                "id": max(_measured(e, rabbit)),  # the newest: the rabbit is locked until commit
+                "date": e.date.isoformat(),
+                "value": e.value[0],
+            }
+            for e in batch
+            if e.kind in MEASUREMENTS
+        ]
+    return added
+
+
+def apply_diff(report, herd, user, grant, rabbit_id, want: list[Effect], prev_entry, entry, last, *, reason=None):
+    """
+    Ändra for one rabbit (D5): the report's current effects that `want` lacks come off, the latest first (a January
+    sale before the attestation), then what is missing is written as Skicka writes it. The voids and the Undo go
+    through the report's right (report_ops) with `reason`, else REPORT_UNDO_REASON. A voided sale outside the
+    genebank takes its buyer with it (kopare's _drop_orphan_buyers). Refusals raise; the caller holds the locks.
+    Returns the added measurements, as _write does.
+    """
+    remove, add = diff(current(report, rabbit_id), want, last, prev_entry, entry)
+    ops, note = frozenset(report_ops(report)), reason or REPORT_UNDO_REASON
+    for c in sorted(remove, key=lambda e: order(e, last), reverse=True):
+        if c.kind in ROW_KINDS:
+            op = uuid.uuid4()
+            void_herd_tracking(c.ref, user, note, op, report_ops=ops)
+            if grant.inbox_grant is not None:  # void_herd_tracking takes no grant, so its trace is left here
+                grant.inbox_grant.trace(op)
+        elif c.kind == "death":
+            undo = [Undo(c.ref, note, report_ops=ops)]
+            execute(user, rabbit_id, lambda ctx, undo=undo: undo, grant=ReportGrant(grant.inbox_grant, report_ops=ops))
+        else:
+            (Weight if c.kind == "weight" else Bodyfat).delete_by_id(c.ref)
+    return _write(user, rabbit_id, add, herd, report, entry, grant, last)
+
+
+def _cannot(refusals, detail="Rapporten kan inte skickas."):
+    return ArsrapportError(422, detail, refusals=[asdict(refusal) for refusal in refusals])
+
+
+def _written(rabbit, exc):
+    """A refused void or write in Ändra or Dra tillbaka, as the 422 refusal for that rabbit (U8)."""
+    return _denied(rabbit, exc.detail if isinstance(exc, HerdTrackingError) else None)
+
+
+def _mail(kind, herd, user, params, ref):
+    """Å7–Å9 to the herd's main member, in the caller's transaction; none without an e-mail address."""
+    member = inbox.herd_holder(herd.id)
+    if member is not None and member.email:
+        enqueue_mail(
+            kind,
+            "member",
+            member.id,
+            params,
+            ref=ref,
+            herd=herd,
+            genebank=herd.genebank_id,
+            dedupe_key=f"{kind}:{ref[1]}",
+            created_by=user.id,
+        )
+
+
+def check_paper(sub, access, on):
+    """5.5 rules 1 and 5, for the dry run and Skicka: the body's item is the route's, and the form came by `on`."""
+    if sub.paper["inbox_item_id"] != access.item.id:
+        raise _bad("inbox_item_id", "Blanketten hör till en annan post i kön.")
+    if sub.paper["received_on"] > on:
+        raise _bad("received_on", "Mottagningsdagen kan inte vara senare än i dag.")
+
+
+def _lock_form(access, user, herd):
+    """
+    5.5 rule 2, under the report's lock: the item locked and checked again as report_access read it, and every
+    other document in it done and waiting for no parent, since the queue's step 1 comes before the form (5.8).
+    Returns the locked item and its arsblankett documents, the form's pages.
+    """
+    item = inbox.lock_item(access.item.id)
+    inbox.require_handler(item, user)  # its 409 says who holds the item now
+    if not _form_item(item, user, herd):
+        raise ArsrapportError(409, "Posten kan inte matas in längre. Öppna den i kön.")
+    others = item.documents.where(InboxDocument.doc_type != "arsblankett")
+    if others.where(InboxDocument.done_at.is_null() | InboxDocument.waiting_for.is_null(False)).exists():
+        raise ArsrapportError(409, "Registrera intygen i posten först.")
+    return item, list(item.documents.where(InboxDocument.doc_type == "arsblankett").order_by(InboxDocument.id))
+
+
+def submit(herd, round_, access, user, sub, *, now=None) -> dict:
+    """
+    Skicka (5.4 points 2–5) in one transaction, under the locks in their order: the same request again gets its
+    first receipt; otherwise the revision and check() once more, the report row, each rabbit's writes, the
+    submission, the draft deleted and the receipt mail queued. On a submitted report it is Ändra: the same row moves
+    on and each changed rabbit gets apply_diff, with Å8 for the mail. Every refusal raises, so nothing stays written.
+    On paper (5.5) the item is locked and checked after the retry, the writes go through its InboxGrant, and the
+    form's pages are done, their photo purged once the report can no longer be withdrawn, before close_if_done.
+    Returns the Receipt.
+    """
+    if sub.key is None:
+        raise _bad("submission_key", "Ange submission_key som ett UUID.")
+    at = now or globals()["now"]()  # the parameter hides the module's clock, which the tests patch
+    on, year = at.astimezone(STOCKHOLM).date(), round_.report_year
+    last, digest, paper = date(year, 12, 31), request_hash(sub), access.source == "paper"
+    same = (YearlyHerdReport.herd == herd.id) & (YearlyHerdReport.round == round_.id)
+    with DB_PROXY.atomic():
+        lock_report(round_, herd)
+        saved = find_submission(sub.key, herd, round_, user, digest)
+        if saved is not None:  # before any item gate: a retry after the item closed (Codex 5)
+            return receipt(saved)
+        if paper:
+            check_paper(sub, access, on)
+        # the membership before the report row, and the main member and its e-mail read under it, before any write
+        membership, member = _lock_matrikel(herd) if paper and sub.paper["matrikel"] is not None else (None, None)
+        old_email = member.email if member is not None else None
+        report = YearlyHerdReport.select().where(same & (YearlyHerdReport.status == "submitted")).for_update().first()
+        item, pages = _lock_form(access, user, herd) if paper else (None, [])
+        _lock_rabbits(sorted(sub.rabbits))
+        if sub.revision != (report.revision if report else None):
+            raise ArsrapportError(409, "Rapporten har ändrats.")
+        refusals, _ = check(herd, round_, access, report, sub, on=on)
+        if refusals:
+            raise _cannot(refusals)
+        grant = ReportGrant(inbox.InboxGrant(item, user, pages[0]) if paper else None)
+        added, change = [], report is not None
+        if change:  # Ändra (D5): the same row, and each changed rabbit gets the diff of the report's effects
+            before = _entries(_submissions(report)[-1].data.get("rabbits") or {})
+            rows = {row["id"]: row for row in report_list(herd, year, report)}
+            report.source, report.report_date, report.revision = access.source, on, report.revision + 1
+            report.data = json.dumps(sub.report)
+            if paper:
+                report.entered_by, report.inbox_item_id = user.id, access.item.id
+            elif report.generated_by_id is None:  # the first login submission sets it; nothing clears it
+                report.generated_by = user.id
+            report.save()
+            for rabbit, entry in sorted(sub.rabbits.items()):
+                if entry == before.get(rabbit):  # P39a: an unchanged choice writes nothing
+                    continue
+                want = wanted(entry, rows[rabbit], report, herd, year, on)
+                try:
+                    added += apply_diff(
+                        report, herd, user, grant, rabbit, want, before.get(rabbit), entry, last, reason=sub.reason
+                    )
+                except (IndividualRefused, HerdTrackingError) as exc:
+                    raise _cannot([_written(rabbit, exc)]) from exc
+        else:
+            revision = YearlyHerdReport.select(fn.MAX(YearlyHerdReport.revision)).where(same).scalar() or 0
+            voided = same & (YearlyHerdReport.status == "voided")
+            received = YearlyHerdReport.select(fn.MIN(YearlyHerdReport.received_at)).where(voided).scalar()
+            if paper and received is None:  # 5.5 rule 5: the day the form came, from midnight in Stockholm
+                received = datetime.combine(sub.paper["received_on"], datetime.min.time(), STOCKHOLM)
+            report = YearlyHerdReport.create(
+                herd=herd.id,
+                round=round_.id,
+                report_date=on,
+                data=json.dumps(sub.report),
+                status="submitted",
+                source=access.source,
+                generated_by=None if paper else user.id,
+                entered_by=user.id if paper else None,
+                inbox_item_id=access.item.id if paper else None,
+                revision=revision + 1,  # voided rows count too, so an old tab never matches a new row
+                received_at=received or at,  # 5.13: the round's first submission
+            )
+            rows = {row["id"]: row for row in report_list(herd, year)}
+            for rabbit, entry in sorted(sub.rabbits.items()):
+                effects = wanted(entry, rows[rabbit], None, herd, year, on)
+                try:
+                    added += _write(user, rabbit, effects, herd, report, entry, grant, last)
+                except (IndividualRefused, HerdTrackingError) as exc:
+                    raise _cannot([_written(rabbit, exc)]) from exc
+        try:
+            submission = YearlyReportSubmission.create(
+                report=report.id,
+                submission_key=sub.key,
+                created_at=at,
+                source=access.source,
+                user=user.id,
+                operation_ids=grant.operation_ids,
+                added_measurements=added,
+                data=submitted_body(sub),
+                request_hash=digest,
+            )
+        except IntegrityError as exc:  # the key, taken meanwhile for another herd, which this lock does not cover
+            raise ArsrapportError(409, KEY_TAKEN) from exc
+        if member is not None:  # check() refused a contact change without one (ingen_huvudmedlem)
+            matrikel, signed = sub.paper["matrikel"], sub.paper["signed_on"]
+            fields, skipped = apply_paper_matrikel(herd, membership, member, submission, item, user, matrikel, signed)
+            log_and_mail_paper_contact(herd, item, submission, user, member, fields, skipped, old_email)
+        for page in pages:  # every page of the form; the photo goes once the report cannot be withdrawn (fråga 31)
+            page.done_at, page.purge_after = page.done_at or at, at + timedelta(days=WITHDRAW_DAYS)
+            page.save()
+        if paper:  # after the writes: InboxGrant needs the item "tagen"
+            inbox.close_if_done(item, user)
+        YearlyReportDraft.delete().where(
+            (YearlyReportDraft.herd == herd.id) & (YearlyReportDraft.round == round_.id)
+        ).execute()
+        kind = "arsrapport.andrad" if change else "arsrapport.kvitto"
+        _mail(kind, herd, user, {"submission_id": submission.id}, ("yearly_report_submission", submission.id))
+        return receipt(submission)
+
+
+WITHDRAW_LATE = (
+    "Rapporten kan dras tillbaka i 7 dagar efter första inskicket, medan rundan är öppen. Kontakta genbanksansvarig."
+)
+
+
+def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> dict:
+    """
+    Dra tillbaka (fråga 15, 5.13) in one transaction under Skicka's locks: owners and caretakers while the round is
+    open and until withdraw_until, editors at any time with a reason, helpers never. Every rabbit the report touched
+    loses its current effects as in apply_diff, after one dry run of them all; the row is voided, the draft keeps
+    what was filled in without its key (P31), and Å9 is queued. Returns the ReportView.
+    """
+    if access.role == "helper":
+        raise ArsrapportError(403, "Genbankshjälpare kan inte dra tillbaka en rapport.")
+    reason = _text(reason, "reason")
+    if access.editor and not reason:
+        raise _bad("reason", "Skriv varför rapporten dras tillbaka.")
+    at = now or globals()["now"]()  # the parameter hides the module's clock, which the tests patch
+    on, last = at.astimezone(STOCKHOLM).date(), date(round_.report_year, 12, 31)
+    with DB_PROXY.atomic():
+        lock_report(round_, herd)
+        report = (
+            YearlyHerdReport.select()
+            .where(
+                (YearlyHerdReport.herd == herd.id)
+                & (YearlyHerdReport.round == round_.id)
+                & (YearlyHerdReport.status == "submitted")
+            )
+            .for_update()
+            .first()
+        )
+        if report is None or revision != report.revision:
+            raise ArsrapportError(409, "Rapporten har ändrats.")
+        submissions = _submissions(report)
+        until = withdraw_until(report, access)
+        if not access.editor and not (round_open(round_, herd.genebank_id, on) and at <= until):
+            raise ArsrapportError(403, WITHDRAW_LATE, withdraw_until=_iso(until))
+        # every rabbit of every submission: one an unchanged later submission left out keeps its effects (P39a)
+        rabbits = sorted({int(key) for submission in submissions for key in submission.data.get("rabbits") or {}})
+        _lock_rabbits(rabbits)
+        ops = {str(op) for submission in submissions for op in submission.operation_ids}
+        refusals = []
+        for rabbit in rabbits:
+            remove = diff(current(report, rabbit), [], last)[0]
+            if not access.can_sell and any(e.kind == "transfer" for e in remove):  # D12: sales are the owner's
+                refusals.append(_refusal(rabbit, "forsaljning_skotare"))
+            else:
+                refusals += _register_refusals(rabbit, None, remove, [], ops, access.role == "admin", reason)
+        if refusals:
+            raise _cannot(refusals, "Rapporten kan inte dras tillbaka.")
+        grant = ReportGrant()
+        for rabbit in rabbits:
+            try:
+                apply_diff(report, herd, user, grant, rabbit, [], None, None, last, reason=reason)
+            except (IndividualRefused, HerdTrackingError) as exc:
+                raise _cannot([_written(rabbit, exc)], "Rapporten kan inte dras tillbaka.") from exc
+        report.status, report.voided_at, report.voided_by_user, report.void_reason = "voided", at, user.id, reason
+        report.save()
+        draft, stamp = _draft(herd, round_), at.astimezone(timezone.utc)
+        if draft is None:  # D10: the submission's data is already stored_body
+            YearlyReportDraft.create(
+                herd=herd.id, round=round_.id, data=submissions[-1].data, updated_at=stamp, updated_by_user=user.id
+            )
+        else:  # the version moves on, so an old tab's autosave cannot bring the key back
+            draft.submission_key, draft.updated_at = None, max(stamp, draft.updated_at + timedelta(microseconds=1))
+            draft.save()
+        _mail("arsrapport.angrad", herd, user, {"report_id": report.id}, ("yearlyherdreport", report.id))
+    return report_view(herd, round_, access, user)
+
+
+@mail_kind("arsrapport.andrad", priority=0, category="T")
+@mail_kind("arsrapport.kvitto", priority=0, category="T")
+def _kvitto(params):
+    """
+    Å7 and Å8 to the herd's main member: what the submission sent, from its row, so a later mail still says what
+    was sent (5.4 point 5). Only end_date is the round's when the mail goes (fråga 32: texts read the round's dates).
+    """
+    submission = YearlyReportSubmission.get_or_none(YearlyReportSubmission.id == params["submission_id"])
+    if submission is None:
+        return None
+    report = YearlyHerdReport.get_by_id(submission.report_id)
+    received = submission.data.get("received_on") if submission.source == "paper" else None
+    return {
+        "herd": report.herd.herd,
+        "datum": received or f"{submission.created_at.astimezone(STOCKHOLM):%Y-%m-%d}",
+        **receipt(submission)["summary"],
+        "end_date": f"{report.round.end_date:%Y-%m-%d}",
+    }
+
+
+@mail_kind(A23, priority=0, category="T")
+def _kontakt_andrad(params):
+    """
+    Å23 to the member: which details a paper form changed, the account by its last two digits as they are when the
+    mail goes (params hold only ids and flags).
+    """
+    submission = YearlyReportSubmission.get_or_none(YearlyReportSubmission.id == params["submission_id"])
+    if submission is None:
+        return None
+    herd = YearlyHerdReport.get_by_id(submission.report_id).herd
+    flags = {field: bool(params.get(field)) for field in PAPER_FIELDS}
+    return {"herd": herd.herd, "account_end": account_end(herd), **flags}
+
+
+@recipient_kind("email_change_old")
+def _old_address(request_id):
+    """The old address of a member_change_request e-mail change (step 5's link path reuses it)."""
+    request = MemberChangeRequest.get_or_none(MemberChangeRequest.id == request_id)
+    if request is None:
+        return None
+    member = Member.get_by_id(request.member_id)
+    return Recipient(request.value["old"], f"{member.first_name} {member.last_name}")
+
+
+@mail_kind("arsrapport.angrad", priority=0, category="T")
+def _angrad(params):
+    """Å9 to the herd's main member: the report was withdrawn, on the day it was voided."""
+    report = YearlyHerdReport.get_or_none(YearlyHerdReport.id == params["report_id"])
+    if report is None or report.voided_at is None:
+        return None
+    return {"herd": report.herd.herd, "datum": f"{report.voided_at.astimezone(STOCKHOLM):%Y-%m-%d}"}

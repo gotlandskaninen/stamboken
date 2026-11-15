@@ -41,13 +41,16 @@ from utils.herd_tracking import (
     BIRTH_DATE_CHANGED_REASON,
     BIRTH_HERD_CHANGED_REASON,
     CONTACT_MANAGER,
+    REPORT_ROW,
     HerdTrackingConflict,
     HerdTrackingError,
     HerdTrackingForbidden,
     HerdTrackingInvalid,
     HerdTrackingNotFound,
+    latest_death_op,
     record_herd_tracking,
     replace_birth_row,
+    report_owners,
     require_reason,
     resolve_herd,
     void_herd_tracking,
@@ -113,6 +116,7 @@ class WriteContext:
     request_id: uuid.UUID = field(default_factory=uuid.uuid4)  # shared by the log rows of one execute()
     log_rows: list = field(default_factory=list)  # inserted together once every command has run
     number_verified: bool = False  # _verify_number runs once per request, whichever command asks
+    granted: frozenset[Role] = frozenset()  # the roles a Grant added to `roles`
 
     def record(self, command, before, after, *, undoes=None, reason=None) -> uuid.UUID:
         """A command log row (ADR-0017); its operation_id now, the row with the others at the end of execute."""
@@ -192,8 +196,24 @@ class PolicyCommand(Command):
             hook(ctx)
 
 
-def roles_for(user, individual) -> frozenset[Role]:
-    """The user's roles on `individual`, from the same sources as User.can_edit and User.can_transfer."""
+class Grant(Protocol):
+    """
+    Roles on a rabbit that come from something the user holds rather than from their own roles, such as an
+    inbox item they have taken (utils.inbox.InboxGrant). execute asks `roles` under the rabbit's lock, in the
+    write transaction: what it returns joins roles_for's, and a call it gives any role passes the can_edit
+    guard, so the policy table alone decides. Anything the grant itself depends on (its own row) the caller
+    locks before calling execute, since the rabbit's locks come after it. `record` writes the grant's trace
+    once every command has run and been logged (ctx.log_rows). A new grant brings its own Role and rows in
+    individual_policy.POLICY.
+    """
+
+    def roles(self, user, individual) -> frozenset[Role]: ...
+
+    def record(self, ctx: WriteContext) -> None: ...
+
+
+def roles_for(user, individual, grant: Grant | None = None) -> frozenset[Role]:
+    """The user's roles on `individual`, from the same sources as User.can_edit and User.can_transfer, and `grant`."""
     herd = individual.current_herd  # the holder row's herd, else the origin herd (current_holder_row)
     managed = user.is_manager or []
     owned = user.transfer_herd_ids()
@@ -204,7 +224,8 @@ def roles_for(user, individual) -> frozenset[Role]:
         Role.OWNER: herd.id in owned,
         Role.CARETAKER: herd.id in user.effective_herd_ids() - owned,
     }
-    return frozenset(role for role, held in roles.items() if held)
+    held = frozenset(role for role, held in roles.items() if held)
+    return held | grant.roles(user, individual) if grant is not None else held
 
 
 def state_for(individual) -> State:
@@ -216,7 +237,7 @@ def state_for(individual) -> State:
 
 def _shared_guards(ctx):
     """Every write, whatever its commands: permission, then voided, both under the lock (IR-03, IR-05)."""
-    if not ctx.user.can_edit(ctx.individual.id):
+    if not ctx.granted and not ctx.user.can_edit(ctx.individual.id):
         raise IndividualRefused("Forbidden")
     if ctx.individual.voided:  # unpromoted while this request waited: its slot is free again
         raise IndividualRefused("Individual not found")
@@ -230,20 +251,23 @@ def execute(
     *,
     target_breeding: int | None = None,
     with_parents: bool = False,
+    grant: Grant | None = None,
 ) -> Individual:
-    """Run the commands `translate` builds from the locked row; raises their refusals unmapped."""
+    """Run the commands `translate` builds from the locked row; raises their refusals unmapped. See Grant."""
     with DATABASE.atomic():
         lock_individual_for_edit(individual_id, target_breeding, with_parents)
         individual = Individual.get_by_id(individual_id)
         target = canonical_breeding_id(target_breeding)
+        granted = grant.roles(user, individual) if grant is not None else frozenset()
         ctx = WriteContext(
             user=user,
             individual=individual,
             stored=Individual.get_by_id(individual_id),
-            roles=roles_for(user, individual),
+            roles=roles_for(user, individual) | granted,
             state=state_for(individual),
             breeding_after=individual.breeding_id if target is None else target,
             update_log=logging.getLogger(f"{individual.current_herd.genebank.name}_update"),
+            granted=granted,
         )
         commands = translate(ctx)
         if not any(isinstance(command, MoveToLitter) for command in commands):
@@ -275,6 +299,8 @@ def execute(
         for command in ordered:
             command.verify(ctx)
         _log_changes(ctx, commands, Individual.get_by_id(individual_id))
+        if grant is not None:
+            grant.record(ctx)
     return ctx.individual
 
 
@@ -536,8 +562,25 @@ class EditDescription(_FormFields):
     apply_rank = 10
 
 
+def _guard_report_death(ctx):
+    """
+    The rabbit's death, written by a submitted yearly report, is changed on the rabbit page only by an editor:
+    the page leads to Ändra (spec 8). The report's own writes come with RAPPORT and pass.
+    """
+    if ctx.stored.death_date is None or ctx.roles & {Role.MANAGER_CURRENT, Role.ADMIN, Role.RAPPORT}:
+        return
+    if report_owners([latest_death_op(ctx.individual.id)]):
+        raise HerdTrackingForbidden(REPORT_ROW)
+
+
 class RecordDeath(_FormFields):
     apply_rank = 10
+
+    def verify(self, ctx):
+        # A change, not an echo (as _log_changes sees it): it would become the latest RecordDeath and free
+        # "Ångra död" of the report's death in a second request.
+        if any(_column_value(ctx.stored, c) != _column_value(ctx.individual, c) for c in self.changes):
+            _guard_report_death(ctx)
 
 
 @dataclass(frozen=True)
@@ -554,6 +597,11 @@ class ClearFields(PolicyCommand):
 
     def pre_write(self, ctx):
         return dict.fromkeys(self.fields)
+
+    def check_reauth(self, ctx):
+        """The rabbit page's "Ångra död" of a death the yearly report wrote leads to Ändra (spec 8)."""
+        if any(getattr(ctx.stored, f) for f in self.fields & set(COMMAND_FIELDS["RecordDeath"])):
+            _guard_report_death(ctx)
 
 
 @dataclass(frozen=True)
@@ -588,6 +636,7 @@ class RecordAttestation(PolicyCommand):
 
     herd: object
     date: str
+    report: int | None = None  # the yearly herd report that writes it (yearly_herd_report_id)
     apply_rank = 70
     policy_stage = None  # asked in apply, after the measurements are written (IR-52)
 
@@ -599,7 +648,9 @@ class RecordAttestation(PolicyCommand):
             raise AssertionError(f"{target.herd} does not hold the rabbit: that is a TransferIndividual")
         # The herd-tracking row with the same operation_id holds what was written.
         op = ctx.record(type(self).__name__, None, None)
-        record_herd_tracking(ctx.individual, target, when, "ATTESTATION", ctx.user, operation_id=op)
+        record_herd_tracking(
+            ctx.individual, target, when, "ATTESTATION", ctx.user, operation_id=op, yearly_herd_report=self.report
+        )
 
 
 def _genebank_correction(ctx, from_herd, to_herd, reason):
@@ -616,11 +667,15 @@ def _genebank_correction(ctx, from_herd, to_herd, reason):
 
 @dataclass(frozen=True)
 class TransferIndividual(PolicyCommand):
-    """A sale or move out of the holder's herd; into another genebank an admin's correction (IR-32, IR-54)."""
+    """
+    A sale or move out of the holder's herd; into another genebank an admin's correction (IR-32, IR-54). On a sale
+    to GX1/MX1, `buyer` is the buyer outside the association (herd_tracking.buyer_contact_fields), never logged.
+    """
 
     herd: object
     date: str
     reason: str | None = None
+    buyer: dict | None = None
     apply_rank = 70
     policy_stage = None  # asked in apply, after the measurements are written (IR-52)
 
@@ -636,7 +691,14 @@ class TransferIndividual(PolicyCommand):
         if target.genebank_id != holder.genebank_id:
             note = _genebank_correction(ctx, holder, target, self.reason)
         op = ctx.record(type(self).__name__, None, None)
-        record_herd_tracking(ctx.individual, target, when, "TRANSFER", ctx.user, operation_id=op, notes=note)
+        record_herd_tracking(
+            ctx.individual, target, when, "TRANSFER", ctx.user, operation_id=op, notes=note, buyer=self.buyer
+        )
+
+
+def record_sale(user, individual_id, herd, date, buyer=None, grant=None):
+    """A sale under the policy, with the buyer outside the association when given (ADR-0016): the queue's way in."""
+    return execute(user, individual_id, lambda ctx: [TransferIndividual(herd, date, buyer=buyer)], grant=grant)
 
 
 def _first_certificate(ctx, certificate):
@@ -903,6 +965,7 @@ class IssueDigitalCertificate(PolicyCommand):
 UNDO_WINDOW = timedelta(days=7)  # as undoing a sale or an attestation in herd-tracking
 UNDOABLE = frozenset({"EditDescription", "RecordDeath", "ClearFields", "RecordAttestation"})
 UNDO_REASON = "Ångrad av den som registrerade den"
+REPORT_UNDO_REASON = "Årsrapporten ändrades eller drogs tillbaka"
 # The TextFields of FORM_WRITABLE_FIELDS; not name, the rabbit's name.
 FREE_TEXT_FIELDS = ("notes", "hair_notes", "color_note", "death_note", "eye_color", "claw_color", "belly_color")
 FREE_TEXT_RETENTION = timedelta(days=396)  # 13 months, rounded up
@@ -937,11 +1000,14 @@ def _undone(entry):
 class Undo(Command):
     """
     Undoes a logged command: its actor within UNDO_WINDOW, or a correction by an editor with a reason
-    (ADR-0017). The steps run in apply, under the individual's lock, in this order.
+    (ADR-0017). The steps run in apply, under the individual's lock, in this order. With Role.RAPPORT granted,
+    `report_ops` (str operation ids) are the yearly report's own commands, which the report's right may undo
+    whoever ran them and however old they are (ADR-0017, addendum 2026-11-14); WriteContext carries only roles.
     """
 
     operation_id: uuid.UUID
     reason: str | None = None
+    report_ops: frozenset[str] = frozenset()
 
     def apply(self, ctx):
         # FOR UPDATE: the free-text purge's UPDATE waits for this undo, or this undo reads the purged row.
@@ -960,11 +1026,19 @@ class Undo(Command):
         if _undone(entry):
             raise HerdTrackingConflict("Ändringen är redan ångrad.")
         actor = actor_role(ctx.user, entry)
-        if not (allowed("Undo", ctx.roles | actor, ctx.state) and allowed(entry.command, ctx.roles, ctx.state)):
+        report = Role.RAPPORT in ctx.granted and str(self.operation_id) in self.report_ops
+        roles = ctx.roles if report else ctx.roles - {Role.RAPPORT}  # RAPPORT reaches only the report's own ops
+        if not (allowed("Undo", roles | actor, ctx.state) and allowed(entry.command, ctx.roles, ctx.state)):
             raise HerdTrackingForbidden(f"Bara den som gjorde ändringen kan ångra den. {CONTACT_MANAGER}")
-        if actor and datetime.now(timezone.utc) - entry.created_at <= UNDO_WINDOW:
+        editor = ctx.roles & {Role.MANAGER_CURRENT, Role.ADMIN}
+        # First: the report's backout often runs as the original actor within the window.
+        if report:
+            note = self.reason or REPORT_UNDO_REASON
+        elif not editor and report_owners([entry.operation_id]):
+            raise HerdTrackingForbidden(REPORT_ROW)
+        elif actor and datetime.now(timezone.utc) - entry.created_at <= UNDO_WINDOW:
             note = UNDO_REASON
-        elif ctx.roles & {Role.MANAGER_CURRENT, Role.ADMIN}:
+        elif editor:
             note = require_reason(self.reason)
         else:
             raise HerdTrackingForbidden(f"Ändringen gjordes för mer än 7 dagar sedan. {CONTACT_MANAGER}")
@@ -972,8 +1046,9 @@ class Undo(Command):
             raise HerdTrackingConflict("Uppgifterna är rensade och kan inte återställas.")
         if entry.command == "RecordAttestation":
             undo_op = ctx.record("Undo", None, None, undoes=entry.operation_id, reason=note)
-            for row in _active_attestation_rows(entry):  # herd-tracking's void rules apply unchanged
-                void_herd_tracking(row.id, ctx.user, note, operation_id=undo_op)
+            ops = self.report_ops if report else None  # an empty set would refuse every row as not the report's
+            for row in _active_attestation_rows(entry):  # herd-tracking's void rules, or the report's
+                void_herd_tracking(row.id, ctx.user, note, operation_id=undo_op, report_ops=ops)
             return
         changed = sorted(key for key, value in entry.after.items() if _column_value(ctx.individual, key) != value)
         if changed:

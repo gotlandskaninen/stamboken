@@ -29,7 +29,15 @@ export interface HerdTrackingRow {
   /** null = not a Phase 10 transfer; false = registered but not confirmed by the buyer. */
   confirmed: boolean | null;
   notes: string | null;
-  buyer: { name: string; contact: string } | null;
+  /** The buyer outside the association: only for admin and the genebank's managers and helpers. */
+  buyer: {
+    id: number;
+    name: string;
+    town: string;
+    postal_address?: string;
+    email?: string;
+    phone?: string;
+  } | null;
   can_void: boolean;
   can_undo_sale: boolean;
   can_undo_operation: boolean;

@@ -10,6 +10,7 @@ import logging
 from flask import Blueprint, jsonify, request
 from flask_login import current_user
 from utils import herd_tracking as ht
+from utils.buyer_contact import erase_buyer_contact
 from utils.database import HerdTracking, Individual, User, not_voided
 
 from .common import check_genebank_access, json_login_required, manager_required, problem
@@ -106,6 +107,18 @@ def void_herd_tracking_row(ht_id):
         return _error(exc)
     _invalidate(individual)
     return jsonify(ht.herd_tracking_history(Individual.get_by_id(individual.id), actor, include_voided=True)), 200
+
+
+# [Next.js] Erase a buyer outside the association on request or objection (ADR-0016); the sale stays.
+@herd_tracking_bp.route("/v2/buyer-contacts/<int:contact_id>", methods=["DELETE"])
+@json_login_required
+@manager_required
+def delete_buyer_contact(contact_id):
+    try:
+        erase_buyer_contact(contact_id, _actor())
+    except ht.HerdTrackingError as exc:
+        return _error(exc)
+    return "", 204
 
 
 # [Next.js] Manager correction command.

@@ -98,6 +98,96 @@ describe("SellRabbitDialog", () => {
     expect(onConfirm.mock.calls[0][1]).toMatch(/^\d{4}-\d{2}-\d{2}$/);
   });
 
+  describe("buyer outside the association", () => {
+    const CONSENT =
+      "Köparen har kryssat ja: föreningen får spara adress, e-post och telefon så länge köparen har kaninen";
+    const OPTIN =
+      "Köparen har kryssat ja: föreningen får kontakta köparen om medlemskap";
+
+    async function chooseOutside(onConfirm = vi.fn()) {
+      render(dialog({ onConfirm }));
+      const options = await openHerdOptions();
+      fireEvent.click(options[0]); // GX1
+      return onConfirm;
+    }
+    const type = (label: RegExp, value: string) =>
+      fireEvent.change(screen.getByLabelText(label), { target: { value } });
+    const confirmButton = () =>
+      screen.getByRole("button", {
+        name: "Bekräfta försäljning",
+      }) as HTMLButtonElement;
+    const acknowledge = () =>
+      fireEvent.click(
+        screen.getByRole("checkbox", { name: /Jag har tagit del/ }),
+      );
+
+    it("asks for name and town only for the outside herd", async () => {
+      render(dialog());
+      const options = await openHerdOptions();
+      fireEvent.click(options[1]); // G2
+      expect(screen.queryByLabelText(/Köparens namn/)).toBeNull();
+      fireEvent.mouseDown(screen.getByRole("combobox"));
+      fireEvent.click((await screen.findAllByRole("option"))[0]);
+      expect(screen.getByLabelText(/Köparens namn/)).toBeTruthy();
+      expect(screen.getByLabelText(/^Ort/)).toBeTruthy();
+      expect(
+        screen.getByText(
+          "Ge köparen överlåtelsebeviset. Där står föreningens information till köparen.",
+        ),
+      ).toBeTruthy();
+    });
+
+    it("requires name and town before the sale can be confirmed", async () => {
+      await chooseOutside();
+      acknowledge();
+      expect(confirmButton().disabled).toBe(true);
+      type(/Köparens namn/, "Anna Köpare");
+      expect(confirmButton().disabled).toBe(true);
+      type(/^Ort/, "Visby");
+      await waitFor(() => expect(confirmButton().disabled).toBe(false));
+    });
+
+    it("shows the contact fields only after the matching yes", async () => {
+      await chooseOutside();
+      const shown = () =>
+        ["Postadress", "E-post", "Telefon"].filter(
+          (label) => screen.queryByLabelText(label) !== null,
+        );
+      expect(shown()).toEqual([]);
+      fireEvent.click(screen.getByRole("checkbox", { name: OPTIN }));
+      expect(shown()).toEqual(["E-post", "Telefon"]);
+      fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
+      expect(shown()).toEqual(["Postadress", "E-post", "Telefon"]);
+    });
+
+    it("sends the buyer, without fields hidden by an unticked box", async () => {
+      const onConfirm = await chooseOutside();
+      type(/Köparens namn/, " Anna Köpare ");
+      type(/^Ort/, "Visby");
+      fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
+      type(/Postadress/, "Väg 1");
+      type(/E-post/, "anna@example.org");
+      fireEvent.click(screen.getByRole("checkbox", { name: CONSENT })); // takes it back
+      fireEvent.click(screen.getByRole("checkbox", { name: OPTIN }));
+      acknowledge();
+      await waitFor(() => expect(confirmButton().disabled).toBe(false));
+      fireEvent.click(confirmButton());
+      expect(onConfirm).toHaveBeenCalledWith("GX1", expect.any(String), {
+        name: "Anna Köpare",
+        town: "Visby",
+        contact_consent: false,
+        membership_optin: true,
+        email: "anna@example.org",
+      });
+    });
+
+    it("offers GX1 again for a rabbit already in GX1", async () => {
+      render(dialog({ currentHerd: { herd: "GX1", herd_name: null } }));
+      const options = await openHerdOptions();
+      expect(options[0].textContent).toBe("GX1 – Utanför genbanken");
+    });
+  });
+
   it("starts from a clean slate on every opening", async () => {
     const { rerender } = render(dialog());
     const options = await openHerdOptions();
