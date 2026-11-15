@@ -277,6 +277,11 @@ describe("ReportForm", () => {
     expect(screen.getAllByRole("group", { name: /G9001-/ })).toHaveLength(1);
   });
 
+  it("shows the save note once, next to Skicka", () => {
+    render(<ReportForm env="demo" view={view()} actions={actions()} />);
+    expect(screen.getAllByText(/^Inte inskickad\. /)).toHaveLength(1);
+  });
+
   it("names the rabbit in a receipt warning", async () => {
     const a = actions();
     a.submitReport.mockImplementationOnce(() =>

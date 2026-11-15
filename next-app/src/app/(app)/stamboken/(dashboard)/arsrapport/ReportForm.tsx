@@ -1144,7 +1144,6 @@ export function ReportForm({
         <div className={styles.layout}>
           <div className={styles.side}>
             <div className={styles.sideStatus}>
-              <ReportStatus status={status} />
               {deadline && <ReportStatus status={deadline} />}
               {syncTimeout && (
                 <div role="alert" className={styles.errorBox}>
