@@ -824,6 +824,22 @@ export function ReportForm({
                   : saveState === "saving"
                     ? { kind: "saving" }
                     : { kind: "saved", at: savedAt, changing: !!view.report };
+  // One short line for the sticky bar below 980 px; the card stays the only
+  // live region, so this one is hidden from screen readers.
+  const shortStatus =
+    status.kind === "saved"
+      ? status.at
+        ? `Sparat ${status.at}`
+        : "Sparas medan du skriver"
+      : status.kind === "saving"
+        ? "Sparar …"
+        : status.kind === "offline"
+          ? `Offline, sparas i ${status.device}`
+          : status.kind === "loggedout"
+            ? "Utloggad, sparas i webbläsaren"
+            : status.kind === "conflict"
+              ? "Ändrad på en annan enhet"
+              : null;
   const deadline = round.deadline
     ? round.deadline < todayStockholm()
       ? ({ kind: "late", deadline: fmtDate(round.deadline) } as const)
@@ -1260,6 +1276,11 @@ export function ReportForm({
                       {doneCount} av {rabbits.length} klara
                     </span>
                   </div>
+                  {shortStatus && (
+                    <span className={styles.stickyStatus} aria-hidden="true">
+                      {shortStatus}
+                    </span>
+                  )}
                   <progress
                     className={styles.progress}
                     max={rabbits.length || 1}

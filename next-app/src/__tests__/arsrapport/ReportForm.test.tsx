@@ -845,6 +845,12 @@ describe("ReportForm", () => {
     expect(within(row(2)).queryByText("Välj månad.")).toBeNull();
   });
 
+  it("repeats the save state in the sticky bar, hidden from screen readers", () => {
+    render(<ReportForm env="demo" view={view()} actions={actions()} />);
+    const line = screen.getByText("Sparas medan du skriver");
+    expect(line.getAttribute("aria-hidden")).toBe("true");
+  });
+
   it("shows Dragen tillbaka after a withdrawal and locks the confirmation while it runs", async () => {
     const a = actions();
     let release: (v: unknown) => void = () => {};
