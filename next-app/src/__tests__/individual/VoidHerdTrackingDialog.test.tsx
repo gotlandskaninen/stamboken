@@ -34,6 +34,7 @@ const row = (date: string): HerdTrackingRow => ({
   can_void: true,
   can_undo_sale: true,
   can_undo_operation: false,
+  report: null,
 });
 
 const open = (

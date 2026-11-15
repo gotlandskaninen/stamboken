@@ -1,6 +1,7 @@
 import { Suspense } from "react";
 import { getUser } from "@/lib/auth";
 import { fetchApi } from "@/lib/api";
+import type { MyReport } from "../arsrapport/lib";
 import MinBesattningContent from "./min-besattning-content";
 
 export const dynamic = "force-dynamic";
@@ -31,10 +32,19 @@ export default async function MinBesattningPage({
   }
 
   // Fetch herd + breeding data in parallel
-  const [herdResult, breedingResult] = await Promise.allSettled([
+  const [herdResult, breedingResult, reportsResult] = await Promise.allSettled([
     fetchApi(`/herd/${userHerdNumber}`),
     fetchApi<{ breedings: any[] }>(`/breeding/${userHerdNumber}`),
+    fetchApi<{ reports: MyReport[] }>("/v2/arsrapport/mina"),
   ]);
+  // An open round whose report is not submitted: a to-do on the overview.
+  const reportTodo =
+    (reportsResult.status === "fulfilled"
+      ? reportsResult.value.reports.find(
+          (r) =>
+            r.herd === userHerdNumber && r.open && r.status !== "submitted",
+        )
+      : null) ?? null;
 
   const herd = herdResult.status === "fulfilled" ? herdResult.value : null;
   const breedings =
@@ -56,6 +66,7 @@ export default async function MinBesattningPage({
         breedings={breedings}
         herdNumber={userHerdNumber}
         initialTab={initialTab}
+        reportTodo={reportTodo}
       />
     </Suspense>
   );

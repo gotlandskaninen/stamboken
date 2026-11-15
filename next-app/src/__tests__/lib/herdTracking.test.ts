@@ -31,10 +31,12 @@ const base: HerdTrackingRow = {
   can_void: true,
   can_undo_sale: true,
   can_undo_operation: false,
+  report: null,
 };
 const history = (rows: HerdTrackingRow[]): HerdTrackingHistory => ({
   individual: { id: 7, number: "G1274-2501" },
   viewer: { can_manage: false },
+  death_report: null,
   rows,
   periods: [],
 });

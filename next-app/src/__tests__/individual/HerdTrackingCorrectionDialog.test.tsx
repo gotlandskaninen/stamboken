@@ -23,6 +23,7 @@ afterEach(cleanup);
 const history: HerdTrackingHistory = {
   individual: { id: 7, number: "G100-2511" },
   viewer: { can_manage: true },
+  death_report: null,
   rows: [
     {
       id: 21,
@@ -47,6 +48,7 @@ const history: HerdTrackingHistory = {
       can_void: true,
       can_undo_sale: false,
       can_undo_operation: false,
+      report: null,
     },
   ],
   periods: [],

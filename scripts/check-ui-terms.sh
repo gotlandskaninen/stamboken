@@ -33,6 +33,7 @@ cd "$(dirname "$0")/.."
 FORBIDDEN='genbanksnummer|kaninnummer|certifikat|överlåt|byter hem|bekräfta flytt|sälj / flytta|genbanksmanager'
 FORBIDDEN+='|kullar & parningar|besättningshistoria|rapportera som död|dödsnotering|dödsanteckning'
 FORBIDDEN+='|försäljningsdatum|köpdatum|lista över individer'
+FORBIDDEN+='|förslag|torrkörning|kodinnehavare'
 # Versal mitt i menyvalet, och Moder/Fader som hel etikett: i en sträng eller JSX-text
 # ("Moder", >Moder<) eller ensam på raden, så att moderId och "Moder Jord" inte träffas.
 CASED="Min Besättning|Alla Kaniner|(^[[:space:]]*|[\"'>])(Moder|Fader)([\"'<]|[[:space:]]*$)"

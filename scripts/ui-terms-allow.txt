@@ -2,3 +2,10 @@
 # (sökväg från repo-roten, ERE som träffraden ska matcha). Kommentera varje rad.
 # Överlåtelsebeviset är papperets namn (ADR-0016), inte ordet för en försäljning.
 next-app/messages/sv.json:"buyerNote": "Ge köparen överlåtelsebeviset\.
+# "förslag", "torrkörning" och "kodinnehavare" står inte i text till medlemmen i årsrapporten
+# (spec 5.1). Dagens träffar är andra funktioner: ett provparningsförslag och inläsningskönens
+# tolkningsförslag, som handläggaren ser och som inte är ett försäljningsförslag.
+next-app/messages/sv.json:"suggestionSuffix": "\(förslag\)"
+next-app/src/app/(app)/stamboken/(dashboard)/genetik/page.tsx:Parningsförslag
+next-app/src/app/(app)/stamboken/(dashboard)/inkorg/[id]/CertificateForm.tsx:[Ff]örslag
+next-app/src/components/genetics/BreedingSuggestionsTab.tsx:(parningsförslag|för att få förslag)

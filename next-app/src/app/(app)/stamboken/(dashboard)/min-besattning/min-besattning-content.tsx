@@ -18,6 +18,7 @@ import { Masthead } from "@/components/shell/Masthead";
 import { HerdSwitcher } from "@/components/shell/HerdSwitcher";
 import { TabBar } from "@/components/shell/TabBar";
 import { MB_TABS, TabPanel, type TabValue } from "./min-besattning-ui";
+import type { MyReport } from "../arsrapport/lib";
 import OversiktTab from "./OversiktTab";
 import KaninerTab from "./KaninerTab";
 import KullarTab from "./KullarTab";
@@ -29,6 +30,7 @@ interface MinBesattningContentProps {
   breedings: any[] | null;
   herdNumber: string | null;
   initialTab: string | null;
+  reportTodo?: MyReport | null;
 }
 
 export default function MinBesattningContent({
@@ -36,6 +38,7 @@ export default function MinBesattningContent({
   breedings,
   herdNumber,
   initialTab,
+  reportTodo,
 }: MinBesattningContentProps) {
   const router = useRouter();
   const user = useUser();
@@ -430,6 +433,7 @@ export default function MinBesattningContent({
             herd={herdData}
             breedings={breedingList}
             herdNumber={userHerdId}
+            reportTodo={reportTodo}
             onGoTab={goTab}
             onNewLitter={() => {
               setShowLitterForm(true);

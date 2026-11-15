@@ -64,6 +64,7 @@ import {
 } from "@/components/individual/HerdTrackingCorrectionDialog";
 import {
   latestUndoableSale,
+  reportHref,
   undoTargetOperationId,
   type HerdTrackingRow,
 } from "@/lib/herdTracking";
@@ -87,6 +88,7 @@ export function CardActions({
   onSell,
   testMateHref,
   onUndoSale,
+  deathReportHref,
 }: {
   canEdit: boolean;
   isEditing: boolean;
@@ -98,6 +100,8 @@ export function CardActions({
   onSell: () => void;
   testMateHref: string | null;
   onUndoSale: (() => void) | null;
+  /** The report that wrote the death: changed there, not undone here. */
+  deathReportHref?: string | null;
 }) {
   const [menuAnchor, setMenuAnchor] = React.useState<null | HTMLElement>(null);
   const { t } = useTranslation();
@@ -206,6 +210,17 @@ export function CardActions({
             <ListItemText sx={{ color: "error.main" }}>
               {t("individual.death.reportAction")}
             </ListItemText>
+          </MenuItem>
+        ) : deathReportHref ? (
+          <MenuItem
+            component={NextLink}
+            href={deathReportHref}
+            onClick={() => setMenuAnchor(null)}
+          >
+            <ListItemIcon>
+              <ReportIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>Ändra i årsrapporten</ListItemText>
           </MenuItem>
         ) : (
           <MenuItem
@@ -676,6 +691,11 @@ export function IndividualDetail({
                     setSellDialogOpen(true);
                   }}
                   testMateHref={testMateHref}
+                  deathReportHref={
+                    history?.death_report && !history.viewer.can_manage
+                      ? reportHref(history.death_report)
+                      : null
+                  }
                   onUndoSale={
                     undoableSale
                       ? () => openVoid(undoableSale, "undoSale")
