@@ -218,6 +218,78 @@ describe("a malformed stored draft", () => {
   });
 });
 
+describe("a body-shaped draft with wrong types", () => {
+  it("normalises every rabbit field instead of copying it", () => {
+    const rabbit = (over: object) =>
+      fromBody({ rabbits: { "123": { val: "kvar", ...over } } } as never)
+        .rabbits[123];
+    expect(() => rabbit({ ej_vagd: {} })).not.toThrow();
+    expect(rabbit({ ej_vagd: {} }).ej_vagd).toBeNull();
+    expect(rabbit({ vikt: {} }).vikt).toBe("");
+    expect(rabbit({ vikt: 2.8 }).vikt).toBe("2,8");
+    expect(rabbit({ hull: {} }).hull).toBeNull();
+    expect(rabbit({ val: {} }).val).toBeNull();
+    expect(rabbit({ val: "bogus" }).val).toBeNull();
+    const dod = fromBody({
+      rabbits: {
+        "1": {
+          val: "dod",
+          dod: { ar: {}, manad: "5", dag: [], slaktad: "x", anteckning: 3 },
+        },
+      },
+    } as never).rabbits[1].dod;
+    expect(dod).toEqual({
+      ar: 0,
+      manad: 5,
+      dag: null,
+      slaktad: true,
+      anteckning: "",
+    });
+    const sald = fromBody({
+      rabbits: {
+        "1": {
+          val: "sald",
+          sald: { till: {}, ar: "2026", manad: {}, dag: "x" },
+        },
+      },
+    } as never).rabbits[1].sald;
+    expect(sald).toEqual({
+      till: "",
+      ar: 2026,
+      manad: null,
+      dag: null,
+      kopare: null,
+    });
+    const s = fromBody({
+      rabbits: "x",
+      ending_genbank: {},
+      membership_after_end: {},
+      health: {},
+      diseases: {
+        rvhd: { antal: {}, alder: {} },
+        annat: { antal: 2, namn: [] },
+      },
+      defects: [
+        { individual_id: {}, beskrivning: "x" },
+        7,
+        { individual_id: 4, beskrivning: {} },
+      ],
+      message: {},
+      reason: [],
+    } as never);
+    expect(s).toMatchObject({
+      ending: true,
+      membership: null,
+      health: null,
+      message: "",
+      reason: "",
+    });
+    expect(s.diseases.rvhd.antal).toBe("");
+    expect(s.diseases.annat).toEqual({ antal: "2", alder: "", namn: "" });
+    expect(s.defects).toEqual([{ individual_id: 4, beskrivning: "" }]);
+  });
+});
+
 describe("keyAfter", () => {
   it("keeps the key after a timeout and renews it otherwise", () => {
     const k = "11111111-1111-4111-8111-111111111111";

@@ -457,8 +457,11 @@ export function toBody(
 // an unknown key (a matrikel, a buyer) is dropped, never copied on.
 const isObj = (v: unknown): v is Record<string, unknown> =>
   typeof v === "object" && v !== null && !Array.isArray(v);
-const num = (v: unknown): number | null =>
-  typeof v === "number" && Number.isFinite(v) ? v : null;
+const num = (v: unknown): number | null => {
+  const n =
+    typeof v === "string" && v.trim() !== "" ? Number(v) : (v as number);
+  return typeof n === "number" && Number.isFinite(n) ? n : null;
+};
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 function pickEntry(raw: unknown): Entry {
   const e = (isObj(raw) ? raw : {}) as Partial<Entry>;
@@ -542,42 +545,6 @@ export function toDraft(state: FormState): DraftData {
   return { ...draft, form };
 }
 
-function fromEntry(b: Partial<BodyEntry> & { val?: Val | null }): Entry {
-  const val = b.val ?? null;
-  return {
-    val,
-    vikt:
-      val === "kvar" && b.vikt != null && b.vikt !== ""
-        ? typeof b.vikt === "number"
-          ? kgText(b.vikt)
-          : String(b.vikt)
-        : "",
-    ej_vagd: val === "kvar" ? (b.ej_vagd ?? null) : null,
-    hull: val === "kvar" ? (b.hull ?? null) : null,
-    dod:
-      val === "dod" && b.dod
-        ? {
-            ar: b.dod.ar,
-            manad: b.dod.manad,
-            dag: b.dod.dag ?? null,
-            slaktad: !!b.dod.slaktad,
-            anteckning: b.dod.anteckning ?? "",
-          }
-        : null,
-    sald:
-      val === "sald" && b.sald
-        ? {
-            till: b.sald.till,
-            ar: b.sald.ar,
-            manad: b.sald.manad,
-            dag: b.sald.dag ?? null,
-            kopare: null,
-          }
-        : null,
-  };
-}
-
-// A draft, or report.submitted, back into the form. The buyers are gone.
 // A stored draft is data the server accepted as it was: it never throws. A
 // malformed `form` falls back to the body shape, and that to an empty form.
 export function fromBody(data: Partial<DraftData>): FormState {
@@ -589,27 +556,46 @@ export function fromBody(data: Partial<DraftData>): FormState {
   }
 }
 
+// The body shape (a draft the server wrote after Dra tillbaka, or
+// report.submitted): rebuilt as a loose form and normalised by pickForm, so no
+// field keeps a wrong type.
 function fromShape(data: Partial<DraftData>): FormState {
-  const state = emptyState();
-  for (const [id, raw] of Object.entries(data.rabbits ?? {}))
-    state.rabbits[Number(id)] = fromEntry(raw);
-  state.ending = !!data.ending_genbank;
-  state.membership = data.membership_after_end ?? null;
-  state.health = data.health ?? null;
-  for (const [d, v] of Object.entries(data.diseases ?? {})) {
-    state.diseases[d as Disease] = {
-      antal: String(v.antal),
-      alder: v.alder ?? "",
-      namn: (v as { namn?: string | null }).namn ?? "",
+  const rabbits: Record<string, unknown> = {};
+  for (const [id, raw] of Object.entries(
+    isObj(data.rabbits) ? data.rabbits : {},
+  )) {
+    const b: Record<string, unknown> = isObj(raw) ? raw : {};
+    rabbits[id] = {
+      val: b.val,
+      vikt:
+        b.val === "kvar" && typeof b.vikt === "number"
+          ? kgText(b.vikt)
+          : b.vikt,
+      ej_vagd: b.val === "kvar" ? b.ej_vagd : null,
+      hull: b.val === "kvar" ? b.hull : null,
+      dod: b.val === "dod" ? b.dod : null,
+      sald: b.val === "sald" ? b.sald : null,
     };
   }
-  state.defects = (data.defects ?? []).map((d) => ({
-    individual_id: d.individual_id,
-    beskrivning: d.beskrivning ?? "",
-  }));
-  state.message = data.message ?? "";
-  state.reason = (data as { reason?: string | null }).reason ?? "";
-  return state;
+  const diseases: Record<string, unknown> = {};
+  for (const [d, v] of Object.entries(
+    isObj(data.diseases) ? data.diseases : {},
+  ))
+    if (isObj(v))
+      diseases[d] = {
+        ...v,
+        antal: typeof v.antal === "number" ? String(v.antal) : v.antal,
+      };
+  return pickForm({
+    rabbits,
+    ending: data.ending_genbank,
+    membership: data.membership_after_end,
+    health: data.health,
+    diseases,
+    defects: data.defects,
+    message: data.message,
+    reason: (data as { reason?: unknown }).reason,
+  } as unknown as Partial<FormState>);
 }
 
 const STOCKHOLM = "Europe/Stockholm";
