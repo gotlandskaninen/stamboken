@@ -389,6 +389,20 @@ class TestEditDescription(IndividualTest):
         refusal = self._refusal(self.owner, EditDescription({"color": "finns-inte"}))
         self.assertEqual(refusal.envelope, error("Unknown color: 'finns-inte''"))
 
+    def test_color_resolved_within_the_rabbits_genebank(self):
+        """Two genebanks may name a colour alike (Albino): the rabbit gets its own genebank's."""
+        gotland = db.Color.create(name="Albino", genebank=self.genebanks[0])
+        mellerud = db.Color.create(name="Albino", genebank=self.genebanks[1])
+        mellerud_rabbit = self.individuals[2]  # in M3
+        self._run(self.admin, EditDescription({"color": "Albino"}), ind=mellerud_rabbit)
+        self.assertEqual(self._stored(mellerud_rabbit).color_id, mellerud.id)
+        self._run(self.owner, EditDescription({"color": "Albino"}))
+        self.assertEqual(self._stored().color_id, gotland.id)
+
+    def test_color_of_another_genebank_is_unknown(self):
+        refusal = self._refusal(self.admin, EditDescription({"color": "stgröhn"}), ind=self.individuals[2])
+        self.assertEqual(refusal.envelope, error("Unknown color: 'stgröhn''"))
+
     def test_color_by_name(self):
         self._run(self.owner, EditDescription({"color": "stgröhn"}))
         self.assertEqual(self._stored().color_id, self.colors[1].id)

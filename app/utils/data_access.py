@@ -1771,7 +1771,11 @@ def form_to_individual(form, user=None):
         if "breeding" in form:
             form["breeding"] = known_litter(form["breeding"])
         if "color" in form and form["color"] is not None:
-            form["color"] = known_color(form["color"])
+            # The rabbit's current herd, as the v2 create does: the form's herd for a new one.
+            herd = individual.current_herd if individual.id else Herd.get_or_none(Herd.herd == form.get("herd"))
+            if herd is None:
+                raise IndividualRefused("Unknown color: no herd to look it up in")
+            form["color"] = known_color(form["color"], herd.genebank_id)
         if "origin_herd" in form:
             form["origin_herd"] = known_origin_herd(form["origin_herd"]["herd"])
         for parent in ["mother", "father"]:
