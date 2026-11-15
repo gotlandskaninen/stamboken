@@ -169,6 +169,35 @@ class TestMembershipLifecycleMachine(DatabaseTest):
                 stored = db.Membership.get_by_id(created["id"])
                 self.assertEqual((stored.membership_status, stored.notes), ("inactive", None))
 
+    def test_a_remaining_family_member_reopens_a_membership_whose_main_member_was_erased(self):
+        """PAUSED -> ERASE_MAIN -> RETIRED -> ADD_MAIN -> PAUSED -> active: rows the random run reaches rarely."""
+        mid = self.client.post("/api/v2/memberships", json={"first_name": "A", "last_name": "B"}).get_json()["id"]
+        family = self.client.post(
+            f"/api/v2/memberships/{mid}/persons", json={"first_name": "C", "last_name": "D", "role": "familjemedlem"}
+        ).get_json()["id"]
+        main = db.Member.get(db.Member.membership == mid, db.Member.role == "huvudmedlem").id
+
+        def patch(status):
+            return self.client.patch(f"/api/v2/memberships/{mid}", json={"membership_status": status}).status_code
+
+        def state():
+            has_main = (
+                db.Member.select()
+                .where(db.Member.membership == mid, db.Member.role == "huvudmedlem", db.Member.end_date.is_null(True))
+                .exists()
+            )
+            return state_of(db.Membership.get_by_id(mid).membership_status, has_main)
+
+        self.assertEqual(patch("inactive"), 200)
+        self.assertEqual(self.client.post(f"/api/v2/persons/{main}/anonymize").status_code, 200)
+        self.assertIs(state(), State.RETIRED)
+        self.assertEqual(patch("active"), 409)
+        swap = self.client.post(f"/api/v2/memberships/{mid}/main-member", json={"person_id": family})
+        self.assertEqual(swap.status_code, 200)
+        self.assertIs(state(), State.PAUSED)
+        self.assertEqual(patch("active"), 200)
+        self.assertIs(state(), State.ACTIVE)
+
     def test_random_sequences(self):
         stats = Counter()
         examples = int(os.environ.get("LIFECYCLE_EXAMPLES", "40"))
