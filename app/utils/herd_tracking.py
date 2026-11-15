@@ -136,11 +136,16 @@ def buyer_items(rows, lock=False):
     """
     The queue's items whose documents may show the buyers of `rows`, the rows a caller is about to void: the items
     with documents of the rabbits or of their sales, when a row holds a buyer outside the association, else none.
-    holder_contact is set when a row is written, so it is read before any lock. With `lock`, they are locked in
-    the queue's own order (it locks its item, then the rabbit): call before lock_individuals.
+    The buyers are read afresh, never from rows or a query a caller read earlier (attach_buyer may have set one
+    since). With `lock`, they are locked in the queue's own order (it locks its item, then the rabbit): call
+    before lock_individuals.
     """
     rows = list(rows)
-    if not any(r.holder_contact_id for r in rows):
+    if (
+        not HerdTracking.select()
+        .where(HerdTracking.id.in_([r.id for r in rows]), HerdTracking.holder_contact.is_null(False))
+        .exists()
+    ):
         return set()
     individual_ids = {r.individual_id for r in rows}
     sales = HerdTracking.select(HerdTracking.id).where(HerdTracking.individual.in_(individual_ids))

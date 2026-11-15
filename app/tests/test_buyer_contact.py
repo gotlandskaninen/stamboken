@@ -1171,6 +1171,28 @@ class TestLockOrder(PurgeTest):
             void_herd_tracking(sale.id, self.manager, "Fel kanin")
         self.assertIn("Försök igen", raised.exception.detail)
 
+    def test_a_correction_reads_the_buyer_again_under_its_rabbit_lock(self):
+        rabbit = db.Individual.get(db.Individual.number == "G1-2112")
+        sale = record_herd_tracking(rabbit, self.gx1, "2026-01-01", "TRANSFER", self.manager)  # no buyer yet
+        item = self.make()  # an item with a document of the sale
+        db.InboxDocument.update(herd_tracking_id=sale.id).where(db.InboxDocument.item == item.id).execute()
+        real_lock = herd_tracking_module.lock_individuals
+
+        def buyer_attached_first(ids):  # attach_buyer commits just before the correction gets the rabbit's lock
+            contact = db.BuyerContact.create(
+                **BUYER, created_by_user=self.manager, purge_at=db.BuyerContact.purge_at_for("2026-01-01")
+            )
+            db.HerdTracking.update(holder_contact=contact).where(db.HerdTracking.id == sale.id).execute()
+            return real_lock(ids)
+
+        event = {"kind": "TRANSFER", "date": "2026-01-02", "herd": "GX1"}
+        with (
+            mock.patch("utils.herd_tracking.lock_individuals", side_effect=buyer_attached_first),
+            self.assertRaises(HerdTrackingConflict) as raised,
+        ):
+            correct_herd_tracking(rabbit, self.manager, None, [sale.id], [event], "Fel datum")
+        self.assertEqual(raised.exception.detail, "Inkorgen ändrades under tiden. Försök igen.")
+
     def test_an_erasure_locks_the_items_before_the_rabbit(self):
         rabbit = db.Individual.get(db.Individual.number == "G1-2112")
         sale, _document = self._sale_with_a_document(rabbit, "2026-01-01")
