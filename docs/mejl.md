@@ -174,7 +174,9 @@ Ingen inloggning; högst 10 anrop i timmen från en IP-adress. En äkta kod
 raderar köparen med samma funktion som när genbanksansvarig raderar
 (`delete_buyer_contacts` med åtgärden `invandning` och utan användare):
 bevisets original, adressen i mejlkön (`forget_recipient`) och en rad i
-`audit_log` följer med.
+`audit_log` följer med. Varje försäljning ger en egen köparrad, så köparens
+alla rader med samma e-postadress (versaler och blanksteg räknas inte)
+raderas i samma transaktion.
 
 | Svar | När |
 |---|---|

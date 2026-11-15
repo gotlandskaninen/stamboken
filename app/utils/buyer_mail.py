@@ -9,6 +9,8 @@ import logging
 import os
 from zoneinfo import ZoneInfo
 
+from peewee import fn
+
 from utils.database import DB_PROXY, BuyerContact, DigitalCertificateV2, Individual
 from utils.mail import enqueue_mail, link_token, mail_kind, verify_link
 
@@ -128,7 +130,8 @@ def erase_by_link(token):
     POST /api/v2/kopare/ta-bort: the buyer objects through the link in kopare.information, and every detail goes
     as when a manager erases the buyer, with the action "invandning" and no user. "removed" or "already_removed"
     for a genuine link; None for any other token, decided before the database is read, so the answer never tells
-    whether an id exists.
+    whether an id exists. A buyer of several rabbits has one contact per sale: every contact with the same
+    address goes with the one in the link.
     """
     contact_id = verify_link(ERASE_PURPOSE, token)
     if contact_id is None:
@@ -138,6 +141,11 @@ def erase_by_link(token):
     from utils.inbox_purge import remove_originals  # pylint: disable=import-outside-toplevel
 
     with DB_PROXY.atomic():
-        count, paths = delete_buyer_contacts([contact_id], "invandning", whole_items=True)
+        ids = {contact_id}
+        contact = BuyerContact.get_or_none(BuyerContact.id == contact_id)
+        if contact is not None and contact.email and contact.email.strip():
+            same = fn.lower(fn.trim(BuyerContact.email)) == contact.email.strip().lower()
+            ids.update(row.id for row in BuyerContact.select(BuyerContact.id).where(same))
+        count, paths = delete_buyer_contacts(sorted(ids), "invandning", whole_items=True)
     remove_originals(paths)  # after the commit, as utils.buyer_contact.erase_buyer_contact
     return "removed" if count else "already_removed"

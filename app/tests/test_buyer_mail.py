@@ -295,6 +295,21 @@ class TestEraseLink(PurgeTest):
         self.assertEqual((response.status_code, response.get_json()), (200, {"result": "already_removed"}))
         self.assertEqual(len(self.deletions()), 1)
 
+    def test_the_link_erases_every_contact_with_the_same_address(self):
+        def contact(email):
+            return db.BuyerContact.create(
+                name="Zelda", town="Visby", email=email, contact_consent_at=datetime.now(timezone.utc),
+                created_by_user=self.manager,
+            ).id  # fmt: skip
+
+        same, other = contact(" Zelda@Example.ORG "), contact("link@example.org")
+        response = self.erase(self.token)
+        self.assertEqual((response.status_code, response.get_json()), (200, {"result": "removed"}))
+        self.assertEqual([row.id for row in db.BuyerContact.select()], [other])
+        self.assertEqual(sorted(row[0] for row in self.deletions()), sorted([str(self.contact_id), str(same)]))
+        self.assertEqual(self.erase(self.token).get_json(), {"result": "already_removed"})
+        self.assertEqual([row.id for row in db.BuyerContact.select()], [other])
+
     def test_any_other_token_changes_nothing_and_answers_alike(self):
         mac = self.token.split(".")[1]
         tokens = {
