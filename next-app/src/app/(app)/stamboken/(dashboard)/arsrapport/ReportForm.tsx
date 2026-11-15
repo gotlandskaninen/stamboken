@@ -135,13 +135,21 @@ async function safe<T>(
 
 // localStorage holds what the server has not confirmed yet, apart per data
 // environment (demo and prod answer from different databases). It never gets
-// a buyer or a matrikel: toDraft strips them.
+// a buyer or a matrikel: toDraft strips them. The copy carries the server
+// draft's updated_at and the report revision it was edited from, so that a
+// copy older than the server's version is never adopted silently (Codex 1).
+type LocalCopy = {
+  data: DraftData;
+  updated_at?: string | null; // missing in a copy from before the stamps
+  revision?: number | null;
+};
 const localKey = (env: Mode, herd: string, year: number) =>
   `arsrapport:${env}:${herd}:${year}`;
-const readLocal = (env: Mode, herd: string, year: number): DraftData | null => {
+const readLocal = (env: Mode, herd: string, year: number): LocalCopy | null => {
   try {
     const raw = window.localStorage.getItem(localKey(env, herd, year));
-    return raw ? (JSON.parse(raw) as DraftData) : null;
+    const copy = raw ? JSON.parse(raw) : null;
+    return copy && !("data" in copy) ? { data: copy } : copy;
   } catch {
     return null;
   }
@@ -150,13 +158,13 @@ const writeLocal = (
   env: Mode,
   herd: string,
   year: number,
-  data: DraftData | null,
+  copy: LocalCopy | null,
 ) => {
   try {
-    if (data)
+    if (copy)
       window.localStorage.setItem(
         localKey(env, herd, year),
-        JSON.stringify(data),
+        JSON.stringify(copy),
       );
     else window.localStorage.removeItem(localKey(env, herd, year));
   } catch {
@@ -258,6 +266,9 @@ export function ReportForm({
   const [withdrawn, setWithdrawn] = React.useState<string | null>(null);
   const [withdrawing, setWithdrawing] = React.useState(false);
   const [localCopy, setLocalCopy] = React.useState(false);
+  // a local copy edited from an older version than the server's: kept apart
+  // until the user chooses, and editing waits
+  const [olderCopy, setOlderCopy] = React.useState<DraftData | null>(null);
   const [filter, setFilter] = React.useState<Filter>("alla");
   const [snapshot, setSnapshot] = React.useState<Set<number>>(new Set());
   const [search, setSearch] = React.useState("");
@@ -302,13 +313,22 @@ export function ReportForm({
     setVersion((v) => v + 1);
   }, []);
 
-  // A copy the server never confirmed (closed tab, lost connection) wins.
+  // A copy the server never confirmed (closed tab, lost connection) wins while
+  // the server is still at the version it was edited from; otherwise the
+  // server's version stays and the user chooses.
   React.useEffect(() => {
     // behind the member-draft gate nothing is adopted: the choice comes first
     if (gateOf(viewRef.current, isPaper) === "draft") return;
     const local = readLocal(env, herd.herd, year);
-    if (local) {
-      const s = fromBody(local);
+    const server = viewRef.current;
+    if (
+      local &&
+      (local.updated_at !== (server.draft?.updated_at ?? null) ||
+        local.revision !== (server.report?.revision ?? null))
+    ) {
+      setOlderCopy(local.data);
+    } else if (local) {
+      const s = fromBody(local.data);
       // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage exists only after hydration
       setState(s);
       setEntered(enteredFrom(viewRef.current.rabbits, s));
@@ -402,6 +422,13 @@ export function ReportForm({
           setSaveState("saved");
           if (versionRef.current === mine)
             writeLocal(env, herd.herd, year, null);
+          // a newer edit waits: its copy now builds on the version just saved
+          else
+            writeLocal(env, herd.herd, year, {
+              data: toDraft(stateRef.current),
+              updated_at: res.data.updated_at,
+              revision: viewRef.current.report?.revision ?? null,
+            });
           continue;
         }
         const p = res.problem;
@@ -432,7 +459,11 @@ export function ReportForm({
   // Autosave: 2 s after the last change, from the revision the page started from.
   React.useEffect(() => {
     if (version === 0 || mode !== "form" || !canEdit || stopped.current) return;
-    writeLocal(env, herd.herd, year, toDraft(stateRef.current));
+    writeLocal(env, herd.herd, year, {
+      data: toDraft(stateRef.current),
+      updated_at: updatedAt.current,
+      revision: viewRef.current.report?.revision ?? null,
+    });
     const t = setTimeout(() => void flushRef.current(), AUTOSAVE_MS);
     return () => clearTimeout(t);
   }, [version, retry, mode, canEdit, env, herd.herd, year]);
@@ -667,7 +698,7 @@ export function ReportForm({
   };
 
   const skicka = async () => {
-    if (phase !== "idle" || syncing) return;
+    if (phase !== "idle" || syncing || olderCopy) return;
     setRefusals(null);
     if (readModeCookieClient() !== env) return fail(ENV_TEXT);
     let body = toBody(state, keyRef.current!, view.report?.revision ?? null);
@@ -807,6 +838,41 @@ export function ReportForm({
   const root = {
     "--report-sticky-top": `${stickyTop}px`,
   } as React.CSSProperties;
+  const olderNotice = olderCopy && (
+    <MbCard title="Osparade ändringar på den här enheten">
+      <p>
+        Rapporten har ändrats sedan du ändrade här. Nu visas den sparade
+        versionen.
+      </p>
+      <div className={styles.actions}>
+        <button
+          type="button"
+          className={`sb-btn ${styles.btn}`}
+          onClick={() => {
+            const s = fromBody(olderCopy);
+            setState(s);
+            setEntered(enteredFrom(rabbits, s));
+            setLocalCopy(true);
+            setOlderCopy(null);
+            setMode("form");
+            setVersion((n) => n + 1); // autosave sends it over the saved one
+          }}
+        >
+          Använd den lokala kopian
+        </button>
+        <button
+          type="button"
+          className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+          onClick={() => {
+            writeLocal(env, herd.herd, year, null);
+            setOlderCopy(null);
+          }}
+        >
+          Behåll den sparade
+        </button>
+      </div>
+    </MbCard>
+  );
 
   if (mode === "receipt" && isPaper && receipt) {
     // The submit closed the item: the Receipt alone, with what the matrikel took.
@@ -844,6 +910,7 @@ export function ReportForm({
         {editor && (
           <ReportStatus status={{ kind: "editor", herd: herd.herd }} />
         )}
+        {olderNotice}
         <Receipt
           view={view}
           receipt={receipt}
@@ -1070,6 +1137,7 @@ export function ReportForm({
       {editor && !isPaper && (
         <ReportStatus status={{ kind: "editor", herd: herd.herd }} />
       )}
+      {olderNotice}
       {closedText ? (
         <ReportStatus status={{ kind: "closed" }} />
       ) : (
@@ -1229,7 +1297,7 @@ export function ReportForm({
                   type="button"
                   className={`sb-btn ${styles.btn}`}
                   onClick={skicka}
-                  disabled={sending || syncing}
+                  disabled={sending || syncing || !!olderCopy}
                 >
                   {sending ? "Skickar…" : buttonText}
                 </button>
@@ -1237,7 +1305,7 @@ export function ReportForm({
             </div>
           </div>
           <fieldset
-            disabled={phase !== "idle" || syncing}
+            disabled={phase !== "idle" || syncing || !!olderCopy}
             className={styles.main}
           >
             {isPaper && (

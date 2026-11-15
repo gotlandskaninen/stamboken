@@ -579,6 +579,88 @@ describe("ReportForm", () => {
     document.cookie = "sb_mode=; max-age=0";
   });
 
+  it("keeps the server's newer draft over an older local copy until the user chooses", async () => {
+    vi.useFakeTimers(); // Codex 1: autosave never sends the old copy with the new updated_at
+    const draft = {
+      data: { rabbits: { "2": { val: "kvar", vikt: 3 } } } as never,
+      updated_at: "2026-12-31T11:00:00+00:00",
+      submission_key: null,
+      own: false,
+    };
+    const copy = (updated_at: string) =>
+      window.localStorage.setItem(
+        "arsrapport:demo:G9001:2026",
+        JSON.stringify({
+          data: { rabbits: { "1": { val: "kvar", vikt: 2 } } },
+          updated_at,
+          revision: null,
+        }),
+      );
+    const kvar = () =>
+      [1, 2].map(
+        (n) =>
+          (within(row(n)).getByLabelText("Finns kvar") as HTMLInputElement)
+            .checked,
+      );
+
+    copy(draft.updated_at); // edited from the version the server still has
+    render(
+      <ReportForm env="demo" view={view({ draft })} actions={actions()} />,
+    );
+    expect(kvar()).toEqual([true, false]);
+    cleanup();
+
+    copy("2026-12-31T10:00:00+00:00"); // edited from an older one
+    const a = actions();
+    render(<ReportForm env="demo" view={view({ draft })} actions={a} />);
+    expect(kvar()).toEqual([false, true]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(a.saveDraft).not.toHaveBeenCalled();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Använd den lokala kopian" }),
+    );
+    expect(kvar()).toEqual([true, false]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).toHaveBeenCalledTimes(1); // the user's choice
+    expect(a.saveDraft.mock.calls[0][2].rabbits["1"].val).toBe("kvar");
+    expect(a.saveDraft.mock.calls[0][3]).toBe(draft.updated_at);
+    cleanup();
+
+    copy("2026-12-31T10:00:00+00:00");
+    render(
+      <ReportForm env="demo" view={view({ draft })} actions={actions()} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Behåll den sparade" }));
+    expect(local()).toBeNull();
+    expect(kvar()).toEqual([false, true]);
+  });
+
+  it("stamps the local copy with the version a save returned while a newer edit waits", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    let release: (v: unknown) => void = () => {};
+    a.saveDraft.mockImplementationOnce(() => new Promise((r) => (release = r)));
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    choose(2, "Finns kvar"); // while the first save is in flight
+    await act(async () => {
+      release({
+        ok: true,
+        data: { updated_at: "2026-12-31T10:00:01+00:00", submission_key: null },
+      });
+    });
+    const kept = JSON.parse(local()!);
+    expect(kept.updated_at).toBe("2026-12-31T10:00:01+00:00");
+    expect(kept.data.rabbits["2"].val).toBe("kvar");
+  });
+
   it("gives a draft with no key (from Dra tillbaka) a new submission key", async () => {
     vi.useFakeTimers();
     const a = actions();
