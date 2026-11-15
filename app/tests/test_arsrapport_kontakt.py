@@ -17,6 +17,7 @@ from unittest import mock
 import utils.arsrapport as arsrapport
 import utils.database as db
 import utils.inbox as inbox
+import utils.inbox_purge as inbox_purge
 import utils.mail as mail
 from herdbook import APP
 from playhouse.shortcuts import model_to_dict
@@ -544,6 +545,18 @@ class KontaktTest(PaperTest):
         self.assertEqual(
             (audit.payload["before"], audit.payload["after"]), ({"email": "[borttagen]"}, {"email": "[borttagen]"})
         )
+
+    def test_change_request_is_purged_30_days_after_it_was_confirmed(self):  # Opus 7, spec 6
+        item = self.form(self.manager)
+        self.login("man")
+        self.ok(item, self.paper(item, matrikel(epost="ny@example.invalid")))
+        (request,) = db.MemberChangeRequest.select()
+        self.assertEqual(request.confirmed_at, NOW)
+        rule = inbox_purge.purge_change_requests
+        self.assertIn(rule, inbox_purge.RULES)  # the nightly inbox_purge runs it
+        self.assertEqual(rule(NOW + timedelta(days=30)), 0)
+        self.assertEqual(rule(NOW + timedelta(days=30, seconds=1)), 1)
+        self.assertFalse(db.MemberChangeRequest.select().exists())
 
     def test_address_writes_all_three_fields(self):  # Codex 13
         item = self.form(self.manager)

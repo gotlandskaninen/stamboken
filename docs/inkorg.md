@@ -1120,6 +1120,7 @@ text på en gammal post) och när posten senast markerades `ofullstandig`.
 | En post i läget `ofullstandig` | 12 månader efter postens gallringsstart; mejl när den markeras och efter 11 månader (se [Mejl](#mejl)) |
 | `sender_address` på en stängd post | när inget mejl till avsändaren väntar, senast 30 dagar efter stängningen, också när Gmail-läsningen är avstängd |
 | `gmail_processed` | 60 dagar |
+| `member_change_request`, årsrapportens kontaktändringar (en e-poständring från blankett har den gamla och den nya adressen) | 30 dagar efter att raden bekräftats, förfallit eller återkallats |
 | Kopian på kaninen och spåret i `inbox_operation` | aldrig |
 
 - En post raderas med sina dokument, händelser, notiser och original, och mejlkön glömmer avsändarens
