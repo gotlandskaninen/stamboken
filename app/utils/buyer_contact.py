@@ -38,7 +38,7 @@ def erase_buyer_contact(contact_id, user):
     if not (user.is_admin or (genebank_id is not None and is_manager_of(user, genebank_id))):
         raise HerdTrackingForbidden("Bara genbanksansvarig eller administratör kan radera köparens uppgifter.")
     with DB_PROXY.atomic():
-        _count, paths = delete_buyer_contacts([contact_id], "radering", user, certificates=True)
+        _count, paths = delete_buyer_contacts([contact_id], "radering", user)
     remove_originals(paths)  # only after the commit: a row never names a removed file
 
 

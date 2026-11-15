@@ -110,13 +110,24 @@ def _drop_orphan_buyers(contact_ids, action, user):
     buyer with it, a correction that rewrites the sale keeps it. Call at the end of the transaction.
     """
     if not contact_ids:
-        return 0
+        return []
     held = HerdTracking.select(HerdTracking.holder_contact).where(
         HerdTracking.holder_contact.in_(contact_ids), ht_not_voided()
     )
     orphans = set(contact_ids) - {contact_id for (contact_id,) in held.tuples()}
-    # The proofs' files go with remove_orphans: this runs inside the caller's transaction.
-    return delete_buyer_contacts(orphans, action, user)[0]
+    return delete_buyer_contacts(orphans, action, user)[1]
+
+
+def _remove_after_commit(paths):
+    """
+    The queue originals a deletion let go of, removed once the void's transaction has committed.
+    shortcut: inside a caller's own transaction (an Undo command) the files wait for inbox_purge.remove_orphans, a
+    day; upgrade with an after-commit hook if such a void ever holds a buyer.
+    """
+    if paths and not DB_PROXY.in_transaction():
+        from utils.inbox_purge import remove_originals  # pylint: disable=import-outside-toplevel  # see below
+
+        remove_originals(paths)
 
 
 def _lock_inbox_items(individual_ids):
@@ -140,7 +151,8 @@ def void_all_for_unpromote(individual, user, operation_id=None):
         rows = list(HerdTracking.select().where(HerdTracking.individual == individual.id, ht_not_voided()))
         if not user.is_admin and _moves_across_genebanks(individual, rows, []):
             raise HerdTrackingForbidden(GENEBANK_CHANGE_ADMIN_ONLY)
-        _drop_orphan_buyers(_void_rows(rows, user, UNPROMOTE_REASON, op), VOID_ACTION, user)
+        paths = _drop_orphan_buyers(_void_rows(rows, user, UNPROMOTE_REASON, op), VOID_ACTION, user)
+    _remove_after_commit(paths)
     return rows
 
 
@@ -390,7 +402,8 @@ def replace_birth_row(individual, user, *, herd=None, date=None, reason, operati
         if not user.is_admin and _moves_across_genebanks(ind, before, after):
             raise HerdTrackingForbidden(GENEBANK_CHANGE_ADMIN_ONLY)
         _assert_no_new_violations(ind, before, after)
-        _drop_orphan_buyers(voided, VOID_ACTION, user)
+        paths = _drop_orphan_buyers(voided, VOID_ACTION, user)
+    _remove_after_commit(paths)
     return new_birth
 
 
@@ -560,7 +573,8 @@ def void_herd_tracking(ht_id, user, reason, operation_id=None):
         _reject_buyer_name([cleaned], [individual.id])
         voided = _void_rows([row], user, cleaned, op)
         _assert_no_new_violations(individual, before, [r for r in before if r.id != row.id])
-        _drop_orphan_buyers(voided, VOID_ACTION, user)
+        paths = _drop_orphan_buyers(voided, VOID_ACTION, user)
+    _remove_after_commit(paths)
     return HerdTracking.get_by_id(ht_id)
 
 
@@ -738,7 +752,8 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
         if any(_changes_genebank(r, ind, current) and not r.notes for r in written):
             raise HerdTrackingInvalid("Ange en anledning i anteckningen för ett genbanksbyte.")
         _assert_no_new_violations(ind, before, current)
-        _drop_orphan_buyers(voided, VOID_ACTION, user)
+        paths = _drop_orphan_buyers(voided, VOID_ACTION, user)
+    _remove_after_commit(paths)
     return written
 
 
@@ -875,7 +890,7 @@ def undo_herd_tracking_operation(operation_id, user, reason, undo_operation_id=N
             with DB_PROXY.atomic():
                 voided = _void_rows(revoid, user, cleaned, undo_op)  # voids first: the unvoids may reuse a slot
                 _unvoid_rows(unvoid, undo_op)
-                _drop_orphan_buyers(voided, VOID_ACTION, user)
+                paths = _drop_orphan_buyers(voided, VOID_ACTION, user)
         except IntegrityError as exc:
             if _violated_constraint(exc) not in ("idx_herdtracking_one_birth", "idx_herdtracking_report_attestation"):
                 raise
@@ -883,6 +898,7 @@ def undo_herd_tracking_operation(operation_id, user, reason, undo_operation_id=N
                 "Ångringen skulle ge kaninen två aktiva rader där bara en är tillåten.",
                 rows=[_row_ref(r) for r in unvoid],
             ) from exc
+    _remove_after_commit(paths)
     return {"undo_operation_id": str(undo_op), "individual_ids": ind_ids}
 
 
@@ -1012,12 +1028,12 @@ def _reject_buyer_name(texts, individual_ids, names=()):
                 raise HerdTrackingInvalid(BUYER_PRIVACY_HELP)
 
 
-def delete_buyer_contacts(contact_ids, action, user=None, certificates=False):
+def delete_buyer_contacts(contact_ids, action, user=None):
     """
-    Deletes buyers outside the association, in the caller's transaction: on a void of the sale, an erasure and
-    the five-year purge. The sale's holder_contact_id goes NULL (ON DELETE SET NULL); the sale stays. Each
-    deletion is one audit_log row without personal data. The sale's documents in the queue lose their originals
-    (inbox_purge.erase_buyer_from_inbox; `certificates` on an erasure). Returns how many went and the paths for
+    Deletes buyers outside the association, in the caller's transaction: on a void of the sale, an erasure, the
+    rabbit's death and the five-year purge. The sale's holder_contact_id goes NULL (ON DELETE SET NULL); the sale
+    stays. Each deletion is one audit_log row without personal data, and every time the sale's documents in the
+    queue are cleared the same way (inbox_purge.erase_buyer_from_inbox). Returns how many went and the paths for
     inbox_purge.remove_originals after the commit.
     """
     # Imported here: inbox_purge imports inbox, which imports individual_number_v2, which imports this module.
@@ -1029,7 +1045,7 @@ def delete_buyer_contacts(contact_ids, action, user=None, certificates=False):
     paths = []
     # The sales first: the delete nulls their link.
     for (sale_id,) in HerdTracking.select(HerdTracking.id).where(HerdTracking.holder_contact.in_(ids)).tuples():
-        paths += erase_buyer_from_inbox(sale_id, certificates=certificates)
+        paths += erase_buyer_from_inbox(sale_id)
     deleted = BuyerContact.delete().where(BuyerContact.id.in_(ids)).returning(BuyerContact.id).tuples()
     deleted = [contact_id for (contact_id,) in deleted]
     for contact_id in deleted:
