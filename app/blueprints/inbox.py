@@ -700,8 +700,9 @@ def transfer(item_id, document_id):
                 seller = proven.from_herd or individual.origin_herd
                 if not (is_manager_of(user, seller.genebank_id) or grant.allows(user, seller)):
                     raise inbox.InboxError(403, "Du får inte koppla ett bevis till kaninens försäljning.")
-                if buyer is not None:  # a sale registered without its buyer gets the one the proof shows
-                    attach_buyer(proven, buyer, user)
+                # A sale registered without its buyer gets the one the proof shows; past its five years, none.
+                if buyer is not None and attach_buyer(proven, buyer, user) is None:
+                    proven.buyer_removed = True  # so the proof is cleared below
                 row = proven
             elif herd in OUTSIDE_GENEBANK_HERDS and buyer is None:
                 # A new sale outside the association needs its buyer (ADR-0016); a proof of one registered does not.
