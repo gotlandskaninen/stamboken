@@ -888,6 +888,7 @@ PAPER_KEYS = ("inbox_item_id", "received_on", "signed_on", "matrikel")
 PAPER_FIELDS = ("konto", "adress", "telefon", "epost", "publicering")  # the form's "Dina uppgifter"
 MATRIKEL_PARTS = {"adress": ("address", "postal_code", "city"), "konto": ("clearing", "konto", "bank")}
 UTOM = ("phone", "email", "address")  # the consent keys a Ja may leave out; the name never
+CONSENT_LABELS = {"phone": "telefonnummer", "email": "e-postadress", "address": "postnummer och ort"}
 ENTRY_KEYS = ("val", "vikt", "ej_vagd", "hull", "dod", "sald")
 DISEASES = ("myxomatos", "rvhd", "koccidios", "annat")
 TEXT_LIMITS = {
@@ -2321,7 +2322,18 @@ def _kontakt_andrad(params):
         return None
     herd = YearlyHerdReport.get_by_id(submission.report_id).herd
     flags = {field: bool(params.get(field)) for field in PAPER_FIELDS}
-    return {"herd": herd.herd, "account_end": account_end(herd), **flags}
+    # The answer the form wrote, read from its own consent row, so the mail can say Ja or Nej (Jonas 2026-11-15).
+    change = (
+        PublicationConsentChange.select()
+        .where(PublicationConsentChange.submission_id == submission.id)
+        .order_by(PublicationConsentChange.id.desc())
+        .first()
+    )
+    value = change.value if change is not None and flags["publicering"] else {}
+    ja = bool(value.get("name"))
+    left_out = [label for key, label in CONSENT_LABELS.items() if ja and not value.get(key)]
+    utan = " och ".join([", ".join(left_out[:-1]), left_out[-1]] if len(left_out) > 1 else left_out)
+    return {"herd": herd.herd, "account_end": account_end(herd), **flags, "ja": ja, "utan": utan.capitalize()}
 
 
 @recipient_kind("email_change_old")

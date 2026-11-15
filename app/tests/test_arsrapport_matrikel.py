@@ -30,7 +30,9 @@ from tests.test_arsrapport_kontakt import (
 ALL, NONE = dict.fromkeys(CONSENT_KEYS, True), dict.fromkeys(CONSENT_KEYS, False)
 JA, NEJ = {"ja": True, "utom": []}, {"ja": False, "utom": []}
 JA_UTOM_TELEFON = {"ja": True, "utom": ["phone"]}
-LINE = "Ditt svar om listan över aktiva genbanker i Koharen har ändrats."
+KOHAREN = "listan över aktiva genbanker som trycks i Koharen."
+LINE = f"Du svarade Ja på blanketten: din genbank får stå med i {KOHAREN} Telefonnummer står inte med."
+LINE_NEJ = f"Du svarade Nej på blanketten: din genbank står inte med i {KOHAREN}"
 
 
 class MatrikelTest(PaperTest):
@@ -82,6 +84,9 @@ class MatrikelTest(PaperTest):
                 )
                 (event,) = self.events(item)
                 self.assertEqual(event.detail, {"falt": ["publicering"], "hoppade": [], "submission_id": sid})
+                _, text = mail.render(A23, arsrapport._kontakt_andrad(self.a23()[-1].params))
+                self.assertIn(LINE_NEJ, text)
+                self.assertNotIn("står inte med.", text.replace(LINE_NEJ, ""))
         self.assertEqual(len(self.changes()), 2)
         self.assertEqual(self.contact_audits(), [])  # the consent's log is its own table
 
@@ -103,9 +108,8 @@ class MatrikelTest(PaperTest):
             | {"publicering": 1},
         )
         _, text = mail.render(A23, arsrapport._kontakt_andrad(row.params))
-        self.assertIn(LINE, text)
-        for value in ("telefon", "Ja", "Nej"):
-            self.assertNotIn(value, text)
+        self.assertIn(LINE, text)  # the answer and what it leaves out, never the values themselves
+        self.assertNotIn("Nej", text)
 
         # The same answer again changes nothing: no row, no event, no mail
         self.login("man")
