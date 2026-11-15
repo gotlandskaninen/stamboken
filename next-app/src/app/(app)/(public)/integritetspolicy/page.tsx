@@ -237,13 +237,9 @@ export default function IntegritetspolicyPage() {
                 utbetalningen. Det visas aldrig för andra medlemmar. Det ses av
                 dig och dem du har gett åtkomst till besättningen, av
                 genbanksansvariga och deras hjälpare, av den som betalar ut
-                stödet, och av föreningens systemansvarig.{" "}
-                <mark>
-                  [INTE KLART: en spärr för bankkontot ska byggas innan sidan
-                  släpps.]
-                </mark>{" "}
-                Underlaget för utbetalningen sparas så att det kan visas för
-                Jordbruksverket vid en kontroll.
+                stödet, och av föreningens systemansvarig. Underlaget för
+                utbetalningen sparas så att det kan visas för Jordbruksverket
+                vid en kontroll.
               </li>
               <li>
                 Ändringar av kaniner, parningar, kullar, besättningar och konton
