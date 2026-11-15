@@ -39,7 +39,6 @@ from utils.database import (
     Herd,
     HerdTracking,
     InboxDocument,
-    InboxItem,
     Individual,
     Member,
     Membership,
@@ -1075,16 +1074,21 @@ def _blank_form():
     page.save(path, format="PDF", title="Tom årsblankett (testversion)")
 
 
-def _member_herd(genebank, code, name, email, owner, log):
-    """An active herd owned by a new membership whose main member has `email` and, for `owner`, that account."""
+def _member_herd(genebank, code, name, email, owner, bank, log):
+    """
+    The herd with a new membership (main member `email`, and `owner`'s account if given), or None when the herd
+    already exists: an existing herd, and everything under it, is left alone.
+    """
+    if Herd.select().where(Herd.herd == code, Herd.genebank == genebank).exists():
+        log(f"Herd: {code} (left alone)", created=False)
+        return None
     herd = _herd(genebank, code, name, True, None, None, log)
-    if herd.membership_id is None:
-        membership = Membership.create()
-        Member.create(
-            first_name="Test", last_name=f"Huvudmedlem {code}", email=email, membership=membership, user=owner
-        )
-        herd.membership = membership
-        herd.save()
+    if Individual.select().where(Individual.number.startswith(f"{code}-")).exists():
+        raise click.ClickException(f"rabbits numbered {code}- exist already; refusing to seed under them.")
+    membership = Membership.create()
+    Member.create(first_name="Test", last_name=f"Huvudmedlem {code}", email=email, membership=membership, user=owner)
+    herd.membership, herd.bank_account_number, herd.bank_name = membership, *bank
+    herd.save()
     return herd
 
 
@@ -1110,29 +1114,6 @@ def _rabbits(herd, manager, log, count, born, first, sexes, litter=None):
     ]
 
 
-SEED_HERDS = ("G9001", "G9002", "G9003", "G9004")
-
-
-def _refuse_foreign_herds():
-    """Abort before any write when G9001-G9004 or a rabbit numbered under them was not made by this seed."""
-    made = {
-        herd.herd
-        for herd in Herd.select().where(Herd.herd.in_(SEED_HERDS), Herd.membership.is_null(False))
-        if Member.select()
-        .where(Member.membership == herd.membership, Member.last_name == f"Huvudmedlem {herd.herd}")
-        .exists()
-    }
-    foreign = {h.herd for h in Herd.select().where(Herd.herd.in_(SEED_HERDS))} - made
-    for herd in SEED_HERDS:
-        numbered = Individual.select().join(Herd, on=(Individual.origin_herd == Herd.id))
-        if numbered.where(Individual.number.startswith(f"{herd}-"), ~(Herd.herd.in_(made))).exists():
-            foreign.add(herd)
-    if foreign:
-        raise click.ClickException(
-            f"{', '.join(sorted(foreign))} exist but were not made by this seed; refusing to touch real data."
-        )
-
-
 @seed_cli.command("arsrapport")
 @click.option("--verbose", "-v", is_flag=True, help="Print detailed output")
 def create_arsrapport_seed(verbose):
@@ -1144,7 +1125,6 @@ def create_arsrapport_seed(verbose):
     manager = User.get_or_none(User.email == "seed-gk-mgr@test.local")
     if gk is None or manager is None:
         raise click.ClickException("run `flask seed create` first.")
-    _refuse_foreign_herds()
     stats = {"created": 0, "existing": 0}
 
     def log(msg, created=True):
@@ -1160,41 +1140,31 @@ def create_arsrapport_seed(verbose):
             "seed-gk-arsrapport@test.local", "seed-gk-arsrapport-pass", "seed-gk-arsrapport", "GK Uppfödare", [], log
         )
 
+        # Only missing herds are created, with everything under them; an existing herd is never touched.
         # G9001: 14 rabbits in three litters. Report list for 2025: 12 att_valja, one dead (August 2025), one
         # moved to G9002 on 2026-01-10 (via_flytt).
-        g1 = _member_herd(gk, "G9001", "Årsrapport Testbesättning", "g9001@example.invalid", owner, log)
-        g2 = _herd(gk, "G9002", "Pappersbesättning", True, None, None, log)
-        if g2.membership_id is None:
-            membership = Membership.create()
-            Member.create(
-                first_name="Test", last_name="Huvudmedlem G9002", email="g9002@example.invalid", membership=membership
-            )
-            g2.membership, g2.bank_account_number, g2.bank_name = membership, "1234-123456712", "Testbanken"
-            g2.save()
-        _member_herd(gk, "G9003", "Utan e-post", None, None, log)
-        g4 = _member_herd(gk, "G9004", "Stora besättningen", "g9004@example.invalid", None, log)
-        if not owner.has_role("owner", g4.id):  # a user is the main member of one membership at most
-            owner.add_role("owner", g4.id)
+        g1 = _member_herd(gk, "G9001", "Årsrapport Testbesättning", "g9001@example.invalid", owner, (None, None), log)
+        g2 = _member_herd(
+            gk, "G9002", "Pappersbesättning", "g9002@example.invalid", None, ("1234-123456712", "Testbanken"), log
+        )
+        _member_herd(gk, "G9003", "Utan e-post", None, None, (None, None), log)
+        g4 = _member_herd(gk, "G9004", "Stora besättningen", "g9004@example.invalid", None, (None, None), log)
 
-        a = _rabbits(g1, manager, log, 4, date(2023, 5, 1), 11, ("female", "male"))
-        b = _rabbits(g1, manager, log, 5, date(2024, 5, 1), 15, ("female", "male"))
-        litter = _breeding(g1, date(2025, 5, 2), date(2025, 4, 1), a[1], a[0], 6, 5, log)  # 6 born, 5 alive at 6 weeks
-        _rabbits(g1, manager, log, 5, date(2025, 5, 2), 20, ("female", "male"), litter)
-        # Initial values only: a rerun never overwrites a row.
-        Individual.update(castration_date=date(2024, 6, 1)).where(
-            Individual.id == a[3].id, Individual.castration_date.is_null()
-        ).execute()  # a male
-        Individual.update(death_date=date(2025, 8, 15), death_note="Sjuk").where(
-            Individual.id == b[3].id, Individual.death_date.is_null()
-        ).execute()
-        for rabbit in a + b:
-            _track(rabbit, g1, None, manager, date(2024, 12, 31), "ATTESTATION", log)
-        _transfer(b[2], g2, g1, manager, date(2026, 1, 10), log)
+        if g1:
+            a = _rabbits(g1, manager, log, 4, date(2023, 5, 1), 11, ("female", "male"))
+            b = _rabbits(g1, manager, log, 5, date(2024, 5, 1), 15, ("female", "male"))
+            litter = _breeding(g1, date(2025, 5, 2), date(2025, 4, 1), a[1], a[0], 6, 5, log)  # 6 born, 5 alive
+            _rabbits(g1, manager, log, 5, date(2025, 5, 2), 20, ("female", "male"), litter)
+            Individual.update(castration_date=date(2024, 6, 1)).where(Individual.id == a[3].id).execute()  # a male
+            Individual.update(death_date=date(2025, 8, 15), death_note="Sjuk").where(Individual.id == b[3].id).execute()
+            for rabbit in a + b:
+                _track(rabbit, g1, None, manager, date(2024, 12, 31), "ATTESTATION", log)
+            if g2:  # a row in G9002 only when G9002 is new too
+                _transfer(b[2], g2, g1, manager, date(2026, 1, 10), log)
 
-        # G9002: 12 adults, one male, a 2025 litter, and a paper form waiting in the queue.
-        paper = _rabbits(g2, manager, log, 12, date(2024, 5, 1), 11, ("female",) * 11 + ("male",))
-        _breeding(g2, date(2025, 5, 2), date(2025, 4, 1), paper[-1], paper[0], 5, 4, log)
-        if not InboxItem.select().where(InboxItem.herd == g2.id, InboxItem.kind == "upload").exists():
+        if g2:  # 12 adults, one male, a 2025 litter, and a paper form waiting in the queue
+            paper = _rabbits(g2, manager, log, 12, date(2024, 5, 1), 11, ("female",) * 11 + ("male",))
+            _breeding(g2, date(2025, 5, 2), date(2025, 4, 1), paper[-1], paper[0], 5, 4, log)
             image = Image.new("RGB", (1200, 1600), (235, 240, 225))
             ImageDraw.Draw(image).text((100, 100), "Syntetisk årsblankett G9002", fill=(20, 20, 30))
             path, sha256 = inbox.store_jpeg(image, "original")
@@ -1202,8 +1172,9 @@ def create_arsrapport_seed(verbose):
             InboxDocument.update(doc_type="arsblankett").where(InboxDocument.id == documents[0].id).execute()
             log("Inbox item: arsblankett for G9002")
 
-        # G9004: the largest herd's size, none needing a weight.
-        _rabbits(g4, manager, log, 183, date(2025, 4, 1), 100, ("female", "male"))
+        if g4:  # the largest herd's size, none needing a weight; the owner is a legacy role (one Member per user)
+            owner.add_role("owner", g4.id)
+            _rabbits(g4, manager, log, 183, date(2025, 4, 1), 100, ("female", "male"))
 
         today = arsrapport.today()
         _get_or_create(

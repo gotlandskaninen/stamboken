@@ -4,6 +4,7 @@ import os
 import shutil
 import tempfile
 from collections import Counter
+from datetime import date
 from unittest import mock
 
 import utils.arsrapport as arsrapport
@@ -12,6 +13,7 @@ import utils.settings as settings
 from herdbook import APP
 
 from tests.database_test import DatabaseTest
+from tests.ht_helpers import ht_row
 
 MODELS = (
     db.Herd,
@@ -89,23 +91,29 @@ class SeedArsrapportTest(DatabaseTest):
         self.assertIn("demo", result.output)
         self.assertFalse(db.Herd.select().where(db.Herd.herd == "G9001").exists())
 
-    def test_refuses_a_herd_the_seed_did_not_make(self):
+    def test_leaves_an_existing_herd_untouched(self):
         self.seed("create")
         gk = db.Genebank.get(db.Genebank.name == "Gotlandskanin")
-        db.Herd.create(genebank=gk, herd="G9001", herd_name="Riktig", is_active=True)
-        before = self.counts()
-        result = self.runner.invoke(args=["seed", "arsrapport"])
-        self.assertNotEqual(result.exit_code, 0, result.output)
-        self.assertIn("G9001", result.output)
-        self.assertEqual(self.counts(), before)
-        self.assertFalse(db.Herd.select().where(db.Herd.herd == "G9004").exists())
+        real = db.Herd.create(genebank=gk, herd="G9001", herd_name="Riktig", is_active=True)
+        rabbit = db.Individual.create(origin_herd=real, number="G9001-2111", sex="female", name="Riktig kanin")
+        ht_row("BIRTH", herd=real, individual=rabbit, herd_tracking_date=date(2021, 5, 1))
+        owned = db.Individual.select().where(db.Individual.origin_herd == real.id).count()
+        self.seed()
+        self.assertEqual(db.Herd.get_by_id(real.id).herd_name, "Riktig")
+        self.assertIsNone(db.Herd.get_by_id(real.id).membership_id)
+        self.assertEqual(db.Individual.select().where(db.Individual.origin_herd == real.id).count(), owned)
+        self.assertEqual(db.HerdTracking.select().where(db.HerdTracking.herd == real.id).count(), 1)
+        self.assertFalse(db.User.get(db.User.email == "seed-gk-arsrapport@test.local").has_role("owner", real.id))
+        self.assertTrue(db.Herd.select().where(db.Herd.herd == "G9004").exists())  # the missing herds are made
 
-    def test_refuses_a_foreign_rabbit_under_a_seed_number(self):
+    def test_a_cleared_date_stays_cleared(self):
         self.seed("create")
         self.seed()
-        herd = db.Herd.get(db.Herd.herd == "G1274")
-        db.Individual.create(origin_herd=herd, number="G9001-9999", sex="female")
-        before = self.counts()
-        result = self.runner.invoke(args=["seed", "arsrapport"])
-        self.assertNotEqual(result.exit_code, 0, result.output)
-        self.assertEqual(self.counts(), before)
+        dead = db.Individual.get(db.Individual.death_date.is_null(False), db.Individual.number.startswith("G9001-"))
+        castrated = db.Individual.get(db.Individual.castration_date.is_null(False))
+        db.Individual.update(death_date=None, death_note=None, castration_date=None).where(
+            db.Individual.id.in_([dead.id, castrated.id])
+        ).execute()
+        self.seed()
+        self.assertIsNone(db.Individual.get_by_id(dead.id).death_date)
+        self.assertIsNone(db.Individual.get_by_id(castrated.id).castration_date)
