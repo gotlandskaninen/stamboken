@@ -563,12 +563,13 @@ def void_denial(user, row, active_rows, individual, transfer_herd_ids=None):
     return f"Bara genbanksansvarig kan ångra en korrigering. {CONTACT_MANAGER}"
 
 
-def void_herd_tracking(ht_id, user, reason, operation_id=None):
+def void_herd_tracking(ht_id, user, reason, operation_id=None, typed=True):
     """
     Void one row (also "Ångra försäljning"). Idempotent per (individual, operation_id):
     a replayed operation returns the row it voided; an already voided row is a no-op.
     Checks I1–I5 afterwards. Callers must gate READ access first: the idempotent
-    replay returns before the permission check.
+    replay returns before the permission check. `typed`: the reason is a user's text (checked against the buyer's
+    name), not a system reason.
     """
     cleaned = require_reason(reason)
     op = new_operation_id(operation_id)
@@ -590,7 +591,8 @@ def void_herd_tracking(ht_id, user, reason, operation_id=None):
         denial = void_denial(user, row, before, individual)
         if denial:
             raise HerdTrackingForbidden(denial)
-        _reject_buyer_name([cleaned], [individual.id])
+        if typed:
+            _reject_buyer_name([cleaned], [individual.id])
         voided = _void_rows([row], user, cleaned, op)
         _assert_no_new_violations(individual, before, [r for r in before if r.id != row.id])
         paths = _drop_orphan_buyers(voided, VOID_ACTION, user)

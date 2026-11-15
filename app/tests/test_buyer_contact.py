@@ -27,7 +27,7 @@ from utils.herd_tracking import (  # noqa: E402
     void_all_for_unpromote,
     void_herd_tracking,
 )
-from utils.individual_commands import record_sale  # noqa: E402
+from utils.individual_commands import RecordAttestation, Undo, execute, record_sale  # noqa: E402
 
 from tests.database_test import DatabaseTest  # noqa: E402
 from tests.test_bunny_v2_api import _old_litter, _promote_without_certificate
@@ -444,6 +444,18 @@ class TestVoid(BuyerBase):
         for reason in ("Såld till Li-Bo", "Li-Bos kanin", "li bo"):
             with self.subTest(reason=reason), self.assertRaises(HerdTrackingInvalid):
                 void_herd_tracking(self.sale.id, self.owner, reason)
+
+    def test_the_undo_commands_own_reason_is_never_checked(self):
+        db.BuyerContact.update(name="Van Den Berg").where(db.BuyerContact.id == self.contact_id).execute()
+        attest = execute(self.manager, self.rabbit.id, lambda ctx: [RecordAttestation("GX1", "2021-07-01")])
+        op = db.IndividualCommand.get(
+            (db.IndividualCommand.individual == attest.id) & (db.IndividualCommand.command == "RecordAttestation")
+        ).operation_id
+        # "Ångrad av den som registrerade den": "den" is a word of the buyer's name, but the text is the system's.
+        execute(self.manager, self.rabbit.id, lambda ctx: [Undo(op)])
+        self.assertEqual(self._latest().id, self.sale.id)
+        with self.assertRaises(HerdTrackingInvalid):  # typed by a user, the same word is refused
+            void_herd_tracking(self.sale.id, self.owner, "den köparen ångrade sig")
 
     def test_a_system_reason_is_never_checked(self):
         db.BuyerContact.update(name="Avpromoverad").where(db.BuyerContact.id == self.contact_id).execute()

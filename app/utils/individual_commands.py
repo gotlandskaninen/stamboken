@@ -1008,7 +1008,7 @@ class Undo(Command):
         if entry.command == "RecordAttestation":
             undo_op = ctx.record("Undo", None, None, undoes=entry.operation_id, reason=note)
             for row in _active_attestation_rows(entry):  # herd-tracking's void rules apply unchanged
-                void_herd_tracking(row.id, ctx.user, note, operation_id=undo_op)
+                void_herd_tracking(row.id, ctx.user, note, operation_id=undo_op, typed=note != UNDO_REASON)
             return
         changed = sorted(key for key, value in entry.after.items() if _column_value(ctx.individual, key) != value)
         if changed:
