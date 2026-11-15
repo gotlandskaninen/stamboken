@@ -12,7 +12,7 @@ from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from peewee import SQL, Expression, IntegrityError, fn
+from peewee import Expression, IntegrityError, fn
 
 from utils.database import (
     DB_PROXY,
@@ -1230,19 +1230,27 @@ BUYER_DELETED = "Köparen är raderad; registrera försäljningen på nytt."
 
 def _buyer_deleted(row_ids):
     """
-    The rows among `row_ids` whose buyer outside the association was deleted (their holder_contact_id went NULL,
-    which the herd_tracking audit trigger records by id). An undo must not restore such a sale without its buyer.
+    The voided rows among `row_ids` whose buyer outside the association was deleted with or after their void: the
+    herd_tracking audit trigger records, by id, the void and then holder_contact_id going NULL (audit_log ids
+    rise with each write, also within a transaction). A buyer erased while the sale was still active is no reason
+    to refuse undoing a later void. An undo must not restore such a sale without its buyer.
     """
     if not row_ids:
         return set()
-    found = AuditLog.select(AuditLog.record_id).where(
+    entries = AuditLog.select(AuditLog.id, AuditLog.record_id, AuditLog.changed_fields, AuditLog.new_data).where(
         (AuditLog.table_name == HerdTracking._meta.table_name)
         & (AuditLog.operation == "UPDATE")
         & AuditLog.record_id.in_([str(i) for i in row_ids])
-        & AuditLog.changed_fields.contains("holder_contact_id")
-        & SQL("new_data ->> 'holder_contact_id' IS NULL")
+        & (AuditLog.changed_fields.contains("holder_contact_id") | AuditLog.changed_fields.contains("voided_at"))
     )
-    return {int(record_id) for (record_id,) in found.tuples()}
+    voids, nulled = {}, {}
+    for audit_id, record_id, fields, new in entries.order_by(AuditLog.id).tuples():
+        new = new or {}
+        if "voided_at" in fields and new.get("voided_at") is not None:
+            voids[record_id] = audit_id  # the latest void of the row
+        if "holder_contact_id" in fields and new.get("holder_contact_id") is None:
+            nulled[record_id] = audit_id
+    return {int(r) for r, audit_id in nulled.items() if r in voids and audit_id > voids[r]}
 
 
 def _keeps_invariants(individual, before, after, known=None, buyer_keys=None):

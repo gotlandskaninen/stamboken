@@ -414,6 +414,13 @@ class TestVoid(BuyerBase):
         self.assertEqual(raised.exception.detail, "Köparen är raderad; registrera försäljningen på nytt.")
         self.assertIsNotNone(db.HerdTracking.get_by_id(self.sale.id).voided_at)
 
+    def test_a_buyer_erased_before_the_void_does_not_block_its_undo(self):
+        buyer_contact.erase_buyer_contact(self.contact_id, self.admin)  # erased while the sale was active
+        void_herd_tracking(self.sale.id, self.owner, "Fel kanin")
+        void_op = db.HerdTracking.get_by_id(self.sale.id).voided_operation_id
+        undo_herd_tracking_operation(void_op, self.manager, "Ångra")
+        self.assertIsNone(db.HerdTracking.get_by_id(self.sale.id).voided_at)
+
     def test_undoing_the_operation_deletes_the_buyer(self):
         undo_herd_tracking_operation(self.sale.operation_id, self.manager, "Fel kanin")
         self.assertIsNone(self._contact(self.contact_id))
