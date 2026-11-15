@@ -42,9 +42,10 @@ class TestInterpreter(unittest.TestCase):
         self.assertEqual(body["messages"][0]["images"], [base64.b64encode(b"jpeg-bytes").decode()])
         self.assertGreaterEqual(kwargs["timeout"], 600)
 
-    def test_the_schema_asks_for_the_certificate_number_and_what_was_struck_through(self):
+    def test_the_schema_asks_for_the_certificate_number_and_for_no_list(self):
         self.assertIn("intygsnummer", interpreter.SCHEMA["required"])
-        self.assertIn("overstruket", interpreter.SCHEMA["required"])
+        # A list has no end in the model's grammar: Gemma filled one until the answer was cut (trial 2026-11-15).
+        self.assertNotIn("array", json.dumps(interpreter.SCHEMA))
         self.assertEqual(
             interpreter.SCHEMA["properties"]["mormor"]["required"], ["genbanksnr", "ar_kull_individ", "namn"]
         )
@@ -59,7 +60,7 @@ class TestInterpreter(unittest.TestCase):
             "kon": None,
             "mor": {"genbanksnr": "G9001", "ar_kull_individ": ["2211"], "namn": "Mira", "extra": "x"},
             "far": "G9003-2311",  # a string where an object belongs
-            "overstruket": ["far", "okänt fält", 3, "mor"],
+            "overstruket": ["far", "mor"],  # no longer asked for: dropped like any unknown key
             "okand_nyckel": {"x": 1},
         }
         with mock.patch.object(requests, "post", return_value=_answer(json.dumps(answer))):
@@ -71,10 +72,8 @@ class TestInterpreter(unittest.TestCase):
                 "namn": "x" * interpreter.MAX_STRING,
                 "farg": "vit",
                 "mor": {"genbanksnr": "G9001", "namn": "Mira"},
-                "overstruket": ["far", "mor"],
             },
         )
-        self.assertEqual(interpreter.conform({"overstruket": 5}, interpreter.SCHEMA), {})
         self.assertIsNone(interpreter.conform([], interpreter.SCHEMA))
 
     def test_off_reads_nothing(self):

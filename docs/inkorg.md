@@ -1046,7 +1046,9 @@ så hur säkert ett fält är avgörs av kontrollerna mot registret, aldrig av m
 6. Där intyget och registret skiljer sig blir fältet `avviker`, med båda värdena. Förslaget
    väljer aldrig.
 
-Ett värde som är överstruket eller rättat på intyget är alltid `osäker`. Finns kaninen redan i
+Tolkningen säger inte vilka värden som är överstrukna eller rättade på intyget. En lista över
+dem prövades och togs bort 2026-11-15: modellen fyllde den med upprepningar tills svaret klipptes.
+Modellen ombeds läsa det som gäller, och kontrollerna mot registret avgör. Finns kaninen redan i
 Stamboken prövas den på samma sätt: föräldrarna mot registret, kön och namn, och namnet när kaninen
 har ett kullsyskon av samma kön. Ett annat födelsedatum än kullens gör den `avviker`, utan värde.
 Har den digitalt intyg och går allt igenom blir förslaget bara "finns redan med digitalt intyg". Ger tolkningen inte två
