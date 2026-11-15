@@ -72,7 +72,7 @@ import utils.genetics_service as genetics  # isort:skip
 from utils import number_assets  # isort:skip
 from utils.individual_commands import purge_command_free_text  # isort:skip
 from utils.members import try_auto_link_member  # isort:skip
-from utils.legacy_compat import is_legacy_host, legacy_classroom_url  # isort:skip
+from utils.legacy_compat import course_message, is_legacy_host, legacy_classroom_url, legacy_hosts, refusal  # isort:skip
 from utils.redis_retry import reconnect_on_drop  # isort:skip
 
 APP = Flask(__name__, static_folder="/static")
@@ -302,6 +302,13 @@ file_handler.setFormatter(
     )
 )
 APP.logger.addHandler(file_handler)
+APP.logger.info("ACCESS_RULES=%s, legacy hosts: %s", settings.service.access_rules, ", ".join(sorted(legacy_hosts())))
+if (
+    settings.service.access_rules == "off"
+    and os.getenv("FLASK_ENV") == "production"
+    and not settings.service.demo_instance
+):
+    APP.logger.warning("ACCESS_RULES is off in production: every logged-in account reaches every function")
 utils.external_auth.setup(APP)
 
 Session(APP)
@@ -402,6 +409,28 @@ def before_request():
             )
         except Exception:
             APP.logger.warning("Failed to set audit context", exc_info=True)
+
+
+@APP.before_request
+def enforce_access_rules():
+    """
+    The access rules (ACCESS_RULES, legacy_compat.refusal) for a logged-in
+    request. A 404, 405 or trailing-slash redirect has no endpoint and passes;
+    OPTIONS only lists the allowed methods.
+    """
+    if settings.service.access_rules != "enforce" or request.endpoint is None or request.method == "OPTIONS":
+        return None
+    if current_user.is_authenticated:
+        user = current_user
+    elif session.get("user_id"):
+        # The older routes read session["user_id"] without flask-login.
+        user = da.fetch_user_info(session["user_id"])
+    else:
+        user = None
+    message = refusal(request.endpoint, request.method, user) if user else None
+    if message:
+        return jsonify({"status": "error", "message": message}), 403
+    return None
 
 
 @APP.teardown_request
@@ -1366,13 +1395,12 @@ def google_token_login():
             if _should_auto_validate_users():
                 user.validated = True
                 user.save(only=[db.User.validated])  # see _GOOGLE_PROFILE_COLUMNS
-            else:
+            elif settings.service.access_rules != "enforce":
+                # The course belongs to the legacy frontend, and the access rules
+                # keep an unvalidated account out of it and off production; without
+                # them the course is the only gate a new account meets.
                 # 401, not 403: the Next.js caller maps 403 to the domain-restriction text.
-                msg = (
-                    f"Du behöver gå webbkursen och bli validerad först: {legacy_classroom_url()} "
-                    "Frågor: admin@gotlandskaninen.se"
-                )
-                return jsonify({"error": msg}), 401
+                return jsonify({"error": course_message()}), 401
 
         if user:
             # Update user with Google profile data in database
@@ -1516,48 +1544,53 @@ def external_login_handler(service):
     # Auto-validate users in environments that opt in (e.g. api-test).
     auto_validate = _should_auto_validate_users()
 
-    user = da.register_user(
-        accountdetails["email"],
-        None,
-        username=accountdetails["username"],
-        validated=auto_validate,
-        fullname=accountdetails["fullname"] if "fullname" in accountdetails else None,
-        privileges=[
-            {"level": "viewer", "genebank": 1},
-            {"level": "viewer", "genebank": 2},
-        ],
-    )
+    # Only a brand-new account gets this Google identity, never one that already
+    # holds the address: anyone can set their own User.email to the address of
+    # a member who has not signed in yet and capture that login. The holder of
+    # an existing account signs in as usual and links Google there.
+    with db.DATABASE.atomic() as creation:
+        try:
+            user = da.register_user(
+                accountdetails["email"],
+                None,
+                username=accountdetails["username"],
+                validated=auto_validate,
+                fullname=accountdetails["fullname"] if "fullname" in accountdetails else None,
+                privileges=[
+                    {"level": "viewer", "genebank": 1},
+                    {"level": "viewer", "genebank": 2},
+                ],
+                adopt_existing=False,
+            )
+        except da.AddressInUseError as taken:
+            APP.logger.warning("Refusing %s login: account #%d already holds the address", service, taken.user_id)
+            return (
+                "Det finns redan ett konto med den här e-postadressen. Logga in på det som vanligt och koppla "
+                "Google under ditt konto, eller kontakta admin@gotlandskaninen.se"
+            )
 
-    if not user:
-        APP.logger.error(
-            "Automatic registering of user with e-mail %s (persistent id %s) for service %s FAILED",
-            accountdetails["email"],
-            persistent_id,
-            service,
-        )
-        return None
+        if not user:
+            APP.logger.error(
+                "Automatic registering of user with e-mail %s (persistent id %s) for service %s FAILED",
+                accountdetails["email"],
+                persistent_id,
+                service,
+            )
+            return None
 
-    # register_user() adopts an existing account with this address. Never hand
-    # this Google identity to one that someone can already sign in to while no
-    # admin has validated it: anyone can set their own User.email to the address
-    # of a member who has not signed in yet (update_user then clears validated)
-    # and capture that login. Decided on the account register_user
-    # returned, so a concurrent email change cannot slip in between. A
-    # brand-new account has no authenticator yet and is linked as before.
-    if not user.validated and db.Authenticators.select().where(db.Authenticators.user == user.id).exists():
-        APP.logger.warning("Refusing to link %s to unvalidated existing user #%d", service, user.id)
-        return _not_validated_response()
+        linked = da.link_account(user, service, persistent_id)
 
-    linked = da.link_account(user, service, persistent_id)
-
-    if not linked:
-        APP.logger.error(
-            "Linked of of user with e-mail %s (persistent id %s) for service %s FAILED",
-            accountdetails["email"],
-            persistent_id,
-            service,
-        )
-        return None
+        if not linked:
+            # Without its identity the new account has no way in, and its address
+            # would refuse the next attempt.
+            creation.rollback()
+            APP.logger.error(
+                "Linked of of user with e-mail %s (persistent id %s) for service %s FAILED",
+                accountdetails["email"],
+                persistent_id,
+                service,
+            )
+            return "Inloggningen gick inte att slutföra. Försök igen, eller kontakta admin@gotlandskaninen.se", 500
 
     # google_email is the CMS identity; google_details() verified this address.
     db.User.update(google_email=accountdetails["email"]).where(db.User.id == user.id).execute()

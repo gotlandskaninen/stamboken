@@ -80,6 +80,70 @@ More in [CLAUDE.md](CLAUDE.md) (quick start, conventions) and
 See [TESTING.md](TESTING.md). Never run pytest against the dev stack; it
 truncates the database.
 
+## Access rules
+
+One API answers both frontends, so it decides per request which logged-in
+account may use which function (`enforce_access_rules` in `app/herdbook.py`,
+the rules in `app/utils/legacy_compat.py`):
+
+| Host | Function | Needs | Otherwise |
+|---|---|---|---|
+| a legacy host (`LEGACY_HOSTS`) | on the legacy list | `validated` (the web course) | 403 |
+| a legacy host | not on the list | `v2_prod_access`, or admin | 403 |
+| any other host | any | `v2_prod_access`, or admin | 403 |
+
+Open to every logged-in account on every host: `/api/user`, `/api/logout`,
+the login routes, linking Google to one's own account, the public certificate
+verification, posting a membership application and the health check
+(`EXEMPT_ENDPOINTS`).
+Anonymous requests are not affected. Each refusal is logged at warning level
+with the endpoint and method only.
+
+`ACCESS_RULES` is `enforce` or `off`. Unset, it is `enforce` when
+`FLASK_ENV=production` and `off` otherwise; the demo API (`DEMO_INSTANCE=true`)
+is always off. Any other value stops the API at start, and the start log shows
+the effective value and the legacy hosts. `LEGACY_HOSTS` (comma-separated)
+defaults to `DEFAULT_LEGACY_HOSTS`. A legacy hostname missing from it counts as
+a new host, where every account without `v2_prod_access` is refused.
+
+**Adding a legacy function.** The list (`LEGACY_ENDPOINTS`) holds pairs of
+Flask endpoint and HTTP method, not URLs: legacy's `GET /api/individual/<nr>`
+is on it, the new frontend's `PATCH` on the same URL is not. It was taken from
+the legacy frontend's source at the commit `build-and-publish.yml` pins, one
+row per call site in `app/tests/data/legacy_calls.tsv`. When that pin moves,
+read the call sites again, update the rows, and add the pairs
+`test_access_rules.py` reports. The `playwright-legacy` job runs the legacy
+suite with the rules enforced.
+
+**Deploy checks**, against the deployed API:
+
+1. A refusal on purpose: an account without `v2_prod_access` gets 403 on an
+   address under `/api/v2/`, for example `GET /api/v2/my-membership`.
+2. An allowed call on purpose, once per legacy hostname: a validated account
+   without `v2_prod_access` gets 200 on a listed function, for example
+   `GET /api/genebanks`, with that hostname as `Host`. The server's own
+   `LEGACY_HOSTS` can differ from the repo's.
+3. Before a release, count the active accounts that are not validated and have
+   a password; the first row is new for them (numbers only):
+
+   ```sql
+   SELECT count(*) FROM hbuser u WHERE u.is_active AND NOT u.validated
+     AND EXISTS (SELECT 1 FROM authenticators a WHERE a.user_id = u.user_id AND a.auth = 'password');
+   ```
+
+   An admin or promoted account is in that group too: on a legacy host the
+   legacy frontend's functions need `validated`, whatever the role. The legacy
+   frontend shows an empty page, not the 403's text.
+4. Count the active accounts without a Google identity (numbers only). The
+   legacy Google login no longer links an account that already holds the
+   address, so their holders sign in with the password and link Google
+   themselves, or an admin helps:
+
+   ```sql
+   SELECT count(*) FROM hbuser u WHERE u.is_active
+     AND NOT EXISTS (SELECT 1 FROM authenticators a WHERE a.user_id = u.user_id AND a.auth = 'google');
+   ```
+
 ## External authenticators
 
 ### Google

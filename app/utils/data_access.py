@@ -19,6 +19,7 @@ from peewee import (
     JOIN,
     Case,
     DatabaseError,
+    DataError,
     DoesNotExist,
     IntegrityError,
     OperationalError,
@@ -430,19 +431,28 @@ def register_user(
     validated=False,
     privileges=None,
     fullname=None,
+    adopt_existing=True,
 ):
     """
     Creates a new user from an e-mail and password, returning the new user
-    object.
+    object. An account that already has this exact e-mail is returned instead,
+    unless adopt_existing is False: then an account holding the address in any
+    casing raises AddressInUseError, and the user returned is always the row
+    this call inserted. (No unique index on e-mail: a concurrent request can
+    still insert a second account with the address, never hand back this one.)
     """
     if privileges is None:
         privileges = []
 
-    # Don't create a new user if the email exists already
-    try:
-        user = User.select().where(User.email == email).get()
-    except DoesNotExist:
-        # Create user
+    if adopt_existing:
+        # Don't create a new user if the email exists already
+        user = User.select().where(User.email == email).first()
+    else:
+        taken = User.select(User.id).where(fn.LOWER(User.email) == email.lower()).first()
+        if taken:
+            raise AddressInUseError(taken.id)
+        user = None
+    if user is None:
         user = User(
             email=email,
             uuid=uuid.uuid4().hex,
@@ -454,8 +464,8 @@ def register_user(
         with DATABASE.atomic():
             user.save()
 
-    # Update to make sure to get the correct id
-    user = User.select().where(User.email == email).get()
+    # By id, not e-mail: another account may hold the same address.
+    user = User.get_by_id(user.id)
     logger.info(f"Registered User {user.as_dict()}")
 
     # If no password is provided, don't create an authenticator
@@ -482,6 +492,14 @@ def register_user(
 
 class InactiveAccountError(Exception):
     """Login attempt for a deactivated account (layer 1)."""
+
+
+class AddressInUseError(Exception):
+    """register_user(adopt_existing=False): account `user_id` already holds the address."""
+
+    def __init__(self, user_id):
+        super().__init__(user_id)
+        self.user_id = user_id
 
 
 def authenticate_user(name, password):
@@ -593,27 +611,23 @@ def link_account(user, method, ident):
     if not method or not ident or not user:
         return None
 
-    # Allows at most one identity for each method to be linked to this account.
-    unlink_account(user, method)
-
     try:
         with DATABASE.atomic():
-            authenticator = (
-                Authenticators.select()
-                .where((Authenticators.auth == method) & (Authenticators.auth_data == ident))
-                .get()
+            # The account's row first, as unlink_account does, then the identity:
+            # no unique index stops two accounts from taking it at the same time.
+            User.select(User.id).where(User.id == user.id).for_update().get()
+            DATABASE.execute_sql("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"authenticator:{method}:{ident}",))
+            taken = Authenticators.select().where(
+                (Authenticators.auth == method) & (Authenticators.auth_data == ident) & (Authenticators.user != user.id)
             )
-        if authenticator:
-            # Someone else has this identity registered, do not allow the same external identity
-            # for multiple users
-            return None
-    except DoesNotExist:
-        pass
-
-    try:
-        authenticator = Authenticators(user=user.id, auth=method, auth_data=ident)
-        with DATABASE.atomic():
-            authenticator.save()
+            if taken.exists():
+                # Someone else has this identity registered, do not allow the same external identity
+                # for multiple users
+                return None
+            # At most one identity for each method. The old one goes in the new
+            # one's transaction: a link that fails leaves the account as it was.
+            Authenticators.delete().where((Authenticators.user == user.id) & (Authenticators.auth == method)).execute()
+            Authenticators.create(user=user.id, auth=method, auth_data=ident)
         logger.info("Linked %s to %s persistent id %s", user.username, method, ident)
         return user
     except PeeweeException as auth_except:
@@ -637,12 +651,20 @@ def link_account(user, method, ident):
 def unlink_account(user, method):
     """
     Removes any linked identities for method method. Return somethings that
-    evaluates to false on failure.
+    evaluates to false on failure. Never the account's last way to sign in:
+    the legacy Google login does not adopt an existing account, so only an
+    admin could let the holder back in.
     """
     if not method or not user:
         return None
     try:
         with DATABASE.atomic():
+            # The account's row is the lock: two unlinks of different methods wait for each other.
+            User.select(User.id).where(User.id == user.id).for_update().get()
+            others = Authenticators.select().where((Authenticators.user == user.id) & (Authenticators.auth != method))
+            if not others.exists():
+                logger.warning("Refusing to unlink %s, the last way to sign in, for user #%d", method, user.id)
+                return None
             Authenticators.delete().where((Authenticators.user == user.id) & (Authenticators.auth == method)).execute()
 
         return True
@@ -818,16 +840,19 @@ def update_user(form, user_uuid=None):
     if not (user.is_admin or user.is_manager) and str(form["id"]) != str(user.id):
         return {"status": "error", "message": "forbidden"}
 
-    if not (user.is_admin or user.is_manager):
-        # Mark user supplied e-mail as false
-        form["validated"] = False
-
-    # check target user
+    # check target user. By primary key: User.get("t") is WHERE 't', the first row of the table.
     try:
         with DATABASE.atomic():
-            target_user = User.get(form["id"])
-    except DoesNotExist:
+            target_user = User.get_by_id(form["id"])
+    except (DoesNotExist, DataError):  # DataError: an id that is no number
         return {"status": "error", "message": "unknown user"}
+
+    if target_user.id == user.id:
+        # An admin's mark that the holder took the web course: the holder can
+        # neither set nor clear it (the legacy frontend's "Ändra e-postadress"
+        # sends validated: false, which locked the member out of it). Decided
+        # on the row read, not on form["id"]: "007" and 7.0 are account 7 too.
+        del form["validated"]
 
     # Managers never edit admin accounts (get_users hides them too); the
     # email is the password-login key, so that edit is a takeover.
@@ -3899,9 +3924,9 @@ def set_v2_prod_access(u_id, enabled):
 
 def set_validated(u_id, validated):
     """
-    Toggle hbuser.validated: the course is done. Google login (redirect and
-    token flows) requires it; session load and password login do not check
-    it. Audited via trigger.
+    Toggle hbuser.validated: the course is done. The legacy Google login
+    requires it, and so do the legacy frontend's functions and the token login
+    when the access rules are off (legacy_compat.refusal). Audited via trigger.
     """
     user = User.get_or_none(User.id == u_id)
     if user is None:
@@ -4310,7 +4335,7 @@ def purge_audit_ip(now, batch=AUDIT_IP_BATCH) -> int:
     next run continues. Returns the rows changed.
     """
     cutoff = DATABASE.execute_sql("SELECT %s::timestamptz - %s::interval", (now, AUDIT_IP_RETENTION)).fetchone()[0]
-    marker_id = "purge-ip-{:%Y%m%dT%H%M%SZ}".format(now.astimezone(timezone.utc))
+    marker_id = f"purge-ip-{now.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}"
     total, last = 0, (datetime.min.replace(tzinfo=timezone.utc), 0)
     while True:
         rows = DATABASE.execute_sql(
