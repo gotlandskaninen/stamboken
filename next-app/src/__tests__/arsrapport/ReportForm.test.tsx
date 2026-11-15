@@ -103,7 +103,9 @@ const send = () =>
 
 describe("ReportForm", () => {
   it("renders the heading with no sticky offset and no dashboard shell", () => {
-    render(<ReportForm view={view()} actions={actions()} stickyTop={0} />);
+    render(
+      <ReportForm env="demo" view={view()} actions={actions()} stickyTop={0} />,
+    );
     expect(
       screen.getByRole("heading", { level: 1, name: "Årsrapport 2026" }),
     ).toBeTruthy();
@@ -111,7 +113,7 @@ describe("ReportForm", () => {
   });
 
   it("asks no consent question and links Dina uppgifter to the profile", () => {
-    render(<ReportForm view={view()} actions={actions()} />);
+    render(<ReportForm env="demo" view={view()} actions={actions()} />);
     expect(screen.queryByText(/Koharen\? Listan/)).toBeNull();
     expect(screen.getByText("Dina uppgifter")).toBeTruthy();
     expect(
@@ -122,7 +124,7 @@ describe("ReportForm", () => {
   });
 
   it("counts done rabbits and keeps a row that became done under 'Inte klara'", () => {
-    render(<ReportForm view={view()} actions={actions()} />);
+    render(<ReportForm env="demo" view={view()} actions={actions()} />);
     expect(screen.getByText("0 av 2 klara")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: /Inte klara \(2\)/ }));
     choose(1, "Finns kvar");
@@ -140,6 +142,7 @@ describe("ReportForm", () => {
   it("moves from one weight field to the next one that lacks a weight", () => {
     render(
       <ReportForm
+        env="demo"
         view={view({ rabbits: [rabbit(1), rabbit(2), rabbit(3)] })}
         actions={actions()}
       />,
@@ -153,7 +156,7 @@ describe("ReportForm", () => {
   });
 
   it("restores the choice when the sale dialog is closed unsaved", () => {
-    render(<ReportForm view={view()} actions={actions()} />);
+    render(<ReportForm env="demo" view={view()} actions={actions()} />);
     choose(1, "Finns kvar");
     choose(1, "Såld");
     fireEvent.click(screen.getByRole("button", { name: "Avbryt" }));
@@ -168,7 +171,7 @@ describe("ReportForm", () => {
   it("holds a buyer outside the genebank in memory only: the draft and localStorage never get it", async () => {
     vi.useFakeTimers();
     const a = actions();
-    render(<ReportForm view={view()} actions={a} />);
+    render(<ReportForm env="demo" view={view()} actions={a} />);
     choose(1, "Såld");
     fireEvent.click(screen.getByLabelText("Utanför genbanken"));
     fireEvent.change(screen.getByLabelText("Köparens namn"), {
@@ -210,7 +213,13 @@ describe("ReportForm", () => {
       },
     );
     const many = Array.from({ length: 31 }, (_, i) => rabbit(i + 1));
-    render(<ReportForm view={view({ rabbits: many })} actions={actions()} />);
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ rabbits: many })}
+        actions={actions()}
+      />,
+    );
     expect(
       screen.queryByRole("button", { name: "Markera resten som finns kvar" }),
     ).toBeNull();
@@ -242,7 +251,7 @@ describe("ReportForm", () => {
         warnings: [],
       }),
     );
-    render(<ReportForm view={view()} actions={a} />);
+    render(<ReportForm env="demo" view={view()} actions={a} />);
     choose(1, "Finns kvar");
     fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
       target: { value: "3" },
@@ -273,7 +282,7 @@ describe("ReportForm", () => {
     a.submitReport
       .mockImplementationOnce(() => fail(408)) // the server committed; the answer was lost
       .mockImplementationOnce(() => ok(receipt));
-    render(<ReportForm view={view()} actions={a} />);
+    render(<ReportForm env="demo" view={view()} actions={a} />);
     fillAll();
     send();
     expect(
@@ -314,7 +323,7 @@ describe("ReportForm", () => {
         },
       }),
     );
-    render(<ReportForm view={view()} actions={a} />);
+    render(<ReportForm env="demo" view={view()} actions={a} />);
     choose(1, "Finns kvar");
     await act(async () => {
       await vi.advanceTimersByTimeAsync(1900);
@@ -368,7 +377,7 @@ describe("ReportForm", () => {
         villkor: { hane: true, hona: true, kull: false, i_tid: true },
       },
     });
-    render(<ReportForm view={v} actions={actions()} />);
+    render(<ReportForm env="demo" view={v} actions={actions()} />);
     expect(
       screen.getByText(
         /Klart\. Årsrapporten för G9001 kom in 3 januari 2027 kl\. 14\.32\./,
@@ -407,6 +416,7 @@ describe("ReportForm", () => {
     } as never;
     const { unmount } = render(
       <ReportForm
+        env="demo"
         view={view({
           access: "caretaker",
           report: { ...base, submitted: { rabbits: sale } },
@@ -418,6 +428,7 @@ describe("ReportForm", () => {
     unmount();
     render(
       <ReportForm
+        env="demo"
         view={view({
           access: "caretaker",
           report: { ...base, submitted: { rabbits: {} } },
@@ -431,6 +442,7 @@ describe("ReportForm", () => {
   it("says the round is closed instead of showing the form", () => {
     render(
       <ReportForm
+        env="demo"
         view={view({
           round: {
             start_date: null,
@@ -462,7 +474,7 @@ describe("ReportForm", () => {
       .mockImplementationOnce(() =>
         ok({ updated_at: "2026-12-31T10:00:02+00:00", submission_key: null }),
       );
-    render(<ReportForm view={view()} actions={a} />);
+    render(<ReportForm env="demo" view={view()} actions={a} />);
     choose(1, "Finns kvar");
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2100);
@@ -486,7 +498,7 @@ describe("ReportForm", () => {
   it("keeps a half-filled death and a disease without a count in the draft", async () => {
     vi.useFakeTimers();
     const a = actions();
-    render(<ReportForm view={view()} actions={a} />);
+    render(<ReportForm env="demo" view={view()} actions={a} />);
     choose(1, "Död eller slaktad"); // no month yet
     fireEvent.click(screen.getByLabelText("Ja, fyll i"));
     fireEvent.change(screen.getByLabelText("Annat, vad"), {
@@ -504,14 +516,20 @@ describe("ReportForm", () => {
     vi.useFakeTimers();
     const a = actions();
     a.saveDraft.mockImplementationOnce(() => fail(409, { draft: null }));
-    const { rerender } = render(<ReportForm view={view()} actions={a} />);
+    const { rerender } = render(
+      <ReportForm env="demo" view={view()} actions={a} />,
+    );
     choose(1, "Finns kvar");
     await act(async () => {
       await vi.advanceTimersByTimeAsync(2100);
     });
     expect(refresh).toHaveBeenCalled();
     rerender(
-      <ReportForm view={view({ report: submittedReport() })} actions={a} />,
+      <ReportForm
+        env="demo"
+        view={view({ report: submittedReport() })}
+        actions={a}
+      />,
     );
     expect(
       screen.getByText(/Klart\. Årsrapporten för G9001 kom in/),
@@ -521,7 +539,7 @@ describe("ReportForm", () => {
   it("treats a rejected server action as an error box on the dry run, and as a timeout on Skicka", async () => {
     const a = actions();
     a.dryRun.mockImplementationOnce(() => Promise.reject(new Error("network")));
-    render(<ReportForm view={view()} actions={a} />);
+    render(<ReportForm env="demo" view={view()} actions={a} />);
     fillAll();
     send();
     expect(
@@ -540,20 +558,96 @@ describe("ReportForm", () => {
     expect(second).toEqual(first);
   });
 
-  it("keeps the local copy apart per data environment", async () => {
+  it("keeps the local copy apart per data environment and never saves across one", async () => {
     vi.useFakeTimers();
-    render(<ReportForm view={view()} actions={actions()} />);
+    const a = actions();
+    render(<ReportForm env="demo" view={view()} actions={a} />);
     choose(1, "Finns kvar");
     expect(Object.keys(window.localStorage)).toEqual([
       "arsrapport:demo:G9001:2026",
     ]);
+    document.cookie = "sb_mode=prod"; // switched while the demo form is open
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft).not.toHaveBeenCalled();
     cleanup();
-    document.cookie = "sb_mode=prod";
-    render(<ReportForm view={view()} actions={actions()} />);
+    render(<ReportForm env="prod" view={view()} actions={actions()} />);
     expect(
       (within(row(1)).getByLabelText("Finns kvar") as HTMLInputElement).checked,
     ).toBe(false);
     document.cookie = "sb_mode=; max-age=0";
+  });
+
+  it("gives a draft with no key (from Dra tillbaka) a new submission key", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    const spent = "11111111-1111-4111-8111-111111111111";
+    a.saveDraft.mockImplementationOnce(() =>
+      fail(409, {
+        draft: {
+          data: { rabbits: {} },
+          updated_at: "2026-12-31T11:00:00+00:00",
+          submission_key: null,
+        },
+      }),
+    );
+    render(
+      <ReportForm
+        env="demo"
+        view={view({
+          draft: {
+            data: { rabbits: {} } as never,
+            updated_at: "2026-12-31T10:00:00+00:00",
+            submission_key: spent,
+            own: true,
+          },
+        })}
+        actions={a}
+      />,
+    );
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    choose(2, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(a.saveDraft.mock.calls[0][4]).toBe(spent);
+    expect(a.saveDraft.mock.calls[1][4]).not.toBe(spent);
+  });
+
+  it("locks editing and Skicka while a conflict reload is pending, and unlocks when the view arrives", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    a.saveDraft.mockImplementationOnce(() => fail(409, { draft: null }));
+    const { rerender } = render(
+      <ReportForm env="demo" view={view()} actions={a} />,
+    );
+    choose(1, "Finns kvar");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2100);
+    });
+    expect(screen.getAllByText("Hämtar senaste versionen…")).not.toHaveLength(
+      0,
+    );
+    expect(
+      within(row(1)).getByLabelText("Finns kvar").matches(":disabled"),
+    ).toBe(true);
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Skicka årsrapporten",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    rerender(<ReportForm env="demo" view={view()} actions={a} />);
+    expect(screen.queryByText("Hämtar senaste versionen…")).toBeNull();
+    expect(
+      (within(row(1)).getByLabelText("Finns kvar") as HTMLInputElement)
+        .disabled,
+    ).toBe(false);
   });
 
   it("an error link clears the search and filter and focuses the control that needs input", async () => {
@@ -565,7 +659,7 @@ describe("ReportForm", () => {
         warnings: [],
       }),
     );
-    render(<ReportForm view={view()} actions={a} />);
+    render(<ReportForm env="demo" view={view()} actions={a} />);
     choose(2, "Finns kvar");
     send();
     const link = await screen.findByRole("link", { name: /G9001-2/ });
@@ -592,7 +686,11 @@ describe("ReportForm", () => {
       () => new Promise((r) => (release = r)),
     );
     render(
-      <ReportForm view={view({ report: submittedReport() })} actions={a} />,
+      <ReportForm
+        env="demo"
+        view={view({ report: submittedReport() })}
+        actions={a}
+      />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Dra tillbaka" }));
     fireEvent.click(

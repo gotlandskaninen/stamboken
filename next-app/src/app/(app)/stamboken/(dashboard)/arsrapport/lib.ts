@@ -453,6 +453,74 @@ export function toBody(
   };
 }
 
+// Only these fields ever leave the form state or enter it from a stored draft:
+// an unknown key (a matrikel, a buyer) is dropped, never copied on.
+const num = (v: unknown): number | null =>
+  typeof v === "number" && Number.isFinite(v) ? v : null;
+const str = (v: unknown): string => (typeof v === "string" ? v : "");
+function pickEntry(raw: Partial<Entry>): Entry {
+  const e = raw ?? {};
+  const val = (["kvar", "dod", "sald", "ej_angiven"] as const).find(
+    (v) => v === e.val,
+  );
+  const dod = e.dod;
+  const sald = e.sald;
+  return {
+    val: val ?? null,
+    vikt: str(e.vikt),
+    ej_vagd: typeof e.ej_vagd === "string" ? e.ej_vagd : null,
+    hull:
+      (["low", "normal", "high"] as const).find((h) => h === e.hull) ?? null,
+    dod: dod
+      ? {
+          ar: num(dod.ar) ?? 0,
+          manad: num(dod.manad),
+          dag: num(dod.dag),
+          slaktad: !!dod.slaktad,
+          anteckning: str(dod.anteckning),
+        }
+      : null,
+    sald: sald
+      ? {
+          till: str(sald.till),
+          ar: num(sald.ar) ?? 0,
+          manad: num(sald.manad),
+          dag: num(sald.dag),
+          kopare: null,
+        }
+      : null,
+  };
+}
+export function pickForm(f: Partial<FormState>): FormState {
+  const state = emptyState();
+  for (const [id, e] of Object.entries(f.rabbits ?? {}))
+    state.rabbits[Number(id)] = pickEntry(e);
+  for (const { key } of DISEASES) {
+    const d = f.diseases?.[key];
+    if (d)
+      state.diseases[key] = {
+        antal: str(d.antal),
+        alder: str(d.alder),
+        namn: str(d.namn),
+      };
+  }
+  state.defects = (f.defects ?? []).flatMap((d) =>
+    num(d?.individual_id) === null
+      ? []
+      : [{ individual_id: d.individual_id, beskrivning: str(d.beskrivning) }],
+  );
+  state.ending = !!f.ending;
+  state.membership =
+    f.membership === "kvar_utan_genbank" ||
+    f.membership === "avsluta_medlemskap"
+      ? f.membership
+      : null;
+  state.health = f.health === "inga" || f.health === "ja" ? f.health : null;
+  state.message = str(f.message);
+  state.reason = str(f.reason);
+  return state;
+}
+
 // The draft is the body without the key, the revision and the buyers (D10).
 export function toDraft(state: FormState): DraftData {
   const { submission_key, revision, ...draft } = toBody(state, "", null);
@@ -460,15 +528,9 @@ export function toDraft(state: FormState): DraftData {
   void revision;
   for (const e of Object.values(draft.rabbits))
     if (e.sald) delete e.sald.kopare; // the buyer stays in memory
-  const form: FormState = { ...state, rabbits: {} };
-  for (const [id, e] of Object.entries(state.rabbits)) {
-    const { kopare, ...sald } = e.sald ?? { kopare: null };
-    void kopare;
-    form.rabbits[Number(id)] = {
-      ...e,
-      sald: e.sald ? (sald as SaldState) : null,
-    };
-  }
+  const form = pickForm(state);
+  for (const e of Object.values(form.rabbits))
+    if (e.sald) delete (e.sald as { kopare?: unknown }).kopare; // memory only
   return { ...draft, form };
 }
 
@@ -510,20 +572,7 @@ function fromEntry(b: Partial<BodyEntry> & { val?: Val | null }): Entry {
 // A draft, or report.submitted, back into the form. The buyers are gone.
 export function fromBody(data: Partial<DraftData>): FormState {
   if (data.form) {
-    const base = emptyState();
-    const rabbits: FormState["rabbits"] = {};
-    for (const [id, e] of Object.entries(data.form.rabbits ?? {}))
-      rabbits[Number(id)] = {
-        ...EMPTY_ENTRY,
-        ...e,
-        sald: e.sald ? { ...e.sald, kopare: null } : null,
-      };
-    return {
-      ...base,
-      ...data.form,
-      rabbits,
-      diseases: { ...base.diseases, ...data.form.diseases },
-    };
+    return pickForm(data.form);
   }
   const state = emptyState();
   for (const [id, raw] of Object.entries(data.rabbits ?? {}))

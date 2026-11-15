@@ -1,5 +1,7 @@
 import { notFound } from "next/navigation";
+import { cookies } from "next/headers";
 import { ApiError, fetchApi } from "@/lib/api";
+import { MODE_COOKIE, parseMode } from "@/lib/mode";
 import { dryRun, saveDraft, submitReport, withdrawReport } from "../../actions";
 import type { ReportView } from "../../lib";
 import { ReportForm } from "../../ReportForm";
@@ -16,6 +18,8 @@ export default async function ReportPage({
   const [{ herd, year }, sp] = await Promise.all([params, searchParams]);
   if (!/^[A-Z]{1,3}[0-9]{1,6}$/.test(herd) || !/^\d{4}$/.test(year)) notFound();
   const post = /^\d+$/.test(sp.post ?? "") ? Number(sp.post) : undefined;
+  // The data environment the fetch below answers from (api.ts reads the same cookie).
+  const env = parseMode((await cookies()).get(MODE_COOKIE)?.value);
   let view: ReportView;
   try {
     view = await fetchApi<ReportView>(
@@ -28,6 +32,8 @@ export default async function ReportPage({
   }
   return (
     <ReportForm
+      key={env}
+      env={env}
       view={view}
       actions={{ saveDraft, dryRun, submitReport, withdrawReport }}
       post={post}

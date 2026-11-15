@@ -168,6 +168,40 @@ describe("an unfinished draft", () => {
   });
 });
 
+describe("the stored form is an allow-list", () => {
+  it("drops unknown keys, a matrikel and a buyer on the way in and out", () => {
+    const evil = {
+      matrikel: { telefon: "0700" },
+      extra: 1,
+      rabbits: {
+        1: {
+          val: "sald",
+          vikt: "2",
+          sald: {
+            till: "utanfor",
+            ar: 2026,
+            manad: 6,
+            dag: null,
+            kopare: { name: "Ola" },
+          },
+          matrikel: {},
+        },
+      },
+      diseases: { rvhd: { antal: "1", alder: "", namn: "", kopare: "x" } },
+      defects: [
+        { individual_id: 1, beskrivning: "x", epost: "a@example.invalid" },
+      ],
+    };
+    const state = fromBody({ form: evil as never });
+    expect(JSON.stringify(state)).not.toMatch(
+      /matrikel|0700|Ola|extra|epost|example/,
+    );
+    expect(state.rabbits[1].sald?.kopare).toBeNull();
+    const draft = JSON.stringify(toDraft(state));
+    expect(draft).not.toMatch(/matrikel|0700|Ola|extra|epost|example|kopare/);
+  });
+});
+
 describe("keyAfter", () => {
   it("keeps the key after a timeout and renews it otherwise", () => {
     const k = "11111111-1111-4111-8111-111111111111";

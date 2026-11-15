@@ -3,7 +3,7 @@
 import React from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { readModeCookieClient } from "@/lib/mode";
+import { readModeCookieClient, type Mode } from "@/lib/mode";
 import { MbCard } from "../min-besattning/min-besattning-ui";
 import type * as Actions from "./actions";
 import type { ActionResult } from "../inkorg/actions";
@@ -85,21 +85,29 @@ async function safe<T>(
 // localStorage holds what the server has not confirmed yet, apart per data
 // environment (demo and prod answer from different databases). It never gets
 // a buyer or a matrikel: toDraft strips them.
-const localKey = (herd: string, year: number) =>
-  `arsrapport:${readModeCookieClient()}:${herd}:${year}`;
-const readLocal = (herd: string, year: number): DraftData | null => {
+const localKey = (env: Mode, herd: string, year: number) =>
+  `arsrapport:${env}:${herd}:${year}`;
+const readLocal = (env: Mode, herd: string, year: number): DraftData | null => {
   try {
-    const raw = window.localStorage.getItem(localKey(herd, year));
+    const raw = window.localStorage.getItem(localKey(env, herd, year));
     return raw ? (JSON.parse(raw) as DraftData) : null;
   } catch {
     return null;
   }
 };
-const writeLocal = (herd: string, year: number, data: DraftData | null) => {
+const writeLocal = (
+  env: Mode,
+  herd: string,
+  year: number,
+  data: DraftData | null,
+) => {
   try {
     if (data)
-      window.localStorage.setItem(localKey(herd, year), JSON.stringify(data));
-    else window.localStorage.removeItem(localKey(herd, year));
+      window.localStorage.setItem(
+        localKey(env, herd, year),
+        JSON.stringify(data),
+      );
+    else window.localStorage.removeItem(localKey(env, herd, year));
   } catch {
     /* storage can be blocked: the server draft still works */
   }
@@ -146,12 +154,16 @@ export function ReportForm({
   contactSlot = ProfileCard,
   stickyTop = 56,
   post,
+  env,
 }: {
   view: ReportView;
   actions: ReportActions;
   contactSlot?: React.ReactNode;
   stickyTop?: number;
   post?: number;
+  // The data environment the view was read from; the page mounts the form
+  // with key={env}, so a switch starts over from the other one's draft.
+  env: Mode;
 }) {
   const router = useRouter();
   const { herd, year, round } = view;
@@ -183,6 +195,7 @@ export function ReportForm({
   const [seenEnd, setSeenEnd] = React.useState(false);
   const [askRest, setAskRest] = React.useState(false);
   const [focusTick, setFocusTick] = React.useState(0);
+  const [syncing, setSyncing] = React.useState(false);
 
   // Latest values for callbacks that outlive a render. Kept in effects, never
   // written during render.
@@ -218,22 +231,23 @@ export function ReportForm({
 
   // A copy the server never confirmed (closed tab, lost connection) wins.
   React.useEffect(() => {
-    const local = readLocal(herd.herd, year);
+    const local = readLocal(env, herd.herd, year);
     if (local) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage exists only after hydration
       setState(fromBody(local));
       setLocalCopy(true);
       setVersion((v) => v + 1);
     }
-  }, [herd.herd, year]);
+  }, [env, herd.herd, year]);
 
   // The server's draft replaces the whole editing state: form, mode and key.
   const adoptDraft = (d: ServerDraft) => {
     setState(fromBody(d.data));
     updatedAt.current = d.updated_at;
-    if (d.submission_key) keyRef.current = d.submission_key;
+    // a draft with no key (written by Dra tillbaka) must not revive a spent one
+    keyRef.current = d.submission_key ?? newKey();
     setSavedAt(fmtTime(d.updated_at));
-    writeLocal(herd.herd, year, null);
+    writeLocal(env, herd.herd, year, null);
     setLocalCopy(false);
     setMode("form");
     setVersion(0);
@@ -243,12 +257,27 @@ export function ReportForm({
   const reload = () => {
     resync.current = true;
     stopped.current = true;
+    setSyncing(true); // editing and Skicka wait for the answer
     router.refresh();
+    setTimeout(() => {
+      if (!resync.current) return;
+      resync.current = false;
+      stopped.current = false;
+      setSyncing(false);
+      setRefusals([
+        {
+          individual_id: null,
+          code: "fel",
+          message: "Det gick inte att hämta senaste versionen. Ladda om sidan.",
+        },
+      ]);
+    }, 10000);
   };
   React.useEffect(() => {
     if (!resync.current) return;
     resync.current = false;
     stopped.current = false;
+    setSyncing(false);
     const base = view.draft?.data ?? view.report?.submitted ?? {};
     setState(fromBody(base));
     setMode(view.report ? "receipt" : "form");
@@ -259,8 +288,8 @@ export function ReportForm({
     keyRef.current = view.draft?.submission_key ?? newKey();
     updatedAt.current = view.draft?.updated_at ?? null;
     frozen.current = null;
-    writeLocal(view.herd.herd, view.year, null);
-  }, [view]);
+    writeLocal(env, view.herd.herd, view.year, null);
+  }, [view, env]);
 
   // One save in flight at a time: a change made meanwhile is sent after it
   // has been answered, with the version it returned.
@@ -273,6 +302,10 @@ export function ReportForm({
     try {
       do {
         again.current = false;
+        if (readModeCookieClient() !== env) {
+          stopped.current = true; // never save into the other environment
+          break;
+        }
         const mine = versionRef.current;
         const slow = setTimeout(() => setSaveState("saving"), 1000);
         const res = await safe(
@@ -291,7 +324,8 @@ export function ReportForm({
           updatedAt.current = res.data.updated_at;
           setSavedAt(fmtTime(res.data.updated_at));
           setSaveState("saved");
-          if (versionRef.current === mine) writeLocal(herd.herd, year, null);
+          if (versionRef.current === mine)
+            writeLocal(env, herd.herd, year, null);
           continue;
         }
         const p = res.problem;
@@ -322,10 +356,10 @@ export function ReportForm({
   // Autosave: 2 s after the last change, from the revision the page started from.
   React.useEffect(() => {
     if (version === 0 || mode !== "form" || !canEdit || stopped.current) return;
-    writeLocal(herd.herd, year, toDraft(stateRef.current));
+    writeLocal(env, herd.herd, year, toDraft(stateRef.current));
     const t = setTimeout(() => void flushRef.current(), AUTOSAVE_MS);
     return () => clearTimeout(t);
-  }, [version, retry, mode, canEdit, herd.herd, year]);
+  }, [version, retry, mode, canEdit, env, herd.herd, year]);
 
   const rabbits = view.rabbits;
   const lastId = rabbits.length ? rabbits[rabbits.length - 1].id : null;
@@ -472,7 +506,9 @@ export function ReportForm({
     setPhase("idle");
   };
 
+  const ENV_TEXT = "Miljön har bytts. Ladda om sidan.";
   const send = async (body: Submission) => {
+    if (readModeCookieClient() !== env) return fail(ENV_TEXT);
     setPhase("sending");
     const res = await safe(
       actionsRef.current.submitReport(herd.herd, year, body, post),
@@ -481,7 +517,7 @@ export function ReportForm({
       keyRef.current = keyAfter("ok", keyRef.current!);
       frozen.current = null;
       updatedAt.current = null;
-      writeLocal(herd.herd, year, null);
+      writeLocal(env, herd.herd, year, null);
       setLocalCopy(false);
       setReceipt(res.data);
       setMode("receipt");
@@ -498,8 +534,9 @@ export function ReportForm({
   };
 
   const skicka = async () => {
-    if (phase !== "idle") return;
+    if (phase !== "idle" || syncing) return;
     setRefusals(null);
+    if (readModeCookieClient() !== env) return fail(ENV_TEXT);
     const body = toBody(state, keyRef.current!, view.report?.revision ?? null);
     frozen.current = body; // never stored: it may hold a buyer
     setPhase("checking");
@@ -521,6 +558,7 @@ export function ReportForm({
   };
 
   const withdraw = async (reason?: string): Promise<string | null> => {
+    if (readModeCookieClient() !== env) return ENV_TEXT;
     setWithdrawing(true);
     const res = await safe(
       actionsRef.current.withdrawReport(
@@ -570,8 +608,9 @@ export function ReportForm({
     /Mobi|Android|iPhone/i.test(navigator.userAgent)
       ? "telefonen"
       : "webbläsaren";
-  const status: StatusKind =
-    phase === "timeout"
+  const status: StatusKind = syncing
+    ? { kind: "syncing" }
+    : phase === "timeout"
       ? { kind: "timeout" }
       : phase !== "idle"
         ? { kind: "sending" }
@@ -621,7 +660,7 @@ export function ReportForm({
           view={view}
           receipt={receipt}
           hasDraft={!!view.draft || localCopy}
-          busy={withdrawing}
+          busy={withdrawing || syncing}
           onChange={startChange}
           onWithdraw={withdraw}
         />
@@ -796,14 +835,17 @@ export function ReportForm({
                   type="button"
                   className={`sb-btn ${styles.btn}`}
                   onClick={skicka}
-                  disabled={sending}
+                  disabled={sending || syncing}
                 >
                   {sending ? "Skickar…" : buttonText}
                 </button>
               )}
             </div>
           </div>
-          <fieldset disabled={phase !== "idle"} className={styles.main}>
+          <fieldset
+            disabled={phase !== "idle" || syncing}
+            className={styles.main}
+          >
             {rabbits.length === 0 ? (
               <p>
                 Stamboken har inga kaniner registrerade i {herd.herd} den 31

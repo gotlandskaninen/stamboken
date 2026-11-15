@@ -12,6 +12,7 @@ export type StatusKind =
   | { kind: "loggedout"; href: string }
   | { kind: "conflict" }
   | { kind: "sending" }
+  | { kind: "syncing" }
   | { kind: "timeout" }
   | { kind: "withdrawn"; date: string }
   | { kind: "closed" }
@@ -27,6 +28,7 @@ const TONE: Record<StatusKind["kind"], string> = {
   loggedout: styles.warning,
   conflict: styles.info,
   sending: "",
+  syncing: styles.info,
   timeout: styles.warning,
   withdrawn: styles.warning,
   closed: styles.info,
@@ -57,6 +59,8 @@ function text(s: StatusKind): React.ReactNode {
       );
     case "conflict":
       return `${CONFLICT_TEXT}. Vi har läst in den senaste.`;
+    case "syncing":
+      return "Hämtar senaste versionen…";
     case "sending":
       return "Skickar…";
     case "timeout":
