@@ -229,7 +229,8 @@ def _issue_digital_certificate(individual, user_id) -> int:
     """
     # Lazy import: the cert pipeline pulls in heavy PDF/signing deps.
     import utils.data_access as da
-    from utils.cert_service_v2 import assign_certificate_number, generate_and_store, invalidate_caches
+    from utils.cert_service_v2 import generate_and_store, invalidate_caches
+    from utils.individual_commands import assign_certificate_number
 
     user = da.fetch_user_info(user_id)
     if user is None:

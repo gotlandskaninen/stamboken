@@ -3,6 +3,8 @@
 // (membership detail). Field names must stay in sync with
 // app/blueprints/members.py.
 
+import type { MembershipStatus } from "@/lib/membershipStatus";
+
 export type MembershipListPerson = {
   id: number;
   first_name: string;
@@ -14,7 +16,7 @@ export type MembershipListPerson = {
 export type MembershipRow = {
   id: number; // membership id
   member_number: number | null;
-  membership_status: string;
+  membership_status: MembershipStatus;
   main_first_name: string | null;
   main_last_name: string | null;
   main_email: string | null;
@@ -80,7 +82,7 @@ export function hasBillingAddress(b: BillingAddress): boolean {
 export type MembershipDetail = BillingAddress & {
   id: number;
   member_number: number | null;
-  membership_status: string;
+  membership_status: MembershipStatus;
   address: string | null;
   postal_code: string | null;
   city: string | null;
@@ -96,13 +98,6 @@ export type MembershipDetail = BillingAddress & {
 // Default page size for the matrikel list — the RSC page uses it whenever the
 // URL carries no (valid) per_page.
 export const MEMBERS_PAGE_SIZE = 25;
-
-export const STATUS_LABELS: Record<string, string> = {
-  active: "Aktiv",
-  inactive: "Inaktiv",
-  pending: "Väntar",
-  friexemplar: "Friexemplar",
-};
 
 export const ROLE_LABELS: Record<string, string> = {
   huvudmedlem: "Huvudmedlem",

@@ -78,10 +78,12 @@ from utils.matrikel import (
     LinkError,
     link_access_delta,
     link_member_user,
+    new_membership,
     normalize_postal_code,
     raise_counter_to,
     split_postal_address,
 )
+from utils.membership_lifecycle import Status
 
 logger = logging.getLogger(__name__)
 
@@ -492,7 +494,7 @@ def _import_membership_group(nr: int, group: list[dict], dry_run: bool, report: 
             report["persons_created"] += 1
             membership = None
             if not dry_run:
-                membership = Membership.create(member_number=nr, membership_status="active", **fields)
+                membership = new_membership(Status.ACTIVE, member_number=nr, **fields)
                 Member.create(
                     membership=membership,
                     role="huvudmedlem",
@@ -699,9 +701,9 @@ def _import_friexemplar_group(name_key: str, group: list[dict], dry_run: bool, r
         return
 
     with DB_PROXY.atomic():
-        membership = Membership.create(
+        membership = new_membership(
+            Status.FRIEXEMPLAR,
             member_number=None,
-            membership_status="friexemplar",
             address=row["address"],
             postal_code=row["postal_code"],
             city=row["city"],
