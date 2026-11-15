@@ -720,7 +720,8 @@ BUYERLESS_BEFORE_SALE = (
 def _carried_buyers(voided, parsed):
     """
     The buyer of a voided sale into GX1/MX1 goes to the event (TRANSFER or CORRECTION, without a buyer of its own)
-    the correction writes into the same herd, so it keeps its purge_at (ADR-0016); with no such event it goes.
+    the correction writes into the same herd (ADR-0016), and its purge_at follows that event's date; with no such
+    event it goes.
     Event index -> contact id; 409 when more than one buyer or more than one event could pair up.
     """
     carried = {}
@@ -989,6 +990,11 @@ def undo_herd_tracking_operation(operation_id, user, reason, undo_operation_id=N
             with DB_PROXY.atomic():
                 voided = _void_rows(revoid, user, cleaned, undo_op)  # voids first: the unvoids may reuse a slot
                 _unvoid_rows(unvoid, undo_op)
+                for row in unvoid:  # a restored sale's buyer goes five years after that sale's date again
+                    if row.holder_contact_id:
+                        BuyerContact.update(purge_at=BuyerContact.purge_at_for(row.herd_tracking_date)).where(
+                            BuyerContact.id == row.holder_contact_id
+                        ).execute()
                 paths = _drop_orphan_buyers(voided, VOID_ACTION, user)
         except IntegrityError as exc:
             if _violated_constraint(exc) not in ("idx_herdtracking_one_birth", "idx_herdtracking_report_attestation"):

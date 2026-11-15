@@ -438,7 +438,8 @@ class TestVoid(BuyerBase):
         undo_herd_tracking_operation(op, self.manager, "Rätt datum ändå")
         self.assertEqual(self._latest().id, self.sale.id)
         self.assertEqual(self._latest().holder_contact_id, self.contact_id)
-        self.assertIsNotNone(self._contact(self.contact_id))
+        # Five years from the restored sale's date again, not the corrected one.
+        self.assertEqual(self._contact(self.contact_id).purge_at, db.BuyerContact.purge_at_for(SALE_DATE))
 
     def test_a_correction_that_moves_the_sale_elsewhere_deletes_the_buyer(self):
         self._correct_date(herd="G2")
