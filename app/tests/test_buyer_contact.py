@@ -18,7 +18,6 @@ from peewee import IntegrityError  # noqa: E402
 from utils import buyer_contact  # noqa: E402
 from utils.herd_tracking import (  # noqa: E402
     HerdTrackingConflict,
-    HerdTrackingError,
     HerdTrackingInvalid,
     correct_herd_tracking,
     herd_tracking_history,
@@ -31,6 +30,8 @@ from utils.herd_tracking import (  # noqa: E402
 from utils.individual_commands import record_sale  # noqa: E402
 
 from tests.database_test import DatabaseTest  # noqa: E402
+from tests.test_bunny_v2_api import _old_litter, _promote_without_certificate
+from tests.test_herd_tracking_locks import capture_sql
 from tests.test_inbox_erasure import ErasureTest
 from tests.test_inbox_purge import NOW as PURGE_NOW  # noqa: E402
 from tests.test_inbox_purge import PurgeTest
@@ -364,26 +365,6 @@ class TestVoid(BuyerBase):
         self.assertEqual(
             [r.new_data for r in self._buyer_log(self.contact_id, "DELETE")], [{"action": "forsaljning_ogiltig"}]
         )
-
-    def test_the_queue_items_are_locked_before_the_rabbit_as_the_queue_does(self):
-        def record(name):
-            return lambda ids: calls.append(name)
-
-        for run in (
-            lambda: void_herd_tracking(self.sale.id, self.owner, "Fel kanin"),
-            lambda: self._correct_date(),
-            lambda: undo_herd_tracking_operation(self._latest().operation_id, self.manager, "Fel"),
-        ):
-            calls = []
-            with (
-                mock.patch("utils.herd_tracking._lock_inbox_items", side_effect=record("items")),
-                mock.patch("utils.herd_tracking.lock_individuals", side_effect=record("rabbit")),
-            ):
-                try:
-                    run()
-                except HerdTrackingError:
-                    pass
-            self.assertEqual(calls[:2], ["items", "rabbit"])
 
     def test_undoing_the_operation_deletes_the_buyer(self):
         undo_herd_tracking_operation(self.sale.operation_id, self.manager, "Fel kanin")
@@ -739,3 +720,58 @@ class TestQueueProofOfARegisteredSale(ErasureTest):
         self.assertEqual(resp.get_json()["herd_tracking_id"], sale_id)
         self.assertEqual(db.InboxDocument.get_by_id(proof.id).herd_tracking_id, sale_id)
         self.assertEqual([c.name for c in db.BuyerContact.select()], [NAME])
+
+
+def _items_locked_before_the_rabbit(statements):
+    """The first lock on inbox_item comes before the first lock on individual (the queue's order)."""
+    first = {}
+    for index, (sql, _params) in enumerate(statements):
+        for table, lock in (("inbox_item", "FOR UPDATE"), ("individual", "FOR NO KEY UPDATE")):
+            if f'FROM "{table}"' in sql and lock in sql:
+                first.setdefault(table, index)
+    return "inbox_item" in first and first["inbox_item"] < first.get("individual", len(statements))
+
+
+class TestLockOrder(PurgeTest):
+    """A void that clears a sale's queue documents locks the items before the rabbit, as the queue does."""
+
+    def setUp(self):
+        super().setUp()
+        self.gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+
+    def _sale_with_a_document(self, rabbit, date):
+        sale = record_herd_tracking(rabbit, self.gx1, date, "TRANSFER", self.manager, buyer=BUYER)
+        item = self.make()
+        db.InboxDocument.update(herd_tracking_id=sale.id).where(db.InboxDocument.item == item.id).execute()
+        return sale, self.document(item)
+
+    def test_void_correction_and_undo(self):
+        rabbit = db.Individual.get(db.Individual.number == "G1-2112")
+        sale, _document = self._sale_with_a_document(rabbit, "2026-01-01")
+        op = new_operation_id()
+        event = {"kind": "TRANSFER", "date": "2026-01-02", "herd": "GX1"}
+        for name, run in (
+            ("correction", lambda: correct_herd_tracking(rabbit, self.manager, op, [sale.id], [event], "Fel datum")),
+            ("undo", lambda: undo_herd_tracking_operation(op, self.manager, "Rätt ändå")),
+            ("void", lambda: void_herd_tracking(sale.id, self.manager, "Fel kanin")),
+        ):
+            with self.subTest(name), capture_sql() as statements:
+                run()
+            self.assertTrue(_items_locked_before_the_rabbit(statements), name)
+
+    def test_unpromote_locks_them_in_its_own_transaction_and_removes_the_files_after_it(self):
+        bunny = db.Bunny.create(
+            breeding=_old_litter(self.herds[0]), slot_order=1, observed_sex="female", observed_color="bleighe"
+        )
+        self.login("admin")
+        resp = _promote_without_certificate(self.client, bunny.id)
+        self.assertEqual(resp.status_code, 201, resp.get_json())
+        rabbit = db.Individual.get(db.Individual.number == resp.get_json()["individual"]["number"])
+        sale, document = self._sale_with_a_document(rabbit, "2025-04-01")
+        self.login("man")
+        with capture_sql() as statements:
+            resp = self.client.post(f"/api/v2/bunny/{bunny.id}/unpromote")
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        self.assertTrue(_items_locked_before_the_rabbit(statements))
+        self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == sale.holder_contact_id))
+        self.assertFalse(self.exists(document.original_path))  # removed after the route's commit
