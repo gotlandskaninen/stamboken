@@ -98,7 +98,8 @@ export function NumberRow({
         />
       </div>
       <p id="paper-number-help" className={styles.meta}>
-        Enter går vidare. 1 Finns kvar, 2 Död, 3 Såld.
+        Enter går vidare. När kaninens val har fokus: 1 Finns kvar, 2 Död, 3
+        Såld.
       </p>
       {problem && (
         <p id="paper-number-problem" className={styles.errorText} role="alert">
