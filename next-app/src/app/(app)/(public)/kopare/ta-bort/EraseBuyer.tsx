@@ -18,7 +18,8 @@ export function takeToken(location: Location, history: History) {
 
 const DONE: Record<Exclude<EraseResult, "error">, string> = {
   removed: "Dina uppgifter är borttagna.",
-  already_removed: "Dina uppgifter är redan borttagna.",
+  already_removed:
+    "Länken har redan använts eller ersatts. Finns det ett nyare mejl, använd länken i det. Annars: skriv till dataskydd@gotlandskaninen.se.",
   invalid:
     "Länken gäller inte längre. Skriv till dataskydd@gotlandskaninen.se.",
 };

@@ -183,7 +183,7 @@ raderas i samma transaktion.
 | Svar | När |
 |---|---|
 | 200 `{"result": "removed"}` | köparen raderades nu |
-| 200 `{"result": "already_removed"}` | koden är äkta men köparen finns inte längre |
+| 200 `{"result": "already_removed"}` | koden är äkta men köparen finns inte längre. Sidan säger att länken redan har använts eller ersatts, eftersom en ångrad och ny försäljning ger en ny köpare och ett nytt mejl, och hänvisar till länken i det nyare mejlet och annars till `dataskydd@gotlandskaninen.se` |
 | 404 med `detail` "Länken gäller inte längre. Skriv till `dataskydd@gotlandskaninen.se`." | allt annat: förfalskad, trasig eller saknad kod, eller en kod för ett annat syfte. Svaret är detsamma vilket id koden än nämner |
 | 429 | för många anrop |
 

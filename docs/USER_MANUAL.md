@@ -733,7 +733,8 @@ Försäljningen står kvar i kaninens historik, utan köparen. Sedan visar sidan
 besked:
 
 - **Dina uppgifter är borttagna.**
-- **Dina uppgifter är redan borttagna.** – länken har redan använts.
+- **Länken har redan använts eller ersatts.** – köparen hänvisas till länken i ett nyare mejl,
+  om det finns ett, och annars till `dataskydd@gotlandskaninen.se`.
 - **Länken gäller inte längre.** – länken är fel eller ofullständig, eller sidan har
   laddats om. Köparen kan klicka på länken i mejlet igen eller skriva till
   `dataskydd@gotlandskaninen.se`.
