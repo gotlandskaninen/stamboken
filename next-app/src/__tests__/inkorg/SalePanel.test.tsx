@@ -138,6 +138,29 @@ describe("SalePanel with a buyer outside the association", () => {
     expect(registerSale.mock.calls[0][2]).not.toHaveProperty("buyer");
   });
 
+  it("never hides the buyer on the previous rabbit's sales, and looks up once typing pauses", async () => {
+    lookupRabbit.mockResolvedValueOnce(registered); // G9001-2511 has the sale
+    render(
+      <SalePanel itemId={12} doc={doc} herds={[]} canSave onDone={vi.fn()} />,
+    );
+    fireEvent.change(screen.getByLabelText(/Säljdatum/), {
+      target: { value: "2026-10-03" },
+    });
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    );
+    await waitFor(() =>
+      expect(screen.queryByLabelText(/Köparens namn/)).toBeNull(),
+    );
+    lookupRabbit.mockClear();
+    lookupRabbit.mockResolvedValue(null);
+    type(/Individnummer/, "G9001-251");
+    type(/Individnummer/, "G9001-2512"); // another rabbit, typed quickly
+    expect(screen.getByLabelText(/Köparens namn/)).toBeInTheDocument(); // at once, before any answer
+    await waitFor(() => expect(lookupRabbit).toHaveBeenCalledTimes(1));
+    expect(lookupRabbit).toHaveBeenCalledWith("G9001-2512");
+  });
+
   it("asks for the buyer when the rabbit's sale is another one", async () => {
     const other = {
       ...registered,
