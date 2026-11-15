@@ -12,6 +12,7 @@ os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), 
 
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
+import utils.herd_tracking as herd_tracking_module  # noqa: E402
 import utils.inbox as inbox  # noqa: E402
 import utils.inbox_purge as purge  # noqa: E402
 from herdbook import APP, limiter  # noqa: E402
@@ -1042,6 +1043,28 @@ class TestLockOrder(PurgeTest):
             with self.subTest(name), capture_sql() as statements:
                 run()
             self.assertTrue(_items_locked_before_the_rabbit(statements), name)
+
+    def test_a_void_refuses_a_buyer_and_item_that_appeared_before_its_rabbit_lock(self):
+        rabbit = db.Individual.get(db.Individual.number == "G1-2112")
+        sale = record_herd_tracking(rabbit, self.gx1, "2026-01-01", "TRANSFER", self.manager)  # no buyer yet
+        real_lock = herd_tracking_module.lock_individuals
+
+        def proof_linked_first(ids):
+            # attach_buyer and a linked proof commit just before the void gets the rabbit's lock.
+            contact = db.BuyerContact.create(
+                **BUYER, created_by_user=self.manager, purge_at=db.BuyerContact.purge_at_for("2026-01-01")
+            )
+            db.HerdTracking.update(holder_contact=contact).where(db.HerdTracking.id == sale.id).execute()
+            item = self.make(doc_type="bevis")
+            db.InboxDocument.update(herd_tracking_id=sale.id).where(db.InboxDocument.item == item.id).execute()
+            return real_lock(ids)
+
+        with (
+            mock.patch("utils.herd_tracking.lock_individuals", side_effect=proof_linked_first),
+            self.assertRaises(HerdTrackingConflict) as raised,
+        ):
+            void_herd_tracking(sale.id, self.manager, "Fel kanin")
+        self.assertIn("Försök igen", raised.exception.detail)
 
     def test_an_erasure_locks_the_items_before_the_rabbit(self):
         rabbit = db.Individual.get(db.Individual.number == "G1-2112")

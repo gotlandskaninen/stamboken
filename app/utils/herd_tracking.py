@@ -163,6 +163,15 @@ def lock_buyer_items(individual_ids):
 QUEUE_CHANGED = "Inkorgen ändrades under tiden. Försök igen."
 
 
+def _require_same_items(rows, items):
+    """
+    Under the rabbit lock: the rows to void hold no buyer whose queue items were not locked before it (a proof
+    linked, or attach_buyer, in between). Otherwise 409, never a lock taken out of order.
+    """
+    if not buyer_items(rows) <= items:
+        raise HerdTrackingConflict(QUEUE_CHANGED)
+
+
 def void_all_for_unpromote(individual, user, operation_id=None, files=None, items=None):
     """
     Retire every active row of an un-promoted individual in one operation. A caller in its own transaction passes
@@ -613,12 +622,13 @@ def void_herd_tracking(ht_id, user, reason, operation_id=None, typed=True):
     if row is None:
         raise HerdTrackingNotFound("Raden finns inte.")
     with DB_PROXY.atomic():
-        buyer_items([row], lock=True)
+        items = buyer_items([row], lock=True)
         lock_individuals([row.individual_id])
         done = _operation_rows([row.individual_id], op)
         if done:
             return next((r for r in done if r.voided_operation_id == op), done[0])
         row = HerdTracking.get_by_id(ht_id)
+        _require_same_items([row], items)
         if row.voided_at is not None:
             return row
         individual = Individual.get_by_id(row.individual_id)
@@ -787,8 +797,10 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
     cleaned = require_reason(reason) if void_ids else None
     op = new_operation_id(operation_id)
     with DB_PROXY.atomic():
-        buyer_items(HerdTracking.select().where(HerdTracking.id.in_(void_ids)), lock=True)
+        to_void = HerdTracking.select().where(HerdTracking.id.in_(void_ids))
+        items = buyer_items(to_void, lock=True)
         lock_individuals([ind_id])
+        _require_same_items(to_void, items)
         ind = Individual.get_by_id(ind_id)
         if _operation_rows([ind_id], op):
             return list(
@@ -981,8 +993,9 @@ def undo_herd_tracking_operation(operation_id, user, reason, undo_operation_id=N
     with DB_PROXY.atomic():
         # The rows this undo may void: those the operation wrote or restored.
         redone = (HerdTracking.operation_id == op) | (HerdTracking.restored_operation_id == op)
-        buyer_items(HerdTracking.select().where(redone), lock=True)
+        items = buyer_items(HerdTracking.select().where(redone), lock=True)
         lock_individuals(ind_ids)
+        _require_same_items(HerdTracking.select().where(redone), items)
         individuals = {i.id: i for i in Individual.select().where(Individual.id.in_(ind_ids))}
         if any(not is_manager_of(user, i.origin_herd.genebank_id) for i in individuals.values()):
             raise HerdTrackingForbidden("Bara genbanksansvarig eller administratör kan ångra en åtgärd.")
