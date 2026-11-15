@@ -81,6 +81,7 @@ const paperView = (over: Partial<ReportView> = {}): ReportView =>
   });
 
 beforeEach(() => {
+  window.scrollTo = vi.fn(); // jsdom does not implement it
   window.localStorage.clear();
   refresh.mockReset();
 });

@@ -1316,28 +1316,6 @@ export function ReportForm({
                 </div>
               </>
             )}
-
-            <div className={styles.sideSend}>
-              {lower}
-              {phase === "timeout" ? (
-                <button
-                  type="button"
-                  className={`sb-btn ${styles.btn}`}
-                  onClick={() => send(frozen.current!)}
-                >
-                  Försök igen
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  className={`sb-btn ${styles.btn}`}
-                  onClick={skicka}
-                  disabled={sending || syncing || !!olderCopy}
-                >
-                  {sending ? "Skickar…" : buttonText}
-                </button>
-              )}
-            </div>
           </div>
           <fieldset
             disabled={phase !== "idle" || syncing || !!olderCopy}
@@ -1789,6 +1767,27 @@ export function ReportForm({
               </MbCard>
             )}
           </fieldset>
+          <div className={styles.sideSend}>
+            {lower}
+            {phase === "timeout" ? (
+              <button
+                type="button"
+                className={`sb-btn ${styles.btn}`}
+                onClick={() => send(frozen.current!)}
+              >
+                Försök igen
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={`sb-btn ${styles.btn}`}
+                onClick={skicka}
+                disabled={sending || syncing || !!olderCopy}
+              >
+                {sending ? "Skickar…" : buttonText}
+              </button>
+            )}
+          </div>
         </div>
       )}
 

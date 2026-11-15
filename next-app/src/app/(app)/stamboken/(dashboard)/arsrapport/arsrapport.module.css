@@ -134,8 +134,9 @@ a.secondary {
   border-color: var(--sb-ink-3);
 }
 
-/* Mobile order: state, search and counter, filters, list, then Skicka. From
-   980 px the first three and Skicka become a sticky side column. */
+/* DOM order is the reading order: state, search and counter, filters, list,
+   then Skicka. From 980 px the first three go in a sticky top of the side
+   column and Skicka sticks to the bottom of it. */
 .layout {
   display: flex;
   flex-direction: column;
@@ -144,17 +145,7 @@ a.secondary {
 .side {
   display: contents;
 }
-.sideStatus {
-  order: 1;
-}
-.sideBar {
-  order: 2;
-}
-.sideFilters {
-  order: 3;
-}
 .main {
-  order: 4;
   border: 0;
   padding: 0;
   margin: 0;
@@ -164,7 +155,6 @@ a.secondary {
   gap: 16px;
 }
 .sideSend {
-  order: 5;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -446,10 +436,19 @@ a.secondary {
     gap: 16px;
     grid-column: 2;
     grid-row: 1;
+    align-self: start;
     position: sticky;
     top: calc(var(--report-sticky-top) + 16px);
-    max-height: calc(100vh - var(--report-sticky-top) - 32px);
+    /* leaves room for Skicka below */
+    max-height: calc(100vh - var(--report-sticky-top) - 260px);
     overflow-y: auto;
+  }
+  .sideSend {
+    grid-column: 2;
+    grid-row: 1;
+    align-self: end;
+    position: sticky;
+    bottom: 16px;
   }
   .sticky {
     position: static;
@@ -536,6 +535,9 @@ a.secondary {
     position: static;
     max-height: none;
     overflow: visible;
+  }
+  .paperForm .sideSend {
+    position: static;
   }
 }
 

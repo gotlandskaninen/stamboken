@@ -851,6 +851,14 @@ describe("ReportForm", () => {
     expect(line.getAttribute("aria-hidden")).toBe("true");
   });
 
+  it("puts Skicka after the rabbit list in the DOM", () => {
+    render(<ReportForm env="demo" view={view()} actions={actions()} />);
+    const send = screen.getByRole("button", { name: "Skicka årsrapporten" });
+    expect(
+      row(2).compareDocumentPosition(send) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("shows Dragen tillbaka after a withdrawal and locks the confirmation while it runs", async () => {
     const a = actions();
     let release: (v: unknown) => void = () => {};
