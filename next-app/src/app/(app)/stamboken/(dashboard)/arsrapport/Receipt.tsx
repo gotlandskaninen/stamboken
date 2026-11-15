@@ -183,6 +183,9 @@ export function Receipt({
         <DialogTitle id="wd-title">Dra tillbaka rapporten</DialogTitle>
         <DialogContent className={styles.detail}>
           <p style={{ margin: 0 }}>{WITHDRAW_TEXT}</p>
+          <p style={{ margin: 0 }}>
+            Vill du bara rätta något? Använd Ändra i stället.
+          </p>
           {editor && (
             <label className={styles.label}>
               Varför dras rapporten tillbaka?
@@ -211,7 +214,7 @@ export function Receipt({
           </button>
           <button
             type="button"
-            className={`sb-btn ${styles.btn}`}
+            className={`sb-btn ${styles.btn} ${styles.confirmDanger}`}
             disabled={busy || (editor && !reason.trim())}
             onClick={withdraw}
           >

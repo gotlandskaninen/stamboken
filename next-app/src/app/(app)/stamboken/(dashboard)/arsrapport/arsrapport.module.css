@@ -162,6 +162,18 @@ a.secondary {
 .danger {
   color: var(--sb-danger);
 }
+/* The confirming button of a withdrawal: the danger tone, not the main green. */
+button.confirmDanger {
+  --bg: var(--sb-danger);
+  --bd: var(--sb-danger);
+  background: var(--sb-danger);
+  border-color: var(--sb-danger);
+  color: var(--sb-card);
+}
+button.confirmDanger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--sb-danger) 85%, black);
+  border-color: color-mix(in srgb, var(--sb-danger) 85%, black);
+}
 .filters {
   display: flex;
   flex-wrap: wrap;

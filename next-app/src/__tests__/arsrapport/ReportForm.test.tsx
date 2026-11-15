@@ -873,6 +873,14 @@ describe("ReportForm", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Dra tillbaka" }));
+    expect(
+      screen.getByText("Vill du bara rätta något? Använd Ändra i stället."),
+    ).toBeTruthy();
+    expect(
+      screen
+        .getByRole("button", { name: "Dra tillbaka rapporten" })
+        .className.includes("confirmDanger"),
+    ).toBe(true);
     fireEvent.click(
       screen.getByRole("button", { name: "Dra tillbaka rapporten" }),
     );
