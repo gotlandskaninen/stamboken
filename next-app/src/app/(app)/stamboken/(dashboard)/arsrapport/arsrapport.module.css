@@ -250,7 +250,7 @@ a.secondary {
   text-align: center;
   box-sizing: border-box;
   min-height: 56px;
-  padding: 4px 8px;
+  padding: 4px 24px; /* room for the check mark on the right */
   border: 1px solid var(--sb-ink-3);
   border-radius: 6px;
   background: var(--sb-card);
@@ -279,7 +279,7 @@ a.secondary {
 }
 .small {
   min-height: 48px;
-  flex: 0 1 auto;
+  min-width: 44px;
 }
 .detail {
   margin-top: 12px;
