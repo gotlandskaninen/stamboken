@@ -13,12 +13,14 @@ export function NumberRow({
   rabbits,
   entered,
   onPick,
+  onReveal,
 }: {
   herd: string;
   year: number;
   rabbits: RabbitView[];
   entered: number[];
   onPick: (id: number) => void;
+  onReveal: (id: number) => void; // show the row (clears the filter)
 }) {
   const [value, setValue] = React.useState("");
   const [problem, setProblem] = React.useState<React.ReactNode>(null);
@@ -40,7 +42,15 @@ export function NumberRow({
       setProblem(
         <>
           Redan inmatad på{" "}
-          <a href={`#rabbit-${hit.id}`}>rad {entered.indexOf(hit.id) + 1}</a>
+          <a
+            href={`#rabbit-${hit.id}`}
+            onClick={(e) => {
+              e.preventDefault();
+              onReveal(hit.id);
+            }}
+          >
+            rad {entered.indexOf(hit.id) + 1}
+          </a>
         </>,
       );
       ref.current?.select();

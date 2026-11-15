@@ -1278,6 +1278,15 @@ export function ReportForm({
             )}
             {isPaper ? (
               <>
+                {filter !== "alla" && (
+                  <button
+                    type="button"
+                    className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+                    onClick={() => setFilter("alla")}
+                  >
+                    Visa alla
+                  </button>
+                )}
                 <div className="sb-card-flat" onKeyDown={onPaperKey}>
                   <div className={styles.list}>
                     {enteredRabbits
@@ -1304,6 +1313,7 @@ export function ReportForm({
                       rabbits={rabbits}
                       entered={entered}
                       onPick={pickRabbit}
+                      onReveal={reveal}
                     />
                   </div>
                 </div>

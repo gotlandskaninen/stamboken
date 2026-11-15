@@ -1,6 +1,7 @@
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -182,6 +183,7 @@ describe("ReportForm on paper", () => {
   });
 
   it("does not adopt a local copy behind the member-draft gate, and Börja clears it", async () => {
+    vi.useFakeTimers();
     window.localStorage.setItem(
       "arsrapport:demo:G9001:2026",
       JSON.stringify({ rabbits: { "1": { val: "kvar", vikt: 2 } } }),
@@ -201,6 +203,9 @@ describe("ReportForm on paper", () => {
     expect(
       screen.getAllByText(/Medlemmen har påbörjat rapporten/).length,
     ).toBeGreaterThan(0);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
     expect(a.saveDraft).not.toHaveBeenCalled();
     fireEvent.click(
       screen.getByRole("button", { name: "Börja från blanketten" }),
@@ -211,6 +216,35 @@ describe("ReportForm on paper", () => {
     expect(
       (within(row(1)).getByLabelText("Finns kvar") as HTMLInputElement).checked,
     ).toBe(false);
+  });
+
+  it("Visa alla brings the rows back after the not-done filter", async () => {
+    const a = actions();
+    a.dryRun.mockImplementationOnce(() =>
+      ok({
+        ok: false,
+        refusals: [
+          { individual_id: 2, code: "inte_klar", message: "Välj något." },
+        ],
+        warnings: [],
+      }),
+    );
+    renderPaper(paperView(), a);
+    typeNumber("1");
+    fireEvent.click(within(row(1)).getByLabelText("Finns kvar"));
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "2,8" },
+    });
+    fireEvent.click(sendButton());
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Visa bara dem som inte är klara",
+      }),
+    );
+    expect(screen.queryByRole("group", { name: /G9001-1\b/ })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Visa alla" }));
+    expect(row(1)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Visa alla" })).toBeNull();
   });
 
   it("says when a number is not there or was entered already", () => {
