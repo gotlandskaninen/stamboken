@@ -277,6 +277,28 @@ describe("ReportForm", () => {
     expect(screen.getAllByRole("group", { name: /G9001-/ })).toHaveLength(1);
   });
 
+  it("names the rabbit in a receipt warning", async () => {
+    const a = actions();
+    a.submitReport.mockImplementationOnce(() =>
+      ok({
+        ...receipt,
+        warnings: [
+          {
+            individual_id: 1,
+            code: "vikt_ovanlig",
+            message: "Stämmer 7,2 kg?",
+          },
+        ],
+      }),
+    );
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    fillAll();
+    send();
+    expect(
+      await screen.findByText(/G9001-1 Kanin1: Stämmer 7,2 kg\?/),
+    ).toBeTruthy();
+  });
+
   it("retries a timed-out Skicka with the same key and body, without a new dry run, and then shows the receipt", async () => {
     const a = actions();
     a.submitReport

@@ -109,9 +109,15 @@ export function Receipt({
       )}
       {receipt && receipt.warnings.length > 0 && (
         <div className={`${styles.status} ${styles.warning}`}>
-          {receipt.warnings.map((w, i) => (
-            <p key={i}>{refusalText(w)}</p>
-          ))}
+          {receipt.warnings.map((w, i) => {
+            const r = view.rabbits.find((x) => x.id === w.individual_id);
+            return (
+              <p key={i}>
+                {r ? `${r.number} ${r.name ?? ""}`.trim() + ": " : ""}
+                {refusalText(w)}
+              </p>
+            );
+          })}
         </div>
       )}
       {hasDraft && (
