@@ -35,6 +35,7 @@ from utils.database import (
     Membership,
     User,
 )
+from utils.mail import forget_recipient
 from utils.postal import (  # noqa: F401 — public helpers
     format_postal_address,
     normalize_postal_code,
@@ -473,6 +474,7 @@ def anonymize_person(member, actor):
                 address=None, postal_code=None, city=None, notes=None, **dict.fromkeys(BILLING_FIELDS), updated_at=now
             ).where(Membership.id == membership.id).execute()
             redact_household_from_audits(membership)
+        application_ids = [a.id for a in MemberApplication.select(MemberApplication.id).where(applications_to_redact)]
         applications_redacted = (
             MemberApplication.update(
                 first_name=ANONYMIZED_FIRST_NAME,
@@ -493,6 +495,9 @@ def anonymize_person(member, actor):
             .where(applications_to_redact)
             .execute()
         )
+        forget_recipient("member", person.id)  # the queue keeps no address hash or dedupe key of the erased
+        for application_id in application_ids:
+            forget_recipient("application", application_id)
         write_matrikel_audit(
             actor,
             "person_anonymized",
