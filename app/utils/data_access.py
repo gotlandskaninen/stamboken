@@ -430,19 +430,28 @@ def register_user(
     validated=False,
     privileges=None,
     fullname=None,
+    adopt_existing=True,
 ):
     """
     Creates a new user from an e-mail and password, returning the new user
-    object.
+    object. An account that already has this exact e-mail is returned instead,
+    unless adopt_existing is False: then an account holding the address in any
+    casing raises AddressInUseError, and the user returned is always the row
+    this call inserted. (No unique index on e-mail: a concurrent request can
+    still insert a second account with the address, never hand back this one.)
     """
     if privileges is None:
         privileges = []
 
-    # Don't create a new user if the email exists already
-    try:
-        user = User.select().where(User.email == email).get()
-    except DoesNotExist:
-        # Create user
+    if adopt_existing:
+        # Don't create a new user if the email exists already
+        user = User.select().where(User.email == email).first()
+    else:
+        taken = User.select(User.id).where(fn.LOWER(User.email) == email.lower()).first()
+        if taken:
+            raise AddressInUseError(taken.id)
+        user = None
+    if user is None:
         user = User(
             email=email,
             uuid=uuid.uuid4().hex,
@@ -454,8 +463,8 @@ def register_user(
         with DATABASE.atomic():
             user.save()
 
-    # Update to make sure to get the correct id
-    user = User.select().where(User.email == email).get()
+    # By id, not e-mail: another account may hold the same address.
+    user = User.get_by_id(user.id)
     logger.info(f"Registered User {user.as_dict()}")
 
     # If no password is provided, don't create an authenticator
@@ -482,6 +491,14 @@ def register_user(
 
 class InactiveAccountError(Exception):
     """Login attempt for a deactivated account (layer 1)."""
+
+
+class AddressInUseError(Exception):
+    """register_user(adopt_existing=False): account `user_id` already holds the address."""
+
+    def __init__(self, user_id):
+        super().__init__(user_id)
+        self.user_id = user_id
 
 
 def authenticate_user(name, password):

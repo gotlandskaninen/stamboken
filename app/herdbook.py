@@ -1543,17 +1543,29 @@ def external_login_handler(service):
     # Auto-validate users in environments that opt in (e.g. api-test).
     auto_validate = _should_auto_validate_users()
 
-    user = da.register_user(
-        accountdetails["email"],
-        None,
-        username=accountdetails["username"],
-        validated=auto_validate,
-        fullname=accountdetails["fullname"] if "fullname" in accountdetails else None,
-        privileges=[
-            {"level": "viewer", "genebank": 1},
-            {"level": "viewer", "genebank": 2},
-        ],
-    )
+    # Only a brand-new account gets this Google identity, never one that already
+    # holds the address: anyone can set their own User.email to the address of
+    # a member who has not signed in yet and capture that login. The holder of
+    # an existing account signs in as usual and links Google there.
+    try:
+        user = da.register_user(
+            accountdetails["email"],
+            None,
+            username=accountdetails["username"],
+            validated=auto_validate,
+            fullname=accountdetails["fullname"] if "fullname" in accountdetails else None,
+            privileges=[
+                {"level": "viewer", "genebank": 1},
+                {"level": "viewer", "genebank": 2},
+            ],
+            adopt_existing=False,
+        )
+    except da.AddressInUseError as taken:
+        APP.logger.warning("Refusing %s login: account #%d already holds the address", service, taken.user_id)
+        return (
+            "Det finns redan ett konto med den här e-postadressen. Logga in på det som vanligt och koppla "
+            "Google under ditt konto, eller kontakta admin@gotlandskaninen.se"
+        )
 
     if not user:
         APP.logger.error(
@@ -1563,17 +1575,6 @@ def external_login_handler(service):
             service,
         )
         return None
-
-    # register_user() adopts an existing account with this address. Never hand
-    # this Google identity to one that someone can already sign in to while no
-    # admin has validated it: anyone can set their own User.email to the address
-    # of a member who has not signed in yet (update_user then clears validated)
-    # and capture that login. Decided on the account register_user
-    # returned, so a concurrent email change cannot slip in between. A
-    # brand-new account has no authenticator yet and is linked as before.
-    if not user.validated and db.Authenticators.select().where(db.Authenticators.user == user.id).exists():
-        APP.logger.warning("Refusing to link %s to unvalidated existing user #%d", service, user.id)
-        return _not_validated_response()
 
     linked = da.link_account(user, service, persistent_id)
 

@@ -328,22 +328,22 @@ class TestOAuthAutoLinkRoutes(FlaskTest):
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(self._linked_to(), anna.id)
 
-    def test_dance_first_login_links_the_new_account_not_an_email_twin(self):
+    def test_dance_first_login_refuses_an_email_twin_in_another_casing(self):
         eve = da.register_user("Anna@gotlandskaninen.se", "pass", username="eve")
 
         resp = self._dance_login(
             None, "anna@gotlandskaninen.se", account_details={"email": "anna@gotlandskaninen.se", "username": "anna"}
         )
 
-        self.assertEqual(resp.status_code, 302)
-        anna = db.User.get(db.User.username == "anna")
-        self.assertEqual(self._linked_to(), anna.id, f"anna={anna.id} eve={eve.id}")
-        self.assertEqual(anna.google_email, "anna@gotlandskaninen.se")  # CMS identity from the first login
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("Det finns redan ett konto", resp.data.decode())
+        self.assertFalse(db.User.select().where(db.User.username == "anna").exists())
+        self.assertFalse(db.Authenticators.select().where(db.Authenticators.auth == "google").exists())
+        self.assertIsNone(self._linked_to(), f"Anna's member row linked to eve (user {eve.id})")
 
-    def test_dance_first_login_adopts_only_a_validated_account_by_email(self):
-        """register_user() adopts an existing account by exact User.email. Eve
-        self-sets the address of a member who has not signed in yet; Anna's first
-        Google login must not attach her Google identity to Eve's account."""
+    def test_dance_first_login_never_adopts_an_existing_account(self):
+        """Eve self-sets the address of a member who has not signed in yet; Anna's
+        first Google login must not attach her Google identity to Eve's account."""
         eve = da.register_user("eve@gotlandskaninen.se", "pass", username="eve", validated=True)
         with self.app as client:
             client.post("/api/login", json={"username": "eve", "password": "pass"})
@@ -361,17 +361,16 @@ class TestOAuthAutoLinkRoutes(FlaskTest):
         )
         self.assertFalse(eve_google.exists(), f"Anna's Google identity linked to eve: PATCH -> {patch.get_json()}")
         self.assertEqual(resp.status_code, 200)
-        self.assertIn("validerad", resp.data.decode())
+        self.assertIn("Det finns redan ett konto", resp.data.decode())
         self.assertIsNone(db.User.get_by_id(eve.id).google_email)
 
-        # An address an admin validated is still adopted on the first Google login.
-        bo = da.register_user("bo@gotlandskaninen.se", "pass", username="bo", validated=True)
+        # Not even an account an admin validated: its holder links Google from it.
+        da.register_user("bo@gotlandskaninen.se", "pass", username="bo", validated=True)
         resp = self._dance_login(
             None, "bo@gotlandskaninen.se", account_details={"email": "bo@gotlandskaninen.se", "username": "bo"}
         )
-        self.assertEqual(resp.status_code, 302)
-        bo_google = db.Authenticators.get((db.Authenticators.user == bo.id) & (db.Authenticators.auth == "google"))
-        self.assertEqual(bo_google.auth_data, "sub-dance")
+        self.assertIn("Det finns redan ett konto", resp.data.decode())
+        self.assertFalse(db.Authenticators.select().where(db.Authenticators.auth == "google").exists())
 
         # A brand-new account is still registered and linked while it awaits validation.
         self.app.get("/api/logout")

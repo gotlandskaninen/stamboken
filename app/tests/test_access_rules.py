@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 from urllib.parse import urlparse
 
+import utils.data_access as da
 import utils.database as db
 import utils.settings as settings
 from herdbook import APP, limiter
@@ -16,6 +17,7 @@ from utils.legacy_compat import DEFAULT_LEGACY_HOSTS, EXEMPT_ENDPOINTS, LEGACY_E
 from werkzeug.routing import RequestRedirect
 
 from tests.database_test import DatabaseTest
+from tests.google_login import ID_TOKEN, redirect_login, token_login
 
 limiter.enabled = False
 
@@ -239,3 +241,77 @@ class TestLegacyList(unittest.TestCase):
                     names.update(re.search(r"server_name\s+([^;]+);", block).group(1).split())
         self.assertIn("stamboken.gotlandskaninen.se", names, f"no legacy server blocks read from {NGINX}")
         self.assertLessEqual(names, set(DEFAULT_LEGACY_HOSTS.split(",")))
+
+
+class TestLegacyGoogleLoginNeverAdopts(DatabaseTest):
+    """The legacy Google path's auto-registration links only an account it creates itself."""
+
+    ADDRESS = ID_TOKEN["email"]
+    TAKEN = "Det finns redan ett konto"
+
+    def setUp(self):
+        # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
+        APP.config["TESTING"] = True
+        super().setUp()
+
+    def first_login(self, client, auto_validate=True):
+        account = {"email": self.ADDRESS, "username": "medlem"}
+        return redirect_login(client, da.authenticate_with_credentials, auto_validate=auto_validate, account=account)
+
+    def assertNothingLinked(self, client, resp):
+        self.assertIn(self.TAKEN, resp.get_data(as_text=True))
+        self.assertFalse(db.Authenticators.select().where(db.Authenticators.auth_data == "google-sub").exists())
+        self.assertEqual(client.get("/api/user").status_code, 401)
+
+    def test_an_address_an_existing_account_holds_is_refused(self):
+        for validated in (False, True):
+            for with_google in (False, True):
+                with self.subTest(validated=validated, with_google=with_google):
+                    db.User.delete().where(db.User.email == "Medlem@gotlandskaninen.se").execute()
+                    holder = da.register_user("Medlem@gotlandskaninen.se", "pass", validated=validated)
+                    if with_google:
+                        db.Authenticators.create(user=holder.id, auth="google", auth_data="sub-annan")
+                    client = APP.test_client(use_cookies=True)
+                    self.assertNothingLinked(client, self.first_login(client))
+                    self.assertEqual(db.User.select().where(db.User.email**self.ADDRESS).count(), 1)
+                    db.Authenticators.delete().where(db.Authenticators.user == holder.id).execute()
+
+    def test_a_brand_new_address_gets_an_account_linked_and_logged_in(self):
+        client = APP.test_client(use_cookies=True)
+        self.assertEqual(self.first_login(client).status_code, 302)
+        me = client.get("/api/user").get_json()
+        self.assertEqual(me["email"], self.ADDRESS)
+        google = db.Authenticators.get(db.Authenticators.auth_data == "google-sub")
+        self.assertEqual(google.user_id, me["id"])
+
+    def test_a_self_set_address_never_captures_the_members_google_login(self):
+        """An account with only Google unlinks it and takes the address of a member
+        who has never signed in, then the member signs in with Google both ways."""
+        member = db.Member.create(
+            membership=db.Membership.create(membership_status="active"),
+            first_name="Ny",
+            last_name="Medlem",
+            role="huvudmedlem",
+            workspace_email=self.ADDRESS,
+        )
+        attacker = da.register_user("annan@gotlandskaninen.se", None, validated=True)
+        db.User.update(v2_prod_access=True).where(db.User.id == attacker.id).execute()
+        db.Authenticators.create(user=attacker.id, auth="google", auth_data="sub-annan")
+        own_token = {**ID_TOKEN, "sub": "sub-annan", "email": "annan@gotlandskaninen.se"}
+
+        with mock.patch.object(settings.service, "access_rules", "enforce"):
+            evil = APP.test_client(use_cookies=True)
+            with mock.patch("google.oauth2.id_token.verify_oauth2_token", return_value=own_token):
+                self.assertEqual(evil.post("/api/auth/google", json={"credential": "t"}).status_code, 200)
+            self.assertEqual(evil.post("/api/unlink/google").get_data(as_text=True), "1")
+            moved = evil.patch("/api/manage/user/", json={"email": self.ADDRESS, "validated": False})
+            self.assertEqual(moved.get_json(), {"status": "updated"})
+
+            victim = APP.test_client(use_cookies=True)
+            self.assertNothingLinked(victim, self.first_login(victim, auto_validate=False))
+            self.assertEqual(token_login(victim, da.authenticate_with_credentials).status_code, 401)
+            self.assertEqual(victim.get("/api/user").status_code, 401)
+
+            self.assertEqual(evil.get("/api/user").get_json()["id"], attacker.id)
+        self.assertFalse(db.Authenticators.select().where(db.Authenticators.user == attacker.id).exists())
+        self.assertIsNone(db.Member.get_by_id(member.id).user_id)
