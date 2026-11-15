@@ -548,6 +548,14 @@ test("9. Typ G: död och försäljning vid årsskiftet", async ({
 }) => {
   const villkor = async () =>
     (await storedReport(page, "M9007")).report.villkor;
+  // Alive on 31 December is an ATTESTATION on that day, which the report view shows as last_reported.
+  const alive = async () =>
+    (await storedReport(page, "M9007")).rabbits
+      .filter(
+        (r: { last_reported: string | null }) =>
+          r.last_reported === "2025-12-31",
+      )
+      .map((r: { number: string }) => r.number);
   await loginInline(page, context, USERS.owner);
   await page.goto("/stamboken/arsrapport/M9007/2025");
   await expect(rows(page)).toHaveCount(2);
@@ -572,6 +580,7 @@ test("9. Typ G: död och försäljning vid årsskiftet", async ({
   await submitted(page);
   await loginInline(page, context, USERS.manager);
   expect(await villkor()).toMatchObject({ hane: true, hona: true });
+  expect(await alive()).toEqual(["M9007-2411", "M9007-2412"]);
 
   // b) The same on 31 December 2025: both were gone on 31 December.
   await loginInline(page, context, USERS.owner);
@@ -592,6 +601,7 @@ test("9. Typ G: död och försäljning vid årsskiftet", async ({
   await submitted(page);
   await loginInline(page, context, USERS.manager);
   expect(await villkor()).toMatchObject({ hane: false, hona: false });
+  expect(await alive()).toEqual([]);
 });
 
 test("10. Paritet: samma svar på papper och digitalt ger samma data", async ({
@@ -721,6 +731,13 @@ test("10. Paritet: samma svar på papper och digitalt ger samma data", async ({
     ...normalise("M9102", await storedReport(page, "M9102")),
     individuals: await individuals("M9102"),
   };
+  // Equal is not enough: both channels could miss the same attestation. The five that stay are alive on 31
+  // December in the register (an ATTESTATION that day, shown as last_reported), and the dead one is not.
+  for (const view of [digital, paper]) {
+    for (const n of ["2411", "2412", "2413", "2414", "2520"])
+      expect(view.register[n].last_reported).toBe("2025-12-31");
+    expect(view.register["2415"].last_reported).not.toBe("2025-12-31");
+  }
   // Rabbit 2415 is dead in the register, in October 2025, in both herds.
   expect(digital.individuals["2415"].death_date).toMatch(/^2025-10-/);
   expect(paper.individuals["2415"].death_date).toMatch(/^2025-10-/);
