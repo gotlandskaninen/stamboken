@@ -209,8 +209,8 @@ def _row_ref(row):
     }
 
 
-def check_invariants(individual, rows):
-    """I1–I4 over one individual's ACTIVE rows; returns a set of Violation."""
+def check_invariants(individual, rows, buyer_keys=None):
+    """I1–I4 over one individual's ACTIVE rows; returns a set of Violation. `buyer_keys`: a cache for _buyer_key."""
     ordered = sorted(rows, key=ht_sort_key)
     found = set()
     births = [r for r in ordered if r.kind == "BIRTH"]
@@ -227,7 +227,7 @@ def check_invariants(individual, rows):
         if (
             row.kind in ("TRANSFER", "CORRECTION")
             and row.herd_id == holder
-            and not _outside_resale(row, holder_contact)
+            and not _outside_resale(row, holder_contact, buyer_keys)
         ):
             found.add(Violation("I4", row.id, "En flytt måste gå till en annan besättning än den som har kaninen."))
         if row.kind in HOLDER_CHANGING_KINDS:
@@ -235,12 +235,33 @@ def check_invariants(individual, rows):
     return found
 
 
-def _buyer_key(contact_id):
+def _buyer_key(contact_id, cache=None):
+    """The buyer as a person (name and town, any case); `cache` (a dict) is filled and read when given."""
+    if cache is not None and contact_id in cache:
+        return cache[contact_id]
     contact = BuyerContact.get_or_none(BuyerContact.id == contact_id) if contact_id else None
-    return (contact.name.casefold(), contact.town.casefold()) if contact else None
+    key = (contact.name.casefold(), contact.town.casefold()) if contact else None
+    if cache is not None:
+        cache[contact_id] = key
+    return key
 
 
-def _outside_resale(row, previous_contact):
+def _buyer_keys(rows):
+    """_buyer_key for every buyer `rows` hold, in one query: the cache herd_tracking_history passes around."""
+    ids = {r.holder_contact_id for r in rows if r.holder_contact_id}
+    keys = dict.fromkeys(ids)
+    if ids:
+        for contact_id, name, town in (
+            BuyerContact.select(BuyerContact.id, BuyerContact.name, BuyerContact.town)
+            .where(BuyerContact.id.in_(list(ids)))
+            .tuples()
+        ):
+            keys[contact_id] = (name.casefold(), town.casefold())
+    keys[None] = None
+    return keys
+
+
+def _outside_resale(row, previous_contact, buyer_keys=None):
     """
     ADR-0016's one exception to I4: a TRANSFER within GX1/MX1 holding a new buyer, another person (name and town)
     than the one before it. A buyer erased later turns the row into a violation the delta check tolerates.
@@ -251,7 +272,7 @@ def _outside_resale(row, previous_contact):
         and row.herd.herd in OUTSIDE_GENEBANK_HERDS
         and row.holder_contact_id is not None
         and row.holder_contact_id != previous_contact
-        and _buyer_key(row.holder_contact_id) != _buyer_key(previous_contact)
+        and _buyer_key(row.holder_contact_id, buyer_keys) != _buyer_key(previous_contact, buyer_keys)
     )
 
 
@@ -1189,15 +1210,19 @@ def compute_periods(active_rows, herds):
     return periods
 
 
-def _keeps_invariants(individual, before, after):
-    """Pure-Python mirror of the services' delta check (I1-I5), so a hint never promises a 409."""
-    known = {(v.code, v.row_id) for v in check_invariants(individual, before)}
-    if any((v.code, v.row_id) not in known for v in check_invariants(individual, after)):
+def _keeps_invariants(individual, before, after, known=None, buyer_keys=None):
+    """
+    Pure-Python mirror of the services' delta check (I1-I5), so a hint never promises a 409. `known`: the
+    violations of `before`, when the caller has them (herd_tracking_history checks them once per call).
+    """
+    if known is None:
+        known = {(v.code, v.row_id) for v in check_invariants(individual, before, buyer_keys)}
+    if any((v.code, v.row_id) not in known for v in check_invariants(individual, after, buyer_keys)):
         return False
     return not (any(r.kind == "BIRTH" for r in before) and not any(r.kind == "BIRTH" for r in after))
 
 
-def _operation_undo_hint(operation_id, rows, individual):
+def _operation_undo_hint(operation_id, rows, individual, known=None, buyer_keys=None):
     """UI hint only (the undo service re-checks across all individuals): undoable within this individual."""
     written, voided, restored = _operation_effects(rows, operation_id)
     if not written and not voided and not restored:
@@ -1212,15 +1237,15 @@ def _operation_undo_hint(operation_id, rows, individual):
     revoid_ids = {r.id for r in written + restored}
     active = [r for r in rows if r.voided_at is None]
     after = [r for r in active if r.id not in revoid_ids] + voided
-    if not _keeps_invariants(individual, active, after):
+    if not _keeps_invariants(individual, active, after, known, buyer_keys):
         return False
     # The service refuses a decoupled BIRTH.
     return not (any(r.kind == "BIRTH" for r in written + voided + restored) and _decouples_birth(individual, after))
 
 
-def _void_keeps_invariants(individual, active, row):
+def _void_keeps_invariants(individual, active, row, known=None, buyer_keys=None):
     """Pure-Python mirror of void_herd_tracking's delta check, so can_void never promises a 409 (I1-I5)."""
-    return _keeps_invariants(individual, active, [r for r in active if r.id != row.id])
+    return _keeps_invariants(individual, active, [r for r in active if r.id != row.id], known, buyer_keys)
 
 
 def _iso(value):
@@ -1243,6 +1268,8 @@ def herd_tracking_history(individual, user, include_voided=None):
     seller_herds = user.transfer_herd_ids()  # once per call, not per TRANSFER row
     active = sorted((r for r in rows if r.voided_at is None), key=ht_sort_key)
     latest_id = active[-1].id if active else None
+    buyer_keys = _buyer_keys(rows)  # once per call, as the invariants of the active rows
+    known = {(v.code, v.row_id) for v in check_invariants(individual, active, buyer_keys)}
     out = []
     for row in rows:
         if row.voided_at is not None and not show_voided:
@@ -1253,7 +1280,7 @@ def herd_tracking_history(individual, user, include_voided=None):
         can_void = (
             is_active
             and void_denial(user, row, active, individual, seller_herds) is None
-            and _void_keeps_invariants(individual, active, row)
+            and _void_keeps_invariants(individual, active, row, known, buyer_keys)
         )
         row_genebank = herds[row.herd_id].genebank_id if row.herd_id else genebank_id
         out.append(
@@ -1276,7 +1303,9 @@ def herd_tracking_history(individual, user, include_voided=None):
                     can_void and row.kind == "TRANSFER" and row.transfer_id is None and row.id == latest_id
                 ),
                 "can_undo_operation": bool(
-                    can_manage and not individual.voided and _operation_undo_hint(undo_target, rows, individual)
+                    can_manage
+                    and not individual.voided
+                    and _operation_undo_hint(undo_target, rows, individual, known, buyer_keys)
                 ),
             }
         )

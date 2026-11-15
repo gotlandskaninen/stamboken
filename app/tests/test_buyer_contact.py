@@ -304,6 +304,15 @@ class TestOutsideResale(BuyerBase):
         self.assertIn("utan köpare", raised.exception.detail)
         self.assertEqual(self._latest().id, self.first.id)
 
+    def test_the_history_reads_the_buyers_once_whatever_the_number_of_resales(self):
+        for day, buyer in (("2022-01-01", OTHER), ("2022-02-01", {"name": "Third", "town": "Klintehamn"})):
+            record_herd_tracking(self.rabbit, self.gx1, day, "TRANSFER", self.manager, buyer=buyer)
+        self._login("owner")  # sees no buyer: every buyer_contact read is the invariants'
+        with capture_sql() as statements:
+            response = self.client.get(f"/api/v2/individual/{RABBIT}/herd-tracking")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(sum('FROM "buyer_contact"' in sql for sql, _params in statements), 1)
+
     def test_a_correction_cannot_write_it(self):
         event = {"kind": "TRANSFER", "date": "2022-01-01", "herd": "GX1"}
         with self.assertRaises(HerdTrackingConflict):
