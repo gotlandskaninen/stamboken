@@ -39,6 +39,7 @@ export function Receipt({
   busy,
   onChange,
   onWithdraw,
+  focusOnMount = false,
 }: {
   view: ReportView;
   receipt: ReceiptData | null;
@@ -46,12 +47,19 @@ export function Receipt({
   busy: boolean;
   onChange: () => void;
   onWithdraw: (reason?: string) => Promise<string | null>;
+  focusOnMount?: boolean; // right after a Skicka: show the receipt and read it out
 }) {
   const report = view.report; // null until the refreshed view arrives after the first Skicka
   const editor = view.access === "manager" || view.access === "admin";
   const [asking, setAsking] = React.useState(false);
   const [reason, setReason] = React.useState("");
   const [error, setError] = React.useState<string | null>(null);
+  const headRef = React.useRef<HTMLHeadingElement>(null);
+  React.useEffect(() => {
+    if (!focusOnMount) return;
+    window.scrollTo({ top: 0 });
+    headRef.current?.focus();
+  }, [focusOnMount]);
   const sum = receipt?.summary ?? summaryOf(view);
   const hasSale = Object.values(report?.submitted?.rabbits ?? {}).some(
     (e) => e.val === "sald",
@@ -85,7 +93,7 @@ export function Receipt({
       <ReportStatus
         status={{ kind: "submitted", text: `Inskickad${changed}` }}
       />
-      <h2 className={styles.headline}>
+      <h2 ref={headRef} tabIndex={-1} className={styles.headline}>
         Klart. Årsrapporten för {view.herd.herd} kom in {when}.
       </h2>
       <div className={styles.stats}>

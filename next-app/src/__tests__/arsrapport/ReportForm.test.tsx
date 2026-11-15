@@ -57,6 +57,7 @@ const actions = (): {
   }) as never;
 
 beforeEach(() => {
+  window.scrollTo = vi.fn(); // jsdom does not implement it
   window.localStorage.clear();
   refresh.mockReset();
 });
@@ -324,9 +325,10 @@ describe("ReportForm", () => {
       ),
     ).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Försök igen" }));
-    expect(
-      await screen.findByText(/Klart\. Årsrapporten för G9001 kom in/),
-    ).toBeTruthy();
+    const headline = await screen.findByText(
+      /Klart\. Årsrapporten för G9001 kom in/,
+    );
+    expect(document.activeElement).toBe(headline); // a screen reader hears it
     expect(a.dryRun).toHaveBeenCalledTimes(1);
     expect(a.submitReport).toHaveBeenCalledTimes(2);
     const [first, second] = a.submitReport.mock.calls.map(

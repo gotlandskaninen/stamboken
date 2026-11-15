@@ -899,6 +899,7 @@ export function ReportForm({
           busy={false}
           onChange={startChange}
           onWithdraw={withdraw}
+          focusOnMount={!!receipt}
         />
         {receipt.matrikel.length > 0 && (
           <div className={`${styles.status} ${styles.info}`}>
@@ -931,6 +932,7 @@ export function ReportForm({
           busy={withdrawing || syncing}
           onChange={startChange}
           onWithdraw={withdraw}
+          focusOnMount={!!receipt}
         />
       </div>
     );
