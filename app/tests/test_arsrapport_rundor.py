@@ -205,12 +205,11 @@ class RundorTest(ArsrapportTest):
         self.assertIsNone(role(nobody, self.form(nobody).id))
         self.assertIsNone(role(self.helper, 999999))
 
-        # A helper's own upload is decided by someone else (P24), as take and InboxGrant say; a manager decides his.
+        # A helper decides her own upload, as a manager decides his (Jonas 2026-11-15, the queue's 49e666b).
         own = self.item(0, sender=self.helper)
         db.InboxDocument.update(doc_type="arsblankett").where(db.InboxDocument.item == own.id).execute()
         db.InboxItem.update(state="tagen", assigned_to=self.helper).where(db.InboxItem.id == own.id).execute()
-        self.assertTrue(inbox.own_upload(db.InboxItem.get_by_id(own.id), self.helper))
-        self.assertIsNone(role(self.helper, own.id))
+        self.assertEqual(role(self.helper, own.id), "helper")
         self.assertEqual(role(self.manager, self.form(self.manager, sender=self.manager).id), "manager")
 
         gx1 = db.Herd.create(genebank=self.gotland, herd="GX1")

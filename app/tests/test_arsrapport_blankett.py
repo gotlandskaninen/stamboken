@@ -139,14 +139,11 @@ class BlankettTest(ArsrapportTest):
 
     def test_paper_needs_a_taken_arsblankett_item(self):
         (a,) = self.rabbits(self.h, 1)
-        own = self.form(None, sender=self.helper)
-        db.InboxItem.update(state="tagen", assigned_to=self.helper).where(db.InboxItem.id == own.id).execute()
         refused = {
             "ny": self.form(None),
             "taken by another": self.form(self.manager),
             "another herd": self.form(self.helper, herd=self.g9002),
             "no arsblankett": self.form(self.helper, pages=0, others=("intyg",)),
-            "own upload": own,  # P24: someone else decides it
         }
         self.login("hjalp")
         before = self.counts()

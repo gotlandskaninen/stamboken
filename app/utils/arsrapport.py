@@ -208,14 +208,13 @@ class Access:
 def _form_item(item, user, herd):
     """
     The paper path's item (5.5): the user's taken item for the herd, not decided in another feature, with an
-    arsblankett document, and never a helper's own upload (P24), as InboxGrant.allows says.
+    arsblankett document. A helper's own upload counts like any other (Jonas 2026-11-15).
     """
     return (
         item.herd_id == herd.id
         and item.state == "tagen"
         and item.assigned_to_id == user.id
         and item.ref_type is None
-        and not inbox.own_upload(item, user)
         and item.documents.where(InboxDocument.doc_type == "arsblankett").exists()
     )
 
