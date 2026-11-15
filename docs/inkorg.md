@@ -60,7 +60,9 @@ Alla datum är `ÅÅÅÅ-MM-DD`.
 | Ägare och skötare | sina egna inskick | laddar upp för sina besättningar |
 
 "Arbetar i kön" betyder admin, genbanksansvarig eller genbankshjälpare i någon genbank. Alla tre
-ser hela kön, också den andra genbankens poster. `GET /api/v2/inkorg/notiser/antal` svarar
+ser hela kön, också den andra genbankens poster, men arbetar bara med poster i genbanker där hen har
+en roll, och med poster utan genbank. Att ta, ta över eller arbeta vidare på en annan genbanks post
+ger 403 (admin undantagen). `GET /api/v2/inkorg/notiser/antal` svarar
 `works_in_queue` så att gränssnittet vet om kön ska visas.
 
 Rollen genbankshjälpare delas ut som andra roller: `POST /api/v2/admin/role` med
@@ -110,7 +112,7 @@ bort.
 | Till | Hur | Från | Vem |
 |---|---|---|---|
 | `ny` | posten kommer in | – | – |
-| `tagen` | `…/ta`, `…/ta-over` | alla öppna lägen | alla i kön |
+| `tagen` | `…/ta`, `…/ta-over` | alla öppna lägen | den som arbetar i postens genbank, admin; vem som helst i kön när posten saknar genbank |
 | `tagen` | `…/tilldela` | `ny`, `hos_genbanksansvarig`, `tagen` (de väntande lägena behåller sitt läge och byter bara handläggare) | genbanksansvarig för postens genbank, admin |
 | `tagen` | `…/lage` | `vantar_foralder`, `ofullstandig` | handläggaren |
 | `tagen` | `…/lage` (öppna igen) | `klar`, `dubblett`, `skrap` | genbanksansvarig för postens genbank, admin; den som öppnar blir handläggare |

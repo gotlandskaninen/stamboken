@@ -112,7 +112,7 @@ class TestExecuteWithGrant(GrantTest):
         self.assertFalse(db.InboxOperation.select().exists())
 
     def test_a_helper_of_the_other_genebank_is_refused(self):
-        item, document = self.taken(self.mellerud_helper)  # an item may hold rabbits of any herd
+        item, document = self.taken(self.mellerud_helper, herd=2)  # an item may hold rabbits of any herd
         with self.assertRaises(IndividualRefused):
             self.certify(self.mellerud_helper, item, document)
         with self.assertRaises(IndividualRefused):  # nor a grant made out to someone else

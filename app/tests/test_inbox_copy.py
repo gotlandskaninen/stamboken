@@ -222,7 +222,7 @@ class TestCopyIsFixed(CopyTest):
         self.assertEqual(self.reload(item).state, "klar")
         self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 409)  # closed: no longer hers
         self.login("mhjalp")
-        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 409)
+        self.assertEqual(self.mask(item, document, mask_rects=rects).status_code, 403)  # not their genebank
         for username in ("man", "admin"):
             with self.subTest(username):
                 self.login(username)

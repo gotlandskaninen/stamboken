@@ -337,8 +337,15 @@ def document_of(item, document_id):
     return document
 
 
+def require_worker_of(item, user):
+    """Everyone in the queue sees all of it, but works only the items of their own genebanks (and those without)."""
+    if not can_handle(user, item.genebank_id):
+        raise InboxError(403, "Du arbetar inte i postens genbank, så du kan se den men inte arbeta med den.")
+
+
 def require_handler(item, user):
     """Only the item's handler changes it or writes through it: anyone else takes it over first."""
+    require_worker_of(item, user)
     if item.state in HELD_STATES and item.assigned_to_id == user.id:
         return
     if item.state in CLOSED_STATES:
@@ -358,6 +365,7 @@ def _set_state(item, state):
 
 def take(item, user, *, over):
     """ "Jag tar den", or with `over` "Ta över": the item becomes the user's, in "tagen"."""
+    require_worker_of(item, user)
     if item.state in CLOSED_STATES:
         raise InboxError(409, "Posten är stängd.")
     previous = item.assigned_to_id

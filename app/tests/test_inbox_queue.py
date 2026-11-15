@@ -51,8 +51,34 @@ class TestVisibility(InboxTest):
         admin_mine = self.client.get("/api/v2/inkorg?scope=mina").get_json()["items"]
         self.assertEqual([i["id"] for i in admin_mine], [unknown.id])  # no genebank of its own: the unknown only
         self.assertEqual(self.client.get("/api/v2/inkorg?scope=min").status_code, 400)
-        self.login("mhjalp")  # reads the other genebank's item, but cannot save through it
+        self.login("mhjalp")  # reads the other genebank's item, but cannot work it
         self.assertEqual(self.client.get(f"/api/v2/inkorg/{gotland.id}").status_code, 200)
+        document = gotland.documents.get()
+        for path in ("ta", "ta-over"):
+            self.assertEqual(self.post(f"/{gotland.id}/{path}").status_code, 403)
+        saved = self.post(f"/{gotland.id}/dokument/{document.id}/spara", action="ny_kanin")
+        self.assertEqual(saved.status_code, 403)
+        self.assertEqual(self.reload(gotland).assigned_to_id, self.helper.id)  # nothing taken over
+        self.assertFalse(db.InboxOperation.select().exists())
+
+    def test_the_queue_is_worked_only_in_ones_own_genebanks_and_the_unknown(self):
+        for username, (gotland, mellerud, unknown) in {
+            "hjalp": (True, False, True),
+            "mhjalp": (False, True, True),
+            "admin": (True, True, True),
+        }.items():
+            self.login(username)
+            for herd, allowed in ((0, gotland), (2, mellerud), (None, unknown)):
+                with self.subTest(username, herd=herd):
+                    item = self.item(herd) if herd is not None else db.InboxItem.create(kind="meddelande")
+                    self.assertEqual(self.post(f"/{item.id}/ta-over").status_code, 200 if allowed else 403)
+                    self.assertEqual(self.post(f"/{item.id}/ta").status_code, 200 if allowed else 403)
+                    self.assertEqual(self.reload(item).assigned_to_id is not None, allowed)
+                    if not allowed:
+                        patch = self.client.patch(
+                            f"/api/v2/inkorg/{item.id}/dokument/{item.documents.get().id}", json={"dismissed": True}
+                        )
+                        self.assertEqual(patch.status_code, 403)
 
     def test_an_owner_or_viewer_sees_none_of_it(self):
         item = self.item(0)

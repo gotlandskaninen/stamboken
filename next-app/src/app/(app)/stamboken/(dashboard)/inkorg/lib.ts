@@ -281,14 +281,22 @@ const isMine = (item: ItemFacts, user: QueueUser) =>
  * The actions the transition table allows this user on this item. "Arbeta
  * vidare" is …/ta by the handler of a waiting item: it becomes "tagen" again.
  */
-export function itemActions(item: ItemFacts, user: QueueUser): ItemAction[] {
+export function itemActions(
+  item: ItemFacts,
+  user: QueueUser,
+  myGenebanks: number[] | null = null,
+): ItemAction[] {
   const actions: ItemAction[] = [];
+  // Seen by the whole queue, taken only by those with a role in its genebank.
+  const mayTake = !lacksRole(user, item.genebank_id, myGenebanks);
   const mine = isMine(item, user);
   const boss = manages(user, item.genebank_id);
   if (OPEN_STATES.includes(item.state)) {
-    if (!item.assigned_to) actions.push("ta");
-    else if (!mine) actions.push("ta_over");
-    else if (item.state !== "tagen") actions.push("arbeta_vidare");
+    if (!item.assigned_to) {
+      if (mayTake) actions.push("ta");
+    } else if (!mine) {
+      if (mayTake) actions.push("ta_over");
+    } else if (item.state !== "tagen") actions.push("arbeta_vidare");
     if (boss) actions.push("tilldela");
   }
   if (mine && item.state === "tagen")

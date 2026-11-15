@@ -130,6 +130,18 @@ describe("itemActions, by docs/inkorg.md", () => {
     expect(itemActions(facts, user)).toEqual(expected);
   });
 
+  it("offers no taking of an item of a genebank the user has no role in", () => {
+    const mine = [1];
+    expect(itemActions(item("ny", null, 2), helper, mine)).toEqual([]);
+    expect(itemActions(item("tagen", someone, 2), helper, mine)).toEqual([]);
+    expect(itemActions(item("ny", null, 1), helper, mine)).toEqual(["ta"]);
+    expect(itemActions(item("ny", null, null), helper, mine)).toEqual(["ta"]);
+    expect(itemActions(item("ny", null, 2), admin, [])).toEqual([
+      "ta",
+      "tilldela",
+    ]);
+  });
+
   // The "Byta läge" table: target state -> the states …/lage accepts it from.
   const LAGE_FROM: Partial<Record<ItemAction, ItemState[]>> = {
     arbeta_vidare: ["vantar_foralder", "ofullstandig", "vantar_uppfodare"], // via …/ta
