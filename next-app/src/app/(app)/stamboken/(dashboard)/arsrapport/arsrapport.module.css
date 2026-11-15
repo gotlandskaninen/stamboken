@@ -452,3 +452,82 @@ a.secondary {
     backdrop-filter: none;
   }
 }
+
+/* Från blankett: the photo of the form beside the report form. */
+.paperPage {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.photoPane {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 16px;
+}
+.numberRow {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.prefixed {
+  display: flex;
+  align-items: center;
+  min-height: 48px;
+  border: 1px solid var(--sb-ink-3);
+  border-radius: 6px;
+  background: var(--sb-card);
+  padding: 0 12px;
+  gap: 2px;
+  font-size: 18px;
+}
+.prefixed span {
+  color: var(--sb-ink-2);
+}
+.prefixed input {
+  flex: 1;
+  min-width: 0;
+  min-height: 46px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: var(--sb-ink);
+}
+.prefixed:focus-within {
+  outline: 2px solid var(--sb-skog);
+  outline-offset: 2px;
+}
+.prefixed input:focus {
+  outline: none;
+}
+@media (min-width: 1100px) {
+  .paperPage {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: start;
+    gap: 24px;
+  }
+  .photoPane {
+    position: sticky;
+    top: calc(var(--report-sticky-top, 56px) + 16px);
+    height: calc(100vh - 120px);
+    overflow: auto;
+  }
+  button.photoToggle {
+    display: none;
+  }
+}
+/* In the right half the report form is one column: no side column. */
+@media (min-width: 980px) {
+  .paperForm .layout {
+    display: flex;
+    flex-direction: column;
+  }
+  .paperForm .side {
+    display: contents;
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+}

@@ -29,6 +29,8 @@ export interface RabbitRowProps {
   onChange: (id: number, patch: Partial<Entry>) => void;
   onSell: (id: number) => void;
   onNextWeight: (id: number) => void;
+  // Paper entry: a fourth choice for a rabbit the form does not mention.
+  paper?: boolean;
 }
 
 const CHOICES: { val: Val; label: string }[] = [
@@ -61,6 +63,7 @@ function RabbitRowImpl({
   onChange,
   onSell,
   onNextWeight,
+  paper = false,
 }: RabbitRowProps) {
   const e = entry ?? EMPTY_ENTRY;
   const [viktOk, setViktOk] = React.useState<string | null>(null);
@@ -131,15 +134,26 @@ function RabbitRowImpl({
 
       {(r.state === "att_valja" || e.val) && (
         <>
-          {e.val === "ej_angiven" && <p>Ej angiven på blanketten</p>}
+          {e.val === "ej_angiven" && !paper && <p>Ej angiven på blanketten</p>}
           <div className={styles.choices}>
-            {CHOICES.map(({ val, label }) => {
+            {(paper
+              ? [
+                  ...CHOICES,
+                  {
+                    val: "ej_angiven" as Val,
+                    label: "Ej angiven på blanketten",
+                  },
+                ]
+              : CHOICES
+            ).map(({ val, label }) => {
               const sellBlocked = val === "sald" && !canSell;
               return (
                 <label key={val} className={styles.choice}>
                   <input
                     type="radio"
                     name={`val-${r.id}`}
+                    id={`val-${r.id}-${val}`}
+                    data-paper-field="val"
                     value={val}
                     checked={e.val === val}
                     data-need={!e.val || undefined}
@@ -163,6 +177,7 @@ function RabbitRowImpl({
             </label>
             <input
               id={`vikt-${r.id}`}
+              data-paper-field="vikt"
               className={`${styles.field} ${styles.weight}`}
               inputMode="decimal"
               data-need={
@@ -182,6 +197,8 @@ function RabbitRowImpl({
             <span aria-hidden="true">kg</span>
             <button
               type="button"
+              id={`ejvagd-${r.id}`}
+              data-paper-field="ej_vagd"
               className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
               aria-pressed={e.ej_vagd !== null}
               onClick={() => {
@@ -268,6 +285,7 @@ function RabbitRowImpl({
             </label>
             <select
               id={`hull-${r.id}`}
+              data-paper-field="hull"
               className={styles.field}
               value={e.hull ?? ""}
               onChange={(ev) =>
@@ -308,6 +326,8 @@ function RabbitRowImpl({
             <label className={styles.label}>
               Månad
               <select
+                id={`month-${r.id}`}
+                data-paper-field="month"
                 className={styles.field}
                 style={{ width: "100%" }}
                 data-need={e.dod.manad === null || undefined}
@@ -332,6 +352,7 @@ function RabbitRowImpl({
             <label className={styles.label}>
               Dag (frivillig)
               <input
+                data-paper-field="month"
                 className={styles.field}
                 style={{ width: "100%", boxSizing: "border-box" }}
                 inputMode="numeric"

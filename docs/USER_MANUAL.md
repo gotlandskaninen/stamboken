@@ -717,6 +717,23 @@ Därefter kan du **Ändra** och skicka ändringarna, eller **Dra tillbaka rappor
 inom sju dagar. En skötare kan inte registrera en försäljning. Säger rutan **Rapporten
 kan inte skickas** listar den vad som saknas, med länkar till kaninerna.
 
+**Från blankett.** Genbanksansvarig och genbankshjälpare matar in en pappersblankett
+från ett ärende i inkorgen (**Mata in årsrapporten**). Sidan heter då **Från blankett**,
+med fotot av blanketten bredvid formuläret (under **Visa blanketten** på en smal skärm)
+och samma formulär i pappersläge. Fyll i **Mottagen** och **Blankettens datum**, och
+skriv varje kanins nummer efter besättningens prefix och tryck Enter. Tangent 1, 2 och 3
+väljer **Finns kvar**, **Död eller slaktad** och **Såld**; Enter går vidare till nästa
+fält och sist till nästa rad. Kaniner som inte står på blanketten ligger under **Kvar i
+Stamboken men inte på blanketten**, där **Markera som ej angivna på blanketten** tar alla
+på en gång. Under **Uppgifter på blanketten** skriver du in svaret om Koharen och nya
+kontouppgifter; de sparas direkt i matrikeln när du skickar, och sidan visar aldrig de
+nuvarande värdena, bara de två sista siffrorna i kontot. Har medlemmen påbörjat rapporten
+frågar sidan om du vill fortsätta på utkastet eller börja från blanketten. Är besättningen
+redan rapporterad kan du **Arkivera blanketten** eller **Ändra rapporten** med en orsak.
+Orsak krävs också när blanketten kommer efter sista dagen. **Skicka och nästa blankett**
+går tillbaka till inkorgen; kvittot stannar kvar när matrikeln ändrades eller när en
+ändring hoppades över för att matrikeln ändrats efter blankettens datum.
+
 #### Notiser
 
 <!-- route: /stamboken/notiser -->
@@ -977,6 +994,9 @@ mejl skickas då till adressen), **Gäller kanske** när det kan höra till ett 
 eller kom efter de tio första bilderna. På ett klart intyg finns **Gör om maskningen** för dem som
 får. **Fråga uppfödaren** finns när ärendet är ditt
 och taget, se [Arbeta i inkorgen](#arbeta-i-inkorgen).
+
+På ett dokument av typen Årsblankett finns **Mata in årsrapporten**, som öppnar blanketten
+bredvid rapportformuläret, se [Årsrapport för en besättning](#årsrapport-för-en-besättning).
 
 ---
 

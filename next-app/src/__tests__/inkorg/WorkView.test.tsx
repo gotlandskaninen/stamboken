@@ -106,7 +106,12 @@ const item = (changes: Partial<InboxDetail> = {}): InboxDetail => ({
   ...changes,
 });
 
-const view = (i: InboxDetail, user: QueueUser = helper, noRole = false) => (
+const view = (
+  i: InboxDetail,
+  user: QueueUser = helper,
+  noRole = false,
+  reportYear: number | null = null,
+) => (
   <ModeProvider mode="prod">
     <WorkView
       item={i}
@@ -115,6 +120,7 @@ const view = (i: InboxDetail, user: QueueUser = helper, noRole = false) => (
       colors={[]}
       herds={[]}
       people={[]}
+      reportYear={reportYear}
     />
   </ModeProvider>
 );
@@ -227,6 +233,29 @@ describe("WorkView: an item of a genebank without a role", () => {
       expect(screen.queryByRole("button", { name })).toBeNull();
     expect(
       screen.queryByRole("button", { name: "Spara och nästa" }),
+    ).toBeNull();
+  });
+});
+
+describe("WorkView: an annual form", () => {
+  const form = doc({ doc_type: "arsblankett", status: "ny", individual: null });
+
+  it("links to the form entry for the round's year, with the item", () => {
+    render(view(item({ documents: [form] }), helper, false, 2026));
+    expect(
+      screen.getByRole("link", { name: "Mata in årsrapporten" }),
+    ).toHaveAttribute("href", "/stamboken/arsrapport/G9001/2026?post=12");
+  });
+
+  it("leaves the link out without a round, and for someone who cannot save", () => {
+    render(view(item({ documents: [form] })));
+    expect(
+      screen.queryByRole("link", { name: "Mata in årsrapporten" }),
+    ).toBeNull();
+    cleanup();
+    render(view(item({ documents: [form] }), helper, true, 2026));
+    expect(
+      screen.queryByRole("link", { name: "Mata in årsrapporten" }),
     ).toBeNull();
   });
 });

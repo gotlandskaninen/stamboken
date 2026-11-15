@@ -11,14 +11,19 @@ import {
   CONFLICT_TEXT,
   DISEASES,
   EMPTY_ENTRY,
+  emptyPaperFields,
   emptyState,
   fmtDate,
   fmtTime,
   fromBody,
   isDone,
   keyAfter,
+  matrikelBody,
+  MATRIKEL_LABEL,
   newKey,
+  paperKey,
   refusalText,
+  stockholmDay,
   toBody,
   toDraft,
   todayStockholm,
@@ -26,12 +31,16 @@ import {
   type Entry,
   type FormState,
   type Membership,
+  type PaperField,
+  type PaperFields,
   type Receipt as ReceiptData,
   type Refusal,
   type ReportView,
   type SaldState,
   type Submission,
 } from "./lib";
+import { NumberRow } from "./NumberRow";
+import { PaperChanges } from "./PaperChanges";
 import { RabbitRow } from "./RabbitRow";
 import { Receipt } from "./Receipt";
 import { ReportStatus, type StatusKind } from "./ReportStatus";
@@ -42,6 +51,48 @@ export type ReportActions = Pick<
   typeof Actions,
   "saveDraft" | "dryRun" | "submitReport" | "withdrawReport"
 >;
+
+// "Från blankett": what the page around the form supplies (PaperEntry).
+export interface PaperProps {
+  documentIds: number[]; // formDocumentIds(item): the form pages still open
+  intygPending: boolean; // the item's intyg come first (5.8)
+  archive: (documentId: number) => Promise<ActionResult<unknown>>; // dismiss one page
+  leave: (message: string) => void; // back to the queue, with a message
+}
+const QUEUE = "/stamboken/inkorg";
+type Gate = "draft" | "reported" | null;
+const enteredFrom = (rabbits: ReportView["rabbits"], s: FormState) =>
+  rabbits
+    .filter((r) => {
+      const v = s.rabbits[r.id]?.val;
+      return v && v !== "ej_angiven";
+    })
+    .map((r) => r.id);
+// Paper starts from the helper's own draft; a member's draft and a submitted
+// report wait behind a gate (5.5).
+const startFrom = (v: ReportView, isPaper: boolean) =>
+  isPaper
+    ? fromBody(v.draft?.own ? v.draft.data : {})
+    : fromBody(v.draft?.data ?? v.report?.submitted ?? {});
+const gateOf = (v: ReportView, isPaper: boolean): Gate =>
+  !isPaper
+    ? null
+    : v.report
+      ? "reported"
+      : v.draft?.own === false
+        ? "draft"
+        : null;
+const summaryLine = (herd: string, r: ReceiptData) => {
+  const { kvar, doda, salda, ej_angivna } = r.summary;
+  return `${herd} inskickad: ${[
+    `${kvar} finns kvar`,
+    doda ? `${doda} ${doda === 1 ? "död" : "döda"}` : "",
+    salda ? `${salda} ${salda === 1 ? "såld" : "sålda"}` : "",
+    ej_angivna ? `${ej_angivna} ej angivna` : "",
+  ]
+    .filter(Boolean)
+    .join(", ")}.`;
+};
 
 type Filter = "inte_klara" | "kvar" | "dod" | "sald" | "alla";
 type Phase = "idle" | "checking" | "sending" | "timeout";
@@ -155,12 +206,14 @@ export function ReportForm({
   stickyTop = 56,
   post,
   env,
+  paper,
 }: {
   view: ReportView;
   actions: ReportActions;
   contactSlot?: React.ReactNode;
   stickyTop?: number;
   post?: number;
+  paper?: PaperProps;
   // The data environment the view was read from; the page mounts the form
   // with key={env}, so a switch starts over from the other one's draft.
   env: Mode;
@@ -168,13 +221,30 @@ export function ReportForm({
   const router = useRouter();
   const { herd, year, round } = view;
   const editor = view.access === "manager" || view.access === "admin";
-  const canEdit = round.open || (editor && round.activated);
+  const item = paper ? view.item : null; // paper entry runs through a queue item
+  const isPaper = !!item;
+  const canEdit =
+    round.open || ((editor || view.access === "helper") && round.activated);
+  // Paper over a report, or after the last day: Skicka needs a reason (D11).
+  const late = !!round.end_date && todayStockholm() > round.end_date;
+  const needReason = isPaper && (!!view.report || late);
 
   const [state, setState] = React.useState<FormState>(() =>
-    fromBody(view.draft?.data ?? view.report?.submitted ?? {}),
+    startFrom(view, isPaper),
   );
+  const [gate, setGate] = React.useState<Gate>(() => gateOf(view, isPaper));
+  const [fields, setFields] = React.useState<PaperFields>(emptyPaperFields);
+  const [receivedOn, setReceivedOn] = React.useState(() =>
+    item ? stockholmDay(item.received_at) : "",
+  );
+  const [signedOn, setSignedOn] = React.useState<string | null>(null); // null: the day it came in
+  const [entered, setEntered] = React.useState<number[]>(() =>
+    enteredFrom(view.rabbits, startFrom(view, isPaper)),
+  );
+  const [archiving, setArchiving] = React.useState(false);
+  const [archiveError, setArchiveError] = React.useState<string | null>(null);
   const [mode, setMode] = React.useState<"form" | "receipt">(
-    view.report ? "receipt" : "form",
+    view.report && !isPaper ? "receipt" : "form",
   );
   const [version, setVersion] = React.useState(0);
   const [retry, setRetry] = React.useState(0);
@@ -225,6 +295,7 @@ export function ReportForm({
   const again = React.useRef(false);
   const resync = React.useRef(false);
   const pendingFocus = React.useRef<number | null>(null);
+  const pendingEl = React.useRef<string | null>(null);
 
   const edit = React.useCallback((fn: (s: FormState) => FormState) => {
     setState(fn);
@@ -235,8 +306,10 @@ export function ReportForm({
   React.useEffect(() => {
     const local = readLocal(env, herd.herd, year);
     if (local) {
+      const s = fromBody(local);
       // eslint-disable-next-line react-hooks/set-state-in-effect -- localStorage exists only after hydration
-      setState(fromBody(local));
+      setState(s);
+      setEntered(enteredFrom(viewRef.current.rabbits, s));
       setLocalCopy(true);
       setVersion((v) => v + 1);
     }
@@ -244,7 +317,9 @@ export function ReportForm({
 
   // The server's draft replaces the whole editing state: form, mode and key.
   const adoptDraft = (d: ServerDraft) => {
-    setState(fromBody(d.data));
+    const s = fromBody(d.data);
+    setState(s);
+    setEntered(enteredFrom(view.rabbits, s));
     updatedAt.current = d.updated_at;
     // a draft with no key (written by Dra tillbaka) must not revive a spent one
     keyRef.current = d.submission_key ?? newKey();
@@ -274,9 +349,11 @@ export function ReportForm({
     clearTimeout(syncTimer.current);
     setSyncTimeout(false);
     setSyncing(false);
-    const base = view.draft?.data ?? view.report?.submitted ?? {};
-    setState(fromBody(base));
-    setMode(view.report ? "receipt" : "form");
+    const next = startFrom(view, isPaper);
+    setState(next);
+    setEntered(enteredFrom(view.rabbits, next));
+    setGate(gateOf(view, isPaper));
+    setMode(view.report && !isPaper ? "receipt" : "form");
     setVersion(0);
     setReceipt(null);
     setPhase("idle");
@@ -285,7 +362,7 @@ export function ReportForm({
     updatedAt.current = view.draft?.updated_at ?? null;
     frozen.current = null;
     writeLocal(env, view.herd.herd, view.year, null);
-  }, [view, env]);
+  }, [view, env, isPaper]);
 
   // One save in flight at a time: a change made meanwhile is sent after it
   // has been answered, with the version it returned.
@@ -434,7 +511,57 @@ export function ReportForm({
   React.useEffect(() => {
     const id = pendingFocus.current;
     if (id !== null && focusRow(id)) pendingFocus.current = null;
+    if (pendingEl.current) {
+      document.getElementById(pendingEl.current)?.focus();
+      pendingEl.current = null;
+    }
   }, [focusTick]);
+  const focusLater = (elementId: string | null) => {
+    pendingEl.current = elementId;
+    setFocusTick((t) => t + 1);
+  };
+
+  // Paper: the keys of a rabbit's row (paperKey holds the chain). 1, 2 and 3
+  // only choose on the radio group, never in a field.
+  const onPaperKey = (e: React.KeyboardEvent<HTMLElement>) => {
+    const t = e.target as HTMLElement;
+    const field = t.dataset.paperField as PaperField | undefined;
+    const row = t.closest<HTMLElement>("fieldset[id^='rabbit-']");
+    if (!field || !row || e.altKey || e.ctrlKey || e.metaKey || e.shiftKey)
+      return;
+    const id = Number(row.id.slice("rabbit-".length));
+    const before = { field, val: stateRef.current.rabbits[id]?.val ?? null };
+    const next = paperKey(before, e.key);
+    if (next.field === before.field && next.val === before.val) return;
+    e.preventDefault();
+    if (next.val !== before.val)
+      document.getElementById(`val-${id}-${next.val}`)?.click(); // the row's own choose()
+    focusLater(
+      {
+        number: "paper-number",
+        val: `val-${id}-kvar`,
+        vikt: `vikt-${id}`,
+        ej_vagd: `ejvagd-${id}`,
+        hull: `hull-${id}`,
+        month: `month-${id}`,
+        sold: null, // the dialog takes the focus
+      }[next.field],
+    );
+  };
+  const pickRabbit = (id: number) => {
+    setEntered((e) => [...e, id]);
+    focusLater(`val-${id}-kvar`);
+  };
+  const markNotStated = () => {
+    const on = new Set(entered);
+    edit((s) => {
+      const next = { ...s.rabbits };
+      for (const r of viewRef.current.rabbits)
+        if (r.state === "att_valja" && !on.has(r.id) && !next[r.id]?.val)
+          next[r.id] = { ...EMPTY_ENTRY, val: "ej_angiven" };
+      return { ...s, rabbits: next };
+    });
+  };
 
   const onRow = React.useCallback(
     (id: number, patch: Partial<Entry>) =>
@@ -520,7 +647,11 @@ export function ReportForm({
       setMode("receipt");
       setPhase("idle");
       setWithdrawn(null);
-      router.refresh();
+      // On paper the submit has closed the item: ReportView is not read again
+      // (with ?post= it would be refused), and the Receipt is the answer.
+      if (!isPaper) router.refresh();
+      else if (!res.data.warnings.length && !res.data.matrikel.length)
+        paper!.leave(summaryLine(herd.herd, res.data));
     } else if (
       res.problem.status === 408 ||
       res.problem.status === 502 ||
@@ -534,8 +665,24 @@ export function ReportForm({
     if (phase !== "idle" || syncing) return;
     setRefusals(null);
     if (readModeCookieClient() !== env) return fail(ENV_TEXT);
-    const body = toBody(state, keyRef.current!, view.report?.revision ?? null);
-    frozen.current = body; // never stored: it may hold a buyer
+    let body = toBody(state, keyRef.current!, view.report?.revision ?? null);
+    if (isPaper) {
+      const signed = signedOn ?? receivedOn;
+      if (!receivedOn) return fail("Ange dagen blanketten kom in.");
+      if (signed > receivedOn)
+        return fail(
+          "Blankettens datum kan inte vara senare än dagen den kom in.",
+        );
+      const matrikel = matrikelBody(fields);
+      body = {
+        ...body,
+        inbox_item_id: item.id,
+        received_on: receivedOn,
+        signed_on: signed,
+        ...(matrikel ? { matrikel } : {}),
+      };
+    }
+    frozen.current = body; // never stored: it may hold a buyer or a matrikel
     setPhase("checking");
     const dry = await safe(
       actionsRef.current.dryRun(herd.herd, year, body, env, post),
@@ -635,7 +782,16 @@ export function ReportForm({
     : null;
   const closedText = !view.report && !canEdit;
   const breed = view.herd.genebank.toLowerCase();
-  const heading = (
+  const heading = item ? (
+    <header>
+      <h1 className={styles.title}>
+        Från blankett · {herd.herd} · Ärende {item.id}
+      </h1>
+      <p className={styles.herdLine}>
+        {herd.name} <Link href={`${QUEUE}/${item.id}`}>Till ärendet</Link>
+      </p>
+    </header>
+  ) : (
     <header>
       <h1 className={styles.title}>Årsrapport {year}</h1>
       <p className={styles.herdLine}>
@@ -647,6 +803,35 @@ export function ReportForm({
     "--report-sticky-top": `${stickyTop}px`,
   } as React.CSSProperties;
 
+  if (mode === "receipt" && isPaper && receipt) {
+    // The submit closed the item: the Receipt alone, with what the matrikel took.
+    return (
+      <div className={styles.root} style={root}>
+        {heading}
+        <Receipt
+          view={{ ...view, report: null }}
+          receipt={receipt}
+          hasDraft={false}
+          busy={false}
+          onChange={startChange}
+          onWithdraw={withdraw}
+        />
+        {receipt.matrikel.length > 0 && (
+          <div className={`${styles.status} ${styles.info}`}>
+            <p>
+              Sparat i matrikeln:{" "}
+              {receipt.matrikel.map((f) => MATRIKEL_LABEL[f] ?? f).join(", ")}.
+            </p>
+          </div>
+        )}
+        <div className={styles.actions}>
+          <Link href={QUEUE} className={`sb-btn ${styles.btn}`}>
+            Nästa blankett
+          </Link>
+        </div>
+      </div>
+    );
+  }
   if (mode === "receipt" && (view.report || receipt)) {
     return (
       <div className={styles.root} style={root}>
@@ -666,6 +851,113 @@ export function ReportForm({
     );
   }
 
+  // The gates in front of the paper form: the item's intyg, a member's draft,
+  // a report already sent (at most one shows).
+  const archive = async () => {
+    setArchiveError(null);
+    setArchiving(true);
+    let failed = false;
+    for (const id of paper!.documentIds) {
+      const res = await safe(paper!.archive(id));
+      if (!res.ok) failed = true;
+    }
+    setArchiving(false);
+    if (failed)
+      setArchiveError("Det gick inte att arkivera blanketten. Försök igen.");
+    else paper!.leave(`Blanketten för ${herd.herd} är arkiverad.`);
+  };
+  if (isPaper && (paper!.intygPending || gate)) {
+    return (
+      <div className={styles.root} style={root}>
+        {heading}
+        {paper!.intygPending ? (
+          <div className={`${styles.status} ${styles.info}`} role="status">
+            <p>
+              Registrera intygen i ärendet först.{" "}
+              <Link href={`${QUEUE}/${item.id}`}>Till ärendet</Link>
+            </p>
+          </div>
+        ) : gate === "draft" ? (
+          <MbCard title="Medlemmen har påbörjat rapporten">
+            <p>
+              Medlemmen har påbörjat rapporten (senast{" "}
+              {fmtDate(view.draft!.updated_at)}).
+            </p>
+            <div className={styles.actions}>
+              <button
+                type="button"
+                className={`sb-btn ${styles.btn}`}
+                onClick={() => {
+                  const s = fromBody(view.draft!.data);
+                  setState(s);
+                  setEntered(enteredFrom(rabbits, s));
+                  setGate(null);
+                }}
+              >
+                Fortsätt på medlemmens utkast
+              </button>
+              <button
+                type="button"
+                className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+                onClick={() => setGate(null)}
+              >
+                Börja från blanketten
+              </button>
+            </div>
+          </MbCard>
+        ) : (
+          <MbCard title="Redan rapporterad">
+            <p>Redan rapporterad den {fmtDate(view.report!.received_at)}.</p>
+            <label className={styles.label}>
+              Varför ändras rapporten?
+              <textarea
+                className={styles.field}
+                rows={2}
+                maxLength={500}
+                value={state.reason}
+                onChange={(e) =>
+                  setState((s) => ({ ...s, reason: e.target.value }))
+                }
+              />
+            </label>
+            {archiveError && (
+              <p className={styles.errorText} role="alert">
+                {archiveError}
+              </p>
+            )}
+            <div className={styles.actions}>
+              <button
+                type="button"
+                className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+                disabled={archiving}
+                onClick={archive}
+              >
+                Arkivera blanketten
+              </button>
+              <button
+                type="button"
+                className={`sb-btn ${styles.btn}`}
+                disabled={archiving || !state.reason.trim()}
+                onClick={() => {
+                  const base = fromBody(
+                    view.draft?.own
+                      ? view.draft.data
+                      : (view.report!.submitted ?? {}),
+                  );
+                  setState({ ...base, reason: state.reason });
+                  setEntered(enteredFrom(rabbits, base));
+                  setGate(null);
+                }}
+              >
+                Ändra rapporten
+              </button>
+            </div>
+          </MbCard>
+        )}
+      </div>
+    );
+  }
+
   const rabbitErrors = [
     ...new Set(
       (refusals ?? [])
@@ -675,13 +967,83 @@ export function ReportForm({
   ];
   const byId = new Map(rabbits.map((r) => [r.id, r]));
   const lonely = (refusals ?? []).filter((r) => r.individual_id === null);
-  const buttonText = view.report ? "Skicka ändringarna" : "Skicka årsrapporten";
+  const buttonText = isPaper
+    ? "Skicka och nästa blankett"
+    : view.report
+      ? "Skicka ändringarna"
+      : "Skicka årsrapporten";
   const sending = phase === "checking" || phase === "sending";
   const lower = <ReportStatus status={status} />;
+  const endCard = (
+    <MbCard title="Jag avslutar min genbank">
+      <div className={styles.detail}>
+        <label className={styles.line} style={{ minHeight: 48 }}>
+          <input
+            type="checkbox"
+            checked={state.ending}
+            onChange={(e) => edit((s) => ({ ...s, ending: e.target.checked }))}
+          />
+          Jag avslutar min genbank
+        </label>
+        {state.ending && (
+          <>
+            <p className={styles.lead}>
+              Fyll gärna i döda och sålda kaniner också, så att registret
+              stämmer. Genbanken kan väckas igen genom att kontakta
+              genbanksansvarig, med samma besättningsnummer.
+            </p>
+            {!view.other_active_herd && (
+              <div
+                role="radiogroup"
+                aria-label="Medlemskapet"
+                className={styles.detail}
+              >
+                {(
+                  [
+                    [
+                      "kvar_utan_genbank",
+                      "Jag vill vara kvar i föreningen som medlem utan genbank",
+                    ],
+                    [
+                      "avsluta_medlemskap",
+                      "Jag vill även avsluta mitt medlemskap",
+                    ],
+                  ] as [Membership, string][]
+                ).map(([v, label]) => (
+                  <label
+                    key={v}
+                    className={styles.line}
+                    style={{ minHeight: 48 }}
+                  >
+                    <input
+                      type="radio"
+                      name="membership"
+                      checked={state.membership === v}
+                      onChange={() => edit((s) => ({ ...s, membership: v }))}
+                    />
+                    {label}
+                  </label>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </div>
+    </MbCard>
+  );
+  // Paper: the rows typed in, in the order they were typed, and the rest of the
+  // register that the form does not mention.
+  const noop = () => undefined;
+  const enteredSet = new Set(entered);
+  const enteredRabbits = entered.flatMap((id) => byId.get(id) ?? []);
+  const restRabbits = rabbits.filter(
+    (r) => r.state === "att_valja" && !enteredSet.has(r.id),
+  );
+  const unchosen = restRabbits.filter((r) => !state.rabbits[r.id]?.val).length;
 
   return (
     <div
-      className={`${styles.root} ${closedText ? "" : styles.wide}`}
+      className={`${styles.root} ${closedText || isPaper ? "" : styles.wide} ${isPaper ? styles.paperForm : ""}`}
       style={root}
       data-report-root={stickyTop === 0 ? "bare" : "shell"}
     >
@@ -689,7 +1051,9 @@ export function ReportForm({
       <p className={styles.lead}>
         Gäller kaninerna i {herd.herd} den 31 december {year}.
       </p>
-      {editor && <ReportStatus status={{ kind: "editor", herd: herd.herd }} />}
+      {editor && !isPaper && (
+        <ReportStatus status={{ kind: "editor", herd: herd.herd }} />
+      )}
       {closedText ? (
         <ReportStatus status={{ kind: "closed" }} />
       ) : (
@@ -777,58 +1141,62 @@ export function ReportForm({
                 </div>
               )}
             </div>
-            <div className={`${styles.sticky} ${styles.sideBar}`}>
-              <div className={styles.stickyRow}>
-                <input
-                  type="search"
-                  className={styles.field}
-                  placeholder="Sök nummer eller namn"
-                  aria-label="Sök nummer eller namn"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key !== "Enter" || visible.length !== 1) return;
-                    e.preventDefault();
-                    focusRow(visible[0].id);
-                  }}
-                />
-                <span className={styles.counter} aria-live="polite">
-                  {doneCount} av {rabbits.length} klara
-                </span>
-              </div>
-              <progress
-                className={styles.progress}
-                max={rabbits.length || 1}
-                value={doneCount}
-                aria-hidden="true"
-              />
-            </div>
+            {!isPaper && (
+              <>
+                <div className={`${styles.sticky} ${styles.sideBar}`}>
+                  <div className={styles.stickyRow}>
+                    <input
+                      type="search"
+                      className={styles.field}
+                      placeholder="Sök nummer eller namn"
+                      aria-label="Sök nummer eller namn"
+                      value={search}
+                      onChange={(e) => setSearch(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key !== "Enter" || visible.length !== 1) return;
+                        e.preventDefault();
+                        focusRow(visible[0].id);
+                      }}
+                    />
+                    <span className={styles.counter} aria-live="polite">
+                      {doneCount} av {rabbits.length} klara
+                    </span>
+                  </div>
+                  <progress
+                    className={styles.progress}
+                    max={rabbits.length || 1}
+                    value={doneCount}
+                    aria-hidden="true"
+                  />
+                </div>
 
-            <div
-              className={`${styles.filters} ${styles.sideFilters}`}
-              role="group"
-              aria-label="Visa"
-            >
-              {(
-                [
-                  ["inte_klara", `Inte klara (${notDone.length})`],
-                  ["kvar", "Finns kvar"],
-                  ["dod", "Döda"],
-                  ["sald", "Sålda"],
-                  ["alla", "Alla"],
-                ] as [Filter, string][]
-              ).map(([f, label]) => (
-                <button
-                  key={f}
-                  type="button"
-                  className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
-                  aria-pressed={filter === f}
-                  onClick={() => chooseFilter(f)}
+                <div
+                  className={`${styles.filters} ${styles.sideFilters}`}
+                  role="group"
+                  aria-label="Visa"
                 >
-                  {label}
-                </button>
-              ))}
-            </div>
+                  {(
+                    [
+                      ["inte_klara", `Inte klara (${notDone.length})`],
+                      ["kvar", "Finns kvar"],
+                      ["dod", "Döda"],
+                      ["sald", "Sålda"],
+                      ["alla", "Alla"],
+                    ] as [Filter, string][]
+                  ).map(([f, label]) => (
+                    <button
+                      key={f}
+                      type="button"
+                      className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+                      aria-pressed={filter === f}
+                      onClick={() => chooseFilter(f)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
 
             <div className={styles.sideSend}>
               {lower}
@@ -856,7 +1224,104 @@ export function ReportForm({
             disabled={phase !== "idle" || syncing}
             className={styles.main}
           >
-            {rabbits.length === 0 ? (
+            {isPaper && (
+              <MbCard title="Blanketten">
+                <div className={styles.grid2}>
+                  <label className={styles.label}>
+                    Mottagen
+                    <input
+                      type="date"
+                      className={styles.field}
+                      style={{ width: "100%", boxSizing: "border-box" }}
+                      value={receivedOn}
+                      max={todayStockholm()}
+                      onChange={(e) => setReceivedOn(e.target.value)}
+                    />
+                  </label>
+                  <label className={styles.label}>
+                    Blankettens datum
+                    <input
+                      type="date"
+                      className={styles.field}
+                      style={{ width: "100%", boxSizing: "border-box" }}
+                      value={signedOn ?? receivedOn}
+                      max={receivedOn || undefined}
+                      onChange={(e) => setSignedOn(e.target.value)}
+                    />
+                  </label>
+                </div>
+              </MbCard>
+            )}
+            {isPaper && endCard}
+            {isPaper && (
+              <PaperChanges
+                fields={fields}
+                onChange={setFields}
+                accountEnd={item.account_end}
+              />
+            )}
+            {isPaper ? (
+              <>
+                <div className="sb-card-flat" onKeyDown={onPaperKey}>
+                  <div className={styles.list}>
+                    {enteredRabbits.map((r) => (
+                      <RabbitRow
+                        key={r.id}
+                        r={r}
+                        paper
+                        entry={state.rabbits[r.id]}
+                        ending={state.ending}
+                        year={year}
+                        canSell={view.can_sell}
+                        done={!!done.get(r.id)}
+                        error={rowErrors.get(r.id)}
+                        onChange={onRow}
+                        onSell={onSell}
+                        onNextWeight={noop}
+                      />
+                    ))}
+                    <NumberRow
+                      herd={herd.herd}
+                      year={year}
+                      rabbits={rabbits}
+                      entered={entered}
+                      onPick={pickRabbit}
+                    />
+                  </div>
+                </div>
+                <MbCard
+                  title={`Kvar i Stamboken men inte på blanketten (${unchosen})`}
+                >
+                  {unchosen > 0 && (
+                    <button
+                      type="button"
+                      className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+                      onClick={markNotStated}
+                    >
+                      Markera som ej angivna på blanketten
+                    </button>
+                  )}
+                  <div onKeyDown={onPaperKey}>
+                    {restRabbits.map((r) => (
+                      <RabbitRow
+                        key={r.id}
+                        r={r}
+                        paper
+                        entry={state.rabbits[r.id]}
+                        ending={state.ending}
+                        year={year}
+                        canSell={view.can_sell}
+                        done={!!done.get(r.id)}
+                        error={rowErrors.get(r.id)}
+                        onChange={onRow}
+                        onSell={onSell}
+                        onNextWeight={noop}
+                      />
+                    ))}
+                  </div>
+                </MbCard>
+              </>
+            ) : rabbits.length === 0 ? (
               <p>
                 Stamboken har inga kaniner registrerade i {herd.herd} den 31
                 december {year}. Saknas kaniner? Kontakta genbanksansvarig. Har
@@ -888,44 +1353,47 @@ export function ReportForm({
                 </div>
               </div>
             )}
-            {rabbits.length > BIG_LIST && seenEnd && restCount > 0 && (
-              <div className={styles.detail}>
-                {askRest ? (
-                  <div
-                    className={styles.note}
-                    role="alertdialog"
-                    aria-label="Markera resten"
-                  >
-                    <span>
-                      Markera {restCount} kaniner som finns kvar? Vuxna kaniner
-                      behöver ändå vikt eller Ej vägd.
-                    </span>
-                    <button
-                      type="button"
-                      className={`sb-btn ${styles.btn}`}
-                      onClick={markRest}
+            {!isPaper &&
+              rabbits.length > BIG_LIST &&
+              seenEnd &&
+              restCount > 0 && (
+                <div className={styles.detail}>
+                  {askRest ? (
+                    <div
+                      className={styles.note}
+                      role="alertdialog"
+                      aria-label="Markera resten"
                     >
-                      Ja, markera
-                    </button>
+                      <span>
+                        Markera {restCount} kaniner som finns kvar? Vuxna
+                        kaniner behöver ändå vikt eller Ej vägd.
+                      </span>
+                      <button
+                        type="button"
+                        className={`sb-btn ${styles.btn}`}
+                        onClick={markRest}
+                      >
+                        Ja, markera
+                      </button>
+                      <button
+                        type="button"
+                        className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+                        onClick={() => setAskRest(false)}
+                      >
+                        Avbryt
+                      </button>
+                    </div>
+                  ) : (
                     <button
                       type="button"
                       className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
-                      onClick={() => setAskRest(false)}
+                      onClick={() => setAskRest(true)}
                     >
-                      Avbryt
+                      Markera resten som finns kvar
                     </button>
-                  </div>
-                ) : (
-                  <button
-                    type="button"
-                    className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
-                    onClick={() => setAskRest(true)}
-                  >
-                    Markera resten som finns kvar
-                  </button>
-                )}
-              </div>
-            )}
+                  )}
+                </div>
+              )}
 
             <MbCard title={`Kullar under ${year}`}>
               {view.litters.length === 0 ? (
@@ -1166,72 +1634,16 @@ export function ReportForm({
               </label>
             </MbCard>
 
-            <MbCard title="Jag avslutar min genbank">
-              <div className={styles.detail}>
-                <label className={styles.line} style={{ minHeight: 48 }}>
-                  <input
-                    type="checkbox"
-                    checked={state.ending}
-                    onChange={(e) =>
-                      edit((s) => ({ ...s, ending: e.target.checked }))
-                    }
-                  />
-                  Jag avslutar min genbank
-                </label>
-                {state.ending && (
-                  <>
-                    <p className={styles.lead}>
-                      Fyll gärna i döda och sålda kaniner också, så att
-                      registret stämmer. Genbanken kan väckas igen genom att
-                      kontakta genbanksansvarig, med samma besättningsnummer.
-                    </p>
-                    {!view.other_active_herd && (
-                      <div
-                        role="radiogroup"
-                        aria-label="Medlemskapet"
-                        className={styles.detail}
-                      >
-                        {(
-                          [
-                            [
-                              "kvar_utan_genbank",
-                              "Jag vill vara kvar i föreningen som medlem utan genbank",
-                            ],
-                            [
-                              "avsluta_medlemskap",
-                              "Jag vill även avsluta mitt medlemskap",
-                            ],
-                          ] as [Membership, string][]
-                        ).map(([v, label]) => (
-                          <label
-                            key={v}
-                            className={styles.line}
-                            style={{ minHeight: 48 }}
-                          >
-                            <input
-                              type="radio"
-                              name="membership"
-                              checked={state.membership === v}
-                              onChange={() =>
-                                edit((s) => ({ ...s, membership: v }))
-                              }
-                            />
-                            {label}
-                          </label>
-                        ))}
-                      </div>
-                    )}
-                  </>
-                )}
-              </div>
-            </MbCard>
+            {!isPaper && endCard}
 
-            {contactSlot}
+            {!isPaper && contactSlot}
 
-            {editor && (
+            {(isPaper ? needReason : editor) && (
               <MbCard title="Orsak">
                 <label className={styles.label}>
-                  Varför ändras rapporten?
+                  {isPaper && !view.report
+                    ? "Varför kommer blanketten in efter sista dagen?"
+                    : "Varför ändras rapporten?"}
                   <textarea
                     id="reason"
                     className={styles.field}
@@ -1262,6 +1674,7 @@ export function ReportForm({
           if (syncing) return;
           onRow(soldFor!, { val: "sald", sald: s });
           setSoldFor(null);
+          if (isPaper) focusLater("paper-number"); // the next row
         }}
         onClose={() => setSoldFor(null)}
       />

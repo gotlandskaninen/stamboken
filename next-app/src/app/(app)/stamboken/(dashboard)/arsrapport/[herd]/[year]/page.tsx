@@ -3,8 +3,10 @@ import { cookies } from "next/headers";
 import { ApiError, fetchApi } from "@/lib/api";
 import { MODE_COOKIE, parseMode } from "@/lib/mode";
 import { dryRun, saveDraft, submitReport, withdrawReport } from "../../actions";
+import type { InboxDetail } from "../../../inkorg/lib";
 import type { ReportView } from "../../lib";
 import { ReportForm } from "../../ReportForm";
+import { PaperEntry } from "./PaperEntry";
 
 export const dynamic = "force-dynamic";
 
@@ -29,6 +31,20 @@ export default async function ReportPage({
     if (e instanceof ApiError && (e.status === 403 || e.status === 404))
       notFound();
     throw e;
+  }
+  if (post && view.item) {
+    // The queue item behind the paper form: its pages and its other documents.
+    const item = await fetchApi<InboxDetail>(`/v2/inkorg/${post}`);
+    return (
+      <PaperEntry
+        key={env}
+        env={env}
+        view={view}
+        item={item}
+        post={post}
+        actions={{ saveDraft, dryRun, submitReport, withdrawReport }}
+      />
+    );
   }
   return (
     <ReportForm

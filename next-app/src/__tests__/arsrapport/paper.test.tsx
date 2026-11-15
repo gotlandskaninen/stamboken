@@ -1,0 +1,533 @@
+import React from "react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
+
+const refresh = vi.fn();
+vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
+
+import {
+  ReportForm,
+  type PaperProps,
+  type ReportActions,
+} from "@/app/(app)/stamboken/(dashboard)/arsrapport/ReportForm";
+import type {
+  Receipt,
+  ReportView,
+} from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
+import { rabbit, view } from "./fixtures";
+
+const receipt: Receipt = {
+  submission_id: 1,
+  report_id: 1,
+  created_at: "2027-01-03T13:32:00+00:00",
+  source: "paper",
+  summary: { kvar: 1, doda: 0, salda: 0, ej_angivna: 1 },
+  matrikel: [],
+  warnings: [],
+};
+const ok = <T,>(data: T) => Promise.resolve({ ok: true as const, data });
+const fail = (status: number) =>
+  Promise.resolve({
+    ok: false as const,
+    problem: { status, title: "t", detail: "x", extensions: {} },
+  });
+
+const actions = () =>
+  ({
+    saveDraft: vi.fn(() =>
+      ok({ updated_at: "2027-01-03T10:00:00+00:00", submission_key: null }),
+    ),
+    dryRun: vi.fn(() => ok({ ok: true, refusals: [], warnings: [] })),
+    submitReport: vi.fn(() => ok(receipt)),
+    withdrawReport: vi.fn(),
+  }) as unknown as {
+    [K in keyof ReportActions]: ReturnType<typeof vi.fn>;
+  } & ReportActions;
+
+const paperProps = (over: Partial<PaperProps> = {}): PaperProps => ({
+  documentIds: [11, 12],
+  intygPending: false,
+  archive: vi.fn(() => ok({})) as never,
+  leave: vi.fn(),
+  ...over,
+});
+const paperView = (over: Partial<ReportView> = {}): ReportView =>
+  view({
+    herd: {
+      id: 2,
+      herd: "G9001",
+      name: "Gårdsnamn",
+      genebank_id: 1,
+      genebank: "Gotlandskanin",
+    },
+    access: "helper",
+    source: "paper",
+    rabbits: [rabbit(1), rabbit(2), rabbit(3)],
+    item: {
+      id: 5,
+      received_at: "2027-01-03T10:00:00+00:00",
+      state: "tagen",
+      account_end: "12",
+    },
+    ...over,
+  });
+
+beforeEach(() => {
+  window.localStorage.clear();
+  refresh.mockReset();
+});
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
+
+const typeNumber = (n: string) => {
+  const input = screen.getByLabelText("Nummer efter G9001-");
+  fireEvent.change(input, { target: { value: n } });
+  fireEvent.keyDown(input, { key: "Enter" });
+};
+const row = (n: number) =>
+  screen.getByRole("group", { name: new RegExp(`G9001-${n}\\b`) });
+const sendButton = () =>
+  screen.getByRole("button", { name: "Skicka och nästa blankett" });
+const renderPaper = (v = paperView(), a = actions(), p = paperProps()) => {
+  render(<ReportForm env="demo" view={v} actions={a} post={5} paper={p} />);
+  return { a, p };
+};
+
+describe("ReportForm on paper", () => {
+  it("names the item and defaults both dates to the day it came in", () => {
+    renderPaper();
+    expect(
+      screen.getByRole("heading", {
+        level: 1,
+        name: "Från blankett · G9001 · Ärende 5",
+      }),
+    ).toBeTruthy();
+    expect((screen.getByLabelText("Mottagen") as HTMLInputElement).value).toBe(
+      "2027-01-03",
+    );
+    expect(
+      (screen.getByLabelText("Blankettens datum") as HTMLInputElement).value,
+    ).toBe("2027-01-03");
+    expect(screen.getByText("Nuvarande konto slutar på ••12")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Gå till profilen" })).toBeNull();
+  });
+
+  it("enters a rabbit by its number, and keys 1 then Enter walk the row", () => {
+    renderPaper();
+    typeNumber("2");
+    expect(row(2)).toBeTruthy();
+    const kvar = within(row(2)).getByLabelText("Finns kvar");
+    expect(document.activeElement).toBe(kvar);
+    fireEvent.keyDown(kvar, { key: "1" });
+    expect((kvar as HTMLInputElement).checked).toBe(true);
+    const vikt = within(row(2)).getByLabelText("Vikt");
+    expect(document.activeElement).toBe(vikt);
+    fireEvent.keyDown(vikt, { key: "1" }); // a digit in the field, not a choice
+    expect(document.activeElement).toBe(vikt);
+    fireEvent.keyDown(vikt, { key: "Enter" });
+    expect(document.activeElement).toBe(
+      within(row(2)).getByRole("button", { name: "Ej vägd" }),
+    );
+    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
+    expect(document.activeElement).toBe(within(row(2)).getByLabelText(/^Hull/));
+    fireEvent.keyDown(document.activeElement!, { key: "Enter" });
+    expect(document.activeElement).toBe(
+      screen.getByLabelText("Nummer efter G9001-"),
+    );
+  });
+
+  it("says when a number is not there or was entered already", () => {
+    renderPaper();
+    typeNumber("2399");
+    expect(
+      screen.getByText(
+        "G9001-2399 finns inte bland kaninerna i G9001 den 31 december 2026.",
+      ),
+    ).toBeTruthy();
+    typeNumber("2");
+    typeNumber("2");
+    expect(screen.getByText(/Redan inmatad på/)).toBeTruthy();
+  });
+
+  it("lists the rabbits not on the form and marks them Ej angiven in one go", () => {
+    renderPaper();
+    typeNumber("1");
+    fireEvent.click(within(row(1)).getByLabelText("Finns kvar"));
+    expect(
+      screen.getByText("Kvar i Stamboken men inte på blanketten (2)"),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Markera som ej angivna på blanketten",
+      }),
+    );
+    expect(
+      screen.getByText("Kvar i Stamboken men inte på blanketten (0)"),
+    ).toBeTruthy();
+    expect(
+      (
+        within(row(2)).getByLabelText(
+          "Ej angiven på blanketten",
+        ) as HTMLInputElement
+      ).checked,
+    ).toBe(true);
+    expect(
+      (
+        within(row(3)).getByLabelText(
+          "Ej angiven på blanketten",
+        ) as HTMLInputElement
+      ).checked,
+    ).toBe(true);
+    // the rabbit that is on the form is not marked
+    expect(
+      (within(row(1)).getByLabelText("Finns kvar") as HTMLInputElement).checked,
+    ).toBe(true);
+  });
+
+  it("sends the item, the dates and the contact changes with ?post=, and leaves on a clean receipt", async () => {
+    const { a, p } = renderPaper();
+    typeNumber("1");
+    fireEvent.click(within(row(1)).getByLabelText("Finns kvar"));
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "2,8" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Markera som ej angivna på blanketten",
+      }),
+    );
+    fireEvent.change(screen.getByLabelText("Telefon"), {
+      target: { value: "070-1234567" },
+    });
+    fireEvent.click(screen.getByLabelText("Nej"));
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(a.submitReport).toHaveBeenCalledTimes(1));
+    const [herd, year, body, env, post] = a.submitReport.mock.calls[0];
+    expect([herd, year, env, post]).toEqual(["G9001", 2026, "demo", 5]);
+    expect(body).toMatchObject({
+      inbox_item_id: 5,
+      received_on: "2027-01-03",
+      signed_on: "2027-01-03",
+      matrikel: {
+        telefon: "070-1234567",
+        publicering: { ja: false, utom: [] },
+      },
+      rabbits: {
+        "1": { val: "kvar", vikt: 2.8 },
+        "2": { val: "ej_angiven" },
+        "3": { val: "ej_angiven" },
+      },
+    });
+    expect(a.dryRun.mock.calls[0][4]).toBe(5);
+    await waitFor(() =>
+      expect(p.leave).toHaveBeenCalledWith(
+        "G9001 inskickad: 1 finns kvar, 1 ej angivna.",
+      ),
+    );
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("refuses a form date later than the day it came in", async () => {
+    const { a } = renderPaper();
+    typeNumber("1");
+    fireEvent.click(within(row(1)).getByLabelText("Finns kvar"));
+    fireEvent.change(screen.getByLabelText("Mottagen"), {
+      target: { value: "2027-01-01" },
+    });
+    fireEvent.change(screen.getByLabelText("Blankettens datum"), {
+      target: { value: "2027-01-02" },
+    });
+    fireEvent.click(sendButton());
+    expect(
+      await screen.findByText(
+        "Blankettens datum kan inte vara senare än dagen den kom in.",
+      ),
+    ).toBeTruthy();
+    expect(a.dryRun).not.toHaveBeenCalled();
+  });
+
+  it("keeps the matrikel and the buyer out of the draft and localStorage", async () => {
+    vi.useFakeTimers();
+    const { a } = renderPaper();
+    typeNumber("1");
+    fireEvent.click(within(row(1)).getByLabelText("Finns kvar"));
+    fireEvent.change(screen.getByLabelText("Telefon"), {
+      target: { value: "070-1234567" },
+    });
+    fireEvent.change(screen.getByLabelText("E-post"), {
+      target: { value: "x@example.invalid" },
+    });
+    await vi.advanceTimersByTimeAsync(2500);
+    expect(a.saveDraft).toHaveBeenCalled();
+    const [, , data, , , , , post] = a.saveDraft.mock.calls.at(-1)!;
+    expect(post).toBe(5);
+    expect(JSON.stringify(data)).not.toMatch(/matrikel|070-1234567|example/);
+    expect(Object.keys(data)).not.toContain("matrikel");
+    const stored = Object.values(window.localStorage).join("");
+    expect(stored).not.toMatch(/matrikel|070-1234567|example/);
+  });
+
+  it("Försök igen sends the frozen body, matrikel and post included, to submitReport only", async () => {
+    const a = actions();
+    a.submitReport.mockImplementationOnce(() => fail(504));
+    renderPaper(paperView(), a);
+    typeNumber("1");
+    fireEvent.click(within(row(1)).getByLabelText("Finns kvar"));
+    fireEvent.change(screen.getByLabelText("Telefon"), {
+      target: { value: "070-1234567" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Markera som ej angivna på blanketten",
+      }),
+    );
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "2,8" },
+    });
+    fireEvent.click(sendButton());
+    const retry = await screen.findByRole("button", { name: "Försök igen" });
+    // the form is locked; what is typed now does not change the frozen body
+    fireEvent.click(retry);
+    await waitFor(() => expect(a.submitReport).toHaveBeenCalledTimes(2));
+    expect(a.dryRun).toHaveBeenCalledTimes(1);
+    const [first, second] = a.submitReport.mock.calls;
+    expect(second[2]).toBe(first[2]);
+    expect(second[2].matrikel).toEqual({ telefon: "070-1234567" });
+    expect(second[4]).toBe(5);
+  });
+
+  it("stays on the receipt when the matrikel took something or skipped it, with no value", async () => {
+    const a = actions();
+    a.submitReport.mockImplementationOnce(() =>
+      ok({
+        ...receipt,
+        matrikel: ["telefon"],
+        warnings: [
+          {
+            individual_id: null,
+            code: "senare_andring",
+            message:
+              "Matrikeln har ändrats efter blankettens datum (adress). Fråga medlemmen.",
+          },
+        ],
+      }),
+    );
+    const { p } = renderPaper(paperView(), a);
+    typeNumber("1");
+    fireEvent.click(within(row(1)).getByLabelText("Finns kvar"));
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "2,8" },
+    });
+    fireEvent.change(screen.getByLabelText("Telefon"), {
+      target: { value: "070-1234567" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Markera som ej angivna på blanketten",
+      }),
+    );
+    fireEvent.click(sendButton());
+    expect(
+      await screen.findByText(/Sparat i matrikeln: telefon\./),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(/ändrats efter blankettens datum \(adress\)/),
+    ).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Nästa blankett" })).toBeTruthy();
+    expect(screen.queryByText(/070-1234567/)).toBeNull();
+    expect(p.leave).not.toHaveBeenCalled();
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it("warns when the typed account ends like the stored one, and shows no stored value but its end", () => {
+    renderPaper();
+    fireEvent.change(screen.getByLabelText("Kontonummer"), {
+      target: { value: "123456712" },
+    });
+    expect(
+      screen.getByText(/Samma slutsiffror som nuvarande konto/),
+    ).toBeTruthy();
+  });
+
+  it("says there is no account when the matrikel has none", () => {
+    renderPaper(
+      paperView({
+        item: {
+          id: 5,
+          received_at: "2027-01-03T10:00:00+00:00",
+          state: "tagen",
+          account_end: null,
+        },
+      }),
+    );
+    expect(screen.getByText("Inget konto i matrikeln")).toBeTruthy();
+  });
+
+  it("asks nothing of the form first when the intyg are not done", () => {
+    renderPaper(paperView(), actions(), paperProps({ intygPending: true }));
+    expect(screen.getByText(/Registrera intygen i ärendet först/)).toBeTruthy();
+    expect(screen.queryByLabelText("Mottagen")).toBeNull();
+  });
+
+  it("shows a member's draft behind a gate, but not the helper's own", () => {
+    const draft = {
+      data: { rabbits: { "1": { val: "kvar", vikt: 2.5 } } } as never,
+      updated_at: "2027-01-02T09:00:00+00:00",
+      submission_key: null,
+      own: false,
+    };
+    const { unmount } = render(
+      <ReportForm
+        env="demo"
+        view={paperView({ draft })}
+        actions={actions()}
+        post={5}
+        paper={paperProps()}
+      />,
+    );
+    expect(
+      screen.getByText(/Medlemmen har påbörjat rapporten \(senast/),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Fortsätt på medlemmens utkast" }),
+    );
+    expect(
+      (within(row(1)).getByLabelText("Finns kvar") as HTMLInputElement).checked,
+    ).toBe(true);
+    unmount();
+    renderPaper(paperView({ draft: { ...draft, own: true } }));
+    expect(screen.queryByText(/Medlemmen har påbörjat/)).toBeNull();
+  });
+
+  it("starts empty on Börja från blanketten", () => {
+    renderPaper(
+      paperView({
+        draft: {
+          data: { rabbits: { "1": { val: "kvar", vikt: 2.5 } } } as never,
+          updated_at: "2027-01-02T09:00:00+00:00",
+          submission_key: null,
+          own: false,
+        },
+      }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Börja från blanketten" }),
+    );
+    // nothing of the member's draft was taken over
+    expect(
+      (within(row(1)).getByLabelText("Finns kvar") as HTMLInputElement).checked,
+    ).toBe(false);
+    expect(
+      screen.getByText("Kvar i Stamboken men inte på blanketten (3)"),
+    ).toBeTruthy();
+  });
+
+  const reported = () =>
+    paperView({
+      report: {
+        id: 1,
+        status: "submitted",
+        source: "login",
+        revision: 4,
+        received_at: "2027-01-02T09:00:00+00:00",
+        report_date: "2027-01-02",
+        on_time: true,
+        submitted: { rabbits: { "1": { val: "kvar", vikt: 2.8 } } as never },
+        can_change: true,
+        can_withdraw: false,
+        withdraw_until: null,
+        villkor: { hane: true, hona: true, kull: true, i_tid: true },
+      },
+    });
+
+  it("archives each open form page and leaves, over a report already sent", async () => {
+    const p = paperProps();
+    renderPaper(reported(), actions(), p);
+    expect(
+      screen.getByText(/Redan rapporterad den 2 januari 2027/),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Arkivera blanketten" }),
+    );
+    await waitFor(() => expect(p.leave).toHaveBeenCalled());
+    expect(p.archive).toHaveBeenCalledTimes(2);
+    expect(p.archive).toHaveBeenNthCalledWith(1, 11);
+    expect(p.archive).toHaveBeenNthCalledWith(2, 12);
+  });
+
+  it("needs a reason to change a report from paper, and sends its revision", async () => {
+    const a = actions();
+    renderPaper(reported(), a);
+    const change = screen.getByRole("button", { name: "Ändra rapporten" });
+    expect((change as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText("Varför ändras rapporten?"), {
+      target: { value: "Ny blankett från medlemmen" },
+    });
+    fireEvent.click(change);
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: "Markera som ej angivna på blanketten",
+      }),
+    );
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(a.submitReport).toHaveBeenCalled());
+    expect(a.submitReport.mock.calls[0][2]).toMatchObject({
+      revision: 4,
+      reason: "Ny blankett från medlemmen",
+    });
+  });
+
+  it("does not archive when a page cannot be dismissed", async () => {
+    const p = paperProps({ archive: vi.fn(() => fail(409)) as never });
+    renderPaper(reported(), actions(), p);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Arkivera blanketten" }),
+    );
+    expect(
+      await screen.findByText(/Det gick inte att arkivera blanketten/),
+    ).toBeTruthy();
+    expect(p.leave).not.toHaveBeenCalled();
+  });
+
+  it("asks a reason of a helper after the last day, and lets the form open", async () => {
+    const a = actions();
+    renderPaper(
+      paperView({
+        round: {
+          start_date: "2026-12-31",
+          deadline: "2027-01-31",
+          end_date: "2000-01-01",
+          activated: true,
+          open: false,
+        },
+      }),
+      a,
+    );
+    expect(
+      screen.getByLabelText("Varför kommer blanketten in efter sista dagen?"),
+    ).toBeTruthy();
+    expect(screen.getByLabelText("Mottagen")).toBeTruthy();
+  });
+
+  it("ends a genebank with no rabbit choices", async () => {
+    const a = actions();
+    renderPaper(paperView(), a);
+    fireEvent.click(screen.getByLabelText("Jag avslutar min genbank"));
+    fireEvent.click(screen.getByLabelText(/även avsluta mitt medlemskap/));
+    fireEvent.click(sendButton());
+    await waitFor(() => expect(a.submitReport).toHaveBeenCalled());
+    expect(a.submitReport.mock.calls[0][2]).toMatchObject({
+      ending_genbank: true,
+      membership_after_end: "avsluta_medlemskap",
+    });
+  });
+});

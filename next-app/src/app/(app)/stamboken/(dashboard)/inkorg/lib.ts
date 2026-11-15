@@ -600,3 +600,24 @@ export function people(
     if (p && !byId.has(p.id)) byId.set(p.id, p);
   return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, "sv"));
 }
+
+/** A round as /v2/arsrapport/rundor lists it (newest year first). */
+export type RoundRow = {
+  year: number;
+  genebanks: { genebank_id: number }[];
+};
+
+/**
+ * The year of the form entry link: the latest round the item's genebank has
+ * activated. It stays after end_date, when paper entry is still allowed (D11).
+ */
+export const reportYear = (
+  rounds: RoundRow[] | null,
+  genebankId: number | null,
+): number | null =>
+  genebankId === null
+    ? null
+    : ([...(rounds ?? [])]
+        .sort((a, b) => b.year - a.year)
+        .find((r) => r.genebanks.some((g) => g.genebank_id === genebankId))
+        ?.year ?? null);

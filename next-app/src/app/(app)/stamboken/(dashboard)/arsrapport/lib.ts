@@ -1,6 +1,7 @@
 // Shapes of /api/v2/arsrapport/* and the form's own logic. Kept free of React
 // and of server actions so the paper page (Task 14) and the status view
 // (Task 15) can reuse it.
+import type { InboxDetail } from "../inkorg/lib";
 
 export type Val = "kvar" | "dod" | "sald" | "ej_angiven";
 export type Hull = "low" | "normal" | "high";
@@ -72,9 +73,25 @@ export interface DraftData {
   message: string;
 }
 
+// The form's contact changes, as the API takes them (paper only). Never in a
+// draft and never in localStorage: the page keeps them in memory.
+export type Utom = "phone" | "email" | "address";
+export interface Matrikel {
+  adress?: { address?: string; postal_code?: string; city?: string };
+  telefon?: string;
+  epost?: string;
+  konto?: { clearing?: string; konto?: string; bank?: string };
+  publicering?: { ja: boolean; utom: Utom[] };
+}
+
 export interface Submission extends DraftData {
   submission_key: string;
   revision: number | null;
+  // Paper only (a body sent with ?post=)
+  inbox_item_id?: number;
+  received_on?: string;
+  signed_on?: string;
+  matrikel?: Matrikel;
 }
 
 export interface ReportView {
@@ -275,6 +292,15 @@ export const REFUSAL_TEXT: Record<string, string> = {
 export const CONFLICT_TEXT = "Rapporten har ändrats på en annan enhet";
 export const TIMEOUT_TEXT =
   "Vi vet inte om rapporten kom fram. Tryck Försök igen. Den skickas inte två gånger.";
+
+// The fields a Receipt's `matrikel` names, in words (never a value).
+export const MATRIKEL_LABEL: Record<string, string> = {
+  konto: "konto",
+  adress: "adress",
+  telefon: "telefon",
+  epost: "e-post",
+  publicering: "publicering i Koharen",
+};
 
 export const refusalText = (r: Refusal) => REFUSAL_TEXT[r.code] ?? r.message;
 
@@ -626,3 +652,115 @@ export function ageText(r: RabbitView, year: number): string | null {
 
 export const sexText = (r: RabbitView) =>
   r.sex === "female" ? "Hona" : r.sex === "male" ? "Hane" : "Okänt kön";
+
+// Calendar date of a timestamp in Stockholm, "YYYY-MM-DD".
+export const stockholmDay = (iso: string): string =>
+  new Intl.DateTimeFormat("sv-SE", { timeZone: STOCKHOLM }).format(
+    new Date(iso),
+  );
+
+// ---- Paper entry (Task 14) --------------------------------------------------
+
+// What the paper form's contact part holds while it is typed. It lives apart
+// from FormState, so it can never reach a draft or localStorage.
+export interface PaperFields {
+  adress: { address: string; postal_code: string; city: string };
+  telefon: string;
+  epost: string;
+  konto: { clearing: string; konto: string; bank: string };
+  consent: "" | "ja" | "nej";
+  utom: Utom[];
+}
+
+export const emptyPaperFields = (): PaperFields => ({
+  adress: { address: "", postal_code: "", city: "" },
+  telefon: "",
+  epost: "",
+  konto: { clearing: "", konto: "", bank: "" },
+  consent: "",
+  utom: [],
+});
+
+// Only the filled fields go, and nothing at all (null) when none is filled: the
+// server then takes no lock on the matrikel. An empty consent is no answer.
+export function matrikelBody(f: PaperFields): Submission["matrikel"] | null {
+  const filled = (o: Record<string, string>) =>
+    Object.fromEntries(
+      Object.entries(o)
+        .map(([k, v]) => [k, v.trim()])
+        .filter(([, v]) => v),
+    );
+  const body: Matrikel = {};
+  const adress = filled(f.adress);
+  if (Object.keys(adress).length) body.adress = adress;
+  if (f.telefon.trim()) body.telefon = f.telefon.trim();
+  if (f.epost.trim()) body.epost = f.epost.trim();
+  const konto = filled(f.konto);
+  if (Object.keys(konto).length) body.konto = konto;
+  if (f.consent)
+    body.publicering = {
+      ja: f.consent === "ja",
+      utom: f.consent === "ja" ? f.utom : [],
+    };
+  return Object.keys(body).length ? body : null;
+}
+
+// The arsblankett pages of a queue item that are not done (no done_at: a
+// document is "klar" or "avfardad" exactly when done_at is set). Archiving
+// dismisses these and leaves the item's other documents alone.
+export const formDocumentIds = (item: InboxDetail): number[] =>
+  item.documents
+    .filter(
+      (d) =>
+        d.doc_type === "arsblankett" &&
+        d.status !== "klar" &&
+        d.status !== "avfardad",
+    )
+    .map((d) => d.id);
+
+// 5.8: the item's other documents (intyg, bevis) come before the form. One that
+// is not done, or waits for a parent, holds the form back.
+export const intygPending = (item: InboxDetail): boolean =>
+  item.documents.some(
+    (d) =>
+      d.doc_type !== "arsblankett" &&
+      (!["klar", "avfardad"].includes(d.status) || !!d.waiting_for?.length),
+  );
+
+// The keyboard chain of one rabbit's row (design brief 4): where the focus is
+// and what is chosen, and what a key does. Digits never choose in a text field.
+export type PaperField =
+  | "number"
+  | "val"
+  | "vikt"
+  | "ej_vagd"
+  | "hull"
+  | "month"
+  | "sold";
+export interface PaperState {
+  field: PaperField;
+  val: Val | null;
+}
+const VAL_KEYS: Record<string, Val> = { "1": "kvar", "2": "dod", "3": "sald" };
+const AFTER_VAL: Record<string, PaperField> = {
+  kvar: "vikt",
+  dod: "month",
+  sald: "sold",
+};
+export function paperKey(state: PaperState, key: string): PaperState {
+  const { field } = state;
+  if (field === "val" && key in VAL_KEYS) {
+    const val = VAL_KEYS[key];
+    return { field: AFTER_VAL[val], val };
+  }
+  if (key === "Enter" || key === "Tab") {
+    if (field === "number" && key === "Enter")
+      return { ...state, field: "val" };
+    if (field === "vikt") return { ...state, field: "ej_vagd" };
+    if (field === "ej_vagd") return { ...state, field: "hull" };
+    // the last field of a row: Enter starts the next row
+    if (key === "Enter" && ["hull", "month", "sold"].includes(field))
+      return { ...state, field: "number" };
+  }
+  return state;
+}
