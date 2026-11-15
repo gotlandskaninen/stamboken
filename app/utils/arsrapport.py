@@ -1395,7 +1395,9 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
     for rabbit, row in rows.items():
         entry, before = sub.rabbits.get(rabbit), before_entries.get(rabbit)
         if entry is None:
-            if row["state"] == "att_valja":
+            if (
+                row["state"] == "att_valja" and not sub.report["ending_genbank"]
+            ):  # 5.7: an ending genebank needs no choices
                 refusals.append(_refusal(rabbit, "inte_klar"))
             continue
         kept = access.editor and before is not None and before.val == "ej_angiven"

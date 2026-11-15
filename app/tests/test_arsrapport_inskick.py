@@ -128,6 +128,19 @@ class InskickTest(ArsrapportTest):
         )
         self.assertIn(a.id, held(self.gotland, self.h))
 
+    def test_ending_genebank_needs_no_choices(self):  # Jonas 2026-11-15, 5.7
+        a, b = self.rabbits(self.h, 2)
+        refused = self.skicka(self.body(self.kvar(a, vikt=2.8)))
+        self.assertEqual(refused.status_code, 422)
+        self.assertEqual([r["code"] for r in refused.get_json()["refusals"]], ["inte_klar"])
+        self.ok(self.body(self.kvar(a, vikt=2.8), ending_genbank=True, membership_after_end="kvar_utan_genbank"))
+        self.assertIn(a.id, held(self.gotland, self.h))
+        self.assertFalse(
+            db.HerdTracking.select()
+            .where(db.HerdTracking.individual == b.id, db.HerdTracking.kind == "ATTESTATION")
+            .exists()
+        )
+
     def test_measurements_are_added_not_replaced(self):
         a, b = self.rabbits(self.h, 2)
         june = db.Weight.create(individual=a, weight=3.1, weight_date=date(2025, 6, 1))
