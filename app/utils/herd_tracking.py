@@ -33,7 +33,7 @@ from utils.database import (
     ht_sort_key,
     lock_individuals,
 )
-from utils.mail import forget_recipient
+from utils.mail import forget_recipient, is_address
 
 UNPROMOTE_REASON = "avpromoverad"
 
@@ -1180,6 +1180,8 @@ def buyer_contact_fields(buyer):
         fields[key] = value or None
     if not fields["name"] or not fields["town"]:
         raise HerdTrackingInvalid("Ange köparens namn och ort.")
+    if fields["email"] and not is_address(fields["email"]):  # or the buyer's mails are cancelled when they go
+        raise HerdTrackingInvalid("Ange en e-postadress till köparen, bara adressen och bara en.")
     consent, optin = buyer.get("contact_consent", False), buyer.get("membership_optin", False)
     if not isinstance(consent, bool) or not isinstance(optin, bool):
         raise HerdTrackingInvalid("Köparens kryss ska vara ja eller nej.")

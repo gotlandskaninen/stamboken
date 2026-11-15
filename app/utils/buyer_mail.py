@@ -12,7 +12,15 @@ from zoneinfo import ZoneInfo
 from peewee import fn
 
 from utils import settings
-from utils.database import DB_PROXY, BuyerContact, DigitalCertificateV2, Individual, MailMessage
+from utils.database import (
+    DB_PROXY,
+    BuyerContact,
+    DigitalCertificateV2,
+    HerdTracking,
+    Individual,
+    MailMessage,
+    lock_individuals,
+)
 from utils.mail import address_hash, enqueue_mail, link_token, mail_kind, verify_link
 
 logger = logging.getLogger(__name__)
@@ -142,27 +150,68 @@ def _membership_mail(params):
     return {"buyer": _one_line(contact.name), "rabbit": _one_line(rabbit.name) or rabbit.number}
 
 
+def _same_buyer(contact_id):
+    """
+    The ids of the buyers with the address of buyer `contact_id`, that one included: a buyer of several rabbits
+    is one contact per sale. A purge may have taken the linked contact's own e-mail (the rabbit was sold on)
+    while a mail to it still holds the address's HMAC; the others are then found from that.
+    """
+    ids = {contact_id}
+    contact = BuyerContact.get_or_none(BuyerContact.id == contact_id)
+    if contact is None:
+        return ids
+    email = (contact.email or "").strip().lower()
+    if email:
+        same = BuyerContact.select(BuyerContact.id).where(fn.lower(fn.trim(BuyerContact.email)) == email)
+        return ids | {row.id for row in same}
+    sent_to = (
+        (MailMessage.recipient_kind == "buyer_contact")
+        & (MailMessage.recipient_id == contact_id)
+        & MailMessage.address_hash.is_null(False)
+    )
+    hashes = {row.address_hash for row in MailMessage.select(MailMessage.address_hash).where(sent_to)}
+    if hashes and settings.mail.link_secret:
+        others = BuyerContact.select(BuyerContact.id, BuyerContact.email).where(BuyerContact.email.is_null(False))
+        ids |= {other.id for other in others if address_hash(other.email) in hashes}
+    return ids
+
+
 def erase_by_link(token):
     """
     POST /api/v2/kopare/ta-bort: the buyer objects through the link in kopare.information, and every detail goes
     as when a manager erases the buyer, with the action "invandning" and no user. "removed" or "already_removed"
     for a genuine link; None for any other token, decided before the database is read, so the answer never tells
     whether an id exists. A buyer of several rabbits has one contact per sale: every contact with the same
-    address goes with the one in the link.
+    address goes with the one in the link (_same_buyer). HerdTrackingConflict when the queue or the buyer's
+    sales changed while the locks were taken: nothing is erased, and the buyer tries again.
     """
     contact_id = verify_link(ERASE_PURPOSE, token)
     if contact_id is None:
         return None
     # Imported here: both import utils.herd_tracking, which imports this module.
-    from utils.herd_tracking import delete_buyer_contacts  # pylint: disable=import-outside-toplevel
+    from utils.herd_tracking import (  # pylint: disable=import-outside-toplevel
+        QUEUE_CHANGED,
+        HerdTrackingConflict,
+        buyer_items,
+        delete_buyer_contacts,
+    )
     from utils.inbox_purge import remove_originals  # pylint: disable=import-outside-toplevel
 
+    def sales(ids):
+        return list(HerdTracking.select().where(HerdTracking.holder_contact.in_(ids)))
+
     with DB_PROXY.atomic():
-        ids = {contact_id}
-        contact = BuyerContact.get_or_none(BuyerContact.id == contact_id)
-        if contact is not None and contact.email and contact.email.strip():
-            same = fn.lower(fn.trim(BuyerContact.email)) == contact.email.strip().lower()
-            ids.update(row.id for row in BuyerContact.select(BuyerContact.id).where(same))
+        # The locks a correction takes, in its order (the queue's items, then the rabbits), as
+        # utils.buyer_contact.erase_buyer_contact: without them a correction that carries the buyer over to a new
+        # row commits in between, and that row loses its buyer without the mark that one was removed.
+        holding = sales(_same_buyer(contact_id))
+        items = buyer_items(holding, lock=True)
+        rabbits = {row.individual_id for row in holding}
+        lock_individuals(rabbits)
+        ids = _same_buyer(contact_id)  # again, under the locks: a correction may have put a new contact in
+        holding = sales(ids)
+        if not buyer_items(holding) <= items or not {row.individual_id for row in holding} <= rabbits:
+            raise HerdTrackingConflict(QUEUE_CHANGED)
         count, paths = delete_buyer_contacts(sorted(ids), "invandning", whole_items=True)
     remove_originals(paths)  # after the commit, as utils.buyer_contact.erase_buyer_contact
     return "removed" if count else "already_removed"

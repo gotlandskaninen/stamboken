@@ -6,6 +6,7 @@ never in a URL, so neither the request log nor an access log ever holds it.
 from extensions import limiter
 from flask import Blueprint, jsonify, request
 from utils.buyer_mail import erase_by_link
+from utils.herd_tracking import HerdTrackingConflict
 
 from .common import problem
 
@@ -26,7 +27,10 @@ def _no_store(response):
 @limiter.limit("10 per hour")
 def erase_buyer():
     body = request.get_json(silent=True)
-    result = erase_by_link(body.get("token") if isinstance(body, dict) else None)
+    try:
+        result = erase_by_link(body.get("token") if isinstance(body, dict) else None)
+    except HerdTrackingConflict as busy:  # a correction or the queue got in between: nothing was erased
+        return problem(409, "Försök igen", str(busy))
     if result is None:  # forged, malformed or for another purpose: one answer, whatever id it names
         return problem(404, "Hittades inte", GONE)
     return jsonify({"result": result})

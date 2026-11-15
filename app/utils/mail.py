@@ -201,6 +201,11 @@ def address_hash(address):
     return _mac(f"addr:{_normalize(address) or ''}").hexdigest()
 
 
+def is_address(raw):
+    """Whether the queue can send to `raw` as it stands: one address, nothing else in the field."""
+    return _normalize(raw) is not None
+
+
 _ADDRESS = re.compile(r"[^@\s<>,;\"']+@[^@\s<>,;\"']+")
 _ADDRESS_LIKE = re.compile(r"<?[^\s<>@]*@[^\s<>]*>?")
 

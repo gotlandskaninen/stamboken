@@ -18,7 +18,7 @@ import utils.database as db  # noqa: E402
 import utils.mail as mail  # noqa: E402
 import utils.settings as settings  # noqa: E402
 from herdbook import limiter  # noqa: E402
-from utils import buyer_contact  # noqa: E402
+from utils import buyer_contact, buyer_mail  # noqa: E402
 from utils.buyer_mail import ERASE_PURPOSE, queue_buyer_mails  # noqa: E402
 from utils.herd_tracking import (  # noqa: E402
     HerdTrackingConflict,
@@ -80,6 +80,17 @@ class TestInformationQueued(BuyerMailTest):
             ("kopare.information", "buyer_contact", sale.holder_contact_id, self.genebanks[0].id, 1, "T"),
         )
         self.assertEqual(row.params, {"buyer_contact_id": sale.holder_contact_id, "individual_id": self.rabbit.id})
+
+    def test_an_address_the_queue_cannot_send_to_is_refused_with_the_sale(self):
+        for typed in ("zelda @example.org", "zelda@example.org, per@example.org", "Zelda <zelda@example.org>", "zelda"):
+            with self.subTest(typed):
+                response = self._sell(buyer={**WITH_EMAIL, "email": typed})
+                self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+                self.assertIn("e-postadress", response.get_data(as_text=True))
+        self.assertEqual((self.mails(), db.BuyerContact.select().count()), ([], 0))
+        self._sale(
+            {**WITH_EMAIL, "email": "  Zelda@Example.ORG "}
+        )  # spaces around it are the typing's, not the address's
 
     def test_a_rolled_back_sale_queues_nothing(self):
         with self.assertRaises(RuntimeError), db.DB_PROXY.atomic():
@@ -442,6 +453,39 @@ class TestEraseLink(PurgeTest):
         self.assertEqual(sorted(row[0] for row in self.deletions()), sorted([str(self.contact_id), str(same)]))
         self.assertEqual(self.erase(self.token).get_json(), {"result": "already_removed"})
         self.assertEqual([row.id for row in db.BuyerContact.select()], [other])
+
+    def test_the_link_finds_the_other_contacts_after_its_own_address_was_purged(self):
+        """The rabbit was sold on, so purge_sold_on took the linked contact's e-mail; the sent mail knows it."""
+        consent = {"contact_consent_at": datetime.now(timezone.utc), "created_by_user": self.manager}
+        purge_at = db.BuyerContact.purge_at_for(date.today())
+        same = db.BuyerContact.create(name="Zelda", town="Visby", email=EMAIL, purge_at=purge_at, **consent).id
+        other = db.BuyerContact.create(
+            name="Per", town="Visby", email="per@example.org", purge_at=purge_at, **consent
+        ).id
+        db.MailMessage.update(address_hash=mail.address_hash(EMAIL)).execute()
+        db.BuyerContact.update(email=None).where(db.BuyerContact.id == self.contact_id).execute()
+        self.assertEqual(self.erase(self.token).get_json(), {"result": "removed"})
+        self.assertEqual([row.id for row in db.BuyerContact.select()], [other])
+        self.assertEqual(sorted(row[0] for row in self.deletions()), sorted([str(self.contact_id), str(same)]))
+
+    def test_a_sale_that_appears_while_the_locks_are_taken_stops_the_erasure(self):
+        """A new sale to the address, of a rabbit this erasure has not locked: nothing goes; the buyer tries again."""
+        late = db.Individual.get(db.Individual.number != "G1-2112")
+        gx1 = db.Herd.get(db.Herd.herd == "GX1")
+        real = buyer_mail._same_buyer
+        calls = []
+
+        def meanwhile(contact_id):
+            if calls:  # between the two reads, as if it committed while the erasure waited for its locks
+                record_herd_tracking(late, gx1, "2026-01-02", "TRANSFER", self.manager, buyer=WITH_EMAIL)
+            calls.append(contact_id)
+            return real(contact_id)
+
+        with mock.patch.object(buyer_mail, "_same_buyer", meanwhile):
+            response = self.erase(self.token)
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.deletions(), [])
+        self.assertEqual(db.BuyerContact.select().count(), 1)  # the late sale rolled back with the erasure
 
     def test_any_other_token_changes_nothing_and_answers_alike(self):
         mac = self.token.split(".")[1]
