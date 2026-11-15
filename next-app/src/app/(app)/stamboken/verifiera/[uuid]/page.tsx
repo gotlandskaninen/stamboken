@@ -76,6 +76,8 @@ export default async function VerifieraPage({
 
   const isIdCard = data.certificate_type === "id_card";
   const superseded = !data.is_current;
+  // No date: no newer digital certificate. A paper one replaced it, or its number was removed.
+  const replaced = data.replaced_by_date !== null;
 
   if (superseded) {
     return (
@@ -83,11 +85,12 @@ export default async function VerifieraPage({
         <main className="vf-body">
           <span className="badge badge-warn">
             <span className="dot" />
-            Ersatt intyg
+            {replaced ? "Ersatt intyg" : "Gäller inte längre"}
           </span>
-          <h1>Äkta, men ersatt</h1>
+          <h1>
+            {replaced ? "Äkta, men ersatt" : "Äkta, men gäller inte längre"}
+          </h1>
           <p className="sub">
-            {/* No date: no newer digital certificate, a paper one replaced it or the number was removed. */}
             {data.replaced_by_date ? (
               <>
                 Intyget är äkta och utfärdat i Stamboken, men ett{" "}
@@ -136,7 +139,9 @@ export default async function VerifieraPage({
           </div>
         </main>
         <footer className="vf-foot">
-          Be säljaren om den senaste versionen av intyget.
+          {replaced
+            ? "Be säljaren om den senaste versionen av intyget."
+            : "Be säljaren om kaninens gällande intyg."}
           <span className="tok">token {uuid}</span>
         </footer>
       </>

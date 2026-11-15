@@ -654,6 +654,8 @@ visar ett av tre besked:
   **Datum**. **Visa kaninens sida i Stamboken →** kräver inloggning.
 - **Äkta, men ersatt** – ett nyare intyg har utfärdats för kaninen. Be säljaren om
   den senaste versionen.
+- **Äkta, men gäller inte längre** – intyget har ersatts av ett pappersintyg eller
+  dragits in. Be säljaren om kaninens gällande intyg.
 - **Intyget hittades inte** – länken matchar inget intyg. Skanna igen eller kontakta
   föreningen med **Kontakta Föreningen Gotlandskaninen**.
 
