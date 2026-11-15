@@ -3,9 +3,12 @@
 Manualen är `next-app/public/stamboken/manual/USER_MANUAL.md`, och skärmbilderna
 ligger i samma katalog. Hemsidan visar den på `/stamboken-online/manual`: sidan läser
 filen vid varje anrop, så en ändrad manual syns efter nästa release utan något extra
-steg. Länkar inom manualen skrivs som GitHubs rubrikankare (`#logga-in`); ett
-vitest-test (`src/__tests__/lib/headingSlug.test.ts`) kontrollerar att varje sådan
-länk har en rubrik. Tre saker håller manualen i takt med gränssnittet.
+steg. Länkar inom manualen skrivs som GitHubs rubrikankare (`#logga-in`).
+Playwright-testet `e2e/public-manual.spec.ts` (projektet public-tests, körs i
+Actions) kontrollerar på den renderade sidan att varje sådan länk, och varje länk
+från Kom igång in i manualen, landar på en rubrik. Länkar till föreningens webbplats
+skrivs med full adress (`https://gotlandskaninen.se/...`) så att de fungerar på
+GitHub; sidan gör dem relativa. Tre saker håller manualen i takt med gränssnittet.
 
 ## 1. Täckningsgrind: varje sida har ett avsnitt
 

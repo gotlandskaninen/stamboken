@@ -1,6 +1,6 @@
 # Användarmanual – Stamboken Online
 
-> **Gäller:** nya Stamboken (Next.js-gränssnittet) på gotlandskaninen.se/stamboken.
+> **Gäller:** nya Stamboken på föreningens webbplats.
 > **Senast kontrollerad mot gränssnittet:** 2026-10-29.
 > Skärmbilderna är tagna i en lokal testmiljö med påhittade kaniner och besättningar.
 
@@ -55,7 +55,8 @@ på skärmen) och slutar med **Skärmarna** (vad varje sida innehåller).
 
 <!-- route: /auth/sign-in -->
 
-Gå till gotlandskaninen.se/stamboken. Är du inte inloggad kommer du till inloggningssidan.
+Klicka på **Stamboken** uppe till höger på föreningens webbplats och sedan på
+**Logga in i Stamboken**. Är du inte inloggad kommer du till inloggningssidan.
 
 Har du ett föreningskonto (en adress som slutar på @gotlandskaninen.se) loggar du in med Google:
 

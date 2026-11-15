@@ -45,7 +45,7 @@ const STEPS: Array<{
   },
   {
     title: "Logga in",
-    text: "Gå till gotlandskaninen.se/stamboken och klicka på Logga in med ditt föreningskonto (Google). Välj föreningskontot i Googles kontoväljare, inte ett privat Gmail-konto. Har du inget föreningskonto loggar du in med användarnamn och lösenord.",
+    text: "Klicka på Stamboken uppe till höger och sedan på Logga in i Stamboken. Där klickar du på Logga in med ditt föreningskonto (Google) och väljer föreningskontot i Googles kontoväljare, inte ett privat Gmail-konto. Har du inget föreningskonto loggar du in med användarnamn och lösenord.",
     link: { href: `${MANUAL_PATH}#logga-in`, label: "Logga in steg för steg" },
   },
   {

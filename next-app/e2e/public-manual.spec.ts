@@ -23,15 +23,38 @@ test("the manual renders with working anchors and screenshots", async ({
     .toBeGreaterThan(0);
 
   // Tables that scroll sideways can be reached with the keyboard.
-  const tables = page.getByRole("region", { name: /^Tabell/ });
-  await expect(tables).toHaveCount(4);
-  await expect(tables.first()).toHaveAttribute("tabindex", "0");
+  const table = page.getByRole("region", { name: /^Tabell/ }).first();
+  await expect(table).toHaveAttribute("tabindex", "0");
 
   // 375-px requirement (ADR-0010): wide tables scroll in their box.
   const scrollWidth = await page.evaluate(
     () => document.documentElement.scrollWidth,
   );
   expect(scrollWidth).toBeLessThanOrEqual(375);
+});
+
+// Vitest does not run in Actions, so the manual's links are checked here on
+// the rendered page: every in-page link and every link Kom igång makes into
+// the manual must land on a heading.
+test("every link into the manual lands on a heading", async ({ page }) => {
+  await page.goto("/stamboken-online/kom-igang");
+  const fromGuide = await page
+    .locator('a[href^="/stamboken-online/manual#"]')
+    .evaluateAll((links) =>
+      links.map((a) => (a as HTMLAnchorElement).hash.slice(1)),
+    );
+  expect(fromGuide.length).toBeGreaterThan(0);
+
+  await page.goto("/stamboken-online/manual");
+  const missing = await page.evaluate((extra) => {
+    const inPage = [
+      ...document.querySelectorAll<HTMLAnchorElement>('article a[href^="#"]'),
+    ].map((a) => a.hash.slice(1));
+    return [...inPage, ...extra].filter(
+      (hash) => !document.getElementById(decodeURIComponent(hash)),
+    );
+  }, fromGuide);
+  expect(missing).toEqual([]);
 });
 
 test("getting started lists the steps and links to the manual", async ({

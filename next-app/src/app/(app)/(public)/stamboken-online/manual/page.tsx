@@ -98,6 +98,13 @@ function components(imageSizes: Map<string, Size>): Components {
         />
       );
     },
+    // The manual links to the site with its full address so the link also
+    // works on GitHub; here it stays on whichever host serves the page.
+    a: ({ href, children }) => (
+      <a href={href?.replace(/^https:\/\/gotlandskaninen\.se(?=\/)/, "")}>
+        {children}
+      </a>
+    ),
     // Wide tables scroll inside their box, not the page (ADR-0010). The box
     // takes focus so a keyboard can scroll it too.
     table: ({ children }) => (
