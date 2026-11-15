@@ -40,10 +40,23 @@ test.describe("Access rules on the new frontend (ACCESS_RULES=enforce)", () => {
     await expect(page.getByText(BANNER_TEXT)).toBeVisible();
 
     // The demo API answers: server-rendered rows on a page that reads data.
+    const prodListRequests: string[] = [];
+    page.on("request", (req) => {
+      if (/\/api\/individuals/.test(req.url())) prodListRequests.push(req.url());
+    });
     await page.goto("/stamboken/alla-kaniner");
     await expect(page.locator(".MuiDataGrid-row").first()).toBeVisible({
       timeout: 30000,
     });
+
+    // The browser's own list request, which the first render skips: it must go
+    // to the demo API too, or the next search would be refused by production.
+    const clientList = page.waitForResponse(/\/api-test\/individuals/, {
+      timeout: 15000,
+    });
+    await page.locator('input[placeholder*="individnummer"]').fill("G");
+    expect((await clientList).status()).toBe(200);
+    expect(prodListRequests).toEqual([]);
   });
 
   test("the same account with sb_mode=prod set by hand gets no production data", async ({
@@ -55,7 +68,15 @@ test.describe("Access rules on the new frontend (ACCESS_RULES=enforce)", () => {
       { name: "sb_mode", value: "prod", url: "https://localhost/" },
     ]);
 
+    // The list's own request to production is the one refused, with the rules'
+    // text: the error text below shows for any failure, a 502 included.
+    const listRefused = page.waitForResponse(/\/api\/individuals/, {
+      timeout: 30000,
+    });
     await page.goto("/stamboken/alla-kaniner");
+    const refused = await listRefused;
+    expect(refused.status()).toBe(403);
+    expect((await refused.json()).message).toBe(NOT_PROMOTED);
     await expect(
       page.getByText("Kunde inte ladda kaniner. Försök igen senare."),
     ).toBeVisible();
@@ -77,7 +98,8 @@ test.describe("Access rules on the new frontend (ACCESS_RULES=enforce)", () => {
       timeout: 30000,
     });
 
-    const res = await page.request.get("/api/v2/my-membership");
-    expect(res.status()).not.toBe(403);
+    // A production address the rules guard, answered in full.
+    const res = await page.request.get("/api/genebanks");
+    expect(res.status()).toBe(200);
   });
 });
