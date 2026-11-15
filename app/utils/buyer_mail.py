@@ -36,11 +36,13 @@ _MONTHS = (
 )
 
 
-def queue_buyer_mails(contact, sale):
+def queue_buyer_mails(contact, sale, replaces=None):
     """
     For a buyer just created with `sale` (its TRANSFER row) who gave an e-mail: kopare.information, and
     kopare.medlemskap with the yes to membership contact. A corrected sale keeps its buyer, and the dedupe_key
-    holds if anything queues again; the notice is one per sale, the invitation one per address.
+    holds if anything queues again; the notice is one per sale, the invitation one per address. `replaces` is
+    the contact this one takes the place of in a correction: that contact is erased with its mails, so its
+    invitation, if it still waits and is to the same address, goes over to this one.
     """
     if not contact.email:
         return
@@ -52,10 +54,16 @@ def queue_buyer_mails(contact, sale):
             who = address_hash(contact.email)
         key = f"{kind}:{who}"
         queued = enqueue_mail(kind, "buyer_contact", contact.id, params, genebank=sale.herd.genebank_id, dedupe_key=key)
-        if queued is None and kind == "kopare.medlemskap":
-            # The one invitation follows the newest contact with the address: a correction that replaces the
-            # buyer erases the old contact, and forget_recipient would cancel the invitation with it.
-            MailMessage.update(recipient_id=contact.id, params=params).where(MailMessage.dedupe_key == key).execute()
+        if queued is None and kind == "kopare.medlemskap" and replaces:
+            # Only that contact's own, and only while no sender has claimed it: another sale's invitation to
+            # the same address stays with its sale, and one sent or cancelled stays as it is.
+            MailMessage.update(recipient_id=contact.id, params=params).where(
+                (MailMessage.dedupe_key == key)
+                & (MailMessage.recipient_kind == "buyer_contact")
+                & (MailMessage.recipient_id == replaces)
+                & (MailMessage.status == "queued")
+                & MailMessage.claim_token.is_null()
+            ).execute()
 
 
 def _one_line(value):

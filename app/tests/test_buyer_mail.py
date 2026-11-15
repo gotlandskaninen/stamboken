@@ -21,6 +21,7 @@ from herdbook import limiter  # noqa: E402
 from utils import buyer_contact  # noqa: E402
 from utils.buyer_mail import ERASE_PURPOSE, queue_buyer_mails  # noqa: E402
 from utils.herd_tracking import (  # noqa: E402
+    HerdTrackingConflict,
     attach_buyer,
     correct_herd_tracking,
     delete_buyer_contacts,
@@ -117,6 +118,44 @@ class TestInformationQueued(BuyerMailTest):
         self.assertEqual((row.status, row.recipient_id), ("queued", written.holder_contact_id))
         self.assertEqual(row.params["buyer_contact_id"], written.holder_contact_id)
         self.assertEqual(len(self.send()), 2)  # the new contact's notice and the invitation
+
+    def test_another_sale_to_the_same_address_leaves_the_invitation_with_its_own_sale(self):
+        optin = {**WITH_EMAIL, "membership_optin": True}
+        first = self._sale(optin)
+        other = self.individuals[1]
+        second = record_herd_tracking(other, self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=optin)
+        (row,) = self.mails("kopare.medlemskap")
+        self.assertEqual(row.recipient_id, first.holder_contact_id)
+        delete_buyer_contacts([second.holder_contact_id], "invandning", None)  # the second sale's buyer goes
+        (row,) = self.mails("kopare.medlemskap")
+        self.assertEqual((row.status, row.recipient_id), ("queued", first.holder_contact_id))
+
+    def corrected_with_invitation(self, **fields):
+        """A sale whose invitation is set to `fields`, then corrected with the buyer typed again."""
+        optin = {**WITH_EMAIL, "membership_optin": True}
+        sale = self._sale(optin)
+        db.MailMessage.update(**fields).where(db.MailMessage.kind == "kopare.medlemskap").execute()
+        event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", "buyer": optin}
+        correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
+        (row,) = self.mails("kopare.medlemskap")
+        return sale.holder_contact_id, row
+
+    def test_a_correction_leaves_an_invitation_a_sender_has_claimed(self):
+        old, row = self.corrected_with_invitation(status="sending", claim_token=uuid.uuid4())
+        self.assertEqual((row.status, row.recipient_id), ("cancelled", old))  # the old contact's, erased with it
+
+    def test_a_correction_leaves_an_invitation_already_sent(self):
+        old, row = self.corrected_with_invitation(status="sent")
+        self.assertEqual((row.status, row.recipient_id), ("sent", old))
+
+    def test_a_correction_never_mails_a_buyer_who_was_removed(self):
+        sale = self._sale(WITH_EMAIL)
+        delete_buyer_contacts([sale.holder_contact_id], "invandning", None)
+        mails = len(self.mails())
+        event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", "buyer": WITH_EMAIL}
+        with self.assertRaises(HerdTrackingConflict):
+            correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
+        self.assertEqual((len(self.mails()), db.BuyerContact.select().count()), (mails, 0))
 
     def test_a_buyer_a_proof_adds_to_a_sale_registered_without_one_is_mailed(self):
         sale = record_herd_tracking(self.rabbit, self.gx1, SALE_DATE, "TRANSFER", self.manager)  # the legacy form

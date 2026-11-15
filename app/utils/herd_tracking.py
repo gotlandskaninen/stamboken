@@ -884,7 +884,9 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
                     raise
                 raise HerdTrackingConflict(BUYER_GONE) from exc
             if event["buyer"]:
-                queue_buyer_mails(row.holder_contact, row)
+                queue_buyer_mails(
+                    row.holder_contact, row, replaces=pairs[index].holder_contact_id if index in pairs else None
+                )
             if index in carried:  # a corrected sale's buyer: five years from the sale's corrected date
                 BuyerContact.update(purge_at=BuyerContact.purge_at_for(event["date"])).where(
                     BuyerContact.id == carried[index]
