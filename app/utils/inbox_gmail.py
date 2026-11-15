@@ -448,10 +448,14 @@ def authenticated(msg, sender):
     Did Gmail authenticate the sender's domain? Only the topmost Authentication-Results counts, the one the
     receiving Google server adds (anything below it may come from the sender), and only an SPF or DKIM pass for
     the From address's domain, a parent or a subdomain of it: a pass for another domain says nothing about
-    From. Quoted strings and comments go first, as they can hold the envelope sender's own text.
+    From. Quoted strings and comments go first, as they can hold the envelope sender's own text; an encoded
+    word (RFC 2047) anywhere in the header fails it.
     """
     headers = msg.get_all("Authentication-Results") or []
     if not headers or not sender:
+        return False
+    raw = next(value for name, value in msg.raw_items() if name.lower() == "authentication-results")
+    if "=?" in raw:  # an encoded word in the envelope sender could decode into a result of its own
         return False
     top = _COMMENT.sub(" ", _QUOTED.sub(" ", " ".join(str(headers[0]).split())))
     server, _, results = top.partition(";")

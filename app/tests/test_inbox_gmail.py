@@ -6,6 +6,8 @@ isort:skip_file
 """
 
 import base64
+import email
+import email.policy
 import errno
 import io
 import os
@@ -768,6 +770,21 @@ class TestAuthenticationResults(InboxTest):
         ):
             with self.subTest(header):
                 self.assertFalse(self.check(header))
+
+    def test_an_encoded_word_in_the_header_does_not_count(self):
+        # =?utf-8?q?...?= decodes to "; spf=pass smtp.mailfrom=example.org", a result the envelope sender wrote
+        forged = "mx.google.com; spf=fail smtp.mailfrom==?utf-8?q?x=3Bspf=3Dpass_smtp.mailfrom=3Dexample.org?="
+        raw = f"Authentication-Results: {forged}\r\nFrom: a@example.org\r\n\r\n".encode()
+        msg = email.message_from_bytes(raw, policy=email.policy.default)
+        self.assertFalse(inbox_gmail.authenticated(msg, SENDER))
+        self.assertTrue(
+            inbox_gmail.authenticated(
+                email.message_from_bytes(
+                    f"Authentication-Results: mx.google.com; {PASS}\r\n\r\n".encode(), policy=email.policy.default
+                ),
+                SENDER,
+            )
+        )
 
 
 class TestSync(GmailTest):
