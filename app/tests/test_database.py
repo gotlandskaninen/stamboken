@@ -1078,7 +1078,7 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertEqual(db.Membership.get_by_id(ms.id).billing_name, "Djurparken i Exempelby")
 
         # Running it again on the migrated schema changes nothing.
-        db.SchemaHistory.delete().where(db.SchemaHistory.version == 37).execute()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 37).execute()
         db.check_migrations()
         self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
 

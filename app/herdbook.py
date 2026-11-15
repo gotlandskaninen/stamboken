@@ -254,6 +254,15 @@ def _purge_command_free_text():
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
 
+def _purge_audit_ip():
+    """Nightly leader job beside _purge_command_free_text: IP addresses leave audit_log after 12 months."""
+    try:
+        count = da.purge_audit_ip(datetime.datetime.now(datetime.timezone.utc))
+        APP.logger.info("Removed the IP address from %s audit log rows", count)
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
 # Initialize security packages
 # Flask-Talisman: Add security headers
 Talisman(
@@ -2950,6 +2959,17 @@ def initialize_app():
             hour=3,
             minute=30,
             id="command_free_text_purge",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        scheduler.add_job(
+            _purge_audit_ip,
+            "cron",
+            hour=3,
+            minute=45,
+            id="audit_ip_purge",
             max_instances=1,
             coalesce=True,
             misfire_grace_time=3600,
