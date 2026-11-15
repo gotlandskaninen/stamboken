@@ -314,6 +314,7 @@ def record_herd_tracking(
         done = _operation_rows([individual_id], op)
         if done:
             return next((r for r in done if r.operation_id == op), done[0])
+        _reject_buyer_name([notes], [individual_id], [contact_fields["name"]] if contact_fields else ())
         before = _active_rows(individual_id)
         existing_birth = next((r for r in before if r.kind == "BIRTH"), None)
         if kind == "BIRTH" and existing_birth is not None:
@@ -1036,10 +1037,18 @@ def buyer_contact_fields(buyer):
     return fields
 
 
+def _name_patterns(name):
+    """The whole name, and each word of it with at least three letters, as whole words with a genitive s."""
+    words = re.findall(r"\w+", name)
+    parts = [r"\s+".join(map(re.escape, words))] + [re.escape(w) for w in words if len(w) >= 3]
+    return [re.compile(rf"\b{part}s?\b", re.IGNORECASE) for part in parts if part]
+
+
 def _reject_buyer_name(texts, individual_ids, names=()):
     """
-    No buyer's name in what a user types (it lives forever in audit_log): any word of the name of a buyer the
-    rabbits' rows hold, or of `names`, as a whole word in any case. "Anna" stops "Såld till anna", not "annan".
+    No buyer's name in what a user types (it lives forever in audit_log): the whole name of a buyer the rabbits'
+    rows hold, or of `names`, or a word of it of three letters or more, in any case and also in the genitive.
+    "Anna" stops "Annas köpare", not "annan"; "de" in "Kim de Vries" stops nothing alone.
     """
     texts = [text for text in texts if text]
     if not texts:
@@ -1047,9 +1056,8 @@ def _reject_buyer_name(texts, individual_ids, names=()):
     held = HerdTracking.select(HerdTracking.holder_contact).where(HerdTracking.individual.in_(individual_ids))
     stored = BuyerContact.select(BuyerContact.name).where(BuyerContact.id.in_(held))
     for name in [*names, *(name for (name,) in stored.tuples())]:
-        for word in re.findall(r"\w{2,}", name):
-            if any(re.search(rf"\b{re.escape(word)}\b", text, re.IGNORECASE) for text in texts):
-                raise HerdTrackingInvalid(BUYER_PRIVACY_HELP)
+        if any(pattern.search(text) for pattern in _name_patterns(name) for text in texts):
+            raise HerdTrackingInvalid(BUYER_PRIVACY_HELP)
 
 
 def delete_buyer_contacts(contact_ids, action, user=None):

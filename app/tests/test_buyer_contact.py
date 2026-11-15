@@ -441,16 +441,22 @@ class TestVoid(BuyerBase):
         self.assertIsNotNone(self._contact(self.contact_id))
 
     def test_the_name_guard_takes_whole_words_of_typed_text_only(self):
-        db.BuyerContact.update(name="Anna Berg").where(db.BuyerContact.id == self.contact_id).execute()
-        with self.assertRaises(HerdTrackingInvalid):
-            void_herd_tracking(self.sale.id, self.owner, "Såld till Anna")
+        db.BuyerContact.update(name="Anna de Berg").where(db.BuyerContact.id == self.contact_id).execute()
+        for reason in ("Såld till Anna", "Annas kanin", "såld till anna de berg"):
+            with self.subTest(reason=reason), self.assertRaises(HerdTrackingInvalid):
+                void_herd_tracking(self.sale.id, self.owner, reason)
+        event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", "notes": "köpt av anna"}
         with self.assertRaises(HerdTrackingInvalid):  # a correction's notes too
-            event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", "notes": "köpt av anna"}
             correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [event], "Fel datum")
+        op, _written = self._correct_date()
         with self.assertRaises(HerdTrackingInvalid):  # and an undo's reason
-            op, _written = self._correct_date()
             undo_herd_tracking_operation(op, self.manager, "Anna ville inte")
-        void_herd_tracking(self._latest().id, self.manager, "Såld till annan köpare")  # "annan" is no "Anna"
+        with self.assertRaises(HerdTrackingInvalid):  # and a sale's note, such as a genebank change's reason
+            record_herd_tracking(self.rabbit, self.herds[2], "2022-01-01", "TRANSFER", self.admin, notes="Bergs fel")
+        # "annan" is no "Anna", and "de" alone is too short to be a name.
+        latest = self._latest().id
+        void_herd_tracking(latest, self.manager, "Såld till annan köpare, de ville inte")
+        self.assertIsNotNone(db.HerdTracking.get_by_id(latest).voided_at)
 
     def test_a_system_reason_is_never_checked(self):
         db.BuyerContact.update(name="Avpromoverad").where(db.BuyerContact.id == self.contact_id).execute()
