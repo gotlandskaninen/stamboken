@@ -1268,9 +1268,11 @@ def diff(cur, want, last, prev_entry=None, entry=None) -> tuple[list[Effect], li
         return [e for e in effects if e.kind in ("attest", "death", "transfer")]
 
     gone = [c for c in rows(cur) if c not in want or (fixed and c.kind == "transfer")]
-    # A 31/12 measurement is written while the herd holds the rabbit, so the report's later sale comes off first.
+    # A 31/12 measurement is written while the herd holds the rabbit, so the report's later sale comes off first;
+    # one outside the genebank stays with its buyer, and apply_diff writes the measurement directly (Opus 2).
     if any((e in cur) != (e in want) for e in cur + want if e.kind in ("weight", "bodyfat")):
-        gone += [c for c in cur if c.kind == "transfer" and c.date > last]
+        later = [c for c in cur if c.kind == "transfer" and c.date > last]
+        gone += [c for c in later if c.value[0] not in OUTSIDE_GENEBANK_HERDS]
     cut = min((order(c, last) for c in gone), default=None)
     remove = [c for c in rows(cur) if cut is not None and order(c, last) >= cut]
     add = [w for w in rows(want) if w not in cur or (cut is not None and order(w, last) >= cut)]
@@ -1983,7 +1985,8 @@ def apply_diff(report, herd, user, grant, rabbit_id, want: list[Effect], prev_en
     genebank takes its buyer with it (kopare's _drop_orphan_buyers). Refusals raise; the caller holds the locks.
     Returns the added measurements, as _write does.
     """
-    remove, add = diff(current(report, rabbit_id), want, last, prev_entry, entry)
+    cur = current(report, rabbit_id)
+    remove, add = diff(cur, want, last, prev_entry, entry)
     ops, note = frozenset(report_ops(report)), reason or REPORT_UNDO_REASON
     for c in sorted(remove, key=lambda e: order(e, last), reverse=True):
         if c.kind in ROW_KINDS:
@@ -1996,7 +1999,27 @@ def apply_diff(report, herd, user, grant, rabbit_id, want: list[Effect], prev_en
             execute(user, rabbit_id, lambda ctx, undo=undo: undo, grant=ReportGrant(grant.inbox_grant, report_ops=ops))
         else:
             (Weight if c.kind == "weight" else Bodyfat).delete_by_id(c.ref)
-    return _write(user, rabbit_id, add, herd, report, entry, grant, last)
+    added = []
+    # Opus 2: the report's sale outside the genebank stays (diff), so the rabbit is in GX1/MX1, where execute lets
+    # only an editor in. Its 31/12 measurement goes in directly then, as one is deleted above: the report's right was
+    # checked at report level (the herd held it on 31/12), and SetMeasurements logs no command.
+    if any(c.kind == "transfer" and c.value[0] in OUTSIDE_GENEBANK_HERDS and c not in remove for c in cur):
+        for e in [e for e in add if e.kind in MEASUREMENTS and not _measured(e, rabbit_id)]:
+            if e.kind == "weight":
+                row = Weight.create(individual=rabbit_id, weight=e.value[0], weight_date=e.date)
+            else:
+                row = Bodyfat.create(individual=rabbit_id, bodyfat=e.value[0], bodyfat_date=e.date)
+            added.append(
+                {
+                    "individual_id": rabbit_id,
+                    "kind": e.kind,
+                    "id": row.id,
+                    "date": e.date.isoformat(),
+                    "value": e.value[0],
+                }
+            )
+        add = [e for e in add if e.kind not in MEASUREMENTS]
+    return added + _write(user, rabbit_id, add, herd, report, entry, grant, last)
 
 
 def _cannot(refusals, detail="Rapporten kan inte skickas."):

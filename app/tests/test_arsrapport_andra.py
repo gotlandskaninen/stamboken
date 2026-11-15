@@ -15,6 +15,7 @@ from unittest import mock
 import utils.arsrapport as arsrapport
 import utils.database as db
 import utils.mail as mail
+from playhouse.shortcuts import model_to_dict
 from utils.database import coerce_date
 from utils.herd_tracking import (
     DATE_BEFORE_LATEST,
@@ -463,6 +464,30 @@ class AndraTest(ArsrapportTest):
         weights = [(coerce_date(w.weight_date), round(w.weight, 2)) for w in db.Weight.filter(individual=a)]
         self.assertEqual(weights, [(LAST, 3.0)])
         self.assertEqual([b.bodyfat for b in db.Bodyfat.filter(individual=a)], ["normal"])
+
+    def test_measurement_change_after_a_january_sale_outside(self):  # Opus 2: the sale and its buyer stay
+        (a,) = self.rabbits(self.h, 1)
+        key, sold = self.sald(a, "utanfor", 2026, 1, 5, kopare=BUYER)
+        rid = self.ok(self.body((key, {**sold, "vikt": 2.8})))["report_id"]
+        (sale,), (buyer,) = rows_of(a, "TRANSFER"), db.BuyerContact.select()
+        stored = {**sold, "sald": {**sold["sald"], "kopare": None}}  # as the submission keeps it: no buyer
+        for revision, change in ((1, {"vikt": 3.0}), (2, {"vikt": 3.0, "hull": "normal"})):  # a weight, then hull
+            body = self.body((key, {**stored, **change}), revision=revision)
+            dry = self.api("POST", "/besattning/G9001/2025/torrkorning", **body).get_json()
+            self.assertEqual((dry["ok"], dry["refusals"]), (True, []))
+            self.ok(body)
+        self.assertEqual([(row.id, row.voided_at) for row in rows_of(a, "TRANSFER")], [(sale.id, None)])
+        self.assertEqual(db.HerdTracking.get_by_id(sale.id).holder_contact_id, buyer.id)
+        self.assertEqual(
+            [model_to_dict(row, recurse=False) for row in db.BuyerContact.select()],
+            [model_to_dict(buyer, recurse=False)],
+        )
+        weights = [(w.id, coerce_date(w.weight_date), round(w.weight, 2)) for w in db.Weight.filter(individual=a)]
+        self.assertEqual([weight[1:] for weight in weights], [(LAST, 3.0)])
+        self.assertEqual([b.bodyfat for b in db.Bodyfat.filter(individual=a)], ["normal"])
+        self.assertEqual([m["id"] for m in self.added(rid)][-1], weights[0][0])  # the report's own, for Dra tillbaka
+        self.withdrawn(3)
+        self.assertFalse(db.Weight.filter(individual=a).exists() or db.Bodyfat.filter(individual=a).exists())
 
     def test_refused_write_at_andra_rolls_back(self):  # U8 at Skicka, for what the dry run cannot see
         a, b = self.rabbits(self.h, 2)
