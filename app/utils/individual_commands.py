@@ -638,17 +638,22 @@ def _genebank_correction(ctx, from_herd, to_herd, reason):
     return note
 
 
+BUYER_REQUIRED = "Ange köparens namn och ort för en försäljning utanför föreningen."
+
+
 @dataclass(frozen=True)
 class TransferIndividual(PolicyCommand):
     """
     A sale or move out of the holder's herd; into another genebank an admin's correction (IR-32, IR-54). On a sale
-    to GX1/MX1, `buyer` is the buyer outside the association (herd_tracking.buyer_contact_fields), never logged.
+    to GX1/MX1, `buyer` is the buyer outside the association (herd_tracking.buyer_contact_fields), never logged,
+    and required (ADR-0016), except on the legacy app's form, which cannot send one (`legacy`).
     """
 
     herd: object
     date: str
     reason: str | None = None
     buyer: dict | None = None
+    legacy: bool = False
     apply_rank = 70
     policy_stage = None  # asked in apply, after the measurements are written (IR-52)
 
@@ -660,6 +665,8 @@ class TransferIndividual(PolicyCommand):
         target = _target(self.herd)
         self.authorize(ctx)
         holder = _holder(ctx)
+        if target.herd in OUTSIDE_GENEBANK_HERDS and self.buyer is None and not self.legacy:
+            raise HerdTrackingInvalid(BUYER_REQUIRED)
         note = None
         if target.genebank_id != holder.genebank_id:
             note = _genebank_correction(ctx, holder, target, self.reason)

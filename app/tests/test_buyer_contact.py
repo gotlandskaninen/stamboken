@@ -179,10 +179,11 @@ class TestSchema(BuyerBase):
 
 
 class TestRegistration(BuyerBase):
-    def test_sale_without_buyer_is_unchanged(self):
-        sale = self._sale(buyer=None)
-        self.assertEqual(sale.herd.herd, "GX1")
-        self.assertIsNone(sale.holder_contact_id)
+    def test_a_sale_outside_without_a_buyer_is_400(self):
+        response = self._sell(buyer=None)
+        self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+        self.assertIn("köparens namn och ort", response.get_json()["detail"])
+        self.assertEqual(self._latest().kind, "BIRTH")
         self.assertEqual(db.BuyerContact.select().count(), 0)
 
     def test_sale_with_buyer_stores_the_contact_on_the_transfer(self):

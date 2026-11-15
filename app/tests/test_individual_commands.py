@@ -681,6 +681,14 @@ class TestTransferIndividual(IndividualTest):
         self.assertEqual((refusal.status, refusal.detail), (400, "Ange en anledning."))
         self.assertEqual(self._transfers(), [])
 
+    def test_a_sale_outside_needs_its_buyer_but_the_legacy_form_cannot_send_one(self):
+        db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        refusal = self._refusal(self.owner, TransferIndividual("GX1", "2021-06-01"), error=HerdTrackingInvalid)
+        self.assertEqual(refusal.status, 400)
+        self.assertEqual(self._transfers(), [])
+        self._run(self.owner, TransferIndividual("GX1", "2021-06-01", legacy=True))
+        self.assertEqual(self._transfers(), [("GX1", None)])
+
     def test_owner_refused_from_outside_genebank(self):
         """The owner of GX1 has no Entry there: the shared guard refuses before apply; a manager moves it back."""
         owner = self._outside_owner()
