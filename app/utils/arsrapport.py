@@ -63,12 +63,15 @@ from utils.database import (
 )
 from utils.herd_tracking import (
     DATE_BEFORE_LATEST,
+    QUEUE_CHANGED,
     REPORT_LATER_ROW,
     HerdTrackingError,
     HerdTrackingInvalid,
     _reject_buyer_name,
     buyer_contact_fields,
+    buyer_items,
     latest_death_op,
+    lock_buyer_items,
     reject_contact_details,
     report_void_denial,
     void_herd_tracking,
@@ -1897,16 +1900,24 @@ def submitted_body(sub: Submission) -> dict:
 
 
 def _lock_rabbits(ids):
-    """The rabbits' litters, then the rabbits, each in ascending order; a rabbit moved to another litter is a 409."""
+    """
+    The queue's items that may show the buyers of the rabbits' sales (lock_buyer_items), then the rabbits' litters,
+    then the rabbits, each in ascending order: the queue's own order (item, litters, rabbits), so the voids of Ändra
+    and Dra tillbaka lock only items already held (Codex 4, Opus 3). A rabbit moved to another litter, or an item
+    that has appeared since, is a 409.
+    """
 
     def litters():
         return dict(Individual.select(Individual.id, Individual.breeding).where(Individual.id.in_(ids)).tuples())
 
+    items = lock_buyer_items(ids)
     before = litters()
     lock_breedings(litter for litter in before.values() if litter is not None)
     lock_individuals(ids)
     if litters() != before:
         raise ArsrapportError(409, "Kaninen ändrades samtidigt. Försök igen.")
+    if not buyer_items(HerdTracking.select().where(HerdTracking.individual.in_(ids), ht_not_voided())) <= items:
+        raise ArsrapportError(409, QUEUE_CHANGED)
 
 
 def _measured(effect, rabbit):

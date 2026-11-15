@@ -18,6 +18,7 @@ import utils.mail as mail
 from utils.database import coerce_date
 from utils.herd_tracking import (
     DATE_BEFORE_LATEST,
+    QUEUE_CHANGED,
     REPORT_LATER_ROW,
     HerdTrackingConflict,
     HerdTrackingForbidden,
@@ -529,6 +530,41 @@ class AndraTest(ArsrapportTest):
         response = self.withdraw(3, "Annan Köpare ångrade sig")
         self.assertEqual((response.status_code, response.get_json()["refusals"]), (422, named))
         self.assertEqual(self.counts()[:5], before[:5])
+
+    def test_buyer_items_are_locked_before_the_rabbits(self):  # Codex 4, Opus 3: the queue's lock order
+        a, c = self.rabbits(self.h, 2)
+        self.ok(
+            self.body(
+                self.sald(a, "utanfor", 2025, 11, 20, kopare=BUYER),
+                self.sald(c, "utanfor", 2025, 11, 20, kopare=OTHER_BUYER),
+            )
+        )
+        item = self.item(documents=2)
+        for document, rabbit in zip(item.documents.order_by(db.InboxDocument.id), (a, c), strict=True):
+            document.individual = rabbit
+            document.save()
+
+        def locks(call):
+            """The first table `call` locks of the queue's item and the rabbit, with its result."""
+            seen, original = [], db.DATABASE.execute_sql
+
+            def spy(sql, *args, **kwargs):
+                if "FOR UPDATE" in sql or "FOR NO KEY UPDATE" in sql:
+                    seen.extend(table for table in ("inbox_item", "individual") if f'FROM "{table}"' in sql)
+                return original(sql, *args, **kwargs)
+
+            with mock.patch.object(db.DATABASE, "execute_sql", side_effect=spy):
+                response = call()
+            self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+            return seen[0]
+
+        change = self.body(self.kvar(a, vikt=2.8), self.sald(c, "utanfor", 2025, 11, 20), revision=1)  # voids a's sale
+        self.assertEqual(locks(lambda: self.skicka(change)), "inbox_item")
+        with mock.patch.object(arsrapport, "buyer_items", return_value={10**9}):  # an item that appeared meanwhile
+            response = self.withdraw(2)
+        self.assertEqual((response.status_code, response.get_json()["detail"]), (409, QUEUE_CHANGED))
+        self.assertEqual(locks(lambda: self.withdraw(2)), "inbox_item")  # voids c's sale
+        self.assertTrue(all(row.voided_at for row in rows_of(c, "TRANSFER")))
 
     def test_reason_naming_a_typed_buyer_is_refused(self):  # Opus 1: the dry run and Skicka alike
         (a,) = self.rabbits(self.h, 1)
