@@ -483,6 +483,21 @@ class TestErasure(BuyerBase):
         self.assertIsNotNone(self._contact(self.contact_id))
         self.assertEqual(self._erase("admin").status_code, 204)
 
+    def test_the_manager_reads_every_kept_field_and_the_read_is_logged(self):
+        helper = da.register_user("helper", "pass")
+        helper.add_role("helper", self.genebanks[0].id)
+        self._login("helper")
+        self.assertEqual(self.client.get(f"/api/v2/buyer-contacts/{self.contact_id}").status_code, 403)
+        self._login("owner")
+        self.assertEqual(self.client.get(f"/api/v2/buyer-contacts/{self.contact_id}").status_code, 404)
+        self._login("man")
+        resp = self.client.get(f"/api/v2/buyer-contacts/{self.contact_id}")
+        self.assertEqual(resp.status_code, 200, resp.get_json())
+        body = resp.get_json()
+        self.assertEqual((body["name"], body["town"], body["email"]), (NAME, "Visby", "z@example.org"))
+        self.assertIsNotNone(body["contact_consent_at"])
+        self.assertEqual([r.changed_by for r in self._buyer_log(self.contact_id, "READ")], ["man"])
+
     def test_the_row_holding_the_buyer_decides_not_the_current_herd(self):
         record_herd_tracking(self.rabbit, self.herds[2], "2022-01-01", "TRANSFER", self.admin)  # now in Mellerud
         other = da.register_user("othermgr", "pass")
@@ -529,7 +544,8 @@ class TestRetention(BuyerBase):
         self.assertEqual(contact.phone, "070123")  # kept while the membership yes holds
         self.assertIsNotNone(contact.membership_optin_at)
         self.assertEqual(buyer_contact.purge_sold_on(NOW), 0)  # one audit row, not one a night
-        self.assertEqual(len(self._buyer_log(self.contact_id, "UPDATE")), 1)
+        (log,) = self._buyer_log(self.contact_id, "UPDATE")
+        self.assertEqual(sorted(log.changed_fields), ["contact_consent_at", "postal_address"])  # not the phone kept
         buyer_contact.purge_membership_optin(NOW + timedelta(days=366))
         contact = self._contact(self.contact_id)
         self.assertEqual((contact.phone, contact.membership_optin_at), (None, None))
