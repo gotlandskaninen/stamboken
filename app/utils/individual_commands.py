@@ -630,9 +630,10 @@ def _genebank_correction(ctx, from_herd, to_herd, reason):
     if not allowed("GenebankCorrection", ctx.roles, ctx.state):
         raise HerdTrackingForbidden("Bara administratör kan flytta en individ till en annan genbank.")
     note = require_reason(reason)
+    # Ids only: the reason is free text that could name a buyer before the herd-tracking guard has read it.
     logger.warning(
-        f"Genebank change by admin {ctx.user.username}: {ctx.stored.number} from {from_herd.genebank.name} "
-        f"({from_herd.herd}) to {to_herd.genebank.name} ({to_herd.herd}): {note}"
+        f"Genebank change by admin user {ctx.user.id}: individual {ctx.stored.id} from herd {from_herd.id} "
+        f"(genebank {from_herd.genebank_id}) to herd {to_herd.id} (genebank {to_herd.genebank_id})"
     )
     return note
 

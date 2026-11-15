@@ -91,6 +91,12 @@ class IndividualTest(DatabaseTest):
     # self.individuals[0] = G1-2111 (paper certificate "12"), [3] = G1-2112 (no certificate), both in G1,
     # the owner's herd; [2] and [4] are in M3 (Mellerud).
 
+    def _id(self, number):
+        return db.Individual.get(db.Individual.number == number).id
+
+    def _herd_id(self, code):
+        return db.Herd.get(db.Herd.herd == code).id
+
     def setUp(self):
         super().setUp()
         self.ind = self.individuals[3]
@@ -663,9 +669,10 @@ class TestTransferIndividual(IndividualTest):
         self.assertEqual(self._transfers(), [("M3", "Felregistrerad")])
         self.assertEqual(
             logs.output,
-            [
-                "WARNING:herdbook.da:Genebank change by admin admin: G1-2112 from Gotland (G1) to Mellerud (M3): "
-                "Felregistrerad"
+            [  # ids only: the reason is free text
+                f"WARNING:herdbook.da:Genebank change by admin user {self.admin.id}: individual {self._id('G1-2112')} "
+                f"from herd {self._herd_id('G1')} (genebank {self.genebanks[0].id}) to herd {self._herd_id('M3')} "
+                f"(genebank {self.genebanks[1].id})"
             ],
         )
 
@@ -1063,9 +1070,10 @@ class TestChangeOriginHerd(IndividualTest):
             self._change(self._name(self.admin), "M3", reason=" Felregistrerad ")
         self.assertEqual(
             logs.output,
-            [
-                "WARNING:herdbook.da:Genebank change by admin admin: G1-2113 from Gotland (G1) to Mellerud (M3): "
-                "Felregistrerad"
+            [  # ids only: the reason is free text
+                f"WARNING:herdbook.da:Genebank change by admin user {self.admin.id}: individual {self._id('G1-2113')} "
+                f"from herd {self._herd_id('G1')} (genebank {self.genebanks[0].id}) to herd {self._herd_id('M3')} "
+                f"(genebank {self.genebanks[1].id})"
             ],
         )
         self.assertEqual(self._origin(), "M3")
