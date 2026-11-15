@@ -692,6 +692,31 @@ varning över en bild har inget sparats, **Skicka** byts mot **Skicka ändå**, 
 knappen **Ta om**. Har du ingen
 besättning säger sidan det. Se [Ladda upp intyg](#ladda-upp-intyg).
 
+#### Årsrapport
+
+<!-- route: /stamboken/arsrapport -->
+
+Dina besättningars årsrapporter i en öppen runda, med **Inskickad** eller **Inte
+inskickad** och sista dag. Har du en enda besättning och ingen roll i en genbank
+kommer du direkt till rapporten. Är ingen runda öppen säger sidan det.
+
+#### Årsrapport för en besättning
+
+<!-- route: /stamboken/arsrapport/[herd]/[year] -->
+
+Rapporten för ett avelsår. Dina kaniner står redan i listan; för varje kanin väljer du
+**Finns kvar** (med vikt och hull: mager, normal eller fet), **Död eller slaktad**
+(med månad) eller **Såld** (till en besättning i genbanken, eller köparens namn och
+ort utanför genbanken). Sök med **Sök nummer eller namn**, filtrera listan och se hur
+många som är klara. Under **Hälsa** svarar du **Inga sjukdomsfall eller defekter**
+eller **Ja, fyll i**. Avslutar du genbanken kryssar du **Jag avslutar min genbank** och
+väljer vad som händer med medlemskapet; då behöver kaninerna inget val.
+
+Det du fyller i sparas medan du skriver. **Skicka årsrapporten** visar ett kvitto.
+Därefter kan du **Ändra** och skicka ändringarna, eller **Dra tillbaka rapporten**
+inom sju dagar. En skötare kan inte registrera en försäljning. Säger rutan **Rapporten
+kan inte skickas** listar den vad som saknas, med länkar till kaninerna.
+
 #### Notiser
 
 <!-- route: /stamboken/notiser -->
