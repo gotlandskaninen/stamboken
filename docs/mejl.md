@@ -190,7 +190,8 @@ raderas i samma transaktion.
 
 Både sidan och API:ts svar har `Cache-Control: no-store` och
 `Referrer-Policy: no-referrer`. `app/tests/test_buyer_mail.py` kontrollerar
-att koden inte hamnar i appens loggar eller i gunicorns åtkomstlogg.
+att koden inte hamnar i appens loggar. Åtkomstloggen testas inte: koden står i
+kroppen, så den loggade raden är bara sökvägen.
 
 ## Utskicksläge
 

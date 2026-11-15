@@ -92,8 +92,9 @@ class TestInformationQueued(BuyerMailTest):
     def test_a_corrected_sale_does_not_mail_the_buyer_twice(self):
         sale = self._sale({**WITH_EMAIL, "membership_optin": True})
         contact = db.BuyerContact.get_by_id(sale.holder_contact_id)
-        event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", "holder_contact_id": contact.id}
+        event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1"}  # no buyer: the sale's own is carried over
         correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
+        self.assertEqual(self._latest().holder_contact_id, contact.id)  # the correction kept the buyer
         queue_buyer_mails(contact, self._latest())  # and if anything queued again, the dedupe_key holds
         self.assertEqual(
             [(row.kind, row.recipient_id) for row in self.mails()],
@@ -419,10 +420,10 @@ class TestEraseLink(PurgeTest):
 
 class TestNoTokenInLogs(BuyerMailTest):
     """
-    The first route that takes a link token: the token reaches no log line on its way in, when the erasure fails or
-    succeeds, nor in the mail's own text in log mode. A fresh process, so the handlers are the app's (as in
-    test_log_masking): its file handler, pointed at stderr, the root's stderr handler, and gunicorn's access log with
-    the filter gunicorn.conf.py puts on it, fed each request as gunicorn would see it.
+    The first route that takes a link token: the token reaches no app log line on its way in, when the erasure fails
+    or succeeds, nor in the mail's own text in log mode. A fresh process, so the handlers are the app's (as in
+    test_log_masking): its file handler, pointed at stderr, and the root's stderr handler. The access log is not
+    asserted: the token travels in the body, so the logged request line is the bare path whatever the code does.
     """
 
     PROBE = textwrap.dedent(
@@ -469,7 +470,7 @@ class TestNoTokenInLogs(BuyerMailTest):
         """
     )
 
-    def test_the_token_reaches_no_log(self):
+    def test_the_token_reaches_no_app_or_mail_log(self):
         contact_id = self._sale(WITH_EMAIL).holder_contact_id
         token = mail.link_token(ERASE_PURPOSE, contact_id)
         app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -486,7 +487,6 @@ class TestNoTokenInLogs(BuyerMailTest):
         self.assertEqual(re.findall(r"^answer (\d+)$", logs, re.MULTILINE), ["404", "500", "200", "200"], logs)
         self.assertIn(f"/kopare/ta-bort#{contact_id}.***", logs)  # the mail's text, logged and masked
         self.assertIn("Exception on /api/v2/kopare/ta-bort [POST]", logs)
-        self.assertEqual(logs.count('"POST /api/v2/kopare/ta-bort HTTP/1.1" '), 4)  # the access log
         self.assertNotIn(token, logs)
         self.assertNotIn(token.split(".")[1], logs)  # nor the mac alone, which the mask would not catch
         self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == contact_id))
