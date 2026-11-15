@@ -22,6 +22,11 @@ SKIP_QUEUE_DATA=""
 DROP_BUYERS_SQL=""
 eval "$(grep -E '^(SKIP_QUEUE_DATA|DROP_BUYERS_SQL)=' "$SCRIPT")"
 
+# The buyers go as the next command after the load: the demo API runs through the sync.
+load_end=$(grep -n 'DUMP_LOG:-/dev/null' "$SCRIPT" | cut -d: -f1)
+next_exec=$(awk -v from="$load_end" 'NR > from && /^docker exec/ { print; exit }' "$SCRIPT")
+check "the next command after the load deletes the buyers" 1 "$(grep -c 'DROP_BUYERS_SQL' <<<"$next_exec")"
+
 name="herdbook-sync-demo-test-$$"
 trap 'docker rm -f "$name" >/dev/null 2>&1' EXIT
 docker run -d --name "$name" -e POSTGRES_HOST_AUTH_METHOD=trust postgres:18 >/dev/null || exit 2
