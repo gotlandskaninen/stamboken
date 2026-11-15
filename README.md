@@ -94,7 +94,8 @@ the rules in `app/utils/legacy_compat.py`):
 
 Open to every logged-in account on every host: `/api/user`, `/api/logout`,
 the login routes, linking Google to one's own account, the public certificate
-verification and posting a membership application (`EXEMPT_ENDPOINTS`).
+verification, posting a membership application and the health check
+(`EXEMPT_ENDPOINTS`).
 Anonymous requests are not affected. Each refusal is logged at warning level
 with the endpoint and method only.
 
@@ -128,6 +129,19 @@ suite with the rules enforced.
    ```sql
    SELECT count(*) FROM hbuser u WHERE u.is_active AND NOT u.validated
      AND EXISTS (SELECT 1 FROM authenticators a WHERE a.user_id = u.user_id AND a.auth = 'password');
+   ```
+
+   An admin or promoted account is in that group too: on a legacy host the
+   legacy frontend's functions need `validated`, whatever the role. The legacy
+   frontend shows an empty page, not the 403's text.
+4. Count the active accounts without a Google identity (numbers only). The
+   legacy Google login no longer links an account that already holds the
+   address, so their holders sign in with the password and link Google
+   themselves, or an admin helps:
+
+   ```sql
+   SELECT count(*) FROM hbuser u WHERE u.is_active
+     AND NOT EXISTS (SELECT 1 FROM authenticators a WHERE a.user_id = u.user_id AND a.auth = 'google');
    ```
 
 ## External authenticators
