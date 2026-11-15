@@ -8,7 +8,7 @@ import { COURSE_URL, MANUAL_PATH } from "@/lib/constants";
 export const metadata: Metadata = {
   title: "Kom igång med Stamboken",
   description:
-    "Från medlemskap till första kullen i Stamboken Online: föreningskonto, webbkurs, inloggning, testmiljön och de första stegen.",
+    "Från medlemskap till första kullen i Stamboken Online: konto, webbkurs, inloggning, testmiljön och de första stegen.",
 };
 
 // Plain style object, not MUI sx with component={Link}: see the note in
@@ -34,9 +34,12 @@ const STEPS: Array<{
     },
   },
   {
-    title: "Ditt föreningskonto",
-    text: "Som medlem får du ett föreningskonto: en e-postadress på gotlandskaninen.se som föreningen skapar åt dig. Samma konto används i medlemsforumet. Har du användarnamn och lösenord från gamla Stamboken fungerar de också.",
-    link: { href: "/medlemsforum", label: "Medlemsforumet" },
+    title: "Ditt konto",
+    text: "Har du ett föreningskonto, alltså en e-postadress på gotlandskaninen.se, loggar du in med det. Har du användarnamn och lösenord från gamla Stamboken fungerar de också. Saknar du båda, mejla admin@gotlandskaninen.se.",
+    link: {
+      href: "mailto:admin@gotlandskaninen.se",
+      label: "Mejla administratören",
+    },
   },
   {
     title: "Gå webbkursen",
@@ -73,7 +76,7 @@ export default function KomIgangPage() {
         section="Kom igång"
         parent={{ label: "Stamboken Online", href: "/stamboken-online" }}
         title="Kom igång med Stamboken"
-        lede="Från medlemskap till första kullen i Stamboken Online: föreningskonto, webbkurs, inloggning och de första stegen."
+        lede="Från medlemskap till första kullen i Stamboken Online: konto, webbkurs, inloggning och de första stegen."
       />
       <Box
         component="section"

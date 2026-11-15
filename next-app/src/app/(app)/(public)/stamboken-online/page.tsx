@@ -62,10 +62,10 @@ export default function StambokenOnlinePage() {
               color: "ink.2",
             }}
           >
-            Du loggar in med ditt föreningskonto: en e-postadress på
-            gotlandskaninen.se som föreningen skapar åt dig som medlem. Har du
-            användarnamn och lösenord från gamla Stamboken fungerar de också.
-            Frågor om konton och inloggning besvaras på{" "}
+            Har du ett föreningskonto, alltså en e-postadress på
+            gotlandskaninen.se, loggar du in med det. Har du användarnamn och
+            lösenord från gamla Stamboken fungerar de också. Frågor om konton
+            och inloggning besvaras på{" "}
             <Link
               href="mailto:admin@gotlandskaninen.se"
               color="inherit"
