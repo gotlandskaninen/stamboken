@@ -2654,7 +2654,7 @@ AUDITED_TABLES = {
 }
 
 
-# Append-only audit_log (NFR-S8). The one definition every path re-creates after lifting it.
+# Append-only audit_log (NFR-S8), re-created by every path that lifts it (migration 28 keeps its own literal).
 AUDIT_LOG_NO_UPDATE_RULE = "CREATE RULE audit_log_no_update AS ON UPDATE TO audit_log DO INSTEAD NOTHING"
 
 # Only rows still holding an IP address, so the nightly purge reads one day of rows once it has caught up.

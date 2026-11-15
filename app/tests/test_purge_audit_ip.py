@@ -11,6 +11,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
+from peewee import OperationalError
+
 import herdbook
 import utils.data_access as da
 import utils.database as db
@@ -76,11 +78,11 @@ class TestPurgeAuditIp(DatabaseTest):
         for row_id in young:
             self.assertEqual(_row(row_id), before[row_id])
 
-    def test_a_run_leaves_one_marker_with_the_count(self):
+    def test_each_batch_commits_with_its_marker(self):
         _seed(NOW - timedelta(days=400))
         _seed(NOW - timedelta(days=400))
         da.purge_audit_ip(NOW, batch=1)
-        self.assertEqual(_markers(), [("purge-ip-20261114T034500Z", {"rows_redacted": 2})])
+        self.assertEqual(_markers(), [("purge-ip-20261114T034500Z", {"rows_redacted": 1})] * 2)
 
     def test_second_run_changes_nothing_and_leaves_no_marker(self):
         _seed(NOW - timedelta(days=400))
@@ -114,8 +116,8 @@ class TestPurgeAuditIp(DatabaseTest):
         holder.start()
         try:
             self.assertTrue(locked.wait(timeout=10))
-            with mock.patch.object(da, "AUDIT_IP_LOCK_TIMEOUT", "100ms"):
-                self.assertEqual(da.purge_audit_ip(NOW), 0)
+            with mock.patch.object(da, "AUDIT_IP_LOCK_TIMEOUT", "100ms"), self.assertRaises(OperationalError):
+                da.purge_audit_ip(NOW)
         finally:
             release.set()
             holder.join(timeout=10)
@@ -142,6 +144,21 @@ class TestPurgeAuditIp(DatabaseTest):
         self.assertIsNone(_row(first)["ip_address"])
         self.assertEqual(_row(second)["ip_address"], "192.0.2.7")
         self.assertEqual(_markers(), [("purge-ip-20261114T034500Z", {"rows_redacted": 1})])
+
+    def test_no_purge_without_its_marker(self):
+        row_id = _seed(NOW - timedelta(days=400))
+        real = db.DB_PROXY.obj.execute_sql
+
+        def fail_marker(sql, params=None, *args, **kwargs):
+            if "'REDACT'" in sql:
+                raise RuntimeError("connection lost")
+            return real(sql, params, *args, **kwargs)
+
+        with mock.patch.object(db.DB_PROXY.obj, "execute_sql", side_effect=fail_marker):
+            with self.assertRaises(RuntimeError):
+                da.purge_audit_ip(NOW)
+        self.assertEqual(_rule_exists(), 1)
+        self.assertEqual(_row(row_id)["ip_address"], "192.0.2.7")
 
     def test_migration_creates_the_partial_index(self):
         self.addCleanup(db.check_migrations)

@@ -962,15 +962,14 @@ def _count_current_admins(locked_rows, exclude_user_id=None):
     )
 
 
-def _has_pgcode(exc, pgcode):
-    """SQLSTATE detection through the peewee wrapper. psycopg2 sets
+def _is_deadlock(exc):
+    """SQLSTATE 40P01 detection through the peewee wrapper. psycopg2 sets
     .pgcode on the ORIGINAL exception; peewee re-raises its own
     OperationalError with the original chained (__cause__/__context__)."""
-    return any(getattr(c, "pgcode", None) == pgcode for c in (exc, exc.__cause__, exc.__context__) if c is not None)
-
-
-def _is_deadlock(exc):
-    return _has_pgcode(exc, "40P01")
+    for candidate in (exc, exc.__cause__, exc.__context__):
+        if candidate is not None and getattr(candidate, "pgcode", None) == "40P01":
+            return True
+    return False
 
 
 def set_account_active(u_id, active, actor_user_id=None):
@@ -4306,47 +4305,38 @@ def purge_audit_ip(now, batch=AUDIT_IP_BATCH) -> int:
     """
     Removes ip_address from audit_log rows older than AUDIT_IP_RETENTION; the rest of the row stays.
     Each batch is found without a lock through idx_audit_log_ip_retention, then the no-update rule is lifted
-    only for one short UPDATE of those ids (the purge_user_audit_pii mechanism). A run that removed any
-    leaves one REDACT marker row. A lock timeout ends the run early and the next night continues.
-    Returns the rows changed.
+    only for one short UPDATE of those ids (the purge_user_audit_pii mechanism), which commits together with
+    its REDACT marker row. A lock timeout raises (the scheduler logs it); committed batches stay, and the
+    next run continues. Returns the rows changed.
     """
     cutoff = DATABASE.execute_sql("SELECT %s::timestamptz - %s::interval", (now, AUDIT_IP_RETENTION)).fetchone()[0]
+    marker_id = "purge-ip-{:%Y%m%dT%H%M%SZ}".format(now.astimezone(timezone.utc))
     total, last = 0, (datetime.min.replace(tzinfo=timezone.utc), 0)
-    try:
-        while True:
-            rows = DATABASE.execute_sql(
-                """
-                SELECT changed_at, id FROM audit_log
-                WHERE ip_address IS NOT NULL AND changed_at < %s AND (changed_at, id) > (%s, %s)
-                ORDER BY changed_at, id LIMIT %s
-                """,
-                (cutoff, *last, batch),
-            ).fetchall()
-            if not rows:
-                break
-            with DATABASE.atomic():
-                # DROP RULE locks audit_log exclusively until commit: never queue every audited write behind it.
-                DATABASE.execute_sql("SELECT set_config('lock_timeout', %s, true)", (AUDIT_IP_LOCK_TIMEOUT,))
-                DATABASE.execute_sql("DROP RULE IF EXISTS audit_log_no_update ON audit_log")
-                cursor = DATABASE.execute_sql(
-                    "UPDATE audit_log SET ip_address = NULL WHERE id = ANY(%s) AND ip_address IS NOT NULL",
-                    ([row[1] for row in rows],),
-                )
-                changed = cursor.rowcount or 0
-                DATABASE.execute_sql(AUDIT_LOG_NO_UPDATE_RULE)
-            total += changed  # only once the batch has committed
-            last = rows[-1]
-    except OperationalError as exc:
-        if not _has_pgcode(exc, "55P03"):  # lock_not_available
-            raise
-        logger.error("purge_audit_ip: audit_log stayed locked after %s rows; the next run continues", total)
-    finally:
-        if total:
-            try:
-                _write_redact_marker("purge-ip-{:%Y%m%dT%H%M%SZ}".format(now.astimezone(timezone.utc)), total)
-            except Exception:  # pylint: disable=broad-except  # never hide the error that ended the run
-                logger.exception("purge_audit_ip: no marker row for %s rows", total)
-    return total
+    while True:
+        rows = DATABASE.execute_sql(
+            """
+            SELECT changed_at, id FROM audit_log
+            WHERE ip_address IS NOT NULL AND changed_at < %s AND (changed_at, id) > (%s, %s)
+            ORDER BY changed_at, id LIMIT %s
+            """,
+            (cutoff, *last, batch),
+        ).fetchall()
+        if not rows:
+            return total
+        with DATABASE.atomic():
+            # DROP RULE locks audit_log exclusively until commit: never queue every audited write behind it.
+            DATABASE.execute_sql("SELECT set_config('lock_timeout', %s, true)", (AUDIT_IP_LOCK_TIMEOUT,))
+            DATABASE.execute_sql("DROP RULE IF EXISTS audit_log_no_update ON audit_log")
+            cursor = DATABASE.execute_sql(
+                "UPDATE audit_log SET ip_address = NULL WHERE id = ANY(%s) AND ip_address IS NOT NULL",
+                ([row[1] for row in rows],),
+            )
+            changed = cursor.rowcount or 0
+            if changed:
+                _write_redact_marker(marker_id, changed)
+            DATABASE.execute_sql(AUDIT_LOG_NO_UPDATE_RULE)
+        total += changed
+        last = rows[-1]
 
 
 # Session-store counter of mass logouts. Outside 'session:*', so the sweep never
