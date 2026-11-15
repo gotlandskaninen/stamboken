@@ -1,7 +1,7 @@
 # Every API call the legacy frontend makes: method, URL template (<x> is a
 # dynamic segment, query strings dropped) and the call site.
 # Read by hand from gotlandskaninen/stamboken-legacy at
-# 51fc2b03b426e2f715fb9140cad639b5f2ada45a, the commit
+# 49e403d3410c5720f3412db2be041b30bfe46bc9, the commit
 # .github/workflows/build-and-publish.yml pins (build-legacy-prod). The URLs are
 # assembled from parts, so each call site was read, not just grepped.
 # Extract again when that pin moves. test_access_rules.py checks each row
