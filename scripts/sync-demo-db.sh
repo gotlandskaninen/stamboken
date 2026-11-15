@@ -7,6 +7,14 @@
 
 set -Eeuo pipefail  # -E: the ERR trap reaches functions (telemetry below)
 
+# Two runs must never overlap: the second would drop the staging copy the first is still loading.
+SYNC_LOCK="${SYNC_DEMO_LOCK:-/tmp/herdbook-sync-demo.lock}"
+exec 8>"$SYNC_LOCK"
+if ! flock -n 8; then
+	echo "Another demo sync is running (lock $SYNC_LOCK)" >&2
+	exit 1
+fi
+
 scriptdir=$(dirname "$0")
 
 ENV_FILE="$scriptdir/../.docker/database-variables.env"

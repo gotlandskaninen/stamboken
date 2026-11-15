@@ -49,6 +49,13 @@ check "the cleaned copy is renamed to the demo database afterwards" 1 "$((rename
 check "nothing but the sequence read touches the demo database before the rename" 0 \
   "$(awk -v to="$rename_line" 'NR < to && /-d "\$TARGET_DB"/ && !/MAIL_SEQ_SQL/' "$SCRIPT" | wc -l)"
 
+# Two runs never overlap: with the lock held, the script stops before it touches anything.
+lock=$(mktemp)
+held=$(flock -n "$lock" bash -c "SYNC_DEMO_LOCK='$lock' bash '$SCRIPT' 2>&1; echo \"exit \$?\"")
+rm -f "$lock"
+check "a second run stops at once while the first holds the lock" 1 "$(grep -c 'Another demo sync is running' <<<"$held")"
+check "and exits 1" 1 "$(grep -c '^exit 1$' <<<"$held")"
+
 name="herdbook-sync-demo-test-$$"
 trap 'docker rm -f "$name" >/dev/null 2>&1' EXIT
 docker run -d --name "$name" -e POSTGRES_HOST_AUTH_METHOD=trust postgres:18 >/dev/null || exit 2
