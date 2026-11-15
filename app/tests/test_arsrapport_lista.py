@@ -59,14 +59,14 @@ class ListaTest(ArsrapportTest):
         query = f"?post={post}" if post is not None else ""
         return self.api("GET", f"/besattning/{herd}/{year}{query}")
 
-    def put_draft(self, data=None, updated_at=None, submission_key=None, revision=None, client=None):
+    def put_draft(self, data=None, updated_at=None, submission_key=None, revision=None, client=None, year=2025):
         body = {
             "data": {"rabbits": {}, "message": "hej"} if data is None else data,
             "updated_at": updated_at,
             "submission_key": submission_key,
             "revision": revision,
         }
-        return (client or self.client).put("/api/v2/arsrapport/besattning/G1/2025/utkast", json=body)
+        return (client or self.client).put(f"/api/v2/arsrapport/besattning/G1/{year}/utkast", json=body)
 
     # The list (5.2)
 
@@ -425,6 +425,33 @@ class ListaTest(ArsrapportTest):
             self.assertNotIn(key, data)
         self.assertNotIn("kopare", data["rabbits"][str(rabbit.id)]["sald"])
         self.assertIn("kopare", body["rabbits"][str(rabbit.id)]["sald"])  # stored_body copies, never mutates
+
+    def assert_round_closed(self, r):
+        self.assertEqual(r.status_code, 409, r.get_data(as_text=True))
+        self.assertEqual(r.json["detail"], "Rundan är inte öppen.")
+
+    def test_owner_draft_before_activation_is_refused(self):
+        round_ = self.round(2026, activate=())
+        self.at(date(2027, 1, 15))  # within the 2026 round's dates
+        self.login("owner")
+        self.assert_round_closed(self.put_draft(year=2026))
+        self.assertEqual(db.YearlyReportDraft.select().count(), 0)
+        arsrapport.activate(round_, self.gotland.id, self.admin)
+        self.assertEqual(self.put_draft(year=2026).status_code, 200)
+
+    def test_owner_draft_after_end_date_is_refused(self):
+        self.at(date(2026, 3, 31))  # the day after end_date
+        self.login("owner")
+        self.assert_round_closed(self.put_draft())
+        self.assertEqual(db.YearlyReportDraft.select().count(), 0)
+
+    def test_editor_draft_after_end_date_is_allowed(self):
+        # D11: managers and admins may still report after end_date
+        self.at(date(2026, 3, 31))
+        self.login("man")
+        r = self.put_draft()
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True))
+        self.assertEqual(db.YearlyReportDraft.get().updated_by_user_id, self.manager.id)
 
     # Mina
 
