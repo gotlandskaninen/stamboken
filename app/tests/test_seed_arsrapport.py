@@ -73,6 +73,8 @@ class SeedArsrapportTest(DatabaseTest):
         # The Mellerud herds of the user-type tests: median and 90th-percentile sizes, three paper forms.
         sizes = {code: len(arsrapport.report_list(herd(code), 2025)) for code in ("M9001", "M9003", "M9004", "M9102")}
         self.assertEqual(sizes, {"M9001": 6, "M9003": 30, "M9004": 3, "M9102": 6})
+        litter = db.Breeding.get(db.Breeding.breeding_herd_id == herd("M9001"), db.Breeding.birth_date == date(2025, 5, 2))
+        self.assertEqual((litter.mother.sex, litter.father.sex, litter.litter_size), ("female", "male", 1))
         on_paper = sorted(i.herd.herd for i in db.InboxItem.select() if i.herd.herd.startswith("M"))
         self.assertEqual(on_paper, ["M9005", "M9006", "M9006", "M9102"])
         uppfodare = db.User.get(db.User.email == "seed-mk-uppfodare@test.local")

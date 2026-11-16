@@ -1218,14 +1218,17 @@ def _user_types(log):
         "seed-mk-uppfodare@test.local", "seed-mk-uppfodare-pass", "seed-mk-uppfodare", "MK Uppfödare", [], log
     )
 
+    def kits(herd, adults, count, first):  # a 2025 litter of the herd's own: mother a female, father a male
+        litter = _breeding(herd, date(2025, 5, 2), date(2025, 4, 1), adults[1], adults[0], count, count, log)
+        _rabbits(herd, manager, log, count, date(2025, 5, 2), first, ("female", "male"), litter)
+
     def median(herd):  # 5 adults born 2024 and one 2025 kit
-        _rabbits(herd, manager, log, 5, date(2024, 5, 1), 11, ("female", "male"))
-        _rabbits(herd, manager, log, 1, date(2025, 5, 2), 20, ("female",))
+        kits(herd, _rabbits(herd, manager, log, 5, date(2024, 5, 1), 11, ("female", "male")), 1, 20)
 
     def large(herd):  # 24 adults and 6 kits; the certificate number is unique per herd, hence 11, 31, 51
         _rabbits(herd, manager, log, 12, date(2023, 5, 1), 11, ("female", "male"))
-        _rabbits(herd, manager, log, 12, date(2024, 5, 1), 31, ("female", "male"))
-        _rabbits(herd, manager, log, 6, date(2025, 5, 2), 51, ("female", "male"))
+        adults = _rabbits(herd, manager, log, 12, date(2024, 5, 1), 31, ("female", "male"))
+        kits(herd, adults, 6, 51)
 
     def ending(herd):
         _rabbits(herd, manager, log, 3, date(2023, 5, 1), 11, ("female", "male"))
