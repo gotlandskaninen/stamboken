@@ -890,10 +890,11 @@ def _only_with(more, counted, villkor, stat, report, deadline):
 
 def _sale_flags(round_, reports):
     """
-    The status view's sale flags per herd, from the submitted `reports` (herd id -> report) in four queries: pending
+    The status view's sale flags per herd, from the submitted `reports` (herd id -> report) in three queries: pending
     proposals (5.14), the rabbits a rejection left to choose again, which its submission stores without a choice
-    (FB3), and approved sales on or before 31/12 into a herd whose report came in before the approval and has not
-    been changed since (FB4).
+    (FB3), and approved sales on or before 31/12 into a herd whose report does not have the rabbit (FB4). Each
+    submission holds every rabbit chosen so far, and a rejection's copies the latest, so only the buyer's own choice
+    for the rabbit puts it there (P3).
     """
     herd_of = {report.id: herd_id for herd_id, report in reports.items()}
     open_ = list(
@@ -902,25 +903,8 @@ def _sale_flags(round_, reports):
         )
     )
     waiting = Counter(herd_of[p.report_id] for p in open_ if p.state == "foreslagen")
-    latest = {}
-    for submission in (
-        YearlyReportSubmission.select(YearlyReportSubmission.report, YearlyReportSubmission.data)
-        .where(YearlyReportSubmission.report.in_(sorted({p.report_id for p in open_ if p.state == "avvisad"})))
-        .order_by(YearlyReportSubmission.id)
-    ):
-        latest[submission.report_id] = submission.data.get("rabbits") or {}
-    again = {
-        herd_of[report_id]: sorted(int(k) for k, e in rabbits.items() if isinstance(e, dict) and e.get("val") is None)
-        for report_id, rabbits in latest.items()
-    }
-    sent = dict(
-        YearlyReportSubmission.select(YearlyReportSubmission.report, fn.MAX(YearlyReportSubmission.created_at))
-        .where(YearlyReportSubmission.report.in_(list(herd_of)))
-        .group_by(YearlyReportSubmission.report)
-        .tuples()
-    )
-    approved = (
-        SaleProposal.select(SaleProposal.to_herd, SaleProposal.decided_at)
+    approved = list(
+        SaleProposal.select(SaleProposal.to_herd, SaleProposal.individual)
         .join(YearlyHerdReport)
         .where(
             YearlyHerdReport.round == round_.id,
@@ -929,7 +913,23 @@ def _sale_flags(round_, reports):
             SaleProposal.to_herd.in_(list(reports)),
         )
     )
-    bought = Counter(p.to_herd_id for p in approved if (at := sent.get(reports[p.to_herd_id].id)) and p.decided_at > at)
+    rejected = {p.report_id for p in open_ if p.state == "avvisad"}
+    wanted = sorted(rejected | {reports[p.to_herd_id].id for p in approved})
+    latest = {}
+    for submission in (
+        YearlyReportSubmission.select(YearlyReportSubmission.report, YearlyReportSubmission.data)
+        .where(YearlyReportSubmission.report.in_(wanted))
+        .order_by(YearlyReportSubmission.id)
+    ):
+        latest[submission.report_id] = submission.data.get("rabbits") or {}
+    again = {
+        herd_of[report_id]: sorted(int(k) for k, e in rabbits.items() if isinstance(e, dict) and e.get("val") is None)
+        for report_id, rabbits in latest.items()
+        if report_id in rejected
+    }
+    bought = Counter(
+        p.to_herd_id for p in approved if str(p.individual_id) not in latest.get(reports[p.to_herd_id].id, {})
+    )
     return waiting, again, bought
 
 

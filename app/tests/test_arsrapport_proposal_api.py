@@ -409,3 +409,17 @@ class ProposalApiTest(ArsrapportTest):
         self.assertEqual(results, {"buyer": "ok", "approve": "ok"})
         # the approval came after the buyer's report: the buyer is told and the row is flagged
         self.assertEqual(len(mails("arsrapport.kop_godkant")), 1)
+        self.assertEqual(self.flags("G9002")["kopt_efter_inskick"], 1)
+
+    def test_rejected_sale_of_the_buyer_keeps_its_purchase_flag(self):  # P3, beside FB4
+        y, y2 = self.rabbits(self.g9002, 2)
+        code = report_code.issue_code(self.g9002, self.round_, self.buyer_member, now=arsrapport.now())
+        self.send(self.sald(y, "G9001", 2025, 10, 5), self.kvar(y2, vikt=2.8), herd=self.g9002, code=code)
+        (outgoing,) = proposals(y)
+        self.day(1)
+        self.assertEqual(self.decide(self.first(), "godkann").status_code, 200)  # a is bought by G9002
+        self.assertEqual(self.flags("G9002")["kopt_efter_inskick"], 1)
+        response = self.decide(outgoing, "avvisa", reason="Fel datum", then="kvar")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.flags("G9002")["kopt_efter_inskick"], 1)  # the rejection's submission is not the buyer's
+        self.assertNotIn(str(self.a.id), self.latest(self.g9002))

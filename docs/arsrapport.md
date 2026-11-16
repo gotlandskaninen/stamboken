@@ -49,8 +49,9 @@ som PDF. Reglerna finns i `app/utils/arsrapport.py` och endpointsen i
   - `forsaljning_avvisad` är antalet kaniner som en avvisad försäljning lämnade åt medlemmen att välja
     igen. `forsaljning_avvisad_paverkar` prövas som `ej_angivna_paverkar`, och "Att ringa" tar med
     besättningen när någon av de två är sann.
-  - `kopt_efter_inskick` är antalet godkända köp daterade senast 31 december till besättningen, som
-    godkändes efter att dess rapport kom in och innan den ändrades.
+  - `kopt_efter_inskick` är antalet godkända köp daterade senast 31 december till besättningen, där
+    kaninen saknas i rapportens senaste inskick. Bara köparens eget val för kaninen tar bort
+    flaggan; ett avvisningsinskick kopierar det senaste inskicket och lägger inte till kaninen.
 - **Konto:** statusvyn har inga kontouppgifter. En blankettpost visar bara kontots två sista siffror
   (`item.account_end`) i rapportvyn.
 
