@@ -6,6 +6,8 @@ Only runs on PostgreSQL (interval arithmetic). Names and addresses are made up; 
 """
 
 import os
+import threading
+import time
 import unittest
 from datetime import date, datetime, timezone
 from unittest import mock
@@ -160,6 +162,29 @@ class TestAnonymizeEndedPersons(DatabaseTest):
             self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, 0, []))
         self.assertFalse(_erased(family) or _erased(main))
         self.assertEqual(_address(active), "Exempelvägen 1")
+
+    def test_a_role_granted_while_the_job_decides_holds_the_membership(self):
+        ended = _membership(113)
+        main = _person(ended, OLD, role="huvudmedlem", user=self.viewer)
+        user_id, genebank_id, locked = self.viewer.id, self.genebanks[0].id, threading.Event()
+
+        def grant_manager_slowly():  # update_role's shape: lock the account, write, commit later
+            try:
+                with db.DB_PROXY.atomic():
+                    user = db.User.select().where(db.User.id == user_id).for_update().get()
+                    user.privileges = [*user.privileges, {"level": "manager", "genebank": genebank_id}]
+                    user.save(only=[db.User._privileges])
+                    locked.set()
+                    time.sleep(1)
+            finally:
+                db.DB_PROXY.close()
+
+        granter = threading.Thread(target=grant_manager_slowly)
+        granter.start()
+        self.assertTrue(locked.wait(10))
+        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, 0, [(ended.id, None, "role")]))
+        granter.join(15)
+        self.assertFalse(_erased(main))
 
     def test_a_failure_on_one_membership_does_not_stop_the_rest(self):
         first = _person(_membership(108), OLD, role="huvudmedlem")

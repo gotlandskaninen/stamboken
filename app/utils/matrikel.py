@@ -574,9 +574,11 @@ def _memberships_with_ended_persons(cutoff):
 def anonymize_ended_persons(now):
     """
     Nightly job (#70): anonymize_person, with no user as actor, on the persons _due_in finds. Each membership is
-    decided again and erased in one transaction under its row lock, the lock retire, delete and add take: a
-    household retired after the candidate query waits its own 12 months. A failure rolls back that membership
-    only and is logged. Returns (anonymized persons, failed memberships, held).
+    decided again and erased in one transaction that first locks every row _due_in reads: the membership (retire,
+    delete and add lock it), its accounts (update_role locks them) and the herds that can hold it (update_herd
+    writes them). A change to any of them commits before the decision or waits until after the erasure. Lock
+    order membership, accounts, herds, as in _lock_for_detach. A failure rolls back that membership only and is
+    logged. Returns (anonymized persons, failed memberships, held).
     """
     cutoff = DB_PROXY.execute_sql(
         "SELECT (%s::timestamptz - %s::interval)::date", (now, ENDED_MEMBER_RETENTION)
@@ -586,6 +588,11 @@ def anonymize_ended_persons(now):
         try:
             with DB_PROXY.atomic():
                 Membership.select().where(Membership.id == membership.id).for_update().get()
+                person_users = Member.select(Member.user).where(Member.membership == membership)
+                accounts = list(User.select().where(User.id.in_(person_users)).order_by(User.id).for_update())
+                owned = [p["herd"] for user in accounts for p in user.privileges or [] if p["level"] == "owner"]
+                herds = Herd.select(Herd.id).where((Herd.membership == membership) | Herd.id.in_(owned))
+                list(herds.order_by(Herd.id).for_update())
                 due, membership_held = _due_in(membership, cutoff)
                 for person in due:  # an ended person conveys no herd: its cache invalidation inside this tx is empty
                     anonymize_person(person, None)
