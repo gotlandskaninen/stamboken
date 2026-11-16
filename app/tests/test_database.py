@@ -1319,7 +1319,8 @@ class TestDatabaseMigration(DatabaseTest):
         def shape():
             columns = {(c.name, c.null) for c in db.DATABASE.get_columns("notice")}
             keys = {(k.column, k.dest_table, k.dest_column) for k in db.DATABASE.get_foreign_keys("notice")}
-            return columns, keys
+            indexes = {(i.name, tuple(i.columns), i.unique) for i in db.DATABASE.get_indexes("notice")}
+            return columns, keys, indexes
 
         fresh = shape()
         db.SchemaHistory.delete().where(db.SchemaHistory.version >= 45).execute()
@@ -1333,6 +1334,7 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertEqual(shape(), fresh)
         self.assertIn(("individual_id", True), fresh[0])
         self.assertIn(("individual_id", "individual", "individual_id"), fresh[1])
+        self.assertIn(("notice_individual_id", ("individual_id",), False), fresh[2])
 
     def _max_schema_version(self):
         return db.SchemaHistory.select(  # pylint: disable=E1120

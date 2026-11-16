@@ -803,18 +803,39 @@ def my_uploads(user):
     ]
 
 
+def _rabbit_numbers(user, notices):
+    """
+    Notice id -> the number of the rabbit it is about, for the notices `user` may still see it on: a manager of
+    the rabbit's genebank (its origin herd's) or an admin, as when the notice was made. A role withdrawn since
+    leaves the notice without its rabbit. One query, whatever the number of notices.
+    """
+    about = {n.id: n.individual_id for n in notices if n.individual_id}
+    if not about:
+        return {}
+    rabbits = (
+        Individual.select(Individual.id, Individual.number, Herd.genebank)
+        .join(Herd, on=(Individual.origin_herd == Herd.id))
+        .where(Individual.id.in_(set(about.values())))
+        .tuples()
+    )
+    mine = None if user.is_admin else set(user.is_manager or [])
+    numbers = {rabbit: number for rabbit, number, genebank in rabbits if mine is None or genebank in mine}
+    return {notice: numbers[rabbit] for notice, rabbit in about.items() if rabbit in numbers}
+
+
 def notices_json(user, *, unread_only, limit, offset):
     query = Notice.select().where(Notice.user == user.id)
     if unread_only:
         query = query.where(Notice.read_at.is_null(True))
-    rows = query.order_by(Notice.created_at.desc(), Notice.id.desc()).limit(limit).offset(offset)
+    rows = list(query.order_by(Notice.created_at.desc(), Notice.id.desc()).limit(limit).offset(offset))
+    numbers = _rabbit_numbers(user, rows)
     return [
         {
             "id": n.id,
             "kind": n.kind,
             "text": NOTICE_TEXTS.get(n.kind, n.kind),
             "item_id": n.item_id,
-            "individual_number": n.individual.number if n.individual_id else None,
+            "individual_number": numbers.get(n.id),
             "created_at": _iso(n.created_at),
             "read_at": _iso(n.read_at),
         }
@@ -1141,17 +1162,17 @@ def _incomplete_mail(params):
 @mail_kind("notis.sammandrag", priority=1, category="N")
 def _digest_mail(params):
     """The user's unread notices when the mail goes; none left (all read since), no mail."""
-    notices = (
+    user = User.get_or_none(User.id == params["user_id"])
+    if user is None or not user.is_active:  # deactivated since the digest was queued
+        return None
+    notices = list(
         Notice.select()
-        .where((Notice.user == params["user_id"]) & Notice.read_at.is_null(True) & (Notice.kind != "klar"))
+        .where((Notice.user == user.id) & Notice.read_at.is_null(True) & (Notice.kind != "klar"))
         .order_by(Notice.created_at, Notice.id)
     )
+    numbers = _rabbit_numbers(user, notices)
     rows = [
-        {
-            "text": NOTICE_TEXTS.get(n.kind, n.kind),
-            "item_id": n.item_id,
-            "individual_number": n.individual.number if n.individual_id else None,
-        }
+        {"text": NOTICE_TEXTS.get(n.kind, n.kind), "item_id": n.item_id, "individual_number": numbers.get(n.id)}
         for n in notices
     ]
     return {"notices": rows} if rows else None

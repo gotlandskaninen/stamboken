@@ -4082,6 +4082,8 @@ def migrate_44_to_45():
             "ALTER TABLE notice ADD COLUMN IF NOT EXISTS individual_id INTEGER "
             "REFERENCES individual (individual_id) ON DELETE CASCADE"
         )
+        # The index a fresh bootstrap gives the foreign key: the cascade looks the notices up by rabbit.
+        DATABASE.execute_sql("CREATE INDEX IF NOT EXISTS notice_individual_id ON notice (individual_id)")
         SchemaHistory.insert(  # pylint: disable=E1120
             version=45, comment="notice.individual", applied=datetime.now()
         ).execute()

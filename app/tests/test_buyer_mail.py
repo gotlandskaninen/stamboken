@@ -479,6 +479,23 @@ class TestEraseLink(PurgeTest):
         buyer_contact.erase_buyer_contact(self.contact_id, self.manager)
         self.assertEqual(self.notices(), [])
 
+    def test_a_manager_who_lost_the_role_no_longer_sees_which_rabbit(self):
+        self.erase(self.token)
+        manager = db.User.get_by_id(self.manager.id)
+        listed = inbox.notices_json(manager, unread_only=True, limit=50, offset=0)
+        self.assertEqual([n["individual_number"] for n in listed if n["kind"] == "kopare_borttagen"], ["G1-2112"])
+        manager.remove_role("manager", self.genebanks[0].id)
+        manager = db.User.get_by_id(self.manager.id)
+        listed = inbox.notices_json(manager, unread_only=True, limit=50, offset=0)
+        self.assertEqual([n["individual_number"] for n in listed if n["kind"] == "kopare_borttagen"], [None])
+        digest = inbox._digest_mail({"user_id": manager.id})  # pylint: disable=protected-access
+        self.assertNotIn("G1-2112", str(digest))
+
+    def test_a_deactivated_manager_gets_no_digest(self):
+        self.erase(self.token)
+        db.User.update(is_active=False).where(db.User.id == self.manager.id).execute()
+        self.assertIsNone(inbox._digest_mail({"user_id": self.manager.id}))  # pylint: disable=protected-access
+
     def test_a_manager_without_the_daily_mail_gets_the_notice_but_no_digest(self):
         inbox.set_mail_enabled(self.manager, False)
         self.erase(self.token)
