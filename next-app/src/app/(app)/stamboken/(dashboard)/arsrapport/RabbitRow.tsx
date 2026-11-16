@@ -283,12 +283,12 @@ function RabbitRowImpl({
           )}
           <div className={styles.line}>
             <label className={styles.label} htmlFor={`hull-${r.id}`}>
-              Hull (frivilligt)
+              Hull<span className={styles.optional}> (frivilligt)</span>
             </label>
             <select
               id={`hull-${r.id}`}
               data-paper-field="hull"
-              className={styles.field}
+              className={`${styles.field} ${styles.hull}`}
               value={e.hull ?? ""}
               onChange={(ev) =>
                 set({ hull: (ev.target.value || null) as Hull | null })

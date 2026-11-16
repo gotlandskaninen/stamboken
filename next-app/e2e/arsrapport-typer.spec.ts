@@ -373,6 +373,38 @@ test("5. Typ C: stor besättning med döda och sålda", async ({
   await page.getByRole("radio", { name: NO_DISEASE }).check();
   await shot(page, "typ-c-formular");
 
+  // The wide layout (issue 75). The viewport goes back to 375 px afterwards.
+  await test.step("bred skärm", async () => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await rows(page).last().scrollIntoViewIfNeeded();
+    await expect(page.getByText(/av 30 klara/)).toBeInViewport();
+    await expect(page.getByLabel("Hitta en kanin")).toBeInViewport();
+    await expect(page.getByRole("button", { name: SEND })).toBeInViewport();
+
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await r(2314).scrollIntoViewIfNeeded();
+    const box = await r(2314).boundingBox();
+    expect(box!.height).toBeLessThanOrEqual(80);
+
+    // A short window: Tab from the search field reaches a filter that nothing covers.
+    await page.setViewportSize({ width: 1280, height: 500 });
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.getByLabel("Hitta en kanin").focus();
+    await page.keyboard.press("Tab");
+    const unobscured = await page.evaluate(() => {
+      const el = document.activeElement as HTMLElement;
+      const b = el.getBoundingClientRect();
+      const hit = document.elementFromPoint(
+        b.x + b.width / 2,
+        b.y + b.height / 2,
+      );
+      return { name: el.textContent, ok: !!hit && el.contains(hit) };
+    });
+    expect(unobscured.name).toMatch(/^Inte klara/);
+    expect(unobscured.ok).toBe(true);
+    await page.setViewportSize({ width: 375, height: 812 });
+  });
+
   await page.getByRole("button", { name: SEND }).click();
   const box = page.getByRole("alert").filter({ hasText: "inte klar" });
   await expect(box).toContainText("1 kanin är inte klar");
