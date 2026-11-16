@@ -336,6 +336,27 @@ class TestSorting(GmailTest):
                 (new,) = [i for i in self.items() if i.id not in known and i.id != item.id]
                 self.assertNotIn(mac, new.message)
 
+    def test_a_token_ending_at_the_cut_is_masked(self):  # FA3
+        link, mac = self.quoted_link()
+        url = f"{HOST}/rapport#{link.rpartition('#')[2]}"
+        body = "a" * (inbox_gmail.MAX_TEXT - len(url)) + url + "X"
+        self.holder(self.herds[0])
+        item = self.waiting()
+        self.fake.deliver(message(body=body, subject=f"Re: Fråga (ärende {item.id})", In_Reply_To=self.our_mail(item)))
+        self.fake.deliver(message(body=body))
+        self.fake.deliver(
+            report("<CAsomething@mail.example.org>").replace(
+                b"kom inte fram.", ("kom inte fram: " + "a" * (inbox_gmail.MAX_TEXT - 80) + url + "X").encode()
+            )
+        )
+        self.read()
+        (event,) = item.events.where(db.InboxEvent.kind == "svar")
+        self.assertNotIn(mac, str(event.detail))
+        others = [i for i in self.items() if i.id != item.id]
+        self.assertEqual(len(others), 2)
+        for other in others:
+            self.assertNotIn(mac, other.message)
+
     def test_a_delivery_report_quoting_the_link_stores_no_token(self):  # FA3
         link, mac = self.quoted_link()
         row, secret = link.rpartition("#")[2].split(".")

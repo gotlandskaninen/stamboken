@@ -43,7 +43,7 @@ from utils.database import (
     User,
 )
 from utils.gmail import Gmail, HistoryTooOld
-from utils.log_masking import mask_tokens
+from utils.log_masking import mask_cut, mask_tokens
 from utils.mail import Recipient, _hostname, _normalize, _scrub, enqueue_mail, mail_kind, recipient_kind
 
 logger = logging.getLogger("herdbook.inbox_gmail")
@@ -319,7 +319,7 @@ def _text(msg):
         parser.close()
         text = "\n".join(" ".join(line.split()) for line in "".join(parser.parts).splitlines() if line.strip())
     # Last, on the finished text: decoding entities, dropping tags and NULs can rebuild a token masking saw in pieces.
-    return mask_tokens(_no_nul(text)).strip()[:MAX_TEXT] or None
+    return mask_cut(_no_nul(text).strip(), MAX_TEXT) or None
 
 
 def _attachments(msg):
@@ -399,7 +399,7 @@ def _delivery_report(msg):
     for part in msg.walk():
         kind = part.get_content_type()
         if kind == "text/plain" and text is None:
-            text = mask_tokens(_no_nul(mask_tokens(_content(part))[:MAX_BODY])).strip()[:MAX_TEXT] or None
+            text = mask_cut(_no_nul(mask_tokens(_content(part))[:MAX_BODY]).strip(), MAX_TEXT) or None
         elif kind == "message/delivery-status":
             for fields in part.get_payload():
                 diagnostic = diagnostic or fields.get("Diagnostic-Code") or fields.get("Status")

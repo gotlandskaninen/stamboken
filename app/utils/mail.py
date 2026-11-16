@@ -39,7 +39,7 @@ from utils.database import (
     MemberApplication,
     User,
 )
-from utils.log_masking import mask_tokens
+from utils.log_masking import mask_cut, mask_tokens
 
 logger = logging.getLogger("herdbook.mail")
 
@@ -215,7 +215,7 @@ def _normalize(raw):
 
 def _scrub(text):
     """SMTP errors and bounces often quote the recipient or the link: no address and no token is stored."""
-    return _ADDRESS_LIKE.sub("<adress>", mask_tokens(text))[:1000] if text else text
+    return mask_cut(_ADDRESS_LIKE.sub("<adress>", mask_tokens(text)), 1000)
 
 
 # --- Templates ---
