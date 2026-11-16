@@ -3,7 +3,6 @@
 import React from "react";
 import { useRouter } from "next/navigation";
 import styles from "../stamboken/(dashboard)/arsrapport/arsrapport.module.css";
-import { getMine } from "./actions";
 import { takeToken } from "./clearHash";
 import { goTo } from "./navigate";
 
@@ -49,7 +48,10 @@ const Message = ({ text, retry }: { text: string; retry?: () => void }) => (
 // One exchange at a time and only the latest requested one may change the page: each answer sets a session cookie, so a
 // second exchange sent before the first has answered could be overwritten by the first one's late Set-Cookie. The queue
 // is module state, so it covers every mount of the gate in the tab. A request that never answers is aborted after
-// 20 s (its response, Set-Cookie included, is dropped), which releases the queue.
+// 20 s, which releases the queue. An abort keeps a cookie that came with the response headers; only a response aborted
+// before its headers arrive sets nothing. Either way it is safe here: the queue runs one exchange at a time, so a late
+// cookie is already in place before the next exchange starts. The code list is a plain request, not a Server Action,
+// because Next.js runs actions one at a time and cannot cancel a stalled one: every retry would queue behind it.
 const EXCHANGE_TIMEOUT_MS = 20_000;
 let latest = 0;
 let queue: Promise<void> = Promise.resolve();
@@ -118,10 +120,21 @@ export function LinkGate({
           herd: string;
         };
         if (!current()) return;
-        const codes = await bounded(getMine());
+        const mineRes = await bounded(
+          fetch("/api/v2/rapport/mina", {
+            credentials: "same-origin",
+            signal: controller.signal,
+          }),
+          controller,
+        );
         if (!current()) return;
-        if (!codes.ok) throw new Error(String(codes.problem.status));
-        const entry = codes.data.find((m) => m.herd === herd);
+        if (!mineRes.ok) throw new Error(String(mineRes.status));
+        const codes = (await bounded(mineRes.json(), controller)) as {
+          code_id: number;
+          herd: string;
+        }[];
+        if (!current()) return;
+        const entry = codes.find((m) => m.herd === herd);
         // The link was good but the cookie did not stay: the browser blocks it.
         if (!entry) return setPhase("cookies");
         token.current = "";

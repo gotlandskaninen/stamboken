@@ -11,8 +11,23 @@ const refresh = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace, refresh }),
 }));
+// The code list: what the stubbed /mina request answers with. `deferred` and the inline stubs answer /oppna only.
 const getMine = vi.fn();
-vi.mock("@/app/(app)/rapport/actions", () => ({ getMine: () => getMine() }));
+const mina = (data: unknown) => ({ status: 200, ok: true, json: () => data });
+const isMina = (url: string) => url === "/api/v2/rapport/mina";
+// Wraps the stubbed fetch: /mina goes to getMine, everything else (the exchange) to the stub.
+const routeMina = () => {
+  const inner = globalThis.fetch as unknown as (
+    url: string,
+    init: { body: string; signal: AbortSignal },
+  ) => Promise<unknown>;
+  vi.stubGlobal(
+    "fetch",
+    vi.fn((url: string, init: { body: string; signal: AbortSignal }) =>
+      isMina(url) ? getMine(init) : inner(url, init),
+    ),
+  );
+};
 
 import { LinkGate, resetLinkQueue } from "@/app/(app)/rapport/LinkGate";
 import { CLEAR_HASH_SCRIPT } from "@/app/(app)/rapport/clearHash";
@@ -21,6 +36,7 @@ afterEach(() => {
   cleanup();
   vi.useRealTimers();
   goTo.mockReset();
+  getMine.mockReset();
   resetLinkQueue(); // the queue is module state: one test's hung request must not block the next
   vi.unstubAllGlobals();
   history.replaceState(null, "", "/");
@@ -51,6 +67,7 @@ describe("LinkGate", () => {
       }),
     );
     history.replaceState(null, "", "/rapport#12.abc");
+    routeMina();
     render(<LinkGate missing="ute" />);
     await waitFor(() =>
       expect(replace).toHaveBeenCalledWith("/rapport/ogiltig"),
@@ -71,6 +88,7 @@ describe("LinkGate", () => {
       "fetch",
       vi.fn(() => Promise.resolve({ status: 403, ok: false })),
     );
+    routeMina();
     render(<LinkGate missing="ute" />);
     return waitFor(() => {
       expect(replace).toHaveBeenCalledWith("/rapport/ogiltig");
@@ -91,6 +109,7 @@ describe("LinkGate", () => {
       }),
     );
     history.replaceState(null, "", "/rapport");
+    routeMina();
     render(<LinkGate missing="ute" />);
     await screen.findByText(/Sidan stängdes efter två timmar/);
     await act(async () => {
@@ -113,11 +132,11 @@ describe("LinkGate", () => {
           }),
       ),
     );
-    getMine.mockResolvedValue({
-      ok: true,
-      data: [{ code_id: 2, herd: "M2", herd_name: null, year: 2025 }],
-    });
+    getMine.mockResolvedValue(
+      mina([{ code_id: 2, herd: "M2", herd_name: null, year: 2025 }]),
+    );
     (window as { __rapportToken?: string }).__rapportToken = "A";
+    routeMina();
     render(<LinkGate />);
     await waitFor(() => expect(pending.A).toBeTruthy());
     await act(async () => {
@@ -167,6 +186,7 @@ describe("LinkGate", () => {
           }),
       ),
     );
+    routeMina();
     return { sent, pending };
   };
   const hashTo = (t: string) =>
@@ -183,10 +203,9 @@ describe("LinkGate", () => {
   it("runs one exchange at a time: B is not sent before A has answered", async () => {
     replace.mockReset();
     const { sent, pending } = deferred();
-    getMine.mockResolvedValue({
-      ok: true,
-      data: [{ code_id: 2, herd: "M2", herd_name: null, year: 2025 }],
-    });
+    getMine.mockResolvedValue(
+      mina([{ code_id: 2, herd: "M2", herd_name: null, year: 2025 }]),
+    );
     (window as { __rapportToken?: string }).__rapportToken = "A";
     render(<LinkGate />);
     await waitFor(() => expect(sent).toEqual(["A"]));
@@ -207,7 +226,7 @@ describe("LinkGate", () => {
 
   it("a link replaced while queued is never sent", async () => {
     const { sent, pending } = deferred();
-    getMine.mockResolvedValue({ ok: true, data: [] });
+    getMine.mockResolvedValue(mina([]));
     (window as { __rapportToken?: string }).__rapportToken = "A";
     render(<LinkGate />);
     await waitFor(() => expect(sent).toEqual(["A"]));
@@ -253,7 +272,7 @@ describe("LinkGate", () => {
 
   it("a new mount queues behind the exchange of the one before", async () => {
     const { sent, pending } = deferred();
-    getMine.mockResolvedValue({ ok: true, data: [] });
+    getMine.mockResolvedValue(mina([]));
     (window as { __rapportToken?: string }).__rapportToken = "A";
     const first = render(<LinkGate />);
     await waitFor(() => expect(sent).toEqual(["A"]));
@@ -293,7 +312,7 @@ describe("LinkGate", () => {
     expect(sent).toEqual(["A", "B"]);
   });
 
-  it("a getMine that never answers shows the retry too", async () => {
+  it("a code list that never answers shows the retry too", async () => {
     vi.useFakeTimers();
     vi.stubGlobal(
       "fetch",
@@ -301,6 +320,7 @@ describe("LinkGate", () => {
     );
     getMine.mockReturnValue(new Promise(() => {}));
     (window as { __rapportToken?: string }).__rapportToken = "A";
+    routeMina();
     render(<LinkGate />);
     await act(async () => {});
     await act(async () => {
@@ -310,7 +330,6 @@ describe("LinkGate", () => {
   });
 
   it("nothing continues when the page goes away while the body is read", async () => {
-    getMine.mockReset();
     let release: (v: unknown) => void = () => {};
     vi.stubGlobal(
       "fetch",
@@ -323,6 +342,7 @@ describe("LinkGate", () => {
       ),
     );
     (window as { __rapportToken?: string }).__rapportToken = "A";
+    routeMina();
     const { unmount } = render(<LinkGate />);
     await act(async () => {});
     unmount();
@@ -338,10 +358,9 @@ describe("LinkGate", () => {
     delete (window as { __rapportToken?: string }).__rapportToken;
     new Function(CLEAR_HASH_SCRIPT)();
     const { sent, pending } = deferred();
-    getMine.mockResolvedValue({
-      ok: true,
-      data: [{ code_id: 1, herd: "M1", herd_name: null, year: 2025 }],
-    });
+    getMine.mockResolvedValue(
+      mina([{ code_id: 1, herd: "M1", herd_name: null, year: 2025 }]),
+    );
     render(<LinkGate missing="ute" />);
     await screen.findByText(/Sidan stängdes efter två timmar/);
     await act(async () => {
@@ -354,5 +373,90 @@ describe("LinkGate", () => {
     });
     await waitFor(() => expect(goTo).toHaveBeenCalledWith("/rapport?kod=1"));
     expect(location.hash).toBe("");
+  });
+
+  it("a code list that stalls is aborted, and the retry gets through", async () => {
+    vi.useFakeTimers();
+    const signals: AbortSignal[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(good("M1"))),
+    );
+    routeMina();
+    getMine
+      .mockImplementationOnce(
+        (init: { signal: AbortSignal }) =>
+          new Promise((_resolve, reject) => {
+            signals.push(init.signal);
+            init.signal.addEventListener("abort", () =>
+              reject(new Error("aborted")),
+            );
+          }),
+      )
+      .mockResolvedValueOnce(
+        mina([{ code_id: 5, herd: "M1", herd_name: null, year: 2025 }]),
+      );
+    (window as { __rapportToken?: string }).__rapportToken = "A";
+    render(<LinkGate />);
+    await act(async () => {});
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+    expect(signals).toHaveLength(1);
+    expect(signals[0].aborted).toBe(true);
+    await act(async () => {
+      screen.getByRole("button", { name: "Försök igen" }).click();
+    });
+    await act(async () => {});
+    expect(goTo).toHaveBeenCalledWith("/rapport?kod=5");
+  });
+
+  it("a code list body that stalls is aborted too", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(good("M1"))),
+    );
+    routeMina();
+    let signal: AbortSignal | undefined;
+    getMine.mockImplementation((init: { signal: AbortSignal }) => {
+      signal = init.signal;
+      return Promise.resolve({
+        status: 200,
+        ok: true,
+        json: () => new Promise(() => {}),
+      });
+    });
+    (window as { __rapportToken?: string }).__rapportToken = "A";
+    render(<LinkGate />);
+    await act(async () => {});
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+    expect(signal?.aborted).toBe(true);
+    expect(screen.getByRole("button", { name: "Försök igen" })).toBeTruthy();
+  });
+
+  it("an exchange body that stalls is aborted after 20 s and shows the retry", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn(() =>
+      Promise.resolve({
+        status: 200,
+        ok: true,
+        json: () => new Promise(() => {}),
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+    (window as { __rapportToken?: string }).__rapportToken = "A";
+    render(<LinkGate />);
+    await act(async () => {});
+    const signal = (
+      fetchMock.mock.calls as unknown as [string, { signal: AbortSignal }][]
+    )[0][1].signal;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+    expect(signal.aborted).toBe(true);
+    expect(screen.getByRole("button", { name: "Försök igen" })).toBeTruthy();
   });
 });
