@@ -1690,6 +1690,13 @@ def update_herd(form, user_uuid):
                 if account != account_end(herd.bank_account_number):
                     return {"status": "error", "message": "Invalid value for bank_account_number"}
                 del form["bank_account_number"]  # the unchanged echo
+            elif account is not None and not (
+                user.is_admin or user.is_matrikel_admin or herd.id in user.effective_herd_ids()
+            ):
+                # A writer who sees only the end of the account may enter a new one, not blank it or
+                # replace it with something that is no account (at least four digits).
+                if sum(c.isdigit() for c in str(account)) < 4:
+                    return {"status": "error", "message": "Invalid value for bank_account_number"}
             bad = invalid_privacy_field(form)
             if bad:
                 return {"status": "error", "message": f"Invalid value for {bad}"}

@@ -247,6 +247,21 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
                 self.assertEqual(result["status"], "error")
                 self.assertEqual(db.Herd.get_by_id(herd.id).bank_account_number, "1234-5")
 
+    def test_manager_may_enter_a_new_account_but_not_blank_it(self):
+        herd = self.herds[1]
+        herd.bank_account_number = "1234-5"
+        herd.save()
+        for value in ("", "45", "abc"):
+            with self.subTest(value=value):
+                result = da.update_herd({"id": herd.id, "bank_account_number": value}, self.manager.uuid)
+                self.assertEqual(result["status"], "error")
+                self.assertEqual(db.Herd.get_by_id(herd.id).bank_account_number, "1234-5")
+        result = da.update_herd({"id": herd.id, "bank_account_number": "9876-54"}, self.manager.uuid)
+        self.assertEqual(result, {"status": "updated"})
+        self.assertEqual(db.Herd.get_by_id(herd.id).bank_account_number, "9876-54")
+        # An admin sees the whole account and may clear it.
+        self.assertEqual(da.update_herd({"id": herd.id, "bank_account_number": ""}, self.admin.uuid)["status"], "updated")
+
     def test_yearly_report_shows_the_whole_account_for_the_readers_own_herd_only(self):
         a, b = self.herds[0], self.herds[1]
         for herd in (a, b):
