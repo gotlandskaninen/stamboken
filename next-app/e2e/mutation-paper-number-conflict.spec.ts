@@ -57,7 +57,8 @@ async function fillWrongPaper(page: Page) {
 
   await dialog.getByRole("combobox").filter({ hasText: "Hona" }).click();
   await page.getByRole("option", { name: "Hona" }).click();
-  await dialog.getByRole("textbox", { name: /^Färg/ }).first().fill("Blå");
+  await dialog.getByRole("combobox", { name: /^Färg/ }).fill("Viltgrå");
+  await page.getByRole("option", { name: /^\d+ Viltgrå(\s|$)/ }).click();
   await dialog.getByRole("combobox").filter({ hasText: "Digitalt" }).click();
   await page.getByRole("option", { name: "Papper" }).click();
   // The paper's number is typed before Stamboken's is shown again

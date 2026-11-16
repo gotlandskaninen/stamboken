@@ -22,6 +22,7 @@ vi.mock("@/app/(app)/stamboken/(dashboard)/min-besattning/actions", () => ({
   registerIndividual,
   suggestIndividualNumber,
   checkIndividualNumber,
+  getColors: vi.fn().mockResolvedValue(null),
 }));
 vi.mock("@/lib/mode-context", () => ({ useMode: () => "prod" }));
 
