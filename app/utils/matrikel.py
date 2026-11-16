@@ -437,7 +437,10 @@ def anonymize_person(member, actor):
     allowed on an active main member — the right to erasure trumps the
     headless-membership invariant.
 
-    `actor` is None when the nightly job (anonymize_ended_persons) erases.
+    `actor` is None when the nightly job (anonymize_ended_persons) erases for
+    retention: then only the application that created this person is scrubbed.
+    The applicant's other submissions may belong to a member who came back, and
+    the ones that never led to membership are #69's job.
     Detaches the account through the same locked unlink path as the endpoint
     (mode="anonymize") and invalidates the genebanks whose
     access the account loses. Returns the scrubbed person: the caller's
@@ -456,7 +459,9 @@ def anonymize_person(member, actor):
         ).execute()
         if person.user_id is not None:
             _detach_user_locked(person, actor=actor, mode="anonymize")
-        applications_to_redact = _applications_of(person)
+        applications_to_redact = (
+            _applications_of(person) if actor is not None else MemberApplication.created_member == person
+        )
         person.first_name = ANONYMIZED_FIRST_NAME
         person.last_name = ANONYMIZED_LAST_NAME
         person.email = None
@@ -571,12 +576,12 @@ def anonymize_ended_persons(now):
     Nightly job (#70): anonymize_person, with no user as actor, on the persons _due_in finds. Each membership is
     decided again and erased in one transaction under its row lock, the lock retire, delete and add take: a
     household retired after the candidate query waits its own 12 months. A failure rolls back that membership
-    only and is logged. Returns (anonymized count, held).
+    only and is logged. Returns (anonymized persons, failed memberships, held).
     """
     cutoff = DB_PROXY.execute_sql(
         "SELECT (%s::timestamptz - %s::interval)::date", (now, ENDED_MEMBER_RETENTION)
     ).fetchone()[0]
-    done, held = 0, []
+    done, failed, held = 0, 0, []
     for membership in _memberships_with_ended_persons(cutoff):
         try:
             with DB_PROXY.atomic():
@@ -586,10 +591,11 @@ def anonymize_ended_persons(now):
                     anonymize_person(person, None)
         except Exception:  # pylint: disable=broad-exception-caught
             logger.exception("Automatic anonymization failed for membership=%s", membership.id)
+            failed += 1
             continue
         done += len(due)
         held += membership_held
-    return done, held
+    return done, failed, held
 
 
 def new_membership(status, **fields):

@@ -260,8 +260,13 @@ def _purge_audit_ip():
 def _anonymize_ended_persons():
     """Nightly leader job beside _purge_audit_ip (#70): persons ended 12 months ago are anonymized."""
     try:
-        count, held = anonymize_ended_persons(datetime.datetime.now(datetime.timezone.utc))
-        APP.logger.info("Anonymized %s persons ended 12 months ago, %s left for the administrator", count, len(held))
+        count, failed, held = anonymize_ended_persons(datetime.datetime.now(datetime.timezone.utc))
+        APP.logger.info(
+            "Anonymized %s persons ended 12 months ago, %s memberships failed, %s left for the administrator",
+            count,
+            failed,
+            len(held),
+        )
         for membership_id, person_id, reason in held:  # ids only, never names: the system administrator decides
             APP.logger.info("Not anonymized: membership=%s person=%s reason=%s", membership_id, person_id, reason)
     finally:

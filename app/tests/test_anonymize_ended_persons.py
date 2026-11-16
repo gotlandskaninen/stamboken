@@ -56,7 +56,7 @@ class TestAnonymizeEndedPersons(DatabaseTest):
         main = _person(ended, OLD, role="huvudmedlem", user=self.viewer)  # viewer is on every account: no hold
         family = _person(ended, OLD)
 
-        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (2, []))
+        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (2, 0, []))
 
         self.assertTrue(_erased(main) and _erased(family))
         self.assertIsNone(db.Member.get_by_id(main.id).user_id)
@@ -64,18 +64,18 @@ class TestAnonymizeEndedPersons(DatabaseTest):
         audit = db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_anonymized")
         self.assertEqual([row.actor_id for row in audit], [None, None])
         # A second night changes nothing.
-        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, []))
+        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, 0, []))
 
     def test_membership_ended_less_than_12_months_ago_stays(self):
         main = _person(_membership(102), YOUNG, role="huvudmedlem")
-        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, []))
+        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, 0, []))
         self.assertFalse(_erased(main))
 
     def test_ended_membership_waits_for_its_last_person(self):
         ended = _membership(103)
         family = _person(ended, OLD)
         main = _person(ended, YOUNG, role="huvudmedlem")
-        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, []))
+        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, 0, []))
         self.assertFalse(_erased(family) or _erased(main))
         self.assertEqual(_address(ended), "Exempelvägen 1")
 
@@ -83,23 +83,23 @@ class TestAnonymizeEndedPersons(DatabaseTest):
         ended = _membership(104)
         main = _person(ended, OLD, role="huvudmedlem")
         db.Herd.update(membership=ended, is_active=True).where(db.Herd.id == self.herds[1].id).execute()
-        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, [(ended.id, None, "active_herd")]))
+        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, 0, [(ended.id, None, "active_herd")]))
         self.assertFalse(_erased(main))
 
     def test_a_role_on_any_person_holds_the_ended_membership(self):
         ended = _membership(105)
         main = _person(ended, OLD, role="huvudmedlem")
         family = _person(ended, OLD, user=self.manager)
-        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, [(ended.id, None, "role")]))
+        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, 0, [(ended.id, None, "role")]))
         self.assertFalse(_erased(main) or _erased(family))
 
     def test_legacy_owner_entry_holds_only_on_an_active_herd(self):
         ended = _membership(106)
         main = _person(ended, OLD, role="huvudmedlem", user=self.owner)  # owner of herds[0]
         db.Herd.update(is_active=True).where(db.Herd.id == self.herds[0].id).execute()
-        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, [(ended.id, None, "active_herd")]))
+        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, 0, [(ended.id, None, "active_herd")]))
         db.Herd.update(is_active=False).where(db.Herd.id == self.herds[0].id).execute()
-        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (1, []))
+        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (1, 0, []))
         self.assertTrue(_erased(main))
 
     def test_active_membership_loses_only_its_long_ended_persons(self):
@@ -111,12 +111,39 @@ class TestAnonymizeEndedPersons(DatabaseTest):
         # The household's herd does not hold a person who left it.
         db.Herd.update(membership=active, is_active=True).where(db.Herd.id == self.herds[1].id).execute()
 
-        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (1, [(active.id, held.id, "role")]))
+        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (1, 0, [(active.id, held.id, "role")]))
 
         self.assertTrue(_erased(gone))
         self.assertFalse(_erased(main) or _erased(recent) or _erased(held))
         membership = db.Membership.get_by_id(active.id)
         self.assertEqual((membership.membership_status, membership.address), ("active", "Exempelvägen 1"))
+
+    def test_only_the_own_application_is_scrubbed_for_a_member_who_came_back(self):
+        old = _person(_membership(111), OLD, role="huvudmedlem")
+        new = _person(_membership(112, status="active"), role="huvudmedlem")
+        db.Member.update(last_name=old.last_name).where(db.Member.id == new.id).execute()
+
+        def application(status, created_member=None):
+            return db.MemberApplication.create(
+                first_name="Test",
+                last_name=old.last_name,
+                email="person@example.invalid",
+                gdpr_consented_at=datetime(2024, 1, 1),
+                status=status,
+                created_member=created_member,
+            ).id
+
+        own = application("approved", old)
+        rejoined = application("approved", new)
+        pending = application("pending")
+
+        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (1, 0, []))
+
+        rows = {a.id: a for a in db.MemberApplication.select()}
+        self.assertEqual(rows[own].first_name, matrikel.ANONYMIZED_FIRST_NAME)
+        self.assertEqual((rows[rejoined].first_name, rows[rejoined].status), ("Test", "approved"))
+        self.assertEqual((rows[pending].first_name, rows[pending].status), ("Test", "pending"))
+        self.assertFalse(_erased(new))
 
     def test_a_household_retired_after_the_candidate_query_keeps_its_address(self):
         active = _membership(110, status="active")
@@ -130,7 +157,7 @@ class TestAnonymizeEndedPersons(DatabaseTest):
             return found
 
         with mock.patch.object(matrikel, "_memberships_with_ended_persons", side_effect=candidates_then_retire):
-            self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, []))
+            self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, 0, []))
         self.assertFalse(_erased(family) or _erased(main))
         self.assertEqual(_address(active), "Exempelvägen 1")
 
@@ -146,18 +173,18 @@ class TestAnonymizeEndedPersons(DatabaseTest):
 
         with mock.patch.object(matrikel, "anonymize_person", side_effect=fail_first):
             with self.assertLogs(matrikel.logger, "ERROR"):
-                self.assertEqual(matrikel.anonymize_ended_persons(NOW), (1, []))
+                self.assertEqual(matrikel.anonymize_ended_persons(NOW), (1, 1, []))
         self.assertFalse(_erased(first))
         self.assertTrue(_erased(second))
 
     def test_job_logs_ids_and_closes_connection(self):
         with (
-            mock.patch.object(herdbook, "anonymize_ended_persons", return_value=(2, [(7, None, "role")])) as job,
+            mock.patch.object(herdbook, "anonymize_ended_persons", return_value=(2, 1, [(7, None, "role")])) as job,
             mock.patch.object(herdbook.genetics.ps, "_close_db_connection") as close,
         ):
             with self.assertLogs(herdbook.APP.logger, "INFO") as logs:
                 herdbook._anonymize_ended_persons()
-            self.assertIn("Anonymized 2 persons", logs.output[0])
+            self.assertIn("Anonymized 2 persons ended 12 months ago, 1 memberships failed", logs.output[0])
             self.assertIn("membership=7 person=None reason=role", logs.output[1])
             self.assertIsNotNone(job.call_args.args[0].tzinfo)
             job.side_effect = RuntimeError("database gone")
