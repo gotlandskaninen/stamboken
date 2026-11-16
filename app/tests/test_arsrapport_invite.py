@@ -19,6 +19,7 @@ import utils.settings as settings
 from herdbook import APP
 
 from tests.arsrapport_fixtures import ArsrapportTest
+from tests.ht_helpers import count_queries
 from tests.test_mail_queue import FakeRelay, _refused
 
 NOW = datetime(2026, 1, 5, 7, 0, tzinfo=timezone.utc)
@@ -177,6 +178,31 @@ class InviteTest(ArsrapportTest):
 
     def test_recipients_counts(self):
         self.assertEqual(invite.recipients(self.round_, self.gotland.id), {"med_epost": 2, "utan_epost": 1})
+
+    def test_recipients_follow_invitation_recipient(self):
+        pending = self.herd_with_member("G9004")
+        db.Membership.update(membership_status="pending").where(db.Membership.id == pending.membership_id).execute()
+        blank = self.herd_with_member("G9005", email="x@example.invalid")
+        db.Member.update(email="  ").where(db.Member.membership == blank.membership_id).execute()
+        ended = self.herd_with_member("G9006")
+        db.Member.update(end_date=date(2025, 1, 1)).where(db.Member.membership == ended.membership_id).execute()
+        expected = [report_code.invitation_recipient(h) is not None for h in invite._herds(self.gotland.id)]
+        self.assertEqual(
+            invite.recipients(self.round_, self.gotland.id),
+            {"med_epost": sum(expected), "utan_epost": len(expected) - sum(expected)},
+        )
+        self.assertEqual(invite.recipients(self.round_, self.gotland.id), {"med_epost": 2, "utan_epost": 4})
+
+    def test_recipients_queries_do_not_grow_with_herds(self):
+        def queries():
+            with count_queries() as counter:
+                invite.recipients(self.round_, self.gotland.id)
+            return counter["n"]
+
+        few = queries()
+        for n in range(30):
+            self.herd_with_member(f"G92{n:02d}")
+        self.assertEqual(queries(), few)
 
     def test_endpoints_need_the_genebank_manager(self):
         self.login("man")

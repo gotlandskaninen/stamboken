@@ -11,7 +11,15 @@ import utils.report_code as report_code
 import utils.settings as settings
 from utils.arsrapport import ArsrapportError
 from utils.arsrapport_pdf import register_extract_pdf
-from utils.database import DB_PROXY, OUTSIDE_GENEBANK_HERDS, Herd, ReportAccessCode, YearlyReportRoundGenebank
+from utils.database import (
+    DB_PROXY,
+    OUTSIDE_GENEBANK_HERDS,
+    Herd,
+    Member,
+    Membership,
+    ReportAccessCode,
+    YearlyReportRoundGenebank,
+)
 from utils.mail import enqueue_mail, mail_kind
 
 logger = logging.getLogger(__name__)
@@ -79,8 +87,20 @@ def send_due_invitations(now: datetime) -> int:
 def recipients(round_, genebank_id) -> dict:
     """How many of the genebank's active herds the invitation reaches by e-mail, and how many need the paper form."""
     del round_  # the herds and their main members do not depend on the round
-    found = [report_code.invitation_recipient(herd) is not None for herd in _herds(genebank_id)]
-    return {"med_epost": sum(found), "utan_epost": len(found) - sum(found)}
+    herd_ids = [herd.id for herd in _herds(genebank_id)]
+    first = {}  # the herd's first main member, as inbox.herd_holder; one query, not two per herd
+    rows = (
+        Member.select(Herd.id.alias("herd_id"), Member.email, Membership.membership_status)
+        .join(Membership)
+        .join(Herd, on=(Herd.membership == Membership.id))
+        .where(Herd.id.in_(herd_ids), Member.role == "huvudmedlem", Member.end_date.is_null(True))
+        .order_by(Member.id)
+        .dicts()
+    )
+    for row in rows:  # the same test as report_code.invitation_recipient
+        first.setdefault(row["herd_id"], row["membership_status"] == "active" and bool((row["email"] or "").strip()))
+    with_mail = sum(first.get(herd_id, False) for herd_id in herd_ids)
+    return {"med_epost": with_mail, "utan_epost": len(herd_ids) - with_mail}
 
 
 def new_link(herd, round_, user, *, now: datetime) -> ReportAccessCode:
