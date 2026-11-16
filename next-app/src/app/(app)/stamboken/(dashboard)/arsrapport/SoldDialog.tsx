@@ -66,9 +66,15 @@ function Body({
   React.useEffect(() => {
     if (loaded !== null) return;
     let cancelled = false;
-    loadHerds(genebankId).then((r) => {
-      if (!cancelled) setLoaded(r);
-    });
+    loadHerds(genebankId)
+      .then((r) => {
+        if (!cancelled) setLoaded(r);
+      })
+      .catch(() => {
+        // a broken connection must not leave the picker waiting for ever
+        if (!cancelled)
+          setLoaded({ success: false as const, error: "unexpected_error" });
+      });
     return () => {
       cancelled = true;
     };

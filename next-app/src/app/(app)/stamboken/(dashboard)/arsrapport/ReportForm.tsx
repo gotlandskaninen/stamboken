@@ -321,6 +321,9 @@ export function ReportForm({
   const submitting = React.useRef(false);
   const submissions = React.useRef(0);
   const autosaveTimer = React.useRef<ReturnType<typeof setTimeout>>(undefined);
+  // Unsaved changes whose autosave Skicka cancelled: saved again if Skicka is refused.
+  const autosavePending = React.useRef(false);
+  const resumeAutosave = React.useRef(false);
   // The server render and the first client render are not interactive yet.
   const [ready, setReady] = React.useState(false);
   React.useEffect(() => {
@@ -410,6 +413,7 @@ export function ReportForm({
   // has been answered, with the version it returned.
   const flush = async () => {
     if (submitting.current) return;
+    autosavePending.current = false;
     if (saving.current) {
       again.current = true;
       return;
@@ -492,6 +496,7 @@ export function ReportForm({
       updated_at: updatedAt.current,
       revision: viewRef.current.report?.revision ?? null,
     });
+    autosavePending.current = true;
     autosaveTimer.current = setTimeout(
       () => void flushRef.current(),
       AUTOSAVE_MS,
@@ -705,7 +710,16 @@ export function ReportForm({
   const fail = (message: string) =>
     showRefusals([{ individual_id: null, code: "fel", message }]);
 
+  // A submission is over: autosave may run again, and changes that Skicka held back are saved.
+  const submitOver = () => {
+    submitting.current = false;
+    if (!resumeAutosave.current) return;
+    resumeAutosave.current = false;
+    setRetry((n) => n + 1); // re-arms the autosave
+  };
+
   const handle = (p: Problem) => {
+    submitOver();
     const ext = p.extensions ?? {};
     if (p.status === 401) setSaveState("loggedout");
     else if (p.status === 422 && Array.isArray(ext.refusals))
@@ -730,6 +744,7 @@ export function ReportForm({
       actionsRef.current.submitReport(herd.herd, year, body, env, post),
     );
     if (res.ok) {
+      submitOver();
       keyRef.current = keyAfter("ok", keyRef.current!);
       frozen.current = null;
       updatedAt.current = null;
@@ -776,6 +791,7 @@ export function ReportForm({
     }
     frozen.current = body; // never stored: it may hold a buyer or a matrikel
     clearTimeout(autosaveTimer.current); // a pending autosave must not reach the server after the submission
+    resumeAutosave.current = autosavePending.current;
     submitting.current = true;
     submissions.current += 1;
     setPhase("checking");
@@ -785,21 +801,18 @@ export function ReportForm({
     if (!dry.ok) {
       if (dry.problem.status === 408 || dry.problem.status === 502) {
         fail(NET_TEXT);
+        submitOver();
         return setPhase("idle");
       }
       return handle(dry.problem);
     }
     if (!dry.data.ok) {
       showRefusals(dry.data.refusals);
+      submitOver();
       return setPhase("idle");
     }
     await send(body);
   };
-
-  // Autosave may run again once the submission is over (refused, or withdrawn).
-  React.useEffect(() => {
-    if (phase === "idle") submitting.current = false;
-  }, [phase]);
 
   const withdraw = async (reason?: string): Promise<string | null> => {
     if (readModeCookieClient() !== env) return ENV_TEXT;

@@ -204,6 +204,37 @@ describe("ReportForm", () => {
     expect(a.saveDraft).not.toHaveBeenCalled();
   });
 
+  it("saves the held-back changes when Skicka is refused", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    a.dryRun = vi.fn(() =>
+      ok({
+        ok: false,
+        refusals: [{ code: "x", message: "Nej", individual_id: 1 }],
+        warnings: [],
+      }),
+    ) as unknown as typeof a.dryRun;
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "3" },
+    });
+    choose(2, "Finns kvar");
+    fireEvent.change(within(row(2)).getByLabelText("Vikt"), {
+      target: { value: "3" },
+    });
+    send(); // before the 2 s autosave; the dry run refuses
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100);
+    });
+    expect(a.dryRun).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2500);
+    });
+    expect(a.submitReport).not.toHaveBeenCalled();
+    expect(a.saveDraft).toHaveBeenCalled();
+  });
+
   it("asks no consent question and links Dina uppgifter to the profile", () => {
     render(<ReportForm env="demo" view={view()} actions={actions()} />);
     expect(screen.queryByText(/Koharen\? Listan/)).toBeNull();
