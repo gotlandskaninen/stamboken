@@ -21,6 +21,7 @@ from utils.certificates_v2 import (
     compute_checksum,
     sign_pdf,
 )
+from utils.fargatlas import ATLAS_FARGER
 from utils.individual_number_v2 import validate_first_certificate
 from utils.settings import certs as cert_settings
 from utils.settings import service as service_settings
@@ -28,6 +29,8 @@ from utils.settings import service as service_settings
 logger = logging.getLogger("herdbook.cert_service_v2")
 
 _generator = CertificateGeneratorV2()
+
+_ATLAS = {(id_, code, name) for id_, code, name, _ in ATLAS_FARGER}
 
 # Association-level signature metadata. Föreningen Gotlandskaninen issues
 # certificates for both the Gotlandskanin and Mellerudskanin genebanks, so the
@@ -73,10 +76,12 @@ def build_cert_data(individual, ind_data, user_id):
     cert_data["color_note"] = raw_color_note
     cert_data["foot_ring"] = ind_data.get("foot_ring") or ""
     # The colour's id is its atlas number; the template skips the chip when empty.
-    # Another genebank's colour (wrong data from before the genebank-scoped lookup) prints no number.
+    # Print the number only when id and name are the atlas's: another genebank's colour, or a database
+    # seeded before the ids were fixed, would print a wrong number. shortcut: a colour outside the atlas
+    # prints none, upgrade when the association adds colours of its own.
     color = individual.color
-    own = color is not None and color.genebank_id == individual.current_herd.genebank_id
-    cert_data["color_code"] = str(color.id) if own else ""
+    atlas = color is not None and (color.id, color.genebank.name[0], color.name) in _ATLAS
+    cert_data["color_code"] = str(color.id) if atlas else ""
     cert_data["issue_date"] = date.today().isoformat()
     cert_data["public_url"] = f"gotlandskaninen.se/stamboken/individ/{individual.number}"
     cert_data["digital_certificate"] = individual.digital_certificate

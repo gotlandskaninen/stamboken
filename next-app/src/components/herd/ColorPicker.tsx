@@ -72,7 +72,10 @@ export function ColorPicker({
   }
 
   // A stored colour that is not on this list stays selected instead of vanishing.
-  const found = options.find((o) => o.name === value);
+  // With a stored id, the name alone is not enough: two genebanks both have an Albino.
+  const found = options.find(
+    (o) => o.name === value && (valueId == null || o.id === valueId),
+  );
   const selected =
     found ??
     (value
@@ -89,7 +92,9 @@ export function ColorPicker({
       filterOptions={filter}
       onChange={(_, v) => onChange(v.name)}
       getOptionLabel={optionLabel}
-      isOptionEqualToValue={(a, b) => a.name === b.name}
+      isOptionEqualToValue={(a, b) =>
+        a.name === b.name && (a.id == null || b.id == null || a.id === b.id)
+      }
       size="small"
       fullWidth
       data-genebank={genebank}

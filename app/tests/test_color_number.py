@@ -50,3 +50,11 @@ class TestColorNumberInResponseAndCertificate(DatabaseTest):
         ind.color = self.colors[0]  # Gotland's
         ind.save()
         self.assertEqual(self._cert_code(ind), "")
+
+    def test_color_code_tom_for_id_som_inte_ar_atlasens(self):
+        """A database seeded before the ids were fixed has Viltgrå as 27, not 22."""
+        color = db.Color.create(id=27, name="Viltgrå", genebank=self.genebanks[0])
+        ind = self.individuals[3]
+        ind.color = color
+        ind.save()
+        self.assertEqual(self._cert_code(ind), "")

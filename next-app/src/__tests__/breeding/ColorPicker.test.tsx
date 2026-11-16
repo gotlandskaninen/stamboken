@@ -132,4 +132,19 @@ describe("ColorPicker", () => {
     );
     expect(screen.getByRole("combobox")).toBeDefined();
   });
+
+  it("visar den lagrade färgens id när två genbanker har samma namn", () => {
+    render(
+      <ColorPicker
+        options={[{ id: 101, name: "Albino", comment: null }]}
+        value="Albino"
+        valueId={12}
+        onChange={() => {}}
+        genebank="Mellerudskanin"
+      />,
+    );
+    expect((screen.getByRole("combobox") as HTMLInputElement).value).toBe(
+      "12 Albino",
+    );
+  });
 });
