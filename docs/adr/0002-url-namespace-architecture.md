@@ -86,7 +86,7 @@ med tabellen ovan:
 
 ```text
 admin, ansok, api, api-test, cms-api, cms-graphql, auth, stamboken,
-stamboken-online, medlem, medlemsforum, bli-genbank, bli-genbanksbesattning, v2,
+stamboken-online, medlem, medlemsforum, rapport, bli-genbank, bli-genbanksbesattning, v2,
 uppladdningar, _next, static, favicon.ico, robots.txt, sitemap.xml, error,
 not-found, preview
 ```

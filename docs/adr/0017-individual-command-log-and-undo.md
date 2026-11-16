@@ -115,7 +115,7 @@ där den tog en användare. Loggraden i `individual_command` får då
 `voided_by_access_code_id`. Spåret pekar på koden, som pekar på besättningen,
 rundan och huvudmedlemmen som fick länken.
 
-Koden har en enda roll, `Role.RAPPORT`, och `ReportGrant(code=…)` ger den bara
+Koden har en enda roll, `Role.RAPPORT`, och `ReportGrant` med en kod ger den bara
 för en kanin som finns i kodens besättning nu och står på rapportens lista.
 En kanin som såldes vidare och godkändes ligger i en annan besättning, och
 länken når den inte längre. Policytabellen ger `RAPPORT` raden `Entry` (aldrig
