@@ -190,6 +190,27 @@ class RapportLinkTest(ArsrapportTest):
         self.assertEqual(other.get("/api/v2/rapport/mina").get_json(), [])
         self.assertNotIn("rapport", self.session(other))
 
+    def test_failed_rotation_grants_nothing_under_the_old_id(self):
+        with self.client.session_transaction() as session:
+            session["planted"] = 1
+        old = self.client.get_cookie("session").value
+        with mock.patch.object(APP.session_interface, "regenerate", side_effect=RuntimeError("redis down")):
+            response = self.exchange()
+        self.assertEqual(response.status_code, 500)
+        self.assertNotIn(self.token.split(".")[1], response.get_data(as_text=True))
+        other = APP.test_client(use_cookies=True)
+        other.set_cookie("session", old)
+        self.assertEqual(other.get("/api/v2/rapport/mina").get_json(), [])
+        self.assertNotIn("rapport", self.session(other))
+        self.assertNotIn("rapport", self.session())
+
+    def test_only_application_json_is_accepted(self):
+        for content_type in ("application/problem+json", "application/vnd.api+json"):
+            response = self.client.post(EXCHANGE, data=json.dumps({"token": self.token}), content_type=content_type)
+            self.assertEqual(response.status_code, 415, content_type)
+        self.assertNotIn("rapport", self.session())
+        self.assertEqual(self.exchange().status_code, 200)
+
     def test_demo_refuses_exchange_and_ignores_codes(self):
         with mock.patch.object(settings.service, "demo_instance", True):
             self.refused(self.exchange())

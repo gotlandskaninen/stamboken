@@ -75,7 +75,7 @@ def rate_limited(exc):
 @rapport_link_bp.route("/v2/rapport/oppna", methods=["POST"])
 @limiter.limit("20 per minute")
 def open_link():
-    if not request.is_json:
+    if request.mimetype != "application/json":  # not is_json: that accepts application/*+json too
         return _answer(problem(415, "Fel innehållstyp", "Skicka JSON."))
     now = arsrapport.now()
     body = request.get_json(silent=True)
@@ -92,12 +92,17 @@ def open_link():
     except Exception as exc:  # pylint: disable=broad-except  # the answer is the same, and the log never names the token
         current_app.logger.error("Report link exchange failed: %s", type(exc).__name__)
         return _answer(_invalid())
+    # As login: a new session id, so a sid planted before the exchange gets nothing. user_id stays. The rotation comes
+    # first: if it fails, the grant is never made, so it cannot be saved under the old id.
+    try:
+        current_app.session_interface.regenerate(session)
+    except Exception as exc:  # pylint: disable=broad-except
+        current_app.logger.error("Report link session rotation failed: %s", type(exc).__name__)
+        return _answer(problem(500, "Serverfel", "Det gick inte att öppna länken. Försök igen."))
     session_codes(now)  # E3: an idle session loses its codes before this one joins, so they are not revived
     others = [entry for entry in session.get("rapport") or [] if entry[0] != code.id]
     session["rapport"] = (others + [[code.id, _environment()]])[-MAX_CODES:]
     touch(now)
-    # As login: a new session id, so a sid planted before the exchange gets nothing. user_id stays.
-    current_app.session_interface.regenerate(session)
     return _answer(jsonify({"herd": herd.herd, "year": code.round.report_year}))
 
 
