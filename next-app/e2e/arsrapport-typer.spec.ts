@@ -343,11 +343,7 @@ test("4. Typ B: ovan användare, långsamt nät och smal skärm", async ({
   await submitted(page);
   await checkScroll();
   await shot(page, "typ-b-kvitto");
-  test.fixme(
-    overflow > 0,
-    "At 320 px the page scrolls sideways by 22 px: the app shell's topbar (topbar-module .right, the language " +
-      "switch and avatar) ends at 342 px; the report itself fits. Expected: no horizontal scroll (WCAG 1.4.10).",
-  );
+  expect(overflow, "side scroll at 320 px (WCAG 1.4.10)").toBe(0);
 });
 
 test("5. Typ C: stor besättning med döda och sålda", async ({
