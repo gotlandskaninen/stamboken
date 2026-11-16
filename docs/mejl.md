@@ -194,6 +194,12 @@ bevisets original, adressen i mejlkön (`forget_recipient`) och en rad i
 alla rader med samma e-postadress (versaler och blanksteg räknas inte)
 raderas i samma transaktion.
 
+Varje genbanksansvarig i försäljningens genbank får en notis i Stamboken,
+`kopare_borttagen`, med kaninens nummer (en notis per genbanksansvarig och
+kanin). Notisen säger inget om köparen. Bara köparens eget invändande ger den:
+när genbanksansvarig raderar köparen, eller en gallring gör det, kommer ingen
+notis. Den dagliga notismejlen följer den vanliga strömbrytaren.
+
 | Svar | När |
 |---|---|
 | 200 `{"result": "removed"}` | köparen raderades nu |

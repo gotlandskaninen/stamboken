@@ -76,6 +76,7 @@ NOTICE_TEXTS = {
     "klar": "Ditt inskick är klart",
     "svar": "Uppfödaren har svarat",
     "star_still": "En post har stått still i 14 dagar",
+    "kopare_borttagen": "En köpare har tagit bort sina uppgifter",
 }
 DOC_TYPES = ("intyg", "bevis", "arsblankett", "annat")
 CERT_FORMATS = ("handskrivet", "datorskrivet", "v1_pdf", "intyg_b", "digitalt_v2")
@@ -203,9 +204,9 @@ def log_event(item, user, kind, **detail):
     return InboxEvent.create(item=item, user=user, kind=kind, detail=detail or None)
 
 
-def notify(user, kind, item, *, mailed=False):
+def notify(user, kind, item, *, individual=None, mailed=False):
     """A notice in Stamboken; `mailed` keeps it out of the daily digest (it has a mail of its own)."""
-    Notice.create(user=user, kind=kind, item=item, mailed_at=now() if mailed else None)
+    Notice.create(user=user, kind=kind, item=item, individual=individual, mailed_at=now() if mailed else None)
 
 
 def queue_workers(genebank_id, *, managers_only=False):
@@ -813,6 +814,7 @@ def notices_json(user, *, unread_only, limit, offset):
             "kind": n.kind,
             "text": NOTICE_TEXTS.get(n.kind, n.kind),
             "item_id": n.item_id,
+            "individual_number": n.individual.number if n.individual_id else None,
             "created_at": _iso(n.created_at),
             "read_at": _iso(n.read_at),
         }
@@ -1144,7 +1146,14 @@ def _digest_mail(params):
         .where((Notice.user == params["user_id"]) & Notice.read_at.is_null(True) & (Notice.kind != "klar"))
         .order_by(Notice.created_at, Notice.id)
     )
-    rows = [{"text": NOTICE_TEXTS.get(n.kind, n.kind), "item_id": n.item_id} for n in notices]
+    rows = [
+        {
+            "text": NOTICE_TEXTS.get(n.kind, n.kind),
+            "item_id": n.item_id,
+            "individual_number": n.individual.number if n.individual_id else None,
+        }
+        for n in notices
+    ]
     return {"notices": rows} if rows else None
 
 

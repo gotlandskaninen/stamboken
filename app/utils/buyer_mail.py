@@ -195,6 +195,7 @@ def erase_by_link(token):
         buyer_items,
         delete_buyer_contacts,
     )
+    from utils.inbox import notify, queue_workers  # pylint: disable=import-outside-toplevel
     from utils.inbox_purge import remove_originals  # pylint: disable=import-outside-toplevel
 
     def sales(ids):
@@ -212,6 +213,11 @@ def erase_by_link(token):
         holding = sales(ids)
         if not buyer_items(holding) <= items or not {row.individual_id for row in holding} <= rabbits:
             raise HerdTrackingConflict(QUEUE_CHANGED)
+        # Before the delete: afterwards the sales no longer point at the buyers. Only this objection tells the
+        # genebank; a manager's erasure and the purges do not. A repeated link finds no sales and so no notice.
+        for genebank_id, individual in sorted({(r.herd.genebank_id, r.individual_id) for r in holding if r.herd_id}):
+            for manager in queue_workers(genebank_id, managers_only=True):
+                notify(manager, "kopare_borttagen", None, individual=individual)
         count, paths = delete_buyer_contacts(sorted(ids), "invandning", whole_items=True)
     remove_originals(paths)  # after the commit, as utils.buyer_contact.erase_buyer_contact
     return "removed" if count else "already_removed"

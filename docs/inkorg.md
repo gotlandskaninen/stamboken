@@ -967,6 +967,7 @@ Alla har notiser, också den som bara laddar upp. Notiserna gäller poster och n
 | `svar` | Uppfödaren har svarat | handläggaren; genbanksansvariga i postens genbank när posten saknar handläggare |
 | `klar` | Ditt inskick är klart | uppladdaren; länka till Mina inskick, inte till kön |
 | `star_still` | En post har stått still i 14 dagar | genbanksansvariga i postens genbank (alla genbanksansvariga och admin när genbanken är okänd) |
+| `kopare_borttagen` | En köpare har tagit bort sina uppgifter | genbanksansvariga i försäljningens genbank, med kaninens nummer i `individual_number` och utan `item_id`; se [Raderingslänken](mejl.md#raderingslänken) |
 
 En notis blir läst när posten öppnas (`GET /api/v2/inkorg/{id}`), när Mina inskick öppnas
 (notiser av typen `klar`) eller genom `…/notiser/las`.
@@ -978,7 +979,7 @@ Parametrar: `unread=1` bara olästa; `limit` (1–200, standard 50) och `offset`
 ```json
 {
   "notices": [
-    {"id": 40, "kind": "ny_post", "text": "Ny post i inläsningskön", "item_id": 12, "created_at": "2026-11-14T08:01:02+00:00", "read_at": null}
+    {"id": 40, "kind": "ny_post", "text": "Ny post i inläsningskön", "item_id": 12, "individual_number": null, "created_at": "2026-11-14T08:01:02+00:00", "read_at": null}
   ],
   "unread": 3
 }

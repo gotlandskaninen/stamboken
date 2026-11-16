@@ -18,7 +18,7 @@ import utils.database as db  # noqa: E402
 import utils.mail as mail  # noqa: E402
 import utils.settings as settings  # noqa: E402
 from herdbook import limiter  # noqa: E402
-from utils import buyer_contact, buyer_mail  # noqa: E402
+from utils import buyer_contact, buyer_mail, inbox  # noqa: E402
 from utils.buyer_mail import ERASE_PURPOSE, queue_buyer_mails  # noqa: E402
 from utils.herd_tracking import (  # noqa: E402
     HerdTrackingConflict,
@@ -443,6 +443,55 @@ class TestEraseLink(PurgeTest):
         (sent,) = db.MailMessage.select()
         self.assertEqual((sent.address_hash, sent.dedupe_key), (None, None))  # forget_recipient
         self.assertEqual(self.deletions(), [(str(self.contact_id), {"action": "invandning"}, None)])
+
+    def notices(self):
+        return [
+            (n.user_id, n.kind, n.individual.number, n.item_id)
+            for n in db.Notice.select().where(db.Notice.kind == "kopare_borttagen")
+        ]
+
+    def test_the_link_tells_the_genebanks_managers_which_rabbit_and_nothing_about_the_buyer(self):
+        self.user("annanman", ("manager", self.genebanks[1].id))
+        self.erase(self.token)  # a manager of the other genebank is not told
+        self.assertEqual(self.notices(), [(self.manager.id, "kopare_borttagen", "G1-2112", None)])
+        digest = inbox._digest_mail({"user_id": self.manager.id})  # pylint: disable=protected-access
+        _subject, body = mail.render("notis.sammandrag", digest)
+        self.assertIn("- En köpare har tagit bort sina uppgifter (G1-2112)\n", body)
+        row = db.Notice.get(db.Notice.kind == "kopare_borttagen")
+        for text in (str(digest), body, str(row.__data__)):
+            for private in (NAME, "Visby", EMAIL):
+                self.assertNotIn(private, text)
+
+    def test_a_second_use_of_the_link_makes_no_notice(self):
+        self.erase(self.token)
+        self.erase(self.token)
+        self.assertEqual(len(self.notices()), 1)
+
+    def test_a_buyer_of_two_rabbits_gives_one_notice_per_rabbit(self):
+        late = db.Individual.get(db.Individual.number != "G1-2112")
+        record_herd_tracking(
+            late, db.Herd.get(db.Herd.herd == "GX1"), "2026-01-02", "TRANSFER", self.manager, buyer=WITH_EMAIL
+        )
+        self.erase(self.token)
+        self.assertEqual(sorted(n[2] for n in self.notices()), sorted(["G1-2112", late.number]))
+
+    def test_a_managers_own_erasure_makes_no_notice(self):
+        buyer_contact.erase_buyer_contact(self.contact_id, self.manager)
+        self.assertEqual(self.notices(), [])
+
+    def test_a_manager_without_the_daily_mail_gets_the_notice_but_no_digest(self):
+        inbox.set_mail_enabled(self.manager, False)
+        self.erase(self.token)
+        self.assertEqual(len(self.notices()), 1)
+        inbox.queue_digests()  # the helper's own notices still go
+        digests = db.MailMessage.select().where(db.MailMessage.kind == "notis.sammandrag")
+        self.assertNotIn(self.manager.id, [row.recipient_id for row in digests])
+        self.assertIsNone(
+            db.Notice.get(db.Notice.kind == "kopare_borttagen", db.Notice.user == self.manager.id).mailed_at
+        )
+        self.assertEqual(
+            inbox.notices_json(self.manager, unread_only=True, limit=10, offset=0)[0]["individual_number"], "G1-2112"
+        )
 
     def test_a_second_visit_says_it_is_already_done(self):
         self.erase(self.token)
