@@ -298,6 +298,14 @@ def change_litter(herd, year, breeding_id):
     return jsonify(arsrapport.change_litter(herd, round_, access, _actor(access), breeding_id, _submission_body()))
 
 
+# [Next.js] The mother picker of the litter dialog: the herd's does in the year, with a login or a link alike.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/honor", methods=["GET"])
+@report_actor_required
+def litter_mothers(herd, year):
+    herd, _, _ = _report_target(herd, year)
+    return jsonify({"honor": arsrapport.report_mothers(herd, year)})
+
+
 # [Next.js] The father picker of the litter dialog: the genebank's males, with a login or a link alike.
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/hanar", methods=["GET"])
 @report_actor_required

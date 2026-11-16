@@ -25,6 +25,7 @@ from utils.database import (
     OUTSIDE_GENEBANK_HERDS,
     Bodyfat,
     Breeding,
+    Bunny,
     Color,
     Herd,
     HerdTracking,
@@ -36,6 +37,7 @@ from utils.database import (
     ht_not_voided,
     lock_breedings,
     lock_individuals,
+    not_voided,
     validate_date,
 )
 from utils.herd_tracking import (
@@ -1008,6 +1010,7 @@ class IssueDigitalCertificate(PolicyCommand):
 
 
 GESTATION_DAYS = 31  # the middle of a rabbit's 26–38 days: the mating is put this long before a litter's birth
+BORN_BELOW_KITS = "Kullen har redan {kits} ungar i registret. Antal födda kan inte vara färre."
 CERTIFIED_LITTER = "Kontakta genbanksansvarig för att ändra en kull med intyg."
 LITTER_DUPLICATE_DAYS = 3  # a litter of the same mother this close may be the same one (spec 5.8, G2)
 _LITTER_LOCK = 0x48424C52  # "HBLR": classid of the advisory lock on the mother while a litter is added
@@ -1136,6 +1139,7 @@ class ConfirmLitterSize(PolicyCommand):
     litter_size6w: int | None  # None keeps the count preliminary (the count born)
     year: int | None = None  # the report year, when the caller knows it; a link's own is always checked
     litter_size: int | None = None  # the count born, changed in the same step (the report's "Ja, ändra den")
+    herd: str | None = None  # the report's herd: the litter must still be in it under the lock
     apply_rank = 80
     herd_scoped = True
 
@@ -1154,10 +1158,17 @@ class ConfirmLitterSize(PolicyCommand):
         year = litter.birth_date.year
         if self.year is not None and self.year != year:
             raise IndividualRefused(f"Kullen är inte född under {self.year}.")
+        if self.herd is not None and litter.breeding_herd_id.herd != self.herd:  # moved since the caller looked
+            raise IndividualRefused("Kullen finns inte i besättningens rapport.")
         _authorize_litter(self, ctx, litter.breeding_herd_id, year)
 
     def check_dates(self, ctx):
         litter = self._litter(ctx)
+        if self.litter_size is not None:
+            registered = Individual.select().where((Individual.breeding == litter.id) & not_voided()).count()
+            unlinked = Bunny.select().where((Bunny.breeding == litter.id) & Bunny.individual.is_null(True)).count()
+            if self.litter_size < registered + unlinked:
+                raise IndividualRefused(BORN_BELOW_KITS.format(kits=registered + unlinked))
         born = self.litter_size if self.litter_size is not None else litter.litter_size
         if born is None or born < 1 or (self.litter_size6w is not None and not 0 <= self.litter_size6w <= born):
             raise IndividualRefused(LITTER_SIZE6W_ABOVE_BORN)
@@ -1202,12 +1213,12 @@ def register_litter(user, mother_id, father_id, birth_date, litter_size, litter_
         )
 
 
-def confirm_litter_size(user, breeding_id, litter_size6w, *, year=None, grant=None, litter_size=None):
+def confirm_litter_size(user, breeding_id, litter_size6w, *, year=None, grant=None, litter_size=None, herd=None):
     """ConfirmLitterSize on the litter's mother; returns the litter. A litter without a mother is not one to confirm."""
     litter = Breeding.get_or_none(Breeding.id == breeding_id)
     if litter is None or litter.mother_id is None:
         raise IndividualRefused("Kullen finns inte.")
-    command = ConfirmLitterSize(litter.id, litter_size6w, year, litter_size)
+    command = ConfirmLitterSize(litter.id, litter_size6w, year, litter_size, herd)
     execute(user, litter.mother_id, lambda ctx: [command], target_breeding=litter.id, grant=grant)
     return Breeding.get_by_id(litter.id)
 

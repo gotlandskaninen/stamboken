@@ -2353,7 +2353,7 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
                 **_by(user, "user", "access_code"),
                 operation_ids=grant.operation_ids,
                 added_measurements=added,
-                data=submitted_body(sub),
+                data={**submitted_body(sub), "litters_added": _litters_added(herd, round_)},
                 request_hash=digest,
             )
         except IntegrityError as exc:  # the key, taken meanwhile for another herd, which this lock does not cover
@@ -2441,7 +2441,7 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
             YearlyReportDraft.create(
                 herd=herd.id,
                 round=round_.id,
-                data=submissions[-1].data,
+                data={k: v for k, v in submissions[-1].data.items() if k != "litters_added"},  # not the form's
                 updated_at=stamp,
                 **_by(user, "updated_by_user", "updated_by_access_code"),
             )
@@ -2452,40 +2452,56 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
     return report_view(herd, round_, access, user)
 
 
-@mail_kind("arsrapport.andrad", priority=0, category="T")
-@mail_kind("arsrapport.kvitto", priority=0, category="T")
-def _new_litters(report, submission):
-    """The litters registered through the report (RegisterLitter) between the previous submission and this one."""
-    year = report.round.report_year
-    earlier = (
-        YearlyReportSubmission.select(fn.MAX(YearlyReportSubmission.created_at))
+def _litters_added(herd, round_):
+    """
+    The litters registered through the report (RegisterLitter) that no earlier submission of the herd in the round
+    has listed, for the submission about to be written: read under the report's lock, so a litter written before it is
+    in and one written after it is the next one's. Each is a small dict that the receipt prints as it stood.
+    """
+    year = round_.report_year
+    listed = {
+        item["id"]
+        for (data,) in YearlyReportSubmission.select(YearlyReportSubmission.data)
         .join(YearlyHerdReport)
-        .where(
-            YearlyHerdReport.herd == report.herd_id,
-            YearlyHerdReport.round == report.round_id,
-            YearlyReportSubmission.created_at < submission.created_at,
-        )
-        .scalar()
-    )
-    window = IndividualCommand.command == "RegisterLitter"
-    window &= IndividualCommand.created_at <= submission.created_at
-    if earlier is not None:
-        window &= IndividualCommand.created_at > earlier
-    ids = [row.after["breeding"] for row in IndividualCommand.select(IndividualCommand.after).where(window)]
+        .where(YearlyHerdReport.herd == herd.id, YearlyHerdReport.round == round_.id)
+        .tuples()
+        for item in data.get("litters_added") or ()
+    }
     Mother = Individual.alias()
-    litters = (
-        Breeding.select(Breeding.birth_date, Breeding.litter_size, Mother.number.alias("mother"))
+    litters = {
+        row["id"]: row
+        for row in Breeding.select(
+            Breeding.id,
+            Breeding.mother,
+            Breeding.birth_date,
+            Breeding.litter_size,
+            Mother.number.alias("mother_number"),
+        )
         .join(Mother, on=(Breeding.mother == Mother.id))
         .where(
-            Breeding.id.in_(ids),
-            Breeding.breeding_herd_id == report.herd_id,
+            Breeding.breeding_herd_id == herd.id,
             Breeding.birth_date.between(date(year, 1, 1), date(year, 12, 31)),
         )
-        .order_by(Breeding.birth_date, Breeding.id)
+        .dicts()
+    }
+    made = IndividualCommand.select(IndividualCommand.after).where(
+        IndividualCommand.command == "RegisterLitter",
+        IndividualCommand.individual.in_({row["mother"] for row in litters.values()}),
     )
-    return [f"efter {row['mother']} född {row['birth_date']}, {row['litter_size']} födda" for row in litters.dicts()]
+    ids = sorted({row.after["breeding"] for row in made} & litters.keys() - listed)
+    return [
+        {
+            "id": i,
+            "mother": litters[i]["mother_number"],
+            "birth_date": litters[i]["birth_date"].isoformat(),
+            "litter_size": litters[i]["litter_size"],
+        }
+        for i in ids
+    ]
 
 
+@mail_kind("arsrapport.andrad", priority=0, category="T")
+@mail_kind("arsrapport.kvitto", priority=0, category="T")
 def _kvitto(params):
     """
     Å7 and Å8 to the herd's main member: what the submission sent, from its row, so a later mail still says what
@@ -2504,7 +2520,10 @@ def _kvitto(params):
         "herd": report.herd.herd,
         "datum": received or f"{submission.created_at.astimezone(STOCKHOLM):%Y-%m-%d}",
         **receipt(submission)["summary"],
-        "kullar": _new_litters(report, submission),
+        "kullar": [
+            f"efter {item['mother']} född {item['birth_date']}, {item['litter_size']} födda"
+            for item in submission.data.get("litters_added") or ()
+        ],
         "end_date": f"{report.round.end_date:%Y-%m-%d}",
     }
 
@@ -2612,6 +2631,8 @@ def _litter_refused(exc):
         return ArsrapportError(403, "Du har inte rätt att ändra kullar i besättningen.")
     if message == "Individual not found":
         return ArsrapportError(404, "Kaninen finns inte.")
+    if message.startswith("Kullen finns inte"):
+        return ArsrapportError(404, message)
     return ArsrapportError(422, message)
 
 
@@ -2678,7 +2699,13 @@ def change_litter(herd, round_, access, user, breeding_id, body):
         access,
         user,
         lambda grant: confirm_litter_size(
-            user, litter.id, fields["litter_size6w"], year=year, grant=grant, litter_size=fields.get("litter_size")
+            user,
+            litter.id,
+            fields["litter_size6w"],
+            year=year,
+            grant=grant,
+            litter_size=fields.get("litter_size"),
+            herd=herd.herd,
         ),
     )
     return {"id": litter.id, "litters": report_litters(herd, year)}
@@ -2686,7 +2713,7 @@ def change_litter(herd, round_, access, user, breeding_id, body):
 
 def report_fathers(herd, year):
     """
-    The father picker: the herd's genebank's uncastrated males that lived in `year` (id, number, name), for a code
+    The father picker: the herd's genebank's males that lived in `year` (id, number, name), for a code
     session too, which has no use of the logged-in searches. Nothing else about them.
     """
     males = (
@@ -2695,11 +2722,33 @@ def report_fathers(herd, year):
         .where(
             Herd.genebank == herd.genebank_id,
             Herd.herd.not_in(OUTSIDE_GENEBANK_HERDS),
-            Individual.sex == "male",
-            Individual.castration_date.is_null(True),
+            Individual.sex == "male",  # a castrated male too: the register accepts him as a father
             not_voided(),
             Individual.death_date.is_null(True) | (Individual.death_date >= date(year, 1, 1)),
         )
         .order_by(Individual.number)
     )
     return [{"id": row["id"], "number": row["number"], "name": row["name"]} for row in males.dicts()]
+
+
+def report_mothers(herd, year):
+    """
+    The mother picker, for a code session too: the herd's does at any time in `year` (id, number, name), those sold
+    or dead since included, since a litter of May can be added in the autumn. The command still checks the doe's
+    holder on the birth date.
+    """
+    first, last = date(year, 1, 1), date(year, 12, 31)
+    held = HerdTracking.select(HerdTracking.individual).where(
+        HerdTracking.herd == herd.id, ht_not_voided(), HerdTracking.herd_tracking_date <= last
+    )
+    does = (
+        Individual.select(Individual.id, Individual.number, Individual.name)
+        .where(
+            Individual.sex == "female",
+            not_voided(),
+            Individual.id.in_(held) | (Individual.origin_herd == herd.id),
+            Individual.death_date.is_null(True) | (Individual.death_date >= first),
+        )
+        .order_by(Individual.number)
+    )
+    return [{"id": row["id"], "number": row["number"], "name": row["name"]} for row in does.dicts()]

@@ -504,6 +504,15 @@ class TestPromotionNumbersTheLitter(LitterTest):
 
     def setUp(self):
         super().setUp()
+
+        class Frozen(date):  # the current-year gate of the promotion must bite whenever the tests run
+            @classmethod
+            def today(cls):
+                return date(2026, 11, 16)
+
+        patcher = mock.patch("blueprints.bunny_v2.date", Frozen)
+        patcher.start()
+        self.addCleanup(patcher.stop)
         self.litter = self.add(born=self.BORN_2026)
         self.client.post("/api/login", json={"username": "owner", "password": "pass"})
         self.bunnies = [

@@ -18,6 +18,7 @@ import utils.report_code as report_code
 import utils.settings as settings
 
 from tests.arsrapport_fixtures import ArsrapportTest
+from tests.ht_helpers import ht_row
 from tests.inbox_fixtures import QUALITY
 
 NOW = datetime.combine(date(2026, 1, 15), clock(12), arsrapport.STOCKHOLM)
@@ -62,12 +63,6 @@ class LitterApiTest(ArsrapportTest):
             db.Breeding.select().where(db.Breeding.mother == self.doe.id, db.Breeding.litter_number.is_null()).count()
         )
 
-    def stamp_litter_commands(self):
-        """The command log stamps the real clock; the tests' report clock is January 2026."""
-        db.IndividualCommand.update(created_at=arsrapport.now() - timedelta(hours=1)).where(
-            db.IndividualCommand.command == "RegisterLitter"
-        ).execute()
-
     def body_for(self):
         """Every rabbit of the herd's list kept."""
         return self.body(*[self.kvar(rabbit, vikt=2.8) for rabbit in (self.doe, self.buck, self.doe2)])
@@ -105,7 +100,6 @@ class TestAddLitter(LitterApiTest):
         """Review focus 1: through the link, the report is withdrawn, the litter stays and the receipt lists it."""
         self.open_link()
         self.assertEqual(self.litter().status_code, 201)
-        self.stamp_litter_commands()
         sent = self.api("POST", f"{REPORT}/skicka", **self.body_for())
         self.assertEqual(sent.status_code, 200, sent.get_data(as_text=True))
         (mail_row,) = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.kvitto")
@@ -120,29 +114,6 @@ class TestAddLitter(LitterApiTest):
         self.assertEqual(len(self.api("GET", REPORT).get_json()["litters"]), 1)
         command = db.IndividualCommand.get(db.IndividualCommand.command == "RegisterLitter")
         self.assertEqual(command.access_code_id, self.code.id)
-
-    def test_the_second_receipt_lists_only_litters_added_since(self):
-        self.open_link()
-        self.litter()
-        self.stamp_litter_commands()
-        self.assertEqual(self.api("POST", f"{REPORT}/skicka", **self.body_for()).status_code, 200)
-        first = db.YearlyReportSubmission.get()
-        self.at(NOW + timedelta(days=1))
-        self.open_link()  # the link's session is short
-        self.assertEqual(self.litter(self.doe2, born="2025-06-20").status_code, 201)
-        db.IndividualCommand.update(created_at=arsrapport.now() - timedelta(minutes=5)).where(
-            db.IndividualCommand.command == "RegisterLitter",
-            db.IndividualCommand.individual == self.doe2.id,
-        ).execute()
-        body = {**self.body_for(), "revision": db.YearlyHerdReport.get().revision}
-        self.assertEqual(self.api("POST", f"{REPORT}/skicka", **body).status_code, 200)
-        second = db.YearlyReportSubmission.select().order_by(db.YearlyReportSubmission.id.desc()).first()
-        self.assertNotEqual(first.id, second.id)
-        self.assertEqual(len(arsrapport._kvitto({"submission_id": first.id})["kullar"]), 1)
-        self.assertEqual(
-            arsrapport._kvitto({"submission_id": second.id})["kullar"],
-            [f"efter {self.doe2.number} född 2025-06-20, 5 födda"],
-        )
 
     def test_a_litter_moves_no_received_at(self):
         """L7: no correction, so the report keeps its first-submission time and its revision."""
@@ -310,13 +281,132 @@ class TestFathers(LitterApiTest):
         response = self.api("GET", f"{REPORT}/hanar")
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         males = response.get_json()["hanar"]
-        self.assertEqual([m["number"] for m in males], sorted([self.buck.number, in_other_herd.number]))
+        # a castrated male is offered too: the register accepts him as a father
+        self.assertEqual(
+            [m["number"] for m in males], sorted([self.buck.number, in_other_herd.number, castrated.number])
+        )
         self.assertEqual({tuple(sorted(m)) for m in males}, {("id", "name", "number")})
+
+    def test_a_castrated_father_is_offered_and_accepted(self):
+        self.buck.castration_date = date(2025, 1, 1)
+        self.buck.save()
+        self.login("owner")
+        self.assertIn(self.buck.number, [m["number"] for m in self.api("GET", f"{REPORT}/hanar").get_json()["hanar"]])
+        self.assertEqual(self.litter().status_code, 201)
 
     def test_the_father_list_needs_a_session_for_the_herd(self):
         self.assertEqual(self.api("GET", f"{REPORT}/hanar").status_code, 401)
         self.login("hjalp")
         self.assertEqual(self.api("GET", f"{REPORT}/hanar").status_code, 403)
+
+
+class TestMothers(LitterApiTest):
+    def test_a_doe_sold_after_her_litter_can_be_chosen_and_the_litter_saved(self):
+        """Review 4: a litter of May is added in the autumn, when the doe is no longer on the report's list."""
+        ht_row("TRANSFER", from_herd=self.h, herd=self.h2, individual=self.doe2, herd_tracking_date=date(2025, 8, 1))
+        self.open_link()
+        self.assertNotIn(self.doe2.id, [r["id"] for r in self.api("GET", REPORT).get_json()["rabbits"]])
+        response = self.api("GET", f"{REPORT}/honor")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        does = response.get_json()["honor"]
+        self.assertIn(self.doe2.id, [d["id"] for d in does])
+        self.assertEqual({tuple(sorted(d)) for d in does}, {("id", "name", "number")})
+        self.assertNotIn(self.other_doe.id, [d["id"] for d in does])
+        self.assertNotIn(self.buck.id, [d["id"] for d in does])
+        saved = self.litter(mother=self.doe2)
+        self.assertEqual(saved.status_code, 201, saved.get_data(as_text=True))
+
+    def test_a_doe_that_died_before_the_year_is_not_offered(self):
+        self.doe2.death_date = date(2024, 12, 1)
+        self.doe2.save()
+        self.login("owner")
+        self.assertNotIn(self.doe2.id, [d["id"] for d in self.api("GET", f"{REPORT}/honor").get_json()["honor"]])
+
+    def test_the_mother_list_needs_a_session_for_the_herd(self):
+        self.assertEqual(self.api("GET", f"{REPORT}/honor").status_code, 401)
+        self.login("hjalp")
+        self.assertEqual(self.api("GET", f"{REPORT}/honor").status_code, 403)
+
+
+class TestKitsAndMoves(LitterApiTest):
+    def test_the_born_count_cannot_drop_below_the_kits(self):
+        self.login("owner")
+        first = self.litter(size=5, size6w=5).get_json()["id"]
+        for k in range(4):
+            db.Individual.create(origin_herd=self.h, breeding=first, number=f"G9001-25{k}1")
+        kit = db.Individual.create(origin_herd=self.h, breeding=first, number="G9001-2591")
+        db.Bunny.create(breeding=first, slot_order=1, fate="registered", individual=kit)  # linked: not counted twice
+        low = self.api("PATCH", f"{REPORT}/kull/{first}", litter_size=2, litter_size6w=2)
+        self.assertEqual(low.status_code, 422)
+        self.assertEqual(
+            low.get_json()["detail"], "Kullen har redan 5 ungar i registret. Antal födda kan inte vara färre."
+        )
+        self.assertEqual(db.Breeding.get_by_id(first).litter_size, 5)
+        self.assertEqual(self.api("PATCH", f"{REPORT}/kull/{first}", litter_size=5, litter_size6w=2).status_code, 200)
+
+    def test_unlinked_roster_slots_count_as_kits(self):
+        self.login("owner")
+        first = self.litter(size=4, size6w=4).get_json()["id"]
+        for slot in range(3):
+            db.Bunny.create(breeding=first, slot_order=slot)
+        self.assertEqual(self.api("PATCH", f"{REPORT}/kull/{first}", litter_size=2, litter_size6w=2).status_code, 422)
+        self.assertEqual(self.api("PATCH", f"{REPORT}/kull/{first}", litter_size=3, litter_size6w=2).status_code, 200)
+
+    def test_a_litter_moved_between_the_check_and_the_command_is_not_changed(self):
+        """Review 2: a helper through a form; a manager moves the litter to G9002 before the command runs."""
+        self.owner.add_role("owner", self.h.id)
+        self.login("owner")
+        first = self.litter(size=5, size6w=None).get_json()["id"]
+        stored = [(f"inkorg/original/{n}.jpg", f"{self.h.id}{n}".rjust(64, "0"), QUALITY) for n in range(1)]
+        item, (document,) = inbox.create_upload(self.owner, self.h, None, stored)
+        document.doc_type = "arsblankett"
+        document.save()
+        inbox.take(item, self.helper, over=False)
+        real = arsrapport._lock_form
+
+        def locked_then_moved(*args):
+            result = real(*args)
+            db.Breeding.update(breeding_herd_id=self.h2.id).where(db.Breeding.id == first).execute()
+            return result
+
+        self.login("hjalp")
+        with mock.patch.object(arsrapport, "_lock_form", side_effect=locked_then_moved):
+            response = self.client.patch(
+                f"/api/v2/arsrapport{REPORT}/kull/{first}?post={item.id}", json={"litter_size6w": 3}
+            )
+        self.assertEqual(response.status_code, 404, response.get_data(as_text=True))
+        litter = db.Breeding.get_by_id(first)
+        self.assertEqual((litter.litter_size6w, litter.litter_size6w_preliminary), (5, True))
+
+
+class TestReceiptSnapshot(LitterApiTest):
+    def test_the_receipt_mail_kinds_build(self):
+        """Review P1: the mail worker calls the registered builder with the row's params."""
+        self.open_link()
+        self.litter()
+        self.assertEqual(self.api("POST", f"{REPORT}/skicka", **self.body_for()).status_code, 200)
+        (row,) = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.kvitto")
+        for kind in ("arsrapport.kvitto", "arsrapport.andrad"):
+            variables = mail.MAIL_KINDS[kind].build(row.params)
+            self.assertEqual(variables["kullar"], [f"efter {self.doe.number} född {BORN}, 5 födda"])
+
+    def test_a_litter_after_the_submission_is_the_next_ones_and_later_edits_leave_the_receipt(self):
+        self.login("owner")
+        first_litter = self.litter().get_json()["id"]
+        self.assertEqual(self.api("POST", f"{REPORT}/skicka", **self.body_for()).status_code, 200)
+        first = db.YearlyReportSubmission.get()
+        self.assertEqual([item["id"] for item in first.data["litters_added"]], [first_litter])
+        self.assertEqual(self.litter(self.doe2, born="2025-06-20").status_code, 201)
+        self.api("PATCH", f"{REPORT}/kull/{first_litter}", litter_size=7, litter_size6w=6)
+        self.assertEqual(len(arsrapport._kvitto({"submission_id": first.id})["kullar"]), 1)
+        self.assertIn("5 födda", arsrapport._kvitto({"submission_id": first.id})["kullar"][0])
+        body = {**self.body_for(), "revision": db.YearlyHerdReport.get().revision}
+        self.assertEqual(self.api("POST", f"{REPORT}/skicka", **body).status_code, 200)
+        second = db.YearlyReportSubmission.select().order_by(db.YearlyReportSubmission.id.desc()).first()
+        self.assertEqual(
+            arsrapport._kvitto({"submission_id": second.id})["kullar"],
+            [f"efter {self.doe2.number} född 2025-06-20, 5 födda"],
+        )
 
 
 class TestPreliminaryMark(LitterApiTest):
