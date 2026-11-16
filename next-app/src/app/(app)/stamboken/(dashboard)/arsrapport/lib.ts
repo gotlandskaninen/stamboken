@@ -1,6 +1,7 @@
 // Shapes of /api/v2/arsrapport/* and the form's own logic. Kept free of React
 // and of server actions so the paper page (Task 14) and the status view
 // (Task 15) can reuse it.
+import { newOperationId } from "@/lib/herdTracking";
 import type { InboxDetail } from "../inkorg/lib";
 
 export type Val = "kvar" | "dod" | "sald" | "ej_angiven";
@@ -307,8 +308,10 @@ export const MATRIKEL_LABEL: Record<string, string> = {
 
 export const refusalText = (r: Refusal) => REFUSAL_TEXT[r.code] ?? r.message;
 
+// randomUUID is missing over plain http and on phones older than iOS 15.4 or
+// Chrome 92; newOperationId falls back to getRandomValues.
 export function newKey(): string {
-  return crypto.randomUUID();
+  return newOperationId();
 }
 
 // A new key unless the answer is unknown: a retry after a timeout must carry
