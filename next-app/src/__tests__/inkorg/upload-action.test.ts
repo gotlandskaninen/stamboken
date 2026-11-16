@@ -37,4 +37,14 @@ describe("uploadIntyg", () => {
     expect(res).toEqual({ ok: false, error: "Otillåten filtyp." });
     expect((api.mock.calls[0][1]!.body as FormData).has("dry_run")).toBe(false);
   });
+
+  it("sends to production in every mode, so the upload outlives the night", async () => {
+    api.mockResolvedValueOnce({ item: { id: 7 }, documents: [] });
+    expect(await uploadIntyg(new FormData())).toEqual({
+      ok: true,
+      documents: [],
+      itemId: 7,
+    });
+    expect(api.mock.calls[0][1]).toMatchObject({ forceProd: true });
+  });
 });

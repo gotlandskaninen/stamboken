@@ -16,7 +16,8 @@ export type UploadResult =
   | { ok: false; error: string; warnings?: UploadedDoc[] };
 
 // One call (docs/inkorg.md, Ladda upp): the files are stored, or refused with
-// per-file warnings that the sender can accept.
+// per-file warnings that the sender can accept. Always to production, also in
+// the testmiljö: the demo would lose the certificate by the next night.
 export async function uploadIntyg(formData: FormData): Promise<UploadResult> {
   try {
     const res = await fetchApi<{
@@ -26,6 +27,7 @@ export async function uploadIntyg(formData: FormData): Promise<UploadResult> {
       method: "POST",
       body: formData,
       timeout: 60000,
+      forceProd: true,
     });
     revalidatePath("/stamboken", "layout");
     return {
