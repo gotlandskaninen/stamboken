@@ -593,6 +593,42 @@ describe("ReportForm", () => {
     expect(screen.getByText(PENDING_SALE_TEXT)).toBeTruthy();
   });
 
+  it("says a sale waits from the receipt until the refresh, then from the view alone", async () => {
+    // a retry after a timeout gets the first receipt, though the sale may have been approved meanwhile
+    const a = actions();
+    a.submitReport.mockImplementation(() =>
+      ok({ ...receipt, summary: { ...receipt.summary, salda: 1, vantar: 1 } }),
+    );
+    const { rerender } = render(
+      <ReportForm env="demo" view={view()} actions={a} />,
+    );
+    fillAll();
+    send();
+    expect(await screen.findByText(PENDING_SALE_TEXT)).toBeTruthy();
+    expect(refresh).toHaveBeenCalled();
+    const refreshed = (state: "foreslagen" | "godkand") =>
+      view({
+        report: submittedReport(),
+        forslag: [
+          {
+            individual_id: 1,
+            to_herd: "G9002",
+            sale_date: "2026-10-03",
+            state,
+          },
+        ],
+      });
+    rerender(<ReportForm env="demo" view={refreshed("godkand")} actions={a} />);
+    expect(
+      screen.getByText(/Klart\. Årsrapporten för G9001 kom in/),
+    ).toBeTruthy();
+    expect(screen.queryByText(PENDING_SALE_TEXT)).toBeNull();
+    rerender(
+      <ReportForm env="demo" view={refreshed("foreslagen")} actions={a} />,
+    );
+    expect(screen.getByText(PENDING_SALE_TEXT)).toBeTruthy();
+  });
+
   it("says the round is closed instead of showing the form", () => {
     render(
       <ReportForm

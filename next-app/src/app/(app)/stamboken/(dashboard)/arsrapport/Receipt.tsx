@@ -41,6 +41,7 @@ export function Receipt({
   onChange,
   onWithdraw,
   focusOnMount = false,
+  refreshed = false,
 }: {
   view: ReportView;
   receipt: ReceiptData | null;
@@ -49,6 +50,8 @@ export function Receipt({
   onChange: () => void;
   onWithdraw: (reason?: string) => Promise<string | null>;
   focusOnMount?: boolean; // right after a Skicka: show the receipt and read it out
+  // the view has been fetched again since the receipt came: it alone says what waits
+  refreshed?: boolean;
 }) {
   const report = view.report; // null until the refreshed view arrives after the first Skicka
   const editor = view.access === "manager" || view.access === "admin";
@@ -64,10 +67,12 @@ export function Receipt({
   const sum = receipt?.summary ?? summaryOf(view);
   // A caretaker's or the link's withdrawal leaves the owner's sales standing (FB5), so it is always offered.
   const canWithdraw = !!report?.can_withdraw;
-  // the view says what waits now; right after Skicka, before it is fetched again, the receipt does
+  // right after Skicka, until the view is fetched again, the receipt says what waits; then the view alone, since a
+  // retry's receipt is the first one and a proposal may have been decided meanwhile
   const pendingSale =
-    view.forslag.some((p) => p.state === "foreslagen") ||
-    !!receipt?.summary.vantar;
+    receipt && !refreshed
+      ? !!receipt.summary.vantar
+      : view.forslag.some((p) => p.state === "foreslagen");
   const at = report?.received_at ?? receipt?.created_at ?? "";
   const when = `${fmtDate(at)} kl. ${fmtTime(at)}`;
   const changed =

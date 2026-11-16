@@ -304,6 +304,8 @@ export function ReportForm({
   // an edit clears some of its errors
   const [failTick, setFailTick] = React.useState(0);
   const [receipt, setReceipt] = React.useState<ReceiptData | null>(null);
+  // the view the receipt came on: a newer one is the refresh after Skicka
+  const [receiptView, setReceiptView] = React.useState<ReportView | null>(null);
   const [withdrawn, setWithdrawn] = React.useState<string | null>(null);
   const [withdrawing, setWithdrawing] = React.useState(false);
   const [localCopy, setLocalCopy] = React.useState(false);
@@ -794,6 +796,7 @@ export function ReportForm({
       writeLocal(store, herd.herd, year, null);
       setLocalCopy(false);
       setReceipt(res.data);
+      setReceiptView(viewRef.current);
       setMode("receipt");
       setPhase("idle");
       setWithdrawn(null);
@@ -1069,6 +1072,7 @@ export function ReportForm({
           onChange={startChange}
           onWithdraw={withdraw}
           focusOnMount={!!receipt}
+          refreshed={view !== receiptView}
         />
       </div>
     );
