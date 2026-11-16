@@ -56,6 +56,7 @@ runs:
           -e SECRET_KEY=dev-secret-do-not-use-in-prod \
           -e SESSION_REDIS_URL=redis://localhost:6379/2 \
           -e RATELIMIT_ENABLED=false \
+          -e LINK_SECRET=ci-throwaway-link-secret \
           -e AUTHCONFIGFILE=/app/tests/auth.ini.test \
           -e S3_ENDPOINT=http://localhost:9000 \
           -e S3_USESSL=false \
@@ -82,6 +83,9 @@ runs:
       run: |
         docker exec "$CONTAINER_NAME" flask seed create --verbose
         docker exec "$CONTAINER_NAME" flask seed arsrapport --verbose
+        # the personal report links of arsrapport-lank.spec.ts
+        mkdir -p next-app/e2e/.auth
+        docker exec "$CONTAINER_NAME" flask seed arsrapport-lankar > next-app/e2e/.auth/arsrapport-lankar.json
 
     - name: Create test users
       shell: bash
