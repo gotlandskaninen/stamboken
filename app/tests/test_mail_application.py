@@ -104,6 +104,9 @@ class TestApplicationFlow(MailTest):
         notice = to["matrikel@example.org"].get_content()
         self.assertIn(f"https://{HOST}/medlem/ansokningar", notice)
         self.assertNotIn("Sökande", notice)  # the notice names no applicant
+        receipt = to["sokande@example.org"].get_content()
+        self.assertIn("200 kr och betalas till Plusgiro 35 03 44-8 eller Swish 123 095 70 50", receipt)  # as the site
+        self.assertNotIn("\n\n\n", receipt)
 
     def test_rolled_back_application_queues_nothing(self):
         real = mail.enqueue_mail
@@ -154,6 +157,7 @@ class TestApprovalMail(MailTest):
         self.assertEqual(envelope_to, ["sokande@example.org"])
         self.assertIn("godkänd", msg["Subject"])
         self.assertIn("hör av sig", msg.get_content())
+        self.assertIn("vi har fått din årsavgift", msg.get_content())  # an approved application is a paid one
 
     def test_failed_approval_queues_nothing(self):
         a = self.application()

@@ -891,6 +891,7 @@ class Individual(BaseModel):
             }
         )
         data["color"] = self.color.name if self.color else None
+        data["color_id"] = self.color_id
         data["weights"] = [{"weight": w.weight, "date": w.weight_date.strftime("%Y-%m-%d")} for w in self.weight_set]  # pylint: disable=no-member
         data["bodyfat"] = [
             {"bodyfat": b.bodyfat, "date": b.bodyfat_date.strftime("%Y-%m-%d")} for b in self.bodyfat_set

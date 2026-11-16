@@ -208,7 +208,7 @@ def _litter(form, stored):
 def _changed(form, stored, key):
     """
     A value that is not null and differs (IR-10, IR-11). A date always, since it is logged whenever sent
-    (IR-50). A colour always: its name resolves to the first colour so named, of any genebank.
+    (IR-50). A colour always: its name resolves within the rabbit's genebank (a stored colour sent back unchanged stays).
     """
     value = form.get(key)
     return value is not None and (key.endswith("date") or key == "color" or value != getattr(stored, key))
