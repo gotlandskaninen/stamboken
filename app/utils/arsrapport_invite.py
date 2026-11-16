@@ -26,11 +26,19 @@ def _invite_genebank(activation, now):
     round_, count = activation.round, 0
     year = round_.report_year
     with DB_PROXY.atomic():  # all or nothing, so sent_at never says more than was queued
+        # A second job on the same activation waits here, then finds it sent: it must not reissue any code.
+        locked = (
+            YearlyReportRoundGenebank.select().where(YearlyReportRoundGenebank.id == activation.id).for_update().get()
+        )
+        if locked.sent_at is not None:
+            return 0
         for herd in _herds(activation.genebank_id):
             member = report_code.invitation_recipient(herd)
             if member is None:
                 continue
             code = report_code.issue_code(herd, round_, member, now=now)
+            if code.member_id != member.id:  # lost the race to a new_link for the new main member, who got that mail
+                continue
             queued = enqueue_mail(
                 "arsrapport.inbjudan",
                 "member",
@@ -84,6 +92,8 @@ def new_link(herd, round_, user, *, now: datetime) -> ReportAccessCode:
         if old is not None:
             report_code.revoke(old, now=now)
         code = report_code.issue_code(herd, round_, member, now=now)
+        if code.member_id != member.id:  # the main member changed under us: nothing goes to the wrong person
+            raise ArsrapportError(409, "Huvudmedlemmen har just ändrats. Försök igen.")
         enqueue_mail(
             "arsrapport.ny_lank",
             "member",

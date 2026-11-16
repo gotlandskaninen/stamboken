@@ -186,3 +186,38 @@ class InviteTest(ArsrapportTest):
         self.assertEqual(self.api("POST", "/besattning/G9001/2025/ny-lank").status_code, 200)
         self.assertEqual(self.api("POST", "/besattning/M9001/2025/ny-lank").status_code, 403)
         self.assertEqual(self.api("POST", f"{path}/{self.mellerud.id}/provmejl").status_code, 403)
+
+    def other_member_code(self, herd):
+        """A code another main member of the herd got, as when a new_link wins the unique index race."""
+        other = db.Member.create(
+            first_name="Ny",
+            last_name="Huvudmedlem",
+            email="ny@example.invalid",
+            role="huvudmedlem",
+            membership=db.Membership.create(),
+        )
+        return db.ReportAccessCode.create(
+            herd=herd.id, round=self.round_.id, member=other.id, expires_at=self.round_.end_date, created_at=NOW
+        )
+
+    def test_invitation_goes_to_the_returned_codes_member(self):
+        rival = self.other_member_code(self.h)
+        real = report_code.issue_code
+        with mock.patch.object(
+            report_code, "issue_code", lambda herd, *a, **k: rival if herd.id == self.h.id else real(herd, *a, **k)
+        ):
+            self.assertEqual(self.run_job(), 1)
+        self.assertEqual([m.herd.herd for m in self.mails()], ["G9002"])
+
+    def test_new_link_refuses_a_code_for_another_member(self):
+        rival = self.other_member_code(self.h)
+        with mock.patch.object(report_code, "issue_code", return_value=rival):
+            with self.assertRaises(arsrapport.ArsrapportError):
+                invite.new_link(self.h, self.round_, self.owner, now=NOW)
+        self.assertEqual(self.mails("arsrapport.ny_lank"), [])
+
+    def test_a_stale_activation_issues_nothing(self):
+        stale = db.YearlyReportRoundGenebank.get(db.YearlyReportRoundGenebank.genebank == self.gotland.id)
+        self.run_job()
+        with mock.patch.object(report_code, "issue_code", side_effect=AssertionError("issued")):
+            self.assertEqual(invite._invite_genebank(stale, NOW), 0)
