@@ -23,6 +23,7 @@ import {
 } from "../../lib";
 import styles from "../../arsrapport.module.css";
 import inkorg from "../../../inkorg/inkorg.module.css";
+import { SalesDialog } from "./SalesDialog";
 
 const SOURCE_TEXT = { paper: "blankett", login: "inloggad", link: "länk" };
 const MEMBERSHIP_TEXT = {
@@ -81,6 +82,7 @@ export function StatusTable({
   const [pending, startTransition] = useTransition();
   const [busy, setBusy] = useState(false);
   const [ask, setAsk] = useState<string | null>(null); // the herd whose "Ny länk" awaits its confirmation
+  const [sales, setSales] = useState<string | null>(null); // the herd whose "Försäljningar" is open
   const [error, setError] = useState<string | null>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
@@ -158,6 +160,15 @@ export function StatusTable({
         onConfirm={() => ask && sendLink(ask)}
         onClose={() => setAsk(null)}
       />
+      {sales && (
+        <SalesDialog
+          herd={sales}
+          year={year}
+          env={env}
+          onDecided={() => startTransition(() => router.refresh())}
+          onClose={() => setSales(null)}
+        />
+      )}
       <nav className={inkorg.counts} aria-label="Lägen">
         {tabs.map(([f, label, n]) => (
           <Link
@@ -214,6 +225,7 @@ export function StatusTable({
                   locked={busy || pending}
                   onTime={changeOnTime}
                   onNewLink={setAsk}
+                  onSales={setSales}
                 />
               ))}
             </tbody>
@@ -231,6 +243,7 @@ function Row({
   locked,
   onTime,
   onNewLink,
+  onSales,
 }: {
   row: StatusRow;
   year: number;
@@ -238,12 +251,20 @@ function Row({
   locked: boolean;
   onTime: (herd: string, value: string) => void;
   onNewLink: (herd: string) => void;
+  onSales: (herd: string) => void;
 }) {
   const reported = row.received_at !== null;
   // The state already says "Ingen e-post" when nothing else is going on.
   const flagNoEmail = row.ingen_epost && row.state !== "ingen_epost";
   const override =
     row.on_time_override === null ? "" : row.on_time_override ? "ja" : "nej";
+  const f = row.flags;
+  const flagged =
+    flagNoEmail ||
+    f.ej_angivna > 0 ||
+    f.forsaljning_vantar > 0 ||
+    f.forsaljning_avvisad > 0 ||
+    f.kopt_efter_inskick > 0;
   return (
     <tr>
       <td>
@@ -298,18 +319,39 @@ function Row({
             Ingen e-post
           </span>
         )}
-        {row.flags.ej_angivna > 0 ? (
+        {f.ej_angivna > 0 && (
+          <span
+            className={`sb-badge ${f.ej_angivna_paverkar ? inkorg.badgeWarn : ""}`}
+            style={{ marginRight: 8 }}
+          >
+            {f.ej_angivna} ej angivna
+            {f.ej_angivna_paverkar && " (påverkar stödet)"}
+          </span>
+        )}
+        {f.forsaljning_vantar > 0 && (
+          <span className="sb-badge" style={{ marginRight: 8 }}>
+            {f.forsaljning_vantar === 1
+              ? "Försäljning väntar"
+              : `${f.forsaljning_vantar} försäljningar väntar`}
+          </span>
+        )}
+        {f.forsaljning_avvisad > 0 && (
           <span
             className={`sb-badge ${
-              row.flags.ej_angivna_paverkar ? inkorg.badgeWarn : ""
+              f.forsaljning_avvisad_paverkar ? inkorg.badgeWarn : ""
             }`}
+            style={{ marginRight: 8 }}
           >
-            {row.flags.ej_angivna} ej angivna
-            {row.flags.ej_angivna_paverkar && " (påverkar stödet)"}
+            Försäljning avvisad, medlemmen väljer igen
+            {f.forsaljning_avvisad_paverkar && " (påverkar stödet)"}
           </span>
-        ) : (
-          !flagNoEmail && "–"
         )}
+        {f.kopt_efter_inskick > 0 && (
+          <span className="sb-badge" style={{ marginRight: 8 }}>
+            Köpt efter inskick
+          </span>
+        )}
+        {!flagged && "–"}
       </td>
       <td data-label="Mottagen">
         {row.received_at ? fmtDate(row.received_at) : "–"}
@@ -332,6 +374,16 @@ function Row({
               onClick={() => onNewLink(row.herd)}
             >
               Ny länk
+            </button>
+          )}
+          {canEdit && row.flags.forsaljning_vantar > 0 && (
+            <button
+              type="button"
+              className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+              disabled={locked}
+              onClick={() => onSales(row.herd)}
+            >
+              Försäljningar
             </button>
           )}
           {canEdit && reported && (

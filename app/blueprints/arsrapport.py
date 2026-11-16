@@ -16,10 +16,19 @@ import utils.arsrapport as arsrapport
 import utils.arsrapport_invite as invite
 import utils.arsrapport_pdf as arsrapport_pdf
 import utils.inbox as inbox
+import utils.sale_proposal as sale_proposal
 from flask import Blueprint, current_app, g, jsonify, request, send_file
 from flask_login import current_user
 from utils.arsrapport import ArsrapportError
-from utils.database import DATABASE, OUTSIDE_GENEBANK_HERDS, Genebank, Herd, ReportAccessCode, YearlyReportRound
+from utils.database import (
+    DATABASE,
+    OUTSIDE_GENEBANK_HERDS,
+    Genebank,
+    Herd,
+    ReportAccessCode,
+    SaleProposal,
+    YearlyReportRound,
+)
 from utils.report_code import CodeActor
 
 from .common import check_genebank_access, json_login_required, manager_required, problem
@@ -377,3 +386,51 @@ def new_link(herd, year):
         return denied
     invite.new_link(target, _genebank_round(year, target.genebank_id), current_user, now=arsrapport.now())
     return jsonify({"sent": True})
+
+
+# [Next.js] The status view's sale dialog: the herd's pending sale proposals; the genebank's manager or admin.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/forslag", methods=["GET"])
+@json_login_required
+def sale_proposals(herd, year):
+    target = Herd.get_or_none(Herd.herd == herd)
+    if target is None or target.herd in OUTSIDE_GENEBANK_HERDS:
+        raise ArsrapportError(404, "Besättningen finns inte.")
+    denied = check_genebank_access(target.genebank_id)
+    if denied:
+        return denied
+    round_ = arsrapport.get_round(year)
+    report = arsrapport.current_report(target, round_) if round_ else None
+    return jsonify({"forslag": sale_proposal.decisions(report) if report else []})
+
+
+def _deciding(proposal_id):
+    """The proposal and None, or None and the 403 for anyone but its genebank's manager or admin (section 6)."""
+    proposal = SaleProposal.get_or_none(SaleProposal.id == proposal_id)
+    if proposal is None:
+        raise ArsrapportError(404, "Försäljningen finns inte.")
+    return proposal, check_genebank_access(proposal.report.herd.genebank_id)
+
+
+# [Next.js] Godkänn: the proposed sale is registered (5.9).
+@arsrapport_bp.route("/v2/arsrapport/forslag/<int:proposal_id>/godkann", methods=["POST"])
+@json_login_required
+def approve_sale(proposal_id):
+    proposal, denied = _deciding(proposal_id)
+    if denied:
+        return denied
+    sale_proposal.approve(proposal, current_user, now=arsrapport.now())
+    return jsonify({"id": proposal.id, "state": "godkand"})
+
+
+# [Next.js] Avvisa: body {reason, then: "kvar" | "valj_igen"}; the member is mailed the reason (F4).
+@arsrapport_bp.route("/v2/arsrapport/forslag/<int:proposal_id>/avvisa", methods=["POST"])
+@json_login_required
+def reject_sale(proposal_id):
+    proposal, denied = _deciding(proposal_id)
+    if denied:
+        return denied
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        raise ArsrapportError(400, "Skicka orsak och val som JSON.")
+    sale_proposal.reject(proposal, current_user, reason=body.get("reason"), then=body.get("then"), now=arsrapport.now())
+    return jsonify({"id": proposal.id, "state": "avvisad"})

@@ -11,6 +11,7 @@ import {
   type ReportView,
   type Refusal,
   type Round,
+  type SaleProposalRow,
   type Submission,
 } from "./lib";
 
@@ -214,5 +215,45 @@ export async function sendTestMail(
       : null,
     "POST",
     {},
+  );
+}
+
+// The status view's sale dialog: the herd's pending proposals (manager or admin).
+export async function saleProposals(herd: string, year: number, env: Mode) {
+  return call<{ forslag: SaleProposalRow[] }>(
+    env,
+    path(herd, year, "/forslag"),
+    "GET",
+    undefined,
+  );
+}
+
+const proposalPath = (id: number, action: "godkann" | "avvisa") =>
+  Number.isSafeInteger(id) && id > 0
+    ? `/v2/arsrapport/forslag/${id}/${action}`
+    : null;
+
+export async function approveSale(id: number, env: Mode) {
+  return call<{ id: number; state: string }>(
+    env,
+    proposalPath(id, "godkann"),
+    "POST",
+    {},
+  );
+}
+
+// The member is mailed the reason; "kvar" counts the rabbit on 31 December,
+// "valj_igen" leaves it for the member to choose again.
+export async function rejectSale(
+  id: number,
+  reason: string,
+  then: "kvar" | "valj_igen",
+  env: Mode,
+) {
+  return call<{ id: number; state: string }>(
+    env,
+    proposalPath(id, "avvisa"),
+    "POST",
+    { reason, then },
   );
 }

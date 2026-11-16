@@ -289,24 +289,23 @@ class ProposalsTest(ArsrapportTest):
         first = self.first()
         sp.reject(first, self.decider, reason="Fel köpare", then="valj_igen", now=NOW)
         self.day(1)
-        self.send(
+        self.send(  # the rejection moved the revision (S1): the reloaded page sends 2
             self.sald(self.a, "G9002", 2025, 10, 3),
             self.kvar(self.b, vikt=2.8),
             self.kvar(self.c, vikt=2.8),
-            revision=1,
+            revision=2,
         )
         self.assertEqual([p.state for p in proposals(self.a)], ["avvisad", "foreslagen"])
 
-    def test_change_after_rejection_kvar_leaves_the_rabbit(self):  # FB3's rule stops at an attested rabbit
+    def test_change_after_rejection_kvar_leaves_the_rabbit(self):  # S1: kvar is the rabbit's entry now
         first = self.first()
         sp.reject(first, self.decider, reason="Fel datum", then="kvar", now=NOW)
         self.day(1)
-        self.send(
-            self.sald(self.a, "G9002", 2025, 10, 3),
-            self.kvar(self.b, vikt=3.0),
-            self.kvar(self.c, vikt=2.8),
-            revision=1,
-        )
+        stale = (self.sald(self.a, "G9002", 2025, 10, 3), self.kvar(self.b, vikt=3.0), self.kvar(self.c, vikt=2.8))
+        with self.assertRaises(ArsrapportError) as caught:  # a page opened before the rejection
+            self.send(*stale, revision=1)
+        self.assertEqual(caught.exception.status, 409)
+        self.send(self.kvar(self.a), *stale[1:], revision=2)  # the reloaded page: a as the rejection left it
         self.assertEqual([p.state for p in proposals(self.a)], ["avvisad"])
         self.assertEqual(len(rows(self.a, "ATTESTATION")), 1)
 

@@ -1,7 +1,7 @@
 """
 Sale proposals (spec section 6, 5.9): a sale that a caretaker or the report link reports, which the genebank's
 manager approves or rejects. Each proposal has a `kontroll` item in the queue. The caller holds no lock: the
-functions take the report lock, then the item, then the rabbit's (execute does), the order of 5.9.
+functions take the report lock and row, then the items, then the rabbit's litter and the rabbit, the order of 5.9.
 """
 
 from datetime import date, datetime
@@ -11,15 +11,23 @@ from peewee import IntegrityError
 
 import utils.arsrapport as arsrapport
 import utils.inbox as inbox
-from utils.database import DB_PROXY, HerdTracking, InboxItem, SaleProposal, ht_not_voided, ht_order_desc
+from utils.database import (
+    DB_PROXY,
+    HerdTracking,
+    InboxItem,
+    SaleProposal,
+    YearlyHerdReport,
+    ht_not_voided,
+    ht_order_desc,
+)
 from utils.herd_tracking import (
     BUYER_TEXT_FIELDS,
+    HerdTrackingError,
     HerdTrackingInvalid,
     _reject_buyer_name,
     buyer_contact_fields,
-    require_reason,
 )
-from utils.individual_commands import RecordAttestation, execute, lock_individual_for_edit, record_sale
+from utils.individual_commands import IndividualRefused, lock_individual_for_edit, record_sale
 
 DECIDED = "Förslaget är redan avgjort."
 NAMED = "Skriv orsaken utan köparens namn."
@@ -122,29 +130,43 @@ def _claim(proposal, user, now, **fields):
 
 def _locked(proposal):
     """
-    The report lock, then the report's item set in one ascending pass (K4): the rabbit's buyer items and every pending
-    proposal's item, this one's too. Returns the proposal as it is under them.
+    The report lock, the report row, then the report's item set in one ascending pass (K4): the rabbit's buyer items
+    and every pending proposal's item, this one's too. Returns the proposal and its report as they are under them.
     """
     report = proposal.report
     arsrapport.lock_report(report.round, report.herd)
+    report = YearlyHerdReport.select().where(YearlyHerdReport.id == report.id).for_update().get()
     arsrapport._lock_items([proposal.individual_id], report=report)  # pylint: disable=protected-access
-    return SaleProposal.get_by_id(proposal.id)
+    return SaleProposal.get_by_id(proposal.id), report
+
+
+def _refused(proposal, exc):
+    """The register's refusal of a decision's write, as a 409 with its reason (U8)."""
+    refusal = arsrapport._written(proposal.individual_id, exc)  # pylint: disable=protected-access
+    return arsrapport.ArsrapportError(409, refusal.message, code=refusal.code)
 
 
 def approve(proposal, user, *, now: datetime) -> HerdTracking:
-    """Registers the sale (record_sale, as the manager's or admin's own right, grant=None) and closes the item."""
+    """
+    Registers the sale (record_sale, as the manager's or admin's own right, grant=None) and closes the item, also after
+    the round's end_date (5.9). A sale on or before 31/12 into a herd whose report is in is mailed to its main member,
+    who then changes the report (FB4).
+    """
     with DB_PROXY.atomic():
-        proposal = _locked(proposal)
+        proposal, report = _locked(proposal)
         if proposal.state != "foreslagen":
             raise arsrapport.ArsrapportError(409, DECIDED)
-        report, buyer = proposal.report, proposal.buyer
+        buyer = proposal.buyer
         code = proposal.to_herd.herd if proposal.to_herd_id else arsrapport._sale_code(report.herd, "utanfor")  # pylint: disable=protected-access
         _claim(proposal, user, now, state="godkand")
         lock_individual_for_edit(proposal.individual_id)
         # the sale takes its seller from the latest holder: a move meanwhile must not sell from another herd
         if arsrapport._holder_on(proposal.individual_id, proposal.sale_date, set()) != report.herd_id:  # pylint: disable=protected-access
             raise arsrapport.ArsrapportError(409, arsrapport.REFUSALS["senare_handelse"])
-        record_sale(user, proposal.individual_id, code, proposal.sale_date.isoformat(), buyer=buyer)
+        try:
+            record_sale(user, proposal.individual_id, code, proposal.sale_date.isoformat(), buyer=buyer)
+        except (IndividualRefused, HerdTrackingError) as exc:
+            raise _refused(proposal, exc) from exc
         row = (
             HerdTracking.select()
             .where(
@@ -157,43 +179,58 @@ def approve(proposal, user, *, now: datetime) -> HerdTracking:
         )
         SaleProposal.update(herd_tracking_id=row.id).where(SaleProposal.id == proposal.id).execute()
         _close_item(proposal, user, "klar")
+        buyer_report = arsrapport.current_report(proposal.to_herd, report.round) if proposal.to_herd_id else None
+        if buyer_report is not None and proposal.sale_date <= date(report.round.report_year, 12, 31):
+            ref = ("sale_proposal", proposal.id)
+            arsrapport._mail("arsrapport.kop_godkant", proposal.to_herd, user, {"proposal_id": proposal.id}, ref)  # pylint: disable=protected-access
     return row
 
 
 def reject(proposal, user, *, reason: str, then: Literal["kvar", "valj_igen"], now: datetime) -> None:
     """
-    F4: `avvisad` with a reason (without the buyer's name, K6). "kvar" attests the rabbit on 31/12 as the manager,
-    unless it already has that attestation; "valj_igen" leaves it unchosen. A refused attestation leaves the
-    proposal open.
+    F4: `avvisad` with a reason, which may not name the buyer (K6). The rabbit's entry is rewritten in a submission of
+    the manager's (S1): "kvar" writes Finns kvar, attesting it on 31/12 unless that is there (FB2), and "valj_igen"
+    leaves it to choose again (FB3). A refused attestation leaves the proposal open. The member is mailed the reason.
     """
     if then not in ("kvar", "valj_igen"):
         raise arsrapport.ArsrapportError(400, "Välj om kaninen finns kvar eller om medlemmen ska välja igen.")
+    reason = arsrapport._text(reason, "reason")  # pylint: disable=protected-access  # 400 for a phone or an e-mail
+    if not reason:
+        raise arsrapport.ArsrapportError(400, "Skriv varför försäljningen inte godkänns.", field="reason")
     with DB_PROXY.atomic():
-        proposal = _locked(proposal)
+        proposal, report = _locked(proposal)
         if proposal.state != "foreslagen":
             raise arsrapport.ArsrapportError(409, DECIDED)
-        reason = require_reason(reason)
         names = [proposal.buyer["name"]] if proposal.buyer else ()
         try:
             _reject_buyer_name([reason], [proposal.individual_id], names=names)
         except HerdTrackingInvalid as exc:
-            raise arsrapport.ArsrapportError(400, NAMED) from exc
-        report = proposal.report
+            raise arsrapport.ArsrapportError(400, NAMED, field="reason") from exc
         _claim(proposal, user, now, state="avvisad", reason=reason)
-        # shortcut: no manager submission in report_ops and no cleared choice (FB2, FB3): 4a Task 2/3 completes it
-        if then == "kvar":
-            lock_individual_for_edit(proposal.individual_id)  # execute locks too, but not when already attested
-            last = date(report.round.report_year, 12, 31)
-            attested = HerdTracking.select().where(
-                HerdTracking.individual == proposal.individual_id,
-                HerdTracking.kind == "ATTESTATION",
-                HerdTracking.herd_tracking_date == last,
-                HerdTracking.herd == report.herd_id,
-                ht_not_voided(),
-            )
-            if not attested.exists():
-                if arsrapport._holder_on(proposal.individual_id, arsrapport.today(), set()) != report.herd_id:  # pylint: disable=protected-access
-                    raise arsrapport.ArsrapportError(409, arsrapport.REFUSALS["senare_handelse"])
-                command = RecordAttestation(report.herd.herd, last.isoformat(), report=report.id)
-                execute(user, proposal.individual_id, lambda ctx: [command])
+        lock_individual_for_edit(proposal.individual_id)
+        arsrapport.settle_rejection(report, user, proposal.individual_id, then, now)
         _close_item(proposal, user, "klar")
+        params, ref = {"proposal_id": proposal.id, "kvar": int(then == "kvar")}, ("sale_proposal", proposal.id)
+        arsrapport._mail("arsrapport.forsaljning_avvisad", report.herd, user, params, ref)  # pylint: disable=protected-access
+
+
+def decisions(report) -> list[dict]:
+    """
+    The status view's sale dialog (5.9), for the genebank's manager or admin: the report's pending proposals, a buyer
+    outside the genebank by name and town only, and whether the buyer has reported the purchase (K7).
+    """
+    return [
+        {
+            "id": proposal.id,
+            "individual_id": proposal.individual_id,
+            "number": proposal.individual.number,
+            "name": proposal.individual.name,
+            "to_herd": proposal.to_herd.herd if proposal.to_herd_id else None,
+            "buyer": {"name": proposal.buyer.get("name"), "town": proposal.buyer.get("town")}
+            if proposal.buyer
+            else None,
+            "sale_date": proposal.sale_date.isoformat(),
+            "buyer_notified_at": proposal.buyer_notified_at.isoformat() if proposal.buyer_notified_at else None,
+        }
+        for proposal in pending(report)
+    ]

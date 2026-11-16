@@ -100,7 +100,7 @@ export function WorkView({
   reportYear = null,
 }: {
   noRole?: boolean;
-  /** The year of the form entry link; null leaves it out. */
+  /** The year of the form entry link and of a sale proposal's status view link; null leaves them out. */
   reportYear?: number | null;
   item: InboxDetail;
   user: QueueUser;
@@ -595,7 +595,22 @@ export function WorkView({
 
         {/* Right: what the document shows */}
         <section className={`sb-card ${styles.card}`} aria-label="Registrering">
-          {doc && !saving && !noRole && (
+          {item.ref_type === "sale_proposal" && (
+            <p className={styles.note}>
+              Avgörs i årsrapportens statusvy.
+              {reportYear && item.genebank_id && (
+                <>
+                  {" "}
+                  <Link
+                    href={`/stamboken/arsrapport/status/${reportYear}?genebank_id=${item.genebank_id}`}
+                  >
+                    Öppna statusvyn
+                  </Link>
+                </>
+              )}
+            </p>
+          )}
+          {doc && !saving && !noRole && item.ref_type !== "sale_proposal" && (
             <div className={styles.note}>
               {CLOSED_STATES.includes(item.state)
                 ? "Ärendet är stängt."

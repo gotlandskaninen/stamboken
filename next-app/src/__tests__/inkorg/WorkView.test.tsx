@@ -259,3 +259,31 @@ describe("WorkView: an annual form", () => {
     ).toBeNull();
   });
 });
+
+describe("WorkView: a sale proposal", () => {
+  const proposal = item({
+    kind: "kontroll",
+    state: "ny",
+    assigned_to: null,
+    ref_type: "sale_proposal",
+    ref_id: 7,
+    documents: [],
+  });
+
+  it("says it is decided in the status view, with a link", () => {
+    render(view(proposal, boss, false, 2026));
+    expect(screen.getByText(/Avgörs i årsrapportens statusvy/)).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Öppna statusvyn" }),
+    ).toHaveAttribute(
+      "href",
+      "/stamboken/arsrapport/status/2026?genebank_id=1",
+    );
+  });
+
+  it("keeps the text without a round", () => {
+    render(view(proposal, boss));
+    expect(screen.getByText(/Avgörs i årsrapportens statusvy/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Öppna statusvyn" })).toBeNull();
+  });
+});

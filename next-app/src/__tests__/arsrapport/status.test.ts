@@ -10,6 +10,13 @@ import {
   type StatusRow,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
 
+const NO_SALES = {
+  forsaljning_vantar: 0,
+  forsaljning_avvisad: 0,
+  forsaljning_avvisad_paverkar: false,
+  kopt_efter_inskick: 0,
+};
+
 const row = (
   herd: string,
   state: RowState,
@@ -25,7 +32,7 @@ const row = (
   received_at: null,
   on_time_override: null,
   inbox_item_id: null,
-  flags: { ej_angivna: 0, ej_angivna_paverkar: false },
+  flags: { ej_angivna: 0, ej_angivna_paverkar: false, ...NO_SALES },
   villkor: { hane: false, hona: false, kull: false, i_tid: false },
   statistik: { kullar: 0, ungar: 0, levande_6v: 0, honor: 0, hanar: 0 },
   ...over,
@@ -40,10 +47,10 @@ const rows = [
   row("G9006", "blankett_inkommen"),
   row("G9007", "inskickad", {
     received_at: "2027-01-12T09:00:00+01:00",
-    flags: { ej_angivna: 3, ej_angivna_paverkar: true },
+    flags: { ej_angivna: 3, ej_angivna_paverkar: true, ...NO_SALES },
   }),
   row("G9008", "inskickad", {
-    flags: { ej_angivna: 1, ej_angivna_paverkar: false },
+    flags: { ej_angivna: 1, ej_angivna_paverkar: false, ...NO_SALES },
   }),
 ];
 const herds = (list: StatusRow[]) => list.map((r) => r.herd);
@@ -124,6 +131,33 @@ describe("Att ringa", () => {
     expect(herds(filterRows(rows, "att_ringa", null, "2027-12-31"))).toEqual([
       "G9007",
     ]);
+  });
+});
+
+describe("toCall and a rejected sale", () => {
+  it("calls a herd whose rabbit to choose again decides the support (FB3)", () => {
+    const flags = (paverkar: boolean) => ({
+      ej_angivna: 0,
+      ej_angivna_paverkar: false,
+      ...NO_SALES,
+      forsaljning_avvisad: 1,
+      forsaljning_avvisad_paverkar: paverkar,
+    });
+    const sent = { received_at: "2027-01-10T09:00:00+01:00" };
+    expect(
+      toCall(
+        row("G9001", "inskickad", { ...sent, flags: flags(true) }),
+        null,
+        "2027-01-01",
+      ),
+    ).toBe(true);
+    expect(
+      toCall(
+        row("G9001", "inskickad", { ...sent, flags: flags(false) }),
+        null,
+        "2027-01-01",
+      ),
+    ).toBe(false);
   });
 });
 

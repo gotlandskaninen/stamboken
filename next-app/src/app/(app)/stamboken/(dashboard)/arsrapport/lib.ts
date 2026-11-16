@@ -943,7 +943,14 @@ export interface StatusRow {
   on_time_override: boolean | null;
   inbox_item_id: number | null;
   telefon?: string | null; // only for genebank managers
-  flags: { ej_angivna: number; ej_angivna_paverkar: boolean };
+  flags: {
+    ej_angivna: number;
+    ej_angivna_paverkar: boolean;
+    forsaljning_vantar: number; // pending sale proposals (5.9)
+    forsaljning_avvisad: number; // rabbits a rejected sale left to choose again (FB3)
+    forsaljning_avvisad_paverkar: boolean;
+    kopt_efter_inskick: number; // sales into the herd approved after its report (FB4)
+  };
   villkor: Villkor;
   statistik: {
     kullar: number;
@@ -979,6 +986,19 @@ export interface StatusView {
   rows: StatusRow[];
 }
 
+// The status view's sale dialog (5.9): a pending proposal, a buyer outside
+// the genebank by name and town only.
+export interface SaleProposalRow {
+  id: number;
+  individual_id: number;
+  number: string;
+  name: string | null;
+  to_herd: string | null;
+  buyer: { name: string; town: string | null } | null;
+  sale_date: string;
+  buyer_notified_at: string | null; // the buyer's own notice (K7)
+}
+
 export type StatusFilter = "att_ringa" | "alla" | RowState;
 
 export const parseFilter = (v: string | undefined): StatusFilter =>
@@ -993,15 +1013,17 @@ export const callFrom = (deadline: string): string =>
     .slice(0, 10);
 
 // Spec 5.14: a herd with a draft is phoned from two days before the round's
-// deadline; a herd whose form left out rabbits that decide the support at any
-// time; a herd whose invitation bounced or failed, until it has reported.
+// deadline; a herd whose form left out rabbits that decide the support, or
+// whose rejected sale left such a rabbit to choose again (FB3), at any time; a
+// herd whose invitation bounced or failed, until it has reported.
 
 export function toCall(
   row: StatusRow,
   deadline: string | null,
   today: string,
 ): boolean {
-  if (row.flags.ej_angivna_paverkar) return true;
+  if (row.flags.ej_angivna_paverkar || row.flags.forsaljning_avvisad_paverkar)
+    return true;
   if (
     (row.inbjudan === "studsade" || row.inbjudan === "misslyckades") &&
     row.state !== "inskickad" &&

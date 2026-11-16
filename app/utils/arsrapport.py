@@ -878,6 +878,58 @@ def _invitations(herds, round_):
     return {herd_id: "oppnad" if code.last_opened_at else mail.get(code.id) for herd_id, code in codes.items()}
 
 
+def _only_with(more, counted, villkor, stat, report, deadline):
+    """The four support conditions fail as counted, and hold once the rabbits `more` count too."""
+    return bool(
+        more and not all(villkor.values()) and all(support_conditions(counted + more, stat, report, deadline).values())
+    )
+
+
+def _sale_flags(round_, reports):
+    """
+    The status view's sale flags per herd, from the submitted `reports` (herd id -> report) in four queries: pending
+    proposals (5.14), the rabbits a rejection left to choose again, which its submission stores without a choice
+    (FB3), and approved sales on or before 31/12 into a herd whose report came in before the approval and has not
+    been changed since (FB4).
+    """
+    herd_of = {report.id: herd_id for herd_id, report in reports.items()}
+    open_ = list(
+        SaleProposal.select(SaleProposal.report, SaleProposal.state).where(
+            SaleProposal.report.in_(list(herd_of)), SaleProposal.state.in_(("foreslagen", "avvisad"))
+        )
+    )
+    waiting = Counter(herd_of[p.report_id] for p in open_ if p.state == "foreslagen")
+    latest = {}
+    for submission in (
+        YearlyReportSubmission.select(YearlyReportSubmission.report, YearlyReportSubmission.data)
+        .where(YearlyReportSubmission.report.in_(sorted({p.report_id for p in open_ if p.state == "avvisad"})))
+        .order_by(YearlyReportSubmission.created_at, YearlyReportSubmission.id)
+    ):
+        latest[submission.report_id] = submission.data.get("rabbits") or {}
+    again = {
+        herd_of[report_id]: sorted(int(k) for k, e in rabbits.items() if isinstance(e, dict) and e.get("val") is None)
+        for report_id, rabbits in latest.items()
+    }
+    sent = dict(
+        YearlyReportSubmission.select(YearlyReportSubmission.report, fn.MAX(YearlyReportSubmission.created_at))
+        .where(YearlyReportSubmission.report.in_(list(herd_of)))
+        .group_by(YearlyReportSubmission.report)
+        .tuples()
+    )
+    approved = (
+        SaleProposal.select(SaleProposal.to_herd, SaleProposal.decided_at)
+        .join(YearlyHerdReport)
+        .where(
+            YearlyHerdReport.round == round_.id,
+            SaleProposal.state == "godkand",
+            SaleProposal.sale_date <= date(round_.report_year, 12, 31),
+            SaleProposal.to_herd.in_(list(reports)),
+        )
+    )
+    bought = Counter(p.to_herd_id for p in approved if (at := sent.get(reports[p.to_herd_id].id)) and p.decided_at > at)
+    return waiting, again, bought
+
+
 def status_view(round_, genebank_id, with_phone=False):
     """
     StatusView (5.14): a row per active herd of the genebank, and per herd with any report in the round (a withdrawn
@@ -911,12 +963,13 @@ def status_view(round_, genebank_id, with_phone=False):
     held, stats, pending = innehav(genebank_id, year), statistik(genebank_id, year), _pending_sales(last)
     data = {herd_id: json.loads(report.data) for herd_id, report in reports.items()}
     unstated = sorted({int(i) for body in data.values() for i in body.get("not_stated") or ()})
+    waiting, again, bought = _sale_flags(round_, reports)
     extra = {
         row.id: Kanin(
             row.id, SEXES.get(row.sex), row.sex == "eunuch" or bool(row.castration_date and row.castration_date <= last)
         )
         for row in Individual.select(Individual.id, Individual.sex, Individual.castration_date).where(
-            Individual.id.in_(unstated)
+            Individual.id.in_(sorted({*unstated, *(i for ids in again.values() for i in ids)}))
         )
     }
     phones = {}
@@ -949,15 +1002,12 @@ def status_view(round_, genebank_id, with_phone=False):
         counted = [kanin for kanin in held.get(herd.id, []) if kanin.individual_id not in pending]
         stat = stats.get(herd.id)
         villkor = support_conditions(counted, stat, report, round_.deadline)
-        not_stated = body.get("not_stated") or []
-        # U12: set when the four conditions hold only if the rabbits the form left out are counted
-        listed = {kanin.individual_id for kanin in counted}
-        more = [extra[i] for i in not_stated if i in extra and i not in listed and i not in pending]
-        affects = bool(
-            not_stated
-            and not all(villkor.values())
-            and all(support_conditions(counted + more, stat, report, round_.deadline).values())
-        )
+        not_stated, choosing = body.get("not_stated") or [], again.get(herd.id, [])
+        # U12 (ej angivna) and FB3 (a rejected sale to choose again): set when the four conditions hold only if
+        # those rabbits are counted
+        listed = {kanin.individual_id for kanin in counted} | pending
+        more, chosen = ([extra[i] for i in ids if i in extra and i not in listed] for ids in (not_stated, choosing))
+        facts = (counted, villkor, stat, report, round_.deadline)
         rows.append(
             {
                 "herd": herd.herd,
@@ -970,7 +1020,14 @@ def status_view(round_, genebank_id, with_phone=False):
                 "received_at": _iso(report.received_at) if report else None,
                 "on_time_override": report.on_time_override if report else None,
                 "inbox_item_id": (report.inbox_item_id if report else None) or (item.id if item else None),
-                "flags": {"ej_angivna": len(not_stated), "ej_angivna_paverkar": affects},
+                "flags": {
+                    "ej_angivna": len(not_stated),
+                    "ej_angivna_paverkar": _only_with(more, *facts),
+                    "forsaljning_vantar": waiting[herd.id],
+                    "forsaljning_avvisad": len(choosing),
+                    "forsaljning_avvisad_paverkar": _only_with(chosen, *facts),
+                    "kopt_efter_inskick": bought[herd.id],
+                },
                 "villkor": villkor,
                 "statistik": {
                     "kullar": stat.kullar if stat else 0,
@@ -1396,19 +1453,6 @@ def _proposals(report):
     return {proposal.individual_id: proposal for proposal in query}
 
 
-def _unchanged(entry, before, proposal, row):
-    """
-    P39a: a choice as in the latest submission writes nothing, unless it is a sale that was rejected and the rabbit is
-    still to choose (FB3); a rejection with "kvar" has attested it, so its row is no longer att_valja.
-    """
-    # shortcut: any resent rejected sale is a new proposal, as the form resends every entry; that includes a January
-    # sale rejected with "kvar", whose 31/12 attestation the report already wrote, so its row stays att_valja. Once
-    # Task 3's rejection rewrites the latest submission's entry and moves the revision (FB2 kvar, FB3 cleared),
-    # entry == before no longer holds and this is moot
-    rejected = entry.val == "sald" and proposal is not None and proposal.state == "avvisad"
-    return entry == before and not (rejected and row["state"] == "att_valja")
-
-
 def _keeps(proposal, before, entry):
     """The rabbit's pending proposal still stands for `entry`: the same sale as before and no buyer typed (K5)."""
     return (
@@ -1659,7 +1703,8 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
         if entry.val == "ej_angiven" and access.source != "paper" and not kept:
             refusals.append(_refusal(rabbit, "ej_angiven_digitalt"))
             continue
-        if _unchanged(entry, before, proposals.get(rabbit), row):  # P39a: it writes nothing and is not refused
+        # P39a: it writes nothing and is not refused; a rejection rewrote its entry and moved the revision (S1)
+        if entry == before:
             continue
         if row["state"] != "att_valja":
             refusals.append(_refusal(rabbit, "senare_handelse"))
@@ -2441,7 +2486,7 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
             report.save()
             for rabbit, entry in sorted(sub.rabbits.items()):
                 prev, proposal = before.get(rabbit), proposals.get(rabbit)
-                if _unchanged(entry, prev, proposal, rows[rabbit]):  # P39a: an unchanged choice writes nothing
+                if entry == prev:  # P39a: an unchanged choice writes nothing
                     continue
                 want = wanted(entry, rows[rabbit], report, herd, year, on)
                 want = _split_sale(proposed, access, report, rabbit, want, prev, entry, proposal, last, at)
@@ -2619,6 +2664,70 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
     return report_view(herd, round_, access, user)
 
 
+def _with_entry(data, key, raw):
+    """A draft's body and its form copy with the rabbit's entry `raw`, or without one when `raw` has no choice."""
+
+    def put(body):
+        if not isinstance(body.get("rabbits"), dict):
+            return body
+        rabbits = {k: e for k, e in body["rabbits"].items() if k != key}
+        return {**body, "rabbits": rabbits | ({key: raw} if raw["val"] else {})}
+
+    data = put(data)
+    return {**data, "form": put(data["form"])} if isinstance(data.get("form"), dict) else data
+
+
+def settle_rejection(report, user, rabbit, then, at):
+    """
+    S1: the rabbit of a rejected proposal, rewritten in a submission of the manager's on the same report, under the
+    caller's locks (report row, items, rabbit), and the revision moved, so a page opened before it gets 409 and never
+    proposes the rejected sale again. "kvar" writes what Finns kvar writes through the report's diff, its operations
+    in report_ops (FB2); the register's refusal is a 409 with its reason. "valj_igen" clears the entry (FB3). An open
+    draft gets the same entry and a new version.
+    """
+    herd, round_ = report.herd, report.round
+    year, on = round_.report_year, at.astimezone(STOCKHOLM).date()
+    last, latest, key = date(year, 12, 31), _submissions(report)[-1], str(rabbit)
+    raw = dict.fromkeys(ENTRY_KEYS) | {"val": "kvar" if then == "kvar" else None}  # as submitted_body stores it
+    grant, added = ReportGrant(), []
+    if then == "kvar":
+        entry, before = _entry(key, raw), _entries(latest.data.get("rabbits") or {}).get(rabbit)
+        row, ops = next(r for r in report_list(herd, year, report) if r["id"] == rabbit), report_ops(report)
+        want = wanted(entry, row, report, herd, year, on)
+        remove, add = diff(current(report, rabbit), want, last, before, entry)
+        if row["state"] == "via_flytt":
+            refusals = [_refusal(rabbit, "senare_handelse")]
+        elif row["state"] == "att_valja" and _holder_on(rabbit, last, ops) != herd.id:
+            refusals = [_refusal(rabbit, "inte_innehavare")]
+        else:  # one already attested outside the report (redan_rapporterad) stays as it is
+            refusals = _register_refusals(rabbit, entry, remove, add, ops, user.is_admin)
+        if refusals:
+            raise ArsrapportError(409, refusals[0].message, code=refusals[0].code)
+        try:
+            added = apply_diff(report, herd, user, grant, rabbit, want, before, entry, last)
+        except (IndividualRefused, HerdTrackingError) as exc:
+            refusal = _written(rabbit, exc)
+            raise ArsrapportError(409, refusal.message, code=refusal.code) from exc
+    YearlyReportSubmission.create(
+        report=report.id,
+        submission_key=uuid.uuid4(),
+        created_at=at,
+        source="login",
+        user=user.id,
+        operation_ids=grant.operation_ids,
+        added_measurements=added,
+        data={**latest.data, "rabbits": {**(latest.data.get("rabbits") or {}), key: raw}},
+        request_hash="",  # no request: nobody retries this key
+    )
+    report.revision += 1
+    report.save(only=[YearlyHerdReport.revision])
+    draft = _draft(herd, round_)
+    if draft is not None:  # an Ändra in progress: an old tab's autosave gets the 409 and this draft
+        draft.data = _with_entry(draft.data, key, raw)
+        draft.updated_at = max(at, draft.updated_at + timedelta(microseconds=1)).astimezone(timezone.utc)
+        draft.save()
+
+
 @mail_kind("arsrapport.andrad", priority=0, category="T")
 @mail_kind("arsrapport.kvitto", priority=0, category="T")
 def _kvitto(params):
@@ -2685,6 +2794,32 @@ def _angrad(params):
     if report is None or report.voided_at is None:
         return None
     return {"herd": report.herd.herd, "datum": f"{report.voided_at.astimezone(STOCKHOLM):%Y-%m-%d}"}
+
+
+@mail_kind("arsrapport.forsaljning_avvisad", priority=1, category="T")
+def _forsaljning_avvisad(params):
+    """F4, to the herd's main member: the sale proposal was rejected, with its reason; `kvar` says how it ended."""
+    proposal = SaleProposal.get_or_none(SaleProposal.id == params["proposal_id"])
+    if proposal is None or proposal.state != "avvisad":
+        return None
+    rabbit, report = proposal.individual, proposal.report
+    return {
+        "number": rabbit.number,
+        "name": rabbit.name or "",
+        "herd": report.herd.herd,
+        "reason": proposal.reason,
+        "kvar": bool(params.get("kvar")),
+        "year": report.round.report_year,
+    }
+
+
+@mail_kind("arsrapport.kop_godkant", priority=1, category="T")
+def _kop_godkant(params):
+    """FB4, to the buyer herd's main member: a sale on or before 31/12 was approved after the buyer's report came in."""
+    proposal = SaleProposal.get_or_none(SaleProposal.id == params["proposal_id"])
+    if proposal is None or proposal.state != "godkand":
+        return None
+    return {"number": proposal.individual.number, "datum": f"{proposal.sale_date:%Y-%m-%d}"}
 
 
 def stale_link_retry(key, herd, round_):
