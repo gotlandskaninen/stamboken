@@ -431,6 +431,31 @@ class TestScope(AddRabbitTest):
                 )
         self.assertEqual(self.kits(), 0)
 
+    def test_a_foreign_paper_number_reads_alike_held_or_free(self):
+        """Codex P2: another genebank's paper number gets one answer whether a rabbit holds it or not, and so does a
+        herd that does not exist; nothing is looked up by it."""
+        sends = {
+            "nummerkontroll": lambda number: self.api(
+                "POST",
+                f"{REPORT}/nummerkontroll",
+                paper_number=number,
+                mother=self.doe.number,
+                father=self.buck.number,
+                birth_date="2025-05-10",
+            ),
+            "kanin": lambda number: self.kit(self.photo_item(), paper_number=number),
+        }
+        free = {name: send("M9001-2511") for name, send in sends.items()}
+        foreign = {"origin_herd": self.foreign_doe.origin_herd, "breeding": self.foreign_litter}
+        db.Individual.create(number="M9001-2511", **foreign)
+        for name, send in sends.items():
+            with self.subTest(name):
+                self.assertEqual(free[name].status_code, 400, free[name].get_data(as_text=True))
+                self.assertEqual(free[name].get_json()["field"], "paper_number")
+                self.assertEqual(send("M9001-2511").get_json(), free[name].get_json())
+                self.assertEqual(send("G9999-2511").get_json(), free[name].get_json())
+        self.assertEqual(self.kits(), 0)
+
 
 class TestReportPhotoReading(AddRabbitTest):
     """G5: the photo is read after its rabbit is saved, and the queue gets the reading beside the registration."""

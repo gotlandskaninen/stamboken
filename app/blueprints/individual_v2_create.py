@@ -125,6 +125,8 @@ def _register(form, actor, may, created, genebank=None):
     paper_number, resolution = form.get("paper_number"), form.get("resolution")
     if refusal := certificate_choice_problem(certificate_type, form.get("paper_certificate"), paper_number, resolution):
         return refusal
+    if certificate_type == "paper" and (refusal := _paper_outside(paper_number, genebank)):
+        return refusal
 
     form_litter_size6w = form.get("litter_size6w")
     if form_litter_size6w is not None:
@@ -323,6 +325,8 @@ def paper_number_check(form, actor, may, genebank=None):
     paper_number, paper_certificate = form.get("paper_number"), form.get("paper_certificate")
     if parse_number(paper_number) is None:
         return problem(400, "Bad Request", PAPER_NUMBER_REQUIRED)
+    if refusal := _paper_outside(paper_number, genebank):
+        return refusal
     if paper_certificate is not None and not isinstance(paper_certificate, str):
         return problem(400, "Bad Request", "paper_certificate must be a string")
     if form.get("breeding_id") is not None:
@@ -556,6 +560,19 @@ def _in_genebank(herd, genebank):
     before anything about it is said, so a link learns nothing outside its own genebank.
     """
     return genebank is None or (herd is not None and herd.genebank_id == genebank)
+
+
+def _paper_outside(paper_number, genebank):
+    """
+    The report's scope (4b) for the paper's own number: a herd outside `genebank`, or no such herd, is refused alike
+    before anything is looked up by the number, so a link never learns whether another genebank's rabbit holds it.
+    None when the herd is the genebank's, or without `genebank`.
+    """
+    paper = parse_number(paper_number)
+    if genebank is None or paper is None or _in_genebank(Herd.get_or_none(Herd.herd == paper[0]), genebank):
+        return None
+    detail = "Besättningen i individnumret finns inte i genbanken. Kontrollera numret på intyget."
+    return problem(400, "Bad Request", detail, field="paper_number")
 
 
 def _litter_in(breeding, genebank):
