@@ -61,43 +61,57 @@ export function LinkGate({
   const started = React.useRef(false);
   const token = React.useRef("");
 
-  const open = React.useCallback(async () => {
-    setPending(true);
-    setPhase("idle");
-    try {
-      const res = await fetch("/api/v2/rapport/oppna", {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: token.current }),
-      });
-      if (res.status === 403) return router.replace("/rapport/ogiltig");
-      if (!res.ok) throw new Error(String(res.status));
-      const { herd } = (await res.json()) as { herd: string };
-      const mine = await getMine();
-      if (!mine.ok) throw new Error(String(mine.problem.status));
-      const entry = mine.data.find((m) => m.herd === herd);
-      // The link was good but the cookie did not stay: the browser blocks it.
-      if (!entry) return setPhase("cookies");
-      token.current = "";
+  // Only the latest requested exchange may change the page: an older one that answers late is dropped.
+  const latest = React.useRef(0);
+
+  const open = React.useCallback(
+    async (link: string) => {
+      const mine = ++latest.current;
+      const current = () => mine === latest.current;
+      token.current = link; // kept for "Försök igen"
+      setPending(true);
       setPhase("idle");
-      // The server page renders again; the placeholder stays until it has.
-      startTransition(() => {
-        router.replace(`/rapport?kod=${entry.code_id}`);
-        router.refresh(); // the same address again does not render again by itself
-      });
-    } catch {
-      setPhase("net");
-    } finally {
-      setPending(false);
-    }
-  }, [router]);
+      try {
+        const res = await fetch("/api/v2/rapport/oppna", {
+          method: "POST",
+          credentials: "same-origin",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ token: link }),
+        });
+        if (!current()) return;
+        if (res.status === 403) return router.replace("/rapport/ogiltig");
+        if (!res.ok) throw new Error(String(res.status));
+        const { herd } = (await res.json()) as { herd: string };
+        const codes = await getMine();
+        if (!current()) return;
+        if (!codes.ok) throw new Error(String(codes.problem.status));
+        const entry = codes.data.find((m) => m.herd === herd);
+        // The link was good but the cookie did not stay: the browser blocks it.
+        if (!entry) return setPhase("cookies");
+        token.current = "";
+        setPhase("idle");
+        // The server page renders again; the placeholder stays until it has.
+        startTransition(() => {
+          router.replace(`/rapport?kod=${entry.code_id}`);
+          router.refresh(); // the same address again does not render again by itself
+        });
+      } catch {
+        if (current()) setPhase("net");
+      } finally {
+        if (current()) setPending(false);
+      }
+    },
+    [router],
+  );
 
   const begin = React.useCallback(
     (t: string) => {
-      if (t === "prov") return setPhase("test");
-      token.current = t;
-      void open();
+      if (t === "prov") {
+        latest.current++; // an exchange still running must not replace the test text
+        setPending(false);
+        return setPhase("test");
+      }
+      void open(t);
     },
     [open],
   );
@@ -121,7 +135,8 @@ export function LinkGate({
 
   if (phase === "test") return <Message text={TEST_LINK_TEXT} />;
   if (phase === "cookies") return <Message text={COOKIES_TEXT} />;
-  if (phase === "net") return <Message text={NET_TEXT} retry={open} />;
+  if (phase === "net")
+    return <Message text={NET_TEXT} retry={() => void open(token.current)} />;
   if (pending || navigating || (phase === "start" && missing))
     return <Skeleton />;
   if (missing === "ute") return <Message text={EXPIRED_TEXT} />;

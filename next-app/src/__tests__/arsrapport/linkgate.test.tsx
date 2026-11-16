@@ -3,7 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 
 const replace = vi.fn();
-vi.mock("next/navigation", () => ({ useRouter: () => ({ replace }) }));
+const refresh = vi.fn();
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace, refresh }),
+}));
 const getMine = vi.fn();
 vi.mock("@/app/(app)/rapport/actions", () => ({ getMine: () => getMine() }));
 
@@ -89,5 +92,39 @@ describe("LinkGate", () => {
     });
     await waitFor(() => expect(bodies).toEqual(['{"token":"7.other"}']));
     expect(location.hash).toBe("");
+  });
+
+  it("a late answer for an older link never overrides the newer one", async () => {
+    replace.mockReset();
+    const pending: Record<string, (r: unknown) => void> = {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init: { body: string }) =>
+          new Promise((resolve) => {
+            pending[JSON.parse(init.body).token] = resolve;
+          }),
+      ),
+    );
+    getMine.mockResolvedValue({
+      ok: true,
+      data: [{ code_id: 2, herd: "M2", herd_name: null, year: 2025 }],
+    });
+    (window as { __rapportToken?: string }).__rapportToken = "A";
+    render(<LinkGate />);
+    await waitFor(() => expect(pending.A).toBeTruthy());
+    await act(async () => {
+      history.pushState(null, "", "/rapport#B");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await waitFor(() => expect(pending.B).toBeTruthy());
+    await act(async () => {
+      pending.B({ status: 200, ok: true, json: () => ({ herd: "M2" }) });
+    });
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/rapport?kod=2"));
+    await act(async () => {
+      pending.A({ status: 403, ok: false }); // the old link answers last
+    });
+    expect(replace).not.toHaveBeenCalledWith("/rapport/ogiltig");
   });
 });
