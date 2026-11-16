@@ -65,6 +65,10 @@ en roll, och med poster utan genbank. Att ta, ta över eller arbeta vidare på e
 ger 403 (admin undantagen). `GET /api/v2/inkorg/notiser/antal` svarar
 `works_in_queue` så att gränssnittet vet om kön ska visas.
 
+Uppladdningen, Mina inskick och `GET /api/v2/inkorg/notiser/antal` kräver inte `v2_prod_access`
+(README, Access rules): sidorna Skicka in intyg och Mina inskick går alltid till produktionen, också
+i testmiljön. Allt annat i kön, notislistan och originalen kräver den.
+
 Rollen genbankshjälpare delas ut som andra roller: `POST /api/v2/admin/role` med
 `{"operation": "add", "user_id": 5, "role": {"level": "helper", "genebank": 1}}` (admin), eller
 den äldre `POST /api/manage/role` (genbanksansvarig i sin egen genbank). Användarlistan
