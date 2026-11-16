@@ -10,6 +10,7 @@ import time
 from datetime import date, timedelta
 from unittest import mock
 
+import blueprints.individual_v2_create as create
 import utils.arsrapport as arsrapport
 import utils.database as db
 import utils.individual_commands as ic
@@ -163,22 +164,32 @@ class TestRegisterLitter(LitterTest):
         self.assertEqual(raised.exception.envelope["message"], "Forbidden")
 
     @staticmethod
-    def advisory_waiters():
-        """Backends waiting for an advisory lock now."""
-        cursor = db.DATABASE.execute_sql("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted")
-        return cursor.fetchone()[0]
+    def waits_for_a(pids):
+        """B's own backend, by its pid, waits for the mother's litter lock, and A's backend is what blocks it."""
+        if not {"a", "b", "mother"} <= pids.keys():
+            return False
+        cursor = db.DATABASE.execute_sql(
+            "SELECT %s = ANY(pg_blocking_pids(pid)) FROM pg_locks WHERE pid = %s AND locktype = 'advisory'"
+            " AND NOT granted AND classid = %s AND objid = %s AND objsubid = 2",
+            (pids["a"], pids["b"], ic._LITTER_LOCK, pids["mother"]),
+        )
+        row = cursor.fetchone()
+        return bool(row and row[0])
 
     def overlap(self, second):
         """
         Transaction A takes the mother's advisory lock and is held there; `second()` runs in B meanwhile.
-        Returns (B's outcome, whether B was seen waiting for an advisory lock while A held it, A's outcome).
+        Returns (B's outcome, whether B was seen waiting for that lock, blocked by A, while A held it, A's outcome).
         """
         locked, release = threading.Event(), threading.Event()
-        real, outcomes, held, threads = ic.lock_mother_litters, {}, [], []
+        real, outcomes, held, threads, pids = ic.lock_mother_litters, {}, [], [], {}
 
-        def hold_after_lock(*args):
-            real(*args)
-            if not held:  # only A, the first to ask
+        def hold_after_lock(mother_id):
+            # the asking backend's pid, before it may wait: A is the first to ask, B the one after
+            pid = db.DATABASE.execute_sql("SELECT pg_backend_pid()").fetchone()[0]
+            pids.update({"b" if held else "a": pid, "mother": mother_id})
+            real(mother_id)
+            if not held:  # only A
                 held.append(True)
                 locked.set()
                 release.wait(30)
@@ -196,17 +207,21 @@ class TestRegisterLitter(LitterTest):
 
         blocked = False
         try:
-            with mock.patch.object(ic, "lock_mother_litters", side_effect=hold_after_lock):
+            # the certificate route imported the function by name: patched there too, so B is seen on either path
+            with (
+                mock.patch.object(ic, "lock_mother_litters", side_effect=hold_after_lock),
+                mock.patch.object(create, "lock_mother_litters", side_effect=hold_after_lock),
+            ):
                 threads.append(threading.Thread(target=run, args=("a", self.add)))
                 threads[0].start()
                 self.assertTrue(locked.wait(10), "A never took the lock")
                 threads.append(threading.Thread(target=run, args=("b", second)))
                 threads[1].start()
                 for _ in range(100):  # bounded: B must be in a lock wait before A is let go
-                    if self.advisory_waiters() or "b" in outcomes:
+                    if self.waits_for_a(pids) or "b" in outcomes:
                         break
                     time.sleep(0.1)
-                blocked = self.advisory_waiters() > 0 and "b" not in outcomes
+                blocked = self.waits_for_a(pids) and "b" not in outcomes
         finally:
             release.set()
             for thread in threads:
