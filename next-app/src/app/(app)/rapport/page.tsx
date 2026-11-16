@@ -14,13 +14,7 @@ import styles from "../stamboken/(dashboard)/arsrapport/arsrapport.module.css";
 
 export const dynamic = "force-dynamic";
 
-const actions = {
-  saveDraft,
-  dryRun,
-  submitReport,
-  withdrawReport,
-  getGenebankHerds,
-};
+const actions = { saveDraft, dryRun, submitReport, withdrawReport };
 
 // The page behind a member's personal link. The server renders from the code session in the cookie; LinkGate, in the
 // browser, first turns a link's #token into that session (the server never sees what follows #).
@@ -83,7 +77,10 @@ export default async function RapportPage({
         link
         env="prod"
         view={report.data}
-        actions={actions}
+        actions={{
+          ...actions,
+          getGenebankHerds: getGenebankHerds.bind(null, entry.herd, entry.year),
+        }}
         stickyTop={0}
       />
     </LinkGate>

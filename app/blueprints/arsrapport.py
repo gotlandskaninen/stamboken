@@ -190,6 +190,14 @@ def report_view(herd, year):
     return jsonify(arsrapport.report_view(herd, round_, access, _actor(access)))
 
 
+# [Next.js] The sale dialog's buyer herds for the personal link, which has no genebank picker of its own (4a).
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/besattningar", methods=["GET"])
+@report_actor_required
+def buyer_herds(herd, year):
+    herd, _, _ = _report_target(herd, year)
+    return jsonify({"herds": arsrapport.buyer_herds(herd)})
+
+
 # [Next.js] The herd's register extract on 31 December as a PDF, for the member to check against (section 9).
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/registerutdrag.pdf", methods=["GET"])
 @report_actor_required

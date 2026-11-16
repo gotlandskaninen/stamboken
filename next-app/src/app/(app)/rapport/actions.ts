@@ -1,6 +1,7 @@
 "use server";
 
 import { fetchApi, ApiError } from "@/lib/api";
+import type { GenebankHerd } from "@/utils/saleRules";
 import type { ActionResult } from "../stamboken/(dashboard)/inkorg/actions";
 import {
   SUBMIT_TIMEOUT_MS,
@@ -133,7 +134,18 @@ export async function withdrawReport(
   );
 }
 
-// The sale dialog's herd picker needs a login. Sales through the link come in step 4, so the list stays empty.
-export async function getGenebankHerds(_genebankId: number) {
-  return { success: false as const, error: "needs_login" };
+// The sale dialog's herd picker: the report herd's genebank, as the logged-in picker has it (4a). The page binds
+// the herd and the year, so the dialog calls it with the genebank id alone, as it calls the logged-in one.
+export async function getGenebankHerds(
+  herd: string,
+  year: number,
+  _genebankId: number,
+) {
+  const res = await call<{ herds: GenebankHerd[] }>(
+    path(herd, year, "/besattningar"),
+    "GET",
+  );
+  return res.ok
+    ? { success: true as const, herds: res.data.herds }
+    : { success: false as const, error: res.problem.detail };
 }

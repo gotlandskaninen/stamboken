@@ -112,6 +112,23 @@ class CodeApiTest(ArsrapportTest):
     def test_extract_pdf_needs_a_session(self):
         self.assertEqual(self.api("GET", "/besattning/G9001/2025/registerutdrag.pdf").status_code, 401)
 
+    def test_code_session_gets_its_genebanks_buyer_herds(self):  # 4a: the link's sale dialog, the owner's list
+        db.Herd.create(genebank=self.gotland, herd="G9009", is_active=False)
+        db.Herd.create(genebank=self.mellerud, herd="M9001", is_active=True)
+        path = "/besattning/G9001/2025/besattningar"
+        self.assertEqual(self.api("GET", path).status_code, 401)
+        self.open_link()
+        response = self.api("GET", path)
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        herds = response.get_json()["herds"]
+        active = db.Herd.select().where(db.Herd.genebank == self.gotland.id, db.Herd.is_active == True)  # noqa: E712
+        self.assertEqual({h["herd"] for h in herds}, {h.herd for h in active})
+        self.assertIn("G9002", {h["herd"] for h in herds})
+        self.assertNotIn("M9001", str(herds))  # another genebank
+        self.assertNotIn("G9009", str(herds))  # not active
+        self.assertEqual({tuple(sorted(h)) for h in herds}, {("herd", "herd_name", "is_active")})
+        self.assertIn(self.api("GET", "/besattning/G9002/2025/besattningar").status_code, (403, 404))
+
     def test_retry_gets_its_receipt_only_while_the_code_is_valid(self):
         """Codex 5: E4 holds for a receipt too; a revoked link answers lank_ogiltig, not the receipt and not 409."""
         self.open_link()

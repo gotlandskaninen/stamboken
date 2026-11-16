@@ -664,6 +664,16 @@ def account_end(herd):
     return (masked_account(herd.bank_account_number) or "").removeprefix("••") or None
 
 
+def buyer_herds(herd):
+    """
+    The sale dialog's picker behind the link (4a): the active herds of `herd`'s genebank, with the fields the
+    logged-in owner's picker gets (individuals.genebank_herds_v2), and nothing more.
+    """
+    active = Herd.is_active == True  # noqa: E712
+    rows = Herd.select().where(Herd.genebank == herd.genebank_id, active).order_by(Herd.herd)
+    return [{"herd": row.herd, "herd_name": row.herd_name, "is_active": True} for row in rows]
+
+
 def _forslag_json(report):
     """ReportView.forslag (5.9): the report's sale proposals not taken back, without the buyer."""
     if report is None:
