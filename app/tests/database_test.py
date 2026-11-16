@@ -45,6 +45,14 @@ if _USE_POSTGRES:
 
 
 _TABLES_TO_TRUNCATE = [
+    "gmail_processed",
+    "gmail_sync",  # no FK, so CASCADE never reaches it
+    "notice",
+    "notice_setting",
+    "inbox_operation",
+    "inbox_event",
+    "inbox_document",
+    "inbox_item",
     "mail_attempt",
     "mail_message",  # before herd, genebank, hbuser (nullable FKs)
     "mail_sender",  # no FK, so CASCADE never reaches it: a paused sender would leak into later tests

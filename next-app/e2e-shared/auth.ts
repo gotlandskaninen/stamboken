@@ -4,6 +4,7 @@ export const TEST_USERS = {
   owner: { username: "test-gk-owner", password: "test-gk-owner-pass" },
   admin: { username: "test-admin", password: "test-admin-pass" },
   manager: { username: "test-gk-manager", password: "test-gk-pass" },
+  helper: { username: "test-gk-helper", password: "test-gk-helper-pass" },
 } as const;
 
 export type TestRole = keyof typeof TEST_USERS;

@@ -1,0 +1,432 @@
+/* Inkorgen: the queue list and the working view. Desktop-first surfaces for
+   queue workers (ADR-0010 §2); below the breakpoints everything stacks. */
+.container {
+  max-width: 1440px;
+  margin: 0 auto;
+  padding: 20px 16px 64px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.card {
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.cardTitle {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+.muted {
+  color: var(--sb-ink-3);
+  font-size: 14px;
+  margin: 0;
+}
+.row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.error {
+  color: var(--sb-danger);
+  font-size: 14px;
+  margin: 0;
+}
+.badgeWarn {
+  background: var(--sb-warning-soft);
+  color: #7a5410;
+  border-color: #e3cf9c;
+}
+
+/* ---- The queue ---- */
+.counts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.count {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 44px;
+  padding: 8px 12px;
+  border: 1px solid var(--sb-line);
+  border-radius: var(--sb-r-2);
+  background: var(--sb-card);
+  color: var(--sb-ink);
+  text-decoration: none;
+  font-size: 14px;
+}
+.count[aria-current="page"] {
+  border-color: var(--sb-skog);
+  background: var(--sb-skog-soft);
+  font-weight: 600;
+}
+.filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+.filters label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--sb-ink-2);
+}
+.filters .check {
+  flex-direction: row;
+  align-items: center;
+  min-height: 44px;
+  gap: 8px;
+}
+.filters .check input {
+  width: 20px;
+  height: 20px;
+}
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.table th {
+  text-align: left;
+  font-family: var(--sb-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sb-ink-3);
+  padding: 9px 12px;
+  border-bottom: 1px solid var(--sb-line);
+}
+.table td {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--sb-line);
+  vertical-align: top;
+}
+.caseLink {
+  font-weight: 600;
+  color: var(--sb-ink);
+}
+.badges {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+.rowActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.rowActions select {
+  width: auto;
+  min-width: 140px;
+}
+.foot {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+/* Stacked cards below the table breakpoint (as in admin/utskick). */
+@media (max-width: 899px) {
+  .table,
+  .table tbody,
+  .table tr,
+  .table td {
+    display: block;
+  }
+  .table thead {
+    display: none;
+  }
+  .table tr {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--sb-line);
+  }
+  .table td {
+    border: 0;
+    padding: 2px 0;
+  }
+  .table td[data-label]::before {
+    content: attr(data-label) ": ";
+    color: var(--sb-ink-3);
+  }
+  .rowActions {
+    margin-top: 8px;
+  }
+}
+
+/* ---- The working view: documents | photo | form ---- */
+.work {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+@media (min-width: 1100px) {
+  .work {
+    grid-template-columns: 260px minmax(0, 1fr) 400px;
+  }
+}
+.docList {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.docButton {
+  width: 100%;
+  min-height: 44px;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border: 1px solid var(--sb-line);
+  border-radius: var(--sb-r-3);
+  background: var(--sb-card);
+  color: var(--sb-ink);
+  font: inherit;
+  cursor: pointer;
+}
+.docButton[aria-current="true"] {
+  border: 2px solid var(--sb-skog);
+}
+.docButton[data-status="klar"],
+.docButton[data-status="sparad"] {
+  background: var(--sb-success-soft);
+}
+.docButton[data-status="vantar_foralder"] {
+  background: var(--sb-warning-soft);
+}
+.docButton[data-status="avfardad"] {
+  color: var(--sb-ink-3);
+}
+.docMeta {
+  font-size: 12px;
+  color: var(--sb-ink-3);
+}
+.facts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 10px;
+  margin: 0;
+  font-size: 14px;
+}
+.facts dt {
+  color: var(--sb-ink-3);
+}
+.facts dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.actions > button,
+.actions > form button {
+  justify-content: center;
+}
+.ask {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--sb-line);
+  border-radius: var(--sb-r-3);
+}
+.history summary {
+  cursor: pointer;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+.history ol {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+/* Photo */
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.toolbar label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  min-height: 44px;
+}
+.toolbar input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+}
+.viewport {
+  height: 60vh;
+  min-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--sb-line);
+  border-radius: var(--sb-r-3);
+  background: var(--sb-paper-2);
+  cursor: grab;
+  touch-action: pan-x pan-y;
+}
+@media (min-width: 1100px) {
+  .viewport {
+    height: calc(100vh - 300px);
+  }
+}
+.stage {
+  position: relative;
+  margin: 0 auto;
+}
+.stage canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+.rect {
+  position: absolute;
+  padding: 0;
+  border: 2px solid transparent;
+  background: rgba(0, 0, 0, 0.78);
+  cursor: move;
+  touch-action: none;
+}
+.rect[aria-pressed="true"] {
+  border-color: var(--sb-lera);
+  outline: 2px solid #fff;
+}
+.rect.frame {
+  background: transparent;
+  border: 3px dashed var(--sb-lera);
+}
+.handle {
+  position: absolute;
+  right: -12px;
+  bottom: -12px;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: var(--sb-lera);
+  border: 2px solid #fff;
+  cursor: nwse-resize;
+  touch-action: none;
+}
+@media (pointer: coarse) {
+  .handle {
+    right: -22px;
+    bottom: -22px;
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* Form */
+.fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.fields > .wide {
+  grid-column: 1 / -1;
+}
+@media (max-width: 479px) {
+  .fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+/* Where a proposed value comes from; each source gets its own colour and word. */
+.field {
+  min-width: 0;
+}
+.field[data-source] {
+  border-left: 4px solid;
+  padding-left: 8px;
+}
+.field[data-source="läst"] {
+  border-color: var(--sb-success);
+}
+.field[data-source="härlett"] {
+  border-color: var(--sb-info);
+}
+.field[data-source="avviker"] {
+  border-color: var(--sb-danger);
+}
+.field[data-source="osäker"] {
+  border-color: var(--sb-warning);
+}
+.sourceTag {
+  font-size: 12px;
+  color: var(--sb-ink-3);
+}
+.registry {
+  display: block;
+  font-size: 12px;
+  color: var(--sb-ink-3);
+}
+/* The image reading's checks under the form, and the grandparents it proposes. */
+.checks {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  font-size: 13px;
+}
+.checks [data-ok="true"] > span {
+  color: var(--sb-success);
+}
+.checks [data-ok="false"] > span {
+  color: var(--sb-danger);
+}
+.segment {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0;
+}
+.segment button {
+  flex: 1 1 auto;
+  border-radius: 0;
+}
+.segment button[aria-pressed="true"] {
+  --bg: var(--sb-skog);
+  --fg: #fff;
+  --bd: var(--sb-skog);
+}
+.submitRow {
+  display: flex;
+  gap: 8px;
+}
+.submitRow > :first-child {
+  flex: 1;
+  justify-content: center;
+}
+.note {
+  font-size: 13px;
+  color: #7a5410;
+  background: var(--sb-warning-soft);
+  border-radius: var(--sb-r-3);
+  padding: 8px 10px;
+  margin: 0;
+}
