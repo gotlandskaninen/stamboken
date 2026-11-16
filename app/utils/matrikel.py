@@ -423,7 +423,7 @@ def _applications_of(person):
     return where
 
 
-def anonymize_person(member, actor):
+def anonymize_person(member, actor, deferred_originals=None):
     """GDPR erasure: anonymize the person row, keep membership history.
 
     Placeholder names (columns are NOT NULL), nulls contact fields +
@@ -447,7 +447,8 @@ def anonymize_person(member, actor):
     (mode="anonymize") and invalidates the genebanks whose
     access the account loses. Erases the intake queue's originals and texts
     that show the person as seller or buyer, and what they sent
-    (erase_person_from_inbox).
+    (erase_person_from_inbox). A caller inside its own transaction passes
+    `deferred_originals` and removes those files after its commit.
     Returns the scrubbed person: the caller's pre-lock instance is stale
     afterwards.
     """
@@ -525,7 +526,10 @@ def anonymize_person(member, actor):
         )
         # the intake queue's photos that show the person, and what they sent (their account read before the detach)
         originals = erase_person_from_inbox(person, user.id if user is not None else None)
-    remove_originals(originals)  # only after the commit: a row never names a removed file
+    if deferred_originals is None:
+        remove_originals(originals)  # only after the commit: a row never names a removed file
+    else:
+        deferred_originals.extend(originals)
     _invalidate_genebanks(lost_genebanks)
     return person
 
@@ -604,6 +608,7 @@ def anonymize_ended_persons(now):
     ).fetchone()[0]
     done, failed, held = 0, 0, []
     for membership in _memberships_with_ended_persons(cutoff):
+        originals = []
         try:
             with DB_PROXY.atomic():
                 Membership.select().where(Membership.id == membership.id).for_update("FOR NO KEY UPDATE").get()
@@ -616,11 +621,12 @@ def anonymize_ended_persons(now):
                 list(herds.order_by(Herd.id).for_update("FOR NO KEY UPDATE"))
                 due, membership_held = _due_in(membership, cutoff)
                 for person in due:  # an ended person conveys no herd: its cache invalidation inside this tx is empty
-                    anonymize_person(person, None)
+                    anonymize_person(person, None, deferred_originals=originals)
         except Exception:  # pylint: disable=broad-exception-caught
             logger.exception("Automatic anonymization failed for membership=%s", membership.id)
             failed += 1
             continue
+        remove_originals(originals)  # after this membership's commit, as anonymize_person does after its own
         done += len(due)
         held += membership_held
     return done, failed, held

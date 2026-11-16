@@ -261,16 +261,39 @@ class TestAnonymizeEndedPersons(DatabaseTest):
         second = _person(_membership(109), OLD, role="huvudmedlem")
         real = matrikel.anonymize_person
 
-        def fail_first(person, actor):
+        def fail_first(person, actor, deferred_originals=None):
             if person.id == first.id:
                 raise RuntimeError("lock timeout")
-            return real(person, actor)
+            return real(person, actor, deferred_originals=deferred_originals)
 
         with mock.patch.object(matrikel, "anonymize_person", side_effect=fail_first):
             with self.assertLogs(matrikel.logger, "ERROR"):
                 self.assertEqual(matrikel.anonymize_ended_persons(NOW), (1, 1, []))
         self.assertFalse(_erased(first))
         self.assertTrue(_erased(second))
+
+    def test_intake_originals_go_only_after_the_membership_commits(self):
+        ended = _membership(130)
+        first = _person(ended, OLD, role="huvudmedlem")
+        _person(ended, OLD)
+        real = matrikel.anonymize_person
+
+        def second_fails(person, actor, deferred_originals=None):
+            if person.id != first.id:
+                raise RuntimeError("lock timeout")
+            return real(person, actor, deferred_originals=deferred_originals)
+
+        with (
+            mock.patch.object(matrikel, "erase_person_from_inbox", return_value=["inkorg/original/a.jpg"]),
+            mock.patch.object(matrikel, "remove_originals") as remove,
+        ):
+            with mock.patch.object(matrikel, "anonymize_person", side_effect=second_fails):
+                with self.assertLogs(matrikel.logger, "ERROR"):
+                    self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, 1, []))
+            remove.assert_not_called()  # the rollback kept the rows that name the file, so the file stays
+            self.assertFalse(_erased(first))
+            self.assertEqual(matrikel.anonymize_ended_persons(NOW), (2, 0, []))
+            remove.assert_called_once_with(["inkorg/original/a.jpg", "inkorg/original/a.jpg"])
 
     def test_job_logs_ids_and_closes_connection(self):
         with (
