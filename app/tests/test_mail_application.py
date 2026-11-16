@@ -281,6 +281,13 @@ class TestMemberAdded(MailTest):
         self.assertEqual(sorted(row.status for row in self.mails()), ["cancelled", "sent", "sent", "sent"])
         self.assertNotIn("example.org", "".join(row.dedupe_key for row in self.mails()))
 
+    def test_log_mode_without_a_link_secret_logs_the_mail(self):
+        self.add()
+        with mock.patch.multiple(settings.mail, mode="log", link_secret=""):
+            mail.send_pending(self.now)
+        (row,) = self.mails()
+        self.assertEqual((row.status, row.attempts, row.last_error), ("logged", 0, None))
+
     def test_a_person_removed_and_added_again_the_same_day_is_told(self):
         first = self.add()
         matrikel.soft_delete_person(first, self.actor)  # before the sender ran: nothing went

@@ -773,14 +773,15 @@ def _member_added(params):
         return None
     # The limit per address is kept here, on the address the mail goes to now and on mails that have gone: it
     # holds across memberships and after an address was changed, and a mail that was stopped uses none of it.
-    gone = (
-        (MailMessage.kind == "medlemskap.tillagd")
-        & (MailMessage.status == "sent")
-        & (MailMessage.address_hash == address_hash(person.email))
-        & (MailMessage.sent_at > _utcnow() - timedelta(days=1))
-    )
-    if settings.mail.link_secret and MailMessage.select().where(gone).count() >= ADDED_TO_AN_ADDRESS_A_DAY:
-        return None
+    if settings.mail.link_secret:  # without it (log mode only) there is no HMAC, and nothing is sent to count
+        gone = (
+            (MailMessage.kind == "medlemskap.tillagd")
+            & (MailMessage.status == "sent")
+            & (MailMessage.address_hash == address_hash(person.email))
+            & (MailMessage.sent_at > _utcnow() - timedelta(days=1))
+        )
+        if MailMessage.select().where(gone).count() >= ADDED_TO_AN_ADDRESS_A_DAY:
+            return None
     main = Member.get_or_none(
         (Member.membership == person.membership_id) & (Member.role == "huvudmedlem") & Member.end_date.is_null(True)
     )
