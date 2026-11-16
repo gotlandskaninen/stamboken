@@ -676,7 +676,8 @@ class TransferIndividual(PolicyCommand):
     """
     A sale or move out of the holder's herd; into another genebank an admin's correction (IR-32, IR-54). On a sale
     to GX1/MX1, `buyer` is the buyer outside the association (herd_tracking.buyer_contact_fields), never logged,
-    and required (ADR-0016), except on the legacy app's form, which cannot send one (`legacy`).
+    and required (ADR-0016), except on the legacy app's form, which cannot send one (`legacy`). `buyer_contact_id`
+    is a buyer kept across Dra tillbaka, linked again in place of `buyer` (K1); only utils.arsrapport sets it.
     """
 
     herd: object
@@ -684,6 +685,7 @@ class TransferIndividual(PolicyCommand):
     reason: str | None = None
     buyer: dict | None = None
     legacy: bool = False
+    buyer_contact_id: int | None = None
     apply_rank = 70
     policy_stage = None  # asked in apply, after the measurements are written (IR-52)
 
@@ -695,14 +697,27 @@ class TransferIndividual(PolicyCommand):
         target = _target(self.herd)
         self.authorize(ctx)
         holder = _holder(ctx)
-        if target.herd in OUTSIDE_GENEBANK_HERDS and self.buyer is None and not self.legacy:
+        if (
+            target.herd in OUTSIDE_GENEBANK_HERDS
+            and self.buyer is None
+            and self.buyer_contact_id is None
+            and not self.legacy
+        ):
             raise HerdTrackingInvalid(BUYER_REQUIRED)
         note = None
         if target.genebank_id != holder.genebank_id:
             note = _genebank_correction(ctx, holder, target, self.reason)
         op = ctx.record(type(self).__name__, None, None)
         record_herd_tracking(
-            ctx.individual, target, when, "TRANSFER", ctx.user, operation_id=op, notes=note, buyer=self.buyer
+            ctx.individual,
+            target,
+            when,
+            "TRANSFER",
+            ctx.user,
+            operation_id=op,
+            notes=note,
+            buyer=self.buyer,
+            holder_contact=self.buyer_contact_id,
         )
 
 

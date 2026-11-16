@@ -1,6 +1,7 @@
 // Shapes of /api/v2/arsrapport/* and the form's own logic. Kept free of React
 // and of server actions so the paper page (Task 14) and the status view
 // (Task 15) can reuse it.
+import type { SaleBuyer } from "@/components/individual/BuyerFields";
 import { newOperationId } from "@/lib/herdTracking";
 import type { Mode } from "@/lib/mode";
 import type { InboxDetail } from "../inkorg/lib";
@@ -179,11 +180,9 @@ export interface MyReport {
 }
 
 // The buyer outside the genebank lives in memory only: never in a draft, never
-// in localStorage (D10).
-export interface Buyer {
-  name: string;
-  town: string;
-}
+// in localStorage (D10). The contact details only with the buyer's yes
+// (BuyerFields, ADR-0016).
+export type Buyer = SaleBuyer;
 export interface DodState {
   ar: number;
   manad: number | null;
@@ -197,6 +196,8 @@ export interface SaldState {
   manad: number | null;
   dag: number | null;
   kopare: Buyer | null;
+  // A buyer kept across Dra tillbaka (K1): the server's id, carried untouched.
+  kopare_id?: number;
 }
 export interface Entry {
   val: Val | null;
@@ -234,7 +235,8 @@ export interface BodyEntry {
     ar: number;
     manad: number;
     dag: number | null;
-    kopare?: Buyer & { contact_consent: false; membership_optin: false };
+    kopare?: Buyer;
+    kopare_id?: number;
   };
 }
 
@@ -523,15 +525,11 @@ function bodyEntry(e: Entry): BodyEntry | null {
         manad: s.manad!,
         dag: s.dag,
         // Only a new sale outside the genebank carries the buyer. A saved
-        // sale is sent without it (Task 6: unchanged unless filled in).
-        ...(s.till === "utanfor" && s.kopare
-          ? {
-              kopare: {
-                ...s.kopare,
-                contact_consent: false as const,
-                membership_optin: false as const,
-              },
-            }
+        // sale is sent without it (Task 6: unchanged unless filled in), and a
+        // kept one with its id (K1).
+        ...(s.till === "utanfor" && s.kopare ? { kopare: s.kopare } : {}),
+        ...(s.till === "utanfor" && s.kopare_id != null
+          ? { kopare_id: s.kopare_id }
           : {}),
       },
     };
@@ -623,6 +621,9 @@ function pickEntry(raw: unknown): Entry {
           manad: num(sald.manad),
           dag: num(sald.dag),
           kopare: null,
+          ...(num(sald.kopare_id) !== null
+            ? { kopare_id: num(sald.kopare_id)! }
+            : {}),
         }
       : null,
   };

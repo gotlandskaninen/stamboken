@@ -30,6 +30,7 @@ from utils.database import (
     AuditLog,
     Bodyfat,
     Breeding,
+    BuyerContact,
     Color,
     Herd,
     HerdTracking,
@@ -73,6 +74,7 @@ from utils.herd_tracking import (
     _reject_buyer_name,
     buyer_contact_fields,
     buyer_items,
+    drop_kept_buyers,
     latest_death_op,
     reject_contact_details,
     report_void_denial,
@@ -158,11 +160,46 @@ def save_round(year, user, **dates):
         round_.save()
     elif changed:
         round_.save(only=[getattr(YearlyReportRound, key) for key in changed])
-        if "end_date" in changed:  # R10: the column of an active code follows the round
+        if "end_date" in changed:  # R10: the column of an active code follows the round, and K2 the kept buyers
             ReportAccessCode.update(expires_at=round_.end_date).where(
                 ReportAccessCode.round == round_.id, ReportAccessCode.revoked_at.is_null()
             ).execute()
+            _move_kept_buyers(round_)
     return round_
+
+
+def kept_until(round_):
+    """
+    K2: purge_at of a buyer kept across Dra tillbaka: the midnight in Stockholm after end_date, plus one day, so the
+    nightly purge after end_date spares it and the next one takes it. None without an end_date.
+    """
+    if round_.end_date is None:
+        return None
+    day = round_.end_date + timedelta(days=2)
+    return datetime(day.year, day.month, day.day, tzinfo=STOCKHOLM)
+
+
+def _move_kept_buyers(round_):
+    """
+    K2: the kept buyers of the round's voided reports follow a changed end_date: those a TRANSFER the reports' own
+    operations wrote held, now voided, and that no active row holds.
+    """
+    voided = YearlyHerdReport.select(YearlyHerdReport.id).where(
+        YearlyHerdReport.round == round_.id, YearlyHerdReport.status == "voided"
+    )
+    written = YearlyReportSubmission.select(YearlyReportSubmission.operation_ids).where(
+        YearlyReportSubmission.report.in_(voided)
+    )
+    ops = sorted({str(op) for (ops,) in written.tuples() for op in ops})
+    sold = HerdTracking.select(HerdTracking.holder_contact).where(
+        HerdTracking.kind == "TRANSFER", HerdTracking.voided_at.is_null(False), HerdTracking.operation_id.in_(ops)
+    )
+    held = HerdTracking.select(HerdTracking.holder_contact).where(
+        HerdTracking.holder_contact.is_null(False), ht_not_voided()
+    )
+    BuyerContact.update(purge_at=kept_until(round_)).where(
+        BuyerContact.id.in_(sold), BuyerContact.id.not_in(held)
+    ).execute()
 
 
 def activate(round_, genebank_id, user, send_at=None):
@@ -491,6 +528,53 @@ def _holds_private(body):
     )
 
 
+KEPT_KEYS = ("kopare_id", "fran_rapport")  # K1: a buyer kept across Dra tillbaka; only the server writes them
+
+
+def _sale_outside(entry):
+    """A body's or a form copy's entry that is a sale outside the genebank."""
+    sald = entry.get("sald") if isinstance(entry, dict) else None
+    return isinstance(sald, dict) and entry.get("val") == "sald" and sald.get("till") == "utanfor"
+
+
+def _kept_claims(data):
+    """K1: {rabbit (id as text): {"kopare_id", "fran_rapport"}} that the server wrote into a draft's body or form."""
+    claims = {}
+    for body in (data, data.get("form")):
+        rabbits = body.get("rabbits") if isinstance(body, dict) else None
+        for key, entry in rabbits.items() if isinstance(rabbits, dict) else ():
+            sald = entry.get("sald") if isinstance(entry, dict) else None
+            if isinstance(sald, dict) and sald.get("kopare_id") is not None:
+                claims[key] = {k: sald.get(k) for k in KEPT_KEYS}
+    return claims
+
+
+def _with_kept(data, claims):
+    """
+    K1, FB6: a draft's data without any kept buyer the client sent, and with the server's `claims` on each rabbit whose
+    sale outside the genebank is still there, in the body and in the form copy alike. The form decides when there is
+    one, since the body leaves out a row still being filled in. Returns (data, the kept ids whose sale is gone).
+    """
+    judged = data["form"] if isinstance(data.get("form"), dict) else data
+    rabbits = judged.get("rabbits") if isinstance(judged.get("rabbits"), dict) else {}
+    held = {key: claim for key, claim in claims.items() if _sale_outside(rabbits.get(key))}
+
+    def put(body):
+        if not isinstance(body.get("rabbits"), dict):
+            return body
+        out = {}
+        for key, entry in body["rabbits"].items():
+            if isinstance(entry, dict) and isinstance(entry.get("sald"), dict):
+                sald = {k: v for k, v in entry["sald"].items() if k not in KEPT_KEYS}
+                entry = {**entry, "sald": sald | (held.get(key, {}) if _sale_outside(entry) else {})}
+            out[key] = entry
+        return {**body, "rabbits": out}
+
+    data = put(data)
+    data = {**data, "form": put(data["form"])} if isinstance(data.get("form"), dict) else data
+    return data, {c["kopare_id"] for c in claims.values()} - {c["kopare_id"] for c in held.values()}
+
+
 def _draft(herd, round_):
     return YearlyReportDraft.get_or_none((YearlyReportDraft.herd == herd.id) & (YearlyReportDraft.round == round_.id))
 
@@ -519,7 +603,8 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
     for a first save) and `revision` the report revision it started from (None when it saw no report). A first save
     needs the submitted report's revision, so a late autosave after Skicka is refused (5.13); a stale version is a
     409 that carries the current draft. Only while the round is open, or after end_date for an editor or a helper on
-    paper (D11, P39c); otherwise a 409 with code rundan_stangd.
+    paper (D11, P39c); otherwise a 409 with code rundan_stangd. A kept buyer's id is the server's alone (K1): the
+    client's is dropped, the stored one stays on a sale still outside the genebank, and goes with a cleared one.
     """
     day, end = today(), round_.end_date
     late_ok = access.editor or access.role == "helper"  # a helper's access always comes through the post
@@ -541,6 +626,7 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
         _recheck_code(access, herd, day)
         draft = _draft(herd, round_)
         report = current_report(herd, round_)
+        stored, gone = _with_kept(stored, _kept_claims(draft.data) if draft is not None else {})
         if draft is None and updated_at is None and revision == (report.revision if report else None):
             try:
                 with DB_PROXY.atomic():  # a savepoint: a racing first save leaves the transaction usable
@@ -561,6 +647,7 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
             for field, value in _by(user, "updated_by_user", "updated_by_access_code").items():
                 setattr(draft, field, value)
             draft.save()
+            drop_kept_buyers(gone, user, lock=True)  # FB6: a cleared sale takes its kept buyer now
             return draft
         if report is not None and draft is None:
             raise ArsrapportError(409, "Rapporten är redan inskickad.", draft=None)
@@ -1094,7 +1181,7 @@ class RabbitEntry:
     ej_vagd: str | None
     hull: str | None
     dod: dict | None  # {ar, manad, dag, slaktad, anteckning}
-    sald: dict | None  # {till, ar, manad, dag, kopare}: kopare is kopare's buyer object or None
+    sald: dict | None  # {till, ar, manad, dag, kopare, kopare_id}: the buyer object, or a kept buyer's id (K1)
 
 
 @dataclass(frozen=True)
@@ -1184,14 +1271,18 @@ def _entry(key, raw):
             raise _bad("dod", "Slaktad är ja eller nej.")
         dod |= {"slaktad": slaktad, "anteckning": _text(raw["dod"].get("anteckning"), "anteckning")}
     if val == "sald":
-        # a stored submission names its proposal (forslag); it is never part of the entry, so equal choices stay equal
-        sald = _month(raw.get("sald"), "sald", ("till", "kopare", "forslag"))
-        till, kopare = raw["sald"].get("till"), raw["sald"].get("kopare")
+        # a stored submission names its proposal (forslag), a draft where its kept buyer came from (fran_rapport, read
+        # from the server's draft): neither is part of the entry, so equal choices stay equal
+        sald = _month(raw.get("sald"), "sald", ("till", "kopare", "forslag", *KEPT_KEYS))
+        till, kopare, kopare_id = (raw["sald"].get(key) for key in ("till", "kopare", "kopare_id"))
         if not isinstance(till, str) or not till:
             raise _bad("sald", "Ange köparens besättning, eller utanför genbanken.")
+        only_outside = "Köparens namn och ort anges bara vid försäljning utanför genbanken."
         if kopare is not None and (till != "utanfor" or not isinstance(kopare, dict)):
-            raise _bad("kopare", "Köparens namn och ort anges bara vid försäljning utanför genbanken.")
-        sald = {"till": till, **sald, "kopare": kopare}
+            raise _bad("kopare", only_outside)
+        if kopare_id is not None and (till != "utanfor" or not _is_int(kopare_id)):
+            raise _bad("kopare_id", only_outside)
+        sald = {"till": till, **sald, "kopare": kopare, "kopare_id": kopare_id}
     return RabbitEntry(int(key), val, _vikt(raw.get("vikt")), _text(raw.get("ej_vagd"), "ej_vagd"), hull, dod, sald)
 
 
@@ -1589,12 +1680,13 @@ def _sale_view(individual_id, kept):
     }
 
 
-def _register_refusals(individual_id, entry, remove, add, ops, admin=False):
+def _register_refusals(individual_id, entry, remove, add, ops, admin=False, kept_buyer=None):
     """
     What the writes would meet in the register: each void under report_void_denial, latest first as apply_diff
     runs them, then a row behind a later one (DATE_BEFORE_LATEST), then each new sale under _validate_sale and the
-    buyer rules. A row behind a later one is senare_handelse; any other denial keeps its text (U8). The reason's
-    check against the buyers is _reason_refusals', once for the report.
+    buyer rules: a sale outside the genebank needs a typed buyer or a kept one (`kept_buyer`, _kept_contact). A row
+    behind a later one is senare_handelse; any other denial keeps its text (U8). The reason's check against the
+    buyers is _reason_refusals', once for the report.
     """
     if not any(e.kind in ROW_KINDS for e in remove + add):
         return []
@@ -1619,14 +1711,42 @@ def _register_refusals(individual_id, entry, remove, add, ops, admin=False):
         kopare, form = entry.sald["kopare"], {"selling_date": sale.date.isoformat(), "herd": sale.value[0]}
         if error := _validate_sale(_sale_view(individual_id, kept), form, _NOT_ADMIN, kopare):
             refusals.append(_refusal(individual_id, "forsaljning", error.replace("Försäljningsdatumet", "Säljdatumet")))
-        if sale.value[0] in OUTSIDE_GENEBANK_HERDS and kopare is None:
+        if sale.value[0] in OUTSIDE_GENEBANK_HERDS and kopare is None and kept_buyer is None:
             refusals.append(_refusal(individual_id, "kopare_saknas"))
-        elif sale.value[0] in OUTSIDE_GENEBANK_HERDS:
+        elif sale.value[0] in OUTSIDE_GENEBANK_HERDS and kopare is not None:
             try:
                 buyer_contact_fields(kopare)
             except HerdTrackingInvalid as exc:
                 refusals.append(_refusal(individual_id, "kopare", str(exc)))
     return refusals
+
+
+def _kept_contact(herd, round_, entry, claim):
+    """
+    K1: the buyer kept across Dra tillbaka that a sale outside the genebank links again in place of a typed buyer,
+    or None. The body names it (kopare_id) and the server's draft says where it came from (`claim`). It is taken
+    only when that report is a voided one of the same herd and round, one of its operations wrote a TRANSFER of this
+    rabbit holding the buyer, and no active row holds it now.
+    """
+    kopare_id = entry.sald["kopare_id"] if entry.sald and entry.sald["kopare"] is None else None
+    if kopare_id is None or claim is None or claim["kopare_id"] != kopare_id or not _is_int(claim["fran_rapport"]):
+        return None
+    report = YearlyHerdReport.get_or_none(
+        (YearlyHerdReport.id == claim["fran_rapport"])
+        & (YearlyHerdReport.herd == herd.id)
+        & (YearlyHerdReport.round == round_.id)
+        & (YearlyHerdReport.status == "voided")
+    )
+    if report is None:
+        return None
+    sold = HerdTracking.select().where(
+        HerdTracking.individual == entry.individual_id,
+        HerdTracking.kind == "TRANSFER",
+        HerdTracking.holder_contact == kopare_id,
+        HerdTracking.operation_id.in_(sorted(report_ops(report))),
+    )
+    held = HerdTracking.select().where(HerdTracking.holder_contact == kopare_id, ht_not_voided())
+    return kopare_id if sold.exists() and not held.exists() else None
 
 
 def _reason_refusals(reason, rabbit_ids, names=()):
@@ -1694,6 +1814,8 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
     own = [rabbit for rabbit in sub.rabbits if rabbit in rows]
     proposals = _proposals(report)
     refusals += _reason_refusals(sub.reason, own, _typed_buyers(sub) + _waiting_buyers(proposals.values()))
+    draft = _draft(herd, round_)  # K1: a proposal takes no kept buyer, so only a role that sells reads them (F1)
+    claims = _kept_claims(draft.data) if draft is not None and access.can_sell else {}
     for rabbit, row in rows.items():
         entry, before = sub.rabbits.get(rabbit), before_entries.get(rabbit)
         if entry is None:
@@ -1748,7 +1870,8 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
         if not access.can_sell and sale is not None and _holder_on(rabbit, sale.date, set()) != herd.id:
             refusals.append(_refusal(rabbit, "senare_handelse"))
             continue
-        refusals += _register_refusals(rabbit, entry, remove, add, ops, access.role == "admin")
+        kept = _kept_contact(herd, round_, entry, claims.get(str(rabbit)))
+        refusals += _register_refusals(rabbit, entry, remove, add, ops, access.role == "admin", kept)
     if access.source == "paper":
         refusals += _matrikel_refusals(herd, sub.paper["matrikel"])
     return refusals, warnings
@@ -2165,14 +2288,14 @@ def receipt(submission) -> dict:
 def submitted_body(sub: Submission) -> dict:
     """
     The submission's data (D10): the body rebuilt from the parsed submission, so only what was validated is kept.
-    Each rabbit keeps its chosen branch alone, and there is no matrikel, buyer, key or revision. _entries reads it
-    back as parsed.
+    Each rabbit keeps its chosen branch alone, and there is no matrikel, buyer (typed or kept), key or revision.
+    _entries reads it back as parsed.
     """
     rabbits = {}
     for rabbit, entry in sub.rabbits.items():
         stored = {key: value for key, value in asdict(entry).items() if key != "individual_id"}
         if entry.sald is not None:
-            stored["sald"] = {key: value for key, value in entry.sald.items() if key != "kopare"}
+            stored["sald"] = {key: value for key, value in entry.sald.items() if key not in ("kopare", "kopare_id")}
         rabbits[str(rabbit)] = stored
     body = {"reason": sub.reason, "rabbits": rabbits} | {key: sub.report[key] for key in BODY_KEYS if key in sub.report}
     if sub.paper is not None:
@@ -2181,16 +2304,19 @@ def submitted_body(sub: Submission) -> dict:
     return body
 
 
-def _lock_items(ids, form_id=None, report=None):
+def _lock_items(ids, form_id=None, report=None, kept=()):
     """
     The queue's items that may show the buyers of the rabbits' sales (buyer_items), the paper form's own item, and
     the kontroll items of `report`'s pending sale proposals (K4), locked in one ascending pass before any litter or
     rabbit: the order of the queue (item, litters, rabbits) and of its bulk assignment, so the voids of Ändra and Dra
     tillbaka, and a proposal taken back or decided, lock only items already held and no cycle forms (Codex 4, Opus 3,
-    Codex re-review 2). Returns their ids: _lock_form checks the form's item again under it, and _lock_rabbits the
+    Codex re-review 2). The voided sales holding the `kept` buyers count too (K1): Skicka links them again or
+    deletes them. Returns their ids: _lock_form checks the form's item again under it, and _lock_rabbits the
     buyers' set.
     """
-    rows = HerdTracking.select().where(HerdTracking.individual.in_(ids), ht_not_voided())
+    rows = HerdTracking.select().where(
+        (HerdTracking.individual.in_(ids) & ht_not_voided()) | HerdTracking.holder_contact.in_(sorted(kept))
+    )
     proposed = set()
     if report is not None:  # the report's lock keeps this set as read
         query = SaleProposal.select(SaleProposal.inbox_item_id).where(
@@ -2242,8 +2368,11 @@ def _command(effect, rabbit, herd, report, entry):
         return RecordAttestation(herd.herd, day, report=report.id)
     if effect.kind == "death":
         return RecordDeath({"death_date": day, "butchered": effect.value[1], "death_note": effect.value[2]})
-    if effect.kind == "transfer":
-        return TransferIndividual(effect.value[0], day, buyer=entry.sald["kopare"])
+    if effect.kind == "transfer":  # check() let a kopare_id through only as this sale's kept buyer (K1)
+        kopare = entry.sald["kopare"]
+        return TransferIndividual(
+            effect.value[0], day, buyer=kopare, buyer_contact_id=entry.sald["kopare_id"] if kopare is None else None
+        )
     if effect.kind == "weight":
         stored = [{"weight": w.weight, "date": w.weight_date.isoformat()} for w in Weight.filter(individual=rabbit)]
         return SetMeasurements(weights=[*stored, {"weight": effect.value[0], "date": day}])
@@ -2280,14 +2409,27 @@ def _write(user, rabbit, effects, herd, report, entry, grant, last):
 
 
 def apply_diff(
-    report, herd, user, grant, rabbit_id, want: list[Effect], prev_entry, entry, last, *, reason=None, keep_sales=False
+    report,
+    herd,
+    user,
+    grant,
+    rabbit_id,
+    want: list[Effect],
+    prev_entry,
+    entry,
+    last,
+    *,
+    reason=None,
+    keep_sales=False,
+    keep_buyer_until=None,
 ):
     """
     Ändra for one rabbit (D5): the report's current effects that `want` lacks come off, the latest first (a January
     sale before the attestation), then what is missing is written as Skicka writes it. The voids and the Undo go
     through the report's right (report_ops) with `reason`, else REPORT_UNDO_REASON. A voided sale outside the
-    genebank takes its buyer with it (kopare's _drop_orphan_buyers). With `keep_sales` the report's sales stay
-    (FB5). Refusals raise; the caller holds the locks. Returns the added measurements, as _write does.
+    genebank takes its buyer with it (kopare's _drop_orphan_buyers), or keeps it until `keep_buyer_until` (Dra
+    tillbaka, K1). With `keep_sales` the report's sales stay (FB5). Refusals raise; the caller holds the locks.
+    Returns the added measurements, as _write does.
     """
     cur = current(report, rabbit_id)
     remove, add = diff(cur, want, last, prev_entry, entry)
@@ -2297,7 +2439,9 @@ def apply_diff(
     for c in sorted(remove, key=lambda e: order(e, last), reverse=True):
         if c.kind in ROW_KINDS:
             op = uuid.uuid4()
-            void_herd_tracking(c.ref, user, note, op, typed=bool(reason), report_ops=ops)
+            void_herd_tracking(
+                c.ref, user, note, op, typed=bool(reason), report_ops=ops, keep_buyer_until=keep_buyer_until
+            )
             if grant.inbox_grant is not None:  # void_herd_tracking takes no grant, so its trace is left here
                 grant.inbox_grant.trace(op)
         elif c.kind == "death":
@@ -2462,9 +2606,12 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         membership, member = _lock_matrikel(herd) if paper and sub.paper["matrikel"] is not None else (None, None)
         old_email = member.email if member is not None else None
         report = YearlyHerdReport.select().where(same & (YearlyHerdReport.status == "submitted")).for_update().first()
-        items = _lock_items(sorted(sub.rabbits), access.item.id if paper else None, report)
+        draft = _draft(herd, round_)  # K1: its kept buyers are linked again or deleted, under the rabbits' locks
+        kept = {int(key): claim["kopare_id"] for key, claim in (_kept_claims(draft.data) if draft else {}).items()}
+        ids = sorted(set(sub.rabbits) | set(kept))
+        items = _lock_items(ids, access.item.id if paper else None, report, kept.values())
         item, pages = _lock_form(access, user, herd) if paper else (None, [])
-        _lock_rabbits(sorted(sub.rabbits), items)
+        _lock_rabbits(ids, items)
         if sub.revision != (report.revision if report else None):
             raise ArsrapportError(409, "Rapporten har ändrats.")
         refusals, _ = check(herd, round_, access, report, sub, on=on)
@@ -2555,6 +2702,7 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
             page.save()
         if paper:  # after the writes: InboxGrant needs the item "tagen"
             inbox.close_if_done(item, user)
+        drop_kept_buyers(set(kept.values()), user)  # FB6: the draft goes, and a kept buyer not linked again with it
         YearlyReportDraft.delete().where(
             (YearlyReportDraft.herd == herd.id) & (YearlyReportDraft.round == round_.id)
         ).execute()
@@ -2594,7 +2742,8 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
     loses its current effects as in apply_diff, after one dry run of them all. Pending sale proposals are taken back
     and approved ones stay; for a role that may not sell, so do the sales the report wrote (FB5). The row is voided,
     the draft keeps what was filled in without its key (P31) for the rabbits Skicka takes now (FB1), and Å9 is
-    queued. Returns the ReportView.
+    queued. A voided sale's buyer outside the genebank stays until kept_until, and the draft's sale names it (K1,
+    K2); a sale the draft no longer has takes its buyer now (FB6). Returns the ReportView.
     """
     import utils.sale_proposal as sale_proposal  # pylint: disable=import-outside-toplevel  # it imports this module
 
@@ -2628,18 +2777,34 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
         rabbits = sorted({int(key) for submission in submissions for key in submission.data.get("rabbits") or {}})
         _lock_rabbits(rabbits, _lock_items(rabbits, report=report))
         ops = {str(op) for submission in submissions for op in submission.operation_ids}
-        refusals = _reason_refusals(reason, rabbits, _waiting_buyers(sale_proposal.pending(report)))
+        refusals, sold = _reason_refusals(reason, rabbits, _waiting_buyers(sale_proposal.pending(report))), []
         for rabbit in rabbits:
             remove = diff(current(report, rabbit), [], last)[0]
             if not access.can_sell:  # FB5: a sale the owner registered stays, as an approved proposal does
                 remove = _without_sale(remove)
+            sold += [e.ref for e in remove if e.kind == "transfer"]
             refusals += _register_refusals(rabbit, None, remove, [], ops, access.role == "admin")
         if refusals:
             raise _cannot(refusals, "Rapporten kan inte dras tillbaka.")
         grant, keep = ReportGrant(code=access.code, report=report, herd=herd), not access.can_sell
+        keep_until = kept_until(round_)
+        keep_until = keep_until if keep_until is not None and keep_until > at else None  # none kept after it
         for rabbit in rabbits:
             try:
-                apply_diff(report, herd, user, grant, rabbit, [], None, None, last, reason=reason, keep_sales=keep)
+                apply_diff(
+                    report,
+                    herd,
+                    user,
+                    grant,
+                    rabbit,
+                    [],
+                    None,
+                    None,
+                    last,
+                    reason=reason,
+                    keep_sales=keep,
+                    keep_buyer_until=keep_until,
+                )
             except (IndividualRefused, HerdTrackingError) as exc:
                 raise _cannot([_written(rabbit, exc)], "Rapporten kan inte dras tillbaka.") from exc
         for proposal in sale_proposal.pending(report):  # 8: pending proposals are taken back, approved ones stay
@@ -2651,17 +2816,27 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
         draft, stamp = _draft(herd, round_), at.astimezone(timezone.utc)
         listed = report_list(herd, round_.report_year)  # FB1: only what Skicka takes now
         choosing = {str(row["id"]) for row in listed if row["state"] == "att_valja"}
-        if draft is None:  # D10: the submission's data is already stored_body
+        kept = {
+            str(row.individual_id): {"kopare_id": row.holder_contact_id, "fran_rapport": report.id}
+            for row in HerdTracking.select().where(
+                HerdTracking.id.in_(sold), HerdTracking.holder_contact.is_null(False)
+            )
+        }
+        # D10: the submission's data is already stored_body
+        data = _pruned(submissions[-1].data if draft is None else draft.data, choosing, {row["id"] for row in listed})
+        data, gone = _with_kept(data, kept)
+        drop_kept_buyers(gone, user)  # FB6; Skicka's locks hold the items and the rabbits
+        if draft is None:
             YearlyReportDraft.create(
                 herd=herd.id,
                 round=round_.id,
-                data=_pruned(submissions[-1].data, choosing, {row["id"] for row in listed}),
+                data=data,
                 updated_at=stamp,
                 **_by(user, "updated_by_user", "updated_by_access_code"),
             )
         else:  # the version moves on, so an old tab's autosave cannot bring the key back
             draft.submission_key, draft.updated_at = None, max(stamp, draft.updated_at + timedelta(microseconds=1))
-            draft.data = _pruned(draft.data, choosing, {row["id"] for row in listed})
+            draft.data = data
             draft.save()
         _mail("arsrapport.angrad", herd, user, {"report_id": report.id}, ("yearlyherdreport", report.id))
     return report_view(herd, round_, access, user)

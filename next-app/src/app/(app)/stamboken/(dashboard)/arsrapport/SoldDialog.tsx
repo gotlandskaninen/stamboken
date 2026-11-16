@@ -13,6 +13,13 @@ import {
   useTheme,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
+import {
+  BuyerFields,
+  EMPTY_BUYER,
+  buyerComplete,
+  buyerPayload,
+  type BuyerDraft,
+} from "@/components/individual/BuyerFields";
 import type { getGenebankHerds } from "../individ/[number]/actions";
 import { isOutsideGenebankHerd, type GenebankHerd } from "@/utils/saleRules";
 import { MONTHS, type SaldState } from "./lib";
@@ -27,6 +34,7 @@ interface Props {
   // The picker's data, as SellRabbitDialog gets it (getGenebankHerds).
   loadHerds: typeof getGenebankHerds;
   existing: SaldState | null; // a saved sale: its buyer fields start empty (Task 6)
+  canSell: boolean; // a proposal takes no kept buyer (F1, K1)
   onSave: (s: SaldState) => void;
   onClose: () => void;
 }
@@ -40,6 +48,7 @@ function Body({
   ownHerd,
   loadHerds,
   existing,
+  canSell,
   onSave,
   onClose,
 }: Props) {
@@ -56,8 +65,12 @@ function Body({
   const [dag, setDag] = React.useState(
     existing?.dag ? String(existing.dag) : "",
   );
-  const [name, setName] = React.useState(existing?.kopare?.name ?? "");
-  const [town, setTown] = React.useState(existing?.kopare?.town ?? "");
+  const [buyer, setBuyer] = React.useState<BuyerDraft>({
+    ...EMPTY_BUYER,
+    ...existing?.kopare,
+  });
+  // K1: a buyer kept across Dra tillbaka, which the seller never reads back
+  const kept = canSell && existing?.kopare_id != null && !existing.kopare;
   const [tried, setTried] = React.useState(false);
   const [loaded, setLoaded] = React.useState<Awaited<
     ReturnType<typeof getGenebankHerds>
@@ -95,8 +108,15 @@ function Body({
   const target = options.find((h) => h.herd === code) ?? null;
   const optionLabel = (h: GenebankHerd) =>
     h.herd_name ? `${h.herd} – ${h.herd_name}` : h.herd;
-  const buyerHalf = !!name.trim() !== !!town.trim();
-  const buyerMissing = outside && !existing && !(name.trim() && town.trim());
+  const typed = [
+    buyer.name,
+    buyer.town,
+    buyer.postal_address,
+    buyer.email,
+    buyer.phone,
+  ].some((v) => v.trim());
+  const buyerHalf = typed && !buyerComplete(buyer);
+  const buyerMissing = outside && !existing && !buyerComplete(buyer);
   const problem =
     // code is only ever the picker's own choice or the saved buyer, so it needs
     // no list: a slow herd list must not turn Spara into a silent refusal
@@ -117,10 +137,10 @@ function Body({
       ar,
       manad,
       dag: dag ? Number(dag) : null,
-      kopare:
-        outside && name.trim() && town.trim()
-          ? { name: name.trim(), town: town.trim() }
-          : null,
+      kopare: outside && buyerComplete(buyer) ? buyerPayload(buyer) : null,
+      ...(outside && existing?.kopare_id != null
+        ? { kopare_id: existing.kopare_id }
+        : {}),
     });
   };
 
@@ -195,34 +215,23 @@ function Body({
         )}
         {outside && (
           <>
-            <label className={styles.label}>
-              Köparens namn
-              <input
-                className={styles.field}
-                style={{ width: "100%", boxSizing: "border-box" }}
-                maxLength={200}
-                autoComplete="off"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </label>
-            <label className={styles.label}>
-              Köparens ort
-              <input
-                className={styles.field}
-                style={{ width: "100%", boxSizing: "border-box" }}
-                maxLength={200}
-                autoComplete="off"
-                value={town}
-                onChange={(e) => setTown(e.target.value)}
-              />
-            </label>
-            {existing && (
+            {kept ? (
               <p className={styles.meta}>
-                Köparens uppgifter sparas inte i rapporten. Lämna fälten tomma
-                om köparen är rätt, och fyll i dem om du vill rätta köparen.
+                Köparen finns sparad. Lämna fälten tomma om köparen är rätt,
+                eller skriv en ny köpare.
               </p>
+            ) : (
+              existing && (
+                <p className={styles.meta}>
+                  Köparens uppgifter sparas inte i rapporten. Lämna fälten tomma
+                  om köparen är rätt, och fyll i dem om du vill rätta köparen.
+                </p>
+              )
             )}
+            <BuyerFields value={buyer} onChange={setBuyer} />
+            <p className={styles.meta}>
+              Köparens uppgifter sparas när du skickar rapporten, inte innan.
+            </p>
           </>
         )}
         <div className={styles.grid2}>

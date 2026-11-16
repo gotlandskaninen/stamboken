@@ -217,7 +217,13 @@ const state = (): FormState => ({
         ar: 2026,
         manad: 6,
         dag: 14,
-        kopare: { name: "Ola", town: "Visby" },
+        kopare: {
+          name: "Ola",
+          town: "Visby",
+          contact_consent: true,
+          membership_optin: false,
+          email: "ola@example.invalid",
+        },
       },
     }),
   },
@@ -253,6 +259,34 @@ describe("draft and body", () => {
     const saved = fromBody(toDraft(state()));
     expect(toBody(saved, "k", 3).rabbits["3"].sald).not.toHaveProperty(
       "kopare",
+    );
+  });
+  it("sends the buyer's yes as given, never a hard-coded no", () => {
+    expect(toBody(state(), "k", 3).rabbits["3"].sald?.kopare).toEqual({
+      name: "Ola",
+      town: "Visby",
+      contact_consent: true,
+      membership_optin: false,
+      email: "ola@example.invalid",
+    });
+  });
+  it("carries a kept buyer's id through the draft and into the body, for a sale outside only (K1)", () => {
+    const s = state();
+    s.rabbits[3] = {
+      ...s.rabbits[3],
+      sald: { ...s.rabbits[3].sald!, kopare: null, kopare_id: 7 },
+    };
+    const saved = fromBody(toDraft(s));
+    expect(saved.rabbits[3].sald?.kopare_id).toBe(7);
+    expect(toBody(saved, "k", null).rabbits["3"].sald).toMatchObject({
+      kopare_id: 7,
+    });
+    expect(toBody(saved, "k", null).rabbits["3"].sald).not.toHaveProperty(
+      "kopare",
+    );
+    saved.rabbits[3].sald!.till = "G9002";
+    expect(toBody(saved, "k", null).rabbits["3"].sald).not.toHaveProperty(
+      "kopare_id",
     );
   });
   it("leaves out a choice that lacks its month, so that the server asks for it", () => {

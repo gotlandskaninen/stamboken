@@ -23,6 +23,7 @@ import {
   type Submission,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
 import { rabbit, view } from "./fixtures";
+import "@/i18n"; // BuyerFields' labels
 
 const receipt: Receipt = {
   submission_id: 1,
@@ -298,10 +299,10 @@ describe("ReportForm", () => {
     render(<ReportForm env="demo" view={view()} actions={a} />);
     choose(1, "Såld");
     fireEvent.click(screen.getByLabelText("Utanför genbanken"));
-    fireEvent.change(screen.getByLabelText("Köparens namn"), {
+    fireEvent.change(screen.getByLabelText(/Köparens namn/), {
       target: { value: "Ola Köpare" },
     });
-    fireEvent.change(screen.getByLabelText("Köparens ort"), {
+    fireEvent.change(screen.getByLabelText(/^Ort/), {
       target: { value: "Visby" },
     });
     fireEvent.change(screen.getByLabelText("Månad"), {

@@ -118,11 +118,30 @@ def _drop_orphan_buyers(contact_ids, action, user):
     """
     if not contact_ids:
         return []
+    return delete_buyer_contacts(_unheld(contact_ids), action, user)[1]
+
+
+def _unheld(contact_ids):
+    """The buyers among `contact_ids` that no active row holds."""
     held = HerdTracking.select(HerdTracking.holder_contact).where(
-        HerdTracking.holder_contact.in_(contact_ids), ht_not_voided()
+        HerdTracking.holder_contact.in_(list(contact_ids)), ht_not_voided()
     )
-    orphans = set(contact_ids) - {contact_id for (contact_id,) in held.tuples()}
-    return delete_buyer_contacts(orphans, action, user)[1]
+    return set(contact_ids) - {contact_id for (contact_id,) in held.tuples()}
+
+
+def drop_kept_buyers(contact_ids, user, *, lock=False):
+    """
+    K1, FB6: the buyers kept across Dra tillbaka among `contact_ids` that no active row holds go now, when their sale
+    is gone from the report. With `lock`, the queue's items and the rabbits are locked first, in the queue's order
+    (erase_buyer_contact); without it the caller holds them.
+    """
+    if not contact_ids:
+        return
+    if lock:
+        holding = list(HerdTracking.select().where(HerdTracking.holder_contact.in_(list(contact_ids))))
+        buyer_items(holding, lock=True)
+        lock_individuals(sorted({row.individual_id for row in holding}))
+    _remove_after_commit(_drop_orphan_buyers(contact_ids, VOID_ACTION, user))
 
 
 def _remove_after_commit(paths, files=None):
@@ -332,6 +351,9 @@ def _operation_rows(individual_ids, operation_id):
     )
 
 
+KEPT_BUYER_GONE = "Köparen finns inte längre sparad. Skriv köparens namn och ort."
+
+
 def record_herd_tracking(
     individual,
     herd,
@@ -344,13 +366,16 @@ def record_herd_tracking(
     yearly_herd_report=None,
     transfer_id=None,
     buyer=None,
+    holder_contact=None,
 ):
     """
     The central writer. Locks the individual, re-reads its
     active rows, requires date >= the latest active row (except BIRTH), sets
     from_herd to the holder at the date, checks I1–I4 as a delta and writes.
     Idempotent per (individual, operation_id). `buyer` (a sale to GX1/MX1 only) is the buyer outside the
-    association as buyer_contact_fields reads it, stored with the row in the same transaction.
+    association as buyer_contact_fields reads it, stored with the row in the same transaction. `holder_contact` (a
+    BuyerContact id) links a buyer kept across Dra tillbaka instead (K1): one no active row holds, whose purge_at goes
+    back to five years from the sale; only utils.arsrapport passes it, once it has checked where the buyer came from.
     """
     if kind not in WRITER_KINDS:
         raise HerdTrackingInvalid(f"Okänd händelsetyp: {kind!r}.")
@@ -361,7 +386,9 @@ def record_herd_tracking(
     except (TypeError, ValueError) as exc:
         raise HerdTrackingInvalid("Ogiltigt datum.") from exc
     reject_contact_details(notes)
-    if buyer is not None and (kind != "TRANSFER" or target.herd not in OUTSIDE_GENEBANK_HERDS):
+    if (buyer is not None or holder_contact is not None) and (
+        kind != "TRANSFER" or target.herd not in OUTSIDE_GENEBANK_HERDS
+    ):
         raise HerdTrackingInvalid("Köparens namn och ort registreras bara vid försäljning utanför genbanken.")
     contact_fields = buyer_contact_fields(buyer) if buyer is not None else None
     individual_id = individual.id if isinstance(individual, Individual) else int(individual)
@@ -397,6 +424,13 @@ def record_herd_tracking(
             if contact_fields
             else None
         )
+        if holder_contact is not None:  # locked against the nightly purge, which deletes by id
+            contact = BuyerContact.select().where(BuyerContact.id == holder_contact).for_update().first()
+            held = HerdTracking.select().where(HerdTracking.holder_contact == holder_contact, ht_not_voided())
+            if contact is None or held.exists():
+                raise HerdTrackingInvalid(KEPT_BUYER_GONE)
+            contact.purge_at = BuyerContact.purge_at_for(when)
+            contact.save(only=[BuyerContact.purge_at])
         try:
             with DB_PROXY.atomic():
                 row = HerdTracking.create(
@@ -689,7 +723,7 @@ def report_void_denial(user, row, active_rows, individual, report_ops):
     return None
 
 
-def void_herd_tracking(ht_id, user, reason, operation_id=None, typed=True, *, report_ops=None):
+def void_herd_tracking(ht_id, user, reason, operation_id=None, typed=True, *, report_ops=None, keep_buyer_until=None):
     """
     Void one row (also "Ångra försäljning"). Idempotent per (individual, operation_id):
     a replayed operation returns the row it voided; an already voided row is a no-op.
@@ -697,6 +731,8 @@ def void_herd_tracking(ht_id, user, reason, operation_id=None, typed=True, *, re
     replay returns before the permission check. `typed`: the reason is a user's text (checked against the buyer's
     name), not a system reason. With `report_ops` (a frozenset of str operation ids), the
     yearly report's right replaces the void table: only utils.arsrapport passes them, once it has checked it.
+    With `keep_buyer_until` (a timestamp, Dra tillbaka's K1 and K2) a buyer no active row holds any more stays,
+    held by the voided row only, with that purge_at.
     """
     cleaned = require_reason(reason)
     op = new_operation_id(operation_id)
@@ -724,7 +760,11 @@ def void_herd_tracking(ht_id, user, reason, operation_id=None, typed=True, *, re
             _reject_buyer_name([cleaned], [individual.id])
         voided = _void_rows([row], user, cleaned, op)
         _assert_no_new_violations(individual, before, [r for r in before if r.id != row.id])
-        paths = _drop_orphan_buyers(voided, VOID_ACTION, user)
+        if keep_buyer_until is None:
+            paths = _drop_orphan_buyers(voided, VOID_ACTION, user)
+        else:
+            paths, kept = [], list(_unheld(voided))
+            BuyerContact.update(purge_at=keep_buyer_until).where(BuyerContact.id.in_(kept)).execute()
     _remove_after_commit(paths)
     return HerdTracking.get_by_id(ht_id)
 
