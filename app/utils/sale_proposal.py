@@ -19,7 +19,7 @@ from utils.herd_tracking import (
     buyer_contact_fields,
     require_reason,
 )
-from utils.individual_commands import RecordAttestation, execute, record_sale
+from utils.individual_commands import RecordAttestation, execute, lock_individual_for_edit, record_sale
 
 DECIDED = "Förslaget är redan avgjort."
 NAMED = "Skriv orsaken utan köparens namn."
@@ -35,12 +35,17 @@ def _stored_buyer(buyer):
     }
 
 
+def _lock_item(proposal):
+    """The proposal's item, locked; None when the queue's purge has deleted it (the decision does not need it)."""
+    if proposal.inbox_item_id is None:
+        return None
+    return InboxItem.select().where(InboxItem.id == proposal.inbox_item_id).for_update().first()
+
+
 def _close_item(proposal, user, state):
     """The proposal's item is done: "klar" when decided, "skrap" when taken back."""
-    if proposal.inbox_item_id is None:
-        return
-    item = inbox.lock_item(proposal.inbox_item_id)
-    if item.state not in inbox.CLOSED_STATES:
+    item = _lock_item(proposal)
+    if item is not None and item.state not in inbox.CLOSED_STATES:
         previous = item.state
         inbox._set_state(item, state)  # pylint: disable=protected-access
         item.save()
@@ -117,8 +122,8 @@ def _claim(proposal, user, now, **fields):
 def _locked(proposal):
     """The report lock, then the proposal's item; returns the proposal as it is under them."""
     arsrapport.lock_report(proposal.report.round, proposal.report.herd)
-    if proposal.inbox_item_id is not None:
-        inbox.lock_item(proposal.inbox_item_id)
+    # shortcut: locks only this proposal's item; the report's whole item set in ascending order (K4) is 4a Task 2/3
+    _lock_item(proposal)
     return SaleProposal.get_by_id(proposal.id)
 
 
@@ -131,6 +136,10 @@ def approve(proposal, user, *, now: datetime) -> HerdTracking:
         report, buyer = proposal.report, proposal.buyer
         code = proposal.to_herd.herd if proposal.to_herd_id else arsrapport._sale_code(report.herd, "utanfor")  # pylint: disable=protected-access
         _claim(proposal, user, now, state="godkand")
+        lock_individual_for_edit(proposal.individual_id)
+        # the sale takes its seller from the latest holder: a move meanwhile must not sell from another herd
+        if arsrapport._holder_on(proposal.individual_id, proposal.sale_date, set()) != report.herd_id:  # pylint: disable=protected-access
+            raise arsrapport.ArsrapportError(409, arsrapport.REFUSALS["senare_handelse"])
         record_sale(user, proposal.individual_id, code, proposal.sale_date.isoformat(), buyer=buyer)
         row = (
             HerdTracking.select()
@@ -167,7 +176,9 @@ def reject(proposal, user, *, reason: str, then: Literal["kvar", "valj_igen"], n
             raise arsrapport.ArsrapportError(400, NAMED) from exc
         report = proposal.report
         _claim(proposal, user, now, state="avvisad", reason=reason)
+        # shortcut: no manager submission in report_ops and no cleared choice (FB2, FB3): 4a Task 2/3 completes it
         if then == "kvar":
+            lock_individual_for_edit(proposal.individual_id)  # execute locks too, but not when already attested
             last = date(report.round.report_year, 12, 31)
             attested = HerdTracking.select().where(
                 HerdTracking.individual == proposal.individual_id,

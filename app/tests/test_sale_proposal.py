@@ -7,6 +7,7 @@ isort:skip_file
 """
 
 from datetime import date, datetime, timezone
+from unittest import mock
 
 import utils.arsrapport as arsrapport
 import utils.database as db
@@ -152,3 +153,30 @@ class ProposalTest(ArsrapportTest):
             sp.reject(proposal, self.manager, reason="Zelda köpte den inte", then="kvar", now=NOW)
         self.assertEqual((ctx.exception.status, ctx.exception.detail), (400, sp.NAMED))
         self.assertEqual(db.SaleProposal.get_by_id(proposal.id).state, "foreslagen")
+
+    def test_approve_refused_when_rabbit_moved_before_sale_date(self):
+        proposal = self.propose()
+        ht_row(
+            "TRANSFER", individual=self.rabbit, herd=self.g9002, from_herd=self.h, herd_tracking_date=date(2025, 10, 1)
+        )
+        with self.assertRaises(arsrapport.ArsrapportError) as ctx:
+            sp.approve(proposal, self.manager, now=NOW)
+        self.assertEqual(ctx.exception.status, 409)
+        self.assertEqual(db.SaleProposal.get_by_id(proposal.id).state, "foreslagen")
+        self.assertEqual(len(rows(self.rabbit, "TRANSFER")), 1)
+
+    def test_reject_kvar_locks_the_rabbit_when_already_attested(self):
+        proposal = self.propose()
+        ht_row("ATTESTATION", individual=self.rabbit, herd=self.h, herd_tracking_date=LAST)
+        with mock.patch.object(sp, "lock_individual_for_edit") as lock:
+            sp.reject(proposal, self.manager, reason="Fel datum", then="kvar", now=NOW)
+        lock.assert_called_with(self.rabbit.id)
+
+    def test_decisions_work_when_the_item_is_gone(self):
+        gone, other = self.propose(), self.propose(self.other)
+        db.InboxItem.delete().execute()
+        sp.retract(gone, now=NOW)
+        retracted = db.SaleProposal.get_by_id(gone.id)
+        self.assertEqual((retracted.state, retracted.buyer), ("atertagen", None))
+        sp.approve(other, self.manager, now=NOW)
+        self.assertEqual(db.SaleProposal.get_by_id(other.id).state, "godkand")
