@@ -96,6 +96,22 @@ class CodeApiTest(ArsrapportTest):
         self.login("owner")  # an account keeps the list for the sale dialog
         self.assertIn("G9002", self.api("GET", "/besattning/G9001/2025").get_json()["herds"])
 
+    def test_extract_pdf_for_the_codes_own_herd_only(self):
+        self.open_link()
+        path = "/besattning/G9001/2025/registerutdrag.pdf"
+        ok = self.api("GET", path)
+        self.assertEqual(ok.status_code, 200)
+        self.assertEqual(ok.mimetype, "application/pdf")
+        self.assertTrue(ok.get_data().startswith(b"%PDF"))
+        self.assertIn("attachment", ok.headers["Content-Disposition"])
+        self.assertEqual(ok.headers["Cache-Control"], "no-store")
+        other = self.api("GET", "/besattning/G9002/2025/registerutdrag.pdf")
+        self.assertIn(other.status_code, (403, 404))
+        self.assertNotIn(b"%PDF", other.get_data())
+
+    def test_extract_pdf_needs_a_session(self):
+        self.assertEqual(self.api("GET", "/besattning/G9001/2025/registerutdrag.pdf").status_code, 401)
+
     def test_retry_gets_its_receipt_only_while_the_code_is_valid(self):
         """Codex 5: E4 holds for a receipt too; a revoked link answers lank_ogiltig, not the receipt and not 409."""
         self.open_link()

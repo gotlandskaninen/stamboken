@@ -5,6 +5,7 @@ Thin route handlers — business logic belongs in utils/arsrapport.py.
 See ADR-0007 for blueprint conventions.
 """
 
+import io
 import os
 import uuid
 from dataclasses import asdict
@@ -12,6 +13,7 @@ from datetime import date, datetime
 from functools import wraps
 
 import utils.arsrapport as arsrapport
+import utils.arsrapport_pdf as arsrapport_pdf
 import utils.inbox as inbox
 from flask import Blueprint, current_app, g, jsonify, request, send_file
 from flask_login import current_user
@@ -185,6 +187,21 @@ def my_reports():
 def report_view(herd, year):
     herd, round_, access = _report_target(herd, year)
     return jsonify(arsrapport.report_view(herd, round_, access, _actor(access)))
+
+
+# [Next.js] The register extract of the herd on 31 December as a PDF, for the member to check the form against (section 9).
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/registerutdrag.pdf", methods=["GET"])
+@report_actor_required
+def register_extract(herd, year):
+    herd, round_, _ = _report_target(herd, year)
+    response = send_file(
+        io.BytesIO(arsrapport_pdf.register_extract_pdf(herd, round_)),
+        mimetype="application/pdf",
+        as_attachment=True,
+        download_name=f"registerutdrag-{herd.herd}-{year}.pdf",
+    )
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 # [Next.js] Autosave of the server draft; a stale version is a 409 with the current draft.

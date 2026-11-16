@@ -1273,6 +1273,15 @@ export function ReportForm({
       <p className={styles.lead}>
         {`Rapporten gäller kaninerna som fanns i ${isPaper ? "besättningen" : "din besättning"} den 31 december ${year}.`}
       </p>
+      {link && (
+        <p className={styles.lead}>
+          <a
+            href={`/api/v2/arsrapport/besattning/${herd.herd}/${year}/registerutdrag.pdf`}
+          >
+            Registerutdraget (PDF)
+          </a>
+        </p>
+      )}
       {editor && !isPaper && (
         <ReportStatus status={{ kind: "editor", herd: herd.herd }} />
       )}

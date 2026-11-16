@@ -129,6 +129,17 @@ describe("ReportForm in link mode", () => {
     ).toBeTruthy();
   });
 
+  it("links the register extract above the rabbits", () => {
+    render(linkForm(actions()));
+    const a = screen.getByRole("link", { name: "Registerutdraget (PDF)" });
+    expect(a.getAttribute("href")).toBe(
+      "/api/v2/arsrapport/besattning/G9001/2026/registerutdrag.pdf",
+    );
+    expect(
+      a.compareDocumentPosition(row(1)) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
   it("goes to the page for a link that no longer works", async () => {
     const a = actions({
       dryRun: vi.fn(() => fail(403, { code: "lank_ogiltig" })),
