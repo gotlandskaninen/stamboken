@@ -1,0 +1,161 @@
+"""
+The yearly report's invitation (step 3, Task 8): the scheduler job, a new link, the test mail and their mail kinds.
+The mail row holds only ids; the link is made when the mail is sent, so no token is ever stored.
+"""
+
+import logging
+from datetime import datetime
+
+import utils.arsrapport as arsrapport
+import utils.report_code as report_code
+from utils.arsrapport import ArsrapportError
+from utils.arsrapport_pdf import register_extract_pdf
+from utils.database import DB_PROXY, OUTSIDE_GENEBANK_HERDS, Herd, ReportAccessCode, YearlyReportRoundGenebank
+from utils.mail import enqueue_mail, mail_kind
+
+logger = logging.getLogger(__name__)
+
+
+def _herds(genebank_id):
+    query = Herd.select().where(Herd.genebank == genebank_id, Herd.is_active, Herd.herd.not_in(OUTSIDE_GENEBANK_HERDS))
+    return query.order_by(Herd.herd)
+
+
+def _invite_genebank(activation, now):
+    round_, count = activation.round, 0
+    year = round_.report_year
+    with DB_PROXY.atomic():  # all or nothing, so sent_at never says more than was queued
+        for herd in _herds(activation.genebank_id):
+            member = report_code.invitation_recipient(herd)
+            if member is None:
+                continue
+            code = report_code.issue_code(herd, round_, member, now=now)
+            queued = enqueue_mail(
+                "arsrapport.inbjudan",
+                "member",
+                member.id,
+                {"code_id": code.id, "year": year},
+                ref=("access_code", code.id),
+                herd=herd,
+                genebank=activation.genebank_id,
+                dedupe_key=f"arsrapport.inbjudan:{herd.id}:{year}",
+            )
+            count += queued is not None
+        YearlyReportRoundGenebank.update(sent_at=now).where(YearlyReportRoundGenebank.id == activation.id).execute()
+    return count
+
+
+def send_due_invitations(now: datetime) -> int:
+    """Queues the invitations of every activation that is due and still unsent; returns how many mails were queued."""
+    today = now.astimezone(arsrapport.STOCKHOLM).date()
+    due = (
+        YearlyReportRoundGenebank.select()
+        .where(YearlyReportRoundGenebank.sent_at.is_null(), YearlyReportRoundGenebank.send_at <= today)
+        .order_by(YearlyReportRoundGenebank.id)
+    )
+    total = 0
+    for activation in due:
+        if not arsrapport.round_open(activation.round, activation.genebank_id, today):
+            continue
+        try:
+            total += _invite_genebank(activation, now)
+        except Exception:  # pylint: disable=broad-except  # the genebank rolled back; the next run retries it
+            logger.exception("Queueing the invitations of genebank %s failed", activation.genebank_id)
+    return total
+
+
+def recipients(round_, genebank_id) -> dict:
+    """How many of the genebank's active herds the invitation reaches by e-mail, and how many need the paper form."""
+    del round_  # the herds and their main members do not depend on the round
+    found = [report_code.invitation_recipient(herd) is not None for herd in _herds(genebank_id)]
+    return {"med_epost": sum(found), "utan_epost": len(found) - sum(found)}
+
+
+def new_link(herd, round_, user, *, now: datetime) -> ReportAccessCode:
+    """Revokes the herd's active code, issues a new one and mails it to the main member. Takes no report lock."""
+    member = report_code.invitation_recipient(herd)
+    if member is None:
+        raise ArsrapportError(409, "Besättningen har ingen huvudmedlem med e-postadress.")
+    with DB_PROXY.atomic():
+        old = ReportAccessCode.get_or_none(
+            ReportAccessCode.herd == herd.id, ReportAccessCode.round == round_.id, ReportAccessCode.revoked_at.is_null()
+        )
+        if old is not None:
+            report_code.revoke(old, now=now)
+        code = report_code.issue_code(herd, round_, member, now=now)
+        enqueue_mail(
+            "arsrapport.ny_lank",
+            "member",
+            member.id,
+            {"code_id": code.id, "year": round_.report_year},
+            ref=("access_code", code.id),
+            herd=herd,
+            genebank=herd.genebank_id,
+            dedupe_key=f"arsrapport.ny_lank:{code.id}",
+            created_by=user.id,
+        )
+    return code
+
+
+def test_mail(round_, genebank_id, user):
+    """The invitation to `user` for the genebank's first herd that has rabbits, with no code and no link."""
+    year = round_.report_year
+    herd = next((h for h in _herds(genebank_id) if arsrapport.report_list(h, year)), None)
+    if herd is None:
+        raise ArsrapportError(409, "Genbanken har ingen aktiv besättning med kaniner att visa i provmejlet.")
+    return enqueue_mail(
+        "arsrapport.inbjudan",
+        "user",
+        user.id,
+        {"prov": True, "year": year, "herd_id": herd.id},
+        herd=herd,
+        genebank=genebank_id,
+    )
+
+
+def _common(herd, round_):
+    return {
+        "herd": herd.herd,
+        "herd_name": herd.herd_name,
+        "year": round_.report_year,
+        "deadline": f"{round_.deadline:%Y-%m-%d}",
+        "end_date": f"{round_.end_date:%Y-%m-%d}",
+    }
+
+
+def _valid_code(params):
+    """The mail's code with its herd and round, or None when the link is revoked, expired or no longer the herd's."""
+    code = ReportAccessCode.get_or_none(ReportAccessCode.id == params["code_id"])
+    if code is None:
+        return None
+    herd = Herd.get_by_id(code.herd_id)
+    return None if report_code.refusal(code, herd, today=arsrapport.today()) else (code, herd, code.round)
+
+
+@mail_kind("arsrapport.inbjudan", priority=0, category="T")
+def _inbjudan(params):
+    if params.get("prov"):
+        herd, round_, link = Herd.get_by_id(params["herd_id"]), arsrapport.get_round(params["year"]), None
+    else:
+        valid = _valid_code(params)
+        if valid is None:
+            return None
+        code, herd, round_ = valid
+        if arsrapport.current_report(herd, round_) is not None:  # already reported on paper or elsewhere
+            return None
+        link = report_code.code_url(code)
+    return {
+        **_common(herd, round_),
+        "link": link,
+        "prov": bool(params.get("prov")),
+        "attachments": [(f"registerutdrag-{herd.herd}.pdf", "application/pdf", register_extract_pdf(herd, round_))],
+    }
+
+
+@mail_kind("arsrapport.ny_lank", priority=0, category="T")
+def _ny_lank(params):
+    valid = _valid_code(params)  # R8: a report already sent does not cancel it; changing or withdrawing needs the link
+    if valid is None:
+        return None
+    code, herd, round_ = valid
+    return {**_common(herd, round_), "link": report_code.code_url(code)}

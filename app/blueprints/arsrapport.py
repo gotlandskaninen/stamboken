@@ -13,6 +13,7 @@ from datetime import date, datetime
 from functools import wraps
 
 import utils.arsrapport as arsrapport
+import utils.arsrapport_invite as invite
 import utils.arsrapport_pdf as arsrapport_pdf
 import utils.inbox as inbox
 from flask import Blueprint, current_app, g, jsonify, request, send_file
@@ -327,3 +328,44 @@ def blank_form():
     if not os.path.isfile(path):
         return problem(404, "Hittades inte", "Blanketten finns inte på servern än.")
     return send_file(path, mimetype="application/pdf", max_age=0)
+
+
+def _genebank_round(year, genebank_id):
+    round_ = arsrapport.get_round(year)
+    if round_ is None or Genebank.get_or_none(Genebank.id == genebank_id) is None:
+        raise ArsrapportError(404, f"Rundan för {year} eller genbanken finns inte.")
+    return round_
+
+
+# [Next.js] "Skicka provmejl till mig": the invitation to the manager's own address, with no link.
+@arsrapport_bp.route("/v2/arsrapport/rundor/<int:year>/genbanker/<int:genebank_id>/provmejl", methods=["POST"])
+@json_login_required
+def test_mail(year, genebank_id):
+    denied = check_genebank_access(genebank_id)
+    if denied:
+        return denied
+    invite.test_mail(_genebank_round(year, genebank_id), genebank_id, current_user)
+    return jsonify({"queued": True})
+
+
+# [Next.js] How many herds the invitation reaches by e-mail, counts only.
+@arsrapport_bp.route("/v2/arsrapport/rundor/<int:year>/genbanker/<int:genebank_id>/mottagare", methods=["GET"])
+@json_login_required
+def recipients(year, genebank_id):
+    if not inbox.can_handle(current_user, genebank_id):
+        return problem(403, "Åtkomst nekad", "Du saknar behörighet för denna genbank.")
+    return jsonify(invite.recipients(_genebank_round(year, genebank_id), genebank_id))
+
+
+# [Next.js] "Ny länk": revokes the herd's link and mails a new one to the main member.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/ny-lank", methods=["POST"])
+@json_login_required
+def new_link(herd, year):
+    target = Herd.get_or_none(Herd.herd == herd)
+    if target is None or target.herd in OUTSIDE_GENEBANK_HERDS:
+        raise ArsrapportError(404, "Besättningen finns inte.")
+    denied = check_genebank_access(target.genebank_id)
+    if denied:
+        return denied
+    invite.new_link(target, _genebank_round(year, target.genebank_id), current_user, now=arsrapport.now())
+    return jsonify({"sent": True})

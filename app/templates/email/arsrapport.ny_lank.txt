@@ -1,0 +1,11 @@
+{% block subject %}Ny länk till årsrapporten {{ year }} för {{ herd }}{% endblock %}
+
+{% block body %}
+Hej!
+
+Här är en ny länk till årsrapporten för besättning {{ herd }}. Den gamla länken gäller inte längre.
+
+{{ link }}
+
+Det du redan fyllt i finns kvar. Sista dag för stödet är {{ deadline }}.
+{% endblock %}

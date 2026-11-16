@@ -1,0 +1,22 @@
+{% block subject %}{% if prov %}[Provmejl] {% endif %}Årsrapporten {{ year }} för {{ herd }}: rapportera senast {{ deadline }}{% endblock %}
+
+{% block body %}
+Hej!
+
+Det är dags för årsrapporten för besättning {{ herd }}{% if herd_name %} ({{ herd_name }}){% endif %}. Den gäller kaninerna som fanns i besättningen den 31 december {{ year }}.
+
+Rapportera här, i mobilen eller datorn. Du behöver inte logga in:
+{% if prov %}[Provmejl] (Länken kommer i det riktiga mejlet.){% else %}{{ link }}{% endif %}
+
+Dina kaniner är redan ifyllda. Välj för varje kanin om den finns kvar, är död eller såld, och skriv vikten på de vuxna. Det du fyller i sparas, så du kan fortsätta senare med samma länk.
+
+Sista dag för stödet är {{ deadline }}. Länken gäller till och med {{ end_date }}.
+
+I bilagan finns registerutdraget: det Stamboken har om din besättning. Det är bara för kontroll och skickas inte in.
+
+Länken gäller bara din besättning. Ge den bara till någon som ska rapportera åt dig.
+
+Rapporterar du hellre på papper? Ladda ned blanketten på gotlandskaninen.se. Rapportera antingen här eller på papper, inte båda.
+
+Har du frågor? Svara på det här mejlet.
+{% endblock %}
