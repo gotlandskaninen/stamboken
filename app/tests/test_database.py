@@ -1310,6 +1310,30 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertIn(("gmail_processed", "failures", False), fresh[0])
         self.assertIn(("seller_member_id", "member", "member_id"), fresh[2])
 
+    def test_replay_44_to_45_lets_a_notice_point_at_a_rabbit(self):
+        """A database stamped at 44 gets notice.individual_id, as a fresh bootstrap."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+
+        def shape():
+            columns = {(c.name, c.null) for c in db.DATABASE.get_columns("notice")}
+            keys = {(k.column, k.dest_table, k.dest_column) for k in db.DATABASE.get_foreign_keys("notice")}
+            return columns, keys
+
+        fresh = shape()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 45).execute()
+        if db.SchemaHistory.get_or_none(db.SchemaHistory.version == 44) is None:
+            db.SchemaHistory.insert(version=44, comment="test seed", applied=datetime.now()).execute()  # pylint: disable=E1120
+        db.DATABASE.execute_sql("ALTER TABLE notice DROP COLUMN individual_id")
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(shape(), fresh)
+        self.assertIn(("individual_id", True), fresh[0])
+        self.assertIn(("individual_id", "individual", "individual_id"), fresh[1])
+
     def _max_schema_version(self):
         return db.SchemaHistory.select(  # pylint: disable=E1120
             db.fn.MAX(db.SchemaHistory.version)
