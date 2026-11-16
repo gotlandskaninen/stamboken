@@ -2485,8 +2485,17 @@ def _litters_added(herd, round_):
         )
         .dicts()
     }
-    # by the litter the command made, not the mother it ran on: a corrected mother keeps the litter on the receipt
+    # Bounded by the log's index (individual, created_at): the command ran on the doe that was the herd's at the
+    # birth, so she has a herd-tracking row here (or was born here) even if the litter's mother was corrected or she
+    # was sold since; and it was written in the report year or later. Within that, by the litter the command made.
+    herds_rabbits = (
+        HerdTracking.select(HerdTracking.individual)
+        .where(HerdTracking.herd == herd.id)
+        .union(Individual.select(Individual.id).where(Individual.origin_herd == herd.id))
+    )
     made = IndividualCommand.select(IndividualCommand.after).where(
+        IndividualCommand.individual.in_(herds_rabbits),
+        IndividualCommand.created_at >= date(year, 1, 1) - timedelta(days=1),  # a day's margin for the time zone
         IndividualCommand.command == "RegisterLitter",
         IndividualCommand.after["breeding"].in_([str(i) for i in litters]),
     )
