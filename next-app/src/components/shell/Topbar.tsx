@@ -10,9 +10,10 @@ import { LanguageToggle } from "./LanguageToggle";
 import { NotificationBell } from "./NotificationBell";
 import { AvatarMenu } from "./AvatarMenu";
 import { SbIcon } from "./SbIcon";
+import { NO_INBOX, type InboxCount } from "@/lib/inkorg";
 import styles from "./topbar.module.css";
 
-export function Topbar() {
+export function Topbar({ inbox = NO_INBOX }: { inbox?: InboxCount }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const pathname = usePathname();
 
@@ -44,15 +45,24 @@ export function Topbar() {
             />
             <span className={styles.wordmarkText}>Stamboken</span>
           </Link>
-          <TopbarNav />
+          <TopbarNav
+            worksInQueue={inbox.works_in_queue}
+            unread={inbox.unread}
+          />
         </div>
         <div className={styles.right}>
           <LanguageToggle />
           <NotificationBell />
-          <AvatarMenu />
+          <AvatarMenu unread={inbox.unread} />
         </div>
       </div>
-      {mobileOpen && <MobileMenu onNavigate={() => setMobileOpen(false)} />}
+      {mobileOpen && (
+        <MobileMenu
+          onNavigate={() => setMobileOpen(false)}
+          worksInQueue={inbox.works_in_queue}
+          unread={inbox.unread}
+        />
+      )}
     </header>
   );
 }

@@ -389,6 +389,39 @@ class TestEditDescription(IndividualTest):
         refusal = self._refusal(self.owner, EditDescription({"color": "finns-inte"}))
         self.assertEqual(refusal.envelope, error("Unknown color: 'finns-inte''"))
 
+    def test_color_resolved_within_the_rabbits_genebank(self):
+        """Two genebanks may name a colour alike (Albino): the rabbit gets its own genebank's."""
+        gotland = db.Color.create(name="Albino", genebank=self.genebanks[0])
+        mellerud = db.Color.create(name="Albino", genebank=self.genebanks[1])
+        mellerud_rabbit = self.individuals[2]  # in M3
+        self._run(self.admin, EditDescription({"color": "Albino"}), ind=mellerud_rabbit)
+        self.assertEqual(self._stored(mellerud_rabbit).color_id, mellerud.id)
+        self._run(self.owner, EditDescription({"color": "Albino"}))
+        self.assertEqual(self._stored().color_id, gotland.id)
+
+    def test_stored_color_sent_back_unchanged_is_kept(self):
+        """Legacy sends the stored name on every save; a rabbit stored with another genebank's colour is not locked out."""
+        rabbit = self.individuals[2]  # in M3
+        rabbit.color = self.colors[0]  # Gotland's, not in Mellerud
+        rabbit.save()
+        self._run(self.admin, EditDescription({"color": "bleighe", "notes": "x"}), ind=rabbit)
+        self.assertEqual(self._stored(rabbit).color_id, self.colors[0].id)
+        self.assertEqual(self._stored(rabbit).notes, "x")
+        self.assertIn("Unknown color", self._refusal(self.admin, EditDescription({"color": "stgröhn"}), ind=rabbit).envelope["message"])
+
+    def test_wrong_genebank_albino_is_corrected_on_save(self):
+        gotland = db.Color.create(name="Albino", genebank=self.genebanks[0])
+        mellerud = db.Color.create(name="Albino", genebank=self.genebanks[1])
+        rabbit = self.individuals[2]
+        rabbit.color = gotland
+        rabbit.save()
+        self._run(self.admin, EditDescription({"color": "Albino"}), ind=rabbit)
+        self.assertEqual(self._stored(rabbit).color_id, mellerud.id)
+
+    def test_color_of_another_genebank_is_unknown(self):
+        refusal = self._refusal(self.admin, EditDescription({"color": "stgröhn"}), ind=self.individuals[2])
+        self.assertEqual(refusal.envelope, error("Unknown color: 'stgröhn''"))
+
     def test_color_by_name(self):
         self._run(self.owner, EditDescription({"color": "stgröhn"}))
         self.assertEqual(self._stored().color_id, self.colors[1].id)

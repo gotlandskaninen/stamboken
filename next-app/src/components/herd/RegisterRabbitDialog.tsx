@@ -46,8 +46,11 @@ import {
   NumberConflictDialog,
   PAPER_NUMBER,
 } from "@/components/herd/NumberConflictDialog";
+import { ColorPicker, colorsFor } from "@/components/herd/ColorPicker";
 import {
   checkIndividualNumber,
+  getColors,
+  type ColorOption,
   registerIndividual,
   suggestIndividualNumber,
   type IndividualNumberSuggestion,
@@ -127,6 +130,8 @@ export function RegisterRabbitDialog({
   // Form state
   const [sex, setSex] = useState<string>("female");
   const [color, setColor] = useState("");
+  const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
+  const [colorsLoading, setColorsLoading] = useState(true);
   const [name, setName] = useState("");
   const [colorNote, setColorNote] = useState("");
   const [eyeColor, setEyeColor] = useState("");
@@ -220,6 +225,24 @@ export function RegisterRabbitDialog({
       fetchSuggestion();
     }
   }, [open, success, fetchSuggestion]);
+
+  // Official colour list; empty (free text) if it cannot be loaded
+  useEffect(() => {
+    if (!open) return;
+    getColors()
+      .then((all) => {
+        const options = colorsFor(all, undefined, herdId);
+        setColorOptions(options);
+        // Text typed in the free-text fallback while loading must be on the list
+        setColor((prev) =>
+          options.length && prev && !options.some((o) => o.name === prev)
+            ? ""
+            : prev,
+        );
+      })
+      .catch(() => setColorOptions([]))
+      .finally(() => setColorsLoading(false));
+  }, [open, herdId]);
 
   // Paper: Stamboken's number for what the paper says (the dry run), shown once it is typed
   useEffect(() => {
@@ -766,12 +789,15 @@ export function RegisterRabbitDialog({
                 alignItems: "flex-start",
               }}
             >
-              <TextField
-                label={t("addRabbit.color")}
+              <ColorPicker
+                options={colorOptions}
+                loading={colorsLoading}
                 value={color}
-                onChange={(e) => setColor(e.target.value)}
-                size="small"
-                fullWidth
+                onChange={setColor}
+                genebank={
+                  herdId.startsWith("M") ? "Mellerudskanin" : "Gotlandskanin"
+                }
+                label={t("addRabbit.color")}
                 required
               />
               <FieldInfo
