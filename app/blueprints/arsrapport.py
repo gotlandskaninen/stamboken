@@ -190,7 +190,7 @@ def report_view(herd, year):
     return jsonify(arsrapport.report_view(herd, round_, access, _actor(access)))
 
 
-# [Next.js] The register extract of the herd on 31 December as a PDF, for the member to check the form against (section 9).
+# [Next.js] The herd's register extract on 31 December as a PDF, for the member to check against (section 9).
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/registerutdrag.pdf", methods=["GET"])
 @report_actor_required
 def register_extract(herd, year):
