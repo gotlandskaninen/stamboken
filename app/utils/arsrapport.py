@@ -109,6 +109,7 @@ class ArsrapportError(Exception):
 
     TITLES = {
         400: "Ogiltig begäran",
+        401: "Autentisering krävs",
         403: "Åtkomst nekad",
         404: "Hittades inte",
         409: "Konflikt",

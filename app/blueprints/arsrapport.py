@@ -9,15 +9,18 @@ import os
 import uuid
 from dataclasses import asdict
 from datetime import date, datetime
+from functools import wraps
 
 import utils.arsrapport as arsrapport
 import utils.inbox as inbox
-from flask import Blueprint, jsonify, request, send_file
+from flask import Blueprint, g, jsonify, request, send_file
 from flask_login import current_user
 from utils.arsrapport import ArsrapportError
-from utils.database import OUTSIDE_GENEBANK_HERDS, Genebank, Herd, YearlyReportRound
+from utils.database import OUTSIDE_GENEBANK_HERDS, Genebank, Herd, ReportAccessCode, YearlyReportRound
+from utils.report_code import CodeActor
 
 from .common import check_genebank_access, json_login_required, manager_required, problem
+from .rapport_link import session_codes, touch
 
 arsrapport_bp = Blueprint("arsrapport", __name__, url_prefix="/api")
 
@@ -75,10 +78,61 @@ def activate(year, genebank_id):
     return jsonify(arsrapport.round_json(round_))
 
 
+def _code_in_session(herd, round_):
+    """The newest code of the session for the herd and round, valid or not: who a retry or a refusal is about."""
+    ids = session_codes(arsrapport.now())
+    if not ids:
+        return None
+    return (
+        ReportAccessCode.select()
+        .where(ReportAccessCode.id.in_(ids), ReportAccessCode.herd == herd.id, ReportAccessCode.round == round_.id)
+        .order_by(ReportAccessCode.id.desc())
+        .first()
+    )
+
+
+def _actor(access):
+    """The account, or the link for a code access: what the service writes as the actor."""
+    return CodeActor(access.code) if access.code else current_user
+
+
+def _retry_actor(herd, round_):
+    """
+    Who a retry of Skicka is looked up for, before the access is read: the account when it has a right to the herd,
+    else the session's code for it, valid or not (a revoked link still gets its receipt), else the account.
+    """
+    if current_user.is_authenticated and arsrapport.report_access(current_user, herd) is not None:
+        return current_user
+    code = _code_in_session(herd, round_)
+    if code is not None:
+        return CodeActor(code)
+    return current_user if current_user.is_authenticated else None
+
+
+def report_actor_required(f):
+    """
+    A route that takes a login or a code session instead of json_login_required: 401 for neither (`session_ute` when
+    a code session timed out). `_report_target` decides which of the two applies to the herd in the URL: the
+    account's own right when it has one, otherwise the session's valid code for that herd, never both (section 6).
+    """
+
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        if current_user.is_authenticated or session_codes(arsrapport.now()):
+            return f(*args, **kwargs)
+        if g.get("rapport_expired"):
+            return problem(401, "Sessionen har gått ut", "Öppna länken i mejlet igen.", code="session_ute")
+        return problem(401, "Autentisering krävs", "Du måste vara inloggad.")
+
+    return decorated
+
+
 def _report_target(code, year):
     """
-    The herd, the year's round and the caller's access, for every route under besattning/<herd>/<year>. `?post=` is
-    the taken paper item that report_access reads (Task 9); a missing access is a 403.
+    The herd, the year's round, the caller's access and the actor, for every route under besattning/<herd>/<year>.
+    `?post=` is the taken paper item that report_access reads (Task 9). A login with a right to the herd goes
+    first, the session's valid code for the herd second; a login without either is a 403, a code session for other
+    herds a 404, and a code session that timed out a 401 `session_ute`.
     """
     herd = Herd.get_or_none(Herd.herd == code)
     if herd is None or herd.herd in OUTSIDE_GENEBANK_HERDS:
@@ -86,10 +140,19 @@ def _report_target(code, year):
     post = request.args.get("post")
     if post is not None and not post.isdecimal():
         raise ArsrapportError(400, "Ange posten som ett nummer.")
-    access = arsrapport.report_access(current_user, herd, int(post) if post is not None else None)
-    if access is None:
-        raise ArsrapportError(403, "Du har inte tillgång till årsrapporten för besättningen.")
+    access = None
+    if current_user.is_authenticated:
+        access = arsrapport.report_access(current_user, herd, int(post) if post is not None else None)
     round_ = arsrapport.get_round(year)
+    if access is None and post is None and round_ is not None:
+        ids = session_codes(arsrapport.now())
+        access = arsrapport.code_access(herd, round_, ids) if ids else None
+        if access is not None:
+            touch(arsrapport.now())
+    if access is None:
+        if current_user.is_authenticated:
+            raise ArsrapportError(403, "Du har inte tillgång till årsrapporten för besättningen.")
+        raise ArsrapportError(404, "Besättningen finns inte.")  # a code session, but not for this herd
     if round_ is None:
         raise ArsrapportError(404, f"Det finns ingen runda för {year}.")
     return herd, round_, access
@@ -111,15 +174,15 @@ def my_reports():
 
 # [Next.js] The report page: the list, the year's litters and sales, the report and the draft (ReportView).
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>", methods=["GET"])
-@json_login_required
+@report_actor_required
 def report_view(herd, year):
     herd, round_, access = _report_target(herd, year)
-    return jsonify(arsrapport.report_view(herd, round_, access, current_user))
+    return jsonify(arsrapport.report_view(herd, round_, access, _actor(access)))
 
 
 # [Next.js] Autosave of the server draft; a stale version is a 409 with the current draft.
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/utkast", methods=["PUT"])
-@json_login_required
+@report_actor_required
 def save_draft(herd, year):
     herd, round_, access = _report_target(herd, year)
     body = request.get_json(silent=True)
@@ -133,13 +196,13 @@ def save_draft(herd, year):
         key = uuid.UUID(body["submission_key"]) if body.get("submission_key") is not None else None
     except (AttributeError, TypeError, ValueError) as exc:
         raise ArsrapportError(400, "Ange updated_at som en tidpunkt och submission_key som ett UUID.") from exc
-    draft = arsrapport.save_draft(herd, round_, access, current_user, body.get("data"), updated_at, key, revision)
+    draft = arsrapport.save_draft(herd, round_, access, _actor(access), body.get("data"), updated_at, key, revision)
     return jsonify({"updated_at": draft.updated_at.isoformat(), "submission_key": str(key) if key else None})
 
 
 # [Next.js] The dry run before Skicka: every refusal per rabbit, and the warnings; nothing is written.
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/torrkorning", methods=["POST"])
-@json_login_required
+@report_actor_required
 def dry_run(herd, year):
     herd, round_, access = _report_target(herd, year)
     sub = arsrapport.parse_submission(_submission_body(), paper=access.source == "paper")
@@ -155,21 +218,22 @@ def dry_run(herd, year):
 
 # [Next.js] Skicka: the submission in one transaction and its Receipt; the same request again gets the same one.
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/skicka", methods=["POST"])
-@json_login_required
+@report_actor_required
 def submit(herd, year):
     sub = arsrapport.parse_submission(_submission_body(), paper=request.args.get("post") is not None)  # before lookups
     target, round_ = Herd.get_or_none(Herd.herd == herd), arsrapport.get_round(year)
     if target is not None and round_ is not None:  # before report_access: a retry after the item closed (Fable 5)
-        saved = arsrapport.find_submission(sub.key, target, round_, current_user, arsrapport.request_hash(sub))
+        who = _retry_actor(target, round_)
+        saved = arsrapport.find_submission(sub.key, target, round_, who, arsrapport.request_hash(sub)) if who else None
         if saved is not None:
             return jsonify(arsrapport.receipt(saved))
     target, round_, access = _report_target(herd, year)
-    return jsonify(arsrapport.submit(target, round_, access, current_user, sub))
+    return jsonify(arsrapport.submit(target, round_, access, _actor(access), sub))
 
 
 # [Next.js] Dra tillbaka: the whole report backed out; body {revision, reason}, the reason required of an editor.
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/dra-tillbaka", methods=["POST"])
-@json_login_required
+@report_actor_required
 def withdraw(herd, year):
     herd, round_, access = _report_target(herd, year)
     body = _submission_body()
@@ -178,7 +242,7 @@ def withdraw(herd, year):
     revision = body.get("revision")
     if type(revision) is not int:  # True is an int too
         raise ArsrapportError(400, "Ange revisionen som ett heltal.", field="revision")
-    view = arsrapport.withdraw(herd, round_, access, current_user, revision=revision, reason=body.get("reason"))
+    view = arsrapport.withdraw(herd, round_, access, _actor(access), revision=revision, reason=body.get("reason"))
     return jsonify(view)
 
 
