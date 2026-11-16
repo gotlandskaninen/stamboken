@@ -762,6 +762,43 @@ def _application_approved(params):
     return {} if Member.select().where(Member.id == params["member_id"]).exists() else None
 
 
+_ADDED_AS = {"familjemedlem": "familjemedlem", "skotare": "skötare"}
+
+
+@mail_kind("medlemskap.tillagd", priority=1, category="T")
+def _member_added(params):
+    """To a person someone else put into a membership (GDPR art. 14); none once the person has left it."""
+    person = Member.get_or_none((Member.id == params["member_id"]) & Member.end_date.is_null(True))
+    if person is None:
+        return None
+    main = Member.get_or_none(
+        (Member.membership == person.membership_id) & (Member.role == "huvudmedlem") & Member.end_date.is_null(True)
+    )
+    return {
+        "role": _ADDED_AS.get(person.role, "medlem"),
+        # one line: a name typed with a line break must not add lines of its own to the mail
+        "main": " ".join(f"{main.first_name} {main.last_name}".split()) if main else None,
+        "phone": bool(person.phone),
+    }
+
+
+def queue_member_added(person):
+    """
+    medlemskap.tillagd in the transaction that adds `person`: only someone put in by another (never a main
+    member, who applied or was written in from the register) and only with an e-mail.
+    """
+    if person.role == "huvudmedlem" or not person.email:
+        return None
+    return enqueue_mail(
+        "medlemskap.tillagd",
+        "member",
+        person.id,
+        {"member_id": person.id},
+        ref=("membership", person.membership_id),
+        dedupe_key=f"medlemskap.tillagd:{person.id}",
+    )
+
+
 def queue_application_mails(application_id, address):
     """
     The receipt to the applicant and a notice to each matrikel admin, in the caller's transaction. The public

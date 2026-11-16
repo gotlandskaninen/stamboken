@@ -35,7 +35,7 @@ from utils.database import (
     Membership,
     User,
 )
-from utils.mail import forget_recipient
+from utils.mail import forget_recipient, queue_member_added
 from utils.membership_lifecycle import Event, Status, next_state, state_of
 from utils.postal import (  # noqa: F401 — public helpers
     format_postal_address,
@@ -312,6 +312,7 @@ def add_person(membership, data, actor):
                 "role": person.role,
             },
         )
+        queue_member_added(person)
     return person
 
 

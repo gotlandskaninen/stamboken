@@ -105,6 +105,20 @@ mejl, 2 för massutskick. **Kategori:** `T` (transaktion) eller `N` (notis).
 **Bilagor:** byggfunktionen kan returnera nyckeln `attachments` med en lista
 av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas.
 
+## Mejltyper om medlemskap
+
+- `ansokan.mottagen`, `ansokan.ny` och `ansokan.godkand` följer en ansökan om
+  medlemskap: kvitto till den sökande, besked till matrikelansvariga och
+  välkomst till den nya medlemmen.
+- `medlemskap.tillagd` går till en person som någon annan har lagt in i ett
+  medlemskap, alltså en familjemedlem eller skötare som huvudmedlemmen eller
+  matrikelansvarig lägger till (`add_person`), när personen har en
+  e-postadress. Det är informationen enligt dataskyddsförordningen artikel 14:
+  vad som sparas, vem som lade in uppgifterna, länken `/dataskydd` och adressen
+  att skriva till. En huvudmedlem får det inte, och inte heller den som kommer
+  in med importen av matrikeln, som skriver sina rader själv. Har personen
+  lämnat medlemskapet när mejlet ska gå blir det `cancelled`.
+
 ## Mottagare
 
 `recipient_kind` säger var adressen finns. Inbyggda: `member`

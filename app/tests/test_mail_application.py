@@ -12,6 +12,7 @@ os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), 
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
 import utils.mail as mail  # noqa: E402
+import utils.matrikel as matrikel  # noqa: E402
 import utils.settings as settings  # noqa: E402
 from herdbook import APP, limiter  # noqa: E402
 
@@ -171,3 +172,79 @@ class TestApprovalMail(MailTest):
         a = self.application(status="rejected")
         self.assertEqual(self._approve(a).status_code, 409)
         self.assertEqual(db.MailMessage.select().count(), 0)
+
+
+class TestMemberAdded(MailTest):
+    """medlemskap.tillagd: to a person someone else put into a membership, in that transaction."""
+
+    def setUp(self):
+        super().setUp()
+        self.actor = da.register_user("matrikel@example.org", "pass")
+        self.membership = db.Membership.create(membership_status="active")
+        db.Member.create(
+            membership=self.membership, first_name="Huvud", last_name="Medlem\nRad två", role="huvudmedlem"
+        )
+
+    def add(self, **data):
+        fields = {"first_name": "Ny", "last_name": "Person", "email": "ny@example.org", **data}
+        return matrikel.add_person(self.membership, fields, self.actor)
+
+    def mails(self):
+        return list(db.MailMessage.select().where(db.MailMessage.kind == "medlemskap.tillagd"))
+
+    def test_a_family_member_with_an_address_is_told(self):
+        person = self.add(phone="070-000 00 00")
+        (row,) = self.mails()
+        self.assertEqual(
+            (row.recipient_kind, row.recipient_id, row.category, row.ref_type, row.ref_id, row.params),
+            ("member", person.id, "T", "membership", self.membership.id, {"member_id": person.id}),
+        )
+        relay = self.relay()
+        self.assertEqual(mail.send_pending(self.now), 1)
+        msg, _, envelope_to = relay.sent[0]
+        body = msg.get_content()
+        self.assertEqual(envelope_to, ["ny@example.org"])
+        self.assertIn("lagts in som familjemedlem", body)
+        self.assertIn("Huvudmedlem är Huvud Medlem Rad två.", body)  # the name on one line
+        self.assertIn("och ditt telefonnummer", body)
+        self.assertIn(f"https://{HOST}/dataskydd", body)
+        self.assertIn("dataskydd@gotlandskaninen.se", body)
+
+    def test_a_keeper_is_told_as_a_keeper_and_no_phone_is_named_without_one(self):
+        self.add(role="skotare")
+        relay = self.relay()
+        mail.send_pending(self.now)
+        body = relay.sent[0][0].get_content()
+        self.assertIn("lagts in som skötare", body)
+        self.assertNotIn("telefonnummer", body)
+
+    def test_no_mail_without_an_address_or_to_a_main_member(self):
+        self.add(email=None)
+        other = db.Membership.create(membership_status="active")
+        matrikel.add_person(
+            other,
+            {"first_name": "Ny", "last_name": "Huvud", "email": "h@example.org", "role": "huvudmedlem"},
+            self.actor,
+        )
+        self.assertEqual(self.mails(), [])
+
+    def test_a_rolled_back_addition_queues_nothing(self):
+        with self.assertRaises(RuntimeError), db.DB_PROXY.atomic():
+            self.add()
+            self.assertEqual(len(self.mails()), 1)
+            raise RuntimeError("the request fails after the person was added")
+        self.assertEqual(self.mails(), [])
+
+    def test_not_sent_once_the_person_has_left_the_membership(self):
+        person = self.add()
+        db.Member.update(end_date=self.now.date()).where(db.Member.id == person.id).execute()
+        relay = self.relay()
+        mail.send_pending(self.now)
+        self.assertEqual((relay.sent, self.mails()[0].status), ([], "cancelled"))
+
+    def test_the_register_import_does_not_go_through_add_person(self):
+        """The import writes its rows itself: the people in the register gave their details themselves."""
+        source = open(
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "cli", "members.py"), encoding="utf-8"
+        ).read()
+        self.assertNotIn("add_person(", source)
