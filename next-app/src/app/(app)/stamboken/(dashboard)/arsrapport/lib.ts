@@ -905,10 +905,22 @@ export const ROW_STATE_FILTER: Record<RowState, string> = {
   ej_rapporterad: "Ej rapporterade",
 };
 
+// The invitation's state, from the mail queue and the link (spec 5.14).
+export type Invitation = "skickad" | "studsade" | "misslyckades" | "oppnad";
+
+export const INVITATION_TEXT: Record<Invitation, string> = {
+  skickad: "Inbjudan skickad",
+  studsade: "Inbjudan studsade",
+  misslyckades: "Inbjudan misslyckades",
+  oppnad: "Länken öppnad",
+};
+
 export interface StatusRow {
   herd: string;
   herd_name: string | null;
   state: RowState;
+  inbjudan: Invitation | null;
+  ingen_epost: boolean;
   source: "login" | "link" | "paper" | null;
   membership_after_end: Membership | null;
   received_at: string | null;
@@ -966,7 +978,7 @@ export const callFrom = (deadline: string): string =>
 
 // Spec 5.14: a herd with a draft is phoned from two days before the round's
 // deadline; a herd whose form left out rabbits that decide the support at any
-// time. Bounced and failed mail join with the mail queue (step 3).
+// time; a herd whose invitation bounced or failed, until it has reported.
 
 export function toCall(
   row: StatusRow,
@@ -974,6 +986,11 @@ export function toCall(
   today: string,
 ): boolean {
   if (row.flags.ej_angivna_paverkar) return true;
+  if (
+    (row.inbjudan === "studsade" || row.inbjudan === "misslyckades") &&
+    row.state !== "inskickad"
+  )
+    return true;
   return (
     deadline !== null && row.state === "paborjad" && today >= callFrom(deadline)
   );

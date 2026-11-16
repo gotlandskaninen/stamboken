@@ -5,8 +5,10 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Mode } from "@/lib/mode";
 import { useMode } from "@/lib/mode-context";
-import { setOnTime } from "../../actions";
+import { ConfirmDialog } from "../../../admin/_components/ConfirmDialog";
+import { newLink, setOnTime } from "../../actions";
 import {
+  INVITATION_TEXT,
   ROW_STATES,
   ROW_STATE_FILTER,
   ROW_STATE_TEXT,
@@ -78,6 +80,7 @@ export function StatusTable({
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [busy, setBusy] = useState(false);
+  const [ask, setAsk] = useState<string | null>(null); // the herd whose "Ny länk" awaits its confirmation
   const [error, setError] = useState<string | null>(null);
   const errorRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
@@ -128,8 +131,33 @@ export function StatusTable({
     }
   }
 
+  async function sendLink(herd: string) {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await newLink(herd, year, env);
+      if (!res.ok) setError(res.problem.detail || res.problem.title);
+      else startTransition(() => router.refresh());
+    } catch {
+      setError("Det gick inte att nå servern. Försök igen.");
+    } finally {
+      setBusy(false);
+      setAsk(null);
+    }
+  }
+
   return (
     <>
+      <ConfirmDialog
+        open={ask !== null}
+        title={`Ny länk till ${ask ?? ""}`}
+        body="Den gamla länken slutar gälla. Skicka en ny länk till huvudmedlemmen?"
+        confirmLabel="Skicka ny länk"
+        busy={busy}
+        onConfirm={() => ask && sendLink(ask)}
+        onClose={() => setAsk(null)}
+      />
       <nav className={inkorg.counts} aria-label="Lägen">
         {tabs.map(([f, label, n]) => (
           <Link
@@ -185,6 +213,7 @@ export function StatusTable({
                   canEdit={canEdit}
                   locked={busy || pending}
                   onTime={changeOnTime}
+                  onNewLink={setAsk}
                 />
               ))}
             </tbody>
@@ -201,14 +230,18 @@ function Row({
   canEdit,
   locked,
   onTime,
+  onNewLink,
 }: {
   row: StatusRow;
   year: number;
   canEdit: boolean;
   locked: boolean;
   onTime: (herd: string, value: string) => void;
+  onNewLink: (herd: string) => void;
 }) {
   const reported = row.received_at !== null;
+  // The state already says "Ingen e-post" when nothing else is going on.
+  const flagNoEmail = row.ingen_epost && row.state !== "ingen_epost";
   const override =
     row.on_time_override === null ? "" : row.on_time_override ? "ja" : "nej";
   return (
@@ -236,6 +269,9 @@ function Row({
         {row.source && (
           <span className={inkorg.muted}> {SOURCE_TEXT[row.source]}</span>
         )}
+        {row.inbjudan && (
+          <div className={inkorg.muted}>{INVITATION_TEXT[row.inbjudan]}</div>
+        )}
         {row.state === "avslutar" && row.membership_after_end && (
           <div className={inkorg.muted}>
             {MEMBERSHIP_TEXT[row.membership_after_end]}
@@ -257,6 +293,11 @@ function Row({
           : "–"}
       </td>
       <td data-label="Flaggor">
+        {flagNoEmail && (
+          <span className="sb-badge" style={{ marginRight: 8 }}>
+            Ingen e-post
+          </span>
+        )}
         {row.flags.ej_angivna > 0 ? (
           <span
             className={`sb-badge ${
@@ -267,7 +308,7 @@ function Row({
             {row.flags.ej_angivna_paverkar && " (påverkar stödet)"}
           </span>
         ) : (
-          "–"
+          !flagNoEmail && "–"
         )}
       </td>
       <td data-label="Mottagen">
@@ -282,6 +323,16 @@ function Row({
             >
               Mata in blankett
             </Link>
+          )}
+          {canEdit && !row.ingen_epost && (
+            <button
+              type="button"
+              className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+              disabled={locked}
+              onClick={() => onNewLink(row.herd)}
+            >
+              Ny länk
+            </button>
           )}
           {canEdit && reported && (
             <label>

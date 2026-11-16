@@ -195,3 +195,24 @@ export async function setOnTime(
     { on_time: onTime },
   );
 }
+
+// "Ny länk": the herd's old link stops working and a new one is mailed to the main member.
+export async function newLink(herd: string, year: number, env: Mode) {
+  return call<{ sent: boolean }>(env, path(herd, year, "/ny-lank"), "POST", {});
+}
+
+// "Skicka provmejl till mig": the invitation without a link, to the manager's own address.
+export async function sendTestMail(
+  year: number,
+  genebankId: number,
+  env: Mode,
+) {
+  return call<{ queued: boolean }>(
+    env,
+    isYear(year) && Number.isSafeInteger(genebankId) && genebankId > 0
+      ? `/v2/arsrapport/rundor/${year}/genbanker/${genebankId}/provmejl`
+      : null,
+    "POST",
+    {},
+  );
+}

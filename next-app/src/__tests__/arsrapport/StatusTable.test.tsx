@@ -1,11 +1,20 @@
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh: vi.fn() }) }));
 vi.mock("@/lib/mode-context", () => ({ useMode: () => "demo" }));
+const newLink = vi.fn();
 vi.mock("@/app/(app)/stamboken/(dashboard)/arsrapport/actions", () => ({
   setOnTime: vi.fn(),
+  newLink: (...a: unknown[]) => newLink(...a),
 }));
 
 import { StatusTable } from "@/app/(app)/stamboken/(dashboard)/arsrapport/status/[year]/StatusTable";
@@ -14,12 +23,17 @@ import type {
   StatusView,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  newLink.mockReset();
+});
 
 const base: StatusRow = {
   herd: "G9001",
   herd_name: "Gård",
   state: "paborjad",
+  inbjudan: null,
+  ingen_epost: false,
   source: null,
   membership_after_end: null,
   received_at: null,
@@ -118,5 +132,70 @@ describe("StatusTable", () => {
   it("shows no payment control", () => {
     show(true);
     expect(document.body.textContent).not.toMatch(/Nordea|pain|betalning/i);
+  });
+  it("shows the invitation state of each row", () => {
+    const states = [
+      ["skickad", "Inbjudan skickad"],
+      ["studsade", "Inbjudan studsade"],
+      ["misslyckades", "Inbjudan misslyckades"],
+      ["oppnad", "Länken öppnad"],
+    ] as const;
+    render(
+      <StatusTable
+        view={view(
+          states.map(([inbjudan], i) => ({
+            ...base,
+            herd: `G910${i}`,
+            inbjudan,
+          })),
+        )}
+        year={2026}
+        genebankId={1}
+        filter="alla"
+        canEdit
+        env="demo"
+      />,
+    );
+    states.forEach(([, text], i) =>
+      expect(
+        within(screen.getByText(`G910${i}`).closest("tr")!).getByText(text),
+      ).toBeTruthy(),
+    );
+  });
+  it("flags a herd without e-mail beside a state that is not ingen_epost, and offers no Ny länk", () => {
+    render(
+      <StatusTable
+        view={view([{ ...base, ingen_epost: true }])}
+        year={2026}
+        genebankId={1}
+        filter="alla"
+        canEdit
+        env="demo"
+      />,
+    );
+    const tr = screen.getByText("G9001").closest("tr")!;
+    expect(within(tr).getByText("Ingen e-post")).toBeTruthy();
+    expect(within(tr).queryByText("Ny länk")).toBeNull();
+  });
+  it("asks before it sends a new link, and sends only on yes", async () => {
+    newLink.mockResolvedValue({ ok: true, data: { sent: true } });
+    show(true);
+    fireEvent.click(
+      within(screen.getByText("G9001").closest("tr")!).getByText("Ny länk"),
+    );
+    expect(
+      screen.getByText(
+        "Den gamla länken slutar gälla. Skicka en ny länk till huvudmedlemmen?",
+      ),
+    ).toBeTruthy();
+    expect(newLink).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByText("Skicka ny länk"));
+    await waitFor(() =>
+      expect(newLink).toHaveBeenCalledWith("G9001", 2026, "demo"),
+    );
+  });
+  it("offers Ny länk only to a manager", () => {
+    show(false);
+    expect(screen.queryByText("Ny länk")).toBeNull();
   });
 });

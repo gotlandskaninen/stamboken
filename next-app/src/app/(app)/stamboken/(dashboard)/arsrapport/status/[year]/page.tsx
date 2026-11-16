@@ -59,6 +59,17 @@ export default async function StatusPage({
     if (!(e instanceof ApiError && e.status === 404)) throw e;
   }
 
+  // How many invitations go out, while none has: counts only, readable by helpers too.
+  const sent = view?.round.genebanks.find(
+    (g) => g.genebank_id === genebank.id,
+  )?.sent_at;
+  const recipients =
+    view && !sent
+      ? await fetchApi<{ med_epost: number; utan_epost: number }>(
+          `/v2/arsrapport/rundor/${year}/genbanker/${genebank.id}/mottagare`,
+        )
+      : null;
+
   return (
     <>
       <Masthead
@@ -103,6 +114,7 @@ export default async function StatusPage({
           genebankName={genebank.name}
           round={view?.round ?? null}
           canEdit={canEdit}
+          recipients={recipients}
           env={env}
         />
         {view && (

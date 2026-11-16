@@ -90,6 +90,12 @@ INSERT INTO yearly_report_submission VALUES (1, 1);
 INSERT INTO yearly_report_draft VALUES (1);
 INSERT INTO member_change_request VALUES (1, 1);
 INSERT INTO sale_proposal VALUES (1, 1);
+CREATE TABLE report_access_code (id int PRIMARY KEY, revoked_at timestamptz);
+ALTER TABLE yearly_report_submission ADD COLUMN access_code_id int REFERENCES report_access_code;
+CREATE TABLE yearly_report_round_genebank (id int PRIMARY KEY, sent_at timestamptz);
+INSERT INTO report_access_code VALUES (1, NULL), (2, '2026-01-01');
+INSERT INTO yearly_report_round_genebank VALUES (1, NULL), (2, '2026-01-01');
+UPDATE yearly_report_submission SET access_code_id = 1;  -- a submission made through a link
 SQL
 
 # The dump-and-load step of sync-demo-db.sh. No inbox_*, notice or gmail_*
@@ -118,8 +124,16 @@ check "the report drafts come over without rows" 0 "$(sql -d dst -c 'SELECT coun
 check "the change requests come over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM member_change_request')"
 check "the sale proposals come over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM sale_proposal')"
 
+check "the report links are revoked, and the rows stay for the submissions" "2|0|1" \
+  "$(sql -d dst -c 'SELECT count(*), count(*) FILTER (WHERE revoked_at IS NULL), (SELECT count(access_code_id) FROM yearly_report_submission) FROM report_access_code')"
+check "the activations are marked sent, none deleted" "2|0" \
+  "$(sql -d dst -c 'SELECT count(*), count(*) FILTER (WHERE sent_at IS NULL) FROM yearly_report_round_genebank')"
+
 check "the demo has no buyers" 0 "$(sql -d dst -c 'SELECT count(*) FROM buyer_contact')"
 check "the sale stays, without its buyer" "1|" "$(sql -d dst -c 'SELECT id, holder_contact_id FROM herd_tracking')"
+# The dump leaves sale proposals out; the step deletes any that came anyway.
+sql -d dst -c "INSERT INTO sale_proposal VALUES (1, 1)" -c "$DROP_BUYERS_SQL" >/dev/null
+check "a sale proposal that came anyway is deleted" 0 "$(sql -d dst -c 'SELECT count(*) FROM sale_proposal')"
 sql -d dst -c "DROP TABLE herd_tracking, buyer_contact" -c "$DROP_BUYERS_SQL" >/dev/null
 check "an older schema without buyers is skipped" 0 "$?"
 

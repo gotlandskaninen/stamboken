@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import type { Mode } from "@/lib/mode";
-import { activateGenebank, saveRound } from "../../actions";
+import { activateGenebank, saveRound, sendTestMail } from "../../actions";
 import { fmtDate, type Round } from "../../lib";
 import styles from "../../arsrapport.module.css";
 import inkorg from "../../../inkorg/inkorg.module.css";
@@ -20,6 +20,7 @@ export function RoundPanel({
   genebankName,
   round,
   canEdit,
+  recipients,
   env,
 }: {
   year: number;
@@ -27,6 +28,7 @@ export function RoundPanel({
   genebankName: string;
   round: Round | null;
   canEdit: boolean;
+  recipients: { med_epost: number; utan_epost: number } | null;
   env: Mode;
 }) {
   const router = useRouter();
@@ -38,6 +40,7 @@ export function RoundPanel({
   });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [testSent, setTestSent] = useState(false);
   const errorRef = useRef<HTMLParagraphElement>(null);
   useEffect(() => {
     if (error) errorRef.current?.focus();
@@ -80,6 +83,49 @@ export function RoundPanel({
     }
   }
 
+  async function testMail() {
+    if (busy) return;
+    setBusy(true);
+    setError(null);
+    setTestSent(false);
+    try {
+      const done = await sendTestMail(year, genebankId, env);
+      if (done.ok) setTestSent(true);
+      else setError(done.problem.detail || done.problem.title);
+    } catch {
+      setError("Det gick inte att nå servern. Försök igen.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // The count of the invitation's recipients and the test mail, once the round exists.
+  const invitation = recipients && (
+    <>
+      <p style={{ margin: 0 }}>
+        Inbjudan går till {recipients.med_epost} besättningar.{" "}
+        {recipients.utan_epost} saknar e-post och får blanketten med post.
+      </p>
+      {canEdit && (
+        <div className={styles.actions}>
+          <button
+            type="button"
+            className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+            disabled={busy}
+            onClick={testMail}
+          >
+            Skicka provmejl till mig
+          </button>
+        </div>
+      )}
+      {testSent && (
+        <p role="status" className={inkorg.muted}>
+          Provmejlet är på väg till din e-postadress.
+        </p>
+      )}
+    </>
+  );
+
   const form = (
     <div className={styles.dates}>
       {DATES.map(([key, label]) => (
@@ -113,10 +159,8 @@ export function RoundPanel({
         {canEdit ? (
           <>
             {form}
-            <p className={inkorg.muted}>
-              Datumen gäller alla genbanker. Inbjudningar skickas när utskicket
-              är byggt.
-            </p>
+            <p className={inkorg.muted}>Datumen gäller alla genbanker.</p>
+            {invitation}
             <div className={styles.actions}>
               <button
                 type="button"
@@ -144,9 +188,12 @@ export function RoundPanel({
         {round?.deadline &&
           ` · sista dag för stödet ${fmtDate(round.deadline)}`}
         {round?.end_date && ` · stänger ${fmtDate(round.end_date)}`}
-        {!activation.sent_at &&
-          ". Inbjudningar skickas när utskicket är byggt."}
+        {activation.sent_at
+          ? `. Inbjudningarna skickades ${fmtDate(activation.sent_at)}`
+          : activation.send_at &&
+            `. Inbjudningarna skickas ${fmtDate(activation.send_at)} kl. 07`}
       </p>
+      {!activation.sent_at && invitation}
       {canEdit && (
         <details>
           <summary>Ändra datum</summary>

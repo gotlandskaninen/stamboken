@@ -20,8 +20,10 @@ vi.mock("@/lib/api", () => ({
 import {
   activateGenebank,
   dryRun,
+  newLink,
   saveDraft,
   saveRound,
+  sendTestMail,
   setOnTime,
   submitReport,
   withdrawReport,
@@ -123,6 +125,21 @@ describe("arsrapport actions", () => {
       await saveRound(2026, {}, "demo"),
       await activateGenebank(2026, 3, "demo"),
       await setOnTime("G9001", 2026, true, "demo"),
+    ])
+      expect(r).toMatchObject({ ok: false, problem: { status: 400 } });
+    expect(fetchApi).not.toHaveBeenCalled();
+  });
+  it("sends Ny länk and the test mail to their routes, and refuses a bad herd or genebank", async () => {
+    await newLink("G9001", 2026, "demo");
+    await sendTestMail(2026, 3, "demo");
+    expect(fetchApi.mock.calls.map((c) => [c[0], c[1].method])).toEqual([
+      ["/v2/arsrapport/besattning/G9001/2026/ny-lank", "POST"],
+      ["/v2/arsrapport/rundor/2026/genbanker/3/provmejl", "POST"],
+    ]);
+    fetchApi.mockClear();
+    for (const r of [
+      await newLink("../x", 2026, "demo"),
+      await sendTestMail(2026, 0, "demo"),
     ])
       expect(r).toMatchObject({ ok: false, problem: { status: 400 } });
     expect(fetchApi).not.toHaveBeenCalled();

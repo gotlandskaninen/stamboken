@@ -180,8 +180,13 @@ docker exec "$CONTAINER" bash -c "
 # and the load's foreign key would fail. One statement, so one transaction: the
 # FK (ON DELETE SET NULL) nulls herd_tracking.holder_contact_id and the sales
 # stay. An older schema without the table is skipped.
-DROP_BUYERS_SQL="DO \$\$ BEGIN IF to_regclass('buyer_contact') IS NOT NULL THEN DELETE FROM buyer_contact; END IF; END \$\$;"
-echo "Deleting the buyers outside the association in $STAGING_DB..."
+# The same statement closes the yearly report's links (step 3): the codes stay,
+# because submissions and commands point at them, but are revoked, and the
+# activations are marked sent, so the demo never sends an invitation and its
+# round is not closed (FA10). A sale proposal can carry a buyer's name; the
+# dump already leaves its rows out, and this deletes any that came anyway.
+DROP_BUYERS_SQL="DO \$\$ BEGIN IF to_regclass('buyer_contact') IS NOT NULL THEN DELETE FROM buyer_contact; END IF; IF to_regclass('sale_proposal') IS NOT NULL THEN DELETE FROM sale_proposal; END IF; IF to_regclass('report_access_code') IS NOT NULL THEN UPDATE report_access_code SET revoked_at = now() WHERE revoked_at IS NULL; END IF; IF to_regclass('yearly_report_round_genebank') IS NOT NULL THEN UPDATE yearly_report_round_genebank SET sent_at = now() WHERE sent_at IS NULL; END IF; END \$\$;"
+echo "Deleting the buyers and closing the report links in $STAGING_DB..."
 docker exec "$CONTAINER" psql -U "$DB_USER" -d "$STAGING_DB" -v ON_ERROR_STOP=1 -q -c "$DROP_BUYERS_SQL"
 
 if [ -n "$MAIL_SEQ" ]; then

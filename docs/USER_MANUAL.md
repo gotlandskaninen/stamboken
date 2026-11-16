@@ -742,18 +742,35 @@ Genbanksansvarig, administratör och genbankshjälpare ser hur rundan går i en 
 **Status för genbanken** finns på **Årsrapport** för genbanksansvariga. Överst väljer du
 genbank (om du har flera) och kan **Skriv ut tom blankett**. Är rundan inte aktiverad för
 genbanken visar sidan de tre datumen (**Öppnar**, **Sista dag för stödet**, **Stänger**) och
-**Aktivera**; datumen gäller alla genbanker. Inbjudningar skickas när utskicket är byggt.
-Därefter står aktiveringen på en rad, och **Ändra datum** öppnar datumen igen. Aktivera och
-ändra datum kan bara genbanksansvarig och administratör; hjälpare ser bara listan.
+**Aktivera**; datumen gäller alla genbanker. Under datumen står hur många besättningar
+inbjudan går till och hur många som saknar e-post och får blanketten med post, och
+**Skicka provmejl till mig** skickar inbjudan till din egen adress. I provmejlet finns länken
+`/rapport#prov`, som bara visar att länken fungerar; den riktiga länken skapas först i det
+riktiga mejlet. Inbjudningarna skickas klockan 07 på rundans första dag, med registerutdraget
+som PDF. Därefter står aktiveringen på en rad, med dagen då inbjudningarna skickades, och
+**Ändra datum** öppnar datumen igen. Aktivera, ändra datum och provmejl kan bara
+genbanksansvarig och administratör; hjälpare ser bara listan och antalen.
+
+**Länken i inbjudan** är personlig och ser ut som `/rapport#` följt av en kod. Medlemmen öppnar
+den utan att logga in, och länken gäller bara den besättningen till rundans sista dag. Koden
+står efter `#`, så den skickas aldrig till servern; skriv aldrig ut en riktig länk i
+ett ärende eller en rapport.
 
 Under det står ett filter per läge med antal (**Att ringa**, **Påbörjade**, **Alla** och de
 andra lägena); valet ligger i adressen. **Att ringa** är påbörjade rapporter
 från två dagar före sista dag för stödet, och besättningar vars blankett lämnade ut
 kaniner som avgör stödet. Varje rad visar besättningen (koden öppnar rapporten), läget,
 villkoren för stöd (**Hane**, **Hona**, **Kull**, **I tid**, med bock eller kryss), flaggor som
-**3 ej angivna**, när rapporten togs emot och åtgärder: **Mata in blankett** öppnar inkorgen
+**3 ej angivna** eller **Ingen e-post**, när rapporten togs emot och åtgärder. Under läget står
+inbjudans läge: **Inbjudan skickad**, **Inbjudan studsade**, **Inbjudan misslyckades** eller
+**Länken öppnad**. Studsade och misslyckade inbjudningar kommer också under **Att ringa** tills
+besättningen har rapporterat. **Mata in blankett** öppnar inkorgen
 för besättningen, och genbanksansvarig kan välja **I tid** (**Räknas**, **Ja** eller **Nej**)
-på en rad med rapport. Genbanksansvariga ser också huvudmedlemmens telefonnummer på raden, så att de kan ringa;
+på en rad med rapport. **Ny länk** på en besättning med e-post frågar
+**Den gamla länken slutar gälla. Skicka en ny länk till huvudmedlemmen?**; svarar du ja
+får huvudmedlemmen ett mejl med en ny länk, och den gamla slutar fungera. Det du eller
+medlemmen redan fyllt i finns kvar, och en medlem som redan rapporterat behöver den nya
+länken för att ändra eller dra tillbaka. Genbanksansvariga ser också huvudmedlemmens telefonnummer på raden, så att de kan ringa;
 hjälpare ser det inte.
 
 #### Notiser

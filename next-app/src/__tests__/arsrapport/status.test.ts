@@ -4,6 +4,7 @@ import {
   countByState,
   filterRows,
   parseFilter,
+  toCall,
   ROW_STATES,
   type RowState,
   type StatusRow,
@@ -17,6 +18,8 @@ const row = (
   herd,
   herd_name: null,
   state,
+  inbjudan: null,
+  ingen_epost: false,
   source: null,
   membership_after_end: null,
   received_at: null,
@@ -121,5 +124,35 @@ describe("Att ringa", () => {
     expect(herds(filterRows(rows, "att_ringa", null, "2027-12-31"))).toEqual([
       "G9007",
     ]);
+  });
+});
+
+describe("toCall and a failed invitation", () => {
+  it("calls a herd whose invitation bounced or failed, until it has reported", () => {
+    const today = "2027-01-01";
+    expect(
+      toCall(
+        row("G9001", "ej_rapporterad", { inbjudan: "studsade" }),
+        null,
+        today,
+      ),
+    ).toBe(true);
+    expect(
+      toCall(
+        row("G9001", "ej_rapporterad", { inbjudan: "misslyckades" }),
+        null,
+        today,
+      ),
+    ).toBe(true);
+    expect(
+      toCall(row("G9001", "inskickad", { inbjudan: "studsade" }), null, today),
+    ).toBe(false);
+    expect(
+      toCall(
+        row("G9001", "ej_rapporterad", { inbjudan: "skickad" }),
+        null,
+        today,
+      ),
+    ).toBe(false);
   });
 });

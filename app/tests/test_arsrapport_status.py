@@ -9,10 +9,13 @@ isort:skip_file
 import os
 from datetime import date, datetime, timedelta
 from datetime import time as clock
+from unittest import mock
 
 import utils.arsrapport as arsrapport
 import utils.database as db
 import utils.inbox as inbox
+import utils.report_code as report_code
+import utils.settings as settings
 from utils.arsrapport_statistik import innehav, statistik
 
 from tests.arsrapport_fixtures import ArsrapportTest
@@ -339,3 +342,55 @@ class StatusTest(ArsrapportTest):
             if n % 3 == 0:
                 self.form_item(herd, "ny")
         self.assertEqual(queries(), few)
+
+    def invite(self, herd, mail_status=None, opened=False):
+        """An active code for `herd` and, when `mail_status` is given, an invitation mail row in that state."""
+        member = db.Member.get(db.Member.membership == herd.membership)
+        code = report_code.issue_code(herd, self.round_, member, now=NOW)
+        if mail_status:
+            db.MailMessage.create(
+                kind="arsrapport.inbjudan",
+                recipient_kind="member",
+                recipient_id=member.id,
+                ref_type="access_code",
+                ref_id=code.id,
+                priority=2,
+                category="T",
+                status=mail_status,
+            )
+        if opened:
+            db.ReportAccessCode.update(last_opened_at=NOW).where(db.ReportAccessCode.id == code.id).execute()
+        return code
+
+    def test_status_invitation_states(self):
+        patcher = mock.patch.multiple(settings.mail, link_secret="test-link-secret", link_hosts=[])
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        queued, sent, bounced, failed, opened, revoked = (self.herd(f"G91{n:02d}") for n in range(6))
+        self.herd("G9199")  # no code at all
+        self.invite(queued, "queued")
+        self.invite(sent, "sent")
+        self.invite(bounced, "bounced")
+        self.invite(failed, "failed")
+        self.invite(opened, "sent", opened=True)
+        report_code.revoke(self.invite(revoked, "sent"), now=NOW)
+        rows = self.rows()
+        got = {herd: rows[herd]["inbjudan"] for herd in ("G9100", "G9101", "G9102", "G9103", "G9104", "G9105", "G9199")}
+        self.assertEqual(
+            got,
+            {
+                "G9100": None,  # still in the queue
+                "G9101": "skickad",
+                "G9102": "studsade",
+                "G9103": "misslyckades",
+                "G9104": "oppnad",
+                "G9105": None,  # revoked: the old link says nothing about the herd now
+                "G9199": None,
+            },
+        )
+
+    def test_status_no_email_flag(self):
+        self.herd("G9102", email=None)
+        rows = self.rows()
+        self.assertTrue(rows["G9102"]["ingen_epost"])
+        self.assertFalse(rows["G9001"]["ingen_epost"])
