@@ -10,6 +10,7 @@ import styles from "../medlem.module.css";
 import { MembershipsGridClient } from "./MembershipsGridClient";
 import { positiveInt } from "./query";
 import { NewMembershipButton } from "./NewMembershipDialog";
+import { GuideLink } from "../guide/GuideLink";
 import { ExportButtons } from "./ExportButtons";
 import type { MembershipRow } from "./types";
 import { MEMBERS_PAGE_SIZE } from "./types";
@@ -61,7 +62,14 @@ export default async function MembershipsListPage({
         eyebrow="Matrikel"
         title="Medlemsmatrikel"
         meta={`${body.total.toLocaleString("sv-SE")} medlemskap`}
-        actions={canEdit ? <NewMembershipButton /> : undefined}
+        actions={
+          canEdit ? (
+            <>
+              <GuideLink />
+              <NewMembershipButton />
+            </>
+          ) : undefined
+        }
       />
       <div className={styles.container}>
         <section className={`sb-card ${ds["ad-grid"]}`}>

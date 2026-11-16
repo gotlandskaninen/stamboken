@@ -168,7 +168,9 @@ Tills dess rapporterar du som tidigare.
 **Uppfödare** (besättningsägare), **genbanksansvarig** och **administratör** – rollerna
 som manualens tre delar handlar om. Dessutom finns **granskare**, som får se en genbank
 utan att ändra, **skötare**, som får sköta en annan medlems besättning, och
-**matrikeladministratör**, som hanterar medlemsregistret.
+**matrikeladministratör**, som hanterar medlemsregistret. Matrikeladministratören har
+en egen guide inne i medlemsregistret (**Guide** överst på sidorna), som bara syns
+för den rollen.
 
 ---
 
