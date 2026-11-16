@@ -4363,7 +4363,8 @@ def purge_member_applications(now) -> int:
     """
     # The columns are naive local times (datetime.now()): compare in that clock, and add the interval to the
     # row's date so the 29 February case lands on 28 February instead of rounding down from today.
-    local_now = now.astimezone().replace(tzinfo=None)
+    # One day of margin: the job runs nightly, so a row never outlives its 12 months (the policy's upper bound).
+    local_now = (now + timedelta(days=1)).astimezone().replace(tzinfo=None)
     cursor = DATABASE.execute_sql(
         """
         DELETE FROM member_application

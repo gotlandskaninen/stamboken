@@ -20,7 +20,7 @@ _USE_POSTGRES = bool(os.getenv("POSTGRES_HOST")) and bool(os.getenv("POSTGRES_DB
 
 NOW = datetime(2026, 11, 14, 3, 50, tzinfo=timezone.utc)
 OLD = datetime(2025, 11, 13)  # more than 12 calendar months before NOW
-YOUNG = datetime(2025, 11, 15)  # less than 12 calendar months before NOW
+YOUNG = datetime(2025, 11, 20)  # clearly less than 12 calendar months before NOW, margin included
 
 
 def _application(status, created_at, reviewed_at=None):
@@ -55,6 +55,13 @@ class TestPurgeMemberApplications(DatabaseTest):
         self.assertNotIn(pending_old, _ids())
         self.assertEqual(da.purge_member_applications(NOW), 0)
 
+    def test_one_day_margin_deletes_a_row_the_next_run_would_miss(self):
+        kept = _application("pending", datetime(2025, 11, 15, 12, 0))  # 12 months end after tonight's cutoff
+        last_day = _application("pending", datetime(2025, 11, 15, 1, 0))  # 12 months end before tomorrow's run
+        da.purge_member_applications(datetime(2026, 11, 14, 3, 50).astimezone())
+        self.assertEqual(_ids(), {kept})
+        self.assertNotIn(last_day, _ids())
+
     def test_rejected_without_reviewed_at_counts_from_submission(self):
         gone = _application("rejected", OLD)
         kept = _application("rejected", YOUNG)
@@ -64,9 +71,9 @@ class TestPurgeMemberApplications(DatabaseTest):
 
     def test_leap_day_application_goes_on_28_february(self):
         leap = _application("pending", datetime(2028, 2, 29, 1, 0))
-        da.purge_member_applications(datetime(2029, 2, 27, 23, 0).astimezone())
+        da.purge_member_applications(datetime(2029, 2, 26, 23, 0).astimezone())
         self.assertIn(leap, _ids())
-        da.purge_member_applications(datetime(2029, 2, 28, 3, 50).astimezone())
+        da.purge_member_applications(datetime(2029, 2, 27, 3, 50).astimezone())
         self.assertNotIn(leap, _ids())
 
     def test_job_logs_and_closes_connection(self):
