@@ -187,7 +187,7 @@ test("5b. A link opened inside the open page is exchanged too", async () => {
   expect(page.url()).not.toContain("#");
 });
 
-test("5c. The clearing script is the first inline script, in the head", async ({
+test("5c. The clearing script is the first inline script, in the head (it is not claimed to precede framework chunks)", async ({
   request,
 }) => {
   const html = await (await request.get("/rapport")).text();
@@ -200,7 +200,8 @@ test("5c. The clearing script is the first inline script, in the head", async ({
   );
   expect(inline[0]).toBeLessThan(clear);
   expect(html.slice(inline[0], clear)).toContain("location.hash");
-  // ... and anything the framework put above it is an async chunk by src, which cannot run before the parser reaches us.
+  // ... and anything above it is an async chunk by src: those may run first when the page is slow, so the order is
+  // only checked to be as described, not claimed to be guaranteed.
   const before = html.slice(0, inline[0]).match(/<script[^>]*>/g) ?? [];
   for (const tag of before) expect(tag).toMatch(/\ssrc=.*\sasync/);
 });

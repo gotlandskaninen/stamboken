@@ -117,14 +117,14 @@ describe("LinkGate", () => {
       history.pushState(null, "", "/rapport#B");
       window.dispatchEvent(new HashChangeEvent("hashchange"));
     });
+    await act(async () => {
+      pending.A({ status: 403, ok: false }); // the old link answers first, and is stale
+    });
     await waitFor(() => expect(pending.B).toBeTruthy());
     await act(async () => {
       pending.B({ status: 200, ok: true, json: () => ({ herd: "M2" }) });
     });
     await waitFor(() => expect(replace).toHaveBeenCalledWith("/rapport?kod=2"));
-    await act(async () => {
-      pending.A({ status: 403, ok: false }); // the old link answers last
-    });
     expect(replace).not.toHaveBeenCalledWith("/rapport/ogiltig");
   });
 
@@ -144,5 +144,102 @@ describe("LinkGate", () => {
     history.replaceState(null, "", "/stamboken#section");
     new Function(CLEAR_HASH_SCRIPT)();
     expect(location.hash).toBe("#section");
+  });
+
+  const deferred = () => {
+    const sent: string[] = [];
+    const pending: Record<string, (r: unknown) => void> = {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url: string, init: { body: string }) =>
+          new Promise((resolve) => {
+            const t = JSON.parse(init.body).token;
+            sent.push(t);
+            pending[t] = resolve;
+          }),
+      ),
+    );
+    return { sent, pending };
+  };
+  const hashTo = (t: string) =>
+    act(async () => {
+      history.pushState(null, "", `/rapport#${t}`);
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+  const good = (herd: string) => ({
+    status: 200,
+    ok: true,
+    json: () => ({ herd }),
+  });
+
+  it("runs one exchange at a time: B is not sent before A has answered", async () => {
+    replace.mockReset();
+    const { sent, pending } = deferred();
+    getMine.mockResolvedValue({
+      ok: true,
+      data: [{ code_id: 2, herd: "M2", herd_name: null, year: 2025 }],
+    });
+    (window as { __rapportToken?: string }).__rapportToken = "A";
+    render(<LinkGate />);
+    await waitFor(() => expect(sent).toEqual(["A"]));
+    await hashTo("B");
+    await act(async () => {}); // time for a wrongly eager second request
+    expect(sent).toEqual(["A"]);
+    await act(async () => {
+      pending.A(good("M1"));
+    });
+    await waitFor(() => expect(sent).toEqual(["A", "B"]));
+    await act(async () => {
+      pending.B(good("M2"));
+    });
+    await waitFor(() => expect(replace).toHaveBeenCalledWith("/rapport?kod=2"));
+    expect(replace).toHaveBeenCalledTimes(1); // only the latest link navigates
+  });
+
+  it("a link replaced while queued is never sent", async () => {
+    const { sent, pending } = deferred();
+    getMine.mockResolvedValue({ ok: true, data: [] });
+    (window as { __rapportToken?: string }).__rapportToken = "A";
+    render(<LinkGate />);
+    await waitFor(() => expect(sent).toEqual(["A"]));
+    await hashTo("B");
+    await hashTo("C");
+    await act(async () => {
+      pending.A(good("M1"));
+    });
+    await waitFor(() => expect(sent).toEqual(["A", "C"]));
+  });
+
+  it("no continuation after unmount", async () => {
+    replace.mockReset();
+    const { sent, pending } = deferred();
+    (window as { __rapportToken?: string }).__rapportToken = "A";
+    const { unmount } = render(<LinkGate />);
+    await waitFor(() => expect(sent).toEqual(["A"]));
+    unmount();
+    await act(async () => {
+      pending.A({ status: 403, ok: false });
+    });
+    expect(replace).not.toHaveBeenCalled();
+  });
+
+  it("the first exchange survives Strict Mode's effect replay", async () => {
+    replace.mockReset();
+    const { sent, pending } = deferred();
+    (window as { __rapportToken?: string }).__rapportToken = "A";
+    render(
+      <React.StrictMode>
+        <LinkGate />
+      </React.StrictMode>,
+    );
+    await waitFor(() => expect(sent).toEqual(["A"]));
+    await act(async () => {
+      pending.A({ status: 403, ok: false });
+    });
+    await waitFor(() =>
+      expect(replace).toHaveBeenCalledWith("/rapport/ogiltig"),
+    );
+    expect(sent).toEqual(["A"]); // not sent twice either
   });
 });

@@ -61,16 +61,22 @@ export function LinkGate({
   const started = React.useRef(false);
   const token = React.useRef("");
 
-  // Only the latest requested exchange may change the page: an older one that answers late is dropped.
+  // One exchange at a time, and only the latest requested one may change the page: each answer sets a session cookie, so
+  // a second exchange sent before the first has answered could be overwritten by the first one's late Set-Cookie.
   const latest = React.useRef(0);
+  const chain = React.useRef<Promise<void>>(Promise.resolve());
+  const alive = React.useRef(true); // false after unmount: nothing continues then
+  React.useEffect(() => {
+    alive.current = true; // Strict Mode replays the effect: the first exchange must survive it
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
-  const open = React.useCallback(
-    async (link: string) => {
-      const mine = ++latest.current;
-      const current = () => mine === latest.current;
-      token.current = link; // kept for "Försök igen"
-      setPending(true);
-      setPhase("idle");
+  const run = React.useCallback(
+    async (link: string, mine: number) => {
+      const current = () => alive.current && mine === latest.current;
+      if (!current()) return; // replaced while it waited its turn
       try {
         const res = await fetch("/api/v2/rapport/oppna", {
           method: "POST",
@@ -104,6 +110,17 @@ export function LinkGate({
     [router],
   );
 
+  const open = React.useCallback(
+    (link: string) => {
+      const mine = ++latest.current;
+      token.current = link; // kept for "Försök igen"
+      setPending(true);
+      setPhase("idle");
+      chain.current = chain.current.then(() => run(link, mine));
+    },
+    [run],
+  );
+
   const begin = React.useCallback(
     (t: string) => {
       if (t === "prov") {
@@ -111,7 +128,7 @@ export function LinkGate({
         setPending(false);
         return setPhase("test");
       }
-      void open(t);
+      open(t);
     },
     [open],
   );
@@ -136,7 +153,7 @@ export function LinkGate({
   if (phase === "test") return <Message text={TEST_LINK_TEXT} />;
   if (phase === "cookies") return <Message text={COOKIES_TEXT} />;
   if (phase === "net")
-    return <Message text={NET_TEXT} retry={() => void open(token.current)} />;
+    return <Message text={NET_TEXT} retry={() => open(token.current)} />;
   if (pending || navigating || (phase === "start" && missing))
     return <Skeleton />;
   if (missing === "ute") return <Message text={EXPIRED_TEXT} />;
