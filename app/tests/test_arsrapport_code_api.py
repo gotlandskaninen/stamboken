@@ -288,6 +288,9 @@ class CodeApiTest(ArsrapportTest):
             ("POST", f"/api/v2/arsrapport/rundor/2025/genbanker/{self.gotland.id}/aktivera", {}),
             ("GET", f"/api/v2/arsrapport/2025/status?genebank_id={self.gotland.id}", None),
             ("POST", "/api/v2/arsrapport/besattning/G9001/2025/i-tid", {"on_time": True}),
+            ("GET", "/api/v2/arsrapport/besattning/G9001/2025/forslag", None),
+            ("POST", "/api/v2/arsrapport/forslag/1/godkann", {}),
+            ("POST", "/api/v2/arsrapport/forslag/1/avvisa", {"reason": "x", "then": "kvar"}),
             ("GET", "/api/v2/arsrapport/blankett.pdf", None),
             ("GET", "/api/v2/arsrapport/mina", None),
         )
