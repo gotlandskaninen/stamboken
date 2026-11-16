@@ -120,6 +120,7 @@ EXEMPT_ENDPOINTS = frozenset(
         # work and the originals stay gated.
         ("inbox.upload", "POST"),
         ("inbox.my_uploads", "GET"),
+        ("inbox.uploads_seen", "POST"),
         ("inbox.notice_count", "GET"),
         ("health_check", "GET"),
         # No data: the SPA shell, which also answers every unknown GET with 404.

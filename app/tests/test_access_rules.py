@@ -336,6 +336,7 @@ class TestLegacyList(unittest.TestCase):
                 ("member_applications.list_public_genebanks", "GET"),
                 ("inbox.upload", "POST"),
                 ("inbox.my_uploads", "GET"),
+                ("inbox.uploads_seen", "POST"),
                 ("inbox.notice_count", "GET"),
                 ("health_check", "GET"),
                 ("main", "GET"),

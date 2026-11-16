@@ -917,8 +917,11 @@ läsningen är på och inte har gått igenom de senaste 20 minuterna. Gränssnit
 
 ### `GET /api/v2/inkorg/mina-inskick`
 
-**Vem:** inloggad. Anroparens egna inskick, nyast först, i klartext. Anropet läser också
-anroparens notiser av typen `klar`.
+**Vem:** inloggad. Anroparens egna inskick, nyast först, i klartext. Anropet ändrar ingenting.
+
+`POST /api/v2/inkorg/mina-inskick/sedda` markerar anroparens notiser av typen `klar` som
+lästa och svarar `{"read": <antal>}`. Sidan "Mina inskick" anropar det när den visas. Det är
+ett eget anrop för att en länk till listan inte ska kunna kvittera någons notiser.
 
 ```json
 {
