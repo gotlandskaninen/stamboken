@@ -82,7 +82,8 @@ class RapportLinkTest(ArsrapportTest):
         _, _, expired_token = self.new_code("G9003")
         forged = f"{self.code.id}.{'A' * 22}"
         unknown = f"{self.code.id + 999}.{self.mac()}"
-        for token in (forged, unknown, revoked_token):
+        no_row = mail.link_token("rapport", self.code.id + 999)  # L8: a valid mac for an id with no row
+        for token in (forged, unknown, no_row, revoked_token):
             with self.subTest(token=token.split(".")[0]):
                 response = self.exchange(token)
                 self.assertEqual((response.status_code, response.headers["Location"]), (303, INVALID))
@@ -148,6 +149,17 @@ class RapportLinkTest(ArsrapportTest):
         self.assertLess(arsrapport.now() - seen, timedelta(minutes=1))
         report_code.revoke(self.code, now=arsrapport.now())
         self.assertEqual(self.client.get("/api/v2/rapport/mina").get_json(), [])
+
+    def test_idle_codes_are_not_revived_by_a_new_link(self):
+        """M1: an idle session loses its codes before the next link joins; the other herd stays closed."""
+        self.exchange()
+        with self.client.session_transaction() as session:
+            session["rapport_seen"] = (arsrapport.now() - timedelta(hours=3)).isoformat()
+        _, other, token = self.new_code("G9002")
+        self.exchange(token)
+        self.assertEqual([entry[0] for entry in self.session()["rapport"]], [other.id])
+        rows = self.client.get("/api/v2/rapport/mina").get_json()
+        self.assertEqual([row["herd"] for row in rows], ["G9002"])
 
     def test_at_most_four_codes(self):
         codes = [self.code.id]

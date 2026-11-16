@@ -6,6 +6,7 @@ Synthetic herds and addresses only.
 isort:skip_file
 """
 
+import threading
 from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 
@@ -54,6 +55,8 @@ class ReportCodeTest(ArsrapportTest):
         self.assertIsNone(report_code.resolve(good[:-1] + ("A" if good[-1] != "A" else "B")))
         self.assertIsNone(report_code.resolve(f"{code.id + 99}.{good.split('.')[1]}"))
         self.assertIsNone(report_code.resolve("not a token"))
+        # L8: a valid mac for an id with no row, which is the path a forged id never takes
+        self.assertIsNone(report_code.resolve(mail.link_token("rapport", code.id + 999)))
 
     def test_link_from_old_host_still_verifies(self):
         code = self.issue()
@@ -129,3 +132,52 @@ class ReportCodeTest(ArsrapportTest):
         self.assertEqual(actor_key(CodeActor(code)), ("code", code.id))
         self.assertEqual(actor_key(self.owner), ("user", self.owner.id))
         self.assertNotEqual(actor_key(CodeActor(code)), actor_key(self.owner))
+
+    def test_issue_survives_a_lost_race(self):
+        """L5: the loser of two concurrent issues re-reads and returns the winner's code."""
+        winner = self.issue()
+        real = report_code._active  # pylint: disable=protected-access
+        calls = []
+
+        def stale(herd, round_):  # the first read saw no code, as a transaction that started before the winner's
+            calls.append(1)
+            return None if len(calls) == 1 else real(herd, round_)
+
+        with mock.patch.object(report_code, "_active", stale):
+            self.assertEqual(self.issue().id, winner.id)
+        self.assertEqual(db.ReportAccessCode.select().count(), 1)
+
+    def test_issue_from_two_connections_gives_one_code(self):
+        results, barrier = [], threading.Barrier(2)
+
+        def run():
+            try:
+                barrier.wait(timeout=10)
+                results.append(report_code.issue_code(self.herd, self.round_, self.member, now=NOW).id)
+            finally:
+                db.DB_PROXY.close()
+
+        threads = [threading.Thread(target=run) for _ in range(2)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=30)
+        self.assertEqual(len(results), 2, "a thread raised")
+        self.assertEqual(len(set(results)), 1)
+        self.assertEqual(db.ReportAccessCode.select().count(), 1)
+
+    def test_a_code_for_an_earlier_main_member_is_replaced(self):
+        old = self.issue()
+        db.Member.update(end_date=date(2026, 1, 1)).where(db.Member.id == self.member.id).execute()
+        new_member = db.Member.create(
+            first_name="Ny",
+            last_name="Huvud",
+            email="ny@example.invalid",
+            membership=self.herd.membership,
+            role="huvudmedlem",
+        )
+        fresh = self.issue(member=new_member)
+        self.assertNotEqual(fresh.id, old.id)
+        self.assertIsNotNone(db.ReportAccessCode.get_by_id(old.id).revoked_at)
+        self.assertEqual(fresh.member_id, new_member.id)
+        self.assertEqual(self.issue(member=new_member).id, fresh.id)

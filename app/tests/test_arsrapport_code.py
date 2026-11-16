@@ -6,6 +6,7 @@ the step-2 owner tests have it with an account. Synthetic herds, rabbits and add
 isort:skip_file
 """
 
+import threading
 from datetime import date, timedelta
 from unittest import mock
 
@@ -287,3 +288,73 @@ class CodeReportTest(ArsrapportTest):
             db.HerdTracking.individual == self.rabbits_[0].id, db.HerdTracking.kind == "ATTESTATION"
         )
         self.assertEqual((row.voided_by_user_id, row.voided_by_access_code_id), (None, self.code.id))
+
+    def test_revoke_waits_for_a_write_that_passed_the_recheck(self):
+        """L3: a revoke that comes after the recheck waits for the submission, and the write stands as the link's."""
+        entered, release, result = threading.Event(), threading.Event(), {}
+        real = arsrapport._lock_items  # pylint: disable=protected-access
+        body, access = self.body(*self.entries), self.access()
+
+        def pause(*args, **kwargs):  # after the recheck, before any write
+            entered.set()
+            release.wait(20)
+            return real(*args, **kwargs)
+
+        def submit():
+            try:
+                with APP.app_context():
+                    sub = arsrapport.parse_submission(body, paper=False)
+                    result["receipt"] = arsrapport.submit(self.h, self.round_, access, CodeActor(self.code), sub)
+            finally:
+                db.DB_PROXY.close()
+
+        def revoke():
+            try:
+                report_code.revoke(self.code, now=arsrapport.now())
+                result["revoked"] = True
+            finally:
+                db.DB_PROXY.close()
+
+        with mock.patch.object(arsrapport, "_lock_items", pause):
+            first = threading.Thread(target=submit)
+            first.start()
+            self.assertTrue(entered.wait(20), "the submission never reached its writes")
+            second = threading.Thread(target=revoke)
+            second.start()
+            second.join(1.5)
+            waiting = second.is_alive()
+            release.set()
+            first.join(30)
+            second.join(30)
+        self.assertTrue(waiting, "the revoke did not wait for the submission")
+        self.assertIn("receipt", result)
+        self.assertTrue(result.get("revoked"))
+        self.assertEqual(self.report().access_code_id, self.code.id)
+        self.assertIsNotNone(db.ReportAccessCode.get_by_id(self.code.id).revoked_at)
+
+    def test_a_link_cannot_probe_buyer_names_through_the_reason(self):
+        """Codex 4: a link's reason is dropped, so the dry run answers the same whatever it says."""
+        buyer = {"name": "Test Köpare", "town": "Visby"}
+        sold = self.sald(self.rabbits_[0], "utanfor", 2025, 11, 20, kopare=buyer)
+        body = self.body(sold, *self.entries[1:])
+        arsrapport.submit(
+            self.h, self.round_, arsrapport.Access("owner"), self.owner, arsrapport.parse_submission(body, paper=False)
+        )
+        self.day(1)
+        probe = arsrapport.parse_submission({**body, "revision": 1, "reason": "Köpare"}, paper=False)
+        report = arsrapport.current_report(self.h, self.round_)
+
+        def codes(access):
+            refusals, _ = arsrapport.check(self.h, self.round_, access, report, probe, on=arsrapport.today())
+            return [r.code for r in refusals]
+
+        self.assertIn("orsak_kopare", codes(arsrapport.Access("owner")))  # the account is told, as before
+        self.assertNotIn("orsak_kopare", codes(self.access()))
+        self.assertIsNone(arsrapport.without_reason(probe).reason)
+
+    def test_withdraw_by_a_link_ignores_a_given_reason(self):
+        self.send(self.body(*self.entries))
+        self.day(1)
+        access = self.access()
+        arsrapport.withdraw(self.h, self.round_, access, CodeActor(self.code), revision=1, reason="Köpare")
+        self.assertIsNone(self.report_by_status("voided").void_reason)

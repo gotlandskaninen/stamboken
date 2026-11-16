@@ -12,7 +12,7 @@ import json
 import re
 import uuid
 from collections import Counter
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from datetime import date, datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
@@ -291,13 +291,27 @@ def code_access(herd, round_, code_ids):
     return None
 
 
-def _recheck_code(access, herd, on=None):
-    """E4 again, under the report's lock, on rows read afresh: the manager may have revoked the code since the page."""
-    if access.code is None:
-        return
-    code, herd = ReportAccessCode.get_by_id(access.code.id), Herd.get_by_id(herd.id)
-    if report_code.refusal(code, herd, today=on or today()) is not None:
+def require_valid_code(code_id, herd, on=None, *, lock=False):
+    """
+    E4 on rows read afresh: 403 `lank_ogiltig` unless the code is valid for the herd. With `lock` the code row is
+    read FOR SHARE and held to the end of the transaction, so a revoke (an UPDATE of that row) waits for the write
+    that passed this check, and a revoke that came first is seen.
+    """
+    query = ReportAccessCode.select().where(ReportAccessCode.id == code_id)
+    code = (query.for_update("FOR SHARE") if lock else query).get()
+    if report_code.refusal(code, Herd.get_by_id(herd.id), today=on or today()) is not None:
         raise ArsrapportError(403, LINK_INVALID, code="lank_ogiltig")
+
+
+def _recheck_code(access, herd, on=None):
+    """E4 again, under the report's lock: the manager may have revoked the code since the page."""
+    if access.code is not None:
+        require_valid_code(access.code.id, herd, on, lock=True)
+
+
+def without_reason(sub):
+    """A link's correction reason is the system's: a client-supplied one would let the dry run probe buyer names."""
+    return replace(sub, reason=None) if sub.reason else sub
 
 
 def lock_report(round_, herd):
@@ -1493,6 +1507,8 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
     The dry run (5.4 point 1): (refusals, warnings) for the submission `sub` on the herd's current `report`, as of
     `on`. It takes no lock and writes nothing; Skicka runs it again under the locks.
     """
+    if access.code is not None:
+        sub = without_reason(sub)
     year, end = round_.report_year, round_.end_date
     last, late = date(year, 12, 31), end is not None and on > end
     # D11, P39c: after end_date an editor, and a helper's first entry, both with a reason
@@ -1921,6 +1937,7 @@ def find_submission(key, herd, round_, user, request_hash):
     """
     if key is None:
         return None
+    actors = user if isinstance(user, (list, tuple)) else [user]  # a login and the links of the session
     saved = (
         YearlyReportSubmission.select(YearlyReportSubmission, YearlyHerdReport)
         .join(YearlyHerdReport)
@@ -1932,7 +1949,7 @@ def find_submission(key, herd, round_, user, request_hash):
     report = saved.report
     saved_by = ("code", saved.access_code_id) if saved.access_code_id is not None else ("user", saved.user_id)
     if (
-        saved_by == actor_key(user)
+        any(saved_by == actor_key(actor) for actor in actors)
         and (report.herd_id, report.round_id, report.status) == (herd.id, round_.id, "submitted")
         and hmac.compare_digest(saved.request_hash, request_hash)
     ):
@@ -2097,7 +2114,9 @@ def apply_diff(report, herd, user, grant, rabbit_id, want: list[Effect], prev_en
                 user,
                 rabbit_id,
                 lambda ctx, undo=undo: undo,
-                grant=ReportGrant(grant.inbox_grant, report_ops=ops, code=grant.code, report=grant.report),
+                grant=ReportGrant(
+                    grant.inbox_grant, report_ops=ops, code=grant.code, report=grant.report
+                ),
             )
         else:
             (Weight if c.kind == "weight" else Bodyfat).delete_by_id(c.ref)
@@ -2188,14 +2207,16 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         raise _bad("submission_key", "Ange submission_key som ett UUID.")
     at = now or globals()["now"]()  # the parameter hides the module's clock, which the tests patch
     on, year = at.astimezone(STOCKHOLM).date(), round_.report_year
+    if access.code is not None:
+        sub = without_reason(sub)
     last, digest, paper = date(year, 12, 31), request_hash(sub), access.source == "paper"
     same = (YearlyHerdReport.herd == herd.id) & (YearlyHerdReport.round == round_.id)
     with DB_PROXY.atomic():
         lock_report(round_, herd)
+        _recheck_code(access, herd, on)  # E4 before a retry's receipt too; the paper item's exception is below
         saved = find_submission(sub.key, herd, round_, user, digest)
         if saved is not None:  # before any item gate: a retry after the item closed (Codex 5)
             return receipt(saved)
-        _recheck_code(access, herd, on)
         if paper:
             check_paper(sub, access, on)
         # the membership before the report row, and the main member and its e-mail read under it, before any write
@@ -2210,7 +2231,9 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         refusals, _ = check(herd, round_, access, report, sub, on=on)
         if refusals:
             raise _cannot(refusals)
-        grant = ReportGrant(inbox.InboxGrant(item, user, pages[0]) if paper else None, code=access.code, report=report)
+        grant = ReportGrant(
+            inbox.InboxGrant(item, user, pages[0]) if paper else None, code=access.code, report=report
+        )
         added, change = [], report is not None
         if change:  # Ändra (D5): the same row, and each changed rabbit gets the diff of the report's effects
             before = _entries(_submissions(report)[-1].data.get("rabbits") or {})
@@ -2310,7 +2333,7 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
     """
     if access.role == "helper":
         raise ArsrapportError(403, "Genbankshjälpare kan inte dra tillbaka en rapport.")
-    reason = _text(reason, "reason")
+    reason = None if access.code is not None else _text(reason, "reason")
     if access.editor and not reason:
         raise _bad("reason", "Skriv varför rapporten dras tillbaka.")
     at = now or globals()["now"]()  # the parameter hides the module's clock, which the tests patch

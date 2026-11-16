@@ -78,17 +78,15 @@ def activate(year, genebank_id):
     return jsonify(arsrapport.round_json(round_))
 
 
-def _code_in_session(herd, round_):
-    """The newest code of the session for the herd and round, valid or not: who a retry or a refusal is about."""
+def _codes_in_session(herd, round_):
+    """The session's codes for the herd and round, newest first, valid or not: who a retry or a refusal is about."""
     ids = session_codes(arsrapport.now())
     if not ids:
-        return None
-    return (
-        ReportAccessCode.select()
-        .where(ReportAccessCode.id.in_(ids), ReportAccessCode.herd == herd.id, ReportAccessCode.round == round_.id)
-        .order_by(ReportAccessCode.id.desc())
-        .first()
+        return []
+    query = ReportAccessCode.select().where(
+        ReportAccessCode.id.in_(ids), ReportAccessCode.herd == herd.id, ReportAccessCode.round == round_.id
     )
+    return list(query.order_by(ReportAccessCode.id.desc()))
 
 
 def _actor(access):
@@ -96,17 +94,17 @@ def _actor(access):
     return CodeActor(access.code) if access.code else current_user
 
 
-def _retry_actor(herd, round_):
+def _retry_actors(herd, round_):
     """
-    Who a retry of Skicka is looked up for, before the access is read: the account when it has a right to the herd,
-    else the session's code for it, valid or not (a revoked link still gets its receipt), else the account.
+    Who a retry of Skicka may be looked up for, before the access is read: the account, and the session's codes for
+    the herd, valid or not. A submission made with a code gets its receipt only while that code is valid (E4); the
+    retry of a paper item's account submission keeps its exception (Codex 5). The second element says whether the
+    request runs as a link, so that its reason is dropped before the request hash is made.
     """
-    if current_user.is_authenticated and arsrapport.report_access(current_user, herd) is not None:
-        return current_user
-    code = _code_in_session(herd, round_)
-    if code is not None:
-        return CodeActor(code)
-    return current_user if current_user.is_authenticated else None
+    user = current_user if current_user.is_authenticated else None
+    codes = [CodeActor(code) for code in _codes_in_session(herd, round_)]
+    own_right = user is not None and arsrapport.report_access(user, herd) is not None
+    return ([user] if user is not None else []) + codes, bool(codes) and not own_right
 
 
 def report_actor_required(f):
@@ -223,9 +221,12 @@ def submit(herd, year):
     sub = arsrapport.parse_submission(_submission_body(), paper=request.args.get("post") is not None)  # before lookups
     target, round_ = Herd.get_or_none(Herd.herd == herd), arsrapport.get_round(year)
     if target is not None and round_ is not None:  # before report_access: a retry after the item closed (Fable 5)
-        who = _retry_actor(target, round_)
-        saved = arsrapport.find_submission(sub.key, target, round_, who, arsrapport.request_hash(sub)) if who else None
+        actors, as_link = _retry_actors(target, round_)
+        digest = arsrapport.request_hash(arsrapport.without_reason(sub) if as_link else sub)
+        saved = arsrapport.find_submission(sub.key, target, round_, actors, digest) if actors else None
         if saved is not None:
+            if saved.access_code_id is not None:  # E4 on every use, also for a receipt
+                arsrapport.require_valid_code(saved.access_code_id, target)
             return jsonify(arsrapport.receipt(saved))
     target, round_, access = _report_target(herd, year)
     return jsonify(arsrapport.submit(target, round_, access, _actor(access), sub))

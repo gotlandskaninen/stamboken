@@ -6,6 +6,8 @@ The token is `mail.link_token("rapport", code.id)`: no code or hash of it is sto
 from dataclasses import dataclass
 from datetime import date, datetime
 
+from peewee import IntegrityError
+
 import utils.settings as settings
 from utils.database import DB_PROXY, Herd, Member, ReportAccessCode
 from utils.mail import link_token, verify_link
@@ -26,16 +28,33 @@ def invitation_recipient(herd: Herd) -> Member | None:
     return member
 
 
+def _active(herd, round_):
+    return ReportAccessCode.get_or_none(
+        ReportAccessCode.herd == herd.id, ReportAccessCode.round == round_.id, ReportAccessCode.revoked_at.is_null()
+    )
+
+
 def issue_code(herd: Herd, round_, member: Member, *, now: datetime) -> ReportAccessCode:
-    """The herd's active code for the round, or a new one that expires on the round's end date."""
+    """
+    The herd's active code for the round, or a new one that expires on the round's end date. A code issued to an
+    earlier main member is revoked and replaced, since refusal would reject it. Two calls at once: the partial unique
+    index lets one insert win, and the other returns the winner's code.
+    """
     with DB_PROXY.atomic():
-        code = ReportAccessCode.get_or_none(
-            ReportAccessCode.herd == herd.id, ReportAccessCode.round == round_.id, ReportAccessCode.revoked_at.is_null()
-        )
+        code = _active(herd, round_)
+        if code is not None and code.member_id != member.id:
+            revoke(code, now=now)
+            code = None
         if code is None:
-            code = ReportAccessCode.create(
-                herd=herd.id, round=round_.id, member=member.id, expires_at=round_.end_date, created_at=now
-            )
+            try:
+                with DB_PROXY.atomic():  # a savepoint: the lost race leaves the transaction usable
+                    code = ReportAccessCode.create(
+                        herd=herd.id, round=round_.id, member=member.id, expires_at=round_.end_date, created_at=now
+                    )
+            except IntegrityError:
+                code = _active(herd, round_)
+                if code is None:
+                    raise
         return code
 
 

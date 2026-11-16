@@ -83,14 +83,38 @@ class CodeApiTest(ArsrapportTest):
         self.assertEqual(out.status_code, 200, out.get_data(as_text=True))
         self.assertEqual(db.YearlyHerdReport.get_by_id(report.id).voided_by_access_code_id, self.code.id)
 
-    def test_retry_gets_its_receipt_also_after_revocation(self):
+    def test_retry_gets_its_receipt_only_while_the_code_is_valid(self):
+        """Codex 5: E4 holds for a receipt too; a revoked link answers lank_ogiltig, not the receipt and not 409."""
         self.open_link()
         body = self.body_for(self.rabbits_)
         first = self.api("POST", "/besattning/G9001/2025/skicka", **body)
         self.assertEqual(first.status_code, 200)
-        report_code.revoke(self.code, now=arsrapport.now())
         again = self.api("POST", "/besattning/G9001/2025/skicka", **body)
         self.assertEqual((again.status_code, again.get_json()), (200, first.get_json()))
+        report_code.revoke(self.code, now=arsrapport.now())
+        gone = self.api("POST", "/besattning/G9001/2025/skicka", **body)
+        self.assertEqual((gone.status_code, gone.get_json()["code"]), (403, "lank_ogiltig"))
+
+    def test_retry_after_login_gets_the_links_receipt(self):
+        """Opus L6: the response was lost, the member logged in, and the same request comes again."""
+        self.open_link()
+        body = self.body_for(self.rabbits_)
+        first = self.api("POST", "/besattning/G9001/2025/skicka", **body)
+        self.assertEqual(first.status_code, 200)
+        self.login("owner")
+        self.open_link()  # the member opens the link again after logging in
+        again = self.api("POST", "/besattning/G9001/2025/skicka", **body)
+        self.assertEqual((again.status_code, again.get_json()), (200, first.get_json()))
+
+    def test_retry_after_a_reissue_is_refused_not_409(self):
+        self.open_link()
+        body = self.body_for(self.rabbits_)
+        self.assertEqual(self.api("POST", "/besattning/G9001/2025/skicka", **body).status_code, 200)
+        report_code.revoke(self.code, now=arsrapport.now())
+        new = report_code.issue_code(self.h, self.round_, self.member, now=arsrapport.now())
+        self.open_link(new)  # the session holds the old, revoked code and the new one
+        again = self.api("POST", "/besattning/G9001/2025/skicka", **body)
+        self.assertEqual((again.status_code, again.get_json()["code"]), (403, "lank_ogiltig"))
 
     def test_code_session_cannot_reach_another_herd(self):
         self.open_link()

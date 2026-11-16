@@ -94,6 +94,7 @@ def open_link(token):
     except Exception as exc:  # pylint: disable=broad-except  # the 303 is the same, and the log never names the token
         current_app.logger.error("Report link exchange failed: %s", type(exc).__name__)
         return _answer(_INVALID)
+    session_codes(now)  # E3: an idle session loses its codes before this one joins, so they are not revived
     others = [entry for entry in session.get("rapport") or [] if entry[0] != code.id]
     session["rapport"] = (others + [[code.id, _environment()]])[-MAX_CODES:]
     touch(now)
