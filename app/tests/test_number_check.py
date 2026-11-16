@@ -491,15 +491,28 @@ class TestRegistration(NumberCheckMixin, DatabaseTest):
         self.assertEqual((response.status_code, problem["stamboken_number"]), (409, "G1-2522"))
         self.assertEqual(self._kinds(problem), ["position", "number_taken"])
 
-    def test_promote_in_a_litter_without_litter_number_is_refused(self):
+    def _unnumbered(self):
         db.Breeding.update(litter_number=None, litter_size6w=4).where(db.Breeding.id == self.litter.id).execute()
-        bunny = db.Bunny.create(breeding=self.litter, slot_order=1, observed_sex="female", observed_color="bleighe")
+        return db.Bunny.create(breeding=self.litter, slot_order=1, observed_sex="female", observed_color="bleighe")
+
+    def test_promote_in_a_litter_without_litter_number_numbers_it(self):
+        bunny = self._unnumbered()
         self._login()
-        response = self._promote(bunny, paper_number="G1-2521")
-        # The roster does not number a litter (a certificate does, test_register_litter): still refused.
-        self.assertEqual(
-            (response.status_code, response.get_json()["detail"]), (422, "Breeding record has no litter_number set")
-        )
+        response = self._promote(bunny, paper_number="G1-2561")
+        self.assertEqual(response.status_code, 201, response.get_json())
+        self.assertEqual(response.get_json()["individual"]["number"], "G1-2561")
+        self.assertEqual(db.Breeding.get_by_id(self.litter.id).litter_number, 6)
+
+    def test_promote_in_a_litter_without_litter_number_goes_to_the_manager_when_it_is_taken(self):
+        bunny = self._unnumbered()
+        self._litter(date(2025, 2, 1), 6)
+        self._login()
+        before = self._written()
+        response = self._promote(bunny, paper_number="G1-2561")
+        self.assertEqual((response.status_code, response.get_json()["title"]), (409, "number_conflict"))
+        self.assertEqual(self._kinds(response.get_json()), ["litter_number_taken"])
+        self.assertEqual(self._written(), before)
+        self.assertIsNone(db.Breeding.get_by_id(self.litter.id).litter_number)
 
 
 class TestImport(NumberCheckMixin, DatabaseTest):

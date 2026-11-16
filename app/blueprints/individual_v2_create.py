@@ -16,9 +16,10 @@ from flask_login import current_user
 from peewee import DataError, DoesNotExist, IntegrityError
 from utils.database import DATABASE, Breeding, Color, Herd, Individual, lock_individuals, not_voided
 from utils.herd_tracking import record_herd_tracking
-from utils.individual_commands import GESTATION_DAYS
+from utils.individual_commands import GESTATION_DAYS, lock_mother_litters
 from utils.individual_number_v2 import (
     HARD_CEILING,
+    LITTER_BORN_BEFORE_NUMBERED,
     LITTER_SIZE6W_ABOVE_BORN,
     PAPER_NUMBER_REQUIRED,
     RosterActionError,
@@ -31,6 +32,7 @@ from utils.individual_number_v2 import (
     new_litter_number,
     number_check,
     number_to_register,
+    number_unnumbered_litter,
     parse_number,
     record_number_choice,
     suggest_individual_number,
@@ -43,10 +45,6 @@ from .common import json_login_required, problem
 
 logger = logging.getLogger(__name__)
 
-LITTER_BORN_BEFORE_NUMBERED = (
-    "Kullen är född före en kull som redan har kullnummer det året. Registrera den med "
-    "+ Ny kull under Kullar och parningar och numrera om kullarna."
-)
 
 individual_v2_create_bp = Blueprint("individual_v2_create", __name__, url_prefix="/api")
 
@@ -126,6 +124,18 @@ def register_individual(form, may_register=None, created=None):
             # a 409 and nothing is written. A paper certificate takes the paper's position when free, not the form's.
             check = None
             if new_litter is not None:
+                # Serialized with RegisterLitter (the same lock) and decided again under it: a litter of the
+                # mother's may have committed since _shortcut_litter looked (the 35-day rule).
+                lock_mother_litters(new_litter["herd"].id, new_litter["mother"].id)
+                errors, _warnings = da.validate_breeding_dates(
+                    breed_date=new_litter["breed_date"],
+                    birth_date=new_litter["birth_date"],
+                    mother=new_litter["mother"],
+                    father=new_litter["father"],
+                    litter_size=new_litter["litter_size"],
+                )
+                if errors:
+                    raise ValueError(" ".join(errors))
                 lock_herd_year(new_litter["herd"], new_litter["birth_date"].year)
                 if certificate_type == "paper":
                     litter = {key: new_litter[key] for key in ("herd", "birth_date", "mother", "father")}
@@ -153,19 +163,9 @@ def register_individual(form, may_register=None, created=None):
                 breeding.save(only=[Breeding.litter_size6w, Breeding.litter_size6w_preliminary])
 
             if breeding.litter_number is None:  # a litter added without a certificate: its first one numbers it (L4)
-                if (
-                    certificate_type == "paper"
-                ):  # the paper's own litter number, or the manager's (409, nothing written)
-                    check = number_check(
-                        current_user, paper_number, breeding=breeding, paper_certificate=paper_certificate
-                    )
-                    _, number, position = parse_number(number_to_register(check, resolution))[1:]
-                else:
-                    number = new_litter_number(herd, breeding.birth_date, lock=True)
-                    if number is None:
-                        raise RosterActionError(409, "litter_order_conflict", LITTER_BORN_BEFORE_NUMBERED)
-                breeding.litter_number = number
-                breeding.save(only=[Breeding.litter_number])
+                check, position = number_unnumbered_litter(
+                    current_user, breeding, certificate_type, paper_number, paper_certificate, resolution
+                )
 
             # Validate certificate eligibility before creating anything: the same first-certificate
             # rules as promote (litter_size6w, roster in sync, quota).
@@ -634,7 +634,25 @@ def _new_litter_suggestion(herd, father, birth_date):
 
 def _first_slot_suggestion(herd, birth_date, litter_number, breeding=None):
     """The suggestion for the first rabbit of a litter that has no number yet (`breeding`: one that exists)."""
-    declared = breeding is not None and breeding.litter_size6w is not None
+    blocked = "litter_size6w_required"  # a new litter: lifted by the litter_size6w the form sends with it
+    certified = 0
+    if breeding is not None:  # the quota of validate_first_certificate, which skips a litter with no number
+        certified = (
+            Individual.select()
+            .where(
+                (Individual.breeding == breeding.id)
+                & not_voided()
+                & (Individual.certificate.is_null(False) | Individual.digital_certificate.is_null(False))
+            )
+            .count()
+        )
+        blocked = (
+            "litter_size6w_required"
+            if breeding.litter_size6w is None
+            else "certificate_quota_exceeded"
+            if certified >= breeding.litter_size6w
+            else None
+        )
     return {
         "suggested": f"{herd.herd}-{birth_date:%y}{litter_number}1",
         "suggested_position": 1,
@@ -644,12 +662,11 @@ def _first_slot_suggestion(herd, birth_date, litter_number, breeding=None):
         "max_count": HARD_CEILING,
         "limited_by": "ceiling",
         "can_register": True,
-        "certified_count": 0,
-        "certified_max_count": None,
+        "certified_count": certified,
+        "certified_max_count": breeding.litter_size6w if breeding is not None else None,
         "past_6w": True,
-        # A new litter: lifted by the litter_size6w the form sends with it.
-        "can_issue_certificate": declared,
-        "certificate_blocked_reason": None if declared else "litter_size6w_required",
+        "can_issue_certificate": blocked is None,
+        "certificate_blocked_reason": blocked,
         "breeding_id": breeding.id if breeding is not None else None,
         "litter_number": litter_number,
     }

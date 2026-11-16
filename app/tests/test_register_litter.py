@@ -11,8 +11,10 @@ from unittest import mock
 
 import utils.arsrapport as arsrapport
 import utils.database as db
+import utils.individual_commands as ic
 import utils.report_code as report_code
 import utils.settings as settings
+from herdbook import APP
 from utils.arsrapport import ReportGrant
 from utils.herd_tracking import record_herd_tracking
 from utils.individual_commands import IndividualRefused, SameLitter, confirm_litter_size, register_litter
@@ -86,21 +88,12 @@ class TestRegisterLitter(LitterTest):
             )
         self.assertEqual(self.litters(), 1)
 
-    def test_ny_kull_skips_only_the_three_day_check(self):
-        first = self.add()
-        # The 35-day rule of every other route still holds, so a litter 2 days later is refused for that...
+    def test_a_litter_four_to_thirty_four_days_later_is_refused_by_the_35_day_rule(self):
+        self.add()
         with self.assertRaises(IndividualRefused) as raised:
-            self.add(born=BORN + timedelta(days=2), ny_kull=True)
-        self.assertNotIsInstance(raised.exception, SameLitter)
+            self.add(born=BORN + timedelta(days=10))
         self.assertIn("inom 35 dagar", raised.exception.envelope["message"])
-        # ...and the unique (mother, father, birth date) is not skipped either.
-        with self.assertRaises(SameLitter) as same:
-            self.add(ny_kull=True)
-        self.assertEqual(
-            (same.exception.envelope["code"], same.exception.envelope["breeding_id"]), ("kullen_finns", first.id)
-        )
-        later = self.add(born=BORN + timedelta(days=40), ny_kull=True)
-        self.assertNotEqual(later.id, first.id)
+        self.assertNotEqual(self.add(born=BORN + timedelta(days=40)).birth_date, BORN)
 
     def test_mother_outside_herd_refused(self):
         stranger = self.adult(self.g2, "G2-2413", "female")
@@ -168,32 +161,83 @@ class TestRegisterLitter(LitterTest):
             confirm_litter_size(self.other_owner, litter.id, 3)
         self.assertEqual(raised.exception.envelope["message"], "Forbidden")
 
-    def test_concurrent_same_litter(self):
-        """Two real transactions for one mother and date: one litter, and the other gets samma_kull (L3)."""
-        barrier = threading.Barrier(2, timeout=10)
-        outcomes = []
+    def overlap(self, second):
+        """
+        Transaction A takes the (herd, mother) advisory lock and is held there; `second()` runs in B meanwhile.
+        Returns (B's outcome, whether B was still blocked while A held the lock, A's outcome).
+        """
+        locked, release, b_done = threading.Event(), threading.Event(), threading.Event()
+        real, outcomes, held = ic.lock_mother_litters, {}, []
 
-        def tab():
+        def hold_after_lock(*args):
+            real(*args)
+            if not held:  # only A, the first to ask
+                held.append(True)
+                locked.set()
+                release.wait(15)
+
+        def run(key, work):
             try:
                 db.DATABASE.connect(reuse_if_open=True)
-                barrier.wait()
-                outcomes.append(self.add())
+                outcomes[key] = work()
             except Exception as exc:  # noqa: BLE001 — a deadlock or an IntegrityError lands here and fails below
-                outcomes.append(exc)
+                outcomes[key] = exc
             finally:
                 db.DATABASE.close()
+                if key == "b":
+                    b_done.set()
 
-        threads = [threading.Thread(target=tab) for _ in range(2)]
-        for thread in threads:
-            thread.start()
-        for thread in threads:
-            thread.join(timeout=20)
-        self.assertFalse(any(thread.is_alive() for thread in threads), "hung or deadlocked")
-        litters = [o for o in outcomes if isinstance(o, db.Breeding)]
-        refused = [o for o in outcomes if isinstance(o, SameLitter)]
-        self.assertEqual((len(litters), len(refused)), (1, 1), outcomes)
-        self.assertEqual(refused[0].envelope["breeding_id"], litters[0].id)
+        with mock.patch.object(ic, "lock_mother_litters", side_effect=hold_after_lock):
+            a = threading.Thread(target=run, args=("a", self.add))
+            a.start()
+            self.assertTrue(locked.wait(10), "A never took the lock")
+            b = threading.Thread(target=run, args=("b", second))
+            b.start()
+            blocked = not b_done.wait(1.5)  # B has had time to run to the lock and wait on it
+            release.set()
+            a.join(20)
+            b.join(20)
+        self.assertFalse(a.is_alive() or b.is_alive(), "hung or deadlocked")
+        return outcomes["b"], blocked, outcomes["a"]
+
+    def test_concurrent_same_litter(self):
+        """B waits for A's commit, then gets samma_kull and A's litter: one litter (L3)."""
+        refused, blocked, first = self.overlap(lambda: self.add())
+        self.assertTrue(blocked, "B ran while A held the lock")
+        self.assertIsInstance(refused, SameLitter, refused)
+        self.assertIsInstance(first, db.Breeding)
+        self.assertEqual(refused.envelope["breeding_id"], first.id)
         self.assertEqual(self.litters(), 1)
+
+    def test_concurrent_certificate_registration_of_a_new_litter(self):
+        """The certificate route creating a litter takes the same lock and decides again under it."""
+
+        def register():
+            client = APP.test_client(use_cookies=True)
+            client.post("/api/login", json={"username": "owner", "password": "pass"})
+            return client.post(
+                URL,
+                json={
+                    "mother": "G1-2411",
+                    "father": "G2-2412",
+                    "birth_date": str(BORN + timedelta(days=2)),
+                    "litter_size": 5,
+                    "litter_size6w": 4,
+                    "sex": "female",
+                    "color": "bleighe",
+                    "certificate_type": "paper",
+                    "paper_certificate": "SC-2",
+                    "paper_number": "G1-2511",
+                },
+            )
+
+        response, blocked, first = self.overlap(register)
+        self.assertTrue(blocked, "B ran while A held the lock")
+        self.assertIsInstance(first, db.Breeding)
+        self.assertEqual(response.status_code, 400, response.get_json())
+        self.assertIn("inom 35 dagar", response.get_json()["detail"])
+        self.assertEqual(self.litters(), 1)
+        self.assertFalse(db.Individual.select().where(db.Individual.certificate == "SC-2").exists())
 
 
 class TestLitterByLink(LitterTest):
@@ -246,6 +290,19 @@ class TestConfirmLitterSize(LitterTest):
             db.IndividualCommand.individual == self.doe.id, db.IndividualCommand.command == "ConfirmLitterSize"
         )
         self.assertEqual((command.before["litter_size6w"], command.after["litter_size6w"]), (5, 3))
+
+    def test_patch_refused_for_certified_litter(self):
+        """FC4: a litter with a certified kit is the manager's, whoever asks; nothing changes."""
+        litter = self.add()
+        db.Individual.create(origin_herd=self.g1, breeding=litter, number="G1-2551", certificate="SC-1")
+        for user in (self.owner, self.manager, self.admin):
+            with self.subTest(user=user.username), self.assertRaises(IndividualRefused) as raised:
+                confirm_litter_size(user, litter.id, 3)
+            self.assertEqual(
+                raised.exception.envelope["message"], "Kontakta genbanksansvarig för att ändra en kull med intyg."
+            )
+        after = db.Breeding.get_by_id(litter.id)
+        self.assertEqual((after.litter_size6w, after.litter_size6w_preliminary), (5, True))
 
     def test_refusals(self):
         litter = self.add()
@@ -311,7 +368,7 @@ class TestLaterCertificate(LitterTest):
         self.numbered(5)
         response = self.register(litter_size6w=3)
         self.assertEqual((response.status_code, response.get_json()["title"]), (409, "number_conflict"))
-        self.assertEqual({c["kind"] for c in response.get_json()["conflicts"]}, {"litter_order"})
+        self.assertEqual({c["kind"] for c in response.get_json()["conflicts"]}, {"litter_number_taken"})
         self.assertEqual(self.state(), (None, 5, True, 0))  # nothing written: not the number, not the count
 
     def test_a_higher_number_goes_to_manager(self):
@@ -362,3 +419,34 @@ class TestLaterCertificate(LitterTest):
         confirm_litter_size(self.owner, self.litter.id, 4)
         self.assertEqual(self.register(litter_size6w=3).status_code, 201)
         self.assertEqual(self.state()[1:3], (4, False))
+
+    def test_taken_number_has_its_own_action_text(self):
+        self.numbered(5)
+        check = self.client.post(f"{URL}/number-check", json={"breeding_id": self.litter.id, "paper_number": "G1-2551"})
+        action = check.get_json()["actions"][0]
+        self.assertEqual(action["text"], "Kullnummer 5 finns redan för 2025. Genbanksansvarig rättar numret.")
+        self.numbered(7, born=date(2025, 2, 1))
+        higher = self.client.post(
+            f"{URL}/number-check", json={"breeding_id": self.litter.id, "paper_number": "G1-2561"}
+        )
+        self.assertEqual(
+            higher.get_json()["actions"][0]["text"],
+            "Kull 7 finns redan för 2025 och har ett högre nummer än 6. Genbanksansvarig rättar numret.",
+        )
+
+    def test_a_paper_litter_number_of_zero_is_refused(self):
+        """G1-2501 reads as litter 0: no match, nothing written (the litter numbers start at 1)."""
+        check = self.client.post(f"{URL}/number-check", json={"breeding_id": self.litter.id, "paper_number": "G1-2501"})
+        data = check.get_json()
+        self.assertEqual((data["status"], data["stamboken_number"]), ("conflict", None))
+        self.assertEqual([c["kind"] for c in data["conflicts"]], ["litter_number_invalid"])
+        response = self.register(paper_number="G1-2501", litter_size6w=3)
+        self.assertEqual((response.status_code, response.get_json()["title"]), (409, "number_conflict"))
+        self.assertEqual(self.state(), (None, 5, True, 0))
+
+    def test_suggest_number_knows_a_full_litter(self):
+        db.Breeding.update(litter_size6w=0).where(db.Breeding.id == self.litter.id).execute()
+        data = self.client.get(f"{URL}/suggest-number", query_string={"breeding_id": self.litter.id}).get_json()
+        self.assertEqual(
+            (data["can_issue_certificate"], data["certificate_blocked_reason"]), (False, "certificate_quota_exceeded")
+        )

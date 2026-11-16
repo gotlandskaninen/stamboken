@@ -109,14 +109,15 @@ class IndividualRefused(Exception):
 
 class SameLitter(IndividualRefused):
     """
-    409: `breeding` is already registered (`code` samma_kull: the mother has a litter born within
-    LITTER_DUPLICATE_DAYS, which the caller asks about; kullen_finns: the same mother, father and date).
+    409, code samma_kull: the mother has a litter (`breeding`) born within LITTER_DUPLICATE_DAYS, which the caller
+    asks about.
     """
 
     status = 409
 
-    def __init__(self, breeding, message, code="samma_kull"):
-        super().__init__(envelope={"status": "error", "message": message, "code": code, "breeding_id": breeding.id})
+    def __init__(self, breeding, message):
+        envelope = {"status": "error", "message": message, "code": "samma_kull", "breeding_id": breeding.id}
+        super().__init__(envelope=envelope)
 
 
 @dataclass
@@ -1007,8 +1008,14 @@ class IssueDigitalCertificate(PolicyCommand):
 
 
 GESTATION_DAYS = 31  # the middle of a rabbit's 26–38 days: the mating is put this long before a litter's birth
+CERTIFIED_LITTER = "Kontakta genbanksansvarig för att ändra en kull med intyg."
 LITTER_DUPLICATE_DAYS = 3  # a litter of the same mother this close may be the same one (spec 5.8, G2)
 _LITTER_LOCK = 0x48424C52  # "HBLR": classid of the advisory lock on (herd, mother) while a litter is added
+
+
+def lock_mother_litters(herd_id, mother_id):
+    """Serializes the writers of a mother's litters in a herd until the transaction ends; taken before any row lock."""
+    DATABASE.execute_sql("SELECT pg_advisory_xact_lock(%s, hashtext(%s))", (_LITTER_LOCK, f"{herd_id}/{mother_id}"))
 
 
 def _authorize_litter(command, ctx, herd, year):
@@ -1031,7 +1038,7 @@ class RegisterLitter(PolicyCommand):
     A litter without a certificate (spec 5.8): the mating and the birth in one step, in `herd` (the mother's holder
     on the birth date), run on the mother. `litter_number` stays NULL until a certificate numbers it. A missing
     `litter_size6w` is the count born, marked preliminary (fråga 17). A litter of the mother within
-    LITTER_DUPLICATE_DAYS is a SameLitter unless `ny_kull`, which skips only that check.
+    LITTER_DUPLICATE_DAYS is a SameLitter (a doe does not litter twice in 3 days).
     """
 
     father_id: int
@@ -1040,7 +1047,6 @@ class RegisterLitter(PolicyCommand):
     litter_size6w: int | None
     herd: str
     year: int  # the report year: a litter is born in it
-    ny_kull: bool = False
     apply_rank = 80
     herd_scoped = True
 
@@ -1085,11 +1091,8 @@ class RegisterLitter(PolicyCommand):
             & Breeding.birth_date.between(self.birth_date - window, self.birth_date + window)
         )
         near = near.order_by(Breeding.birth_date, Breeding.id)
-        if not self.ny_kull and (found := near.first()) is not None:
+        if (found := near.first()) is not None:  # includes the unique (mother, father, birth_date)
             raise SameLitter(found, f"Modern har redan en kull född {found.birth_date}.")
-        same = near.where((Breeding.father == self.father_id) & (Breeding.birth_date == self.birth_date)).first()
-        if same is not None:  # the unique (mother, father, birth_date): not even "a new one" may repeat it
-            raise SameLitter(same, "Kullen finns redan: samma mor, far och födelsedatum.", code="kullen_finns")
         # The mating and birth rules of "Ny parning" and a birth, which data_access owns (it imports this module).
         from utils import data_access  # pylint: disable=import-outside-toplevel,cyclic-import
 
@@ -1153,6 +1156,9 @@ class ConfirmLitterSize(PolicyCommand):
         litter = self._litter(ctx)
         if litter.litter_size is None or not 0 <= self.litter_size6w <= litter.litter_size:
             raise IndividualRefused(LITTER_SIZE6W_ABOVE_BORN)
+        certified = Individual.certificate.is_null(False) | Individual.digital_certificate.is_null(False)
+        if Individual.select().where((Individual.breeding == litter.id) & certified).exists():
+            raise IndividualRefused(CERTIFIED_LITTER)  # under the litter's lock: a kit's certificate is counted in it
         # shortcut: no roster lock yet (4b Task 3, issue #79); add the refusal when count_at_6_weeks exists
 
     def apply(self, ctx):
@@ -1165,9 +1171,7 @@ class ConfirmLitterSize(PolicyCommand):
         ctx.record(type(self).__name__, before, after)
 
 
-def register_litter(
-    user, mother_id, father_id, birth_date, litter_size, litter_size6w, herd, *, year, ny_kull=False, grant=None
-):
+def register_litter(user, mother_id, father_id, birth_date, litter_size, litter_size6w, herd, *, year, grant=None):
     """
     RegisterLitter on the mother; returns the new Breeding. Two requests for the same mother in a herd run one
     after the other (advisory lock, taken before the rows: the 3-day window is read under it), so two tabs
@@ -1175,9 +1179,8 @@ def register_litter(
     """
     with DATABASE.atomic():
         row = Herd.select(Herd.id).where(Herd.herd == herd).first()
-        key = f"{row.id if row else herd}/{mother_id}"
-        DATABASE.execute_sql("SELECT pg_advisory_xact_lock(%s, hashtext(%s))", (_LITTER_LOCK, key))
-        command = RegisterLitter(father_id, birth_date, litter_size, litter_size6w, herd, year, ny_kull)
+        lock_mother_litters(row.id if row else herd, mother_id)
+        command = RegisterLitter(father_id, birth_date, litter_size, litter_size6w, herd, year)
         execute(user, mother_id, lambda ctx: [command], grant=grant, lock_also=(father_id,))
         return Breeding.get(
             Breeding.mother == mother_id, Breeding.father == father_id, Breeding.birth_date == birth_date

@@ -32,7 +32,17 @@ _PARENTS = {
     "father": ("far", "farfar", "farmor", ("male", "eunuch"), "Far"),
 }
 # The kinds of number_check conflict that say the paper's number is not the one its litter gives.
-_NUMBER_CONFLICTS = {"prefix", "year", "litter", "litter_missing", "litter_order", "position", "number_taken"}
+_NUMBER_CONFLICTS = {
+    "prefix",
+    "year",
+    "litter",
+    "litter_missing",
+    "litter_order",
+    "litter_number_taken",
+    "litter_number_invalid",
+    "position",
+    "number_taken",
+}
 SAME_LITTER_DAYS = 35  # a litter of the same parents this close is the certificate's, registered on another date
 MAX_LISTED = 5  # litters listed for the handler when nothing read picks one
 _DIGIT_FOR = str.maketrans({"S": "5", "s": "5", "O": "0", "o": "0", "l": "1", "I": "1", "|": "1"})

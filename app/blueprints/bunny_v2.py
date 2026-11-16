@@ -25,6 +25,7 @@ from utils.individual_number_v2 import (
     lock_litter,
     number_check,
     number_to_register,
+    number_unnumbered_litter,
     parse_number,
     provisional_number,
     record_number_choice,
@@ -437,6 +438,14 @@ def promote_bunny(
                 raise RosterActionError(422, "litter_size6w_above_born", LITTER_SIZE6W_ABOVE_BORN)
             breeding.litter_size6w = litter_size6w
             breeding.save(only=[Breeding.litter_size6w])
+        check = position = None
+        if breeding.litter_number is None:  # a litter added without a certificate: this first one numbers it
+            try:
+                check, position = number_unnumbered_litter(
+                    user, breeding, certificate_type, paper_number, paper_certificate, resolution
+                )
+            except ValueError as exc:
+                raise RosterActionError(422, "litter_full", str(exc)) from exc
         try:
             validate_first_certificate(breeding)
         except RosterAliveExceeds6w as exc:
@@ -450,8 +459,7 @@ def promote_bunny(
             raise RosterActionError(422, str(exc), detail) from exc
 
         # 5d. The paper's number against Stamboken's, under the lock: conflict → 409, nothing written.
-        check = position = None
-        if certificate_type == "paper":
+        if certificate_type == "paper" and check is None:
             check = number_check(user, paper_number, breeding=breeding, paper_certificate=paper_certificate)
             try:
                 position = parse_number(number_to_register(check, resolution))[3]
