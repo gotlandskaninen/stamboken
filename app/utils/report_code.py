@@ -1,0 +1,110 @@
+"""
+The yearly report's personal link (step 3): one `report_access_code` per herd and round, its token and its validity.
+The token is `mail.link_token("rapport", code.id)`: no code or hash of it is stored.
+"""
+
+from dataclasses import dataclass
+from datetime import date, datetime
+
+import utils.settings as settings
+from utils.database import DB_PROXY, Herd, Member, ReportAccessCode
+from utils.mail import link_token, verify_link
+
+
+def invitation_recipient(herd: Herd) -> Member | None:
+    """
+    FA11: who the herd's invitation goes to, and who a code must have been issued to. The herd's current main
+    member, when the membership is active and the member has an e-mail address. A pending or friexemplar membership
+    gets no link.
+    """
+    # Late import: inbox pulls in half the app, and arsrapport imports this module.
+    import utils.inbox as inbox  # pylint: disable=import-outside-toplevel
+
+    member = inbox.herd_holder(herd.id)
+    if member is None or member.membership.membership_status != "active" or not (member.email or "").strip():
+        return None
+    return member
+
+
+def issue_code(herd: Herd, round_, member: Member, *, now: datetime) -> ReportAccessCode:
+    """The herd's active code for the round, or a new one that expires on the round's end date."""
+    with DB_PROXY.atomic():
+        code = ReportAccessCode.get_or_none(
+            ReportAccessCode.herd == herd.id, ReportAccessCode.round == round_.id, ReportAccessCode.revoked_at.is_null()
+        )
+        if code is None:
+            code = ReportAccessCode.create(
+                herd=herd.id, round=round_.id, member=member.id, expires_at=round_.end_date, created_at=now
+            )
+        return code
+
+
+def revoke(code: ReportAccessCode, *, now: datetime) -> None:
+    ReportAccessCode.update(revoked_at=now).where(
+        ReportAccessCode.id == code.id, ReportAccessCode.revoked_at.is_null()
+    ).execute()
+    code.revoked_at = code.revoked_at or now
+
+
+def code_url(code: ReportAccessCode) -> str:
+    return f"{settings.service.host.rstrip('/')}/rapport/{link_token('rapport', code.id)}"
+
+
+def resolve(token: str) -> ReportAccessCode | None:
+    code_id = verify_link("rapport", token)
+    return ReportAccessCode.get_or_none(ReportAccessCode.id == code_id) if code_id else None
+
+
+def refusal(code: ReportAccessCode, herd: Herd, *, today: date) -> str | None:
+    """
+    None when the code is valid (E4), else a reason for the log, never shown. Validity follows the round's end date
+    (R10), not the column, and the recipient is the one the invitation would go to now (FA11).
+    """
+    if code.revoked_at is not None:
+        return "aterkallad"
+    end_date = code.round.end_date
+    if end_date is None or today > end_date:
+        return "utgangen"
+    if not herd.is_active:
+        return "inaktiv"
+    recipient = invitation_recipient(herd)
+    if recipient is None:
+        return "ingen_mottagare"
+    if recipient.id != code.member_id:
+        return "ny_huvudmedlem"
+    return None
+
+
+@dataclass(frozen=True)
+class CodeActor:
+    """A link standing in for a user wherever the report and the command layer name an actor."""
+
+    code: ReportAccessCode
+    id = None
+    is_admin = False
+    # frozensets, not tuples: roles_for does set arithmetic on them (R1, R1b).
+    is_manager = frozenset()
+    is_helper = frozenset()
+
+    @property
+    def access_code_id(self) -> int:
+        return self.code.id
+
+    @property
+    def username(self) -> str:
+        return f"länk {self.code.herd.herd}/{self.code.round.report_year}"
+
+    def transfer_herd_ids(self) -> frozenset:
+        return frozenset()
+
+    def effective_herd_ids(self) -> frozenset:
+        return frozenset()
+
+    def can_edit(self, _) -> bool:
+        return False
+
+
+def actor_key(actor) -> tuple[str, int]:
+    """R2: an actor is a user or a code, never compared by id alone."""
+    code_id = getattr(actor, "access_code_id", None)
+    return ("code", code_id) if code_id is not None else ("user", actor.id)

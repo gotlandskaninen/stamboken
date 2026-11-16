@@ -42,6 +42,7 @@ from utils.database import (
     MemberChangeRequest,
     Membership,
     PublicationConsentChange,
+    ReportAccessCode,
     SaleProposal,
     Weight,
     YearlyHerdReport,
@@ -152,6 +153,10 @@ def save_round(year, user, **dates):
         round_.save()
     elif changed:
         round_.save(only=[getattr(YearlyReportRound, key) for key in changed])
+        if "end_date" in changed:  # R10: the column of an active code follows the round
+            ReportAccessCode.update(expires_at=round_.end_date).where(
+                ReportAccessCode.round == round_.id, ReportAccessCode.revoked_at.is_null()
+            ).execute()
     return round_
 
 

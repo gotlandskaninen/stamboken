@@ -127,6 +127,8 @@ mail.smtp_port = int(os.environ.get("SMTP_PORT") or "587")
 mail.sender = os.environ.get("MAIL_FROM") or "stamboken@gotlandskaninen.se"
 # Its own secret per environment, not SECRET_KEY: link tokens, Message-IDs and address hashes.
 mail.link_secret = os.environ.get("LINK_SECRET", "")
+# Earlier host names whose links still verify after HERDBOOK_HOST changes; new links always use the current host.
+mail.link_hosts = [host.strip() for host in os.environ.get("LINK_HOSTS", "").split(",") if host.strip()]
 
 
 def refuse_unsafe_mail_settings():

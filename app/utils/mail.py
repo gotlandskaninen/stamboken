@@ -158,9 +158,9 @@ def _mac(message):
     return hmac.new(secret.encode(), message.encode(), hashlib.sha256)
 
 
-def _link_mac(purpose, row_id):
+def _link_mac(purpose, row_id, host=None):
     # The hostname binds a link to its environment: the demo is a copy of production with the same row ids.
-    message = f"link:{_hostname()}:{purpose}:{row_id}"
+    message = f"link:{host or _hostname()}:{purpose}:{row_id}"
     return base64.urlsafe_b64encode(_mac(message).digest()[:16]).rstrip(b"=").decode()
 
 
@@ -181,7 +181,11 @@ def verify_link(purpose, token):
     if match is None or not settings.mail.link_secret:
         return None
     row_id = int(match.group(1))
-    return row_id if hmac.compare_digest(_link_mac(purpose, row_id), match.group(2)) else None
+    # A link made under an earlier host name still verifies while that name is in LINK_HOSTS (FA4).
+    hosts = [_hostname(), *settings.mail.link_hosts]
+    return (
+        row_id if any(hmac.compare_digest(_link_mac(purpose, row_id, host), match.group(2)) for host in hosts) else None
+    )
 
 
 def _hostname():
