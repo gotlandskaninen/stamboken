@@ -140,13 +140,14 @@ def _membership_mail(params):
         return None
     # Once per address, from the mails that have gone: each buyer holds an invitation of its own, so one buyer's
     # deletion never cancels the invitation of another with the same address.
-    gone = (
-        (MailMessage.kind == "kopare.medlemskap")
-        & (MailMessage.status == "sent")
-        & (MailMessage.address_hash == address_hash(contact.email))
-    )
-    if settings.mail.link_secret and MailMessage.select().where(gone).exists():
-        return None
+    if settings.mail.link_secret:  # without it (log mode only) there is no HMAC, and nothing is sent to find
+        gone = (
+            (MailMessage.kind == "kopare.medlemskap")
+            & (MailMessage.status == "sent")
+            & (MailMessage.address_hash == address_hash(contact.email))
+        )
+        if MailMessage.select().where(gone).exists():
+            return None
     return {"buyer": _one_line(contact.name), "rabbit": _one_line(rabbit.name) or rabbit.number}
 
 

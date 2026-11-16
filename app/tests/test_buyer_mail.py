@@ -366,6 +366,14 @@ class TestMembership(BuyerMailTest):
         self._sale(WITH_EMAIL)
         self.assertEqual(self.mails("kopare.medlemskap"), [])
 
+    def test_log_mode_without_a_link_secret_builds_the_welcome(self):
+        contact_id = self._sale({**WITH_EMAIL, "membership_optin": True}).holder_contact_id
+        with mock.patch.multiple(settings.mail, mode="log", link_secret=""):
+            built = mail.MAIL_KINDS["kopare.medlemskap"].build(
+                {"buyer_contact_id": contact_id, "individual_id": self.rabbit.id}
+            )
+        self.assertEqual(built["buyer"], NAME)
+
     def test_the_welcome_with_the_yes_alone(self):
         contact_id = self._sale({**BUYER, "email": EMAIL, "membership_optin": True}).holder_contact_id
         # The notice goes too: the e-mail given for membership alone still reaches the buyer with the erase link.
