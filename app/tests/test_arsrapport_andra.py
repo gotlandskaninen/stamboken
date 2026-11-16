@@ -713,7 +713,7 @@ class AndraTest(ArsrapportTest):
         self.assertEqual(unchanged, 0, counts)
         self.assertLessEqual(changed, 68, counts)
 
-    def test_caretaker_cannot_change_or_withdraw_a_sale(self):  # I1, D12: sales are the owner's
+    def test_caretaker_cannot_change_a_sale_and_withdrawing_keeps_it(self):  # I1, D12, FB5: sales are the owner's
         kept, december, outside = self.rabbits(self.h, 3)
         entries = (
             self.kvar(kept, vikt=2.8),
@@ -736,17 +736,16 @@ class AndraTest(ArsrapportTest):
             response = self.skicka(body)
             self.assertEqual(response.status_code, 422, response.get_data(as_text=True))
             self.assertEqual(response.get_json()["refusals"], [{"individual_id": int(changed[0]), **refused}])
-        response = self.withdraw(1)
-        self.assertEqual(response.status_code, 422, response.get_data(as_text=True))
-        self.assertEqual(
-            response.get_json()["refusals"],
-            [{"individual_id": december.id, **refused}, {"individual_id": outside.id, **refused}],
-        )
         self.assertEqual(self.counts(), before)
-        self.assertEqual([(c.name, c.town) for c in db.BuyerContact.select()], [(BUYER["name"], BUYER["town"])])
-        self.assertEqual(self.report(rid).status, "submitted")
         # a change that leaves the sales alone is still the caretaker's
         self.ok(self.body(self.kvar(kept, vikt=3.0), *stored[1:], revision=1))
+        sales = rows_of(december, "TRANSFER") + rows_of(outside, "TRANSFER")
+        self.withdrawn(2)  # FB5: the rest backs out, and the owner's sales stay the register's
+        self.assertEqual(self.report(rid).status, "voided")
+        (attested,) = rows_of(kept, "ATTESTATION")
+        self.assertIsNotNone(attested.voided_at)
+        self.assertEqual([db.HerdTracking.get_by_id(row.id).voided_at for row in sales], [None, None])
+        self.assertEqual([(c.name, c.town) for c in db.BuyerContact.select()], [(BUYER["name"], BUYER["town"])])
 
     def test_withdraw_window_counts_from_the_rounds_first_submission(self):  # I2: no new 7 days per report row
         (a,) = self.rabbits(self.h, 1)

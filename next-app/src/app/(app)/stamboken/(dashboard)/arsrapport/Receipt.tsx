@@ -8,6 +8,7 @@ import {
   DialogTitle,
 } from "@mui/material";
 import {
+  PENDING_SALE_TEXT,
   fmtDate,
   fmtTime,
   refusalText,
@@ -61,12 +62,9 @@ export function Receipt({
     headRef.current?.focus();
   }, [focusOnMount]);
   const sum = receipt?.summary ?? summaryOf(view);
-  const hasSale = Object.values(report?.submitted?.rabbits ?? {}).some(
-    (e) => e.val === "sald",
-  );
-  // A caretaker cannot back out a sale (D12), so the button is not offered.
-  const canWithdraw =
-    !!report?.can_withdraw && !(view.access === "caretaker" && hasSale);
+  // A caretaker's or the link's withdrawal leaves the owner's sales standing (FB5), so it is always offered.
+  const canWithdraw = !!report?.can_withdraw;
+  const pendingSale = view.forslag.some((p) => p.state === "foreslagen");
   const at = report?.received_at ?? receipt?.created_at ?? "";
   const when = `${fmtDate(at)} kl. ${fmtTime(at)}`;
   const changed =
@@ -109,6 +107,7 @@ export function Receipt({
           </div>
         ))}
       </div>
+      {pendingSale && <p className={styles.meta}>{PENDING_SALE_TEXT}</p>}
       {v && (
         <p className={styles.line}>
           Villkor för stödet: {mark(v.hane, "Hane")} {mark(v.hona, "Hona")}{" "}

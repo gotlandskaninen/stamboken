@@ -99,6 +99,7 @@ def retract(proposal, *, now: datetime) -> None:
     """The member took the sale back: `atertagen`, the buyer deleted, the item closed. A decided proposal stays."""
     with DB_PROXY.atomic():
         arsrapport.lock_report(proposal.report.round, proposal.report.herd)
+        arsrapport._lock_items([], report=proposal.report)  # pylint: disable=protected-access  # K4
         changed = (
             SaleProposal.update(state="atertagen", buyer=None, decided_at=now)
             .where(SaleProposal.id == proposal.id, SaleProposal.state == "foreslagen")
@@ -120,10 +121,13 @@ def _claim(proposal, user, now, **fields):
 
 
 def _locked(proposal):
-    """The report lock, then the proposal's item; returns the proposal as it is under them."""
-    arsrapport.lock_report(proposal.report.round, proposal.report.herd)
-    # shortcut: locks only this proposal's item; the report's whole item set in ascending order (K4) is 4a Task 2/3
-    _lock_item(proposal)
+    """
+    The report lock, then the report's item set in one ascending pass (K4): the rabbit's buyer items and every pending
+    proposal's item, this one's too. Returns the proposal as it is under them.
+    """
+    report = proposal.report
+    arsrapport.lock_report(report.round, report.herd)
+    arsrapport._lock_items([proposal.individual_id], report=report)  # pylint: disable=protected-access
     return SaleProposal.get_by_id(proposal.id)
 
 

@@ -703,6 +703,13 @@ export function ReportForm({
     [edit],
   );
   const onSell = React.useCallback((id: number) => setSoldFor(id), []);
+  // 5.9: a sale is a proposal while one is pending, or when a caretaker or the link makes it. A sale the report
+  // already holds without one was registered, and only the genebank manager changes it (FB5).
+  const proposalFor = (id: number) =>
+    view.forslag.some(
+      (p) => p.individual_id === id && p.state === "foreslagen",
+    ) ||
+    (!view.can_sell && view.report?.submitted?.rabbits?.[id]?.val !== "sald");
   const onNextWeight = React.useCallback((id: number) => {
     const ids = visibleIds.current;
     const s = stateRef.current;
@@ -808,7 +815,12 @@ export function ReportForm({
     if (phase !== "idle" || syncing || olderCopy) return;
     setRefusals(null);
     if (!link && readModeCookieClient() !== env) return fail(ENV_TEXT);
-    let body = toBody(state, keyRef.current!, view.report?.revision ?? null);
+    let body = toBody(
+      state,
+      keyRef.current!,
+      view.report?.revision ?? null,
+      view.rabbits.map((r) => r.id),
+    );
     if (isPaper) {
       const signed = signedOn ?? receivedOn;
       if (!receivedOn) return fail("Ange dagen blanketten kom in.");
@@ -1594,6 +1606,7 @@ export function ReportForm({
                       ending={state.ending}
                       year={year}
                       canSell={view.can_sell}
+                      proposal={proposalFor(r.id)}
                       done={!!done.get(r.id)}
                       error={rowErrors.get(r.id)}
                       onChange={onRow}

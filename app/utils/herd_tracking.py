@@ -27,6 +27,7 @@ from utils.database import (
     InboxItem,
     Individual,
     IndividualCommand,
+    SaleProposal,
     YearlyHerdReport,
     YearlyReportRound,
     YearlyReportSubmission,
@@ -650,10 +651,27 @@ def void_denial(user, row, active_rows, individual, transfer_herd_ids=None, owne
     return f"Bara genbanksansvarig kan ångra en korrigering. {CONTACT_MANAGER}"
 
 
+def _behind_report_sales(row, active_rows, report_ops):
+    """
+    K3, fråga 15 b: the report's attestation goes from behind the sales that stay, so the rabbit counts on 31/12 via
+    the move. Every later row is a TRANSFER that an approved proposal of the same report wrote, or the report's own
+    (FB5: a sale the owner registered, which a link's or a caretaker's Dra tillbaka keeps).
+    """
+    later = [r for r in active_rows if ht_sort_key(r) > ht_sort_key(row)]
+    if row.kind != "ATTESTATION" or row.yearly_herd_report_id is None or not later:
+        return False
+    approved = SaleProposal.select(SaleProposal.herd_tracking_id).where(
+        SaleProposal.report == row.yearly_herd_report_id, SaleProposal.state == "godkand"
+    )
+    approved = {proposal.herd_tracking_id for proposal in approved}
+    return all(r.kind == "TRANSFER" and (r.id in approved or str(r.operation_id) in report_ops) for r in later)
+
+
 def report_void_denial(user, row, active_rows, individual, report_ops):
     """
     The yearly report's right (ADR-0017, addendum 2026-11-14): the report's own rows, whoever wrote them and however
-    old, unless something was registered after them. The right itself is checked at report level. None = allowed.
+    old, unless something was registered after them other than the report's sales (_behind_report_sales). The right
+    itself is checked at report level. None = allowed.
     """
     if str(row.operation_id) not in report_ops:
         return "Raden hör inte till årsrapporten."
@@ -661,7 +679,7 @@ def report_void_denial(user, row, active_rows, individual, report_ops):
         return BIRTH_NOT_VOIDABLE
     if not user.is_admin and _moves_across_genebanks(individual, active_rows, [r for r in active_rows if r != row]):
         return GENEBANK_CHANGE_ADMIN_ONLY
-    if not active_rows or active_rows[-1].id != row.id:
+    if not active_rows or (active_rows[-1].id != row.id and not _behind_report_sales(row, active_rows, report_ops)):
         return REPORT_LATER_ROW
     if row.kind == "TRANSFER":  # the seller's rules that do not depend on who or when (sale_undo_denial)
         if row.transfer_id is not None:

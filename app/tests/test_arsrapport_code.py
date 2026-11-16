@@ -159,9 +159,9 @@ class CodeReportTest(ArsrapportTest):
         self.assertEqual(exc.detail, arsrapport.WITHDRAW_LATE)
         self.assertEqual(self.counts(), before)
 
-    def test_code_sale_refused(self):
-        entries = [self.sald(self.rabbits_[0], "G9002", 2025, 12, 20), *self.entries[1:]]
-        message = "Försäljningen registrerar du hos genbanksansvarig. Ring eller mejla."
+    def test_code_sale_is_a_proposal(self):  # step 4a: no longer salj_via_lank
+        sold = self.rabbits_[0]
+        entries = [self.sald(sold, "G9002", 2025, 12, 20), *self.entries[1:]]
         refusals, _ = arsrapport.check(
             self.h,
             self.round_,
@@ -170,11 +170,14 @@ class CodeReportTest(ArsrapportTest):
             arsrapport.parse_submission(self.body(*entries), paper=False),
             on=arsrapport.today(),
         )
-        self.assertEqual([(r.code, r.message) for r in refusals], [("salj_via_lank", message)])
-        before = self.counts()
-        exc = self.refused(lambda: self.send(self.body(*entries)), 422)
-        self.assertEqual([r["code"] for r in exc.extra["refusals"]], ["salj_via_lank"])
-        self.assertEqual(self.counts(), before)
+        self.assertEqual(refusals, [])
+        self.send(self.body(*entries))
+        transfers = db.HerdTracking.select().where(
+            db.HerdTracking.individual == sold.id, db.HerdTracking.kind == "TRANSFER"
+        )
+        self.assertFalse(transfers.exists())
+        proposal = db.SaleProposal.get()
+        self.assertEqual((proposal.individual_id, proposal.to_herd_id), (sold.id, self.g9002.id))
 
     def test_code_checked_again_under_lock(self):
         access = self.access()  # the dry run's view, before the manager revokes the code

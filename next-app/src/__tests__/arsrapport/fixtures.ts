@@ -45,6 +45,7 @@ export const view = (over: Partial<ReportView> = {}): ReportView => ({
   rabbits: [rabbit(1), rabbit(2)],
   litters: [],
   sales: [],
+  forslag: [],
   herds: ["G9002"],
   report: null,
   draft: null,

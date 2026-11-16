@@ -132,6 +132,13 @@ export interface ReportView {
     to_herd: string;
     date: string;
   }[];
+  // The report's sale proposals not taken back (5.9), without the buyer.
+  forslag: {
+    individual_id: number;
+    to_herd: string | null;
+    sale_date: string;
+    state: "foreslagen" | "godkand" | "avvisad";
+  }[];
   herds: string[];
   report: null | {
     id: number;
@@ -295,6 +302,9 @@ export const REFUSAL_TEXT: Record<string, string> = {
   orsak_kopare: "Skriv inte köparens namn i orsaken.",
 };
 export const CONFLICT_TEXT = "Rapporten har ändrats på en annan enhet";
+// A sale by a caretaker or through the link is a proposal (5.9).
+export const PENDING_SALE_TEXT =
+  "Försäljningen väntar på genbanksansvarig. Kaninen står kvar hos dig tills den är godkänd.";
 export const TIMEOUT_TEXT =
   "Vi vet inte om rapporten kom fram. Tryck Försök igen. Den skickas inte två gånger.";
 
@@ -532,9 +542,12 @@ export function toBody(
   state: FormState,
   key: string,
   revision: number | null,
+  // Skicka sends only the rabbits on the current list: a sold one may linger in a local copy (FB1)
+  listed?: readonly number[],
 ): Submission {
   const rabbits: Record<string, BodyEntry> = {};
   for (const [id, e] of Object.entries(state.rabbits)) {
+    if (listed && !listed.includes(Number(id))) continue;
     const b = bodyEntry(e);
     if (b) rabbits[id] = b;
   }
@@ -559,10 +572,12 @@ export function toBody(
     diseases: state.health === "ja" ? diseases : {},
     defects:
       state.health === "ja"
-        ? state.defects.map((d) => ({
-            individual_id: d.individual_id,
-            beskrivning: d.beskrivning.trim() || null,
-          }))
+        ? state.defects
+            .filter((d) => !listed || listed.includes(d.individual_id))
+            .map((d) => ({
+              individual_id: d.individual_id,
+              beskrivning: d.beskrivning.trim() || null,
+            }))
         : [],
     message: state.message.trim(),
   };

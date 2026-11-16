@@ -664,6 +664,24 @@ def account_end(herd):
     return (masked_account(herd.bank_account_number) or "").removeprefix("••") or None
 
 
+def _forslag_json(report):
+    """ReportView.forslag (5.9): the report's sale proposals not taken back, without the buyer."""
+    if report is None:
+        return []
+    query = (
+        SaleProposal.select(
+            SaleProposal.individual.alias("individual_id"),
+            Herd.herd.alias("to_herd"),
+            SaleProposal.sale_date,
+            SaleProposal.state,
+        )
+        .join(Herd, JOIN.LEFT_OUTER, on=(SaleProposal.to_herd == Herd.id))
+        .where(SaleProposal.report == report.id, SaleProposal.state != "atertagen")
+        .order_by(SaleProposal.id)
+    )
+    return [{**row, "sale_date": _iso(row["sale_date"])} for row in query.dicts()]
+
+
 def report_view(herd, round_, access, user):
     """ReportView for the herd and the round's year, as `access` sees it ."""
     year = round_.report_year
@@ -740,6 +758,7 @@ def report_view(herd, round_, access, user):
         "rabbits": report_list(herd, year, report),
         "litters": [{**row, "birth_date": _iso(row["birth_date"])} for row in litters.dicts()],
         "sales": [{**row, "date": _iso(row["date"])} for row in sales.dicts()],
+        "forslag": _forslag_json(report),
         "herds": [] if access.code else sorted(row.herd for row in others),  # a link sees no other herd
         "report": {**_report_json(report, round_, access, is_open), "villkor": herd_conditions(herd, round_, report)}
         if report
@@ -1095,7 +1114,8 @@ def _entry(key, raw):
             raise _bad("dod", "Slaktad är ja eller nej.")
         dod |= {"slaktad": slaktad, "anteckning": _text(raw["dod"].get("anteckning"), "anteckning")}
     if val == "sald":
-        sald = _month(raw.get("sald"), "sald", ("till", "kopare"))
+        # a stored submission names its proposal (forslag); it is never part of the entry, so equal choices stay equal
+        sald = _month(raw.get("sald"), "sald", ("till", "kopare", "forslag"))
         till, kopare = raw["sald"].get("till"), raw["sald"].get("kopare")
         if not isinstance(till, str) or not till:
             raise _bad("sald", "Ange köparens besättning, eller utanför genbanken.")
@@ -1358,6 +1378,35 @@ def same_sale(a, b) -> bool:
     return bool(a and b) and all(a[key] == b[key] for key in ("till", "ar", "manad", "dag"))
 
 
+def _proposals(report):
+    """The report's latest sale proposal per rabbit (5.9); {} without a report."""
+    if report is None:
+        return {}
+    query = SaleProposal.select().where(SaleProposal.report == report.id).order_by(SaleProposal.id)
+    return {proposal.individual_id: proposal for proposal in query}
+
+
+def _unchanged(entry, before, proposal):
+    """P39a: a choice as in the latest submission writes nothing, unless it is a sale that was rejected (FB3)."""
+    rejected = entry.val == "sald" and proposal is not None and proposal.state == "avvisad"
+    return entry == before and not rejected
+
+
+def _keeps(proposal, before, entry):
+    """The rabbit's pending proposal still stands for `entry`: the same sale as before and no buyer typed (K5)."""
+    return (
+        proposal is not None
+        and proposal.state == "foreslagen"
+        and before is not None
+        and same_sale(before.sald, entry.sald)
+        and entry.sald.get("kopare") is None
+    )
+
+
+def _without_sale(effects):
+    return [e for e in effects if e.kind != "transfer"]
+
+
 def diff(cur, want, last, prev_entry=None, entry=None) -> tuple[list[Effect], list[Effect]]:
     """
     (remove, add): what a change voids, undoes or deletes, and what it writes, given the rabbit's entry in the
@@ -1425,7 +1474,7 @@ _NOT_ADMIN = SimpleNamespace(is_admin=False)
 
 
 def _no_sale(individual_id, access):
-    """D12: a caretaker's sale is the owner's; a link's is the genebank manager's until step 4 makes it a proposal."""
+    """FB5: a caretaker or the link changes no sale the owner registered; the genebank manager corrects it."""
     return _refusal(individual_id, "salj_via_lank" if access.role == "code" else "forsaljning_skotare")
 
 
@@ -1573,6 +1622,7 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
     # Only the report's own rabbits: another herd's rabbit would make the refusal an oracle on its buyer's name.
     own = [rabbit for rabbit in sub.rabbits if rabbit in rows]
     refusals += _reason_refusals(sub.reason, own, _typed_buyers(sub))
+    proposals = _proposals(report)
     for rabbit, row in rows.items():
         entry, before = sub.rabbits.get(rabbit), before_entries.get(rabbit)
         if entry is None:
@@ -1585,7 +1635,7 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
         if entry.val == "ej_angiven" and access.source != "paper" and not kept:
             refusals.append(_refusal(rabbit, "ej_angiven_digitalt"))
             continue
-        if entry == before:  # P39a: an unchanged choice writes nothing and is not refused
+        if _unchanged(entry, before, proposals.get(rabbit)):  # P39a: it writes nothing and is not refused
             continue
         if row["state"] != "att_valja":
             refusals.append(_refusal(rabbit, "senare_handelse"))
@@ -1593,9 +1643,6 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
         if entry.val == "ej_angiven":  # it writes nothing, but what it takes off still meets the register (M1)
             remove, add = diff(current(report, rabbit), [], last, before, entry)
             refusals += _register_refusals(rabbit, entry, remove, add, ops, access.role == "admin")
-            continue
-        if entry.val == "sald" and not access.can_sell:
-            refusals.append(_no_sale(rabbit, access))
             continue
         if entry.dod and not _death_possible(entry.dod, row["birth_date"], on):
             refusals.append(_refusal(rabbit, "dodsdatum_ogiltigt"))
@@ -1615,8 +1662,12 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
             and not sub.report["ending_genbank"]
         ):
             refusals.append(_refusal(rabbit, "vikt_saknas"))
-        remove, add = diff(current(report, rabbit), wanted(entry, row, report, herd, year, on), last, before, entry)
-        if not access.can_sell and any(e.kind == "transfer" for e in remove + add):  # D12: sales are the owner's
+        want = wanted(entry, row, report, herd, year, on)
+        if _keeps(proposals.get(rabbit), before, entry):  # the pending proposal holds the sale
+            want = _without_sale(want)
+        remove, add = diff(current(report, rabbit), want, last, before, entry)
+        # FB5: a sale the owner registered is the register's; a new sale by this role is a proposal, checked as a sale
+        if not access.can_sell and any(e.kind == "transfer" for e in remove):
             refusals.append(_no_sale(rabbit, access))
             continue
         refusals += _register_refusals(rabbit, entry, remove, add, ops, access.role == "admin")
@@ -2043,16 +2094,25 @@ def submitted_body(sub: Submission) -> dict:
     return body
 
 
-def _lock_items(ids, form_id=None):
+def _lock_items(ids, form_id=None, report=None):
     """
-    The queue's items that may show the buyers of the rabbits' sales (buyer_items), and the paper form's own item,
-    locked in one ascending pass before any litter or rabbit: the order of the queue (item, litters, rabbits) and of
-    its bulk assignment, so the voids of Ändra and Dra tillbaka lock only items already held and no cycle forms
-    (Codex 4, Opus 3, Codex re-review 2). Returns their ids: _lock_form checks the form's item again under it, and
-    _lock_rabbits the buyers' set.
+    The queue's items that may show the buyers of the rabbits' sales (buyer_items), the paper form's own item, and
+    the kontroll items of `report`'s pending sale proposals (K4), locked in one ascending pass before any litter or
+    rabbit: the order of the queue (item, litters, rabbits) and of its bulk assignment, so the voids of Ändra and Dra
+    tillbaka, and a proposal taken back or decided, lock only items already held and no cycle forms (Codex 4, Opus 3,
+    Codex re-review 2). Returns their ids: _lock_form checks the form's item again under it, and _lock_rabbits the
+    buyers' set.
     """
     rows = HerdTracking.select().where(HerdTracking.individual.in_(ids), ht_not_voided())
-    wanted = sorted(buyer_items(rows) | ({form_id} if form_id is not None else set()))
+    proposed = set()
+    if report is not None:  # the report's lock keeps this set as read
+        query = SaleProposal.select(SaleProposal.inbox_item_id).where(
+            SaleProposal.report == report.id,
+            SaleProposal.state == "foreslagen",
+            SaleProposal.inbox_item_id.is_null(False),
+        )
+        proposed = {proposal.inbox_item_id for proposal in query}
+    wanted = sorted(buyer_items(rows) | proposed | ({form_id} if form_id is not None else set()))
     if not wanted:
         return set()
     query = InboxItem.select(InboxItem.id).where(InboxItem.id.in_(wanted)).order_by(InboxItem.id).for_update()
@@ -2132,16 +2192,20 @@ def _write(user, rabbit, effects, herd, report, entry, grant, last):
     return added
 
 
-def apply_diff(report, herd, user, grant, rabbit_id, want: list[Effect], prev_entry, entry, last, *, reason=None):
+def apply_diff(
+    report, herd, user, grant, rabbit_id, want: list[Effect], prev_entry, entry, last, *, reason=None, keep_sales=False
+):
     """
     Ändra for one rabbit (D5): the report's current effects that `want` lacks come off, the latest first (a January
     sale before the attestation), then what is missing is written as Skicka writes it. The voids and the Undo go
     through the report's right (report_ops) with `reason`, else REPORT_UNDO_REASON. A voided sale outside the
-    genebank takes its buyer with it (kopare's _drop_orphan_buyers). Refusals raise; the caller holds the locks.
-    Returns the added measurements, as _write does.
+    genebank takes its buyer with it (kopare's _drop_orphan_buyers). With `keep_sales` the report's sales stay
+    (FB5). Refusals raise; the caller holds the locks. Returns the added measurements, as _write does.
     """
     cur = current(report, rabbit_id)
     remove, add = diff(cur, want, last, prev_entry, entry)
+    if keep_sales:
+        remove = _without_sale(remove)
     ops, note = frozenset(report_ops(report)), reason or REPORT_UNDO_REASON
     for c in sorted(remove, key=lambda e: order(e, last), reverse=True):
         if c.kind in ROW_KINDS:
@@ -2234,6 +2298,47 @@ def _lock_form(access, user, herd):
     return item, list(item.documents.where(InboxDocument.doc_type == "arsblankett").order_by(InboxDocument.id))
 
 
+def _split_sale(proposed, access, report, rabbit, want, prev, entry, proposal, last, at):
+    """
+    5.9 for one rabbit Skicka writes: `want` without the sale a proposal carries. A pending proposal that `entry`
+    still gives stands (_keeps); any other pending one is taken back. A new sale by a role that may not sell (F1)
+    goes to `proposed` as (rabbit, entry, sale), for _propose once the submission exists.
+    """
+    import utils.sale_proposal as sale_proposal  # pylint: disable=import-outside-toplevel  # it imports this module
+
+    if _keeps(proposal, prev, entry):
+        return _without_sale(want)
+    if proposal is not None and proposal.state == "foreslagen":
+        sale_proposal.retract(proposal, now=at)
+    if not access.can_sell:
+        add = diff(current(report, rabbit), want, last, prev, entry)[1]
+        sale = next((e for e in add if e.kind == "transfer"), None)
+        if sale is not None:
+            proposed.append((rabbit, entry, sale))
+            return _without_sale(want)
+    return want
+
+
+def _propose(report, submission, proposed):
+    """
+    The submission's new proposals (_split_sale), then its data naming the proposal behind each sale, pending or
+    approved, in place of the buyer.
+    """
+    import utils.sale_proposal as sale_proposal  # pylint: disable=import-outside-toplevel  # it imports this module
+
+    for rabbit, entry, sale in proposed:
+        to_herd = None if entry.sald["till"] == "utanfor" else Herd.get(Herd.herd == sale.value[0])
+        buyer, individual = entry.sald["kopare"], Individual(id=rabbit)
+        sale_proposal.propose(report, submission, individual, to_herd=to_herd, buyer=buyer, sale_date=sale.date)
+    named = {rabbit: p.id for rabbit, p in _proposals(report).items() if p.state in ("foreslagen", "godkand")}
+    sales = [(int(key), entry["sald"]) for key, entry in submission.data["rabbits"].items() if entry.get("sald")]
+    if any(rabbit in named for rabbit, _ in sales):
+        for rabbit, sald in sales:
+            if rabbit in named:
+                sald["forslag"] = named[rabbit]
+        submission.save(only=[YearlyReportSubmission.data])
+
+
 def submit(herd, round_, access, user, sub, *, now=None) -> dict:
     """
     Skicka (5.4 points 2–5) in one transaction, under the locks in their order: the same request again gets its
@@ -2264,7 +2369,7 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         membership, member = _lock_matrikel(herd) if paper and sub.paper["matrikel"] is not None else (None, None)
         old_email = member.email if member is not None else None
         report = YearlyHerdReport.select().where(same & (YearlyHerdReport.status == "submitted")).for_update().first()
-        items = _lock_items(sorted(sub.rabbits), access.item.id if paper else None)
+        items = _lock_items(sorted(sub.rabbits), access.item.id if paper else None, report)
         item, pages = _lock_form(access, user, herd) if paper else (None, [])
         _lock_rabbits(sorted(sub.rabbits), items)
         if sub.revision != (report.revision if report else None):
@@ -2275,10 +2380,11 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         grant = ReportGrant(
             inbox.InboxGrant(item, user, pages[0]) if paper else None, code=access.code, report=report, herd=herd
         )
-        added, change = [], report is not None
+        added, change, proposed = [], report is not None, []
         if change:  # Ändra (D5): the same row, and each changed rabbit gets the diff of the report's effects
             before = _entries(_submissions(report)[-1].data.get("rabbits") or {})
             rows = {row["id"]: row for row in report_list(herd, year, report)}
+            proposals = _proposals(report)
             report.source, report.report_date, report.revision = access.source, on, report.revision + 1
             report.data = json.dumps(sub.report)
             if paper:
@@ -2289,9 +2395,11 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
                 report.generated_by = user.id
             report.save()
             for rabbit, entry in sorted(sub.rabbits.items()):
-                if entry == before.get(rabbit):  # P39a: an unchanged choice writes nothing
+                prev, proposal = before.get(rabbit), proposals.get(rabbit)
+                if _unchanged(entry, prev, proposal):  # P39a: an unchanged choice writes nothing
                     continue
                 want = wanted(entry, rows[rabbit], report, herd, year, on)
+                want = _split_sale(proposed, access, report, rabbit, want, prev, entry, proposal, last, at)
                 try:
                     added += apply_diff(
                         report, herd, user, grant, rabbit, want, before.get(rabbit), entry, last, reason=sub.reason
@@ -2325,6 +2433,7 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
             rows = {row["id"]: row for row in report_list(herd, year)}
             for rabbit, entry in sorted(sub.rabbits.items()):
                 effects = wanted(entry, rows[rabbit], None, herd, year, on)
+                effects = _split_sale(proposed, access, None, rabbit, effects, None, entry, None, last, at)
                 try:
                     added += _write(user, rabbit, effects, herd, report, entry, grant, last)
                 except (IndividualRefused, HerdTrackingError) as exc:
@@ -2343,6 +2452,7 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
             )
         except IntegrityError as exc:  # the key, taken meanwhile for another herd, which this lock does not cover
             raise ArsrapportError(409, KEY_TAKEN) from exc
+        _propose(report, submission, proposed)
         if member is not None:  # check() refused a contact change without one (ingen_huvudmedlem)
             matrikel, signed = sub.paper["matrikel"], sub.paper["signed_on"]
             fields, skipped = apply_paper_matrikel(herd, membership, member, submission, item, user, matrikel, signed)
@@ -2360,6 +2470,25 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         return receipt(submission)
 
 
+def _pruned(data, choosing, listed):
+    """
+    FB1: a withdrawn report's draft without what Skicka would refuse now (okand_kanin, senare_handelse): the entries
+    of rabbits not left to choose (`choosing`, ids as text) and the defects of rabbits off the list (`listed`), in the
+    body and in the form's copy.
+    """
+
+    def prune(body):
+        if isinstance(body.get("rabbits"), dict):
+            body = {**body, "rabbits": {key: e for key, e in body["rabbits"].items() if key in choosing}}
+        if isinstance(body.get("defects"), list):
+            kept = [d for d in body["defects"] if isinstance(d, dict) and d.get("individual_id") in listed]
+            body = {**body, "defects": kept}
+        return body
+
+    data = prune(data)
+    return {**data, "form": prune(data["form"])} if isinstance(data.get("form"), dict) else data
+
+
 WITHDRAW_LATE = (
     "Rapporten kan dras tillbaka i 7 dagar efter första inskicket, medan rundan är öppen. Kontakta genbanksansvarig."
 )
@@ -2369,9 +2498,13 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
     """
     Dra tillbaka (fråga 15, 5.13) in one transaction under Skicka's locks: owners and caretakers while the round is
     open and until withdraw_until, editors at any time with a reason, helpers never. Every rabbit the report touched
-    loses its current effects as in apply_diff, after one dry run of them all; the row is voided, the draft keeps
-    what was filled in without its key (P31), and Å9 is queued. Returns the ReportView.
+    loses its current effects as in apply_diff, after one dry run of them all. Pending sale proposals are taken back
+    and approved ones stay; for a role that may not sell, so do the sales the report wrote (FB5). The row is voided,
+    the draft keeps what was filled in without its key (P31) for the rabbits Skicka takes now (FB1), and Å9 is
+    queued. Returns the ReportView.
     """
+    import utils.sale_proposal as sale_proposal  # pylint: disable=import-outside-toplevel  # it imports this module
+
     if access.role == "helper":
         raise ArsrapportError(403, "Genbankshjälpare kan inte dra tillbaka en rapport.")
     reason = None if access.code is not None else _text(reason, "reason")
@@ -2400,38 +2533,42 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
             raise ArsrapportError(403, WITHDRAW_LATE, withdraw_until=_iso(until))
         # every rabbit of every submission: one an unchanged later submission left out keeps its effects (P39a)
         rabbits = sorted({int(key) for submission in submissions for key in submission.data.get("rabbits") or {}})
-        _lock_rabbits(rabbits, _lock_items(rabbits))
+        _lock_rabbits(rabbits, _lock_items(rabbits, report=report))
         ops = {str(op) for submission in submissions for op in submission.operation_ids}
         refusals = _reason_refusals(reason, rabbits)
         for rabbit in rabbits:
             remove = diff(current(report, rabbit), [], last)[0]
-            if not access.can_sell and any(e.kind == "transfer" for e in remove):  # D12: sales are the owner's
-                refusals.append(_no_sale(rabbit, access))
-            else:
-                refusals += _register_refusals(rabbit, None, remove, [], ops, access.role == "admin")
+            if not access.can_sell:  # FB5: a sale the owner registered stays, as an approved proposal does
+                remove = _without_sale(remove)
+            refusals += _register_refusals(rabbit, None, remove, [], ops, access.role == "admin")
         if refusals:
             raise _cannot(refusals, "Rapporten kan inte dras tillbaka.")
-        grant = ReportGrant(code=access.code, report=report, herd=herd)
+        grant, keep = ReportGrant(code=access.code, report=report, herd=herd), not access.can_sell
         for rabbit in rabbits:
             try:
-                apply_diff(report, herd, user, grant, rabbit, [], None, None, last, reason=reason)
+                apply_diff(report, herd, user, grant, rabbit, [], None, None, last, reason=reason, keep_sales=keep)
             except (IndividualRefused, HerdTrackingError) as exc:
                 raise _cannot([_written(rabbit, exc)], "Rapporten kan inte dras tillbaka.") from exc
+        for proposal in sale_proposal.pending(report):  # 8: pending proposals are taken back, approved ones stay
+            sale_proposal.retract(proposal, now=at)
         report.status, report.voided_at, report.void_reason = "voided", at, reason
         for field, value in _by(user, "voided_by_user", "voided_by_access_code_id").items():
             setattr(report, field, value)
         report.save()
         draft, stamp = _draft(herd, round_), at.astimezone(timezone.utc)
+        listed = report_list(herd, round_.report_year)  # FB1: only what Skicka takes now
+        choosing = {str(row["id"]) for row in listed if row["state"] == "att_valja"}
         if draft is None:  # D10: the submission's data is already stored_body
             YearlyReportDraft.create(
                 herd=herd.id,
                 round=round_.id,
-                data=submissions[-1].data,
+                data=_pruned(submissions[-1].data, choosing, {row["id"] for row in listed}),
                 updated_at=stamp,
                 **_by(user, "updated_by_user", "updated_by_access_code"),
             )
         else:  # the version moves on, so an old tab's autosave cannot bring the key back
             draft.submission_key, draft.updated_at = None, max(stamp, draft.updated_at + timedelta(microseconds=1))
+            draft.data = _pruned(draft.data, choosing, {row["id"] for row in listed})
             draft.save()
         _mail("arsrapport.angrad", herd, user, {"report_id": report.id}, ("yearlyherdreport", report.id))
     return report_view(herd, round_, access, user)

@@ -244,6 +244,14 @@ describe("draft and body", () => {
     });
     expect(toBody(s, "k", null).rabbits).not.toHaveProperty("2");
   });
+  it("sends only the rabbits on the current list", () => {
+    // FB1: a rabbit whose sale was approved has left the list, but a local copy may still hold it
+    const s = state();
+    s.defects = [...s.defects, { individual_id: 3, beskrivning: "Kort öra" }];
+    const b = toBody(s, "k", null, [1, 2]);
+    expect(Object.keys(b.rabbits).sort()).toEqual(["1", "2"]);
+    expect(b.defects.map((d) => d.individual_id)).toEqual([1]);
+  });
   it("sends the weight as a number and Ej vägd instead of a weight", () => {
     const b = toBody(state(), "k", null).rabbits;
     expect(b["1"].vikt).toBe(2.8);

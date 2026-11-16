@@ -17,9 +17,10 @@ import {
   ReportForm,
   type ReportActions,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/ReportForm";
-import type {
-  Receipt,
-  Submission,
+import {
+  PENDING_SALE_TEXT,
+  type Receipt,
+  type Submission,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
 import { rabbit, view } from "./fixtures";
 
@@ -548,49 +549,48 @@ describe("ReportForm", () => {
     ).toBeTruthy();
   });
 
-  it("hides Dra tillbaka from a caretaker when the report has a sale", () => {
-    const base = {
-      id: 1,
-      status: "submitted",
-      source: "login",
-      revision: 0,
-      received_at: "2027-01-03T13:32:00+00:00",
-      report_date: "2027-01-03",
-      on_time: true,
-      can_change: true,
-      can_withdraw: true,
-      withdraw_until: "2027-01-10T13:32:00+00:00",
-      villkor: { hane: true, hona: true, kull: true, i_tid: true },
-    };
+  it("offers Dra tillbaka to a caretaker with a sale, and says a pending sale waits", () => {
+    // FB5: the withdrawal leaves the owner's sale standing, so it is offered
     const sale = {
       "1": {
         val: "sald",
         sald: { till: "G9002", ar: 2026, manad: 3, dag: null },
       },
     } as never;
-    const { unmount } = render(
-      <ReportForm
-        env="demo"
-        view={view({
-          access: "caretaker",
-          report: { ...base, submitted: { rabbits: sale } },
-        })}
-        actions={actions()}
-      />,
-    );
-    expect(screen.queryByRole("button", { name: "Dra tillbaka" })).toBeNull();
-    unmount();
     render(
       <ReportForm
         env="demo"
         view={view({
           access: "caretaker",
-          report: { ...base, submitted: { rabbits: {} } },
+          can_sell: false,
+          forslag: [
+            {
+              individual_id: 1,
+              to_herd: "G9002",
+              sale_date: "2026-03-31",
+              state: "foreslagen",
+            },
+          ],
+          report: {
+            id: 1,
+            status: "submitted",
+            source: "login",
+            revision: 0,
+            received_at: "2027-01-03T13:32:00+00:00",
+            report_date: "2027-01-03",
+            on_time: true,
+            submitted: { rabbits: sale },
+            can_change: true,
+            can_withdraw: true,
+            withdraw_until: "2027-01-10T13:32:00+00:00",
+            villkor: { hane: true, hona: true, kull: true, i_tid: true },
+          },
         })}
         actions={actions()}
       />,
     );
     expect(screen.getByRole("button", { name: "Dra tillbaka" })).toBeTruthy();
+    expect(screen.getByText(PENDING_SALE_TEXT)).toBeTruthy();
   });
 
   it("says the round is closed instead of showing the form", () => {

@@ -5,7 +5,10 @@ import {
   RabbitRow,
   type RabbitRowProps,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/RabbitRow";
-import { EMPTY_ENTRY } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
+import {
+  EMPTY_ENTRY,
+  PENDING_SALE_TEXT,
+} from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
 import { rabbit } from "./fixtures";
 
 afterEach(cleanup);
@@ -109,18 +112,31 @@ describe("RabbitRow", () => {
     expect(onNextWeight).toHaveBeenCalledWith(1);
   });
 
-  it("shows Såld as disabled to a caretaker and explains why", () => {
+  it("opens the sale dialog for a caretaker, whose sale shows as a proposal", () => {
     const onSell = vi.fn();
     render(<RabbitRow {...props({ canSell: false, onSell })} />);
-    const sold = screen.getByLabelText("Såld");
-    expect(sold.getAttribute("aria-disabled")).toBe("true");
-    fireEvent.click(sold);
-    expect(onSell).not.toHaveBeenCalled();
-    expect(
-      screen.getByText(
-        "Försäljningen registreras av ägaren eller genbanksansvarig.",
-      ),
-    ).toBeTruthy();
+    fireEvent.click(screen.getByLabelText("Såld"));
+    expect(onSell).toHaveBeenCalledWith(1);
+    cleanup();
+    const sold = {
+      ...EMPTY_ENTRY,
+      val: "sald" as const,
+      sald: { till: "G9002", ar: 2026, manad: 10, dag: 3, kopare: null },
+    };
+    render(
+      <RabbitRow
+        {...props({ canSell: false, proposal: true, onSell, entry: sold })}
+      />,
+    );
+    expect(screen.getByText(PENDING_SALE_TEXT)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Ändra" }));
+    expect(onSell).toHaveBeenCalledTimes(2);
+    cleanup();
+    // FB5: a sale the owner registered is not the caretaker's to change
+    render(<RabbitRow {...props({ canSell: false, entry: sold })} />);
+    expect(screen.getByText("Såld till G9002, 3 oktober 2026")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Ändra" })).toBeNull();
+    expect(screen.queryByText(PENDING_SALE_TEXT)).toBeNull();
   });
 
   it("shows a kept ej_angiven and a rabbit counted by its move without asking", () => {
