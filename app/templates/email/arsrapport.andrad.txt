@@ -5,7 +5,9 @@ Hej!
 
 Årsrapporten för besättning {{ herd }} ändrades den {{ datum }}. Nu har du rapporterat {{ kvar }} {{ "kanin" if kvar == 1 else "kaniner" }} som finns kvar, {{ doda }} {{ "död" if doda == 1 else "döda" }} och {{ salda }} {{ "såld" if salda == 1 else "sålda" }}.
 
-Du kan ändra den så länge rundan är öppen, till och med {{ end_date }}.
+{% if vantar %}Försäljningen väntar på genbanksansvarig. Kaninen står kvar hos dig tills den är godkänd.
+
+{% endif %}Du kan ändra den så länge rundan är öppen, till och med {{ end_date }}.
 
 Var det inte du? Kontakta genbanksansvarig genom att svara på det här mejlet.
 {% endblock %}

@@ -2069,14 +2069,22 @@ def find_submission(key, herd, round_, user, request_hash):
     raise ArsrapportError(409, KEY_TAKEN)
 
 
+def _waiting_sales(data):
+    """The rabbits (ids as text) whose sale in a submission's data was a pending proposal when it was sent."""
+    rabbits = data.get("rabbits") or {}
+    return {key for key, entry in rabbits.items() if ((entry or {}).get("sald") or {}).get("forslag") is not None}
+
+
 def receipt(submission) -> dict:
     """
     Receipt, from the submission row and its events alone, so every retry gets the same one, also after a later change
     (D21): the summary and the weight warnings come from its data, the matrikel's fields and warnings from its
-    matrikel_andrad event.
+    matrikel_andrad event. `vantar` counts the sales among `salda` that were pending proposals then (the data names
+    them).
     """
     entries, event = _entries(submission.data.get("rabbits") or {}), _contact_event(submission)
     chosen = Counter(entry.val for entry in entries.values())
+    waiting = len(_waiting_sales(submission.data))
     warnings = [_vikt_ovanlig(rabbit, entry.vikt) for rabbit, entry in sorted(entries.items())]
     warnings += [_later_change(field) for field in event.get("hoppade", [])]
     return {
@@ -2088,6 +2096,7 @@ def receipt(submission) -> dict:
             "kvar": chosen["kvar"],
             "doda": chosen["dod"],
             "salda": chosen["sald"],
+            "vantar": waiting,
             "ej_angivna": chosen["ej_angiven"],
         },
         "matrikel": event.get("falt", []),
@@ -2344,7 +2353,7 @@ def _propose(report, submission, proposed):
     The submission's proposals, under Skicka's locks. A pending proposal follows the submission: one whose rabbit it
     has no sale for is taken back with its buyer, also a rabbit it leaves out (5.7's ending). A rabbit left out keeps
     its register rows (P39a), but not a sale that waits for a decision. Then the new proposals (_split_sale), and the
-    data names the pending proposal behind each sale in place of the buyer.
+    data names the pending proposal behind each sale in place of the buyer, which the receipt reads.
     """
     import utils.sale_proposal as sale_proposal  # pylint: disable=import-outside-toplevel  # it imports this module
 

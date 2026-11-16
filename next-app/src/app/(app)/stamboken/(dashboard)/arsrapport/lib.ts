@@ -42,6 +42,7 @@ export interface Summary {
   kvar: number;
   doda: number;
   salda: number;
+  vantar?: number; // of salda, those sent as proposals (5.9)
   ej_angivna: number;
 }
 

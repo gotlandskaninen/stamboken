@@ -330,7 +330,7 @@ class BlankettTest(ArsrapportTest):
         self.login("man")
         entries = [self.ej_angiven(r) if r in missing else self.kvar(r, vikt=2.8) for r in rabbits]
         receipt = self.ok(item, self.paper(item, *entries, received_on="2026-01-12"))  # before the deadline (U12)
-        self.assertEqual(receipt["summary"], {"kvar": 9, "doda": 0, "salda": 0, "ej_angivna": 3})
+        self.assertEqual(receipt["summary"], {"kvar": 9, "doda": 0, "salda": 0, "vantar": 0, "ej_angivna": 3})
         ids = sorted(r.id for r in missing)
         written = db.HerdTracking.select().where(db.HerdTracking.individual.in_(ids), db.HerdTracking.kind != "BIRTH")
         self.assertEqual((written.count(), db.Weight.select().where(db.Weight.individual.in_(ids)).count()), (0, 0))

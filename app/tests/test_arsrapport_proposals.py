@@ -15,21 +15,25 @@ from unittest import mock
 import utils.arsrapport as arsrapport
 import utils.database as db
 import utils.inbox as inbox
+import utils.mail as mail
 import utils.report_code as report_code
 import utils.sale_proposal as sp
 import utils.settings as settings
 from herdbook import APP
 from utils.arsrapport import ArsrapportError
+from utils.arsrapport_pdf import receipt_pdf
 from utils.report_code import CodeActor
 
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.database_test import _USE_POSTGRES
+from tests.test_arsrapport_pdf import text_of
 
 DAY0 = date(2026, 1, 10)
 LAST = date(2025, 12, 31)
 BUYER = {"name": "Zelda Uniquebuyer", "town": "Visby"}
 OTHER_BUYER = {"name": "Ylva Otherbuyer", "town": "Slite"}
 NOW = datetime(2026, 1, 12, 11, 0, tzinfo=timezone.utc)
+PENDING_SALE_TEXT = "Försäljningen väntar på genbanksansvarig. Kaninen står kvar hos dig tills den är godkänd."
 
 
 def rows(rabbit, kind, active=True):
@@ -458,6 +462,26 @@ class ProposalsTest(ArsrapportTest):
         self.assertEqual(refused, [(None, "orsak_kopare")])
         self.assertEqual(db.YearlyReportSubmission.select().count(), 1)
         self.assertEqual(self.report().revision, 1)
+
+    def test_receipt_pdf_and_mail_say_a_pending_sale_waits(self):
+        receipt = self.send(
+            self.sald(self.a, "G9002", 2025, 10, 3), self.kvar(self.b, vikt=2.8), self.kvar(self.c, vikt=2.8)
+        )
+        self.assertEqual((receipt["summary"]["salda"], receipt["summary"]["vantar"]), (1, 1))
+        submission = db.YearlyReportSubmission.get()
+        self.assertIn("Såld till G9002, väntar på genbanksansvarig", text_of(receipt_pdf(self.report(), submission)))
+        row = db.MailMessage.get(db.MailMessage.kind == "arsrapport.kvitto")
+        _, text = mail.render("arsrapport.kvitto", arsrapport._kvitto(row.params))  # pylint: disable=protected-access
+        self.assertIn(PENDING_SALE_TEXT, text)
+        sp.approve(proposals(self.a)[0], self.decider, now=NOW)
+        self.day(1)  # an approved sale is a sale: the next receipt does not say it waits
+        receipt = self.send(
+            self.sald(self.a, "G9002", 2025, 10, 3),
+            self.kvar(self.b, vikt=3.0),
+            self.kvar(self.c, vikt=2.8),
+            revision=1,
+        )
+        self.assertEqual((receipt["summary"]["salda"], receipt["summary"]["vantar"]), (1, 0))
 
     def test_withdraw_prunes_an_open_draft_and_its_form(self):  # FB1, the branch with a draft already there
         sale = sp.approve(self.first(), self.decider, now=NOW)

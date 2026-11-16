@@ -64,7 +64,10 @@ export function Receipt({
   const sum = receipt?.summary ?? summaryOf(view);
   // A caretaker's or the link's withdrawal leaves the owner's sales standing (FB5), so it is always offered.
   const canWithdraw = !!report?.can_withdraw;
-  const pendingSale = view.forslag.some((p) => p.state === "foreslagen");
+  // the view says what waits now; right after Skicka, before it is fetched again, the receipt does
+  const pendingSale =
+    view.forslag.some((p) => p.state === "foreslagen") ||
+    !!receipt?.summary.vantar;
   const at = report?.received_at ?? receipt?.created_at ?? "";
   const when = `${fmtDate(at)} kl. ${fmtTime(at)}`;
   const changed =
