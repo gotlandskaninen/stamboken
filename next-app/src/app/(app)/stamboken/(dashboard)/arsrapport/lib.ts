@@ -2,6 +2,7 @@
 // and of server actions so the paper page (Task 14) and the status view
 // (Task 15) can reuse it.
 import { newOperationId } from "@/lib/herdTracking";
+import type { Mode } from "@/lib/mode";
 import type { InboxDetail } from "../inkorg/lib";
 
 export type Val = "kvar" | "dod" | "sald" | "ej_angiven";
@@ -111,8 +112,8 @@ export interface ReportView {
     activated: boolean;
     open: boolean;
   };
-  access: "owner" | "caretaker" | "manager" | "admin" | "helper";
-  source: "login" | "paper";
+  access: "owner" | "caretaker" | "manager" | "admin" | "helper" | "code";
+  source: "login" | "link" | "paper";
   can_sell: boolean;
   other_active_herd: boolean;
   rabbits: RabbitView[];
@@ -307,6 +308,11 @@ export const MATRIKEL_LABEL: Record<string, string> = {
 };
 
 export const refusalText = (r: Refusal) => REFUSAL_TEXT[r.code] ?? r.message;
+
+// The browser copy of an unsent form: one per data environment, and one for the personal link (/rapport), which
+// has no environment of its own.
+export const localKey = (scope: Mode | "link", herd: string, year: number) =>
+  `arsrapport:${scope}:${herd}:${year}`;
 
 // randomUUID is missing over plain http and on phones older than iOS 15.4 or
 // Chrome 92; newOperationId falls back to getRandomValues.

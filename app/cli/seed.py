@@ -17,6 +17,7 @@ Creates data mirroring production patterns:
 Idempotent — safe to run multiple times (skips existing data).
 """
 
+import json
 import logging
 import os
 import re
@@ -28,7 +29,7 @@ from typing import NamedTuple
 import click
 from flask.cli import AppGroup
 from PIL import Image, ImageDraw
-from utils import arsrapport, inbox, settings
+from utils import arsrapport, inbox, report_code, settings
 from utils import data_access as da
 from utils.database import (
     DATABASE,
@@ -47,6 +48,7 @@ from utils.database import (
     YearlyReportRound,
     ht_not_voided,
 )
+from utils.mail import link_token
 
 logger = logging.getLogger("herdbook.seed")
 
@@ -1193,6 +1195,25 @@ def create_arsrapport_seed(verbose):
     click.echo("  seed-gk-hjalp@test.local / seed-gk-hjalp-pass (genebank helper, enters G9002's paper form)")
     click.echo("  seed-mk-uppfodare@test.local / seed-mk-uppfodare-pass (owns M9001-M9004, M9006, M9007, M9101)")
     click.echo("  seed-mk-hjalp@test.local / seed-mk-hjalp-pass (genebank helper, M9005, M9006 and M9102 on paper)")
+
+
+@seed_cli.command("arsrapport-lankar")
+def create_arsrapport_links():
+    """Print the personal report links of M9001, M9002 and M9101 as JSON {"herd": "/rapport#<token>"}."""
+    if os.environ.get("FLASK_ENV") == "production" or settings.service.demo_instance:
+        raise click.ClickException("refusing to seed test data with public passwords in production or the demo.")
+    round_ = YearlyReportRound.get_or_none(YearlyReportRound.report_year == 2025)
+    if round_ is None:
+        raise click.ClickException("run `flask seed arsrapport` first.")
+    links = {}
+    for code in ("M9001", "M9002", "M9101"):
+        herd = Herd.get_or_none(Herd.herd == code)
+        member = report_code.invitation_recipient(herd) if herd else None
+        if member is None:
+            raise click.ClickException(f"{code} has no main member to issue a link to; run `flask seed arsrapport`.")
+        access = report_code.issue_code(herd, round_, member, now=arsrapport.now())
+        links[code] = f"/rapport#{link_token('rapport', access.id)}"
+    click.echo(json.dumps(links))
 
 
 def _paper_form(herd, manager, log):

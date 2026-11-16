@@ -19,6 +19,7 @@ import {
   fromBody,
   isDone,
   keyAfter,
+  localKey,
   matrikelBody,
   MATRIKEL_LABEL,
   newKey,
@@ -149,9 +150,11 @@ type LocalCopy = {
   updated_at?: string | null; // missing in a copy from before the stamps
   revision?: number | null;
 };
-const localKey = (env: Mode, herd: string, year: number) =>
-  `arsrapport:${env}:${herd}:${year}`;
-const readLocal = (env: Mode, herd: string, year: number): LocalCopy | null => {
+const readLocal = (
+  env: Mode | "link",
+  herd: string,
+  year: number,
+): LocalCopy | null => {
   try {
     const raw = window.localStorage.getItem(localKey(env, herd, year));
     const copy = raw ? JSON.parse(raw) : null;
@@ -161,7 +164,7 @@ const readLocal = (env: Mode, herd: string, year: number): LocalCopy | null => {
   }
 };
 const writeLocal = (
-  env: Mode,
+  env: Mode | "link",
   herd: string,
   year: number,
   copy: LocalCopy | null,
@@ -213,6 +216,16 @@ const ProfileCard = (
   </MbCard>
 );
 
+// Through the personal link there is no profile: the genebank manager changes these (the inline version is step 5).
+const LinkContactCard = (
+  <MbCard title="Dina uppgifter">
+    <p style={{ margin: 0 }}>
+      Har din adress, e-post, ditt konto för stödet eller ditt svar om Koharen
+      ändrats? Kontakta genbanksansvarig.
+    </p>
+  </MbCard>
+);
+
 // Publishes the side column's height as --side-h on the layout, so that Skicka, which
 // comes after the list in the DOM, can stick right under the sticky side column.
 function trackSideHeight(el: HTMLDivElement | null) {
@@ -228,7 +241,8 @@ function trackSideHeight(el: HTMLDivElement | null) {
 export function ReportForm({
   view,
   actions,
-  contactSlot = ProfileCard,
+  contactSlot,
+  link,
   stickyTop = 56,
   post,
   env,
@@ -237,6 +251,8 @@ export function ReportForm({
   view: ReportView;
   actions: ReportActions;
   contactSlot?: React.ReactNode;
+  // The page behind the personal link (/rapport): no sign-in, so no mode cookie, profile or sign-in link.
+  link?: true;
   stickyTop?: number;
   post?: number;
   paper?: PaperProps;
@@ -246,6 +262,10 @@ export function ReportForm({
 }) {
   const router = useRouter();
   const { herd, year, round } = view;
+  const store = link ? "link" : env;
+  // A link that was revoked or has ended: the page for it, and nothing more is saved.
+  const gone = (p: Problem) =>
+    !!link && p.status === 403 && p.extensions?.code === "lank_ogiltig";
   const editor = view.access === "manager" || view.access === "admin";
   const item = paper ? view.item : null; // paper entry runs through a queue item
   const isPaper = !!item;
@@ -354,7 +374,7 @@ export function ReportForm({
   React.useEffect(() => {
     // behind the member-draft gate nothing is adopted: the choice comes first
     if (gateOf(viewRef.current, isPaper) === "draft") return;
-    const local = readLocal(env, herd.herd, year);
+    const local = readLocal(store, herd.herd, year);
     const server = viewRef.current;
     if (
       local &&
@@ -370,7 +390,7 @@ export function ReportForm({
       setLocalCopy(true);
       setVersion((v) => v + 1);
     }
-  }, [env, herd.herd, year, isPaper]);
+  }, [store, herd.herd, year, isPaper]);
 
   // The server's draft replaces the whole editing state: form, mode and key.
   const adoptDraft = (d: ServerDraft) => {
@@ -381,7 +401,7 @@ export function ReportForm({
     // a draft with no key (written by Dra tillbaka) must not revive a spent one
     keyRef.current = d.submission_key ?? newKey();
     setSavedAt(fmtTime(d.updated_at));
-    writeLocal(env, herd.herd, year, null);
+    writeLocal(store, herd.herd, year, null);
     setLocalCopy(false);
     setMode("form");
     setVersion(0);
@@ -418,8 +438,8 @@ export function ReportForm({
     keyRef.current = view.draft?.submission_key ?? newKey();
     updatedAt.current = view.draft?.updated_at ?? null;
     frozen.current = null;
-    writeLocal(env, view.herd.herd, view.year, null);
-  }, [view, env, isPaper]);
+    writeLocal(store, view.herd.herd, view.year, null);
+  }, [view, store, isPaper]);
 
   // One save in flight at a time: a change made meanwhile is sent after it
   // has been answered, with the version it returned.
@@ -435,7 +455,7 @@ export function ReportForm({
       do {
         again.current = false;
         if (submitting.current) break;
-        if (readModeCookieClient() !== env) {
+        if (!link && readModeCookieClient() !== env) {
           stopped.current = true; // never save into the other environment
           break;
         }
@@ -465,10 +485,10 @@ export function ReportForm({
           setSavedAt(fmtTime(res.data.updated_at));
           setSaveState("saved");
           if (versionRef.current === mine)
-            writeLocal(env, herd.herd, year, null);
+            writeLocal(store, herd.herd, year, null);
           // a newer edit waits: its copy now builds on the version just saved
           else
-            writeLocal(env, herd.herd, year, {
+            writeLocal(store, herd.herd, year, {
               data: toDraft(stateRef.current),
               updated_at: res.data.updated_at,
               revision: viewRef.current.report?.revision ?? null,
@@ -484,6 +504,9 @@ export function ReportForm({
         } else if (p.status === 409 && ext.code === "rundan_stangd") {
           stopped.current = true;
           setSaveState("closed");
+        } else if (gone(p)) {
+          stopped.current = true;
+          router.replace("/rapport/ogiltig");
         } else if (p.status === 401) setSaveState("loggedout");
         else {
           setSaveState("offline");
@@ -503,7 +526,7 @@ export function ReportForm({
   // Autosave: 2 s after the last change, from the revision the page started from.
   React.useEffect(() => {
     if (version === 0 || mode !== "form" || !canEdit || stopped.current) return;
-    writeLocal(env, herd.herd, year, {
+    writeLocal(store, herd.herd, year, {
       data: toDraft(stateRef.current),
       updated_at: updatedAt.current,
       revision: viewRef.current.report?.revision ?? null,
@@ -514,7 +537,7 @@ export function ReportForm({
       AUTOSAVE_MS,
     );
     return () => clearTimeout(autosaveTimer.current);
-  }, [version, retry, mode, canEdit, env, herd.herd, year]);
+  }, [version, retry, mode, canEdit, env, store, herd.herd, year]);
 
   const rabbits = view.rabbits;
   const lastId = rabbits.length ? rabbits[rabbits.length - 1].id : null;
@@ -733,7 +756,8 @@ export function ReportForm({
   const handle = (p: Problem) => {
     submitOver();
     const ext = p.extensions ?? {};
-    if (p.status === 401) setSaveState("loggedout");
+    if (gone(p)) router.replace("/rapport/ogiltig");
+    else if (p.status === 401) setSaveState("loggedout");
     else if (p.status === 422 && Array.isArray(ext.refusals))
       showRefusals(ext.refusals as Refusal[]);
     else if (p.status === 409 && ext.code === "rundan_stangd")
@@ -750,7 +774,7 @@ export function ReportForm({
 
   const ENV_TEXT = "Miljön har bytts. Ladda om sidan.";
   const send = async (body: Submission) => {
-    if (readModeCookieClient() !== env) return fail(ENV_TEXT);
+    if (!link && readModeCookieClient() !== env) return fail(ENV_TEXT);
     setPhase("sending");
     const res = await safe(
       actionsRef.current.submitReport(herd.herd, year, body, env, post),
@@ -760,7 +784,7 @@ export function ReportForm({
       keyRef.current = keyAfter("ok", keyRef.current!);
       frozen.current = null;
       updatedAt.current = null;
-      writeLocal(env, herd.herd, year, null);
+      writeLocal(store, herd.herd, year, null);
       setLocalCopy(false);
       setReceipt(res.data);
       setMode("receipt");
@@ -783,7 +807,7 @@ export function ReportForm({
   const skicka = async () => {
     if (phase !== "idle" || syncing || olderCopy) return;
     setRefusals(null);
-    if (readModeCookieClient() !== env) return fail(ENV_TEXT);
+    if (!link && readModeCookieClient() !== env) return fail(ENV_TEXT);
     let body = toBody(state, keyRef.current!, view.report?.revision ?? null);
     if (isPaper) {
       const signed = signedOn ?? receivedOn;
@@ -827,7 +851,7 @@ export function ReportForm({
   };
 
   const withdraw = async (reason?: string): Promise<string | null> => {
-    if (readModeCookieClient() !== env) return ENV_TEXT;
+    if (!link && readModeCookieClient() !== env) return ENV_TEXT;
     setWithdrawing(true);
     const res = await safe(
       actionsRef.current.withdrawReport(
@@ -855,6 +879,10 @@ export function ReportForm({
       return null;
     }
     const ext = res.problem.extensions ?? {};
+    if (gone(res.problem)) {
+      router.replace("/rapport/ogiltig");
+      return null;
+    }
     if (res.problem.status === 403)
       return "Tiden för att dra tillbaka rapporten har gått ut.";
     if (res.problem.status === 409) return `${CONFLICT_TEXT}. Ladda om sidan.`;
@@ -889,7 +917,9 @@ export function ReportForm({
           : saveState === "loggedout"
             ? {
                 kind: "loggedout",
-                href: `/auth/sign-in?return_to=${encodeURIComponent(typeof window === "undefined" ? "/stamboken/arsrapport" : window.location.pathname)}`,
+                href: link
+                  ? null
+                  : `/auth/sign-in?return_to=${encodeURIComponent(typeof window === "undefined" ? "/stamboken/arsrapport" : window.location.pathname)}`,
               }
             : saveState === "conflict"
               ? { kind: "conflict" }
@@ -912,7 +942,9 @@ export function ReportForm({
         : status.kind === "offline"
           ? `Offline, sparas i ${status.device}`
           : status.kind === "loggedout"
-            ? "Utloggad, sparas i webbläsaren"
+            ? link
+              ? "Sidan stängdes, sparas i webbläsaren"
+              : "Utloggad, sparas i webbläsaren"
             : status.kind === "conflict"
               ? "Ändrad på en annan enhet"
               : null;
@@ -969,7 +1001,7 @@ export function ReportForm({
           type="button"
           className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
           onClick={() => {
-            writeLocal(env, herd.herd, year, null);
+            writeLocal(store, herd.herd, year, null);
             setOlderCopy(null);
           }}
         >
@@ -1070,7 +1102,7 @@ export function ReportForm({
                   const s = fromBody(view.draft!.data);
                   setState(s);
                   setEntered(enteredFrom(rabbits, s));
-                  writeLocal(env, herd.herd, year, null);
+                  writeLocal(store, herd.herd, year, null);
                   setLocalCopy(false);
                   setGate(null);
                 }}
@@ -1083,7 +1115,7 @@ export function ReportForm({
                 onClick={() => {
                   setState(emptyState());
                   setEntered([]);
-                  writeLocal(env, herd.herd, year, null);
+                  writeLocal(store, herd.herd, year, null);
                   setLocalCopy(false);
                   setGate(null);
                 }}
@@ -1851,7 +1883,8 @@ export function ReportForm({
 
             {!isPaper && endCard}
 
-            {!isPaper && contactSlot}
+            {!isPaper &&
+              (contactSlot ?? (link ? LinkContactCard : ProfileCard))}
 
             {(isPaper ? needReason : editor) && (
               <MbCard title="Orsak">

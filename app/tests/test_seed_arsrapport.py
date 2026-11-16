@@ -1,5 +1,6 @@
 """`flask seed arsrapport`: the demo round for the trial run. Idempotent, synthetic, refuses production."""
 
+import json
 import os
 import shutil
 import tempfile
@@ -9,6 +10,7 @@ from unittest import mock
 
 import utils.arsrapport as arsrapport
 import utils.database as db
+import utils.report_code as report_code
 import utils.settings as settings
 from herdbook import APP
 
@@ -38,6 +40,9 @@ class SeedArsrapportTest(DatabaseTest):
         patcher.start()
         self.addCleanup(patcher.stop)
         self.folder = folder
+        link_secret = mock.patch.object(settings.mail, "link_secret", "test-link-secret")
+        link_secret.start()
+        self.addCleanup(link_secret.stop)
         self.runner = APP.test_cli_runner()
 
     def seed(self, command="arsrapport"):
@@ -102,6 +107,38 @@ class SeedArsrapportTest(DatabaseTest):
         self.assertNotEqual(result.exit_code, 0, result.output)
         self.assertIn("demo", result.output)
         self.assertFalse(db.Herd.select().where(db.Herd.herd == "G9001").exists())
+
+    def test_seed_lankar_prints_a_working_link_per_herd(self):
+        self.seed("create")
+        self.seed()
+        result = self.runner.invoke(args=["seed", "arsrapport-lankar"])
+        self.assertEqual(result.exit_code, 0, f"{result.output} {result.exception!r}")
+        links = json.loads(result.output)
+        self.assertEqual(sorted(links), ["M9001", "M9002", "M9101"])
+        for herd, link in links.items():
+            self.assertRegex(link, r"^/rapport#\d+\.[A-Za-z0-9_-]{22}$")
+            code = report_code.resolve(link.split("#")[1])
+            self.assertEqual(code.herd.herd, herd)
+            self.assertIsNone(report_code.refusal(code, code.herd, today=arsrapport.today()))
+        again = self.runner.invoke(args=["seed", "arsrapport-lankar"])
+        self.assertEqual(json.loads(again.output), links)  # the active code is reused
+
+    def test_seed_lankar_refused_in_production(self):
+        self.seed("create")
+        self.seed()
+        with mock.patch.dict(os.environ, {"FLASK_ENV": "production"}):
+            result = self.runner.invoke(args=["seed", "arsrapport-lankar"])
+        self.assertNotEqual(result.exit_code, 0, result.output)
+        self.assertIn("production", result.output)
+        self.assertFalse(db.ReportAccessCode.select().exists())
+
+    def test_seed_lankar_refused_in_the_demo(self):
+        self.seed("create")
+        self.seed()
+        with mock.patch.object(settings.service, "demo_instance", True):
+            result = self.runner.invoke(args=["seed", "arsrapport-lankar"])
+        self.assertNotEqual(result.exit_code, 0, result.output)
+        self.assertFalse(db.ReportAccessCode.select().exists())
 
     def test_leaves_an_existing_herd_untouched(self):
         self.seed("create")

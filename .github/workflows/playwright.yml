@@ -224,6 +224,8 @@ jobs:
         run: |
           docker compose -f docker-compose.local-production.yml exec -T api flask seed create --verbose
           docker compose -f docker-compose.local-production.yml exec -T api flask seed arsrapport --verbose
+          mkdir -p next-app/e2e/.auth
+          docker compose -f docker-compose.local-production.yml exec -T api flask seed arsrapport-lankar > next-app/e2e/.auth/arsrapport-lankar.json
 
       - name: Create legacy test users
         run: |

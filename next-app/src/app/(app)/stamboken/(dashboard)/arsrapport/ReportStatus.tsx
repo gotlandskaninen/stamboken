@@ -10,7 +10,7 @@ export type StatusKind =
   | { kind: "saved"; at: string | null; changing: boolean }
   | { kind: "saving" }
   | { kind: "offline"; device: "telefonen" | "webbläsaren" }
-  | { kind: "loggedout"; href: string }
+  | { kind: "loggedout"; href: string | null }
   | { kind: "conflict" }
   | { kind: "sending" }
   | { kind: "syncing" }
@@ -52,6 +52,9 @@ function text(s: StatusKind): React.ReactNode {
     case "offline":
       return `Inte sparat än, ingen anslutning. Det du fyllt i finns kvar i ${s.device}.`;
     case "loggedout":
+      // Through the personal link (no href) the page was closed after two hours.
+      if (s.href === null)
+        return "Sidan stängdes efter två timmar av säkerhetsskäl. Öppna länken i mejlet igen. Det du fyllt i är sparat.";
       return (
         <>
           Du har loggats ut. <Link href={s.href}>Logga in igen</Link>. Det du
