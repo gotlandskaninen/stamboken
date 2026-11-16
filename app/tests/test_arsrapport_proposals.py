@@ -84,14 +84,14 @@ class ProposalsTest(ArsrapportTest):
         self.assertEqual(access.role, who)
         return access, user
 
-    def send(self, *entries, who="code", revision=None, body=None):
+    def send(self, *entries, who="code", revision=None, body=None, **fields):
         access, actor = self.actor(who)
-        sub = arsrapport.parse_submission(body or self.body(*entries, revision=revision), paper=False)
+        sub = arsrapport.parse_submission(body or self.body(*entries, revision=revision, **fields), paper=False)
         return arsrapport.submit(self.h, self.round_, access, actor, sub)
 
-    def withdraw(self, revision, who="code"):
+    def withdraw(self, revision, who="code", reason=None):
         access, actor = self.actor(who)
-        return arsrapport.withdraw(self.h, self.round_, access, actor, revision=revision)
+        return arsrapport.withdraw(self.h, self.round_, access, actor, revision=revision, reason=reason)
 
     def report(self):
         return db.YearlyHerdReport.get(db.YearlyHerdReport.herd == self.h.id, db.YearlyHerdReport.status == "submitted")
@@ -404,3 +404,74 @@ class ProposalsTest(ArsrapportTest):
         item, _ = inbox.create_upload(db.User.get_by_id(self.owner.id), self.h, None, stored)
         db.InboxDocument.update(individual=rabbit.id).where(db.InboxDocument.item == item.id).execute()
         return db.InboxItem.get_by_id(item.id)
+
+    # Codex review of c3ec99e..f4a035a
+
+    def test_former_seller_cannot_propose_after_approved_sale(self):  # the herd holds the rabbit on the sale date
+        sp.approve(self.first(), self.decider, now=NOW)
+        db.Herd.create(genebank=self.gotland, herd="G9003", is_active=True)
+        self.day(1)
+        resold = (self.sald(self.a, "G9003", 2025, 11, 5), self.kvar(self.b, vikt=2.8), self.kvar(self.c, vikt=2.8))
+        self.assertEqual(self.refused(lambda: self.send(*resold, revision=1)), [(self.a.id, "senare_handelse")])
+        self.assertEqual([p.state for p in proposals(self.a)], ["godkand"])
+        self.assertNotIn(self.a.id, arsrapport._pending_sales(LAST))  # pylint: disable=protected-access
+
+    def test_ending_leaves_out_a_pending_sale(self):  # a sale the submission no longer carries is taken back
+        self.send(
+            self.sald(self.a, "utanfor", 2025, 10, 3, kopare=BUYER),
+            self.kvar(self.b, vikt=2.8),
+            self.kvar(self.c, vikt=2.8),
+        )
+        (pending,) = proposals(self.a)
+        self.day(1)
+        self.send(
+            self.kvar(self.b, vikt=2.8),
+            self.kvar(self.c, vikt=2.8),
+            revision=1,
+            ending_genbank=True,
+            membership_after_end="kvar_utan_genbank",
+        )
+        pending = db.SaleProposal.get_by_id(pending.id)
+        self.assertEqual((pending.state, pending.buyer), ("atertagen", None))
+        self.assertEqual(db.InboxItem.get_by_id(pending.inbox_item_id).state, "skrap")
+        with self.assertRaises(ArsrapportError) as caught:
+            sp.approve(pending, self.decider, now=NOW)
+        self.assertEqual(caught.exception.status, 409)
+
+    def test_reason_naming_a_pending_buyer_is_refused(self):  # SaleProposal.buyer, before anything is stored
+        entries = (self.sald(self.a, "utanfor", 2025, 10, 3), self.kvar(self.b, vikt=2.8), self.kvar(self.c, vikt=2.8))
+        self.send(self.sald(self.a, "utanfor", 2025, 10, 3, kopare=BUYER), *entries[1:], who="caretaker")
+        self.day(1)
+        access, user = self.actor("caretaker")
+        body = self.body(*entries, revision=1, reason="Zelda hämtar den i mars")
+        refusals, _ = arsrapport.check(
+            self.h,
+            self.round_,
+            access,
+            self.report(),
+            arsrapport.parse_submission(body, paper=False),
+            on=arsrapport.today(),
+        )
+        self.assertEqual([(r.individual_id, r.code) for r in refusals], [(None, "orsak_kopare")])
+        self.assertEqual(self.refused(lambda: self.send(body=body, who="caretaker")), [(None, "orsak_kopare")])
+        refused = self.refused(lambda: self.withdraw(1, who="caretaker", reason="Zelda ångrade sig"))
+        self.assertEqual(refused, [(None, "orsak_kopare")])
+        self.assertEqual(db.YearlyReportSubmission.select().count(), 1)
+        self.assertEqual(self.report().revision, 1)
+
+    def test_withdraw_prunes_an_open_draft_and_its_form(self):  # FB1, the branch with a draft already there
+        sale = sp.approve(self.first(), self.decider, now=NOW)
+        access, actor = self.actor("code")
+        rabbits = {str(r.id): {"val": "kvar", "vikt": 2.8} for r in (self.a, self.b, self.c)}
+        defects = [{"individual_id": r.id, "beskrivning": "Skev tand"} for r in (self.a, self.b)]
+        form = {"rabbits": rabbits, "defects": defects, "health": "ja"}
+        data = {"rabbits": rabbits, "defects": defects, "health": "ja", "form": form}
+        arsrapport.save_draft(self.h, self.round_, access, actor, data, None, None, 1)
+        self.day(1)
+        self.withdraw(1)
+        draft = db.YearlyReportDraft.get()
+        kept = sorted([str(self.b.id), str(self.c.id)])
+        self.assertEqual((sorted(draft.data["rabbits"]), sorted(draft.data["form"]["rabbits"])), (kept, kept))
+        self.assertEqual([d["individual_id"] for d in draft.data["defects"]], [self.b.id])
+        self.assertEqual([d["individual_id"] for d in draft.data["form"]["defects"]], [self.b.id])
+        self.assertIsNone(db.HerdTracking.get_by_id(sale.id).voided_at)

@@ -1391,8 +1391,10 @@ def _unchanged(entry, before, proposal, row):
     P39a: a choice as in the latest submission writes nothing, unless it is a sale that was rejected and the rabbit is
     still to choose (FB3); a rejection with "kvar" has attested it, so its row is no longer att_valja.
     """
-    # shortcut: any resent rejected sale is a new proposal, as the form resends every entry; once Task 3's rejection
-    # rewrites the latest submission's entry (FB2 kvar, FB3 cleared), entry == before no longer holds and this is moot
+    # shortcut: any resent rejected sale is a new proposal, as the form resends every entry; that includes a January
+    # sale rejected with "kvar", whose 31/12 attestation the report already wrote, so its row stays att_valja. Once
+    # Task 3's rejection rewrites the latest submission's entry and moves the revision (FB2 kvar, FB3 cleared),
+    # entry == before no longer holds and this is moot
     rejected = entry.val == "sald" and proposal is not None and proposal.state == "avvisad"
     return entry == before and not (rejected and row["state"] == "att_valja")
 
@@ -1573,8 +1575,9 @@ def _register_refusals(individual_id, entry, remove, add, ops, admin=False):
 def _reason_refusals(reason, rabbit_ids, names=()):
     """
     Opus 1, 4: a typed reason that names a buyer of the rabbits' rows, or one of `names`, the buyers the submission
-    types, is refused once for the report. void_herd_tracking checks the same rows per rabbit, so a dry run that
-    passes here never meets that 422; the reason is stored in the submission and on the voided rows.
+    types and the report's pending proposals hold, is refused once for the report. void_herd_tracking checks the same
+    rows per rabbit, so a dry run that passes here never meets that 422; the reason is stored in the submission and on
+    the voided rows.
     """
     try:
         _reject_buyer_name([reason], rabbit_ids, names=names)
@@ -1587,6 +1590,12 @@ def _typed_buyers(sub):
     """The buyer names the submission types; kopare is checked later, so here only a name that is text counts."""
     buyers = (entry.sald["kopare"] for entry in sub.rabbits.values() if entry.sald)
     return [buyer["name"] for buyer in buyers if isinstance(buyer, dict) and isinstance(buyer.get("name"), str)]
+
+
+def _waiting_buyers(proposals):
+    """The buyer names the pending proposals hold, which no BuyerContact has yet: a reason names none of them."""
+    pending = (p.buyer for p in proposals if p.state == "foreslagen" and p.buyer)
+    return [buyer["name"] for buyer in pending if isinstance(buyer.get("name"), str)]
 
 
 def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal], list[Refusal]]:
@@ -1626,8 +1635,8 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
     refusals += [_refusal(rabbit, "okand_kanin") for rabbit in strangers]
     # Only the report's own rabbits: another herd's rabbit would make the refusal an oracle on its buyer's name.
     own = [rabbit for rabbit in sub.rabbits if rabbit in rows]
-    refusals += _reason_refusals(sub.reason, own, _typed_buyers(sub))
     proposals = _proposals(report)
+    refusals += _reason_refusals(sub.reason, own, _typed_buyers(sub) + _waiting_buyers(proposals.values()))
     for rabbit, row in rows.items():
         entry, before = sub.rabbits.get(rabbit), before_entries.get(rabbit)
         if entry is None:
@@ -1674,6 +1683,12 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
         # FB5: a sale the owner registered is the register's; a new sale by this role is a proposal, checked as a sale
         if not access.can_sell and any(e.kind == "transfer" for e in remove):
             refusals.append(_no_sale(rabbit, access))
+            continue
+        sale = next((e for e in add if e.kind == "transfer"), None)
+        # A proposal sells from this herd, which writes no row to check it: the herd holds the rabbit on the sale
+        # date, by all its rows as approve reads them (Skicka runs this under the rabbit's lock)
+        if not access.can_sell and sale is not None and _holder_on(rabbit, sale.date, set()) != herd.id:
+            refusals.append(_refusal(rabbit, "senare_handelse"))
             continue
         refusals += _register_refusals(rabbit, entry, remove, add, ops, access.role == "admin")
     if access.source == "paper":
@@ -2326,16 +2341,22 @@ def _split_sale(proposed, access, report, rabbit, want, prev, entry, proposal, l
 
 def _propose(report, submission, proposed):
     """
-    The submission's new proposals (_split_sale), then its data naming the proposal behind each sale, pending or
-    approved, in place of the buyer.
+    The submission's proposals, under Skicka's locks. A pending proposal follows the submission: one whose rabbit it
+    has no sale for is taken back with its buyer, also a rabbit it leaves out (5.7's ending). A rabbit left out keeps
+    its register rows (P39a), but not a sale that waits for a decision. Then the new proposals (_split_sale), and the
+    data names the pending proposal behind each sale in place of the buyer.
     """
     import utils.sale_proposal as sale_proposal  # pylint: disable=import-outside-toplevel  # it imports this module
 
+    rabbits = submission.data["rabbits"]
+    for proposal in sale_proposal.pending(report):
+        if (rabbits.get(str(proposal.individual_id)) or {}).get("val") != "sald":
+            sale_proposal.retract(proposal, now=submission.created_at)
     for rabbit, entry, sale in proposed:
         to_herd = None if entry.sald["till"] == "utanfor" else Herd.get(Herd.herd == sale.value[0])
         buyer, individual = entry.sald["kopare"], Individual(id=rabbit)
         sale_proposal.propose(report, submission, individual, to_herd=to_herd, buyer=buyer, sale_date=sale.date)
-    named = {rabbit: p.id for rabbit, p in _proposals(report).items() if p.state in ("foreslagen", "godkand")}
+    named = {rabbit: p.id for rabbit, p in _proposals(report).items() if p.state == "foreslagen"}
     sales = [(int(key), entry["sald"]) for key, entry in submission.data["rabbits"].items() if entry.get("sald")]
     if any(rabbit in named for rabbit, _ in sales):
         for rabbit, sald in sales:
@@ -2540,7 +2561,7 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
         rabbits = sorted({int(key) for submission in submissions for key in submission.data.get("rabbits") or {}})
         _lock_rabbits(rabbits, _lock_items(rabbits, report=report))
         ops = {str(op) for submission in submissions for op in submission.operation_ids}
-        refusals = _reason_refusals(reason, rabbits)
+        refusals = _reason_refusals(reason, rabbits, _waiting_buyers(sale_proposal.pending(report)))
         for rabbit in rabbits:
             remove = diff(current(report, rabbit), [], last)[0]
             if not access.can_sell:  # FB5: a sale the owner registered stays, as an approved proposal does
