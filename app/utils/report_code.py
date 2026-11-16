@@ -32,6 +32,20 @@ class StaleRecipient(Exception):
     """The member a code was to be issued to is not the herd's main member any more."""
 
 
+_HERD_CODE_LOCK = 0x48424343  # "HBCC": classid of the advisory lock on a herd's access codes
+
+
+def lock_herd_codes(herd: Herd) -> None:
+    """
+    Serializes issuing and replacing a herd's link (issue_code, new_link) until the transaction ends, taken before the
+    recipient is read and before any revoke, so a stale selection cannot revoke the code of the member who replaced it.
+    Lock order: this lock first, then code rows. It is never taken under the report lock, and nothing holding it takes
+    the report lock, so a submission (report lock, then FOR SHARE on its code row in _recheck_code) can wait for a
+    revoke to commit but never form a cycle with it.
+    """
+    DB_PROXY.execute_sql("SELECT pg_advisory_xact_lock(%s, %s)", (_HERD_CODE_LOCK, herd.id))
+
+
 def require_current(herd: Herd, member: Member) -> None:
     # Late import, as in invitation_recipient.
     import utils.inbox as inbox  # pylint: disable=import-outside-toplevel
@@ -54,6 +68,7 @@ def issue_code(herd: Herd, round_, member: Member, *, now: datetime) -> ReportAc
     index lets one insert win, and the other returns the winner's code.
     """
     with DB_PROXY.atomic():
+        lock_herd_codes(herd)
         require_current(herd, member)  # before anything is revoked: a stale caller changes nothing
         code = _active(herd, round_)
         if code is not None and code.member_id != member.id:

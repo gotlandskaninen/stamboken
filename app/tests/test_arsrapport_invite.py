@@ -297,6 +297,35 @@ class InviteTest(ArsrapportTest):
         (token,) = re.findall(r"/rapport#(\S+)", sent[0].get_body().get_content())
         self.assertEqual(report_code.resolve(token).id, new.id)
 
+    def spy_sql(self):
+        seen = []
+        real = db.DB_PROXY.obj.execute_sql
+
+        def spy(sql, params=None, *args, **kwargs):
+            seen.append(sql)
+            return real(sql, params, *args, **kwargs)
+
+        patcher = mock.patch.object(db.DB_PROXY.obj, "execute_sql", spy)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        return seen
+
+    def assert_lock_comes_first(self, seen):
+        locks = [i for i, q in enumerate(seen) if "pg_advisory_xact_lock" in q]
+        touched = [i for i, q in enumerate(seen) if "report_access_code" in q or 'FROM "member"' in q]
+        self.assertTrue(locks and touched and locks[0] < touched[0], seen)
+
+    def test_issuing_and_replacing_a_link_take_the_herd_lock_first(self):
+        # Not a concurrency test: it shows the per-herd lock is taken before any code or recipient statement.
+        # Lock order: this lock, then code rows. It is never taken under lock_report, and nothing here takes
+        # lock_report, so a submission (lock_report, then FOR SHARE on its code row) cannot form a cycle with it.
+        seen = self.spy_sql()
+        report_code.issue_code(self.h, self.round_, self.member, now=NOW)
+        self.assert_lock_comes_first(seen)
+        seen.clear()
+        invite.new_link(self.h, self.round_, self.owner, now=NOW)
+        self.assert_lock_comes_first(seen)
+
     def test_new_link_answers_409_when_issue_code_finds_the_member_stale(self):
         self.run_job()
         old = self.codes(self.h)[0]

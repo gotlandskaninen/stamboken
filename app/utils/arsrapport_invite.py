@@ -85,18 +85,18 @@ def recipients(round_, genebank_id) -> dict:
 
 def new_link(herd, round_, user, *, now: datetime) -> ReportAccessCode:
     """Revokes the herd's active code, issues a new one and mails it to the main member. Takes no report lock."""
-    member = report_code.invitation_recipient(herd)
-    if member is None:
-        raise ArsrapportError(409, "Besättningen har ingen huvudmedlem med e-postadress.")
     try:
-        return _replace_link(herd, round_, user, member, now)
+        return _replace_link(herd, round_, user, now)
     except report_code.StaleRecipient as exc:  # the main member changed after the first check: retryable, not a 500
         raise ArsrapportError(409, "Huvudmedlemmen har just ändrats. Försök igen.") from exc
 
 
-def _replace_link(herd, round_, user, member, now):
+def _replace_link(herd, round_, user, now):
     with DB_PROXY.atomic():
-        report_code.require_current(herd, member)  # before the revoke: a stale selection changes nothing
+        report_code.lock_herd_codes(herd)  # first: the recipient is read, and the old link revoked, under it
+        member = report_code.invitation_recipient(herd)
+        if member is None:
+            raise ArsrapportError(409, "Besättningen har ingen huvudmedlem med e-postadress.")
         old = ReportAccessCode.get_or_none(
             ReportAccessCode.herd == herd.id, ReportAccessCode.round == round_.id, ReportAccessCode.revoked_at.is_null()
         )
