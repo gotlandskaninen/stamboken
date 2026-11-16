@@ -587,7 +587,9 @@ def anonymize_ended_persons(now):
     for membership in _memberships_with_ended_persons(cutoff):
         try:
             with DB_PROXY.atomic():
-                Membership.select().where(Membership.id == membership.id).for_update().get()
+                # NO KEY: still waits for retire, delete and add (FOR UPDATE), but not for a herd write's FK check
+                # on this row, which holds its herd lock while it waits: that order would deadlock with ours.
+                Membership.select().where(Membership.id == membership.id).for_update("FOR NO KEY UPDATE").get()
                 person_users = Member.select(Member.user).where(Member.membership == membership)
                 accounts = list(User.select().where(User.id.in_(person_users)).order_by(User.id).for_update())
                 owned = [p["herd"] for user in accounts for p in user.privileges or [] if p["level"] == "owner"]

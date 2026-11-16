@@ -186,6 +186,31 @@ class TestAnonymizeEndedPersons(DatabaseTest):
         granter.join(15)
         self.assertFalse(_erased(main))
 
+    def test_a_herd_linked_while_the_job_waits_holds_the_membership_without_deadlock(self):
+        ended = _membership(114)
+        main = _person(ended, OLD, role="huvudmedlem", user=self.viewer)
+        user_id, herd_id, locked, errors = self.viewer.id, self.herds[1].id, threading.Event(), []
+
+        def link_herd_while_holding_the_account():  # the job waits on the account while it holds the membership
+            try:
+                with db.DB_PROXY.atomic():
+                    db.User.select().where(db.User.id == user_id).for_update().get()
+                    locked.set()
+                    time.sleep(1)
+                    db.Herd.update(membership=ended.id, is_active=True).where(db.Herd.id == herd_id).execute()
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                errors.append(exc)
+            finally:
+                db.DB_PROXY.close()
+
+        linker = threading.Thread(target=link_herd_while_holding_the_account)
+        linker.start()
+        self.assertTrue(locked.wait(10))
+        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, 0, [(ended.id, None, "active_herd")]))
+        linker.join(15)
+        self.assertEqual(errors, [])
+        self.assertFalse(_erased(main))
+
     def test_a_failure_on_one_membership_does_not_stop_the_rest(self):
         first = _person(_membership(108), OLD, role="huvudmedlem")
         second = _person(_membership(109), OLD, role="huvudmedlem")
