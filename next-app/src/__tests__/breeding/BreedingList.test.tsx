@@ -18,6 +18,8 @@ vi.mock("react-i18next", () => ({
         "breeding.born": "Född",
         "breeding.mating": "Parning",
         "breeding.details": "Detaljer",
+        "breeding.preliminary": "preliminärt",
+        "breeding.confirmCount": "Bekräfta antalet",
       };
       return translations[key] || key;
     },
@@ -158,5 +160,44 @@ describe("BreedingList", () => {
 
     // After expanding, "Stor kull" should be visible
     expect(screen.getByText("Stor kull")).toBeDefined();
+  });
+
+  it("marks a preliminary litter and confirms its count as it stands", () => {
+    const onConfirmCount = vi.fn(() => Promise.resolve(true));
+    const preliminary = [
+      {
+        ...mockBreedings[0],
+        litter_size6w: 6,
+        litter_size6w_preliminary: true,
+      },
+    ];
+    renderWithTheme(
+      <BreedingList
+        breedings={preliminary}
+        isLoading={false}
+        canEdit
+        onConfirmCount={onConfirmCount}
+      />,
+    );
+    expect(screen.getByText(/6 vid 6v \(preliminärt\)/)).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Detaljer" }));
+    fireEvent.click(screen.getByRole("button", { name: "Bekräfta antalet" }));
+    expect(onConfirmCount).toHaveBeenCalledWith(1, 6);
+  });
+
+  it("has no preliminary mark or button on a confirmed litter", () => {
+    renderWithTheme(
+      <BreedingList
+        breedings={[mockBreedings[0]]}
+        isLoading={false}
+        canEdit
+        onConfirmCount={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Detaljer" }));
+    expect(screen.queryByText(/preliminärt/)).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Bekräfta antalet" }),
+    ).toBeNull();
   });
 });

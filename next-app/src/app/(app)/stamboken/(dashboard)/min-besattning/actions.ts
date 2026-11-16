@@ -94,6 +94,27 @@ export async function updateBreeding(
   }
 }
 
+// "Bekräfta antalet": clears "preliminärt" on a litter added from the yearly report.
+export async function confirmLitterCount(
+  breedingId: number,
+  count: number,
+): Promise<ActionResult<Breeding>> {
+  try {
+    const breeding = await fetchApi<Breeding>(
+      `/v2/breeding/${breedingId}/antal`,
+      { method: "POST", body: JSON.stringify({ litter_size6w: count }) },
+    );
+    revalidatePath("/stamboken/min-besattning");
+    return { success: true, data: breeding };
+  } catch (e) {
+    if (e instanceof ApiError) {
+      return { success: false, error: e.detail };
+    }
+    console.error("confirmLitterCount failed:", e);
+    return { success: false, error: "unexpected_error" };
+  }
+}
+
 export async function deleteBreeding(
   breedingId: number,
 ): Promise<ActionResult> {

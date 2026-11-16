@@ -5,6 +5,9 @@ import type { ActionResult } from "../stamboken/(dashboard)/inkorg/actions";
 import {
   SUBMIT_TIMEOUT_MS,
   type DraftData,
+  type Father,
+  type Litter,
+  type LitterBody,
   type Receipt,
   type ReportView,
   type Refusal,
@@ -136,4 +139,32 @@ export async function withdrawReport(
 // The sale dialog's herd picker needs a login. Sales through the link come in step 4, so the list stays empty.
 export async function getGenebankHerds(_genebankId: number) {
   return { success: false as const, error: "needs_login" };
+}
+
+// "Kullar under Y": as the logged-in page's actions, without `env` and `post`.
+export async function addLitter(herd: string, year: number, body: LitterBody) {
+  return call<{ id: number; litters: Litter[] }>(
+    path(herd, year, "/kull"),
+    "POST",
+    body,
+  );
+}
+
+export async function changeLitter(
+  herd: string,
+  year: number,
+  breedingId: number,
+  body: { litter_size?: number; litter_size6w: number | null },
+) {
+  return call<{ id: number; litters: Litter[] }>(
+    Number.isSafeInteger(breedingId) && breedingId > 0
+      ? path(herd, year, `/kull/${breedingId}`)
+      : null,
+    "PATCH",
+    body,
+  );
+}
+
+export async function getFathers(herd: string, year: number) {
+  return call<{ hanar: Father[] }>(path(herd, year, "/hanar"), "GET");
 }

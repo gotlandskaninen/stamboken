@@ -61,6 +61,8 @@ interface BreedingListProps {
     litter_size?: number | null;
     litter_size6w?: number | null;
   }) => Promise<boolean>;
+  // Confirms the count alive at 6 weeks of a preliminary litter as it stands
+  onConfirmCount?: (breedingId: number, count: number) => Promise<boolean>;
   canEdit?: boolean;
   herdId?: string;
 }
@@ -74,6 +76,7 @@ export function BreedingList({
   onRegisterFirst,
   onRegisterBirth,
   onUpdate,
+  onConfirmCount,
   canEdit,
   herdId,
 }: BreedingListProps) {
@@ -390,6 +393,9 @@ export function BreedingList({
                     {b.litter_size6w != null
                       ? `, ${b.litter_size6w} ${t("breeding.aliveAt6wShort")}`
                       : ""}
+                    {b.litter_size6w_preliminary
+                      ? ` (${t("breeding.preliminary")})`
+                      : ""}
                   </span>
                 )}
                 {b.breed_date &&
@@ -583,6 +589,21 @@ export function BreedingList({
                     {t("breeding.born")}: {b.birth_date}
                   </p>
                 )}
+                {b.litter_size6w_preliminary &&
+                  b.litter_size6w != null &&
+                  onConfirmCount &&
+                  canEdit && (
+                    <button
+                      type="button"
+                      className="sb-btn sb-btn-secondary sb-btn-sm"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        void onConfirmCount(b.id, b.litter_size6w);
+                      }}
+                    >
+                      {t("breeding.confirmCount")}
+                    </button>
+                  )}
                 {b.breed_notes && (
                   <p
                     style={{

@@ -35,6 +35,7 @@ import {
   type DraftData,
   type Entry,
   type FormState,
+  type Litter,
   type Membership,
   type PaperField,
   type PaperFields,
@@ -50,12 +51,16 @@ import { RabbitRow } from "./RabbitRow";
 import { Receipt } from "./Receipt";
 import { ReportStatus, type StatusKind } from "./ReportStatus";
 import { SoldDialog } from "./SoldDialog";
+import { ConfirmCountDialog, LitterDialog } from "./LitterDialog";
 import styles from "./arsrapport.module.css";
 
 export type ReportActions = Pick<
   typeof Actions,
   "saveDraft" | "dryRun" | "submitReport" | "withdrawReport"
-> & { getGenebankHerds: typeof getGenebankHerds }; // the sale dialog's herd picker
+> & { getGenebankHerds: typeof getGenebankHerds } & Partial<
+    // the sale dialog's herd picker
+    Pick<typeof Actions, "addLitter" | "changeLitter" | "getFathers">
+  >; // "Kullar under Y"
 
 // "Från blankett": what the page around the form supplies (PaperEntry).
 export interface PaperProps {
@@ -274,6 +279,11 @@ export function ReportForm({
   // Paper over a report, or after the last day: Skicka needs a reason (D11).
   const late = !!round.end_date && todayStockholm() > round.end_date;
   const needReason = isPaper && (!!view.report || late);
+  const canLitter =
+    canEdit &&
+    !!actions.addLitter &&
+    !!actions.changeLitter &&
+    !!actions.getFathers;
 
   const [state, setState] = React.useState<FormState>(() =>
     startFrom(view, isPaper),
@@ -314,6 +324,15 @@ export function ReportForm({
   const [snapshot, setSnapshot] = React.useState<Set<number>>(new Set());
   const [search, setSearch] = React.useState("");
   const [soldFor, setSoldFor] = React.useState<number | null>(null);
+  // "Kullar under Y": a litter is written at once, so the list comes from the answer until the page is read again
+  const [saved, setSaved] = React.useState<{
+    base: Litter[];
+    list: Litter[];
+  } | null>(null);
+  const litters = saved?.base === view.litters ? saved.list : view.litters;
+  const setLitters = (list: Litter[]) => setSaved({ base: view.litters, list });
+  const [litterOpen, setLitterOpen] = React.useState(false);
+  const [confirming, setConfirming] = React.useState<Litter | null>(null);
   const [seenEnd, setSeenEnd] = React.useState(false);
   const [askRest, setAskRest] = React.useState(false);
   const [focusTick, setFocusTick] = React.useState(0);
@@ -1652,14 +1671,14 @@ export function ReportForm({
               )}
 
             <MbCard title={`Kullar under ${year}`}>
-              {view.litters.length === 0 ? (
+              {litters.length === 0 ? (
                 <p>
                   Inga kullar under {year} i Stamboken. Minst en kull krävs för
                   stödet.
                 </p>
               ) : (
                 <ul className={styles.cardList}>
-                  {view.litters.map((l) => (
+                  {litters.map((l) => (
                     <li key={l.id}>
                       Född {fmtDate(l.birth_date)}
                       {l.litter_number != null
@@ -1671,9 +1690,31 @@ export function ReportForm({
                       {l.litter_size6w != null
                         ? `, ${l.litter_size6w} efter sex veckor`
                         : ""}
+                      {l.preliminary ? " (preliminärt)" : ""}
+                      {l.preliminary && canLitter && (
+                        <>
+                          {" "}
+                          <button
+                            type="button"
+                            className="sb-btn sb-btn-secondary sb-btn-sm"
+                            onClick={() => setConfirming(l)}
+                          >
+                            Bekräfta antalet
+                          </button>
+                        </>
+                      )}
                     </li>
                   ))}
                 </ul>
+              )}
+              {canLitter && (
+                <button
+                  type="button"
+                  className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+                  onClick={() => setLitterOpen(true)}
+                >
+                  Lägg till kull
+                </button>
               )}
             </MbCard>
 
@@ -1937,6 +1978,34 @@ export function ReportForm({
             )}
           </div>
         </div>
+      )}
+
+      {canLitter && (
+        <>
+          <LitterDialog
+            open={litterOpen && !syncing}
+            year={year}
+            mothers={view.rabbits.filter(
+              (r) => r.sex === "female" && !r.castrated,
+            )}
+            loadFathers={() => actions.getFathers!(herd.herd, year, env, post)}
+            litters={litters}
+            add={(body) => actions.addLitter!(herd.herd, year, body, env, post)}
+            change={(id, body) =>
+              actions.changeLitter!(herd.herd, year, id, body, env, post)
+            }
+            onSaved={setLitters}
+            onClose={() => setLitterOpen(false)}
+          />
+          <ConfirmCountDialog
+            litter={syncing ? null : confirming}
+            change={(id, body) =>
+              actions.changeLitter!(herd.herd, year, id, body, env, post)
+            }
+            onSaved={setLitters}
+            onClose={() => setConfirming(null)}
+          />
+        </>
       )}
 
       <SoldDialog
