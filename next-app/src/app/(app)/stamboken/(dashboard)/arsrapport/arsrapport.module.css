@@ -804,7 +804,7 @@ table.statusTable th {
     flex-basis: 204px;
   }
   .wide .row > .choices .choice {
-    flex-basis: 98px;
+    flex-basis: 90px;
   }
   .wide .row > .choices .choice span {
     padding: 4px 16px 4px 4px;
@@ -825,7 +825,7 @@ table.statusTable th {
     padding-inline: 10px;
   }
   .wide .row .hull {
-    width: 108px;
+    width: 132px;
     padding: 0 6px;
   }
   .wide .row .optional {
