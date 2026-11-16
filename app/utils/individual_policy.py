@@ -58,6 +58,7 @@ EDIT_LIKE = (
     "RecordAttestation",
     "IssueDigitalCertificate",
 )
+LITTER_COMMANDS = ("RegisterLitter", "ConfirmLitterSize")
 CERT_GUARDED = ("AssignPaperCertificate", "RenameIndividual", "MoveToLitter")  # IR-18, IR-19
 
 POLICY: tuple[Allow, ...] = (
@@ -80,6 +81,9 @@ POLICY: tuple[Allow, ...] = (
     # these rows are what a report writes (FA1). Never GX1/MX1, and no other command.
     Allow("Entry", Role.RAPPORT, outside_genebank=False),
     *[Allow(c, Role.RAPPORT) for c in ("RecordAttestation", "RecordDeath", "SetMeasurements")],
+    # A litter added without a certificate (spec 5.8): the holders, the editors and the report's link; HANDLAGGARE
+    # follows OWNER below. The commands ask it for the litter's herd, which may not be the mother's now (L2).
+    *[Allow(c, r) for c in LITTER_COMMANDS for r in (*EDITORS, *HOLDERS, Role.RAPPORT)],
 )
 # The inbox handler (utils.inbox.InboxGrant) may do what the owner may. That leaves out the corrections, which
 # are a manager's or an admin's (ADR-0017 level 2), and any rabbit in GX1/MX1, which Entry keeps out.
@@ -117,6 +121,8 @@ COMMAND_FIELDS: Mapping[str, tuple[str, ...]] = {
     "ChangeOriginHerd": ("origin_herd", "reason"),
     "IssueDigitalCertificate": ("digital_certificate",),
     "GenebankCorrection": ("herd", "origin_herd", "reason"),
+    "RegisterLitter": ("litter",),
+    "ConfirmLitterSize": ("litter_size6w",),
     "Undo": ("undo",),
 }
 

@@ -254,8 +254,14 @@ class TestDryRun(NumberCheckMixin, DatabaseTest):
         self.assertIn("Kullen: besättning G1, mor G1-1911, far G2-1711. Jag menar", message)
         self.assertNotIn("None", message)
 
-    def test_uncomputable_without_a_litter_number(self):
+    def test_a_litter_without_a_litter_number_takes_the_papers(self):
         litter = self._litter(date(2025, 4, 3), None)
+        self._login()
+        data = self._check(breeding_id=litter.id, paper_number="G1-2511").get_json()
+        self.assertEqual((data["status"], data["stamboken_number"], data["choices"]), ("match", "G1-2511", []))
+
+    def test_uncomputable_without_a_birth_date(self):
+        litter = db.Breeding.create(breeding_herd_id=self.herds[0], litter_size=5)
         self._login()
         data = self._check(breeding_id=litter.id, paper_number="G1-2511").get_json()
         self.assertEqual(
@@ -485,12 +491,15 @@ class TestRegistration(NumberCheckMixin, DatabaseTest):
         self.assertEqual((response.status_code, problem["stamboken_number"]), (409, "G1-2522"))
         self.assertEqual(self._kinds(problem), ["position", "number_taken"])
 
-    def test_promote_in_a_litter_without_litter_number_is_uncomputable(self):
+    def test_promote_in_a_litter_without_litter_number_is_refused(self):
         db.Breeding.update(litter_number=None, litter_size6w=4).where(db.Breeding.id == self.litter.id).execute()
         bunny = db.Bunny.create(breeding=self.litter, slot_order=1, observed_sex="female", observed_color="bleighe")
         self._login()
         response = self._promote(bunny, paper_number="G1-2521")
-        self.assertEqual((response.status_code, response.get_json()["check_status"]), (409, "uncomputable"))
+        # The roster does not number a litter (a certificate does, test_register_litter): still refused.
+        self.assertEqual(
+            (response.status_code, response.get_json()["detail"]), (422, "Breeding record has no litter_number set")
+        )
 
 
 class TestImport(NumberCheckMixin, DatabaseTest):

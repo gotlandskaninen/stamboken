@@ -872,8 +872,11 @@ class InboxGrant:
             and herd.herd not in OUTSIDE_GENEBANK_HERDS
         )
 
+    def roles_in(self, user, herd):
+        return frozenset({Role.HANDLAGGARE}) if self.allows(user, herd) else frozenset()
+
     def roles(self, user, individual):
-        return frozenset({Role.HANDLAGGARE}) if self.allows(user, individual.current_herd) else frozenset()
+        return self.roles_in(user, individual.current_herd)
 
     def trace(self, operation_id):
         """ "Inlagd från foto av": the write's operation id, its handler and the document."""

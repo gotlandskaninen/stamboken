@@ -1949,6 +1949,11 @@ class ReportGrant:
             self._listed = {row["id"] for row in report_list(herd, year, self.report)}
         return held | ({Role.RAPPORT} if individual.id in self._listed else frozenset())
 
+    def roles_in(self, user, herd):
+        """For the litter commands (4b), which write in the litter's herd and not on a listed rabbit (L2)."""
+        held = self.inbox_grant.roles_in(user, herd) if self.inbox_grant is not None else frozenset()
+        return held | {Role.RAPPORT} if self.code is not None and self.code.herd_id == herd.id else held
+
     def record(self, ctx):
         self.operation_ids += [str(row["operation_id"]) for row in ctx.log_rows]
         if self.inbox_grant is not None:

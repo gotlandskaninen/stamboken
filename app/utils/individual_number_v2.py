@@ -887,6 +887,25 @@ def new_litter_number(herd, birth_date, *, lock):
     return max((b.litter_number for b in numbered), default=0) + 1
 
 
+def number_from_certificate(breeding, paper_number):
+    """
+    The litter number an unnumbered litter takes from the paper certificate's individual number (spec 5.8, L4): the
+    paper's own, not max+1. Returns (number, None), or (None, the litter that blocks it) when a litter of the
+    herd's year already has that number or a higher one: a renumber the genebank manager does, so the certificate
+    goes to them and nothing is written. Call under the herd/year lock (lock_litter) when writing.
+    """
+    wanted = parse_number(paper_number)[2]
+    blocker = (
+        herd_year(breeding.breeding_herd_id, breeding.birth_date.year)
+        .where(
+            Breeding.litter_number.is_null(False) & (Breeding.litter_number >= wanted) & (Breeding.id != breeding.id)
+        )
+        .order_by(Breeding.litter_number, Breeding.id)
+        .first()
+    )
+    return (None, blocker) if blocker is not None else (wanted, None)
+
+
 def _litter_text(litter):
     parts = [f"parning {litter.breed_date}" if litter.breed_date else None]
     parts.append(f"född {litter.birth_date}" if litter.birth_date else None)
@@ -930,17 +949,22 @@ def number_check(
         herd, birth_date = breeding.breeding_herd_id, breeding.birth_date
         mother, father = breeding.mother, breeding.father
     stamboken, reason, later_litter = None, None, None
-    if new_litter and birth_date is not None:
-        litter_number = new_litter_number(herd, birth_date, lock=False)
-        if litter_number is None:
-            born = fn.COALESCE(Breeding.birth_date, Breeding.breed_date + 30)  # as new_litter_number counts
-            later_litter = (
-                herd_year(herd, birth_date.year)
-                .where(Breeding.litter_number.is_null(False) & (born > birth_date))
-                .order_by(born, Breeding.id)
-                .first()
-            )
+    # a litter added without a certificate (not an existing rabbit's: its check stays as it was)
+    unnumbered = breeding is not None and individual is None and breeding.litter_number is None
+    if (new_litter or unnumbered) and birth_date is not None:
+        if unnumbered:
+            litter_number, later_litter = number_from_certificate(breeding, paper_number)
         else:
+            litter_number = new_litter_number(herd, birth_date, lock=False)
+            if litter_number is None:
+                born = fn.COALESCE(Breeding.birth_date, Breeding.breed_date + 30)  # as new_litter_number counts
+                later_litter = (
+                    herd_year(herd, birth_date.year)
+                    .where(Breeding.litter_number.is_null(False) & (born > birth_date))
+                    .order_by(born, Breeding.id)
+                    .first()
+                )
+        if litter_number is not None:
             position = paper[3] if 1 <= paper[3] <= HARD_CEILING else 1
             stamboken = f"{herd.herd}-{birth_date:%y}{litter_number}{position}"
     elif breeding is not None and breeding.litter_number is not None and birth_date is not None:

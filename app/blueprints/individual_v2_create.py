@@ -16,6 +16,7 @@ from flask_login import current_user
 from peewee import DataError, DoesNotExist, IntegrityError
 from utils.database import DATABASE, Breeding, Color, Herd, Individual, lock_individuals, not_voided
 from utils.herd_tracking import record_herd_tracking
+from utils.individual_commands import GESTATION_DAYS
 from utils.individual_number_v2 import (
     HARD_CEILING,
     LITTER_SIZE6W_ABOVE_BORN,
@@ -42,7 +43,6 @@ from .common import json_login_required, problem
 
 logger = logging.getLogger(__name__)
 
-GESTATION_DAYS = 31  # the middle of a rabbit's 26–38 days
 LITTER_BORN_BEFORE_NUMBERED = (
     "Kullen är född före en kull som redan har kullnummer det året. Registrera den med "
     "+ Ny kull under Kullar och parningar och numrera om kullarna."
@@ -140,13 +140,32 @@ def register_individual(form, may_register=None, created=None):
                     return refusal
             herd = breeding.breeding_herd_id
 
-            # If form provides litter_size6w and breeding doesn't have it yet,
-            # persist BEFORE certificate validation so the quota check sees it.
-            if form_litter_size6w is not None and breeding.litter_size6w is None:
+            # If form provides litter_size6w and breeding doesn't have it yet, or has only a preliminary one
+            # (L5: the certificate's count is the confirmed one), persist BEFORE certificate validation so the
+            # quota check sees it.
+            if form_litter_size6w is not None and (
+                breeding.litter_size6w is None or breeding.litter_size6w_preliminary
+            ):
                 if breeding.litter_size is not None and form_litter_size6w > breeding.litter_size:
                     raise ValueError(LITTER_SIZE6W_ABOVE_BORN)
                 breeding.litter_size6w = form_litter_size6w
-                breeding.save(only=[Breeding.litter_size6w])
+                breeding.litter_size6w_preliminary = False
+                breeding.save(only=[Breeding.litter_size6w, Breeding.litter_size6w_preliminary])
+
+            if breeding.litter_number is None:  # a litter added without a certificate: its first one numbers it (L4)
+                if (
+                    certificate_type == "paper"
+                ):  # the paper's own litter number, or the manager's (409, nothing written)
+                    check = number_check(
+                        current_user, paper_number, breeding=breeding, paper_certificate=paper_certificate
+                    )
+                    _, number, position = parse_number(number_to_register(check, resolution))[1:]
+                else:
+                    number = new_litter_number(herd, breeding.birth_date, lock=True)
+                    if number is None:
+                        raise RosterActionError(409, "litter_order_conflict", LITTER_BORN_BEFORE_NUMBERED)
+                breeding.litter_number = number
+                breeding.save(only=[Breeding.litter_number])
 
             # Validate certificate eligibility before creating anything: the same first-certificate
             # rules as promote (litter_size6w, roster in sync, quota).
@@ -238,8 +257,13 @@ def suggest_number():
     if not _can_register_in_herd(current_user, herd):
         return problem(403, "Forbidden", "Åtkomst nekad")
 
-    if breeding.litter_number is None:
-        return problem(400, "Bad Request", "Breeding record has no litter_number. Assign one first.")
+    if breeding.litter_number is None:  # a litter added without a certificate: the number it would get now
+        if breeding.birth_date is None:
+            return problem(400, "Bad Request", "Breeding record has no birth_date.")
+        litter_number = new_litter_number(herd, breeding.birth_date, lock=False)
+        if litter_number is None:
+            return problem(409, "litter_order_conflict", LITTER_BORN_BEFORE_NUMBERED)
+        return jsonify(_first_slot_suggestion(herd, breeding.birth_date, litter_number, breeding)), 200
 
     try:
         result = suggest_individual_number(herd.herd, breeding)
@@ -474,10 +498,6 @@ def _registration_refusal(breeding, may_register=None):
     if not _may_register(breeding.breeding_herd_id, may_register):
         return problem(403, "Forbidden", "Åtkomst nekad")
 
-    # Validate litter_number exists
-    if breeding.litter_number is None:
-        return problem(400, "Bad Request", "Breeding record has no litter_number. Assign one first.")
-
     # Same minimum age as roster promotion — direct registration from litter
     # context must not bypass the 42-day rule. (The manual import route is
     # separate and stays exempt for historical rabbits.)
@@ -609,7 +629,13 @@ def _new_litter_suggestion(herd, father, birth_date):
     litter_number = new_litter_number(herd, birth_date, lock=False)
     if litter_number is None:
         return problem(409, "litter_order_conflict", LITTER_BORN_BEFORE_NUMBERED)
-    suggestion = {
+    return jsonify(_first_slot_suggestion(herd, birth_date, litter_number)), 200
+
+
+def _first_slot_suggestion(herd, birth_date, litter_number, breeding=None):
+    """The suggestion for the first rabbit of a litter that has no number yet (`breeding`: one that exists)."""
+    declared = breeding is not None and breeding.litter_size6w is not None
+    return {
         "suggested": f"{herd.herd}-{birth_date:%y}{litter_number}1",
         "suggested_position": 1,
         "used_positions": [],
@@ -621,13 +647,12 @@ def _new_litter_suggestion(herd, father, birth_date):
         "certified_count": 0,
         "certified_max_count": None,
         "past_6w": True,
-        # Lifted by the litter_size6w the form sends with the new litter.
-        "can_issue_certificate": False,
-        "certificate_blocked_reason": "litter_size6w_required",
-        "breeding_id": None,
+        # A new litter: lifted by the litter_size6w the form sends with it.
+        "can_issue_certificate": declared,
+        "certificate_blocked_reason": None if declared else "litter_size6w_required",
+        "breeding_id": breeding.id if breeding is not None else None,
         "litter_number": litter_number,
     }
-    return jsonify(suggestion), 200
 
 
 def _may_register(herd, may_register):
