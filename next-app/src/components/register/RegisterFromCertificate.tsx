@@ -241,16 +241,21 @@ export function RegisterFromCertificate({
       else setFormError(problemText(problem));
     });
 
-  // The number Stamboken suggests for the chosen litter: shown, and filled in only where nothing is typed yet
+  // The number Stamboken suggests for the chosen litter: shown, and filled in where nothing is typed yet or where
+  // an earlier suggestion filled it. An answer counts only while it is the latest asked for and its litter is still
+  // the chosen one; a number the user typed is never replaced.
   const [suggested, setSuggested] = useState<{
     litter: number;
     number: string;
   } | null>(null);
-  const typedNumber = useRef(form.paper_number);
+  const now = useRef({ number: form.paper_number, litter: picked?.id });
   useEffect(() => {
-    typedNumber.current = form.paper_number;
+    now.current = { number: form.paper_number, litter: picked?.id };
   });
+  const asked = useRef(0);
+  const filled = useRef<string | null>(null);
   const pickLitter = (id: string) => {
+    const request = ++asked.current;
     const l = litters.find((x) => String(x.id) === id);
     if (!l) return;
     onChange("birth_date", l.birth_date);
@@ -262,9 +267,13 @@ export function RegisterFromCertificate({
       l.litter_size6w == null || l.preliminary ? "" : String(l.litter_size6w),
     );
     suggest?.(l.id).then((number) => {
-      if (!number) return;
+      if (!number || request !== asked.current || now.current.litter !== l.id)
+        return;
       setSuggested({ litter: l.id, number });
-      if (!typedNumber.current.trim()) onChange("paper_number", number);
+      const typed = now.current.number.trim();
+      if (typed && typed !== filled.current) return;
+      filled.current = number;
+      onChange("paper_number", number);
     });
   };
   const suggestion =

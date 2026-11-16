@@ -421,6 +421,84 @@ describe("the lookups", () => {
   });
 });
 
+// Codex P2: a suggestion belongs to the litter that asked for it, and never replaces what the user typed
+describe("a litter's suggested number", () => {
+  const twoLitters = () =>
+    find.mockImplementation(async (_h, _y, number) =>
+      number === "G9001-2411"
+        ? {
+            name: "Mor",
+            color: null,
+            mother: null,
+            father: null,
+            litters: [
+              { id: 5, birth_date: "2025-05-10", father: "G9001-2412" },
+              { id: 6, birth_date: "2025-08-20", father: "G9001-2412" },
+            ].map((l) => ({ ...l, litter_size: 5, litter_size6w: 5 })),
+          }
+        : undefined,
+    );
+  const pickLitter = async (born: string) => {
+    fireEvent.mouseDown(await screen.findByRole("combobox", { name: "Kull" }));
+    fireEvent.click(screen.getByRole("option", { name: new RegExp(born) }));
+  };
+  const NUMBERS: Record<number, string> = { 5: "G9001-2511", 6: "G9001-2521" };
+  const paperNumber = () => input(/^Individnummer på pappret/);
+
+  it("of a litter no longer chosen is dropped, when it comes after the next one's", async () => {
+    twoLitters();
+    const answers: Record<number, ReturnType<typeof pending<string | null>>> = {
+      5: pending(),
+      6: pending(),
+    };
+    suggest.mockImplementation((_h, _y, id) => answers[id].promise);
+    open();
+    type(/^Mor/, "G9001-2411");
+    await pickLitter("2025-05-10");
+    await pickLitter("2025-08-20");
+    await act(async () => answers[6].resolve(NUMBERS[6]));
+    await act(async () => answers[5].resolve(NUMBERS[5]));
+    expect(paperNumber()).toHaveValue("G9001-2521");
+    expect(screen.queryByText(/Stamboken föreslår G9001-2511/)).toBeNull();
+  });
+
+  it("of a litter no longer chosen is dropped, when it comes first", async () => {
+    twoLitters();
+    const answers: Record<number, ReturnType<typeof pending<string | null>>> = {
+      5: pending(),
+      6: pending(),
+    };
+    suggest.mockImplementation((_h, _y, id) => answers[id].promise);
+    open();
+    type(/^Mor/, "G9001-2411");
+    await pickLitter("2025-05-10");
+    await pickLitter("2025-08-20");
+    await act(async () => answers[5].resolve(NUMBERS[5]));
+    expect(paperNumber()).toHaveValue("");
+    await act(async () => answers[6].resolve(NUMBERS[6]));
+    expect(paperNumber()).toHaveValue("G9001-2521");
+  });
+
+  it("replaces the one an earlier litter filled in, never one typed", async () => {
+    twoLitters();
+    suggest.mockImplementation(async (_h, _y, id) => NUMBERS[id]);
+    open();
+    type(/^Mor/, "G9001-2411");
+    await pickLitter("2025-05-10");
+    await waitFor(() => expect(paperNumber()).toHaveValue("G9001-2511"));
+    await pickLitter("2025-08-20");
+    await waitFor(() => expect(paperNumber()).toHaveValue("G9001-2521"));
+    type(/^Individnummer på pappret/, "G9001-2531"); // as the paper says
+    await pickLitter("2025-05-10");
+    expect(
+      await screen.findByText(
+        "Som det står på intyget. Stamboken föreslår G9001-2511.",
+      ),
+    ).toBeInTheDocument();
+    expect(paperNumber()).toHaveValue("G9001-2531");
+  });
+});
+
 // Finding 1: an answer belongs to the form that asked, and a registration in progress cannot be cancelled.
 describe("a late answer", () => {
   it("of a cancelled mother's upload never reaches the father's form", async () => {
