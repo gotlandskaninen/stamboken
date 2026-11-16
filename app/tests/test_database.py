@@ -1145,6 +1145,24 @@ class TestDatabaseMigration(DatabaseTest):
         db.Herd.update(www="x").where(db.Herd.id == herd.id).execute()
         self.assertEqual(updates(), 1)
 
+    def test_replay_40_to_41_lets_matrikel_audit_go_without_actor(self):
+        """A database stamped at 40 accepts matrikel audit rows without a user (the nightly anonymization, #70)."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        db.DATABASE.execute_sql('ALTER TABLE "matrikel_audit" ALTER COLUMN "actor_id" SET NOT NULL')
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 41).execute()
+
+        for _ in range(2):  # a second run on the migrated schema changes nothing
+            db.check_migrations()
+            self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+            columns = {c.name: c for c in db.DATABASE.get_columns("matrikel_audit")}
+            self.assertTrue(columns["actor_id"].null)
+            db.SchemaHistory.delete().where(db.SchemaHistory.version >= 41).execute()
+        db.check_migrations()
+        membership = db.Membership.create(member_number=4141)
+        self.assertIsNone(db.MatrikelAudit.create(actor=None, action="x", membership=membership).actor_id)
+
     def test_replay_32_to_33_adds_the_history_algorithm_version(self):
         """
         A database stamped at 32 gets genetics_history_state.algorithm_version,

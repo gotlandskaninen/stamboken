@@ -190,8 +190,8 @@ def raise_counter_to(value: int) -> None:
         row.save()
 
 
-def write_matrikel_audit(actor: User, action: str, membership: Membership, payload: dict) -> MatrikelAudit:
-    """Append one matrikel audit row. Payloads carry before/after values."""
+def write_matrikel_audit(actor: User | None, action: str, membership: Membership, payload: dict) -> MatrikelAudit:
+    """Append one matrikel audit row. Payloads carry before/after values. No actor: the nightly job wrote it."""
     return MatrikelAudit.create(actor=actor, action=action, membership=membership, payload=payload)
 
 
@@ -437,6 +437,7 @@ def anonymize_person(member, actor):
     allowed on an active main member — the right to erasure trumps the
     headless-membership invariant.
 
+    `actor` is None when the nightly job (anonymize_ended_persons) erases.
     Detaches the account through the same locked unlink path as the endpoint
     (mode="anonymize") and invalidates the genebanks whose
     access the account loses. Returns the scrubbed person: the caller's
@@ -506,6 +507,82 @@ def anonymize_person(member, actor):
         )
     _invalidate_genebanks(lost_genebanks)
     return person
+
+
+ENDED_MEMBER_RETENTION = "12 months"  # a PostgreSQL interval: calendar months, as the privacy policy says (#34)
+# Account roles that keep an ended person from automatic erasure. Every account is a viewer, so viewer is not one;
+# a legacy owner entry counts only on an active herd (_retention_hold).
+RETENTION_HOLD_LEVELS = frozenset({"admin", "matrikel_admin", "manager"})
+
+
+def _retention_hold(user) -> str | None:
+    """Why this account keeps its person from automatic erasure: "role", "active_herd" or None."""
+    if user is None:
+        return None
+    privileges = user.privileges or []
+    if any(p["level"] in RETENTION_HOLD_LEVELS for p in privileges):
+        return "role"
+    owned = [p["herd"] for p in privileges if p["level"] == "owner"]
+    if owned and Herd.select().where(Herd.id.in_(owned), Herd.is_active == True).exists():  # noqa: E712
+        return "active_herd"
+    return None
+
+
+def ended_persons_due(now):
+    """
+    The persons the nightly job anonymizes (#70), and the ones it leaves to the system administrator.
+
+    A membership without an active person has ended: its persons are due once the LATEST end_date (anonymized
+    persons included) lies 12 calendar months back, all together, so the household address is never cleared
+    early. Any person's account role, or an active herd of the membership or of a person's legacy owner entry,
+    holds the whole membership. In a membership that still has an active person, each ended person is due 12
+    months after their own end_date, held only by their own account. Returns (due persons, held) where held is a
+    list of (membership_id, person_id or None for the whole membership, reason).
+    """
+    cutoff = DB_PROXY.execute_sql(
+        "SELECT (%s::timestamptz - %s::interval)::date", (now, ENDED_MEMBER_RETENTION)
+    ).fetchone()[0]
+    not_erased = ~((Member.first_name == ANONYMIZED_FIRST_NAME) & (Member.last_name == ANONYMIZED_LAST_NAME))
+    candidates = Member.select(Member.membership).where(Member.end_date < cutoff, not_erased).distinct()
+    due, held = [], []
+    for membership in Membership.select().where(Membership.id.in_(candidates)).order_by(Membership.id):
+        persons = list(Member.select().where(Member.membership == membership).order_by(Member.id))
+        erasable = [p for p in persons if p.end_date is not None and not is_anonymized(p)]
+        if any(p.end_date is None for p in persons):
+            for person in erasable:
+                if person.end_date < cutoff:
+                    reason = _retention_hold(person.user)
+                    if reason:
+                        held.append((membership.id, person.id, reason))
+                    else:
+                        due.append(person)
+            continue
+        if max(p.end_date for p in persons) >= cutoff:
+            continue
+        reason = next((r for r in map(_retention_hold, (p.user for p in erasable)) if r), None)
+        if reason is None and Herd.select().where(Herd.membership == membership, Herd.is_active == True).exists():  # noqa: E712
+            reason = "active_herd"
+        if reason:
+            held.append((membership.id, None, reason))
+        else:
+            due.extend(erasable)
+    return due, held
+
+
+def anonymize_ended_persons(now):
+    """
+    Nightly job (#70): anonymize_person on every person ended_persons_due finds, with no user as actor. One
+    transaction per person, so a failure is logged and the rest go on. Returns (anonymized count, held).
+    """
+    due, held = ended_persons_due(now)
+    done = 0
+    for person in due:
+        try:
+            anonymize_person(person, None)
+            done += 1
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("Automatic anonymization failed for member=%s", person.id)
+    return done, held
 
 
 def new_membership(status, **fields):
@@ -911,7 +988,7 @@ def link_member_user(person_id, user_id, *, actor, mode, confirmed_herd_ids=None
     return person, conveyed
 
 
-def _detach_user_locked(person: Member, *, actor: User, mode: str) -> int:
+def _detach_user_locked(person: Member, *, actor: User | None, mode: str) -> int:
     """Inside an open transaction with membership → user → person locked."""
     user_id = person.user_id
     person.user = None
