@@ -112,7 +112,9 @@ ansökningsformuläret.
 3. Välj **Status**.
 4. Låt **Tilldela medlemsnummer automatiskt** vara ikryssad så får medlemskapet
    nästa lediga nummer. Kryssar du ur den får medlemskapet inget nummer. Ett
-   nummer kan du skriva in senare på medlemskapets sida.
+   nummer kan du skriva in senare på medlemskapets sida. Lägger du in ett
+   friexemplar, kryssa ur rutan: då får det nummer 0 i exporten, som i den
+   gamla matrikelfilen.
 5. Klicka **Skapa**.
 
 Personen blir huvudmedlem i det nya medlemskapet.
@@ -236,8 +238,10 @@ CSV-fil som går att öppna i Excel.
 - **Exportera MATR** ger aktiva medlemskap och friexemplar med samma kolumner
   som den gamla matrikelfilen: en rad per person, med adress, betalningsnotering
   och anteckningar på huvudmedlemmens rad och fakturaadressen sist.
-  Friexemplar får nummer 0. Använd den som adresslista för Koharen och för
-  avgiftsuppföljning.
+  Friexemplar utan medlemsnummer får nummer 0, men ett friexemplar som har
+  fått ett nummer står med det numret. Filen har ingen kolumn för status, så
+  kontrollera status i matrikeln innan du följer upp avgifter. Använd filen som
+  adresslista för Koharen och för avgiftsuppföljning.
 - **Exportera Koharen** ger personerna i aktiva medlemskap, med bara de
   uppgifter hushållet har sagt ja till att publicera: namn, telefon, e-post och
   adress. Valet gäller hela hushållet och görs av huvudmedlemmen under
