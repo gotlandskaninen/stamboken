@@ -305,7 +305,8 @@ class ProposalsTest(ArsrapportTest):
         with self.assertRaises(ArsrapportError) as caught:  # a page opened before the rejection
             self.send(*stale, revision=1)
         self.assertEqual(caught.exception.status, 409)
-        self.send(self.kvar(self.a), *stale[1:], revision=2)  # the reloaded page: a as the rejection left it
+        kept = self.kvar(self.a, ej_vagd=arsrapport.REJECTED_KVAR)  # the reloaded page: a as the rejection left it (S6)
+        self.send(kept, *stale[1:], revision=2)
         self.assertEqual([p.state for p in proposals(self.a)], ["avvisad"])
         self.assertEqual(len(rows(self.a, "ATTESTATION")), 1)
 

@@ -2677,18 +2677,23 @@ def _with_entry(data, key, raw):
     return {**data, "form": put(data["form"])} if isinstance(data.get("form"), dict) else data
 
 
+REJECTED_KVAR = "Försäljningen avvisades"  # S6: the Ej vägd reason of a rabbit a rejection left as Finns kvar
+
+
 def settle_rejection(report, user, rabbit, then, at):
     """
     S1: the rabbit of a rejected proposal, rewritten in a submission of the manager's on the same report, under the
     caller's locks (report row, items, rabbit), and the revision moved, so a page opened before it gets 409 and never
     proposes the rejected sale again. "kvar" writes what Finns kvar writes through the report's diff, its operations
-    in report_ops (FB2); the register's refusal is a 409 with its reason. "valj_igen" clears the entry (FB3). An open
-    draft gets the same entry and a new version.
+    in report_ops (FB2), with Ej vägd, so the member's row is klar and may still get a weight (S6); the register's
+    refusal is a 409 with its reason. "valj_igen" clears the entry (FB3). An open draft gets the same entry and a new
+    version.
     """
     herd, round_ = report.herd, report.round
     year, on = round_.report_year, at.astimezone(STOCKHOLM).date()
     last, latest, key = date(year, 12, 31), _submissions(report)[-1], str(rabbit)
-    raw = dict.fromkeys(ENTRY_KEYS) | {"val": "kvar" if then == "kvar" else None}  # as submitted_body stores it
+    kvar = {"val": "kvar", "ej_vagd": REJECTED_KVAR}
+    raw = dict.fromkeys(ENTRY_KEYS) | (kvar if then == "kvar" else {"val": None})  # as submitted_body stores it
     grant, added = ReportGrant(), []
     if then == "kvar":
         entry, before = _entry(key, raw), _entries(latest.data.get("rabbits") or {}).get(rabbit)
@@ -2719,8 +2724,11 @@ def settle_rejection(report, user, rabbit, then, at):
         data={**latest.data, "rabbits": {**(latest.data.get("rabbits") or {}), key: raw}},
         request_hash="",  # no request: nobody retries this key
     )
-    report.revision += 1
-    report.save(only=[YearlyHerdReport.revision])
+    body = json.loads(report.data)  # the report's not_weighed comes from the entries, as parse_submission makes it
+    body["not_weighed"] = {k: v for k, v in (body.get("not_weighed") or {}).items() if k != key}
+    body["not_weighed"] |= {key: REJECTED_KVAR} if then == "kvar" else {}
+    report.revision, report.data = report.revision + 1, json.dumps(body)
+    report.save(only=[YearlyHerdReport.revision, YearlyHerdReport.data])
     draft = _draft(herd, round_)
     if draft is not None:  # an Ändra in progress: an old tab's autosave gets the 409 and this draft
         draft.data = _with_entry(draft.data, key, raw)

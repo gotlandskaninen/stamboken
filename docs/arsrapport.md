@@ -77,7 +77,8 @@ får köparens huvudmedlem mejlet `arsrapport.kop_godkant`.
 
 `POST /api/v2/arsrapport/forslag/<id>/avvisa` med `{"reason": …, "then": "kvar" | "valj_igen"}`
 avvisar förslaget. Orsaken krävs och får inte innehålla köparens namn, telefonnummer eller
-e-postadresser. `kvar` skriver kaninen som Finns kvar och `valj_igen` lämnar den åt medlemmen att
+e-postadresser. `kvar` skriver kaninen som Finns kvar med Ej vägd ("Försäljningen avvisades"), så
+att raden är klar och medlemmen ändå kan väga den, och `valj_igen` lämnar den åt medlemmen att
 välja igen. Båda skrivs som ett inskick av genbanksansvarig på samma rapport och flyttar
 revisionen, så att en sida som öppnades före beslutet får 409. Vägrar registret `kvar` blir svaret
 409 med registrets orsak, och förslaget står kvar. Medlemmen får orsaken i mejlet

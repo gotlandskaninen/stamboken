@@ -7,6 +7,7 @@ Synthetic herds, rabbits and buyers only.
 isort:skip_file
 """
 
+import json
 from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 
@@ -26,6 +27,7 @@ from tests.ht_helpers import ht_row
 DAY0 = date(2026, 1, 10)
 LAST = date(2025, 12, 31)
 BUYER = {"name": "Zelda Uniquebuyer", "town": "Visby"}
+KEPT = arsrapport.REJECTED_KVAR  # S6: the Ej vägd reason a kvar rejection writes
 
 
 def rows(rabbit, kind):
@@ -65,12 +67,18 @@ class ProposalApiTest(ArsrapportTest):
     def day(self, n):
         self.at(DAY0 + timedelta(days=n))
 
-    def send(self, *entries, revision=None):
-        """The link's Skicka."""
-        access = arsrapport.code_access(self.h, self.round_, [self.code.id])
+    def latest(self, herd=None):
+        """The rabbits of the latest submission of `herd`'s report, as the page reloads them."""
+        report = arsrapport.current_report(herd or self.h, self.round_)
+        return arsrapport._submissions(report)[-1].data["rabbits"]  # pylint: disable=protected-access
+
+    def send(self, *entries, revision=None, herd=None, code=None):
+        """The link's Skicka, for G9001 or for `herd` with its `code`."""
+        herd, code = herd or self.h, code or self.code
+        access = arsrapport.code_access(herd, self.round_, [code.id])
         body = self.body(*entries, revision=revision)
         return arsrapport.submit(
-            self.h, self.round_, access, CodeActor(self.code), arsrapport.parse_submission(body, paper=False)
+            herd, self.round_, access, CodeActor(code), arsrapport.parse_submission(body, paper=False)
         )
 
     def withdraw(self, revision):
@@ -268,7 +276,7 @@ class ProposalApiTest(ArsrapportTest):
         self.assertEqual([r.id for r in rows(self.a, "ATTESTATION")], [attest.id])  # nothing new to write
         self.assertEqual(arsrapport._submissions(self.report())[-1].operation_ids, [])  # pylint: disable=protected-access
         self.day(1)  # an unrelated Ändra from the reloaded page
-        self.send(self.kvar(self.a), self.kvar(self.b, vikt=3.0), self.kvar(self.c, vikt=2.8), revision=2)
+        self.send(self.kvar(self.a, ej_vagd=KEPT), self.kvar(self.b, vikt=3.0), self.kvar(self.c, vikt=2.8), revision=2)
         self.assertEqual([p.state for p in proposals(self.a)], ["avvisad"])
         self.assertEqual([r.id for r in rows(self.a, "ATTESTATION")], [attest.id])
 
@@ -318,3 +326,21 @@ class ProposalApiTest(ArsrapportTest):
         arsrapport.submit(self.g9002, self.round_, access, buyer, arsrapport.parse_submission(body, paper=False))
         self.assertEqual(self.flags("G9002")["kopt_efter_inskick"], 0)
         self.assertEqual(rows(self.a, "ATTESTATION")[0].herd_id, self.g9002.id)
+
+    # Codex review of 9e55e5b..f638e7a, and S6
+
+    def test_reject_kvar_leaves_a_klar_row(self):  # S6
+        proposal = self.first()
+        self.assertEqual(self.decide(proposal, "avvisa", reason="Fel datum", then="kvar").status_code, 200)
+        stored = self.latest()[str(self.a.id)]
+        self.assertEqual((stored["val"], stored["vikt"], stored["ej_vagd"]), ("kvar", None, KEPT))
+        self.assertEqual(json.loads(self.report().data)["not_weighed"], {str(self.a.id): KEPT})
+        self.day(1)  # the reloaded page sends a as it is: nothing to refuse, nothing new written
+        (attest,) = rows(self.a, "ATTESTATION")
+        self.send(self.kvar(self.a, ej_vagd=KEPT), self.kvar(self.b, vikt=3.0), self.kvar(self.c, vikt=2.8), revision=2)
+        weighed = db.Weight.select().where(db.Weight.individual == self.a.id)
+        self.assertEqual(([r.id for r in rows(self.a, "ATTESTATION")], weighed.count()), ([attest.id], 0))
+        self.assertEqual([p.state for p in proposals(self.a)], ["avvisad"])
+        self.day(2)  # the member may still weigh it
+        self.send(self.kvar(self.a, vikt=2.9), self.kvar(self.b, vikt=3.0), self.kvar(self.c, vikt=2.8), revision=3)
+        self.assertEqual([round(w.weight, 2) for w in weighed], [2.9])

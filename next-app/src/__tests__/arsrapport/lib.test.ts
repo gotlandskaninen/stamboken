@@ -57,6 +57,25 @@ describe("parseWeight", () => {
 describe("isDone", () => {
   const adult = rabbit(1);
   const young = rabbit(2, { adult: false });
+  it("counts an adult a rejected sale left as Finns kvar, and sends it back unchanged (S6)", () => {
+    // as the server stores the entry: Finns kvar with Ej vägd
+    const stored = {
+      val: "kvar",
+      vikt: null,
+      ej_vagd: "Försäljningen avvisades",
+      hull: null,
+      dod: null,
+      sald: null,
+    };
+    const state = fromBody({ rabbits: { "1": stored } } as never);
+    expect(isDone(adult, state.rabbits[1], false)).toBe(true);
+    expect(toBody(state, "k", 2).rabbits["1"]).toEqual({
+      val: "kvar",
+      vikt: null,
+      ej_vagd: "Försäljningen avvisades",
+      hull: null,
+    });
+  });
   it("needs a choice, and a weight or Ej vägd for an adult that stays", () => {
     expect(isDone(adult, undefined, false)).toBe(false);
     expect(isDone(adult, e({ val: "kvar" }), false)).toBe(false);
