@@ -1,15 +1,13 @@
 import Link from "next/link";
 import { fetchApi } from "@/lib/api";
 import { Masthead } from "@/components/shell/Masthead";
-import { RefreshBadge } from "@/components/shell/RefreshBadge";
-import { getInboxCount } from "@/lib/inkorg-server";
 import {
   formatDate,
-  NO_INBOX,
   STATUS_BADGE,
   statusText,
   type Inskick,
 } from "@/lib/inkorg";
+import { MarkSeen } from "./MarkSeen";
 import styles from "./inskick.module.css";
 
 export const dynamic = "force-dynamic";
@@ -17,24 +15,15 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Mina inskick" };
 
 export default async function MinaInskickPage() {
-  // Opening this page marks the user's "klart" notices as read (the POST below),
-  // after the layout counted them: the count seen here is the stale one (the
-  // menu's own, so it follows the mode as the menu does).
-  const { unread } = await getInboxCount().catch(() => NO_INBOX);
   // Production in every mode, where the uploads go (ny/actions.ts).
   const { items } = await fetchApi<{ items: Inskick[] }>(
     "/v2/inkorg/mina-inskick",
     { forceProd: true },
   );
-  // Best effort: the list is what the page is for.
-  await fetchApi("/v2/inkorg/mina-inskick/sedda", {
-    method: "POST",
-    forceProd: true,
-  }).catch(() => undefined);
 
   return (
     <>
-      <RefreshBadge unread={unread} />
+      <MarkSeen />
       <Masthead
         eyebrow="Inläsning"
         title="Mina inskick"

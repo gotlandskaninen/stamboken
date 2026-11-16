@@ -446,6 +446,8 @@ class TestUploaderAndNotices(InboxTest):
         mine = self.item(0)
         inbox.notify(self.owner, "klar", mine)
         inbox.notify(self.owner, "svar", mine)
+        inbox.notify(self.manager, "klar", mine)
+        self.assertEqual(self.client.post("/api/v2/inkorg/mina-inskick/sedda").status_code, 401)
         self.login("owner")
 
         def unread():
@@ -458,6 +460,9 @@ class TestUploaderAndNotices(InboxTest):
         resp = self.client.post("/api/v2/inkorg/mina-inskick/sedda")
         self.assertEqual((resp.status_code, resp.get_json()), (200, {"read": 1}))
         self.assertEqual(unread(), ["svar"])
+        self.assertEqual(self.client.post("/api/v2/inkorg/mina-inskick/sedda").get_json(), {"read": 0})
+        theirs = db.Notice.get((db.Notice.user == self.manager.id) & (db.Notice.kind == "klar"))
+        self.assertIsNone(theirs.read_at)
 
     def test_notices_list_read_and_mail_setting(self):
         first, second = self.item(0), self.item(0)

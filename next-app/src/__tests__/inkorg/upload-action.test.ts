@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { revalidatePath } from "next/cache";
 import { ApiError, fetchApi } from "@/lib/api";
-import { uploadIntyg } from "@/app/(app)/stamboken/(dashboard)/inskick/ny/actions";
+import {
+  markUploadsSeen,
+  uploadIntyg,
+} from "@/app/(app)/stamboken/(dashboard)/inskick/ny/actions";
 
 vi.mock("@/lib/api", async (importOriginal) => {
   const actual = await importOriginal<typeof import("@/lib/api")>();
@@ -46,5 +50,25 @@ describe("uploadIntyg", () => {
       itemId: 7,
     });
     expect(api.mock.calls[0][1]).toMatchObject({ forceProd: true });
+  });
+});
+
+describe("markUploadsSeen", () => {
+  it("posts to production and refreshes the menu when notices were read", async () => {
+    api.mockResolvedValueOnce({ read: 2 });
+    await markUploadsSeen();
+    expect(api).toHaveBeenCalledWith("/v2/inkorg/mina-inskick/sedda", {
+      method: "POST",
+      forceProd: true,
+    });
+    expect(revalidatePath).toHaveBeenCalledWith("/stamboken", "layout");
+  });
+
+  it("leaves the menu alone when nothing was unread, and swallows a failure", async () => {
+    api.mockResolvedValueOnce({ read: 0 });
+    await markUploadsSeen();
+    api.mockRejectedValueOnce(new Error("nere"));
+    await markUploadsSeen();
+    expect(revalidatePath).not.toHaveBeenCalled();
   });
 });
