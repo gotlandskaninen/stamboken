@@ -40,14 +40,20 @@ test.describe("Access rules on the new frontend (ACCESS_RULES=enforce)", () => {
     await expect(page.getByText(BANNER_TEXT)).toBeVisible();
 
     // The demo API answers: server-rendered rows on a page that reads data.
+    // The browser's list requests are blocked during the first load: if the
+    // server's request went to production and failed, RabbitExplorer would
+    // fetch the rows itself and hide it.
     const prodListRequests: string[] = [];
     page.on("request", (req) => {
       if (/\/api\/individuals/.test(req.url())) prodListRequests.push(req.url());
     });
+    const browserList = /\/api(-test)?\/individuals/;
+    await page.route(browserList, (route) => route.abort());
     await page.goto("/stamboken/alla-kaniner");
     await expect(page.locator(".MuiDataGrid-row").first()).toBeVisible({
       timeout: 30000,
     });
+    await page.unroute(browserList);
 
     // The browser's own list request, which the first render skips: it must go
     // to the demo API too, or the next search would be refused by production.
