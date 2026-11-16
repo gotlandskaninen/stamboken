@@ -753,8 +753,9 @@ genbanksansvarig och administratör; hjälpare ser bara listan och antalen.
 
 **Länken i inbjudan** är personlig och ser ut som `/rapport#` följt av en kod. Medlemmen öppnar
 den utan att logga in, och länken gäller bara den besättningen till rundans sista dag. Koden
-står efter `#`, så den skickas aldrig till servern; skriv aldrig ut en riktig länk i
-ett ärende eller en rapport.
+står efter `#`, så den finns inte i adressen som webbläsaren ber servern om. Sidan tar
+bort koden ur adressfältet och skickar den sedan en gång för att öppna rapporten. Skriv
+aldrig ut en riktig länk i ett ärende eller en rapport.
 
 Under det står ett filter per läge med antal (**Att ringa**, **Påbörjade**, **Alla** och de
 andra lägena); valet ligger i adressen. **Att ringa** är påbörjade rapporter

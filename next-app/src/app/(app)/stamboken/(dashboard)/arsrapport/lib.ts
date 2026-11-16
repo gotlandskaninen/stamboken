@@ -988,7 +988,8 @@ export function toCall(
   if (row.flags.ej_angivna_paverkar) return true;
   if (
     (row.inbjudan === "studsade" || row.inbjudan === "misslyckades") &&
-    row.state !== "inskickad"
+    row.state !== "inskickad" &&
+    row.state !== "avslutar" // a report has come in either way
   )
     return true;
   return (

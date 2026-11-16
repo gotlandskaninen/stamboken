@@ -96,4 +96,37 @@ describe("RoundPanel invitation", () => {
     expect(screen.queryByText(/Inbjudan går till/)).toBeNull();
     expect(screen.getByText(/Inbjudningarna skickades/)).toBeTruthy();
   });
+  it("says 1 besättning for one herd", () => {
+    render(
+      <RoundPanel
+        year={2026}
+        genebankId={1}
+        genebankName="Gotland"
+        round={round}
+        canEdit
+        recipients={{ med_epost: 1, utan_epost: 1 }}
+        env="demo"
+      />,
+    );
+    expect(
+      screen.getByText(
+        /Inbjudan går till 1 besättning\.\s+1 saknar e-post och får blanketten med post\./,
+      ),
+    ).toBeTruthy();
+  });
+  it("shows a helper the count before the round is activated, without the button", () => {
+    render(
+      <RoundPanel
+        year={2026}
+        genebankId={1}
+        genebankName="Gotland"
+        round={{ ...round, genebanks: [] }}
+        canEdit={false}
+        recipients={{ med_epost: 190, utan_epost: 5 }}
+        env="demo"
+      />,
+    );
+    expect(screen.getByText(/Inbjudan går till 190/)).toBeTruthy();
+    expect(screen.queryByText("Skicka provmejl till mig")).toBeNull();
+  });
 });

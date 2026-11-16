@@ -103,7 +103,8 @@ export function RoundPanel({
   const invitation = recipients && (
     <>
       <p style={{ margin: 0 }}>
-        Inbjudan går till {recipients.med_epost} besättningar.{" "}
+        Inbjudan går till {recipients.med_epost}{" "}
+        {recipients.med_epost === 1 ? "besättning" : "besättningar"}.{" "}
         {recipients.utan_epost} saknar e-post och får blanketten med post.
       </p>
       {canEdit && (
@@ -173,7 +174,10 @@ export function RoundPanel({
             </div>
           </>
         ) : (
-          <p className={inkorg.muted}>Genbanksansvarig aktiverar rundan.</p>
+          <>
+            <p className={inkorg.muted}>Genbanksansvarig aktiverar rundan.</p>
+            {invitation}
+          </>
         )}
         {problem}
       </section>

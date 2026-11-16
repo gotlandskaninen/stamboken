@@ -148,6 +148,9 @@ describe("toCall and a failed invitation", () => {
       toCall(row("G9001", "inskickad", { inbjudan: "studsade" }), null, today),
     ).toBe(false);
     expect(
+      toCall(row("G9001", "avslutar", { inbjudan: "studsade" }), null, today),
+    ).toBe(false);
+    expect(
       toCall(
         row("G9001", "ej_rapporterad", { inbjudan: "skickad" }),
         null,
