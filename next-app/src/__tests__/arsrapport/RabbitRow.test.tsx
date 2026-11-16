@@ -160,4 +160,30 @@ describe("RabbitRow", () => {
     expect(screen.getByText(/räknas via flytten/)).toBeTruthy();
     expect(screen.queryAllByRole("radio")).toHaveLength(0);
   });
+
+  it("marks a rabbit bought during the year, with the seller in the title (4a Task 5)", () => {
+    render(
+      <RabbitRow
+        {...props({
+          r: rabbit(1, { kopt: { datum: "2026-05-14", fran: "G9002" } }),
+        })}
+      />,
+    );
+    const badge = screen.getByText("Köpt 14 maj");
+    expect(badge.getAttribute("title")).toBe("Köpt från G9002");
+    cleanup();
+    render(
+      <RabbitRow
+        {...props({
+          r: rabbit(1, { kopt: { datum: "2026-01-02", fran: "GX1" } }),
+        })}
+      />,
+    );
+    expect(screen.getByText("Köpt 2 januari").getAttribute("title")).toBe(
+      "Köpt utanför genbanken",
+    );
+    cleanup();
+    render(<RabbitRow {...props()} />);
+    expect(screen.queryByText(/^Köpt/)).toBeNull();
+  });
 });

@@ -288,3 +288,43 @@ describe("WorkView: a sale proposal", () => {
     expect(screen.queryByRole("link", { name: "Öppna statusvyn" })).toBeNull();
   });
 });
+
+describe("WorkView: a purchase notice (4a Task 5)", () => {
+  const notice = item({
+    kind: "kontroll",
+    state: "ny",
+    assigned_to: null,
+    ref_type: "kopanmalan",
+    ref_id: null,
+    documents: [],
+    report_year: null,
+    ref_data: {
+      number: "G9002-2501",
+      from_herd: "G9002",
+      date: "2025-05-14",
+      individual_id: 70,
+    },
+  });
+
+  it("shows its fields and the rabbit's page, where the sale is registered", () => {
+    render(view(notice, boss, false, 2026));
+    expect(
+      screen.getByText(/Anmält köp: G9002-2501 från G9002, 14 maj 2025/),
+    ).toBeTruthy();
+    expect(screen.getByRole("link", { name: "kaninens sida" })).toHaveAttribute(
+      "href",
+      "/stamboken/individ/G9002-2501",
+    );
+    expect(screen.queryByRole("link", { name: "Öppna statusvyn" })).toBeNull();
+  });
+
+  it("links to the status view when a pending sale matches it", () => {
+    render(view({ ...notice, report_year: 2025 }, boss, false, 2026));
+    expect(
+      screen.getByRole("link", { name: "Öppna statusvyn" }),
+    ).toHaveAttribute(
+      "href",
+      "/stamboken/arsrapport/status/2025?genebank_id=1",
+    );
+  });
+});

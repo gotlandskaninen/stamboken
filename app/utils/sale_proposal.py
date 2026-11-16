@@ -11,6 +11,7 @@ from peewee import IntegrityError
 
 import utils.arsrapport as arsrapport
 import utils.inbox as inbox
+import utils.purchase_notice as purchase_notice
 from utils.database import (
     DB_PROXY,
     Herd,
@@ -132,17 +133,23 @@ def _claim(proposal, user, now, **fields):
 def _locked(proposal, buyer=False):
     """
     The report lock, the report row, then the report's item set in one ascending pass (K4): the rabbit's buyer items
-    and every pending proposal's item, this one's too. Returns the proposal and its report as they are under them.
+    and every pending proposal's item, this one's too. Returns the proposal and its report as they are under them,
+    and the ids of the buyer's purchase notices that the sale settles.
     With `buyer` the buying herd's report lock too, both in herd id order, the only place that takes two (P2): the
-    buyer's Skicka then comes wholly before the approval or after it.
+    buyer's Skicka, and a purchase notice of the buyer's, then come wholly before the approval or after it, and those
+    notices join the item pass.
     """
     report = proposal.report
     herds = {report.herd_id} | ({proposal.to_herd_id} if buyer and proposal.to_herd_id else set())
     for herd_id in sorted(herds):
         arsrapport.lock_report(report.round, Herd(id=herd_id))
     report = YearlyHerdReport.select().where(YearlyHerdReport.id == report.id).for_update().get()
-    arsrapport._lock_items([proposal.individual_id], report=report)  # pylint: disable=protected-access
-    return SaleProposal.get_by_id(proposal.id), report
+    notices = []
+    if buyer and proposal.to_herd_id:
+        found = purchase_notice.open_notices([proposal.to_herd_id])
+        notices = [item.id for item in purchase_notice.matching(proposal, report.herd.herd, found)]
+    arsrapport._lock_items([proposal.individual_id], report=report, notices=notices)  # pylint: disable=protected-access
+    return SaleProposal.get_by_id(proposal.id), report, notices
 
 
 def _refused(proposal, exc):
@@ -158,7 +165,7 @@ def approve(proposal, user, *, now: datetime) -> HerdTracking:
     who then changes the report (FB4).
     """
     with DB_PROXY.atomic():
-        proposal, report = _locked(proposal, buyer=True)
+        proposal, report, notices = _locked(proposal, buyer=True)
         if proposal.state != "foreslagen":
             raise arsrapport.ArsrapportError(409, DECIDED)
         buyer = proposal.buyer
@@ -184,6 +191,8 @@ def approve(proposal, user, *, now: datetime) -> HerdTracking:
         )
         SaleProposal.update(herd_tracking_id=row.id).where(SaleProposal.id == proposal.id).execute()
         _close_item(proposal, user, "klar")
+        for item_id in notices:  # fråga 19: one approval settles the buyer's notice too
+            purchase_notice.close(item_id, user)
         buyer_report = arsrapport.current_report(proposal.to_herd, report.round) if proposal.to_herd_id else None
         if buyer_report is not None and proposal.sale_date <= date(report.round.report_year, 12, 31):
             ref = ("sale_proposal", proposal.id)
@@ -203,7 +212,7 @@ def reject(proposal, user, *, reason: str, then: Literal["kvar", "valj_igen"], n
     if not reason:
         raise arsrapport.ArsrapportError(400, "Skriv varför försäljningen inte godkänns.", field="reason")
     with DB_PROXY.atomic():
-        proposal, report = _locked(proposal)
+        proposal, report, _ = _locked(proposal)
         if proposal.state != "foreslagen":
             raise arsrapport.ArsrapportError(409, DECIDED)
         names = [proposal.buyer["name"]] if proposal.buyer else ()
@@ -222,8 +231,12 @@ def reject(proposal, user, *, reason: str, then: Literal["kvar", "valj_igen"], n
 def decisions(report) -> list[dict]:
     """
     The status view's sale dialog (5.9), for the genebank's manager or admin: the report's pending proposals, a buyer
-    outside the genebank by name and town only, and whether the buyer has reported the purchase (K7).
+    outside the genebank by name and town only, and whether the buyer has reported the purchase (K7), with the buyer
+    herd's purchase notice that approving the sale settles (fråga 19).
     """
+    proposals = pending(report)
+    notices = purchase_notice.open_notices({p.to_herd_id for p in proposals if p.to_herd_id})
+    matched = {p.id: next(iter(purchase_notice.matching(p, report.herd.herd, notices)), None) for p in proposals}
     return [
         {
             "id": proposal.id,
@@ -236,6 +249,7 @@ def decisions(report) -> list[dict]:
             else None,
             "sale_date": proposal.sale_date.isoformat(),
             "buyer_notified_at": proposal.buyer_notified_at.isoformat() if proposal.buyer_notified_at else None,
+            "kopanmalan": purchase_notice.notice_json(matched[proposal.id]) if matched[proposal.id] else None,
         }
-        for proposal in pending(report)
+        for proposal in proposals
     ]

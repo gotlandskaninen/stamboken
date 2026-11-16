@@ -57,6 +57,7 @@ const actions = (): {
     dryRun: vi.fn(() => ok({ ok: true, refusals: [], warnings: [] })),
     submitReport: vi.fn(() => ok(receipt)),
     withdrawReport: vi.fn(),
+    reportPurchase: vi.fn(),
     // the genebank's herds, as GET /v2/genebank/<id>/herds lists them
     getGenebankHerds: vi.fn(() =>
       Promise.resolve({
@@ -149,6 +150,65 @@ describe("ReportForm", () => {
       />,
     );
     expect(screen.getByLabelText("Hitta en kanin")).toBeTruthy();
+  });
+
+  it("filters the rabbits bought this year and sends a purchase notice (4a Task 5)", async () => {
+    const v = view({
+      rabbits: [
+        rabbit(1),
+        rabbit(2, { kopt: { datum: "2026-05-14", fran: "G9002" } }),
+      ],
+      kopanmalningar: [
+        {
+          id: 5,
+          number: "G9002-77",
+          from_herd: "G9002",
+          date: "2026-06-01",
+          state: "ny",
+        },
+        {
+          id: 6,
+          number: "G9002-78",
+          from_herd: "G9002",
+          date: "2026-06-02",
+          state: "klar",
+        },
+      ],
+    });
+    const a = actions();
+    a.reportPurchase.mockReturnValue(
+      ok({
+        id: 7,
+        number: "G9002-79",
+        from_herd: "GX1",
+        date: "2026-07-01",
+        state: "ny",
+      }),
+    );
+    render(<ReportForm env="demo" view={v} actions={a} />);
+    fireEvent.click(screen.getByRole("button", { name: "Köpta" }));
+    expect(screen.queryByRole("group", { name: /G9001-1\b/ })).toBeNull();
+    expect(within(row(2)).getByText("Köpt 14 maj")).toBeTruthy();
+    // an open notice is shown as waiting; a registered one is the rabbit's row
+    expect(screen.getByText(/Anmält köp: G9002-77, 1 juni 2026/)).toBeTruthy();
+    expect(screen.queryByText(/G9002-78/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Anmäl köpet" }));
+    fireEvent.change(screen.getByLabelText("Kaninens nummer"), {
+      target: { value: "G9002-79" },
+    });
+    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+    fireEvent.change(screen.getByLabelText("Datum för köpet"), {
+      target: { value: "2026-07-01" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Skicka anmälan" }));
+    await screen.findByRole("status");
+    expect(a.reportPurchase).toHaveBeenCalledWith(
+      "G9001",
+      2026,
+      { number: "G9002-79", from_herd: "utanfor", date: "2026-07-01" },
+      "demo",
+    );
+    expect(refresh).toHaveBeenCalled();
   });
 
   it("offers only active herds of the genebank but the seller's own and GX1, and sends the herd code", async () => {

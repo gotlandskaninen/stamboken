@@ -18,6 +18,7 @@ import utils.data_access as da
 import utils.inbox as inbox
 import utils.inbox_interpreter as interpreter
 import utils.inbox_purge as inbox_purge
+import utils.purchase_notice as purchase_notice
 from extensions import limiter
 from flask import Blueprint, jsonify, request, send_file
 from flask_login import current_user
@@ -352,7 +353,8 @@ def item_detail(item_id):
         return problem(404, "Hittades inte", "Posten finns inte.")
     with DB_PROXY.atomic():
         inbox.open_item(item, current_user)
-    return jsonify(inbox.item_detail(item))
+        purchase_notice.close_registered([item])  # a purchase notice whose transfer is registered closes itself
+    return jsonify(inbox.item_detail(InboxItem.get_by_id(item.id)))
 
 
 @inbox_bp.route("/inkorg/<int:item_id>/ta", methods=["POST"])

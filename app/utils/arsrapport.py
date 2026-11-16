@@ -407,7 +407,8 @@ def report_list(herd, year, report=None):
     """
     ReportView.rabbits, sorted on number: the 5.2 list plus every rabbit in the report's latest submission (D3b).
     Only rows outside the report's own operations make a rabbit "redan_rapporterad" (an active ATTESTATION dated
-    31/12 in H) or "via_flytt" (an active life sign after 31/12, the first of them in `later`).
+    31/12 in H) or "via_flytt" (an active life sign after 31/12, the first of them in `later`). `kopt` is the
+    latest active TRANSFER into H dated in the year: its date and the seller herd (Task 5).
     """
     last = date(year, 12, 31)
     ids, ops = _listed_5_2(herd, last), set()
@@ -448,6 +449,7 @@ def report_list(herd, year, report=None):
             "death_date": _iso(death) if death is not None and death > last else None,
             "state": "att_valja",
             "later": None,
+            "kopt": None,
         }
     signs = (
         HerdTracking.select(
@@ -475,6 +477,21 @@ def report_list(herd, year, report=None):
             row["state"], row["later"] = "redan_rapporterad", None
         elif when > last and row["state"] == "att_valja":
             row["state"], row["later"] = "via_flytt", {"kind": sign["kind"], "date": _iso(when)}
+    Seller = Herd.alias()
+    bought = (
+        HerdTracking.select(HerdTracking.individual, HerdTracking.herd_tracking_date, Seller.herd.alias("fran"))
+        .join(Seller, JOIN.LEFT_OUTER, on=(HerdTracking.from_herd == Seller.id))
+        .where(
+            HerdTracking.individual.in_(sorted(rows)),
+            HerdTracking.herd == herd.id,
+            HerdTracking.kind == "TRANSFER",
+            ht_not_voided(),
+            HerdTracking.herd_tracking_date.between(date(year, 1, 1), last),
+        )
+        .order_by(HerdTracking.herd_tracking_date, HerdTracking.id)
+    )
+    for row in bought.dicts():  # oldest first: the latest purchase wins
+        rows[row["individual"]]["kopt"] = {"datum": _iso(row["herd_tracking_date"]), "fran": row["fran"]}
     return list(rows.values())
 
 
@@ -784,6 +801,8 @@ def _forslag_json(report):
 
 def report_view(herd, round_, access, user):
     """ReportView for the herd and the round's year, as `access` sees it ."""
+    import utils.purchase_notice as purchase_notice  # pylint: disable=import-outside-toplevel  # it imports this module
+
     year = round_.report_year
     first, last = date(year, 1, 1), date(year, 12, 31)
     activated = _activations(round_).where(YearlyReportRoundGenebank.genebank == herd.genebank_id).exists()
@@ -859,6 +878,7 @@ def report_view(herd, round_, access, user):
         "litters": [{**row, "birth_date": _iso(row["birth_date"])} for row in litters.dicts()],
         "sales": [{**row, "date": _iso(row["date"])} for row in sales.dicts()],
         "forslag": _forslag_json(report),
+        "kopanmalningar": purchase_notice.report_notices(herd, year),  # closes the registered ones first
         "herds": [] if access.code else sorted(row.herd for row in others),  # a link sees no other herd
         "report": {**_report_json(report, round_, access, is_open), "villkor": herd_conditions(herd, round_, report)}
         if report
@@ -1056,6 +1076,8 @@ def status_view(round_, genebank_id, with_phone=False):
     A fixed number of queries however many herds there are. `with_phone` adds the main member's phone to each row
     (`telefon`, null without one); without it the key is absent.
     """
+    import utils.purchase_notice as purchase_notice  # pylint: disable=import-outside-toplevel  # it imports this module
+
     year, last = round_.report_year, date(round_.report_year, 12, 31)
     in_round = list(
         YearlyHerdReport.select(YearlyHerdReport.id, YearlyHerdReport.herd, YearlyHerdReport.status)
@@ -1083,6 +1105,7 @@ def status_view(round_, genebank_id, with_phone=False):
     data = {herd_id: json.loads(report.data) for herd_id, report in reports.items()}
     unstated = sorted({int(i) for body in data.values() for i in body.get("not_stated") or ()})
     waiting, again, bought = _sale_flags(round_, reports)
+    notices = purchase_notice.unsettled([herd.id for herd in herds], year)
     extra = {
         row.id: Kanin(
             row.id, SEXES.get(row.sex), row.sex == "eunuch" or bool(row.castration_date and row.castration_date <= last)
@@ -1146,6 +1169,7 @@ def status_view(round_, genebank_id, with_phone=False):
                     "forsaljning_avvisad": len(choosing),
                     "forsaljning_avvisad_paverkar": _only_with(chosen, *facts),
                     "kopt_efter_inskick": bought[herd.id],
+                    "kop_anmalt": notices[herd.id],
                 },
                 "villkor": villkor,
                 "statistik": {
@@ -2333,15 +2357,15 @@ def submitted_body(sub: Submission) -> dict:
     return body
 
 
-def _lock_items(ids, form_id=None, report=None, kept=()):
+def _lock_items(ids, form_id=None, report=None, kept=(), notices=()):
     """
-    The queue's items that may show the buyers of the rabbits' sales (buyer_items), the paper form's own item, and
-    the kontroll items of `report`'s pending sale proposals (K4), locked in one ascending pass before any litter or
-    rabbit: the order of the queue (item, litters, rabbits) and of its bulk assignment, so the voids of Ändra and Dra
-    tillbaka, and a proposal taken back or decided, lock only items already held and no cycle forms (Codex 4, Opus 3,
-    Codex re-review 2). The voided sales holding the `kept` buyers count too (K1): Skicka links them again or
-    deletes them. Returns their ids: _lock_form checks the form's item again under it, and _lock_rabbits the
-    buyers' set.
+    The queue's items that may show the buyers of the rabbits' sales (buyer_items), the paper form's own item, the
+    kontroll items of `report`'s pending sale proposals (K4) and the purchase `notices` an approval settles (Task 5),
+    locked in one ascending pass before any litter or rabbit: the order of the queue (item, litters, rabbits) and of
+    its bulk assignment, so the voids of Ändra and Dra tillbaka, and a proposal taken back or decided, lock only
+    items already held and no cycle forms (Codex 4, Opus 3, Codex re-review 2). The voided sales holding the `kept`
+    buyers count too (K1): Skicka links them again or deletes them. Returns their ids: _lock_form checks the form's
+    item again under it, and _lock_rabbits the buyers' set.
     """
     rows = HerdTracking.select().where(
         (HerdTracking.individual.in_(ids) & ht_not_voided()) | HerdTracking.holder_contact.in_(sorted(kept))
@@ -2354,7 +2378,7 @@ def _lock_items(ids, form_id=None, report=None, kept=()):
             SaleProposal.inbox_item_id.is_null(False),
         )
         proposed = {proposal.inbox_item_id for proposal in query}
-    wanted = sorted(buyer_items(rows) | proposed | ({form_id} if form_id is not None else set()))
+    wanted = sorted(buyer_items(rows) | proposed | set(notices) | ({form_id} if form_id is not None else set()))
     if not wanted:
         return set()
     query = InboxItem.select(InboxItem.id).where(InboxItem.id.in_(wanted)).order_by(InboxItem.id).for_update()

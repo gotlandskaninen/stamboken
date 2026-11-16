@@ -44,6 +44,7 @@ import {
   type QueueUser,
   type Rect,
 } from "../lib";
+import { fmtDate } from "../../arsrapport/lib";
 import { RowActions } from "../QueueControls";
 import { AskBreeder } from "./AskBreeder";
 import { CertificateForm } from "./CertificateForm";
@@ -606,6 +607,34 @@ export function WorkView({
                   >
                     Öppna statusvyn
                   </Link>
+                </>
+              )}
+            </p>
+          )}
+          {item.ref_type === "kopanmalan" && item.ref_data && (
+            // a purchase notice (4a Task 5): it closes itself once the purchase is registered
+            <p className={styles.note}>
+              Anmält köp: {item.ref_data.number} från {item.ref_data.from_herd},{" "}
+              {fmtDate(item.ref_data.date)}.{" "}
+              {item.report_year && item.genebank_id ? (
+                <>
+                  Säljarens försäljning väntar. Godkänn den i årsrapportens
+                  statusvy.{" "}
+                  <Link
+                    href={`/stamboken/arsrapport/status/${item.report_year}?genebank_id=${item.genebank_id}`}
+                  >
+                    Öppna statusvyn
+                  </Link>
+                </>
+              ) : (
+                <>
+                  Registrera försäljningen på{" "}
+                  <Link
+                    href={`/stamboken/individ/${encodeURIComponent(item.ref_data.number)}`}
+                  >
+                    kaninens sida
+                  </Link>
+                  .
                 </>
               )}
             </p>

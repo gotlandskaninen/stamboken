@@ -24,6 +24,18 @@ export interface RabbitView {
   death_date: string | null;
   state: "att_valja" | "redan_rapporterad" | "via_flytt";
   later: { kind: string; date: string } | null;
+  // The latest transfer into the herd dated in the year: "Köpt 14 maj" (4a Task 5).
+  kopt: { datum: string; fran: string | null } | null;
+}
+
+// A purchase notice the herd sent ("Anmäl köpet"): a queue item for the
+// genebank manager until the transfer is registered.
+export interface PurchaseNotice {
+  id: number;
+  number: string;
+  from_herd: string;
+  date: string;
+  state: string;
 }
 
 export interface Refusal {
@@ -141,6 +153,8 @@ export interface ReportView {
     sale_date: string;
     state: "foreslagen" | "godkand" | "avvisad";
   }[];
+  // The herd's purchase notices dated in the year.
+  kopanmalningar: PurchaseNotice[];
   herds: string[];
   report: null | {
     id: number;
@@ -308,6 +322,10 @@ export const CONFLICT_TEXT = "Rapporten har ändrats på en annan enhet";
 // A sale by a caretaker or through the link is a proposal (5.9).
 export const PENDING_SALE_TEXT =
   "Försäljningen väntar på genbanksansvarig. Kaninen står kvar hos dig tills den är godkänd.";
+export const PURCHASE_SENT_TEXT =
+  "Anmälan är skickad till genbanksansvarig. Kaninen kommer in i din besättning när köpet är registrerat.";
+export const NOT_IN_STAMBOKEN_TEXT =
+  "Finns kaninen inte i Stamboken? Lägg till den från intyget.";
 export const TIMEOUT_TEXT =
   "Vi vet inte om rapporten kom fram. Tryck Försök igen. Den skickas inte två gånger.";
 
@@ -741,6 +759,13 @@ function fromShape(data: Partial<DraftData>): FormState {
 }
 
 const STOCKHOLM = "Europe/Stockholm";
+// "14 maj": the bought mark on a rabbit's row.
+export const fmtDay = (iso: string): string =>
+  new Intl.DateTimeFormat("sv-SE", {
+    day: "numeric",
+    month: "long",
+    timeZone: "UTC",
+  }).format(new Date(iso));
 export const fmtDate = (iso: string): string =>
   new Intl.DateTimeFormat("sv-SE", {
     day: "numeric",
@@ -961,6 +986,7 @@ export interface StatusRow {
     forsaljning_avvisad: number; // rabbits a rejected sale left to choose again (FB3)
     forsaljning_avvisad_paverkar: boolean;
     kopt_efter_inskick: number; // sales into the herd approved after its report (FB4)
+    kop_anmalt: number; // the herd's open purchase notices that no pending sale matches (4a Task 5)
   };
   villkor: Villkor;
   statistik: {
@@ -1008,6 +1034,7 @@ export interface SaleProposalRow {
   buyer: { name: string; town: string | null } | null;
   sale_date: string;
   buyer_notified_at: string | null; // the buyer's own notice (K7)
+  kopanmalan: PurchaseNotice | null; // the buyer herd's notice that approving settles (fråga 19)
 }
 
 export type StatusFilter = "att_ringa" | "alla" | RowState;

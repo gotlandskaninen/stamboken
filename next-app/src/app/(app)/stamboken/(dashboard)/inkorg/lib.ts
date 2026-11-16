@@ -113,8 +113,15 @@ export interface InboxDetail extends Omit<InboxItem, "documents"> {
   sender_authenticated: boolean | null;
   documents: InboxDocument[];
   events: InboxEvent[];
-  /** A sale proposal's round year: its status view decides it. Null for other items. */
+  /** A sale proposal's round year, or that of the proposal a purchase notice matches. Null for other items. */
   report_year?: number | null;
+  /** A purchase notice's fields (ref_type "kopanmalan"); null for other items. */
+  ref_data?: {
+    number: string;
+    from_herd: string;
+    date: string;
+    individual_id: number;
+  } | null;
 }
 
 export interface QueueList {

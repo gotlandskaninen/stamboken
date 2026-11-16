@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import {
   Button,
   Dialog,
@@ -118,9 +119,18 @@ export function SalesDialog({
               {" · "}
               {fmtDate(p.sale_date)}
             </p>
-            {p.buyer_notified_at && (
+            {(p.buyer_notified_at || p.kopanmalan) && (
               <p className={inkorg.muted} style={{ margin: "0 0 4px" }}>
                 Köparen har anmält köpet
+                {p.kopanmalan && (
+                  // fråga 19: Godkänn registers the sale and closes the notice
+                  <>
+                    , {fmtDate(p.kopanmalan.date)} ·{" "}
+                    <Link href={`/stamboken/inkorg/${p.kopanmalan.id}`}>
+                      Visa anmälan
+                    </Link>
+                  </>
+                )}
               </p>
             )}
             <div className={inkorg.rowActions}>

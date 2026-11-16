@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import { isOutsideGenebankHerd } from "@/utils/saleRules";
 import {
   EJ_VAGD_REASONS,
   EMPTY_ENTRY,
@@ -9,6 +10,7 @@ import {
   PENDING_SALE_TEXT,
   ageText,
   fmtDate,
+  fmtDay,
   kgText,
   parseWeight,
   sexText,
@@ -50,6 +52,20 @@ function saleText(e: Entry): string {
       ? String(s.ar)
       : `${s.dag ? s.dag + " " : ""}${MONTHS[s.manad - 1]} ${s.ar}`;
   return `Såld till ${to}, ${when}`;
+}
+
+// "Köpt 14 maj", the seller in its title: a mark, not a second list (4a Task 5).
+function BoughtBadge({ kopt }: { kopt: NonNullable<RabbitView["kopt"]> }) {
+  const from = !kopt.fran
+    ? undefined
+    : isOutsideGenebankHerd(kopt.fran)
+      ? "Köpt utanför genbanken"
+      : `Köpt från ${kopt.fran}`;
+  return (
+    <span className="sb-badge" title={from} style={{ marginLeft: 8 }}>
+      Köpt {fmtDay(kopt.datum)}
+    </span>
+  );
 }
 
 function RabbitRowImpl({
@@ -112,6 +128,7 @@ function RabbitRowImpl({
         {paper && <span className={styles.meta}>{sexText(r)} </span>}
         <span className={styles.num}>{r.number}</span>{" "}
         <span className={styles.name}>{r.name}</span>
+        {r.kopt && <BoughtBadge kopt={r.kopt} />}
         {paper && r.color && <span className={styles.meta}> {r.color}</span>}
         {done && <span className={styles.klar}>✓ Klar</span>}
       </legend>

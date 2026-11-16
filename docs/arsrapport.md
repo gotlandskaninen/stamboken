@@ -14,6 +14,7 @@ som PDF. Reglerna finns i `app/utils/arsrapport.py` och endpointsen i
 | `POST /api/v2/arsrapport/besattning/<besättning>/<år>/i-tid` | admin och genbanksansvarig i besättningens genbank. Hjälpare får 403. |
 | `GET /api/v2/arsrapport/besattning/<besättning>/<år>/forslag` | admin och genbanksansvarig i besättningens genbank. Hjälpare får 403. |
 | `POST /api/v2/arsrapport/forslag/<id>/godkann` och `…/avvisa` | admin och genbanksansvarig i besättningens genbank. Hjälpare, ägare och genbanksansvarig i den andra genbanken får 403. |
+| `POST /api/v2/arsrapport/besattning/<besättning>/<år>/kop` | den som får rapportera för besättningen, inloggad eller via länken (`report_actor_required`). Länken når bara sin egen besättning och sitt år. |
 | `GET /api/v2/arsrapport/blankett.pdf` | alla som är inloggade |
 
 ## Statusvyn
@@ -25,7 +26,7 @@ som PDF. Reglerna finns i `app/utils/arsrapport.py` och endpointsen i
  rows: [{herd, herd_name, state, source, membership_after_end, received_at, on_time_override,
          inbox_item_id, telefon (bara för genbanksansvariga och administratör),
          flags: {ej_angivna, ej_angivna_paverkar, forsaljning_vantar, forsaljning_avvisad,
-                 forsaljning_avvisad_paverkar, kopt_efter_inskick},
+                 forsaljning_avvisad_paverkar, kopt_efter_inskick, kop_anmalt},
          villkor: {hane, hona, kull, i_tid},
          statistik: {kullar, ungar, levande_6v, honor, hanar}}]}
 ```
@@ -52,6 +53,8 @@ som PDF. Reglerna finns i `app/utils/arsrapport.py` och endpointsen i
   - `kopt_efter_inskick` är antalet godkända köp daterade senast 31 december till besättningen, där
     kaninen saknas i rapportens senaste inskick. Bara köparens eget val för kaninen tar bort
     flaggan; ett avvisningsinskick kopierar det senaste inskicket och lägger inte till kaninen.
+  - `kop_anmalt` är antalet öppna köpanmälningar daterade under året som inget väntande
+    försäljningsförslag matchar och vars köp inte är registrerat (se nedan).
 - **Konto:** statusvyn har inga kontouppgifter. En blankettpost visar bara kontots två sista siffror
   (`item.account_end`) i rapportvyn.
 
@@ -69,8 +72,9 @@ Utan en inskickad rapport blir svaret 404.
 ## Försäljningsförslag
 
 `GET …/besattning/<besättning>/<år>/forslag` svarar `{"forslag": [{id, individual_id, number, name,
-to_herd, buyer, sale_date, buyer_notified_at}]}` med de förslag som väntar. En köpare utanför
-genbanken visas bara med namn och ort (`buyer`), och `to_herd` är då `null`.
+to_herd, buyer, sale_date, buyer_notified_at, kopanmalan}]}` med de förslag som väntar. En köpare utanför
+genbanken visas bara med namn och ort (`buyer`), och `to_herd` är då `null`. `kopanmalan` är
+köparens köpanmälan som förslaget matchar, eller `null`.
 
 `POST /api/v2/arsrapport/forslag/<id>/godkann` registrerar försäljningen, också efter rundans
 `end_date`. Är köpet daterat senast 31 december och köparens besättning har skickat in sin rapport,
@@ -87,6 +91,27 @@ revisionen, så att en sida som öppnades före beslutet får 409. Inskicken ord
 skrevs under rapportens lås, inte efter `created_at`. Vägrar registret `kvar` blir svaret
 409 med registrets orsak, och förslaget står kvar. Medlemmen får orsaken i mejlet
 `arsrapport.forsaljning_avvisad`. Ett förslag som redan är avgjort ger 409.
+
+## Köpanmälan
+
+`POST …/besattning/<besättning>/<år>/kop` med `{"number", "from_herd", "date"}` anmäler att
+besättningen köpt kaninen `number` från besättningen `from_herd` (`"utanfor"` blir genbankens GX1
+eller MX1) på dagen `date` under året. Anmälan blir en post i kön, `kind` `kontroll` med `ref_type`
+`kopanmalan` och fälten i `ref_data`: `{number, from_herd, date, individual_id}`, utan personuppgifter.
+Svaret är `{id, number, from_herd, date, state}`.
+
+- Ett nummer som Stamboken saknar ger 422 med `code` `inte_i_stamboken`: kaninen läggs till från
+  intyget i stället. En kanin som redan står i besättningen ger 409, och en öppen anmälan av samma
+  kanin är svaret igen.
+- En anmälan **matchar** ett väntande försäljningsförslag för samma kanin från `from_herd` till
+  besättningen när datumen skiljer högst 14 dagar. Godkänns förslaget stängs anmälan i samma
+  transaktion; dess post låses i samma stigande pass som förslagets.
+- En anmälan **stänger sig själv** ("Köpet är registrerat") när en aktiv `TRANSFER` av kaninen till
+  besättningen finns, registrerad efter anmälan eller daterad högst 14 dagar före anmälans datum.
+  Kontrollen görs i rapportvyn och när posten öppnas i kön, utan trigger, under postens lås.
+- Rapportvyns `rabbits` har `kopt: {datum, fran} | null` från den senaste aktiva `TRANSFER` till
+  besättningen daterad under året, och `kopanmalningar: [{id, number, from_herd, date, state}]` med
+  besättningens anmälningar daterade under året.
 
 ## Den tomma blanketten
 

@@ -2,7 +2,13 @@ import { notFound } from "next/navigation";
 import { cookies } from "next/headers";
 import { ApiError, fetchApi } from "@/lib/api";
 import { MODE_COOKIE, parseMode } from "@/lib/mode";
-import { dryRun, saveDraft, submitReport, withdrawReport } from "../../actions";
+import {
+  dryRun,
+  reportPurchase,
+  saveDraft,
+  submitReport,
+  withdrawReport,
+} from "../../actions";
 import { getGenebankHerds } from "../../../individ/[number]/actions";
 import type { InboxDetail } from "../../../inkorg/lib";
 import type { ReportView } from "../../lib";
@@ -48,6 +54,7 @@ export default async function ReportPage({
           dryRun,
           submitReport,
           withdrawReport,
+          reportPurchase,
           getGenebankHerds,
         }}
       />
@@ -63,6 +70,7 @@ export default async function ReportPage({
         dryRun,
         submitReport,
         withdrawReport,
+        reportPurchase,
         getGenebankHerds,
       }}
       post={post}

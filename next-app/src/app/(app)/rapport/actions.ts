@@ -6,6 +6,7 @@ import type { ActionResult } from "../stamboken/(dashboard)/inkorg/actions";
 import {
   SUBMIT_TIMEOUT_MS,
   type DraftData,
+  type PurchaseNotice,
   type Receipt,
   type ReportView,
   type Refusal,
@@ -132,6 +133,14 @@ export async function withdrawReport(
     { revision, reason: reason ?? null },
     SUBMIT_TIMEOUT_MS,
   );
+}
+
+export async function reportPurchase(
+  herd: string,
+  year: number,
+  body: { number: string; from_herd: string; date: string },
+) {
+  return call<PurchaseNotice>(path(herd, year, "/kop"), "POST", body);
 }
 
 // The sale dialog's herd picker: the report herd's genebank, as the logged-in picker has it (4a). The page binds

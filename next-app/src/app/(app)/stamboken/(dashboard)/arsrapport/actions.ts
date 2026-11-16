@@ -7,6 +7,7 @@ import type { ActionResult } from "../inkorg/actions";
 import {
   SUBMIT_TIMEOUT_MS,
   type DraftData,
+  type PurchaseNotice,
   type Receipt,
   type ReportView,
   type Refusal,
@@ -140,6 +141,16 @@ export async function withdrawReport(
     { revision, reason: reason ?? null },
     SUBMIT_TIMEOUT_MS,
   );
+}
+
+// "Anmäl köpet": a purchase notice for the genebank manager (4a Task 5).
+export async function reportPurchase(
+  herd: string,
+  year: number,
+  body: { number: string; from_herd: string; date: string },
+  env: Mode,
+) {
+  return call<PurchaseNotice>(env, path(herd, year, "/kop"), "POST", body);
 }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;

@@ -264,7 +264,8 @@ function Row({
     f.ej_angivna > 0 ||
     f.forsaljning_vantar > 0 ||
     f.forsaljning_avvisad > 0 ||
-    f.kopt_efter_inskick > 0;
+    f.kopt_efter_inskick > 0 ||
+    f.kop_anmalt > 0;
   return (
     <tr>
       <td>
@@ -350,6 +351,16 @@ function Row({
           <span className="sb-badge" style={{ marginRight: 8 }}>
             Köpt efter inskick
           </span>
+        )}
+        {f.kop_anmalt > 0 && (
+          // purchase notices with no pending sale: registered from the queue (4a Task 5)
+          <Link
+            href={`/stamboken/inkorg?herd=${row.herd}&kind=kontroll`}
+            className="sb-badge"
+            style={{ marginRight: 8 }}
+          >
+            {f.kop_anmalt === 1 ? "Köp anmält" : `${f.kop_anmalt} köp anmälda`}
+          </Link>
         )}
         {!flagged && "–"}
       </td>

@@ -31,6 +31,7 @@ NO_SALES = {
     "forsaljning_avvisad": 0,
     "forsaljning_avvisad_paverkar": False,
     "kopt_efter_inskick": 0,
+    "kop_anmalt": 0,
 }
 
 

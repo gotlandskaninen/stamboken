@@ -16,6 +16,7 @@ import utils.arsrapport as arsrapport
 import utils.arsrapport_invite as invite
 import utils.arsrapport_pdf as arsrapport_pdf
 import utils.inbox as inbox
+import utils.purchase_notice as purchase_notice
 import utils.sale_proposal as sale_proposal
 from flask import Blueprint, current_app, g, jsonify, request, send_file
 from flask_login import current_user
@@ -205,6 +206,21 @@ def report_view(herd, year):
 def buyer_herds(herd, year):
     herd, _, _ = _report_target(herd, year)
     return jsonify({"herds": arsrapport.buyer_herds(herd)})
+
+
+# [Next.js] "Anmäl köpet": body {number, from_herd, date}; a purchase notice in the genebank's queue (4a Task 5).
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/kop", methods=["POST"])
+@report_actor_required
+def report_purchase(herd, year):
+    herd, round_, access = _report_target(herd, year)  # a link writes only its own herd and year
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        raise ArsrapportError(400, "Skicka köpet som JSON.")
+    when = _dates("date").get("date")
+    item = purchase_notice.report_purchase(
+        herd, round_, _actor(access), number=body.get("number"), from_herd=body.get("from_herd"), date=when
+    )
+    return jsonify(purchase_notice.notice_json(item))
 
 
 # [Next.js] The herd's register extract on 31 December as a PDF, for the member to check against (section 9).

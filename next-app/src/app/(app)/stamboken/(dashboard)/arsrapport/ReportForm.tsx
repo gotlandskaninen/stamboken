@@ -8,6 +8,7 @@ import { MbCard } from "../min-besattning/min-besattning-ui";
 import type * as Actions from "./actions";
 import type { getGenebankHerds } from "../individ/[number]/actions";
 import type { ActionResult } from "../inkorg/actions";
+import { CLOSED_STATES, type ItemState } from "../inkorg/lib";
 import {
   CONFLICT_TEXT,
   DISEASES,
@@ -47,6 +48,7 @@ import {
 } from "./lib";
 import { NumberRow } from "./NumberRow";
 import { PaperChanges } from "./PaperChanges";
+import { PurchaseDialog } from "./PurchaseDialog";
 import { RabbitRow } from "./RabbitRow";
 import { Receipt } from "./Receipt";
 import { ReportStatus, type StatusKind } from "./ReportStatus";
@@ -55,8 +57,8 @@ import styles from "./arsrapport.module.css";
 
 export type ReportActions = Pick<
   typeof Actions,
-  "saveDraft" | "dryRun" | "submitReport" | "withdrawReport"
-> & { getGenebankHerds: typeof getGenebankHerds }; // the sale dialog's herd picker
+  "saveDraft" | "dryRun" | "submitReport" | "withdrawReport" | "reportPurchase"
+> & { getGenebankHerds: typeof getGenebankHerds }; // the sale and purchase dialogs' herd picker
 
 // "Från blankett": what the page around the form supplies (PaperEntry).
 export interface PaperProps {
@@ -100,7 +102,7 @@ const summaryLine = (herd: string, r: ReceiptData) => {
     .join(", ")}.`;
 };
 
-type Filter = "inte_klara" | "kvar" | "dod" | "sald" | "alla";
+type Filter = "inte_klara" | "kvar" | "dod" | "sald" | "kopt" | "alla";
 type Phase = "idle" | "checking" | "sending" | "timeout";
 type SaveState =
   | "saved"
@@ -317,6 +319,7 @@ export function ReportForm({
   const [snapshot, setSnapshot] = React.useState<Set<number>>(new Set());
   const [search, setSearch] = React.useState("");
   const [soldFor, setSoldFor] = React.useState<number | null>(null);
+  const [buying, setBuying] = React.useState(false); // "Anmäl ett köp" is open
   const [seenEnd, setSeenEnd] = React.useState(false);
   const [askRest, setAskRest] = React.useState(false);
   const [focusTick, setFocusTick] = React.useState(0);
@@ -584,6 +587,7 @@ export function ReportForm({
       return false;
     if (filter === "alla") return true;
     if (filter === "inte_klara") return snapshot.has(r.id);
+    if (filter === "kopt") return r.kopt !== null; // bought during the year (4a Task 5)
     return state.rabbits[r.id]?.val === filter;
   });
   const lastShown = lastId !== null && visible.some((r) => r.id === lastId);
@@ -1457,6 +1461,7 @@ export function ReportForm({
                       ["kvar", "Finns kvar"],
                       ["dod", "Döda"],
                       ["sald", "Sålda"],
+                      ["kopt", "Köpta"],
                       ["alla", "Alla"],
                     ] as [Filter, string][]
                   ).map(([f, label]) => (
@@ -1628,6 +1633,28 @@ export function ReportForm({
                     </p>
                   )}
                 </div>
+              </div>
+            )}
+            {!isPaper && canEdit && (
+              <div className={styles.detail}>
+                {view.kopanmalningar
+                  .filter((n) => !CLOSED_STATES.includes(n.state as ItemState))
+                  .map((n) => (
+                    <p key={n.id} className={styles.meta}>
+                      Anmält köp: {n.number}, {fmtDate(n.date)}. Väntar på
+                      genbanksansvarig.
+                    </p>
+                  ))}
+                <p className={styles.line}>
+                  <span>Saknas ett köp?</span>
+                  <button
+                    type="button"
+                    className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+                    onClick={() => setBuying(true)}
+                  >
+                    Anmäl köpet
+                  </button>
+                </p>
               </div>
             )}
             {!isPaper &&
@@ -1978,6 +2005,16 @@ export function ReportForm({
           if (isPaper) focusLater("paper-number"); // the next row
         }}
         onClose={() => setSoldFor(null)}
+      />
+      <PurchaseDialog
+        open={buying}
+        year={year}
+        genebankId={herd.genebank_id}
+        ownHerd={herd.herd}
+        loadHerds={actions.getGenebankHerds}
+        send={(body) => actions.reportPurchase(herd.herd, year, body, env)}
+        onSent={() => router.refresh()}
+        onClose={() => setBuying(false)}
       />
     </div>
   );

@@ -5,6 +5,7 @@ import {
   getGenebankHerds,
   getMine,
   getReport,
+  reportPurchase,
   saveDraft,
   submitReport,
   withdrawReport,
@@ -14,7 +15,13 @@ import styles from "../stamboken/(dashboard)/arsrapport/arsrapport.module.css";
 
 export const dynamic = "force-dynamic";
 
-const actions = { saveDraft, dryRun, submitReport, withdrawReport };
+const actions = {
+  saveDraft,
+  dryRun,
+  submitReport,
+  withdrawReport,
+  reportPurchase,
+};
 
 // The page behind a member's personal link. The server renders from the code session in the cookie; LinkGate, in the
 // browser, first turns a link's #token into that session (the server never sees what follows #).

@@ -39,6 +39,87 @@ interface Props {
   onClose: () => void;
 }
 
+// The step-2 herd picker: the genebank's active herds, not `ownHerd` and not
+// GX1/MX1 ("Utanför genbanken" is its own choice). Also the purchase dialog's.
+export function HerdPicker({
+  genebankId,
+  ownHerd,
+  loadHerds,
+  label,
+  value,
+  onChange,
+}: {
+  genebankId: number;
+  ownHerd: string;
+  loadHerds: typeof getGenebankHerds;
+  label: string;
+  value: string;
+  onChange: (herd: string) => void;
+}) {
+  const [loaded, setLoaded] = React.useState<Awaited<
+    ReturnType<typeof getGenebankHerds>
+  > | null>(null);
+
+  React.useEffect(() => {
+    if (loaded !== null) return;
+    let cancelled = false;
+    loadHerds(genebankId)
+      .then((r) => {
+        if (!cancelled) setLoaded(r);
+      })
+      .catch(() => {
+        // a broken connection must not leave the picker waiting for ever
+        if (!cancelled)
+          setLoaded({ success: false as const, error: "unexpected_error" });
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [loaded, loadHerds, genebankId]);
+  const herds = loaded?.success ? loaded.herds : null;
+  const options = React.useMemo(
+    () =>
+      (herds ?? [])
+        .filter(
+          (h) =>
+            h.is_active && h.herd !== ownHerd && !isOutsideGenebankHerd(h.herd),
+        )
+        .sort((a, b) => a.herd.localeCompare(b.herd, "sv", { numeric: true })),
+    [herds, ownHerd],
+  );
+  const target = options.find((h) => h.herd === value) ?? null;
+  const optionLabel = (h: GenebankHerd) =>
+    h.herd_name ? `${h.herd} – ${h.herd_name}` : h.herd;
+
+  return (
+    <>
+      <Autocomplete
+        options={options}
+        value={target}
+        onChange={(_, h) => onChange(h?.herd ?? "")}
+        getOptionLabel={optionLabel}
+        isOptionEqualToValue={(a, b) => a.herd === b.herd}
+        loading={loaded === null}
+        loadingText="Hämtar besättningar …"
+        noOptionsText="Ingen besättning matchar"
+        renderInput={(params) => <TextField {...params} label={label} />}
+      />
+      {loaded && !loaded.success && (
+        <p className={styles.errorText} role="alert">
+          Det gick inte att hämta besättningarna.{" "}
+          <button
+            type="button"
+            className="sb-btn sb-btn-secondary sb-btn-sm"
+            onClick={() => setLoaded(null)}
+          >
+            Försök igen
+          </button>
+        </p>
+      )}
+    </>
+  );
+}
+
 // The buyer outside the genebank is held in memory by the caller and never
 // reaches the draft or localStorage.
 function Body({
@@ -72,42 +153,6 @@ function Body({
   // K1: a buyer kept across Dra tillbaka, which the seller never reads back
   const kept = canSell && existing?.kopare_id != null && !existing.kopare;
   const [tried, setTried] = React.useState(false);
-  const [loaded, setLoaded] = React.useState<Awaited<
-    ReturnType<typeof getGenebankHerds>
-  > | null>(null);
-
-  React.useEffect(() => {
-    if (loaded !== null) return;
-    let cancelled = false;
-    loadHerds(genebankId)
-      .then((r) => {
-        if (!cancelled) setLoaded(r);
-      })
-      .catch(() => {
-        // a broken connection must not leave the picker waiting for ever
-        if (!cancelled)
-          setLoaded({ success: false as const, error: "unexpected_error" });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [loaded, loadHerds, genebankId]);
-  const herds = loaded?.success ? loaded.herds : null;
-  // Active herds of the genebank, not the seller's own and not GX1/MX1:
-  // "Utanför genbanken" is its own choice.
-  const options = React.useMemo(
-    () =>
-      (herds ?? [])
-        .filter(
-          (h) =>
-            h.is_active && h.herd !== ownHerd && !isOutsideGenebankHerd(h.herd),
-        )
-        .sort((a, b) => a.herd.localeCompare(b.herd, "sv", { numeric: true })),
-    [herds, ownHerd],
-  );
-  const target = options.find((h) => h.herd === code) ?? null;
-  const optionLabel = (h: GenebankHerd) =>
-    h.herd_name ? `${h.herd} – ${h.herd_name}` : h.herd;
   const typed = [
     buyer.name,
     buyer.town,
@@ -185,33 +230,14 @@ function Body({
           </label>
         </div>
         {!outside && (
-          <>
-            <Autocomplete
-              options={options}
-              value={target}
-              onChange={(_, h) => setCode(h?.herd ?? "")}
-              getOptionLabel={optionLabel}
-              isOptionEqualToValue={(a, b) => a.herd === b.herd}
-              loading={loaded === null}
-              loadingText="Hämtar besättningar …"
-              noOptionsText="Ingen besättning matchar"
-              renderInput={(params) => (
-                <TextField {...params} label="Köparens besättning" />
-              )}
-            />
-            {loaded && !loaded.success && (
-              <p className={styles.errorText} role="alert">
-                Det gick inte att hämta besättningarna.{" "}
-                <button
-                  type="button"
-                  className="sb-btn sb-btn-secondary sb-btn-sm"
-                  onClick={() => setLoaded(null)}
-                >
-                  Försök igen
-                </button>
-              </p>
-            )}
-          </>
+          <HerdPicker
+            genebankId={genebankId}
+            ownHerd={ownHerd}
+            loadHerds={loadHerds}
+            label="Köparens besättning"
+            value={code}
+            onChange={setCode}
+          />
         )}
         {outside && (
           <>

@@ -15,6 +15,7 @@ const NO_SALES = {
   forsaljning_avvisad: 0,
   forsaljning_avvisad_paverkar: false,
   kopt_efter_inskick: 0,
+  kop_anmalt: 0,
 };
 
 const row = (

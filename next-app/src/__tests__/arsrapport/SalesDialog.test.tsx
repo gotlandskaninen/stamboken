@@ -35,6 +35,7 @@ const inGenebank: SaleProposalRow = {
   buyer: null,
   sale_date: "2025-10-03",
   buyer_notified_at: null,
+  kopanmalan: null,
 };
 const outside: SaleProposalRow = {
   ...inGenebank,
@@ -78,6 +79,44 @@ describe("SalesDialog", () => {
     );
     expect(within(second).getByText("Köparen har anmält köpet")).toBeTruthy();
     expect(within(first).queryByText("Köparen har anmält köpet")).toBeNull();
+  });
+
+  it("shows the buyer's purchase notice beside the sale (fråga 19)", async () => {
+    saleProposals.mockResolvedValue({
+      ok: true,
+      data: {
+        forslag: [
+          {
+            ...inGenebank,
+            kopanmalan: {
+              id: 31,
+              number: "G9001-2401",
+              from_herd: "G9001",
+              date: "2025-10-05",
+              state: "ny",
+            },
+          },
+        ],
+      },
+    });
+    render(
+      <SalesDialog
+        herd="G9001"
+        year={2025}
+        env="demo"
+        onDecided={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const first = await screen.findByRole("region", { name: "G9001-2401" });
+    expect(first.textContent).toContain(
+      "Köparen har anmält köpet, 5 oktober 2025 · Visa anmälan",
+    );
+    expect(
+      within(first)
+        .getByRole("link", { name: "Visa anmälan" })
+        .getAttribute("href"),
+    ).toBe("/stamboken/inkorg/31");
   });
 
   it("approves a sale and reloads the list", async () => {
