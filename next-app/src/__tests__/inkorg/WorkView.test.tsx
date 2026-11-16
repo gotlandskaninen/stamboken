@@ -268,21 +268,22 @@ describe("WorkView: a sale proposal", () => {
     ref_type: "sale_proposal",
     ref_id: 7,
     documents: [],
+    report_year: 2025,
   });
 
-  it("says it is decided in the status view, with a link", () => {
-    render(view(proposal, boss, false, 2026));
+  it("links to its own round's status view, not the newest round's", () => {
+    render(view(proposal, boss, false, 2026)); // 2026 is the newest round the genebank activated
     expect(screen.getByText(/Avgörs i årsrapportens statusvy/)).toBeTruthy();
     expect(
       screen.getByRole("link", { name: "Öppna statusvyn" }),
     ).toHaveAttribute(
       "href",
-      "/stamboken/arsrapport/status/2026?genebank_id=1",
+      "/stamboken/arsrapport/status/2025?genebank_id=1",
     );
   });
 
-  it("keeps the text without a round", () => {
-    render(view(proposal, boss));
+  it("keeps the text without a year", () => {
+    render(view({ ...proposal, report_year: null }, boss, false, 2026));
     expect(screen.getByText(/Avgörs i årsrapportens statusvy/)).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Öppna statusvyn" })).toBeNull();
   });

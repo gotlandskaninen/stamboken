@@ -423,3 +423,10 @@ class ProposalApiTest(ArsrapportTest):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(self.flags("G9002")["kopt_efter_inskick"], 1)  # the rejection's submission is not the buyer's
         self.assertNotIn(str(self.a.id), self.latest(self.g9002))
+
+    def test_inbox_item_links_its_own_rounds_status_view(self):  # P4
+        self.round(2026)  # the genebank's newest activated round
+        proposal = self.first()
+        self.login("man")
+        item = self.client.get(f"/api/v2/inkorg/{proposal.inbox_item_id}").get_json()
+        self.assertEqual((item["ref_type"], item["report_year"]), ("sale_proposal", 2025))

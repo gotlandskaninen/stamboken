@@ -100,7 +100,7 @@ export function WorkView({
   reportYear = null,
 }: {
   noRole?: boolean;
-  /** The year of the form entry link and of a sale proposal's status view link; null leaves them out. */
+  /** The year of the form entry link; null leaves it out. */
   reportYear?: number | null;
   item: InboxDetail;
   user: QueueUser;
@@ -598,11 +598,11 @@ export function WorkView({
           {item.ref_type === "sale_proposal" && (
             <p className={styles.note}>
               Avgörs i årsrapportens statusvy.
-              {reportYear && item.genebank_id && (
+              {item.report_year && item.genebank_id && (
                 <>
                   {" "}
                   <Link
-                    href={`/stamboken/arsrapport/status/${reportYear}?genebank_id=${item.genebank_id}`}
+                    href={`/stamboken/arsrapport/status/${item.report_year}?genebank_id=${item.genebank_id}`}
                   >
                     Öppna statusvyn
                   </Link>
