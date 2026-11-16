@@ -229,6 +229,7 @@ class TestBuildCertData(unittest.TestCase):
         ind = SimpleNamespace(
             origin_herd=SimpleNamespace(genebank=SimpleNamespace(name="Mellerud"), name="Uppfödare", herd_name=None, herd="M12"),
             microchip="752098100012345",
+            color=None,
             number="G1-1",
             digital_certificate="1",
         )
