@@ -35,7 +35,7 @@ export interface RabbitRowProps {
 
 const CHOICES: { val: Val; label: string }[] = [
   { val: "kvar", label: "Finns kvar" },
-  { val: "dod", label: "Död eller slaktad" },
+  { val: "dod", label: "Död" },
   { val: "sald", label: "Såld" },
 ];
 

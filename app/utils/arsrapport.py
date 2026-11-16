@@ -990,7 +990,7 @@ def _entry(key, raw):
     if val is None:
         return None
     if val not in CHOICES:
-        raise _bad("val", "Välj Finns kvar, Död eller slaktad eller Såld.")
+        raise _bad("val", "Välj Finns kvar, Död eller Såld.")
     if hull not in (None, "low", "normal", "high"):
         raise _bad("hull", "Hullet är mager, normal eller fet.")
     dod = sald = None  # the details of another choice are left behind
@@ -1304,7 +1304,7 @@ class Refusal:
 
 
 REFUSALS = {  # the copy the client shows (P44)
-    "inte_klar": "Välj Finns kvar, Död eller slaktad eller Såld.",
+    "inte_klar": "Välj Finns kvar, Död eller Såld.",
     "vikt_saknas": "Vuxna kaniner behöver vikt eller Ej vägd.",
     "vikt_ogiltig": "Ange vikten i kilo, till exempel 2,8.",
     "ej_angiven_digitalt": "Ej angiven finns bara när en blankett matas in.",

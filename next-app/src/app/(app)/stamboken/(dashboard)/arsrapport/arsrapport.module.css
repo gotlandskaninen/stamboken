@@ -261,7 +261,7 @@ button.confirmDanger:hover:not(:disabled) {
   gap: 8px;
 }
 .choice {
-  /* equal width and height whatever the label's length ("Död eller slaktad" wraps) */
+  /* equal width and height whatever the length of the labels */
   flex: 1 1 0;
   min-width: 5.5em;
   position: relative;

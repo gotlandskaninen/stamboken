@@ -388,7 +388,7 @@ class TorrkorningTest(ArsrapportTest):
                 {
                     "individual_id": corrected.id,
                     "code": "inte_klar",
-                    "message": "Välj Finns kvar, Död eller slaktad eller Såld.",
+                    "message": "Välj Finns kvar, Död eller Såld.",
                 }
             ],
         )

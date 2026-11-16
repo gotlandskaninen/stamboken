@@ -672,7 +672,7 @@ describe("ReportForm", () => {
     vi.useFakeTimers();
     const a = actions();
     render(<ReportForm env="demo" view={view()} actions={a} />);
-    choose(1, "Död eller slaktad"); // no month yet
+    choose(1, "Död"); // no month yet
     fireEvent.click(screen.getByLabelText("Ja, fyll i"));
     fireEvent.change(screen.getByLabelText("Annat, vad"), {
       target: { value: "Förkylning" },
@@ -976,7 +976,7 @@ describe("ReportForm", () => {
       }),
     );
     render(<ReportForm env="demo" view={view()} actions={a} />);
-    choose(2, "Död eller slaktad");
+    choose(2, "Död");
     send();
     const box = (await screen.findByText("1 kanin är inte klara")).closest(
       "div",

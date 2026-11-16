@@ -273,7 +273,7 @@ export const DISEASES: { key: Disease; label: string }[] = [
 // The refusal codes, in the words the error box shows (the server's `message`
 // is the fallback for any other code).
 export const REFUSAL_TEXT: Record<string, string> = {
-  inte_klar: "Välj Finns kvar, Död eller slaktad eller Såld.",
+  inte_klar: "Välj Finns kvar, Död eller Såld.",
   vikt_saknas: "Vuxna kaniner behöver vikt eller Ej vägd.",
   vikt_ogiltig: "Ange vikten i kilo, till exempel 2,8.",
   rundan_stangd:

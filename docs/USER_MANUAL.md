@@ -705,10 +705,10 @@ kommer du direkt till rapporten. Är ingen runda öppen säger sidan det.
 <!-- route: /stamboken/arsrapport/[herd]/[year] -->
 
 Rapporten för ett avelsår. Dina kaniner står redan i listan; för varje kanin väljer du
-**Finns kvar** (med vikt och hull: mager, normal eller fet), **Död eller slaktad**
-(med månad) eller **Såld** (till en besättning i genbanken, eller köparens namn och
-ort utanför genbanken). Sök med **Sök nummer eller namn**, filtrera listan och se hur
-många som är klara. Under **Hälsa** svarar du **Inga sjukdomsfall eller defekter**
+**Finns kvar** (med vikt och hull: mager, normal eller fet), **Död** (med månad,
+och om kaninen slaktades) eller **Såld** (till en besättning i genbanken, eller köparens namn och
+ort utanför genbanken). Har du 15 kaniner eller fler kan du söka med **Hitta en kanin**. Filtrera listan och se
+hur många som är klara. Under **Hälsa** svarar du **Inga sjukdomsfall eller defekter**
 eller **Ja, fyll i**. Avslutar du genbanken kryssar du **Jag avslutar min genbank** och
 väljer vad som händer med medlemskapet; då behöver kaninerna inget val.
 
@@ -722,7 +722,7 @@ från ett ärende i inkorgen (**Mata in årsrapporten**). Sidan heter då **Frå
 med fotot av blanketten bredvid formuläret (under **Visa blanketten** på en smal skärm)
 och samma formulär i pappersläge. Fyll i **Mottagen** och **Blankettens datum**, och
 skriv varje kanins nummer efter besättningens prefix och tryck Enter. Tangent 1, 2 och 3
-väljer **Finns kvar**, **Död eller slaktad** och **Såld**; Enter går vidare till nästa
+väljer **Finns kvar**, **Död** och **Såld**; Enter går vidare till nästa
 fält och sist till nästa rad. Kaniner som inte står på blanketten ligger under **Kvar i
 Stamboken men inte på blanketten**, där **Markera som ej angivna på blanketten** tar alla
 på en gång. Under **Uppgifter på blanketten** skriver du in svaret om Koharen och nya

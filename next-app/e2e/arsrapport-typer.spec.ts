@@ -156,7 +156,7 @@ async function enterPaperRow(
 
 // Dead and sold rows of a big herd: the dead one in October, the sold ones to a buyer outside the genebank.
 async function markDead(r: Locator, month: string) {
-  await r.getByRole("radio", { name: "Död eller slaktad" }).check();
+  await r.getByRole("radio", { name: "Död", exact: true }).check();
   await r.locator('select[id^="month-"]').selectOption(month);
 }
 async function markSold(
@@ -566,7 +566,7 @@ test("9. Typ G: död och försäljning vid årsskiftet", async ({
   const female = rabbit(page, "M9007-2412");
 
   // a) Both leave on 1 January 2026: they lived on 31 December, so the herd has a male and a female.
-  await male.getByRole("radio", { name: "Död eller slaktad" }).check();
+  await male.getByRole("radio", { name: "Död", exact: true }).check();
   await male.getByLabel("År").selectOption("2026");
   await male.locator('select[id^="month-"]').selectOption("1");
   await male.getByLabel("Dag (frivillig)").fill("1");

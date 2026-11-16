@@ -68,7 +68,7 @@ test("2. Uppfödaren skickar G9001 och G9004", async ({ page, context }) => {
     await r.getByLabel("Vikt", { exact: true }).fill("2,8");
   }
   const died = all.nth(dead);
-  await died.getByRole("radio", { name: "Död eller slaktad" }).check();
+  await died.getByRole("radio", { name: "Död", exact: true }).check();
   await died.locator('select[id^="month-"]').selectOption("10");
   await page.getByRole("radio", { name: NO_DISEASE }).check();
   await page.getByRole("button", { name: "Skicka årsrapporten" }).click();

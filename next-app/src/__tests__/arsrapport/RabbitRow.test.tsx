@@ -31,7 +31,7 @@ describe("RabbitRow", () => {
     const radios = screen.getAllByRole("radio") as HTMLInputElement[];
     expect(radios.map((r) => r.parentElement?.textContent)).toEqual([
       "Finns kvar",
-      "Död eller slaktad",
+      "Död",
       "Såld",
     ]);
     expect(radios.some((r) => r.checked)).toBe(false);
@@ -40,7 +40,7 @@ describe("RabbitRow", () => {
   it("opens the month for Död and keeps the year preselected", () => {
     const onChange = vi.fn();
     const { rerender } = render(<RabbitRow {...props({ onChange })} />);
-    fireEvent.click(screen.getByLabelText("Död eller slaktad"));
+    fireEvent.click(screen.getByLabelText("Död"));
     const patch = onChange.mock.calls[0][1];
     expect(patch.val).toBe("dod");
     expect(patch.dod.ar).toBe(2026);
