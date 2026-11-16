@@ -14,8 +14,8 @@ Bilderna är tagna med påhittade personer.
 - **Riktiga stamboken.** Utan tillgång till riktiga stamboken hamnar du i
   testmiljön. Där kan du öva, men allt du gör där försvinner nästa natt. Be
   administratören om tillgång.
-- **Hitta sidorna.** Klicka på din bild uppe till höger. Under **Profil** och
-  **Manual** finns **Medlemsansökningar**, **Matrikel** och **Statistik**. Står
+- **Hitta sidorna.** Klicka på din bild uppe till höger. Längre ner i menyn
+  finns **Medlemsansökningar**, **Matrikel** och **Statistik**. Står
   det en siffra efter Medlemsansökningar väntar så många ansökningar. Överst på
   de tre sidorna finns länken **Guide** hit.
 
@@ -30,8 +30,12 @@ Den som vill bli medlem fyller i ansökan på
 hur stor årsavgiften är och hur den betalas. Ansökan hamnar sedan under
 **Medlemsansökningar**, med namn, e-post och när den skickades in.
 
-Stamboken skickar inga mejl om ansökningar än, varken till dig eller till den
-som ansöker. Titta därför i listan då och då.
+När en ansökan kommer in mejlar Stamboken:
+
+- **den som ansöker** ett kvitto: att ansökan har kommit in, hur årsavgiften
+  betalas och att ansökan behandlas när avgiften har kommit in.
+- **varje matrikeladministratör** att en ny ansökan väntar, med en länk till
+  listan. Administratörer utan rollen Matrikeladministratör får inget mejl.
 
 ![Medlemsansökningar](ansokningar.png)
 
@@ -55,10 +59,11 @@ betalningen, det gör du.
 2. Stamboken frågar "Godkänna ansökan?". Klicka **Godkänn** igen.
 
 Medlemskapet skapas med status Aktiv, nästa lediga medlemsnummer och dagens
-datum som medlem sedan. Det går inte att ångra. Skriv sedan in betalningen i
-medlemskapets **Betalningsnotering** (se [Notera betald
-avgift](#notera-betald-avgift)) och meddela den nya medlemmen själv, eftersom
-Stamboken inte gör det än.
+datum som medlem sedan. Det går inte att ångra. Stamboken mejlar den nya
+medlemmen att ansökan är godkänd och att årsavgiften har kommit in, och att
+föreningen hör av sig om hur hen kommer åt Stamboken. Skriv sedan in
+betalningen i medlemskapets **Betalningsnotering** (se [Notera betald
+avgift](#notera-betald-avgift)).
 
 Används e-postadressen redan av en annan aktiv person i matrikeln visar
 Stamboken en varning efter godkännandet. Kontrollera då att personen inte redan
@@ -179,7 +184,9 @@ Under **Personer** står hushållets personer med roll, kontakt, konto och
 
 - **Lägga till en familjemedlem:** klicka **Lägg till person**, fyll i
   **Förnamn** och **Efternamn**, gärna **E-post** och **Telefon**, välj **Roll**
-  (**Familjemedlem** eller **Skötare**) och klicka **Spara**.
+  (**Familjemedlem** eller **Skötare**) och klicka **Spara**. Har personen en
+  e-postadress mejlar Stamboken hen att hen har lagts in, vem som är
+  huvudmedlem och var föreningens dataskyddspolicy finns.
 - **Ändra en person:** klicka **Redigera** på personens rad.
 - **Fler åtgärder:** klicka **⋯** på personens rad:
   - **Ge åtkomst** låter personen sköta en av hushållets besättningar i
