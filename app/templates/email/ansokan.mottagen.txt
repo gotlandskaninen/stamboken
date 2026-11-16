@@ -1,7 +1,12 @@
 {% block subject %}Vi har tagit emot din ansökan om medlemskap{% endblock %}
+{# The same facts as MEMBERSHIP_PAYMENT in next-app/src/components/public/MembershipSteps.tsx: change both. #}
 
 {% block body %}
 Hej!
 
-Tack för din ansökan om medlemskap i Föreningen Gotlandskaninen. Vi har tagit emot den och går igenom den så snart vi kan. Du får besked när den är behandlad.
+Tack för din ansökan om medlemskap i Föreningen Gotlandskaninen. Vi har tagit emot den.
+
+Har du inte betalat årsavgiften än? Den är 200 kr och betalas till Plusgiro 35 03 44-8 eller Swish 123 095 70 50. Ange namn och adress.
+
+Vi behandlar ansökan när avgiften har kommit in. Du får besked när den är klar.
 {% endblock %}
