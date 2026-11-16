@@ -21,6 +21,7 @@ from flask import current_app
 from peewee import JOIN, IntegrityError, fn
 
 import utils.inbox as inbox
+import utils.report_code as report_code
 from utils.arsrapport_statistik import SEXES, Kanin, innehav, statistik
 from utils.database import (
     DB_PROXY,
@@ -91,12 +92,14 @@ from utils.mail import Recipient, enqueue_mail, mail_kind, recipient_kind
 from utils.matrikel import AddressValidationError, is_anonymized, parse_postal_fields, write_matrikel_audit
 from utils.members import CONSENT_TEXT_VERSION, consent_from_answer, effective_consent, set_consent, stored_consent
 from utils.reference_population import _alive_by_note
+from utils.report_code import actor_key
 
 STOCKHOLM = ZoneInfo("Europe/Stockholm")
 BLANK_FORM = "arsrapport/arsblankett.pdf"  # under settings.service.private_upload_folder (D14)
 STATES = ("avslutar", "inskickad", "blankett_vantar", "blankett_inkommen", "paborjad", "ingen_epost", "ej_rapporterad")
 DATE_FIELDS = ("start_date", "deadline", "end_date")
 DRAFT_MAX_BYTES = 256 * 1024
+LINK_INVALID = "Länken gäller inte längre."
 WITHDRAW_DAYS = 7  # fråga 15: owners and caretakers withdraw until 7 days after the first submission
 _REPORT_LOCK = 0x48424152  # "HBAR": classid of the advisory lock on a herd's report in a round
 
@@ -212,16 +215,17 @@ def round_json(round_):
 
 @dataclass(frozen=True)
 class Access:
-    role: str  # owner | caretaker | manager | admin | helper
+    role: str  # owner | caretaker | manager | admin | helper | code
     item: InboxItem | None = None  # paper only: the taken item with an arsblankett document
+    code: ReportAccessCode | None = None  # the personal link (step 3): role "code"
 
     @property
     def source(self):
-        return "paper" if self.item else "login"
+        return "paper" if self.item else "link" if self.code else "login"
 
     @property
     def can_sell(self):
-        return self.role != "caretaker"  # D12
+        return self.role not in ("caretaker", "code")  # D12; a link's sale is a proposal (step 4)
 
     @property
     def editor(self):
@@ -266,6 +270,33 @@ def report_access(user, herd, item_id=None):
     if herd.id in user.effective_herd_ids():
         return Access("caretaker")
     return None
+
+
+def code_access(herd, round_, code_ids):
+    """
+    The link's access: the session's valid code for this herd and round, else None. A code for the herd that is
+    no longer valid (revoked, expired, a new main member) is a 403 `lank_ogiltig`, which the page shows as 5.13.
+    """
+    codes = list(
+        ReportAccessCode.select().where(
+            ReportAccessCode.id.in_(code_ids), ReportAccessCode.herd == herd.id, ReportAccessCode.round == round_.id
+        )
+    )
+    for code in codes:
+        if report_code.refusal(code, herd, today=today()) is None:
+            return Access("code", code=code)
+    if codes:
+        raise ArsrapportError(403, LINK_INVALID, code="lank_ogiltig")
+    return None
+
+
+def _recheck_code(access, herd, on=None):
+    """E4 again, under the report's lock, on rows read afresh: the manager may have revoked the code since the page."""
+    if access.code is None:
+        return
+    code, herd = ReportAccessCode.get_by_id(access.code.id), Herd.get_by_id(herd.id)
+    if report_code.refusal(code, herd, today=on or today()) is not None:
+        raise ArsrapportError(403, LINK_INVALID, code="lank_ogiltig")
 
 
 def lock_report(round_, herd):
@@ -445,13 +476,21 @@ def _draft(herd, round_):
     return YearlyReportDraft.get_or_none((YearlyReportDraft.herd == herd.id) & (YearlyReportDraft.round == round_.id))
 
 
+def _by(actor, user_field, code_field):
+    """The columns that name who wrote: the account, or the link (step 3), never both."""
+    code_id = getattr(actor, "access_code_id", None)
+    return {user_field: None if code_id is not None else actor.id, code_field: code_id}
+
+
 def draft_json(draft, user):
-    """ReportView.draft; `own` says whether the asking user saved it last (P59b)."""
+    """ReportView.draft; `own` says whether the asking user or link saved it last (P59b); user and code never match."""
     return {
         "data": draft.data,
         "updated_at": _iso(draft.updated_at),
         "submission_key": str(draft.submission_key) if draft.submission_key else None,
-        "own": draft.updated_by_user_id == user.id,
+        "own": ("code", draft.updated_by_access_code_id) == actor_key(user)
+        if draft.updated_by_access_code_id is not None
+        else ("user", draft.updated_by_user_id) == actor_key(user),
     }
 
 
@@ -480,6 +519,7 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
         raise ArsrapportError(400, "Utkastet är för stort.")
     with DB_PROXY.atomic():
         lock_report(round_, herd)
+        _recheck_code(access, herd, day)
         draft = _draft(herd, round_)
         report = current_report(herd, round_)
         if draft is None and updated_at is None and revision == (report.revision if report else None):
@@ -491,15 +531,16 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
                         data=stored,
                         submission_key=submission_key,
                         updated_at=now().astimezone(timezone.utc),
-                        updated_by_user=user.id,
+                        **_by(user, "updated_by_user", "updated_by_access_code"),
                     )
             except IntegrityError:
                 draft = _draft(herd, round_)
         elif draft is not None and draft.updated_at == updated_at:
             # The version always moves on, also when the clock does not.
             draft.updated_at = max(now(), draft.updated_at + timedelta(microseconds=1)).astimezone(timezone.utc)
-            draft.data, draft.submission_key, draft.updated_by_user = stored, submission_key, user.id
-            draft.updated_by_access_code = None
+            draft.data, draft.submission_key = stored, submission_key
+            for field, value in _by(user, "updated_by_user", "updated_by_access_code").items():
+                setattr(draft, field, value)
             draft.save()
             return draft
         if report is not None and draft is None:
@@ -570,11 +611,11 @@ def herd_conditions(herd, round_, report):
 
 def withdraw_until(report, access):
     """
-    An owner's or caretaker's last instant for Dra tillbaka: the round's first submission (received_at, which a
+    An owner's, caretaker's or link's last instant for Dra tillbaka: the round's first submission (received_at, which a
     report after a withdrawal inherits) + 7 days, so withdrawing and sending again never restarts it; None for the
     others.
     """
-    if access.role not in ("owner", "caretaker"):
+    if access.role not in ("owner", "caretaker", "code"):
         return None
     return report.received_at + timedelta(days=WITHDRAW_DAYS)
 
@@ -1314,6 +1355,7 @@ REFUSALS = {  # the copy the client shows (P44)
     "vikt_ogiltig": "Ange vikten i kilo, till exempel 2,8.",
     "ej_angiven_digitalt": "Ej angiven finns bara när en blankett matas in.",
     "forsaljning_skotare": "Försäljningen registreras av ägaren eller genbanksansvarig.",
+    "salj_via_lank": "Försäljningen registrerar du hos genbanksansvarig. Ring eller mejla.",
     "kopare_saknas": "Skriv köparens namn och ort.",
     "senare_handelse": "Kaninen har en senare händelse i Stamboken. Genbanksansvarig kan rätta.",
     "okand_kanin": "Kaninen finns inte i listan för besättningen.",
@@ -1332,6 +1374,11 @@ REFUSALS = {  # the copy the client shows (P44)
 }
 # _validate_sale's user: the report never sells into another genebank, since TransferIndividual needs a reason there.
 _NOT_ADMIN = SimpleNamespace(is_admin=False)
+
+
+def _no_sale(individual_id, access):
+    """D12: a caretaker's sale is the owner's; a link's is the genebank manager's until step 4 makes it a proposal."""
+    return _refusal(individual_id, "salj_via_lank" if access.role == "code" else "forsaljning_skotare")
 
 
 def _refusal(individual_id, code, message=None):
@@ -1498,7 +1545,7 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
             refusals += _register_refusals(rabbit, entry, remove, add, ops, access.role == "admin")
             continue
         if entry.val == "sald" and not access.can_sell:
-            refusals.append(_refusal(rabbit, "forsaljning_skotare"))
+            refusals.append(_no_sale(rabbit, access))
             continue
         if entry.dod and not _death_possible(entry.dod, row["birth_date"], on):
             refusals.append(_refusal(rabbit, "dodsdatum_ogiltigt"))
@@ -1520,7 +1567,7 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
             refusals.append(_refusal(rabbit, "vikt_saknas"))
         remove, add = diff(current(report, rabbit), wanted(entry, row, report, herd, year, on), last, before, entry)
         if not access.can_sell and any(e.kind == "transfer" for e in remove + add):  # D12: sales are the owner's
-            refusals.append(_refusal(rabbit, "forsaljning_skotare"))
+            refusals.append(_no_sale(rabbit, access))
             continue
         refusals += _register_refusals(rabbit, entry, remove, add, ops, access.role == "admin")
     if access.source == "paper":
@@ -1866,9 +1913,10 @@ def request_hash(sub: Submission) -> str:
 
 def find_submission(key, herd, round_, user, request_hash):
     """
-    The submission whose receipt a retry gets: the key's, when the same user sent it for the herd and round, its
-    report is still submitted and the request hash is equal (D21). Any other use of the key is a 409; an unknown
-    key is None. The route asks before report_access, so a retry after the item closed gets its receipt.
+    The submission whose receipt a retry gets: the key's, when the same user, or the same link (never one for the
+    other), sent it for the herd and round, its report is still submitted and the request hash is equal (D21). Any
+    other use of the key is a 409; an unknown key is None. The route asks before report_access, so a retry after
+    the item closed gets its receipt.
     """
     if key is None:
         return None
@@ -1881,8 +1929,9 @@ def find_submission(key, herd, round_, user, request_hash):
     if saved is None:
         return None
     report = saved.report
+    saved_by = ("code", saved.access_code_id) if saved.access_code_id is not None else ("user", saved.user_id)
     if (
-        saved.user_id == user.id
+        saved_by == actor_key(user)
         and (report.herd_id, report.round_id, report.status) == (herd.id, round_.id, "submitted")
         and hmac.compare_digest(saved.request_hash, request_hash)
     ):
@@ -2043,7 +2092,12 @@ def apply_diff(report, herd, user, grant, rabbit_id, want: list[Effect], prev_en
                 grant.inbox_grant.trace(op)
         elif c.kind == "death":
             undo = [Undo(c.ref, note, report_ops=ops)]
-            execute(user, rabbit_id, lambda ctx, undo=undo: undo, grant=ReportGrant(grant.inbox_grant, report_ops=ops))
+            execute(
+                user,
+                rabbit_id,
+                lambda ctx, undo=undo: undo,
+                grant=ReportGrant(grant.inbox_grant, report_ops=ops, code=grant.code, report=grant.report),
+            )
         else:
             (Weight if c.kind == "weight" else Bodyfat).delete_by_id(c.ref)
     added = []
@@ -2091,7 +2145,7 @@ def _mail(kind, herd, user, params, ref):
             herd=herd,
             genebank=herd.genebank_id,
             dedupe_key=f"{kind}:{ref[1]}",
-            created_by=user.id,
+            created_by=user.id,  # None for a link
         )
 
 
@@ -2140,6 +2194,7 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         saved = find_submission(sub.key, herd, round_, user, digest)
         if saved is not None:  # before any item gate: a retry after the item closed (Codex 5)
             return receipt(saved)
+        _recheck_code(access, herd, on)
         if paper:
             check_paper(sub, access, on)
         # the membership before the report row, and the main member and its e-mail read under it, before any write
@@ -2154,7 +2209,7 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         refusals, _ = check(herd, round_, access, report, sub, on=on)
         if refusals:
             raise _cannot(refusals)
-        grant = ReportGrant(inbox.InboxGrant(item, user, pages[0]) if paper else None)
+        grant = ReportGrant(inbox.InboxGrant(item, user, pages[0]) if paper else None, code=access.code, report=report)
         added, change = [], report is not None
         if change:  # Ändra (D5): the same row, and each changed rabbit gets the diff of the report's effects
             before = _entries(_submissions(report)[-1].data.get("rabbits") or {})
@@ -2163,6 +2218,8 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
             report.data = json.dumps(sub.report)
             if paper:
                 report.entered_by, report.inbox_item_id = user.id, access.item.id
+            elif access.code is not None:
+                report.access_code_id = access.code.id
             elif report.generated_by_id is None:  # the first login submission sets it; nothing clears it
                 report.generated_by = user.id
             report.save()
@@ -2191,7 +2248,8 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
                 data=json.dumps(sub.report),
                 status="submitted",
                 source=access.source,
-                generated_by=None if paper else user.id,
+                generated_by=None if paper or access.code else user.id,
+                access_code_id=access.code.id if access.code else None,
                 entered_by=user.id if paper else None,
                 inbox_item_id=access.item.id if paper else None,
                 revision=revision + 1,  # voided rows count too, so an old tab never matches a new row
@@ -2212,7 +2270,7 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
                 submission_key=sub.key,
                 created_at=at,
                 source=access.source,
-                user=user.id,
+                **_by(user, "user", "access_code"),
                 operation_ids=grant.operation_ids,
                 added_measurements=added,
                 data=submitted_body(sub),
@@ -2258,6 +2316,7 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
     on, last = at.astimezone(STOCKHOLM).date(), date(round_.report_year, 12, 31)
     with DB_PROXY.atomic():
         lock_report(round_, herd)
+        _recheck_code(access, herd, on)
         report = (
             YearlyHerdReport.select()
             .where(
@@ -2282,23 +2341,29 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
         for rabbit in rabbits:
             remove = diff(current(report, rabbit), [], last)[0]
             if not access.can_sell and any(e.kind == "transfer" for e in remove):  # D12: sales are the owner's
-                refusals.append(_refusal(rabbit, "forsaljning_skotare"))
+                refusals.append(_no_sale(rabbit, access))
             else:
                 refusals += _register_refusals(rabbit, None, remove, [], ops, access.role == "admin")
         if refusals:
             raise _cannot(refusals, "Rapporten kan inte dras tillbaka.")
-        grant = ReportGrant()
+        grant = ReportGrant(code=access.code, report=report)
         for rabbit in rabbits:
             try:
                 apply_diff(report, herd, user, grant, rabbit, [], None, None, last, reason=reason)
             except (IndividualRefused, HerdTrackingError) as exc:
                 raise _cannot([_written(rabbit, exc)], "Rapporten kan inte dras tillbaka.") from exc
-        report.status, report.voided_at, report.voided_by_user, report.void_reason = "voided", at, user.id, reason
+        report.status, report.voided_at, report.void_reason = "voided", at, reason
+        for field, value in _by(user, "voided_by_user", "voided_by_access_code_id").items():
+            setattr(report, field, value)
         report.save()
         draft, stamp = _draft(herd, round_), at.astimezone(timezone.utc)
         if draft is None:  # D10: the submission's data is already stored_body
             YearlyReportDraft.create(
-                herd=herd.id, round=round_.id, data=submissions[-1].data, updated_at=stamp, updated_by_user=user.id
+                herd=herd.id,
+                round=round_.id,
+                data=submissions[-1].data,
+                updated_at=stamp,
+                **_by(user, "updated_by_user", "updated_by_access_code"),
             )
         else:  # the version moves on, so an old tab's autosave cannot bring the key back
             draft.submission_key, draft.updated_at = None, max(stamp, draft.updated_at + timedelta(microseconds=1))
