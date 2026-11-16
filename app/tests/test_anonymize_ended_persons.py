@@ -118,7 +118,23 @@ class TestAnonymizeEndedPersons(DatabaseTest):
         membership = db.Membership.get_by_id(active.id)
         self.assertEqual((membership.membership_status, membership.address), ("active", "Exempelvägen 1"))
 
-    def test_a_failure_on_one_person_does_not_stop_the_rest(self):
+    def test_a_household_retired_after_the_candidate_query_keeps_its_address(self):
+        active = _membership(110, status="active")
+        main = _person(active, role="huvudmedlem")
+        family = _person(active, OLD)
+        candidates = matrikel._memberships_with_ended_persons
+
+        def candidates_then_retire(cutoff):
+            found = candidates(cutoff)
+            matrikel.retire_membership(active, self.admin)  # the main member's 12 months start today
+            return found
+
+        with mock.patch.object(matrikel, "_memberships_with_ended_persons", side_effect=candidates_then_retire):
+            self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, []))
+        self.assertFalse(_erased(family) or _erased(main))
+        self.assertEqual(_address(active), "Exempelvägen 1")
+
+    def test_a_failure_on_one_membership_does_not_stop_the_rest(self):
         first = _person(_membership(108), OLD, role="huvudmedlem")
         second = _person(_membership(109), OLD, role="huvudmedlem")
         real = matrikel.anonymize_person

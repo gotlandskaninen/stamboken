@@ -528,60 +528,67 @@ def _retention_hold(user) -> str | None:
     return None
 
 
-def ended_persons_due(now):
+def _due_in(membership, cutoff):
     """
-    The persons the nightly job anonymizes (#70), and the ones it leaves to the system administrator.
+    The persons of `membership` the nightly job anonymizes (#70), and the holds it leaves to the administrator.
 
     A membership without an active person has ended: its persons are due once the LATEST end_date (anonymized
-    persons included) lies 12 calendar months back, all together, so the household address is never cleared
-    early. Any person's account role, or an active herd of the membership or of a person's legacy owner entry,
-    holds the whole membership. In a membership that still has an active person, each ended person is due 12
-    months after their own end_date, held only by their own account. Returns (due persons, held) where held is a
-    list of (membership_id, person_id or None for the whole membership, reason).
+    persons included) is before `cutoff`, all together, so the household address is never cleared early. Any
+    person's account role, or an active herd of the membership or of a person's legacy owner entry, holds the
+    whole membership. In a membership that still has an active person, each ended person is due once their own
+    end_date is before `cutoff`, held only by their own account. Returns (due persons, held) where held is a list
+    of (membership_id, person_id or None for the whole membership, reason).
     """
-    cutoff = DB_PROXY.execute_sql(
-        "SELECT (%s::timestamptz - %s::interval)::date", (now, ENDED_MEMBER_RETENTION)
-    ).fetchone()[0]
+    persons = list(Member.select().where(Member.membership == membership).order_by(Member.id))
+    erasable = [p for p in persons if p.end_date is not None and not is_anonymized(p)]
+    if any(p.end_date is None for p in persons):
+        due, held = [], []
+        for person in erasable:
+            if person.end_date < cutoff:
+                reason = _retention_hold(person.user)
+                if reason:
+                    held.append((membership.id, person.id, reason))
+                else:
+                    due.append(person)
+        return due, held
+    if max(p.end_date for p in persons) >= cutoff:
+        return [], []
+    reason = next((r for r in map(_retention_hold, (p.user for p in erasable)) if r), None)
+    if reason is None and Herd.select().where(Herd.membership == membership, Herd.is_active == True).exists():  # noqa: E712
+        reason = "active_herd"
+    return ([], [(membership.id, None, reason)]) if reason else (erasable, [])
+
+
+def _memberships_with_ended_persons(cutoff):
+    """Memberships with a person ended before `cutoff` and not yet anonymized: the nightly job's candidates."""
     not_erased = ~((Member.first_name == ANONYMIZED_FIRST_NAME) & (Member.last_name == ANONYMIZED_LAST_NAME))
-    candidates = Member.select(Member.membership).where(Member.end_date < cutoff, not_erased).distinct()
-    due, held = [], []
-    for membership in Membership.select().where(Membership.id.in_(candidates)).order_by(Membership.id):
-        persons = list(Member.select().where(Member.membership == membership).order_by(Member.id))
-        erasable = [p for p in persons if p.end_date is not None and not is_anonymized(p)]
-        if any(p.end_date is None for p in persons):
-            for person in erasable:
-                if person.end_date < cutoff:
-                    reason = _retention_hold(person.user)
-                    if reason:
-                        held.append((membership.id, person.id, reason))
-                    else:
-                        due.append(person)
-            continue
-        if max(p.end_date for p in persons) >= cutoff:
-            continue
-        reason = next((r for r in map(_retention_hold, (p.user for p in erasable)) if r), None)
-        if reason is None and Herd.select().where(Herd.membership == membership, Herd.is_active == True).exists():  # noqa: E712
-            reason = "active_herd"
-        if reason:
-            held.append((membership.id, None, reason))
-        else:
-            due.extend(erasable)
-    return due, held
+    ended = Member.select(Member.membership).where(Member.end_date < cutoff, not_erased)
+    return list(Membership.select(Membership.id).where(Membership.id.in_(ended)).order_by(Membership.id))
 
 
 def anonymize_ended_persons(now):
     """
-    Nightly job (#70): anonymize_person on every person ended_persons_due finds, with no user as actor. One
-    transaction per person, so a failure is logged and the rest go on. Returns (anonymized count, held).
+    Nightly job (#70): anonymize_person, with no user as actor, on the persons _due_in finds. Each membership is
+    decided again and erased in one transaction under its row lock, the lock retire, delete and add take: a
+    household retired after the candidate query waits its own 12 months. A failure rolls back that membership
+    only and is logged. Returns (anonymized count, held).
     """
-    due, held = ended_persons_due(now)
-    done = 0
-    for person in due:
+    cutoff = DB_PROXY.execute_sql(
+        "SELECT (%s::timestamptz - %s::interval)::date", (now, ENDED_MEMBER_RETENTION)
+    ).fetchone()[0]
+    done, held = 0, []
+    for membership in _memberships_with_ended_persons(cutoff):
         try:
-            anonymize_person(person, None)
-            done += 1
+            with DB_PROXY.atomic():
+                Membership.select().where(Membership.id == membership.id).for_update().get()
+                due, membership_held = _due_in(membership, cutoff)
+                for person in due:  # an ended person conveys no herd: its cache invalidation inside this tx is empty
+                    anonymize_person(person, None)
         except Exception:  # pylint: disable=broad-exception-caught
-            logger.exception("Automatic anonymization failed for member=%s", person.id)
+            logger.exception("Automatic anonymization failed for membership=%s", membership.id)
+            continue
+        done += len(due)
+        held += membership_held
     return done, held
 
 
