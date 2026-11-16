@@ -13,6 +13,7 @@ import utils.arsrapport as arsrapport
 import utils.inbox as inbox
 from utils.database import (
     DB_PROXY,
+    Herd,
     HerdTracking,
     InboxItem,
     SaleProposal,
@@ -128,13 +129,17 @@ def _claim(proposal, user, now, **fields):
         raise arsrapport.ArsrapportError(409, DECIDED)
 
 
-def _locked(proposal):
+def _locked(proposal, buyer=False):
     """
     The report lock, the report row, then the report's item set in one ascending pass (K4): the rabbit's buyer items
     and every pending proposal's item, this one's too. Returns the proposal and its report as they are under them.
+    With `buyer` the buying herd's report lock too, both in herd id order, the only place that takes two (P2): the
+    buyer's Skicka then comes wholly before the approval or after it.
     """
     report = proposal.report
-    arsrapport.lock_report(report.round, report.herd)
+    herds = {report.herd_id} | ({proposal.to_herd_id} if buyer and proposal.to_herd_id else set())
+    for herd_id in sorted(herds):
+        arsrapport.lock_report(report.round, Herd(id=herd_id))
     report = YearlyHerdReport.select().where(YearlyHerdReport.id == report.id).for_update().get()
     arsrapport._lock_items([proposal.individual_id], report=report)  # pylint: disable=protected-access
     return SaleProposal.get_by_id(proposal.id), report
@@ -153,7 +158,7 @@ def approve(proposal, user, *, now: datetime) -> HerdTracking:
     who then changes the report (FB4).
     """
     with DB_PROXY.atomic():
-        proposal, report = _locked(proposal)
+        proposal, report = _locked(proposal, buyer=True)
         if proposal.state != "foreslagen":
             raise arsrapport.ArsrapportError(409, DECIDED)
         buyer = proposal.buyer

@@ -73,7 +73,9 @@ genbanken visas bara med namn och ort (`buyer`), och `to_herd` är då `null`.
 
 `POST /api/v2/arsrapport/forslag/<id>/godkann` registrerar försäljningen, också efter rundans
 `end_date`. Är köpet daterat senast 31 december och köparens besättning har skickat in sin rapport,
-får köparens huvudmedlem mejlet `arsrapport.kop_godkant`.
+får köparens huvudmedlem mejlet `arsrapport.kop_godkant`. Godkännandet tar både säljarens och
+köparens rapportlås, i besättningarnas id-ordning, så köparens Skicka kommer helt före eller helt
+efter det.
 
 `POST /api/v2/arsrapport/forslag/<id>/avvisa` med `{"reason": …, "then": "kvar" | "valj_igen"}`
 avvisar förslaget. Orsaken krävs och får inte innehålla köparens namn, telefonnummer eller

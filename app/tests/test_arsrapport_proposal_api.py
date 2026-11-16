@@ -8,6 +8,8 @@ isort:skip_file
 """
 
 import json
+import threading
+import time
 from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 
@@ -22,6 +24,7 @@ from utils.arsrapport import ArsrapportError
 from utils.report_code import CodeActor
 
 from tests.arsrapport_fixtures import ArsrapportTest
+from tests.database_test import _USE_POSTGRES
 from tests.ht_helpers import ht_row
 
 DAY0 = date(2026, 1, 10)
@@ -357,3 +360,52 @@ class ProposalApiTest(ArsrapportTest):
         self.assertEqual((latest[str(self.a.id)]["val"], latest[str(self.b.id)]["val"]), ("kvar", None))
         self.assertEqual(self.report().revision, 3)
         self.assertEqual(self.flags()["forsaljning_avvisad"], 1)
+
+    def test_approval_waits_for_the_buyers_first_submission(self):  # P2
+        if not _USE_POSTGRES:
+            self.skipTest("advisory locks need PostgreSQL")
+        self.owner.add_role("owner", self.g9002.id)
+        proposal = self.first()
+        sent, results, original = threading.Event(), {}, arsrapport._mail  # pylint: disable=protected-access
+
+        def held_open(kind, *args):
+            # the buyer's Skicka has read its list and written: it holds its report until it commits
+            if kind == "arsrapport.kvitto":
+                sent.set()
+                time.sleep(1)
+            return original(kind, *args)
+
+        def buyer_submits():
+            try:
+                with APP.app_context():
+                    buyer = db.User.get_by_id(self.owner.id)
+                    access = arsrapport.report_access(buyer, self.g9002)
+                    sub = arsrapport.parse_submission(self.body(), paper=False)
+                    arsrapport.submit(self.g9002, self.round_, access, buyer, sub)
+                results["buyer"] = "ok"
+            except Exception as exc:  # noqa: BLE001  # the test reports any failure
+                results["buyer"] = repr(exc)
+            finally:
+                db.DB_PROXY.close()
+
+        def manager_approves():
+            try:
+                sent.wait(timeout=10)
+                with APP.app_context():
+                    sp.approve(proposal, db.User.get_by_id(self.manager.id), now=arsrapport.now())
+                results["approve"] = "ok"
+            except Exception as exc:  # noqa: BLE001
+                results["approve"] = repr(exc)
+            finally:
+                db.DB_PROXY.close()
+
+        with mock.patch.object(arsrapport, "_mail", side_effect=held_open):
+            threads = [threading.Thread(target=buyer_submits), threading.Thread(target=manager_approves)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=30)
+        self.assertFalse(any(thread.is_alive() for thread in threads), "hung threads")
+        self.assertEqual(results, {"buyer": "ok", "approve": "ok"})
+        # the approval came after the buyer's report: the buyer is told and the row is flagged
+        self.assertEqual(len(mails("arsrapport.kop_godkant")), 1)
