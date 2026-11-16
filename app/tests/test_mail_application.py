@@ -268,15 +268,38 @@ class TestMemberAdded(MailTest):
         matrikel.retire_membership(self.membership, self.actor)
         self.assertEqual(self.mails()[0].status, "cancelled")
 
-    def test_one_mail_a_day_to_an_address_whoever_is_added_with_it(self):
+    def sent_to(self):
+        relay = self.relay()
+        mail.send_pending(self.now)
+        return [envelope_to[0] for _msg, _sender, envelope_to in relay.sent]
+
+    def test_an_address_gets_at_most_three_a_day_also_when_changed_to_before_the_mail_goes(self):
+        for n in range(4):
+            self.add(first_name=f"Nummer {n}", email=f"person{n}@example.org")
+        db.Member.update(email=" Samma@Example.ORG ").where(db.Member.role == "familjemedlem").execute()
+        self.assertEqual(self.sent_to(), ["samma@example.org"] * mail.ADDED_TO_AN_ADDRESS_A_DAY)
+        self.assertEqual(sorted(row.status for row in self.mails()), ["cancelled", "sent", "sent", "sent"])
+        self.assertNotIn("example.org", "".join(row.dedupe_key for row in self.mails()))
+
+    def test_a_person_removed_and_added_again_the_same_day_is_told(self):
+        first = self.add()
+        matrikel.soft_delete_person(first, self.actor)  # before the sender ran: nothing went
         self.add()
-        self.add(first_name="Samma", last_name="Adress")  # a new person id, the same address
-        self.add(first_name="Annan", email=" NY@example.org ")  # the address as someone typed it
-        self.assertEqual(len(self.mails()), 1)
-        with mock.patch.object(mail, "_utcnow", return_value=self.now + timedelta(days=1)):
-            self.add(first_name="Nästa", last_name="Dag")
-        self.assertEqual(len(self.mails()), 2)
-        self.assertNotIn("ny@example.org", "".join(row.dedupe_key for row in self.mails()))
+        self.assertEqual(self.sent_to(), ["ny@example.org"])
+
+    def test_a_promotion_while_the_sender_connects_stops_the_mail(self):
+        person = self.add()
+        relay = self.relay()
+        connect = mail._connect
+
+        def promoted_meanwhile(conn):
+            connect(conn)
+            matrikel.swap_main_member(self.membership, db.Member.get_by_id(person.id), self.actor)
+
+        with mock.patch.object(mail, "_connect", promoted_meanwhile):
+            mail.send_pending(self.now)
+        (row,) = self.mails()
+        self.assertEqual((relay.sent, row.status, row.claim_token), ([], "cancelled", None))
 
     def test_a_membership_causes_at_most_ten_mails_a_day(self):
         for n in range(mail.ADDED_A_DAY + 2):

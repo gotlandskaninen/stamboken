@@ -385,6 +385,7 @@ def swap_main_member(membership, new_main, actor):
             current.save()
         new_main.role = "huvudmedlem"
         new_main.save()
+        cancel_member_added([new_main.id])
         write_matrikel_audit(
             actor,
             "main_member_changed",

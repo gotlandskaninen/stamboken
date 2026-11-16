@@ -119,8 +119,8 @@ av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas.
   in med importen av matrikeln, som skriver sina rader själv. Har personen
   lämnat medlemskapet eller blivit huvudmedlem när mejlet ska gå blir det
   `cancelled`. Huvudmedlemmen väljer adressen, så mejlet får inte bli ett sätt
-  att överösa någon: en adress får högst ett om dagen, och ett medlemskap ger
-  högst tio om dagen.
+  att överösa någon: ett medlemskap ger högst tio om dagen, och en adress får
+  högst tre om dagen, räknat på mejl som har gått när nästa ska skickas.
 
 ## Mottagare
 
