@@ -112,6 +112,7 @@ def enqueue_mail(
     dedupe_key=None,
     not_before=None,
     created_by=None,
+    priority=None,
 ):
     """
     Queues one mail in the caller's transaction and returns its id, or None when a row with `dedupe_key`
@@ -136,7 +137,7 @@ def enqueue_mail(
             ref_id=ref_id,
             herd=herd,
             genebank=genebank,
-            priority=spec.priority,
+            priority=spec.priority if priority is None else priority,  # a mail of the kind may be more urgent
             category=spec.category,
             dedupe_key=dedupe_key,
             next_attempt_at=not_before or _utcnow(),

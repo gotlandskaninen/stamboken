@@ -121,6 +121,7 @@ def test_mail(round_, genebank_id, user):
         {"prov": True, "year": year, "herd_id": herd.id},
         herd=herd,
         genebank=genebank_id,
+        priority=0,  # Å2: the manager waits for it
     )
 
 
@@ -143,7 +144,7 @@ def _valid_code(params):
     return None if report_code.refusal(code, herd, today=arsrapport.today()) else (code, herd, code.round)
 
 
-@mail_kind("arsrapport.inbjudan", priority=0, category="T")
+@mail_kind("arsrapport.inbjudan", priority=2, category="T")
 def _inbjudan(params):
     if params.get("prov"):
         herd, round_ = Herd.get_by_id(params["herd_id"]), arsrapport.get_round(params["year"])
@@ -164,7 +165,7 @@ def _inbjudan(params):
     }
 
 
-@mail_kind("arsrapport.ny_lank", priority=0, category="T")
+@mail_kind("arsrapport.ny_lank", priority=1, category="T")
 def _ny_lank(params):
     valid = _valid_code(params)  # R8: a report already sent does not cancel it; changing or withdrawing needs the link
     if valid is None:

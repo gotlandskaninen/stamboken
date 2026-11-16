@@ -5,8 +5,9 @@ isort:skip_file
 
 import os
 import tempfile
-from datetime import timedelta
+from datetime import datetime, timedelta
 from unittest import mock
+from zoneinfo import ZoneInfo
 
 os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), "auth.ini.test"))
 
@@ -63,3 +64,29 @@ class TestMailJobs(MailTest):
             {k: job.kwargs[k] for k in ("trigger", "seconds", "id", "max_instances", "coalesce")},
             {"trigger": "interval", "seconds": 30, "id": "mail_send", "max_instances": 1, "coalesce": True},
         )
+
+    def test_leader_registers_the_invitation_job_and_a_startup_catch_up(self):
+        lock = os.path.join(tempfile.mkdtemp(), "scheduler.lock")
+        with (
+            mock.patch.object(herdbook, "SCHEDULER_LOCK_PATH", lock),
+            mock.patch.object(ci, "init_redis"),
+            mock.patch.object(ci, "start_pubsub_listener"),
+            mock.patch.object(ci, "set_cache_and_functions"),
+            mock.patch.object(herdbook, "_warm_genetics_in_background"),
+            mock.patch.object(herdbook.gblogging, "create_genebank_logs"),
+            mock.patch.object(herdbook.apscheduler.schedulers.background, "BackgroundScheduler") as scheduler_cls,
+        ):
+            herdbook.initialize_app()
+        calls = scheduler_cls.return_value.add_job.call_args_list
+        (daily,) = [c for c in calls if herdbook._send_arsrapport_invitations in c.args]
+        self.assertEqual((daily.args[1], daily.kwargs["hour"]), ("cron", 7))
+        (catch_up,) = [c for c in calls if herdbook._catch_up_arsrapport_invitations in c.args]
+        self.assertEqual(catch_up.kwargs["trigger"], "date")
+
+    def test_catch_up_runs_only_after_seven_stockholm_time(self):
+        stockholm = ZoneInfo("Europe/Stockholm")
+        with mock.patch.object(herdbook, "_send_arsrapport_invitations") as job:
+            herdbook._catch_up_arsrapport_invitations(datetime(2026, 12, 31, 6, 59, tzinfo=stockholm))
+            job.assert_not_called()
+            herdbook._catch_up_arsrapport_invitations(datetime(2026, 12, 31, 7, 10, tzinfo=stockholm))
+            job.assert_called_once()

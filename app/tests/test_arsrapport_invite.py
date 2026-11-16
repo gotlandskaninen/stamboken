@@ -223,6 +223,14 @@ class InviteTest(ArsrapportTest):
         with mock.patch.object(report_code, "issue_code", side_effect=AssertionError("issued")):
             self.assertEqual(invite._invite_genebank(stale, NOW), 0)
 
+    def test_priorities_follow_the_mail_queue_spec(self):
+        self.run_job()
+        invite.new_link(self.h, self.round_, self.owner, now=NOW)
+        invite.test_mail(self.round_, self.gotland.id, self.owner)
+        self.assertEqual({m.priority for m in self.mails()}, {2, 0})
+        self.assertEqual(sorted(m.priority for m in self.mails() if m.params.get("prov")), [0])
+        self.assertEqual([m.priority for m in self.mails("arsrapport.ny_lank")], [1])
+
     def send_all(self, relay):
         with (
             mock.patch.multiple(settings.mail, mode="live", allowlist=[]),

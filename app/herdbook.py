@@ -21,6 +21,7 @@ import time
 import uuid
 from logging.handlers import TimedRotatingFileHandler
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import apscheduler.schedulers.background
 import click
@@ -320,6 +321,16 @@ def _send_arsrapport_invitations():
         APP.logger.exception("Queueing the yearly report invitations failed")
     finally:
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _catch_up_arsrapport_invitations(now=None):
+    """
+    At startup: a restart across 07:00 leaves the day's cron run to tomorrow, so run the job once now if it is past
+    07:00 (FA9). send_due_invitations only does what is due and unsent, so a second run changes nothing.
+    """
+    now = now or datetime.datetime.now(ZoneInfo("Europe/Stockholm"))
+    if now.astimezone(ZoneInfo("Europe/Stockholm")).hour >= 7:
+        _send_arsrapport_invitations()
 
 
 def _queue_notice_digests():
@@ -3113,6 +3124,13 @@ def initialize_app():
             max_instances=1,
             coalesce=True,
             misfire_grace_time=3600,
+        )
+
+        scheduler.add_job(
+            _catch_up_arsrapport_invitations,
+            trigger="date",
+            id="arsrapport_invitations_catch_up",
+            misfire_grace_time=None,
         )
 
         # The intake queue's daily digest of unread notices (docs/inkorg.md), category N in the mail queue.
