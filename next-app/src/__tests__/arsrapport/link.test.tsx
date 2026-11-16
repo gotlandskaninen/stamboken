@@ -110,6 +110,55 @@ describe("ReportForm in link mode", () => {
     expect(readMode).not.toHaveBeenCalled();
   });
 
+  it("link mode never reads sb_mode when withdrawing either", async () => {
+    const a = actions({
+      withdrawReport: vi.fn(() =>
+        ok({
+          draft: {
+            data: { rabbits: {} },
+            updated_at: "2026-12-31T10:00:03+00:00",
+          },
+        }),
+      ),
+    });
+    render(
+      <ReportForm
+        link
+        env="prod"
+        view={view({
+          access: "code",
+          source: "link",
+          report: {
+            id: 1,
+            status: "submitted",
+            source: "link",
+            revision: 0,
+            received_at: "2027-01-03T13:32:00+00:00",
+            report_date: "2027-01-03",
+            on_time: true,
+            submitted: {
+              rabbits: { "1": { val: "kvar", vikt: 2.8 } } as never,
+            },
+            can_change: true,
+            can_withdraw: true,
+            withdraw_until: "2027-01-10T13:32:00+00:00",
+            villkor: { hane: true, hona: true, kull: false, i_tid: true },
+          } as never,
+        })}
+        actions={a}
+        stickyTop={0}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Dra tillbaka" }));
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Dra tillbaka rapporten" }),
+      );
+    });
+    expect(a.withdrawReport).toHaveBeenCalled();
+    expect(readMode).not.toHaveBeenCalled();
+  });
+
   it("link mode uses its own storage key", () => {
     render(linkForm(actions()));
     choose(1, "Finns kvar");

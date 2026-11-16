@@ -254,5 +254,17 @@ test("8. The session ends in the middle of input and the link continues", async 
   await expect(
     weight(rows(page).filter({ hasText: "M9203-2412" })),
   ).toHaveValue("2,9"); // kept in the browser, and saved again
+  // The restored value reaches the server again: the draft behind the link holds it.
+  await expect
+    .poll(
+      async () => {
+        const res = await page.request.get(
+          "/api/v2/arsrapport/besattning/M9203/2025",
+        );
+        return JSON.stringify((await res.json()).draft?.data ?? {});
+      },
+      { timeout: 30_000 },
+    )
+    .toContain('"2,9"');
   await context.close();
 });
