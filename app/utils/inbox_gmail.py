@@ -43,6 +43,7 @@ from utils.database import (
     User,
 )
 from utils.gmail import Gmail, HistoryTooOld
+from utils.log_masking import mask_tokens
 from utils.mail import Recipient, _hostname, _normalize, _scrub, enqueue_mail, mail_kind, recipient_kind
 
 logger = logging.getLogger("herdbook.inbox_gmail")
@@ -311,7 +312,7 @@ def _text(msg):
     part = msg.get_body(preferencelist=("plain", "html"))
     if part is None:
         return None
-    text = _content(part)[:MAX_BODY]
+    text = mask_tokens(_content(part))[:MAX_BODY]  # a reply may quote the invitation's link (FA3)
     if part.get_content_subtype() == "html":
         parser = _HtmlText()
         parser.feed(text)
@@ -397,7 +398,7 @@ def _delivery_report(msg):
     for part in msg.walk():
         kind = part.get_content_type()
         if kind == "text/plain" and text is None:
-            text = _no_nul(_content(part)[:MAX_BODY]).strip()[:MAX_TEXT] or None
+            text = _no_nul(mask_tokens(_content(part))[:MAX_BODY]).strip()[:MAX_TEXT] or None
         elif kind == "message/delivery-status":
             for fields in part.get_payload():
                 diagnostic = diagnostic or fields.get("Diagnostic-Code") or fields.get("Status")

@@ -19,6 +19,7 @@ import utils.settings as settings
 from herdbook import APP
 
 from tests.arsrapport_fixtures import ArsrapportTest
+from tests.test_mail_queue import FakeRelay, _refused
 
 NOW = datetime(2026, 1, 5, 7, 0, tzinfo=timezone.utc)
 
@@ -221,3 +222,39 @@ class InviteTest(ArsrapportTest):
         self.run_job()
         with mock.patch.object(report_code, "issue_code", side_effect=AssertionError("issued")):
             self.assertEqual(invite._invite_genebank(stale, NOW), 0)
+
+    def send_all(self, relay):
+        with (
+            mock.patch.multiple(settings.mail, mode="live", allowlist=[]),
+            mock.patch.object(mail.smtplib, "SMTP", relay),
+        ):
+            mail.send_pending()
+
+    def test_no_token_in_rows_after_sending_failing_and_bouncing(self):  # R5
+        self.run_job()
+        macs = [report_code.code_url(c).split("#")[1].split(".")[1] for h in (self.h, self.h2) for c in self.codes(h)]
+        urls = [report_code.code_url(c) for h in (self.h, self.h2) for c in self.codes(h)]
+        # the first mail is refused with a text quoting its link, the second goes through and then bounces
+        relay = FakeRelay(replies=[_refused(550, f"5.7.1 rejected, body had {urls[0]}", "g9001@example.invalid"), None])
+        self.send_all(relay)
+        first, second = self.mails()
+        self.assertEqual((first.status, second.status), ("failed", "sent"))
+        self.assertTrue(mail.record_bounce(mail.message_id(second.id), f"550 5.1.1 returned: {urls[1]}"))
+        for table in (db.MailMessage, db.MailAttempt):
+            for row in table.select().dicts():
+                for mac in macs:
+                    self.assertNotIn(mac, repr(row))
+
+    def test_new_link_mail_goes_through_the_queue_after_submission(self):
+        self.run_job()
+        (rabbit, _) = list(db.Individual.select().where(db.Individual.origin_herd == self.h.id))
+        self.reported(self.h, self.kvar(rabbit, vikt=2.8))
+        new = invite.new_link(self.h, self.round_, self.owner, now=NOW)
+        relay = FakeRelay()
+        self.send_all(relay)
+        (row,) = self.mails("arsrapport.ny_lank")
+        self.assertEqual(db.MailMessage.get_by_id(row.id).status, "sent")
+        sent = [m for m, _, _ in relay.sent if "Ny länk" in m["Subject"]]
+        self.assertEqual(len(sent), 1)
+        (token,) = re.findall(r"/rapport#(\S+)", sent[0].get_body().get_content())
+        self.assertEqual(report_code.resolve(token).id, new.id)

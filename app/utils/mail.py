@@ -213,8 +213,8 @@ def _normalize(raw):
 
 
 def _scrub(text):
-    """SMTP errors often quote the recipient: nothing that looks like an address is stored."""
-    return _ADDRESS_LIKE.sub("<adress>", text)[:1000] if text else text
+    """SMTP errors and bounces often quote the recipient or the link: no address and no token is stored."""
+    return _ADDRESS_LIKE.sub("<adress>", mask_tokens(text))[:1000] if text else text
 
 
 # --- Templates ---

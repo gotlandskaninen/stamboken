@@ -285,6 +285,39 @@ class TestSorting(GmailTest):
         self.assertIn("kom inte fram", item.message)
         self.assertTrue(self.done(gmail_id))
 
+    def quoted_link(self):
+        """A link as an invitation carries it, and its mac."""
+        token = mail.link_token("rapport", 12)
+        return f"https://{HOST}/rapport#{token}", token.split(".")[1]
+
+    def test_a_reply_quoting_the_link_stores_no_token(self):  # FA3
+        link, mac = self.quoted_link()
+        self.holder(self.herds[0])
+        item = self.waiting()
+        self.fake.deliver(
+            message(
+                subject=f"Re: Fråga (ärende {item.id})",
+                body=f"Tack!\n\n> Rapportera här:\n> {link}\n",
+                In_Reply_To=self.our_mail(item),
+            )
+        )
+        self.fake.deliver(message(subject="Re: Årsrapporten", body=f"Hej\n> {link}\n"))
+        self.read()
+        (event,) = item.events.where(db.InboxEvent.kind == "svar")
+        self.assertNotIn(mac, str(event.detail))
+        self.assertIn("Tack!", event.detail["text"])
+        (new,) = [i for i in self.items() if i.id != item.id]
+        self.assertNotIn(mac, new.message)
+
+    def test_a_delivery_report_quoting_the_link_stores_no_token(self):  # FA3
+        link, mac = self.quoted_link()
+        raw = report("<CAsomething@mail.example.org>").replace(b"kom inte fram.", f"kom inte fram: {link}".encode())
+        self.fake.deliver(raw)
+        self.read()
+        (item,) = self.items()
+        self.assertIn("kom inte fram", item.message)
+        self.assertNotIn(mac, item.message)
+
     def test_an_automatic_answer_is_ignored(self):
         for header in ({"Auto-Submitted": "auto-replied"}, {"X-Autoreply": "yes"}, {"Precedence": "auto_reply"}):
             with self.subTest(header=header):
