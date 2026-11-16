@@ -93,14 +93,15 @@ function Body({
     [herds, ownHerd],
   );
   const target = options.find((h) => h.herd === code) ?? null;
-  const known = !!target;
   const optionLabel = (h: GenebankHerd) =>
     h.herd_name ? `${h.herd} – ${h.herd_name}` : h.herd;
   const buyerHalf = !!name.trim() !== !!town.trim();
   const buyerMissing = outside && !existing && !(name.trim() && town.trim());
   const problem =
+    // code is only ever the picker's own choice or the saved buyer, so it needs
+    // no list: a slow herd list must not turn Spara into a silent refusal
     (!outside &&
-      !known &&
+      !code &&
       "Välj en besättning i genbanken, eller Utanför genbanken.") ||
     (manad === null && "Välj månad.") ||
     (outside &&
