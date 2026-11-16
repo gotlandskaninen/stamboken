@@ -36,7 +36,7 @@ import {
   uploadPhoto,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/rabbitActions";
 
-const KEY = "arsrapport:kanin:code-12:G9001:2025"; // the link's code 12: a draft is the actor's own
+const KEY = "arsrapport:kanin:prod:code-12:G9001:2025"; // the link's code 12: a draft is the actor's own
 const upload = vi.mocked(uploadPhoto);
 const register = vi.mocked(registerRabbit);
 const find = vi.mocked(findRabbit);
@@ -78,8 +78,10 @@ const back = () =>
 const uploaded = (item_id: number) =>
   ({ ok: true, data: { item_id, document_id: item_id + 100 } }) as const;
 
-function open(onClose = vi.fn()) {
-  render(<AddRabbitDialog herd="G9001" year={2025} onClose={onClose} />);
+function open(onClose = vi.fn(), env?: "demo" | "prod") {
+  render(
+    <AddRabbitDialog herd="G9001" year={2025} env={env} onClose={onClose} />,
+  );
   return onClose;
 }
 // close the open dialog and let its history.back() land before the next one opens
@@ -88,8 +90,8 @@ async function closeAll() {
   await act(() => new Promise((resolve) => setTimeout(resolve, 20)));
 }
 // open, and wait for the form's setup (colours, the actor, a saved draft)
-async function opened(onClose = vi.fn()) {
-  open(onClose);
+async function opened(onClose = vi.fn(), env?: "demo" | "prod") {
+  open(onClose, env);
   await waitFor(() => expect(setup).toHaveBeenCalled());
   await act(async () => {});
   return onClose;
@@ -268,6 +270,24 @@ describe("the draft in the browser", () => {
     await opened();
     expect(input(/^Namn/)).toHaveValue("");
     expect(localStorage.getItem(KEY)).not.toBeNull(); // still there for code 12
+  });
+
+  // Codex P2: the demo copies production's accounts and codes, so the same actor is in both
+  it("is the environment's own: the demo's draft is not production's", async () => {
+    await opened(vi.fn(), "demo");
+    type(/^Namn/, "Kulla");
+    fireEvent.click(screen.getByRole("button", { name: "Avbryt" }));
+    fireEvent.click(screen.getByRole("button", { name: "Spara som utkast" }));
+    expect(localStorage.getItem(KEY)).toBeNull();
+    await closeAll();
+    await opened(vi.fn(), "prod"); // the same code 12, logged in to production
+    expect(input(/^Namn/)).toHaveValue("");
+    await closeAll();
+    await opened(); // the link, which is production's
+    expect(input(/^Namn/)).toHaveValue("");
+    await closeAll();
+    await opened(vi.fn(), "demo");
+    expect(input(/^Namn/)).toHaveValue("Kulla");
   });
 
   it("is gone after seven days", async () => {

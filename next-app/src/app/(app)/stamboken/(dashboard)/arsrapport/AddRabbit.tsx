@@ -81,8 +81,13 @@ const blank = (
 });
 
 export const DRAFT_DAYS = 7;
-export const draftKey = (actor: string, herd: string, year: number) =>
-  `arsrapport:kanin:${actor}:${herd}:${year}`;
+// The demo is a copy of production with the same accounts and codes, in the same browser: the environment is in it
+export const draftKey = (
+  env: Mode,
+  actor: string,
+  herd: string,
+  year: number,
+) => `arsrapport:kanin:${env}:${actor}:${herd}:${year}`;
 
 // A draft saved more than DRAFT_DAYS ago is gone, as is one that cannot be read.
 function readDrafts(key: string, now = Date.now()): Draft[] | null {
@@ -126,7 +131,7 @@ function writeDrafts(key: string, drafts: Draft[] | null) {
  * kit's form comes back afterwards. Back closes the dialog (it is one entry in
  * the browser's history) and first asks "Spara som utkast eller släng?" once
  * something is typed. Only that choice keeps anything in the browser, for this
- * actor and for DRAFT_DAYS, and never the photo.
+ * actor in this environment and for DRAFT_DAYS, and never the photo.
  */
 export function AddRabbitDialog({
   herd,
@@ -165,7 +170,7 @@ export function AddRabbitDialog({
       .then((r) => {
         if (cancelled || !r.ok) return;
         setColors(r.data.farger);
-        const actorKey = draftKey(r.data.aktor, herd, year);
+        const actorKey = draftKey(env ?? "prod", r.data.aktor, herd, year); // the link is production's
         setKey(actorKey);
         const drafts = readDrafts(actorKey);
         if (drafts && !touchedRef.current) {
