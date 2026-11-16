@@ -66,7 +66,7 @@ def revoke(code: ReportAccessCode, *, now: datetime) -> None:
 
 
 def code_url(code: ReportAccessCode) -> str:
-    return f"{settings.service.host.rstrip('/')}/rapport/{link_token('rapport', code.id)}"
+    return f"{settings.service.host.rstrip('/')}/rapport#{link_token('rapport', code.id)}"
 
 
 def resolve(token: str) -> ReportAccessCode | None:

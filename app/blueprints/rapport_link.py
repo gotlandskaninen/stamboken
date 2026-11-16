@@ -1,7 +1,7 @@
 """
 The yearly report's personal link (step 3): the exchange of a link token for a short code session, and the
-session's reads. The token never reaches Next: nginx sends /rapport/<token> here, and the answer is a 303 to
-/rapport?kod=<id>.
+session's reads. The link is `/rapport#<token>`: a browser never sends the fragment, so the token reaches no
+server log. The page reads it, clears it from the address bar and posts it to the exchange.
 
 Thin route handlers. The code and its validity are in utils/report_code.py.
 """
@@ -13,7 +13,7 @@ import utils.arsrapport as arsrapport
 import utils.report_code as report_code
 import utils.settings as settings
 from extensions import limiter
-from flask import Blueprint, current_app, g, jsonify, redirect, request, session
+from flask import Blueprint, current_app, g, jsonify, make_response, request, session
 from utils.database import Herd, ReportAccessCode
 
 from .common import problem
@@ -22,9 +22,7 @@ rapport_link_bp = Blueprint("rapport_link", __name__, url_prefix="/api")
 
 MAX_CODES = 4  # E2: the session holds at most four codes, the oldest dropped
 IDLE = timedelta(hours=2)  # E3
-_CANONICAL = re.compile(r"[1-9][0-9]{0,18}\.[A-Za-z0-9_-]{22}")  # R6: nothing else goes near a log or the database
-_INVALID = "/rapport/ogiltig"
-_HEADERS = {"Cache-Control": "no-store", "Referrer-Policy": "no-referrer"}
+_CANONICAL = re.compile(r"[1-9][0-9]{0,18}\.[A-Za-z0-9_-]{22}")  # nothing else goes near the database
 
 
 def _environment():
@@ -32,19 +30,13 @@ def _environment():
     return "demo" if settings.service.demo_instance else "prod"
 
 
-def exchange_headers(response):
-    """
-    An after_request hook, registered in herdbook.py before Flask-Talisman: Flask runs these last-registered first,
-    and Talisman sets one Referrer-Policy for every answer, so this one has to run after it.
-    """
-    if request.endpoint == "rapport_link.open_link":
-        response.headers.update(_HEADERS)
-    return response
+def _invalid():
+    return problem(403, "Åtkomst nekad", arsrapport.LINK_INVALID, code="lank_ogiltig")
 
 
-def _answer(location):
-    response = redirect(location, 303)
-    response.headers.update(_HEADERS)
+def _answer(response):
+    response = make_response(response)
+    response.headers["Cache-Control"] = "no-store"
     return response
 
 
@@ -78,29 +70,35 @@ def rate_limited(exc):
     return problem(429, "För många anrop", f"Högst {exc.description}.", type="rate-limit-exceeded")
 
 
-# [Next.js, nginx] The exchange: a valid link starts a code session and goes on to the page without the token.
-@rapport_link_bp.route("/v2/rapport/oppna/<path:token>", methods=["GET"])
+# [Next.js] The exchange: the page reads the token after # in the link and posts it here. A valid link starts a code
+# session. JSON only: a cross-site page cannot send it without a CORS preflight, so no login CSRF.
+@rapport_link_bp.route("/v2/rapport/oppna", methods=["POST"])
 @limiter.limit("20 per minute")
-def open_link(token):
+def open_link():
+    if not request.is_json:
+        return _answer(problem(415, "Fel innehållstyp", "Skicka JSON."))
     now = arsrapport.now()
-    # Canonical form first, before anything is logged or looked up; the same answer as for a forged token.
-    if settings.service.demo_instance or not _CANONICAL.fullmatch(token):
-        return _answer(_INVALID)
+    body = request.get_json(silent=True)
+    token = body.get("token") if isinstance(body, dict) else None
+    # Canonical form first, before anything is looked up; the same answer as for a forged token.
+    if settings.service.demo_instance or not isinstance(token, str) or not _CANONICAL.fullmatch(token):
+        return _answer(_invalid())
     try:
         code = report_code.resolve(token)
-        if code is None or report_code.refusal(code, code.herd, today=arsrapport.today()) is not None:
-            return _answer(_INVALID)
+        herd = code.herd if code is not None else None
+        if code is None or report_code.refusal(code, herd, today=arsrapport.today()) is not None:
+            return _answer(_invalid())
         ReportAccessCode.update(last_opened_at=now).where(ReportAccessCode.id == code.id).execute()
-    except Exception as exc:  # pylint: disable=broad-except  # the 303 is the same, and the log never names the token
+    except Exception as exc:  # pylint: disable=broad-except  # the answer is the same, and the log never names the token
         current_app.logger.error("Report link exchange failed: %s", type(exc).__name__)
-        return _answer(_INVALID)
+        return _answer(_invalid())
     session_codes(now)  # E3: an idle session loses its codes before this one joins, so they are not revived
     others = [entry for entry in session.get("rapport") or [] if entry[0] != code.id]
     session["rapport"] = (others + [[code.id, _environment()]])[-MAX_CODES:]
     touch(now)
     # As login: a new session id, so a sid planted before the exchange gets nothing. user_id stays.
     current_app.session_interface.regenerate(session)
-    return _answer(f"/rapport?kod={code.id}")
+    return _answer(jsonify({"herd": herd.herd, "year": code.round.report_year}))
 
 
 # [Next.js] The session's valid codes, for the page and its list of herds.

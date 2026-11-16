@@ -49,7 +49,7 @@ class ReportCodeTest(ArsrapportTest):
 
     def test_resolve_rejects_forged_and_foreign_purpose(self):
         code = self.issue()
-        self.assertEqual(report_code.resolve(report_code.code_url(code).rsplit("/", 1)[1]).id, code.id)
+        self.assertEqual(report_code.resolve(report_code.code_url(code).rsplit("#", 1)[1]).id, code.id)
         self.assertIsNone(report_code.resolve(mail.link_token("andringar", code.id)))
         good = mail.link_token("rapport", code.id)
         self.assertIsNone(report_code.resolve(good[:-1] + ("A" if good[-1] != "A" else "B")))
@@ -100,7 +100,7 @@ class ReportCodeTest(ArsrapportTest):
 
     def test_code_url_has_no_herd_or_name(self):
         url = report_code.code_url(self.issue())
-        self.assertRegex(url, r"^https?://[^/]+/rapport/\d+\.[A-Za-z0-9_-]{22}$")
+        self.assertRegex(url, r"^https?://[^/]+/rapport#\d+\.[A-Za-z0-9_-]{22}$")
         self.assertNotIn("G9001", url)
 
     def test_extended_round_extends_codes(self):

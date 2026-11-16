@@ -51,8 +51,10 @@ class CodeApiTest(ArsrapportTest):
 
     def open_link(self, code=None, client=None):
         code = code or self.code
-        response = (client or self.client).get(f"/api/v2/rapport/oppna/{mail.link_token('rapport', code.id)}")
-        self.assertEqual(response.status_code, 303)
+        response = (client or self.client).post(
+            "/api/v2/rapport/oppna", json={"token": mail.link_token("rapport", code.id)}
+        )
+        self.assertEqual(response.status_code, 200)
 
     def body_for(self, rabbits, **fields):
         return self.body(*[self.kvar(rabbit, vikt=2.8) for rabbit in rabbits], **fields)
