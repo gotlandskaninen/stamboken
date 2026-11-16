@@ -1890,27 +1890,31 @@ class ReportGrant:
     individual_commands.Grant for a report's writes, which collects the operation ids every execute logged. Logged
     in it gives no role, since roles_for does, so the can_edit guard applies. On paper the item's InboxGrant gives a
     helper HANDLAGGARE and leaves everyone's trace. `report_ops` (the report's own operations) gives RAPPORT, for
-    the backouts of Ändra; Undo checks them. With `code` (the link, step 3) RAPPORT is the code's only role, and
-    only for a rabbit of the code's herd on the report's list (`report`: its latest submission's rabbits too).
+    the backouts of Ändra; Undo checks them. Both only for a rabbit in the report's herd now (`herd`, or the code's).
+    With `code` (the link, step 3) RAPPORT is the code's only role, and without `report_ops` only for a rabbit on
+    the report's list (`report`: its latest submission's rabbits too).
     """
 
-    def __init__(self, inbox_grant=None, report_ops=frozenset(), code=None, report=None):
+    def __init__(self, inbox_grant=None, report_ops=frozenset(), code=None, report=None, herd=None):
         self.inbox_grant, self.report_ops = inbox_grant, frozenset(report_ops)
-        self.code, self.report, self._listed = code, report, None
+        self.code, self.report, self.herd, self._listed = code, report, herd, None
         self.operation_ids = []
 
     def roles(self, user, individual):
         held = self.inbox_grant.roles(user, individual) if self.inbox_grant is not None else frozenset()
+        # FA1, for a login as well: RAPPORT only for a rabbit that is in the report's herd now. A rabbit a manager
+        # moved on, or a sale approved, is no longer the report's to write or undo.
+        herd_id = self.code.herd_id if self.code is not None else self.herd.id if self.herd is not None else None
+        if herd_id is not None and individual.current_herd.id != herd_id:
+            return held
+        if self.report_ops:  # Undo checks the operation itself
+            return held | {Role.RAPPORT}
         if self.code is None:
-            return held | ({Role.RAPPORT} if self.report_ops else frozenset())
-        # FA1: a link writes only for a rabbit that is in the code's herd now, and on the report's list (or one of
-        # the report's own operations is undone). A rabbit sold on and approved is no longer in the herd.
-        if individual.current_herd.id != self.code.herd_id:
             return held
         if self._listed is None:  # once, before the first write of the request
             herd, year = Herd.get_by_id(self.code.herd_id), self.code.round.report_year
             self._listed = {row["id"] for row in report_list(herd, year, self.report)}
-        return held | ({Role.RAPPORT} if self.report_ops or individual.id in self._listed else frozenset())
+        return held | ({Role.RAPPORT} if individual.id in self._listed else frozenset())
 
     def record(self, ctx):
         self.operation_ids += [str(row["operation_id"]) for row in ctx.log_rows]
@@ -2115,7 +2119,7 @@ def apply_diff(report, herd, user, grant, rabbit_id, want: list[Effect], prev_en
                 rabbit_id,
                 lambda ctx, undo=undo: undo,
                 grant=ReportGrant(
-                    grant.inbox_grant, report_ops=ops, code=grant.code, report=grant.report
+                    grant.inbox_grant, report_ops=ops, code=grant.code, report=grant.report, herd=grant.herd
                 ),
             )
         else:
@@ -2232,7 +2236,7 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         if refusals:
             raise _cannot(refusals)
         grant = ReportGrant(
-            inbox.InboxGrant(item, user, pages[0]) if paper else None, code=access.code, report=report
+            inbox.InboxGrant(item, user, pages[0]) if paper else None, code=access.code, report=report, herd=herd
         )
         added, change = [], report is not None
         if change:  # Ändra (D5): the same row, and each changed rabbit gets the diff of the report's effects
@@ -2370,7 +2374,7 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
                 refusals += _register_refusals(rabbit, None, remove, [], ops, access.role == "admin")
         if refusals:
             raise _cannot(refusals, "Rapporten kan inte dras tillbaka.")
-        grant = ReportGrant(code=access.code, report=report)
+        grant = ReportGrant(code=access.code, report=report, herd=herd)
         for rabbit in rabbits:
             try:
                 apply_diff(report, herd, user, grant, rabbit, [], None, None, last, reason=reason)

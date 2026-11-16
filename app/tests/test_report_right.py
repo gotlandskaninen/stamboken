@@ -11,6 +11,7 @@ from datetime import date, datetime, timedelta, timezone
 
 import utils.database as db
 from herdbook import APP
+from utils.arsrapport import ReportGrant
 from utils.herd_tracking import (
     GENEBANK_CHANGE_ADMIN_ONLY,
     REPORT_ROW,
@@ -22,6 +23,7 @@ from utils.herd_tracking import (
 from utils.individual_commands import (
     REPORT_UNDO_REASON,
     UNDO_REASON,
+    IndividualRefused,
     RecordAttestation,
     RecordDeath,
     TransferIndividual,
@@ -174,6 +176,17 @@ class TestReportUndo(ReportRightTest):
     def test_undo_outside_report_ops_is_refused(self):
         with self.assertRaises(HerdTrackingForbidden):
             self._undo(self._caretaker(), self.op, frozenset())
+        self.assertIsNotNone(self._stored().death_date)
+
+    def test_login_grant_stays_within_the_reports_herd(self):
+        """L2: a withdraw does not undo a death in another herd, once a manager moved the rabbit."""
+        ops = frozenset({str(self.op)})
+        grant = ReportGrant(report_ops=ops, herd=self.herds[0])
+        self.assertEqual(grant.roles(self.owner, db.Individual.get_by_id(self.ind.id)), frozenset({Role.RAPPORT}))
+        record_herd_tracking(self.ind, self.herds[1], date(2026, 1, 10), "TRANSFER", self.manager)
+        self.assertEqual(grant.roles(self.owner, db.Individual.get_by_id(self.ind.id)), frozenset())
+        with self.assertRaises((HerdTrackingForbidden, IndividualRefused)):
+            execute(self.owner, self.ind.id, lambda ctx: [Undo(self.op, report_ops=ops)], grant=grant)
         self.assertIsNotNone(self._stored().death_date)
 
     def test_rapport_reaches_only_the_reports_own_operations(self):

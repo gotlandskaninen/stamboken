@@ -204,3 +204,25 @@ class CodeActorTest(ArsrapportTest):
         )
         self.assertEqual(actor_role(self.owner, user_entry), frozenset({Role.ACTOR}))
         self.assertEqual(actor_role(self.actor, user_entry), frozenset())
+
+    def test_report_ops_grant_does_not_build_the_list(self):
+        """L9: with report_ops the role is given without the heavy report_list, and still only inside the herd."""
+        rabbit = db.Individual.get_by_id(self.rabbits_[0].id)
+        with mock.patch.object(arsrapport, "report_list", side_effect=AssertionError("not needed")):
+            grant = ReportGrant(code=self.code, report_ops=frozenset({"op"}))
+            self.assertEqual(grant.roles(self.actor, rabbit), frozenset({Role.RAPPORT}))
+            foreign = db.Individual.get_by_id(self.foreign.id)
+            self.assertEqual(grant.roles(self.actor, foreign), frozenset())
+
+    def test_report_ops_grant_for_a_rabbit_moved_on(self):
+        """L2, for a code: the death the link recorded is not undone after the rabbit left the herd."""
+        rabbit = self.rabbits_[1]
+        self.run_as_code(rabbit, RecordDeath({"death_date": "2025-06-01", "butchered": False, "death_note": None}))
+        op = db.IndividualCommand.get(db.IndividualCommand.individual == rabbit.id).operation_id
+        ht_row(
+            "TRANSFER", herd=self.other, individual=rabbit, from_herd=self.herd, herd_tracking_date=date(2026, 1, 10)
+        )
+        ops = frozenset({str(op)})
+        with self.assertRaises((IndividualRefused, HerdTrackingForbidden)):
+            self.run_as_code(rabbit, Undo(op, report_ops=ops), report_ops=ops)
+        self.assertIsNotNone(db.Individual.get_by_id(rabbit.id).death_date)
