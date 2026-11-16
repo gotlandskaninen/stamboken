@@ -63,8 +63,8 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # history algorithm version (33) + genetics epoch (34) + the individual command log (35) +
 # Individual.microchip (36) + billing address on membership and member_application (37) +
 # retiring the PDF rows of digital certificates that a paper certificate replaced (38) +
-# audit_log IP retention index (39) + herd bank privacy reset (40).
-CURRENT_SCHEMA_VERSION = 40
+# audit_log IP retention index (39) + herd bank privacy reset (40) + the mail queue (41).
+CURRENT_SCHEMA_VERSION = 41
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -2048,6 +2048,72 @@ class IndividualCommand(BaseModel):
         indexes = ((("individual", "created_at"), False),)
 
 
+def _utcnow():
+    return datetime.now(timezone.utc)
+
+
+class MailMessage(BaseModel):
+    """One outgoing mail (docs/mejl.md): template, ids and a recipient reference, never an address or a text."""
+
+    id = AutoField()
+    kind = TextField()
+    params = BinaryJSONField(default=dict, index=False)  # ids and flags only, never searched
+    recipient_kind = TextField()
+    recipient_id = IntegerField()
+    ref_type = TextField(null=True)
+    ref_id = IntegerField(null=True)
+    # SET NULL: a queued mail must never make a write fail.
+    herd = ForeignKeyField(Herd, null=True, on_delete="SET NULL")
+    genebank = ForeignKeyField(Genebank, null=True, on_delete="SET NULL")
+    priority = SmallIntegerField()
+    category = CharField(1)  # T transaction, N notice
+    dedupe_key = TextField(null=True, unique=True)
+    status = TextField(default="queued")
+    attempts = SmallIntegerField(default=0)
+    next_attempt_at = TimestampTZField(default=_utcnow)
+    claimed_at = TimestampTZField(null=True)
+    claim_token = UUIDField(null=True)
+    sent_at = TimestampTZField(null=True)
+    address_hash = TextField(null=True)
+    last_error = TextField(null=True)
+    created_at = TimestampTZField(default=_utcnow)
+    created_by = ForeignKeyField(User, null=True, on_delete="SET NULL", column_name="created_by")
+
+    class Meta:
+        table_name = "mail_message"
+        indexes = (
+            (("status", "next_attempt_at", "priority", "id"), False),
+            (("ref_type", "ref_id"), False),
+            (("recipient_kind", "recipient_id"), False),
+        )
+
+
+class MailAttempt(BaseModel):
+    """One SMTP attempt or bounce of a mail."""
+
+    id = AutoField()
+    message = ForeignKeyField(MailMessage, on_delete="CASCADE")
+    at = TimestampTZField(default=_utcnow)
+    source = TextField()  # smtp, bounce
+    result = TextField()  # sent, temporary, permanent, systemic, bounce
+    smtp_code = TextField(null=True)
+    detail = TextField(null=True)  # scrubbed of addresses
+
+    class Meta:
+        table_name = "mail_attempt"
+
+
+class MailSender(BaseModel):
+    """The mail sender's one row: its heartbeat, for the "queue stalled" alarm, and its pause after a systemic error."""
+
+    id = IntegerField(primary_key=True, default=1, constraints=[Check("id = 1")])
+    last_run_at = TimestampTZField(null=True)
+    paused_until = TimestampTZField(null=True)
+
+    class Meta:
+        table_name = "mail_sender"
+
+
 MODELS = [
     Genebank,
     Membership,
@@ -2078,6 +2144,9 @@ MODELS = [
     HerdAccessGrant,
     MatrikelAudit,
     IndividualCommand,
+    MailMessage,
+    MailAttempt,
+    MailSender,
 ]
 
 
@@ -3667,9 +3736,12 @@ def migrate_39_to_40():
     """Issue #33: the bank details are always private, so reset any stored level."""
     with DATABASE.atomic():
         # The audit trigger would copy every account number into a new audit row without a user.
-        audited = not isinstance(DATABASE, SqliteDatabase) and DATABASE.execute_sql(
-            "SELECT 1 FROM pg_trigger WHERE tgrelid = 'herd'::regclass AND tgname = 'audit_trigger'"
-        ).fetchone()
+        audited = (
+            not isinstance(DATABASE, SqliteDatabase)
+            and DATABASE.execute_sql(
+                "SELECT 1 FROM pg_trigger WHERE tgrelid = 'herd'::regclass AND tgname = 'audit_trigger'"
+            ).fetchone()
+        )
         if audited:
             DATABASE.execute_sql('ALTER TABLE "herd" DISABLE TRIGGER "audit_trigger"')
         # NULL stays NULL (reads treat it as private).
@@ -3683,6 +3755,15 @@ def migrate_39_to_40():
             DATABASE.execute_sql('ALTER TABLE "herd" ENABLE TRIGGER "audit_trigger"')
         SchemaHistory.insert(  # pylint: disable=E1120
             version=40, comment="herd bank privacy reset to private", applied=datetime.now()
+        ).execute()
+
+
+def migrate_40_to_41():
+    """The outgoing mail queue (docs/mejl.md). Not audited: no addresses or texts, purged after 13 months."""
+    with DATABASE.atomic():
+        DATABASE.create_tables([MailMessage, MailAttempt, MailSender], safe=True)
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=41, comment="mail queue: mail_message, mail_attempt, mail_sender", applied=datetime.now()
         ).execute()
 
 
@@ -4163,6 +4244,7 @@ MIGRATIONS = {
     (37, 38): migrate_37_to_38,  # ADR-0019 retire replaced certificate PDFs
     (38, 39): migrate_38_to_39,  # audit_log IP retention index
     (39, 40): migrate_39_to_40,  # bank privacy reset
+    (40, 41): migrate_40_to_41,  # mail queue
 }
 
 

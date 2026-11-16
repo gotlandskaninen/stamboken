@@ -58,6 +58,7 @@ S3_ACCESSKEY=PRODKEY-SENTINEL
 S3_SECRETKEY=PRODSECRET-SENTINEL
 PDF_SIGNING_KEY=/config/pdf_signing_key.pem
 PDF_SIGNING_CA=/config/pdf_signing_ca.pem
+MAIL_MODE=live
 EOF
 
 # 2. Defence in depth: even a hand-edited .docker/api-variables.env holding prod
@@ -72,6 +73,18 @@ for svc in api api-test; do
     check "R097 local-production $svc: ${kv%%=*} is pinned" "${kv#*=}" "$(q "$proj" "env('$svc').get('${kv%%=*}')")"
   done
 done
+
+# ── Local stacks never send mail: the copied prod file says MAIL_MODE=live ─
+# local-production holds a copy of production's mail queue, so both its APIs pin
+# MAIL_MODE=log; so does the dev stack, which reads the same file.
+for svc in api api-test; do
+  check "local-production $svc: MAIL_MODE is pinned to log" "log" "$(q "$proj" "env('$svc').get('MAIL_MODE')")"
+done
+proj="$work/mail/dev"
+mkdir -p "$proj/.docker"
+cp "$work/prod-api-variables.env" "$proj/.docker/api-variables.env"
+resolve "$ROOT/docker-compose.yml" "$proj"
+check "dev api: MAIL_MODE is pinned to log" "log" "$(q "$proj" "env('api').get('MAIL_MODE')")"
 
 # ── R071: the passwordless (trust) local-production Postgres holds the prod dump ─
 # A port published without a host IP binds 0.0.0.0, so anyone who can reach the

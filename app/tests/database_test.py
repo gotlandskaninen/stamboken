@@ -45,6 +45,9 @@ if _USE_POSTGRES:
 
 
 _TABLES_TO_TRUNCATE = [
+    "mail_attempt",
+    "mail_message",  # before herd, genebank, hbuser (nullable FKs)
+    "mail_sender",  # no FK, so CASCADE never reaches it: a paused sender would leak into later tests
     "audit_log",
     "individual_command",  # before individual + hbuser (FKs individual, actor)
     "matrikel_audit",  # before membership + hbuser (FKs actor, membership)

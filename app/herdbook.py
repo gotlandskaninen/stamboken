@@ -70,12 +70,16 @@ from utils import app_logging  # isort:skip
 import utils.genetics_service as genetics  # isort:skip
 from utils import number_assets  # isort:skip
 from utils.individual_commands import purge_command_free_text  # isort:skip
+from utils.log_masking import TokenMaskFilter  # isort:skip
+from utils.mail import purge_old_mail, send_pending  # isort:skip
 from utils.members import try_auto_link_member  # isort:skip
 from utils.legacy_compat import course_message, is_legacy_host, legacy_classroom_url, legacy_hosts, refusal  # isort:skip
 from utils.redis_retry import reconnect_on_drop  # isort:skip
 
 APP = Flask(__name__, static_folder="/static")
 app_logging.setup()  # before any APP.logger use, or Flask adds its own stderr handler
+# Link tokens are credentials: masked in every line, in Flask's "Exception on <path>" and in the path field.
+app_logging.HANDLER.addFilter(TokenMaskFilter())
 auth_log = logging.getLogger("herdbook.auth")
 
 
@@ -118,6 +122,7 @@ UPLOAD_DIR = os.getenv("UPLOAD_FOLDER", "/app/uppladdningar")
 # string (e.g. a bare "GOOGLE_CLIENT_ID=" env line) must normalize to None:
 settings.refuse_committed_signing_key()
 settings.refuse_auto_validate_outside_demo()
+settings.refuse_unsafe_mail_settings()
 
 # verify_oauth2_token would otherwise enforce audience "" and fail every login.
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID") or None
@@ -239,10 +244,27 @@ def _reconcile_all_history():
 
 
 def _purge_command_free_text():
-    """Nightly leader job (ADR-0017), built as _reconcile_all_history: it closes its thread's connection itself."""
+    """Nightly leader job (ADR-0017), built as _reconcile_all_history: it closes its thread's connection itself.
+
+    It purges the mail queue first, on its own, so neither purge failing skips the other."""
+    now = datetime.datetime.now(datetime.timezone.utc)
     try:
-        count = purge_command_free_text(datetime.datetime.now(datetime.timezone.utc))
+        try:
+            APP.logger.info("Purged %s mail queue rows", purge_old_mail(now))
+        except Exception:  # pylint: disable=broad-except
+            APP.logger.exception("Purging the mail queue failed")
+        count = purge_command_free_text(now)
         APP.logger.info("Purged free text from %s command log rows", count)
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _send_mail():
+    """Leader job every 30 s (docs/mejl.md), built as _reconcile_all_history: it closes its thread's connection."""
+    try:
+        send_pending()
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Mail sender run failed")
     finally:
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
@@ -2845,6 +2867,16 @@ def initialize_app():
             max_instances=1,
             coalesce=True,
             misfire_grace_time=3600,
+        )
+
+        # Sends committed mail from the queue (docs/mejl.md); only the leader ever sends.
+        scheduler.add_job(
+            _send_mail,
+            trigger="interval",
+            seconds=30,
+            id="mail_send",
+            max_instances=1,
+            coalesce=True,
         )
 
         scheduler.add_job(
