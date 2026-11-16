@@ -26,14 +26,24 @@ const shown = (key: keyof CertForm, value: unknown) =>
 /**
  * A certificate photo from the yearly report (4b, G5): the member registered
  * the rabbit at once, so the queue sets the image reading beside what was
- * registered, field by field, and marks where they differ.
+ * registered, field by field, and marks where they differ. The item's handler
+ * closes it with "Stämmer" or "Rättat", and can have the photo read again.
  */
 export function ReportPhotoCheck({
   doc,
   registered,
+  canCheck = false,
+  pending = false,
+  onCheck,
+  onReinterpret,
 }: {
   doc: InboxDocument;
   registered: NonNullable<InboxDetail["registered"]>;
+  /** The item's handler, the item taken and the photo not checked yet. */
+  canCheck?: boolean;
+  pending?: boolean;
+  onCheck?: (outcome: "stammer" | "rattat") => void;
+  onReinterpret?: () => void;
 }) {
   const fields = doc.proposal?.fields ?? {};
   const number = String(registered.paper_number ?? "");
@@ -91,6 +101,42 @@ export function ReportPhotoCheck({
           })}
         </tbody>
       </table>
+      {canCheck && (
+        <>
+          <div className={styles.submitRow}>
+            <button
+              type="button"
+              className="sb-btn"
+              disabled={pending}
+              onClick={() => onCheck?.("stammer")}
+            >
+              Stämmer
+            </button>
+            <button
+              type="button"
+              className="sb-btn sb-btn-secondary"
+              disabled={pending}
+              onClick={() => onCheck?.("rattat")}
+            >
+              Rättat
+            </button>
+            {doc.interpretation_status !== "av" && (
+              <button
+                type="button"
+                className="sb-btn sb-btn-secondary"
+                disabled={pending || doc.interpretation_status === "vantar"}
+                onClick={onReinterpret}
+              >
+                Tolka igen
+              </button>
+            )}
+          </div>
+          <p className={styles.muted}>
+            Rättat: du har ändrat kaninen i Stamboken så att den stämmer med
+            intyget. Båda stänger ärendet.
+          </p>
+        </>
+      )}
     </div>
   );
 }

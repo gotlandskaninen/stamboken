@@ -8,6 +8,7 @@ import type { GenebankHerd } from "@/utils/saleRules";
 import {
   changeState,
   confirmMask,
+  checkReportPhoto,
   reinterpretDocument,
   takeItem,
   updateDocument,
@@ -68,6 +69,7 @@ const EVENT_LABEL: Record<string, string> = {
   fraga: "Fråga till uppfödaren",
   svar: "Svar från uppfödaren",
   tolka_igen: "Tolkas igen",
+  kontrollerad: "Kontrollerat",
 };
 
 function eventText(e: InboxEvent): string {
@@ -78,6 +80,8 @@ function eventText(e: InboxEvent): string {
   if (e.kind === "sparad")
     return `${label}: ${d.individual}${d.action === "overlatelse" ? `, såld till ${d.herd}` : ""}`;
   if (e.kind === "foralder_inlagd") return `${label}: ${d.individual}`;
+  if (e.kind === "kontrollerad")
+    return `${label}: ${d.outcome === "rattat" ? "Rättat" : "Stämmer"}`;
   if (e.kind === "fraga" || e.kind === "svar")
     return d.text ? `${label}: ${d.text}` : label;
   return label;
@@ -245,6 +249,14 @@ export function WorkView({
   const takeButtons = actions.filter(
     (a) => a === "ta" || a === "ta_over" || a === "arbeta_vidare",
   );
+  // A report photo (4b) is the queue's own to close: taken, compared with its rabbit, closed
+  const reportPhoto =
+    item.kind === "kontroll" && item.ref_type === "individual";
+  const checking =
+    reportPhoto &&
+    !noRole &&
+    item.assigned_to?.id === user.id &&
+    item.state === "tagen";
 
   return (
     <div className={styles.container}>
@@ -596,18 +608,18 @@ export function WorkView({
 
         {/* Right: what the document shows */}
         <section className={`sb-card ${styles.card}`} aria-label="Registrering">
-          {doc && !saving && !noRole && (
+          {doc && !saving && !checking && !noRole && (
             <div className={styles.note}>
               {CLOSED_STATES.includes(item.state)
                 ? "Ärendet är stängt."
-                : item.ref_type
+                : item.ref_type && !reportPhoto
                   ? `Ärendet gäller ${item.ref_type} ${item.ref_id ?? ""} och avgörs där, inte i kön.`
                   : item.assigned_to?.id === user.id
                     ? "Ärendet väntar. Arbeta vidare för att spara."
                     : item.assigned_to
                       ? `${item.assigned_to.name} har ärendet. Ta över det för att spara.`
                       : "Ta ärendet för att spara."}
-              {!item.ref_type && takeButtons.length > 0 && (
+              {(!item.ref_type || reportPhoto) && takeButtons.length > 0 && (
                 <div className={styles.row} style={{ marginTop: 8 }}>
                   {takeButtons.map((a) => (
                     <button
@@ -626,7 +638,24 @@ export function WorkView({
           )}
 
           {!doc ? null : item.registered && doc.doc_type === "intyg" ? (
-            <ReportPhotoCheck doc={doc} registered={item.registered} />
+            <ReportPhotoCheck
+              doc={doc}
+              registered={item.registered}
+              canCheck={checking && doc.status === "sparad"}
+              pending={pending}
+              onCheck={(outcome) =>
+                run(
+                  () => checkReportPhoto(item.id, doc.id, outcome),
+                  () => setNotice("Ärendet är stängt."),
+                )
+              }
+              onReinterpret={() =>
+                run(
+                  () => reinterpretDocument(item.id, doc.id),
+                  () => setNotice("Fotot tolkas igen."),
+                )
+              }
+            />
           ) : (doc.status === "klar" || doc.status === "avfardad") &&
             !masking ? (
             <div className={styles.card}>

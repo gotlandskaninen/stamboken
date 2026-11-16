@@ -443,6 +443,19 @@ def reinterpret(item_id, document_id):
     return _locked(item_id, action)
 
 
+# [Next.js] A report photo compared with its rabbit (4b): "Stämmer" or "Rättat" closes it.
+@inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/kontrollerad", methods=["POST"])
+@json_login_required
+@_queue_worker
+def check_report_photo(item_id, document_id):
+    def action(item):
+        document = inbox.document_of(item, document_id)
+        inbox.check_report_photo(item, document, current_user, _body().get("outcome"))
+        return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document], True)[0]})
+
+    return _locked(item_id, action)
+
+
 # [Next.js] "Mina inskick": the user's own uploads, in plain words.
 @inbox_bp.route("/inkorg/mina-inskick", methods=["GET"])
 @json_login_required

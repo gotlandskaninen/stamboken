@@ -485,3 +485,72 @@ class TestReportPhotoReading(AddRabbitTest):
         inbox.take(queued, self.helper, over=False)
         with self.assertRaises(inbox.InboxError):  # an ordinary saved certificate stays as it was
             inbox.reinterpret(queued, queued_doc, self.helper)
+
+
+class TestReportPhotoCheck(AddRabbitTest):
+    """A report photo is closed in the queue: a worker of its genebank takes it, compares and closes it."""
+
+    def setUp(self):
+        super().setUp()
+        self.open_link()
+        self.item_id = self.photo_item()
+        self.assertEqual(self.kit(self.item_id).status_code, 201)
+        (self.document,) = self.reload(self.item_id).documents
+        self.client.get("/api/logout")
+
+    def queue(self, path, **body):
+        return self.client.post(f"/api/v2/inkorg/{self.item_id}{path}", json=body)
+
+    def check(self, outcome):
+        return self.queue(f"/dokument/{self.document.id}/kontrollerad", outcome=outcome)
+
+    def test_a_helper_takes_it_and_closes_it_as_stammer(self):
+        self.login("hjalp")
+        self.assertEqual(self.queue("/ta").status_code, 200)
+        response = self.check("stammer")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        item = self.reload(self.item_id)
+        self.assertEqual((item.state, item.ref_id is not None), ("klar", True))
+        self.assertIsNotNone(db.InboxDocument.get_by_id(self.document.id).done_at)
+        self.assertEqual(response.get_json()["document"]["status"], "klar")  # checked, not dismissed
+        self.assertEqual(inbox.item_detail(item)["documents"][0]["status"], "klar")
+        checked = item.events.where(db.InboxEvent.kind == "kontrollerad").get()
+        self.assertEqual((checked.user_id, checked.detail["outcome"]), (self.helper.id, "stammer"))
+        closed = item.events.where(db.InboxEvent.kind == "lage").order_by(db.InboxEvent.id.desc()).first()
+        self.assertEqual((closed.detail["from"], closed.detail["to"]), ("tagen", "klar"))
+        self.assertEqual(self.check("stammer").status_code, 409)  # closed: once
+
+    def test_rattat_and_nothing_else(self):
+        self.login("man")
+        self.assertEqual(self.queue("/ta").status_code, 200)
+        self.assertEqual(self.check("annat").status_code, 400)
+        self.assertEqual(self.check("rattat").status_code, 200)
+        checked = self.reload(self.item_id).events.where(db.InboxEvent.kind == "kontrollerad").get()
+        self.assertEqual(checked.detail["outcome"], "rattat")
+
+    def test_only_its_handler_and_only_a_worker_of_its_genebank(self):
+        self.login("hjalp")
+        self.assertEqual(self.check("stammer").status_code, 409)  # not taken
+        self.login("mhjalp")  # a helper of Mellerud
+        self.assertEqual(self.queue("/ta").status_code, 403)
+        self.assertEqual(self.check("stammer").status_code, 403)
+        self.assertEqual(self.reload(self.item_id).state, "ny")
+
+    def test_tolka_igen_for_its_handler(self):
+        self.login("hjalp")
+        self.assertEqual(self.queue("/ta").status_code, 200)
+        with mock.patch.object(settings.interpretation, "interpreter", "gemma"):
+            response = self.queue(f"/dokument/{self.document.id}/tolka-igen")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(db.InboxDocument.get_by_id(self.document.id).interpretation_status, "vantar")
+
+    def test_an_ordinary_item_is_not_closed_so(self):
+        stored = [("inkorg/original/q.jpg", "2".rjust(64, "0"), QUALITY)]
+        ordinary, (document,) = inbox.create_upload(self.owner, self.h, None, stored)
+        self.login("hjalp")
+        self.assertEqual(self.client.post(f"/api/v2/inkorg/{ordinary.id}/ta").status_code, 200)
+        refused = self.client.post(
+            f"/api/v2/inkorg/{ordinary.id}/dokument/{document.id}/kontrollerad", json={"outcome": "stammer"}
+        )
+        self.assertEqual(refused.status_code, 409)
+        self.assertEqual(db.InboxItem.get_by_id(ordinary.id).state, "tagen")

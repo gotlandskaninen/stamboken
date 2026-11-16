@@ -10,6 +10,7 @@ import {
 
 const actions = vi.hoisted(() => ({
   changeState: vi.fn(),
+  checkReportPhoto: vi.fn(),
   confirmMask: vi.fn(),
   reinterpretDocument: vi.fn(),
   takeItem: vi.fn(),
@@ -325,5 +326,67 @@ describe("WorkView on a report photo", () => {
     expect(
       screen.queryByRole("table", { name: "Tolkningen och registreringen" }),
     ).toBeNull();
+  });
+});
+
+// Closing a report photo: its handler compares and closes it, or has it read again (4b).
+describe("ReportPhotoCheck's buttons", () => {
+  const photoItem = (changes: Partial<InboxDetail> = {}) =>
+    item({
+      kind: "kontroll",
+      ref_type: "individual",
+      ref_id: 51,
+      registered: { paper_number: "G9001-2511", name: "Kulla" },
+      documents: [doc({ status: "sparad", interpretation_status: "klar" })],
+      ...changes,
+    });
+
+  beforeEach(() => {
+    actions.reinterpretDocument.mockResolvedValue({ ok: true, data: {} });
+  });
+
+  it("for the handler: Stämmer and Rättat close it, Tolka igen reads it again", async () => {
+    const checkReportPhoto = vi.mocked(actions.checkReportPhoto);
+    checkReportPhoto.mockResolvedValue({ ok: true, data: {} });
+    render(view(photoItem()));
+    // one at a time: the buttons wait while a call is out
+    const press = async (name: string) => {
+      const button = screen.getByRole("button", { name });
+      await waitFor(() => expect(button).toBeEnabled());
+      fireEvent.click(button);
+    };
+    await press("Stämmer");
+    await waitFor(() =>
+      expect(checkReportPhoto).toHaveBeenCalledWith(12, 31, "stammer"),
+    );
+    await press("Rättat");
+    await waitFor(() =>
+      expect(checkReportPhoto).toHaveBeenCalledWith(12, 31, "rattat"),
+    );
+    await press("Tolka igen");
+    await waitFor(() =>
+      expect(actions.reinterpretDocument).toHaveBeenCalledWith(12, 31),
+    );
+  });
+
+  it("before it is taken: no closing, and the take button where the note is", () => {
+    render(view(photoItem({ assigned_to: null, state: "ny" }), boss));
+    expect(screen.queryByRole("button", { name: "Stämmer" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Jag tar den" }).length).toBe(
+      2,
+    ); // the header and the note
+  });
+
+  it("checked or closed: no buttons", () => {
+    render(
+      view(
+        photoItem({
+          state: "klar",
+          documents: [doc({ status: "klar", interpretation_status: "klar" })],
+        }),
+      ),
+    );
+    expect(screen.queryByRole("button", { name: "Stämmer" })).toBeNull();
+    expect(screen.getByText("Ärendet är stängt.")).toBeInTheDocument();
   });
 });

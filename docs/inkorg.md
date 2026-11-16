@@ -336,6 +336,7 @@ till avsändaren väntar, och senast 30 dagar efter stängningen.
 | `fraga` | `{"text": "Står det G1-2112?", "document": 31, "rotation": 0, "crop": {"x": 0, "y": 0, "w": 0.5, "h": 0.25}}`; de tre sista bara med utsnitt |
 | `svar` | `{"text": "Ja.", "documents": [33], "not_saved": ["brev.docx"]}`; `user` är `null`, `not_saved` bara när något inte sparades |
 | `tolka_igen` | `{"document": 31}`; handläggaren lade dokumentet i tolkningens kö igen |
+| `kontrollerad` | `{"document": 31, "outcome": "stammer" \| "rattat"}`; ett foto från årsrapporten är jämfört med kaninen (`…/kontrollerad`) |
 | `original_raderat` | `{"document": 31}`; originalet raderades på begäran (`…/radera-original`) |
 | `kopia_borttagen` | `{"document": 31}`; den maskade kopian togs bort (`…/kopia`) |
 | `matrikel_andrad` | `{"falt": ["konto", "epost"], "hoppade": ["telefon"], "submission_id": 12}`; en årsblankett ändrade uppgifter i matrikeln (`falt`) eller hoppade över dem, eftersom matrikeln ändrats efter blankettens datum (`hoppade`). Bara fältnamnen, aldrig värdena |
@@ -609,6 +610,25 @@ registreringen aldrig väntar på den; jobbet `inbox_wake` väcker varje timme d
 **Fel:** 404 när dokumentet inte hör till posten; 409 när anroparen inte är handläggare, när
 tolkningen är avstängd (`Bildtolkningen är avstängd.`), när dokumentet inte är ett intyg som
 inte sparats än (`Bara ett intyg som inte är sparat kan tolkas.`) eller när originalet är raderat.
+Ett foto från årsrapporten (`kind: "kontroll"`, `ref_type: "individual"`) tolkas också när kaninen
+redan är sparad, eftersom tolkningen jämförs med det uppfödaren registrerade.
+
+### `POST /api/v2/inkorg/{id}/dokument/{dok}/kontrollerad`
+
+Ett foto från årsrapporten är jämfört med kaninen som registrerades från det. Kroppen är
+`{"outcome": "stammer"}` eller `{"outcome": "rattat"}` (handläggaren har rättat kaninen efter
+intyget). Dokumentet blir klart, händelsen `kontrollerad` loggas och posten blir `klar` som när
+en vanlig posts sista dokument är klart. Postens detalj har då `registered`: kaninen som den
+registrerades, med samma nycklar som intygsformuläret.
+
+**Vem:** handläggaren (posten tagen). Admin, genbanksansvarig och genbankshjälpare i postens
+genbank kan ta posten, som andra poster.
+
+**Svar 200:** `{"item": <post i listform>, "document": <dokument>}`.
+
+**Fel:** 400 för ett annat `outcome`; 404 när dokumentet inte hör till posten; 409 när posten inte
+är ett foto från årsrapporten, när anroparen inte är handläggare eller posten inte är tagen, eller
+när dokumentet redan är klart.
 
 ## Spara det intyget visar
 

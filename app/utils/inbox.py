@@ -708,15 +708,15 @@ def paper_certificate(individual):
     )
 
 
-def _document_status(document):
-    if document.done_at:
-        return "klar" if document.public_path or document.herd_tracking_id else "avfardad"
+def _document_status(document, report=False):
+    if document.done_at:  # a report photo is done when it is checked against its rabbit (check_report_photo)
+        return "klar" if document.public_path or document.herd_tracking_id or report else "avfardad"
     if document.individual_id:
         return "sparad"
     return "vantar_foralder" if document.waiting_for else "ny"
 
 
-def documents_json(documents):
+def documents_json(documents, report=False):
     numbers = {}
     individual_ids = {d.individual_id for d in documents if d.individual_id}
     if individual_ids:
@@ -731,7 +731,7 @@ def documents_json(documents):
     return [
         {
             "id": d.id,
-            "status": _document_status(d),
+            "status": _document_status(d, report),
             "mime": d.mime,
             "quality": d.quality,
             "warnings": warnings(d.quality),
@@ -757,6 +757,29 @@ def documents_json(documents):
 def report_photo(item):
     """A certificate photo from the yearly report (4b, G5): its rabbit is registered, and the reading checks it."""
     return item.kind == "kontroll" and item.ref_type == "individual"
+
+
+CHECK_OUTCOMES = ("stammer", "rattat")  # "Stämmer", or "Rättat": the handler corrected the rabbit to the photo
+
+
+def check_report_photo(item, document, user, outcome):
+    """
+    A report photo compared with its rabbit by the item's handler (4b): the document is done, with the outcome in the
+    item's history, and the item closes as "klar" the way an ordinary item does once its documents are done.
+    """
+    if not report_photo(item):
+        raise InboxError(409, "Bara ett foto från årsrapporten kontrolleras så.")
+    require_handler(item, user)
+    if item.state != "tagen":
+        raise InboxError(409, "Posten väntar. Gör den till tagen igen för att spara.")
+    if outcome not in CHECK_OUTCOMES:
+        raise InboxError(400, 'outcome är "stammer" eller "rattat".')
+    if document.done_at is not None:
+        raise InboxError(409, "Dokumentet är redan klart.")
+    document.done_at = now()
+    document.save()
+    log_event(item, user, "kontrollerad", document=document.id, outcome=outcome)
+    close_if_done(item, user)
 
 
 def registered_rabbit(item):
@@ -792,7 +815,7 @@ def item_detail(item):
         **items_json([item])[0],
         "message": item.message,
         "sender_address": item.sender_address,
-        "documents": documents_json(documents),
+        "documents": documents_json(documents, report_photo(item)),
         "events": [
             {"id": e.id, "at": _iso(e.at), "kind": e.kind, "user": _person(e.user_id, names), "detail": e.detail}
             for e in events
