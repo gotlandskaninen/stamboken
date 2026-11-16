@@ -772,6 +772,15 @@ def open_item(item, user):
     ).execute()
 
 
+def uploads_seen(user):
+    """The user has seen "Mina inskick": her "klar" notices are read. Returns how many changed."""
+    return (
+        Notice.update(read_at=now())
+        .where((Notice.user == user.id) & (Notice.kind == "klar") & Notice.read_at.is_null(True))
+        .execute()
+    )
+
+
 def my_uploads(user):
     """ "Mina inskick": the user's own items in plain words, and the rabbits registered from them."""
     items = list(InboxItem.select().where(InboxItem.sender_user == user.id).order_by(InboxItem.received_at.desc()))
@@ -786,9 +795,6 @@ def my_uploads(user):
         )
         for item_id, number in query.tuples():
             rabbits.setdefault(item_id, []).append(number)
-    Notice.update(read_at=now()).where(
-        (Notice.user == user.id) & (Notice.kind == "klar") & Notice.read_at.is_null(True)
-    ).execute()
     return [
         {
             "id": item.id,
