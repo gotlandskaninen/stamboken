@@ -117,7 +117,10 @@ av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas.
   vad som sparas, vem som lade in uppgifterna, länken `/dataskydd` och adressen
   att skriva till. En huvudmedlem får det inte, och inte heller den som kommer
   in med importen av matrikeln, som skriver sina rader själv. Har personen
-  lämnat medlemskapet när mejlet ska gå blir det `cancelled`.
+  lämnat medlemskapet eller blivit huvudmedlem när mejlet ska gå blir det
+  `cancelled`. Huvudmedlemmen väljer adressen, så mejlet får inte bli ett sätt
+  att överösa någon: en adress får högst ett om dagen, och ett medlemskap ger
+  högst tio om dagen.
 
 ## Mottagare
 

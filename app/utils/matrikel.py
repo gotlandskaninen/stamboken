@@ -35,7 +35,7 @@ from utils.database import (
     Membership,
     User,
 )
-from utils.mail import forget_recipient, queue_member_added
+from utils.mail import cancel_member_added, forget_recipient, queue_member_added
 from utils.membership_lifecycle import Event, Status, next_state, state_of
 from utils.postal import (  # noqa: F401 — public helpers
     format_postal_address,
@@ -337,6 +337,7 @@ def soft_delete_person(member, actor):
         if member.end_date is None:
             member.end_date = date.today()
             member.save()
+        cancel_member_added([member.id])
         now = datetime.now()
         revoked = (
             HerdAccessGrant.update(revoked_at=now, updated_at=now)
@@ -608,6 +609,7 @@ def retire_membership(membership, actor):
             ).execute()
             person.end_date = date.today()
             person.save()
+        cancel_member_added([p.id for p in persons])
         membership.membership_status = "inactive"
         # `membership` is the CALLER's pre-lock instance — a full-row save would
         # overwrite a notes/address PATCH that committed while we waited for the

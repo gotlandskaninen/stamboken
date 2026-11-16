@@ -242,6 +242,50 @@ class TestMemberAdded(MailTest):
         mail.send_pending(self.now)
         self.assertEqual((relay.sent, self.mails()[0].status), ([], "cancelled"))
 
+    def test_not_sent_once_the_person_is_main_member(self):
+        person = self.add()
+        matrikel.swap_main_member(self.membership, person, self.actor)
+        relay = self.relay()
+        mail.send_pending(self.now)
+        self.assertEqual((relay.sent, self.mails()[0].status), ([], "cancelled"))
+
+    def test_a_removal_while_the_sender_connects_stops_the_mail(self):
+        person = self.add()
+        relay = self.relay()
+        connect = mail._connect
+
+        def removed_meanwhile(conn):  # after the build, while the connection and its TLS come up
+            connect(conn)
+            matrikel.soft_delete_person(db.Member.get_by_id(person.id), self.actor)
+
+        with mock.patch.object(mail, "_connect", removed_meanwhile):
+            mail.send_pending(self.now)
+        (row,) = self.mails()
+        self.assertEqual((relay.sent, row.status, row.claim_token), ([], "cancelled", None))
+
+    def test_a_retired_membership_stops_its_peoples_mails(self):
+        self.add()
+        matrikel.retire_membership(self.membership, self.actor)
+        self.assertEqual(self.mails()[0].status, "cancelled")
+
+    def test_one_mail_a_day_to_an_address_whoever_is_added_with_it(self):
+        self.add()
+        self.add(first_name="Samma", last_name="Adress")  # a new person id, the same address
+        self.add(first_name="Annan", email=" NY@example.org ")  # the address as someone typed it
+        self.assertEqual(len(self.mails()), 1)
+        with mock.patch.object(mail, "_utcnow", return_value=self.now + timedelta(days=1)):
+            self.add(first_name="Nästa", last_name="Dag")
+        self.assertEqual(len(self.mails()), 2)
+        self.assertNotIn("ny@example.org", "".join(row.dedupe_key for row in self.mails()))
+
+    def test_a_membership_causes_at_most_ten_mails_a_day(self):
+        for n in range(mail.ADDED_A_DAY + 2):
+            self.add(first_name=f"Nummer {n}", email=f"person{n}@example.org")
+        self.assertEqual(len(self.mails()), mail.ADDED_A_DAY)
+        other = db.Membership.create(membership_status="active")  # another membership is not held back
+        matrikel.add_person(other, {"first_name": "Ny", "last_name": "Person", "email": "x@example.org"}, self.actor)
+        self.assertEqual(len(self.mails()), mail.ADDED_A_DAY + 1)
+
     def test_the_register_import_does_not_go_through_add_person(self):
         """The import writes its rows itself: the people in the register gave their details themselves."""
         source = open(
