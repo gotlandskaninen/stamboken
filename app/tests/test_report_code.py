@@ -108,7 +108,10 @@ class ReportCodeTest(ArsrapportTest):
         old_end = self.round_.end_date
         self.at(date(2026, 1, 15))
         revoked = report_code.issue_code(
-            db.Herd.create(genebank=self.gotland, herd="G9002", is_active=True), self.round_, self.member, now=NOW
+            db.Herd.create(genebank=self.gotland, herd="G9002", is_active=True, membership=self.member.membership_id),
+            self.round_,
+            self.member,
+            now=NOW,
         )
         report_code.revoke(revoked, now=NOW)
         arsrapport.save_round(2025, self.admin, end_date=old_end + timedelta(days=14))

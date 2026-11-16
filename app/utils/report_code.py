@@ -28,6 +28,19 @@ def invitation_recipient(herd: Herd) -> Member | None:
     return member
 
 
+class StaleRecipient(Exception):
+    """The member a code was to be issued to is not the herd's main member any more."""
+
+
+def require_current(herd: Herd, member: Member) -> None:
+    # Late import, as in invitation_recipient.
+    import utils.inbox as inbox  # pylint: disable=import-outside-toplevel
+
+    holder = inbox.herd_holder(herd.id)
+    if holder is None or holder.id != member.id:
+        raise StaleRecipient(f"member {member.id} is not herd {herd.id}'s main member")
+
+
 def _active(herd, round_):
     return ReportAccessCode.get_or_none(
         ReportAccessCode.herd == herd.id, ReportAccessCode.round == round_.id, ReportAccessCode.revoked_at.is_null()
@@ -41,6 +54,7 @@ def issue_code(herd: Herd, round_, member: Member, *, now: datetime) -> ReportAc
     index lets one insert win, and the other returns the winner's code.
     """
     with DB_PROXY.atomic():
+        require_current(herd, member)  # before anything is revoked: a stale caller changes nothing
         code = _active(herd, round_)
         if code is not None and code.member_id != member.id:
             revoke(code, now=now)

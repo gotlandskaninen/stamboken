@@ -36,7 +36,10 @@ def _invite_genebank(activation, now):
             member = report_code.invitation_recipient(herd)
             if member is None:
                 continue
-            code = report_code.issue_code(herd, round_, member, now=now)
+            try:
+                code = report_code.issue_code(herd, round_, member, now=now)
+            except report_code.StaleRecipient:  # the main member changed since the selection: not ours to mail
+                continue
             if code.member_id != member.id:  # lost the race to a new_link for the new main member, who got that mail
                 continue
             queued = enqueue_mail(
@@ -86,6 +89,10 @@ def new_link(herd, round_, user, *, now: datetime) -> ReportAccessCode:
     if member is None:
         raise ArsrapportError(409, "Besättningen har ingen huvudmedlem med e-postadress.")
     with DB_PROXY.atomic():
+        try:
+            report_code.require_current(herd, member)  # before the revoke: a stale selection changes nothing
+        except report_code.StaleRecipient as exc:
+            raise ArsrapportError(409, "Huvudmedlemmen har just ändrats. Försök igen.") from exc
         old = ReportAccessCode.get_or_none(
             ReportAccessCode.herd == herd.id, ReportAccessCode.round == round_.id, ReportAccessCode.revoked_at.is_null()
         )

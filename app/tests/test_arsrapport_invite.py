@@ -223,6 +223,36 @@ class InviteTest(ArsrapportTest):
         with mock.patch.object(report_code, "issue_code", side_effect=AssertionError("issued")):
             self.assertEqual(invite._invite_genebank(stale, NOW), 0)
 
+    def test_the_activation_is_locked_for_update(self):
+        # A non-concurrent test cannot show the wait itself, so check that the statement asks for the row lock.
+        stale = db.YearlyReportRoundGenebank.get(db.YearlyReportRoundGenebank.genebank == self.gotland.id)
+        seen = []
+        real = db.DB_PROXY.obj.execute_sql
+
+        def spy(sql, *args, **kwargs):
+            seen.append(sql)
+            return real(sql, *args, **kwargs)
+
+        with mock.patch.object(db.DB_PROXY.obj, "execute_sql", spy):
+            invite._invite_genebank(stale, NOW)
+        self.assertTrue([q for q in seen if "yearly_report_round_genebank" in q and "FOR UPDATE" in q])
+
+    def test_a_stale_recipient_never_replaces_the_current_members_link(self):
+        # A was the main member when the job chose; B is now, and has an active code.
+        current = report_code.invitation_recipient(self.h)
+        rival = self.other_member_code(self.h)  # a code for someone who is not the herd's main member any more
+        db.ReportAccessCode.update(revoked_at=NOW).where(db.ReportAccessCode.id == rival.id).execute()
+        mine = report_code.issue_code(self.h, self.round_, current, now=NOW)
+        stale_member = db.Member.get_by_id(rival.member_id)
+        with self.assertRaises(report_code.StaleRecipient):
+            report_code.issue_code(self.h, self.round_, stale_member, now=NOW)
+        self.assertIsNone(db.ReportAccessCode.get_by_id(mine.id).revoked_at)
+        self.assertEqual(db.ReportAccessCode.select().where(db.ReportAccessCode.revoked_at.is_null()).count(), 1)
+        with self.assertRaises(arsrapport.ArsrapportError):  # new_link says so too, and revokes nothing
+            with mock.patch.object(report_code, "invitation_recipient", return_value=stale_member):
+                invite.new_link(self.h, self.round_, self.owner, now=NOW)
+        self.assertIsNone(db.ReportAccessCode.get_by_id(mine.id).revoked_at)
+
     def test_priorities_follow_the_mail_queue_spec(self):
         self.run_job()
         invite.new_link(self.h, self.round_, self.owner, now=NOW)
