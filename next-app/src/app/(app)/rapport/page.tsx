@@ -6,6 +6,7 @@ import {
   dryRun,
   getFathers,
   getGenebankHerds,
+  getMothers,
   getMine,
   getReport,
   saveDraft,
@@ -26,6 +27,7 @@ const actions = {
   addLitter,
   changeLitter,
   getFathers,
+  getMothers,
 };
 
 // The page behind a member's personal link. The server renders from the code session in the cookie; LinkGate, in the

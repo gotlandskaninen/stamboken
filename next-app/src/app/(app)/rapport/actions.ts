@@ -168,3 +168,7 @@ export async function changeLitter(
 export async function getFathers(herd: string, year: number) {
   return call<{ hanar: Father[] }>(path(herd, year, "/hanar"), "GET");
 }
+
+export async function getMothers(herd: string, year: number) {
+  return call<{ honor: Father[] }>(path(herd, year, "/honor"), "GET");
+}

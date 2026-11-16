@@ -178,6 +178,20 @@ export async function changeLitter(
   );
 }
 
+export async function getMothers(
+  herd: string,
+  year: number,
+  env: Mode,
+  post?: number,
+) {
+  return call<{ honor: Father[] }>(
+    env,
+    path(herd, year, "/honor", post),
+    "GET",
+    undefined,
+  );
+}
+
 export async function getFathers(
   herd: string,
   year: number,

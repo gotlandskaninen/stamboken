@@ -7,6 +7,7 @@ import {
   changeLitter,
   dryRun,
   getFathers,
+  getMothers,
   saveDraft,
   submitReport,
   withdrawReport,
@@ -60,6 +61,7 @@ export default async function ReportPage({
           addLitter,
           changeLitter,
           getFathers,
+          getMothers,
         }}
       />
     );
@@ -78,6 +80,7 @@ export default async function ReportPage({
         addLitter,
         changeLitter,
         getFathers,
+        getMothers,
       }}
       post={post}
     />

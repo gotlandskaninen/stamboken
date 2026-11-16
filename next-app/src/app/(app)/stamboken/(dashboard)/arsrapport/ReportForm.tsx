@@ -59,7 +59,10 @@ export type ReportActions = Pick<
   "saveDraft" | "dryRun" | "submitReport" | "withdrawReport"
 > & { getGenebankHerds: typeof getGenebankHerds } & Partial<
     // the sale dialog's herd picker
-    Pick<typeof Actions, "addLitter" | "changeLitter" | "getFathers">
+    Pick<
+      typeof Actions,
+      "addLitter" | "changeLitter" | "getFathers" | "getMothers"
+    >
   >; // "Kullar under Y"
 
 // "Från blankett": what the page around the form supplies (PaperEntry).
@@ -283,7 +286,8 @@ export function ReportForm({
     canEdit &&
     !!actions.addLitter &&
     !!actions.changeLitter &&
-    !!actions.getFathers;
+    !!actions.getFathers &&
+    !!actions.getMothers;
 
   const [state, setState] = React.useState<FormState>(() =>
     startFrom(view, isPaper),
@@ -1985,9 +1989,7 @@ export function ReportForm({
           <LitterDialog
             open={litterOpen && !syncing}
             year={year}
-            mothers={view.rabbits.filter(
-              (r) => r.sex === "female" && !r.castrated,
-            )}
+            loadMothers={() => actions.getMothers!(herd.herd, year, env, post)}
             loadFathers={() => actions.getFathers!(herd.herd, year, env, post)}
             litters={litters}
             add={(body) => actions.addLitter!(herd.herd, year, body, env, post)}

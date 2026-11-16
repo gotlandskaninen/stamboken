@@ -1095,6 +1095,7 @@ describe("ReportForm", () => {
       ...a,
       addLitter: vi.fn() as never,
       getFathers: vi.fn(() => ok({ hanar: [] })) as never,
+      getMothers: vi.fn(() => ok({ honor: [] })) as never,
       changeLitter: changeLitter as never,
     };
     render(

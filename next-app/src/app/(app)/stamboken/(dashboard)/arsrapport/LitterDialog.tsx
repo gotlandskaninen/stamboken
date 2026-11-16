@@ -14,7 +14,7 @@ import {
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import type { ActionResult } from "../inkorg/actions";
-import type { Father, Litter, LitterBody, RabbitView } from "./lib";
+import type { Father, Litter, LitterBody } from "./lib";
 import { fmtDate } from "./lib";
 import styles from "./arsrapport.module.css";
 
@@ -27,12 +27,40 @@ const SAME_HINT =
   "En hona kan inte få två kullar så tätt. Stämmer inte datumet, ändra den befintliga kullen.";
 const SIX_WEEKS_HINT =
   "Lämna tomt om kullen är yngre än 6 veckor, så räknar vi alla som levande tills du ändrar.";
+const FETCH_FAILED = "Det gick inte att nå servern. Försök igen.";
+
+// A picker's list from its action: null while loading, "fel" when it could not be fetched (retry sets null again).
+function useList(load: () => Promise<ActionResult<Father[]>>) {
+  const [list, setList] = React.useState<Father[] | "fel" | null>(null);
+  const loader = React.useRef(load);
+  React.useEffect(() => {
+    loader.current = load;
+  });
+  React.useEffect(() => {
+    if (list !== null) return;
+    let cancelled = false;
+    loader
+      .current()
+      .then((r) => {
+        if (!cancelled) setList(r.ok ? r.data : "fel");
+      })
+      .catch(() => {
+        if (!cancelled) setList("fel");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [list]);
+  return [list, () => setList(null)] as const;
+}
+
 const toInt = (v: string) => (/^\d+$/.test(v.trim()) ? Number(v) : null);
 
 interface Props {
   open: boolean;
   year: number;
-  mothers: RabbitView[]; // the herd's females on the report
+  // the herd's does in the year, also those sold or dead since, and the genebank's males
+  loadMothers: () => Promise<ActionResult<{ honor: Father[] }>>;
   loadFathers: () => Promise<ActionResult<{ hanar: Father[] }>>;
   litters: Litter[]; // the year's litters: the one `samma_kull` names
   add: (body: LitterBody) => Promise<ActionResult<Saved>>;
@@ -43,7 +71,7 @@ interface Props {
 
 function Body({
   year,
-  mothers,
+  loadMothers,
   loadFathers,
   litters,
   add,
@@ -63,24 +91,12 @@ function Body({
   const [error, setError] = React.useState<string | null>(null);
   const [same, setSame] = React.useState<number | null>(null); // samma_kull: the existing litter
   const [saved, setSaved] = React.useState(false);
-  const [fathers, setFathers] = React.useState<
-    Father[] | "fel" | null // null: still loading
-  >(null);
-
-  React.useEffect(() => {
-    if (fathers !== null) return;
-    let cancelled = false;
-    loadFathers()
-      .then((r) => {
-        if (!cancelled) setFathers(r.ok ? r.data.hanar : "fel");
-      })
-      .catch(() => {
-        if (!cancelled) setFathers("fel");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [fathers, loadFathers]);
+  const [mothers, retryMothers] = useList(() =>
+    loadMothers().then((r) => (r.ok ? { ...r, data: r.data.honor } : r)),
+  );
+  const [fathers, retryFathers] = useList(() =>
+    loadFathers().then((r) => (r.ok ? { ...r, data: r.data.hanar } : r)),
+  );
 
   const born6 = size6w.trim() === "" ? null : toInt(size6w);
   const total = toInt(size);
@@ -112,14 +128,20 @@ function Body({
     setError(null);
     if (problem || busy) return;
     setBusy(true);
-    const res = await add({
-      mother_id: Number(mother),
-      father_id: father!.id,
-      birth_date: born,
-      litter_size: total!,
-      litter_size6w: born6,
-    });
-    setBusy(false);
+    let res;
+    try {
+      res = await add({
+        mother_id: Number(mother),
+        father_id: father!.id,
+        birth_date: born,
+        litter_size: total!,
+        litter_size6w: born6,
+      });
+    } catch {
+      return fail(FETCH_FAILED); // what was typed stays
+    } finally {
+      setBusy(false);
+    }
     if (res.ok) return done(res.data);
     const p = res.problem;
     if (p.status === 409 && p.extensions?.code === "samma_kull")
@@ -131,18 +153,26 @@ function Body({
     if (same === null || busy) return;
     setBusy(true);
     setError(null);
-    const res = await change(same, {
-      litter_size: total!,
-      litter_size6w: born6,
-    });
-    setBusy(false);
+    let res;
+    try {
+      res = await change(same, {
+        litter_size: total!,
+        litter_size6w: born6,
+      });
+    } catch {
+      return fail(FETCH_FAILED); // the question stays, so "Ja, ändra den" can be tried again
+    } finally {
+      setBusy(false);
+    }
     if (res.ok) return done(res.data);
     setSame(null);
     fail(res.problem.detail ?? "Kullen kunde inte ändras. Försök igen.");
   };
 
   const existing = same !== null ? litters.find((l) => l.id === same) : null;
-  const motherNumber = mothers.find((m) => String(m.id) === mother)?.number;
+  const motherNumber = Array.isArray(mothers)
+    ? mothers.find((m) => String(m.id) === mother)?.number
+    : undefined;
   const fatherLabel = (f: Father) =>
     f.name ? `${f.number} – ${f.name}` : f.number;
 
@@ -187,14 +217,28 @@ function Body({
                 value={mother}
                 onChange={(e) => setMother(e.target.value)}
               >
-                <option value="">Välj modern</option>
-                {mothers.map((m) => (
+                <option value="">
+                  {mothers === null ? "Hämtar honor …" : "Välj modern"}
+                </option>
+                {(Array.isArray(mothers) ? mothers : []).map((m) => (
                   <option key={m.id} value={m.id}>
                     {m.name ? `${m.number} – ${m.name}` : m.number}
                   </option>
                 ))}
               </select>
             </label>
+            {mothers === "fel" && (
+              <p className={styles.errorText} role="alert">
+                Det gick inte att hämta honorna.{" "}
+                <button
+                  type="button"
+                  className="sb-btn sb-btn-secondary sb-btn-sm"
+                  onClick={retryMothers}
+                >
+                  Försök igen
+                </button>
+              </p>
+            )}
             <Autocomplete
               options={Array.isArray(fathers) ? fathers : []}
               value={father}
@@ -212,7 +256,7 @@ function Body({
                 <button
                   type="button"
                   className="sb-btn sb-btn-secondary sb-btn-sm"
-                  onClick={() => setFathers(null)}
+                  onClick={retryFathers}
                 >
                   Försök igen
                 </button>
@@ -357,8 +401,15 @@ function ConfirmBody({
     if (bad || busy) return;
     setBusy(true);
     setError(null);
-    const res = await change(litter.id, { litter_size6w: n });
-    setBusy(false);
+    let res;
+    try {
+      res = await change(litter.id, { litter_size6w: n });
+    } catch {
+      setError(FETCH_FAILED);
+      return;
+    } finally {
+      setBusy(false);
+    }
     if (res.ok) {
       onSaved(res.data.litters);
       onClose();

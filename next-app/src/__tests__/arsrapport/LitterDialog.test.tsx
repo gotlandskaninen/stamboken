@@ -12,7 +12,6 @@ import {
   LitterDialog,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/LitterDialog";
 import type { Litter } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
-import { rabbit } from "./fixtures";
 
 afterEach(cleanup);
 
@@ -33,7 +32,9 @@ function setup(over: Record<string, unknown> = {}) {
   const props = {
     open: true,
     year: 2026,
-    mothers: [rabbit(1), rabbit(2)],
+    loadMothers: vi.fn(() =>
+      ok({ honor: [{ id: 1, number: "G9001-1", name: null }] }),
+    ),
     loadFathers: vi.fn(() =>
       ok({ hanar: [{ id: 3, number: "G9001-3", name: "Hane" }] }),
     ),
@@ -51,6 +52,7 @@ function setup(over: Record<string, unknown> = {}) {
 }
 
 async function fill(size6w = "") {
+  await screen.findByRole("option", { name: "G9001-1" });
   fireEvent.change(screen.getByLabelText("Mor"), { target: { value: "1" } });
   const far = screen.getByRole("combobox", { name: "Far" });
   fireEvent.keyDown(far, { key: "ArrowDown" });
@@ -242,5 +244,84 @@ describe("ConfirmCountDialog", () => {
         }) as HTMLButtonElement
       ).disabled,
     ).toBe(true);
+  });
+});
+
+describe("a network failure", () => {
+  const down = () => Promise.reject(new Error("offline"));
+  const FALLBACK = "Det gick inte att nå servern. Försök igen.";
+
+  it("keeps the form and shows an error when saving a litter fails", async () => {
+    const p = setup({ add: vi.fn(down) });
+    await fill();
+    fireEvent.click(screen.getByRole("button", { name: "Spara kullen" }));
+    expect(await screen.findByText(FALLBACK)).toBeTruthy();
+    expect(
+      (screen.getByLabelText("Antal födda") as HTMLInputElement).value,
+    ).toBe("5");
+    const save = screen.getByRole("button", {
+      name: "Spara kullen",
+    }) as HTMLButtonElement;
+    expect(save.disabled).toBe(false); // busy is reset: it can be tried again
+    p.add.mockImplementation(() => ok({ id: 8, litters: [litter({ id: 8 })] }));
+    fireEvent.click(save);
+    await waitFor(() => expect(p.onSaved).toHaveBeenCalled());
+  });
+
+  it("keeps the question when changing the existing litter fails", async () => {
+    const same = () =>
+      Promise.resolve({
+        ok: false as const,
+        problem: {
+          status: 409,
+          title: "Konflikt",
+          detail: "x",
+          extensions: { code: "samma_kull", breeding_id: 7 },
+        },
+      });
+    const p = setup({ add: vi.fn(same), change: vi.fn(down) });
+    await fill("4");
+    fireEvent.click(screen.getByRole("button", { name: "Spara kullen" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Ja, ändra den" }),
+    );
+    expect(await screen.findByText(FALLBACK)).toBeTruthy();
+    const again = screen.getByRole("button", {
+      name: "Ja, ändra den",
+    }) as HTMLButtonElement;
+    expect(again.disabled).toBe(false);
+    expect(p.onSaved).not.toHaveBeenCalled();
+  });
+
+  it("shows an error and can retry when confirming a count fails", async () => {
+    const change = vi.fn(down);
+    render(
+      <ConfirmCountDialog
+        litter={litter()}
+        change={change}
+        onSaved={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Bekräfta antalet" }));
+    expect(await screen.findByText(FALLBACK)).toBeTruthy();
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Bekräfta antalet",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(false);
+  });
+
+  it("offers a retry when the does could not be fetched", async () => {
+    const loadMothers = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValue({ ok: true as const, data: { honor: [] } });
+    setup({ loadMothers });
+    const retry = await screen.findAllByRole("button", { name: "Försök igen" });
+    fireEvent.click(retry[0]);
+    await waitFor(() => expect(loadMothers).toHaveBeenCalledTimes(2));
   });
 });
