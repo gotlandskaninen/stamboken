@@ -27,10 +27,21 @@ import {
 } from "@/app/(app)/stamboken/(dashboard)/inkorg/lib";
 import styles from "@/app/(app)/stamboken/(dashboard)/inkorg/inkorg.module.css";
 
-export type Found = RegistryRabbit;
+/** One of the mother's litters, as the report's lookup gives them: picking it fills in the kit's litter. */
+export type ParentLitter = {
+  id: number;
+  birth_date: string;
+  father: string | null;
+  litter_size: number | null;
+  litter_size6w: number | null;
+};
+export type Found = RegistryRabbit & { litters?: ParentLitter[] };
 /** The registry's record of a number: null when there is no such rabbit, undefined when the lookup could not tell. */
 export type Lookup = (number: string) => Promise<Found | null | undefined>;
 export type SaveResult = { ok: true } | { ok: false; problem: Problem };
+/** "Var är kaninen nu" (spec 5.8). */
+export type Where = "hos_mig" | "sald" | "dod";
+export type Parent = "mother" | "father";
 
 /** What the reading saw and what the registry says, beside a field that is not simply läst; null otherwise. */
 export function proposalHint(field?: ProposedField) {
@@ -109,11 +120,32 @@ function RegistryHint({ rabbit }: { rabbit: Found | null | undefined }) {
   );
 }
 
+const WHERE: [Where, string][] = [
+  ["hos_mig", "Hos mig"],
+  ["sald", "Såld"],
+  ["dod", "Död"],
+];
+const ADD_PARENT: Record<Parent, string> = {
+  mother: "Lägg till modern från hennes intyg nu",
+  father: "Lägg till fadern från hans intyg nu",
+};
+
+const litterLabel = (l: ParentLitter) =>
+  [
+    `Född ${l.birth_date}`,
+    l.father && `far ${l.father}`,
+    l.litter_size != null && `${l.litter_size} födda`,
+  ]
+    .filter(Boolean)
+    .join(", ");
+
 /**
  * What a certificate shows, as one registration form for the queue and the
  * yearly report: the fields, the paper number's check (a conflict opens
  * NumberConflictDialog) and the registry's record of each number, looked up
  * with `lookup`. The caller owns the values (`form`) and saves with `onSave`.
+ * The report adds its photo, the mother's litters (from its lookup), "var är
+ * kaninen nu" and a missing parent's own registration.
  */
 export function RegisterFromCertificate({
   mode,
@@ -126,6 +158,10 @@ export function RegisterFromCertificate({
   submitLabel,
   conflictHint,
   proposed = {},
+  photo,
+  where,
+  onWhere,
+  onAddParent,
   header,
   afterFields,
   buttons,
@@ -142,6 +178,10 @@ export function RegisterFromCertificate({
   /** Under the form when the paper's number is refused: what to do if the paper is right. */
   conflictHint: string;
   proposed?: Partial<Record<keyof CertForm, ProposedField>>;
+  photo?: React.ReactNode;
+  where?: Where | null;
+  onWhere?: (where: Where) => void;
+  onAddParent?: (parent: Parent, number: string) => void;
   header?: React.ReactNode;
   afterFields?: React.ReactNode;
   buttons?: React.ReactNode;
@@ -164,6 +204,13 @@ export function RegisterFromCertificate({
     mother: useRegistry(mode === "ny_kanin" ? form.mother : "", lookup),
     father: useRegistry(mode === "ny_kanin" ? form.father : "", lookup),
   };
+  const litters = registry.mother?.litters ?? [];
+  const picked = litters.find(
+    (l) =>
+      l.birth_date === form.birth_date &&
+      (l.father ?? "") === form.father.trim().toUpperCase(),
+  );
+
   const submit = (resolution?: NumberResolution) =>
     start(async () => {
       setErrors({});
@@ -186,6 +233,18 @@ export function RegisterFromCertificate({
         setErrors({ [field]: problemText(problem) });
       else setFormError(problemText(problem));
     });
+
+  const pickLitter = (id: string) => {
+    const l = litters.find((x) => String(x.id) === id);
+    if (!l) return;
+    onChange("birth_date", l.birth_date);
+    onChange("father", l.father ?? "");
+    onChange("litter_size", l.litter_size == null ? "" : String(l.litter_size));
+    onChange(
+      "litter_size6w",
+      l.litter_size6w == null ? "" : String(l.litter_size6w),
+    );
+  };
 
   const text = (
     key: keyof CertForm,
@@ -223,12 +282,26 @@ export function RegisterFromCertificate({
     key: "individual" | "mother" | "father",
     label: string,
     required = true,
-  ) =>
-    text(key, label, {
-      required,
-      placeholder: "G1274-2512",
-      helperText: <RegistryHint rabbit={registry[key]} />,
-    });
+  ) => (
+    <>
+      {text(key, label, {
+        required,
+        placeholder: "G1274-2512",
+        helperText: <RegistryHint rabbit={registry[key]} />,
+      })}
+      {key !== "individual" && registry[key] === null && onAddParent && (
+        <div className={styles.field}>
+          <button
+            type="button"
+            className="sb-btn sb-btn-secondary sb-btn-sm"
+            onClick={() => onAddParent(key, form[key].trim().toUpperCase())}
+          >
+            {ADD_PARENT[key]}
+          </button>
+        </div>
+      )}
+    </>
+  );
 
   return (
     <form
@@ -239,6 +312,7 @@ export function RegisterFromCertificate({
       }}
     >
       {header}
+      {photo}
 
       <div className={styles.fields}>
         {mode === "pappersintyg" &&
@@ -299,6 +373,26 @@ export function RegisterFromCertificate({
               />
             </Field>
             {number("mother", "Mor")}
+            {litters.length > 0 && (
+              <Field>
+                <TextField
+                  select
+                  label="Kull"
+                  size="small"
+                  fullWidth
+                  value={picked ? String(picked.id) : ""}
+                  onChange={(e) => pickLitter(e.target.value)}
+                  helperText="En vald kull fyller i födelsedatum, far och antal."
+                >
+                  <MenuItem value="">Annan kull</MenuItem>
+                  {litters.map((l) => (
+                    <MenuItem key={l.id} value={String(l.id)}>
+                      {litterLabel(l)}
+                    </MenuItem>
+                  ))}
+                </TextField>
+              </Field>
+            )}
             {number("father", "Far")}
             {text("litter_size", "Antal födda", {
               type: "number",
@@ -309,6 +403,24 @@ export function RegisterFromCertificate({
               slotProps: { htmlInput: { min: 1 } },
               helperText: "Står inte alltid på intyget.",
             })}
+            {onWhere && (
+              <Field wide>
+                <fieldset className={styles.segment}>
+                  <legend>Var är kaninen nu?</legend>
+                  {WHERE.map(([value, label]) => (
+                    <label key={value}>
+                      <input
+                        type="radio"
+                        name="where"
+                        checked={where === value}
+                        onChange={() => onWhere(value)}
+                      />{" "}
+                      {label}
+                    </label>
+                  ))}
+                </fieldset>
+              </Field>
+            )}
           </>
         )}
       </div>

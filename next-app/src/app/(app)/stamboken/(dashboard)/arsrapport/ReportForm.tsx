@@ -52,6 +52,7 @@ import { Receipt } from "./Receipt";
 import { ReportStatus, type StatusKind } from "./ReportStatus";
 import { SoldDialog } from "./SoldDialog";
 import { ConfirmCountDialog, LitterDialog } from "./LitterDialog";
+import { AddRabbitDialog, AddRabbitPrompt } from "./AddRabbit";
 import styles from "./arsrapport.module.css";
 
 export type ReportActions = Pick<
@@ -336,6 +337,9 @@ export function ReportForm({
   const litters = saved?.base === view.litters ? saved.list : view.litters;
   const setLitters = (list: Litter[]) => setSaved({ base: view.litters, list });
   const [litterOpen, setLitterOpen] = React.useState(false);
+  // "Lägg till kanin från intyget" (4b): registered at once, so the note says it stays
+  const [rabbitOpen, setRabbitOpen] = React.useState(false);
+  const [rabbitSaved, setRabbitSaved] = React.useState(false);
   const [confirming, setConfirming] = React.useState<Litter | null>(null);
   const [seenEnd, setSeenEnd] = React.useState(false);
   const [askRest, setAskRest] = React.useState(false);
@@ -726,6 +730,16 @@ export function ReportForm({
     [edit],
   );
   const onSell = React.useCallback((id: number) => setSoldFor(id), []);
+  const canAddRabbit = canEdit && !isPaper;
+  const addRabbit = canAddRabbit && (
+    <AddRabbitPrompt
+      saved={rabbitSaved}
+      onOpen={() => {
+        setRabbitSaved(false);
+        setRabbitOpen(true);
+      }}
+    />
+  );
   const onNextWeight = React.useCallback((id: number) => {
     const ids = visibleIds.current;
     const s = stateRef.current;
@@ -1601,11 +1615,14 @@ export function ReportForm({
                 </MbCard>
               </>
             ) : rabbits.length === 0 ? (
-              <p>
-                Stamboken har inga kaniner registrerade i {herd.herd} den 31
-                december {year}. Saknas kaniner? Kontakta genbanksansvarig. Har
-                du inga kaniner kvar? Välj Jag avslutar min genbank.
-              </p>
+              <>
+                <p>
+                  Stamboken har inga kaniner registrerade i {herd.herd} den 31
+                  december {year}. Saknas kaniner? Kontakta genbanksansvarig.
+                  Har du inga kaniner kvar? Välj Jag avslutar min genbank.
+                </p>
+                {addRabbit}
+              </>
             ) : (
               <div className="sb-card-flat">
                 <div className={styles.list}>
@@ -1738,6 +1755,7 @@ export function ReportForm({
                   ))}
                 </ul>
               )}
+              {addRabbit}
             </MbCard>
 
             <MbCard title="Hälsa">
@@ -2008,6 +2026,36 @@ export function ReportForm({
             onClose={() => setConfirming(null)}
           />
         </>
+      )}
+
+      {rabbitOpen && (
+        <AddRabbitDialog
+          herd={herd.herd}
+          year={year}
+          env={link ? undefined : env}
+          onClose={(registered) => {
+            setRabbitOpen(false);
+            if (!registered.length) return;
+            setRabbitSaved(true);
+            router.refresh(); // the list, with the new rabbits
+            // "var är kaninen nu" as the row's choice, for those on the list; a sale opens its dialog
+            for (const [rabbit, where] of registered) {
+              if (!rabbit.listed || !where) continue;
+              if (where === "sald") {
+                if (view.can_sell) onSell(rabbit.id);
+              } else if (where === "dod") {
+                const dod = {
+                  ar: year,
+                  manad: null,
+                  dag: null,
+                  slaktad: false,
+                  anteckning: "",
+                };
+                onRow(rabbit.id, { val: "dod", dod });
+              } else onRow(rabbit.id, { val: "kvar" });
+            }
+          }}
+        />
       )}
 
       <SoldDialog
