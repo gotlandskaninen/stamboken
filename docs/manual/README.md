@@ -62,11 +62,31 @@ stacken ovan. Två krav utöver stacken:
   (`select verification_token from digitalcertificatev2 where is_current order by id desc limit 1`).
 
 ```bash
-cd next-app && MANUAL_CERT_UUID=<uuid> pnpm exec playwright test --config playwright.manual-screenshots.config.ts
+cd next-app && MANUAL_CERT_UUID=<uuid> pnpm exec playwright test --config playwright.manual-screenshots.config.ts e2e/manual/screenshots.spec.ts
 ```
 
 Bilderna visar seedens påhittade besättningar (Visby Kaninuppfödning, G1274) och
 testanvändarna; inga riktiga medlemmar.
+
+## Guiden för matrikeln
+
+Medlemsregistret (`/medlem`) har en egen guide för matrikeladministratörer:
+`next-app/content/matrikel-guide/GUIDE.md` med skärmbilderna i samma katalog. Den
+ligger utanför `public/` eftersom den bara är till för dem som sköter matrikeln:
+`/medlem/guide` och bilderna under `/medlem/guide/bild/` visas bara för
+administratörer och matrikeladministratörer, alla andra får 404.
+`outputFileTracingIncludes` i `next.config.js` tar med katalogen i standalone-bygget.
+Den publika manualen nämner bara att guiden finns.
+
+Täckningsgrinden ovan kräver ett `<!-- route: /medlem/... -->` i guiden för varje
+`page.tsx` under `next-app/src/app/(app)/medlem/` (utom guiden själv). Skärmbilderna
+tas av `next-app/e2e/manual/matrikel-guide-screenshots.spec.ts` med påhittade
+personer, mot en nystartad seedad stack (en andra körning lägger in samma personer
+igen). Ingen nginx behövs, dev-servern räcker:
+
+```bash
+cd next-app && MANUAL_BASE_URL=http://localhost:3000 pnpm exec playwright test --config playwright.manual-screenshots.config.ts e2e/manual/matrikel-guide-screenshots.spec.ts
+```
 
 ## Framtida steg: förslag på manualtext från PR-diffen
 
