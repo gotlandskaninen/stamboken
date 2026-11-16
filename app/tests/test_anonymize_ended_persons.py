@@ -13,6 +13,7 @@ from datetime import date, datetime, timezone
 from unittest import mock
 
 import herdbook
+import utils.data_access as da
 import utils.database as db
 import utils.matrikel as matrikel
 
@@ -80,6 +81,50 @@ class TestAnonymizeEndedPersons(DatabaseTest):
         self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, 0, []))
         self.assertFalse(_erased(family) or _erased(main))
         self.assertEqual(_address(ended), "Exempelvägen 1")
+
+    def test_exactly_12_calendar_months_across_a_leap_day(self):
+        # 12 months before 2028-03-01 is 2027-03-01; 365 days would be 2027-03-02, as 2028 has a February 29.
+        due = _person(_membership(115), date(2027, 2, 28), role="huvudmedlem")
+        kept = _person(_membership(116), date(2027, 3, 1), role="huvudmedlem")
+        household = _membership(119, status="active")
+        _person(household, role="huvudmedlem")
+        left_due, left_kept = _person(household, date(2027, 2, 28)), _person(household, date(2027, 3, 1))
+        now = datetime(2028, 3, 1, 3, 55, tzinfo=timezone.utc)
+        self.assertEqual(matrikel.anonymize_ended_persons(now), (2, 0, []))
+        self.assertTrue(_erased(due) and _erased(left_due))
+        self.assertFalse(_erased(kept) or _erased(left_kept))
+
+    def test_an_anonymized_person_with_the_latest_end_date_still_counts(self):
+        ended = _membership(117)
+        family = _person(ended, OLD)
+        db.Member.create(
+            membership=ended,
+            first_name=matrikel.ANONYMIZED_FIRST_NAME,
+            last_name=matrikel.ANONYMIZED_LAST_NAME,
+            role="huvudmedlem",
+            end_date=YOUNG,
+        )
+        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, 0, []))
+        self.assertFalse(_erased(family))
+
+    def test_each_hold_role_holds_and_viewer_does_not(self):
+        for number, level in enumerate(("admin", "matrikel_admin", "manager"), start=120):
+            with self.subTest(level=level):
+                account = da.register_user(f"konto{number}", "pass")
+                account.add_role(level, self.genebanks[0].id if level == "manager" else None)
+                ended = _membership(number)
+                _person(ended, OLD, role="huvudmedlem", user=account)
+                self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, 0, [(ended.id, None, "role")]))
+                db.Membership.update(membership_status="active").where(db.Membership.id == ended.id).execute()
+                db.Member.update(end_date=None).where(db.Member.membership == ended).execute()
+
+    def test_legacy_owner_holds_a_person_who_left_an_active_household(self):
+        active = _membership(118, status="active")
+        _person(active, role="huvudmedlem")
+        left = _person(active, OLD, user=self.owner)  # owner of herds[0]
+        db.Herd.update(is_active=True).where(db.Herd.id == self.herds[0].id).execute()
+        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, 0, [(active.id, left.id, "active_herd")]))
+        self.assertFalse(_erased(left))
 
     def test_active_herd_holds_the_ended_membership(self):
         ended = _membership(104)

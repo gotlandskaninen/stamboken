@@ -576,9 +576,12 @@ def anonymize_ended_persons(now):
     Nightly job (#70): anonymize_person, with no user as actor, on the persons _due_in finds. Each membership is
     decided again and erased in one transaction that first locks every row _due_in reads: the membership (retire,
     delete and add lock it), its accounts (update_role locks them) and the herds that can hold it (update_herd
-    writes them). A change to any of them commits before the decision or waits until after the erasure. Lock
-    order membership, accounts, herds, as in _lock_for_detach. A failure rolls back that membership only and is
-    logged. Returns (anonymized persons, failed memberships, held).
+    writes them). A change to any of them commits before the decision or waits until after the erasure; a herd
+    moved INTO the membership after the herd lock lands as if moved just after the erasure. Lock order
+    membership, accounts, herds, as in _lock_for_detach. All three are NO KEY locks: they still wait for those
+    writers, but not for an insert's foreign-key check on the row, which may hold another of these rows while it
+    waits. A failure rolls back that membership only and is logged. Returns (anonymized persons, failed
+    memberships, held).
     """
     cutoff = DB_PROXY.execute_sql(
         "SELECT (%s::timestamptz - %s::interval)::date", (now, ENDED_MEMBER_RETENTION)
@@ -587,14 +590,14 @@ def anonymize_ended_persons(now):
     for membership in _memberships_with_ended_persons(cutoff):
         try:
             with DB_PROXY.atomic():
-                # NO KEY: still waits for retire, delete and add (FOR UPDATE), but not for a herd write's FK check
-                # on this row, which holds its herd lock while it waits: that order would deadlock with ours.
                 Membership.select().where(Membership.id == membership.id).for_update("FOR NO KEY UPDATE").get()
                 person_users = Member.select(Member.user).where(Member.membership == membership)
-                accounts = list(User.select().where(User.id.in_(person_users)).order_by(User.id).for_update())
+                accounts = list(
+                    User.select().where(User.id.in_(person_users)).order_by(User.id).for_update("FOR NO KEY UPDATE")
+                )
                 owned = [p["herd"] for user in accounts for p in user.privileges or [] if p["level"] == "owner"]
                 herds = Herd.select(Herd.id).where((Herd.membership == membership) | Herd.id.in_(owned))
-                list(herds.order_by(Herd.id).for_update())
+                list(herds.order_by(Herd.id).for_update("FOR NO KEY UPDATE"))
                 due, membership_held = _due_in(membership, cutoff)
                 for person in due:  # an ended person conveys no herd: its cache invalidation inside this tx is empty
                     anonymize_person(person, None)
