@@ -357,6 +357,35 @@ class TestSorting(GmailTest):
         for other in others:
             self.assertNotIn(mac, other.message)
 
+    def test_no_token_from_file_names_notes_or_questions(self):  # FA3
+        link, mac = self.quoted_link()
+        token = link.rpartition("#")[2]
+        self.holder(self.herds[0])
+        item = self.waiting()
+        self.fake.deliver(
+            message(
+                subject=f"Re: Fråga (ärende {item.id})",
+                files=[(f"{token}.txt", "text/plain", b"x")],
+                In_Reply_To=self.our_mail(item),
+            )
+        )
+        self.fake.deliver(message(files=[(f"{token}.txt", "text/plain", b"x")]))
+        self.read()
+        (event,) = item.events.where(db.InboxEvent.kind == "svar")
+        self.assertNotIn(mac, str(event.detail))
+        (new,) = [i for i in self.items() if i.id != item.id]
+        self.assertNotIn(mac, str(list(new.events.dicts())))
+        upload, _ = inbox.create_upload(self.owner, self.herds[0], f"Se {link}", [])
+        self.assertNotIn(mac, db.InboxItem.get_by_id(upload.id).message)
+        taken = self.item(0)
+        inbox.take(taken, self.helper, over=False)
+        inbox.change_state(taken, self.helper, "ofullstandig", note=f"Saknas, se {link}")
+        self.assertNotIn(mac, str(list(taken.events.dicts())))
+        asked = self.item(0)
+        inbox.take(asked, self.helper, over=False)
+        inbox_gmail.ask_breeder(asked, self.helper, f"Är det din länk? {link}")
+        self.assertNotIn(mac, str(list(asked.events.dicts())))
+
     def test_a_delivery_report_quoting_the_link_stores_no_token(self):  # FA3
         link, mac = self.quoted_link()
         row, secret = link.rpartition("#")[2].split(".")

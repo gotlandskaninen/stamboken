@@ -329,7 +329,7 @@ def _attachments(msg):
         name = part.get_filename()
         if part.is_multipart() or (part.get_content_maintype() == "text" and not name):
             continue
-        found.append((_no_nul(name or "namnlös")[:200], part.get_payload(decode=True) or b""))
+        found.append((mask_cut(_no_nul(name or "namnlös"), 200), part.get_payload(decode=True) or b""))
     return found
 
 
@@ -587,7 +587,7 @@ def ask_breeder(item, user, text, document_id=None, crop=None):
         raise inbox.InboxError(409, "Posten väntar. Arbeta vidare med den för att fråga uppfödaren.")
     if not isinstance(text, str) or not text.strip() or len(text) > inbox.MAX_NOTE:
         raise inbox.InboxError(400, f"Skriv frågan, högst {inbox.MAX_NOTE} tecken.")
-    detail = {"text": text.strip()}
+    detail = {"text": mask_tokens(text.strip())}
     if crop is not None:
         if isinstance(document_id, bool) or not isinstance(document_id, int):
             raise inbox.InboxError(400, "Ange dokumentet som utsnittet är ur.")

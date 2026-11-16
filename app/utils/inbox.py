@@ -35,6 +35,7 @@ from utils.database import (
 )
 from utils.individual_number_v2 import parse_number
 from utils.individual_policy import Role
+from utils.log_masking import mask_tokens
 from utils.mail import enqueue_mail, forget_recipient, mail_kind
 
 OPEN_STATES = ("ny", "tagen", "vantar_uppfodare", "vantar_foralder", "hos_genbanksansvarig", "ofullstandig")
@@ -238,7 +239,9 @@ def handlers():
 
 def create_upload(user, herd, message, stored):
     """The item of an upload: one document per stored image ((path, sha256, quality)), and its notices."""
-    item = InboxItem.create(kind="upload", genebank=herd.genebank_id, herd=herd, sender_user=user, message=message)
+    item = InboxItem.create(
+        kind="upload", genebank=herd.genebank_id, herd=herd, sender_user=user, message=mask_tokens(message)
+    )
     documents = [
         InboxDocument.create(item=item, original_path=path, mime="image/jpeg", sha256=sha256, quality=quality)
         for path, sha256, quality in stored
@@ -419,7 +422,7 @@ def change_state(item, user, state, *, note=None, duplicate_of=None):
         require_handler(item, user)
     if note is not None and (not isinstance(note, str) or len(note) > MAX_NOTE):
         raise InboxError(400, f"Anteckningen ska vara text, högst {MAX_NOTE} tecken.")
-    detail = {"from": item.state, "to": state, **({"note": note.strip()} if note and note.strip() else {})}
+    detail = {"from": item.state, "to": state, **({"note": mask_tokens(note.strip())} if note and note.strip() else {})}
     if state == "ofullstandig" and "note" not in detail:
         raise InboxError(400, "Skriv vad som saknas.")
     if state == "vantar_foralder":

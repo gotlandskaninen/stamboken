@@ -20,6 +20,7 @@ from PIL import Image, ImageFilter
 import utils.settings as settings
 from utils.database import DB_PROXY, InboxDocument, InboxItem
 from utils.inbox_proposal import build_proposal
+from utils.log_masking import mask_cut
 
 logger = logging.getLogger(__name__)
 
@@ -78,15 +79,15 @@ def conform(value, schema):
     """
     The model's answer as `schema` describes it, or None: an object keeps only its known keys, a value of the
     wrong type counts as missing, a string loses its NUL characters and lone surrogates (jsonb takes neither)
-    and is cut to MAX_STRING, an enum keeps only its values. Nothing the model sends reaches the database or
-    the checks otherwise.
+    and is cut to MAX_STRING, a link token is masked after both, an enum keeps only its values. Nothing the
+    model sends reaches the database or the checks otherwise.
     """
     kind = schema.get("type")
     if kind == "object" and isinstance(value, dict):
         kept = {key: conform(value.get(key), sub) for key, sub in schema["properties"].items()}
         return {key: item for key, item in kept.items() if item is not None}
     if kind == "string" and isinstance(value, str):
-        text = value.replace("\x00", "").encode("utf-8", "ignore").decode()[:MAX_STRING]
+        text = mask_cut(value.replace("\x00", "").encode("utf-8", "ignore").decode(), MAX_STRING)
         return text if text in schema.get("enum", [text]) else None
     return None
 
