@@ -399,6 +399,16 @@ const complete = (e: Entry) =>
       ? !!e.sald?.till && e.sald.manad != null
       : e.val !== null;
 
+// K1, FB6: the server deletes a kept buyer once its row is no longer a sale
+// outside the genebank, so the row lets go of the id too.
+export function withoutGoneBuyer(e: Entry): Entry {
+  if (e.sald?.kopare_id == null) return e;
+  if (e.val === "sald" && e.sald.till === "utanfor") return e;
+  const { kopare_id, ...sald } = e.sald;
+  void kopare_id;
+  return { ...e, sald };
+}
+
 // What a half-filled choice still lacks, for the row error (null when nothing
 // specific is missing).
 export function incompleteText(e: Entry | undefined): string | null {

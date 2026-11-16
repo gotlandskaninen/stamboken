@@ -20,6 +20,7 @@ import {
 import {
   PENDING_SALE_TEXT,
   type Receipt,
+  type ReportView,
   type Submission,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
 import { rabbit, view } from "./fixtures";
@@ -291,6 +292,41 @@ describe("ReportForm", () => {
     expect(
       (within(row(1)).getByLabelText("Såld") as HTMLInputElement).checked,
     ).toBe(false);
+  });
+
+  it("lets go of a kept buyer once the row is no longer a sale outside the genebank (FB6)", () => {
+    const kept = {
+      data: {
+        rabbits: {
+          "1": {
+            val: "sald",
+            sald: {
+              till: "utanfor",
+              ar: 2026,
+              manad: 6,
+              dag: null,
+              kopare_id: 7,
+            },
+          },
+        },
+      },
+      updated_at: "2026-12-31T11:00:00+00:00",
+      submission_key: null,
+      own: true,
+    } as unknown as ReportView["draft"];
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ draft: kept })}
+        actions={actions()}
+      />,
+    );
+    fireEvent.click(within(row(1)).getByRole("button", { name: "Ändra" }));
+    expect(screen.getByText(/Köparen finns sparad/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Avbryt" }));
+    choose(1, "Finns kvar");
+    choose(1, "Såld");
+    expect(screen.queryByText(/Köparen finns sparad/)).toBeNull();
   });
 
   it("holds a buyer outside the genebank in memory only: the draft and localStorage never get it", async () => {

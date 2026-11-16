@@ -30,6 +30,7 @@ import {
   stockholmDay,
   toBody,
   toDraft,
+  withoutGoneBuyer,
   todayStockholm,
   autosaveAnswerKept,
   type DraftData,
@@ -698,7 +699,10 @@ export function ReportForm({
         ...s,
         rabbits: {
           ...s.rabbits,
-          [id]: { ...(s.rabbits[id] ?? EMPTY_ENTRY), ...patch },
+          [id]: withoutGoneBuyer({
+            ...(s.rabbits[id] ?? EMPTY_ENTRY),
+            ...patch,
+          }),
         },
       }));
     },
