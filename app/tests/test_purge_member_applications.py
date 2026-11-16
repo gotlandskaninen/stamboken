@@ -62,6 +62,13 @@ class TestPurgeMemberApplications(DatabaseTest):
         self.assertEqual(_ids(), {kept})
         self.assertNotIn(gone, _ids())
 
+    def test_leap_day_application_goes_on_28_february(self):
+        leap = _application("pending", datetime(2028, 2, 29, 1, 0))
+        da.purge_member_applications(datetime(2029, 2, 27, 23, 0).astimezone())
+        self.assertIn(leap, _ids())
+        da.purge_member_applications(datetime(2029, 2, 28, 3, 50).astimezone())
+        self.assertNotIn(leap, _ids())
+
     def test_job_logs_and_closes_connection(self):
         with (
             mock.patch.object(da, "purge_member_applications", return_value=3) as purge,

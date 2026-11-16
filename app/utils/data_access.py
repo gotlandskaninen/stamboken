@@ -4361,13 +4361,16 @@ def purge_member_applications(now) -> int:
     The table is not in AUDITED_TABLES, so audit_log holds no copy; matrikel_audit has no row for these.
     Returns the rows deleted.
     """
+    # The columns are naive local times (datetime.now()): compare in that clock, and add the interval to the
+    # row's date so the 29 February case lands on 28 February instead of rounding down from today.
+    local_now = now.astimezone().replace(tzinfo=None)
     cursor = DATABASE.execute_sql(
         """
         DELETE FROM member_application
-        WHERE (status = 'rejected' AND COALESCE(reviewed_at, created_at) < %s::timestamptz - %s::interval)
-           OR (status = 'pending' AND created_at < %s::timestamptz - %s::interval)
+        WHERE (status = 'rejected' AND COALESCE(reviewed_at, created_at) + %s::interval <= %s)
+           OR (status = 'pending' AND created_at + %s::interval <= %s)
         """,
-        (now, APPLICATION_RETENTION, now, APPLICATION_RETENTION),
+        (APPLICATION_RETENTION, local_now, APPLICATION_RETENTION, local_now),
     )
     return cursor.rowcount or 0
 
