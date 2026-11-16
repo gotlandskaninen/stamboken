@@ -424,6 +424,24 @@ class ProposalApiTest(ArsrapportTest):
         self.assertEqual(self.flags("G9002")["kopt_efter_inskick"], 1)  # the rejection's submission is not the buyer's
         self.assertNotIn(str(self.a.id), self.latest(self.g9002))
 
+    def test_bought_back_rabbit_is_not_answered_by_its_older_sale(self):  # Codex round 2: A to B, and back to A
+        code = report_code.issue_code(self.g9002, self.round_, self.buyer_member, now=arsrapport.now())
+        self.assertEqual(self.decide(self.first(), "godkann").status_code, 200)  # a to G9002 on 3 October
+        self.day(1)
+        (y,) = self.rabbits(self.g9002, 1)
+        self.send(self.sald(self.a, "G9001", 2025, 11, 5), self.kvar(y, vikt=2.8), herd=self.g9002, code=code)
+        (back,) = [p for p in proposals(self.a) if p.state == "foreslagen"]
+        self.day(2)
+        self.assertEqual(self.decide(back, "godkann").status_code, 200)  # and back to G9001 on 5 November
+        self.assertEqual(self.latest()[str(self.a.id)]["val"], "sald")  # still the October sale
+        self.assertEqual(self.flags("G9001")["kopt_efter_inskick"], 1)
+        self.day(3)  # G9001 answers for a again: Finns kvar, after the approval
+        revision = self.report().revision
+        self.send(
+            self.kvar(self.a, vikt=2.8), self.kvar(self.b, vikt=2.8), self.kvar(self.c, vikt=2.8), revision=revision
+        )
+        self.assertEqual(self.flags("G9001")["kopt_efter_inskick"], 0)
+
     def test_inbox_item_links_its_own_rounds_status_view(self):  # P4
         self.round(2026)  # the genebank's newest activated round
         proposal = self.first()

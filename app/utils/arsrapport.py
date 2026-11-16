@@ -979,9 +979,9 @@ def _sale_flags(round_, reports):
     """
     The status view's sale flags per herd, from the submitted `reports` (herd id -> report) in three queries: pending
     proposals (5.14), the rabbits a rejection left to choose again, which its submission stores without a choice
-    (FB3), and approved sales on or before 31/12 into a herd whose report does not have the rabbit (FB4). Each
-    submission holds every rabbit chosen so far, and a rejection's copies the latest, so only the buyer's own choice
-    for the rabbit puts it there (P3).
+    (FB3), and approved sales on or before 31/12 into a herd whose report does not answer them yet (FB4,
+    _answers_purchase). Each submission holds every rabbit chosen so far, and a rejection's copies the latest, so
+    only the buyer's own choice for the rabbit answers it (P3).
     """
     herd_of = {report.id: herd_id for herd_id, report in reports.items()}
     open_ = list(
@@ -991,7 +991,9 @@ def _sale_flags(round_, reports):
     )
     waiting = Counter(herd_of[p.report_id] for p in open_ if p.state == "foreslagen")
     approved = list(
-        SaleProposal.select(SaleProposal.to_herd, SaleProposal.individual)
+        SaleProposal.select(
+            SaleProposal.to_herd, SaleProposal.individual, SaleProposal.sale_date, SaleProposal.decided_at
+        )
         .join(YearlyHerdReport)
         .where(
             YearlyHerdReport.round == round_.id,
@@ -1002,22 +1004,49 @@ def _sale_flags(round_, reports):
     )
     rejected = {p.report_id for p in open_ if p.state == "avvisad"}
     wanted = sorted(rejected | {reports[p.to_herd_id].id for p in approved})
-    latest = {}
+    history = {}  # report id -> [(created_at, rabbits)], in the order written
     for submission in (
-        YearlyReportSubmission.select(YearlyReportSubmission.report, YearlyReportSubmission.data)
+        YearlyReportSubmission.select(
+            YearlyReportSubmission.report, YearlyReportSubmission.data, YearlyReportSubmission.created_at
+        )
         .where(YearlyReportSubmission.report.in_(wanted))
         .order_by(YearlyReportSubmission.id)
     ):
-        latest[submission.report_id] = submission.data.get("rabbits") or {}
+        history.setdefault(submission.report_id, []).append(
+            (submission.created_at, submission.data.get("rabbits") or {})
+        )
+    latest = {report_id: written[-1][1] for report_id, written in history.items()}
     again = {
         herd_of[report_id]: sorted(int(k) for k, e in rabbits.items() if isinstance(e, dict) and e.get("val") is None)
         for report_id, rabbits in latest.items()
         if report_id in rejected
     }
     bought = Counter(
-        p.to_herd_id for p in approved if str(p.individual_id) not in latest.get(reports[p.to_herd_id].id, {})
+        p.to_herd_id for p in approved if not _answers_purchase(p, history.get(reports[p.to_herd_id].id, []))
     )
     return waiting, again, bought
+
+
+def _answers_purchase(purchase, history):
+    """
+    FB4, Codex round 2: the buyer's report answers an approved purchase when its entry for the rabbit was last
+    changed by a submission after the approval, and covers 31/12 from the purchase on: kvar, or a death or a sale on
+    or after the purchase date. An older answer, such as the rabbit's own sale before it was bought back, never does.
+    """
+    key = str(purchase.individual_id)
+    raw = history[-1][1].get(key) if history else None
+    entry = _entry(key, raw) if isinstance(raw, dict) else None
+    if entry is None or entry.val not in ("kvar", "dod", "sald"):
+        return False
+    written = history[-1][0]
+    for at, rabbits in reversed(history):  # back to the submission that changed it (a rejection's copies it)
+        if not isinstance(rabbits.get(key), dict) or _entry(key, rabbits[key]) != entry:
+            break
+        written = at
+    if purchase.decided_at is not None and written <= purchase.decided_at:
+        return False
+    when = entry.dod or entry.sald
+    return entry.val == "kvar" or partial_date(when["ar"], when["manad"], when["dag"], today()) >= purchase.sale_date
 
 
 def status_view(round_, genebank_id, with_phone=False):
