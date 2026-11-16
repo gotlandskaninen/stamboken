@@ -48,7 +48,7 @@
   margin-top: 4px;
 }
 .info {
-  background: var(--sb-himmel-soft);
+  background: var(--sb-info-soft); /* the theme's semantic information colour */
 }
 /* An information notice, not a field: no outline, an icon in front of the text. */
 .notice {
@@ -59,7 +59,7 @@
 }
 .notice svg {
   flex: none;
-  color: var(--sb-himmel);
+  color: var(--sb-info);
 }
 .warning {
   background: var(--sb-warning-soft);
@@ -261,9 +261,11 @@ button.confirmDanger:hover:not(:disabled) {
   gap: 8px;
 }
 .choice {
-  flex: 1 1 5.5em;
+  /* equal width and height whatever the label's length ("Död eller slaktad" wraps) */
+  flex: 1 1 0;
+  min-width: 5.5em;
   position: relative;
-  display: block;
+  display: flex;
 }
 .choice input {
   position: absolute;
@@ -275,6 +277,7 @@ button.confirmDanger:hover:not(:disabled) {
   cursor: pointer;
 }
 .choice span {
+  flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -604,7 +607,7 @@ button.confirmDanger:hover:not(:disabled) {
   background: var(--sb-warning-soft);
 }
 .badgeInfo {
-  background: var(--sb-himmel-soft);
+  background: var(--sb-info-soft);
   color: var(--sb-ink);
 }
 .badgeDone {
