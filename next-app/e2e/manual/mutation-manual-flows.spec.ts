@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 
-// Manualens steg som tester (docs/USER_MANUAL.md, del 1 Uppfödare). Varje
+// Manualens steg som tester (next-app/public/stamboken/manual/USER_MANUAL.md, del 1 Uppfödare). Varje
 // test.step heter som steget i manualen; ändras manualen ändras testet.
 // Kör i projektet mutation-tests (filnamnet matchar /mutation-.*/) mot den
 // seedade e2e-stacken: G1274 ägs av test-gk-owner; föräldraparet
@@ -134,7 +134,7 @@ test("Registrera unge och utfärda digitalt intyg", async ({ page }) => {
     const color = dialog.getByRole("combobox", { name: "Färg" });
     await color.click();
     await color.fill("Blå");
-    await page.getByRole("option", { name: "Blå", exact: true }).click();
+    await page.getByRole("option", { name: /^\d+ Blå(\s|$)/ }).click();
   });
   await test.step('5. Välj Intyg: "Digitalt"', async () => {
     await dialog.getByRole("combobox").filter({ hasText: "Digitalt" }).click();

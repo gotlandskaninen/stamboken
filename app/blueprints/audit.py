@@ -11,7 +11,7 @@ import logging
 import utils.data_access as da
 from flask import Blueprint, jsonify, request
 from flask_login import current_user
-from utils.database import AUDITED_TABLES
+from utils.database import AUDITED_TABLES, account_end
 
 from blueprints.common import check_genebank_access, json_login_required, manager_required, problem
 
@@ -93,6 +93,15 @@ def get_audit_log(table_name, record_id):
         from_date=from_date,
         to_date=to_date,
     )
+    if (
+        table_name == "herd"
+        and not (current_user.is_admin or current_user.is_matrikel_admin)
+        and str(record_id) not in {str(i) for i in current_user.effective_herd_ids()}  # own users: whole
+    ):
+        for entry in result["data"]:
+            for snapshot in (entry["old_data"], entry["new_data"]):
+                if snapshot and "bank_account_number" in snapshot:
+                    snapshot["bank_account_number"] = account_end(snapshot["bank_account_number"])
     return jsonify(result)
 
 

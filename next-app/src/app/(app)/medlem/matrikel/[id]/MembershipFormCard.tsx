@@ -5,6 +5,11 @@ import { Checkbox, FormControlLabel, MenuItem, Select } from "@mui/material";
 import { ConfirmDialog } from "@/app/(app)/stamboken/(dashboard)/admin/_components/ConfirmDialog";
 import { useSnackbar } from "@/components/SnackbarProvider";
 import { useNotifications } from "@/contexts/NotificationContext";
+import {
+  MEMBERSHIP_STATUS,
+  MEMBERSHIP_STATUSES,
+  type MembershipStatus,
+} from "@/lib/membershipStatus";
 import { formatPostalCode, isValidPostalCode } from "@/lib/postal";
 import { retireMembership, updateMembership } from "../actions";
 import type { MembershipPatch } from "../actions";
@@ -47,6 +52,15 @@ export function MembershipFormCard({
   // when the revalidated prop arrives — a second click in that window wrote
   // another membership_retired audit row.
   const [retired, setRetired] = useState(false);
+  const inactive = membership.membership_status === "inactive";
+  const active = membership.persons.filter((p) => p.end_date === null);
+  // Avsluta has nothing left to do once no person is active. Inaktiv *with*
+  // active persons (set through the select) can still be ended.
+  const ended = retired || (inactive && active.length === 0);
+  // The backend's RETIRED (app/utils/membership_lifecycle.py): inactive with no
+  // active huvudmedlem. It refuses a status change (409) until one is appointed.
+  const locked =
+    ended || (inactive && !active.some((p) => p.role === "huvudmedlem"));
   const postalOk = isValidPostalCode(postalCode);
   const billingPostalOk =
     !billingOn || isValidPostalCode(billing.billing_postal_code);
@@ -117,15 +131,17 @@ export function MembershipFormCard({
               </span>
               <Select
                 value={status}
-                onChange={(e) => setStatus(e.target.value)}
+                onChange={(e) => setStatus(e.target.value as MembershipStatus)}
                 aria-labelledby="ms-status-label"
                 size="small"
                 fullWidth
+                disabled={locked}
               >
-                <MenuItem value="active">Aktiv</MenuItem>
-                <MenuItem value="inactive">Inaktiv</MenuItem>
-                <MenuItem value="pending">Väntar</MenuItem>
-                <MenuItem value="friexemplar">Friexemplar</MenuItem>
+                {MEMBERSHIP_STATUSES.map((s) => (
+                  <MenuItem key={s} value={s}>
+                    {MEMBERSHIP_STATUS[s].label}
+                  </MenuItem>
+                ))}
               </Select>
             </div>
             <div>
@@ -147,6 +163,14 @@ export function MembershipFormCard({
               )}
             </div>
           </div>
+          {/* Below the row, not in the Status cell: there it pushes Medlemsnummer out of line. */}
+          {locked ? (
+            <p className={ds["ad-field-hint"]}>
+              {ended
+                ? "Ett avslutat medlemskap kan inte återaktiveras. Skapa ett nytt medlemskap i stället."
+                : "Medlemskapet saknar huvudmedlem. Utse en ny huvudmedlem för att kunna ändra status."}
+            </p>
+          ) : null}
           <p className={ds["ad-field-hint"]}>
             Ändringar auditloggas; ett nummer över märket höjer räknaren.
           </p>
@@ -367,7 +391,7 @@ export function MembershipFormCard({
             >
               {pending ? "Sparar..." : "Spara"}
             </button>
-            {membership.membership_status !== "inactive" && !retired ? (
+            {!ended ? (
               <button
                 type="button"
                 className={`sb-btn ${ds["ad-btn-danger"]}`}

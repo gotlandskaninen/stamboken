@@ -7,7 +7,7 @@ export default defineConfig({
   // prod-mode admin session) — they run ONLY via playwright.admin.config.ts,
   // never in this default CI config. Ignored globally here; owner-tests below
   // overrides testIgnore, so it repeats the admin-dir exclusion in its array.
-  // e2e/manual/screenshots.spec.ts skriver docs/manual/*.png och körs bara via
+  // e2e/manual/screenshots.spec.ts skriver public/stamboken/manual/*.png och körs bara via
   // playwright.manual-screenshots.config.ts; mutation-manual-flows.spec.ts i
   // samma mapp hör till mutation-tests nedan.
   testIgnore: [/e2e\/admin\//, /e2e\/manual\/screenshots\.spec\.ts$/],

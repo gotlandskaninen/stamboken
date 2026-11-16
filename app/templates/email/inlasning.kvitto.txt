@@ -1,0 +1,9 @@
+{% block subject %}Vi har fått dina bilder (ärende {{ item_id }}){% endblock %}
+
+{% block body %}
+Hej!
+
+Vi har fått {{ images }} {{ "bild" if images == 1 else "bilder" }}. Genbanksansvarig lägger in {{ "den" if images == 1 else "dem" }} i Stamboken.
+
+Svara på det här mejlet om du vill lägga till något. Ärendet har nummer {{ item_id }}.
+{% endblock %}

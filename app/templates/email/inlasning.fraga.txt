@@ -1,0 +1,13 @@
+{% block subject %}Fråga om ett inskick till Stamboken (ärende {{ item_id }}){% endblock %}
+
+{% block body %}
+Hej!
+
+Vi lägger in ett intyg som gäller din besättning och har en fråga:
+
+{{ text }}
+{% if crop %}
+Bilden i mejlet visar den del av fotot som frågan gäller.
+{% endif %}
+Svara på det här mejlet och behåll ärendenumret i ämnesraden.
+{% endblock %}

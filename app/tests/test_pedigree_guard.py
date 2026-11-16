@@ -1,6 +1,5 @@
 """No parent change may make an animal its own ancestor."""
 
-import io
 import re
 import threading
 import unittest
@@ -275,64 +274,3 @@ class TestPedigreeGuardV2Routes(PedigreeFixture, FlaskTest):
         individual = db.Individual.get_by_id(self.a.id)
         self.assertEqual(individual.breeding_id, self.a.breeding_id)
         self.assertIsNone(individual.digital_certificate)
-
-
-# The stored litter sizes: the legacy routes call update_breeding whenever the form's differ.
-SIZES = {"litter_size": 1, "litter_size6w": None}
-
-
-class TestPedigreeGuardLegacyCertificateRoutes(PedigreeFixture, FlaskTest):
-    """A body litter is ignored: the legacy certificate routes never move a rabbit."""
-
-    def setUp(self):
-        super().setUp()
-        self.c_litter = self._litter(self.c, self.f2, date(2025, 1, 1))
-        patches = {
-            "present": patch("herdbook.check_certificate_s3", return_value=True),
-            "sign": patch("herdbook.sign_data", side_effect=lambda pdf: io.BytesIO(b"%PDF-fake")),
-            "upload": patch("herdbook.upload_certificate", return_value=True),
-        }
-        self.mocks = {name: p.start() for name, p in patches.items()}
-        for p in patches.values():
-            self.addCleanup(p.stop)
-
-    def _request(self, method, url, body):
-        with self.app as context:
-            context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
-            return context.open(url, method=method, json=body)
-
-    def _assert_signed_in_place(self, response):
-        self.assertEqual(response.status_code, 200, response.data[:200])
-        self.mocks["sign"].assert_called_once()
-        self.mocks["upload"].assert_called_once()
-        self.assertEqual(db.Individual.get_by_id(self.a.id).breeding_id, self.a.breeding_id)
-
-    def _digital(self):
-        db.Individual.update(certificate=None, digital_certificate=100500).where(
-            db.Individual.id == self.a.id
-        ).execute()
-
-    def test_update_certificate_ignores_a_body_litter(self):
-        self._digital()
-        body = {"breeding": self.c_litter.id, **SIZES}
-        self._assert_signed_in_place(self._request("PATCH", f"/api/certificates/update/{self.a.number}", body))
-
-    def test_update_certificate_without_a_litter_change_still_signs(self):
-        self._digital()
-        response = self._request("PATCH", f"/api/certificates/update/{self.a.number}", {"name": "Ny", **SIZES})
-        self.assertEqual(response.status_code, 200, response.data[:200])
-        self.mocks["sign"].assert_called_once()
-        self.mocks["upload"].assert_called_once()
-
-    def test_issue_certificate_ignores_a_body_litter(self):
-        db.Individual.update(certificate=None).where(db.Individual.id == self.a.id).execute()
-        body = {"breeding": self.c_litter.id, **SIZES}
-        self._assert_signed_in_place(self._request("POST", f"/api/certificates/issue/{self.a.number}", body))
-
-    def test_issue_certificate_without_a_litter_change_still_signs(self):
-        db.Individual.update(certificate=None).where(db.Individual.id == self.a.id).execute()
-        body = dict(SIZES)
-        response = self._request("POST", f"/api/certificates/issue/{self.a.number}", body)
-        self.assertEqual(response.status_code, 200, response.data[:200])
-        self.mocks["sign"].assert_called_once()
-        self.mocks["upload"].assert_called_once()

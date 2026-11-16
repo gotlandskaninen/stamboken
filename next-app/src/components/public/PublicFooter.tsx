@@ -9,11 +9,14 @@ type FooterLink = {
   external?: boolean;
 };
 
-const FOOTER_COLUMNS: Array<{
-  heading: string;
-  links: FooterLink[];
-  plusgiro?: { label: string; value: string };
-}> = [
+const CONTACT_EMAIL = "info@gotlandskaninen.se";
+
+const PAYMENT = [
+  { label: "Plusgiro", value: "35 03 44-8" },
+  { label: "Swish", value: "123 095 70 50" },
+];
+
+const FOOTER_ROWS: Array<{ heading: string; links: FooterLink[] }> = [
   {
     heading: "Läs mer",
     links: [
@@ -22,7 +25,7 @@ const FOOTER_COLUMNS: Array<{
       { label: "Lantraskaninen", href: "/lantraskaninen" },
       { label: "Gotlandskanin", href: "/gotlandskanin" },
       { label: "Mellerudskanin", href: "/mellerudskanin" },
-      { label: "Bli genbank", href: "/bli-genbank" },
+      { label: "Bli genbanksbesättning", href: "/bli-genbanksbesattning" },
     ],
   },
   {
@@ -40,16 +43,23 @@ const FOOTER_COLUMNS: Array<{
   },
   {
     heading: "Kontakt",
-    links: [
-      {
-        label: "info@gotlandskaninen.se",
-        href: "mailto:info@gotlandskaninen.se",
-      },
-      { label: "Styrelse / Kontakt", href: "/styrelsen" },
-    ],
-    plusgiro: { label: "Plusgiro", value: "35 03 44-8" },
+    links: [{ label: "Styrelse / Kontakt", href: "/styrelsen" }],
   },
 ];
+
+// 12px above and below on phones: a 44px touch target.
+const footerLinkSx = {
+  display: "inline-block",
+  py: { xs: 3, md: 1 },
+  color: "ink.2",
+  fontSize: "14px",
+  textDecoration: "underline",
+  textDecorationColor: "var(--sb-line-strong)",
+  textDecorationThickness: "1px",
+  textUnderlineOffset: "3px",
+  transition: "text-decoration-color 200ms",
+  "&:hover": { textDecorationColor: "var(--sb-lera)" },
+} as const;
 
 export function PublicFooter() {
   return (
@@ -64,65 +74,110 @@ export function PublicFooter() {
         px: { xs: 6, md: 10 },
       }}
     >
+      {/* Brand left; how to reach and pay the association right */}
       <Box
         sx={{
-          display: "grid",
-          gridTemplateColumns: {
-            xs: "1fr",
-            sm: "1fr 1fr",
-            md: "2fr 1fr 1fr 1fr",
-          },
-          gap: 12,
-          mb: 12,
+          display: "flex",
+          flexDirection: { xs: "column", md: "row" },
+          justifyContent: "space-between",
+          alignItems: "flex-start",
+          gap: { xs: 5, md: 12 },
         }}
       >
-        {/* Brand column */}
-        <Box>
-          <Box sx={{ display: "flex", alignItems: "center", gap: 3, mb: 4.5 }}>
-            <Image src="/stamboken/logo.png" alt="" width={36} height={36} />
-            <Box sx={{ lineHeight: 1 }}>
-              <Typography
-                sx={{
-                  fontFamily: "'Source Serif 4', Georgia, serif",
-                  fontSize: "17px",
-                  fontWeight: 500,
-                }}
-              >
-                Föreningen Gotlandskaninen
-              </Typography>
-              <Typography
-                variant="mono"
-                sx={{
-                  fontSize: "10px",
-                  letterSpacing: "0.14em",
-                  textTransform: "uppercase",
-                  color: "ink.3",
-                  mt: 1,
-                }}
-              >
-                Sedan 1984
-              </Typography>
-            </Box>
+        <Box sx={{ display: "flex", alignItems: "center", gap: 3 }}>
+          <Image src="/stamboken/logo.png" alt="" width={36} height={36} />
+          <Box sx={{ lineHeight: 1 }}>
+            <Typography
+              sx={{
+                fontFamily: "'Source Serif 4', Georgia, serif",
+                fontSize: "17px",
+                fontWeight: 500,
+              }}
+            >
+              Föreningen Gotlandskaninen
+            </Typography>
+            <Typography
+              variant="mono"
+              sx={{
+                fontSize: "11px",
+                letterSpacing: "0.14em",
+                textTransform: "uppercase",
+                color: "ink.3",
+                mt: 1,
+              }}
+            >
+              Sedan 1984
+            </Typography>
           </Box>
-          <Typography
+        </Box>
+        <Box
+          sx={{
+            display: "flex",
+            flexDirection: "column",
+            alignItems: { md: "flex-end" },
+            gap: { md: 1.5 },
+          }}
+        >
+          <Box component="a" href={`mailto:${CONTACT_EMAIL}`} sx={footerLinkSx}>
+            {CONTACT_EMAIL}
+          </Box>
+          <Box
+            component="dl"
             sx={{
-              maxWidth: 320,
-              lineHeight: 1.55,
-              color: "ink.2",
-              fontSize: "14px",
+              m: 0,
+              display: "flex",
+              flexDirection: { xs: "column", md: "row" },
+              gap: { xs: 1.5, md: 7 },
             }}
           >
-            En ideell förening som sedan 1984 bevarar två svenska lantraser av
-            kanin – gotlandskanin och mellerudskanin – genom genbank, stambok
-            och aktivt avelsarbete.
-          </Typography>
+            {PAYMENT.map((row) => (
+              <Box
+                key={row.label}
+                sx={{ display: "flex", alignItems: "baseline", columnGap: 4 }}
+              >
+                <Typography
+                  component="dt"
+                  sx={{ fontSize: "13px", color: "ink.2" }}
+                >
+                  {row.label}
+                </Typography>
+                <Typography
+                  component="dd"
+                  variant="mono"
+                  sx={{
+                    m: 0,
+                    fontSize: "14px",
+                    fontWeight: 500,
+                    whiteSpace: "nowrap",
+                    color: "ink.main",
+                  }}
+                >
+                  {row.value}
+                </Typography>
+              </Box>
+            ))}
+          </Box>
         </Box>
+      </Box>
 
-        {/* Link columns */}
-        {FOOTER_COLUMNS.map((col) => (
-          <Box key={col.heading}>
-            <Typography variant="eyebrow" sx={{ mb: 3, display: "block" }}>
-              {col.heading}
+      {/* One row per group: label left, links flowing right. Phones: the
+          label on top and the links in two columns. */}
+      <Box sx={{ mt: 8, borderTop: 1, borderColor: "line.main" }}>
+        {FOOTER_ROWS.map((row) => (
+          <Box
+            key={row.heading}
+            sx={{
+              display: { md: "grid" },
+              gridTemplateColumns: { md: "140px 1fr" },
+              alignItems: "baseline",
+              pt: { xs: 5, md: 3.5 },
+              pb: { xs: 2, md: 3.5 },
+              borderBottom: 1,
+              borderColor: "line.main",
+            }}
+          >
+            <Typography variant="eyebrow" sx={{ display: "block" }}>
+              {row.heading}
             </Typography>
             <Box
               component="ul"
@@ -130,89 +185,37 @@ export function PublicFooter() {
                 listStyle: "none",
                 p: 0,
                 m: 0,
-                display: "grid",
-                gap: 2,
+                mt: { xs: 1, md: 0 },
+                display: { xs: "grid", md: "flex" },
+                gridTemplateColumns: "1fr 1fr",
+                flexWrap: "wrap",
+                columnGap: { xs: 6, md: 7 },
               }}
             >
-              {col.links.map((link) =>
-                link.href.startsWith("mailto:") || link.external ? (
+              {row.links.map((link) =>
+                link.external ? (
                   <li key={link.href}>
                     <Box
                       component="a"
                       href={link.href}
-                      {...(link.external
-                        ? { target: "_blank", rel: "noopener noreferrer" }
-                        : {})}
-                      sx={{
-                        color: "ink.main",
-                        textDecoration: "underline",
-                        textDecorationColor: "line.strong",
-                        textUnderlineOffset: "3px",
-                        textDecorationThickness: "1px",
-                        fontSize: "14px",
-                        transition: "text-decoration-color 200ms",
-                        "&:hover": { textDecorationColor: "lera.main" },
-                      }}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      sx={footerLinkSx}
                     >
                       {link.label}
                     </Box>
                   </li>
                 ) : (
                   <li key={link.href}>
-                    <Link
-                      href={link.href}
-                      style={{
-                        color: "#3D362C",
-                        textDecoration: "underline",
-                        textUnderlineOffset: "3px",
-                        fontSize: "14px",
-                      }}
-                    >
-                      {link.label}
+                    <Link href={link.href} style={{ textDecoration: "none" }}>
+                      <Box component="span" sx={footerLinkSx}>
+                        {link.label}
+                      </Box>
                     </Link>
                   </li>
                 ),
               )}
             </Box>
-            {col.plusgiro && (
-              <Box
-                sx={{
-                  mt: 4.5,
-                  px: 3,
-                  py: 2.5,
-                  bgcolor: "paper.2",
-                  border: 1,
-                  borderColor: "line.main",
-                  borderRadius: "8px",
-                  maxWidth: 180,
-                }}
-              >
-                <Typography
-                  variant="mono"
-                  sx={{
-                    fontSize: "10px",
-                    letterSpacing: "0.14em",
-                    textTransform: "uppercase",
-                    // ink.3 on paper.2 is 4.31:1; AA needs 4.5 for small text.
-                    color: "ink.2",
-                    display: "block",
-                  }}
-                >
-                  {col.plusgiro.label}
-                </Typography>
-                <Typography
-                  variant="mono"
-                  sx={{
-                    fontSize: "14px",
-                    fontWeight: 500,
-                    mt: 0.5,
-                    color: "ink.main",
-                  }}
-                >
-                  {col.plusgiro.value}
-                </Typography>
-              </Box>
-            )}
           </Box>
         ))}
       </Box>
@@ -220,9 +223,7 @@ export function PublicFooter() {
       {/* Bottom bar */}
       <Box
         sx={{
-          borderTop: 1,
-          borderColor: "line.main",
-          pt: 6,
+          pt: { xs: 6, md: 5 },
           display: "flex",
           gap: { xs: 4, md: 5 },
           alignItems: "center",
@@ -235,6 +236,7 @@ export function PublicFooter() {
           sx={{
             display: "flex",
             gap: 5,
+            alignItems: "center",
             fontSize: "12px",
             color: "ink.3",
             flexWrap: "wrap",
@@ -244,7 +246,11 @@ export function PublicFooter() {
           <Box
             component="a"
             href="https://github.com/gotlandskaninen/stamboken"
-            sx={{ color: "inherit" }}
+            sx={{
+              color: "inherit",
+              display: "inline-block",
+              py: { xs: 3, md: 0 },
+            }}
           >
             Källkod (AGPL-3.0)
           </Box>

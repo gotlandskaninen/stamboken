@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta
 from peewee import DoesNotExist, fn
 
 from utils import number_assets
+from utils.certificate_lifecycle import CertState, Event, check
 from utils.database import (
     DATABASE,
     Breeding,
@@ -460,6 +461,7 @@ def _create_individual_record(
     if paper_certificate:
         individual.certificate = paper_certificate
         individual.save()
+        check(CertState.NONE, Event.REGISTER_WITH_PAPER, individual.cert_state())
 
     record_herd_tracking(individual, herd, breeding.birth_date or datetime.now().date(), "BIRTH", signature)
 

@@ -8,7 +8,8 @@ interface VerificationResponse {
   individual_name: string;
   individual_number: string;
   genebank: string;
-  digital_certificate: number;
+  // null once a paper certificate has replaced the digital one, or the number was lost (ADR-0019)
+  digital_certificate: number | null;
   issued_at: string;
   is_current: boolean;
   replaced_by_date: string | null;
@@ -74,6 +75,8 @@ export default async function VerifieraPage({
 
   const isIdCard = data.certificate_type === "id_card";
   const superseded = !data.is_current;
+  // No date: no newer digital certificate, a paper certificate replaced it.
+  const replaced = data.replaced_by_date !== null;
 
   if (superseded) {
     return (
@@ -81,19 +84,25 @@ export default async function VerifieraPage({
         <main className="vf-body">
           <span className="badge badge-warn">
             <span className="dot" />
-            Ersatt intyg
+            {replaced ? "Ersatt intyg" : "Gäller inte längre"}
           </span>
-          <h1>Äkta, men ersatt</h1>
+          <h1>
+            {replaced ? "Äkta, men ersatt" : "Äkta, men gäller inte längre"}
+          </h1>
           <p className="sub">
-            Intyget är äkta och utfärdat i Stamboken, men ett{" "}
-            <strong>nyare intyg</strong> har utfärdats för denna kanin
-            {data.replaced_by_date && (
+            {data.replaced_by_date ? (
               <>
-                {" "}
-                <strong>{svDate(data.replaced_by_date)}</strong>
+                Intyget är äkta och utfärdat i Stamboken, men ett{" "}
+                <strong>nyare intyg</strong> har utfärdats för denna kanin{" "}
+                <strong>{svDate(data.replaced_by_date)}</strong>.
               </>
-            )}
-            . Det här dokumentet är inte längre den aktuella versionen.
+            ) : (
+              <>
+                Intyget är äkta och utfärdat i Stamboken, men det{" "}
+                <strong>gäller inte längre</strong> för denna kanin.
+              </>
+            )}{" "}
+            Det här dokumentet är inte längre den aktuella versionen.
           </p>
           <div className="ind-card">
             <div className="num">{data.individual_number}</div>
@@ -102,10 +111,12 @@ export default async function VerifieraPage({
               <span className="l">Ras</span>
               <span className="v">{data.genebank}</span>
             </div>
-            <div className="frow">
-              <span className="l">Intygsnummer</span>
-              <span className="v">{data.digital_certificate}</span>
-            </div>
+            {data.digital_certificate !== null && (
+              <div className="frow">
+                <span className="l">Intygsnummer</span>
+                <span className="v">{data.digital_certificate}</span>
+              </div>
+            )}
             <div className="frow">
               <span className="l">Detta intyg</span>
               <span className="v">{svDate(data.issued_at)}</span>
@@ -127,7 +138,9 @@ export default async function VerifieraPage({
           </div>
         </main>
         <footer className="vf-foot">
-          Be säljaren om den senaste versionen av intyget.
+          {replaced
+            ? "Be säljaren om den senaste versionen av intyget."
+            : "Be säljaren om kaninens gällande intyg."}
           <span className="tok">token {uuid}</span>
         </footer>
       </>

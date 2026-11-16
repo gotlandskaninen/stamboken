@@ -39,6 +39,7 @@ describe("existing exports are unchanged (UserEditClient imports these)", () => 
     expect(rowTitle("hbuser", "mass-logout-2026-08-21T10:00:00")).toBe(
       "Massutloggning — alla sessioner",
     );
+    expect(rowTitle("audit_log", "purge-ip-20261114T034500Z")).toBe("Gallring av IP-adresser");
   });
 });
 

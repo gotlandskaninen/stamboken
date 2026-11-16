@@ -1,0 +1,39 @@
+# Not named *.conf on purpose: ./nginx is also mounted as user_conf.d (dev, and the
+# deploy script copies only ./nginx), and a *.conf here would be included inside http.
+# Mounted over /etc/nginx/nginx.conf in the production compose files.
+# Replaces the image's nginx.conf (jonasal/nginx-certbot) to put the access log
+# format on http level, so port 80, unknown host names and every vhost share it.
+user  nginx;
+worker_processes  auto;
+
+error_log  /var/log/nginx/error.log notice;
+pid        /run/nginx.pid;
+
+events {
+    worker_connections  1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    # The path as requested, without the query string, even when nginx rewrites
+    # $uri internally. No referer and no cookies are logged.
+    map $request_uri $log_path {
+        ~^(?<p>[^?]*)  $p;
+        default        $request_uri;
+    }
+
+    log_format access_json escape=json
+        '{"time":"$time_iso8601","ip":"$remote_addr","host":"$host",'
+        '"method":"$request_method","path":"$log_path","status":"$status",'
+        '"bytes":$body_bytes_sent,"request_time":$request_time,'
+        '"user_agent":"$http_user_agent"}';
+
+    access_log  /var/log/nginx/access.log  access_json;
+
+    sendfile        on;
+    keepalive_timeout  65;
+
+    include /etc/nginx/conf.d/*.conf;
+}

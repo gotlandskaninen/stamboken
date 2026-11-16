@@ -1,6 +1,6 @@
 import { test, expect, type Page } from "@playwright/test";
 
-// Manualens "Lägga till en kanin utan registrerad kull" (docs/USER_MANUAL.md, del 1)
+// Manualens "Lägga till en kanin utan registrerad kull" (next-app/public/stamboken/manual/USER_MANUAL.md, del 1)
 // mot den seedade e2e-stacken. Filnamnet matchar inget mutation-/public-mönster, så
 // specen körs i projektet owner-tests (test-gk-owner, äger G1274).
 // Föräldrarna Visby Vera × Visby Test-04 används inte av någon annan spec. G1274:s
@@ -79,7 +79,9 @@ test("Lägga till en kanin utan registrerad kull", async ({ page }) => {
     // Kön är första listan, Intyg den som visar "Digitalt" (förvalt här).
     await dialog.getByRole("combobox").filter({ hasText: "Hona" }).click();
     await page.getByRole("option", { name: "Hona" }).click();
-    await dialog.getByRole("textbox", { name: /^Färg/ }).first().fill("Blå");
+    const color = dialog.getByRole("combobox", { name: /^Färg/ });
+    await color.fill("Viltgrå");
+    await page.getByRole("option", { name: /^\d+ Viltgrå(\s|$)/ }).click();
   });
   await test.step('5. Välj Intyg "Papper", skriv Intygsnummer och Individnummer på pappret', async () => {
     await dialog.getByRole("combobox").filter({ hasText: "Digitalt" }).click();

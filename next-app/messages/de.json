@@ -8,6 +8,8 @@
     "search": "Suchen..."
   },
   "sidebar": {
+    "minaInskick": "Meine Einsendungen",
+    "inkorg": "Eingang",
     "minBesattning": "Mein Bestand",
     "genetik": "Genetik",
     "provparning": "Probepaarung",
@@ -279,6 +281,7 @@
     "promoteTitleWithNumber": "Kaninchen registrieren — {{number}}",
     "promoteSuccess": "{{number}} registriert",
     "promoteError": "Das Kaninchen konnte nicht registriert werden",
+    "suggestionError": "Der Nummernvorschlag konnte nicht abgerufen werden",
     "certificateError": "Das Zertifikat konnte nicht erstellt werden: {{error}}",
     "registerAnother": "Ein weiteres Jungtier im Wurf registrieren",
     "allAdded": "Alle {{count}} Jungtiere wurden zur Wurfliste hinzugefügt.",

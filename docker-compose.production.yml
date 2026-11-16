@@ -100,22 +100,18 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - SESSION_REDIS_URL=redis://redis:6379/2
       - RATELIMIT_STORAGE_URL=redis://redis:6379/3
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "20m"
-        max-file: "10"
     volumes:
       - type: bind
         source: ./config
         target: /config
         read_only: true
       - type: bind
-        source: ./logs
-        target: /logs
-      - type: bind
         source: ./uppladdningar
         target: /app/uppladdningar
+      # Originals of the intake queue: the api only, never nginx, which serves all of uppladdningar.
+      - type: bind
+        source: ./skyddat
+        target: /app/skyddat
     depends_on:
       database:
         condition: service_healthy
@@ -171,21 +167,11 @@ services:
       # registration on the demo returns a transient certificate_error instead
       # of a stored PDF. Same S3 dependency the /v2/certificates/issue endpoint
       # already had — enabling the promote-flow digital option only surfaces it.
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "20m"
-        max-file: "10"
     volumes:
       - type: bind
         source: ./config
         target: /config
         read_only: true
-      - type: bind
-        # Own dir: the genebank CSV logs don't record the instance, so demo
-        # edits must not land in production's logs. Create it like ./logs.
-        source: ./logs-test
-        target: /logs
       # Read-only: the demo shares this host dir with the production api, and a
       # photo upload writes the fixed path kaniner/<number>.jpg that nginx serves.
       # So demo uploads (photos, profile pictures) and v2 certificate issuance
@@ -194,6 +180,11 @@ services:
         source: ./uppladdningar
         target: /app/uppladdningar
         read_only: true
+      # The demo's own intake queue files, never production's: its nightly sweep removes files its own
+      # database does not name. Create it like ./skyddat (writable by the image's uid 1001).
+      - type: bind
+        source: ./skyddat-test
+        target: /app/skyddat
     depends_on:
       database:
         condition: service_healthy
@@ -254,7 +245,9 @@ services:
       # Certbot hanterar flera domäner
       - STAGING=${CERTBOT_STAGING:-0}
     volumes:
+      - ./nginx/nginx.main:/etc/nginx/nginx.conf:ro
       - ./nginx/production/herdbook-production.conf:/etc/nginx/user_conf.d/herdbook.conf:ro
+      - ./nginx/production/stamboken-legacy.conf:/etc/nginx/user_conf.d/stamboken-legacy.conf:ro
       - ./nginx/legacy-frontend-prod:/etc/nginx/legacy-frontend-prod:ro
       - ./nginx/legacy-frontend-test:/etc/nginx/legacy-frontend-test:ro
       - ./letsencrypt:/etc/letsencrypt
@@ -271,5 +264,24 @@ services:
       - api-test
   # S3: S3-kompatibel lagring, nycklar i .docker/api-variables.env
 
+  # ============================================
+  # Ollama - bildtolkningen av intyg (docs/inkorg.md, "Tolkning")
+  # Startar bara med profilen tolkning. Ingen publicerad port: bara api når den,
+  # på http://ollama:11434. Modellen hämtas en gång till volymen.
+  # ============================================
+  ollama:
+    # Låst till version och digest. Höjs för hand, i båda compose-filerna, efter ett
+    # prov av tolkningen: en ny Ollama kan läsa intygen annorlunda.
+    image: ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592
+    restart: always
+    profiles:
+      - tolkning
+    cpus: 6
+    environment:
+      - OLLAMA_KEEP_ALIVE=5m
+    volumes:
+      - ollama_models:/root/.ollama
+
 volumes:
   redis_data:
+  ollama_models:

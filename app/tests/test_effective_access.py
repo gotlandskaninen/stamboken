@@ -177,12 +177,159 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
         self.assertEqual(self.herds[0].filtered_dict(self.viewer).get("email"), "o@h1")  # "authenticated"
         self.assertEqual(self.herds[1].filtered_dict(self.viewer).get("name"), "owner2")  # "authenticated"
 
+    def test_bank_fields_never_shown_to_other_members(self):
+        """Issue #33: stored 'authenticated'/'public' must not expose the bank details."""
+        herd = self.herds[1]
+        for level in ("authenticated", "public"):
+            herd.bank_account_number, herd.bank_name = "1234-5", "Bank"
+            herd.bank_account_number_privacy = herd.bank_name_privacy = level
+            herd.save()
+            for user in (self.viewer, None):
+                data = herd.filtered_dict(user)
+                self.assertNotIn("bank_account_number", data)
+                self.assertNotIn("bank_name", data)
+            data = herd.filtered_dict(self.admin)
+            self.assertEqual(data.get("bank_account_number"), "1234-5")
+            self.assertEqual(data.get("bank_name"), "Bank")
+            data = herd.filtered_dict(self.manager)
+            self.assertEqual(data.get("bank_account_number"), "••45")
+            self.assertEqual(data.get("bank_name"), "Bank")
+
+    def test_bank_fields_still_shown_to_herd_user(self):
+        user = self._caretaker_with_grant("bank-caretaker@example.com", self.herds[1])
+        self.herds[1].bank_account_number, self.herds[1].bank_name = "1234-5", "Bank"
+        self.herds[1].bank_account_number_privacy = self.herds[1].bank_name_privacy = "public"
+        self.herds[1].save()
+        self.assertEqual(self.herds[1].filtered_dict(user).get("bank_account_number"), "1234-5")
+        self.assertEqual(self.herds[1].filtered_dict(user).get("bank_name"), "Bank")
+
+    def test_update_herd_ignores_bank_privacy(self):
+        herd = self.herds[0]
+        result = da.update_herd(
+            {"id": herd.id, "www": "w", "bank_account_number_privacy": "public", "bank_name_privacy": "authenticated"},
+            self.admin.uuid,
+        )
+        self.assertEqual(result, {"status": "updated"})
+        herd = db.Herd.get(herd.id)
+        self.assertEqual(herd.bank_account_number_privacy, "private")
+        self.assertEqual(herd.bank_name_privacy, "private")
+
+    def test_update_herd_ignores_bank_privacy_as_manager_even_if_stored_value_is_bad(self):
+        herd = self.herds[0]
+        herd.bank_account_number_privacy = "Public "  # invalid legacy value echoed back by the SPA
+        herd.save()
+        result = da.update_herd(
+            {"id": herd.id, "www": "w", "bank_account_number_privacy": "Public "},
+            self.manager.uuid,
+        )
+        self.assertEqual(result, {"status": "updated"})
+        self.assertEqual(db.Herd.get(herd.id).www, "w")
+
+    def test_manager_echoing_the_masked_account_does_not_overwrite_it(self):
+        """The legacy SPA PATCHes back what it read: '••45' must not replace the stored account."""
+        herd = self.herds[1]
+        herd.bank_account_number = "1234-5"
+        herd.save()
+        echoed = herd.filtered_dict(self.manager)
+        self.assertEqual(echoed["bank_account_number"], "••45")
+        echoed.update(www="new-www", id=herd.id)
+        self.assertEqual(da.update_herd(echoed, self.manager.uuid), {"status": "updated"})
+        herd = db.Herd.get_by_id(herd.id)
+        self.assertEqual((herd.bank_account_number, herd.www), ("1234-5", "new-www"))
+
+    def test_partly_edited_mask_is_refused_and_the_account_kept(self):
+        herd = self.herds[1]
+        herd.bank_account_number = "1234-5"
+        herd.save()
+        for value in ("•45", "••8327-9", "••4"):
+            with self.subTest(value=value):
+                result = da.update_herd({"id": herd.id, "www": "w", "bank_account_number": value}, self.manager.uuid)
+                self.assertEqual(result["status"], "error")
+                self.assertEqual(db.Herd.get_by_id(herd.id).bank_account_number, "1234-5")
+
+    def test_manager_may_enter_a_new_account_but_not_blank_it(self):
+        herd = self.herds[1]
+        herd.bank_account_number = "1234-5"
+        herd.save()
+        for value in ("", "45", "abc"):
+            with self.subTest(value=value):
+                result = da.update_herd({"id": herd.id, "bank_account_number": value}, self.manager.uuid)
+                self.assertEqual(result["status"], "error")
+                self.assertEqual(db.Herd.get_by_id(herd.id).bank_account_number, "1234-5")
+        result = da.update_herd({"id": herd.id, "bank_account_number": "9876-54"}, self.manager.uuid)
+        self.assertEqual(result, {"status": "updated"})
+        self.assertEqual(db.Herd.get_by_id(herd.id).bank_account_number, "9876-54")
+        # An admin sees the whole account and may clear it.
+        self.assertEqual(da.update_herd({"id": herd.id, "bank_account_number": ""}, self.admin.uuid)["status"], "updated")
+
+    def test_yearly_report_shows_the_whole_account_for_the_readers_own_herd_only(self):
+        a, b = self.herds[0], self.herds[1]
+        for herd in (a, b):
+            herd.bank_account_number = "1234-5"
+            herd.save()
+        rnd = db.YearlyReportRound.create(
+            report_year=2025, start_date=date(2025, 12, 31), end_date=date(2026, 3, 30), created_by=self.admin
+        )
+        for herd in (a, b):
+            db.YearlyHerdReport.create(
+                herd=herd, report_date=date(2026, 1, 1), generated_by=self.manager, name="2025", data="{}",
+                publish=False, publish_tel=False, publish_email=False, publish_address=False, round=rnd,
+            )  # fmt: skip
+        reports = da.get_yearly_reports(rnd.id, a.genebank_id, False, {a.id})
+        accounts = {r["herd"]: r["bank_account"] for r in reports}
+        self.assertEqual(accounts, {a.herd: "1234-5", b.herd: "••45"})
+
+    def test_account_end(self):
+        for value, expected in (
+            ("8327-9, 123 456 789 12", "••12"),
+            ("1234-5", "••45"),
+            ("7", "••7"),
+            ("ingen siffra", "••"),
+            ("", ""),
+            (None, None),
+        ):
+            with self.subTest(value=value):
+                self.assertEqual(db.account_end(value), expected)
+
+    def test_add_herd_ignores_bank_privacy(self):
+        result = da.add_herd(
+            {"herd": "ZZ99", "genebank": self.genebanks[0].id, "bank_name_privacy": "public"},
+            self.admin.uuid,
+        )
+        self.assertEqual(result, {"status": "success"})
+        herd = db.Herd.get(db.Herd.herd == "ZZ99")
+        self.assertEqual(herd.bank_name_privacy, "private")
+
+    def test_matrikel_admin_sees_the_whole_account(self):
+        self.herds[1].bank_account_number = "1234-5"
+        self.herds[1].save()
+        user = self._user("matrikel@example.com")
+        user.add_role("matrikel_admin", None)
+        self.assertEqual(self.herds[1].filtered_dict(user).get("bank_account_number"), "1234-5")
+
+    def test_yearly_report_cuts_the_account_unless_full_account(self):
+        herd = self.herds[0]
+        herd.bank_account_number = "1234-5"
+        herd.save()
+        rnd = db.YearlyReportRound.create(
+            report_year=2025, start_date=date(2025, 12, 31), end_date=date(2026, 3, 30), created_by=self.admin
+        )
+        db.YearlyHerdReport.create(
+            herd=herd, report_date=date(2026, 1, 1), generated_by=self.manager, name="2025", data="{}",
+            publish=False, publish_tel=False, publish_email=False, publish_address=False, round=rnd,
+        )  # fmt: skip
+        gb = herd.genebank_id
+        self.assertEqual(da.get_yearly_reports(rnd.id, gb)[0]["bank_account"], "••45")
+        self.assertEqual(da.get_yearly_reports(rnd.id, gb, True)[0]["bank_account"], "1234-5")
+        self.assertIn("••45", da.export_yearly_reports_csv(rnd.id, gb))
+        self.assertNotIn("1234-5", da.export_yearly_reports_csv(rnd.id, gb))
+
     def test_filtered_dict_manager_of_genebank_gets_private_level(self):
         self.herds[1].bank_account_number = "1234-5"  # bank_account_number_privacy="private"
         self.herds[1].save()
         data = self.herds[1].filtered_dict(self.manager)
         self.assertEqual(data.get("www"), "www2")  # www_privacy="private"
-        self.assertEqual(data.get("bank_account_number"), "1234-5")
+        self.assertEqual(data.get("bank_account_number"), "••45")
 
     def test_filtered_dict_manager_of_other_genebank_gets_public_level(self):
         user = self._user("othermanager@example.se")

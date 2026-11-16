@@ -42,6 +42,7 @@ import { PedigreeSection } from "@/components/individual/PedigreeSection";
 import { HealthSection } from "@/components/individual/HealthSection";
 import { HerdHistorySection } from "@/components/individual/HerdHistorySection";
 import { NotesSection } from "@/components/individual/NotesSection";
+import { PaperCertificate } from "@/components/individual/PaperCertificate";
 import { EditSaveBar } from "@/components/individual/EditSaveBar";
 import { ReportDeathDialog } from "@/components/individual/ReportDeathDialog";
 import { SellRabbitDialog } from "@/components/individual/SellRabbitDialog";
@@ -253,6 +254,7 @@ interface Props {
   pedigree?: PedigreeNode | null;
   history: HerdTrackingHistory | null;
   auditEntries?: AuditLogEntry[];
+  hasPaperCertificate?: boolean;
   geneticsSlot?: React.ReactNode;
 }
 
@@ -261,6 +263,7 @@ export function IndividualDetail({
   pedigree,
   history,
   auditEntries = [],
+  hasPaperCertificate = false,
   geneticsSlot,
 }: Props) {
   const searchParams = useSearchParams();
@@ -718,6 +721,9 @@ export function IndividualDetail({
                 setCorrectionOpen(true);
               }}
             />
+            {individual.number && hasPaperCertificate && (
+              <PaperCertificate number={individual.number} />
+            )}
             <NotesSection
               individual={individual}
               isEditing={isEditing}
