@@ -75,5 +75,6 @@ jobs:
             -e SESSION_REDIS_URL=redis://localhost:6379/2 \
             -e AUTHCONFIGFILE=/app/tests/auth.ini.test \
             -e CI=true \
+            -v "$PWD/nginx:/nginx:ro" \
             herdbook-api-test:latest \
             pytest /app/tests/ -v --tb=short -n auto

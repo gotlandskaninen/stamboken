@@ -3,7 +3,6 @@
 import logging
 import os
 import re
-from urllib.parse import unquote
 
 # Server socket
 bind = "0.0.0.0:9090"
@@ -29,18 +28,20 @@ SCHEDULER_LOCK = "/tmp/herdbook_scheduler.lock"
 # Must match _TOKEN, _PREFIX and mask_tokens in utils/log_masking.py; repeated because this file is loaded before
 # the app is importable.
 _LINK_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])(\d{1,19})\.[A-Za-z0-9_-]{22}(?![A-Za-z0-9_-])")
-_LINK_PREFIX = re.compile(r"(?i)((?<!/v2)/rapport/|/api/v2/rapport/oppna/)[^\s?\"']*")
+
+
+def _tolerant(text):
+    return "".join(f"(?:{re.escape(char)}|%{ord(char):02x})" for char in text)
+
+
+_LINK_PREFIX = re.compile(
+    rf"(?i)((?<!/v2){_tolerant('/rapport/')}|{_tolerant('/api')}(?:-test)?{_tolerant('/v2/rapport/oppna/')})"
+    r"(?:[^\s?\"']|%3f)*"
+)
 
 
 def _mask(text):
-    decoded = text
-    for _ in range(3):
-        decoded, previous = unquote(decoded), decoded
-        if decoded == previous:
-            break
-    if _LINK_PREFIX.search(decoded):
-        text = _LINK_PREFIX.sub(r"\1***", decoded)
-    return _LINK_TOKEN.sub(r"\1.***", text)
+    return _LINK_TOKEN.sub(r"\1.***", _LINK_PREFIX.sub(r"\1***", text))
 
 
 class _TokenMaskFilter(logging.Filter):

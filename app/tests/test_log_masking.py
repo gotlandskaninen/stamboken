@@ -72,16 +72,33 @@ class TestLogMasking(unittest.TestCase):
             f"/%72apport/{TOKEN}",
             f"/rapport/4711.{'%61' * 22}",
             f"/rapport%2F{TOKEN}",
-            f"/%2572apport/{TOKEN}",
             f"/api/v2/rapport/oppna/{TOKEN}",
+            f"/api-test/v2/rapport/oppna/{TOKEN}",
+            f"/api/%76%32/rapport/oppna/{TOKEN}",
             "/api/v2/rapport/oppna/4711.truncated",
             "/RAPPORT/4711.truncated",
+            f"/rapport/4711.%3F{'b' * 22}",  # an encoded ? inside the tail
+            f"/rapport/4711.%3f{'b' * 22}",
         ):
             with self.subTest(path=path):
                 masked = mask_tokens(f"GET {path} HTTP/1.1")
-                self.assertTrue(masked.endswith("/*** HTTP/1.1"), masked)
-                self.assertNotIn("aaaa", masked)
-                self.assertNotIn("truncated", masked)
+                self.assertIn("***", masked)
+                self.assertTrue(masked.endswith(" HTTP/1.1"), masked)
+                for secret in ("aaaa", "bbbb", "truncated", "%61"):
+                    self.assertNotIn(secret, masked)
+
+    def test_masking_never_returns_decoded_text(self):
+        """M2: an encoded new line in a header or a query must not become a new log line."""
+        for text in (
+            "User-Agent: /rapport/%0Aforged line",
+            "GET /rapport/x?q=%0Aforged HTTP/1.1",
+            "GET /x?q=/rapport/%0D%0Aforged HTTP/1.1",
+        ):
+            with self.subTest(text=text):
+                masked = mask_tokens(text)
+                self.assertNotIn("\n", masked)
+                self.assertNotIn("\r", masked)
+        self.assertEqual(mask_tokens("GET /x%0Ay HTTP/1.1"), "GET /x%0Ay HTTP/1.1")  # untouched without a link
 
     def test_other_rapport_routes_stay_readable(self):
         for text in ("GET /api/v2/rapport/mina HTTP/1.1", "GET /rapport?kod=3 HTTP/1.1"):
@@ -94,8 +111,8 @@ class TestLogMasking(unittest.TestCase):
         spec.loader.exec_module(conf)
         for line in (
             f"GET /rapport/{TOKEN} HTTP/1.1",
-            f"GET /%72apport/{TOKEN} HTTP/1.1",
             "GET /rapport/4711.cut HTTP/1.1",
+            f"GET /rapport/4711.%3F{'b' * 22} HTTP/1.1",
         ):
             record = logging.LogRecord("gunicorn.access", logging.INFO, "", 0, "%(r)s", ({"r": line},), None)
             conf._TokenMaskFilter().filter(record)  # pylint: disable=protected-access
