@@ -47,6 +47,7 @@ import {
 import { RowActions } from "../QueueControls";
 import { AskBreeder } from "./AskBreeder";
 import { CertificateForm } from "./CertificateForm";
+import { ReportPhotoCheck } from "./ReportPhotoCheck";
 import { MailFacts, SenderUnconfirmed } from "./MailFacts";
 import { PhotoViewer } from "./PhotoViewer";
 import { SalePanel } from "./SalePanel";
@@ -624,7 +625,9 @@ export function WorkView({
             </div>
           )}
 
-          {!doc ? null : (doc.status === "klar" || doc.status === "avfardad") &&
+          {!doc ? null : item.registered && doc.doc_type === "intyg" ? (
+            <ReportPhotoCheck doc={doc} registered={item.registered} />
+          ) : (doc.status === "klar" || doc.status === "avfardad") &&
             !masking ? (
             <div className={styles.card}>
               <h2 className={styles.cardTitle}>

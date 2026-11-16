@@ -72,9 +72,9 @@ def register_individual_as(actor, herd, form, created=None):
     """
     The report's registration (4b, L1): with `actor`'s own right only (a user, or the link's CodeActor), and only
     into `herd`, where the new rabbit and its litter are born. No current_user, so an account never lends a link
-    its rights, nor a link an account its herd.
+    its rights, nor a link an account its herd. Parents and litters outside the herd's genebank read as missing.
     """
-    return _register(form, actor, may_register_in(actor, herd), created)
+    return _register(form, actor, may_register_in(actor, herd), created, herd.genebank_id)
 
 
 def may_register_in(actor, herd):
@@ -89,12 +89,15 @@ def may_register_in(actor, herd):
     return may
 
 
-def _register(form, actor, may, created):
-    """A registration with `actor` as the signer and `may(herd)` deciding every herd it writes in."""
+def _register(form, actor, may, created, genebank=None):
+    """
+    A registration with `actor` as the signer and `may(herd)` deciding every herd it writes in; with `genebank`, the
+    parents and the litter are looked up in that genebank only (_in_genebank).
+    """
     breeding_id = form.get("breeding_id")
     new_litter = None  # "Lägg till kanin": the litter to create, when no breeding_id and no matching litter
     if breeding_id is None:
-        breeding, new_litter, refusal = _shortcut_litter(form, may)
+        breeding, new_litter, refusal = _shortcut_litter(form, may, genebank)
         if refusal:
             return refusal
     else:
@@ -103,9 +106,8 @@ def _register(form, actor, may, created):
         except (TypeError, ValueError):
             return problem(400, "Bad Request", "breeding_id must be an integer")
 
-        try:
-            breeding = Breeding.get_by_id(breeding_id)
-        except DoesNotExist:
+        breeding = _litter_in(Breeding.get_or_none(Breeding.id == breeding_id), genebank)
+        if breeding is None:
             return problem(404, "Not Found", f"Breeding {breeding_id} not found")
 
     if breeding is not None and (refusal := _registration_refusal(breeding, may)):
@@ -258,16 +260,18 @@ def suggest_number():
     return number_suggestion(request.args, lambda herd: _can_register_in_herd(current_user, herd))
 
 
-def number_suggestion(args, may):
-    """suggest-number's answer for the query `args`, with `may(herd)` deciding the litter's herd (the report's too)."""
+def number_suggestion(args, may, genebank=None):
+    """
+    suggest-number's answer for the query `args`, with `may(herd)` deciding the litter's herd (the report's too) and
+    `genebank` scoping the lookups (_in_genebank).
+    """
     breeding_id = args.get("breeding_id", type=int)
     if breeding_id:
-        try:
-            breeding = Breeding.get_by_id(breeding_id)
-        except DoesNotExist:
+        breeding = _litter_in(Breeding.get_or_none(Breeding.id == breeding_id), genebank)
+        if breeding is None:
             return problem(404, "Not Found", f"Breeding {breeding_id} not found")
     elif "mother" in args:
-        key, refusal = _litter_key(args)
+        key, refusal = _litter_key(args, genebank)
         if refusal:
             return refusal
         mother, father, birth_date = key
@@ -311,20 +315,23 @@ def number_check_route():
     return paper_number_check(form, current_user, lambda herd: _can_register_in_herd(current_user, herd))
 
 
-def paper_number_check(form, actor, may):
-    """number-check's answer for the body `form`, as `actor` sees the holders, with `may(herd)` deciding the herd."""
+def paper_number_check(form, actor, may, genebank=None):
+    """
+    number-check's answer for the body `form`, as `actor` sees the holders, with `may(herd)` deciding the herd and
+    `genebank` scoping the lookups (_in_genebank).
+    """
     paper_number, paper_certificate = form.get("paper_number"), form.get("paper_certificate")
     if parse_number(paper_number) is None:
         return problem(400, "Bad Request", PAPER_NUMBER_REQUIRED)
     if paper_certificate is not None and not isinstance(paper_certificate, str):
         return problem(400, "Bad Request", "paper_certificate must be a string")
     if form.get("breeding_id") is not None:
-        breeding = Breeding.get_or_none(Breeding.id == _as_int(form["breeding_id"]))
+        breeding = _litter_in(Breeding.get_or_none(Breeding.id == _as_int(form["breeding_id"])), genebank)
         if breeding is None:
             return problem(404, "Not Found", f"Breeding {form['breeding_id']} not found")
         litter, herd = {"breeding": breeding}, breeding.breeding_herd_id
     else:
-        key, refusal = _litter_key(form)
+        key, refusal = _litter_key(form, genebank)
         if refusal:
             return refusal
         mother, father, birth_date = key
@@ -535,11 +542,24 @@ def _registration_refusal(breeding, may):
     return None
 
 
-def _live_individual(number):
-    """The registered (not voided) individual with this number, or None."""
+def _live_individual(number, genebank=None):
+    """The registered (not voided) individual with this number, or None; with `genebank`, only one of that genebank."""
     if not isinstance(number, str):
         return None
-    return Individual.get_or_none((Individual.number == number) & not_voided())
+    found = Individual.get_or_none((Individual.number == number) & not_voided())
+    return found if found is not None and _in_genebank(found.origin_herd, genebank) else None
+
+
+def _in_genebank(herd, genebank):
+    """
+    The report's scope (4b): with `genebank`, a parent or litter of another genebank reads exactly as a missing one,
+    before anything about it is said, so a link learns nothing outside its own genebank.
+    """
+    return genebank is None or (herd is not None and herd.genebank_id == genebank)
+
+
+def _litter_in(breeding, genebank):
+    return breeding if breeding is not None and _in_genebank(breeding.breeding_herd_id, genebank) else None
 
 
 def _as_int(value):
@@ -549,9 +569,9 @@ def _as_int(value):
         return None
 
 
-def _litter_key(values):
+def _litter_key(values, genebank=None):
     """((mother, father, birth_date), None) naming the litter of a registration without breeding_id, or (None, 400)."""
-    mother, father = _live_individual(values.get("mother")), _live_individual(values.get("father"))
+    mother, father = _live_individual(values.get("mother"), genebank), _live_individual(values.get("father"), genebank)
     if mother is None or father is None:
         return None, problem(400, "Bad Request", "Välj mor och far bland registrerade kaniner.")
     try:
@@ -575,14 +595,14 @@ def _new_litter_refusal(herd, father, birth_date, may):
     return None
 
 
-def _shortcut_litter(form, may):
+def _shortcut_litter(form, may, genebank=None):
     """The litter of a registration without breeding_id ("Lägg till kanin", the legacy add form's shortcut).
 
     The body names the litter by mother, father and birth_date, unique in the litter table: an existing litter
     is reused (legacy's "Kull hittad"). Otherwise the new litter, in the mother's herd, is validated here before
     anything is written. Returns (existing_breeding, new_litter_fields, refusal) with exactly one set.
     """
-    key, refusal = _litter_key(form)
+    key, refusal = _litter_key(form, genebank)
     if refusal:
         return None, None, refusal
     mother, father, birth_date = key

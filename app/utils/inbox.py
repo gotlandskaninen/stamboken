@@ -625,7 +625,8 @@ def reinterpret(item, document, user):
     require_handler(item, user)
     if not interpreter.enabled():
         raise InboxError(409, "Bildtolkningen är avstängd.")
-    if document.doc_type != "intyg" or document.done_at is not None or document.individual_id is not None:
+    saved_elsewhere = document.individual_id is not None and not report_photo(item)
+    if document.doc_type != "intyg" or document.done_at is not None or saved_elsewhere:
         raise InboxError(409, "Bara ett intyg som inte är sparat kan tolkas.")
     if document.original_path is None:
         raise InboxError(409, "Originalet är raderat.")
@@ -753,8 +754,37 @@ def documents_json(documents):
     ]
 
 
+def report_photo(item):
+    """A certificate photo from the yearly report (4b, G5): its rabbit is registered, and the reading checks it."""
+    return item.kind == "kontroll" and item.ref_type == "individual"
+
+
+def registered_rabbit(item):
+    """
+    A report photo's rabbit as the member registered it, keyed as the certificate form's fields, for the queue to
+    set beside the reading; None for any other item, or before the rabbit is saved.
+    """
+    rabbit = Individual.get_or_none(Individual.id == item.ref_id) if report_photo(item) and item.ref_id else None
+    if rabbit is None:
+        return None
+    litter = rabbit.breeding
+    mother, father = (litter.mother, litter.father) if litter else (None, None)
+    return {
+        "paper_number": rabbit.number,
+        "paper_certificate": rabbit.certificate,
+        "name": rabbit.name,
+        "sex": rabbit.sex,
+        "birth_date": _iso(litter.birth_date) if litter else None,
+        "color": rabbit.color.name if rabbit.color_id else None,
+        "mother": mother.number if mother else None,
+        "father": father.number if father else None,
+        "litter_size": litter.litter_size if litter else None,
+        "litter_size6w": litter.litter_size6w if litter else None,
+    }
+
+
 def item_detail(item):
-    """GET …/<id>: the list form plus the message, the documents and the history."""
+    """GET …/<id>: the list form plus the message, the documents and the history (and a report photo's rabbit)."""
     documents = list(item.documents.order_by(InboxDocument.id))
     events = list(item.events.order_by(InboxEvent.at, InboxEvent.id))
     names = person_names([e.user_id for e in events])
@@ -767,6 +797,7 @@ def item_detail(item):
             {"id": e.id, "at": _iso(e.at), "kind": e.kind, "user": _person(e.user_id, names), "detail": e.detail}
             for e in events
         ],
+        "registered": registered_rabbit(item),
     }
 
 

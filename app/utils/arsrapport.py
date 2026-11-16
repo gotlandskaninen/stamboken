@@ -2789,6 +2789,7 @@ def report_parent(herd, number):
                 "father": row.father.number if row.father_id else None,
                 "litter_size": row.litter_size,
                 "litter_size6w": row.litter_size6w,
+                "preliminary": row.litter_size6w_preliminary,
             }
             for row in litters
         ],

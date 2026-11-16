@@ -171,12 +171,16 @@ def initial_status():
 
 
 def _waiting():
-    """A certificate waiting to be read, in an open item, with nothing saved from it yet and its original kept."""
+    """
+    A certificate waiting to be read, in an open item, with nothing saved from it yet and its original kept. A report
+    photo (4b) is read after its rabbit is saved too: the reading is compared with what the member registered (G5).
+    """
+    report_photo = (InboxItem.kind == "kontroll") & (InboxItem.ref_type == "individual")
     return (
         (InboxDocument.interpretation_status == "vantar")
         & (InboxDocument.doc_type == "intyg")
         & InboxDocument.done_at.is_null()
-        & InboxDocument.individual.is_null()
+        & (InboxDocument.individual.is_null() | report_photo)
         & InboxDocument.original_path.is_null(False)
         & InboxItem.closed_at.is_null()
     )

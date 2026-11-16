@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import {
   Autocomplete,
   MenuItem,
@@ -34,6 +34,8 @@ export type ParentLitter = {
   father: string | null;
   litter_size: number | null;
   litter_size6w: number | null;
+  /** The count alive at 6 weeks is only the count born, until someone confirms it. */
+  preliminary?: boolean;
 };
 export type Found = RegistryRabbit & { litters?: ParentLitter[] };
 /** The registry's record of a number: null when there is no such rabbit, undefined when the lookup could not tell. */
@@ -144,8 +146,9 @@ const litterLabel = (l: ParentLitter) =>
  * yearly report: the fields, the paper number's check (a conflict opens
  * NumberConflictDialog) and the registry's record of each number, looked up
  * with `lookup`. The caller owns the values (`form`) and saves with `onSave`.
- * The report adds its photo, the mother's litters (from its lookup), "var är
- * kaninen nu" and a missing parent's own registration.
+ * The report adds its photo, the mother's litters (from its lookup) with the
+ * number Stamboken suggests for the chosen one (`suggest`), "var är kaninen
+ * nu" and a missing parent's own registration.
  */
 export function RegisterFromCertificate({
   mode,
@@ -162,6 +165,7 @@ export function RegisterFromCertificate({
   where,
   onWhere,
   onAddParent,
+  suggest,
   header,
   afterFields,
   buttons,
@@ -182,9 +186,12 @@ export function RegisterFromCertificate({
   where?: Where | null;
   onWhere?: (where: Where) => void;
   onAddParent?: (parent: Parent, number: string) => void;
+  /** The individual number Stamboken would give a certificate of the litter, or null. */
+  suggest?: (litterId: number) => Promise<string | null>;
   header?: React.ReactNode;
   afterFields?: React.ReactNode;
-  buttons?: React.ReactNode;
+  /** Beside Spara; a function gets whether a save is in progress. */
+  buttons?: React.ReactNode | ((pending: boolean) => React.ReactNode);
   footer?: React.ReactNode;
 }) {
   const sources = Object.fromEntries(
@@ -234,17 +241,34 @@ export function RegisterFromCertificate({
       else setFormError(problemText(problem));
     });
 
+  // The number Stamboken suggests for the chosen litter: shown, and filled in only where nothing is typed yet
+  const [suggested, setSuggested] = useState<{
+    litter: number;
+    number: string;
+  } | null>(null);
+  const typedNumber = useRef(form.paper_number);
+  useEffect(() => {
+    typedNumber.current = form.paper_number;
+  });
   const pickLitter = (id: string) => {
     const l = litters.find((x) => String(x.id) === id);
     if (!l) return;
     onChange("birth_date", l.birth_date);
     onChange("father", l.father ?? "");
     onChange("litter_size", l.litter_size == null ? "" : String(l.litter_size));
+    // A preliminary count is the count born: the certificate's own count is asked for, not copied from it
     onChange(
       "litter_size6w",
-      l.litter_size6w == null ? "" : String(l.litter_size6w),
+      l.litter_size6w == null || l.preliminary ? "" : String(l.litter_size6w),
     );
+    suggest?.(l.id).then((number) => {
+      if (!number) return;
+      setSuggested({ litter: l.id, number });
+      if (!typedNumber.current.trim()) onChange("paper_number", number);
+    });
   };
+  const suggestion =
+    suggested && picked?.id === suggested.litter ? suggested.number : null;
 
   const text = (
     key: keyof CertForm,
@@ -320,7 +344,9 @@ export function RegisterFromCertificate({
         {text("paper_number", "Individnummer på pappret", {
           required: true,
           placeholder: "G1274-2512",
-          helperText: "Som det står på intyget.",
+          helperText: suggestion
+            ? `Som det står på intyget. Stamboken föreslår ${suggestion}.`
+            : "Som det står på intyget.",
         })}
         {text("paper_certificate", "Intygsnummer", {
           required: true,
@@ -401,7 +427,10 @@ export function RegisterFromCertificate({
             {text("litter_size6w", "Levande i kullen efter 6 veckor", {
               type: "number",
               slotProps: { htmlInput: { min: 1 } },
-              helperText: "Står inte alltid på intyget.",
+              required: !!picked?.preliminary,
+              helperText: picked?.preliminary
+                ? "Kullens antal är preliminärt. Skriv antalet som står på intyget."
+                : "Står inte alltid på intyget.",
             })}
             {onWhere && (
               <Field wide>
@@ -437,7 +466,7 @@ export function RegisterFromCertificate({
         <button type="submit" className="sb-btn" disabled={!canSave || pending}>
           {pending ? "Sparar…" : submitLabel}
         </button>
-        {buttons}
+        {typeof buttons === "function" ? buttons(pending) : buttons}
       </div>
       {footer}
 

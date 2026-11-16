@@ -115,9 +115,27 @@ export async function findRabbit(
   return res.problem.extensions?.code === "saknas" ? null : undefined;
 }
 
-/** The genebank's colour names. */
-export async function getColors(herd: string, year: number, env?: Mode) {
-  return call<{ farger: string[] }>(env, path(herd, year, "/farger"), {
-    method: "GET",
-  });
+/** On opening: the genebank's colour names, and the actor ("code-12", "user-5") a browser draft is kept under. */
+export async function getFormSetup(herd: string, year: number, env?: Mode) {
+  return call<{ farger: string[]; aktor: string }>(
+    env,
+    path(herd, year, "/kanin-formular"),
+    { method: "GET" },
+  );
+}
+
+/** The individual number Stamboken would give a certificate of the litter, or null when it cannot tell. */
+export async function suggestNumber(
+  herd: string,
+  year: number,
+  breedingId: number,
+  env?: Mode,
+): Promise<string | null> {
+  if (!Number.isSafeInteger(breedingId) || breedingId <= 0) return null;
+  const res = await call<{ suggested?: string }>(
+    env,
+    path(herd, year, `/nummerforslag?breeding_id=${breedingId}`),
+    { method: "GET" },
+  );
+  return res.ok ? (res.data.suggested ?? null) : null;
 }

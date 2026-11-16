@@ -35,7 +35,7 @@ from utils.database import (
 from utils.report_code import CodeActor, actor_key
 
 from .common import check_genebank_access, json_login_required, manager_required, problem
-from .inbox import MAX_FILES, MAX_REQUEST, REGISTRATION_FIELDS, _each_image, _Refused
+from .inbox import MAX_REQUEST, REGISTRATION_FIELDS, _each_image, _Refused
 from .individual_v2_create import may_register_in, number_suggestion, paper_number_check, register_individual_as
 from .rapport_link import _environment, session_codes, touch
 
@@ -426,6 +426,7 @@ PHOTOS_KEPT = 60  # the session's own uploads a registration may bind (FC1): an 
 PHOTO_FIRST = "Ladda upp ett foto av intyget först."
 PHOTO_NOT_OURS = "Fotot hör inte till den här rapporten. Ladda upp det igen."
 PHOTO_USED = "Fotot gäller redan en annan kanin. Ladda upp ett nytt foto av intyget."
+ONE_PAGE = "Ladda upp ett intyg i taget. PDF:en har fler än en sida."
 
 
 @arsrapport_bp.errorhandler(413)
@@ -472,8 +473,15 @@ def upload_photo(herd, year):
     if file is None or not file.filename:
         raise ArsrapportError(400, "Ingen fil bifogad.")
     encoded, stored = [], []
+
+    def keep(image):
+        # shortcut: one certificate per photo, a PDF of one page; several pages wait for a flow of several documents
+        if encoded:
+            raise _Refused(problem(400, "Ogiltig begäran", ONE_PAGE))
+        encoded.append((inbox.jpeg_bytes(image), inbox.measure(image)))
+
     try:
-        _each_image(file, MAX_FILES, lambda image: encoded.append((inbox.jpeg_bytes(image), inbox.measure(image))))
+        _each_image(file, math.inf, keep)  # every page count reaches keep, which stops at the second page
         for data, quality in encoded:
             stored.append((*inbox.write_jpeg(data, "original"), quality))
         # a link has no account: the item names its code, as an account would be named
@@ -535,12 +543,14 @@ def add_rabbit(herd, year):
     return jsonify({"id": individual.id, "number": individual.number, "item_id": item_id, "listed": listed}), 201
 
 
-# [Next.js] The form's colours, for a code session too: /api/colors needs a login.
-@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/farger", methods=["GET"])
+# [Next.js] What the form needs on opening: the genebank's colours (/api/colors needs a login) and who the actor is,
+# a code or an account, which a draft saved in the browser is kept under.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/kanin-formular", methods=["GET"])
 @report_actor_required
-def colors(herd, year):
-    herd, _, _ = _report_target(herd, year)
-    return jsonify({"farger": arsrapport.genebank_colors(herd)})
+def rabbit_form(herd, year):
+    herd, _, access = _report_target(herd, year)
+    actor = "-".join(map(str, actor_key(_actor(access))))
+    return jsonify({"farger": arsrapport.genebank_colors(herd), "aktor": actor})
 
 
 # [Next.js] The form's parent lookup by number, for a code session too (L10): 404 only when there is no such rabbit.
@@ -559,7 +569,7 @@ def find_rabbit(herd, year):
 @report_actor_required
 def number_proposal(herd, year):
     herd, _, access = _report_target(herd, year)
-    return number_suggestion(request.args, may_register_in(_actor(access), herd))
+    return number_suggestion(request.args, may_register_in(_actor(access), herd), herd.genebank_id)
 
 
 # [Next.js] The paper's number against Stamboken's before a save (number-check), for a code session too (FC1).
@@ -571,4 +581,4 @@ def number_control(herd, year):
     if not isinstance(body, dict):
         raise ArsrapportError(400, "Skicka numret som JSON.")
     actor = _actor(access)
-    return paper_number_check(body, actor, may_register_in(actor, herd))
+    return paper_number_check(body, actor, may_register_in(actor, herd), herd.genebank_id)

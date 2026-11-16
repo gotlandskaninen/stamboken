@@ -13,15 +13,18 @@ from datetime import date, datetime, timedelta
 from datetime import time as clock
 from unittest import mock
 
+import blueprints.arsrapport as report_routes
 import utils.arsrapport as arsrapport
 import utils.database as db
+import utils.inbox as inbox
+import utils.inbox_interpreter as interpreter
 import utils.mail as mail
 import utils.report_code as report_code
 import utils.settings as settings
 from herdbook import APP, limiter
 
 from tests.arsrapport_fixtures import ArsrapportTest
-from tests.inbox_fixtures import encoded, photo
+from tests.inbox_fixtures import QUALITY, encoded, pdf, photo
 
 NOW = datetime.combine(date(2026, 1, 15), clock(12), arsrapport.STOCKHOLM)
 REPORT = "/besattning/G9001/2025"
@@ -127,6 +130,15 @@ class TestPhoto(AddRabbitTest):
         self.open_link(self.code2)
         self.assertEqual(self.upload_photo().status_code, 404)  # a code for G9002 does not reach G9001
         self.assertFalse(db.InboxItem.select().exists())
+
+    def test_one_certificate_a_photo(self):
+        """A PDF of several pages is refused before anything is stored (mitt val, until several documents follow)."""
+        self.open_link()
+        refused = self.upload_photo(content=pdf(photo((600, 800)), photo((600, 800), seed=2)))
+        self.assertEqual(refused.status_code, 400, refused.get_data(as_text=True))
+        self.assertEqual(refused.get_json()["detail"], report_routes.ONE_PAGE)
+        self.assertFalse(db.InboxItem.select().exists())
+        self.assertEqual(self.upload_photo(content=pdf(photo((600, 800)))).status_code, 201)
 
 
 class TestUploadLimit(AddRabbitTest):
@@ -358,11 +370,118 @@ class TestParentLookup(AddRabbitTest):
         self.assertEqual((missing.status_code, missing.get_json()["code"]), (404, "saknas"))
         self.assertNotIn("code", self.search(self.doe.number, OTHER).get_json())  # the herd's 404: not "saknas"
 
-    def test_colours_for_a_code_session(self):
+    def test_the_forms_colours_and_actor_for_a_code_session(self):
         db.Color.create(name="viltgrå", genebank=self.gotland)
         db.Color.create(name="svart", genebank=self.mellerud)
-        self.assertEqual(self.client.get(f"/api/v2/arsrapport{REPORT}/farger").status_code, 401)
+        path = f"/api/v2/arsrapport{REPORT}/kanin-formular"
+        self.assertEqual(self.client.get(path).status_code, 401)
         self.open_link()
-        colours = self.client.get(f"/api/v2/arsrapport{REPORT}/farger").get_json()["farger"]
-        self.assertIn("viltgrå", colours)
-        self.assertNotIn("svart", colours)
+        setup = self.client.get(path).get_json()
+        self.assertIn("viltgrå", setup["farger"])
+        self.assertNotIn("svart", setup["farger"])
+        self.assertEqual(setup["aktor"], f"code-{self.code.id}")  # a draft in the browser is the link's own
+        self.login("owner")
+        self.assertEqual(self.client.get(path).get_json()["aktor"], f"user-{self.owner.id}")
+
+
+class TestScope(AddRabbitTest):
+    """A link learns nothing outside its genebank: an out-of-scope parent or litter reads exactly as a missing one."""
+
+    def setUp(self):
+        super().setUp()
+        mellerud = db.Herd.create(genebank=self.mellerud, herd="M9001", is_active=True)
+        self.foreign_doe, self.foreign_buck = self.rabbits(mellerud, 2)
+        self.foreign_litter = self.foreign_doe.breeding
+        self.open_link()
+
+    def test_out_of_genebank_reads_as_missing(self):
+        litter = {"mother": self.doe.number, "birth_date": "2025-05-10"}
+        cases = {
+            "nummerforslag": lambda father: self.client.get(
+                f"/api/v2/arsrapport{REPORT}/nummerforslag", query_string={**litter, "father": father}
+            ),
+            "nummerkontroll": lambda father: self.api(
+                "POST", f"{REPORT}/nummerkontroll", paper_number="G9001-2511", father=father, **litter
+            ),
+            "kanin": lambda father: self.kit(self.photo_item(), father=father),
+        }
+        for name, send in cases.items():
+            with self.subTest(name):
+                foreign, missing = send(self.foreign_buck.number), send("M9001-9999")
+                self.assertEqual(foreign.status_code, missing.status_code)
+                self.assertEqual(foreign.get_json()["detail"], missing.get_json()["detail"])
+                self.assertEqual(foreign.status_code, 400)
+        by_litter = {
+            "nummerforslag": lambda bid: self.client.get(
+                f"/api/v2/arsrapport{REPORT}/nummerforslag", query_string={"breeding_id": bid}
+            ),
+            "nummerkontroll": lambda bid: self.api(
+                "POST", f"{REPORT}/nummerkontroll", paper_number="G9001-2511", breeding_id=bid
+            ),
+            "kanin": lambda bid: self.kit(self.photo_item(), breeding_id=bid),
+        }
+        absent = db.Breeding.select(db.fn.MAX(db.Breeding.id)).scalar() + 1000
+        for name, send in by_litter.items():
+            with self.subTest(name, by="breeding_id"):
+                foreign, missing = send(self.foreign_litter.id), send(absent)
+                self.assertEqual((foreign.status_code, missing.status_code), (404, 404))
+                self.assertEqual(
+                    foreign.get_json()["detail"].replace(str(self.foreign_litter.id), "<id>"),
+                    missing.get_json()["detail"].replace(str(absent), "<id>"),
+                )
+        self.assertEqual(self.kits(), 0)
+
+
+class TestReportPhotoReading(AddRabbitTest):
+    """G5: the photo is read after its rabbit is saved, and the queue gets the reading beside the registration."""
+
+    READING = {"genbanksnr": "G9001", "ar_kull_individ": "2511", "namn": "Kulla"}
+
+    def setUp(self):
+        super().setUp()
+        for patcher in (
+            mock.patch.object(settings.interpretation, "interpreter", "gemma"),
+            mock.patch.dict(interpreter.INTERPRETERS, {"gemma": lambda image, schema: dict(self.READING)}),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def registered(self):
+        """A queue upload bound to a rabbit first (older), then the report's photo of the kit, registered."""
+        stored = [("inkorg/original/q.jpg", "1".rjust(64, "0"), QUALITY)]
+        queued, (queued_doc,) = inbox.create_upload(self.owner, self.h, None, stored)
+        queued_doc.individual = self.doe
+        queued_doc.save()
+        self.open_link()
+        item_id = self.photo_item()
+        self.assertEqual(self.kit(item_id).status_code, 201)
+        item = self.reload(item_id)
+        (document,) = item.documents
+        return queued, queued_doc, item, document
+
+    def test_registered_photo_is_read_and_set_beside_the_rabbit(self):
+        queued, queued_doc, item, document = self.registered()
+        self.assertEqual((document.individual_id is not None, document.interpretation_status), (True, "vantar"))
+        self.assertEqual(interpreter.interpret_next(), document.id)  # not the older, saved queue upload
+        self.assertIsNone(interpreter.interpret_next())
+        read = db.InboxDocument.get_by_id(document.id)
+        self.assertEqual(read.interpretation_status, "klar")
+        self.assertIn("fields", read.proposal)
+        self.assertEqual(db.InboxDocument.get_by_id(queued_doc.id).interpretation_status, "vantar")
+        detail = inbox.item_detail(item)
+        self.assertEqual(
+            {key: detail["registered"][key] for key in ("paper_number", "paper_certificate", "mother", "name")},
+            {"paper_number": "G9001-2511", "paper_certificate": "P-2511", "mother": self.doe.number, "name": "Kulla"},
+        )
+        self.assertEqual(detail["documents"][0]["proposal"], read.proposal)
+        self.assertIsNone(inbox.item_detail(queued)["registered"])
+
+    def test_tolka_igen_on_a_registered_report_photo(self):
+        queued, queued_doc, item, document = self.registered()
+        interpreter.interpret_next()
+        inbox.take(item, self.helper, over=False)
+        inbox.reinterpret(item, db.InboxDocument.get_by_id(document.id), self.helper)
+        self.assertEqual(db.InboxDocument.get_by_id(document.id).interpretation_status, "vantar")
+        inbox.take(queued, self.helper, over=False)
+        with self.assertRaises(inbox.InboxError):  # an ordinary saved certificate stays as it was
+            inbox.reinterpret(queued, queued_doc, self.helper)

@@ -259,3 +259,71 @@ describe("WorkView: an annual form", () => {
     ).toBeNull();
   });
 });
+
+// A certificate photo from the yearly report (4b, G5): already registered, so the reading is set beside the
+// registration instead of the masking of a saved certificate. An ordinary saved upload keeps its masking.
+describe("WorkView on a report photo", () => {
+  const registered = {
+    paper_number: "G9001-2511",
+    paper_certificate: "P-2511",
+    name: "Kulla",
+    sex: "female",
+    birth_date: "2025-05-10",
+    color: null,
+    mother: "G9001-2411",
+    father: "G9001-2412",
+    litter_size: 5,
+    litter_size6w: 4,
+  };
+  const reading = {
+    fields: {
+      paper_number: { value: "G9001-2511", source: "läst" as const },
+      name: { value: "Kalla", source: "läst" as const },
+      mother: { value: null, source: "osäker" as const, read: "G9001 2411" },
+    },
+    checks: [],
+  };
+
+  it("shows the reading beside the registered rabbit and marks what differs", () => {
+    render(
+      view(
+        item({
+          kind: "kontroll",
+          ref_type: "individual",
+          ref_id: 51,
+          assigned_to: null,
+          state: "ny",
+          registered,
+          documents: [
+            doc({
+              individual: "G9001-2511",
+              interpretation_status: "klar",
+              proposal: reading,
+            }),
+          ],
+        }),
+      ),
+    );
+    const table = screen.getByRole("table", {
+      name: "Tolkningen och registreringen",
+    });
+    const row = (label: string) =>
+      Array.from(table.querySelectorAll("tr")).find(
+        (tr) => tr.querySelector("th")?.textContent === label,
+      )!;
+    expect(row("Namn")).toHaveAttribute("data-differs", "true");
+    expect(row("Namn")).toHaveTextContent("KallaKulla Avviker");
+    expect(row("Individnummer")).not.toHaveAttribute("data-differs");
+    expect(row("Mor")).toHaveTextContent("G9001 2411G9001-2411 Avviker");
+    expect(screen.getByRole("link", { name: "G9001-2511" })).toBeVisible();
+    expect(screen.queryByText("Dölj säljare och köpare")).toBeNull();
+  });
+
+  it("an ordinary saved certificate still opens the masking", () => {
+    render(view(item({ registered: null })));
+    expect(screen.getByText("Dölj säljare och köpare")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("table", { name: "Tolkningen och registreringen" }),
+    ).toBeNull();
+  });
+});
