@@ -124,18 +124,8 @@ def register_individual(form, may_register=None, created=None):
             # a 409 and nothing is written. A paper certificate takes the paper's position when free, not the form's.
             check = None
             if new_litter is not None:
-                # Serialized with RegisterLitter (the same lock) and decided again under it: a litter of the
-                # mother's may have committed since _shortcut_litter looked (the 35-day rule).
-                lock_mother_litters(new_litter["herd"].id, new_litter["mother"].id)
-                errors, _warnings = da.validate_breeding_dates(
-                    breed_date=new_litter["breed_date"],
-                    birth_date=new_litter["birth_date"],
-                    mother=new_litter["mother"],
-                    father=new_litter["father"],
-                    litter_size=new_litter["litter_size"],
-                )
-                if errors:
-                    raise ValueError(" ".join(errors))
+                # Serialized with RegisterLitter (the same lock); _create_litter decides the dates again under it
+                lock_mother_litters(new_litter["mother"].id)
                 lock_herd_year(new_litter["herd"], new_litter["birth_date"].year)
                 if certificate_type == "paper":
                     litter = {key: new_litter[key] for key in ("herd", "birth_date", "mother", "father")}
@@ -163,9 +153,11 @@ def register_individual(form, may_register=None, created=None):
                 breeding.save(only=[Breeding.litter_size6w, Breeding.litter_size6w_preliminary])
 
             if breeding.litter_number is None:  # a litter added without a certificate: its first one numbers it (L4)
-                check, position = number_unnumbered_litter(
+                check, numbered_position = number_unnumbered_litter(
                     current_user, breeding, certificate_type, paper_number, paper_certificate, resolution
                 )
+                if certificate_type == "paper":  # a digital certificate keeps the position the request chose
+                    position = numbered_position
 
             # Validate certificate eligibility before creating anything: the same first-certificate
             # rules as promote (litter_size6w, roster in sync, quota).
@@ -608,6 +600,12 @@ def _create_litter(herd, mother, father, birth_date, breed_date, litter_size, li
     mother_now, father_now = Individual.get_by_id(mother.id), Individual.get_by_id(father.id)
     if mother_now.voided or father_now.voided or mother_now.current_herd.id != herd.id:
         raise RosterActionError(409, "Conflict", "Mor eller far ändrades samtidigt. Försök igen.")
+    # _shortcut_litter looked before any lock: a litter of the mother's (35-day rule) or a parent may have changed
+    errors, _warnings = da.validate_breeding_dates(
+        breed_date=breed_date, birth_date=birth_date, mother=mother_now, father=father_now, litter_size=litter_size
+    )
+    if errors:
+        raise ValueError(" ".join(errors))
     if litter_number is None:
         raise RosterActionError(409, "litter_order_conflict", LITTER_BORN_BEFORE_NUMBERED)
     return Breeding.create(

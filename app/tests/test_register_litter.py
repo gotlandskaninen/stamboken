@@ -6,6 +6,7 @@ isort:skip_file
 """
 
 import threading
+import time
 from datetime import date, timedelta
 from unittest import mock
 
@@ -161,53 +162,97 @@ class TestRegisterLitter(LitterTest):
             confirm_litter_size(self.other_owner, litter.id, 3)
         self.assertEqual(raised.exception.envelope["message"], "Forbidden")
 
+    @staticmethod
+    def advisory_waiters():
+        """Backends waiting for an advisory lock now."""
+        cursor = db.DATABASE.execute_sql("SELECT count(*) FROM pg_locks WHERE locktype = 'advisory' AND NOT granted")
+        return cursor.fetchone()[0]
+
     def overlap(self, second):
         """
-        Transaction A takes the (herd, mother) advisory lock and is held there; `second()` runs in B meanwhile.
-        Returns (B's outcome, whether B was still blocked while A held the lock, A's outcome).
+        Transaction A takes the mother's advisory lock and is held there; `second()` runs in B meanwhile.
+        Returns (B's outcome, whether B was seen waiting for an advisory lock while A held it, A's outcome).
         """
-        locked, release, b_done = threading.Event(), threading.Event(), threading.Event()
-        real, outcomes, held = ic.lock_mother_litters, {}, []
+        locked, release = threading.Event(), threading.Event()
+        real, outcomes, held, threads = ic.lock_mother_litters, {}, [], []
 
         def hold_after_lock(*args):
             real(*args)
             if not held:  # only A, the first to ask
                 held.append(True)
                 locked.set()
-                release.wait(15)
+                release.wait(30)
 
         def run(key, work):
             try:
                 db.DATABASE.connect(reuse_if_open=True)
+                db.DATABASE.execute_sql("SET lock_timeout = '25s'")  # a failure must not hang on a lock
+                db.DATABASE.execute_sql("SET statement_timeout = '60s'")
                 outcomes[key] = work()
             except Exception as exc:  # noqa: BLE001 — a deadlock or an IntegrityError lands here and fails below
                 outcomes[key] = exc
             finally:
                 db.DATABASE.close()
-                if key == "b":
-                    b_done.set()
 
-        with mock.patch.object(ic, "lock_mother_litters", side_effect=hold_after_lock):
-            a = threading.Thread(target=run, args=("a", self.add))
-            a.start()
-            self.assertTrue(locked.wait(10), "A never took the lock")
-            b = threading.Thread(target=run, args=("b", second))
-            b.start()
-            blocked = not b_done.wait(1.5)  # B has had time to run to the lock and wait on it
+        blocked = False
+        try:
+            with mock.patch.object(ic, "lock_mother_litters", side_effect=hold_after_lock):
+                threads.append(threading.Thread(target=run, args=("a", self.add)))
+                threads[0].start()
+                self.assertTrue(locked.wait(10), "A never took the lock")
+                threads.append(threading.Thread(target=run, args=("b", second)))
+                threads[1].start()
+                for _ in range(100):  # bounded: B must be in a lock wait before A is let go
+                    if self.advisory_waiters() or "b" in outcomes:
+                        break
+                    time.sleep(0.1)
+                blocked = self.advisory_waiters() > 0 and "b" not in outcomes
+        finally:
             release.set()
-            a.join(20)
-            b.join(20)
-        self.assertFalse(a.is_alive() or b.is_alive(), "hung or deadlocked")
+            for thread in threads:
+                thread.join(40)
+        self.assertFalse(any(thread.is_alive() for thread in threads), "hung or deadlocked")
         return outcomes["b"], blocked, outcomes["a"]
 
     def test_concurrent_same_litter(self):
         """B waits for A's commit, then gets samma_kull and A's litter: one litter (L3)."""
         refused, blocked, first = self.overlap(lambda: self.add())
-        self.assertTrue(blocked, "B ran while A held the lock")
+        self.assertTrue(blocked, "B was not waiting for the lock while A held it")
         self.assertIsInstance(refused, SameLitter, refused)
         self.assertIsInstance(first, db.Breeding)
         self.assertEqual(refused.envelope["breeding_id"], first.id)
         self.assertEqual(self.litters(), 1)
+
+    def test_concurrent_registrations_across_herds_of_a_doe_that_moved(self):
+        """The doe went G1 -> G2 the day after the birth: the lock is hers, not her herd's."""
+        record_herd_tracking(self.doe, self.g2, BORN + timedelta(days=1), "TRANSFER", self.owner)
+
+        def register():
+            client = APP.test_client(use_cookies=True)
+            client.post("/api/login", json={"username": "owner2", "password": "pass"})
+            return client.post(URL, json=self.shortcut_body(BORN + timedelta(days=2)))
+
+        response, blocked, first = self.overlap(register)
+        self.assertTrue(blocked, "B was not waiting for the lock while A held it")
+        self.assertEqual(first.breeding_herd_id.herd, "G1")
+        self.assertEqual(response.status_code, 409, response.get_json())  # the number check sees A's litter
+        self.assertIn("duplicate_litter", [c["kind"] for c in response.get_json()["conflicts"]])
+        self.assertEqual(self.litters(), 1)
+
+    @staticmethod
+    def shortcut_body(born):
+        return {
+            "mother": "G1-2411",
+            "father": "G2-2412",
+            "birth_date": str(born),
+            "litter_size": 5,
+            "litter_size6w": 4,
+            "sex": "female",
+            "color": "bleighe",
+            "certificate_type": "paper",
+            "paper_certificate": "SC-2",
+            "paper_number": "G1-2511",
+        }
 
     def test_concurrent_certificate_registration_of_a_new_litter(self):
         """The certificate route creating a litter takes the same lock and decides again under it."""
@@ -215,27 +260,13 @@ class TestRegisterLitter(LitterTest):
         def register():
             client = APP.test_client(use_cookies=True)
             client.post("/api/login", json={"username": "owner", "password": "pass"})
-            return client.post(
-                URL,
-                json={
-                    "mother": "G1-2411",
-                    "father": "G2-2412",
-                    "birth_date": str(BORN + timedelta(days=2)),
-                    "litter_size": 5,
-                    "litter_size6w": 4,
-                    "sex": "female",
-                    "color": "bleighe",
-                    "certificate_type": "paper",
-                    "paper_certificate": "SC-2",
-                    "paper_number": "G1-2511",
-                },
-            )
+            return client.post(URL, json=self.shortcut_body(BORN + timedelta(days=2)))
 
         response, blocked, first = self.overlap(register)
-        self.assertTrue(blocked, "B ran while A held the lock")
+        self.assertTrue(blocked, "B was not waiting for the lock while A held it")
         self.assertIsInstance(first, db.Breeding)
-        self.assertEqual(response.status_code, 400, response.get_json())
-        self.assertIn("inom 35 dagar", response.get_json()["detail"])
+        self.assertEqual(response.status_code, 409, response.get_json())  # the number check sees A's litter
+        self.assertIn("duplicate_litter", [c["kind"] for c in response.get_json()["conflicts"]])
         self.assertEqual(self.litters(), 1)
         self.assertFalse(db.Individual.select().where(db.Individual.certificate == "SC-2").exists())
 
@@ -450,3 +481,61 @@ class TestLaterCertificate(LitterTest):
         self.assertEqual(
             (data["can_issue_certificate"], data["certificate_blocked_reason"]), (False, "certificate_quota_exceeded")
         )
+
+    def test_a_digital_registration_keeps_the_chosen_position(self):
+        response = self.register(certificate_type="digital", paper_certificate=None, paper_number=None, position=3)
+        self.assertEqual(response.status_code, 201, response.get_json())
+        self.assertEqual(response.get_json()["individual"]["number"], "G1-2513")
+
+    def test_an_out_of_range_position_is_refused_and_writes_nothing(self):
+        for position in (0, 10):
+            with self.subTest(position=position):
+                response = self.register(
+                    certificate_type="digital", paper_certificate=None, paper_number=None, position=position
+                )
+                self.assertEqual(response.status_code, 400, response.get_json())
+                self.assertEqual(self.state(), (None, 5, True, 0))
+
+
+class TestPromotionNumbersTheLitter(LitterTest):
+    """The roster's promotion gives a litter added without a certificate its number, as a registration does."""
+
+    BORN_2026 = date(2026, 5, 10)
+
+    def setUp(self):
+        super().setUp()
+        self.litter = self.add(born=self.BORN_2026)
+        self.client.post("/api/login", json={"username": "owner", "password": "pass"})
+        self.bunnies = [
+            db.Bunny.create(breeding=self.litter, slot_order=n, observed_sex="female", observed_color="bleighe")
+            for n in (1, 2)
+        ]
+
+    def promote(self, bunny, paper_number, **fields):
+        body = {"certificate_type": "paper", "paper_certificate": f"SC-{paper_number}", "paper_number": paper_number}
+        return self.client.post(f"/api/v2/bunny/{bunny.id}/promote", json={**body, **fields})
+
+    def state(self):
+        litter = db.Breeding.get_by_id(self.litter.id)
+        return litter.litter_number, litter.litter_size6w, litter.litter_size6w_preliminary
+
+    def test_the_certificates_count_replaces_a_preliminary_one(self):
+        response = self.promote(self.bunnies[0], "G1-2661", litter_size6w=3)
+        self.assertEqual(response.status_code, 201, response.get_json())
+        self.assertEqual(self.state(), (6, 3, False))
+
+    def test_a_refusal_after_the_count_rolls_it_back(self):
+        db.Breeding.create(breeding_herd_id=self.g1, birth_date=date(2026, 2, 1), litter_number=6, litter_size=4)
+        response = self.promote(self.bunnies[0], "G1-2661", litter_size6w=3)
+        self.assertEqual((response.status_code, response.get_json()["title"]), (409, "number_conflict"))
+        self.assertEqual(self.state(), (None, 5, True))
+
+    def test_two_promotions_in_the_current_year_after_a_paper_gap(self):
+        """Litter 1 exists, the paper says 6: the next sibling is not stopped by the consecutive-number gate."""
+        db.Breeding.create(
+            breeding_herd_id=self.g1, birth_date=date(2026, 1, 10), litter_number=1, litter_size=4, litter_size6w=4
+        )
+        first = self.promote(self.bunnies[0], "G1-2661")
+        second = self.promote(self.bunnies[1], "G1-2662")
+        self.assertEqual((first.status_code, second.status_code), (201, 201), (first.get_json(), second.get_json()))
+        self.assertEqual(self.state()[0], 6)

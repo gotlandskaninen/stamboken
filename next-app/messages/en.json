@@ -463,6 +463,8 @@
       "litter": "The litter digit differs: the paper says litter {{paper}}, Stamboken litter {{stamboken}}. Litter {{paper}} in Stamboken: {{litter}}.",
       "litter_missing": "The litter is not in Stamboken. It is created as litter {{stamboken}}, not litter {{paper}}.",
       "litter_order": "The litter is born before litter {{litterNumber}}, which already has a number. Stamboken cannot give the litter a number.",
+      "litter_number_taken": "Litter number {{paper}} is already taken, or comes before a litter that already has a number (litter {{litterNumber}}). The genebank manager corrects the number.",
+      "litter_number_invalid": "The litter number on the certificate must be 1 or higher. Contact the genebank manager.",
       "position": "The position differs: the paper says position {{paper}}, Stamboken position {{stamboken}}. Position {{paper}} is held by {{holder}}.",
       "year": "The year differs: the paper says {{paper}}, the litter's birth year gives {{stamboken}}.",
       "prefix": "The herd differs: the paper says {{paper}}, the litter is in {{stamboken}}.",

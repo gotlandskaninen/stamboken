@@ -514,8 +514,11 @@ def provisional_number(breeding: Breeding, bunny: Bunny) -> str | None:
     return f"{state['prefix']}{available[ahead_count]}"
 
 
-def check_litter_order(herd_identifier: str, year: int) -> dict:
+def check_litter_order(herd_identifier: str, year: int, allow_gaps: bool = False) -> dict:
     """Check if litter numbers match chronological birth_date order.
+
+    `allow_gaps`: only an order that is not rising is a conflict, since a paper certificate may give a litter a
+    number above the next free one (L4); the suggested number stays the consecutive one.
 
     Returns:
         {"consistent": bool, "conflicts": list[dict]}
@@ -548,7 +551,11 @@ def check_litter_order(herd_identifier: str, year: int) -> dict:
     conflicts = []
     for i, lit in enumerate(litters):
         correct_number = i + 1
-        if lit.litter_number != correct_number:
+        if allow_gaps:
+            wrong = i > 0 and lit.litter_number <= litters[i - 1].litter_number
+        else:
+            wrong = lit.litter_number != correct_number
+        if wrong:
             # Count affected individuals
             affected = list(Individual.select(Individual.number).where(Individual.breeding == lit.id))
             conflicts.append(

@@ -396,7 +396,7 @@ def promote_bunny(
         # 4. Current-year litter-number conflict. Historical years are
         #    grandfathered — only the current year blocks registration.
         if breeding.birth_date.year == today.year:
-            order = check_litter_order(herd.herd, breeding.birth_date.year)
+            order = check_litter_order(herd.herd, breeding.birth_date.year, allow_gaps=True)
             if not order["consistent"]:
                 raise RosterActionError(
                     409,
@@ -433,11 +433,13 @@ def promote_bunny(
 
         # 5c. Certificate rules: litter_size6w declared, the roster in sync with it, and a free slot.
         #     Alive at 6 weeks sent with the registration is saved in this transaction: a refusal leaves it unset.
-        if litter_size6w is not None and breeding.litter_size6w is None:
+        #     A preliminary count is replaced by the certificate's confirmed one (L5), as in direct registration.
+        if litter_size6w is not None and (breeding.litter_size6w is None or breeding.litter_size6w_preliminary):
             if litter_size6w > breeding.litter_size:
                 raise RosterActionError(422, "litter_size6w_above_born", LITTER_SIZE6W_ABOVE_BORN)
             breeding.litter_size6w = litter_size6w
-            breeding.save(only=[Breeding.litter_size6w])
+            breeding.litter_size6w_preliminary = False
+            breeding.save(only=[Breeding.litter_size6w, Breeding.litter_size6w_preliminary])
         check = position = None
         if breeding.litter_number is None:  # a litter added without a certificate: this first one numbers it
             try:

@@ -1010,12 +1010,15 @@ class IssueDigitalCertificate(PolicyCommand):
 GESTATION_DAYS = 31  # the middle of a rabbit's 26–38 days: the mating is put this long before a litter's birth
 CERTIFIED_LITTER = "Kontakta genbanksansvarig för att ändra en kull med intyg."
 LITTER_DUPLICATE_DAYS = 3  # a litter of the same mother this close may be the same one (spec 5.8, G2)
-_LITTER_LOCK = 0x48424C52  # "HBLR": classid of the advisory lock on (herd, mother) while a litter is added
+_LITTER_LOCK = 0x48424C52  # "HBLR": classid of the advisory lock on the mother while a litter is added
 
 
-def lock_mother_litters(herd_id, mother_id):
-    """Serializes the writers of a mother's litters in a herd until the transaction ends; taken before any row lock."""
-    DATABASE.execute_sql("SELECT pg_advisory_xact_lock(%s, hashtext(%s))", (_LITTER_LOCK, f"{herd_id}/{mother_id}"))
+def lock_mother_litters(mother_id):
+    """
+    Serializes the writers of a mother's litters until the transaction ends; taken before any row lock. Keyed on the
+    mother alone: a doe that changed herd around a birth date must give the writers one lock, not two.
+    """
+    DATABASE.execute_sql("SELECT pg_advisory_xact_lock(%s, %s)", (_LITTER_LOCK, mother_id))
 
 
 def _authorize_litter(command, ctx, herd, year):
@@ -1186,13 +1189,12 @@ class ConfirmLitterSize(PolicyCommand):
 
 def register_litter(user, mother_id, father_id, birth_date, litter_size, litter_size6w, herd, *, year, grant=None):
     """
-    RegisterLitter on the mother; returns the new Breeding. Two requests for the same mother in a herd run one
+    RegisterLitter on the mother; returns the new Breeding. Two requests for the same mother run one
     after the other (advisory lock, taken before the rows: the 3-day window is read under it), so two tabs
     give one litter and a samma_kull (L3).
     """
     with DATABASE.atomic():
-        row = Herd.select(Herd.id).where(Herd.herd == herd).first()
-        lock_mother_litters(row.id if row else herd, mother_id)
+        lock_mother_litters(mother_id)
         command = RegisterLitter(father_id, birth_date, litter_size, litter_size6w, herd, year)
         execute(user, mother_id, lambda ctx: [command], grant=grant, lock_also=(father_id,))
         return Breeding.get(
