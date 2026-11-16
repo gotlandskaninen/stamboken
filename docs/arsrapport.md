@@ -80,7 +80,8 @@ avvisar förslaget. Orsaken krävs och får inte innehålla köparens namn, tele
 e-postadresser. `kvar` skriver kaninen som Finns kvar med Ej vägd ("Försäljningen avvisades"), så
 att raden är klar och medlemmen ändå kan väga den, och `valj_igen` lämnar den åt medlemmen att
 välja igen. Båda skrivs som ett inskick av genbanksansvarig på samma rapport och flyttar
-revisionen, så att en sida som öppnades före beslutet får 409. Vägrar registret `kvar` blir svaret
+revisionen, så att en sida som öppnades före beslutet får 409. Inskicken ordnas i den ordning de
+skrevs under rapportens lås, inte efter `created_at`. Vägrar registret `kvar` blir svaret
 409 med registrets orsak, och förslaget står kvar. Medlemmen får orsaken i mejlet
 `arsrapport.forsaljning_avvisad`. Ett förslag som redan är avgjort ger 409.
 

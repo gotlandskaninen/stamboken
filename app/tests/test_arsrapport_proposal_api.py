@@ -344,3 +344,16 @@ class ProposalApiTest(ArsrapportTest):
         self.day(2)  # the member may still weigh it
         self.send(self.kvar(self.a, vikt=2.9), self.kvar(self.b, vikt=3.0), self.kvar(self.c, vikt=2.8), revision=3)
         self.assertEqual([round(w.weight, 2) for w in weighed], [2.9])
+
+    def test_rejections_locked_in_another_order_than_started(self):  # P1
+        self.first(self.sald(self.a, "G9002", 2025, 10, 3), self.sald(self.b, "G9002", 2025, 11, 5))
+        (first,), (second,) = proposals(self.a), proposals(self.b)
+        started = datetime(2026, 1, 10, 11, 0, tzinfo=timezone.utc)
+        # a's rejection started first but took the report's lock second: it writes after b's, with an older clock
+        manager = db.User.get_by_id(self.manager.id)
+        sp.reject(second, manager, reason="Fel köpare", then="valj_igen", now=started + timedelta(seconds=1))
+        sp.reject(first, manager, reason="Fel datum", then="kvar", now=started)
+        latest = self.latest()
+        self.assertEqual((latest[str(self.a.id)]["val"], latest[str(self.b.id)]["val"]), ("kvar", None))
+        self.assertEqual(self.report().revision, 3)
+        self.assertEqual(self.flags()["forsaljning_avvisad"], 1)

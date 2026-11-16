@@ -329,9 +329,12 @@ def current_report(herd, round_):
 
 
 def _submissions(report):
-    """The report's submissions, oldest first."""
+    """
+    The report's submissions, oldest first: in the order they were written, which the report's lock serializes. Not
+    by created_at, which a writer takes before it waits for the lock (P1).
+    """
     query = YearlyReportSubmission.select().where(YearlyReportSubmission.report == report.id)
-    return list(query.order_by(YearlyReportSubmission.created_at, YearlyReportSubmission.id))
+    return list(query.order_by(YearlyReportSubmission.id))
 
 
 def report_ops(report):
@@ -903,7 +906,7 @@ def _sale_flags(round_, reports):
     for submission in (
         YearlyReportSubmission.select(YearlyReportSubmission.report, YearlyReportSubmission.data)
         .where(YearlyReportSubmission.report.in_(sorted({p.report_id for p in open_ if p.state == "avvisad"})))
-        .order_by(YearlyReportSubmission.created_at, YearlyReportSubmission.id)
+        .order_by(YearlyReportSubmission.id)
     ):
         latest[submission.report_id] = submission.data.get("rabbits") or {}
     again = {
