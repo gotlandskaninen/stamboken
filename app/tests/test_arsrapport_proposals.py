@@ -293,6 +293,19 @@ class ProposalsTest(ArsrapportTest):
         )
         self.assertEqual([p.state for p in proposals(self.a)], ["avvisad", "foreslagen"])
 
+    def test_change_after_rejection_kvar_leaves_the_rabbit(self):  # FB3's rule stops at an attested rabbit
+        first = self.first()
+        sp.reject(first, self.decider, reason="Fel datum", then="kvar", now=NOW)
+        self.day(1)
+        self.send(
+            self.sald(self.a, "G9002", 2025, 10, 3),
+            self.kvar(self.b, vikt=3.0),
+            self.kvar(self.c, vikt=2.8),
+            revision=1,
+        )
+        self.assertEqual([p.state for p in proposals(self.a)], ["avvisad"])
+        self.assertEqual(len(rows(self.a, "ATTESTATION")), 1)
+
     def test_owner_sale_survives_link_change_and_withdraw(self):  # FB5, acceptance case 1 with a sale
         entries = (self.kvar(self.a, vikt=2.8), self.sald(self.b, "G9002", 2025, 10, 3))
         self.send(*entries, self.sald(self.c, "utanfor", 2025, 11, 20, kopare=BUYER), who="owner")

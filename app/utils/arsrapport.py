@@ -1386,10 +1386,15 @@ def _proposals(report):
     return {proposal.individual_id: proposal for proposal in query}
 
 
-def _unchanged(entry, before, proposal):
-    """P39a: a choice as in the latest submission writes nothing, unless it is a sale that was rejected (FB3)."""
+def _unchanged(entry, before, proposal, row):
+    """
+    P39a: a choice as in the latest submission writes nothing, unless it is a sale that was rejected and the rabbit is
+    still to choose (FB3); a rejection with "kvar" has attested it, so its row is no longer att_valja.
+    """
+    # shortcut: any resent rejected sale is a new proposal, as the form resends every entry; once Task 3's rejection
+    # rewrites the latest submission's entry (FB2 kvar, FB3 cleared), entry == before no longer holds and this is moot
     rejected = entry.val == "sald" and proposal is not None and proposal.state == "avvisad"
-    return entry == before and not rejected
+    return entry == before and not (rejected and row["state"] == "att_valja")
 
 
 def _keeps(proposal, before, entry):
@@ -1635,7 +1640,7 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
         if entry.val == "ej_angiven" and access.source != "paper" and not kept:
             refusals.append(_refusal(rabbit, "ej_angiven_digitalt"))
             continue
-        if _unchanged(entry, before, proposals.get(rabbit)):  # P39a: it writes nothing and is not refused
+        if _unchanged(entry, before, proposals.get(rabbit), row):  # P39a: it writes nothing and is not refused
             continue
         if row["state"] != "att_valja":
             refusals.append(_refusal(rabbit, "senare_handelse"))
@@ -2396,7 +2401,7 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
             report.save()
             for rabbit, entry in sorted(sub.rabbits.items()):
                 prev, proposal = before.get(rabbit), proposals.get(rabbit)
-                if _unchanged(entry, prev, proposal):  # P39a: an unchanged choice writes nothing
+                if _unchanged(entry, prev, proposal, rows[rabbit]):  # P39a: an unchanged choice writes nothing
                     continue
                 want = wanted(entry, rows[rabbit], report, herd, year, on)
                 want = _split_sale(proposed, access, report, rabbit, want, prev, entry, proposal, last, at)
