@@ -79,7 +79,7 @@ COPY app/ .
 
 # Create non-root user and required runtime directories
 RUN groupadd -r -g 1001 apiuser && useradd -r -u 1001 -g apiuser apiuser
-RUN mkdir -p /api_src /app/certs \
+RUN mkdir -p /api_src /app/certs /app/skyddat \
     && chown -R apiuser:apiuser /app /api_src
 USER apiuser
 

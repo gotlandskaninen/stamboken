@@ -360,6 +360,16 @@ class TestDataAccess(DatabaseTest):
         updated = da.form_to_individual(forms["admin_update"], self.admin)
         self.assertEqual(updated, self.individuals[0])
 
+    def test_form_to_individual_color_within_herds_genebank(self):
+        """Legacy create: "Albino" is the colour of the herd's genebank; another genebank's colour is unknown."""
+        gotland = db.Color.create(name="Albino", genebank=self.genebanks[0])
+        mellerud = db.Color.create(name="Albino", genebank=self.genebanks[1])
+        for herd, color in ((self.herds[0], gotland), (self.herds[2], mellerud)):
+            form = {"number": f"{herd.herd}-9902", "color": "Albino", "herd": herd.herd}
+            self.assertEqual(da.form_to_individual(form, self.admin).color, color)
+        form = {"number": "M3-9903", "color": "stgröhn", "herd": self.herds[2].herd}
+        self.assertRaises(ValueError, da.form_to_individual, form, self.admin)
+
     def test_add_individual(self):
         """
         Checks that `utils.data_access.add_individual` works as intended.

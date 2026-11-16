@@ -35,6 +35,8 @@ from utils.database import (
     Membership,
     User,
 )
+from utils.inbox_purge import erase_person_from_inbox, remove_originals
+from utils.mail import forget_recipient
 from utils.membership_lifecycle import Event, Status, next_state, state_of
 from utils.postal import (  # noqa: F401 — public helpers
     format_postal_address,
@@ -443,8 +445,11 @@ def anonymize_person(member, actor):
     the ones that never led to membership are #69's job.
     Detaches the account through the same locked unlink path as the endpoint
     (mode="anonymize") and invalidates the genebanks whose
-    access the account loses. Returns the scrubbed person: the caller's
-    pre-lock instance is stale afterwards.
+    access the account loses. Erases the intake queue's originals and texts
+    that show the person as seller or buyer, and what they sent
+    (erase_person_from_inbox).
+    Returns the scrubbed person: the caller's pre-lock instance is stale
+    afterwards.
     """
     with DB_PROXY.atomic():
         # current user_id under the membership lock, never the caller's stale copy
@@ -480,8 +485,9 @@ def anonymize_person(member, actor):
                 address=None, postal_code=None, city=None, notes=None, **dict.fromkeys(BILLING_FIELDS), updated_at=now
             ).where(Membership.id == membership.id).execute()
             redact_household_from_audits(membership)
-        applications_redacted = (
-            MemberApplication.update(
+        application_ids = [
+            row.id
+            for row in MemberApplication.update(
                 first_name=ANONYMIZED_FIRST_NAME,
                 last_name=ANONYMIZED_LAST_NAME,
                 email="[borttagen]",
@@ -498,8 +504,15 @@ def anonymize_person(member, actor):
                 status=Case(None, [(MemberApplication.status == "pending", "rejected")], MemberApplication.status),
             )
             .where(applications_to_redact)
+            # the rows this statement redacted, not a list read before it: an application committed in between
+            # is redacted here too, and its mail must be forgotten with it
+            .returning(MemberApplication.id)
             .execute()
-        )
+        ]
+        applications_redacted = len(application_ids)
+        forget_recipient("member", person.id)  # the queue keeps no address hash or dedupe key of the erased
+        for application_id in application_ids:
+            forget_recipient("application", application_id)
         write_matrikel_audit(
             actor,
             "person_anonymized",
@@ -510,6 +523,9 @@ def anonymize_person(member, actor):
         lost_genebanks = (
             {h.genebank_id for h in Herd.select(Herd.genebank).where(Herd.id.in_(list(lost)))} if lost else set()
         )
+        # the intake queue's photos that show the person, and what they sent (their account read before the detach)
+        originals = erase_person_from_inbox(person, user.id if user is not None else None)
+    remove_originals(originals)  # only after the commit: a row never names a removed file
     _invalidate_genebanks(lost_genebanks)
     return person
 

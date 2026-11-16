@@ -1,6 +1,6 @@
 ---
 status: "proposed"
-date: 2026-11-06
+date: 2026-11-14
 decision-makers: Jonas
 ---
 
@@ -151,6 +151,29 @@ vad i medlemsregistret beslutas separat.
   kontrollerar i stället att databasen vägrar roll utan scope och dinglande
   besättning.
 
+## Tillägg 2026-11-14: genbankshjälpare (föreslaget)
+
+Föreslaget tillägg, att godkännas av beslutsfattaren. Inläsningskön
+([docs/inkorg.md](../inkorg.md)) behöver en lagrad roll till:
+
+| Roll | Omfattning | Typiskt |
+|------|------------|---------|
+| `helper` | En genbank | Genbankshjälpare i inläsningskön |
+
+* `helper` lagras och delas ut som de andra rollerna: av admin, eller av
+  genbanksansvarig i sin egen genbank.
+* En hjälpare ser hela inläsningskön och originalen i den, och får läsrätt i
+  sin genbank. Hon har **ingen allmän rätt att ändra kaniner**:
+  `effective_herd_ids()`, `can_edit()` och `can_transfer()` ger henne inget
+  utöver läsrätten.
+* Hon skriver bara genom en post i kön som hon själv har i läget `tagen`, för
+  en kanin i en genbank där hon är hjälpare. Det är en grant, inte en roll:
+  se ADR-0015, tillägg 2026-11-14. Flask prövar den per anrop, under låset,
+  mot den lagrade posten.
+* "Arbetar i kön" (admin, eller `manager` eller `helper` i någon genbank) är
+  den grova kontrollen för köns endpoints. Varje skrivning prövas sedan mot
+  kaninen enligt ADR-0015.
+
 ## Mer information
 
 * [ADR-0007: Flask-API:et delas upp i blueprints per domän](0007-blueprint-refactor.md)
@@ -165,3 +188,4 @@ vad i medlemsregistret beslutas separat.
 | 2026-10-27 | Jonas | Utkast |
 | 2026-10-31 | Jonas | Lagring av roller: tabellen `user_role` ersätter JSON-kolumnen `hbuser.privileges`; införs första releasen efter servermigreringen |
 | 2026-11-06 | Jonas | MADR-format, kortad |
+| 2026-11-14 | Jonas | Föreslaget tillägg: den lagrade rollen `helper` (genbankshjälpare), utan allmän skrivrätt |
