@@ -10,6 +10,7 @@ from datetime import date, datetime, timezone
 import fitz
 import utils.arsrapport as arsrapport
 import utils.database as db
+import utils.mail as mail
 from utils.arsrapport_pdf import receipt_pdf, register_extract_pdf
 
 from tests.arsrapport_fixtures import ArsrapportTest
@@ -111,3 +112,14 @@ class PdfTest(ArsrapportTest):
         text = text_of(register_extract_pdf(self.h, self.round_))
         self.assertIn(kept.number, text)
         self.assertIn(moved.number, text)
+
+    def test_kvitto_mail_has_the_pdf_attachment(self):
+        kept, other = self.rabbits(self.h, 2)
+        report = self.reported(self.h, self.kvar(kept, vikt=2.8), self.ej_angiven(other))
+        submission = arsrapport._submissions(report)[-1]  # pylint: disable=protected-access
+        for kind in ("arsrapport.kvitto", "arsrapport.andrad"):
+            built = arsrapport._kvitto({"submission_id": submission.id})  # pylint: disable=protected-access
+            ((name, mime, data),) = built["attachments"]
+            self.assertEqual((name, mime), ("kvittens.pdf", "application/pdf"), kind)
+            self.assertIn(kept.number, text_of(data))
+            mail.render(kind, {k: v for k, v in built.items() if k != "attachments"})
