@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import styles from "../stamboken/(dashboard)/arsrapport/arsrapport.module.css";
 import { getMine } from "./actions";
 import { takeToken } from "./clearHash";
+import { goTo } from "./navigate";
 
 // The personal link is /rapport#<token>. A browser never sends what follows #, so the server cannot see it: this
 // component reads it, takes it out of the address bar at once (errorHandling.ts records location.href), posts it to
@@ -78,7 +79,6 @@ export function LinkGate({
   children?: React.ReactNode;
 }) {
   const router = useRouter();
-  const [navigating, startTransition] = React.useTransition();
   const [pending, setPending] = React.useState(false);
   const [phase, setPhase] = React.useState<
     "start" | "idle" | "cookies" | "net" | "test"
@@ -99,6 +99,7 @@ export function LinkGate({
       const current = () => alive.current && mine === latest;
       if (!current()) return; // replaced while it waited its turn
       const controller = new AbortController();
+      let navigating = false;
       try {
         const res = await bounded(
           fetch("/api/v2/rapport/oppna", {
@@ -125,15 +126,13 @@ export function LinkGate({
         if (!entry) return setPhase("cookies");
         token.current = "";
         setPhase("idle");
-        // The server page renders again; the placeholder stays until it has.
-        startTransition(() => {
-          router.replace(`/rapport?kod=${entry.code_id}`);
-          router.refresh(); // the same address again does not render again by itself
-        });
+        // The page loads again from the new session; the placeholder stays until it has.
+        navigating = true;
+        goTo(`/rapport?kod=${entry.code_id}`);
       } catch {
         if (current()) setPhase("net");
       } finally {
-        if (current()) setPending(false);
+        if (current() && !navigating) setPending(false);
       }
     },
     [router],
@@ -183,8 +182,7 @@ export function LinkGate({
   if (phase === "cookies") return <Message text={COOKIES_TEXT} />;
   if (phase === "net")
     return <Message text={NET_TEXT} retry={() => open(token.current)} />;
-  if (pending || navigating || (phase === "start" && missing))
-    return <Skeleton />;
+  if (pending || (phase === "start" && missing)) return <Skeleton />;
   if (missing === "ute") return <Message text={EXPIRED_TEXT} />;
   if (missing === "fel") return <Message text={NET_TEXT} />;
   return <>{children}</>;

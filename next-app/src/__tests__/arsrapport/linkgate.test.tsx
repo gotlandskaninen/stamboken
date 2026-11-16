@@ -3,6 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 
 const replace = vi.fn();
+const goTo = vi.fn();
+vi.mock("@/app/(app)/rapport/navigate", () => ({
+  goTo: (url: string) => goTo(url),
+}));
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ replace, refresh }),
@@ -16,6 +20,7 @@ import { CLEAR_HASH_SCRIPT } from "@/app/(app)/rapport/clearHash";
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
+  goTo.mockReset();
   resetLinkQueue(); // the queue is module state: one test's hung request must not block the next
   vi.unstubAllGlobals();
   history.replaceState(null, "", "/");
@@ -126,7 +131,7 @@ describe("LinkGate", () => {
     await act(async () => {
       pending.B({ status: 200, ok: true, json: () => ({ herd: "M2" }) });
     });
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/rapport?kod=2"));
+    await waitFor(() => expect(goTo).toHaveBeenCalledWith("/rapport?kod=2"));
     expect(replace).not.toHaveBeenCalledWith("/rapport/ogiltig");
   });
 
@@ -195,8 +200,9 @@ describe("LinkGate", () => {
     await act(async () => {
       pending.B(good("M2"));
     });
-    await waitFor(() => expect(replace).toHaveBeenCalledWith("/rapport?kod=2"));
-    expect(replace).toHaveBeenCalledTimes(1); // only the latest link navigates
+    await waitFor(() => expect(goTo).toHaveBeenCalledWith("/rapport?kod=2"));
+    expect(goTo).toHaveBeenCalledTimes(1); // only the latest link navigates
+    expect(replace).not.toHaveBeenCalled();
   });
 
   it("a link replaced while queued is never sent", async () => {
@@ -324,5 +330,29 @@ describe("LinkGate", () => {
       release({ herd: "M1" });
     });
     expect(getMine).not.toHaveBeenCalled();
+  });
+
+  it("a hash change is exchanged whichever listener sees it first", async () => {
+    // The root script's listener is registered before LinkGate mounts, as in the served page.
+    history.replaceState(null, "", "/rapport");
+    delete (window as { __rapportToken?: string }).__rapportToken;
+    new Function(CLEAR_HASH_SCRIPT)();
+    const { sent, pending } = deferred();
+    getMine.mockResolvedValue({
+      ok: true,
+      data: [{ code_id: 1, herd: "M1", herd_name: null, year: 2025 }],
+    });
+    render(<LinkGate missing="ute" />);
+    await screen.findByText(/Sidan stängdes efter två timmar/);
+    await act(async () => {
+      history.pushState(null, "", "/rapport#9.late"); // the root listener clears it first
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await waitFor(() => expect(sent).toEqual(["9.late"]));
+    await act(async () => {
+      pending["9.late"](good("M1"));
+    });
+    await waitFor(() => expect(goTo).toHaveBeenCalledWith("/rapport?kod=1"));
+    expect(location.hash).toBe("");
   });
 });
