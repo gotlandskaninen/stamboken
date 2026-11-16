@@ -1935,7 +1935,8 @@ def request_hash(sub: Submission) -> str:
 def find_submission(key, herd, round_, user, request_hash):
     """
     The submission whose receipt a retry gets: the key's, when the same user, or the same link (never one for the
-    other), sent it for the herd and round, its report is still submitted and the request hash is equal (D21). Any
+    other), sent it for the herd and round, its report is still submitted and the request hash is equal (D21;
+    `request_hash` may be a function of whether the submission was a link's). Any
     other use of the key is a 409; an unknown key is None. The route asks before report_access, so a retry after
     the item closed gets its receipt.
     """
@@ -1952,10 +1953,13 @@ def find_submission(key, herd, round_, user, request_hash):
         return None
     report = saved.report
     saved_by = ("code", saved.access_code_id) if saved.access_code_id is not None else ("user", saved.user_id)
+    mine = any(saved_by == actor_key(actor) for actor in actors)
+    # The hash is made as the submission's own actor was treated: a link's reason was dropped (without_reason).
+    digest = request_hash(saved.access_code_id is not None) if callable(request_hash) else request_hash
     if (
-        any(saved_by == actor_key(actor) for actor in actors)
+        mine
         and (report.herd_id, report.round_id, report.status) == (herd.id, round_.id, "submitted")
-        and hmac.compare_digest(saved.request_hash, request_hash)
+        and hmac.compare_digest(saved.request_hash, digest)
     ):
         return saved
     raise ArsrapportError(409, KEY_TAKEN)
@@ -2462,3 +2466,18 @@ def _angrad(params):
     if report is None or report.voided_at is None:
         return None
     return {"herd": report.herd.herd, "datum": f"{report.voided_at.astimezone(STOCKHOLM):%Y-%m-%d}"}
+
+
+def stale_link_retry(key, herd, round_):
+    """
+    The retry of a link's submission by a later code of the same herd (a reissue): the old code is revoked, so the
+    answer is 403 `lank_ogiltig` and not the 409 of a key that is someone else's. Returns when it is not that case.
+    """
+    saved = (
+        YearlyReportSubmission.select(YearlyReportSubmission, YearlyHerdReport)
+        .join(YearlyHerdReport)
+        .where(YearlyReportSubmission.submission_key == key, YearlyReportSubmission.access_code.is_null(False))
+        .first()
+    )
+    if saved is not None and (saved.report.herd_id, saved.report.round_id) == (herd.id, round_.id):
+        require_valid_code(saved.access_code_id, herd)

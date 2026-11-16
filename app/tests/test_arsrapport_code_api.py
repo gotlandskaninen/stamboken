@@ -14,6 +14,7 @@ import utils.database as db
 import utils.mail as mail
 import utils.report_code as report_code
 import utils.settings as settings
+from herdbook import APP
 
 from tests.arsrapport_fixtures import ArsrapportTest
 
@@ -113,6 +114,31 @@ class CodeApiTest(ArsrapportTest):
         report_code.revoke(self.code, now=arsrapport.now())
         new = report_code.issue_code(self.h, self.round_, self.member, now=arsrapport.now())
         self.open_link(new)  # the session holds the old, revoked code and the new one
+        again = self.api("POST", "/besattning/G9001/2025/skicka", **body)
+        self.assertEqual((again.status_code, again.get_json()["code"]), (403, "lank_ogiltig"))
+
+    def test_retry_with_a_reason_is_judged_by_its_own_submission(self):
+        """Codex r2 5: the link dropped the reason, so a replay by a logged-in member hashes as the link did."""
+        self.open_link()
+        body = self.body_for(self.rabbits_, reason="En rättelse")
+        first = self.api("POST", "/besattning/G9001/2025/skicka", **body)
+        self.assertEqual(first.status_code, 200, first.get_data(as_text=True))
+        self.login("owner")
+        self.open_link()
+        again = self.api("POST", "/besattning/G9001/2025/skicka", **body)  # scenario A
+        self.assertEqual((again.status_code, again.get_json()), (200, first.get_json()))
+        report_code.revoke(self.code, now=arsrapport.now())
+        gone = self.api("POST", "/besattning/G9001/2025/skicka", **body)  # scenario B
+        self.assertEqual((gone.status_code, gone.get_json()["code"]), (403, "lank_ogiltig"))
+
+    def test_retry_with_a_reason_after_a_reissue_with_only_the_new_code(self):
+        self.open_link()
+        body = self.body_for(self.rabbits_, reason="En rättelse")
+        self.assertEqual(self.api("POST", "/besattning/G9001/2025/skicka", **body).status_code, 200)
+        report_code.revoke(self.code, now=arsrapport.now())
+        new = report_code.issue_code(self.h, self.round_, self.member, now=arsrapport.now())
+        self.client = APP.test_client(use_cookies=True)  # a browser that has only the new link
+        self.open_link(new)
         again = self.api("POST", "/besattning/G9001/2025/skicka", **body)
         self.assertEqual((again.status_code, again.get_json()["code"]), (403, "lank_ogiltig"))
 

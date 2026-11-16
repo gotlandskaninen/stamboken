@@ -107,13 +107,11 @@ def _retry_actors(herd, round_):
     """
     Who a retry of Skicka may be looked up for, before the access is read: the account, and the session's codes for
     the herd, valid or not. A submission made with a code gets its receipt only while that code is valid (E4); the
-    retry of a paper item's account submission keeps its exception (Codex 5). The second element says whether the
-    request runs as a link, so that its reason is dropped before the request hash is made.
+    retry of a paper item's account submission keeps its exception (Codex 5).
     """
     user = current_user if current_user.is_authenticated else None
     codes = [CodeActor(code) for code in _codes_in_session(herd, round_)]
-    own_right = user is not None and arsrapport.report_access(user, herd) is not None
-    return ([user] if user is not None else []) + codes, bool(codes) and not own_right
+    return ([user] if user is not None else []) + codes
 
 
 def report_actor_required(f):
@@ -232,9 +230,17 @@ def submit(herd, year):
     sub = arsrapport.parse_submission(_submission_body(), paper=request.args.get("post") is not None)  # before lookups
     target, round_ = Herd.get_or_none(Herd.herd == herd), arsrapport.get_round(year)
     if target is not None and round_ is not None:  # before report_access: a retry after the item closed (Fable 5)
-        actors, as_link = _retry_actors(target, round_)
-        digest = arsrapport.request_hash(arsrapport.without_reason(sub) if as_link else sub)
-        saved = arsrapport.find_submission(sub.key, target, round_, actors, digest) if actors else None
+        actors = _retry_actors(target, round_)
+
+        def digest(by_link):  # as the original submission's actor was treated
+            return arsrapport.request_hash(arsrapport.without_reason(sub) if by_link else sub)
+
+        try:
+            saved = arsrapport.find_submission(sub.key, target, round_, actors, digest) if actors else None
+        except ArsrapportError as exc:
+            if exc.status == 409 and any(isinstance(actor, CodeActor) for actor in actors):
+                arsrapport.stale_link_retry(sub.key, target, round_)  # a reissued link: 403 lank_ogiltig
+            raise
         if saved is not None:
             if saved.access_code_id is not None:  # E4 on every use, also for a receipt
                 arsrapport.require_valid_code(saved.access_code_id, target)
