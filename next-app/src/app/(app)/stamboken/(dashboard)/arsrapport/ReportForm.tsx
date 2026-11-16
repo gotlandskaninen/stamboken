@@ -213,6 +213,18 @@ const ProfileCard = (
   </MbCard>
 );
 
+// Publishes the side column's height as --side-h on the layout, so that Skicka, which
+// comes after the list in the DOM, can stick right under the sticky side column.
+function trackSideHeight(el: HTMLDivElement | null) {
+  const layout = el?.parentElement;
+  if (!el || !layout || typeof ResizeObserver === "undefined") return;
+  const ro = new ResizeObserver(() =>
+    layout.style.setProperty("--side-h", `${el.offsetHeight}px`),
+  );
+  ro.observe(el);
+  return () => ro.disconnect();
+}
+
 export function ReportForm({
   view,
   actions,
@@ -1245,7 +1257,7 @@ export function ReportForm({
         />
       ) : (
         <div className={styles.layout}>
-          <div className={styles.side}>
+          <div className={styles.side} ref={trackSideHeight}>
             <div>
               {deadline && <ReportStatus status={deadline} />}
               {syncTimeout && (

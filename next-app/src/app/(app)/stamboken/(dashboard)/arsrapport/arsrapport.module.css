@@ -672,20 +672,22 @@ table.statusTable th {
   }
   .wide .layout {
     grid-template-columns: minmax(0, 1fr) 300px;
-    grid-template-rows: auto 1fr; /* Skicka under the side column, not at the foot of the list */
   }
   .wide .main {
     grid-row: 1 / span 2;
   }
+  /* One sticky block in two grid items: the side column sticks at the top and
+     Skicka sticks right under it (--side-h is set by trackSideHeight). */
   .wide .side {
-    position: static;
-    max-height: none;
-    overflow: visible;
+    grid-row: 1 / span 2;
+    max-height: max(160px, calc(100vh - var(--report-sticky-top) - 240px));
   }
   .wide .sideSend {
-    grid-row: 2;
+    grid-row: 1 / span 2;
     align-self: start;
-    position: static;
+    margin-top: calc(var(--side-h, 360px) + 16px);
+    top: calc(var(--report-sticky-top) + 16px + var(--side-h, 360px) + 16px);
+    bottom: auto;
   }
   .wide .stickyRow {
     display: contents;
