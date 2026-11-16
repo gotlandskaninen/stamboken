@@ -594,6 +594,42 @@ class TestAuditBlueprint(DatabaseTest):
         self.assertIsInstance(data["data"], list)
         self.assertGreater(len(data["data"]), 0)
 
+    def test_herd_audit_history_cuts_the_bank_account_for_a_manager(self):
+        herd = self.herds[0]
+        herd.bank_account_number = "1234-5"
+        herd.save()
+        for username, expected in (("admin", "1234-5"), ("man", "••45")):
+            self.client.get("/api/logout")
+            self.login(username)
+            response = self.client.get(f"/api/audit-log/herd/{herd.id}")
+            self.assertEqual(response.status_code, 200)
+            data = response.get_json()["data"]
+            new_values = [e["new_data"].get("bank_account_number") for e in data if e["new_data"]]
+            self.assertIn(expected, new_values)
+            if username == "man":
+                for entry in data:
+                    for snapshot in (entry["old_data"], entry["new_data"]):
+                        self.assertNotEqual((snapshot or {}).get("bank_account_number"), "1234-5")
+
+    def test_herd_audit_history_masks_old_data_and_spares_the_owner_manager(self):
+        herd = self.herds[0]
+        herd.bank_account_number = "1234-5"
+        herd.save()
+        herd.bank_account_number = "9876-5"
+        herd.save()  # the second UPDATE puts the first account in old_data
+        self.login("man")
+        data = self.client.get(f"/api/audit-log/herd/{herd.id}").get_json()["data"]
+        seen = [e[k].get("bank_account_number") for e in data for k in ("old_data", "new_data") if e[k]]
+        self.assertIn("••45", seen)
+        self.assertNotIn("1234-5", seen)
+        self.assertNotIn("9876-5", seen)
+        self.client.get("/api/logout")
+        self.manager.add_role("owner", herd.id)  # a manager who also owns the herd sees it whole
+        self.login("man")
+        data = self.client.get(f"/api/audit-log/herd/{herd.id}").get_json()["data"]
+        seen = [e[k].get("bank_account_number") for e in data for k in ("old_data", "new_data") if e[k]]
+        self.assertIn("1234-5", seen)
+
     def test_get_audit_history_omits_editor_ip_address(self):
         """The editor's IP is PII (purge_user_audit_pii NULLs it, the admin reader
         omits it): neither a genebank manager nor an admin gets it per record."""
