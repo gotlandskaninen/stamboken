@@ -501,6 +501,67 @@ class TestReportPhotoReading(AddRabbitTest):
         self.assertEqual(detail["documents"][0]["proposal"], read.proposal)
         self.assertIsNone(inbox.item_detail(queued)["registered"])
 
+    def read_registered(self, **reading):
+        """The report photo of the kit, registered first and then read as `reading` says."""
+        self.READING = reading
+        _, _, _, document = self.registered()
+        self.assertEqual(interpreter.interpret_next(), document.id)
+        return db.InboxDocument.get_by_id(document.id).proposal
+
+    @staticmethod
+    def parent(rabbit):
+        return {"genbanksnr": "G9001", "ar_kull_individ": rabbit.number.split("-")[1], "namn": ""}
+
+    def test_every_field_beside_the_registered_rabbit(self):
+        """Codex P2: a photo read after its rabbit is saved gets every field of the form compared with that rabbit,
+        with what differs or is unsure kept, and the checks."""
+        proposal = self.read_registered(
+            genbanksnr="G9001",
+            ar_kull_individ="2511",
+            intygsnummer="P-2511",
+            fodelsedatum="250510",
+            kon="Hona",
+            namn="Bella",
+            farg="",
+            fodda_i_kullen="5",
+            levande_efter_6_veckor="fyra",
+            mor=self.parent(self.doe),
+            far=self.parent(self.buck),
+        )
+        fields = {key: (field["source"], field["value"]) for key, field in proposal["fields"].items()}
+        self.assertEqual(
+            fields,
+            {
+                "paper_number": ("läst", "G9001-2511"),
+                "paper_certificate": ("läst", "P-2511"),
+                "name": ("avviker", None),
+                "sex": ("läst", "female"),
+                "birth_date": ("läst", "2025-05-10"),
+                "mother": ("läst", self.doe.number),
+                "father": ("läst", self.buck.number),
+                "litter_size": ("läst", 5),
+                "litter_size6w": ("osäker", None),
+            },
+        )
+        name = proposal["fields"]["name"]
+        self.assertEqual((name["read"], name["registry"]), ("Bella", "Kulla"))
+        self.assertEqual(proposal["fields"]["litter_size6w"]["read"], "fyra")
+        self.assertIn(
+            {"ok": False, "text": "Namnet på intyget är inte registrets för G9001-2511 (Kulla)."}, proposal["checks"]
+        )
+
+    def test_another_rabbits_number_deviates_from_the_registered_one(self):
+        """Another rabbit's number read is not taken as that rabbit's certificate: it deviates from the kit's."""
+        proposal = self.read_registered(genbanksnr="G9001", ar_kull_individ=self.doe2.number.split("-")[1])
+        field = proposal["fields"]["paper_number"]
+        self.assertEqual((field["source"], field["value"], field["registry"]), ("avviker", None, "G9001-2511"))
+        self.assertNotIn("individual", proposal["fields"])  # not the littermate's own comparison
+
+    def test_a_number_not_read_is_unsure_beside_the_registered_one(self):
+        proposal = self.read_registered(genbanksnr="G9001", ar_kull_individ="25?1", mor=self.parent(self.doe))
+        self.assertEqual(proposal["fields"]["paper_number"], {"value": None, "source": "osäker", "read": "G9001 25?1"})
+        self.assertEqual(proposal["fields"]["mother"]["source"], "läst")
+
     def test_tolka_igen_on_a_registered_report_photo(self):
         queued, queued_doc, item, document = self.registered()
         interpreter.interpret_next()

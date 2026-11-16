@@ -4,6 +4,7 @@ import { useState } from "react";
 import {
   Field,
   proposalHint,
+  ProposalChecks,
   RegisterFromCertificate,
 } from "@/components/register/RegisterFromCertificate";
 import { lookupRabbit, saveCertificate } from "../actions";
@@ -170,18 +171,7 @@ export function CertificateForm({
                   )}
                 </ul>
               )}
-            {proposal.checks.length > 0 && (
-              <ul className={styles.checks} aria-label="Kontroller">
-                {proposal.checks.map((check) => (
-                  <li key={check.text} data-ok={String(check.ok)}>
-                    <span aria-hidden="true">
-                      {check.ok === true ? "✓" : check.ok === false ? "✗" : "·"}
-                    </span>{" "}
-                    {check.text}
-                  </li>
-                ))}
-              </ul>
-            )}
+            <ProposalChecks checks={proposal.checks} />
           </>
         )
       }

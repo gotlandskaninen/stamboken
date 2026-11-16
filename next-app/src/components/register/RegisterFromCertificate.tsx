@@ -21,6 +21,7 @@ import {
   type CertForm,
   type NumberResolution,
   type Problem,
+  type Proposal,
   type ProposedField,
   type SaveMode,
   type Source,
@@ -54,6 +55,22 @@ export function proposalHint(field?: ProposedField) {
   ].filter(Boolean);
   return parts.length ? (
     <span className={styles.registry}>{parts.join(" · ")}</span>
+  ) : null;
+}
+
+/** The image reading's checks in words, under what they are about. */
+export function ProposalChecks({ checks }: { checks: Proposal["checks"] }) {
+  return checks.length > 0 ? (
+    <ul className={styles.checks} aria-label="Kontroller">
+      {checks.map((check) => (
+        <li key={check.text} data-ok={String(check.ok)}>
+          <span aria-hidden="true">
+            {check.ok === true ? "✓" : check.ok === false ? "✗" : "·"}
+          </span>{" "}
+          {check.text}
+        </li>
+      ))}
+    </ul>
   ) : null;
 }
 

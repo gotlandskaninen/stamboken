@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { ProposalChecks } from "@/components/register/RegisterFromCertificate";
 import type { CertForm, InboxDetail, InboxDocument } from "../lib";
 import styles from "../inkorg.module.css";
 
@@ -26,8 +27,11 @@ const shown = (key: keyof CertForm, value: unknown) =>
 /**
  * A certificate photo from the yearly report (4b, G5): the member registered
  * the rabbit at once, so the queue sets the image reading beside what was
- * registered, field by field, and marks where they differ. The item's handler
- * closes it with "Stämmer" or "Rättat", and can have the photo read again.
+ * registered, field by field, and marks where they differ: the reading's own
+ * avviker against the rabbit, or a value read before the rabbit was saved
+ * that is not the registered one. What was unsure says so, and the reading's
+ * checks follow. The item's handler closes it with "Stämmer" or "Rättat", and
+ * can have the photo read again.
  */
 export function ReportPhotoCheck({
   doc,
@@ -83,15 +87,23 @@ export function ReportPhotoCheck({
           {ROWS.map(([key, label]) => {
             const read = fields[key];
             const fromPhoto = read ? (read.value ?? read.read ?? null) : null;
+            // `read` is the paper's own text ("250510", "Hona"): only a value is compared
             const differs =
-              fromPhoto != null &&
-              registered[key] != null &&
-              String(fromPhoto).trim().toUpperCase() !==
-                String(registered[key]).trim().toUpperCase();
+              read?.source === "avviker" ||
+              (read?.value != null &&
+                registered[key] != null &&
+                String(read.value).trim().toUpperCase() !==
+                  String(registered[key]).trim().toUpperCase());
             return (
               <tr key={key} data-differs={differs || undefined}>
                 <th scope="row">{label}</th>
-                <td>{shown(key, fromPhoto)}</td>
+                <td>
+                  {shown(key, fromPhoto)}
+                  {(read?.source === "osäker" ||
+                    read?.source === "härlett") && (
+                    <span className={styles.muted}> ({read.source})</span>
+                  )}
+                </td>
                 <td>
                   {shown(key, registered[key])}
                   {differs && <strong> Avviker</strong>}
@@ -101,6 +113,7 @@ export function ReportPhotoCheck({
           })}
         </tbody>
       </table>
+      {doc.proposal && <ProposalChecks checks={doc.proposal.checks} />}
       {canCheck && (
         <>
           <div className={styles.submitRow}>

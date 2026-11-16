@@ -1089,6 +1089,11 @@ bekräftade föräldrar hjälper registret: en förälder som hittats, eller upp
 ingen förälder gick att läsa, ger sina kullar. En enda kull född det lästa datumet fyller i mor och
 far som `härlett`; annars listas kullarna i `checks`.
 
+Ett foto från årsrapporten som tolkas efter att kaninen sparats jämförs med den kaninen, vilket
+nummer som än lästes. Varje fält i formuläret får ett värde: `läst` när det stämmer med det som
+registrerades, `avviker` med det registrerade värdet när det inte gör det, och `osäker` när det är
+överstruket eller inte går att läsa. Kontrollerna är desamma som för en kanin som redan finns.
+
 **Inställningar** (`.docker/api-variables.env`):
 
 | Variabel | Värde | Standard |

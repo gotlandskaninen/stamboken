@@ -271,53 +271,126 @@ describe("WorkView on a report photo", () => {
     sex: "female",
     birth_date: "2025-05-10",
     color: null,
-    mother: "G9001-2411",
-    father: "G9001-2412",
+    mother: "G9001-24001",
+    father: "G9001-24002",
     litter_size: 5,
     litter_size6w: 4,
   };
+  // As Flask builds it for a photo read after its rabbit was saved (test_arsrapport_add_rabbit.py,
+  // test_every_field_beside_the_registered_rabbit): every field, the paper's own text in `read`.
   const reading = {
     fields: {
-      paper_number: { value: "G9001-2511", source: "läst" as const },
-      name: { value: "Kalla", source: "läst" as const },
-      mother: { value: null, source: "osäker" as const, read: "G9001 2411" },
+      sex: { read: "Hona", value: "female", source: "läst" as const },
+      name: {
+        read: "Bella",
+        value: null,
+        source: "avviker" as const,
+        registry: "Kulla",
+      },
+      father: {
+        read: "G9001 24002",
+        value: "G9001-24002",
+        source: "läst" as const,
+      },
+      mother: {
+        read: "G9001 24001",
+        value: "G9001-24001",
+        source: "läst" as const,
+      },
+      birth_date: {
+        read: "250510",
+        value: "2025-05-10",
+        source: "läst" as const,
+      },
+      litter_size: { read: "5", value: 5, source: "läst" as const },
+      paper_number: {
+        read: "G9001 2511",
+        value: "G9001-2511",
+        source: "läst" as const,
+      },
+      litter_size6w: { read: "fyra", value: null, source: "osäker" as const },
+      paper_certificate: {
+        read: "P-2511",
+        value: "P-2511",
+        source: "läst" as const,
+      },
     },
-    checks: [],
+    checks: [
+      { ok: null, text: "G9001-2511 finns redan i Stamboken." },
+      {
+        ok: false,
+        text: "Namnet på intyget är inte registrets för G9001-2511 (Kulla).",
+      },
+      { ok: true, text: "Intygsnumret är kaninens." },
+    ],
   };
+  const photoItem = (proposal: InboxDocument["proposal"]) =>
+    item({
+      kind: "kontroll",
+      ref_type: "individual",
+      ref_id: 51,
+      assigned_to: null,
+      state: "ny",
+      registered,
+      documents: [
+        doc({
+          individual: "G9001-2511",
+          interpretation_status: "klar",
+          proposal,
+        }),
+      ],
+    });
+  const row = (label: string) =>
+    Array.from(
+      screen
+        .getByRole("table", { name: "Tolkningen och registreringen" })
+        .querySelectorAll("tr"),
+    ).find((tr) => tr.querySelector("th")?.textContent === label)!;
 
-  it("shows the reading beside the registered rabbit and marks what differs", () => {
+  it("shows every field read beside the registered rabbit, what differs, what is unsure, and the checks", () => {
+    render(view(photoItem(reading)));
+    expect(row("Namn")).toHaveAttribute("data-differs", "true");
+    expect(row("Namn")).toHaveTextContent("BellaKulla Avviker");
+    expect(row("Levande i kullen efter 6 veckor")).toHaveTextContent(
+      "fyra (osäker)4",
+    );
+    expect(row("Levande i kullen efter 6 veckor")).not.toHaveAttribute(
+      "data-differs",
+    );
+    for (const [label, text] of [
+      ["Individnummer", "G9001-2511G9001-2511"],
+      ["Intygsnummer", "P-2511P-2511"],
+      ["Kön", "HonaHona"],
+      ["Födelsedatum", "2025-05-102025-05-10"],
+      ["Mor", "G9001-24001G9001-24001"],
+      ["Far", "G9001-24002G9001-24002"],
+      ["Antal födda", "55"],
+    ]) {
+      expect(row(label)).toHaveTextContent(text);
+      expect(row(label)).not.toHaveAttribute("data-differs");
+    }
+    expect(row("Färg")).toHaveTextContent("––");
+    const checks = screen.getByRole("list", { name: "Kontroller" });
+    expect(checks).toHaveTextContent(
+      "✗ Namnet på intyget är inte registrets för G9001-2511 (Kulla).",
+    );
+    expect(checks).toHaveTextContent("✓ Intygsnumret är kaninens.");
+    expect(screen.getByRole("link", { name: "G9001-2511" })).toBeVisible();
+    expect(screen.queryByText("Dölj säljare och köpare")).toBeNull();
+  });
+
+  it("a value read before the rabbit was saved is compared with what was registered", () => {
     render(
       view(
-        item({
-          kind: "kontroll",
-          ref_type: "individual",
-          ref_id: 51,
-          assigned_to: null,
-          state: "ny",
-          registered,
-          documents: [
-            doc({
-              individual: "G9001-2511",
-              interpretation_status: "klar",
-              proposal: reading,
-            }),
-          ],
+        photoItem({
+          fields: { name: { value: "Kalla", source: "läst", read: "Kalla" } },
+          checks: [],
         }),
       ),
     );
-    const table = screen.getByRole("table", {
-      name: "Tolkningen och registreringen",
-    });
-    const row = (label: string) =>
-      Array.from(table.querySelectorAll("tr")).find(
-        (tr) => tr.querySelector("th")?.textContent === label,
-      )!;
     expect(row("Namn")).toHaveAttribute("data-differs", "true");
     expect(row("Namn")).toHaveTextContent("KallaKulla Avviker");
-    expect(row("Individnummer")).not.toHaveAttribute("data-differs");
-    expect(row("Mor")).toHaveTextContent("G9001 2411G9001-2411 Avviker");
-    expect(screen.getByRole("link", { name: "G9001-2511" })).toBeVisible();
-    expect(screen.queryByText("Dölj säljare och köpare")).toBeNull();
+    expect(screen.queryByRole("list", { name: "Kontroller" })).toBeNull();
   });
 
   it("an ordinary saved certificate still opens the masking", () => {

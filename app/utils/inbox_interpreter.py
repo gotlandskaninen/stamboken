@@ -239,7 +239,11 @@ def interpret_next():
         ):
             return document_id
         if raw is not None:
-            proposal = build_proposal(raw, item.genebank_id, item.herd_id)
+            # A report photo (utils/inbox.report_photo, which imports this module) is set beside the rabbit registered
+            # from it: the document re-read under the item's lock, as the registration binds it under that lock.
+            report_photo = item.kind == "kontroll" and item.ref_type == "individual"
+            registered = document.individual if report_photo else None
+            proposal = build_proposal(raw, item.genebank_id, item.herd_id, registered)
             _finish(document, "klar", interpretation=raw, proposal=proposal)
         elif document.attempts >= MAX_ATTEMPTS:
             _finish(document, "misslyckad")
