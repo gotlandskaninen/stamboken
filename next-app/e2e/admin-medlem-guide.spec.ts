@@ -1,8 +1,9 @@
 import { test, expect } from "@playwright/test";
 
 // The matrikel guide is for those who keep the member register: admins and
-// matrikel admins read it, everyone else gets a 404 for the page and its
-// screenshots (they live outside public/).
+// matrikel admins read it. Other logged-in users get a 404 for the page and
+// its screenshots (they live outside public/); visitors who are not logged in
+// are sent to sign in, as on every page under /medlem.
 
 test("an admin reads the guide, its pictures and its anchors", async ({
   page,
@@ -43,7 +44,13 @@ test.describe("a breeder", () => {
 test.describe("someone not logged in", () => {
   test.use({ storageState: { cookies: [], origins: [] } });
 
-  test("gets 404 for the guide's pictures", async ({ request }) => {
+  test("is sent to sign in for the guide, and gets 404 for its pictures", async ({
+    page,
+    request,
+  }) => {
+    // Like every page under /medlem: the middleware asks for a login first.
+    await page.goto("/medlem/guide");
+    await expect(page).toHaveURL(/\/auth\/sign-in/);
     expect(
       (await request.get("/medlem/guide/bild/matrikel.png")).status(),
     ).toBe(404);

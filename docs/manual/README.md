@@ -74,7 +74,8 @@ Medlemsregistret (`/medlem`) har en egen guide för matrikeladministratörer:
 `next-app/content/matrikel-guide/GUIDE.md` med skärmbilderna i samma katalog. Den
 ligger utanför `public/` eftersom den bara är till för dem som sköter matrikeln:
 `/medlem/guide` och bilderna under `/medlem/guide/bild/` visas bara för
-administratörer och matrikeladministratörer, alla andra får 404.
+administratörer och matrikeladministratörer. Andra inloggade får 404, och den som
+inte är inloggad skickas till inloggningen som på alla sidor under `/medlem`.
 `outputFileTracingIncludes` i `next.config.js` tar med katalogen i standalone-bygget.
 Den publika manualen nämner bara att guiden finns.
 

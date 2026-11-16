@@ -144,9 +144,10 @@ företag, kryssa i **Annan fakturaadress** och fyll i **Fakturamottagare**,
 **E-post för faktura** och **Fakturareferens**. Kryssar du ur rutan och sparar
 tas fakturaadressen bort, och fakturan går till postadressen.
 
-En medlem vars konto är kopplat till medlemskapet (se [Koppla ett
-konto](#koppla-ett-konto)) kan själv ändra sin adress under **Profil** i
-Stamboken. Ändringen syns då här.
+Är huvudmedlemmens konto kopplat till medlemskapet (se [Koppla ett
+konto](#koppla-ett-konto)) kan huvudmedlemmen själv ändra hushållets adress
+under **Profil** i Stamboken. Ändringen syns då här. Andra personer i hushållet
+kan bara läsa uppgifterna.
 
 ![Medlemskap](medlemskap-formular.png)
 
@@ -198,8 +199,9 @@ Under **Personer** står hushållets personer med roll, kontakt, konto och
 
 En person i matrikeln och ett konto i Stamboken är två olika saker. Klicka
 **Koppla konto…** på personens rad, sök fram kontot och klicka **Koppla konto**.
-Då ser medlemmen sitt medlemskap under **Profil** och kan själv ändra adress
-och vad som får publiceras i Koharen. **Koppla bort** tar bort kopplingen.
+Då ser personen medlemskapet under **Profil**. Är personen huvudmedlem kan hen
+där också ändra hushållets adress och vad som får publiceras i Koharen. Andra
+personer i hushållet kan bara läsa. **Koppla bort** tar bort kopplingen.
 
 ### Avsluta ett medlemskap
 
@@ -236,8 +238,11 @@ CSV-fil som går att öppna i Excel.
   och anteckningar på huvudmedlemmens rad och fakturaadressen sist.
   Friexemplar får nummer 0. Använd den som adresslista för Koharen och för
   avgiftsuppföljning.
-- **Exportera Koharen** ger aktiva medlemmar med bara de uppgifter var och en
-  har sagt ja till att publicera: namn, telefon, e-post och adress. Den är
+- **Exportera Koharen** ger personerna i aktiva medlemskap, med bara de
+  uppgifter hushållet har sagt ja till att publicera: namn, telefon, e-post och
+  adress. Valet gäller hela hushållet och görs av huvudmedlemmen under
+  **Profil**, och syns som **Publiceras i Koharen** på medlemskapets sida. Har
+  hushållet inte svarat är uppgifterna tomma och det står "ej angivet". Filen är
   underlaget till medlemsförteckningen i Koharen.
 
 Filerna innehåller personuppgifter. Spara dem inte där andra kommer åt dem, och
