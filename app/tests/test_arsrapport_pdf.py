@@ -13,6 +13,7 @@ import utils.database as db
 from utils.arsrapport_pdf import receipt_pdf, register_extract_pdf
 
 from tests.arsrapport_fixtures import ArsrapportTest
+from tests.ht_helpers import ht_row
 
 BUYER = {"name": "Zelda Uniquebuyer", "town": "Visby"}
 ACCOUNT = "12345678901"
@@ -51,6 +52,7 @@ class PdfTest(ArsrapportTest):
 
     def test_receipt_has_choices_and_no_buyer_or_account(self):
         kept, sold = self.rabbits(self.h, 2)
+        db.Herd.update(bank_account_number=ACCOUNT, bank_name="Testbanken").where(db.Herd.id == self.h.id).execute()
         report = self.reported(
             self.h, self.kvar(kept, vikt=2.8), self.sald(sold, "utanfor", 2025, 10, 3, kopare=BUYER), health="inga"
         )
@@ -64,6 +66,8 @@ class PdfTest(ArsrapportTest):
         self.assertNotIn(BUYER["name"], text)
         self.assertNotIn(BUYER["town"], text)
         self.assertNotIn(ACCOUNT, text)
+        self.assertNotIn("Testbanken", text)
+        self.assertIn("Inga sjukdomsfall eller defekter", text)
 
     def test_extract_lists_sold_during_the_year(self):
         kept, sold = self.rabbits(self.h, 2)
@@ -71,3 +75,37 @@ class PdfTest(ArsrapportTest):
         text = text_of(register_extract_pdf(self.h, self.round_))
         self.assertIn("2025-10-03", text)
         self.assertNotIn(BUYER["name"], text)
+
+    def receipt_text(self, **report_fields):
+        kept, other = self.rabbits(self.h, 2)
+        report = self.reported(self.h, self.kvar(kept, vikt=2.8), self.ej_angiven(other), **report_fields)
+        return kept, text_of(receipt_pdf(report, arsrapport._submissions(report)[-1]))  # pylint: disable=protected-access
+
+    def test_receipt_health_not_answered(self):
+        _, text = self.receipt_text(health=None)
+        self.assertIn("Ej besvarad", text)
+        self.assertNotIn("Sjukdomsfall", text)
+
+    def test_receipt_health_cases_with_details(self):
+        diseases = {"annat": {"namn": "Snuvan", "antal": 2, "alder": "3 månader"}, "rvhd": {"antal": 1, "alder": ""}}
+        kept, other = self.rabbits(self.h, 2)
+        defects = [{"individual_id": other.id, "beskrivning": "Sned tand", "foto": None}]
+        report = self.reported(
+            self.h, self.kvar(kept, vikt=2.8), self.ej_angiven(other), health="ja", diseases=diseases, defects=defects
+        )
+        text = text_of(receipt_pdf(report, arsrapport._submissions(report)[-1]))  # pylint: disable=protected-access
+        for expected in ("Snuvan", "3 månader", "rvhd", "Sned tand", other.number):
+            self.assertIn(expected, text)
+
+    def test_extract_keeps_rabbit_moved_after_31_december(self):
+        kept, moved = self.rabbits(self.h, 2)
+        ht_row(
+            "TRANSFER",
+            individual=moved,
+            herd=db.Herd.get(db.Herd.herd == "GX1"),
+            from_herd=self.h,
+            herd_tracking_date=date(2026, 1, 3),
+        )
+        text = text_of(register_extract_pdf(self.h, self.round_))
+        self.assertIn(kept.number, text)
+        self.assertIn(moved.number, text)

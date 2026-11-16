@@ -58,7 +58,9 @@ th, td { text-align: left; padding: 1.5mm 2mm; border-bottom: 0.2mm solid #D7CFB
 {% else %}<p>Inga kaniner.</p>{% endif %}
 
 <h2>Hälsa</h2>
-<p>{{ health }}{% if diseases %}: {{ diseases | join(", ") }}{% endif %}</p>
+<p>{{ health }}</p>
+{% if diseases %}<ul>{% for d in diseases %}<li>{{ d }}</li>{% endfor %}</ul>{% endif %}
+{% if defects %}<p>Defekter</p><ul>{% for d in defects %}<li>{{ d.number }}: {{ d.text }}</li>{% endfor %}</ul>{% endif %}
 {% endif %}
 </body>
 </html>

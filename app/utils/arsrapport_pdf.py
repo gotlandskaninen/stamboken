@@ -17,6 +17,7 @@ _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "arsrappo
 # nosemgrep: python.flask.security.xss.audit.direct-use-of-jinja2.direct-use-of-jinja2
 _ENV = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
 _SEX = {"female": "hona", "male": "hane", "eunuch": "kastrat"}
+_HEALTH = {None: "Ej besvarad", "inga": "Inga sjukdomsfall eller defekter"}
 _HULL = {"low": "mager", "normal": "normal", "high": "fet"}
 
 
@@ -100,7 +101,6 @@ def register_extract_pdf(herd, round_) -> bytes:
             "weight": weights.get(row["id"]),
         }
         for row in rows
-        if row["state"] != "via_flytt"  # moved on after 31/12: not on the list
     ]
     return _render(
         mode="utdrag", herd=herd.herd, year=year, rabbits=rabbits, sold=sold, dead=dead, litters=_litters(herd, year)
@@ -133,16 +133,24 @@ def receipt_pdf(report, submission) -> bytes:
         for rabbit, entry in sorted(entries.items(), key=lambda item: numbers[item[0]])
     ]
     health = data.get("health")
-    diseases = [f"{name} {value['antal']}" for name, value in (data.get("diseases") or {}).items()]
+    diseases = [_disease(name, value) for name, value in (data.get("diseases") or {}).items()]
+    named = _numbers(d["individual_id"] for d in data.get("defects") or [])
+    defects = [{"number": named.get(d["individual_id"]), "text": d["beskrivning"]} for d in data.get("defects") or []]
     return _render(
         mode="kvittens",
         herd=report.herd.herd,
         year=report.round.report_year,
         received=submission.created_at.astimezone(arsrapport.STOCKHOLM).strftime("%Y-%m-%d %H:%M"),
         rabbits=rabbits,
-        health="Inga sjukdomsfall eller defekter" if health == "inga" else "Sjukdomsfall eller defekter",
+        health=_HEALTH.get(health, "Sjukdomsfall eller defekter"),
         diseases=diseases,
+        defects=defects,
     )
+
+
+def _disease(name, value):
+    label = (value.get("namn") or name) if name == "annat" else name
+    return f"{label}: {value['antal']} st" + (f", {value['alder']}" if value.get("alder") else "")
 
 
 def _when(month):
