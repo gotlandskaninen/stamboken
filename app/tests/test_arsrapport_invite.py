@@ -170,8 +170,9 @@ class InviteTest(ArsrapportTest):
         self.assertEqual(db.ReportAccessCode.select().count(), 0)
         subject, body = mail.render(row.kind, {k: v for k, v in self.build(row).items() if k != "attachments"})
         self.assertTrue(subject.startswith("[Provmejl] "))
-        self.assertIn("(Länken kommer i det riktiga mejlet.)", body)
-        self.assertNotIn("/rapport#", body)
+        self.assertIn("/rapport#prov", body)
+        self.assertIn("(Det här är en provlänk.", body)
+        self.assertEqual(db.ReportAccessCode.select().count(), 0)
 
     def test_recipients_counts(self):
         self.assertEqual(invite.recipients(self.round_, self.gotland.id), {"med_epost": 2, "utan_epost": 1})

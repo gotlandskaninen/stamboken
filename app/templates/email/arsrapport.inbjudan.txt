@@ -6,7 +6,8 @@ Hej!
 Det är dags för årsrapporten för besättning {{ herd }}{% if herd_name %} ({{ herd_name }}){% endif %}. Den gäller kaninerna som fanns i besättningen den 31 december {{ year }}.
 
 Rapportera här, i mobilen eller datorn. Du behöver inte logga in:
-{% if prov %}[Provmejl] (Länken kommer i det riktiga mejlet.){% else %}{{ link }}{% endif %}
+{{ link }}{% if prov %}
+(Det här är en provlänk. I det riktiga mejlet öppnar den besättningens rapport.){% endif %}
 
 Dina kaniner är redan ifyllda. Välj för varje kanin om den finns kvar, är död eller såld, och skriv vikten på de vuxna. Det du fyller i sparas, så du kan fortsätta senare med samma länk.
 

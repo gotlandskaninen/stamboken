@@ -8,6 +8,7 @@ from datetime import datetime
 
 import utils.arsrapport as arsrapport
 import utils.report_code as report_code
+import utils.settings as settings
 from utils.arsrapport import ArsrapportError
 from utils.arsrapport_pdf import register_extract_pdf
 from utils.database import DB_PROXY, OUTSIDE_GENEBANK_HERDS, Herd, ReportAccessCode, YearlyReportRoundGenebank
@@ -135,7 +136,8 @@ def _valid_code(params):
 @mail_kind("arsrapport.inbjudan", priority=0, category="T")
 def _inbjudan(params):
     if params.get("prov"):
-        herd, round_, link = Herd.get_by_id(params["herd_id"]), arsrapport.get_round(params["year"]), None
+        herd, round_ = Herd.get_by_id(params["herd_id"]), arsrapport.get_round(params["year"])
+        link = f"{settings.service.host.rstrip('/')}/rapport#prov"  # FA9: no code, no token
     else:
         valid = _valid_code(params)
         if valid is None:
