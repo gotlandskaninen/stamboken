@@ -762,6 +762,86 @@ def _application_approved(params):
     return {} if Member.select().where(Member.id == params["member_id"]).exists() else None
 
 
+_ADDED_AS = {"familjemedlem": "familjemedlem", "skotare": "skötare"}
+
+
+@mail_kind("medlemskap.tillagd", priority=1, category="T")
+def _member_added(params):
+    """To a person someone else put into a membership (GDPR art. 14); none once the person has left it."""
+    person = Member.get_or_none((Member.id == params["member_id"]) & Member.end_date.is_null(True))
+    if person is None or person.role not in _ADDED_AS:  # left, or made main member since the mail was queued
+        return None
+    # The limit per address is kept here, on the address the mail goes to now and on mails that have gone: it
+    # holds across memberships and after an address was changed, and a mail that was stopped uses none of it.
+    if settings.mail.link_secret:  # without it (log mode only) there is no HMAC, and nothing is sent to count
+        gone = (
+            (MailMessage.kind == "medlemskap.tillagd")
+            & (MailMessage.status == "sent")
+            & (MailMessage.address_hash == address_hash(person.email))
+            & (MailMessage.sent_at > _utcnow() - timedelta(days=1))
+        )
+        if MailMessage.select().where(gone).count() >= ADDED_TO_AN_ADDRESS_A_DAY:
+            return None
+    main = Member.get_or_none(
+        (Member.membership == person.membership_id) & (Member.role == "huvudmedlem") & Member.end_date.is_null(True)
+    )
+    return {
+        "role": _ADDED_AS[person.role],
+        # one line: a name typed with a line break must not add lines of its own to the mail
+        "main": " ".join(f"{main.first_name} {main.last_name}".split()) if main else None,
+        "phone": bool(person.phone),
+    }
+
+
+ADDED_A_DAY = 10  # medlemskap.tillagd mails one membership can cause in a day
+ADDED_TO_AN_ADDRESS_A_DAY = 3  # and one address can get: a family may share one, nobody needs more
+
+
+def queue_member_added(person):
+    """
+    medlemskap.tillagd in the transaction that adds `person` (the caller holds the membership's row lock): only
+    someone put in by another (never a main member, who applied or was written in from the register) and only
+    with an e-mail. A main member chooses the address, so the association's mail must not become a way to flood
+    one: a membership causes at most ADDED_A_DAY a day, and an address gets at most ADDED_TO_AN_ADDRESS_A_DAY
+    (_member_added, when the mail goes).
+    """
+    if person.role not in _ADDED_AS or not person.email:
+        return None
+    ref = ("membership", person.membership_id)
+    today = (
+        (MailMessage.kind == "medlemskap.tillagd")
+        & (MailMessage.ref_type == ref[0])
+        & (MailMessage.ref_id == ref[1])
+        & (MailMessage.created_at > _utcnow() - timedelta(days=1))
+    )
+    if MailMessage.select().where(today).count() >= ADDED_A_DAY:
+        logger.warning("Membership %s has added %s people with mail today: no more mails", ref[1], ADDED_A_DAY)
+        return None
+    params = {"member_id": person.id}
+    return enqueue_mail(
+        "medlemskap.tillagd", "member", person.id, params, ref=ref, dedupe_key=f"medlemskap.tillagd:{person.id}"
+    )
+
+
+def cancel_member_added(member_ids):
+    """
+    The people left their membership or became its main member: their unsent medlemskap.tillagd is stopped, also
+    one being sent right now, which loses its claim (_renew), in the caller's transaction.
+    """
+    return (
+        MailMessage.update(
+            status="cancelled", claim_token=None, claimed_at=None, last_error="personen har lämnat medlemskapet"
+        )
+        .where(
+            (MailMessage.kind == "medlemskap.tillagd")
+            & (MailMessage.recipient_kind == "member")
+            & MailMessage.recipient_id.in_(list(member_ids))
+            & MailMessage.status.in_(("queued", "sending"))
+        )
+        .execute()
+    )
+
+
 def queue_application_mails(application_id, address):
     """
     The receipt to the applicant and a notice to each matrikel admin, in the caller's transaction. The public
