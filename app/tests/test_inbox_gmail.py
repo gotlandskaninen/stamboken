@@ -309,14 +309,46 @@ class TestSorting(GmailTest):
         (new,) = [i for i in self.items() if i.id != item.id]
         self.assertNotIn(mac, new.message)
 
+    def test_a_link_rebuilt_by_normalizing_is_masked_on_both_paths(self):  # FA3
+        link, mac = self.quoted_link()
+        row, secret = link.rpartition("#")[2].split(".")
+        html = lambda inner: f"<p>Tack</p><p>{inner}</p>"  # noqa: E731
+        variants = {
+            "entity": html(f"{HOST}/rapport#{row}&#46;{secret}"),
+            "wbr": html(f"{HOST}/rapport#{row}.{secret[:10]}<wbr>{secret[10:]}"),
+            "nul": f"Tack {row}.{secret[:10]}\x00{secret[10:]}",
+        }
+        self.holder(self.herds[0])
+        for name, body in variants.items():
+            with self.subTest(name=name):
+                item = self.waiting()
+                known = {i.id for i in self.items()}
+                reply, plain = (
+                    message(In_Reply_To=self.our_mail(item), subject=f"Re: Fråga (ärende {item.id})"),
+                    message(),
+                )
+                for msg in (reply, plain):
+                    msg.set_content(body, subtype="plain" if name == "nul" else "html")
+                    self.fake.deliver(msg)
+                self.read()
+                (event,) = item.events.where(db.InboxEvent.kind == "svar").order_by(db.InboxEvent.id.desc()).limit(1)
+                self.assertNotIn(mac, str(event.detail))
+                (new,) = [i for i in self.items() if i.id not in known and i.id != item.id]
+                self.assertNotIn(mac, new.message)
+
     def test_a_delivery_report_quoting_the_link_stores_no_token(self):  # FA3
         link, mac = self.quoted_link()
-        raw = report("<CAsomething@mail.example.org>").replace(b"kom inte fram.", f"kom inte fram: {link}".encode())
-        self.fake.deliver(raw)
+        row, secret = link.rpartition("#")[2].split(".")
+        split = f"{row}.{secret[:10]}\x00{secret[10:]}"  # removing the NUL after masking would rebuild the token
+        for quoted in (link, split):
+            raw = report("<CAsomething@mail.example.org>").replace(
+                b"kom inte fram.", f"kom inte fram: {quoted}".encode()
+            )
+            self.fake.deliver(raw)
         self.read()
-        (item,) = self.items()
-        self.assertIn("kom inte fram", item.message)
-        self.assertNotIn(mac, item.message)
+        for item in self.items():
+            self.assertIn("kom inte fram", item.message)
+            self.assertNotIn(mac, item.message)
 
     def test_an_automatic_answer_is_ignored(self):
         for header in ({"Auto-Submitted": "auto-replied"}, {"X-Autoreply": "yes"}, {"Precedence": "auto_reply"}):

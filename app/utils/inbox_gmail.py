@@ -318,7 +318,8 @@ def _text(msg):
         parser.feed(text)
         parser.close()
         text = "\n".join(" ".join(line.split()) for line in "".join(parser.parts).splitlines() if line.strip())
-    return _no_nul(text).strip()[:MAX_TEXT] or None
+    # Last, on the finished text: decoding entities, dropping tags and NULs can rebuild a token masking saw in pieces.
+    return mask_tokens(_no_nul(text)).strip()[:MAX_TEXT] or None
 
 
 def _attachments(msg):
@@ -398,7 +399,7 @@ def _delivery_report(msg):
     for part in msg.walk():
         kind = part.get_content_type()
         if kind == "text/plain" and text is None:
-            text = _no_nul(mask_tokens(_content(part))[:MAX_BODY]).strip()[:MAX_TEXT] or None
+            text = mask_tokens(_no_nul(mask_tokens(_content(part))[:MAX_BODY])).strip()[:MAX_TEXT] or None
         elif kind == "message/delivery-status":
             for fields in part.get_payload():
                 diagnostic = diagnostic or fields.get("Diagnostic-Code") or fields.get("Status")
