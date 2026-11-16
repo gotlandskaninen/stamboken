@@ -7,6 +7,7 @@ import {
   incompleteText,
   isDone,
   keyAfter,
+  autosaveAnswerKept,
   parseWeight,
   toBody,
   toDraft,
@@ -402,5 +403,13 @@ describe("keyAfter", () => {
     expect(keyAfter("timeout", k)).toBe(k);
     expect(keyAfter("ok", k)).not.toBe(k);
     expect(keyAfter("withdrawn", k)).not.toBe(k);
+  });
+});
+
+describe("autosaveAnswerKept", () => {
+  it("keeps an answer only when no submission started since the save left", () => {
+    expect(autosaveAnswerKept(0, 0)).toBe(true);
+    expect(autosaveAnswerKept(1, 1)).toBe(true);
+    expect(autosaveAnswerKept(0, 1)).toBe(false);
   });
 });

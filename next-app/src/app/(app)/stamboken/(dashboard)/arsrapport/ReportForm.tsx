@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { readModeCookieClient, type Mode } from "@/lib/mode";
 import { MbCard } from "../min-besattning/min-besattning-ui";
 import type * as Actions from "./actions";
+import type { getGenebankHerds } from "../individ/[number]/actions";
 import type { ActionResult } from "../inkorg/actions";
 import {
   CONFLICT_TEXT,
@@ -29,6 +30,7 @@ import {
   toBody,
   toDraft,
   todayStockholm,
+  autosaveAnswerKept,
   type DraftData,
   type Entry,
   type FormState,
@@ -52,7 +54,7 @@ import styles from "./arsrapport.module.css";
 export type ReportActions = Pick<
   typeof Actions,
   "saveDraft" | "dryRun" | "submitReport" | "withdrawReport"
->;
+> & { getGenebankHerds: typeof getGenebankHerds }; // the sale dialog's herd picker
 
 // "Från blankett": what the page around the form supplies (PaperEntry).
 export interface PaperProps {
@@ -118,6 +120,8 @@ type ServerDraft = {
 
 const AUTOSAVE_MS = 2000;
 const BIG_LIST = 30;
+// 75 % of herds have 14 rabbits or fewer at year-end (old prod, 2025): a search is for the rest.
+const SEARCH_FROM = 15;
 const NET_TEXT = "Det gick inte att nå servern. Försök igen.";
 
 // A server action can reject when the browser loses the connection to the
@@ -312,6 +316,17 @@ export function ReportForm({
   const resync = React.useRef(false);
   const pendingFocus = React.useRef<number | null>(null);
   const pendingEl = React.useRef<string | null>(null);
+  // Skicka against autosave: a submission in flight, how many have started,
+  // and the autosave timer that Skicka cancels.
+  const submitting = React.useRef(false);
+  const submissions = React.useRef(0);
+  const autosaveTimer = React.useRef<ReturnType<typeof setTimeout>>(undefined);
+  // The server render and the first client render are not interactive yet.
+  const [ready, setReady] = React.useState(false);
+  React.useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- true only once React has hydrated
+    setReady(true);
+  }, []);
 
   const edit = React.useCallback((fn: (s: FormState) => FormState) => {
     setState(fn);
@@ -394,6 +409,7 @@ export function ReportForm({
   // One save in flight at a time: a change made meanwhile is sent after it
   // has been answered, with the version it returned.
   const flush = async () => {
+    if (submitting.current) return;
     if (saving.current) {
       again.current = true;
       return;
@@ -402,11 +418,13 @@ export function ReportForm({
     try {
       do {
         again.current = false;
+        if (submitting.current) break;
         if (readModeCookieClient() !== env) {
           stopped.current = true; // never save into the other environment
           break;
         }
         const mine = versionRef.current;
+        const sentAt = submissions.current;
         const slow = setTimeout(() => setSaveState("saving"), 1000);
         const res = await safe(
           actionsRef.current.saveDraft(
@@ -421,8 +439,13 @@ export function ReportForm({
           ),
         );
         clearTimeout(slow);
+        if (res.ok) updatedAt.current = res.data.updated_at; // the server's truth, whatever came meanwhile
+        // Skicka started while this save was on its way: its answer says nothing about the form any more.
+        if (!autosaveAnswerKept(sentAt, submissions.current)) {
+          setSaveState((s) => (s === "saving" ? "saved" : s));
+          break;
+        }
         if (res.ok) {
-          updatedAt.current = res.data.updated_at;
           setSavedAt(fmtTime(res.data.updated_at));
           setSaveState("saved");
           if (versionRef.current === mine)
@@ -469,8 +492,11 @@ export function ReportForm({
       updated_at: updatedAt.current,
       revision: viewRef.current.report?.revision ?? null,
     });
-    const t = setTimeout(() => void flushRef.current(), AUTOSAVE_MS);
-    return () => clearTimeout(t);
+    autosaveTimer.current = setTimeout(
+      () => void flushRef.current(),
+      AUTOSAVE_MS,
+    );
+    return () => clearTimeout(autosaveTimer.current);
   }, [version, retry, mode, canEdit, env, herd.herd, year]);
 
   const rabbits = view.rabbits;
@@ -749,6 +775,9 @@ export function ReportForm({
       };
     }
     frozen.current = body; // never stored: it may hold a buyer or a matrikel
+    clearTimeout(autosaveTimer.current); // a pending autosave must not reach the server after the submission
+    submitting.current = true;
+    submissions.current += 1;
     setPhase("checking");
     const dry = await safe(
       actionsRef.current.dryRun(herd.herd, year, body, env, post),
@@ -766,6 +795,11 @@ export function ReportForm({
     }
     await send(body);
   };
+
+  // Autosave may run again once the submission is over (refused, or withdrawn).
+  React.useEffect(() => {
+    if (phase === "idle") submitting.current = false;
+  }, [phase]);
 
   const withdraw = async (reason?: string): Promise<string | null> => {
     if (readModeCookieClient() !== env) return ENV_TEXT;
@@ -863,7 +897,6 @@ export function ReportForm({
       : ({ kind: "deadline", deadline: fmtDate(round.deadline) } as const)
     : null;
   const closedText = !view.report && !canEdit;
-  const breed = view.herd.genebank.toLowerCase();
   const heading = item ? (
     <header>
       <h1 className={styles.title}>
@@ -877,7 +910,8 @@ export function ReportForm({
     <header>
       <h1 className={styles.title}>Årsrapport {year}</h1>
       <p className={styles.herdLine}>
-        {herd.herd} {herd.name}
+        Besättning {herd.herd}
+        {herd.name ? ` · ${herd.name}` : ""}
       </p>
     </header>
   );
@@ -1180,7 +1214,7 @@ export function ReportForm({
     >
       {heading}
       <p className={styles.lead}>
-        Gäller kaninerna i {herd.herd} den 31 december {year}.
+        {`Rapporten gäller kaninerna som fanns i ${isPaper ? "besättningen" : "din besättning"} den 31 december ${year}.`}
       </p>
       {editor && !isPaper && (
         <ReportStatus status={{ kind: "editor", herd: herd.herd }} />
@@ -1285,29 +1319,38 @@ export function ReportForm({
                 <span className={styles.counter} aria-live="polite">
                   {entered.length} inmatade, {allRest.length} kvar
                 </span>
+                {!ready && <span className={styles.stickyStatus}>Laddar…</span>}
               </div>
             )}
             {!isPaper && (
               <>
                 <div className={styles.sticky}>
                   <div className={styles.stickyRow}>
-                    <input
-                      type="search"
-                      className={styles.field}
-                      placeholder="Sök nummer eller namn"
-                      aria-label="Sök nummer eller namn"
-                      value={search}
-                      onChange={(e) => setSearch(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key !== "Enter" || visible.length !== 1) return;
-                        e.preventDefault();
-                        focusRow(visible[0].id);
-                      }}
-                    />
+                    {rabbits.length >= SEARCH_FROM && (
+                      <label className={styles.searchLabel}>
+                        Hitta en kanin
+                        <input
+                          type="search"
+                          className={styles.field}
+                          placeholder="Nummer eller namn"
+                          value={search}
+                          onChange={(e) => setSearch(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.key !== "Enter" || visible.length !== 1)
+                              return;
+                            e.preventDefault();
+                            focusRow(visible[0].id);
+                          }}
+                        />
+                      </label>
+                    )}
                     <span className={styles.counter} aria-live="polite">
                       {doneCount} av {rabbits.length} klara
                     </span>
                   </div>
+                  {!ready && (
+                    <span className={styles.stickyStatus}>Laddar…</span>
+                  )}
                   {shortStatus && (
                     <span className={styles.stickyStatus} aria-hidden="true">
                       {shortStatus}
@@ -1346,7 +1389,7 @@ export function ReportForm({
             )}
           </div>
           <fieldset
-            disabled={phase !== "idle" || syncing || !!olderCopy}
+            disabled={phase !== "idle" || syncing || !!olderCopy || !ready}
             className={styles.main}
           >
             {isPaper && (
@@ -1810,7 +1853,7 @@ export function ReportForm({
                 type="button"
                 className={`sb-btn ${styles.btn}`}
                 onClick={skicka}
-                disabled={sending || syncing || !!olderCopy}
+                disabled={sending || syncing || !!olderCopy || !ready}
               >
                 {sending ? "Skickar…" : buttonText}
               </button>
@@ -1823,8 +1866,9 @@ export function ReportForm({
         open={soldFor !== null && !syncing}
         number={soldRabbit?.number ?? ""}
         year={year}
-        herds={view.herds}
-        breed={breed}
+        genebankId={herd.genebank_id}
+        ownHerd={herd.herd}
+        loadHerds={actions.getGenebankHerds}
         existing={
           soldFor !== null ? (state.rabbits[soldFor]?.sald ?? null) : null
         }

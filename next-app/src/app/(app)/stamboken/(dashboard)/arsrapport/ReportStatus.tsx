@@ -1,5 +1,6 @@
 import React from "react";
 import Link from "next/link";
+import CalendarMonthOutlinedIcon from "@mui/icons-material/CalendarMonthOutlined";
 import { CONFLICT_TEXT, TIMEOUT_TEXT } from "./lib";
 import styles from "./arsrapport.module.css";
 
@@ -33,7 +34,7 @@ const TONE: Record<StatusKind["kind"], string> = {
   withdrawn: styles.warning,
   closed: styles.info,
   late: styles.info,
-  deadline: "",
+  deadline: `${styles.info} ${styles.notice}`,
   editor: styles.info,
   submitted: styles.done,
 };
@@ -94,6 +95,9 @@ export function ReportStatus({
       className={`${styles.status} ${TONE[status.kind]}`}
       role={urgent ? "alert" : "status"}
     >
+      {status.kind === "deadline" && (
+        <CalendarMonthOutlinedIcon aria-hidden="true" />
+      )}
       <p>{text(status)}</p>
       {children}
     </div>

@@ -232,9 +232,9 @@ export interface BodyEntry {
 export const SUBMIT_TIMEOUT_MS = 30_000;
 
 // The wording of the blankett's question about the listing in Koharen
-// (CONSENT_TEXT_VERSION "2026-11" on the server). Only the paper form shows it.
+// (CONSENT_TEXT_VERSION "2026-11-16" on the server). Only the paper form shows it.
 export const CONSENT_TEXT =
-  "Får din genbank stå med i listan över aktiva genbanker i Koharen? Listan gör det lättare för genbankerna att hitta varandra. Den visar innehavarens namn och genbankens nummer, och dessutom postnummer och ort, telefonnummer och e-postadress ur medlemsregistret.";
+  "Får din genbank stå med i Koharens lista över aktiva genbanker? Koharen är föreningens tidning på papper och går bara till medlemmar. Listan gör det lättare för genbankerna att hitta varandra. Den visar innehavarens namn och genbankens nummer, och dessutom postnummer och ort, telefonnummer och e-postadress ur medlemsregistret.";
 
 export const EJ_VAGD_REASONS = [
   "Hann inte väga",
@@ -993,3 +993,11 @@ export function countByState(rows: StatusRow[]): Record<RowState, number> {
   for (const r of rows) counts[r.state] += 1;
   return counts;
 }
+
+// Autosave and Skicka. A save may leave only while no submission is in flight
+// (the caller checks), and its answer counts only when no submission has
+// started since it left: submissions is a counter that Skicka raises.
+export const autosaveAnswerKept = (
+  sentAt: number,
+  submissionsNow: number,
+): boolean => sentAt === submissionsNow;

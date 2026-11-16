@@ -22,7 +22,9 @@ from utils.matrikel import ConfirmRequired, LinkError, link_member_user
 logger = logging.getLogger(__name__)
 
 CONSENT_KEYS = ("name", "phone", "email", "address")
-CONSENT_TEXT_VERSION = "2026-11"  # the blankett's wording: one consent, one purpose (fråga 33)
+# the blankett's wording: one consent, one purpose (fråga 33). Bumped 2026-11-16: the question now says Koharen is the
+# paper magazine for members only, so the answer covers a narrower scope than "2026-11" did.
+CONSENT_TEXT_VERSION = "2026-11-16"
 PROFILE_CONSENT_TEXT_VERSION = "profil-2025"  # the profile's text ("Medlemsmatrikeln trycks i Koharen") for now
 
 # Only Phase 9-provisioned Workspace addresses may auto-link. The

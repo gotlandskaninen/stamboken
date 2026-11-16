@@ -71,6 +71,7 @@ function RabbitRowImpl({
     !!e.ej_vagd && !(EJ_VAGD_REASONS as readonly string[]).includes(e.ej_vagd),
   );
   const [caretakerHint, setCaretakerHint] = React.useState(false);
+  const [prevVikt, setPrevVikt] = React.useState(""); // the weight Ej vägd cleared: back when it is turned off
   const errId = `err-${r.id}`;
   const set = (patch: Partial<Entry>) => onChange(r.id, patch);
 
@@ -205,11 +206,10 @@ function RabbitRowImpl({
               aria-pressed={e.ej_vagd !== null}
               onClick={() => {
                 setAnnat(false);
-                set(
-                  e.ej_vagd === null
-                    ? { ej_vagd: "", vikt: "" }
-                    : { ej_vagd: null },
-                );
+                if (e.ej_vagd === null) {
+                  setPrevVikt(e.vikt);
+                  set({ ej_vagd: "", vikt: "" });
+                } else set({ ej_vagd: null, vikt: prevVikt });
               }}
             >
               Ej vägd

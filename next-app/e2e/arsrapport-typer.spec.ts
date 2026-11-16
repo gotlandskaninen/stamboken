@@ -171,10 +171,12 @@ async function markSold(
   await r.getByRole("radio", { name: "Såld" }).click(); // opens the dialog; the radio is set when it is saved
   const dialog = page.getByRole("dialog");
   if ("herd" in to) {
-    await dialog.getByLabel("Köparens besättningsnummer").fill(to.herd);
-    await expect(
-      dialog.getByText(`${to.herd} finns, mellerudskanin`),
-    ).toBeVisible();
+    await dialog
+      .getByRole("combobox", { name: "Köparens besättning" })
+      .fill(to.herd);
+    await page
+      .getByRole("option", { name: new RegExp(`^${to.herd} `) })
+      .click();
   } else {
     await dialog.getByRole("radio", { name: "Utanför genbanken" }).check();
     await dialog.getByLabel("Köparens namn").fill(to.outside);
@@ -392,16 +394,6 @@ test("5. Typ C: stor besättning med döda och sålda", async ({
   // Change one row after the submission and send again.
   await page.getByRole("button", { name: "Ändra", exact: true }).click();
   await weight(r(2314)).fill("3,1");
-  // shortcut: waits for the autosave before Skicka. A user who presses Skicka at once can get a late autosave
-  // after the submit, and then "Dra tillbaka" says "Rapporten har ändrats på en annan enhet. Ladda om sidan."
-  // (seen in CI 2026-11-15 on e5f3e24). Drop this wait when the form stops autosaving during a submit.
-  await expect
-    .poll(
-      async () =>
-        JSON.stringify((await storedReport(page, "M9003")).draft?.data ?? {}),
-      { timeout: 30_000 },
-    )
-    .toContain('"3,1"');
   await page.getByRole("button", { name: SEND }).click();
   await submitted(page);
   const changed = await storedReport(page, "M9003");

@@ -54,6 +54,18 @@ const actions = (): {
     dryRun: vi.fn(() => ok({ ok: true, refusals: [], warnings: [] })),
     submitReport: vi.fn(() => ok(receipt)),
     withdrawReport: vi.fn(),
+    // the genebank's herds, as GET /v2/genebank/<id>/herds lists them
+    getGenebankHerds: vi.fn(() =>
+      Promise.resolve({
+        success: true as const,
+        herds: [
+          { herd: "G9001", herd_name: "Gårdsnamn", is_active: true },
+          { herd: "G9002", herd_name: "Pappersbesättning", is_active: true },
+          { herd: "G9003", herd_name: "Nedlagd", is_active: false },
+          { herd: "GX1", herd_name: null, is_active: true },
+        ],
+      }),
+    ),
   }) as never;
 
 beforeEach(() => {
@@ -110,7 +122,86 @@ describe("ReportForm", () => {
     expect(
       screen.getByRole("heading", { level: 1, name: "Årsrapport 2026" }),
     ).toBeTruthy();
-    expect(screen.getByText(/G9001 Gårdsnamn/)).toBeTruthy();
+    expect(screen.getByText("Besättning G9001 · Gårdsnamn")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Rapporten gäller kaninerna som fanns i din besättning den 31 december 2026.",
+      ),
+    ).toBeTruthy();
+  });
+
+  it("shows the search, labelled, only from 15 rabbits", () => {
+    const { unmount } = render(
+      <ReportForm env="demo" view={view()} actions={actions()} />,
+    );
+    expect(screen.queryByLabelText("Hitta en kanin")).toBeNull();
+    expect(screen.getByText("0 av 2 klara")).toBeTruthy(); // counter and filters stay
+    unmount();
+    const many = Array.from({ length: 15 }, (_, i) => rabbit(i + 1));
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ rabbits: many })}
+        actions={actions()}
+      />,
+    );
+    expect(screen.getByLabelText("Hitta en kanin")).toBeTruthy();
+  });
+
+  it("offers only active herds of the genebank but the seller's own and GX1, and sends the herd code", async () => {
+    vi.useFakeTimers();
+    render(<ReportForm env="demo" view={view()} actions={actions()} />);
+    choose(1, "Såld");
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(10);
+    });
+    const box = screen.getByRole("combobox", { name: "Köparens besättning" });
+    fireEvent.mouseDown(box);
+    expect(screen.getByText("G9002 – Pappersbesättning")).toBeTruthy();
+    expect(screen.queryByText(/G9003/)).toBeNull(); // not active
+    expect(screen.queryByText(/G9001 –/)).toBeNull(); // the seller's own
+    expect(screen.queryByText(/GX1/)).toBeNull(); // its own choice
+    fireEvent.click(screen.getByText("G9002 – Pappersbesättning"));
+    fireEvent.change(screen.getByLabelText("Månad"), {
+      target: { value: "6" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Spara försäljningen" }),
+    );
+    expect(within(row(1)).getByText(/Såld till G9002, juni 2026/)).toBeTruthy();
+  });
+
+  it("brings the weight back when Ej vägd is turned off again", () => {
+    render(<ReportForm env="demo" view={view()} actions={actions()} />);
+    choose(1, "Finns kvar");
+    const vikt = () =>
+      within(row(1)).getByLabelText("Vikt") as HTMLInputElement;
+    fireEvent.change(vikt(), { target: { value: "3,3" } });
+    const ejVagd = within(row(1)).getByRole("button", { name: "Ej vägd" });
+    fireEvent.click(ejVagd);
+    expect(vikt().value).toBe("");
+    fireEvent.click(ejVagd);
+    expect(vikt().value).toBe("3,3");
+  });
+
+  it("does not autosave over Skicka: the timer is cancelled and a late answer is dropped", async () => {
+    vi.useFakeTimers();
+    const a = actions();
+    render(<ReportForm env="demo" view={view()} actions={a} />);
+    choose(1, "Finns kvar");
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "3" },
+    });
+    choose(2, "Finns kvar");
+    fireEvent.change(within(row(2)).getByLabelText("Vikt"), {
+      target: { value: "3" },
+    });
+    send(); // at once, before the 2 s autosave
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(a.submitReport).toHaveBeenCalledTimes(1);
+    expect(a.saveDraft).not.toHaveBeenCalled();
   });
 
   it("asks no consent question and links Dina uppgifter to the profile", () => {
@@ -822,11 +913,14 @@ describe("ReportForm", () => {
         warnings: [],
       }),
     );
-    render(<ReportForm env="demo" view={view()} actions={a} />);
+    const many = Array.from({ length: 15 }, (_, i) => rabbit(i + 1));
+    render(
+      <ReportForm env="demo" view={view({ rabbits: many })} actions={a} />,
+    );
     choose(2, "Finns kvar");
     send();
     const link = await screen.findByRole("link", { name: /G9001-2/ });
-    fireEvent.change(screen.getByLabelText("Sök nummer eller namn"), {
+    fireEvent.change(screen.getByLabelText("Hitta en kanin"), {
       target: { value: "Kanin1" },
     });
     expect(screen.queryByRole("group", { name: /G9001-2\b/ })).toBeNull();
@@ -837,8 +931,7 @@ describe("ReportForm", () => {
       ),
     );
     expect(
-      (screen.getByLabelText("Sök nummer eller namn") as HTMLInputElement)
-        .value,
+      (screen.getByLabelText("Hitta en kanin") as HTMLInputElement).value,
     ).toBe("");
   });
 

@@ -7,10 +7,14 @@ import {
   DialogContent,
   DialogTitle,
   IconButton,
+  TextField,
+  Autocomplete,
   useMediaQuery,
   useTheme,
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
+import type { getGenebankHerds } from "../individ/[number]/actions";
+import { isOutsideGenebankHerd, type GenebankHerd } from "@/utils/saleRules";
 import { MONTHS, type SaldState } from "./lib";
 import styles from "./arsrapport.module.css";
 
@@ -18,8 +22,10 @@ interface Props {
   open: boolean;
   number: string;
   year: number;
-  herds: string[];
-  breed: string; // lower case, as ORDLISTA writes breeds
+  genebankId: number;
+  ownHerd: string; // the seller's herd: not a buyer
+  // The picker's data, as SellRabbitDialog gets it (getGenebankHerds).
+  loadHerds: typeof getGenebankHerds;
   existing: SaldState | null; // a saved sale: its buyer fields start empty (Task 6)
   onSave: (s: SaldState) => void;
   onClose: () => void;
@@ -30,8 +36,9 @@ interface Props {
 function Body({
   number,
   year,
-  herds,
-  breed,
+  genebankId,
+  ownHerd,
+  loadHerds,
   existing,
   onSave,
   onClose,
@@ -52,9 +59,37 @@ function Body({
   const [name, setName] = React.useState(existing?.kopare?.name ?? "");
   const [town, setTown] = React.useState(existing?.kopare?.town ?? "");
   const [tried, setTried] = React.useState(false);
+  const [loaded, setLoaded] = React.useState<Awaited<
+    ReturnType<typeof getGenebankHerds>
+  > | null>(null);
 
-  const clean = code.trim().toUpperCase();
-  const known = herds.includes(clean);
+  React.useEffect(() => {
+    if (loaded !== null) return;
+    let cancelled = false;
+    loadHerds(genebankId).then((r) => {
+      if (!cancelled) setLoaded(r);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [loaded, loadHerds, genebankId]);
+  const herds = loaded?.success ? loaded.herds : null;
+  // Active herds of the genebank, not the seller's own and not GX1/MX1:
+  // "Utanför genbanken" is its own choice.
+  const options = React.useMemo(
+    () =>
+      (herds ?? [])
+        .filter(
+          (h) =>
+            h.is_active && h.herd !== ownHerd && !isOutsideGenebankHerd(h.herd),
+        )
+        .sort((a, b) => a.herd.localeCompare(b.herd, "sv", { numeric: true })),
+    [herds, ownHerd],
+  );
+  const target = options.find((h) => h.herd === code) ?? null;
+  const known = !!target;
+  const optionLabel = (h: GenebankHerd) =>
+    h.herd_name ? `${h.herd} – ${h.herd_name}` : h.herd;
   const buyerHalf = !!name.trim() !== !!town.trim();
   const buyerMissing = outside && !existing && !(name.trim() && town.trim());
   const problem =
@@ -71,7 +106,7 @@ function Body({
     setTried(true);
     if (problem) return;
     onSave({
-      till: outside ? "utanfor" : clean,
+      till: outside ? "utanfor" : code,
       ar,
       manad,
       dag: dag ? Number(dag) : null,
@@ -124,21 +159,29 @@ function Body({
         </div>
         {!outside && (
           <>
-            <label className={styles.label}>
-              Köparens besättningsnummer
-              <input
-                className={styles.field}
-                style={{ width: "100%", boxSizing: "border-box" }}
-                autoCapitalize="characters"
-                value={code}
-                onChange={(e) => setCode(e.target.value)}
-              />
-            </label>
-            {clean !== "" && (
-              <p className={styles.meta} role="status">
-                {known
-                  ? `${clean} finns, ${breed}`
-                  : `${clean} finns inte i genbanken`}
+            <Autocomplete
+              options={options}
+              value={target}
+              onChange={(_, h) => setCode(h?.herd ?? "")}
+              getOptionLabel={optionLabel}
+              isOptionEqualToValue={(a, b) => a.herd === b.herd}
+              loading={loaded === null}
+              loadingText="Hämtar besättningar …"
+              noOptionsText="Ingen besättning matchar"
+              renderInput={(params) => (
+                <TextField {...params} label="Köparens besättning" />
+              )}
+            />
+            {loaded && !loaded.success && (
+              <p className={styles.errorText} role="alert">
+                Det gick inte att hämta besättningarna.{" "}
+                <button
+                  type="button"
+                  className="sb-btn sb-btn-secondary sb-btn-sm"
+                  onClick={() => setLoaded(null)}
+                >
+                  Försök igen
+                </button>
               </p>
             )}
           </>
