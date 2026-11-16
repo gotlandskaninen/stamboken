@@ -114,6 +114,8 @@ där den tog en användare. Loggraden i `individual_command` får då
 `signature = NULL` och `access_code_id`, och rader den makulerar får
 `voided_by_access_code_id`. Spåret pekar på koden, som pekar på besättningen,
 rundan och huvudmedlemmen som fick länken.
+Länken har formen `/rapport#<kod>`: webbläsaren skickar aldrig fragmentet, så koden
+syns i ingen serverlogg. Sidan växlar in koden med `POST /api/v2/rapport/oppna`.
 
 Koden har en enda roll, `Role.RAPPORT`, och `ReportGrant` med en kod ger den bara
 för en kanin som finns i kodens besättning nu och står på rapportens lista.

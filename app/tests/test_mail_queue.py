@@ -237,7 +237,7 @@ class TestModes(MailTest):
         ):
             mail.send_pending(self.now)
         text = "\n".join(logs.output)
-        self.assertIn(f"Din länk 4711.***\n\nÖppna https://{HOST}/rapport/***", text)
+        self.assertIn(f"Din länk 4711.***\n\nÖppna https://{HOST}/rapport/4711.***", text)
         self.assertNotIn(token, text)
 
     def test_allowlist_sends_to_listed_and_blocks_the_rest(self):

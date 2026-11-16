@@ -25,30 +25,15 @@ errorlog = "-"
 SCHEDULER_LOCK = "/tmp/herdbook_scheduler.lock"
 
 
-# Must match _TOKEN, _PREFIX and mask_tokens in utils/log_masking.py; repeated because this file is loaded before
-# the app is importable.
+# Must match _TOKEN in utils/log_masking.py; repeated because this file is loaded before the app is importable.
 _LINK_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])(\d{1,19})\.[A-Za-z0-9_-]{22}(?![A-Za-z0-9_-])")
-
-
-def _tolerant(text):
-    return "".join(f"(?:{re.escape(char)}|%{ord(char):02x})" for char in text)
-
-
-_LINK_PREFIX = re.compile(
-    rf"(?i)((?<!/v2){_tolerant('/rapport/')}|{_tolerant('/api')}(?:-test)?{_tolerant('/v2/rapport/oppna/')})"
-    r"(?:[^\s?\"']|%3f)*"
-)
-
-
-def _mask(text):
-    return _LINK_TOKEN.sub(r"\1.***", _LINK_PREFIX.sub(r"\1***", text))
 
 
 class _TokenMaskFilter(logging.Filter):
     """Keeps link tokens in the request line out of the access log."""
 
     def filter(self, record):
-        record.msg, record.args = _mask(record.getMessage()), None
+        record.msg, record.args = _LINK_TOKEN.sub(r"\1.***", record.getMessage()), None
         return True
 
 

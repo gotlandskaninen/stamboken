@@ -30,9 +30,6 @@ services:
       # xdist worker gw1 owns db 3 and its flushdb would hit limiter keys
       - RATELIMIT_STORAGE_URL=memory://
     ports: !reset []
-    volumes:
-      # The report link's nginx rules are checked as text by tests/test_rapport_link.py
-      - ./nginx:/nginx:ro
     # Don't start the app server — just keep the container alive for docker exec pytest
     command: ["sleep", "infinity"]
     healthcheck:

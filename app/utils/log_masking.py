@@ -10,25 +10,8 @@ import re
 _TOKEN = re.compile(r"(?<![A-Za-z0-9_-])(\d{1,19})\.[A-Za-z0-9_-]{22}(?![A-Za-z0-9_-])")
 
 
-def _tolerant(text):
-    """`text` as a case-insensitive pattern that also takes each character percent-encoded (%72 for r, %2F for /)."""
-    return "".join(f"(?:{re.escape(char)}|%{ord(char):02x})" for char in text)
-
-
-# R6: everything after the link's path prefixes goes, whatever shape it has (truncated, wrong, percent-encoded, an
-# encoded ? or a new line inside the tail). The match is found in the text as written and masked there: decoded
-# text is never returned, so an encoded new line cannot forge a log line. `/api/v2/rapport/mina` and the other API
-# routes are no links and stay readable.
-_PREFIX = re.compile(
-    rf"(?i)((?<!/v2){_tolerant('/rapport/')}|{_tolerant('/api')}(?:-test)?{_tolerant('/v2/rapport/oppna/')})"
-    r"(?:[^\s?\"']|%3f)*"
-)
-
-
 def mask_tokens(text):
-    if not text:
-        return text
-    return _TOKEN.sub(r"\1.***", _PREFIX.sub(r"\1***", text))
+    return _TOKEN.sub(r"\1.***", text) if text else text
 
 
 class TokenMaskFilter(logging.Filter):
