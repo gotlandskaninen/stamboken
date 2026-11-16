@@ -233,12 +233,13 @@ export default function IntegritetspolicyPage() {
               </li>
               <li>
                 Har du rätt till stöd lägger du in ett bankkonto för
-                utbetalningen. Det visas aldrig för andra medlemmar. Det ses av
-                dig och dem du har gett åtkomst till besättningen, av
-                genbanksansvariga och deras hjälpare, av den som betalar ut
-                stödet, och av föreningens systemansvarig. Underlaget för
-                utbetalningen sparas så att det kan visas för Jordbruksverket
-                vid en kontroll.
+                utbetalningen. Det visas aldrig för andra medlemmar. Hela
+                kontonumret ses av dig och dem du har gett åtkomst till
+                besättningen, av dem som sköter medlemsregistret och betalar ut
+                stödet, och av föreningens systemansvarig. Genbanksansvariga och
+                deras hjälpare ser bankens namn och de två sista siffrorna i
+                kontonumret. Underlaget för utbetalningen sparas så att det kan
+                visas för Jordbruksverket vid en kontroll.
               </li>
               <li>
                 Ändringar av kaniner, parningar, kullar, besättningar och konton
