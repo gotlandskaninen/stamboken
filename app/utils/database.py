@@ -2205,6 +2205,8 @@ class InboxItem(BaseModel):
     missing_proof = BooleanField(default=False)
     ref_type = TextField(null=True)  # kontroll and avisering point at another feature's row
     ref_id = IntegerField(null=True)
+    # A kontroll item's structured fields, with no personal data (the purchase notice's number, seller and date).
+    ref_data = BinaryJSONField(null=True, index=False)
 
     class Meta:
         table_name = "inbox_item"
@@ -4197,7 +4199,7 @@ _HT_VOID_CHECK = (
 def _create_arsrapport_schema():
     """
     Idempotent: the yearly report v2 tables, and what they add to yearlyreportround, yearlyherdreport, breeding,
-    herd_tracking and individual_command, with the names a fresh bootstrap gives them (an FK is
+    herd_tracking, individual_command and inbox_item, with the names a fresh bootstrap gives them (an FK is
     <table>_<column>_fkey). Called from init() and migrate_41_to_42. Skipped on SQLite.
     """
     if isinstance(DATABASE, SqliteDatabase):
@@ -4207,6 +4209,7 @@ def _create_arsrapport_schema():
     sql('ALTER TABLE "yearlyreportround" ADD COLUMN IF NOT EXISTS "deadline" DATE')
     sql('ALTER TABLE "publication_consent_change" ADD COLUMN IF NOT EXISTS "submission_id" INTEGER')  # Task 11
     sql('ALTER TABLE "breeding" ADD COLUMN IF NOT EXISTS "litter_size6w_preliminary" BOOLEAN NOT NULL DEFAULT false')
+    sql('ALTER TABLE "inbox_item" ADD COLUMN IF NOT EXISTS "ref_data" JSONB')  # 4a Task 5: the purchase notice
     sql(
         'ALTER TABLE "yearlyherdreport" '
         + ", ".join(f'ALTER COLUMN "{name}" DROP NOT NULL' for name in _LEGACY_REPORT_FIELDS)

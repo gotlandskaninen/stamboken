@@ -20,7 +20,14 @@ NEW_TABLES = (
     "member_change_request",
     "publication_consent_change",
 )
-TOUCHED_TABLES = ("yearlyreportround", "yearlyherdreport", "herd_tracking", "individual_command", "breeding")
+TOUCHED_TABLES = (
+    "yearlyreportround",
+    "yearlyherdreport",
+    "herd_tracking",
+    "individual_command",
+    "breeding",
+    "inbox_item",
+)
 TABLES = list(NEW_TABLES + TOUCHED_TABLES)
 NEW_COLUMNS = {
     "yearlyreportround": ("deadline",),
@@ -44,6 +51,7 @@ NEW_COLUMNS = {
     "herd_tracking": ("access_code_id", "voided_by_access_code_id"),
     "individual_command": ("access_code_id",),
     "breeding": ("litter_size6w_preliminary",),
+    "inbox_item": ("ref_data",),
 }
 LEGACY_NOT_NULL = ("name", "publish", "publish_tel", "publish_email", "publish_address", "generated_by_id")
 NOW = datetime(2026, 1, 10, 12, 0, tzinfo=timezone.utc)
