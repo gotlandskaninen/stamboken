@@ -55,7 +55,7 @@ class TestPurgeMemberApplications(DatabaseTest):
         self.assertNotIn(pending_old, _ids())
         self.assertEqual(da.purge_member_applications(NOW), 0)
 
-    def test_one_day_margin_deletes_a_row_the_next_run_would_miss(self):
+    def test_one_day_margin_deletes_a_row_whose_12_months_end_before_the_next_run(self):
         kept = _application("pending", datetime(2025, 11, 15, 12, 0))  # 12 months end after tonight's cutoff
         last_day = _application("pending", datetime(2025, 11, 15, 1, 0))  # 12 months end before tomorrow's run
         da.purge_member_applications(datetime(2026, 11, 14, 3, 50).astimezone())
@@ -69,13 +69,15 @@ class TestPurgeMemberApplications(DatabaseTest):
         self.assertEqual(_ids(), {kept})
         self.assertNotIn(gone, _ids())
 
-    def test_leap_day_application_goes_on_28_february(self):
+    def test_leap_day_application_goes_by_28_february(self):
         leap = _application("pending", datetime(2028, 2, 29, 1, 0))
         da.purge_member_applications(datetime(2029, 2, 26, 23, 0).astimezone())
         self.assertIn(leap, _ids())
         da.purge_member_applications(datetime(2029, 2, 27, 3, 50).astimezone())
         self.assertNotIn(leap, _ids())
 
+
+class TestPurgeMemberApplicationsJob(unittest.TestCase):
     def test_job_logs_and_closes_connection(self):
         with (
             mock.patch.object(da, "purge_member_applications", return_value=3) as purge,

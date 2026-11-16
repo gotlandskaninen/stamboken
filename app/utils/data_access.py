@@ -4363,15 +4363,16 @@ def purge_member_applications(now) -> int:
     """
     # The columns are naive local times (datetime.now()): compare in that clock, and add the interval to the
     # row's date so the 29 February case lands on 28 February instead of rounding down from today.
-    # One day of margin: the job runs nightly, so a row never outlives its 12 months (the policy's upper bound).
-    local_now = (now + timedelta(days=1)).astimezone().replace(tzinfo=None)
+    # One day of margin: the job runs nightly, so a normal run keeps every row within its 12 months (the policy's
+    # upper bound); a missed run can still leave one a day too long.
+    cutoff = (now + timedelta(days=1)).astimezone().replace(tzinfo=None)
     cursor = DATABASE.execute_sql(
         """
         DELETE FROM member_application
         WHERE (status = 'rejected' AND COALESCE(reviewed_at, created_at) + %s::interval <= %s)
            OR (status = 'pending' AND created_at + %s::interval <= %s)
         """,
-        (APPLICATION_RETENTION, local_now, APPLICATION_RETENTION, local_now),
+        (APPLICATION_RETENTION, cutoff, APPLICATION_RETENTION, cutoff),
     )
     return cursor.rowcount or 0
 
