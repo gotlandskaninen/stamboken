@@ -157,6 +157,7 @@ class TestApprovalMail(MailTest):
         self.assertEqual(envelope_to, ["sokande@example.org"])
         self.assertIn("godkänd", msg["Subject"])
         self.assertIn("hör av sig", msg.get_content())
+        self.assertIn("vi har fått din årsavgift", msg.get_content())  # an approved application is a paid one
 
     def test_failed_approval_queues_nothing(self):
         a = self.application()
