@@ -292,6 +292,7 @@ class TestAnonymizeEndedPersons(DatabaseTest):
                     self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, 1, []))
             remove.assert_not_called()  # the rollback kept the rows that name the file, so the file stays
             self.assertFalse(_erased(first))
+            remove.side_effect = lambda paths: self.assertFalse(db.DB_PROXY.in_transaction())  # after the COMMIT
             self.assertEqual(matrikel.anonymize_ended_persons(NOW), (2, 0, []))
             remove.assert_called_once_with(["inkorg/original/a.jpg", "inkorg/original/a.jpg"])
 
