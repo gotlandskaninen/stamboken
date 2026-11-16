@@ -97,6 +97,8 @@ def recipients(round_, genebank_id) -> dict:
         .order_by(Member.id)
         .dicts()
     )
+    # idx_member_single_active_main allows at most one current main member, so first-wins only mirrors
+    # report_code.invitation_recipient.
     for row in rows:  # the same test as report_code.invitation_recipient
         first.setdefault(row["herd_id"], row["membership_status"] == "active" and bool((row["email"] or "").strip()))
     with_mail = sum(first.get(herd_id, False) for herd_id in herd_ids)
