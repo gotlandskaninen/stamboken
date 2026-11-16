@@ -8,16 +8,14 @@ import sys
 import textwrap
 import unittest
 
-from utils.log_masking import _TOKEN, TokenMaskFilter, mask_tokens
+from utils.log_masking import _PREFIX, _TOKEN, TokenMaskFilter, mask_tokens
 
 TOKEN = "4711." + "a" * 22  # shaped like utils.mail.link_token; built, so no scanner takes it for a secret
 
 
 class TestLogMasking(unittest.TestCase):
     def test_token_in_url_is_masked_and_the_row_id_kept(self):
-        self.assertEqual(
-            mask_tokens(f"https://example.org/rapport/{TOKEN}?x=1"), "https://example.org/rapport/4711.***?x=1"
-        )
+        self.assertEqual(mask_tokens(f"https://example.org/rapport/{TOKEN}?x=1"), "https://example.org/rapport/***?x=1")
 
     def test_ordinary_text_is_untouched(self):
         for text in ("GET /api/v2/individual/G9001-2512 200", "version 2.8.0", "12.5 kg", None, ""):
@@ -66,6 +64,42 @@ class TestLogMasking(unittest.TestCase):
         conf = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(conf)
         self.assertEqual(conf._LINK_TOKEN.pattern, _TOKEN.pattern)  # pylint: disable=protected-access
+        self.assertEqual(conf._LINK_PREFIX.pattern, _PREFIX.pattern)  # pylint: disable=protected-access
+
+    def test_percent_encoded_token_masked(self):
+        for path in (
+            f"/rapport/{TOKEN}",
+            f"/%72apport/{TOKEN}",
+            f"/rapport/4711.{'%61' * 22}",
+            f"/rapport%2F{TOKEN}",
+            f"/%2572apport/{TOKEN}",
+            f"/api/v2/rapport/oppna/{TOKEN}",
+            "/api/v2/rapport/oppna/4711.truncated",
+            "/RAPPORT/4711.truncated",
+        ):
+            with self.subTest(path=path):
+                masked = mask_tokens(f"GET {path} HTTP/1.1")
+                self.assertTrue(masked.endswith("/*** HTTP/1.1"), masked)
+                self.assertNotIn("aaaa", masked)
+                self.assertNotIn("truncated", masked)
+
+    def test_other_rapport_routes_stay_readable(self):
+        for text in ("GET /api/v2/rapport/mina HTTP/1.1", "GET /rapport?kod=3 HTTP/1.1"):
+            self.assertEqual(mask_tokens(text), text)
+
+    def test_gunicorn_filter_prefix_rule(self):
+        path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "gunicorn.conf.py")
+        spec = importlib.util.spec_from_file_location("gunicorn_conf", path)
+        conf = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(conf)
+        for line in (
+            f"GET /rapport/{TOKEN} HTTP/1.1",
+            f"GET /%72apport/{TOKEN} HTTP/1.1",
+            "GET /rapport/4711.cut HTTP/1.1",
+        ):
+            record = logging.LogRecord("gunicorn.access", logging.INFO, "", 0, "%(r)s", ({"r": line},), None)
+            conf._TokenMaskFilter().filter(record)  # pylint: disable=protected-access
+            self.assertEqual(record.getMessage(), "GET /rapport/*** HTTP/1.1")
 
     def test_app_log_handlers_mask_exception_paths_and_mail_lines(self):
         """
@@ -98,5 +132,5 @@ class TestLogMasking(unittest.TestCase):
         )
         self.assertIn("status 500", p.stderr)
         self.assertIn("Exception on /api/v2/certificates/4711.***", p.stderr)
-        self.assertIn("Mail 1: https://example.org/rapport/4711.***", p.stderr)
+        self.assertIn("Mail 1: https://example.org/rapport/***", p.stderr)
         self.assertNotIn(TOKEN, p.stderr)

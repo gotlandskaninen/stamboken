@@ -80,6 +80,7 @@ import utils.genetics_service as genetics  # isort:skip
 from utils import number_assets  # isort:skip
 from utils.individual_commands import purge_command_free_text  # isort:skip
 from utils.log_masking import TokenMaskFilter  # isort:skip
+from blueprints.rapport_link import exchange_headers  # isort:skip
 from utils.mail import purge_old_mail, send_pending  # isort:skip
 from utils import inbox  # isort:skip
 from utils.inbox import queue_digests  # isort:skip
@@ -353,6 +354,8 @@ def _interpret_document():
 
 
 # Initialize security packages
+# The report link exchange's Referrer-Policy: registered before Talisman so it runs after it.
+APP.after_request(exchange_headers)
 # Flask-Talisman: Add security headers
 Talisman(
     APP,

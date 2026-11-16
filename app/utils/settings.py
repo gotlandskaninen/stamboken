@@ -141,6 +141,21 @@ def refuse_unsafe_mail_settings():
         raise RuntimeError(f"MAIL_MODE={mail.mode} requires LINK_SECRET.")
 
 
+arsrapport = Namespace()  # pylint: disable=C0103
+
+
+def _contacts(raw):
+    """E6: the contacts the expired-link page shows, `[{"ras", "namn", "telefon"}]`; none when unreadable."""
+    try:
+        rows = json.loads(raw or "[]")
+        return [{key: str(row[key]) for key in ("ras", "namn", "telefon")} for row in rows]
+    except (ValueError, TypeError, KeyError):
+        logging.warning("ARSRAPPORT_KONTAKT is not a JSON list of {ras, namn, telefon}; no contacts shown.")
+        return []
+
+
+arsrapport.kontakt = _contacts(os.environ.get("ARSRAPPORT_KONTAKT"))
+
 gmail = Namespace()  # pylint: disable=C0103
 # Reading the association's mailbox into the intake queue (docs/inkorg-gmail.md). Reading moves mail to the trash.
 gmail.mode = (os.environ.get("INLASNING_GMAIL") or "off").strip().lower()

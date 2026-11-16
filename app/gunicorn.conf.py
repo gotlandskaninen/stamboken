@@ -3,6 +3,7 @@
 import logging
 import os
 import re
+from urllib.parse import unquote
 
 # Server socket
 bind = "0.0.0.0:9090"
@@ -25,15 +26,28 @@ errorlog = "-"
 SCHEDULER_LOCK = "/tmp/herdbook_scheduler.lock"
 
 
-# Must match _TOKEN in utils/log_masking.py; repeated because this file is loaded before the app is importable.
+# Must match _TOKEN, _PREFIX and mask_tokens in utils/log_masking.py; repeated because this file is loaded before
+# the app is importable.
 _LINK_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])(\d{1,19})\.[A-Za-z0-9_-]{22}(?![A-Za-z0-9_-])")
+_LINK_PREFIX = re.compile(r"(?i)((?<!/v2)/rapport/|/api/v2/rapport/oppna/)[^\s?\"']*")
+
+
+def _mask(text):
+    decoded = text
+    for _ in range(3):
+        decoded, previous = unquote(decoded), decoded
+        if decoded == previous:
+            break
+    if _LINK_PREFIX.search(decoded):
+        text = _LINK_PREFIX.sub(r"\1***", decoded)
+    return _LINK_TOKEN.sub(r"\1.***", text)
 
 
 class _TokenMaskFilter(logging.Filter):
     """Keeps link tokens in the request line out of the access log."""
 
     def filter(self, record):
-        record.msg, record.args = _LINK_TOKEN.sub(r"\1.***", record.getMessage()), None
+        record.msg, record.args = _mask(record.getMessage()), None
         return True
 
 
