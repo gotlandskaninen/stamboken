@@ -127,4 +127,22 @@ describe("LinkGate", () => {
     });
     expect(replace).not.toHaveBeenCalledWith("/rapport/ogiltig");
   });
+
+  it("the script also takes a hash set before the app has started", () => {
+    history.replaceState(null, "", "/rapport");
+    delete (window as { __rapportToken?: string }).__rapportToken;
+    new Function(CLEAR_HASH_SCRIPT)();
+    history.pushState(null, "", "/rapport#5.early");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    expect(location.hash).toBe("");
+    expect((window as { __rapportToken?: string }).__rapportToken).toBe(
+      "5.early",
+    );
+  });
+
+  it("the script does nothing on other pages", () => {
+    history.replaceState(null, "", "/stamboken#section");
+    new Function(CLEAR_HASH_SCRIPT)();
+    expect(location.hash).toBe("#section");
+  });
 });

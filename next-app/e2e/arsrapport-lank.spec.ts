@@ -181,9 +181,28 @@ test("5. Two links open: /rapport lists both", async () => {
 
 test("5b. A link opened inside the open page is exchanged too", async () => {
   const page = shared; // on M9202's report: only the hash changes
+  await hydrated(page); // a slow dev server has not hydrated yet when the previous step ends
   await page.evaluate((hash) => (location.hash = hash), tokenOf("M9201"));
   await expect(page.getByText("Besättning M9201")).toBeVisible();
   expect(page.url()).not.toContain("#");
+});
+
+test("5c. The clearing script is the first inline script, in the head", async ({
+  request,
+}) => {
+  const html = await (await request.get("/rapport")).text();
+  const clear = html.indexOf("__rapportToken");
+  expect(clear).toBeGreaterThan(-1);
+  expect(clear).toBeLessThan(html.indexOf("</head>"));
+  // Before every other inline script (the framework's data and bootstrap code) ...
+  const inline = [...html.matchAll(/<script(?![^>]*\ssrc=)[^>]*>/g)].map(
+    (m) => m.index,
+  );
+  expect(inline[0]).toBeLessThan(clear);
+  expect(html.slice(inline[0], clear)).toContain("location.hash");
+  // ... and anything the framework put above it is an async chunk by src, which cannot run before the parser reaches us.
+  const before = html.slice(0, inline[0]).match(/<script[^>]*>/g) ?? [];
+  for (const tag of before) expect(tag).toMatch(/\ssrc=.*\sasync/);
 });
 
 test("6. The test mail's link #prov opens nothing", async ({ browser }) => {
