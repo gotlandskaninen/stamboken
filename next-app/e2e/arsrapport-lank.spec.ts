@@ -106,7 +106,25 @@ test("0. The genebank manager has activated the round", async ({
 test("1. The link opens the report and the token leaves the address bar", async () => {
   const page = shared;
   const seen = watchRequests(page, [tokenOf("M9001")]);
+  // The token is out of the address bar by the end of parsing, before the application starts.
+  await page.addInitScript(() => {
+    document.addEventListener("DOMContentLoaded", () => {
+      (window as unknown as { __hashAtParse: string }).__hashAtParse =
+        location.hash;
+    });
+  });
   await page.goto(links["M9001"]);
+  await expect(page.getByText("Besättning M9001")).toBeVisible();
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __hashAtParse: string }).__hashAtParse,
+    ),
+  ).toBe("");
+  expect(
+    await page.evaluate(
+      () => (window as unknown as { __rapportToken?: string }).__rapportToken,
+    ),
+  ).toBeUndefined();
   await expect(page.getByText("Besättning M9001")).toBeVisible(); // no redirect to sign-in: the middleware leaves /rapport alone
   expect(page.url()).not.toContain("#");
   expect(new URL(page.url()).pathname).toBe("/rapport");
@@ -141,7 +159,7 @@ test("3. Withdraw, then send again", async () => {
 test("4. A link that does not work shows the page for it", async () => {
   const page = shared;
   // shortcut: a forged token stands in for a revoked one; no route revokes a code before step 9.
-  await page.goto("about:blank"); // a new load: a hash change alone does not reload the page
+  // From the open /rapport of step 3: a hash change alone, no new load.
   await page.goto("/rapport#1.AAAAAAAAAAAAAAAAAAAAAA");
   await expect(page.getByText("Länken gäller inte längre.")).toBeVisible();
   expect(page.url()).not.toContain("#");
@@ -150,7 +168,6 @@ test("4. A link that does not work shows the page for it", async () => {
 
 test("5. Two links open: /rapport lists both", async () => {
   const page = shared;
-  await page.goto("about:blank");
   await page.goto(links["M9002"]); // the session holds M9001 already
   await expect(page.getByText("Besättning M9002")).toBeVisible();
   await page.goto("/rapport");
@@ -160,6 +177,13 @@ test("5. Two links open: /rapport lists both", async () => {
   await expect(page.getByRole("link", { name: /^M9001/ })).toBeVisible();
   await page.getByRole("link", { name: /^M9002/ }).click();
   await expect(page.getByText("Besättning M9002")).toBeVisible();
+});
+
+test("5b. A link opened inside the open page is exchanged too", async () => {
+  const page = shared; // on M9002's report: only the hash changes
+  await page.evaluate((hash) => (location.hash = hash), tokenOf("M9001"));
+  await expect(page.getByText("Besättning M9001")).toBeVisible();
+  expect(page.url()).not.toContain("#");
 });
 
 test("6. The test mail's link #prov opens nothing", async ({ browser }) => {

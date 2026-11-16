@@ -1,6 +1,6 @@
 import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
 
 const replace = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ replace }) }));
@@ -8,6 +8,7 @@ const getMine = vi.fn();
 vi.mock("@/app/(app)/rapport/actions", () => ({ getMine: () => getMine() }));
 
 import { LinkGate } from "@/app/(app)/rapport/LinkGate";
+import { CLEAR_HASH_SCRIPT } from "@/app/(app)/rapport/clearHash";
 
 afterEach(() => {
   cleanup();
@@ -45,5 +46,48 @@ describe("LinkGate", () => {
       expect(replace).toHaveBeenCalledWith("/rapport/ogiltig"),
     );
     expect(hashAtPost).toBe("");
+  });
+
+  it("the inline script takes the token out of the address bar before the app starts", () => {
+    history.replaceState(null, "", "/rapport#12.abc");
+    new Function(CLEAR_HASH_SCRIPT)();
+    expect(location.hash).toBe("");
+    expect(location.pathname).toBe("/rapport");
+    expect((window as { __rapportToken?: string }).__rapportToken).toBe(
+      "12.abc",
+    );
+    // LinkGate takes the token from memory and posts it; the variable is gone afterwards.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve({ status: 403, ok: false })),
+    );
+    render(<LinkGate missing="ute" />);
+    return waitFor(() => {
+      expect(replace).toHaveBeenCalledWith("/rapport/ogiltig");
+      expect((window as { __rapportToken?: string }).__rapportToken).toBe(
+        undefined,
+      );
+    });
+  });
+
+  it("a link opened inside the open page (hash change only) is cleared and exchanged", async () => {
+    replace.mockReset();
+    const bodies: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_url: string, init: { body: string }) => {
+        bodies.push(init.body);
+        return Promise.resolve({ status: 403, ok: false });
+      }),
+    );
+    history.replaceState(null, "", "/rapport");
+    render(<LinkGate missing="ute" />);
+    await screen.findByText(/Sidan stängdes efter två timmar/);
+    await act(async () => {
+      history.pushState(null, "", "/rapport#7.other");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await waitFor(() => expect(bodies).toEqual(['{"token":"7.other"}']));
+    expect(location.hash).toBe("");
   });
 });

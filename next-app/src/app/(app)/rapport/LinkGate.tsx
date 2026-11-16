@@ -4,6 +4,7 @@ import React from "react";
 import { useRouter } from "next/navigation";
 import styles from "../stamboken/(dashboard)/arsrapport/arsrapport.module.css";
 import { getMine } from "./actions";
+import { takeToken } from "./clearHash";
 
 // The personal link is /rapport#<token>. A browser never sends what follows #, so the server cannot see it: this
 // component reads it, takes it out of the address bar at once (errorHandling.ts records location.href), posts it to
@@ -81,7 +82,10 @@ export function LinkGate({
       token.current = "";
       setPhase("idle");
       // The server page renders again; the placeholder stays until it has.
-      startTransition(() => router.replace(`/rapport?kod=${entry.code_id}`));
+      startTransition(() => {
+        router.replace(`/rapport?kod=${entry.code_id}`);
+        router.refresh(); // the same address again does not render again by itself
+      });
     } catch {
       setPhase("net");
     } finally {
@@ -89,24 +93,31 @@ export function LinkGate({
     }
   }, [router]);
 
-  React.useEffect(() => {
-    if (started.current) return; // Strict Mode runs effects twice; the token is read once
-    started.current = true;
-    if (location.hash) {
-      token.current = location.hash.slice(1);
-      history.replaceState(null, "", "/rapport"); // before anything else, the token must leave the address bar
-    }
-    if (token.current === "prov") {
-      token.current = "";
-      setPhase("test");
-      return;
-    }
-    if (token.current) {
+  const begin = React.useCallback(
+    (t: string) => {
+      if (t === "prov") return setPhase("test");
+      token.current = t;
       void open();
-      return;
+    },
+    [open],
+  );
+
+  React.useEffect(() => {
+    // A link opened inside the page that is already open only changes the hash: nothing reloads.
+    const onHash = () => {
+      const t = takeToken();
+      if (t) begin(t);
+    };
+    window.addEventListener("hashchange", onHash);
+    if (!started.current) {
+      started.current = true; // Strict Mode runs effects twice; the first token is taken once
+      const t = takeToken();
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- the hash exists only in the browser
+      if (t) begin(t);
+      else setPhase("idle");
     }
-    setPhase("idle");
-  }, [open]);
+    return () => window.removeEventListener("hashchange", onHash);
+  }, [begin]);
 
   if (phase === "test") return <Message text={TEST_LINK_TEXT} />;
   if (phase === "cookies") return <Message text={COOKIES_TEXT} />;

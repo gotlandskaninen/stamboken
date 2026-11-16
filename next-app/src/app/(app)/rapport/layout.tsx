@@ -1,4 +1,5 @@
 import { ClientProviders } from "../client-providers";
+import { CLEAR_HASH_SCRIPT } from "./clearHash";
 
 // The address is a personal link: never indexed, and no Referer leaves the page.
 export const metadata = {
@@ -12,5 +13,11 @@ export default function RapportLayout({
 }: {
   children: React.ReactNode;
 }) {
-  return <ClientProviders>{children}</ClientProviders>;
+  return (
+    <>
+      {/* First in the body: it runs while the HTML is parsed, before any application script */}
+      <script dangerouslySetInnerHTML={{ __html: CLEAR_HASH_SCRIPT }} />
+      <ClientProviders>{children}</ClientProviders>
+    </>
+  );
 }
