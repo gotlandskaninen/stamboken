@@ -1199,14 +1199,14 @@ def create_arsrapport_seed(verbose):
 
 @seed_cli.command("arsrapport-lankar")
 def create_arsrapport_links():
-    """Print the personal report links of M9001, M9002 and M9101 as JSON {"herd": "/rapport#<token>"}."""
+    """Print the personal report links of M9201, M9202 and M9203 as JSON {"herd": "/rapport#<token>"}."""
     if os.environ.get("FLASK_ENV") == "production" or settings.service.demo_instance:
         raise click.ClickException("refusing to seed test data with public passwords in production or the demo.")
     round_ = YearlyReportRound.get_or_none(YearlyReportRound.report_year == 2025)
     if round_ is None:
         raise click.ClickException("run `flask seed arsrapport` first.")
     links = {}
-    for code in ("M9001", "M9002", "M9101"):
+    for code in ("M9201", "M9202", "M9203"):
         herd = Herd.get_or_none(Herd.herd == code)
         member = report_code.invitation_recipient(herd) if herd else None
         if member is None:
@@ -1268,6 +1268,10 @@ def _user_types(log):
         ("M9007", "Typ G årsskiftet", None, True, 0, pair),
         ("M9101", "Paritet digital", None, True, 0, median),
         ("M9102", "Paritet papper", None, False, 1, median),
+        # Only e2e/arsrapport-lank.spec.ts uses these (the personal links), so it never collides with the Typ tests.
+        ("M9201", "Länk A", None, False, 0, median),
+        ("M9202", "Länk B", None, False, 0, median),
+        ("M9203", "Länk C", None, False, 0, median),
     ]
     for code, name, phone, owned, forms, rabbits in herds:
         account = owner if code == "M9001" else None  # one Member per user; the other herds get the owner role

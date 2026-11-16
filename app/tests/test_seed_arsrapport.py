@@ -114,11 +114,12 @@ class SeedArsrapportTest(DatabaseTest):
         result = self.runner.invoke(args=["seed", "arsrapport-lankar"])
         self.assertEqual(result.exit_code, 0, f"{result.output} {result.exception!r}")
         links = json.loads(result.output)
-        self.assertEqual(sorted(links), ["M9001", "M9002", "M9101"])
+        self.assertEqual(sorted(links), ["M9201", "M9202", "M9203"])
         for herd, link in links.items():
             self.assertRegex(link, r"^/rapport#\d+\.[A-Za-z0-9_-]{22}$")
             code = report_code.resolve(link.split("#")[1])
             self.assertEqual(code.herd.herd, herd)
+            self.assertEqual(len(arsrapport.report_list(code.herd, 2025)), 6)
             self.assertIsNone(report_code.refusal(code, code.herd, today=arsrapport.today()))
         again = self.runner.invoke(args=["seed", "arsrapport-lankar"])
         self.assertEqual(json.loads(again.output), links)  # the active code is reused

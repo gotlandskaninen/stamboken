@@ -9,7 +9,7 @@ import {
 } from "@playwright/test";
 import { loginInline } from "../e2e-shared/auth";
 
-// The yearly report through the personal link /rapport#<token> (step 3), on the Mellerud herds M9001, M9002 and M9101
+// The yearly report through the personal link /rapport#<token> (step 3), on the Mellerud herds M9201, M9202 and M9203
 // of `flask seed arsrapport`, whose links `flask seed arsrapport-lankar` writes to e2e/.auth/arsrapport-lankar.json.
 // Nobody is signed in. Serial, and it assumes a freshly seeded database, as CI's is.
 test.describe.configure({ mode: "serial", retries: 0 });
@@ -69,11 +69,11 @@ async function fillAllAndSend(page: Page) {
   await expect(rows(page)).toHaveCount(6);
   await hydrated(page);
   for (const n of [2411, 2412, 2413, 2414, 2415]) {
-    const r = rows(page).filter({ hasText: `M9001-${n}` });
+    const r = rows(page).filter({ hasText: `M9201-${n}` });
     await kvar(r).check();
     await weight(r).fill("2,8");
   }
-  await kvar(rows(page).filter({ hasText: "M9001-2520" })).check();
+  await kvar(rows(page).filter({ hasText: "M9201-2520" })).check();
   await page.getByRole("radio", { name: NO_DISEASE }).check();
   await page.getByRole("button", { name: SEND }).click();
   await expect(page.getByText(/^Inskickad/)).toBeVisible({ timeout: 30_000 });
@@ -105,7 +105,7 @@ test("0. The genebank manager has activated the round", async ({
 
 test("1. The link opens the report and the token leaves the address bar", async () => {
   const page = shared;
-  const seen = watchRequests(page, [tokenOf("M9001")]);
+  const seen = watchRequests(page, [tokenOf("M9201")]);
   // The token is out of the address bar by the end of parsing, before the application starts.
   await page.addInitScript(() => {
     document.addEventListener("DOMContentLoaded", () => {
@@ -113,8 +113,8 @@ test("1. The link opens the report and the token leaves the address bar", async 
         location.hash;
     });
   });
-  await page.goto(links["M9001"]);
-  await expect(page.getByText("Besättning M9001")).toBeVisible();
+  await page.goto(links["M9201"]);
+  await expect(page.getByText("Besättning M9201")).toBeVisible();
   expect(
     await page.evaluate(
       () => (window as unknown as { __hashAtParse: string }).__hashAtParse,
@@ -125,11 +125,11 @@ test("1. The link opens the report and the token leaves the address bar", async 
       () => (window as unknown as { __rapportToken?: string }).__rapportToken,
     ),
   ).toBeUndefined();
-  await expect(page.getByText("Besättning M9001")).toBeVisible(); // no redirect to sign-in: the middleware leaves /rapport alone
+  await expect(page.getByText("Besättning M9201")).toBeVisible(); // no redirect to sign-in: the middleware leaves /rapport alone
   expect(page.url()).not.toContain("#");
   expect(new URL(page.url()).pathname).toBe("/rapport");
   expect(await page.evaluate(() => location.hash)).toBe("");
-  await expect(page.getByText("Besättning M9001")).toBeVisible();
+  await expect(page.getByText("Besättning M9201")).toBeVisible();
   await page.waitForLoadState("networkidle");
   expect(seen.leaks).toEqual([]);
   expect(
@@ -168,21 +168,21 @@ test("4. A link that does not work shows the page for it", async () => {
 
 test("5. Two links open: /rapport lists both", async () => {
   const page = shared;
-  await page.goto(links["M9002"]); // the session holds M9001 already
-  await expect(page.getByText("Besättning M9002")).toBeVisible();
+  await page.goto(links["M9202"]); // the session holds M9201 already
+  await expect(page.getByText("Besättning M9202")).toBeVisible();
   await page.goto("/rapport");
   await expect(
     page.getByRole("heading", { name: "Välj besättning" }),
   ).toBeVisible();
-  await expect(page.getByRole("link", { name: /^M9001/ })).toBeVisible();
-  await page.getByRole("link", { name: /^M9002/ }).click();
-  await expect(page.getByText("Besättning M9002")).toBeVisible();
+  await expect(page.getByRole("link", { name: /^M9201/ })).toBeVisible();
+  await page.getByRole("link", { name: /^M9202/ }).click();
+  await expect(page.getByText("Besättning M9202")).toBeVisible();
 });
 
 test("5b. A link opened inside the open page is exchanged too", async () => {
-  const page = shared; // on M9002's report: only the hash changes
-  await page.evaluate((hash) => (location.hash = hash), tokenOf("M9001"));
-  await expect(page.getByText("Besättning M9001")).toBeVisible();
+  const page = shared; // on M9202's report: only the hash changes
+  await page.evaluate((hash) => (location.hash = hash), tokenOf("M9201"));
+  await expect(page.getByText("Besättning M9201")).toBeVisible();
   expect(page.url()).not.toContain("#");
 });
 
@@ -215,7 +215,7 @@ test("7. A browser that drops cookies gets the cookie text", async ({
     delete headers["set-cookie"];
     await route.fulfill({ response, headers });
   });
-  await page.goto(links["M9101"]);
+  await page.goto(links["M9203"]);
   await expect(
     page.getByText(/Din webbläsare tog inte emot inloggningen/),
   ).toBeVisible();
@@ -227,17 +227,17 @@ test("8. The session ends in the middle of input and the link continues", async 
 }) => {
   const context: BrowserContext = await browser.newContext();
   const page = await context.newPage();
-  await page.goto(links["M9101"]);
+  await page.goto(links["M9203"]);
   await expect(rows(page)).toHaveCount(6);
   await hydrated(page);
-  const first = rows(page).filter({ hasText: "M9101-2411" });
+  const first = rows(page).filter({ hasText: "M9203-2411" });
   await kvar(first).check();
   await weight(first).fill("2,8");
   await expect(page.getByText(/Sparat \d/).first()).toBeVisible({
     timeout: 30_000,
   });
   await context.clearCookies(); // the two hours are over
-  const second = rows(page).filter({ hasText: "M9101-2412" });
+  const second = rows(page).filter({ hasText: "M9203-2412" });
   await kvar(second).check();
   await weight(second).fill("2,9");
   await expect(
@@ -245,14 +245,14 @@ test("8. The session ends in the middle of input and the link continues", async 
   ).toBeVisible({
     timeout: 30_000,
   });
-  await page.goto(links["M9101"]); // the same link again
+  await page.goto(links["M9203"]); // the same link again
   await expect(rows(page)).toHaveCount(6);
   await hydrated(page);
   await expect(
-    kvar(rows(page).filter({ hasText: "M9101-2411" })),
+    kvar(rows(page).filter({ hasText: "M9203-2411" })),
   ).toBeChecked();
   await expect(
-    weight(rows(page).filter({ hasText: "M9101-2412" })),
+    weight(rows(page).filter({ hasText: "M9203-2412" })),
   ).toHaveValue("2,9"); // kept in the browser, and saved again
   await context.close();
 });
