@@ -43,7 +43,6 @@ const INTRO: Record<Parent, string> = {
 
 type Photo = {
   status: "tom" | "skickar" | "klar" | "fel";
-  attempt?: number; // the upload that set this: a late answer of an earlier one is dropped
   item_id?: number;
   error?: string;
 };
@@ -221,48 +220,47 @@ export function AddRabbitDialog({
     setStack((s) => s.map((d) => (d.id === id ? change(d) : d)));
   const touch = () => setTouched(true);
 
-  // Only the photo is sent again: what was typed stays (Review Focus 4). The answer goes to the draft that sent
-  // it, and only while this upload is its latest; a cancelled form has none.
-  const send = async (draftId: number, file: File) => {
+  // Only the photo is sent again: what was typed stays (Review Focus 4). A draft's latest attempt starts when its
+  // photo is chosen, before it is prepared: an earlier photo still being prepared is not sent, and an earlier
+  // upload's answer is dropped. A cancelled form has no draft to answer.
+  const latest = React.useRef(new Map<number, number>());
+  const begin = (draftId: number) => {
     const attempt = nextId();
+    latest.current.set(draftId, attempt);
     updateDraft(draftId, (d) => ({
       ...d,
-      file,
-      photo: { status: "skickar", attempt },
+      photo: { status: "skickar" },
     }));
+    return attempt;
+  };
+  const send = async (draftId: number, file: File, attempt: number) => {
+    updateDraft(draftId, (d) => ({ ...d, file }));
     let photo: Photo;
     if (file.size > MAX_BYTES) {
-      photo = {
-        status: "fel",
-        error: "Filen är för stor. Max 10 MB.",
-        attempt,
-      };
+      photo = { status: "fel", error: "Filen är för stor. Max 10 MB." };
     } else {
       const data = new FormData();
       data.set("file", file);
       try {
         const res = await uploadPhoto(herd, year, data, env);
         photo = res.ok
-          ? { status: "klar", item_id: res.data.item_id, attempt }
-          : { status: "fel", error: res.problem.detail, attempt };
+          ? { status: "klar", item_id: res.data.item_id }
+          : { status: "fel", error: res.problem.detail };
       } catch {
-        photo = {
-          status: "fel",
-          error: "Uppladdningen avbröts. Försök igen.",
-          attempt,
-        };
+        photo = { status: "fel", error: "Uppladdningen avbröts. Försök igen." };
       }
     }
-    updateDraft(draftId, (d) =>
-      d.photo.attempt === attempt ? { ...d, photo } : d,
-    );
+    if (latest.current.get(draftId) === attempt)
+      updateDraft(draftId, (d) => ({ ...d, photo }));
   };
   const pick = async (file: File | undefined) => {
     if (!file) return;
     touch();
     const draftId = top.id;
-    updateDraft(draftId, (d) => ({ ...d, photo: { status: "skickar" } }));
-    send(draftId, await prepare(file));
+    const attempt = begin(draftId);
+    const prepared = await prepare(file);
+    if (latest.current.get(draftId) === attempt)
+      send(draftId, prepared, attempt);
   };
 
   const lookup: Lookup = React.useCallback(
@@ -356,7 +354,7 @@ export function AddRabbitDialog({
             <button
               type="button"
               className="sb-btn sb-btn-secondary sb-btn-sm"
-              onClick={() => send(top.id, top.file!)}
+              onClick={() => send(top.id, top.file!, begin(top.id))}
             >
               Försök igen
             </button>

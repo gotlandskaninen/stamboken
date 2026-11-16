@@ -23,10 +23,11 @@ vi.mock("@/app/(app)/stamboken/(dashboard)/arsrapport/rabbitActions", () => ({
   suggestNumber: vi.fn(async () => null),
 }));
 vi.mock("@/app/(app)/stamboken/(dashboard)/inskick/ny/prepare", () => ({
-  prepare: async (file: File) => file,
+  prepare: vi.fn(async (file: File) => file),
 }));
 
 import { AddRabbitDialog } from "@/app/(app)/stamboken/(dashboard)/arsrapport/AddRabbit";
+import { prepare } from "@/app/(app)/stamboken/(dashboard)/inskick/ny/prepare";
 import {
   findRabbit,
   getFormSetup,
@@ -41,6 +42,7 @@ const register = vi.mocked(registerRabbit);
 const find = vi.mocked(findRabbit);
 const setup = vi.mocked(getFormSetup);
 const suggest = vi.mocked(suggestNumber);
+const prepared = vi.mocked(prepare);
 
 beforeEach(() => localStorage.clear());
 afterEach(async () => {
@@ -54,18 +56,19 @@ afterEach(async () => {
     data: { farger: ["viltgrå"], aktor: "code-12" },
   }));
   suggest.mockImplementation(async () => null);
+  prepared.mockImplementation(async (file: File) => file);
 });
 
 const input = (label: RegExp | string) => screen.getByLabelText(label);
 const type = (label: RegExp | string, value: string) =>
   fireEvent.change(input(label), { target: { value } });
-const photoFile = () =>
-  new File([new Uint8Array([0xff, 0xd8, 0xff])], "intyg.jpg", {
+const photoFile = (name = "intyg.jpg") =>
+  new File([new Uint8Array([0xff, 0xd8, 0xff])], name, {
     type: "image/jpeg",
   });
-const choosePhoto = () =>
+const choosePhoto = (file = photoFile()) =>
   fireEvent.change(input("Foto av intyget"), {
-    target: { files: [photoFile()] },
+    target: { files: [file] },
   });
 // the browser's Back: the event comes from outside React
 const back = () =>
@@ -140,6 +143,45 @@ describe("the photo", () => {
     choosePhoto();
     expect(await screen.findByText(limit, { exact: false })).toBeVisible();
   });
+
+  // Codex P1: a photo replaced while it is still being prepared is never sent, whichever finishes first
+  it.each([
+    ["the replaced one", ["a", "b"]],
+    ["the new one", ["b", "a"]],
+  ])(
+    "only the last photo chosen is sent and registered, when %s is prepared first",
+    async (_, order) => {
+      const a = photoFile("a.jpg");
+      const b = photoFile("b.jpg");
+      const ready = { a: pending<File>(), b: pending<File>() };
+      prepared.mockImplementation((file) =>
+        file === a ? ready.a.promise : ready.b.promise,
+      );
+      upload.mockResolvedValueOnce(uploaded(8));
+      register.mockResolvedValueOnce({
+        ok: true,
+        data: { id: 51, number: "G9001-2511", item_id: 8, listed: true },
+      });
+      const onClose = open();
+      choosePhoto(a);
+      choosePhoto(b);
+      for (const which of order as ("a" | "b")[])
+        await act(async () => ready[which].resolve(which === "a" ? a : b));
+      expect(
+        await screen.findByText("Fotot är uppladdat."),
+      ).toBeInTheDocument();
+      expect(upload).toHaveBeenCalledTimes(1);
+      expect(upload.mock.calls[0][2].get("file")).toBe(b);
+      type(/^Individnummer på pappret/, "G9001-2511");
+      type(/^Intygsnummer/, "P-2511");
+      type(/^Födelsedatum/, "2025-05-10");
+      type(/^Mor/, "G9001-2411");
+      type(/^Far(?!-)/, "G9001-2412");
+      fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+      await waitFor(() => expect(onClose).toHaveBeenCalled());
+      expect(register.mock.calls[0][2]).toMatchObject({ item_id: 8 });
+    },
+  );
 });
 
 describe("Back", () => {
