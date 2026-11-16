@@ -483,6 +483,80 @@ describe("a late answer", () => {
   });
 });
 
+// Codex P2: the browser's Back is no way around a registration in progress either
+describe("Back while a registration is out", () => {
+  const fillKit = () => {
+    type(/^Individnummer på pappret/, "G9001-2511");
+    type(/^Intygsnummer/, "P-2511");
+    type(/^Födelsedatum/, "2025-05-10");
+    type(/^Mor/, "G9001-2411");
+    type(/^Far(?!-)/, "G9001-2412");
+  };
+
+  it("waits for a parent's registration, and the kit's form comes back", async () => {
+    find.mockImplementation(async () => null);
+    upload.mockResolvedValueOnce(uploaded(9));
+    const saving = pending<Awaited<ReturnType<typeof registerRabbit>>>();
+    register.mockImplementationOnce(() => saving.promise);
+    const pushState = vi.spyOn(window.history, "pushState");
+    const onClose = open();
+    type(/^Namn/, "Kulla");
+    type(/^Mor/, "G9001-2411");
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Lägg till modern från hennes intyg nu",
+      }),
+    );
+    choosePhoto();
+    await screen.findByText("Fotot är uppladdat.");
+    type(/^Intygsnummer/, "P-2411");
+    type(/^Födelsedatum/, "2024-05-01");
+    type(/^Mor/, "G9001-2201");
+    type(/^Far(?!-)/, "G9001-2202");
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    await waitFor(() => expect(register).toHaveBeenCalled());
+    pushState.mockClear();
+    back();
+    expect(screen.queryByText("Spara som utkast eller släng?")).toBeNull();
+    expect(pushState).toHaveBeenCalledWith({ kanin: true }, ""); // the entry Back took is back
+    await act(async () =>
+      saving.resolve({
+        ok: true,
+        data: { id: 50, number: "G9001-2411", item_id: 9, listed: true },
+      }),
+    );
+    await waitFor(() => expect(input(/^Namn/)).toHaveValue("Kulla"));
+    expect(input(/^Mor/)).toHaveValue("G9001-2411");
+    expect(onClose).not.toHaveBeenCalled();
+    back(); // and Back works again once it is in
+    expect(
+      screen.getByText("Spara som utkast eller släng?"),
+    ).toBeInTheDocument();
+    pushState.mockRestore();
+  });
+
+  it("waits for the kit's registration, which then closes the dialog", async () => {
+    upload.mockResolvedValueOnce(uploaded(7));
+    const saving = pending<Awaited<ReturnType<typeof registerRabbit>>>();
+    register.mockImplementationOnce(() => saving.promise);
+    const historyBack = vi.spyOn(window.history, "back");
+    const onClose = open();
+    choosePhoto();
+    await screen.findByText("Fotot är uppladdat.");
+    fillKit();
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    await waitFor(() => expect(register).toHaveBeenCalled());
+    back();
+    expect(screen.queryByText("Spara som utkast eller släng?")).toBeNull();
+    expect(onClose).not.toHaveBeenCalled();
+    const kit = { id: 51, number: "G9001-2511", item_id: 7, listed: true };
+    await act(async () => saving.resolve({ ok: true, data: kit }));
+    await waitFor(() => expect(onClose).toHaveBeenCalledWith([[kit, null]]));
+    expect(historyBack).toHaveBeenCalledTimes(1); // the entry put back is the one leaving takes
+    historyBack.mockRestore();
+  });
+});
+
 describe("a missing parent", () => {
   it("is added from her own certificate, and the kit's form comes back", async () => {
     let motherIn = false;

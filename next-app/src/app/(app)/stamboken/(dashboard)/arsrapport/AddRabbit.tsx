@@ -200,6 +200,11 @@ export function AddRabbitDialog({
       window.history.pushState({ kanin: true }, "");
     pushed.current = true;
     const onPop = () => {
+      if (committing.current) {
+        // Back waits for the registration, as Stäng does: the browser took the entry, so it is put back
+        window.history.pushState({ kanin: true }, "");
+        return;
+      }
       pushed.current = false;
       if (touchedRef.current) setAsk(true);
       else doneRef.current();
@@ -397,6 +402,7 @@ export function AddRabbitDialog({
                 type="button"
                 className={`sb-btn ${styles.btn}`}
                 onClick={() => {
+                  if (committing.current) return;
                   if (key) writeDrafts(key, stack);
                   leave();
                 }}
@@ -407,6 +413,7 @@ export function AddRabbitDialog({
                 type="button"
                 className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
                 onClick={() => {
+                  if (committing.current) return;
                   if (key) writeDrafts(key, null);
                   leave();
                 }}
