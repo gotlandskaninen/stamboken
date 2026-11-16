@@ -276,6 +276,7 @@ class ListaTest(ArsrapportTest):
                     "father": None,
                     "litter_size": 4,
                     "litter_size6w": 4,
+                    "preliminary": False,
                 }
             ],
         )

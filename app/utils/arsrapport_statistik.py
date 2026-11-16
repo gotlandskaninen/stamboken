@@ -50,6 +50,7 @@ class Statistik:
     honor: int  # castrated too
     hanar: int  # castrated too
     okant_kon: int  # held rabbits of unknown sex, in neither honor nor hanar
+    preliminart: bool = False  # a litter's 6-week count is still the count born (levande_6v is a guess)
 
 
 def innehav(genebank_id: int, year: int) -> dict[int, list[Kanin]]:
@@ -130,7 +131,8 @@ def statistik(genebank_id: int, year: int) -> dict[int, Statistik]:
     Litters: ``Breeding`` rows with the herd as ``breeding_herd_id`` and
     ``birth_date`` in ``year``. ``ungar`` and ``levande_6v`` are their sums,
     or None when any litter's count is unknown; ``kullar_okant_6v`` counts the
-    litters without a 6-week count. ``avelshonor``/``avelshanar`` count distinct
+    litters without a 6-week count. ``preliminart`` is set when a litter's count is still preliminary.
+    ``avelshonor``/``avelshanar`` count distinct
     mothers and fathers of those litters, castrated or not.
 
     ``honor``/``hanar``/``okant_kon`` count ``innehav``, castrated included.
@@ -144,6 +146,7 @@ def statistik(genebank_id: int, year: int) -> dict[int, Statistik]:
             fn.COUNT(Breeding.id).filter(Breeding.litter_size.is_null()).alias("okand_storlek"),
             fn.SUM(Breeding.litter_size6w).alias("levande_6v"),
             fn.COUNT(Breeding.id).filter(Breeding.litter_size6w.is_null()).alias("kullar_okant_6v"),
+            fn.COUNT(Breeding.id).filter(Breeding.litter_size6w_preliminary).alias("preliminara"),
             fn.COUNT(Breeding.mother.distinct()).alias("avelshonor"),
             fn.COUNT(Breeding.father.distinct()).alias("avelshanar"),
         )
@@ -161,6 +164,7 @@ def statistik(genebank_id: int, year: int) -> dict[int, Statistik]:
             row["ungar"] = None
         if row["kullar_okant_6v"]:
             row["levande_6v"] = None
+        row["preliminart"] = bool(row.pop("preliminara"))
         by_herd[row.pop("herd_id")] = row
 
     no_litters = dict(

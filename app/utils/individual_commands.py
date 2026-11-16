@@ -1130,8 +1130,9 @@ class ConfirmLitterSize(PolicyCommand):
     """
 
     breeding_id: int
-    litter_size6w: int
+    litter_size6w: int | None  # None keeps the count preliminary (the count born)
     year: int | None = None  # the report year, when the caller knows it; a link's own is always checked
+    litter_size: int | None = None  # the count born, changed in the same step (the report's "Ja, ändra den")
     apply_rank = 80
     herd_scoped = True
 
@@ -1154,7 +1155,8 @@ class ConfirmLitterSize(PolicyCommand):
 
     def check_dates(self, ctx):
         litter = self._litter(ctx)
-        if litter.litter_size is None or not 0 <= self.litter_size6w <= litter.litter_size:
+        born = self.litter_size if self.litter_size is not None else litter.litter_size
+        if born is None or born < 1 or (self.litter_size6w is not None and not 0 <= self.litter_size6w <= born):
             raise IndividualRefused(LITTER_SIZE6W_ABOVE_BORN)
         certified = Individual.certificate.is_null(False) | Individual.digital_certificate.is_null(False)
         if Individual.select().where((Individual.breeding == litter.id) & certified).exists():
@@ -1163,11 +1165,22 @@ class ConfirmLitterSize(PolicyCommand):
 
     def apply(self, ctx):
         litter = self._litter(ctx)
-        before = {"breeding": litter.id, "litter_size6w": litter.litter_size6w}
+        before = {"breeding": litter.id, "litter_size": litter.litter_size, "litter_size6w": litter.litter_size6w}
         before["preliminary"] = litter.litter_size6w_preliminary
-        litter.litter_size6w, litter.litter_size6w_preliminary = self.litter_size6w, False
-        litter.save(only=[Breeding.litter_size6w, Breeding.litter_size6w_preliminary, Breeding.updated_at])
-        after = {"breeding": litter.id, "litter_size6w": self.litter_size6w, "preliminary": False}
+        if self.litter_size is not None:
+            litter.litter_size = self.litter_size
+        preliminary = self.litter_size6w is None
+        litter.litter_size6w = litter.litter_size if preliminary else self.litter_size6w
+        litter.litter_size6w_preliminary = preliminary
+        litter.save(
+            only=[Breeding.litter_size, Breeding.litter_size6w, Breeding.litter_size6w_preliminary, Breeding.updated_at]
+        )
+        after = {
+            "breeding": litter.id,
+            "litter_size": litter.litter_size,
+            "litter_size6w": litter.litter_size6w,
+            "preliminary": preliminary,
+        }
         ctx.record(type(self).__name__, before, after)
 
 
@@ -1187,12 +1200,12 @@ def register_litter(user, mother_id, father_id, birth_date, litter_size, litter_
         )
 
 
-def confirm_litter_size(user, breeding_id, litter_size6w, *, year=None, grant=None):
+def confirm_litter_size(user, breeding_id, litter_size6w, *, year=None, grant=None, litter_size=None):
     """ConfirmLitterSize on the litter's mother; returns the litter. A litter without a mother is not one to confirm."""
     litter = Breeding.get_or_none(Breeding.id == breeding_id)
     if litter is None or litter.mother_id is None:
         raise IndividualRefused("Kullen finns inte.")
-    command = ConfirmLitterSize(litter.id, litter_size6w, year)
+    command = ConfirmLitterSize(litter.id, litter_size6w, year, litter_size)
     execute(user, litter.mother_id, lambda ctx: [command], target_breeding=litter.id, grant=grant)
     return Breeding.get_by_id(litter.id)
 

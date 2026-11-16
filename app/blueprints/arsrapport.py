@@ -282,6 +282,30 @@ def withdraw(herd, year):
     return jsonify(view)
 
 
+# [Next.js] "Kullar under Y": a litter without a certificate, registered at once (it stays if the report is withdrawn).
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/kull", methods=["POST"])
+@report_actor_required
+def add_litter(herd, year):
+    herd, round_, access = _report_target(herd, year)
+    return jsonify(arsrapport.add_litter(herd, round_, access, _actor(access), _submission_body())), 201
+
+
+# [Next.js] A litter's counts, confirmed (the 6-week count) or changed; the dialog's "Ja, ändra den" after samma_kull.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/kull/<int:breeding_id>", methods=["PATCH"])
+@report_actor_required
+def change_litter(herd, year, breeding_id):
+    herd, round_, access = _report_target(herd, year)
+    return jsonify(arsrapport.change_litter(herd, round_, access, _actor(access), breeding_id, _submission_body()))
+
+
+# [Next.js] The father picker of the litter dialog: the genebank's males, with a login or a link alike.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/hanar", methods=["GET"])
+@report_actor_required
+def litter_fathers(herd, year):
+    herd, _, _ = _report_target(herd, year)
+    return jsonify({"hanar": arsrapport.report_fathers(herd, year)})
+
+
 # [Next.js] "I tid" for a submitted report: body {on_time: true | false | null}; the genebank's manager or admin.
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/i-tid", methods=["POST"])
 @json_login_required

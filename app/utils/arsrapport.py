@@ -83,10 +83,13 @@ from utils.individual_commands import (
     IndividualRefused,
     RecordAttestation,
     RecordDeath,
+    SameLitter,
     SetMeasurements,
     TransferIndividual,
     Undo,
+    confirm_litter_size,
     execute,
+    register_litter,
 )
 from utils.individual_policy import Role
 from utils.mail import Recipient, enqueue_mail, mail_kind, recipient_kind
@@ -664,14 +667,8 @@ def account_end(herd):
     return (masked_account(herd.bank_account_number) or "").removeprefix("••") or None
 
 
-def report_view(herd, round_, access, user):
-    """ReportView for the herd and the round's year, as `access` sees it ."""
-    year = round_.report_year
-    first, last = date(year, 1, 1), date(year, 12, 31)
-    activated = _activations(round_).where(YearlyReportRoundGenebank.genebank == herd.genebank_id).exists()
-    is_open = round_open(round_, herd.genebank_id, today())
-    report = current_report(herd, round_)
-    draft = _draft(herd, round_)
+def report_litters(herd, year):
+    """ReportView.litters: the herd's litters born in `year`; `preliminary` while the 6-week count is a guess."""
     Mother, Father = Individual.alias(), Individual.alias()
     litters = (
         Breeding.select(
@@ -682,13 +679,25 @@ def report_view(herd, round_, access, user):
             Father.number.alias("father"),
             Breeding.litter_size,
             Breeding.litter_size6w,
+            Breeding.litter_size6w_preliminary.alias("preliminary"),
         )
         .join(Mother, JOIN.LEFT_OUTER, on=(Breeding.mother == Mother.id))
         .switch(Breeding)
         .join(Father, JOIN.LEFT_OUTER, on=(Breeding.father == Father.id))
-        .where(Breeding.breeding_herd_id == herd.id, Breeding.birth_date.between(first, last))
+        .where(Breeding.breeding_herd_id == herd.id, Breeding.birth_date.between(date(year, 1, 1), date(year, 12, 31)))
         .order_by(Breeding.birth_date, Breeding.id)
     )
+    return [{**row, "birth_date": _iso(row["birth_date"])} for row in litters.dicts()]
+
+
+def report_view(herd, round_, access, user):
+    """ReportView for the herd and the round's year, as `access` sees it ."""
+    year = round_.report_year
+    first, last = date(year, 1, 1), date(year, 12, 31)
+    activated = _activations(round_).where(YearlyReportRoundGenebank.genebank == herd.genebank_id).exists()
+    is_open = round_open(round_, herd.genebank_id, today())
+    report = current_report(herd, round_)
+    draft = _draft(herd, round_)
     ToHerd = Herd.alias()
     # shortcut: a sale is found by from_herd, which older rows may lack; read the holder before it if they matter.
     sales = (
@@ -738,7 +747,7 @@ def report_view(herd, round_, access, user):
         "can_sell": access.can_sell,
         "other_active_herd": other_active,
         "rabbits": report_list(herd, year, report),
-        "litters": [{**row, "birth_date": _iso(row["birth_date"])} for row in litters.dicts()],
+        "litters": report_litters(herd, year),
         "sales": [{**row, "date": _iso(row["date"])} for row in sales.dicts()],
         "herds": [] if access.code else sorted(row.herd for row in others),  # a link sees no other herd
         "report": {**_report_json(report, round_, access, is_open), "villkor": herd_conditions(herd, round_, report)}
@@ -947,6 +956,7 @@ def status_view(round_, genebank_id, with_phone=False):
                     "kullar": stat.kullar if stat else 0,
                     "ungar": stat.ungar if stat else 0,
                     "levande_6v": stat.levande_6v if stat else 0,
+                    "preliminart": stat.preliminart if stat else False,
                     "honor": stat.honor if stat else 0,
                     "hanar": stat.hanar if stat else 0,
                 },
@@ -2444,6 +2454,38 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
 
 @mail_kind("arsrapport.andrad", priority=0, category="T")
 @mail_kind("arsrapport.kvitto", priority=0, category="T")
+def _new_litters(report, submission):
+    """The litters registered through the report (RegisterLitter) between the previous submission and this one."""
+    year = report.round.report_year
+    earlier = (
+        YearlyReportSubmission.select(fn.MAX(YearlyReportSubmission.created_at))
+        .join(YearlyHerdReport)
+        .where(
+            YearlyHerdReport.herd == report.herd_id,
+            YearlyHerdReport.round == report.round_id,
+            YearlyReportSubmission.created_at < submission.created_at,
+        )
+        .scalar()
+    )
+    window = IndividualCommand.command == "RegisterLitter"
+    window &= IndividualCommand.created_at <= submission.created_at
+    if earlier is not None:
+        window &= IndividualCommand.created_at > earlier
+    ids = [row.after["breeding"] for row in IndividualCommand.select(IndividualCommand.after).where(window)]
+    Mother = Individual.alias()
+    litters = (
+        Breeding.select(Breeding.birth_date, Breeding.litter_size, Mother.number.alias("mother"))
+        .join(Mother, on=(Breeding.mother == Mother.id))
+        .where(
+            Breeding.id.in_(ids),
+            Breeding.breeding_herd_id == report.herd_id,
+            Breeding.birth_date.between(date(year, 1, 1), date(year, 12, 31)),
+        )
+        .order_by(Breeding.birth_date, Breeding.id)
+    )
+    return [f"efter {row['mother']} född {row['birth_date']}, {row['litter_size']} födda" for row in litters.dicts()]
+
+
 def _kvitto(params):
     """
     Å7 and Å8 to the herd's main member: what the submission sent, from its row, so a later mail still says what
@@ -2462,6 +2504,7 @@ def _kvitto(params):
         "herd": report.herd.herd,
         "datum": received or f"{submission.created_at.astimezone(STOCKHOLM):%Y-%m-%d}",
         **receipt(submission)["summary"],
+        "kullar": _new_litters(report, submission),
         "end_date": f"{report.round.end_date:%Y-%m-%d}",
     }
 
@@ -2523,3 +2566,140 @@ def stale_link_retry(key, herd, round_):
     )
     if saved is not None and (saved.report.herd_id, saved.report.round_id) == (herd.id, round_.id):
         require_valid_code(saved.access_code_id, herd)
+
+
+# Kullar under Y (step 4b, Task 2): a litter is written at once, as the report's own writes are not (spec 5.8)
+
+LITTER_KEYS = ("mother_id", "father_id", "birth_date", "litter_size", "litter_size6w")
+
+
+def _litter_counts(body, new):
+    """The body's counts: `litter_size` (born) and `litter_size6w`, which may be null, a preliminary count."""
+    counts = {}
+    for key in ("litter_size", "litter_size6w"):
+        if key not in body:
+            if key == "litter_size" and new:
+                raise _bad(key, "Ange antal födda.")
+            continue
+        value = body[key]
+        if not (_is_int(value) or (value is None and key == "litter_size6w")):
+            raise _bad(key, "Ange antalet som ett heltal.")
+        counts[key] = value
+    return counts
+
+
+def _litter_body(body, *, new):
+    """A POST (`new`) or PATCH body as the wrappers take it; a PATCH takes only the counts."""
+    if not isinstance(body, dict):
+        raise ArsrapportError(400, "Skicka kullen som JSON.")
+    _keys(body, LITTER_KEYS if new else ("litter_size", "litter_size6w"), "kull")
+    fields = _litter_counts(body, new)
+    if new:
+        for key in ("mother_id", "father_id"):
+            if not _is_int(body.get(key)):
+                raise _bad(key, "Välj kaninen.")
+            fields[key] = body[key]
+        fields["birth_date"] = _day(body.get("birth_date"), "birth_date")
+    return fields
+
+
+def _litter_refused(exc):
+    """The command's refusal as the report's problem: 409 `samma_kull` with the litter, 403, 404 or a 422."""
+    message = exc.envelope.get("message") or "Kullen kan inte sparas."
+    if isinstance(exc, SameLitter):
+        return ArsrapportError(409, message, code="samma_kull", breeding_id=exc.envelope["breeding_id"])
+    if message == "Forbidden":
+        return ArsrapportError(403, "Du har inte rätt att ändra kullar i besättningen.")
+    if message == "Individual not found":
+        return ArsrapportError(404, "Kaninen finns inte.")
+    return ArsrapportError(422, message)
+
+
+def _litter_write(herd, round_, access, user, write):
+    """
+    Runs `write(grant)` under the report's lock, as a report writes: the link's code read again (E4), a paper
+    item locked and checked, the round open (an editor or a helper also after its last day, as Skicka). It never
+    touches the report row, so a litter moves no `received_at`.
+    """
+    on = today()
+    activated = _activations(round_).where(YearlyReportRoundGenebank.genebank == herd.genebank_id).exists()
+    if not (round_open(round_, herd.genebank_id, on) or ((access.editor or access.role == "helper") and activated)):
+        raise ArsrapportError(409, "Rundan är inte öppen.", code="rundan_stangd")
+    with DB_PROXY.atomic():
+        lock_report(round_, herd)
+        _recheck_code(access, herd, on)
+        paper = access.item is not None
+        item, pages = _lock_form(access, user, herd) if paper else (None, [])
+        report = current_report(herd, round_)
+        grant = ReportGrant(
+            inbox.InboxGrant(item, user, pages[0]) if paper else None, code=access.code, report=report, herd=herd
+        )
+        try:
+            return write(grant)
+        except IndividualRefused as exc:
+            raise _litter_refused(exc) from exc
+
+
+def add_litter(herd, round_, access, user, body):
+    """POST kull: a litter without a certificate in the herd; the new litter's id and the year's litters."""
+    fields = _litter_body(body, new=True)
+    litter = _litter_write(
+        herd,
+        round_,
+        access,
+        user,
+        lambda grant: register_litter(
+            user,
+            fields["mother_id"],
+            fields["father_id"],
+            fields["birth_date"],
+            fields["litter_size"],
+            fields.get("litter_size6w"),
+            herd.herd,
+            year=round_.report_year,
+            grant=grant,
+        ),
+    )
+    return {"id": litter.id, "litters": report_litters(herd, round_.report_year)}
+
+
+def change_litter(herd, round_, access, user, breeding_id, body):
+    """PATCH kull/<id>: the counts of one of the herd's litters, confirmed or changed (a certified one is refused)."""
+    fields = _litter_body(body, new=False)
+    if "litter_size6w" not in fields:
+        raise _bad("litter_size6w", "Ange antal levande vid 6 veckor, eller lämna tomt.")
+    year = round_.report_year
+    litter = Breeding.get_or_none(Breeding.id == breeding_id)
+    if litter is None or litter.breeding_herd_id.id != herd.id or (litter.birth_date or date.min).year != year:
+        raise ArsrapportError(404, "Kullen finns inte i besättningens rapport.")
+    _litter_write(
+        herd,
+        round_,
+        access,
+        user,
+        lambda grant: confirm_litter_size(
+            user, litter.id, fields["litter_size6w"], year=year, grant=grant, litter_size=fields.get("litter_size")
+        ),
+    )
+    return {"id": litter.id, "litters": report_litters(herd, year)}
+
+
+def report_fathers(herd, year):
+    """
+    The father picker: the herd's genebank's uncastrated males that lived in `year` (id, number, name), for a code
+    session too, which has no use of the logged-in searches. Nothing else about them.
+    """
+    males = (
+        Individual.select(Individual.id, Individual.number, Individual.name)
+        .join(Herd, on=(Individual.origin_herd == Herd.id))
+        .where(
+            Herd.genebank == herd.genebank_id,
+            Herd.herd.not_in(OUTSIDE_GENEBANK_HERDS),
+            Individual.sex == "male",
+            Individual.castration_date.is_null(True),
+            not_voided(),
+            Individual.death_date.is_null(True) | (Individual.death_date >= date(year, 1, 1)),
+        )
+        .order_by(Individual.number)
+    )
+    return [{"id": row["id"], "number": row["number"], "name": row["name"]} for row in males.dicts()]

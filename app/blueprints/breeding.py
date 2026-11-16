@@ -10,6 +10,7 @@ import logging
 import utils.data_access as da
 from flask import Blueprint, jsonify, request, session
 from utils.database import Bunny
+from utils.individual_commands import IndividualRefused, confirm_litter_size
 
 from .common import json_login_required, problem
 
@@ -99,6 +100,27 @@ def update_breeding_v2(breeding_id):
     if result.get("warnings"):
         updated["warnings"] = result["warnings"]
     return jsonify(updated), 200
+
+
+@breeding_bp.route("/v2/breeding/<int:breeding_id>/antal", methods=["POST"])
+@json_login_required
+def confirm_litter_count(breeding_id):
+    """Min besättning's "Bekräfta antalet": the count alive at 6 weeks of a litter, which clears "preliminärt"."""
+    form = request.get_json(silent=True)
+    count = form.get("litter_size6w") if isinstance(form, dict) else None
+    if type(count) is not int:  # True is an int too
+        return problem(400, "Bad Request", "Ange antal levande vid 6 veckor som ett heltal.")
+    try:
+        confirm_litter_size(da.fetch_user_info(session.get("user_id")), breeding_id, count)
+    except IndividualRefused as exc:
+        message = exc.envelope.get("message")
+        if message == "Forbidden":
+            return problem(403, "Forbidden", message)
+        if message == "Kullen finns inte.":
+            return problem(404, "Not Found", message)
+        return problem(422, "Update failed", message)
+    _invalidate_breeding(breeding_id)
+    return jsonify(da.get_breeding_event(breeding_id, session.get("user_id"))), 200
 
 
 @breeding_bp.route("/v2/breeding/<int:breeding_id>", methods=["DELETE"])

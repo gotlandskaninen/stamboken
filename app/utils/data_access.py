@@ -3135,6 +3135,7 @@ def update_breeding(form, user_uuid):
         # a correction committed before the lock.
         if new_sizes[1] != breeding.litter_size6w:
             changes["litter_size6w"] = new_sizes[1]
+            changes["litter_size6w_preliminary"] = False  # a typed count is not the guess
     except (TypeError, ValueError):
         errors += ["Unknown litter size."]
 
