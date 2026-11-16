@@ -17,6 +17,7 @@ const RESERVED_SLUGS = new Set([
   "stamboken-online",
   "medlem",
   "medlemsforum",
+  "rapport",
   "bli-genbank",
   "bli-genbanksbesattning",
   "v2",

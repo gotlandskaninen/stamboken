@@ -116,6 +116,18 @@ class CodeApiTest(ArsrapportTest):
         again = self.api("POST", "/besattning/G9001/2025/skicka", **body)
         self.assertEqual((again.status_code, again.get_json()["code"]), (403, "lank_ogiltig"))
 
+    def test_link_writes_are_named_in_the_audit_log(self):
+        """Opus L4: changed_by is the link and the IP is set, also when a logged-in user without a right writes."""
+        self.user("annan")
+        self.login("annan")
+        self.open_link()
+        last = db.AuditLog.select(db.fn.MAX(db.AuditLog.id)).scalar() or 0
+        self.assertEqual(self.skicka("G9001", self.rabbits_).status_code, 200)
+        rows = db.AuditLog.select().where(db.AuditLog.id > last)
+        self.assertTrue(rows.exists())
+        self.assertEqual({row.changed_by for row in rows}, {"länk G9001/2025"})
+        self.assertTrue(all(row.ip_address for row in rows))
+
     def test_code_session_cannot_reach_another_herd(self):
         self.open_link()
         before = self.counts()

@@ -13,10 +13,10 @@ from functools import wraps
 
 import utils.arsrapport as arsrapport
 import utils.inbox as inbox
-from flask import Blueprint, g, jsonify, request, send_file
+from flask import Blueprint, current_app, g, jsonify, request, send_file
 from flask_login import current_user
 from utils.arsrapport import ArsrapportError
-from utils.database import OUTSIDE_GENEBANK_HERDS, Genebank, Herd, ReportAccessCode, YearlyReportRound
+from utils.database import DATABASE, OUTSIDE_GENEBANK_HERDS, Genebank, Herd, ReportAccessCode, YearlyReportRound
 from utils.report_code import CodeActor
 
 from .common import check_genebank_access, json_login_required, manager_required, problem
@@ -89,6 +89,15 @@ def _codes_in_session(herd, round_):
     return list(query.order_by(ReportAccessCode.id.desc()))
 
 
+def _audit_as(actor):
+    """The audit triggers' session variables, as before_request sets them for an account."""
+    try:
+        DATABASE.execute_sql("SELECT set_config('audit.user', %s, false)", (actor.username,))
+        DATABASE.execute_sql("SELECT set_config('audit.ip', %s, false)", (request.remote_addr or "",))
+    except Exception:  # pylint: disable=broad-except  # as before_request: the write goes on without it
+        current_app.logger.warning("Failed to set audit context", exc_info=True)
+
+
 def _actor(access):
     """The account, or the link for a code access: what the service writes as the actor."""
     return CodeActor(access.code) if access.code else current_user
@@ -153,6 +162,8 @@ def _report_target(code, year):
         raise ArsrapportError(404, "Besättningen finns inte.")  # a code session, but not for this herd
     if round_ is None:
         raise ArsrapportError(404, f"Det finns ingen runda för {year}.")
+    if access.code is not None:  # the audit log names the link, also for a logged-in user who writes through it
+        _audit_as(CodeActor(access.code))
     return herd, round_, access
 
 
