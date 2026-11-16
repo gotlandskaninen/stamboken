@@ -70,12 +70,21 @@ from utils import app_logging  # isort:skip
 import utils.genetics_service as genetics  # isort:skip
 from utils import number_assets  # isort:skip
 from utils.individual_commands import purge_command_free_text  # isort:skip
+from utils.log_masking import TokenMaskFilter  # isort:skip
+from utils.mail import purge_old_mail, send_pending  # isort:skip
+from utils import inbox  # isort:skip
+from utils.inbox import queue_digests  # isort:skip
+from utils import inbox_gmail  # isort:skip
+from utils import inbox_purge  # isort:skip
+from utils.inbox_interpreter import interpret_next  # isort:skip
 from utils.members import try_auto_link_member  # isort:skip
 from utils.legacy_compat import course_message, is_legacy_host, legacy_classroom_url, legacy_hosts, refusal  # isort:skip
 from utils.redis_retry import reconnect_on_drop  # isort:skip
 
 APP = Flask(__name__, static_folder="/static")
 app_logging.setup()  # before any APP.logger use, or Flask adds its own stderr handler
+# Link tokens are credentials: masked in every line, in Flask's "Exception on <path>" and in the path field.
+app_logging.HANDLER.addFilter(TokenMaskFilter())
 auth_log = logging.getLogger("herdbook.auth")
 
 
@@ -118,6 +127,10 @@ UPLOAD_DIR = os.getenv("UPLOAD_FOLDER", "/app/uppladdningar")
 # string (e.g. a bare "GOOGLE_CLIENT_ID=" env line) must normalize to None:
 settings.refuse_committed_signing_key()
 settings.refuse_auto_validate_outside_demo()
+settings.refuse_unsafe_mail_settings()
+settings.refuse_unsafe_gmail_settings()
+settings.refuse_private_folder_under_uploads()
+settings.report_unwritable_private_folder()
 
 # verify_oauth2_token would otherwise enforce audience "" and fail every login.
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID") or None
@@ -202,6 +215,10 @@ from cli.breeding import breeding_cli  # noqa: E402
 
 APP.cli.add_command(breeding_cli)
 
+from cli.gmail import gmail_cli  # noqa: E402
+
+APP.cli.add_command(gmail_cli)
+
 
 @genetics_cli.command("recompute-history")
 @click.argument("genebank_id", type=int)
@@ -239,10 +256,82 @@ def _reconcile_all_history():
 
 
 def _purge_command_free_text():
-    """Nightly leader job (ADR-0017), built as _reconcile_all_history: it closes its thread's connection itself."""
+    """Nightly leader job (ADR-0017), built as _reconcile_all_history: it closes its thread's connection itself.
+
+    It purges the mail queue first, on its own, so neither purge failing skips the other."""
+    now = datetime.datetime.now(datetime.timezone.utc)
     try:
-        count = purge_command_free_text(datetime.datetime.now(datetime.timezone.utc))
+        try:
+            APP.logger.info("Purged %s mail queue rows", purge_old_mail(now))
+        except Exception:  # pylint: disable=broad-except
+            APP.logger.exception("Purging the mail queue failed")
+        count = purge_command_free_text(now)
         APP.logger.info("Purged free text from %s command log rows", count)
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _purge_inbox():
+    """Nightly leader job (docs/inkorg.md, "Gallring"), built as _send_mail: it closes its thread's connection.
+
+    Each rule runs on its own inside inbox_purge.run, so one failing does not skip the others."""
+    try:
+        inbox_purge.run(datetime.datetime.now(datetime.timezone.utc))
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("The inbox purge failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _send_mail():
+    """Leader job every 30 s (docs/mejl.md), built as _reconcile_all_history: it closes its thread's connection."""
+    try:
+        send_pending()
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Mail sender run failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _queue_notice_digests():
+    """Leader job at 07:00 (docs/inkorg.md), built as _send_mail: it closes its thread's connection."""
+    try:
+        APP.logger.info("Queued %s notice digests", queue_digests())
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Queueing the notice digests failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _read_gmail():
+    """Leader job every 5 minutes (docs/inkorg-gmail.md), built as _send_mail: it closes its thread's connection.
+
+    The app context is for the upload's image checks, which answer with Flask responses."""
+    try:
+        with APP.app_context():
+            inbox_gmail.run()
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Reading the Gmail mailbox failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _wake_waiting_items():
+    """Leader job every hour (docs/inkorg.md, "Väntar på förälder"), built as _send_mail: it closes its connection."""
+    try:
+        APP.logger.info("Woke %s inbox items waiting for a parent", inbox.wake_waiting())
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Waking the inbox items waiting for a parent failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _interpret_document():
+    """Leader job every minute (docs/inkorg.md, "Tolkning"), built as _send_mail: it closes its thread's connection."""
+    try:
+        interpret_next()
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Interpreting an inbox document failed")
     finally:
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
@@ -2847,6 +2936,39 @@ def initialize_app():
             misfire_grace_time=3600,
         )
 
+        # The intake queue's retention (docs/inkorg.md, "Gallring"); idempotent, so a late leader still runs it.
+        scheduler.add_job(
+            _purge_inbox,
+            "cron",
+            hour=3,
+            minute=45,
+            id="inbox_purge",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        # Sends committed mail from the queue (docs/mejl.md); only the leader ever sends.
+        scheduler.add_job(
+            _send_mail,
+            trigger="interval",
+            seconds=30,
+            id="mail_send",
+            max_instances=1,
+            coalesce=True,
+        )
+
+        # The intake queue's daily digest of unread notices (docs/inkorg.md), category N in the mail queue.
+        scheduler.add_job(
+            _queue_notice_digests,
+            "cron",
+            hour=7,
+            id="notice_digest",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
         scheduler.add_job(
             _purge_audit_ip,
             "cron",
@@ -2856,6 +2978,25 @@ def initialize_app():
             max_instances=1,
             coalesce=True,
             misfire_grace_time=3600,
+        )
+
+        # Reads the association's mailbox into the intake queue (docs/inkorg-gmail.md); never on the demo.
+        if settings.gmail.mode == "on":
+            scheduler.add_job(
+                _read_gmail, trigger="interval", minutes=5, id="inbox_gmail", max_instances=1, coalesce=True
+            )
+        # Wakes the intake queue's items still waiting for a registered parent, which a save skipped as locked.
+        scheduler.add_job(
+            _wake_waiting_items, trigger="interval", hours=1, id="inbox_wake", max_instances=1, coalesce=True
+        )
+        # The image reading of photographed certificates, one document a run (docs/inkorg.md, "Tolkning").
+        scheduler.add_job(
+            _interpret_document,
+            trigger="interval",
+            minutes=1,
+            id="inbox_interpret",
+            max_instances=1,
+            coalesce=True,
         )
 
         # Warm the shared genetics memo once at startup (workers only build their snapshots)
@@ -2899,7 +3040,12 @@ def get_yearly_reports(round_id, genebank_id):
 
         # Get the report round to include the year
         report_round = da.YearlyReportRound.get_by_id(round_id)
-        reports = da.get_yearly_reports(round_id, genebank_id)
+        reports = da.get_yearly_reports(
+            round_id,
+            genebank_id,
+            current_user.is_admin or current_user.is_matrikel_admin,
+            frozenset() if current_user.is_admin else current_user.effective_herd_ids(),
+        )
 
         return jsonify(
             {
@@ -2927,7 +3073,12 @@ def export_yearly_reports(round_id, genebank_id):
 
         # Get the report round to include the year in the filename
         report_round = da.YearlyReportRound.get_by_id(round_id)
-        csv_data = da.export_yearly_reports_csv(round_id, genebank_id)
+        csv_data = da.export_yearly_reports_csv(
+            round_id,
+            genebank_id,
+            current_user.is_admin or current_user.is_matrikel_admin,
+            frozenset() if current_user.is_admin else current_user.effective_herd_ids(),
+        )
 
         return Response(
             csv_data,

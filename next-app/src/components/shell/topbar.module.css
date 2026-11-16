@@ -334,3 +334,18 @@
     display: none;
   }
 }
+
+.navBadge {
+  display: inline-block;
+  margin-left: 6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  background: var(--sb-lera);
+  color: #fff;
+  font-family: var(--sb-mono);
+  font-size: 10px;
+  line-height: 16px;
+  border-radius: 999px;
+  text-align: center;
+}

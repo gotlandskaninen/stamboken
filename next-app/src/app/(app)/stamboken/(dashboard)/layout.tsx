@@ -1,5 +1,7 @@
 import { cookies } from "next/headers";
 import { requireDashboardSession } from "@/lib/auth";
+import { NO_INBOX } from "@/lib/inkorg";
+import { getInboxCount } from "@/lib/inkorg-server";
 import { UserProvider } from "@/lib/user-context";
 import { MODE_COOKIE, parseMode } from "@/lib/mode";
 import { ModeProvider } from "@/lib/mode-context";
@@ -37,11 +39,13 @@ export default async function DashboardLayout({
   // correct dataset with no flash-of-wrong-mode (ADR-0008 server-first).
   const cookieStore = await cookies();
   const mode = parseMode(cookieStore.get(MODE_COOKIE)?.value);
+  // The menu must render even when the notice count is unavailable.
+  const inbox = await getInboxCount().catch(() => NO_INBOX);
   return (
     <ClientProviders>
       <UserProvider user={user}>
         <ModeProvider mode={mode}>
-          <DashboardShell>{children}</DashboardShell>
+          <DashboardShell inbox={inbox}>{children}</DashboardShell>
         </ModeProvider>
       </UserProvider>
     </ClientProviders>

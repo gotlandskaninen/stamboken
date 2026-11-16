@@ -35,10 +35,10 @@ async function fetchUserWithRetry(
   return null;
 }
 
-export async function getUser(): Promise<UserContext | null> {
+export async function getUser(forceProd = false): Promise<UserContext | null> {
   const cookieStore = await cookies();
   if (!cookieStore.get("session")) return null;
-  return fetchUserWithRetry();
+  return fetchUserWithRetry(forceProd);
 }
 
 /** Sign-in URL preserving the current destination for post-login return. */
@@ -51,8 +51,8 @@ async function signInUrl(): Promise<string> {
   return `/auth/sign-in?return_to=${returnTo}`;
 }
 
-export async function requireUser(): Promise<UserContext> {
-  const user = await getUser();
+export async function requireUser(forceProd = false): Promise<UserContext> {
+  const user = await getUser(forceProd);
   if (!user) {
     redirect(await signInUrl());
   }
