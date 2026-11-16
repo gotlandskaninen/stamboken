@@ -6,6 +6,7 @@ See ADR-0007 for blueprint conventions.
 """
 
 import io
+import math
 import os
 import uuid
 from dataclasses import asdict
@@ -16,14 +17,27 @@ import utils.arsrapport as arsrapport
 import utils.arsrapport_invite as invite
 import utils.arsrapport_pdf as arsrapport_pdf
 import utils.inbox as inbox
-from flask import Blueprint, current_app, g, jsonify, request, send_file
+from extensions import limiter
+from flask import Blueprint, current_app, g, jsonify, request, send_file, session
 from flask_login import current_user
+from limits import parse as parse_limit
 from utils.arsrapport import ArsrapportError
-from utils.database import DATABASE, OUTSIDE_GENEBANK_HERDS, Genebank, Herd, ReportAccessCode, YearlyReportRound
-from utils.report_code import CodeActor
+from utils.database import (
+    DATABASE,
+    OUTSIDE_GENEBANK_HERDS,
+    Genebank,
+    Herd,
+    InboxDocument,
+    InboxItem,
+    ReportAccessCode,
+    YearlyReportRound,
+)
+from utils.report_code import CodeActor, actor_key
 
 from .common import check_genebank_access, json_login_required, manager_required, problem
-from .rapport_link import session_codes, touch
+from .inbox import MAX_FILES, MAX_REQUEST, REGISTRATION_FIELDS, _each_image, _Refused
+from .individual_v2_create import may_register_in, number_suggestion, paper_number_check, register_individual_as
+from .rapport_link import _environment, session_codes, touch
 
 arsrapport_bp = Blueprint("arsrapport", __name__, url_prefix="/api")
 
@@ -401,3 +415,160 @@ def new_link(herd, year):
         return denied
     invite.new_link(target, _genebank_round(year, target.genebank_id), current_user, now=arsrapport.now())
     return jsonify({"sent": True})
+
+
+# "Lägg till kanin från intyget" (4b Task 4, spec 5.8): the certificate's photo first, a `kontroll` item in the queue
+# (G5), then the rabbit, registered at once with the report actor's own right and bound to that photo.
+
+PHOTO_LIMIT = parse_limit("60 per hour")  # per code or per user, every request with access, refused or not (mitt val)
+PHOTO_LIMITED = "Du har laddat upp många foton den senaste timmen. Fortsätt efter kl. {at}. Det du skrivit är sparat."
+PHOTOS_KEPT = 60  # the session's own uploads a registration may bind (FC1): an hour's worth
+PHOTO_FIRST = "Ladda upp ett foto av intyget först."
+PHOTO_NOT_OURS = "Fotot hör inte till den här rapporten. Ladda upp det igen."
+PHOTO_USED = "Fotot gäller redan en annan kanin. Ladda upp ett nytt foto av intyget."
+
+
+@arsrapport_bp.errorhandler(413)
+def too_large(_exc):
+    """A photo over MAX_REQUEST (werkzeug's 413 is HTML) as problem+json, as the queue's upload."""
+    return problem(413, "Payload Too Large", "Filen är för stor. Max 10 MB.")
+
+
+def _photo_key(access):
+    """Who a photo is the session's for (FC1): the actor (a code or an account) and the environment (FA2)."""
+    return [*actor_key(_actor(access)), _environment()]
+
+
+def _photo_limit(access):
+    """
+    The 429 once the actor has sent PHOTO_LIMIT this hour, else None. Counted after the access check, so nobody
+    spends a herd's photos without its code, and fail-open like the login's bucket when the limiter is off.
+    """
+    if not (limiter.enabled and limiter.initialized):
+        return None
+    key = "/".join(map(str, actor_key(_actor(access))))
+    try:
+        if limiter.limiter.hit(PHOTO_LIMIT, "arsrapport-foto", key):
+            return None
+        reset = limiter.limiter.get_window_stats(PHOTO_LIMIT, "arsrapport-foto", key).reset_time
+    except Exception:  # pylint: disable=broad-except  # as the limiter's swallow_errors
+        current_app.logger.exception("Photo rate limit check failed, letting the request through")
+        return None
+    at = datetime.fromtimestamp(math.ceil(reset / 60) * 60, arsrapport.STOCKHOLM)  # "efter" a whole minute
+    return problem(429, "För många foton", PHOTO_LIMITED.format(at=f"{at:%H.%M}"), type="rate-limit-exceeded")
+
+
+# [Next.js] The certificate's photo: the queue's checks, a `kontroll` item with an `intyg` document (G5).
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/foto", methods=["POST"])
+@report_actor_required
+def upload_photo(herd, year):
+    request.max_content_length = MAX_REQUEST  # before the body is read, as the queue's upload
+    herd, _, access = _report_target(herd, year)
+    if access.item is not None:
+        raise ArsrapportError(403, "Intyg på papper läggs in i kön.")
+    if (limited := _photo_limit(access)) is not None:
+        return limited
+    file = request.files.get("file")
+    if file is None or not file.filename:
+        raise ArsrapportError(400, "Ingen fil bifogad.")
+    encoded, stored = [], []
+    try:
+        _each_image(file, MAX_FILES, lambda image: encoded.append((inbox.jpeg_bytes(image), inbox.measure(image))))
+        for data, quality in encoded:
+            stored.append((*inbox.write_jpeg(data, "original"), quality))
+        # a link has no account: the item names its code, as an account would be named
+        sender, named = (None, {"access_code_id": access.code.id}) if access.code else (_actor(access), {})
+        with DATABASE.atomic():
+            item, documents = inbox.create_upload(
+                sender, herd, None, stored, kind="kontroll", ref_type="individual", **named
+            )
+    except _Refused as refused:
+        inbox.remove_files(path for path, _, _ in stored)
+        return refused.response
+    except BaseException:
+        inbox.remove_files(path for path, _, _ in stored)
+        raise
+    # A new list, not an append: the session saves on assignment (as open_link's)
+    session["rapport_foton"] = ((session.get("rapport_foton") or []) + [[item.id, *_photo_key(access)]])[-PHOTOS_KEPT:]
+    return jsonify({"item_id": item.id, "document_id": documents[0].id}), 201
+
+
+# [Next.js] The rabbit from its paper certificate, bound to the session's own photo (FC1); it stays if the report is
+# withdrawn (spec 5.8).
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/kanin", methods=["POST"])
+@report_actor_required
+def add_rabbit(herd, year):
+    herd, round_, access = _report_target(herd, year)
+    body = _submission_body()
+    if not isinstance(body, dict):
+        raise ArsrapportError(400, "Skicka kaninen som JSON.")
+    item_id = body.get("item_id")
+    if type(item_id) is not int:  # True is an int too
+        raise ArsrapportError(400, PHOTO_FIRST, field="photo")
+    if [item_id, *_photo_key(access)] not in (session.get("rapport_foton") or []):
+        raise ArsrapportError(403, PHOTO_NOT_OURS, field="photo")
+    actor = _actor(access)
+    form = {key: body[key] for key in REGISTRATION_FIELDS if key in body}
+    form["certificate_type"] = "paper"  # from the paper certificate only, a link above all (FC1)
+    created = []
+
+    def write(_grant):
+        item = inbox.lock_item(item_id)  # after the report's lock and the code's recheck, as a sale proposal's
+        if (item.herd_id, item.kind, item.ref_type) != (herd.id, "kontroll", "individual"):
+            raise ArsrapportError(403, PHOTO_NOT_OURS, field="photo")
+        if item.ref_id is not None:
+            raise ArsrapportError(409, PHOTO_USED, field="photo")
+        document = item.documents.order_by(InboxDocument.id).first()
+
+        def bind(individual):  # in the registration's transaction: the photo and the rabbit commit together
+            InboxItem.update(ref_id=individual.id).where(InboxItem.id == item.id).execute()
+            inbox.saved(item, document, None if access.code else actor, individual, "ny_kanin")
+            created.append(individual)
+
+        return register_individual_as(actor, herd, form, bind)
+
+    response = arsrapport._litter_write(herd, round_, access, actor, write)  # pylint: disable=protected-access
+    if not created:
+        return response  # the registration's refusal; nothing was written
+    individual = created[0]
+    listed = any(row["id"] == individual.id for row in arsrapport.report_list(herd, round_.report_year))
+    return jsonify({"id": individual.id, "number": individual.number, "item_id": item_id, "listed": listed}), 201
+
+
+# [Next.js] The form's colours, for a code session too: /api/colors needs a login.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/farger", methods=["GET"])
+@report_actor_required
+def colors(herd, year):
+    herd, _, _ = _report_target(herd, year)
+    return jsonify({"farger": arsrapport.genebank_colors(herd)})
+
+
+# [Next.js] The form's parent lookup by number, for a code session too (L10): 404 only when there is no such rabbit.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/kanin-sok", methods=["GET"])
+@report_actor_required
+def find_rabbit(herd, year):
+    herd, _, _ = _report_target(herd, year)
+    found = arsrapport.report_parent(herd, (request.args.get("nummer") or "").strip().upper())
+    if found is None:
+        raise ArsrapportError(404, "Kaninen finns inte i Stamboken.", code="saknas")  # not a 404 for the herd
+    return jsonify(found)
+
+
+# [Next.js] The number a certificate of a litter would get (suggest-number), for a code session too (FC1).
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/nummerforslag", methods=["GET"])
+@report_actor_required
+def number_proposal(herd, year):
+    herd, _, access = _report_target(herd, year)
+    return number_suggestion(request.args, may_register_in(_actor(access), herd))
+
+
+# [Next.js] The paper's number against Stamboken's before a save (number-check), for a code session too (FC1).
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/nummerkontroll", methods=["POST"])
+@report_actor_required
+def number_control(herd, year):
+    herd, _, access = _report_target(herd, year)
+    body = _submission_body()
+    if not isinstance(body, dict):
+        raise ArsrapportError(400, "Skicka numret som JSON.")
+    actor = _actor(access)
+    return paper_number_check(body, actor, may_register_in(actor, herd))

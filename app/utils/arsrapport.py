@@ -2752,3 +2752,49 @@ def report_mothers(herd, year):
         .order_by(Individual.number)
     )
     return [{"id": row["id"], "number": row["number"], "name": row["name"]} for row in does.dicts()]
+
+
+def report_parent(herd, number):
+    """
+    The registration form's lookup by number (4b, L10), for a code session too: a rabbit of the herd's genebank, with
+    what the form compares against the photo (name, colour, parents), and a doe's litters born in this herd, which
+    fill in the kit's litter. None for any other number, so a link learns nothing outside its genebank.
+    """
+    rabbit = Individual.get_or_none((Individual.number == number) & not_voided())
+    if rabbit is None or rabbit.origin_herd.genebank_id != herd.genebank_id:
+        return None
+    litter = rabbit.breeding
+
+    def named(parent):
+        return {"number": parent.number, "name": parent.name} if parent is not None else None
+
+    litters = (
+        Breeding.select()
+        .where(Breeding.mother == rabbit.id, Breeding.breeding_herd_id == herd.id, Breeding.birth_date.is_null(False))
+        .order_by(Breeding.birth_date.desc())
+        if rabbit.sex == "female"
+        else []
+    )
+    return {
+        "number": rabbit.number,
+        "name": rabbit.name,
+        "sex": rabbit.sex,
+        "color": rabbit.color.name if rabbit.color_id else None,
+        "mother": named(litter.mother if litter else None),
+        "father": named(litter.father if litter else None),
+        "litters": [
+            {
+                "id": row.id,
+                "birth_date": row.birth_date.isoformat(),
+                "father": row.father.number if row.father_id else None,
+                "litter_size": row.litter_size,
+                "litter_size6w": row.litter_size6w,
+            }
+            for row in litters
+        ],
+    }
+
+
+def genebank_colors(herd):
+    """The colour names of the herd's genebank, which the registration accepts (it drops any other name)."""
+    return [row.name for row in Color.select(Color.name).where(Color.genebank == herd.genebank_id).order_by(Color.name)]

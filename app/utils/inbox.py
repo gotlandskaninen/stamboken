@@ -237,18 +237,27 @@ def handlers():
     return sorted((_person(w.id, names) for w in workers), key=lambda p: p["name"].casefold())
 
 
-def create_upload(user, herd, message, stored):
-    """The item of an upload: one document per stored image ((path, sha256, quality)), and its notices."""
+def create_upload(user, herd, message, stored, *, kind="upload", ref_type=None, **detail):
+    """
+    The item of an upload: one document per stored image ((path, sha256, quality)), and its notices. The report's
+    photo (4b) is a `kontroll` item with `ref_type`; its `user` is None for the report link, which `detail` names
+    (access_code_id), as an account would be named.
+    """
     item = InboxItem.create(
-        kind="upload", genebank=herd.genebank_id, herd=herd, sender_user=user, message=mask_tokens(message)
+        kind=kind,
+        genebank=herd.genebank_id,
+        herd=herd,
+        sender_user=user,
+        message=mask_tokens(message),
+        ref_type=ref_type,
     )
     documents = [
         InboxDocument.create(item=item, original_path=path, mime="image/jpeg", sha256=sha256, quality=quality)
         for path, sha256, quality in stored
     ]
-    log_event(item, user, "inkommen", documents=len(documents))
+    log_event(item, user, "inkommen", documents=len(documents), **detail)
     for worker in queue_workers(item.genebank_id):
-        if worker.id != user.id:
+        if user is None or worker.id != user.id:
             notify(worker, "ny_post", item)
     return item, documents
 

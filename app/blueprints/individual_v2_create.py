@@ -11,7 +11,7 @@ from datetime import date as date_type
 from datetime import timedelta
 
 import utils.data_access as da
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, jsonify, request
 from flask_login import current_user
 from peewee import DataError, DoesNotExist, IntegrityError
 from utils.database import DATABASE, Breeding, Color, Herd, Individual, lock_individuals, not_voided
@@ -65,10 +65,36 @@ def register_individual(form, may_register=None, created=None):
     `may_register(herd)`, the herds the caller may register in (its grant), and `created(individual)`, called
     in the transaction once the rabbit exists.
     """
+    return _register(form, current_user, lambda herd: _may_register(herd, may_register), created)
+
+
+def register_individual_as(actor, herd, form, created=None):
+    """
+    The report's registration (4b, L1): with `actor`'s own right only (a user, or the link's CodeActor), and only
+    into `herd`, where the new rabbit and its litter are born. No current_user, so an account never lends a link
+    its rights, nor a link an account its herd.
+    """
+    return _register(form, actor, may_register_in(actor, herd), created)
+
+
+def may_register_in(actor, herd):
+    """The report's rule as a predicate: `herd` only, with the actor's own right there (a code's: its own herd)."""
+
+    def may(target):
+        if target is None or target.id != herd.id:
+            return False
+        code = getattr(actor, "code", None)
+        return code.herd_id == herd.id if code is not None else _can_register_in_herd(actor, target)
+
+    return may
+
+
+def _register(form, actor, may, created):
+    """A registration with `actor` as the signer and `may(herd)` deciding every herd it writes in."""
     breeding_id = form.get("breeding_id")
     new_litter = None  # "Lägg till kanin": the litter to create, when no breeding_id and no matching litter
     if breeding_id is None:
-        breeding, new_litter, refusal = _shortcut_litter(form, may_register)
+        breeding, new_litter, refusal = _shortcut_litter(form, may)
         if refusal:
             return refusal
     else:
@@ -82,7 +108,7 @@ def register_individual(form, may_register=None, created=None):
         except DoesNotExist:
             return problem(404, "Not Found", f"Breeding {breeding_id} not found")
 
-    if breeding is not None and (refusal := _registration_refusal(breeding, may_register)):
+    if breeding is not None and (refusal := _registration_refusal(breeding, may)):
         return refusal
 
     # Generate individual number (optionally with explicit position)
@@ -129,14 +155,14 @@ def register_individual(form, may_register=None, created=None):
                 lock_herd_year(new_litter["herd"], new_litter["birth_date"].year)
                 if certificate_type == "paper":
                     litter = {key: new_litter[key] for key in ("herd", "birth_date", "mother", "father")}
-                    check = number_check(current_user, paper_number, paper_certificate=paper_certificate, **litter)
+                    check = number_check(actor, paper_number, paper_certificate=paper_certificate, **litter)
                     position = parse_number(number_to_register(check, resolution))[3]
                 breeding = _create_litter(**new_litter)
             else:
                 breeding = lock_litter(breeding.id)
                 # Decided again on the locked litter: it may have moved to another herd (or been renumbered or
                 # re-dated) since the check above, and the rabbit is born in the locked litter's herd.
-                if refusal := _registration_refusal(breeding, may_register):
+                if refusal := _registration_refusal(breeding, may):
                     return refusal
             herd = breeding.breeding_herd_id
 
@@ -154,7 +180,7 @@ def register_individual(form, may_register=None, created=None):
 
             if breeding.litter_number is None:  # a litter added without a certificate: its first one numbers it (L4)
                 check, numbered_position = number_unnumbered_litter(
-                    current_user, breeding, certificate_type, paper_number, paper_certificate, resolution
+                    actor, breeding, certificate_type, paper_number, paper_certificate, resolution
                 )
                 if certificate_type == "paper":  # a digital certificate keeps the position the request chose
                     position = numbered_position
@@ -163,7 +189,7 @@ def register_individual(form, may_register=None, created=None):
             # rules as promote (litter_size6w, roster in sync, quota).
             validate_first_certificate(breeding)
             if certificate_type == "paper" and check is None:
-                check = number_check(current_user, paper_number, breeding=breeding, paper_certificate=paper_certificate)
+                check = number_check(actor, paper_number, breeding=breeding, paper_certificate=paper_certificate)
                 position = parse_number(number_to_register(check, resolution))[3]
 
             individual = _create_individual_record(
@@ -179,10 +205,10 @@ def register_individual(form, may_register=None, created=None):
                 belly_color=form.get("belly_color"),
                 hair_notes=form.get("hair_notes"),
                 paper_certificate=paper_certificate,
-                signature=current_user,
+                signature=actor,
             )
             if check is not None and check["status"] != "match":
-                record_number_choice(individual, current_user, check)
+                record_number_choice(individual, actor, check)
             if created is not None:
                 created(individual)
     except RosterActionError as e:
@@ -200,7 +226,8 @@ def register_individual(form, may_register=None, created=None):
 
     # The certificate after the commit, as promote does: a failed digital issuance keeps the rabbit
     # and comes back as certificate_error.
-    certificate, certificate_error = _apply_certificate(individual, certificate_type, session.get("user_id"))
+    # session["user_id"] is the account's uuid; a link has none, and registers only with a paper certificate
+    certificate, certificate_error = _apply_certificate(individual, certificate_type, getattr(actor, "uuid", None))
     response_data = {
         "individual": individual.as_dict(),
         "certificate": certificate,
@@ -228,25 +255,30 @@ def suggest_number():
     Without breeding_id the litter is named by mother, father and birth_date, as for a registration
     without breeding_id: an existing litter's suggestion, or the first number of the litter to be created.
     """
-    breeding_id = request.args.get("breeding_id", type=int)
+    return number_suggestion(request.args, lambda herd: _can_register_in_herd(current_user, herd))
+
+
+def number_suggestion(args, may):
+    """suggest-number's answer for the query `args`, with `may(herd)` deciding the litter's herd (the report's too)."""
+    breeding_id = args.get("breeding_id", type=int)
     if breeding_id:
         try:
             breeding = Breeding.get_by_id(breeding_id)
         except DoesNotExist:
             return problem(404, "Not Found", f"Breeding {breeding_id} not found")
-    elif "mother" in request.args:
-        key, refusal = _litter_key(request.args)
+    elif "mother" in args:
+        key, refusal = _litter_key(args)
         if refusal:
             return refusal
         mother, father, birth_date = key
         breeding = Breeding.get_or_none(mother=mother, father=father, birth_date=birth_date)
         if breeding is None:
-            return _new_litter_suggestion(mother.current_herd, father, birth_date)
+            return _new_litter_suggestion(mother.current_herd, father, birth_date, may)
     else:
         return problem(400, "Bad Request", "breeding_id query parameter is required")
 
     herd = breeding.breeding_herd_id
-    if not _can_register_in_herd(current_user, herd):
+    if not may(herd):
         return problem(403, "Forbidden", "Åtkomst nekad")
 
     if breeding.litter_number is None:  # a litter added without a certificate: the number it would get now
@@ -276,6 +308,11 @@ def number_check_route():
     form = request.get_json(silent=True)
     if not isinstance(form, dict):
         return problem(400, "Bad Request", "Request body must be a JSON object")
+    return paper_number_check(form, current_user, lambda herd: _can_register_in_herd(current_user, herd))
+
+
+def paper_number_check(form, actor, may):
+    """number-check's answer for the body `form`, as `actor` sees the holders, with `may(herd)` deciding the herd."""
     paper_number, paper_certificate = form.get("paper_number"), form.get("paper_certificate")
     if parse_number(paper_number) is None:
         return problem(400, "Bad Request", PAPER_NUMBER_REQUIRED)
@@ -298,9 +335,9 @@ def number_check_route():
             if breeding is not None
             else {"herd": herd, "birth_date": birth_date, "mother": mother, "father": father}
         )
-    if not _can_register_in_herd(current_user, herd):
+    if not may(herd):
         return problem(403, "Forbidden", "Åtkomst nekad")
-    return jsonify(number_check(current_user, paper_number, paper_certificate=paper_certificate, **litter)), 200
+    return jsonify(number_check(actor, paper_number, paper_certificate=paper_certificate, **litter)), 200
 
 
 @individual_v2_create_bp.route("/v2/individual/import", methods=["POST"])
@@ -484,10 +521,10 @@ def import_individual():
     return jsonify(response_data), 201
 
 
-def _registration_refusal(breeding, may_register=None):
+def _registration_refusal(breeding, may):
     """The problem response refusing a direct registration into `breeding` now, or None."""
-    # Authorization: check user can edit in this herd
-    if not _may_register(breeding.breeding_herd_id, may_register):
+    # Authorization: may the caller register in this herd
+    if not may(breeding.breeding_herd_id):
         return problem(403, "Forbidden", "Åtkomst nekad")
 
     # Same minimum age as roster promotion — direct registration from litter
@@ -524,9 +561,9 @@ def _litter_key(values):
     return (mother, father, birth_date), None
 
 
-def _new_litter_refusal(herd, father, birth_date, may_register=None):
+def _new_litter_refusal(herd, father, birth_date, may):
     """The refusal of a new litter born in `herd` (the mother's) to `father`, or None."""
-    if not _may_register(herd, may_register):
+    if not may(herd):
         return problem(403, "Forbidden", "Modern finns inte i en besättning där du får registrera kaniner.")
     # Any registered buck of the genebank may be the father, alive or not (as for "Ny parning").
     if father.origin_herd.genebank_id != herd.genebank_id:
@@ -538,7 +575,7 @@ def _new_litter_refusal(herd, father, birth_date, may_register=None):
     return None
 
 
-def _shortcut_litter(form, may_register=None):
+def _shortcut_litter(form, may):
     """The litter of a registration without breeding_id ("Lägg till kanin", the legacy add form's shortcut).
 
     The body names the litter by mother, father and birth_date, unique in the litter table: an existing litter
@@ -554,7 +591,7 @@ def _shortcut_litter(form, may_register=None):
         return existing, None, None
 
     herd = mother.current_herd
-    if refusal := _new_litter_refusal(herd, father, birth_date, may_register):
+    if refusal := _new_litter_refusal(herd, father, birth_date, may):
         return None, None, refusal
     litter_size, litter_size6w = _as_int(form.get("litter_size")), _as_int(form.get("litter_size6w"))
     if litter_size is None or litter_size < 1:
@@ -620,9 +657,9 @@ def _create_litter(herd, mother, father, birth_date, breed_date, litter_size, li
     )
 
 
-def _new_litter_suggestion(herd, father, birth_date):
+def _new_litter_suggestion(herd, father, birth_date, may):
     """The number suggestion for the first rabbit of a litter not created yet: position 1 of the year's next."""
-    if refusal := _new_litter_refusal(herd, father, birth_date):
+    if refusal := _new_litter_refusal(herd, father, birth_date, may):
         return refusal
     litter_number = new_litter_number(herd, birth_date, lock=False)
     if litter_number is None:

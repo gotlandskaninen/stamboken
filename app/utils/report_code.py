@@ -142,6 +142,11 @@ class CodeActor:
     def username(self) -> str:
         return f"länk {self.code.herd.herd}/{self.code.round.report_year}"
 
+    @property
+    def accessible_genebanks(self) -> list[int]:
+        """What number_check may name to the link: its herd's genebank, as for an owner of the herd (4b)."""
+        return [self.code.herd.genebank_id]
+
     def transfer_herd_ids(self) -> frozenset:
         return frozenset()
 

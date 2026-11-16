@@ -1272,7 +1272,8 @@ def record_number_choice(individual, user, check):
         request_id=uuid.uuid4(),
         command="UseStambokenNumber",
         individual=individual,
-        actor=user.id,
+        actor=user.id,  # None for the report link, which signs with its access code
+        access_code_id=getattr(user, "access_code_id", None),
         before={"paper_number": check["paper_number"]},
         after={"number": individual.number, "conflicts": sorted({c["kind"] for c in check["conflicts"]})},
     )
