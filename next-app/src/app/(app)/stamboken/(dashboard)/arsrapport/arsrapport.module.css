@@ -108,6 +108,9 @@
   font-size: var(--sb-fs-sm);
   color: var(--sb-ink-2);
 }
+.hints {
+  display: none;
+}
 .progress {
   width: 100%;
   height: 6px;
@@ -658,4 +661,125 @@ button.confirmDanger:hover:not(:disabled) {
 /* The queue's table header is 10 px; the status table reads at the small label size. */
 table.statusTable th {
   font-size: var(--sb-fs-xs);
+}
+
+/* A wide screen (issue 75): one row per rabbit, and the side column stacked as
+   counter, progress bar, search, filters, shortcuts and Skicka. Mobile keeps the
+   base rules above. Paper pages are not .wide and keep their own layout. */
+@media (min-width: 1000px) {
+  .wide {
+    max-width: 1280px;
+  }
+  .wide .layout {
+    grid-template-columns: minmax(0, 1fr) 300px;
+    grid-template-rows: auto 1fr; /* Skicka under the side column, not at the foot of the list */
+  }
+  .wide .main {
+    grid-row: 1 / span 2;
+  }
+  .wide .side {
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+  .wide .sideSend {
+    grid-row: 2;
+    align-self: start;
+    position: static;
+  }
+  .wide .stickyRow {
+    display: contents;
+  }
+  .wide .counter {
+    order: 0;
+    font-size: 18px;
+  }
+  .wide .progress {
+    order: 1;
+  }
+  .wide .searchLabel {
+    order: 2;
+  }
+  .wide .hints {
+    display: block;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--sb-ink-2);
+    font-size: var(--sb-fs-sm);
+  }
+  .wide .hints li + li {
+    margin-top: 4px;
+  }
+  .wide .hints kbd {
+    font-family: var(--sb-mono);
+    border: 1px solid var(--sb-ink-3);
+    border-radius: 4px;
+    background: var(--sb-card);
+    padding: 0 4px;
+  }
+
+  /* The row: name and facts, the three choices, then weight when Finns kvar is
+     chosen. flex-wrap lets the weight drop to a second line when it does not fit. */
+  .wide .row {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-start;
+    column-gap: 12px;
+    row-gap: 8px;
+    padding: 8px 16px;
+    min-height: 64px;
+  }
+  .wide .row legend {
+    position: absolute;
+    top: 8px;
+    left: 16px;
+    width: 216px;
+    float: none;
+    font-size: 16px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .wide .row > .meta {
+    flex: 0 0 216px;
+    margin: 0;
+    padding-top: 24px;
+    font-size: var(--sb-fs-sm);
+  }
+  .wide .row > .meta + .meta,
+  .wide .row > .choices ~ .meta {
+    flex-basis: 100%;
+    padding-top: 0;
+    order: 5;
+  }
+  .wide .row .choices {
+    flex-wrap: nowrap;
+  }
+  .wide .row .choice {
+    flex: 0 0 112px;
+    min-width: 0;
+  }
+  .wide .row .choice span {
+    padding: 4px 18px 4px 6px;
+  }
+  .wide .row .detail {
+    flex: 1 1 280px;
+    margin-top: 0;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: 16px;
+  }
+  .wide .row .detail > .note,
+  .wide .row .detail > .grid2 {
+    flex-basis: 100%;
+  }
+  .wide .row > .errorText,
+  .wide .row > p:not(.meta) {
+    flex-basis: 100%;
+    margin: 0;
+    order: 6;
+  }
 }

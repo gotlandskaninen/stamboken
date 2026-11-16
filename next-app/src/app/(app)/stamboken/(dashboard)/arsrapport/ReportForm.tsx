@@ -1398,6 +1398,16 @@ export function ReportForm({
                     </button>
                   ))}
                 </div>
+                <ul className={styles.hints}>
+                  {rabbits.length >= SEARCH_FROM && (
+                    <li>
+                      <kbd>Enter</kbd> i sökfältet: gå till kaninen vid en träff
+                    </li>
+                  )}
+                  <li>
+                    <kbd>Enter</kbd> i Vikt: nästa kanin som saknar vikt
+                  </li>
+                </ul>
               </>
             )}
           </div>
