@@ -18,7 +18,7 @@ import utils.report_code as report_code
 import utils.settings as settings
 from herdbook import APP
 from utils.arsrapport_pdf import receipt_pdf
-from utils.herd_tracking import CONTACT_OR_MEMBERSHIP_NEEDED, void_herd_tracking
+from utils.herd_tracking import CONTACT_OR_MEMBERSHIP_NEEDED, undo_herd_tracking_operation, void_herd_tracking
 from utils.individual_commands import record_sale
 from utils.report_code import CodeActor
 
@@ -122,7 +122,23 @@ class KeptBuyerTest(ArsrapportTest):
             {"till": "utanfor", "ar": 2025, "manad": 10, "dag": 10, "kopare_id": contact.id, "fran_rapport": rid},
         )
         self.assertEqual(self.view["draft"]["data"], self.draft())  # the seller gets the id, never the buyer
-        self.assertFalse(any(text in json.dumps(self.view) for text in BUYER_TEXTS))
+        (row,) = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.angrad")
+        _, mailed = mail.render("arsrapport.angrad", arsrapport._angrad(row.params))  # pylint: disable=protected-access
+        for text in (json.dumps(self.view), mailed):
+            self.assertFalse([value for value in BUYER_TEXTS if value in text])
+
+    def test_first_draft_save_takes_no_kopare_id(self):  # K1: only the server writes one
+        self.ok(self.body(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=BUYER), self.kvar(self.b, vikt=2.8)))
+        forged = {"val": "sald", "sald": {"till": "utanfor", "ar": 2025, "manad": 10, "dag": 10, "kopare_id": 1}}
+        data = arsrapport.stored_body(self.body(self.kvar(self.b, vikt=2.8)))
+        data["rabbits"][str(self.a.id)] = {**forged, "sald": {**forged["sald"], "fran_rapport": 1}}
+        data["form"] = {"rabbits": {str(self.a.id): forged}}
+        response = self.api(
+            "PUT", "/besattning/G9001/2025/utkast", data=data, updated_at=None, submission_key=None, revision=1
+        )
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertNotIn("kopare_id", json.dumps(self.draft()))
+        self.assertNotIn("fran_rapport", json.dumps(self.draft()))
 
     def test_resubmit_reattaches_kept_buyer(self):
         contact, _ = self.sold_and_withdrawn()
@@ -218,6 +234,15 @@ class KeptBuyerTest(ArsrapportTest):
         self.assertEqual(contacts(), {contact.id: datetime(2026, 5, 2, tzinfo=STOCKHOLM)})
         self.ok(self.resent())  # linked again: a later change of the round leaves it at five years
         arsrapport.save_round(2025, self.admin, end_date=date(2026, 5, 15))
+        self.assertEqual(contacts(), {contact.id: db.BuyerContact.purge_at_for(SOLD_ON)})
+
+    def test_undoing_the_withdraws_void_gives_the_buyer_five_years_again(self):
+        contact, _ = self.sold_and_withdrawn()
+        (sale,) = sales(self.a)
+        undo_herd_tracking_operation(
+            sale.voided_operation_id, db.User.get_by_id(self.manager.id), "Fel tillbakadragning"
+        )
+        self.assertEqual([row.id for row in sales(self.a, active=True)], [sale.id])
         self.assertEqual(contacts(), {contact.id: db.BuyerContact.purge_at_for(SOLD_ON)})
 
     def test_contact_fields_need_tick(self):  # through the report: BuyerFields' rule on the server

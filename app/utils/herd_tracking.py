@@ -1122,6 +1122,9 @@ def undo_herd_tracking_operation(operation_id, user, reason, undo_operation_id=N
             with DB_PROXY.atomic():
                 voided = _void_rows(revoid, user, cleaned, undo_op)  # voids first: the unvoids may reuse a slot
                 _unvoid_rows(unvoid, undo_op)
+                for row in (r for r in unvoid if r.holder_contact_id):  # a kept buyer's sale again (K1, K2)
+                    purge_at = BuyerContact.purge_at_for(row.herd_tracking_date)
+                    BuyerContact.update(purge_at=purge_at).where(BuyerContact.id == row.holder_contact_id).execute()
                 paths = _drop_orphan_buyers(voided, VOID_ACTION, user)
         except IntegrityError as exc:
             if _violated_constraint(exc) not in ("idx_herdtracking_one_birth", "idx_herdtracking_report_attestation"):
