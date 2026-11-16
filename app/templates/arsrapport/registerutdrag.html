@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<title>{% if mode == "utdrag" %}Registerutdrag{% else %}Kvittens{% endif %} {{ herd }} {{ year }}</title>
+<style>
+@page { size: A4 portrait; margin: 18mm; }
+body { font-family: "DejaVu Sans", sans-serif; font-size: 10pt; color: #1F1B16; }
+h1 { font-size: 16pt; margin: 0 0 2mm; }
+h2 { font-size: 12pt; margin: 8mm 0 2mm; }
+table { width: 100%; border-collapse: collapse; }
+th, td { text-align: left; padding: 1.5mm 2mm; border-bottom: 0.2mm solid #D7CFBE; }
+.note { color: #3D362C; }
+</style>
+</head>
+<body>
+{% if mode == "utdrag" %}
+<h1>{{ herd }} {{ year }}: Registerutdrag, bara för kontroll</h1>
+<p class="note">Så här står det i Stamboken. Utdraget skickas inte in. Rätta i rapporten.</p>
+
+<h2>Kaniner i besättningen den 31 december {{ year }}</h2>
+{% if rabbits %}
+<table>
+<tr><th>Nummer</th><th>Namn</th><th>Kön</th><th>Född</th><th>Senast rapporterad</th><th>Senaste vikt</th></tr>
+{% for r in rabbits %}
+<tr><td>{{ r.number }}</td><td>{{ r.name or "" }}</td><td>{{ r.sex }}</td><td>{{ r.born or "" }}</td><td>{{ r.last_reported or "" }}</td><td>{{ r.weight if r.weight is not none else "" }}</td></tr>
+{% endfor %}
+</table>
+{% else %}<p>Inga kaniner.</p>{% endif %}
+
+<h2>Sålda under {{ year }}</h2>
+{% if sold %}<table>{% for s in sold %}<tr><td>{{ s.number }}</td><td>{{ s.date }}</td></tr>{% endfor %}</table>{% else %}<p>Inga försäljningar under {{ year }} i Stamboken.</p>{% endif %}
+
+<h2>Döda under {{ year }}</h2>
+{% if dead %}<table>{% for d in dead %}<tr><td>{{ d.number }}</td><td>{{ d.date }}</td></tr>{% endfor %}</table>{% else %}<p>Inga döda.</p>{% endif %}
+
+<h2>Kullar under {{ year }}</h2>
+{% if litters %}
+<table>
+<tr><th>Datum</th><th>Kull</th><th>Mor</th><th>Far</th><th>Födda</th><th>Levande vid 6 veckor</th></tr>
+{% for l in litters %}
+<tr><td>{{ l.date }}</td><td>{{ l.number or "" }}</td><td>{{ l.mother or "" }}</td><td>{{ l.father or "" }}</td><td>{{ l.born if l.born is not none else "" }}</td><td>{{ l.alive if l.alive is not none else "" }}</td></tr>
+{% endfor %}
+</table>
+{% else %}<p>Inga kullar under {{ year }} i Stamboken.</p>{% endif %}
+{% else %}
+<h1>{{ herd }} {{ year }}: Kvittens</h1>
+<p class="note">Årsrapporten kom in {{ received }}.</p>
+
+<h2>Kaniner</h2>
+{% if rabbits %}
+<table>
+<tr><th>Nummer</th><th>Val</th><th>Datum</th><th>Vikt</th><th>Hull</th></tr>
+{% for r in rabbits %}
+<tr><td>{{ r.number }}</td><td>{{ r.choice }}</td><td>{{ r.when or "" }}</td><td>{{ r.weight if r.weight is not none else "" }}</td><td>{{ r.hull or "" }}</td></tr>
+{% endfor %}
+</table>
+{% else %}<p>Inga kaniner.</p>{% endif %}
+
+<h2>Hälsa</h2>
+<p>{{ health }}{% if diseases %}: {{ diseases | join(", ") }}{% endif %}</p>
+{% endif %}
+</body>
+</html>
