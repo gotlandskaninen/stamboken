@@ -64,8 +64,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # Individual.microchip (36) + billing address on membership and member_application (37) +
 # retiring the PDF rows of digital certificates that a paper certificate replaced (38) +
 # audit_log IP retention index (39) + herd bank privacy reset (40) + the mail queue (41) +
-# the intake queue (42) and its retention (43).
-CURRENT_SCHEMA_VERSION = 43
+# the intake queue (42) and its retention (43) +
+# matrikel_audit rows without a user, written by the nightly anonymization (44).
+CURRENT_SCHEMA_VERSION = 44
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -2068,7 +2069,7 @@ class MatrikelAudit(BaseModel):
     """
 
     id = AutoField(primary_key=True, column_name="matrikel_audit_id")
-    actor = ForeignKeyField(User, null=False, backref="matrikel_actions")
+    actor = ForeignKeyField(User, null=True, backref="matrikel_actions")  # NULL: the nightly anonymization (#70)
     action = CharField(max_length=50, null=False)
     membership = ForeignKeyField(Membership, null=False, backref="audit_entries")
     payload = BinaryJSONField(default=dict)
@@ -4016,6 +4017,17 @@ def migrate_42_to_43():
         ).execute()
 
 
+def migrate_43_to_44():
+    """Issue #70: matrikel_audit rows written by the nightly anonymization have no user as actor."""
+    with DATABASE.atomic():
+        # DROP NOT NULL is idempotent; SQLite builds the table from the model, which already allows NULL.
+        if not isinstance(DATABASE, SqliteDatabase) and "matrikel_audit" in DATABASE.get_tables():
+            DATABASE.execute_sql('ALTER TABLE "matrikel_audit" ALTER COLUMN "actor_id" DROP NOT NULL')
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=44, comment="matrikel_audit.actor may be NULL", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4496,6 +4508,7 @@ MIGRATIONS = {
     (40, 41): migrate_40_to_41,  # mail queue
     (41, 42): migrate_41_to_42,  # intake queue
     (42, 43): migrate_42_to_43,  # intake queue retention
+    (43, 44): migrate_43_to_44,  # matrikel_audit actor NULL for the nightly job
 }
 
 
