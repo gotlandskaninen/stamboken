@@ -296,3 +296,13 @@ class InviteTest(ArsrapportTest):
         self.assertEqual(len(sent), 1)
         (token,) = re.findall(r"/rapport#(\S+)", sent[0].get_body().get_content())
         self.assertEqual(report_code.resolve(token).id, new.id)
+
+    def test_new_link_answers_409_when_issue_code_finds_the_member_stale(self):
+        self.run_job()
+        old = self.codes(self.h)[0]
+        with mock.patch.object(report_code, "issue_code", side_effect=report_code.StaleRecipient("changed")):
+            with self.assertRaises(arsrapport.ArsrapportError) as caught:
+                invite.new_link(self.h, self.round_, self.owner, now=NOW)
+        self.assertEqual(caught.exception.status, 409)
+        self.assertIsNone(db.ReportAccessCode.get_by_id(old.id).revoked_at)
+        self.assertEqual(self.mails("arsrapport.ny_lank"), [])

@@ -88,11 +88,15 @@ def new_link(herd, round_, user, *, now: datetime) -> ReportAccessCode:
     member = report_code.invitation_recipient(herd)
     if member is None:
         raise ArsrapportError(409, "Besättningen har ingen huvudmedlem med e-postadress.")
+    try:
+        return _replace_link(herd, round_, user, member, now)
+    except report_code.StaleRecipient as exc:  # the main member changed after the first check: retryable, not a 500
+        raise ArsrapportError(409, "Huvudmedlemmen har just ändrats. Försök igen.") from exc
+
+
+def _replace_link(herd, round_, user, member, now):
     with DB_PROXY.atomic():
-        try:
-            report_code.require_current(herd, member)  # before the revoke: a stale selection changes nothing
-        except report_code.StaleRecipient as exc:
-            raise ArsrapportError(409, "Huvudmedlemmen har just ändrats. Försök igen.") from exc
+        report_code.require_current(herd, member)  # before the revoke: a stale selection changes nothing
         old = ReportAccessCode.get_or_none(
             ReportAccessCode.herd == herd.id, ReportAccessCode.round == round_.id, ReportAccessCode.revoked_at.is_null()
         )
