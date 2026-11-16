@@ -272,7 +272,7 @@ class TestFathers(LitterApiTest):
         castrated.castration_date = date(2025, 1, 1)
         castrated.save()
         dead_before = self.rabbits(self.h2, 1, sexes=("male",))[0]
-        dead_before.death_date = date(2024, 12, 1)
+        dead_before.death_date = date(2024, 11, 1)  # before any mating of a 2025 litter
         dead_before.save()
         elsewhere = db.Herd.create(genebank=self.mellerud, herd="M9001", is_active=True)
         self.rabbits(elsewhere, 1, sexes=("male",))
@@ -286,6 +286,17 @@ class TestFathers(LitterApiTest):
             [m["number"] for m in males], sorted([self.buck.number, in_other_herd.number, castrated.number])
         )
         self.assertEqual({tuple(sorted(m)) for m in males}, {("id", "name", "number")})
+
+    def test_a_father_who_died_in_december_can_sire_a_january_litter(self):
+        """A litter born 10 January 2025 was mated around 10 December 2024: the father may have died after that."""
+        december = self.rabbits(self.h2, 1, sexes=("male",))[0]
+        december.death_date = date(2024, 12, 20)
+        december.save()
+        self.open_link()
+        males = [m["number"] for m in self.api("GET", f"{REPORT}/hanar").get_json()["hanar"]]
+        self.assertIn(december.number, males)
+        response = self.litter(father=december, born="2025-01-10")
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
 
     def test_a_castrated_father_is_offered_and_accepted(self):
         self.buck.castration_date = date(2025, 1, 1)
@@ -389,6 +400,19 @@ class TestReceiptSnapshot(LitterApiTest):
         for kind in ("arsrapport.kvitto", "arsrapport.andrad"):
             variables = mail.MAIL_KINDS[kind].build(row.params)
             self.assertEqual(variables["kullar"], [f"efter {self.doe.number} född {BORN}, 5 födda"])
+
+    def test_a_corrected_mother_keeps_the_litter_on_the_receipt(self):
+        """The litter is found by the id its command made, not by the mother it ran on."""
+        self.login("owner")
+        litter_id = self.litter().get_json()["id"]
+        db.Breeding.update(mother=self.doe2).where(db.Breeding.id == litter_id).execute()  # corrected before Skicka
+        self.assertEqual(self.api("POST", f"{REPORT}/skicka", **self.body_for()).status_code, 200)
+        submission = db.YearlyReportSubmission.get()
+        self.assertEqual([item["id"] for item in submission.data["litters_added"]], [litter_id])
+        self.assertEqual(
+            arsrapport._kvitto({"submission_id": submission.id})["kullar"],
+            [f"efter {self.doe2.number} född {BORN}, 5 födda"],
+        )
 
     def test_a_litter_after_the_submission_is_the_next_ones_and_later_edits_leave_the_receipt(self):
         self.login("owner")

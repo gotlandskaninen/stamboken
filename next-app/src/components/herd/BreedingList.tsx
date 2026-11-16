@@ -123,7 +123,7 @@ export function BreedingList({
   const handleRegisterClick = async (b: any) => {
     if (!herdId || !b.birth_date) return;
     const year = new Date(b.birth_date).getFullYear();
-    const result = await checkLitterOrder(herdId, year);
+    const result = await checkLitterOrder(herdId, year, true);
     if (result.success && !result.data.consistent) {
       setConflictData({
         conflicts: result.data.conflicts as any[],
@@ -224,7 +224,7 @@ export function BreedingList({
       // An out-of-order birth is appended at the end of the number series;
       // surface the renumber dialog right away instead of at register time.
       if (herdId) {
-        const check = await checkLitterOrder(herdId, yyyy);
+        const check = await checkLitterOrder(herdId, yyyy, true);
         if (check.success && !check.data.consistent) {
           setConflictData({
             conflicts: check.data.conflicts as any[],

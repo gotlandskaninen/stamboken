@@ -342,9 +342,12 @@ export async function suggestIndividualNumber(
   }
 }
 
+// `allowGaps`: before a registration, the rule promotion applies, where a paper certificate's litter number may skip
+// ahead (litter 6 after litter 1); without it, the renumber view's consecutive rule.
 export async function checkLitterOrder(
   herd: string,
   year: number,
+  allowGaps = false,
 ): Promise<
   ActionResult<{ consistent: boolean; conflicts: Record<string, unknown>[] }>
 > {
@@ -353,7 +356,7 @@ export async function checkLitterOrder(
       consistent: boolean;
       conflicts: Record<string, unknown>[];
     }>(
-      `/v2/breeding/check-order?herd=${encodeURIComponent(herd)}&year=${year}`,
+      `/v2/breeding/check-order?herd=${encodeURIComponent(herd)}&year=${year}${allowGaps ? "&allow_gaps=1" : ""}`,
     );
     return { success: true, data: result };
   } catch (e) {

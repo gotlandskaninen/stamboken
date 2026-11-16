@@ -23,6 +23,7 @@ from peewee import JOIN, IntegrityError, fn
 import utils.inbox as inbox
 import utils.report_code as report_code
 from utils.arsrapport_statistik import SEXES, Kanin, innehav, statistik
+from utils.data_access import MAX_GESTATION_DAYS
 from utils.database import (
     DB_PROXY,
     LIFE_SIGN_KINDS,
@@ -2484,9 +2485,10 @@ def _litters_added(herd, round_):
         )
         .dicts()
     }
+    # by the litter the command made, not the mother it ran on: a corrected mother keeps the litter on the receipt
     made = IndividualCommand.select(IndividualCommand.after).where(
         IndividualCommand.command == "RegisterLitter",
-        IndividualCommand.individual.in_({row["mother"] for row in litters.values()}),
+        IndividualCommand.after["breeding"].in_([str(i) for i in litters]),
     )
     ids = sorted({row.after["breeding"] for row in made} & litters.keys() - listed)
     return [
@@ -2713,9 +2715,11 @@ def change_litter(herd, round_, access, user, breeding_id, body):
 
 def report_fathers(herd, year):
     """
-    The father picker: the herd's genebank's males that lived in `year` (id, number, name), for a code
-    session too, which has no use of the logged-in searches. Nothing else about them.
+    The father picker: the herd's genebank's males that lived in `year` or in the longest gestation before it, since
+    a litter of early January was mated in December (id, number, name), for a code session too, which has no use of
+    the logged-in searches. Nothing else about them.
     """
+    mated_from = date(year, 1, 1) - timedelta(days=MAX_GESTATION_DAYS)
     males = (
         Individual.select(Individual.id, Individual.number, Individual.name)
         .join(Herd, on=(Individual.origin_herd == Herd.id))
@@ -2724,7 +2728,7 @@ def report_fathers(herd, year):
             Herd.herd.not_in(OUTSIDE_GENEBANK_HERDS),
             Individual.sex == "male",  # a castrated male too: the register accepts him as a father
             not_voided(),
-            Individual.death_date.is_null(True) | (Individual.death_date >= date(year, 1, 1)),
+            Individual.death_date.is_null(True) | (Individual.death_date >= mated_from),
         )
         .order_by(Individual.number)
     )

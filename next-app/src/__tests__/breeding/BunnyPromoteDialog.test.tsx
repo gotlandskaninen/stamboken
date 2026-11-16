@@ -149,3 +149,49 @@ describe("BunnyPromoteDialog without alive at 6 weeks", () => {
     expect(updateBreeding).not.toHaveBeenCalled();
   }, 20000); // the full MUI dialog renders slowly under the parallel suite
 });
+
+// Round 2 of the step-4b review: a preliminary count is asked for like a missing one and sent with the
+// certificate, whose count replaces it.
+describe("BunnyPromoteDialog on a litter with a preliminary count", () => {
+  it("asks for alive at 6 weeks and sends it", async () => {
+    promoteBunny.mockResolvedValue({ success: false, error: "x" });
+    render(
+      <BunnyPromoteDialog
+        open
+        onClose={() => {}}
+        onPromoted={() => {}}
+        bunny={{
+          id: 9,
+          breeding_id: 4,
+          slot_order: 1,
+          observed_sex: "female",
+          observed_color: "Viltgrå",
+          label: null,
+          notes: null,
+          fate: "undecided",
+          provisional_number: "G1-2511",
+          individual: null,
+        }}
+        breeding={{
+          id: 4,
+          litter_size: 5,
+          litter_size6w: 5,
+          litter_size6w_preliminary: true,
+        }}
+        herdId="G1"
+      />,
+    );
+    const save = screen.getByRole("button", { name: "Registrera" });
+    expect((save as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.change(screen.getByLabelText(/Levande i kullen efter 6 veckor/), {
+      target: { value: "3" },
+    });
+    fireEvent.click(save);
+    await waitFor(() =>
+      expect(promoteBunny).toHaveBeenCalledWith(
+        9,
+        expect.objectContaining({ litter_size6w: 3 }),
+      ),
+    );
+  }, 20000);
+});

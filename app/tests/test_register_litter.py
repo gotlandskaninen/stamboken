@@ -539,6 +539,34 @@ class TestPromotionNumbersTheLitter(LitterTest):
         self.assertEqual((response.status_code, response.get_json()["title"]), (409, "number_conflict"))
         self.assertEqual(self.state(), (None, 5, True))
 
+    def test_a_preliminary_count_is_shown_as_such_and_the_certificate_confirms_it(self):
+        """
+        Round 2: the litter list tells the dialogs the count is preliminary, so they ask for it; the certificate's
+        count replaces it, and the litter is then confirmed for good (ConfirmLitterSize refuses a certified litter).
+        """
+
+        def listed():
+            breedings = self.client.get("/api/breeding/G1").get_json()["breedings"]
+            return next(b for b in breedings if b["id"] == self.litter.id)
+
+        self.assertEqual((listed()["litter_size6w"], listed()["litter_size6w_preliminary"]), (5, True))
+        response = self.promote(self.bunnies[0], "G1-2661", litter_size6w=3)
+        self.assertEqual(response.status_code, 201, response.get_json())
+        self.assertEqual((listed()["litter_size6w"], listed()["litter_size6w_preliminary"]), (3, False))
+        with self.assertRaises(IndividualRefused) as refused:
+            confirm_litter_size(self.owner, self.litter.id, 4)
+        self.assertEqual(refused.exception.envelope["message"], ic.CERTIFIED_LITTER)
+
+    def test_the_register_buttons_check_tolerates_the_paper_gap(self):
+        """Round 2: after paper litter 6 (litter 1 exists), the button's check-order passes as promotion does."""
+        db.Breeding.create(
+            breeding_herd_id=self.g1, birth_date=date(2026, 1, 10), litter_number=1, litter_size=4, litter_size6w=4
+        )
+        self.assertEqual(self.promote(self.bunnies[0], "G1-2661").status_code, 201)
+        check = "/api/v2/breeding/check-order?herd=G1&year=2026"
+        self.assertTrue(self.client.get(f"{check}&allow_gaps=1").get_json()["consistent"])
+        self.assertFalse(self.client.get(check).get_json()["consistent"])  # the renumber view keeps its own rule
+
     def test_two_promotions_in_the_current_year_after_a_paper_gap(self):
         """Litter 1 exists, the paper says 6: the next sibling is not stopped by the consecutive-number gate."""
         db.Breeding.create(
