@@ -344,9 +344,14 @@ class TestSorting(GmailTest):
         item = self.waiting()
         self.fake.deliver(message(body=body, subject=f"Re: Fråga (ärende {item.id})", In_Reply_To=self.our_mail(item)))
         self.fake.deliver(message(body=body))
+        sentence = (
+            "Mejlet till mottagare@example.org kom inte fram: "  # the report's own first line, as the text starts
+        )
+        text = sentence + "a" * (inbox_gmail.MAX_TEXT - len(sentence) - len(url)) + url + "X"
+        self.assertEqual(text.index(url) + len(url), inbox_gmail.MAX_TEXT)  # the token ends exactly at the cut
         self.fake.deliver(
             report("<CAsomething@mail.example.org>").replace(
-                b"kom inte fram.", ("kom inte fram: " + "a" * (inbox_gmail.MAX_TEXT - 80) + url + "X").encode()
+                b"Mejlet till mottagare@example.org kom inte fram.", text.encode()
             )
         )
         self.read()
