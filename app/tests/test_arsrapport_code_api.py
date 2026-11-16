@@ -86,6 +86,16 @@ class CodeApiTest(ArsrapportTest):
         self.assertEqual(out.status_code, 200, out.get_data(as_text=True))
         self.assertEqual(db.YearlyHerdReport.get_by_id(report.id).voided_by_access_code_id, self.code.id)
 
+    def test_code_view_names_no_other_herd(self):
+        """Codex T6: the page's RSC payload reaches the browser, so a link sees only its own herd's number."""
+        self.open_link()
+        data = self.api("GET", "/besattning/G9001/2025").get_json()
+        self.assertEqual(data["herds"], [])
+        for other in ("G9002", "GX1"):
+            self.assertNotIn(other, str(data))
+        self.login("owner")  # an account keeps the list for the sale dialog
+        self.assertIn("G9002", self.api("GET", "/besattning/G9001/2025").get_json()["herds"])
+
     def test_retry_gets_its_receipt_only_while_the_code_is_valid(self):
         """Codex 5: E4 holds for a receipt too; a revoked link answers lank_ogiltig, not the receipt and not 409."""
         self.open_link()

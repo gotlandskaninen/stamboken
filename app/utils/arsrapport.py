@@ -739,7 +739,7 @@ def report_view(herd, round_, access, user):
         "rabbits": report_list(herd, year, report),
         "litters": [{**row, "birth_date": _iso(row["birth_date"])} for row in litters.dicts()],
         "sales": [{**row, "date": _iso(row["date"])} for row in sales.dicts()],
-        "herds": sorted(row.herd for row in others),
+        "herds": [] if access.code else sorted(row.herd for row in others),  # a link sees no other herd
         "report": {**_report_json(report, round_, access, is_open), "villkor": herd_conditions(herd, round_, report)}
         if report
         else None,
