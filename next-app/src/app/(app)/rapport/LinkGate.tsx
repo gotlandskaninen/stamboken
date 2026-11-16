@@ -45,6 +45,31 @@ const Message = ({ text, retry }: { text: string; retry?: () => void }) => (
   </div>
 );
 
+// One exchange at a time and only the latest requested one may change the page: each answer sets a session cookie, so a
+// second exchange sent before the first has answered could be overwritten by the first one's late Set-Cookie. The queue
+// is module state, so it covers every mount of the gate in the tab. A request that never answers is aborted after
+// 20 s (its response, Set-Cookie included, is dropped), which releases the queue.
+const EXCHANGE_TIMEOUT_MS = 20_000;
+let latest = 0;
+let queue: Promise<void> = Promise.resolve();
+export function resetLinkQueue() {
+  latest = 0;
+  queue = Promise.resolve();
+}
+
+// `work` must settle within the time limit, or it counts as a failure; the controller, when given, is aborted then.
+function bounded<T>(work: Promise<T>, controller?: AbortController) {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      controller?.abort();
+      reject(new Error("timeout"));
+    }, EXCHANGE_TIMEOUT_MS);
+    Promise.resolve(work)
+      .then(resolve, reject)
+      .finally(() => clearTimeout(timer));
+  });
+}
+
 export function LinkGate({
   missing,
   children,
@@ -61,10 +86,6 @@ export function LinkGate({
   const started = React.useRef(false);
   const token = React.useRef("");
 
-  // One exchange at a time, and only the latest requested one may change the page: each answer sets a session cookie, so
-  // a second exchange sent before the first has answered could be overwritten by the first one's late Set-Cookie.
-  const latest = React.useRef(0);
-  const chain = React.useRef<Promise<void>>(Promise.resolve());
   const alive = React.useRef(true); // false after unmount: nothing continues then
   React.useEffect(() => {
     alive.current = true; // Strict Mode replays the effect: the first exchange must survive it
@@ -75,20 +96,28 @@ export function LinkGate({
 
   const run = React.useCallback(
     async (link: string, mine: number) => {
-      const current = () => alive.current && mine === latest.current;
+      const current = () => alive.current && mine === latest;
       if (!current()) return; // replaced while it waited its turn
+      const controller = new AbortController();
       try {
-        const res = await fetch("/api/v2/rapport/oppna", {
-          method: "POST",
-          credentials: "same-origin",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ token: link }),
-        });
+        const res = await bounded(
+          fetch("/api/v2/rapport/oppna", {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ token: link }),
+            signal: controller.signal,
+          }),
+          controller,
+        );
         if (!current()) return;
         if (res.status === 403) return router.replace("/rapport/ogiltig");
         if (!res.ok) throw new Error(String(res.status));
-        const { herd } = (await res.json()) as { herd: string };
-        const codes = await getMine();
+        const { herd } = (await bounded(res.json(), controller)) as {
+          herd: string;
+        };
+        if (!current()) return;
+        const codes = await bounded(getMine());
         if (!current()) return;
         if (!codes.ok) throw new Error(String(codes.problem.status));
         const entry = codes.data.find((m) => m.herd === herd);
@@ -112,11 +141,11 @@ export function LinkGate({
 
   const open = React.useCallback(
     (link: string) => {
-      const mine = ++latest.current;
+      const mine = ++latest;
       token.current = link; // kept for "Försök igen"
       setPending(true);
       setPhase("idle");
-      chain.current = chain.current.then(() => run(link, mine));
+      queue = queue.then(() => run(link, mine));
     },
     [run],
   );
@@ -124,7 +153,7 @@ export function LinkGate({
   const begin = React.useCallback(
     (t: string) => {
       if (t === "prov") {
-        latest.current++; // an exchange still running must not replace the test text
+        latest++; // an exchange still running must not replace the test text
         setPending(false);
         return setPhase("test");
       }

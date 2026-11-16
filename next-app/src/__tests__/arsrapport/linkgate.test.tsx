@@ -10,11 +10,13 @@ vi.mock("next/navigation", () => ({
 const getMine = vi.fn();
 vi.mock("@/app/(app)/rapport/actions", () => ({ getMine: () => getMine() }));
 
-import { LinkGate } from "@/app/(app)/rapport/LinkGate";
+import { LinkGate, resetLinkQueue } from "@/app/(app)/rapport/LinkGate";
 import { CLEAR_HASH_SCRIPT } from "@/app/(app)/rapport/clearHash";
 
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
+  resetLinkQueue(); // the queue is module state: one test's hung request must not block the next
   vi.unstubAllGlobals();
   history.replaceState(null, "", "/");
 });
@@ -241,5 +243,86 @@ describe("LinkGate", () => {
       expect(replace).toHaveBeenCalledWith("/rapport/ogiltig"),
     );
     expect(sent).toEqual(["A"]); // not sent twice either
+  });
+
+  it("a new mount queues behind the exchange of the one before", async () => {
+    const { sent, pending } = deferred();
+    getMine.mockResolvedValue({ ok: true, data: [] });
+    (window as { __rapportToken?: string }).__rapportToken = "A";
+    const first = render(<LinkGate />);
+    await waitFor(() => expect(sent).toEqual(["A"]));
+    first.unmount();
+    (window as { __rapportToken?: string }).__rapportToken = "B";
+    render(<LinkGate />);
+    await act(async () => {});
+    expect(sent).toEqual(["A"]);
+    await act(async () => {
+      pending.A(good("M1"));
+    });
+    await waitFor(() => expect(sent).toEqual(["A", "B"]));
+  });
+
+  it("a request that never answers is aborted after 20 s, shows the retry and lets the next link run", async () => {
+    vi.useFakeTimers();
+    const { sent } = deferred();
+    (window as { __rapportToken?: string }).__rapportToken = "A";
+    render(<LinkGate />);
+    await act(async () => {});
+    expect(sent).toEqual(["A"]);
+    const signal = (
+      fetch as unknown as {
+        mock: { calls: [string, { signal: AbortSignal }][] };
+      }
+    ).mock.calls[0][1].signal;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+    expect(signal.aborted).toBe(true);
+    expect(screen.getByRole("button", { name: "Försök igen" })).toBeTruthy();
+    await act(async () => {
+      history.pushState(null, "", "/rapport#B");
+      window.dispatchEvent(new HashChangeEvent("hashchange"));
+    });
+    await act(async () => {});
+    expect(sent).toEqual(["A", "B"]);
+  });
+
+  it("a getMine that never answers shows the retry too", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.resolve(good("M1"))),
+    );
+    getMine.mockReturnValue(new Promise(() => {}));
+    (window as { __rapportToken?: string }).__rapportToken = "A";
+    render(<LinkGate />);
+    await act(async () => {});
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(20_000);
+    });
+    expect(screen.getByRole("button", { name: "Försök igen" })).toBeTruthy();
+  });
+
+  it("nothing continues when the page goes away while the body is read", async () => {
+    getMine.mockReset();
+    let release: (v: unknown) => void = () => {};
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() =>
+        Promise.resolve({
+          status: 200,
+          ok: true,
+          json: () => new Promise((r) => (release = r)),
+        }),
+      ),
+    );
+    (window as { __rapportToken?: string }).__rapportToken = "A";
+    const { unmount } = render(<LinkGate />);
+    await act(async () => {});
+    unmount();
+    await act(async () => {
+      release({ herd: "M1" });
+    });
+    expect(getMine).not.toHaveBeenCalled();
   });
 });

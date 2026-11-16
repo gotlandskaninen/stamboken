@@ -48,7 +48,7 @@ export default function RootLayout({
   return (
     <html lang="sv">
       <head>
-        {/* The personal report link's token leaves the address bar before any other script runs (only on /rapport) */}
+        {/* The personal report link's hash is cleared before the app's own code runs; it is the first inline script, and not claimed to precede framework chunks (only on /rapport) */}
         <script dangerouslySetInnerHTML={{ __html: CLEAR_HASH_SCRIPT }} />
         <link rel="icon" href="/static/img/icons/favicon.ico" sizes="any" />
         <link
