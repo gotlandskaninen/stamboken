@@ -47,7 +47,7 @@
     "embla-carousel-react": "^8.6.0",
     "formik": "2.4.6",
     "i18next": "25.4.2",
-    "next": "16.4.3",
+    "next": "16.4.5",
     "payload": "^3.90.2",
     "react": "19.2.8",
     "react-apexcharts": "1.7.0",
