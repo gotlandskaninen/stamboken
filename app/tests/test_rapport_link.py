@@ -190,6 +190,19 @@ class RapportLinkTest(ArsrapportTest):
         self.assertEqual(other.get("/api/v2/rapport/mina").get_json(), [])
         self.assertNotIn("rapport", self.session(other))
 
+    def test_rotation_happens_even_when_the_session_was_cleared_first(self):
+        # load_user clears a revoked session before the handler runs; regenerate() alone skips an empty one.
+        with self.client.session_transaction() as session:
+            session["user_id"] = "a-revoked-session"  # without _user_id, before_request clears it when revoked
+        old = self.client.get_cookie("session").value
+        with mock.patch("herdbook._session_revoked", return_value=True):
+            self.assertEqual(self.exchange().status_code, 200)
+        self.assertNotEqual(self.client.get_cookie("session").value, old)
+        other = APP.test_client(use_cookies=True)
+        other.set_cookie("session", old)
+        self.assertEqual(other.get("/api/v2/rapport/mina").get_json(), [])
+        self.assertNotIn("rapport", self.session(other))
+
     def test_failed_rotation_grants_nothing_under_the_old_id(self):
         with self.client.session_transaction() as session:
             session["planted"] = 1

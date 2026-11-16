@@ -94,9 +94,13 @@ def open_link():
         return _answer(_invalid())
     # As login: a new session id, so a sid planted before the exchange gets nothing. user_id stays. The rotation comes
     # first: if it fails, the grant is never made, so it cannot be saved under the old id.
+    had_codes = "rapport" in session
+    session.setdefault("rapport", [])  # regenerate() skips an empty session, e.g. one the revocation check just cleared
     try:
         current_app.session_interface.regenerate(session)
     except Exception as exc:  # pylint: disable=broad-except
+        if not had_codes:
+            session.pop("rapport", None)
         current_app.logger.error("Report link session rotation failed: %s", type(exc).__name__)
         return _answer(problem(500, "Serverfel", "Det gick inte att öppna länken. Försök igen."))
     session_codes(now)  # E3: an idle session loses its codes before this one joins, so they are not revived
