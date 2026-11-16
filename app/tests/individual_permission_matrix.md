@@ -30,7 +30,7 @@ Fält: `death_date`, `death_note`, `butchered`
 | caretaker | ✓ | ✓ | – | – |
 | actor | – | – | – | – |
 | handlaggare | ✓ | ✓ | – | – |
-| rapport | – | – | – | – |
+| rapport | ✓ | ✓ | – | – |
 
 ## ClearFields
 
@@ -60,7 +60,7 @@ Fält: `weights`, `bodyfat`
 | caretaker | ✓ | ✓ | – | – |
 | actor | – | – | – | – |
 | handlaggare | ✓ | ✓ | – | – |
-| rapport | – | – | – | – |
+| rapport | ✓ | ✓ | – | – |
 
 ## RecordAttestation
 
@@ -75,7 +75,7 @@ Fält: `herd`, `yearly_report_date`
 | caretaker | ✓ | ✓ | – | – |
 | actor | – | – | – | – |
 | handlaggare | ✓ | ✓ | – | – |
-| rapport | – | – | – | – |
+| rapport | ✓ | ✓ | – | – |
 
 ## TransferIndividual
 
@@ -155,6 +155,7 @@ Fält: `origin_herd`, `reason`
 | manager_origin + owner | ✓ | ✓ | – | – |
 | manager_origin + caretaker | ✓ | ✓ | – | – |
 | manager_origin + handlaggare | ✓ | ✓ | – | – |
+| manager_origin + rapport | ✓ | ✓ | – | – |
 
 ## IssueDigitalCertificate
 
@@ -199,10 +200,7 @@ Fält: `undo`
 | caretaker | – | – | – | – |
 | actor | – | – | – | – |
 | handlaggare | – | – | – | – |
-| rapport | – | – | – | – |
+| rapport | ✓ | ✓ | – | – |
 | owner + actor | ✓ | ✓ | – | – |
-| owner + rapport | ✓ | ✓ | – | – |
 | caretaker + actor | ✓ | ✓ | – | – |
-| caretaker + rapport | ✓ | ✓ | – | – |
 | actor + handlaggare | ✓ | ✓ | – | – |
-| handlaggare + rapport | ✓ | ✓ | – | – |

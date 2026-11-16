@@ -176,9 +176,10 @@ class TestReportUndo(ReportRightTest):
             self._undo(self._caretaker(), self.op, frozenset())
         self.assertIsNotNone(self._stored().death_date)
 
-    def test_rapport_does_not_lend_the_command_right(self):
+    def test_rapport_reaches_only_the_reports_own_operations(self):
+        """Step 3 gave RAPPORT its own Entry row (the link has no account), so the grant's check is what limits it."""
         with self.assertRaises(HerdTrackingForbidden):
-            self._undo(self.viewer, self.op, frozenset({str(self.op)}))
+            self._undo(self.viewer, self.op, frozenset())
         self.assertIsNotNone(self._stored().death_date)
 
     def test_report_ops_without_the_grant_are_refused(self):
@@ -189,11 +190,14 @@ class TestReportUndo(ReportRightTest):
 
 
 class TestReportRole(unittest.TestCase):
-    def test_rapport_needs_a_role_with_entry(self):
+    def test_rapport_alone_has_only_the_reports_commands(self):
+        """The link's role (step 3, FA1): the report's three commands and Undo, never in GX1/MX1, and nothing else."""
+        report_commands = {"Entry", "RecordAttestation", "RecordDeath", "SetMeasurements", "Undo"}
         for command in ("Entry", *COMMAND_FIELDS):
             for state in STATES:
                 with self.subTest(command=command, state=str(state)):
-                    self.assertIs(allowed(command, frozenset({Role.RAPPORT}), state), False)
+                    wanted = command in report_commands and not state.outside_genebank
+                    self.assertIs(allowed(command, frozenset({Role.RAPPORT}), state), wanted)
         for role in (Role.OWNER, Role.CARETAKER, Role.HANDLAGGARE):
             with self.subTest(role=role.value):
                 self.assertIs(allowed("Undo", frozenset({Role.RAPPORT, role}), State(False, False)), True)

@@ -1826,16 +1826,27 @@ class ReportGrant:
     individual_commands.Grant for a report's writes, which collects the operation ids every execute logged. Logged
     in it gives no role, since roles_for does, so the can_edit guard applies. On paper the item's InboxGrant gives a
     helper HANDLAGGARE and leaves everyone's trace. `report_ops` (the report's own operations) gives RAPPORT, for
-    the backouts of Ändra; Undo checks them.
+    the backouts of Ändra; Undo checks them. With `code` (the link, step 3) RAPPORT is the code's only role, and
+    only for a rabbit of the code's herd on the report's list (`report`: its latest submission's rabbits too).
     """
 
-    def __init__(self, inbox_grant=None, report_ops=frozenset()):
+    def __init__(self, inbox_grant=None, report_ops=frozenset(), code=None, report=None):
         self.inbox_grant, self.report_ops = inbox_grant, frozenset(report_ops)
+        self.code, self.report, self._listed = code, report, None
         self.operation_ids = []
 
     def roles(self, user, individual):
         held = self.inbox_grant.roles(user, individual) if self.inbox_grant is not None else frozenset()
-        return held | ({Role.RAPPORT} if self.report_ops else frozenset())
+        if self.code is None:
+            return held | ({Role.RAPPORT} if self.report_ops else frozenset())
+        # FA1: a link writes only for a rabbit that is in the code's herd now, and on the report's list (or one of
+        # the report's own operations is undone). A rabbit sold on and approved is no longer in the herd.
+        if individual.current_herd.id != self.code.herd_id:
+            return held
+        if self._listed is None:  # once, before the first write of the request
+            herd, year = Herd.get_by_id(self.code.herd_id), self.code.round.report_year
+            self._listed = {row["id"] for row in report_list(herd, year, self.report)}
+        return held | ({Role.RAPPORT} if self.report_ops or individual.id in self._listed else frozenset())
 
     def record(self, ctx):
         self.operation_ids += [str(row["operation_id"]) for row in ctx.log_rows]

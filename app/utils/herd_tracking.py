@@ -91,10 +91,12 @@ def _void_rows(rows, user, reason, operation_id):
     ids = [r.id for r in rows]
     if not ids:
         return []
+    code_id = getattr(user, "access_code_id", None)  # the report link as the voider (step 3)
+    voider = {"voided_by_access_code_id": code_id} if code_id is not None else {"voided_by_user": user}
     voided = list(
         HerdTracking.update(
             voided_at=_now_utc(),
-            voided_by_user=user,
+            **voider,
             voided_reason=reason,
             voided_operation_id=operation_id,
         )
@@ -362,6 +364,8 @@ def record_herd_tracking(
         raise HerdTrackingInvalid("Köparens namn och ort registreras bara vid försäljning utanför genbanken.")
     contact_fields = buyer_contact_fields(buyer) if buyer is not None else None
     individual_id = individual.id if isinstance(individual, Individual) else int(individual)
+    code_id = getattr(user, "access_code_id", None)  # the report link as the signer: no account, no signature
+    signer = {"access_code_id": code_id} if code_id is not None else {"signature": user}
     with DB_PROXY.atomic():
         lock_individuals([individual_id])
         ind = Individual.get_by_id(individual_id)
@@ -398,7 +402,7 @@ def record_herd_tracking(
                     individual=individual_id,
                     herd=target,
                     from_herd=None if kind == "BIRTH" else holder_id,
-                    signature=user,
+                    **signer,
                     herd_tracking_date=when,
                     kind=kind,
                     operation_id=op,

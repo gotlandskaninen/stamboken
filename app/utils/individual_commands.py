@@ -65,6 +65,7 @@ from utils.individual_number_v2 import (
 )
 from utils.individual_policy import COMMAND_FIELDS, Role, State, allowed
 from utils.pedigree_guard import CYCLE_PROBLEM, pedigree_cycle_error
+from utils.report_code import actor_key
 
 logger = logging.getLogger("herdbook.da")  # the helpers moved from data_access keep their log name
 
@@ -128,6 +129,7 @@ class WriteContext:
                 "command": command,
                 "individual": self.individual.id,
                 "actor": self.user.id,
+                "access_code_id": getattr(self.user, "access_code_id", None),
                 "before": before,
                 "after": after,
                 "undoes": undoes,
@@ -981,7 +983,8 @@ FREE_TEXT_RETENTION = timedelta(days=396)  # 13 months, rounded up
 
 def actor_role(user, entry) -> frozenset[Role]:
     """{ACTOR} when `user` ran the logged command `entry`: only Undo derives it, never roles_for."""
-    return frozenset({Role.ACTOR}) if entry.actor_id == user.id else frozenset()
+    ran = ("code", entry.access_code_id) if entry.access_code_id is not None else ("user", entry.actor_id)
+    return frozenset({Role.ACTOR}) if ran == actor_key(user) else frozenset()
 
 
 def _active_attestation_rows(entry):
