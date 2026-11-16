@@ -134,7 +134,7 @@ test("Registrera unge och utfärda digitalt intyg", async ({ page }) => {
     const color = dialog.getByRole("combobox", { name: "Färg" });
     await color.click();
     await color.fill("Blå");
-    await page.getByRole("option", { name: "Blå", exact: true }).click();
+    await page.getByRole("option", { name: /^\d+ Blå(\s|$)/ }).click();
   });
   await test.step('5. Välj Intyg: "Digitalt"', async () => {
     await dialog.getByRole("combobox").filter({ hasText: "Digitalt" }).click();

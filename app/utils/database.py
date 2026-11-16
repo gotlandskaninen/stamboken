@@ -388,6 +388,7 @@ class Herd(BaseModel):
         """
 
         access_level = "public"
+        effective = None  # the user's herd ids, fetched at most once
         if user and user.is_admin:
             access_level = "private"
         elif user:
@@ -420,7 +421,18 @@ class Herd(BaseModel):
         # legacy herd response (ADR-0006: don't perturb legacy contracts).
         data.pop("membership", None)
 
-        return remove_fields_by_privacy(data, access_level)
+        raw = data
+        data = remove_fields_by_privacy(raw, access_level)
+        # Bank details: whole for admin, matrikel_admin (who has no genebank role, so only these
+        # fields are added, not the other private ones) and the herd's own users. The genebank
+        # manager (private level, but none of those) sees the last two digits of the account.
+        if user and effective is None and not (user.is_admin or user.is_matrikel_admin):
+            effective = user.effective_herd_ids()
+        if user and (user.is_admin or user.is_matrikel_admin or self.id in effective):
+            data.update({f: raw[f] for f in ("bank_account_number", "bank_name") if f in raw})
+        elif "bank_account_number" in data:
+            data["bank_account_number"] = account_end(data["bank_account_number"])
+        return data
 
     class Meta:  # pylint: disable=too-few-public-methods
         """
@@ -435,6 +447,23 @@ PRIVACY_LEVELS = ("public", "authenticated", "private")
 # The bank details are only for support payouts: never shown to other members,
 # whatever the stored level says (issue #33).
 BANK_PRIVACY_FIELDS = ("bank_account_number_privacy", "bank_name_privacy")
+
+
+ACCOUNT_MASK = "••"
+
+
+def account_end(value):
+    """
+    Only the last two digits of a bank account number, for readers who must not see all of it.
+
+    >>> account_end("8327-9, 123 456 789 12")
+    '••12'
+    >>> account_end(None) is None
+    True
+    """
+    if not value:
+        return value
+    return ACCOUNT_MASK + re.sub(r"\D", "", str(value))[-2:]
 
 
 def remove_fields_by_privacy(data, access_level):
@@ -892,6 +921,7 @@ class Individual(BaseModel):
             }
         )
         data["color"] = self.color.name if self.color else None
+        data["color_id"] = self.color_id
         data["weights"] = [{"weight": w.weight, "date": w.weight_date.strftime("%Y-%m-%d")} for w in self.weight_set]  # pylint: disable=no-member
         data["bodyfat"] = [
             {"bodyfat": b.bodyfat, "date": b.bodyfat_date.strftime("%Y-%m-%d")} for b in self.bodyfat_set

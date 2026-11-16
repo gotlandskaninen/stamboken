@@ -107,6 +107,7 @@ export interface Individual extends LimitedIndividual {
   mother: LimitedIndividual | null;
   father: LimitedIndividual | null;
   color?: string | null;
+  color_id?: number | null;
   color_note: string | null;
   death_date: string | null;
   death_note: string | null;
