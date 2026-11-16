@@ -1844,6 +1844,28 @@ class TestYearlyReportAdminContracts(FlaskTest):
             if account == "••45":
                 self.assertNotIn("1234-5", csv_text)
 
+    def test_yearly_reports_show_a_managers_own_herd_whole_and_the_other_masked(self):
+        a, b = self.herds[0], self.herds[1]
+        for herd in (a, b):
+            herd.bank_account_number = "1234-5"
+            herd.save()
+        self.manager.add_role("owner", a.id)
+        rnd = db.YearlyReportRound.create(
+            report_year=2018, start_date=date(2018, 1, 1), end_date=date(2018, 12, 31), created_by=self.admin
+        )
+        for herd in (a, b):
+            db.YearlyHerdReport.create(
+                herd=herd, report_date=date(2018, 12, 31), generated_by=self.manager, name="2018", data="{}",
+                publish=False, publish_tel=False, publish_email=False, publish_address=False, round=rnd,
+            )  # fmt: skip
+        url = f"/api/manage/yearly-reports/{rnd.id}/{a.genebank_id}"
+        with self.app as ctx:
+            self.login(ctx, self.manager)
+            accounts = {r["herd"]: r["bank_account"] for r in ctx.get(url).get_json()["reports"]}
+            csv_text = ctx.get(f"{url}/export").data.decode("utf-8")
+        self.assertEqual(accounts, {a.herd: "1234-5", b.herd: "••45"})
+        self.assertEqual(csv_text.count("1234-5"), 1)  # herd A whole, herd B cut
+
     def test_export_yearly_reports_returns_csv(self):
         """Inventory row: GET /api/manage/yearly-reports/{x}/{x}/export (YearlyReportViewer.tsx:114)."""
         with self.app as ctx:

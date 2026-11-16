@@ -46,7 +46,7 @@ from utils.database import next_individual_number  # isort: skip
 from utils.database import ACTIVE_WINDOW_DAYS  # isort: skip
 from utils.database import AUDIT_LOG_NO_UPDATE_RULE  # isort: skip
 from utils.database import OUTSIDE_GENEBANK_HERDS  # isort: skip
-from utils.database import BANK_PRIVACY_FIELDS, PRIVACY_LEVELS, account_end  # isort: skip
+from utils.database import ACCOUNT_MASK, BANK_PRIVACY_FIELDS, PRIVACY_LEVELS, account_end  # isort: skip
 from utils.database import ht_not_voided  # isort: skip
 from utils.database import ht_order_desc  # isort: skip
 from utils.database import latest_ht_per_individual  # isort: skip
@@ -1686,7 +1686,7 @@ def update_herd(form, user_uuid):
             # A manager reads the account as '••45' and the legacy SPA echoes the herd back: a masked
             # value is never an account number, so it must not overwrite the stored one.
             account = form.get("bank_account_number")
-            if account is not None and "•" in str(account):
+            if account is not None and ACCOUNT_MASK[0] in str(account):
                 if account != account_end(herd.bank_account_number):
                     return {"status": "error", "message": "Invalid value for bank_account_number"}
                 del form["bank_account_number"]  # the unchanged echo

@@ -2930,7 +2930,7 @@ def get_yearly_reports(round_id, genebank_id):
             round_id,
             genebank_id,
             current_user.is_admin or current_user.is_matrikel_admin,
-            current_user.effective_herd_ids(),
+            frozenset() if current_user.is_admin else current_user.effective_herd_ids(),
         )
 
         return jsonify(
@@ -2963,7 +2963,7 @@ def export_yearly_reports(round_id, genebank_id):
             round_id,
             genebank_id,
             current_user.is_admin or current_user.is_matrikel_admin,
-            current_user.effective_herd_ids(),
+            frozenset() if current_user.is_admin else current_user.effective_herd_ids(),
         )
 
         return Response(
