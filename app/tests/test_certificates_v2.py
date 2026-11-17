@@ -224,6 +224,10 @@ class TestPedigreeTemplateV2(unittest.TestCase):
     def test_individual_number_in_one_field(self):
         self.assertIn("G1274-2301", self._html())
 
+    def test_microline_carries_number_and_checksum(self):
+        html = self._html(digital_certificate="345", doc_hash_stub="ABCD1234")
+        self.assertIn("Genbanksintyg 345 · ABCD1234 · ", html)
+
     def test_unknown_parent_has_no_stray_dash(self):
         html = self._html(F_genebank_number=None, F_genebank_aki=None)
         self.assertNotIn("\u2014-", html)

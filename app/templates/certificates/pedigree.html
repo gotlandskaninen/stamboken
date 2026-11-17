@@ -121,11 +121,9 @@ body {
 .cert-nr .lbl { font-family: var(--sans); font-size: 8.5pt; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--ink); }
 .cert-nr .sub { font-size: 7.5pt; color: var(--ink-2); margin-top: .8mm; }
 
-/* double rule under header — classic ledger */
-.rule-thick { height: 0; border-top: 1.4pt solid var(--ink); margin-top: 3.5mm; }
-.rule-thin  { height: 0; border-top: 0.4pt solid var(--line-strong); margin-top: 0.8mm; }
-
-/* microtext security line — hard to reproduce with copier/scanner */
+/* microtext security line between two equally thin rules — hard to reproduce with copier/scanner */
+.rule { height: 0; border-top: 0.4pt solid var(--line-strong); margin-top: 0.8mm; }
+.rule.top { margin-top: 3.5mm; }
 .microline {
   font-family: var(--mono);
   font-size: 3.2pt; font-weight: 400;
@@ -213,7 +211,7 @@ body {
 
 /* === Certification ===================================================== */
 .sign-wrap {
-  display: flex; align-items: center;
+  display: flex; align-items: flex-start;
   background: var(--card);
   border: 0.5pt solid var(--line);
   border-radius: 1.5mm;
@@ -236,12 +234,12 @@ body {
 .sign-note {
   font-size: 8pt; color: var(--ink-2); margin-top: 1.8mm; padding-right: 6mm;
 }
-.qr { text-align: center; margin-left: 5mm; }
-.qr svg { width: 25mm; height: 25mm; }
+.qr { text-align: center; margin-left: 5mm; margin-top: 3.4mm; }  /* centred on the four row rules, not on the box */
+.qr svg { width: 27mm; height: 27mm; }
 .qr .qt {
   font-family: var(--mono);
   font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.12em;
-  color: var(--ink-3); margin-top: 0.6mm;
+  color: var(--ink-3); margin-top: 2.5mm;
 }
 
 /* === Extras ============================================================ */
@@ -274,7 +272,7 @@ body {
 <style>
 /* Print-first: white paper and the paper certificate B's colours (green parents, grey signature), as approved in the board film (stamboken-drift research/film/docs/make.py, V2_PRINT_CSS). */
 html, body { background:#fff; }
-h1, .sec, .breed { color:var(--skog) !important; } .rule-thick { border-top-color:var(--skog) !important; }
+h1, .sec, .breed { color:var(--skog) !important; }
 .fields td { border-bottom:.6pt solid #8C8778 !important; }
 .p-card { background:#EEF3EC !important; border:.8pt solid var(--skog) !important; } .p-card .p-role { color:var(--skog) !important; }
 .g-card { background:#fff !important; border-color:#8C8778 !important; }
@@ -297,9 +295,9 @@ h1, .sec, .breed { color:var(--skog) !important; } .rule-thick { border-top-colo
     </div>
     <div class="cert-nr"><div class="lbl">Kaninens individnummer</div><div class="num"><b>{{ genebank_number }}</b>-{{ genebank_aki }}</div></div>
   </div>
-  <div class="rule-thick"></div>
-  <div class="microline">{% for _ in range(14) %}Föreningen Gotlandskaninen · Genbanksintyg {{ digital_certificate }} · {{ genebank_number }}-{{ genebank_aki }} · Verifiera på gotlandskaninen.se · {% endfor %}</div>
-  <div class="rule-thin"></div>
+  <div class="rule top"></div>
+  <div class="microline">{% for _ in range(14) %}Föreningen Gotlandskaninen · Genbanksintyg {{ digital_certificate }} · {{ doc_hash_stub }} · {{ genebank_number }}-{{ genebank_aki }} · Verifiera på gotlandskaninen.se · {% endfor %}</div>
+  <div class="rule"></div>
 
   <div class="sec"><span class="no">01</span><span class="t">Identitet</span><span class="fill"></span></div>
   <table class="fields">
