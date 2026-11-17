@@ -33,6 +33,7 @@ from utils.database import (
     NoticeSetting,
     User,
 )
+from utils.inbox_proposal import build_proposal
 from utils.individual_number_v2 import parse_number
 from utils.individual_policy import Role
 from utils.log_masking import mask_tokens
@@ -241,7 +242,7 @@ def create_upload(user, herd, message, stored, *, kind="upload", ref_type=None, 
     """
     The item of an upload: one document per stored image ((path, sha256, quality)), and its notices. The report's
     photo (4b) is a `kontroll` item with `ref_type`; its `user` is None for the report link, which `detail` names
-    (access_code_id), as an account would be named.
+    (access_code_id), as an account would be named. Its notices wait for its rabbit (bind_report_photo).
     """
     item = InboxItem.create(
         kind=kind,
@@ -256,10 +257,15 @@ def create_upload(user, herd, message, stored, *, kind="upload", ref_type=None, 
         for path, sha256, quality in stored
     ]
     log_event(item, user, "inkommen", documents=len(documents), **detail)
+    if not report_photo(item):
+        _notify_workers(item, user)
+    return item, documents
+
+
+def _notify_workers(item, user):
     for worker in queue_workers(item.genebank_id):
         if user is None or worker.id != user.id:
             notify(worker, "ny_post", item)
-    return item, documents
 
 
 def person_names(ids):
@@ -454,6 +460,10 @@ def change_state(item, user, state, *, note=None, duplicate_of=None):
     _set_state(item, state)
     if reopened:
         item.assigned_to, item.assigned_at = user, now()
+    if reopened and report_photo(item):  # "Öppna igen": the photo is checked again, so nothing else closes it
+        InboxDocument.update(done_at=None).where(
+            (InboxDocument.item == item.id) & InboxDocument.individual.is_null(False)
+        ).execute()
     if state == "hos_genbanksansvarig":
         item.assigned_to, item.assigned_at = None, None
     item.save()
@@ -774,6 +784,8 @@ def check_report_photo(item, document, user, outcome):
         raise InboxError(409, "Posten väntar. Gör den till tagen igen för att spara.")
     if outcome not in CHECK_OUTCOMES:
         raise InboxError(400, 'outcome är "stammer" eller "rattat".')
+    if item.ref_id is None or document.individual_id != item.ref_id:  # a photo checks only the rabbit it registered
+        raise InboxError(409, "Fotot är inte kopplat till någon registrerad kanin. Det kan inte kontrolleras.")
     if document.done_at is not None:
         raise InboxError(409, "Dokumentet är redan klart.")
     document.done_at = now()
@@ -981,6 +993,21 @@ def saved(item, document, user, individual, action):
     document.seller_member = herd_holder(individual.current_herd.id) or document.seller_member
     document.save()
     log_event(item, user, "sparad", document=document.id, action=action, individual=individual.number)
+
+
+def bind_report_photo(item, document, user, individual):
+    """
+    A report photo bound to the rabbit registered from it (4b, G5), under the item's lock and in the registration's
+    transaction: a reading already made is set beside the rabbit again from what was read (no new reading), and only
+    now do the queue's workers hear of it; a photo never bound may be scrapped, which asks for a new upload.
+    """
+    InboxItem.update(ref_id=individual.id).where(InboxItem.id == item.id).execute()
+    item.ref_id = individual.id
+    saved(item, document, user, individual, "ny_kanin")
+    if document.interpretation_status == "klar" and document.interpretation is not None:
+        document.proposal = build_proposal(document.interpretation, item.genebank_id, item.herd_id, individual)
+        document.save()
+    _notify_workers(item, user)
 
 
 def bound_rabbit(document):

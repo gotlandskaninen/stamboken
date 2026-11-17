@@ -22,6 +22,7 @@ import utils.mail as mail
 import utils.report_code as report_code
 import utils.settings as settings
 from herdbook import APP, limiter
+from utils.inbox_proposal import build_proposal
 
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.inbox_fixtures import QUALITY, encoded, pdf, photo
@@ -108,9 +109,21 @@ class TestPhoto(AddRabbitTest):
         self.assertTrue(document.original_path)
         (event,) = item.events
         self.assertEqual((event.kind, event.user_id, event.detail["access_code_id"]), ("inkommen", None, self.code.id))
-        # the queue's workers hear of it, though the sender has no account
-        noticed = {row.user_id for row in db.Notice.select().where(db.Notice.item == item.id)}
+        # the queue's workers hear of it only once its rabbit is registered (bind_report_photo)
+        self.assertFalse(db.Notice.select().where(db.Notice.item == item.id).exists())
+
+    def test_the_queue_hears_of_the_photo_when_it_is_bound(self):
+        """Codex r4: an unbound photo is no work for the queue; binding it tells its workers, though the link has no
+        account."""
+        self.open_link()
+        item_id = self.photo_item()
+        self.assertFalse(db.Notice.select().where(db.Notice.item == item_id).exists())
+        self.assertEqual(self.kit(item_id).status_code, 201)
+        noticed = [
+            row.user_id for row in db.Notice.select().where(db.Notice.item == item_id, db.Notice.kind == "ny_post")
+        ]
         self.assertIn(self.helper.id, noticed)
+        self.assertEqual(len(noticed), len(set(noticed)))
 
     def test_a_login_is_the_items_sender(self):
         self.login("owner")
@@ -325,6 +338,34 @@ class TestPhotoBinding(AddRabbitTest):
         self.login("owner")
         item_id = self.photo_item(OTHER)  # the same account, G9002's report
         self.assertEqual(self.kit(item_id).status_code, 403)
+        self.assertEqual(self.kits(), 0)
+
+    def test_a_photo_the_queue_can_no_longer_check_is_refused(self):
+        """Opus M2: only a certificate in an open item, its original kept and not done, is bound to the rabbit."""
+        self.open_link()
+        spoilers = {
+            "skrapad": lambda item, doc: db.InboxItem.update(state="skrap", closed_at=inbox.now()).where(
+                db.InboxItem.id == item
+            ),
+            "annan typ": lambda item, doc: db.InboxDocument.update(doc_type="annat").where(db.InboxDocument.id == doc),
+            "original raderat": lambda item, doc: db.InboxDocument.update(original_path=None).where(
+                db.InboxDocument.id == doc
+            ),
+            "avfärdad": lambda item, doc: db.InboxDocument.update(done_at=inbox.now()).where(
+                db.InboxDocument.id == doc
+            ),
+        }
+        for name, spoil in spoilers.items():
+            with self.subTest(name):
+                item_id = self.photo_item()
+                (document,) = self.reload(item_id).documents
+                spoil(item_id, document.id).execute()
+                refused = self.kit(item_id)
+                problem = refused.get_json()
+                self.assertEqual(
+                    (refused.status_code, problem["detail"], problem["field"]), (409, report_routes.PHOTO_GONE, "photo")
+                )
+                self.assertIsNone(self.reload(item_id).ref_id)
         self.assertEqual(self.kits(), 0)
 
     def test_photo_binds_once(self):
@@ -562,6 +603,52 @@ class TestReportPhotoReading(AddRabbitTest):
         self.assertEqual(proposal["fields"]["paper_number"], {"value": None, "source": "osäker", "read": "G9001 25?1"})
         self.assertEqual(proposal["fields"]["mother"]["source"], "läst")
 
+    def test_a_reading_made_before_the_rabbit_is_set_beside_it_when_bound(self):
+        """Codex r4: the photo read before its rabbit is saved gets every field compared with that rabbit when it is
+        bound, from the stored reading: no new reading, and no comparison left at the fields read without it."""
+        db.Color.create(name="viltgrå", genebank=self.gotland)
+        self.READING = {
+            "genbanksnr": "G9001",
+            "ar_kull_individ": "2511",
+            "intygsnummer": "P-2511",
+            "fodelsedatum": "250510",
+            "kon": "Hona",
+            "namn": "Kulla",
+            "farg": "viltgrå",
+            "fodda_i_kullen": "5",
+            "levande_efter_6_veckor": "4",
+            "mor": self.parent(self.doe),
+            "far": self.parent(self.buck),
+        }
+        self.open_link()
+        item_id = self.photo_item()
+        (document,) = self.reload(item_id).documents
+        self.assertEqual(interpreter.interpret_next(), document.id)  # read while nothing is registered from it
+        self.assertEqual(db.InboxDocument.get_by_id(document.id).interpretation_status, "klar")
+        response = self.kit(item_id, color="viltgrå")
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        read = db.InboxDocument.get_by_id(document.id)
+        kit = db.Individual.get_by_id(response.get_json()["id"])
+        self.assertEqual(read.proposal, build_proposal(read.interpretation, self.gotland.id, self.h.id, kit))
+        self.assertEqual(
+            set(read.proposal["fields"]),
+            {
+                "paper_number",
+                "paper_certificate",
+                "name",
+                "sex",
+                "birth_date",
+                "color",
+                "mother",
+                "father",
+                "litter_size",
+                "litter_size6w",
+            },
+        )
+        self.assertEqual({field["source"] for field in read.proposal["fields"].values()}, {"läst"})
+        self.assertEqual(read.interpretation_status, "klar")
+        self.assertIsNone(interpreter.interpret_next())  # nothing read again
+
     def test_tolka_igen_on_a_registered_report_photo(self):
         queued, queued_doc, item, document = self.registered()
         interpreter.interpret_next()
@@ -629,6 +716,43 @@ class TestReportPhotoCheck(AddRabbitTest):
             response = self.queue(f"/dokument/{self.document.id}/tolka-igen")
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         self.assertEqual(db.InboxDocument.get_by_id(self.document.id).interpretation_status, "vantar")
+
+    def test_reopening_opens_the_check_again(self):
+        """Codex r4: "Öppna igen" on a checked photo brings its check back, and turning it does not close it again."""
+        self.login("man")
+        self.assertEqual(self.queue("/ta").status_code, 200)
+        self.assertEqual(self.check("stammer").status_code, 200)
+        self.assertEqual(self.reload(self.item_id).state, "klar")
+        self.assertEqual(self.queue("/lage", state="tagen").status_code, 200)
+        shown = inbox.item_detail(self.reload(self.item_id))["documents"][0]
+        self.assertEqual((shown["status"], shown["done_at"]), ("sparad", None))  # Stämmer and Rättat are back
+        turned = self.client.patch(f"/api/v2/inkorg/{self.item_id}/dokument/{self.document.id}", json={"rotation": 90})
+        self.assertEqual(turned.status_code, 200, turned.get_data(as_text=True))
+        self.assertEqual(self.reload(self.item_id).state, "tagen")
+        with mock.patch.object(settings.interpretation, "interpreter", "gemma"):
+            self.assertEqual(self.queue(f"/dokument/{self.document.id}/tolka-igen").status_code, 200)
+        self.assertEqual(self.check("rattat").status_code, 200)
+        item = self.reload(self.item_id)
+        self.assertEqual(item.state, "klar")
+        outcomes = [e.detail["outcome"] for e in item.events.where(db.InboxEvent.kind == "kontrollerad")]
+        self.assertEqual(outcomes, ["stammer", "rattat"])
+
+    def test_only_the_bound_rabbit_is_checked(self):
+        """Codex r4: a photo that registered no rabbit, or another than the item's, cannot be checked."""
+        stored = [("inkorg/original/u.jpg", "3".rjust(64, "0"), QUALITY)]
+        unbound, (loose,) = inbox.create_upload(
+            None, self.h, None, stored, kind="kontroll", ref_type="individual", access_code_id=self.code.id
+        )
+        db.InboxItem.update(ref_id=self.doe.id).where(db.InboxItem.id == self.item_id).execute()  # not its rabbit
+        self.login("hjalp")
+        for item_id, document_id in ((unbound.id, loose.id), (self.item_id, self.document.id)):
+            with self.subTest(item=item_id):
+                self.assertEqual(self.client.post(f"/api/v2/inkorg/{item_id}/ta").status_code, 200)
+                refused = self.client.post(
+                    f"/api/v2/inkorg/{item_id}/dokument/{document_id}/kontrollerad", json={"outcome": "stammer"}
+                )
+                self.assertEqual(refused.status_code, 409, refused.get_data(as_text=True))
+                self.assertIsNone(db.InboxDocument.get_by_id(document_id).done_at)
 
     def test_an_ordinary_item_is_not_closed_so(self):
         stored = [("inkorg/original/q.jpg", "2".rjust(64, "0"), QUALITY)]

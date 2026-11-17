@@ -28,7 +28,6 @@ from utils.database import (
     Genebank,
     Herd,
     InboxDocument,
-    InboxItem,
     ReportAccessCode,
     YearlyReportRound,
 )
@@ -426,6 +425,7 @@ PHOTOS_KEPT = 60  # the session's own uploads a registration may bind (FC1): an 
 PHOTO_FIRST = "Ladda upp ett foto av intyget först."
 PHOTO_NOT_OURS = "Fotot hör inte till den här rapporten. Ladda upp det igen."
 PHOTO_USED = "Fotot gäller redan en annan kanin. Ladda upp ett nytt foto av intyget."
+PHOTO_GONE = "Fotot kan inte användas längre. Ladda upp det igen."
 ONE_PAGE = "Ladda upp ett intyg i taget. PDF:en har fler än en sida."
 
 
@@ -527,10 +527,17 @@ def add_rabbit(herd, year):
         if item.ref_id is not None:
             raise ArsrapportError(409, PHOTO_USED, field="photo")
         document = item.documents.order_by(InboxDocument.id).first()
+        # only a photo the queue can still check: scrapped, retyped, its original gone or dismissed, it is no longer
+        if (
+            item.state in inbox.CLOSED_STATES
+            or document is None
+            or (document.doc_type, document.done_at) != ("intyg", None)
+            or document.original_path is None
+        ):
+            raise ArsrapportError(409, PHOTO_GONE, field="photo")
 
         def bind(individual):  # in the registration's transaction: the photo and the rabbit commit together
-            InboxItem.update(ref_id=individual.id).where(InboxItem.id == item.id).execute()
-            inbox.saved(item, document, None if access.code else actor, individual, "ny_kanin")
+            inbox.bind_report_photo(item, document, None if access.code else actor, individual)
             created.append(individual)
 
         return register_individual_as(actor, herd, form, bind)
