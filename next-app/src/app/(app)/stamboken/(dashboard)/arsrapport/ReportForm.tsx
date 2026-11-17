@@ -277,6 +277,14 @@ export function ReportForm({
   // Paper over a report, or after the last day: Skicka needs a reason (D11).
   const late = !!round.end_date && todayStockholm() > round.end_date;
   const needReason = isPaper && (!!view.report || late);
+  // The server's require_open: while the round is open, or after its end for an
+  // editor or a helper; never before it opens.
+  const canNotify =
+    round.open ||
+    ((editor || view.access === "helper") &&
+      round.activated &&
+      !!round.start_date &&
+      late);
 
   const [state, setState] = React.useState<FormState>(() =>
     startFrom(view, isPaper),
@@ -1652,7 +1660,7 @@ export function ReportForm({
                 </div>
               </div>
             )}
-            {!isPaper && canEdit && (
+            {!isPaper && canNotify && (
               <div className={styles.detail}>
                 {view.kopanmalningar
                   .filter((n) => !CLOSED_STATES.includes(n.state as ItemState))

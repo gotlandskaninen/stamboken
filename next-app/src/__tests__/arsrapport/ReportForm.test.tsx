@@ -803,6 +803,26 @@ describe("ReportForm", () => {
     ).toBeNull();
   });
 
+  it("offers Anmäl köpet only where the server takes it: not to an editor before the round opens", () => {
+    const at = (round: Partial<ReportView["round"]>) => {
+      cleanup();
+      const before = view().round;
+      render(
+        <ReportForm
+          env="demo"
+          view={view({ access: "manager", round: { ...before, ...round } })}
+          actions={actions()}
+        />,
+      );
+      return !!screen.queryByRole("button", { name: "Anmäl köpet" });
+    };
+    expect(at({})).toBe(true); // open
+    expect(at({ start_date: "2999-12-31", open: false })).toBe(false); // not yet open
+    expect(
+      at({ start_date: "2025-12-31", end_date: "2026-03-30", open: false }),
+    ).toBe(true); // after the end: an editor still writes
+  });
+
   it("says when the round opens instead of that it is closed", () => {
     render(
       <ReportForm
