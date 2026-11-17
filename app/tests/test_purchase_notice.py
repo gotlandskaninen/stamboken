@@ -185,7 +185,8 @@ class PurchaseNoticeTest(ArsrapportTest):
         self.assertEqual(self.notify(when="2025-05-20").get_json()["id"], item.id)
         self.assertEqual(len(notices()), 1)
         # "utanfor" is the genebank's GX1, and the typed number is stored as Stamboken has it
-        self.assertEqual(self.notify(number=f" {self.b.number} ", from_herd="utanfor").get_json()["from_herd"], "GX1")
+        typed = f" {self.b.number.lower()} "
+        self.assertEqual(self.notify(number=typed, from_herd="utanfor").get_json()["from_herd"], "GX1")
         self.assertEqual(notices()[1].ref_data["number"], self.b.number)
         self.assertEqual(self.kop_anmalt(), 2)
         self.login("man")
@@ -788,6 +789,10 @@ class PurchaseNoticeTest(ArsrapportTest):
         detail = self.client.get(f"/api/v2/inkorg/{item.id}").get_json()
         self.assertEqual((detail["kind"], detail["ref_type"], detail["ref_data"]), ("upload", None, fields))
         self.assertEqual(self.client.post(f"/api/v2/inkorg/{item.id}/ta", json={}).status_code, 200)
+        # registered and transferred while a worker holds it: opening it does not close it under the worker's hands
+        rabbit = db.Individual.create(origin_herd=self.seller, number=self.NEW, sex="female")
+        ht_row("TRANSFER", from_herd=self.seller, herd=self.h, individual=rabbit, herd_tracking_date=date(2025, 5, 20))
+        self.assertEqual(self.client.get(f"/api/v2/inkorg/{item.id}").get_json()["state"], "tagen")
 
     def test_link_sends_photos_and_its_code_is_the_sender(self):
         self.open_link(self.code)

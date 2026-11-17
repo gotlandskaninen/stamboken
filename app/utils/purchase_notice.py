@@ -142,7 +142,7 @@ def report_purchase(
     request again answers with the notice. The queue's workers hear of a notice once, when its first photo comes.
     """
     year = round_.report_year
-    individual = _in_genebank(number.strip(), herd.genebank_id) if isinstance(number, str) else None
+    individual = _in_genebank(number.strip().upper(), herd.genebank_id) if isinstance(number, str) else None
     if individual is None:
         raise ArsrapportError(422, NOT_IN_STAMBOKEN, code="inte_i_stamboken", field="number")
     seller = _seller(herd, year, from_herd, date)

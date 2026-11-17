@@ -2206,7 +2206,8 @@ class InboxItem(BaseModel):
     missing_proof = BooleanField(default=False)
     ref_type = TextField(null=True)  # kontroll and avisering point at another feature's row
     ref_id = IntegerField(null=True)
-    # A kontroll item's structured fields, with no personal data (the purchase notice's number, seller and date).
+    # Structured fields with no personal data: a purchase notice's, or a bought rabbit's sent photos' (an upload, S7),
+    # number, seller and date.
     ref_data = BinaryJSONField(null=True, index=False)
 
     class Meta:

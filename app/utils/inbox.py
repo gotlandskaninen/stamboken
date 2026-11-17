@@ -853,7 +853,7 @@ def _report_year(item):
 def item_detail(item):
     """
     GET …/<id>: the list form plus the message, the documents, the history, a sale proposal's year, a kontroll
-    item's structured fields (ref_data), and a report photo's rabbit.
+    item's or a sent upload's structured fields (ref_data), and a report photo's rabbit.
     """
     documents = list(item.documents.order_by(InboxDocument.id))
     events = list(item.events.order_by(InboxEvent.at, InboxEvent.id))
