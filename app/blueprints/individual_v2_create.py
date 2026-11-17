@@ -50,6 +50,8 @@ logger = logging.getLogger(__name__)
 
 individual_v2_create_bp = Blueprint("individual_v2_create", __name__, url_prefix="/api")
 
+CERTIFICATE_UNUSABLE = "Intygsnumret kan inte användas. Kontakta genbanksansvarig."
+
 
 @individual_v2_create_bp.route("/v2/individual", methods=["POST"])
 @json_login_required
@@ -144,6 +146,8 @@ def _register(form, actor, may, created, genebank=None):
     paper_certificate = form.get("paper_certificate") if certificate_type == "paper" else None
     if paper_certificate is not None and (not isinstance(paper_certificate, str) or len(paper_certificate) > 20):
         return problem(400, "Bad Request", "paper_certificate must be a string of at most 20 characters")
+    # The report's scope: no lookup by certificate number, which reaches every genebank; the unique index decides.
+    checked_certificate = paper_certificate if genebank is None else None
 
     sex = form.get("sex")  # "male", "female", or None
     color_name = form.get("color")
@@ -161,7 +165,7 @@ def _register(form, actor, may, created, genebank=None):
                 lock_herd_year(new_litter["herd"], new_litter["birth_date"].year)
                 if certificate_type == "paper":
                     litter = {key: new_litter[key] for key in ("herd", "birth_date", "mother", "father")}
-                    check = number_check(actor, paper_number, paper_certificate=paper_certificate, **litter)
+                    check = number_check(actor, paper_number, paper_certificate=checked_certificate, **litter)
                     position = parse_number(number_to_register(check, resolution))[3]
                 breeding = _create_litter(**new_litter)
             else:
@@ -186,7 +190,7 @@ def _register(form, actor, may, created, genebank=None):
 
             if breeding.litter_number is None:  # a litter added without a certificate: its first one numbers it (L4)
                 check, numbered_position = number_unnumbered_litter(
-                    actor, breeding, certificate_type, paper_number, paper_certificate, resolution
+                    actor, breeding, certificate_type, paper_number, checked_certificate, resolution
                 )
                 if certificate_type == "paper":  # a digital certificate keeps the position the request chose
                     position = numbered_position
@@ -195,7 +199,7 @@ def _register(form, actor, may, created, genebank=None):
             # rules as promote (litter_size6w, roster in sync, quota).
             validate_first_certificate(breeding)
             if certificate_type == "paper" and check is None:
-                check = number_check(actor, paper_number, breeding=breeding, paper_certificate=paper_certificate)
+                check = number_check(actor, paper_number, breeding=breeding, paper_certificate=checked_certificate)
                 position = parse_number(number_to_register(check, resolution))[3]
 
             individual = _create_individual_record(
@@ -224,6 +228,8 @@ def _register(form, actor, may, created, genebank=None):
     except ValueError as e:
         return problem(400, "Bad Request", str(e))
     except IntegrityError:
+        if genebank is not None:  # the same answer whichever genebank holds the number
+            return problem(409, "Conflict", CERTIFICATE_UNUSABLE, field="paper_certificate")
         return problem(
             409, "Conflict", "A conflict prevented registration — a certificate number may already be in use"
         )

@@ -10,7 +10,7 @@ import logging
 import utils.data_access as da
 from flask import Blueprint, jsonify, request, session
 from utils.database import Bunny
-from utils.individual_commands import IndividualRefused, confirm_litter_size
+from utils.individual_commands import LITTER_CHANGED, IndividualRefused, confirm_litter_size
 
 from .common import json_login_required, problem
 
@@ -114,10 +114,11 @@ def confirm_litter_count(breeding_id):
         confirm_litter_size(da.fetch_user_info(session.get("user_id")), breeding_id, count)
     except IndividualRefused as exc:
         message = exc.envelope.get("message")
-        if message == "Forbidden":
-            return problem(403, "Forbidden", message)
-        if message == "Kullen finns inte.":
-            return problem(404, "Not Found", message)
+        # no right to the litter reads as no litter: nothing about it is told to whoever may not write it
+        if message in ("Forbidden", "Kullen finns inte.", "Individual not found"):
+            return problem(404, "Not Found", "Kullen finns inte.")
+        if message == LITTER_CHANGED:
+            return problem(409, "Conflict", message)
         return problem(422, "Update failed", message)
     _invalidate_breeding(breeding_id)
     return jsonify(da.get_breeding_event(breeding_id, session.get("user_id"))), 200

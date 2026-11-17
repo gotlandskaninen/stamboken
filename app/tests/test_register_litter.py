@@ -117,6 +117,23 @@ class TestRegisterLitter(LitterTest):
         )
         self.assertEqual(self.litters(), 0)
 
+    def test_a_missing_father_reads_as_one_of_another_genebank(self):
+        """Opus L3: one text whether the father does not exist or is in another genebank."""
+        absent = db.Individual.select(db.fn.MAX(db.Individual.id)).scalar() + 1000
+        with self.assertRaises(IndividualRefused) as raised:
+            self.add(father=mock.Mock(id=absent))
+        self.assertEqual(
+            raised.exception.envelope["message"], "Fadern måste vara registrerad i samma genbank som modern."
+        )
+        self.assertEqual(self.litters(), 0)
+
+    def test_an_unknown_mother_is_not_found(self):
+        """Opus L3: an unknown mother id is a refusal the callers answer with 404, not a 500."""
+        absent = db.Individual.select(db.fn.MAX(db.Individual.id)).scalar() + 1000
+        with self.assertRaises(IndividualRefused) as raised:
+            self.add(mother=mock.Mock(id=absent))
+        self.assertEqual(raised.exception.envelope["message"], "Individual not found")
+
     def test_a_viewer_and_the_wrong_herds_owner_are_refused(self):
         for user, herd in ((self.viewer, "G1"), (self.other_owner, "G1")):
             with self.subTest(user=user.username), self.assertRaises(IndividualRefused) as raised:
@@ -414,6 +431,31 @@ class TestConfirmLitterSize(LitterTest):
         )
         self.assertTrue(db.Breeding.get_by_id(litter.id).litter_size6w_preliminary)
         self.assertEqual(confirm_litter_size(self.owner, litter.id, 2).litter_size6w, 2)
+
+    def test_the_right_is_asked_before_anything_about_the_litter_is_told(self):
+        """Opus L3: without a right to the litter, one without a birth or of another year reads as any other."""
+        mating = db.Breeding.create(
+            breeding_herd_id=self.g1, mother=self.doe, father=self.buck, breed_date=BORN - timedelta(days=200)
+        )
+        litter = self.add()
+        for breeding_id, year in ((mating.id, None), (litter.id, 2024), (litter.id, None)):
+            with self.subTest(breeding=breeding_id, year=year), self.assertRaises(IndividualRefused) as raised:
+                confirm_litter_size(self.other_owner, breeding_id, 3, year=year)
+            self.assertEqual(raised.exception.envelope["message"], "Forbidden")
+        with self.assertRaises(IndividualRefused) as raised:
+            confirm_litter_size(self.owner, mating.id, 3)
+        self.assertEqual(raised.exception.envelope["message"], "Kullen har ingen födelse registrerad.")
+
+    def test_a_mother_corrected_before_the_lock_is_a_conflict(self):
+        """Opus L3: the litter's mother changed between the caller's read and the lock: 409, not an AssertionError."""
+        litter = self.add()
+        other = self.adult(self.g1, "G1-2414", "female")
+        with self.assertRaises(IndividualRefused) as raised:
+            ic.execute(
+                self.owner, other.id, lambda ctx: [ic.ConfirmLitterSize(litter.id, 3)], target_breeding=litter.id
+            )
+        self.assertEqual(raised.exception.envelope["message"], ic.LITTER_CHANGED)
+        self.assertTrue(db.Breeding.get_by_id(litter.id).litter_size6w_preliminary)
 
     def test_wrong_report_year_is_refused(self):
         litter = self.add()

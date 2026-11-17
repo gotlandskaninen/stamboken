@@ -427,6 +427,8 @@ PHOTO_NOT_OURS = "Fotot hör inte till den här rapporten. Ladda upp det igen."
 PHOTO_USED = "Fotot gäller redan en annan kanin. Ladda upp ett nytt foto av intyget."
 PHOTO_GONE = "Fotot kan inte användas längre. Ladda upp det igen."
 ONE_PAGE = "Ladda upp ett intyg i taget. PDF:en har fler än en sida."
+PAPER_IN_QUEUE = "Intyg på papper läggs in i kön."
+NO_RIGHT_TO_ADD = "Du har inte rätt att lägga till kaniner i besättningen."
 
 
 @arsrapport_bp.errorhandler(413)
@@ -464,9 +466,12 @@ def _photo_limit(access):
 @report_actor_required
 def upload_photo(herd, year):
     request.max_content_length = MAX_REQUEST  # before the body is read, as the queue's upload
-    herd, _, access = _report_target(herd, year)
+    herd, round_, access = _report_target(herd, year)
     if access.item is not None:
-        raise ArsrapportError(403, "Intyg på papper läggs in i kön.")
+        raise ArsrapportError(403, PAPER_IN_QUEUE)
+    arsrapport.require_round_open(herd, round_, access)
+    if not may_register_in(_actor(access), herd)(herd):  # the right to the rabbit the photo is for (Opus L4)
+        raise ArsrapportError(403, NO_RIGHT_TO_ADD)
     if (limited := _photo_limit(access)) is not None:
         return limited
     file = request.files.get("file")
@@ -475,13 +480,11 @@ def upload_photo(herd, year):
     encoded, stored = [], []
 
     def keep(image):
-        # shortcut: one certificate per photo, a PDF of one page; several pages wait for a flow of several documents
-        if encoded:
-            raise _Refused(problem(400, "Ogiltig begäran", ONE_PAGE))
         encoded.append((inbox.jpeg_bytes(image), inbox.measure(image)))
 
     try:
-        _each_image(file, math.inf, keep)  # every page count reaches keep, which stops at the second page
+        # shortcut: one certificate per photo, a PDF of one page; several pages wait for a flow of several documents
+        _each_image(file, 1, keep, lambda: problem(400, "Ogiltig begäran", ONE_PAGE))  # refused before page 2
         for data, quality in encoded:
             stored.append((*inbox.write_jpeg(data, "original"), quality))
         # a link has no account: the item names its code, as an account would be named
@@ -507,6 +510,8 @@ def upload_photo(herd, year):
 @report_actor_required
 def add_rabbit(herd, year):
     herd, round_, access = _report_target(herd, year)
+    if access.item is not None:
+        raise ArsrapportError(403, PAPER_IN_QUEUE)
     body = _submission_body()
     if not isinstance(body, dict):
         raise ArsrapportError(400, "Skicka kaninen som JSON.")
@@ -588,4 +593,6 @@ def number_control(herd, year):
     if not isinstance(body, dict):
         raise ArsrapportError(400, "Skicka numret som JSON.")
     actor = _actor(access)
+    # no lookup by certificate number for the report (it reaches every genebank): registration answers instead
+    body = {key: value for key, value in body.items() if key != "paper_certificate"}
     return paper_number_check(body, actor, may_register_in(actor, herd), herd.genebank_id)

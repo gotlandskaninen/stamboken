@@ -16,6 +16,7 @@ import utils.inbox as inbox
 import utils.mail as mail
 import utils.report_code as report_code
 import utils.settings as settings
+from utils.individual_commands import LITTER_CHANGED, IndividualRefused
 
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.ht_helpers import ht_row
@@ -333,6 +334,26 @@ class TestMothers(LitterApiTest):
         self.login("owner")
         self.assertNotIn(self.doe2.id, [d["id"] for d in self.api("GET", f"{REPORT}/honor").get_json()["honor"]])
 
+    def test_only_does_held_in_the_year_are_offered(self):
+        """Opus L8: a doe that left the herd before the year is not offered, born here or not; one held on 1 January,
+        one that came during the year and one born here without any herd-tracking row are."""
+        born_gone, sold_in_year = self.rabbits(self.h, 2, born=date(2023, 5, 1), sexes=("female",))
+        gone = self.rabbits(self.h2, 1, born=date(2023, 3, 1), sexes=("female",))[0]
+        ht_row("TRANSFER", from_herd=self.h2, herd=self.h, individual=gone, herd_tracking_date=date(2023, 8, 1))
+        for doe in (gone, born_gone):
+            ht_row("TRANSFER", from_herd=self.h, herd=self.h2, individual=doe, herd_tracking_date=date(2024, 6, 1))
+        ht_row("TRANSFER", from_herd=self.h, herd=self.h2, individual=sold_in_year, herd_tracking_date=date(2025, 3, 1))
+        came = self.rabbits(self.h2, 1, born=date(2024, 3, 1), sexes=("female",))[0]
+        ht_row("TRANSFER", from_herd=self.h2, herd=self.h, individual=came, herd_tracking_date=date(2025, 6, 1))
+        late = self.rabbits(self.h2, 1, born=date(2024, 3, 1), sexes=("female",))[0]
+        ht_row("TRANSFER", from_herd=self.h2, herd=self.h, individual=late, herd_tracking_date=date(2026, 1, 2))
+        untracked = db.Individual.create(
+            origin_herd=self.h, breeding=self.doe.breeding, number="G9001-2499", sex="female"
+        )
+        self.login("owner")
+        offered = {d["id"] for d in self.api("GET", f"{REPORT}/honor").get_json()["honor"]}
+        self.assertEqual(offered, {self.doe.id, self.doe2.id, sold_in_year.id, came.id, untracked.id})
+
     def test_the_mother_list_needs_a_session_for_the_herd(self):
         self.assertEqual(self.api("GET", f"{REPORT}/honor").status_code, 401)
         self.login("hjalp")
@@ -473,9 +494,48 @@ class TestMinBesattning(LitterApiTest):
         self.assertEqual(self.client.post("/api/v2/breeding/99999/antal", json={"litter_size6w": 1}).status_code, 404)
         self.login("hjalp")
         self.assertEqual(
-            self.client.post(f"/api/v2/breeding/{first}/antal", json={"litter_size6w": 2}).status_code, 403
+            self.client.post(f"/api/v2/breeding/{first}/antal", json={"litter_size6w": 2}).status_code, 404
         )
         self.assertEqual(db.Breeding.get_by_id(first).litter_size6w, 3)
+
+    def test_without_a_right_every_litter_reads_as_missing(self):
+        """Opus L3: an absent litter, one without a birth and one of the herd's read the same to someone without a
+        right to them, and its owner hears what is wrong."""
+        mating = db.Breeding.create(
+            breeding_herd_id=self.h, mother=self.doe, father=self.buck, breed_date=date(2025, 1, 2)
+        )
+        self.login("owner")
+        first = self.litter().get_json()["id"]
+        no_birth = self.client.post(f"/api/v2/breeding/{mating.id}/antal", json={"litter_size6w": 2})
+        self.assertEqual(
+            (no_birth.status_code, no_birth.get_json()["detail"]), (422, "Kullen har ingen födelse registrerad.")
+        )
+        self.login("hjalp")
+        answers = [
+            self.client.post(f"/api/v2/breeding/{breeding_id}/antal", json={"litter_size6w": 2})
+            for breeding_id in (mating.id, first, mating.id + 100000)
+        ]
+        self.assertEqual(
+            {(a.status_code, a.get_data(as_text=True)) for a in answers},
+            {(answers[0].status_code, answers[0].get_data(as_text=True))},
+        )
+        self.assertEqual((answers[0].status_code, answers[0].get_json()["detail"]), (404, "Kullen finns inte."))
+
+    def test_a_litter_changed_meanwhile_is_a_conflict(self):
+        """Opus L3: the command's 409 reaches both callers as a 409."""
+        refused = IndividualRefused(LITTER_CHANGED)
+        self.assertEqual(arsrapport._litter_refused(refused).status, 409)
+        self.login("owner")
+        first = self.litter().get_json()["id"]
+        with mock.patch("blueprints.breeding.confirm_litter_size", side_effect=refused):
+            response = self.client.post(f"/api/v2/breeding/{first}/antal", json={"litter_size6w": 2})
+        self.assertEqual((response.status_code, response.get_json()["detail"]), (409, LITTER_CHANGED))
+
+    def test_an_unknown_mother_is_a_404(self):
+        """Opus L3: a mother id that is no rabbit is not found, not a 500."""
+        self.login("owner")
+        response = self.litter(mother=mock.Mock(id=db.Individual.select(db.fn.MAX(db.Individual.id)).scalar() + 1000))
+        self.assertEqual((response.status_code, response.get_json()["detail"]), (404, "Kaninen finns inte."))
 
     def test_a_typed_count_in_my_herd_clears_preliminary(self):
         self.login("owner")

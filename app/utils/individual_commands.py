@@ -293,7 +293,8 @@ def execute(
     `lock_also`: other individuals the commands read or write (RegisterLitter's father), locked with this one.
     """
     with DATABASE.atomic():
-        lock_individual_for_edit(individual_id, target_breeding, with_parents, lock_also)
+        if not lock_individual_for_edit(individual_id, target_breeding, with_parents, lock_also):
+            raise IndividualRefused("Individual not found")  # an unknown id: a 404 to the caller, not a 500
         individual = Individual.get_by_id(individual_id)
         target = canonical_breeding_id(target_breeding)
         granted = grant.roles(user, individual) if grant is not None else frozenset()
@@ -1015,6 +1016,7 @@ ALIVE_BELOW_KITS = (
     "Kullen har {kits} registrerade ungar som levde vid 6 veckor. Antal levande vid 6 veckor kan inte vara färre."
 )
 CERTIFIED_LITTER = "Kontakta genbanksansvarig för att ändra en kull med intyg."
+LITTER_CHANGED = "Kullen ändrades samtidigt. Försök igen."  # a 409 to the callers
 LITTER_DUPLICATE_DAYS = 3  # a litter of the same mother this close may be the same one (spec 5.8, G2)
 _LITTER_LOCK = 0x48424C52  # "HBLR": classid of the advisory lock on the mother while a litter is added
 
@@ -1075,9 +1077,8 @@ class RegisterLitter(PolicyCommand):
         if in_herd.id != herd.id:
             raise IndividualRefused("Modern fanns inte i besättningen vid födelsedatumet.")
         father = Individual.get_or_none(Individual.id == self.father_id)
-        if father is None or father.voided:
-            raise IndividualRefused("Fadern finns inte i Stamboken.")
-        if father.origin_herd.genebank_id != herd.genebank_id:
+        # one text for a father missing and one of another genebank: nothing is told outside the genebank
+        if father is None or father.voided or father.origin_herd.genebank_id != herd.genebank_id:
             raise IndividualRefused("Fadern måste vara registrerad i samma genbank som modern.")
 
     def check_dates(self, ctx):
@@ -1150,20 +1151,21 @@ class ConfirmLitterSize(PolicyCommand):
         litter = Breeding.get_or_none(Breeding.id == self.breeding_id)
         if litter is None:
             raise IndividualRefused("Kullen finns inte.")
-        if litter.mother_id != ctx.individual.id:
-            raise AssertionError("ConfirmLitterSize runs on the litter's mother")
+        if litter.mother_id != ctx.individual.id:  # its mother corrected since the caller read it
+            raise IndividualRefused(LITTER_CHANGED)
         return litter
 
     def authorize(self, ctx):
         litter = self._litter(ctx)
-        if litter.birth_date is None:
+        born = litter.birth_date
+        # the right first: whether the litter has a birth or is in the year is told only to whoever may write it
+        _authorize_litter(self, ctx, litter.breeding_herd_id, born.year if born else None)
+        if born is None:
             raise IndividualRefused("Kullen har ingen födelse registrerad.")
-        year = litter.birth_date.year
-        if self.year is not None and self.year != year:
+        if self.year is not None and self.year != born.year:
             raise IndividualRefused(f"Kullen är inte född under {self.year}.")
         if self.herd is not None and litter.breeding_herd_id.herd != self.herd:  # moved since the caller looked
             raise IndividualRefused("Kullen finns inte i besättningens rapport.")
-        _authorize_litter(self, ctx, litter.breeding_herd_id, year)
 
     def check_dates(self, ctx):
         litter = self._litter(ctx)

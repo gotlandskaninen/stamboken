@@ -99,6 +99,9 @@ export async function confirmLitterCount(
   breedingId: number,
   count: number,
 ): Promise<ActionResult<Breeding>> {
+  if (!Number.isSafeInteger(breedingId) || breedingId <= 0) {
+    return { success: false, error: "Kullen finns inte." };
+  }
   try {
     const breeding = await fetchApi<Breeding>(
       `/v2/breeding/${breedingId}/antal`,

@@ -80,6 +80,7 @@ from utils.herd_tracking import (
     void_herd_tracking,
 )
 from utils.individual_commands import (
+    LITTER_CHANGED,
     REPORT_UNDO_REASON,
     IndividualRefused,
     RecordAttestation,
@@ -2644,7 +2645,21 @@ def _litter_refused(exc):
         return ArsrapportError(404, "Kaninen finns inte.")
     if message.startswith("Kullen finns inte"):
         return ArsrapportError(404, message)
+    if message == LITTER_CHANGED:
+        return ArsrapportError(409, message)
     return ArsrapportError(422, message)
+
+
+def require_round_open(herd, round_, access):
+    """
+    The round open for a write from the report that is not the report itself (a litter, a rabbit, a photo): an editor
+    or a helper also after its last day, as Skicka; otherwise 409 rundan_stangd. Returns today.
+    """
+    on = today()
+    activated = _activations(round_).where(YearlyReportRoundGenebank.genebank == herd.genebank_id).exists()
+    if not (round_open(round_, herd.genebank_id, on) or ((access.editor or access.role == "helper") and activated)):
+        raise ArsrapportError(409, "Rundan är inte öppen.", code="rundan_stangd")
+    return on
 
 
 def _litter_write(herd, round_, access, user, write):
@@ -2653,10 +2668,7 @@ def _litter_write(herd, round_, access, user, write):
     item locked and checked, the round open (an editor or a helper also after its last day, as Skicka). It never
     touches the report row, so a litter moves no `received_at`.
     """
-    on = today()
-    activated = _activations(round_).where(YearlyReportRoundGenebank.genebank == herd.genebank_id).exists()
-    if not (round_open(round_, herd.genebank_id, on) or ((access.editor or access.role == "helper") and activated)):
-        raise ArsrapportError(409, "Rundan är inte öppen.", code="rundan_stangd")
+    on = require_round_open(herd, round_, access)
     with DB_PROXY.atomic():
         lock_report(round_, herd)
         _recheck_code(access, herd, on)
@@ -2747,19 +2759,27 @@ def report_fathers(herd, year):
 def report_mothers(herd, year):
     """
     The mother picker, for a code session too: the herd's does at any time in `year` (id, number, name), those sold
-    or dead since included, since a litter of May can be added in the autumn. The command still checks the doe's
-    holder on the birth date.
+    or dead since included, since a litter of May can be added in the autumn; not a doe that left the herd before
+    the year. The command still checks the doe's holder on the birth date.
     """
     first, last = date(year, 1, 1), date(year, 12, 31)
-    held = HerdTracking.select(HerdTracking.individual).where(
-        HerdTracking.herd == herd.id, ht_not_voided(), HerdTracking.herd_tracking_date <= last
+    rows = HerdTracking.select(HerdTracking.individual).where(ht_not_voided())
+    # in the herd at some time in the year: a row here during it, or the herd as holder on 1 January
+    during = rows.where(HerdTracking.herd == herd.id, HerdTracking.herd_tracking_date.between(first, last))
+    ever_here = rows.where(HerdTracking.herd == herd.id)
+    holder = latest_ht_per_individual(as_of=first).where(HerdTracking.individual.in_(ever_here)).alias("holder")
+    on_first = Individual.select(Individual.id).join(
+        holder, on=((holder.c.i_id == Individual.id) & (holder.c.rank == 1))
     )
+    on_first = on_first.where(holder.c.herd == herd.id)
+    tracked = rows.where(HerdTracking.individual == Individual.id, HerdTracking.herd_tracking_date <= last)
+    untracked = (Individual.origin_herd == herd.id) & ~fn.EXISTS(tracked)  # then the origin herd is the holder
     does = (
         Individual.select(Individual.id, Individual.number, Individual.name)
         .where(
             Individual.sex == "female",
             not_voided(),
-            Individual.id.in_(held) | (Individual.origin_herd == herd.id),
+            Individual.id.in_(during) | Individual.id.in_(on_first) | untracked,
             Individual.death_date.is_null(True) | (Individual.death_date >= first),
         )
         .order_by(Individual.number)

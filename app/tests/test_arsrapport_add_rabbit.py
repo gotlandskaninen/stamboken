@@ -14,6 +14,7 @@ from datetime import time as clock
 from unittest import mock
 
 import blueprints.arsrapport as report_routes
+import pypdfium2
 import utils.arsrapport as arsrapport
 import utils.database as db
 import utils.inbox as inbox
@@ -152,6 +153,53 @@ class TestPhoto(AddRabbitTest):
         self.assertEqual(refused.get_json()["detail"], report_routes.ONE_PAGE)
         self.assertFalse(db.InboxItem.select().exists())
         self.assertEqual(self.upload_photo(content=pdf(photo((600, 800)))).status_code, 201)
+
+    def test_a_pdf_of_several_pages_is_refused_before_page_two_is_rendered(self):
+        """Opus L4: the page count is read first; no page of a PDF with more than one is rendered."""
+        self.open_link()
+        rendered, real = [], pypdfium2.PdfPage.render
+
+        def render(page, *args, **kwargs):
+            rendered.append(page)
+            return real(page, *args, **kwargs)
+
+        with mock.patch.object(pypdfium2.PdfPage, "render", render):
+            refused = self.upload_photo(content=pdf(photo((600, 800)), photo((600, 800), seed=2)))
+        self.assertEqual((refused.status_code, refused.get_json()["detail"]), (400, report_routes.ONE_PAGE))
+        self.assertEqual(rendered, [])
+
+    def test_no_photo_while_the_round_is_closed(self):
+        """Opus L4: the round's rule of the report's other writes: after its last day the owner uploads nothing, and
+        neither does anyone in a genebank that has not activated the round (the link has expired with it)."""
+        self.login("owner")
+        db.YearlyReportRound.update(end_date=date(2026, 1, 10)).where(
+            db.YearlyReportRound.id == self.round_.id
+        ).execute()
+        refused = self.upload_photo()
+        self.assertEqual((refused.status_code, refused.get_json()["code"]), (409, "rundan_stangd"))
+        mellerud = db.Herd.create(genebank=self.mellerud, herd="M9001", is_active=True)
+        self.login("admin")
+        refused = self.upload_photo("/besattning/M9001/2025")
+        self.assertEqual((refused.status_code, refused.get_json()["code"]), (409, "rundan_stangd"))
+        self.assertFalse(db.InboxItem.select().where(db.InboxItem.herd << [self.h.id, mellerud.id]).exists())
+
+    def test_upload_and_registration_ask_the_same_right(self):
+        """Opus L4: a caretaker (a herd-access grant) may register in the herd, so may upload for it; whoever may not
+        register may not upload either, so no photo is left without its rabbit."""
+        caretaker = self.user("skotare")
+        person = db.Member.create(
+            first_name="Test", last_name="Skötare", membership=self.h.membership, role="skotare", user=caretaker
+        )
+        db.HerdAccessGrant.create(member=person, herd=self.h, granted_by=self.admin)
+        self.login("skotare")
+        self.assertEqual(self.api("GET", REPORT).get_json()["access"], "caretaker")
+        response = self.kit(self.photo_item())
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        self.login("owner")
+        with mock.patch("blueprints.individual_v2_create._can_register_in_herd", return_value=False):
+            refused = self.upload_photo()
+        self.assertEqual((refused.status_code, refused.get_json()["detail"]), (403, report_routes.NO_RIGHT_TO_ADD))
+        self.assertEqual(db.InboxItem.select().count(), 1)
 
 
 class TestUploadLimit(AddRabbitTest):
@@ -368,6 +416,23 @@ class TestPhotoBinding(AddRabbitTest):
                 self.assertIsNone(self.reload(item_id).ref_id)
         self.assertEqual(self.kits(), 0)
 
+    def test_no_rabbit_through_a_paper_item(self):
+        """Opus L7: ?post= is the paper form's, whose certificates go through the queue: refused as the upload is."""
+        stored = [("inkorg/original/form.jpg", "4".rjust(64, "0"), QUALITY)]
+        form, (page,) = inbox.create_upload(self.owner, self.h, None, stored)
+        page.doc_type = "arsblankett"
+        page.save()
+        inbox.take(form, self.manager, over=False)
+        self.login("man")
+        item_id = self.photo_item()  # as the genebank's manager, not through the form
+        refused = self.client.post(
+            f"/api/v2/arsrapport{REPORT}/kanin?post={form.id}",
+            json={"item_id": item_id, "mother": self.doe.number, "father": self.buck.number},
+        )
+        self.assertEqual((refused.status_code, refused.get_json()["detail"]), (403, report_routes.PAPER_IN_QUEUE))
+        self.assertIsNone(self.reload(item_id).ref_id)
+        self.assertEqual(self.kits(), 0)
+
     def test_photo_binds_once(self):
         self.open_link()
         item_id = self.photo_item()
@@ -496,6 +561,46 @@ class TestScope(AddRabbitTest):
                 self.assertEqual(send("M9001-2511").get_json(), free[name].get_json())
                 self.assertEqual(send("G9999-2511").get_json(), free[name].get_json())
         self.assertEqual(self.kits(), 0)
+
+
+class TestCertificateNumberScope(AddRabbitTest):
+    """Codex r4 #1: a report actor learns nothing from a certificate number about the rabbits that hold it."""
+
+    def setUp(self):
+        super().setUp()
+        mellerud = db.Herd.create(genebank=self.mellerud, herd="M9001", is_active=True)
+        self.foreign = self.rabbits(mellerud, 1)[0]
+        self.open_link()
+
+    def check(self, certificate):
+        return self.api(
+            "POST",
+            f"{REPORT}/nummerkontroll",
+            paper_number="G9001-2511",
+            paper_certificate=certificate,
+            mother=self.doe.number,
+            father=self.buck.number,
+            birth_date="2025-05-10",
+        )
+
+    def test_the_number_check_reads_alike_for_a_taken_and_a_free_certificate(self):
+        free = self.check("P-FRI-1")
+        self.assertEqual(free.status_code, 200, free.get_data(as_text=True))
+        for taken in (self.foreign.certificate, self.doe2.certificate):
+            with self.subTest(taken=taken):
+                self.assertEqual(self.check(taken).get_json(), free.get_json())
+
+    def test_a_taken_certificate_is_refused_alike_at_registration(self):
+        item_id = self.photo_item()
+        answers = [
+            self.kit(item_id, paper_certificate=taken) for taken in (self.foreign.certificate, self.doe2.certificate)
+        ]
+        for refused in answers:
+            self.assertEqual(refused.status_code, 409, refused.get_data(as_text=True))
+            self.assertEqual(refused.get_json()["detail"], "Intygsnumret kan inte användas. Kontakta genbanksansvarig.")
+        self.assertEqual(answers[0].get_json(), answers[1].get_json())
+        self.assertEqual((self.kits(), self.reload(item_id).ref_id), (0, None))
+        self.assertEqual(self.kit(item_id, paper_certificate="P-FRI-1").status_code, 201)
 
 
 class TestReportPhotoReading(AddRabbitTest):
