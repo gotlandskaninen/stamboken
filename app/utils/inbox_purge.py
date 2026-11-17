@@ -43,6 +43,7 @@ GMAIL_PROCESSED_AFTER = timedelta(days=60)
 CHANGE_REQUEST_AFTER = timedelta(days=30)  # the mail queue's limit (spec 6)
 STALLED_AFTER = timedelta(days=14)
 ORPHAN_AFTER = timedelta(days=1)  # an upload in progress has written its files but not committed its rows
+HELD_AFTER = timedelta(days=1)  # a report photo held for a purchase whose dialog was left
 VIEWS = ("oppnad", "original_visat")  # looking at an item is not something happening to it
 
 
@@ -246,6 +247,27 @@ def purge_junk(now):
     return _delete_items((InboxItem.state == "skrap") & (InboxItem.closed_at < now - JUNK_AFTER))
 
 
+def purge_held(now):
+    """
+    A report photo held for a purchase (`ref_data` inbox.PURPOSE) a day after it came in, with its file: never sent
+    (S7), taken by a notice or bound to a rabbit, so its dialog was left, and nothing saved from it in the queue. Read
+    again under the items' locks, so one sent or bound meanwhile stays as it is.
+    """
+    held = (
+        (InboxItem.kind == "kontroll")
+        & (InboxItem.ref_type == "individual")
+        & InboxItem.ref_id.is_null(True)
+        & InboxItem.ref_data.has_key(inbox.PURPOSE)
+        & (InboxItem.received_at < now - HELD_AFTER)
+        & InboxItem.id.not_in(_saved())
+    )
+    with DB_PROXY.atomic():
+        _lock(InboxItem.select(InboxItem.id).where(held))
+        gone, paths = _delete_rows(held)
+    remove_originals(paths)
+    return len(gone)
+
+
 def purge_messages(now):
     """A closed message ("meddelande") without documents 13 months after it closed."""
     no_documents = InboxItem.id.not_in(InboxDocument.select(InboxDocument.item))
@@ -328,6 +350,7 @@ RULES = (
     purge_sold_proofs,
     purge_incomplete,
     purge_junk,
+    purge_held,
     purge_messages,
     purge_opened,
     purge_gmail_processed,

@@ -244,9 +244,17 @@ function Body({
       if (res.ok) {
         setSent(PURCHASE_SENT_TEXT);
         onSent();
-      } else if (res.problem.extensions?.code === "inte_i_stamboken")
+      } else if (res.problem.extensions?.code === "inte_i_stamboken") {
         setMissing(true);
-      else if (res.problem.extensions?.field === "photo")
+        if (photo.status === "klar") {
+          // the photo already uploaded is sent with the others, with what it shows, not left held
+          setPhotos((all) => {
+            const free = all.findIndex((p) => p.status === "tom");
+            return all.map((p, k) => (k === free ? photo : p));
+          });
+          setPhoto(EMPTY);
+        }
+      } else if (res.problem.extensions?.field === "photo")
         setPhoto({ status: "fel", error: res.problem.detail }); // chosen again
       else setRefused(res.problem.detail || res.problem.title);
     } catch {

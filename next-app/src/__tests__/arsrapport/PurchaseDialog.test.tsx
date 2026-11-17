@@ -213,6 +213,68 @@ describe("PurchaseDialog", () => {
     expect(send).toHaveBeenCalledTimes(1); // the notice was not sent again
   });
 
+  it("carries a photo already uploaded into the photos sent when Stamboken lacks the rabbit (S7)", async () => {
+    const send = vi.fn().mockResolvedValue({
+      ok: false,
+      problem: {
+        status: 422,
+        title: "Kan inte sparas",
+        detail: "x",
+        extensions: { code: "inte_i_stamboken" },
+      },
+    });
+    const upload = vi
+      .fn()
+      .mockResolvedValue({ ok: true, data: { item_id: 7, document_id: 31 } });
+    const sendPhotos = vi.fn().mockResolvedValue({
+      ok: true,
+      data: {
+        id: 1,
+        number: "G9002-9999",
+        from_herd: "GX1",
+        date: "2025-05-14",
+        state: "ny",
+      },
+    });
+    dialog(send, vi.fn(), upload, sendPhotos);
+    fill("Kaninens nummer", "G9002-9999");
+    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+    fill("Datum för köpet", "2025-05-14");
+    fireEvent.change(
+      screen.getByLabelText(
+        "Foto av överlåtelsebeviset eller intyget (om du har)",
+      ),
+      {
+        target: {
+          files: [new File(["x"], "intyg.jpg", { type: "image/jpeg" })],
+        },
+      },
+    );
+    await screen.findByText("Fotot är uppladdat.");
+    fireEvent.click(screen.getByLabelText("Intyg"));
+    click();
+    await screen.findByText(NOT_IN_STAMBOKEN_TEXT);
+    // the first of the photos sent, still uploaded, with what it shows; the second may follow
+    const first = screen.getByRole("radiogroup", { name: "Vad visar foto 1?" });
+    expect(
+      (within(first).getByLabelText("Intyg") as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(screen.getByLabelText("Foto 2 (om du har)")).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Skicka till genbanksansvarig" }),
+    );
+    await waitFor(() =>
+      expect(sendPhotos).toHaveBeenCalledWith({
+        number: "G9002-9999",
+        from_herd: "utanfor",
+        date: "2025-05-14",
+        documents: [{ id: 31, doc_type: "intyg" }],
+      }),
+    );
+    expect(upload).toHaveBeenCalledTimes(1); // not uploaded again
+    expect((upload.mock.calls[0] as unknown[])[1]).toBe("kop");
+  });
+
   it("sends a photo of the proof or the certificate once it is uploaded, with what it shows", async () => {
     let uploaded: (v: unknown) => void = () => undefined;
     const upload = vi.fn(

@@ -19,6 +19,7 @@ import utils.database as db
 import utils.herd_tracking as herd_tracking
 import utils.inbox as inbox
 import utils.inbox_interpreter as interpreter
+import utils.inbox_purge as inbox_purge
 import utils.mail as mail
 import utils.matrikel as matrikel
 import utils.purchase_notice as purchase_notice
@@ -975,6 +976,35 @@ class PurchaseNoticeTest(ArsrapportTest):
         held = self.upload(purpose="inskick")
         self.assertEqual(self.send(held).status_code, 200)
         self.assertEqual(interpreter.interpret_next(), held["document_id"])
+
+    def test_a_held_photo_left_a_day_goes_with_its_file(self):
+        """
+        Codex P2: a photo held for a purchase whose dialog was left, never sent, taken or bound, goes with its file
+        in the nightly purge a day after it came in. A sent, bound, fresh or rabbit's photo stays.
+        """
+        self.assertIn(inbox_purge.purge_held, inbox_purge.RULES)
+        self.login("owner")
+        left = [self.upload(purpose="kop"), self.upload(purpose="inskick")]
+        fresh = self.upload(purpose="inskick")
+        plain = self.upload()  # a rabbit's photo, not held for a purchase
+        bound = self.upload(purpose="kop")
+        db.InboxItem.update(ref_id=self.own.id, ref_data=None).where(db.InboxItem.id == bound["item_id"]).execute()
+        sent_photo = self.upload(purpose="kop")  # a notice's photo, sent with the rabbit Stamboken lacks (S7)
+        self.assertEqual(self.send(sent_photo, types=("intyg",)).status_code, 200)
+        files = {
+            u["document_id"]: os.path.join(self.folder, db.InboxDocument.get_by_id(u["document_id"]).original_path)
+            for u in (*left, fresh, plain, bound, sent_photo)
+        }
+        old = [u["item_id"] for u in (*left, plain, bound)]
+        two_days_ago = inbox.now() - timedelta(days=2)
+        db.InboxItem.update(received_at=two_days_ago).where(db.InboxItem.id.in_(old)).execute()
+        db.InboxItem.update(received_at=two_days_ago).where(db.InboxItem.kind == "upload").execute()
+        self.assertEqual(inbox_purge.purge_held(inbox.now()), 2)
+        remaining = {d.id for d in db.InboxDocument.select()}
+        for document_id, path in files.items():
+            gone = document_id in {u["document_id"] for u in left}
+            self.assertEqual((document_id in remaining, os.path.exists(path)), (not gone, not gone))
+        self.assertEqual(inbox_purge.purge_held(inbox.now()), 0)  # again: nothing
 
     # S8: "Ärenden hos genbanksansvarig", the queue items that concern the report
 
