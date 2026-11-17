@@ -3,6 +3,7 @@
 import unittest
 import uuid
 from datetime import date, datetime, timezone
+from unittest import mock
 
 import utils.data_access as da
 import utils.database as db
@@ -145,6 +146,17 @@ class TestArsrapportMigration(IsolatedSchemaTest):
         db._create_arsrapport_schema()
         db._create_arsrapport_schema()
         self.assertEqual(snapshot(), self.bootstrapped)
+
+    def test_boot_adds_the_columns_a_database_at_42_lacks(self):
+        """S5: a database that ran an earlier 42 gets the columns added to it since, under the same number."""
+        with mock.patch.object(db, "_create_arsrapport_schema") as helper:
+            db.check_migrations()
+        helper.assert_not_called()  # a healthy database takes no table lock at boot
+        _sql('ALTER TABLE "inbox_item" DROP COLUMN "ref_data"')
+        _sql('ALTER TABLE "breeding" DROP COLUMN "litter_size6w_preliminary"')
+        self.assertTrue(db.verify(try_init=False))  # the boot: migrations under their lock, then the models
+        self.assertEqual(snapshot(), self.bootstrapped)
+        self.assertEqual(db.SchemaHistory.select(db.fn.MAX(db.SchemaHistory.version)).scalar(), 42)  # pylint: disable=E1120
 
     def test_one_submitted_report_per_herd_and_round(self):
         self._report()

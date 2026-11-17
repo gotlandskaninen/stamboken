@@ -4793,6 +4793,7 @@ def check_migrations():
     )
     try:
         _run_migrations()
+        _repair_arsrapport_columns()
     finally:
         try:
             DATABASE.execute_sql(
@@ -4805,6 +4806,31 @@ def check_migrations():
             # migration error — turning e.g. a fatal ProgrammingError into
             # an OperationalError that connect() swallows.
             logger.warning("Failed to release migration advisory lock", exc_info=True)
+
+
+def _repair_arsrapport_columns():
+    """
+    S5: the yearly report's migration keeps its number while the branch adds columns to it, so a database that ran
+    an earlier 42 (dev and agent stacks) never replays it, and verify() fails on the missing column. When a table
+    the migration changes exists but lacks a column of its model, the migration's idempotent helper runs again,
+    with its ADD COLUMN IF NOT EXISTS statements. The catalog is read first, so a healthy database takes no table
+    lock at boot; one not bootstrapped yet has none of the tables and is init()'s.
+    """
+    for model in (
+        YearlyReportRound,
+        YearlyHerdReport,
+        Breeding,
+        InboxItem,
+        HerdTracking,
+        IndividualCommand,
+        PublicationConsentChange,
+    ):
+        have = {column.name for column in DATABASE.get_columns(model._meta.table_name)}
+        if have and {field.column_name for field in model._meta.sorted_fields} - have:
+            logger.info("Adding the yearly report's columns to %s", model._meta.table_name)
+            with DATABASE.atomic():
+                _create_arsrapport_schema()
+            return
 
 
 def _run_migrations():
