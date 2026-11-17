@@ -213,8 +213,9 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
 - `sender_authenticated`: för en mejlad post `true` när Gmail har godkänt avsändaradressens domän (SPF
   eller DKIM, samma kontroll som kvittot) och annars `false`; `null` för en uppladdning. Mejlen om posten
   (`inlasning.klar`, `inlasning.ofullstandig`, `inlasning.paminnelse`) går till en mejlad posts adress
-  bara när den är `true`, så att en förfalskad avsändare aldrig får kön att mejla någon annan. Visa till
-  exempel "Avsändaren är inte bekräftad" när den är `false`.
+  bara när den är `true`, så att en förfalskad avsändare aldrig får kön att mejla någon annan. Foton som
+  en länk skickat genom årsrapporten (en uppladdning utan konto) har länkens medlem som `member`, och
+  mejlen går dit. Visa till exempel "Avsändaren är inte bekräftad" när den är `false`.
 - `maybe_blurry`: något dokument har varningen `suddig` (kön visar "kan vara oskarp").
 - `documents` och `documents_done`: antal dokument och antal klara eller avfärdade.
 
@@ -1186,7 +1187,8 @@ huvudmedlem i matrikeln. Finns en kopia är den det enda som blir kvar, med säl
 täckt.
 
 Det personen själv har skickat in raderas också: poster där personen är den matchade avsändaren av ett
-mejl (`member`) och poster som personens konto har laddat upp. En sådan post som inte har lagt något på
+mejl eller den som skickade (`member`, också foton som skickats med personens årsrapportlänk) och poster
+som personens konto har laddat upp. En sådan post som inte har lagt något på
 en kanin raderas med sina filer. En post som har det står kvar utan original, text och
 `sender_address`, och mejl till avsändaren som ännu inte har gått stoppas (`cancelled`), och mejlkön
 glömmer adressen.

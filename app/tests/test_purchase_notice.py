@@ -8,6 +8,7 @@ isort:skip_file
 """
 
 import io
+import os
 import threading
 import time
 from datetime import date, timedelta
@@ -19,6 +20,7 @@ import utils.herd_tracking as herd_tracking
 import utils.inbox as inbox
 import utils.inbox_interpreter as interpreter
 import utils.mail as mail
+import utils.matrikel as matrikel
 import utils.purchase_notice as purchase_notice
 import utils.report_code as report_code
 import utils.sale_proposal as sale_proposal
@@ -802,10 +804,36 @@ class PurchaseNoticeTest(ArsrapportTest):
         response = self.send(uploaded)
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         (item,) = self.uploads()
-        self.assertEqual((item.herd_id, item.sender_user_id), (self.h.id, None))
+        self.assertEqual((item.herd_id, item.sender_user_id, item.member_id), (self.h.id, None, self.code.member_id))
         (event,) = item.events
-        self.assertEqual((event.user_id, event.detail), (None, {"via": "länk G9001/2025", "documents": 1}))
+        detail = {"via": "länk G9001/2025", "access_code_id": self.code.id, "documents": 1}
+        self.assertEqual((event.user_id, event.detail), (None, detail))
         self.assertIn(self.helper.id, self.heard(item))
+
+    def test_a_link_sent_case_mails_its_member_when_it_is_done(self):
+        """Codex P1: the queue's mails about a link's sent photos go to the member the link went to."""
+        self.open_link(self.code)
+        uploaded = self.upload(purpose="inskick")
+        item_id = self.send(uploaded).get_json()["id"]
+        self.login("man")
+        self.assertEqual(self.client.post(f"/api/v2/inkorg/{item_id}/ta", json={}).status_code, 200)
+        path = f"/api/v2/inkorg/{item_id}/dokument/{uploaded['document_id']}"
+        self.assertEqual(self.client.patch(path, json={"dismissed": True}).status_code, 200)
+        (row,) = db.MailMessage.select().where(db.MailMessage.kind == "inlasning.klar")
+        self.assertEqual((row.recipient_kind, row.recipient_id), ("member", self.code.member_id))
+        self.assertEqual(mail.RECIPIENT_KINDS["member"](row.recipient_id).address, "g1@example.invalid")
+        self.assertEqual(mail.MAIL_KINDS["inlasning.klar"].build(row.params)["account"], False)  # the mail is built
+
+    def test_erasing_the_links_member_removes_its_sent_photos(self):
+        """Codex P1: an erasure of the member the link went to finds the photos sent through it, and their files go."""
+        self.open_link(self.code)
+        uploaded = self.upload(purpose="inskick")
+        item_id = self.send(uploaded).get_json()["id"]
+        original = os.path.join(self.folder, db.InboxDocument.get_by_id(uploaded["document_id"]).original_path)
+        self.assertTrue(os.path.exists(original))
+        matrikel.anonymize_person(db.Member.get_by_id(self.code.member_id), self.admin)
+        self.assertFalse(db.InboxItem.select().where(db.InboxItem.id == item_id).exists())
+        self.assertFalse(os.path.exists(original))
 
     def test_a_retry_needs_its_receipt_and_reveals_nothing_of_another_case(self):
         """

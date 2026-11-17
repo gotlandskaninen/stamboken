@@ -549,12 +549,15 @@ def retention_start(item):
 def mail_sender(item, kind, params, **options):
     """
     Queues `kind` to the item's uploader, or else to the address a mailed item came from, but only when Gmail
-    authenticated it: a forged From must never make us mail its victim. None without either.
+    authenticated it: a forged From must never make us mail its victim. An upload with no account (a link's, S7) goes
+    to its `member`; a mail's `member` is matched from its From, so never that. None without any.
     """
     if item.sender_user_id is not None:
         recipient = ("user", item.sender_user_id)
     elif item.sender_address and item.sender_authenticated:
         recipient = ("inbox_sender", item.id)
+    elif item.kind == "upload" and item.member_id is not None:
+        recipient = ("member", item.member_id)
     else:
         return None
     options.update(ref=("inbox_item", item.id), herd=item.herd_id, genebank=item.genebank_id)

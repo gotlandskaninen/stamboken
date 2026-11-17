@@ -246,8 +246,9 @@ def send_photos(herd, round_, access, user, *, number, from_herd, date, document
     (`photos`, their items). As if the buyer had mailed them: an ordinary upload of the herd (`kind` "upload", no
     ref_type, so the queue registers and transfers from it), its certificates read as usual, the purchase's fields in
     `ref_data`, and the queue's workers told once. Written as a notice is, while the round is open; `user` is the
-    account or the link, which the item's history names. The same request again, by the same actor from the session
-    that uploaded the photos and for the same year, answers with the item (its receipt); any other runs every check.
+    account or the link, which the item's history names, and a link's item has the member it went to as `member`. The
+    same request again, by the same actor from the session that uploaded the photos and for the same year, answers
+    with the item (its receipt); any other runs every check.
     """
     year = round_.report_year
     number = number.strip().upper() if isinstance(number, str) else ""
@@ -289,6 +290,7 @@ def send_photos(herd, round_, access, user, *, number, from_herd, date, document
             genebank=herd.genebank_id,
             herd=herd.id,
             sender_user=None if by_link else user.id,
+            member=access.code.member_id if by_link else None,  # the link's: its mails go there, an erasure finds it
             ref_data={
                 "number": number,
                 "from_herd": seller,
@@ -305,8 +307,8 @@ def send_photos(herd, round_, access, user, *, number, from_herd, date, document
             )
             moved.where(InboxDocument.id == document_id).execute()
         InboxItem.delete().where(InboxItem.id.in_(held)).execute()  # the photos' own items, empty now
-        # the link has no account: its name goes in the history, as on a notice
-        detail = {"via": user.username} if by_link else {}
+        # the link has no account: its name and code go in the history, as a report photo's code does
+        detail = {"via": user.username, "access_code_id": access.code.id} if by_link else {}
         inbox.log_event(item, None if by_link else user.id, "inkommen", documents=len(types), **detail)
         inbox._notify_workers(item, None if by_link else user)  # pylint: disable=protected-access
     return item
