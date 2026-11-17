@@ -111,11 +111,11 @@ body {
 }
 .cert-nr .num {
   font-family: var(--serif);
-  font-size: 17pt; font-weight: 400;
+  font-size: 17pt; font-weight: 600;
   color: var(--ink);
   line-height: 1.1;
 }
-.cert-nr .num b { font-weight: 600; }
+.cert-nr .gm { background: #F2E4C2; border-radius: 0.6mm; padding: 0 0.5mm; margin-right: 0.3mm; }  /* G or M, sand as the first box on paper */
 .fields td.vname { font-family: var(--serif); font-size: 11pt; font-weight: 600; }  /* as the parents' names */
 .head-mid .breed { font-size: 10.5pt; }
 .cert-nr .lbl { font-family: var(--sans); font-size: 8.5pt; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--ink); }
@@ -293,7 +293,7 @@ h1, .sec, .breed { color:var(--skog) !important; }
       <h1>Genbanksintyg</h1>
       <p class="breed">Ras: {{ breed }}</p>
     </div>
-    <div class="cert-nr"><div class="lbl">Kaninens individnummer</div><div class="num"><b>{{ genebank_number }}</b>-{{ genebank_aki }}</div></div>
+    <div class="cert-nr"><div class="lbl">Kaninens individnummer</div><div class="num"><span class="gm">{{ genebank_number[:1] }}</span>{{ genebank_number[1:] }}-{{ genebank_aki }}</div></div>
   </div>
   <div class="rule top"></div>
   <div class="microline">{% for _ in range(14) %}Föreningen Gotlandskaninen · Genbanksintyg {{ digital_certificate }} · {{ doc_hash_stub }} · {{ genebank_number }}-{{ genebank_aki }} · Verifiera på gotlandskaninen.se · {% endfor %}</div>

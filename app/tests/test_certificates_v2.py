@@ -222,7 +222,8 @@ class TestPedigreeTemplateV2(unittest.TestCase):
         self.assertIn('<p class="breed">Ras: Mellerudskanin</p>', html)
 
     def test_individual_number_in_one_field(self):
-        self.assertIn("G1274-2301", self._html())
+        # the whole number in one weight, the letter marked as on the paper's first box
+        self.assertIn('<div class="num"><span class="gm">G</span>1274-2301</div>', self._html())
 
     def test_microline_carries_number_and_checksum(self):
         html = self._html(digital_certificate="345", doc_hash_stub="ABCD1234")
