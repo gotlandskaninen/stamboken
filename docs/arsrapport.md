@@ -142,13 +142,14 @@ med anmälan.
 sessionen som andra foton genom rapporten). `doc_type` är `"intyg"` eller `"bevis"`. Fotona blir en
 vanlig post i kön, `kind` `upload` utan `ref_type`, för besättningen och med kontot som avsändare
 (länken står i historiken, `via` och `access_code_id`, och länkens medlem är postens `member`, dit
-köns mejl om posten går och som en radering hittar), som om köparen mejlat dem. Köpets fält står i `ref_data`:
-`{number, from_herd, date, receipt}`. Intyget läses av bildmodellen som andra intyg, och köns arbetare får
-notisen `ny_post` en gång. Genbanksansvarig eller en hjälpare registrerar kaninen i
-ursprungsbesättningen och för över den till köparen genom kön. Svaret är `{id, number, from_herd,
-date, state}`. Samma begäran igen svarar med posten bara när den kommer från samma konto eller länk,
-i den session som laddade upp fotona, för samma besättning och år och med samma innehåll: kvittot
-`receipt` är fotonas egna poster och en hash av begäran. Alla andra begäranden kontrolleras som nya.
+köns mejl om posten går och som en radering hittar), som om köparen mejlat dem. Köpets fält står
+i `ref_data`: `{number, from_herd, date, receipt}`. Intyget läses av bildmodellen som andra intyg,
+och köns arbetare får notisen `ny_post` en gång. Genbanksansvarig eller en hjälpare registrerar
+kaninen i ursprungsbesättningen och för över den till köparen genom kön. Svaret är `{id, number,
+from_herd, date, state}`. Samma begäran igen svarar med posten bara när den kommer från samma
+konto eller länk, i den session som laddade upp fotona, för samma besättning och år och med samma
+innehåll: kvittot `receipt` är fotonas egna poster och en hash av begäran. Alla andra begäranden
+kontrolleras som nya.
 
 - Ett nummer som finns i genbanken ger 409 (det är en anmälan), saknat foto 400 med `field`
   `photo`, och sessionens regler för foton gäller som för anmälan (403, 409).
