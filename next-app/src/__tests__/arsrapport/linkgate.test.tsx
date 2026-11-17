@@ -166,6 +166,21 @@ describe("LinkGate", () => {
     );
   });
 
+  it("the script keeps a token whose hash is rewritten between popstate and hashchange", () => {
+    history.replaceState(null, "", "/rapport?kod=2");
+    delete (window as { __rapportToken?: string }).__rapportToken;
+    new Function(CLEAR_HASH_SCRIPT)();
+    history.pushState(null, "", "/rapport?kod=2#6.inpage");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    // A React commit before hashchange: Next writes its canonical address back, without the hash.
+    history.replaceState(null, "", "/rapport?kod=2");
+    window.dispatchEvent(new HashChangeEvent("hashchange"));
+    expect(location.hash).toBe("");
+    expect((window as { __rapportToken?: string }).__rapportToken).toBe(
+      "6.inpage",
+    );
+  });
+
   it("the script does nothing on other pages", () => {
     history.replaceState(null, "", "/stamboken#section");
     new Function(CLEAR_HASH_SCRIPT)();
