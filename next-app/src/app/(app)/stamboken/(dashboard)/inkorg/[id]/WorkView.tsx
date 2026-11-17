@@ -661,6 +661,13 @@ export function WorkView({
               )}
             </p>
           )}
+          {item.kind === "upload" && item.ref_data && (
+            // a bought rabbit Stamboken lacks (S7): register it in its birth herd, then transfer it to the buyer
+            <p className={styles.note}>
+              Köpt av {item.herd}: {item.ref_data.number} från{" "}
+              {item.ref_data.from_herd}, {fmtDate(item.ref_data.date)}.
+            </p>
+          )}
           {doc &&
             !saving &&
             !checking &&

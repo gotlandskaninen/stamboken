@@ -117,12 +117,12 @@ export interface InboxDetail extends Omit<InboxItem, "documents"> {
   registered?: Partial<Record<keyof CertForm, string | number | null>> | null;
   /** A sale proposal's round year, or that of the proposal a purchase notice matches. Null for other items. */
   report_year?: number | null;
-  /** A purchase notice's fields (ref_type "kopanmalan"); null for other items. */
+  /** A purchase notice's fields (ref_type "kopanmalan"), or a bought rabbit's sent photos (an upload, S7). */
   ref_data?: {
     number: string;
     from_herd: string;
     date: string;
-    individual_id: number;
+    individual_id?: number; // a notice's only: sent photos are of a rabbit Stamboken lacks
   } | null;
 }
 

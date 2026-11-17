@@ -493,6 +493,29 @@ describe("WorkView: a sale proposal", () => {
   });
 });
 
+describe("WorkView: a bought rabbit's sent photos (S7)", () => {
+  it("shows the purchase beside an ordinary upload, which the queue works on", () => {
+    const sent = item({
+      kind: "upload",
+      state: "ny",
+      assigned_to: null,
+      herd: "G9001",
+      documents: [doc({ doc_type: "intyg", status: "ny" })],
+      ref_data: {
+        number: "G9002-2511",
+        from_herd: "G9002",
+        date: "2025-05-14",
+      },
+    });
+    render(view(sent, boss, false, 2026));
+    expect(
+      screen.getByText(/Köpt av G9001: G9002-2511 från G9002, 14 maj 2025/),
+    ).toBeTruthy();
+    expect(screen.queryByText(/Ärendet gäller/)).toBeNull();
+    expect(screen.queryByText(/Anmält köp/)).toBeNull();
+  });
+});
+
 describe("WorkView: a purchase notice (4a Task 5)", () => {
   const notice = item({
     kind: "kontroll",

@@ -47,6 +47,40 @@ export interface PurchaseNotice {
   state: string;
 }
 
+// "Skicka till genbanksansvarig" (S7): the body of …/kop/inskick, a rabbit
+// Stamboken lacks, with the photos this session uploaded with syfte=inskick.
+export interface PurchasePhotosBody {
+  number: string;
+  from_herd: string;
+  date: string;
+  documents: { id: number; doc_type: "bevis" | "intyg" }[];
+}
+
+// "Ärenden hos genbanksansvarig" (S8): one queue item that concerns the report.
+export interface ReportCase {
+  id: number;
+  what: "inskick" | "kop_saknas" | "kopanmalan" | "foto" | "forsaljning";
+  number: string | null;
+  photos: number;
+  state: "tolkas" | "vantar" | "arbetar" | "klart";
+}
+
+export const CASE_STATE_TEXT: Record<ReportCase["state"], string> = {
+  tolkas: "Väntar på att fotot läses",
+  vantar: "Väntar på genbanksansvarig",
+  arbetar: "Genbanksansvarig arbetar med det",
+  klart: "Klart",
+};
+
+export function caseText(c: ReportCase): string {
+  const n = c.number ?? "";
+  if (c.what === "kop_saknas") return `Köpt kanin finns inte i registret: ${n}`;
+  if (c.what === "kopanmalan") return `Anmält köp: ${n}`;
+  if (c.what === "foto") return n ? `Foto av intyget: ${n}` : "Foto av intyget";
+  if (c.what === "forsaljning") return `Försäljning av ${n}`;
+  return `Inskick med ${c.photos} ${c.photos === 1 ? "foto" : "foton"}`;
+}
+
 // "Kullar under Y": one litter of the herd; `preliminary` while the 6-week count is still the count born.
 export interface Litter {
   id: number;
@@ -184,6 +218,7 @@ export interface ReportView {
   }[];
   // The herd's purchase notices dated in the year.
   kopanmalningar: PurchaseNotice[];
+  arenden: ReportCase[];
   herds: string[];
   report: null | {
     id: number;
@@ -353,8 +388,6 @@ export const PENDING_SALE_TEXT =
   "Försäljningen väntar på genbanksansvarig. Kaninen står kvar hos dig tills den är godkänd.";
 export const PURCHASE_SENT_TEXT =
   "Anmälan är skickad till genbanksansvarig. Kaninen kommer in i din besättning när köpet är registrerat.";
-export const NOT_IN_STAMBOKEN_TEXT =
-  "Finns kaninen inte i Stamboken? Kontakta genbanksansvarig, som registrerar den från intyget.";
 export const TIMEOUT_TEXT =
   "Vi vet inte om rapporten kom fram. Tryck Försök igen. Den skickas inte två gånger.";
 

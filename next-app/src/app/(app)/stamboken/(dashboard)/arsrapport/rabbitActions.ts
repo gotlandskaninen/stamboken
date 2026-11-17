@@ -76,11 +76,12 @@ export async function uploadPhoto(
   year: number,
   data: FormData,
   env?: Mode,
-  purpose?: "kop", // a purchase notice's photo, which is never read
+  // a purchase notice's photo, which is never read, or a bought rabbit's that is sent to the queue (S7)
+  purpose?: "kop" | "inskick",
 ) {
   return call<{ item_id: number; document_id: number }>(
     env,
-    path(herd, year, purpose === "kop" ? "/foto?syfte=kop" : "/foto"),
+    path(herd, year, purpose ? `/foto?syfte=${purpose}` : "/foto"),
     { method: "POST", body: data, timeout: 60000 },
   );
 }

@@ -10,6 +10,7 @@ import {
   getMothers,
   reportPurchase,
   saveDraft,
+  sendPurchasePhotos,
   submitReport,
   withdrawReport,
 } from "../../actions";
@@ -59,6 +60,7 @@ export default async function ReportPage({
           submitReport,
           withdrawReport,
           reportPurchase,
+          sendPurchasePhotos,
           getGenebankHerds,
           addLitter,
           changeLitter,
@@ -79,6 +81,7 @@ export default async function ReportPage({
         submitReport,
         withdrawReport,
         reportPurchase,
+        sendPurchasePhotos,
         getGenebankHerds,
         addLitter,
         changeLitter,

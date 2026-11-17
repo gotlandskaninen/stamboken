@@ -11,6 +11,7 @@ import {
   getReport,
   reportPurchase,
   saveDraft,
+  sendPurchasePhotos,
   submitReport,
   withdrawReport,
 } from "./actions";
@@ -29,6 +30,7 @@ const actions = {
   getFathers,
   getMothers,
   reportPurchase,
+  sendPurchasePhotos,
 };
 
 // The page behind a member's personal link. The server renders from the code session in the cookie; LinkGate, in the

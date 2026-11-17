@@ -10,6 +10,7 @@ import {
   type Litter,
   type LitterBody,
   type PurchaseBody,
+  type PurchasePhotosBody,
   type PurchaseNotice,
   type Receipt,
   type ReportView,
@@ -145,6 +146,14 @@ export async function reportPurchase(
   body: PurchaseBody,
 ) {
   return call<PurchaseNotice>(path(herd, year, "/kop"), "POST", body);
+}
+
+export async function sendPurchasePhotos(
+  herd: string,
+  year: number,
+  body: PurchasePhotosBody,
+) {
+  return call<PurchaseNotice>(path(herd, year, "/kop/inskick"), "POST", body);
 }
 
 // The sale dialog's herd picker: the report herd's genebank, as the logged-in picker has it (4a). The page binds

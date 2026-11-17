@@ -20,6 +20,7 @@ import {
 import {
   PENDING_SALE_TEXT,
   type Receipt,
+  type ReportCase,
   type ReportView,
   type Submission,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
@@ -58,6 +59,7 @@ const actions = (): {
     submitReport: vi.fn(() => ok(receipt)),
     withdrawReport: vi.fn(),
     reportPurchase: vi.fn(),
+    sendPurchasePhotos: vi.fn(),
     // the genebank's herds, as GET /v2/genebank/<id>/herds lists them
     getGenebankHerds: vi.fn(() =>
       Promise.resolve({
@@ -158,22 +160,6 @@ describe("ReportForm", () => {
         rabbit(1),
         rabbit(2, { kopt: { datum: "2026-05-14", fran: "G9002" } }),
       ],
-      kopanmalningar: [
-        {
-          id: 5,
-          number: "G9002-77",
-          from_herd: "G9002",
-          date: "2026-06-01",
-          state: "ny",
-        },
-        {
-          id: 6,
-          number: "G9002-78",
-          from_herd: "G9002",
-          date: "2026-06-02",
-          state: "klar",
-        },
-      ],
     });
     const a = actions();
     a.reportPurchase.mockReturnValue(
@@ -189,9 +175,6 @@ describe("ReportForm", () => {
     fireEvent.click(screen.getByRole("button", { name: "Köpta" }));
     expect(screen.queryByRole("group", { name: /G9001-1\b/ })).toBeNull();
     expect(within(row(2)).getByText("Köpt 14 maj")).toBeTruthy();
-    // an open notice is shown as waiting; a registered one is the rabbit's row
-    expect(screen.getByText(/Anmält köp: G9002-77, 1 juni 2026/)).toBeTruthy();
-    expect(screen.queryByText(/G9002-78/)).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: "Anmäl köpet" }));
     fireEvent.change(screen.getByLabelText("Kaninens nummer"), {
       target: { value: "G9002-79" },
@@ -209,6 +192,59 @@ describe("ReportForm", () => {
       "demo",
     );
     expect(refresh).toHaveBeenCalled();
+  });
+
+  it("lists the herd's cases with the queue in plain words (S8)", () => {
+    const arenden: ReportCase[] = [
+      {
+        id: 9,
+        what: "kop_saknas",
+        number: "G9002-2511",
+        photos: 2,
+        state: "tolkas",
+      },
+      {
+        id: 8,
+        what: "kopanmalan",
+        number: "G9002-77",
+        photos: 0,
+        state: "vantar",
+      },
+      {
+        id: 7,
+        what: "forsaljning",
+        number: "G9001-1",
+        photos: 0,
+        state: "arbetar",
+      },
+      { id: 6, what: "foto", number: "G9001-3", photos: 1, state: "vantar" },
+      { id: 5, what: "inskick", number: null, photos: 1, state: "klart" },
+    ];
+    const { unmount } = render(
+      <ReportForm env="demo" view={view({ arenden })} actions={actions()} />,
+    );
+    const card = screen
+      .getByRole("heading", {
+        name: "Ärenden hos genbanksansvarig",
+      })
+      .closest("section")!;
+    expect(
+      within(card as HTMLElement)
+        .getAllByRole("listitem")
+        .map((li) => li.textContent),
+    ).toEqual([
+      "Ärende 9 · Köpt kanin finns inte i registret: G9002-2511 · Väntar på att fotot läses",
+      "Ärende 8 · Anmält köp: G9002-77 · Väntar på genbanksansvarig",
+      "Ärende 7 · Försäljning av G9001-1 · Genbanksansvarig arbetar med det",
+      "Ärende 6 · Foto av intyget: G9001-3 · Väntar på genbanksansvarig",
+      "Ärende 5 · Inskick med 1 foto · Klart",
+    ]);
+    unmount();
+    // nothing with the queue: no section
+    render(<ReportForm env="demo" view={view()} actions={actions()} />);
+    expect(
+      screen.queryByRole("heading", { name: "Ärenden hos genbanksansvarig" }),
+    ).toBeNull();
   });
 
   it("offers only active herds of the genebank but the seller's own and GX1, and sends the herd code", async () => {

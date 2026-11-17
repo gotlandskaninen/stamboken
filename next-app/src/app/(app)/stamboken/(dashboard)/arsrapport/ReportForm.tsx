@@ -8,8 +8,9 @@ import { MbCard } from "../min-besattning/min-besattning-ui";
 import type * as Actions from "./actions";
 import type { getGenebankHerds } from "../individ/[number]/actions";
 import type { ActionResult } from "../inkorg/actions";
-import { CLOSED_STATES, type ItemState } from "../inkorg/lib";
 import {
+  CASE_STATE_TEXT,
+  caseText,
   CONFLICT_TEXT,
   DISEASES,
   EMPTY_ENTRY,
@@ -61,7 +62,12 @@ import styles from "./arsrapport.module.css";
 
 export type ReportActions = Pick<
   typeof Actions,
-  "saveDraft" | "dryRun" | "submitReport" | "withdrawReport" | "reportPurchase"
+  | "saveDraft"
+  | "dryRun"
+  | "submitReport"
+  | "withdrawReport"
+  | "reportPurchase"
+  | "sendPurchasePhotos"
 > & { getGenebankHerds: typeof getGenebankHerds } & Partial<
     // the sale and purchase dialogs' herd picker
     Pick<
@@ -1712,14 +1718,6 @@ export function ReportForm({
             )}
             {!isPaper && canNotify && (
               <div className={styles.detail}>
-                {view.kopanmalningar
-                  .filter((n) => !CLOSED_STATES.includes(n.state as ItemState))
-                  .map((n) => (
-                    <p key={n.id} className={styles.meta}>
-                      Anmält köp: {n.number}, {fmtDate(n.date)}. Väntar på
-                      genbanksansvarig.
-                    </p>
-                  ))}
                 <p className={styles.line}>
                   <span>Saknas ett köp?</span>
                   <button
@@ -1773,6 +1771,19 @@ export function ReportForm({
                   )}
                 </div>
               )}
+
+            {!isPaper && view.arenden.length > 0 && (
+              // S8: what the queue still has for the herd, also after the round has closed
+              <MbCard title="Ärenden hos genbanksansvarig">
+                <ul className={styles.cardList}>
+                  {view.arenden.map((c) => (
+                    <li key={c.id}>
+                      Ärende {c.id} · {caseText(c)} · {CASE_STATE_TEXT[c.state]}
+                    </li>
+                  ))}
+                </ul>
+              </MbCard>
+            )}
 
             <MbCard title={`Kullar under ${year}`}>
               {litters.length === 0 ? (
@@ -2174,8 +2185,11 @@ export function ReportForm({
         ownHerd={herd.herd}
         loadHerds={actions.getGenebankHerds}
         send={(body) => actions.reportPurchase(herd.herd, year, body, env)}
-        upload={(data) =>
-          uploadPhoto(herd.herd, year, data, link ? undefined : env, "kop")
+        sendPhotos={(body) =>
+          actions.sendPurchasePhotos(herd.herd, year, body, env)
+        }
+        upload={(data, purpose) =>
+          uploadPhoto(herd.herd, year, data, link ? undefined : env, purpose)
         }
         onSent={() => router.refresh()}
         onClose={() => setBuying(false)}

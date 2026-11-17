@@ -182,9 +182,11 @@ describe("the link's herd picker", () => {
 describe("the report's photo upload", () => {
   it("names a purchase notice's photo, which the server never reads", async () => {
     await uploadPhoto("G9001", 2025, new FormData(), undefined, "kop");
+    await uploadPhoto("G9001", 2025, new FormData(), undefined, "inskick");
     await uploadPhoto("G9001", 2025, new FormData());
     expect(fetchApi.mock.calls.map((c) => c[0])).toEqual([
       "/v2/arsrapport/besattning/G9001/2025/foto?syfte=kop",
+      "/v2/arsrapport/besattning/G9001/2025/foto?syfte=inskick",
       "/v2/arsrapport/besattning/G9001/2025/foto",
     ]);
   });

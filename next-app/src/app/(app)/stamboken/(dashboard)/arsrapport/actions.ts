@@ -11,6 +11,7 @@ import {
   type Litter,
   type LitterBody,
   type PurchaseBody,
+  type PurchasePhotosBody,
   type PurchaseNotice,
   type Receipt,
   type ReportView,
@@ -217,6 +218,21 @@ export async function reportPurchase(
   env: Mode,
 ) {
   return call<PurchaseNotice>(env, path(herd, year, "/kop"), "POST", body);
+}
+
+// "Skicka till genbanksansvarig": photos of a bought rabbit Stamboken lacks, to the queue (S7).
+export async function sendPurchasePhotos(
+  herd: string,
+  year: number,
+  body: PurchasePhotosBody,
+  env: Mode,
+) {
+  return call<PurchaseNotice>(
+    env,
+    path(herd, year, "/kop/inskick"),
+    "POST",
+    body,
+  );
 }
 
 const DATE = /^\d{4}-\d{2}-\d{2}$/;

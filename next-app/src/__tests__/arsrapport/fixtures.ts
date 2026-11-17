@@ -48,6 +48,7 @@ export const view = (over: Partial<ReportView> = {}): ReportView => ({
   sales: [],
   forslag: [],
   kopanmalningar: [],
+  arenden: [],
   herds: ["G9002"],
   report: null,
   draft: null,
