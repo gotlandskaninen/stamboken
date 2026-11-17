@@ -18,6 +18,7 @@ from herdbook import APP, limiter  # noqa: E402
 from peewee import IntegrityError  # noqa: E402
 from utils import buyer_contact  # noqa: E402
 from utils.herd_tracking import (  # noqa: E402
+    UNDO_REASON,
     HerdTrackingConflict,
     HerdTrackingInvalid,
     correct_herd_tracking,
@@ -459,14 +460,18 @@ class TestVoid(BuyerBase):
 
     def test_the_reason_never_names_the_buyer(self):
         with self.assertRaises(HerdTrackingInvalid):
-            void_herd_tracking(self.sale.id, self.owner, f"Såld till {NAME.upper()} av misstag")
+            void_herd_tracking(self.sale.id, self.manager, f"Såld till {NAME.upper()} av misstag")
         self.assertIsNotNone(self._contact(self.contact_id))
+
+    def test_the_sellers_reason_is_the_systems(self):  # one who may not see the buyer gets no answer to a guess
+        void_herd_tracking(self.sale.id, self.owner, f"Såld till {NAME.upper()} av misstag")
+        self.assertEqual(db.HerdTracking.get_by_id(self.sale.id).voided_reason, UNDO_REASON)
 
     def test_the_name_guard_takes_whole_words_of_typed_text_only(self):
         db.BuyerContact.update(name="Anna de Berg").where(db.BuyerContact.id == self.contact_id).execute()
         for reason in ("Såld till Anna", "Annas kanin", "såld till anna de berg"):
             with self.subTest(reason=reason), self.assertRaises(HerdTrackingInvalid):
-                void_herd_tracking(self.sale.id, self.owner, reason)
+                void_herd_tracking(self.sale.id, self.manager, reason)
         event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", "notes": "köpt av anna"}
         with self.assertRaises(HerdTrackingInvalid):  # a correction's notes too
             correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [event], "Fel datum")
@@ -484,7 +489,7 @@ class TestVoid(BuyerBase):
         db.BuyerContact.update(name="Li-Bo").where(db.BuyerContact.id == self.contact_id).execute()
         for reason in ("Såld till Li-Bo", "Li-Bos kanin", "li bo"):
             with self.subTest(reason=reason), self.assertRaises(HerdTrackingInvalid):
-                void_herd_tracking(self.sale.id, self.owner, reason)
+                void_herd_tracking(self.sale.id, self.manager, reason)
 
     def test_the_undo_commands_own_reason_is_never_checked(self):
         db.BuyerContact.update(name="Van Den Berg").where(db.BuyerContact.id == self.contact_id).execute()
@@ -496,7 +501,7 @@ class TestVoid(BuyerBase):
         execute(self.manager, self.rabbit.id, lambda ctx: [Undo(op)])
         self.assertEqual(self._latest().id, self.sale.id)
         with self.assertRaises(HerdTrackingInvalid):  # typed by a user, the same word is refused
-            void_herd_tracking(self.sale.id, self.owner, "den köparen ångrade sig")
+            void_herd_tracking(self.sale.id, self.manager, "den köparen ångrade sig")
 
     def test_a_system_reason_is_never_checked(self):
         db.BuyerContact.update(name="Avpromoverad").where(db.BuyerContact.id == self.contact_id).execute()

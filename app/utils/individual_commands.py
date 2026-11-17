@@ -42,6 +42,7 @@ from utils.herd_tracking import (
     BIRTH_HERD_CHANGED_REASON,
     CONTACT_MANAGER,
     REPORT_ROW,
+    UNDO_REASON,
     HerdTrackingConflict,
     HerdTrackingError,
     HerdTrackingForbidden,
@@ -989,7 +990,6 @@ class IssueDigitalCertificate(PolicyCommand):
 
 UNDO_WINDOW = timedelta(days=7)  # as undoing a sale or an attestation in herd-tracking
 UNDOABLE = frozenset({"EditDescription", "RecordDeath", "ClearFields", "RecordAttestation"})
-UNDO_REASON = "Ångrad av den som registrerade den"
 REPORT_UNDO_REASON = "Årsrapporten ändrades eller drogs tillbaka"
 # The TextFields of FORM_WRITABLE_FIELDS; not name, the rabbit's name.
 FREE_TEXT_FIELDS = ("notes", "hair_notes", "color_note", "death_note", "eye_color", "claw_color", "belly_color")

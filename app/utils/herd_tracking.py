@@ -40,6 +40,7 @@ from utils.database import (
 from utils.mail import forget_recipient
 
 UNPROMOTE_REASON = "avpromoverad"
+UNDO_REASON = "Ångrad av den som registrerade den"
 
 
 class HerdTrackingError(ValueError):
@@ -729,7 +730,8 @@ def void_herd_tracking(ht_id, user, reason, operation_id=None, typed=True, *, re
     a replayed operation returns the row it voided; an already voided row is a no-op.
     Checks I1–I5 afterwards. Callers must gate READ access first: the idempotent
     replay returns before the permission check. `typed`: the reason is a user's text (checked against the buyer's
-    name), not a system reason. With `report_ops` (a frozenset of str operation ids), the
+    name), not a system reason; from one who may not see the buyers (can_see_buyer) it is UNDO_REASON instead, as
+    Access.reads_buyers strips the report's. With `report_ops` (a frozenset of str operation ids), the
     yearly report's right replaces the void table: only utils.arsrapport passes them, once it has checked it.
     With `keep_buyer_until` (a timestamp, Dra tillbaka's K1 and K2) a buyer no active row holds any more stays,
     held by the voided row only, with that purge_at.
@@ -756,6 +758,9 @@ def void_herd_tracking(ht_id, user, reason, operation_id=None, typed=True, *, re
             denial = report_void_denial(user, row, before, individual, report_ops)
         if denial:
             raise HerdTrackingForbidden(denial)
+        if typed and not can_see_buyer(user, _row_genebank_id(row, individual)):
+            # A seller's own row (void_denial): its text is never checked against the buyers, so it answers no guess
+            cleaned, typed = UNDO_REASON, False
         if typed:
             _reject_buyer_name([cleaned], [individual.id])
         voided = _void_rows([row], user, cleaned, op)

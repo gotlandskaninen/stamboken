@@ -363,6 +363,41 @@ class KeptBuyerTest(ArsrapportTest):
         stored += [json.dumps(row.data) for row in db.YearlyReportSubmission.select()]
         self.assertFalse([text for text in stored if text and "Zelda" in text])
 
+    def test_a_seller_cannot_probe_the_kept_buyer_through_a_void(self):  # Codex P1: the shared void's system reason
+        self.sold_and_withdrawn()
+        self.caretaker()
+        owner = db.User.get_by_id(self.owner.id)
+
+        def attested():  # an ordinary attestation through the rabbit page's PATCH
+            response = self.client.patch(
+                f"/api/individual/{self.a.number}", json={"herd": "G9001", "yearly_report_date": "2026-01-10"}
+            )
+            self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+            (row,) = db.HerdTracking.select().where(
+                db.HerdTracking.individual == self.a.id,
+                db.HerdTracking.kind == "ATTESTATION",
+                db.HerdTracking.voided_at.is_null(),
+            )
+            return row.id
+
+        def sold():  # the owner's own sale outside the genebank, on the rabbit page
+            record_sale(owner, self.a.id, "GX1", "2026-01-10", buyer=OTHER)
+            (row,) = sales(self.a, active=True)
+            return row.id
+
+        voided = []
+        for who, row in (("skotare", attested), ("owner", sold)):
+            self.login(who)
+            with self.subTest(who):
+                answers = []
+                for reason in ("Zelda hämtar den", "Ingen hämtar den"):
+                    voided.append(row())
+                    response = self.client.post(f"/api/v2/herd-tracking/{voided[-1]}/void", json={"reason": reason})
+                    answers.append(response.status_code)
+                self.assertEqual(answers, [200, 200])
+        reasons = [db.HerdTracking.get_by_id(row_id).voided_reason for row_id in voided]
+        self.assertEqual(reasons, [herd_tracking.UNDO_REASON] * 4)  # the typed text is never stored
+
     def test_late_withdraw_keeps_nothing(self):  # after kept_until only an editor withdraws, and nothing is kept
         self.ok(self.body(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=BUYER), self.kvar(self.b, vikt=2.8)))
         self.at(KEPT_UNTIL + timedelta(hours=12))

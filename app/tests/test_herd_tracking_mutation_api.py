@@ -8,6 +8,7 @@ os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), 
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
 from herdbook import APP, limiter  # noqa: E402
+from utils.herd_tracking import UNDO_REASON  # noqa: E402
 
 from tests.database_test import DatabaseTest  # noqa: E402
 from tests.ht_helpers import age_row, ht_row  # noqa: E402
@@ -50,7 +51,7 @@ class TestUndoSaleApi(MutationBase):
         self.assertTrue(latest["can_undo_sale"])
         response = self._void(latest["id"])
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
-        self.assertEqual(response.get_json()["rows"][0]["voided_reason"], "Fel köpare")
+        self.assertEqual(response.get_json()["rows"][0]["voided_reason"], UNDO_REASON)  # the seller's typed text goes
         individual = self.client.get(f"/api/v2/individual/{REGISTERED}").get_json()
         self.assertEqual(individual["herd"]["herd"], "G1")
         again = self._sell("G3")
