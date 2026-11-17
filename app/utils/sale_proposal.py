@@ -234,11 +234,14 @@ def decisions(report) -> list[dict]:
     """
     The status view's sale dialog (5.9), for the genebank's manager or admin: the report's pending proposals, a buyer
     outside the genebank by name and town only, and whether the buyer has reported the purchase (K7), with the buyer
-    herd's purchase notice that approving the sale settles (fråga 19).
+    herd's purchase notice that approving the sale settles (fråga 19), or one whose date does not fit the sale's.
     """
-    proposals = pending(report)
+    proposals, seller = pending(report), report.herd.herd
     notices = purchase_notice.open_notices({p.to_herd_id for p in proposals if p.to_herd_id})
-    matched = {p.id: next(iter(purchase_notice.matching(p, report.herd.herd, notices)), None) for p in proposals}
+
+    def first(found):
+        return purchase_notice.notice_json(found[0]) if found else None
+
     return [
         {
             "id": proposal.id,
@@ -251,7 +254,9 @@ def decisions(report) -> list[dict]:
             else None,
             "sale_date": proposal.sale_date.isoformat(),
             "buyer_notified_at": proposal.buyer_notified_at.isoformat() if proposal.buyer_notified_at else None,
-            "kopanmalan": purchase_notice.notice_json(matched[proposal.id]) if matched[proposal.id] else None,
+            "kopanmalan": first(purchase_notice.matching(proposal, seller, notices)),
+            # M1: the buyer's notice of the same purchase with a date too far off or across 31/12, shown with a warning
+            "kopanmalan_avviker": first(purchase_notice.mismatched(proposal, seller, notices)),
         }
         for proposal in proposals
     ]

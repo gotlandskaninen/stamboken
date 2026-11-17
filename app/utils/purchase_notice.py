@@ -3,12 +3,11 @@ Purchase notices (step 4a Task 5, fråga 19): the buyer reports a rabbit bought 
 has not moved into the herd. A notice is a `kontroll` item of the buyer herd, its fields in `ref_data` (the number,
 the seller herd's code, the date and the rabbit's id) and no personal data. The genebank's manager registers the
 transfer, or approves the seller's matching sale proposal, and the notice closes once a transfer of the rabbit into
-the herd is registered by any path.
+the herd is registered by any path, dated within 14 days of the notice and with no 31/12 between them.
 """
 
 import datetime
 from collections import Counter
-from datetime import timedelta
 
 import utils.arsrapport as arsrapport
 import utils.inbox as inbox
@@ -131,20 +130,38 @@ def report_purchase(herd, round_, access, user, *, number, from_herd, date, phot
     return item
 
 
-def _matches(proposal, seller, item):
-    """The pending sale `proposal` from the herd `seller` (a code) is the sale the notice `item` reports."""
+def _fits(moved, item):
+    """
+    A sale or transfer on `moved` is the purchase the notice `item` reports by date: at most MATCH_DAYS apart and no
+    31/12 between them (within 14 days, the same year), so a rabbit counted on one 31/12 is never another's purchase.
+    """
+    day = _day(item)
+    return abs((moved - day).days) <= MATCH_DAYS and moved.year == day.year
+
+
+def _same_purchase(proposal, seller, item):
+    """The pending sale `proposal` from the herd `seller` (a code) has the rabbit, seller and buyer of `item`."""
     data = item.ref_data
     return (
         proposal.individual_id == data["individual_id"]
         and proposal.to_herd_id == item.herd_id
         and seller == data["from_herd"]
-        and abs((proposal.sale_date - _day(item)).days) <= MATCH_DAYS
     )
+
+
+def _matches(proposal, seller, item):
+    """The pending sale `proposal` from the herd `seller` is the sale the notice `item` reports."""
+    return _same_purchase(proposal, seller, item) and _fits(proposal.sale_date, item)
 
 
 def matching(proposal, seller, items):
     """The notices among `items` that approving `proposal`, a pending sale from the herd `seller`, settles."""
     return [item for item in items if _matches(proposal, seller, item)]
+
+
+def mismatched(proposal, seller, items):
+    """The notices among `items` of the purchase `proposal` sells whose date does not fit it: approval leaves them."""
+    return [item for item in items if _same_purchase(proposal, seller, item) and not _fits(proposal.sale_date, item)]
 
 
 def _pending_of(individual_ids):
@@ -172,10 +189,10 @@ def _order(row):
 def registered(items):
     """
     The ids of the notices among `items` whose transfer is registered: an active TRANSFER of the rabbit into the
-    buyer herd, registered after the notice came in or dated at most MATCH_DAYS before the notice's date, after
-    which no active row moves the rabbit to another herd on or before that date. One that a later move ended before
-    the purchase is an earlier stay in the herd, also when it was registered after the notice, as for a rabbit bought
-    back. A pure read: the closing calls it again under the locks.
+    buyer herd whose date fits the notice's (_fits), after which no active row moves the rabbit to another herd on or
+    before that date. One that a later move ended before the purchase is an earlier stay in the herd, also when it was
+    registered after the notice, as for a rabbit bought back. Any other transfer leaves the notice open, for the
+    manager to close by hand. A pure read: the closing calls it again under the locks.
     """
     if not items:
         return set()
@@ -189,8 +206,7 @@ def registered(items):
 
     def bought(item, move):
         day, rabbit = _day(item), item.ref_data["individual_id"]
-        recent = coerce_date(move.herd_tracking_date) >= day - timedelta(days=MATCH_DAYS)
-        if not recent and (move.created_at is None or move.created_at < item.received_at):
+        if not _fits(coerce_date(move.herd_tracking_date), item):
             return False
         return not any(
             row.individual_id == rabbit

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
+  Alert,
   Button,
   Dialog,
   DialogActions,
@@ -132,6 +133,17 @@ export function SalesDialog({
                   </>
                 )}
               </p>
+            )}
+            {p.kopanmalan_avviker && (
+              // M1: the same purchase, dated more than 14 days from the sale or across 31/12
+              <Alert severity="warning" sx={{ mb: 1 }}>
+                Köparen har anmält köpet med ett annat datum,{" "}
+                {fmtDate(p.kopanmalan_avviker.date)}. Godkänn stänger inte
+                anmälan. ·{" "}
+                <Link href={`/stamboken/inkorg/${p.kopanmalan_avviker.id}`}>
+                  Visa anmälan
+                </Link>
+              </Alert>
             )}
             <div className={inkorg.rowActions}>
               <Button

@@ -1064,6 +1064,7 @@ export interface SaleProposalRow {
   sale_date: string;
   buyer_notified_at: string | null; // the buyer's own notice (K7)
   kopanmalan: PurchaseNotice | null; // the buyer herd's notice that approving settles (fråga 19)
+  kopanmalan_avviker: PurchaseNotice | null; // its notice dated too far off or across 31/12 (M1)
 }
 
 export type StatusFilter = "att_ringa" | "alla" | RowState;

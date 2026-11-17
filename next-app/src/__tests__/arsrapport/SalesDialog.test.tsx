@@ -36,6 +36,7 @@ const inGenebank: SaleProposalRow = {
   sale_date: "2025-10-03",
   buyer_notified_at: null,
   kopanmalan: null,
+  kopanmalan_avviker: null,
 };
 const outside: SaleProposalRow = {
   ...inGenebank,
@@ -117,6 +118,46 @@ describe("SalesDialog", () => {
         .getByRole("link", { name: "Visa anmälan" })
         .getAttribute("href"),
     ).toBe("/stamboken/inkorg/31");
+  });
+
+  it("warns of a notice whose date does not fit the sale (M1)", async () => {
+    saleProposals.mockResolvedValue({
+      ok: true,
+      data: {
+        forslag: [
+          {
+            ...inGenebank,
+            kopanmalan_avviker: {
+              id: 32,
+              number: "G9001-2401",
+              from_herd: "G9001",
+              date: "2025-10-20",
+              state: "ny",
+            },
+          },
+        ],
+      },
+    });
+    render(
+      <SalesDialog
+        herd="G9001"
+        year={2025}
+        env="demo"
+        onDecided={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const first = await screen.findByRole("region", { name: "G9001-2401" });
+    const warning = within(first).getByRole("alert");
+    expect(warning.textContent).toContain(
+      "Köparen har anmält köpet med ett annat datum, 20 oktober 2025. Godkänn stänger inte anmälan. · Visa anmälan",
+    );
+    expect(
+      within(warning)
+        .getByRole("link", { name: "Visa anmälan" })
+        .getAttribute("href"),
+    ).toBe("/stamboken/inkorg/32");
+    expect(within(first).queryByText(/Köparen har anmält köpet,/)).toBeNull();
   });
 
   it("approves a sale and reloads the list", async () => {

@@ -276,17 +276,47 @@ class PurchaseNoticeTest(ArsrapportTest):
         self.assertEqual((closing.user_id, closing.detail["note"]), (self.manager.id, "Köpet är registrerat"))
         self.assertEqual(db.InboxItem.get_by_id(item.id).state, "ny")
 
-    def test_notice_fifteen_days_from_the_sale_is_not_matched(self):
+    def test_notice_fifteen_days_from_the_sale_is_shown_apart_and_stays_open(self):  # M1
         proposal = self.seller_proposes(5, 10)
         self.login("owner")
         self.notify(when="2025-05-25")
+        (notice,) = notices()
         self.login("man")
         (row,) = self.client.get("/api/v2/arsrapport/besattning/G9002/2025/forslag").get_json()["forslag"]
-        self.assertIsNone(row["kopanmalan"])
+        self.assertEqual((row["kopanmalan"], row["kopanmalan_avviker"]), (None, purchase_notice.notice_json(notice)))
         self.client.post(f"/api/v2/arsrapport/forslag/{proposal.id}/godkann", json={})
-        # the transfer is registered after the notice all the same: the next look at the notice closes it
-        self.assertEqual(notices()[0].state, "ny")
-        self.assertEqual(self.client.get(f"/api/v2/inkorg/{notices()[0].id}").get_json()["state"], "klar")
+        # the transfer of 10 May is registered after the notice, but 15 days from its date: no look closes it
+        self.assertEqual(self.state(notice), "ny")
+        self.assertEqual(self.client.get(f"/api/v2/inkorg/{notice.id}").get_json()["state"], "ny")
+
+    def test_a_notice_and_a_sale_across_new_year_are_not_one_sale(self):  # M1
+        proposal = self.seller_proposes(1, 5, year=2026)  # a January sale in the seller's 2025 report
+        notice = self.stored_notice(self.a, date(2025, 12, 30))  # the buyer's 2025 notice, six days before
+        self.login("man")
+        (row,) = self.client.get("/api/v2/arsrapport/besattning/G9002/2025/forslag").get_json()["forslag"]
+        self.assertEqual((row["kopanmalan"], row["kopanmalan_avviker"]), (None, purchase_notice.notice_json(notice)))
+        response = self.client.post(f"/api/v2/arsrapport/forslag/{proposal.id}/godkann", json={})
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(purchase_notice.registered([notice]), set())
+        self.assertEqual(self.client.get(f"/api/v2/inkorg/{notice.id}").get_json()["state"], "ny")
+        self.assertEqual(self.kop_anmalt(), 1)
+
+    def test_only_a_transfer_within_fourteen_days_and_the_same_year_closes_a_notice(self):  # M1
+        before, after, late, new_year = self.rabbits(self.seller, 4)
+        self.login("owner")
+        dated = ((before, "2025-05-14"), (after, "2025-05-14"), (late, "2025-05-14"), (new_year, "2025-12-20"))
+        for rabbit, when in dated:
+            self.assertEqual(self.notify(number=rabbit.number, when=when).status_code, 200)
+        moved = (
+            (before, date(2025, 4, 30)),
+            (after, date(2025, 5, 28)),
+            (late, date(2025, 5, 29)),
+            (new_year, date(2026, 1, 2)),  # 13 days on, in the next year
+        )
+        for rabbit, day in moved:
+            ht_row("TRANSFER", from_herd=self.seller, herd=self.h, individual=rabbit, herd_tracking_date=day)
+        first, second, _, _ = notices()
+        self.assertEqual(purchase_notice.registered(notices()), {first.id, second.id})
 
     def test_notice_closes_when_transfer_registered(self):
         self.login("owner")
@@ -305,7 +335,7 @@ class PurchaseNoticeTest(ArsrapportTest):
             [(None, {"from": "ny", "to": "klar", "note": "Köpet är registrerat"})],
         )
         # the queue's item view closes too
-        ht_row("TRANSFER", from_herd=self.seller, herd=self.h, individual=self.b, herd_tracking_date=date(2025, 6, 1))
+        ht_row("TRANSFER", from_herd=self.seller, herd=self.h, individual=self.b, herd_tracking_date=date(2025, 5, 20))
         self.login("man")
         self.assertEqual(self.client.get(f"/api/v2/inkorg/{second.id}").get_json()["state"], "klar")
         self.assertEqual(self.kop_anmalt(), 0)
@@ -319,8 +349,8 @@ class PurchaseNoticeTest(ArsrapportTest):
         self.assertEqual([row["state"] for row in self.view()["kopanmalningar"]], ["ny"])
         self.assertEqual(self.kop_anmalt(), 1)
         self.assertEqual(purchase_notice.registered(notices()), set())
-        # this purchase, registered after the notice with another date
-        ht_row("TRANSFER", from_herd=self.seller, herd=self.h, individual=self.a, herd_tracking_date=date(2025, 4, 1))
+        # this purchase, registered after the notice with a date within 14 days of it
+        ht_row("TRANSFER", from_herd=self.seller, herd=self.h, individual=self.a, herd_tracking_date=date(2025, 5, 1))
         self.assertEqual(purchase_notice.registered(notices()), {notices()[0].id})
 
     def test_another_genebanks_rabbit_or_herd_is_answered_as_missing(self):
