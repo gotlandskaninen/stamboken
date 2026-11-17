@@ -649,6 +649,20 @@ class AndraTest(ArsrapportTest):
         (attestation,) = rows_of(b, "ATTESTATION")
         self.assertIsNone(attestation.voided_at)
 
+    def test_late_autosave_after_andra_leaves_the_withdraw_alone(self):  # e2e Typ C: only the page's revision is stale
+        (a,) = self.rabbits(self.h, 1)
+        self.ok(self.body(self.kvar(a, vikt=2.8)))
+        self.ok(self.body(self.kvar(a, vikt=3.1), revision=1))
+        data = arsrapport.stored_body(self.body(self.kvar(a, vikt=3.1)))
+        key = self.body()["submission_key"]
+        late = self.api(
+            "PUT", "/besattning/G9001/2025/utkast", data=data, updated_at=None, submission_key=key, revision=1
+        )
+        self.assertEqual((late.status_code, late.get_json()["draft"]), (409, None))
+        self.assertEqual((self.report().revision, db.YearlyReportDraft.select().count()), (2, 0))
+        self.assertEqual(self.withdraw(1).status_code, 409)  # the revision the change replaced
+        self.assertIsNone(self.withdrawn(2)["report"])
+
     def test_withdraw_keeps_an_autosaved_draft(self):  # P31: "Det du fyllt i finns kvar"
         (a,) = self.rabbits(self.h, 1)
         self.ok(self.body(self.kvar(a, vikt=2.8)))

@@ -427,11 +427,12 @@ test("5. Typ C: stor besättning med döda och sålda", async ({
   const changed = await storedReport(page, "M9003");
   expect(changed.report.revision).toBeGreaterThan(1);
 
-  // Withdraw and send again.
+  // Withdraw and send again. The receipt comes before the refreshed view: Dra tillbaka stays disabled until the view
+  // has the new revision (the old one gave a false "ändrats på en annan enhet"), and the click waits for that.
   await page.getByRole("button", { name: "Dra tillbaka", exact: true }).click();
   await page.getByRole("button", { name: "Dra tillbaka rapporten" }).click();
-  // The form is back and the report is gone. The "Dragen tillbaka" note is not asserted: the autosave of the row
-  // changed just before can reach the server after the submit and swap the note for "Ändrad på en annan enhet".
+  // The form is back and the report is gone.
+  await expect(page.getByText(/^Dragen tillbaka/)).toBeVisible();
   await expect(page.getByRole("button", { name: SEND })).toBeVisible();
   await expect(page.getByText(/^Inskickad/)).toHaveCount(0);
   expect((await storedReport(page, "M9003")).report).toBeNull();

@@ -321,6 +321,11 @@ export function ReportForm({
   const [receipt, setReceipt] = React.useState<ReceiptData | null>(null);
   const [withdrawn, setWithdrawn] = React.useState<string | null>(null);
   const [withdrawing, setWithdrawing] = React.useState(false);
+  // The report revision this page's own Skicka of a change, or Dra tillbaka, just replaced. Until router.refresh
+  // brings a view past it, view.report is stale: Ändra, Dra tillbaka and Skicka wait instead of sending its revision.
+  const [replaced, setReplaced] = React.useState<number>();
+  const refreshing =
+    replaced !== undefined && view.report?.revision === replaced;
   const [localCopy, setLocalCopy] = React.useState(false);
   // a local copy edited from an older version than the server's: kept apart
   // until the user chooses, and editing waits
@@ -829,8 +834,11 @@ export function ReportForm({
       setWithdrawn(null);
       // On paper the submit has closed the item: ReportView is not read again
       // (with ?post= it would be refused), and the Receipt is the answer.
-      if (!isPaper) router.refresh();
-      else if (!res.data.warnings.length && !res.data.matrikel.length)
+      if (!isPaper) {
+        // a first Skicka replaced nothing: Receipt shows no actions until the view has the report
+        setReplaced(body.revision ?? undefined);
+        router.refresh();
+      } else if (!res.data.warnings.length && !res.data.matrikel.length)
         paper!.leave(summaryLine(herd.herd, res.data));
     } else if (
       res.problem.status === 408 ||
@@ -842,7 +850,7 @@ export function ReportForm({
   };
 
   const skicka = async () => {
-    if (phase !== "idle" || syncing || olderCopy) return;
+    if (phase !== "idle" || syncing || olderCopy || refreshing) return;
     setRefusals(null);
     if (!link && readModeCookieClient() !== env) return fail(ENV_TEXT);
     let body = toBody(state, keyRef.current!, view.report?.revision ?? null);
@@ -912,6 +920,7 @@ export function ReportForm({
       setReceipt(null);
       setMode("form");
       setVersion(0); // so that "Dragen tillbaka" shows until the next edit
+      setReplaced(view.report!.revision);
       router.refresh();
       return null;
     }
@@ -1090,7 +1099,7 @@ export function ReportForm({
           view={view}
           receipt={receipt}
           hasDraft={!!view.draft || localCopy}
-          busy={withdrawing || syncing}
+          busy={withdrawing || syncing || refreshing}
           onChange={startChange}
           onWithdraw={withdraw}
           focusOnMount={!!receipt}
@@ -1993,7 +2002,9 @@ export function ReportForm({
                 type="button"
                 className={`sb-btn ${styles.btn}`}
                 onClick={skicka}
-                disabled={sending || syncing || !!olderCopy || !ready}
+                disabled={
+                  sending || syncing || !!olderCopy || !ready || refreshing
+                }
               >
                 {sending ? "Skickar…" : buttonText}
               </button>

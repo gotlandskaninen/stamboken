@@ -1077,6 +1077,50 @@ describe("ReportForm", () => {
     ).not.toHaveLength(0);
   });
 
+  it("waits for the refreshed view after its own Skicka and Dra tillbaka, so neither sends a stale revision", async () => {
+    const a = actions();
+    a.withdrawReport.mockImplementation(() =>
+      ok({
+        draft: {
+          data: { rabbits: {} },
+          updated_at: "2027-01-03T14:00:00+00:00",
+        },
+      }),
+    );
+    const at = (revision: number) =>
+      view({ report: { ...submittedReport(), revision } as never });
+    const { rerender } = render(
+      <ReportForm env="demo" view={at(0)} actions={a} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Ändra" }));
+    fireEvent.change(within(row(1)).getByLabelText("Vikt"), {
+      target: { value: "3,1" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Skicka ändringarna" }));
+    await screen.findByText(/^Klart\./);
+    const button = (name: string | RegExp) =>
+      screen.getByRole("button", { name }) as HTMLButtonElement;
+    // The receipt is up, but the view still holds revision 0, which the change replaced.
+    expect(button("Dra tillbaka").disabled).toBe(true);
+    expect(button("Ändra").disabled).toBe(true);
+    rerender(<ReportForm env="demo" view={at(1)} actions={a} />);
+    expect(button("Dra tillbaka").disabled).toBe(false);
+    fireEvent.click(button("Dra tillbaka"));
+    fireEvent.click(button("Dra tillbaka rapporten"));
+    await waitFor(() => expect(a.withdrawReport).toHaveBeenCalledTimes(1));
+    expect(a.withdrawReport.mock.calls[0][2]).toBe(1);
+    // The form is back, but the view still holds the withdrawn report: Skicka waits for the one without it.
+    expect(
+      (
+        (await screen.findByRole("button", {
+          name: /^Skicka/,
+        })) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true);
+    rerender(<ReportForm env="demo" view={view()} actions={a} />);
+    expect(button(/^Skicka/).disabled).toBe(false);
+  });
+
   it("adds a litter from Kullar under Y and confirms a preliminary count", async () => {
     const preliminary = {
       id: 7,
