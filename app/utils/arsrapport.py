@@ -215,15 +215,22 @@ def _move_kept_buyers(round_):
         YearlyReportSubmission.report.in_(voided)
     )
     ops = sorted({str(op) for (ops,) in written.tuples() for op in ops})
-    sold = HerdTracking.select(HerdTracking.holder_contact).where(
-        HerdTracking.kind == "TRANSFER", HerdTracking.voided_at.is_null(False), HerdTracking.operation_id.in_(ops)
+    sold = HerdTracking.select(HerdTracking.individual, HerdTracking.holder_contact).where(
+        HerdTracking.kind == "TRANSFER",
+        HerdTracking.voided_at.is_null(False),
+        HerdTracking.operation_id.in_(ops),
+        HerdTracking.holder_contact.is_null(False),
     )
+    sold = list(sold.tuples())
     held = HerdTracking.select(HerdTracking.holder_contact).where(
         HerdTracking.holder_contact.is_null(False), ht_not_voided()
     )
-    # Locked in id order, as the purge locks them, and `held` read after: a resubmission that linked one again has
+    # The rabbits first, as a resubmission takes them all before it links their buyers in rabbit order, then the
+    # buyers in id order, as the purge locks them, and `held` read after: a resubmission that linked one again has
     # committed by then, and keeps its five years
-    locked = BuyerContact.select(BuyerContact.id).where(BuyerContact.id.in_(sold)).order_by(BuyerContact.id)
+    lock_individuals({rabbit for rabbit, _ in sold})
+    locked = BuyerContact.select(BuyerContact.id).where(BuyerContact.id.in_([c for _, c in sold]))
+    locked = locked.order_by(BuyerContact.id)
     ids = [contact_id for (contact_id,) in locked.for_update().tuples()]
     BuyerContact.update(purge_at=kept_until(round_)).where(
         BuyerContact.id.in_(ids), BuyerContact.id.not_in(held)

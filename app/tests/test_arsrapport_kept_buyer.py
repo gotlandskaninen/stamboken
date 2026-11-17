@@ -16,6 +16,7 @@ import utils.arsrapport as arsrapport
 import utils.buyer_contact as buyer_contact
 import utils.database as db
 import utils.herd_tracking as herd_tracking
+import utils.individual_commands as individual_commands
 import utils.mail as mail
 import utils.report_code as report_code
 import utils.settings as settings
@@ -427,16 +428,17 @@ class KeptBuyerTest(ArsrapportTest):
 
     def race(self, target, name, first, second):
         """
-        Two real transactions: `first` runs until `target.name` has returned inside it and holds its locks there while
-        `second` starts, then goes on and commits. Returns each one's result, or the repr of what it raised.
+        Two real transactions: `first` runs until `target.name` has first returned inside it and holds its locks there
+        while `second` starts, then goes on and commits. Returns each one's result, or the repr of what it raised.
         """
         if not _USE_POSTGRES:
             self.skipTest("row locks need PostgreSQL")
-        barrier, results, original = threading.Barrier(2, timeout=10), {}, getattr(target, name)
+        barrier, results, original, paused = threading.Barrier(2, timeout=10), {}, getattr(target, name), []
 
         def held(*args, **kwargs):
             value = original(*args, **kwargs)
-            if threading.current_thread().name == "first":
+            if threading.current_thread().name == "first" and not paused:
+                paused.append(True)
                 barrier.wait()
                 time.sleep(0.5)  # `second` meets the locks `first` holds
             return value
@@ -534,3 +536,26 @@ class KeptBuyerTest(ArsrapportTest):
         results = self.race(arsrapport, "drop_kept_buyers", self.resubmit(), self.extend())
         self.assertEqual(results, {"first": True, "second": EXTENDED})
         self.assertEqual(contacts(), {contact.id: db.BuyerContact.purge_at_for(SOLD_ON)})
+
+    def test_end_date_moved_during_a_resubmission_that_links_buyers_against_id_order(self):  # Codex P2, finding 3
+        # b's buyer first and a's on Ändra: Skicka links a's (the higher id) before b's, against the buyers' id order
+        self.ok(self.body(self.kvar(self.a, vikt=2.8), self.sald(self.b, "utanfor", 2025, 10, 10, kopare=BUYER)))
+        both = (self.sald(self.a, "utanfor", 2025, 10, 10, kopare=OTHER), self.sald(self.b, "utanfor", 2025, 10, 10))
+        self.ok({**self.body(*both), "revision": 1})
+        self.withdrawn(2)
+        kept = [sales(rabbit)[-1].holder_contact_id for rabbit in (self.a, self.b)]
+        self.assertGreater(kept[0], kept[1])
+        rabbits = {
+            key: {**entry, "sald": {k: v for k, v in entry["sald"].items() if k != "fran_rapport"}}
+            for key, entry in self.draft()["rabbits"].items()
+        }
+        data = {k: v for k, v in self.draft().items() if k != "form"}
+        sub = arsrapport.parse_submission(self.body(**{**data, "rabbits": rabbits}), paper=False)
+        owner = db.User.get_by_id(self.owner.id)
+
+        def resubmit():
+            return bool(arsrapport.submit(self.h, self.round_, arsrapport.Access("owner"), owner, sub))
+
+        results = self.race(individual_commands, "record_herd_tracking", resubmit, self.extend())
+        self.assertEqual(results, {"first": True, "second": EXTENDED})
+        self.assertEqual(contacts(), dict.fromkeys(kept, db.BuyerContact.purge_at_for(SOLD_ON)))
