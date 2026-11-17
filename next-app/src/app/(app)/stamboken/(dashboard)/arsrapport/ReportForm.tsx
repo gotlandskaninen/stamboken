@@ -552,9 +552,18 @@ export function ReportForm({
   const done = React.useMemo(() => {
     const m = new Map<number, boolean>();
     for (const r of rabbits)
-      m.set(r.id, isDone(r, state.rabbits[r.id], state.ending));
+      m.set(
+        r.id,
+        isDone(
+          r,
+          state.rabbits[r.id],
+          state.ending,
+          view.report?.submitted?.rabbits?.[r.id]?.sald,
+          view.can_sell,
+        ),
+      );
     return m;
-  }, [rabbits, state.rabbits, state.ending]);
+  }, [rabbits, state.rabbits, state.ending, view.report, view.can_sell]);
   const notDone = rabbits.filter((r) => !done.get(r.id));
   const doneCount = rabbits.length - notDone.length;
 
@@ -688,8 +697,16 @@ export function ReportForm({
       const before = stateRef.current.rabbits[id] ?? EMPTY_ENTRY;
       const rabbit = viewRef.current.rabbits.find((x) => x.id === id);
       const after = { ...before, ...patch };
+      const v = viewRef.current;
       const doneAfter =
-        !!rabbit && isDone(rabbit, after, stateRef.current.ending);
+        !!rabbit &&
+        isDone(
+          rabbit,
+          after,
+          stateRef.current.ending,
+          v.report?.submitted?.rabbits?.[id]?.sald,
+          v.can_sell,
+        );
       setRefusals((rs) => {
         const left = rs?.filter(
           (r) =>

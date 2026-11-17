@@ -110,6 +110,26 @@ describe("isDone", () => {
       true,
     );
   });
+  it("does not count a sale outside the genebank whose buyer Skicka would miss", () => {
+    const sale = { till: "utanfor", ar: 2026, manad: 6, dag: null };
+    const sold = (more: object) =>
+      e({ val: "sald", sald: { ...sale, kopare: null, ...more } });
+    // only in the draft, which never holds the buyer: restored after a reload
+    expect(isDone(adult, sold({}), false)).toBe(false);
+    expect(isDone(adult, sold({}), false, null)).toBe(false);
+    // the report's own sale, unchanged; changed, it is a new sale
+    expect(isDone(adult, sold({}), false, sale)).toBe(true);
+    expect(isDone(adult, sold({ manad: 7 }), false, sale)).toBe(false);
+    // typed in this session, or a kept buyer only a role that sells may use
+    const buyer = { name: "Ola Köpare", town: "Visby" } as never;
+    expect(isDone(adult, sold({ kopare: buyer }), false)).toBe(true);
+    expect(isDone(adult, sold({ kopare_id: 7 }), false, null, true)).toBe(true);
+    expect(isDone(adult, sold({ kopare_id: 7 }), false, null, false)).toBe(
+      false,
+    );
+    // a sale to a herd in the genebank has no such buyer
+    expect(isDone(adult, sold({ till: "G9002" }), false)).toBe(true);
+  });
 });
 
 describe("editClears", () => {

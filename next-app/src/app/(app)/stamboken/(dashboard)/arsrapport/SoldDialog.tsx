@@ -22,7 +22,7 @@ import {
 } from "@/components/individual/BuyerFields";
 import type { getGenebankHerds } from "../individ/[number]/actions";
 import { isOutsideGenebankHerd, type GenebankHerd } from "@/utils/saleRules";
-import { MONTHS, type BodyEntry, type SaldState } from "./lib";
+import { MONTHS, storedSale, type BodyEntry, type SaldState } from "./lib";
 import styles from "./arsrapport.module.css";
 
 interface Props {
@@ -160,10 +160,10 @@ function Body({
   // the draft, or a changed one, needs the buyer again, as Skicka does.
   const stored =
     outside &&
-    submitted?.till === "utanfor" &&
-    submitted.ar === ar &&
-    submitted.manad === manad &&
-    (submitted.dag ?? null) === (dag ? Number(dag) : null);
+    storedSale(
+      { till: "utanfor", ar, manad, dag: dag ? Number(dag) : null },
+      submitted,
+    );
   const [tried, setTried] = React.useState(false);
   const typed = [
     buyer.name,

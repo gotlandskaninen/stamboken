@@ -499,15 +499,44 @@ export function editClears(
   }
 }
 
+// The sale outside the genebank that the report's latest submission holds,
+// unchanged: its buyer is stored, so it needs none typed again.
+export const storedSale = (
+  s: Pick<SaldState, "till" | "ar" | "manad" | "dag">,
+  submitted: BodyEntry["sald"] | null | undefined,
+): boolean =>
+  s.till === "utanfor" &&
+  submitted?.till === "utanfor" &&
+  submitted.ar === s.ar &&
+  submitted.manad === s.manad &&
+  (submitted.dag ?? null) === s.dag;
+
+// A sale outside the genebank that Skicka would refuse for its buyer
+// (kopare_saknas): none typed, not the stored sale, and no kept buyer the role
+// may use (K1). The draft never holds a buyer, so a sale only in the draft
+// needs it again.
+export const lacksBuyer = (
+  s: SaldState,
+  submitted: BodyEntry["sald"] | null | undefined,
+  canSell: boolean,
+): boolean =>
+  s.till === "utanfor" &&
+  !s.kopare &&
+  !(canSell && s.kopare_id != null) &&
+  !storedSale(s, submitted);
+
 export function isDone(
   r: RabbitView,
   e: Entry | undefined,
   ending: boolean,
+  submitted?: BodyEntry["sald"] | null, // the rabbit's sale in report.submitted
+  canSell = true,
 ): boolean {
   if (ending) return true; // 5.7: an ending genebank needs neither choice nor weight
   if (!e || e.val === null) return r.state !== "att_valja";
   if (e.val === "ej_angiven") return true; // P44: kept from a paper submission
   if (!complete(e)) return false;
+  if (e.val === "sald" && lacksBuyer(e.sald!, submitted, canSell)) return false;
   // a weight over 20 kg waits for the fix button, the server refuses it
   if (e.val === "kvar" && parseWeight(e.vikt).gramsHint !== null) return false;
   // a death before the birth or in the future waits too, the server refuses it

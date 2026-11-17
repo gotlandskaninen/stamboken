@@ -354,6 +354,37 @@ describe("ReportForm", () => {
     ).toBe(false);
   });
 
+  it("does not count a sale outside the genebank only in the draft as klar: its buyer is gone", () => {
+    const draft = {
+      data: {
+        rabbits: {
+          "1": {
+            val: "sald",
+            sald: { till: "utanfor", ar: 2026, manad: 6, dag: null },
+          },
+        },
+      },
+      updated_at: "2026-12-31T11:00:00+00:00",
+      submission_key: null,
+      own: true,
+    } as unknown as ReportView["draft"];
+    render(
+      <ReportForm env="demo" view={view({ draft })} actions={actions()} />,
+    );
+    expect(within(row(1)).queryByText("✓ Klar")).toBeNull();
+    fireEvent.click(within(row(1)).getByRole("button", { name: "Ändra" }));
+    fireEvent.change(screen.getByLabelText(/Köparens namn/), {
+      target: { value: "Ola Köpare" },
+    });
+    fireEvent.change(screen.getByLabelText(/^Ort/), {
+      target: { value: "Visby" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Spara försäljningen" }),
+    );
+    expect(within(row(1)).getByText("✓ Klar")).toBeTruthy();
+  });
+
   it("lets go of a kept buyer once the row is no longer a sale outside the genebank (FB6)", () => {
     const kept = {
       data: {
