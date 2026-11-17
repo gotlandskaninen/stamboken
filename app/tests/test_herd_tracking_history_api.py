@@ -10,7 +10,6 @@ import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
 from herdbook import APP, limiter  # noqa: E402
 from utils.herd_tracking import (
-    UNDO_REASON,
     HerdTrackingInvalid,
     can_see_buyer,
     herd_tracking_history,
@@ -96,7 +95,7 @@ class TestHistoryEndpoint(HistoryBase):
         self._login("owner")
         self.assertNotIn(self.sale.id, [r["id"] for r in self._history().get_json()["rows"]])
         voided = [r for r in self._history("?include_voided=1").get_json()["rows"] if r["id"] == self.sale.id]
-        self.assertEqual(voided[0]["voided_reason"], UNDO_REASON)  # the seller's typed text is never stored
+        self.assertEqual(voided[0]["voided_reason"], "Fel köpare")
         self._login("man")
         self.assertIn(self.sale.id, [r["id"] for r in self._history().get_json()["rows"]])
         self.assertNotIn(self.sale.id, [r["id"] for r in self._history("?include_voided=0").get_json()["rows"]])

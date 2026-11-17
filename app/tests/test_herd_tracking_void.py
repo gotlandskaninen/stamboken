@@ -9,7 +9,6 @@ import utils.data_access as da
 import utils.database as db
 from utils.herd_tracking import (
     OWN_ROWS_ONLY,
-    UNDO_REASON,
     HerdTrackingConflict,
     HerdTrackingError,
     HerdTrackingForbidden,
@@ -111,7 +110,7 @@ class TestUndoSale(VoidBase):
         first = void_herd_tracking(self.sale.id, self.owner, "Fel köpare")
         second = void_herd_tracking(self.sale.id, self.manager, "Igen")
         self.assertEqual(second.voided_operation_id, first.voided_operation_id)
-        self.assertEqual(second.voided_reason, UNDO_REASON)  # the seller's, whatever she typed
+        self.assertEqual(second.voided_reason, "Fel köpare")
 
     def test_replayed_operation_id_never_voids_a_second_row(self):
         """Ruling I4: idempotency per (individual, operation_id), checked before the row's own voided state."""
