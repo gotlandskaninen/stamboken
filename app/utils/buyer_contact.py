@@ -77,28 +77,40 @@ def erase_buyer_contact(contact_id, user):
     remove_originals(paths)  # only after the commit: a row never names a removed file
 
 
-def purge_expired(now):
-    """Name and town five years after they were entered: the buyer goes."""
+def _delete_locked(rule, action):
+    """
+    Deletes the buyers that match `rule`, under the writers' locks in their order (the queue's items, the rabbits,
+    then the buyers, as erase_buyer_contact takes them), with `rule` read again under them before any buyer or
+    document goes. A resubmission that links a kept buyer again, an undo of its sale's void and a longer round all
+    move purge_at under those locks, so the buyer stays; and the delete's ON DELETE SET NULL never waits on a sale
+    that an undo holds while the undo waits on the buyer.
+    """
     with DB_PROXY.atomic():
-        expired = BuyerContact.select(BuyerContact.id).where(BuyerContact.purge_at <= now)
-        count, paths = delete_buyer_contacts([contact_id for (contact_id,) in expired.tuples()], "gallring_fem_ar")
+        ids = [contact_id for (contact_id,) in BuyerContact.select(BuyerContact.id).where(rule).tuples()]
+        holding = list(HerdTracking.select().where(HerdTracking.holder_contact.in_(ids)))
+        buyer_items(holding, lock=True)
+        lock_individuals({row.individual_id for row in holding})
+        still = BuyerContact.select(BuyerContact.id).where(BuyerContact.id.in_(ids) & rule).order_by(BuyerContact.id)
+        count, paths = delete_buyer_contacts([contact_id for (contact_id,) in still.for_update().tuples()], action)
     remove_originals(paths)
     return count
+
+
+def purge_expired(now):
+    """Name and town five years after they were entered, or a buyer kept across Dra tillbaka after its round."""
+    return _delete_locked(BuyerContact.purge_at <= now, "gallring_fem_ar")
 
 
 def purge_dead(now):  # pylint: disable=unused-argument  # every rule takes the clock
     """Once the association learns the rabbit is dead, its buyers' names and towns go before the five years."""
     dead = (Individual.death_date.is_null(False)) | (fn.COALESCE(Individual.death_note, "") != "")
-    with DB_PROXY.atomic():
-        held = (
-            HerdTracking.select(HerdTracking.holder_contact)
-            .join(Individual, on=(Individual.id == HerdTracking.individual))
-            .where(HerdTracking.holder_contact.is_null(False) & dead)
-            .distinct()
-        )
-        count, paths = delete_buyer_contacts([contact_id for (contact_id,) in held.tuples()], "gallring_dod")
-    remove_originals(paths)
-    return count
+    held = (
+        HerdTracking.select(HerdTracking.holder_contact)
+        .join(Individual, on=(Individual.id == HerdTracking.individual))
+        .where(HerdTracking.holder_contact.is_null(False) & dead)
+        .distinct()
+    )
+    return _delete_locked(BuyerContact.id.in_(held), "gallring_dod")
 
 
 def _null_fields(where, changes, action):

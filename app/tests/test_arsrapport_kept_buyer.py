@@ -15,6 +15,7 @@ from unittest import mock
 import utils.arsrapport as arsrapport
 import utils.buyer_contact as buyer_contact
 import utils.database as db
+import utils.herd_tracking as herd_tracking
 import utils.mail as mail
 import utils.report_code as report_code
 import utils.settings as settings
@@ -35,6 +36,7 @@ BUYER_TEXTS = ("Zelda", "Keptbuyer", "Klintehamn", "zelda@example")
 OTHER = {"name": "Ylva Newbuyer", "town": "Slite"}
 KEPT_UNTIL = datetime(2026, 4, 1, tzinfo=STOCKHOLM)  # end_date 30 March, plus the night after it and a day
 SOLD_ON = date(2025, 10, 10)
+PURGE_NIGHT = datetime(2026, 4, 1, 3, 50, tzinfo=STOCKHOLM)  # the first night the kept buyer is due
 EXTENDED = date(2026, 4, 30)  # the round's end_date moved a month on
 EXTENDED_UNTIL = datetime(2026, 5, 2, tzinfo=STOCKHOLM)
 
@@ -369,7 +371,7 @@ class KeptBuyerTest(ArsrapportTest):
         self.assertEqual(contacts(), {})
         self.assertNotIn("kopare_id", json.dumps(self.draft()))
 
-    # Codex review of 8b19610: a moved end_date against the writers, in two transactions
+    # Codex review of 8b19610: the nightly purge and a moved end_date against the writers, in two transactions
 
     def race(self, target, name, first, second):
         """
@@ -423,8 +425,41 @@ class KeptBuyerTest(ArsrapportTest):
         admin = db.User.get_by_id(self.admin.id)
         return lambda: arsrapport.save_round(2025, admin, end_date=EXTENDED).end_date
 
+    def purge(self):
+        return lambda: buyer_contact.purge_expired(PURGE_NIGHT)
+
     def sent(self):
         self.ok(self.body(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=BUYER), self.kvar(self.b, vikt=2.8)))
+
+    # Finding 2: the purge locks as the writers do, and reads purge_at again under the locks
+
+    def test_purge_spares_a_kept_buyer_linked_again_meanwhile(self):
+        contact, _ = self.sold_and_withdrawn()
+        results = self.race(arsrapport, "drop_kept_buyers", self.resubmit(), self.purge())
+        self.assertEqual(results, {"first": True, "second": 0})
+        self.assertEqual([sale.holder_contact_id for sale in sales(self.a, active=True)], [contact.id])
+        self.assertEqual(contacts(), {contact.id: db.BuyerContact.purge_at_for(SOLD_ON)})
+
+    def test_purge_waits_for_an_undo_of_the_withdraws_void(self):  # no deadlock through ON DELETE SET NULL
+        contact, _ = self.sold_and_withdrawn()
+        (sale,) = sales(self.a)
+        manager = db.User.get_by_id(self.manager.id)
+
+        def undo():
+            return undo_herd_tracking_operation(sale.voided_operation_id, manager, "Fel tillbakadragning")[
+                "individual_ids"
+            ]
+
+        results = self.race(herd_tracking, "_unvoid_rows", undo, self.purge())
+        self.assertEqual(results, {"first": [self.a.id], "second": 0})
+        self.assertEqual([row.id for row in sales(self.a, active=True)], [sale.id])
+        self.assertEqual(contacts(), {contact.id: db.BuyerContact.purge_at_for(SOLD_ON)})
+
+    def test_purge_spares_a_kept_buyer_of_a_round_extended_meanwhile(self):
+        contact, _ = self.sold_and_withdrawn()
+        results = self.race(arsrapport, "_move_kept_buyers", self.extend(), self.purge())
+        self.assertEqual(results, {"first": EXTENDED, "second": 0})
+        self.assertEqual(contacts(), {contact.id: EXTENDED_UNTIL})
 
     # Finding 3: a moved end_date and Dra tillbaka take the round row's lock
 
