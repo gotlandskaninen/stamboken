@@ -3330,8 +3330,9 @@ def update_yearly_report_round(round_id, form, user_uuid):
             yr_round.report_year = form.get("report_year", yr_round.report_year)
             # Do not update 'created_by' or 'creation_date'
             yr_round.save()
-            if "end_date" in form:  # read back under the row's lock: the form's text as a date, whatever it was before
-                arsrapport.follow_end_date(YearlyReportRound.get_by_id(round_id))
+            # Always, from the row read back under its lock: save() writes every column, so a form without end_date
+            # may still write back one read before a save_round that moved it
+            arsrapport.follow_end_date(YearlyReportRound.get_by_id(round_id))
         return {"status": "success", "round": yr_round.id}
     except YearlyReportRound.DoesNotExist:
         return {"status": "error", "message": "YearlyReportRound not found."}
