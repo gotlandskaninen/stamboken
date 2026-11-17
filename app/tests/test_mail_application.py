@@ -157,8 +157,11 @@ class TestApprovalMail(MailTest):
         msg, _, envelope_to = relay.sent[0]
         self.assertEqual(envelope_to, ["sokande@example.org"])
         self.assertIn("godkänd", msg["Subject"])
-        self.assertIn("hör av sig", msg.get_content())
-        self.assertIn("vi har fått din årsavgift", msg.get_content())  # an approved application is a paid one
+        body = " ".join(msg.get_content().split())  # the mail wraps its lines
+        self.assertIn("vi har fått din medlemsavgift", body)  # an approved application is a paid one
+        number = db.Member.get_by_id(member_id).membership.member_number
+        self.assertIn(f"Du har fått medlemsnummer {number}.", body)
+        self.assertIn("välkomstbrev som vi sänder via Postnord", body)
 
     def test_failed_approval_queues_nothing(self):
         a = self.application()
