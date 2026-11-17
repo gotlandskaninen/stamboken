@@ -78,6 +78,8 @@ function eventText(e: InboxEvent): string {
   if (e.kind === "sparad")
     return `${label}: ${d.individual}${d.action === "overlatelse" ? `, såld till ${d.herd}` : ""}`;
   if (e.kind === "foralder_inlagd") return `${label}: ${d.individual}`;
+  // The personal link has no account: the history names it instead (a purchase notice).
+  if (e.kind === "inkommen" && d.via) return `${label} via ${d.via}`;
   if (e.kind === "fraga" || e.kind === "svar")
     return d.text ? `${label}: ${d.text}` : label;
   return label;

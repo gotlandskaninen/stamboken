@@ -318,6 +318,18 @@ describe("WorkView: a purchase notice (4a Task 5)", () => {
     expect(screen.queryByRole("link", { name: "Öppna statusvyn" })).toBeNull();
   });
 
+  it("names the link that sent it in the history", () => {
+    const event = {
+      id: 1,
+      at: "2026-01-10T11:00:00+00:00",
+      kind: "inkommen",
+      user: null,
+      detail: { via: "länk G9001/2025" },
+    };
+    render(view({ ...notice, events: [event] }, boss, false, 2026));
+    expect(screen.getByText(/Inkommet via länk G9001\/2025/)).toBeTruthy();
+  });
+
   it("links to the status view when a pending sale matches it", () => {
     render(view({ ...notice, report_year: 2025 }, boss, false, 2026));
     expect(
