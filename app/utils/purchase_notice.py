@@ -14,6 +14,8 @@ The report lists its herd's queue items in plain words (S8, report_cases).
 """
 
 import datetime
+import hashlib
+import json
 from collections import Counter
 
 import utils.arsrapport as arsrapport
@@ -38,6 +40,7 @@ from utils.database import (
     lock_individuals,
     not_voided,
 )
+from utils.report_code import actor_key
 
 KIND = "kopanmalan"
 _PURCHASE_LOCK = 0x48424B50  # "HBKP": classid of the advisory lock on a purchase of a rabbit into a herd
@@ -243,7 +246,8 @@ def send_photos(herd, round_, access, user, *, number, from_herd, date, document
     (`photos`, their items). As if the buyer had mailed them: an ordinary upload of the herd (`kind` "upload", no
     ref_type, so the queue registers and transfers from it), its certificates read as usual, the purchase's fields in
     `ref_data`, and the queue's workers told once. Written as a notice is, while the round is open; `user` is the
-    account or the link, which the item's history names. The same request again answers with the item.
+    account or the link, which the item's history names. The same request again, by the same actor from the session
+    that uploaded the photos and for the same year, answers with the item (its receipt); any other runs every check.
     """
     year = round_.report_year
     number = number.strip().upper() if isinstance(number, str) else ""
@@ -254,6 +258,8 @@ def send_photos(herd, round_, access, user, *, number, from_herd, date, document
     seller = _seller(herd, year, from_herd, date)
     types = _photo_list(documents)
     by_link = access.code is not None
+    canonical = [*actor_key(user), herd.id, year, number, seller, date.isoformat(), sorted(types.items())]
+    request = hashlib.sha256(json.dumps(canonical).encode()).hexdigest()
     with DB_PROXY.atomic():
         round_ = arsrapport._lock_round(round_)  # pylint: disable=protected-access
         arsrapport.lock_report(round_, herd)  # also two sends of the herd's report, one after the other
@@ -262,9 +268,11 @@ def send_photos(herd, round_, access, user, *, number, from_herd, date, document
         arsrapport.require_open(round_, herd, access, arsrapport.today())
         found = list(InboxDocument.select().where(InboxDocument.id.in_(sorted(types))))
         held = sorted({document.item_id for document in found})
-        if len(found) == len(types) and len(held) == 1:  # the same request again: the item they went to
+        if len(found) == len(types) and len(held) == 1:  # maybe the same request again: the item they went to
             item = InboxItem.get_by_id(held[0])
-            if item.herd_id == herd.id and sent(item) and item.ref_data["number"] == number:
+            receipt = item.ref_data.get("receipt") if sent(item) else None
+            # its receipt: this actor, herd, year and payload, from photos this session uploaded (photos keeps them)
+            if receipt and receipt["request"] == request and set(receipt["staged"]) <= set(photos):
                 return item
         if len(found) != len(types):
             raise ArsrapportError(409, arsrapport.PHOTO_GONE, field="photo")
@@ -281,7 +289,12 @@ def send_photos(herd, round_, access, user, *, number, from_herd, date, document
             genebank=herd.genebank_id,
             herd=herd.id,
             sender_user=None if by_link else user.id,
-            ref_data={"number": number, "from_herd": seller, "date": date.isoformat()},
+            ref_data={
+                "number": number,
+                "from_herd": seller,
+                "date": date.isoformat(),
+                "receipt": {"staged": held, "request": request},
+            },
         )
         # read as any upload's certificate: a reading claimed before the move drops (attempts), one made before it goes
         read = dict.fromkeys(("interpretation", "proposal", "interpreter", "interpreted_at"))

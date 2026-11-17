@@ -766,9 +766,11 @@ class PurchaseNoticeTest(ArsrapportTest):
         (item,) = self.uploads()
         fields = {"number": self.NEW, "from_herd": "G9002", "date": "2025-05-14"}
         self.assertEqual(response.get_json(), {"id": item.id, **fields, "state": "ny"})
+        # the receipt a retry is known by: the photos' own items, and a hash of who sent what for which year
+        stored = {**fields, "receipt": {"staged": [first["item_id"], second["item_id"]], "request": mock.ANY}}
         self.assertEqual(
             (item.state, item.herd_id, item.genebank_id, item.sender_user_id, item.ref_type, item.ref_data),
-            ("ny", self.h.id, self.gotland.id, self.owner.id, None, fields),
+            ("ny", self.h.id, self.gotland.id, self.owner.id, None, stored),
         )
         documents = [(d.id, d.doc_type) for d in item.documents.order_by(db.InboxDocument.id)]
         self.assertEqual(documents, [(first["document_id"], "intyg"), (second["document_id"], "bevis")])
@@ -787,7 +789,7 @@ class PurchaseNoticeTest(ArsrapportTest):
         # the queue's item view: an upload its workers register from, with the purchase beside it
         self.login("man")
         detail = self.client.get(f"/api/v2/inkorg/{item.id}").get_json()
-        self.assertEqual((detail["kind"], detail["ref_type"], detail["ref_data"]), ("upload", None, fields))
+        self.assertEqual((detail["kind"], detail["ref_type"], detail["ref_data"]), ("upload", None, stored))
         self.assertEqual(self.client.post(f"/api/v2/inkorg/{item.id}/ta", json={}).status_code, 200)
         # registered and transferred while a worker holds it: opening it does not close it under the worker's hands
         rabbit = db.Individual.create(origin_herd=self.seller, number=self.NEW, sex="female")
@@ -804,6 +806,34 @@ class PurchaseNoticeTest(ArsrapportTest):
         (event,) = item.events
         self.assertEqual((event.user_id, event.detail), (None, {"via": "länk G9001/2025", "documents": 1}))
         self.assertIn(self.helper.id, self.heard(item))
+
+    def test_a_retry_needs_its_receipt_and_reveals_nothing_of_another_case(self):
+        """
+        Codex P1: sent photos answer with their item only to the same actor, from the session that uploaded them, for
+        the same herd, year and payload. A link naming another sender's photos of a 2024 case, with its number, is
+        refused like any photo not its own, and learns nothing of that case.
+        """
+        self.login("owner")
+        uploaded = self.upload(purpose="inskick")
+        item_id = self.send(uploaded).get_json()["id"]
+        case = db.InboxItem.get_by_id(item_id)  # the owner's case, as one sent for 2024
+        dated = {**case.ref_data, "date": "2024-11-02"}
+        db.InboxItem.update(ref_data=dated).where(db.InboxItem.id == item_id).execute()
+        link = APP.test_client(use_cookies=True)
+        token = mail.link_token("rapport", self.code.id)
+        self.assertEqual(link.post("/api/v2/rapport/oppna", json={"token": token}).status_code, 200)
+        elsewhere = APP.test_client(use_cookies=True)  # the owner in another browser: not the uploading session
+        elsewhere.post("/api/login", json={"username": "owner", "password": "pass"})
+        for client in (link, elsewhere):
+            refused = self.send(uploaded, client=client)
+            self.assertEqual((refused.status_code, refused.get_json()["detail"]), (403, arsrapport.PHOTO_NOT_OURS))
+            self.assertFalse({"id", "number", "from_herd", "date", "state"} & set(refused.get_json()))
+            self.assertNotIn("2024-11-02", refused.get_data(as_text=True))
+        changed = self.send(uploaded, types=("bevis",))  # the same session, another payload: not the same request
+        self.assertEqual(changed.status_code, 403)
+        again = self.send(uploaded)  # the same request again: its receipt
+        self.assertEqual((again.status_code, again.get_json()["id"]), (200, item_id))
+        self.assertEqual(len(self.uploads()), 1)
 
     def test_sending_photos_is_refused_for_another_herd_year_round_or_photo(self):
         self.open_link(self.code)

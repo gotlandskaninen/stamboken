@@ -2207,7 +2207,8 @@ class InboxItem(BaseModel):
     ref_type = TextField(null=True)  # kontroll and avisering point at another feature's row
     ref_id = IntegerField(null=True)
     # Structured fields with no personal data: a purchase notice's, or a bought rabbit's sent photos' (an upload, S7),
-    # number, seller and date; on a report photo held for a purchase, its purpose (inbox.PURPOSE).
+    # number, seller and date, and the sent photos' receipt for a retry; on a report photo held for a purchase, its
+    # purpose (inbox.PURPOSE).
     ref_data = BinaryJSONField(null=True, index=False)
 
     class Meta:
