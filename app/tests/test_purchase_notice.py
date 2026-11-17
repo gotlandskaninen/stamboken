@@ -682,16 +682,14 @@ class PurchaseNoticeTest(ArsrapportTest):
         self.assertEqual(self.state(db.InboxItem.get_by_id(item_id)), "klar")
         self.assertEqual(self.kop_anmalt(), 0)
 
+    # A notice's photo is never read by the model, with the image reading on (Codex P1 and P2)
 
-class PurchasePhotoReadingTest(PurchaseNoticeTest):
-    """A notice's photo is never read by the model, with the image reading on (Codex P1 and P2)."""
-
-    def setUp(self):
-        super().setUp()
-        self.read = []
+    def reading_on(self):
+        """The image reading on, with a model that records what it is given: the list of images read."""
+        read = []
 
         def model(image, schema):
-            self.read.append(image)
+            read.append(image)
             return {"genbanksnr": "G9002", "ar_kull_individ": "2501", "namn": "Läst"}
 
         for patcher in (
@@ -700,17 +698,20 @@ class PurchasePhotoReadingTest(PurchaseNoticeTest):
         ):
             patcher.start()
             self.addCleanup(patcher.stop)
+        return read
 
     def test_a_purchase_upload_is_never_read(self):
+        read = self.reading_on()
         self.login("owner")
         uploaded = self.upload(purpose="kop")
         self.assertEqual(db.InboxDocument.get_by_id(uploaded["document_id"]).interpretation_status, "av")
         self.assertIsNone(interpreter.interpret_next())  # not between the upload and the notice either
         self.assertEqual(self.notify_with(uploaded["document_id"], "intyg").status_code, 200)
         self.assertIsNone(interpreter.interpret_next())
-        self.assertEqual(self.read, [])
+        self.assertEqual(read, [])
 
     def test_a_reading_made_before_the_photo_became_a_notice_goes(self):
+        self.reading_on()
         self.login("owner")
         uploaded = self.upload()  # a rabbit's photo, which waits for the reading
         self.assertEqual(interpreter.interpret_next(), uploaded["document_id"])
@@ -722,3 +723,22 @@ class PurchasePhotoReadingTest(PurchaseNoticeTest):
             ("av", None, None, None),
         )
         self.assertIsNone(interpreter.interpret_next())
+
+    def test_the_queue_never_sends_a_notice_photo_to_be_read(self):
+        """Neither a new type, Tolka igen nor a status set to waiting has the worker read a notice's photo."""
+        read = self.reading_on()
+        self.login("owner")
+        uploaded = self.upload(purpose="kop")
+        item_id = self.notify_with(uploaded["document_id"], "bevis").get_json()["id"]
+        self.login("man")
+        self.assertEqual(self.client.post(f"/api/v2/inkorg/{item_id}/ta", json={}).status_code, 200)
+        path = f"/api/v2/inkorg/{item_id}/dokument/{uploaded['document_id']}"
+        retyped = self.client.patch(path, json={"doc_type": "intyg"})
+        self.assertEqual(retyped.status_code, 200, retyped.get_data(as_text=True))
+        self.assertEqual(db.InboxDocument.get_by_id(uploaded["document_id"]).interpretation_status, "av")
+        again = self.client.post(f"{path}/tolka-igen", json={})
+        self.assertEqual((again.status_code, again.get_json()["detail"]), (409, inbox.NOTICE_UNREAD))
+        waiting = db.InboxDocument.update(interpretation_status="vantar")
+        waiting.where(db.InboxDocument.id == uploaded["document_id"]).execute()
+        self.assertIsNone(interpreter.interpret_next())
+        self.assertEqual(read, [])

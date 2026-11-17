@@ -174,10 +174,12 @@ def _waiting():
     """
     A certificate waiting to be read, in an open item, with nothing saved from it yet and its original kept. A report
     photo (4b) is read after its rabbit is saved too: the reading is compared with what the member registered (G5).
+    A purchase notice's photo never is, whatever its status says.
     """
     report_photo = (InboxItem.kind == "kontroll") & (InboxItem.ref_type == "individual")
     return (
         (InboxDocument.interpretation_status == "vantar")
+        & (InboxItem.ref_type.is_null() | (InboxItem.ref_type != "kopanmalan"))
         & (InboxDocument.doc_type == "intyg")
         & InboxDocument.done_at.is_null()
         & (InboxDocument.individual.is_null() | report_photo)

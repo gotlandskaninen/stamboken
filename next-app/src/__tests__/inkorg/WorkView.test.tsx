@@ -548,6 +548,26 @@ describe("WorkView: a purchase notice (4a Task 5)", () => {
     expect(screen.queryByText("Försäljning")).toBeNull(); // the queue's sale panel
   });
 
+  it("lets its handler look at the photo and dismiss it, never retype or read it", () => {
+    const photo = doc({
+      doc_type: "intyg",
+      status: "ny",
+      individual: null,
+      interpretation_status: "klar",
+    });
+    const taken = { ...notice, state: "tagen" as const, assigned_to: me };
+    render(view({ ...taken, documents: [photo] }, helper, false, 2026));
+    expect(screen.getByRole("button", { name: "Avfärda" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Vrid" })).toBeTruthy();
+    expect(screen.queryByLabelText("Typ")).toBeNull();
+    expect(screen.queryByLabelText("Format")).toBeNull();
+    expect(screen.queryByRole("button", { name: "Tolka igen" })).toBeNull();
+    cleanup(); // the same photo in an upload offers them
+    render(view(item({ documents: [photo] }), helper));
+    expect(screen.getByLabelText("Typ")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Tolka igen" })).toBeTruthy();
+  });
+
   it("links to the status view when a pending sale matches it", () => {
     render(view({ ...notice, report_year: 2025 }, boss, false, 2026));
     expect(

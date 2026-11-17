@@ -150,6 +150,8 @@ export function WorkView({
   const [noPersonalData, setNoPersonalData] = useState(false);
   // Nothing saved from it yet: its type can change and it can be dismissed.
   const fresh = doc?.status === "ny" || doc?.status === "vantar_foralder";
+  // A purchase notice's photo is looked at and dismissed only: never read, so no type, format or Tolka igen.
+  const purchase = item.ref_type === "kopanmalan";
   // Also reset when the handler changes: a turn made before the item was taken
   // was never saved, and the masking must start from the stored rotation.
   const step = `${doc?.id}:${doc?.status}:${item.assigned_to?.id ?? ""}`;
@@ -507,49 +509,53 @@ export function WorkView({
               )}
               {editable && (
                 <div className={styles.filters}>
-                  <label>
-                    Typ
-                    <select
-                      className="sb-input"
-                      value={doc.doc_type}
-                      disabled={pending || !fresh}
-                      onChange={(e) =>
-                        run(() =>
-                          updateDocument(item.id, doc.id, {
-                            doc_type: e.target.value,
-                          }),
-                        )
-                      }
-                    >
-                      {Object.entries(DOC_TYPE_LABEL).map(([v, l]) => (
-                        <option key={v} value={v}>
-                          {l}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Format
-                    <select
-                      className="sb-input"
-                      value={doc.cert_format ?? ""}
-                      disabled={pending}
-                      onChange={(e) =>
-                        run(() =>
-                          updateDocument(item.id, doc.id, {
-                            cert_format: e.target.value || null,
-                          }),
-                        )
-                      }
-                    >
-                      <option value="">Inte angivet</option>
-                      {Object.entries(CERT_FORMAT_LABEL).map(([v, l]) => (
-                        <option key={v} value={v}>
-                          {l}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                  {!purchase && (
+                    <label>
+                      Typ
+                      <select
+                        className="sb-input"
+                        value={doc.doc_type}
+                        disabled={pending || !fresh}
+                        onChange={(e) =>
+                          run(() =>
+                            updateDocument(item.id, doc.id, {
+                              doc_type: e.target.value,
+                            }),
+                          )
+                        }
+                      >
+                        {Object.entries(DOC_TYPE_LABEL).map(([v, l]) => (
+                          <option key={v} value={v}>
+                            {l}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
+                  {!purchase && (
+                    <label>
+                      Format
+                      <select
+                        className="sb-input"
+                        value={doc.cert_format ?? ""}
+                        disabled={pending}
+                        onChange={(e) =>
+                          run(() =>
+                            updateDocument(item.id, doc.id, {
+                              cert_format: e.target.value || null,
+                            }),
+                          )
+                        }
+                      >
+                        <option value="">Inte angivet</option>
+                        {Object.entries(CERT_FORMAT_LABEL).map(([v, l]) => (
+                          <option key={v} value={v}>
+                            {l}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  )}
                   {fresh && (
                     <button
                       type="button"
@@ -569,6 +575,7 @@ export function WorkView({
                     </button>
                   )}
                   {fresh &&
+                    !purchase &&
                     doc.doc_type === "intyg" &&
                     doc.interpretation_status !== "av" && (
                       <button

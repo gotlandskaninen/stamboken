@@ -616,8 +616,9 @@ def update_document(item, document, user, changes):
         _rotation(changes["rotation"])
     if "dismissed" in changes and not isinstance(changes["dismissed"], bool):
         raise InboxError(400, "dismissed är true eller false.")
-    if changes.get("doc_type", document.doc_type) != document.doc_type:  # only certificates are read
-        document.interpretation_status = interpreter.initial_status() if changes["doc_type"] == "intyg" else "av"
+    if changes.get("doc_type", document.doc_type) != document.doc_type:  # only certificates are read, never a notice's
+        read = changes["doc_type"] == "intyg" and item.ref_type != "kopanmalan"
+        document.interpretation_status = interpreter.initial_status() if read else "av"
         document.attempts = 0
     for key in ("doc_type", "cert_format", "rotation"):
         if key in changes:
@@ -635,11 +636,16 @@ def update_document(item, document, user, changes):
     close_if_done(item, user)
 
 
+NOTICE_UNREAD = "Fotot till ett anmält köp tolkas inte."
+
+
 def reinterpret(item, document, user):
     """ "Tolka igen", after a turn: the certificate waits for the image reading again, its old proposal gone."""
     require_handler(item, user)
     if not interpreter.enabled():
         raise InboxError(409, "Bildtolkningen är avstängd.")
+    if item.ref_type == "kopanmalan":
+        raise InboxError(409, NOTICE_UNREAD)
     saved_elsewhere = document.individual_id is not None and not report_photo(item)
     if document.doc_type != "intyg" or document.done_at is not None or saved_elsewhere:
         raise InboxError(409, "Bara ett intyg som inte är sparat kan tolkas.")
