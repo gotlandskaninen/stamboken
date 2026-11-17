@@ -150,8 +150,8 @@ body {
 .fields td { border-bottom: 0.4pt solid var(--line-faint); vertical-align: bottom; }
 .fields .l {
   font-family: var(--mono);
-  font-size: 6.5pt; font-weight: 400;
-  text-transform: uppercase; letter-spacing: 0.1em;
+  font-size: 7.5pt; font-weight: 400;
+  text-transform: uppercase; letter-spacing: 0.05em;
   color: var(--ink-3);
   width: 21%;
   padding: 1.6mm 2mm 1mm 0;
@@ -212,7 +212,7 @@ body {
 .sign { border-collapse: collapse; width: 100%; }
 .sign .sl {
   font-family: var(--mono);
-  font-size: 6.5pt; text-transform: uppercase; letter-spacing: 0.1em;
+  font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.05em;
   color: var(--ink-3);
   padding: 1mm 4mm 1mm 0; vertical-align: bottom; width: 34mm;
 }
@@ -251,11 +251,22 @@ body {
 .disc {
   margin-top: 4mm; padding-top: 2mm;
   border-top: 0.4pt solid var(--line);
-  font-size: 6.8pt; color: var(--ink-4);
+  font-size: 7.5pt; color: var(--ink-3);
   line-height: 1.5; text-align: center;
 }
 .fingerprint { font-family: var(--mono); font-size: 6pt; letter-spacing: 0.04em; color: var(--ink-3); }
 </style>
+<style>
+/* Print-first: white paper and the paper certificate B's colours (green parents, grey signature), as approved in the board film (stamboken-drift research/film/docs/make.py, V2_PRINT_CSS). */
+html, body { background:#fff; }
+h1, .sec, .breed { color:var(--skog) !important; } .rule-thick { border-top-color:var(--skog) !important; }
+.fields td { border-bottom:.6pt solid #8C8778 !important; }
+.p-card { background:#EEF3EC !important; border:.8pt solid var(--skog) !important; } .p-card .p-role { color:var(--skog) !important; }
+.g-card { background:#fff !important; border-color:#8C8778 !important; }
+.sign-wrap { background:#F3F1EC !important; border:.6pt solid #8C8778 !important; }
+.watermark { opacity:.04; }
+</style>
+<style>.chip { background:#fff !important; border:.6pt solid #8C8778; color:var(--ink-2); } .eu-strip img { background:#fff; padding:1.5mm 3mm; }</style>
 </head>
 <body>
 <img class="watermark" src="logo.svg" alt="">
@@ -356,7 +367,7 @@ body {
 
   <div class="disc">
     Genbanksintyget följer kaninen. Ägarbyten skrivs på överlåtelsebeviset och i Stamboken.<br>
-    Får endast utfärdas av innehavare av godkänd besättning. Båda föräldradjuren ska vara registrerade.<br>
+    Får endast utfärdas av innehavare av godkänd besättning. Båda föräldrarna ska vara registrerade.<br>
     Eftertryck förbjudet utan Föreningen Gotlandskaninens medgivande.<br>
     <span class="fingerprint">Dokument-ID {{ digital_certificate }} · SHA-256 {{ doc_hash_stub }} · Äktheten avgörs alltid av verifieringen på gotlandskaninen.se — inte av papperet.</span>
   </div>
