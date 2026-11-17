@@ -226,7 +226,7 @@ body {
   font-family: var(--sans);
   font-size: 8pt;
   color: var(--ink-2);
-  padding: 1mm 4mm 1mm 0; vertical-align: bottom; width: 34mm;
+  padding: 1mm 4mm 1mm 0; vertical-align: bottom; width: 46mm;
 }
 .sign .sv {
   font-size: 10pt; font-weight: 600; color: var(--ink);
@@ -304,8 +304,8 @@ h1, .sec, .breed { color:var(--skog) !important; } .rule-thick { border-top-colo
   <div class="sec"><span class="no">01</span><span class="t">Identitet</span><span class="fill"></span></div>
   <table class="fields">
     <tr><td class="l">Namn</td><td class="v vname">{{ name or '—' }}</td><td class="l">Födelsedatum</td><td class="v">{{ birth_date }}</td></tr>
-    <tr><td class="l">Kön</td><td class="v">{{ sex }}</td><td class="l">Födda i kullen</td><td class="v">{{ litter_size }}</td></tr>
-    <tr><td class="l">Levande vid 6 veckor</td><td class="v">{{ litter_size6w }}</td><td class="l">Färg / kännetecken</td><td class="v">{% if color_code %}<span class="chip">{{ color_code }}</span> {% endif %}{{ color }}</td></tr>
+    <tr><td class="l">Kön</td><td class="v">{{ sex }}</td><td class="l">Färg / kännetecken</td><td class="v">{% if color_code %}<span class="chip">{{ color_code }}</span> {% endif %}{{ color }}</td></tr>
+    <tr><td class="l">Födda i kullen</td><td class="v">{{ litter_size }}</td><td class="l">Levande vid 6 veckor</td><td class="v">{{ litter_size6w }}</td></tr>
     <tr><td class="l">Färganteckning</td><td class="v" colspan="3">{{ color_note or '—' }}</td></tr>
     <tr><td class="l">Ögonfärg</td><td class="v">{{ eye_color or '—' }}</td><td class="l">Klofärg</td><td class="v">{{ claw_color or '—' }}</td></tr>
     <tr><td class="l">Hårlag</td><td class="v">{{ hair_notes or '—' }}</td><td class="l">Färg på buken</td><td class="v">{{ belly_color or '—' }}</td></tr>
@@ -362,8 +362,8 @@ h1, .sec, .breed { color:var(--skog) !important; } .rule-thick { border-top-colo
   <div class="sign-wrap">
     <div class="cols">
       <table class="sign">
-        <tr><td class="sl">Intygas av</td><td class="sv">{{ fullname }}</td></tr>
-        <tr><td class="sl">Besättningsnummer</td><td class="sv">{{ herd }}</td></tr>
+        <tr><td class="sl">Uppfödarens namn</td><td class="sv">{{ fullname }}</td></tr>
+        <tr><td class="sl">Uppfödarens besättningsnummer</td><td class="sv">{{ herd }}</td></tr>
         <tr><td class="sl">Utfärdat</td><td class="sv">{{ issue_date }}</td></tr>
         <tr><td class="sl">Intygsnummer</td><td class="sv">{{ digital_certificate }}</td></tr>
       </table>
