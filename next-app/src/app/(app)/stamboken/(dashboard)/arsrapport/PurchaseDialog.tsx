@@ -43,7 +43,6 @@ interface Props {
   upload: (
     data: FormData,
   ) => Promise<ActionResult<{ item_id: number; document_id: number }>>; // the report's photo upload (4b)
-  onAddRabbit?: () => void; // the report's "Lägg till kanin från intyget", where the report offers it
   onSent: () => void;
   onClose: () => void;
 }
@@ -57,7 +56,6 @@ function Body({
   loadHerds,
   send,
   upload,
-  onAddRabbit,
   onSent,
   onClose,
 }: Props) {
@@ -177,21 +175,14 @@ function Body({
                 }}
               />
             </label>
+            {/* Not "Lägg till från intyget": a rabbit of another herd's litter is registered for that herd, never by
+                its buyer. Open: a notice with the certificate's photo would need the queue to register it there. */}
             <p
               className={missing ? styles.errorText : styles.meta}
               role={missing ? "alert" : undefined}
             >
               {NOT_IN_STAMBOKEN_TEXT}
             </p>
-            {missing && onAddRabbit && (
-              <button
-                type="button"
-                className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
-                onClick={onAddRabbit}
-              >
-                Lägg till från intyget
-              </button>
-            )}
             <div
               className={styles.choices}
               role="radiogroup"

@@ -54,20 +54,7 @@ const actions = () =>
     dryRun: vi.fn(),
     submitReport: vi.fn(),
     withdrawReport: vi.fn(),
-    getGenebankHerds: vi.fn(() =>
-      Promise.resolve({ success: true, herds: [] }),
-    ),
-    reportPurchase: vi.fn(() =>
-      Promise.resolve({
-        ok: false,
-        problem: {
-          status: 422,
-          title: "Kan inte sparas",
-          detail: "",
-          extensions: { code: "inte_i_stamboken" },
-        },
-      }),
-    ),
+    getGenebankHerds: vi.fn(),
   }) as never;
 
 // a helper's paper form, as paper.test.tsx sets it up
@@ -131,25 +118,5 @@ describe("Lägg till kanin från intyget in the report", () => {
     expect(
       within(row).getByRole("radio", { name: "Finns kvar" }),
     ).toBeChecked();
-  });
-
-  it("Anmäl köpet hands a number Stamboken lacks to the same form", async () => {
-    render(<ReportForm env="demo" view={view()} actions={actions()} />);
-    fireEvent.click(screen.getByRole("button", { name: "Anmäl köpet" }));
-    fireEvent.change(screen.getByLabelText("Kaninens nummer"), {
-      target: { value: "G9002-9999" },
-    });
-    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
-    fireEvent.change(screen.getByLabelText("Datum för köpet"), {
-      target: { value: "2026-07-01" },
-    });
-    fireEvent.click(screen.getByRole("button", { name: "Skicka anmälan" }));
-    fireEvent.click(
-      await screen.findByRole("button", { name: "Lägg till från intyget" }),
-    );
-    expect(screen.queryByRole("dialog", { name: /Anmäl ett köp/ })).toBeNull();
-    fireEvent.click(screen.getByRole("button", { name: "Registrerad" }));
-    expect(refresh).toHaveBeenCalled();
-    expect(screen.getByText(RABBIT_SAVED)).toHaveAttribute("role", "status");
   });
 });

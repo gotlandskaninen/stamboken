@@ -216,7 +216,8 @@ class PurchaseNoticeTest(ArsrapportTest):
         self.assertEqual(response.status_code, 422)
         body = response.get_json()
         self.assertEqual((body["code"], body["field"]), ("inte_i_stamboken", "number"))
-        self.assertEqual(body["detail"], "Finns kaninen inte i Stamboken? Lägg till den från intyget.")
+        manager = "Finns kaninen inte i Stamboken? Kontakta genbanksansvarig, som registrerar den från intyget."
+        self.assertEqual(body["detail"], manager)
         db.Individual.update(voided=True).where(db.Individual.id == self.b.id).execute()  # an unpromoted slot
         self.assertEqual(self.notify(number=self.b.number).status_code, 422)
         self.assertEqual(notices(), [])

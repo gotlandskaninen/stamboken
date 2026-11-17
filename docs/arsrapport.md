@@ -111,8 +111,9 @@ med anmälan.
 
 - Kaninen och säljaren söks bara i besättningens genbank (kaninens ursprungsbesättning), så en
   annan genbanks nummer eller besättning får samma svar som ett som inte finns.
-- Ett nummer som Stamboken saknar ger 422 med `code` `inte_i_stamboken`: kaninen läggs till från
-  intyget i stället. En kanin som redan står i besättningen ger 409. En öppen anmälan av samma
+- Ett nummer som Stamboken saknar ger 422 med `code` `inte_i_stamboken`: köparen kontaktar
+  genbanksansvarig, som registrerar kaninen från intyget i säljarens besättning. Köparen får inte
+  registrera i en annan besättning. En kanin som redan står i besättningen ger 409. En öppen anmälan av samma
   kanin under året är svaret igen, och en öppen anmälan från ett annat år ger 409.
 - Anmälan skrivs som rapporten, under rapportens lås: medan rundan är öppen, och efter `end_date`
   bara av genbanksansvarig och admin. Annars 409 med `code` `rundan_stangd`.

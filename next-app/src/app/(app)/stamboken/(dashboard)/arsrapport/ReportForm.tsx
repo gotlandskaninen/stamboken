@@ -2178,15 +2178,6 @@ export function ReportForm({
           uploadPhoto(herd.herd, year, data, link ? undefined : env, "kop")
         }
         onSent={() => router.refresh()}
-        onAddRabbit={
-          canAddRabbit
-            ? () => {
-                setBuying(false);
-                setRabbitSaved(false);
-                setRabbitOpen(true);
-              }
-            : undefined
-        }
         onClose={() => setBuying(false)}
       />
     </div>

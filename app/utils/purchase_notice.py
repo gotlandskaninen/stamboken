@@ -33,7 +33,7 @@ from utils.database import (
 KIND = "kopanmalan"
 _PURCHASE_LOCK = 0x48424B50  # "HBKP": classid of the advisory lock on a purchase of a rabbit into a herd
 MATCH_DAYS = 14  # mitt val: a notice and a sale proposal of the same rabbit this close in date are one sale
-NOT_IN_STAMBOKEN = "Finns kaninen inte i Stamboken? Lägg till den från intyget."
+NOT_IN_STAMBOKEN = "Finns kaninen inte i Stamboken? Kontakta genbanksansvarig, som registrerar den från intyget."
 PHOTO_TYPES = ("bevis", "intyg")  # what a notice's photo shows: the transfer proof, or the rabbit's certificate
 REGISTERED = "Köpet är registrerat"
 

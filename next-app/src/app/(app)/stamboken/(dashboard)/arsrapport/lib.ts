@@ -354,7 +354,7 @@ export const PENDING_SALE_TEXT =
 export const PURCHASE_SENT_TEXT =
   "Anmälan är skickad till genbanksansvarig. Kaninen kommer in i din besättning när köpet är registrerat.";
 export const NOT_IN_STAMBOKEN_TEXT =
-  "Finns kaninen inte i Stamboken? Lägg till den från intyget.";
+  "Finns kaninen inte i Stamboken? Kontakta genbanksansvarig, som registrerar den från intyget.";
 export const TIMEOUT_TEXT =
   "Vi vet inte om rapporten kom fram. Tryck Försök igen. Den skickas inte två gånger.";
 
