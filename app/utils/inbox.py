@@ -31,7 +31,10 @@ from utils.database import (
     Member,
     Notice,
     NoticeSetting,
+    SaleProposal,
     User,
+    YearlyHerdReport,
+    YearlyReportRound,
 )
 from utils.inbox_proposal import build_proposal
 from utils.individual_number_v2 import parse_number
@@ -818,13 +821,39 @@ def registered_rabbit(item):
     }
 
 
+def _report_year(item):
+    """
+    The round year of a sale proposal's item, whose status view decides it (5.9), or of the proposal a purchase
+    notice matches (4a Task 5); None for any other item.
+    """
+    if item.ref_type == "kopanmalan":
+        from utils.purchase_notice import proposal_for  # pylint: disable=import-outside-toplevel  # it imports us
+
+        proposal = proposal_for(item)
+        return proposal.report.round.report_year if proposal is not None else None
+    if item.ref_type != "sale_proposal":
+        return None
+    return (
+        YearlyReportRound.select(YearlyReportRound.report_year)
+        .join(YearlyHerdReport)
+        .join(SaleProposal)
+        .where(SaleProposal.id == item.ref_id)
+        .scalar()
+    )
+
+
 def item_detail(item):
-    """GET …/<id>: the list form plus the message, the documents and the history (and a report photo's rabbit)."""
+    """
+    GET …/<id>: the list form plus the message, the documents, the history, a sale proposal's year, a kontroll
+    item's structured fields (ref_data), and a report photo's rabbit.
+    """
     documents = list(item.documents.order_by(InboxDocument.id))
     events = list(item.events.order_by(InboxEvent.at, InboxEvent.id))
     names = person_names([e.user_id for e in events])
     return {
         **items_json([item])[0],
+        "report_year": _report_year(item),
+        "ref_data": item.ref_data,
         "message": item.message,
         "sender_address": item.sender_address,
         "documents": documents_json(documents, report_photo(item)),

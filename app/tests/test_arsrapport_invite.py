@@ -7,11 +7,13 @@ isort:skip_file
 """
 
 import re
+import threading
 from datetime import date, datetime, timezone
 from unittest import mock
 
 import utils.arsrapport as arsrapport
 import utils.arsrapport_invite as invite
+import utils.data_access as da
 import utils.database as db
 import utils.mail as mail
 import utils.report_code as report_code
@@ -19,8 +21,10 @@ import utils.settings as settings
 from herdbook import APP
 
 from tests.arsrapport_fixtures import ArsrapportTest
+from tests.database_test import _USE_POSTGRES
 from tests.ht_helpers import count_queries
 from tests.test_mail_queue import FakeRelay, _refused
+from tests.test_purchase_notice import in_thread, lock_waiter, run_all, until
 
 NOW = datetime(2026, 1, 5, 7, 0, tzinfo=timezone.utc)
 
@@ -361,3 +365,33 @@ class InviteTest(ArsrapportTest):
         self.assertEqual(caught.exception.status, 409)
         self.assertIsNone(db.ReportAccessCode.get_by_id(old.id).revoked_at)
         self.assertEqual(self.mails("arsrapport.ny_lank"), [])
+
+    def test_new_link_and_a_legacy_year_change_take_the_round_row_first(self):  # Codex: no deadlock
+        """
+        The legacy PATCH holds the round row FOR UPDATE (report_year is a unique key) and then updates the codes;
+        the replacement code's insert takes the round row's key-share lock. new_link takes the round row first.
+        """
+        if not _USE_POSTGRES:
+            self.skipTest("row locks need PostgreSQL")
+        self.run_job()
+        revoked, original, results = threading.Event(), report_code.revoke, {}
+
+        def revoke_then_wait(code, *, now):
+            original(code, now=now)  # the old code's row is held from here
+            revoked.set()
+            until(lock_waiter)  # the year change waits for a lock before the replacement goes in
+
+        def link():
+            return invite.new_link(self.h, self.round_, self.owner, now=NOW).id
+
+        def year():
+            revoked.wait(10)
+            return da.update_yearly_report_round(self.round_.id, {"report_year": 2024}, self.admin.uuid)["status"]
+
+        with mock.patch.object(report_code, "revoke", side_effect=revoke_then_wait):
+            done = run_all(in_thread(results, "link", link), in_thread(results, "year", year))
+        self.assertTrue(done, "hung threads")
+        self.assertEqual(results["year"], "success", results)
+        new = db.ReportAccessCode.get_by_id(results["link"])
+        self.assertIsNone(new.revoked_at)
+        self.assertEqual((new.round.report_year, new.expires_at), (2024, self.round_.end_date))

@@ -31,9 +31,12 @@ def _herds(genebank_id):
 
 
 def _invite_genebank(activation, now):
-    round_, count = activation.round, 0
-    year = round_.report_year
+    count = 0
     with DB_PROXY.atomic():  # all or nothing, so sent_at never says more than was queued
+        # The round row first, as Dra tillbaka takes it: a moved end_date updates it before the codes, so the two
+        # never take the codes in different orders, and each code gets the end_date read here
+        round_ = arsrapport._lock_round(activation.round)  # pylint: disable=protected-access
+        year = round_.report_year
         # A second job on the same activation waits here, then finds it sent: it must not reissue any code.
         locked = (
             YearlyReportRoundGenebank.select().where(YearlyReportRoundGenebank.id == activation.id).for_update().get()
@@ -115,7 +118,10 @@ def new_link(herd, round_, user, *, now: datetime) -> ReportAccessCode:
 
 def _replace_link(herd, round_, user, now):
     with DB_PROXY.atomic():
-        report_code.lock_herd_codes(herd)  # first: the recipient is read, and the old link revoked, under it
+        # The round row before the codes, as the invitation job: a legacy PATCH of report_year holds the row FOR
+        # UPDATE and then updates the codes, which the replacement's insert (a key-share lock on the row) would cross
+        round_ = arsrapport._lock_round(round_)  # pylint: disable=protected-access
+        report_code.lock_herd_codes(herd)  # then: the recipient is read, and the old link revoked, under it
         member = report_code.invitation_recipient(herd)
         if member is None:
             raise ArsrapportError(409, "Besättningen har ingen huvudmedlem med e-postadress.")

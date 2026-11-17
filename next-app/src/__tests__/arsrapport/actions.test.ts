@@ -28,6 +28,8 @@ import {
   submitReport,
   withdrawReport,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/actions";
+import { getGenebankHerds as linkHerds } from "@/app/(app)/rapport/actions";
+import { ApiError } from "@/lib/api";
 import {
   SUBMIT_TIMEOUT_MS,
   emptyState,
@@ -142,6 +144,36 @@ describe("arsrapport actions", () => {
       await sendTestMail(2026, 0, "demo"),
     ])
       expect(r).toMatchObject({ ok: false, problem: { status: 400 } });
+    expect(fetchApi).not.toHaveBeenCalled();
+  });
+});
+
+describe("the link's herd picker", () => {
+  it("asks the report's own route on production and gives the dialog its shape", async () => {
+    const herds = [{ herd: "G9002", herd_name: "Gården", is_active: true }];
+    fetchApi.mockResolvedValue({ herds });
+    expect(await linkHerds("G9001", 2025, 1)).toEqual({
+      success: true,
+      herds,
+    });
+    expect(fetchApi.mock.calls[0][0]).toBe(
+      "/v2/arsrapport/besattning/G9001/2025/besattningar",
+    );
+    expect(fetchApi.mock.calls[0][1]).toMatchObject({
+      method: "GET",
+      forceProd: true,
+    });
+  });
+  it("passes a refusal on as the dialog's error, and asks nothing for a bad herd", async () => {
+    const refusal = { status: 404, title: "Hittades inte", detail: "Nej" };
+    // the mocked ApiError takes no fields, so they are set on it as the real one sets them
+    fetchApi.mockRejectedValue(Object.assign(new ApiError(refusal), refusal));
+    expect(await linkHerds("G9001", 2025, 1)).toEqual({
+      success: false,
+      error: "Nej",
+    });
+    fetchApi.mockClear();
+    expect((await linkHerds("../x", 2025, 1)).success).toBe(false);
     expect(fetchApi).not.toHaveBeenCalled();
   });
 });

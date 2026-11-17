@@ -4,6 +4,7 @@ isort:skip_file
 """
 
 import os
+import threading
 from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 from zoneinfo import ZoneInfo
@@ -16,10 +17,12 @@ import utils.inbox as inbox  # noqa: E402
 import utils.inbox_purge as purge  # noqa: E402
 from herdbook import APP, limiter  # noqa: E402
 from peewee import IntegrityError  # noqa: E402
-from utils import buyer_contact  # noqa: E402
+from utils import buyer_contact, herd_tracking  # noqa: E402
 from utils.herd_tracking import (  # noqa: E402
+    UNDO_REASON,
     HerdTrackingConflict,
     HerdTrackingInvalid,
+    QueueChanged,
     correct_herd_tracking,
     herd_tracking_history,
     new_operation_id,
@@ -30,12 +33,13 @@ from utils.herd_tracking import (  # noqa: E402
 )
 from utils.individual_commands import RecordAttestation, Undo, execute, record_sale  # noqa: E402
 
-from tests.database_test import DatabaseTest  # noqa: E402
+from tests.database_test import _USE_POSTGRES, DatabaseTest  # noqa: E402
 from tests.test_bunny_v2_api import _old_litter, _promote_without_certificate
 from tests.test_herd_tracking_locks import capture_sql
 from tests.test_inbox_erasure import ErasureTest
 from tests.test_inbox_purge import NOW as PURGE_NOW  # noqa: E402
 from tests.test_inbox_purge import PurgeTest
+from tests.test_purchase_notice import in_thread, lock_waiter, run_all, until
 
 limiter.enabled = False
 
@@ -459,14 +463,18 @@ class TestVoid(BuyerBase):
 
     def test_the_reason_never_names_the_buyer(self):
         with self.assertRaises(HerdTrackingInvalid):
-            void_herd_tracking(self.sale.id, self.owner, f"Såld till {NAME.upper()} av misstag")
+            void_herd_tracking(self.sale.id, self.manager, f"Såld till {NAME.upper()} av misstag")
         self.assertIsNotNone(self._contact(self.contact_id))
+
+    def test_the_sellers_reason_is_the_systems(self):  # one who may not see the buyer gets no answer to a guess
+        void_herd_tracking(self.sale.id, self.owner, f"Såld till {NAME.upper()} av misstag")
+        self.assertEqual(db.HerdTracking.get_by_id(self.sale.id).voided_reason, UNDO_REASON)
 
     def test_the_name_guard_takes_whole_words_of_typed_text_only(self):
         db.BuyerContact.update(name="Anna de Berg").where(db.BuyerContact.id == self.contact_id).execute()
         for reason in ("Såld till Anna", "Annas kanin", "såld till anna de berg"):
             with self.subTest(reason=reason), self.assertRaises(HerdTrackingInvalid):
-                void_herd_tracking(self.sale.id, self.owner, reason)
+                void_herd_tracking(self.sale.id, self.manager, reason)
         event = {"kind": "TRANSFER", "date": "2021-07-01", "herd": "GX1", "notes": "köpt av anna"}
         with self.assertRaises(HerdTrackingInvalid):  # a correction's notes too
             correct_herd_tracking(self.rabbit, self.manager, None, [self.sale.id], [event], "Fel datum")
@@ -484,7 +492,7 @@ class TestVoid(BuyerBase):
         db.BuyerContact.update(name="Li-Bo").where(db.BuyerContact.id == self.contact_id).execute()
         for reason in ("Såld till Li-Bo", "Li-Bos kanin", "li bo"):
             with self.subTest(reason=reason), self.assertRaises(HerdTrackingInvalid):
-                void_herd_tracking(self.sale.id, self.owner, reason)
+                void_herd_tracking(self.sale.id, self.manager, reason)
 
     def test_the_undo_commands_own_reason_is_never_checked(self):
         db.BuyerContact.update(name="Van Den Berg").where(db.BuyerContact.id == self.contact_id).execute()
@@ -496,7 +504,7 @@ class TestVoid(BuyerBase):
         execute(self.manager, self.rabbit.id, lambda ctx: [Undo(op)])
         self.assertEqual(self._latest().id, self.sale.id)
         with self.assertRaises(HerdTrackingInvalid):  # typed by a user, the same word is refused
-            void_herd_tracking(self.sale.id, self.owner, "den köparen ångrade sig")
+            void_herd_tracking(self.sale.id, self.manager, "den köparen ångrade sig")
 
     def test_a_system_reason_is_never_checked(self):
         db.BuyerContact.update(name="Avpromoverad").where(db.BuyerContact.id == self.contact_id).execute()
@@ -732,6 +740,57 @@ class TestQueueDocuments(PurgeTest):
     def test_the_five_year_purge_too(self):
         buyer_contact.purge_expired(NOW + timedelta(days=5 * 366))
         self.assertScrubbed([self.certificate, self.photo], [self.proof, self.other])
+
+    def against_a_late_item(self, job):
+        """
+        `job` in one transaction and the queue in another: while `job` holds the rabbit, the queue links another item
+        to the sale, locks that item and waits for the rabbit, its own order. Returns both results and the document.
+        """
+        if not _USE_POSTGRES:
+            self.skipTest("row locks need PostgreSQL")
+        (late,) = self.make().documents
+        held, original, results = threading.Event(), herd_tracking.lock_individuals, {}
+
+        def rabbit_held(ids):
+            value = original(ids)
+            if not held.is_set():
+                held.set()
+                until(lock_waiter)  # the queue holds its item and waits for the rabbit
+            return value
+
+        def queue():  # the queue's own order: its item, then the rabbit
+            held.wait(10)
+            db.InboxDocument.update(herd_tracking_id=self.sale.id).where(db.InboxDocument.id == late.id).execute()
+            with db.DB_PROXY.atomic():
+                inbox.lock_item(late.item_id)
+                db.lock_individuals([self.rabbit.id])
+            return "ok"
+
+        with mock.patch.object(herd_tracking, "lock_individuals", side_effect=rabbit_held):
+            done = run_all(in_thread(results, "job", job), in_thread(results, "queue", queue))
+        self.assertTrue(done, "hung threads")
+        self.assertTrue(held.is_set())
+        return results, late
+
+    def test_the_purge_finds_an_item_linked_after_its_scan_and_takes_the_items_first(self):  # Codex P2, finding 4
+        results, late = self.against_a_late_item(lambda: buyer_contact.purge_expired(NOW + timedelta(days=5 * 366)))
+        self.assertEqual(results, {"job": 1, "queue": "ok"})
+        self.assertScrubbed([self.certificate, self.photo, late], [self.proof, self.other])
+
+    def test_an_erasure_finds_an_item_linked_after_its_scan_and_starts_again(self):  # Codex: item scans
+        def erase():
+            buyer_contact.erase_buyer_contact(self.sale.holder_contact_id, self.manager)
+            return "ok"
+
+        results, late = self.against_a_late_item(erase)
+        self.assertEqual(results, {"job": "ok", "queue": "ok"})
+        self.assertScrubbed([self.certificate, self.photo, self.proof, late], [self.other])
+
+    def test_a_void_answers_409_for_an_item_linked_after_its_scan(self):  # Codex: item scans
+        results, _late = self.against_a_late_item(lambda: void_herd_tracking(self.sale.id, self.manager, "Fel"))
+        self.assertEqual(results, {"job": repr(QueueChanged()), "queue": "ok"})
+        self.assertIsNone(db.HerdTracking.get_by_id(self.sale.id).voided_at)
+        self.assertIsNotNone(db.BuyerContact.get_or_none(db.BuyerContact.id == self.sale.holder_contact_id))
 
     def test_after_the_originals_purge_only_what_is_left_is_cleared(self):
         purge.purge_originals(PURGE_NOW + timedelta(days=400))  # certificates and proofs, not other photos

@@ -8,6 +8,7 @@ import { MbCard } from "../min-besattning/min-besattning-ui";
 import type * as Actions from "./actions";
 import type { getGenebankHerds } from "../individ/[number]/actions";
 import type { ActionResult } from "../inkorg/actions";
+import { CLOSED_STATES, type ItemState } from "../inkorg/lib";
 import {
   CONFLICT_TEXT,
   DISEASES,
@@ -30,6 +31,7 @@ import {
   stockholmDay,
   toBody,
   toDraft,
+  withoutGoneBuyer,
   todayStockholm,
   autosaveAnswerKept,
   type DraftData,
@@ -47,6 +49,7 @@ import {
 } from "./lib";
 import { NumberRow } from "./NumberRow";
 import { PaperChanges } from "./PaperChanges";
+import { PurchaseDialog } from "./PurchaseDialog";
 import { RabbitRow } from "./RabbitRow";
 import { Receipt } from "./Receipt";
 import { ReportStatus, type StatusKind } from "./ReportStatus";
@@ -57,9 +60,9 @@ import styles from "./arsrapport.module.css";
 
 export type ReportActions = Pick<
   typeof Actions,
-  "saveDraft" | "dryRun" | "submitReport" | "withdrawReport"
+  "saveDraft" | "dryRun" | "submitReport" | "withdrawReport" | "reportPurchase"
 > & { getGenebankHerds: typeof getGenebankHerds } & Partial<
-    // the sale dialog's herd picker
+    // the sale and purchase dialogs' herd picker
     Pick<
       typeof Actions,
       "addLitter" | "changeLitter" | "getFathers" | "getMothers"
@@ -108,7 +111,7 @@ const summaryLine = (herd: string, r: ReceiptData) => {
     .join(", ")}.`;
 };
 
-type Filter = "inte_klara" | "kvar" | "dod" | "sald" | "alla";
+type Filter = "inte_klara" | "kvar" | "dod" | "sald" | "kopt" | "alla";
 type Phase = "idle" | "checking" | "sending" | "timeout";
 type SaveState =
   | "saved"
@@ -289,6 +292,14 @@ export function ReportForm({
     !!actions.changeLitter &&
     !!actions.getFathers &&
     !!actions.getMothers;
+  // The server's require_open: while the round is open, or after its end for an
+  // editor or a helper; never before it opens.
+  const canNotify =
+    round.open ||
+    ((editor || view.access === "helper") &&
+      round.activated &&
+      !!round.start_date &&
+      late);
 
   const [state, setState] = React.useState<FormState>(() =>
     startFrom(view, isPaper),
@@ -319,6 +330,8 @@ export function ReportForm({
   // an edit clears some of its errors
   const [failTick, setFailTick] = React.useState(0);
   const [receipt, setReceipt] = React.useState<ReceiptData | null>(null);
+  // the view the receipt came on: a newer one is the refresh after Skicka
+  const [receiptView, setReceiptView] = React.useState<ReportView | null>(null);
   const [withdrawn, setWithdrawn] = React.useState<string | null>(null);
   const [withdrawing, setWithdrawing] = React.useState(false);
   // The report revision this page's own Skicka of a change, or Dra tillbaka, just replaced. Until router.refresh
@@ -346,6 +359,7 @@ export function ReportForm({
   const [rabbitOpen, setRabbitOpen] = React.useState(false);
   const [rabbitSaved, setRabbitSaved] = React.useState(false);
   const [confirming, setConfirming] = React.useState<Litter | null>(null);
+  const [buying, setBuying] = React.useState(false); // "Anmäl ett köp" is open
   const [seenEnd, setSeenEnd] = React.useState(false);
   const [askRest, setAskRest] = React.useState(false);
   const [focusTick, setFocusTick] = React.useState(0);
@@ -578,9 +592,18 @@ export function ReportForm({
   const done = React.useMemo(() => {
     const m = new Map<number, boolean>();
     for (const r of rabbits)
-      m.set(r.id, isDone(r, state.rabbits[r.id], state.ending));
+      m.set(
+        r.id,
+        isDone(
+          r,
+          state.rabbits[r.id],
+          state.ending,
+          view.report?.submitted?.rabbits?.[r.id]?.sald,
+          view.can_sell,
+        ),
+      );
     return m;
-  }, [rabbits, state.rabbits, state.ending]);
+  }, [rabbits, state.rabbits, state.ending, view.report, view.can_sell]);
   const notDone = rabbits.filter((r) => !done.get(r.id));
   const doneCount = rabbits.length - notDone.length;
 
@@ -613,6 +636,7 @@ export function ReportForm({
       return false;
     if (filter === "alla") return true;
     if (filter === "inte_klara") return snapshot.has(r.id);
+    if (filter === "kopt") return r.kopt !== null; // bought during the year (4a Task 5)
     return state.rabbits[r.id]?.val === filter;
   });
   const lastShown = lastId !== null && visible.some((r) => r.id === lastId);
@@ -713,8 +737,16 @@ export function ReportForm({
       const before = stateRef.current.rabbits[id] ?? EMPTY_ENTRY;
       const rabbit = viewRef.current.rabbits.find((x) => x.id === id);
       const after = { ...before, ...patch };
+      const v = viewRef.current;
       const doneAfter =
-        !!rabbit && isDone(rabbit, after, stateRef.current.ending);
+        !!rabbit &&
+        isDone(
+          rabbit,
+          after,
+          stateRef.current.ending,
+          v.report?.submitted?.rabbits?.[id]?.sald,
+          v.can_sell,
+        );
       setRefusals((rs) => {
         const left = rs?.filter(
           (r) =>
@@ -728,7 +760,10 @@ export function ReportForm({
         ...s,
         rabbits: {
           ...s.rabbits,
-          [id]: { ...(s.rabbits[id] ?? EMPTY_ENTRY), ...patch },
+          [id]: withoutGoneBuyer({
+            ...(s.rabbits[id] ?? EMPTY_ENTRY),
+            ...patch,
+          }),
         },
       }));
     },
@@ -745,6 +780,13 @@ export function ReportForm({
       }}
     />
   );
+  // 5.9: a sale is a proposal while one is pending, or when a caretaker or the link makes it. A sale the report
+  // already holds without one was registered, and only the genebank manager changes it (FB5).
+  const proposalFor = (id: number) =>
+    view.forslag.some(
+      (p) => p.individual_id === id && p.state === "foreslagen",
+    ) ||
+    (!view.can_sell && view.report?.submitted?.rabbits?.[id]?.val !== "sald");
   const onNextWeight = React.useCallback((id: number) => {
     const ids = visibleIds.current;
     const s = stateRef.current;
@@ -829,6 +871,7 @@ export function ReportForm({
       writeLocal(store, herd.herd, year, null);
       setLocalCopy(false);
       setReceipt(res.data);
+      setReceiptView(viewRef.current);
       setMode("receipt");
       setPhase("idle");
       setWithdrawn(null);
@@ -853,7 +896,12 @@ export function ReportForm({
     if (phase !== "idle" || syncing || olderCopy || refreshing) return;
     setRefusals(null);
     if (!link && readModeCookieClient() !== env) return fail(ENV_TEXT);
-    let body = toBody(state, keyRef.current!, view.report?.revision ?? null);
+    let body = toBody(
+      state,
+      keyRef.current!,
+      view.report?.revision ?? null,
+      view.rabbits.map((r) => r.id),
+    );
     if (isPaper) {
       const signed = signedOn ?? receivedOn;
       if (!receivedOn) return fail("Ange dagen blanketten kom in.");
@@ -1103,6 +1151,7 @@ export function ReportForm({
           onChange={startChange}
           onWithdraw={withdraw}
           focusOnMount={!!receipt}
+          refreshed={view !== receiptView}
         />
       </div>
     );
@@ -1483,6 +1532,7 @@ export function ReportForm({
                       ["kvar", "Finns kvar"],
                       ["dod", "Döda"],
                       ["sald", "Sålda"],
+                      ["kopt", "Köpta"],
                       ["alla", "Alla"],
                     ] as [Filter, string][]
                   ).map(([f, label]) => (
@@ -1643,6 +1693,7 @@ export function ReportForm({
                       ending={state.ending}
                       year={year}
                       canSell={view.can_sell}
+                      proposal={proposalFor(r.id)}
                       done={!!done.get(r.id)}
                       error={rowErrors.get(r.id)}
                       onChange={onRow}
@@ -1656,6 +1707,28 @@ export function ReportForm({
                     </p>
                   )}
                 </div>
+              </div>
+            )}
+            {!isPaper && canNotify && (
+              <div className={styles.detail}>
+                {view.kopanmalningar
+                  .filter((n) => !CLOSED_STATES.includes(n.state as ItemState))
+                  .map((n) => (
+                    <p key={n.id} className={styles.meta}>
+                      Anmält köp: {n.number}, {fmtDate(n.date)}. Väntar på
+                      genbanksansvarig.
+                    </p>
+                  ))}
+                <p className={styles.line}>
+                  <span>Saknas ett köp?</span>
+                  <button
+                    type="button"
+                    className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+                    onClick={() => setBuying(true)}
+                  >
+                    Anmäl köpet
+                  </button>
+                </p>
               </div>
             )}
             {!isPaper &&
@@ -2079,6 +2152,12 @@ export function ReportForm({
         existing={
           soldFor !== null ? (state.rabbits[soldFor]?.sald ?? null) : null
         }
+        submitted={
+          soldFor !== null
+            ? (view.report?.submitted?.rabbits?.[soldFor]?.sald ?? null)
+            : null
+        }
+        canSell={view.can_sell}
         onSave={(s: SaldState) => {
           if (syncing) return;
           onRow(soldFor!, { val: "sald", sald: s });
@@ -2086,6 +2165,16 @@ export function ReportForm({
           if (isPaper) focusLater("paper-number"); // the next row
         }}
         onClose={() => setSoldFor(null)}
+      />
+      <PurchaseDialog
+        open={buying}
+        year={year}
+        genebankId={herd.genebank_id}
+        ownHerd={herd.herd}
+        loadHerds={actions.getGenebankHerds}
+        send={(body) => actions.reportPurchase(herd.herd, year, body, env)}
+        onSent={() => router.refresh()}
+        onClose={() => setBuying(false)}
       />
     </div>
   );

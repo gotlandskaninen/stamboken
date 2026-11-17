@@ -17,11 +17,14 @@ import {
   ReportForm,
   type ReportActions,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/ReportForm";
-import type {
-  Receipt,
-  Submission,
+import {
+  PENDING_SALE_TEXT,
+  type Receipt,
+  type ReportView,
+  type Submission,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
 import { rabbit, view } from "./fixtures";
+import "@/i18n"; // BuyerFields' labels
 
 const receipt: Receipt = {
   submission_id: 1,
@@ -54,6 +57,7 @@ const actions = (): {
     dryRun: vi.fn(() => ok({ ok: true, refusals: [], warnings: [] })),
     submitReport: vi.fn(() => ok(receipt)),
     withdrawReport: vi.fn(),
+    reportPurchase: vi.fn(),
     // the genebank's herds, as GET /v2/genebank/<id>/herds lists them
     getGenebankHerds: vi.fn(() =>
       Promise.resolve({
@@ -146,6 +150,65 @@ describe("ReportForm", () => {
       />,
     );
     expect(screen.getByLabelText("Hitta en kanin")).toBeTruthy();
+  });
+
+  it("filters the rabbits bought this year and sends a purchase notice (4a Task 5)", async () => {
+    const v = view({
+      rabbits: [
+        rabbit(1),
+        rabbit(2, { kopt: { datum: "2026-05-14", fran: "G9002" } }),
+      ],
+      kopanmalningar: [
+        {
+          id: 5,
+          number: "G9002-77",
+          from_herd: "G9002",
+          date: "2026-06-01",
+          state: "ny",
+        },
+        {
+          id: 6,
+          number: "G9002-78",
+          from_herd: "G9002",
+          date: "2026-06-02",
+          state: "klar",
+        },
+      ],
+    });
+    const a = actions();
+    a.reportPurchase.mockReturnValue(
+      ok({
+        id: 7,
+        number: "G9002-79",
+        from_herd: "GX1",
+        date: "2026-07-01",
+        state: "ny",
+      }),
+    );
+    render(<ReportForm env="demo" view={v} actions={a} />);
+    fireEvent.click(screen.getByRole("button", { name: "Köpta" }));
+    expect(screen.queryByRole("group", { name: /G9001-1\b/ })).toBeNull();
+    expect(within(row(2)).getByText("Köpt 14 maj")).toBeTruthy();
+    // an open notice is shown as waiting; a registered one is the rabbit's row
+    expect(screen.getByText(/Anmält köp: G9002-77, 1 juni 2026/)).toBeTruthy();
+    expect(screen.queryByText(/G9002-78/)).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Anmäl köpet" }));
+    fireEvent.change(screen.getByLabelText("Kaninens nummer"), {
+      target: { value: "G9002-79" },
+    });
+    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+    fireEvent.change(screen.getByLabelText("Datum för köpet"), {
+      target: { value: "2026-07-01" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Skicka anmälan" }));
+    await screen.findByRole("status");
+    expect(a.reportPurchase).toHaveBeenCalledWith(
+      "G9001",
+      2026,
+      { number: "G9002-79", from_herd: "utanfor", date: "2026-07-01" },
+      "demo",
+    );
+    expect(refresh).toHaveBeenCalled();
   });
 
   it("offers only active herds of the genebank but the seller's own and GX1, and sends the herd code", async () => {
@@ -291,16 +354,82 @@ describe("ReportForm", () => {
     ).toBe(false);
   });
 
+  it("does not count a sale outside the genebank only in the draft as klar: its buyer is gone", () => {
+    const draft = {
+      data: {
+        rabbits: {
+          "1": {
+            val: "sald",
+            sald: { till: "utanfor", ar: 2026, manad: 6, dag: null },
+          },
+        },
+      },
+      updated_at: "2026-12-31T11:00:00+00:00",
+      submission_key: null,
+      own: true,
+    } as unknown as ReportView["draft"];
+    render(
+      <ReportForm env="demo" view={view({ draft })} actions={actions()} />,
+    );
+    expect(within(row(1)).queryByText("✓ Klar")).toBeNull();
+    fireEvent.click(within(row(1)).getByRole("button", { name: "Ändra" }));
+    fireEvent.change(screen.getByLabelText(/Köparens namn/), {
+      target: { value: "Ola Köpare" },
+    });
+    fireEvent.change(screen.getByLabelText(/^Ort/), {
+      target: { value: "Visby" },
+    });
+    fireEvent.click(
+      screen.getByRole("button", { name: "Spara försäljningen" }),
+    );
+    expect(within(row(1)).getByText("✓ Klar")).toBeTruthy();
+  });
+
+  it("lets go of a kept buyer once the row is no longer a sale outside the genebank (FB6)", () => {
+    const kept = {
+      data: {
+        rabbits: {
+          "1": {
+            val: "sald",
+            sald: {
+              till: "utanfor",
+              ar: 2026,
+              manad: 6,
+              dag: null,
+              kopare_id: 7,
+            },
+          },
+        },
+      },
+      updated_at: "2026-12-31T11:00:00+00:00",
+      submission_key: null,
+      own: true,
+    } as unknown as ReportView["draft"];
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ draft: kept })}
+        actions={actions()}
+      />,
+    );
+    fireEvent.click(within(row(1)).getByRole("button", { name: "Ändra" }));
+    expect(screen.getByText(/Köparen finns sparad/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Avbryt" }));
+    choose(1, "Finns kvar");
+    choose(1, "Såld");
+    expect(screen.queryByText(/Köparen finns sparad/)).toBeNull();
+  });
+
   it("holds a buyer outside the genebank in memory only: the draft and localStorage never get it", async () => {
     vi.useFakeTimers();
     const a = actions();
     render(<ReportForm env="demo" view={view()} actions={a} />);
     choose(1, "Såld");
     fireEvent.click(screen.getByLabelText("Utanför genbanken"));
-    fireEvent.change(screen.getByLabelText("Köparens namn"), {
+    fireEvent.change(screen.getByLabelText(/Köparens namn/), {
       target: { value: "Ola Köpare" },
     });
-    fireEvent.change(screen.getByLabelText("Köparens ort"), {
+    fireEvent.change(screen.getByLabelText(/^Ort/), {
       target: { value: "Visby" },
     });
     fireEvent.change(screen.getByLabelText("Månad"), {
@@ -548,49 +677,104 @@ describe("ReportForm", () => {
     ).toBeTruthy();
   });
 
-  it("hides Dra tillbaka from a caretaker when the report has a sale", () => {
-    const base = {
-      id: 1,
-      status: "submitted",
-      source: "login",
-      revision: 0,
-      received_at: "2027-01-03T13:32:00+00:00",
-      report_date: "2027-01-03",
-      on_time: true,
-      can_change: true,
-      can_withdraw: true,
-      withdraw_until: "2027-01-10T13:32:00+00:00",
-      villkor: { hane: true, hona: true, kull: true, i_tid: true },
+  it("takes empty buyer fields on Ändra for the sale outside the report holds", () => {
+    const sale = { till: "utanfor", ar: 2026, manad: 6, dag: null };
+    const report = {
+      ...submittedReport(),
+      submitted: { rabbits: { "1": { val: "sald", sald: sale } } as never },
     };
+    render(
+      <ReportForm env="demo" view={view({ report })} actions={actions()} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Ändra" }));
+    fireEvent.click(within(row(1)).getByRole("button", { name: "Ändra" }));
+    expect(
+      screen.getByText(/Lämna fälten tomma om köparen är rätt/),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Spara försäljningen" }),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("offers Dra tillbaka to a caretaker with a sale, and says a pending sale waits", () => {
+    // FB5: the withdrawal leaves the owner's sale standing, so it is offered
     const sale = {
       "1": {
         val: "sald",
         sald: { till: "G9002", ar: 2026, manad: 3, dag: null },
       },
     } as never;
-    const { unmount } = render(
-      <ReportForm
-        env="demo"
-        view={view({
-          access: "caretaker",
-          report: { ...base, submitted: { rabbits: sale } },
-        })}
-        actions={actions()}
-      />,
-    );
-    expect(screen.queryByRole("button", { name: "Dra tillbaka" })).toBeNull();
-    unmount();
     render(
       <ReportForm
         env="demo"
         view={view({
           access: "caretaker",
-          report: { ...base, submitted: { rabbits: {} } },
+          can_sell: false,
+          forslag: [
+            {
+              individual_id: 1,
+              to_herd: "G9002",
+              sale_date: "2026-03-31",
+              state: "foreslagen",
+            },
+          ],
+          report: {
+            id: 1,
+            status: "submitted",
+            source: "login",
+            revision: 0,
+            received_at: "2027-01-03T13:32:00+00:00",
+            report_date: "2027-01-03",
+            on_time: true,
+            submitted: { rabbits: sale },
+            can_change: true,
+            can_withdraw: true,
+            withdraw_until: "2027-01-10T13:32:00+00:00",
+            villkor: { hane: true, hona: true, kull: true, i_tid: true },
+          },
         })}
         actions={actions()}
       />,
     );
     expect(screen.getByRole("button", { name: "Dra tillbaka" })).toBeTruthy();
+    expect(screen.getByText(PENDING_SALE_TEXT)).toBeTruthy();
+  });
+
+  it("says a sale waits from the receipt until the refresh, then from the view alone", async () => {
+    // a retry after a timeout gets the first receipt, though the sale may have been approved meanwhile
+    const a = actions();
+    a.submitReport.mockImplementation(() =>
+      ok({ ...receipt, summary: { ...receipt.summary, salda: 1, vantar: 1 } }),
+    );
+    const { rerender } = render(
+      <ReportForm env="demo" view={view()} actions={a} />,
+    );
+    fillAll();
+    send();
+    expect(await screen.findByText(PENDING_SALE_TEXT)).toBeTruthy();
+    expect(refresh).toHaveBeenCalled();
+    const refreshed = (state: "foreslagen" | "godkand") =>
+      view({
+        report: submittedReport(),
+        forslag: [
+          {
+            individual_id: 1,
+            to_herd: "G9002",
+            sale_date: "2026-10-03",
+            state,
+          },
+        ],
+      });
+    rerender(<ReportForm env="demo" view={refreshed("godkand")} actions={a} />);
+    expect(
+      screen.getByText(/Klart\. Årsrapporten för G9001 kom in/),
+    ).toBeTruthy();
+    expect(screen.queryByText(PENDING_SALE_TEXT)).toBeNull();
+    rerender(
+      <ReportForm env="demo" view={refreshed("foreslagen")} actions={a} />,
+    );
+    expect(screen.getByText(PENDING_SALE_TEXT)).toBeTruthy();
   });
 
   it("says the round is closed instead of showing the form", () => {
@@ -617,6 +801,26 @@ describe("ReportForm", () => {
     expect(
       screen.queryByRole("button", { name: "Skicka årsrapporten" }),
     ).toBeNull();
+  });
+
+  it("offers Anmäl köpet only where the server takes it: not to an editor before the round opens", () => {
+    const at = (round: Partial<ReportView["round"]>) => {
+      cleanup();
+      const before = view().round;
+      render(
+        <ReportForm
+          env="demo"
+          view={view({ access: "manager", round: { ...before, ...round } })}
+          actions={actions()}
+        />,
+      );
+      return !!screen.queryByRole("button", { name: "Anmäl köpet" });
+    };
+    expect(at({})).toBe(true); // open
+    expect(at({ start_date: "2999-12-31", open: false })).toBe(false); // not yet open
+    expect(
+      at({ start_date: "2025-12-31", end_date: "2026-03-30", open: false }),
+    ).toBe(true); // after the end: an editor still writes
   });
 
   it("says when the round opens instead of that it is closed", () => {

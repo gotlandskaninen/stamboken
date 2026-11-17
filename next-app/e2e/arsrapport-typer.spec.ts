@@ -180,7 +180,7 @@ async function markSold(
   } else {
     await dialog.getByRole("radio", { name: "Utanför genbanken" }).check();
     await dialog.getByLabel("Köparens namn").fill(to.outside);
-    await dialog.getByLabel("Köparens ort").fill("Mellerud");
+    await dialog.getByLabel(/^Ort/).fill("Mellerud");
   }
   await dialog.getByLabel("År").selectOption(when.ar);
   await dialog.getByLabel("Månad").selectOption(when.manad);
@@ -438,21 +438,16 @@ test("5. Typ C: stor besättning med döda och sålda", async ({
   expect((await storedReport(page, "M9003")).report).toBeNull();
   await shot(page, "typ-c-dragen-tillbaka");
   await expect(rows(page)).toHaveCount(30);
-  // shortcut: this asserts today's behaviour, which contradicts the withdraw text ("Det du fyllt i finns kvar"):
-  // a buyer outside the genebank is not kept in a draft (the buyer-data rule), so the withdrawn form has five
-  // sales without a buyer and Skicka refuses them. Open for Jonas 2026-11-15; update this step when it is decided.
-  await page.getByRole("button", { name: SEND }).click();
-  await expect(box).toContainText("5 kaniner är inte klara");
-  await expect(box).toContainText("Skriv köparens namn och ort.");
-  await shot(page, "typ-c-kopare-saknas");
-  for (const n of outside) {
-    await r(n).getByRole("button", { name: "Ändra", exact: true }).click();
-    const dialog = page.getByRole("dialog");
-    await dialog.getByLabel("Köparens namn").fill(`Köpare ${n}`);
-    await dialog.getByLabel("Köparens ort").fill("Mellerud");
-    await dialog.getByRole("button", { name: "Spara försäljningen" }).click();
-    await expect(dialog).toBeHidden();
-  }
+  // The five buyers outside the genebank are kept across Dra tillbaka (Jonas 2026-11-16), shown only as saved,
+  // so Skicka goes through at once.
+  await r(outside[0])
+    .getByRole("button", { name: "Ändra", exact: true })
+    .click();
+  const dialog = page.getByRole("dialog");
+  await expect(dialog).toContainText("Köparen finns sparad.");
+  await expect(dialog).not.toContainText(`Köpare ${outside[0]}`);
+  await dialog.getByRole("button", { name: "Avbryt" }).click();
+  await expect(dialog).toBeHidden();
   await page.getByRole("button", { name: SEND }).click();
   await submitted(page);
   await shot(page, "typ-c-kvitto-igen");

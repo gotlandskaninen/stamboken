@@ -107,13 +107,14 @@ def register_extract_pdf(herd, round_) -> bytes:
     )
 
 
-def _choice(entry):
+def _choice(entry, waiting=False):
     if entry.val == "kvar":
         return "Finns kvar"
     if entry.val == "dod":
         return "Död"
     if entry.val == "sald":
-        return "Såld " + ("utanför genbanken" if entry.sald["till"] == "utanfor" else f"till {entry.sald['till']}")
+        sold = "Såld " + ("utanför genbanken" if entry.sald["till"] == "utanfor" else f"till {entry.sald['till']}")
+        return sold + (", väntar på genbanksansvarig" if waiting else "")  # a proposal (5.9)
     return "Ej angiven"
 
 
@@ -121,11 +122,11 @@ def receipt_pdf(report, submission) -> bytes:
     """What the submission reported: each rabbit's choice, weight and hull, and the health answer."""
     data = submission.data
     entries = arsrapport._entries(data.get("rabbits") or {})  # pylint: disable=protected-access
-    numbers = _numbers(entries)
+    numbers, waiting = _numbers(entries), arsrapport._waiting_sales(data)  # pylint: disable=protected-access
     rabbits = [
         {
             "number": numbers[rabbit],
-            "choice": _choice(entry),
+            "choice": _choice(entry, str(rabbit) in waiting),
             "when": _when(entry.dod or entry.sald),
             "weight": entry.vikt,
             "hull": _HULL.get(entry.hull),

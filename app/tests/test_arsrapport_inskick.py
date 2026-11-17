@@ -238,7 +238,7 @@ class InskickTest(ArsrapportTest):
             {key: first[key] for key in ("source", "summary", "matrikel", "warnings")},
             {
                 "source": "login",
-                "summary": {"kvar": 1, "doda": 0, "salda": 0, "ej_angivna": 0},
+                "summary": {"kvar": 1, "doda": 0, "salda": 0, "vantar": 0, "ej_angivna": 0},
                 "matrikel": [],
                 "warnings": [{"individual_id": a.id, "code": "vikt_ovanlig", "message": "Stämmer 7,2 kg?"}],
             },

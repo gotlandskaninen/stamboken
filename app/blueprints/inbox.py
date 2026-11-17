@@ -18,6 +18,7 @@ import utils.data_access as da
 import utils.inbox as inbox
 import utils.inbox_interpreter as interpreter
 import utils.inbox_purge as inbox_purge
+import utils.purchase_notice as purchase_notice
 from extensions import limiter
 from flask import Blueprint, jsonify, request, send_file
 from flask_login import current_user
@@ -352,9 +353,17 @@ def item_detail(item_id):
     item = InboxItem.get_or_none(InboxItem.id == item_id)
     if item is None:
         return problem(404, "Hittades inte", "Posten finns inte.")
-    with DB_PROXY.atomic():
-        inbox.open_item(item, current_user)
-    return jsonify(inbox.item_detail(item))
+    try:
+        with DB_PROXY.atomic():
+            if item.ref_type == purchase_notice.KIND:
+                # locked before the opening's event, whose FK takes KEY SHARE: two first openings would then both
+                # wait for the other's to close it; held through the closing
+                item = inbox.lock_item(item.id)
+            inbox.open_item(item, current_user)
+            purchase_notice.close_registered([item])  # a purchase notice whose transfer is registered closes itself
+    except inbox.InboxError as exc:  # the purge took it meanwhile
+        return problem(exc.status, exc.title, exc.detail)
+    return jsonify(inbox.item_detail(InboxItem.get_by_id(item.id)))
 
 
 @inbox_bp.route("/inkorg/<int:item_id>/ta", methods=["POST"])

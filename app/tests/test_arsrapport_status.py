@@ -25,6 +25,14 @@ from tests.inbox_fixtures import QUALITY
 LAST = date(2025, 12, 31)
 NOW = datetime.combine(date(2026, 1, 15), clock(12), arsrapport.STOCKHOLM)
 GOOD = {"hane": True, "hona": True, "kull": True, "i_tid": True}
+# the sale flags of a herd without sale proposals (4a)
+NO_SALES = {
+    "forsaljning_vantar": 0,
+    "forsaljning_avvisad": 0,
+    "forsaljning_avvisad_paverkar": False,
+    "kopt_efter_inskick": 0,
+    "kop_anmalt": 0,
+}
 
 
 class StatusTest(ArsrapportTest):
@@ -199,7 +207,7 @@ class StatusTest(ArsrapportTest):
         entries = [self.ej_angiven(r) if r in missing else self.kvar(r, vikt=2.8) for r in rabbits]
         self.reported(self.h, *entries, source="paper")
         row = self.rows()["G9001"]
-        self.assertEqual(row["flags"], {"ej_angivna": 3, "ej_angivna_paverkar": True})
+        self.assertEqual(row["flags"], {"ej_angivna": 3, "ej_angivna_paverkar": True, **NO_SALES})
         self.assertFalse(row["villkor"]["hane"])
         self.assertEqual((row["villkor"]["kull"], row["villkor"]["i_tid"], row["source"]), (True, True, "paper"))
 
@@ -209,7 +217,7 @@ class StatusTest(ArsrapportTest):
         report = self.reported(self.h, *entries)
         report.received_at = datetime.combine(date(2026, 3, 1), clock(12), arsrapport.STOCKHOLM)
         report.save()
-        self.assertEqual(self.rows()["G9001"]["flags"], {"ej_angivna": 3, "ej_angivna_paverkar": False})
+        self.assertEqual(self.rows()["G9001"]["flags"], {"ej_angivna": 3, "ej_angivna_paverkar": False, **NO_SALES})
         report.on_time_override = True
         report.save()
         self.assertTrue(self.rows()["G9001"]["flags"]["ej_angivna_paverkar"])
@@ -227,7 +235,7 @@ class StatusTest(ArsrapportTest):
         )
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         row = self.rows()["G9001"]
-        self.assertEqual(row["flags"], {"ej_angivna": 0, "ej_angivna_paverkar": False})
+        self.assertEqual(row["flags"], {"ej_angivna": 0, "ej_angivna_paverkar": False, **NO_SALES})
         self.assertTrue(row["villkor"]["hane"])
         self.assertEqual(db.YearlyHerdReport.get_by_id(report.id).received_at, received)
 

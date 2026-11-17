@@ -9,6 +9,7 @@ import {
   getMothers,
   getMine,
   getReport,
+  reportPurchase,
   saveDraft,
   submitReport,
   withdrawReport,
@@ -23,11 +24,11 @@ const actions = {
   dryRun,
   submitReport,
   withdrawReport,
-  getGenebankHerds,
   addLitter,
   changeLitter,
   getFathers,
   getMothers,
+  reportPurchase,
 };
 
 // The page behind a member's personal link. The server renders from the code session in the cookie; LinkGate, in the
@@ -91,7 +92,10 @@ export default async function RapportPage({
         link
         env="prod"
         view={report.data}
-        actions={actions}
+        actions={{
+          ...actions,
+          getGenebankHerds: getGenebankHerds.bind(null, entry.herd, entry.year),
+        }}
         stickyTop={0}
       />
     </LinkGate>

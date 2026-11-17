@@ -27,6 +27,7 @@ from utils.database import (
     InboxItem,
     Individual,
     IndividualCommand,
+    SaleProposal,
     YearlyHerdReport,
     YearlyReportRound,
     YearlyReportSubmission,
@@ -39,6 +40,7 @@ from utils.database import (
 from utils.mail import forget_recipient
 
 UNPROMOTE_REASON = "avpromoverad"
+UNDO_REASON = "Ångrad av den som registrerade den"
 
 
 class HerdTrackingError(ValueError):
@@ -117,11 +119,29 @@ def _drop_orphan_buyers(contact_ids, action, user):
     """
     if not contact_ids:
         return []
+    return delete_buyer_contacts(_unheld(contact_ids), action, user)[1]
+
+
+def _unheld(contact_ids):
+    """The buyers among `contact_ids` that no active row holds."""
     held = HerdTracking.select(HerdTracking.holder_contact).where(
-        HerdTracking.holder_contact.in_(contact_ids), ht_not_voided()
+        HerdTracking.holder_contact.in_(list(contact_ids)), ht_not_voided()
     )
-    orphans = set(contact_ids) - {contact_id for (contact_id,) in held.tuples()}
-    return delete_buyer_contacts(orphans, action, user)[1]
+    return set(contact_ids) - {contact_id for (contact_id,) in held.tuples()}
+
+
+def drop_kept_buyers(contact_ids, user, *, lock=False):
+    """
+    K1, FB6: the buyers kept across Dra tillbaka among `contact_ids` that no active row holds go now, when their sale
+    is gone from the report. With `lock`, the queue's items and the rabbits are locked first, in the queue's order
+    (erase_buyer_contact); without it the caller holds them.
+    """
+    if not contact_ids:
+        return
+    if lock:
+        holding = list(HerdTracking.select().where(HerdTracking.holder_contact.in_(list(contact_ids))))
+        lock_buyer_rows(holding, {row.individual_id for row in holding})
+    _remove_after_commit(_drop_orphan_buyers(contact_ids, VOID_ACTION, user))
 
 
 def _remove_after_commit(paths, files=None):
@@ -167,6 +187,28 @@ def lock_buyer_items(individual_ids):
 
 
 QUEUE_CHANGED = "Inkorgen ändrades under tiden. Försök igen."
+
+
+class QueueChanged(HerdTrackingConflict):
+    """An item was linked to the rabbits after lock_buyer_rows locked their items; nothing is written yet."""
+
+    def __init__(self):
+        super().__init__(QUEUE_CHANGED)
+
+
+def lock_buyer_rows(rows, individual_ids):
+    """
+    The queue's order for a caller that voids `rows` or deletes their buyers: their items (buyer_items), then the
+    rabbits, then the item set read again. An item linked to the rabbits or their sales after the first read would be
+    locked after the rabbit, and its holder may wait for the rabbit: QueueChanged then, before anything is written,
+    for the caller to roll back and start again (utils.buyer_contact) or answer 409. Returns the items.
+    """
+    rows = list(rows)
+    items = buyer_items(rows, lock=True)
+    lock_individuals(individual_ids)
+    if not buyer_items(rows) <= items:
+        raise QueueChanged
+    return items
 
 
 def void_all_for_unpromote(individual, user, operation_id=None, files=None, items=None):
@@ -331,6 +373,9 @@ def _operation_rows(individual_ids, operation_id):
     )
 
 
+KEPT_BUYER_GONE = "Köparen finns inte längre sparad. Skriv köparens namn och ort."
+
+
 def record_herd_tracking(
     individual,
     herd,
@@ -343,13 +388,16 @@ def record_herd_tracking(
     yearly_herd_report=None,
     transfer_id=None,
     buyer=None,
+    holder_contact=None,
 ):
     """
     The central writer. Locks the individual, re-reads its
     active rows, requires date >= the latest active row (except BIRTH), sets
     from_herd to the holder at the date, checks I1–I4 as a delta and writes.
     Idempotent per (individual, operation_id). `buyer` (a sale to GX1/MX1 only) is the buyer outside the
-    association as buyer_contact_fields reads it, stored with the row in the same transaction.
+    association as buyer_contact_fields reads it, stored with the row in the same transaction. `holder_contact` (a
+    BuyerContact id) links a buyer kept across Dra tillbaka instead (K1): one no active row holds, whose purge_at goes
+    back to five years from the sale; only utils.arsrapport passes it, once it has checked where the buyer came from.
     """
     if kind not in WRITER_KINDS:
         raise HerdTrackingInvalid(f"Okänd händelsetyp: {kind!r}.")
@@ -360,7 +408,9 @@ def record_herd_tracking(
     except (TypeError, ValueError) as exc:
         raise HerdTrackingInvalid("Ogiltigt datum.") from exc
     reject_contact_details(notes)
-    if buyer is not None and (kind != "TRANSFER" or target.herd not in OUTSIDE_GENEBANK_HERDS):
+    if (buyer is not None or holder_contact is not None) and (
+        kind != "TRANSFER" or target.herd not in OUTSIDE_GENEBANK_HERDS
+    ):
         raise HerdTrackingInvalid("Köparens namn och ort registreras bara vid försäljning utanför genbanken.")
     contact_fields = buyer_contact_fields(buyer) if buyer is not None else None
     individual_id = individual.id if isinstance(individual, Individual) else int(individual)
@@ -396,6 +446,13 @@ def record_herd_tracking(
             if contact_fields
             else None
         )
+        if holder_contact is not None:  # locked against the nightly purge, which deletes by id
+            contact = BuyerContact.select().where(BuyerContact.id == holder_contact).for_update().first()
+            held = HerdTracking.select().where(HerdTracking.holder_contact == holder_contact, ht_not_voided())
+            if contact is None or held.exists():
+                raise HerdTrackingInvalid(KEPT_BUYER_GONE)
+            contact.purge_at = BuyerContact.purge_at_for(when)
+            contact.save(only=[BuyerContact.purge_at])
         try:
             with DB_PROXY.atomic():
                 row = HerdTracking.create(
@@ -650,10 +707,27 @@ def void_denial(user, row, active_rows, individual, transfer_herd_ids=None, owne
     return f"Bara genbanksansvarig kan ångra en korrigering. {CONTACT_MANAGER}"
 
 
+def _behind_report_sales(row, active_rows, report_ops):
+    """
+    K3, fråga 15 b: the report's attestation goes from behind the sales that stay, so the rabbit counts on 31/12 via
+    the move. Every later row is a TRANSFER that an approved proposal of the same report wrote, or the report's own
+    (FB5: a sale the owner registered, which a link's or a caretaker's Dra tillbaka keeps).
+    """
+    later = [r for r in active_rows if ht_sort_key(r) > ht_sort_key(row)]
+    if row.kind != "ATTESTATION" or row.yearly_herd_report_id is None or not later:
+        return False
+    approved = SaleProposal.select(SaleProposal.herd_tracking_id).where(
+        SaleProposal.report == row.yearly_herd_report_id, SaleProposal.state == "godkand"
+    )
+    approved = {proposal.herd_tracking_id for proposal in approved}
+    return all(r.kind == "TRANSFER" and (r.id in approved or str(r.operation_id) in report_ops) for r in later)
+
+
 def report_void_denial(user, row, active_rows, individual, report_ops):
     """
     The yearly report's right (ADR-0017, addendum 2026-11-14): the report's own rows, whoever wrote them and however
-    old, unless something was registered after them. The right itself is checked at report level. None = allowed.
+    old, unless something was registered after them other than the report's sales (_behind_report_sales). The right
+    itself is checked at report level. None = allowed.
     """
     if str(row.operation_id) not in report_ops:
         return "Raden hör inte till årsrapporten."
@@ -661,7 +735,7 @@ def report_void_denial(user, row, active_rows, individual, report_ops):
         return BIRTH_NOT_VOIDABLE
     if not user.is_admin and _moves_across_genebanks(individual, active_rows, [r for r in active_rows if r != row]):
         return GENEBANK_CHANGE_ADMIN_ONLY
-    if not active_rows or active_rows[-1].id != row.id:
+    if not active_rows or (active_rows[-1].id != row.id and not _behind_report_sales(row, active_rows, report_ops)):
         return REPORT_LATER_ROW
     if row.kind == "TRANSFER":  # the seller's rules that do not depend on who or when (sale_undo_denial)
         if row.transfer_id is not None:
@@ -671,14 +745,18 @@ def report_void_denial(user, row, active_rows, individual, report_ops):
     return None
 
 
-def void_herd_tracking(ht_id, user, reason, operation_id=None, typed=True, *, report_ops=None):
+def void_herd_tracking(ht_id, user, reason, operation_id=None, typed=True, *, report_ops=None, keep_buyer_until=None):
     """
     Void one row (also "Ångra försäljning"). Idempotent per (individual, operation_id):
     a replayed operation returns the row it voided; an already voided row is a no-op.
     Checks I1–I5 afterwards. Callers must gate READ access first: the idempotent
     replay returns before the permission check. `typed`: the reason is a user's text (checked against the buyer's
-    name), not a system reason. With `report_ops` (a frozenset of str operation ids), the
-    yearly report's right replaces the void table: only utils.arsrapport passes them, once it has checked it.
+    name), not a system reason; from one who may not see the buyers (can_see_buyer) it is UNDO_REASON instead when a
+    row of the rabbit, live or voided, holds a buyer, as Access.reads_buyers strips the report's. With `report_ops`
+    (a frozenset of str operation ids), the yearly report's right replaces the void table: only utils.arsrapport
+    passes them, once it has checked it.
+    With `keep_buyer_until` (a timestamp, Dra tillbaka's K1 and K2) a buyer no active row holds any more stays,
+    held by the voided row only, with that purge_at.
     """
     cleaned = require_reason(reason)
     op = new_operation_id(operation_id)
@@ -686,8 +764,7 @@ def void_herd_tracking(ht_id, user, reason, operation_id=None, typed=True, *, re
     if row is None:
         raise HerdTrackingNotFound("Raden finns inte.")
     with DB_PROXY.atomic():
-        buyer_items([row], lock=True)
-        lock_individuals([row.individual_id])
+        lock_buyer_rows([row], [row.individual_id])
         done = _operation_rows([row.individual_id], op)
         if done:
             return next((r for r in done if r.voided_operation_id == op), done[0])
@@ -702,11 +779,18 @@ def void_herd_tracking(ht_id, user, reason, operation_id=None, typed=True, *, re
             denial = report_void_denial(user, row, before, individual, report_ops)
         if denial:
             raise HerdTrackingForbidden(denial)
+        if typed and not can_see_buyer(user, _row_genebank_id(row, individual)) and _holds_buyer(individual.id):
+            # A seller's own row (void_denial): its text is never checked against the buyers, so it answers no guess
+            cleaned, typed = UNDO_REASON, False
         if typed:
             _reject_buyer_name([cleaned], [individual.id])
         voided = _void_rows([row], user, cleaned, op)
         _assert_no_new_violations(individual, before, [r for r in before if r.id != row.id])
-        paths = _drop_orphan_buyers(voided, VOID_ACTION, user)
+        if keep_buyer_until is None:
+            paths = _drop_orphan_buyers(voided, VOID_ACTION, user)
+        else:
+            paths, kept = [], list(_unheld(voided))
+            BuyerContact.update(purge_at=keep_buyer_until).where(BuyerContact.id.in_(kept)).execute()
     _remove_after_commit(paths)
     return HerdTracking.get_by_id(ht_id)
 
@@ -848,8 +932,7 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
     cleaned = require_reason(reason) if void_ids else None
     op = new_operation_id(operation_id)
     with DB_PROXY.atomic():
-        buyer_items(HerdTracking.select().where(HerdTracking.id.in_(void_ids)), lock=True)
-        lock_individuals([ind_id])
+        lock_buyer_rows(HerdTracking.select().where(HerdTracking.id.in_(void_ids)), [ind_id])
         ind = Individual.get_by_id(ind_id)
         if _operation_rows([ind_id], op):
             return list(
@@ -1021,8 +1104,7 @@ def undo_herd_tracking_operation(operation_id, user, reason, undo_operation_id=N
     with DB_PROXY.atomic():
         # The rows this undo may void: those the operation wrote or restored.
         redone = (HerdTracking.operation_id == op) | (HerdTracking.restored_operation_id == op)
-        buyer_items(HerdTracking.select().where(redone), lock=True)
-        lock_individuals(ind_ids)
+        lock_buyer_rows(HerdTracking.select().where(redone), ind_ids)
         individuals = {i.id: i for i in Individual.select().where(Individual.id.in_(ind_ids))}
         if any(not is_manager_of(user, i.origin_herd.genebank_id) for i in individuals.values()):
             raise HerdTrackingForbidden("Bara genbanksansvarig eller administratör kan ångra en åtgärd.")
@@ -1064,6 +1146,9 @@ def undo_herd_tracking_operation(operation_id, user, reason, undo_operation_id=N
             with DB_PROXY.atomic():
                 voided = _void_rows(revoid, user, cleaned, undo_op)  # voids first: the unvoids may reuse a slot
                 _unvoid_rows(unvoid, undo_op)
+                for row in (r for r in unvoid if r.holder_contact_id):  # a kept buyer's sale again (K1, K2)
+                    purge_at = BuyerContact.purge_at_for(row.herd_tracking_date)
+                    BuyerContact.update(purge_at=purge_at).where(BuyerContact.id == row.holder_contact_id).execute()
                 paths = _drop_orphan_buyers(voided, VOID_ACTION, user)
         except IntegrityError as exc:
             if _violated_constraint(exc) not in ("idx_herdtracking_one_birth", "idx_herdtracking_report_attestation"):
@@ -1188,6 +1273,15 @@ def _name_patterns(name):
     words = re.findall(r"\w+", name)
     parts = [r"[\s-]+".join(map(re.escape, words))] + [re.escape(w) for w in words if len(w) >= 3]
     return [re.compile(rf"(?<!\w){part}s?(?!\w)", re.IGNORECASE) for part in parts if part]
+
+
+def _holds_buyer(individual_id):
+    """A row of the rabbit, live or voided, holds a buyer outside the association: what _reject_buyer_name reads."""
+    return (
+        HerdTracking.select()
+        .where(HerdTracking.individual == individual_id, HerdTracking.holder_contact.is_null(False))
+        .exists()
+    )
 
 
 def _reject_buyer_name(texts, individual_ids, names=()):
@@ -1381,6 +1475,7 @@ def herd_tracking_history(individual, user, include_voided=None):
     buyer_keys = _buyer_keys(rows)  # once per call, as the invariants of the active rows
     known = {(v.code, v.row_id) for v in check_invariants(individual, active, buyer_keys)}
     lost = _buyer_deleted([r.id for r in rows if r.voided_at is not None])
+    holds_buyer = any(r.holder_contact_id for r in rows)  # _holds_buyer, on the rows already read
     out = []
     for row in rows:
         if row.voided_at is not None and not show_voided:
@@ -1410,6 +1505,8 @@ def herd_tracking_history(individual, user, include_voided=None):
                 "notes": row.notes,
                 "buyer": resolve_buyer(row, user, row_genebank),
                 "can_void": can_void,
+                # void_herd_tracking would put its system reason in place of this user's: the page asks for none
+                "reason_replaced": holds_buyer and not can_see_buyer(user, row_genebank),
                 "can_undo_sale": bool(
                     can_void and row.kind == "TRANSFER" and row.transfer_id is None and row.id == latest_id
                 ),

@@ -17,6 +17,8 @@ import utils.arsrapport as arsrapport
 import utils.arsrapport_invite as invite
 import utils.arsrapport_pdf as arsrapport_pdf
 import utils.inbox as inbox
+import utils.purchase_notice as purchase_notice
+import utils.sale_proposal as sale_proposal
 from extensions import limiter
 from flask import Blueprint, current_app, g, jsonify, request, send_file, session
 from flask_login import current_user
@@ -29,6 +31,7 @@ from utils.database import (
     Herd,
     InboxDocument,
     ReportAccessCode,
+    SaleProposal,
     YearlyReportRound,
 )
 from utils.report_code import CodeActor, actor_key
@@ -201,6 +204,29 @@ def my_reports():
 def report_view(herd, year):
     herd, round_, access = _report_target(herd, year)
     return jsonify(arsrapport.report_view(herd, round_, access, _actor(access)))
+
+
+# [Next.js] The sale dialog's buyer herds for the personal link, which has no genebank picker of its own (4a).
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/besattningar", methods=["GET"])
+@report_actor_required
+def buyer_herds(herd, year):
+    herd, _, _ = _report_target(herd, year)
+    return jsonify({"herds": arsrapport.buyer_herds(herd)})
+
+
+# [Next.js] "Anmäl köpet": body {number, from_herd, date}; a purchase notice in the genebank's queue (4a Task 5).
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/kop", methods=["POST"])
+@report_actor_required
+def report_purchase(herd, year):
+    herd, round_, access = _report_target(herd, year)  # a link writes only its own herd and year
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        raise ArsrapportError(400, "Skicka köpet som JSON.")
+    when = _dates("date").get("date")
+    item = purchase_notice.report_purchase(
+        herd, round_, access, _actor(access), number=body.get("number"), from_herd=body.get("from_herd"), date=when
+    )
+    return jsonify(purchase_notice.notice_json(item))
 
 
 # [Next.js] The herd's register extract on 31 December as a PDF, for the member to check against (section 9).
@@ -597,3 +623,63 @@ def number_control(herd, year):
     # no lookup by certificate number for the report (it reaches every genebank): registration answers instead
     body = {key: value for key, value in body.items() if key != "paper_certificate"}
     return paper_number_check(body, actor, may_register_in(actor, herd), herd.genebank_id)
+
+
+# [Next.js] The status view's sale dialog: the herd's pending sale proposals; the genebank's manager or admin.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/forslag", methods=["GET"])
+@json_login_required
+def sale_proposals(herd, year):
+    target = Herd.get_or_none(Herd.herd == herd)
+    if target is None or target.herd in OUTSIDE_GENEBANK_HERDS:
+        raise ArsrapportError(404, "Besättningen finns inte.")
+    denied = check_genebank_access(target.genebank_id)
+    if denied:
+        return denied
+    round_ = arsrapport.get_round(year)
+    report = arsrapport.current_report(target, round_) if round_ else None
+    return jsonify({"forslag": sale_proposal.decisions(report) if report else []})
+
+
+def _deciding(proposal_id):
+    """The proposal and None, or None and the 403 for anyone but its genebank's manager or admin (section 6)."""
+    proposal = SaleProposal.get_or_none(SaleProposal.id == proposal_id)
+    if proposal is None:
+        raise ArsrapportError(404, "Försäljningen finns inte.")
+    return proposal, check_genebank_access(proposal.report.herd.genebank_id)
+
+
+# [Next.js] Godkänn: the proposed sale is registered (5.9).
+@arsrapport_bp.route("/v2/arsrapport/forslag/<int:proposal_id>/godkann", methods=["POST"])
+@json_login_required
+def approve_sale(proposal_id):
+    proposal, denied = _deciding(proposal_id)
+    if denied:
+        return denied
+    sale_proposal.approve(proposal, current_user, now=arsrapport.now())
+    return jsonify({"id": proposal.id, "state": "godkand"})
+
+
+# [Next.js] Avvisa: body {reason, then: "kvar" | "valj_igen"}; the member is mailed the reason (F4).
+@arsrapport_bp.route("/v2/arsrapport/forslag/<int:proposal_id>/avvisa", methods=["POST"])
+@json_login_required
+def reject_sale(proposal_id):
+    proposal, denied = _deciding(proposal_id)
+    if denied:
+        return denied
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        raise ArsrapportError(400, "Skicka orsak och val som JSON.")
+    sale_proposal.reject(proposal, current_user, reason=body.get("reason"), then=body.get("then"), now=arsrapport.now())
+    return jsonify({"id": proposal.id, "state": "avvisad"})
+
+
+# [API] A pending sale's buyer erased on request or objection (ADR-0016), by proposal: a buyer only a proposal names
+# has no BuyerContact yet, so DELETE /v2/buyer-contacts cannot reach it. The sale can then only be rejected.
+@arsrapport_bp.route("/v2/arsrapport/forslag/<int:proposal_id>/kopare", methods=["DELETE"])
+@json_login_required
+def erase_sale_buyer(proposal_id):
+    proposal, denied = _deciding(proposal_id)
+    if denied:
+        return denied
+    sale_proposal.clear_buyer(proposal, "radering", current_user)
+    return "", 204

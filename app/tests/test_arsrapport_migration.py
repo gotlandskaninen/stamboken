@@ -3,6 +3,7 @@
 import unittest
 import uuid
 from datetime import date, datetime, timezone
+from unittest import mock
 
 import utils.data_access as da
 import utils.database as db
@@ -20,7 +21,14 @@ NEW_TABLES = (
     "member_change_request",
     "publication_consent_change",
 )
-TOUCHED_TABLES = ("yearlyreportround", "yearlyherdreport", "herd_tracking", "individual_command", "breeding")
+TOUCHED_TABLES = (
+    "yearlyreportround",
+    "yearlyherdreport",
+    "herd_tracking",
+    "individual_command",
+    "breeding",
+    "inbox_item",
+)
 TABLES = list(NEW_TABLES + TOUCHED_TABLES)
 NEW_COLUMNS = {
     "yearlyreportround": ("deadline",),
@@ -44,6 +52,7 @@ NEW_COLUMNS = {
     "herd_tracking": ("access_code_id", "voided_by_access_code_id"),
     "individual_command": ("access_code_id",),
     "breeding": ("litter_size6w_preliminary",),
+    "inbox_item": ("ref_data",),
 }
 LEGACY_NOT_NULL = ("name", "publish", "publish_tel", "publish_email", "publish_address", "generated_by_id")
 NOW = datetime(2026, 1, 10, 12, 0, tzinfo=timezone.utc)
@@ -137,6 +146,53 @@ class TestArsrapportMigration(IsolatedSchemaTest):
         db._create_arsrapport_schema()
         db._create_arsrapport_schema()
         self.assertEqual(snapshot(), self.bootstrapped)
+
+    def stamp_42(self, comment):
+        """schema_history's 42 as `comment` until the test ends: the class's database was bootstrapped by init()."""
+        row = db.SchemaHistory.get_by_id(42)
+        db.SchemaHistory.update(comment=comment).where(db.SchemaHistory.version == 42).execute()
+        self.addCleanup(db.SchemaHistory.update(comment=row.comment).where(db.SchemaHistory.version == 42).execute)
+
+    def test_boot_adds_the_columns_a_database_at_42_lacks(self):
+        """S5: a database that ran an earlier 42 gets the columns added to it since, under the same number."""
+        self.stamp_42(f"{db.ARSRAPPORT_42} rounds per genebank")
+        with mock.patch.object(db, "_create_arsrapport_schema") as helper, self.assertNoLogs(db.logger, "WARNING"):
+            db.check_migrations()
+        helper.assert_not_called()  # a healthy database takes no table lock at boot
+        _sql('ALTER TABLE "inbox_item" DROP COLUMN "ref_data"')
+        _sql('ALTER TABLE "breeding" DROP COLUMN "litter_size6w_preliminary"')
+        with (
+            mock.patch.object(db, "_create_arsrapport_schema") as helper,
+            self.assertLogs(db.logger, "WARNING") as logs,
+        ):
+            self.assertTrue(db.verify(try_init=False))  # the boot: migrations under their lock, then the models
+        helper.assert_not_called()  # L4: the two columns alone
+        self.assertIn("breeding.litter_size6w_preliminary, inbox_item.ref_data", logs.output[0])
+        self.assertEqual(snapshot(), self.bootstrapped)
+        self.assertEqual(db.SchemaHistory.select(db.fn.MAX(db.SchemaHistory.version)).scalar(), 42)  # pylint: disable=E1120
+
+    def test_boot_creates_a_yearly_report_table_a_database_at_42_lacks(self):  # Codex round 2, P2
+        """Under the migration lock, not by a worker's verify() and init() racing for it."""
+        self.stamp_42(f"{db.ARSRAPPORT_42} rounds per genebank")
+        _sql('DROP TABLE "sale_proposal"')
+        with self.assertLogs(db.logger, "WARNING") as logs:
+            self.assertTrue(db.verify(try_init=False))  # no init(): the boot's repair made it
+        self.assertIn("sale_proposal", logs.output[0])
+        self.assertEqual(snapshot(), self.bootstrapped)
+
+    def test_boot_leaves_alone_a_42_of_another_migration(self):  # L4: a collision of migration numbers
+        for comment in ("Bootstrapped", "another branch's migration 42"):
+            with self.subTest(comment):
+                self.stamp_42(comment)
+                with self.assertNoLogs(db.logger, "WARNING"):  # nothing missing: nothing said
+                    db.check_migrations()
+                _sql('ALTER TABLE "inbox_item" DROP COLUMN "ref_data"')
+                with mock.patch.object(db, "_add_columns") as add, self.assertLogs(db.logger, "ERROR") as logs:
+                    db.check_migrations()
+                add.assert_not_called()
+                self.assertIn("not repairing inbox_item.ref_data", logs.output[0])
+                self.assertNotIn("ref_data", {c.name for c in db.DATABASE.get_columns("inbox_item")})
+                db._create_arsrapport_schema()
 
     def test_one_submitted_report_per_herd_and_round(self):
         self._report()

@@ -463,3 +463,84 @@ describe("ReportPhotoCheck's buttons", () => {
     expect(screen.getByText("Ärendet är stängt.")).toBeInTheDocument();
   });
 });
+
+describe("WorkView: a sale proposal", () => {
+  const proposal = item({
+    kind: "kontroll",
+    state: "ny",
+    assigned_to: null,
+    ref_type: "sale_proposal",
+    ref_id: 7,
+    documents: [],
+    report_year: 2025,
+  });
+
+  it("links to its own round's status view, not the newest round's", () => {
+    render(view(proposal, boss, false, 2026)); // 2026 is the newest round the genebank activated
+    expect(screen.getByText(/Avgörs i årsrapportens statusvy/)).toBeTruthy();
+    expect(
+      screen.getByRole("link", { name: "Öppna statusvyn" }),
+    ).toHaveAttribute(
+      "href",
+      "/stamboken/arsrapport/status/2025?genebank_id=1",
+    );
+  });
+
+  it("keeps the text without a year", () => {
+    render(view({ ...proposal, report_year: null }, boss, false, 2026));
+    expect(screen.getByText(/Avgörs i årsrapportens statusvy/)).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "Öppna statusvyn" })).toBeNull();
+  });
+});
+
+describe("WorkView: a purchase notice (4a Task 5)", () => {
+  const notice = item({
+    kind: "kontroll",
+    state: "ny",
+    assigned_to: null,
+    ref_type: "kopanmalan",
+    ref_id: null,
+    documents: [],
+    report_year: null,
+    ref_data: {
+      number: "G9002-2501",
+      from_herd: "G9002",
+      date: "2025-05-14",
+      individual_id: 70,
+    },
+  });
+
+  it("shows its fields and the rabbit's page, where the sale is registered", () => {
+    render(view(notice, boss, false, 2026));
+    expect(
+      screen.getByText(/Anmält köp: G9002-2501 från G9002, 14 maj 2025/),
+    ).toBeTruthy();
+    expect(screen.getByRole("link", { name: "kaninens sida" })).toHaveAttribute(
+      "href",
+      "/stamboken/individ/G9002-2501",
+    );
+    expect(screen.queryByRole("link", { name: "Öppna statusvyn" })).toBeNull();
+  });
+
+  it("names the link that sent it in the history", () => {
+    const event = {
+      id: 1,
+      at: "2026-01-10T11:00:00+00:00",
+      kind: "inkommen",
+      user: null,
+      detail: { via: "länk G9001/2025" },
+    };
+    render(view({ ...notice, events: [event] }, boss, false, 2026));
+    expect(screen.getByText(/Inkommet via länk G9001\/2025/)).toBeTruthy();
+  });
+
+  it("links to the status view when a pending sale matches it", () => {
+    render(view({ ...notice, report_year: 2025 }, boss, false, 2026));
+    expect(
+      screen.getByRole("link", { name: "Öppna statusvyn" }),
+    ).toHaveAttribute(
+      "href",
+      "/stamboken/arsrapport/status/2025?genebank_id=1",
+    );
+  });
+});

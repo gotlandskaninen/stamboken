@@ -1,6 +1,7 @@
 // Shapes of /api/v2/arsrapport/* and the form's own logic. Kept free of React
 // and of server actions so the paper page (Task 14) and the status view
 // (Task 15) can reuse it.
+import type { SaleBuyer } from "@/components/individual/BuyerFields";
 import { newOperationId } from "@/lib/herdTracking";
 import type { Mode } from "@/lib/mode";
 import type { InboxDetail } from "../inkorg/lib";
@@ -23,6 +24,18 @@ export interface RabbitView {
   death_date: string | null;
   state: "att_valja" | "redan_rapporterad" | "via_flytt";
   later: { kind: string; date: string } | null;
+  // The latest transfer into the herd dated in the year: "Köpt 14 maj" (4a Task 5).
+  kopt: { datum: string; fran: string | null } | null;
+}
+
+// A purchase notice the herd sent ("Anmäl köpet"): a queue item for the
+// genebank manager until the transfer is registered.
+export interface PurchaseNotice {
+  id: number;
+  number: string;
+  from_herd: string;
+  date: string;
+  state: string;
 }
 
 // "Kullar under Y": one litter of the herd; `preliminary` while the 6-week count is still the count born.
@@ -70,6 +83,7 @@ export interface Summary {
   kvar: number;
   doda: number;
   salda: number;
+  vantar?: number; // of salda, those sent as proposals (5.9)
   ej_angivna: number;
 }
 
@@ -152,6 +166,15 @@ export interface ReportView {
     to_herd: string;
     date: string;
   }[];
+  // The report's sale proposals not taken back (5.9), without the buyer.
+  forslag: {
+    individual_id: number;
+    to_herd: string | null;
+    sale_date: string;
+    state: "foreslagen" | "godkand" | "avvisad";
+  }[];
+  // The herd's purchase notices dated in the year.
+  kopanmalningar: PurchaseNotice[];
   herds: string[];
   report: null | {
     id: number;
@@ -191,11 +214,9 @@ export interface MyReport {
 }
 
 // The buyer outside the genebank lives in memory only: never in a draft, never
-// in localStorage (D10).
-export interface Buyer {
-  name: string;
-  town: string;
-}
+// in localStorage (D10). The contact details only with the buyer's yes
+// (BuyerFields, ADR-0016).
+export type Buyer = SaleBuyer;
 export interface DodState {
   ar: number;
   manad: number | null;
@@ -209,6 +230,8 @@ export interface SaldState {
   manad: number | null;
   dag: number | null;
   kopare: Buyer | null;
+  // A buyer kept across Dra tillbaka (K1): the server's id, carried untouched.
+  kopare_id?: number;
 }
 export interface Entry {
   val: Val | null;
@@ -246,7 +269,8 @@ export interface BodyEntry {
     ar: number;
     manad: number;
     dag: number | null;
-    kopare?: Buyer & { contact_consent: false; membership_optin: false };
+    kopare?: Buyer;
+    kopare_id?: number;
   };
 }
 
@@ -315,6 +339,13 @@ export const REFUSAL_TEXT: Record<string, string> = {
   orsak_kopare: "Skriv inte köparens namn i orsaken.",
 };
 export const CONFLICT_TEXT = "Rapporten har ändrats på en annan enhet";
+// A sale by a caretaker or through the link is a proposal (5.9).
+export const PENDING_SALE_TEXT =
+  "Försäljningen väntar på genbanksansvarig. Kaninen står kvar hos dig tills den är godkänd.";
+export const PURCHASE_SENT_TEXT =
+  "Anmälan är skickad till genbanksansvarig. Kaninen kommer in i din besättning när köpet är registrerat.";
+export const NOT_IN_STAMBOKEN_TEXT =
+  "Finns kaninen inte i Stamboken? Lägg till den från intyget.";
 export const TIMEOUT_TEXT =
   "Vi vet inte om rapporten kom fram. Tryck Försök igen. Den skickas inte två gånger.";
 
@@ -406,6 +437,16 @@ const complete = (e: Entry) =>
       ? !!e.sald?.till && e.sald.manad != null
       : e.val !== null;
 
+// K1, FB6: the server deletes a kept buyer once its row is no longer a sale
+// outside the genebank, so the row lets go of the id too.
+export function withoutGoneBuyer(e: Entry): Entry {
+  if (e.sald?.kopare_id == null) return e;
+  if (e.val === "sald" && e.sald.till === "utanfor") return e;
+  const { kopare_id, ...sald } = e.sald;
+  void kopare_id;
+  return { ...e, sald };
+}
+
 // What a half-filled choice still lacks, for the row error (null when nothing
 // specific is missing).
 export function incompleteText(e: Entry | undefined): string | null {
@@ -478,15 +519,44 @@ export function editClears(
   }
 }
 
+// The sale outside the genebank that the report's latest submission holds,
+// unchanged: its buyer is stored, so it needs none typed again.
+export const storedSale = (
+  s: Pick<SaldState, "till" | "ar" | "manad" | "dag">,
+  submitted: BodyEntry["sald"] | null | undefined,
+): boolean =>
+  s.till === "utanfor" &&
+  submitted?.till === "utanfor" &&
+  submitted.ar === s.ar &&
+  submitted.manad === s.manad &&
+  (submitted.dag ?? null) === s.dag;
+
+// A sale outside the genebank that Skicka would refuse for its buyer
+// (kopare_saknas): none typed, not the stored sale, and no kept buyer the role
+// may use (K1). The draft never holds a buyer, so a sale only in the draft
+// needs it again.
+export const lacksBuyer = (
+  s: SaldState,
+  submitted: BodyEntry["sald"] | null | undefined,
+  canSell: boolean,
+): boolean =>
+  s.till === "utanfor" &&
+  !s.kopare &&
+  !(canSell && s.kopare_id != null) &&
+  !storedSale(s, submitted);
+
 export function isDone(
   r: RabbitView,
   e: Entry | undefined,
   ending: boolean,
+  submitted?: BodyEntry["sald"] | null, // the rabbit's sale in report.submitted
+  canSell = true,
 ): boolean {
   if (ending) return true; // 5.7: an ending genebank needs neither choice nor weight
   if (!e || e.val === null) return r.state !== "att_valja";
   if (e.val === "ej_angiven") return true; // P44: kept from a paper submission
   if (!complete(e)) return false;
+  if (e.val === "sald" && lacksBuyer(e.sald!, submitted, canSell)) return false;
   // a weight over 20 kg waits for the fix button, the server refuses it
   if (e.val === "kvar" && parseWeight(e.vikt).gramsHint !== null) return false;
   // a death before the birth or in the future waits too, the server refuses it
@@ -532,15 +602,11 @@ function bodyEntry(e: Entry): BodyEntry | null {
         manad: s.manad!,
         dag: s.dag,
         // Only a new sale outside the genebank carries the buyer. A saved
-        // sale is sent without it (Task 6: unchanged unless filled in).
-        ...(s.till === "utanfor" && s.kopare
-          ? {
-              kopare: {
-                ...s.kopare,
-                contact_consent: false as const,
-                membership_optin: false as const,
-              },
-            }
+        // sale is sent without it (Task 6: unchanged unless filled in), and a
+        // kept one with its id (K1).
+        ...(s.till === "utanfor" && s.kopare ? { kopare: s.kopare } : {}),
+        ...(s.till === "utanfor" && s.kopare_id != null
+          ? { kopare_id: s.kopare_id }
           : {}),
       },
     };
@@ -552,9 +618,12 @@ export function toBody(
   state: FormState,
   key: string,
   revision: number | null,
+  // Skicka sends only the rabbits on the current list: a sold one may linger in a local copy (FB1)
+  listed?: readonly number[],
 ): Submission {
   const rabbits: Record<string, BodyEntry> = {};
   for (const [id, e] of Object.entries(state.rabbits)) {
+    if (listed && !listed.includes(Number(id))) continue;
     const b = bodyEntry(e);
     if (b) rabbits[id] = b;
   }
@@ -579,10 +648,12 @@ export function toBody(
     diseases: state.health === "ja" ? diseases : {},
     defects:
       state.health === "ja"
-        ? state.defects.map((d) => ({
-            individual_id: d.individual_id,
-            beskrivning: d.beskrivning.trim() || null,
-          }))
+        ? state.defects
+            .filter((d) => !listed || listed.includes(d.individual_id))
+            .map((d) => ({
+              individual_id: d.individual_id,
+              beskrivning: d.beskrivning.trim() || null,
+            }))
         : [],
     message: state.message.trim(),
   };
@@ -627,6 +698,9 @@ function pickEntry(raw: unknown): Entry {
           manad: num(sald.manad),
           dag: num(sald.dag),
           kopare: null,
+          ...(num(sald.kopare_id) !== null
+            ? { kopare_id: num(sald.kopare_id)! }
+            : {}),
         }
       : null,
   };
@@ -734,6 +808,13 @@ function fromShape(data: Partial<DraftData>): FormState {
 }
 
 const STOCKHOLM = "Europe/Stockholm";
+// "14 maj": the bought mark on a rabbit's row.
+export const fmtDay = (iso: string): string =>
+  new Intl.DateTimeFormat("sv-SE", {
+    day: "numeric",
+    month: "long",
+    timeZone: "UTC",
+  }).format(new Date(iso));
 export const fmtDate = (iso: string): string =>
   new Intl.DateTimeFormat("sv-SE", {
     day: "numeric",
@@ -947,7 +1028,15 @@ export interface StatusRow {
   on_time_override: boolean | null;
   inbox_item_id: number | null;
   telefon?: string | null; // only for genebank managers
-  flags: { ej_angivna: number; ej_angivna_paverkar: boolean };
+  flags: {
+    ej_angivna: number;
+    ej_angivna_paverkar: boolean;
+    forsaljning_vantar: number; // pending sale proposals (5.9)
+    forsaljning_avvisad: number; // rabbits a rejected sale left to choose again (FB3)
+    forsaljning_avvisad_paverkar: boolean;
+    kopt_efter_inskick: number; // sales into the herd approved after its report (FB4)
+    kop_anmalt: number; // the herd's open purchase notices that no pending sale matches (4a Task 5)
+  };
   villkor: Villkor;
   statistik: {
     kullar: number;
@@ -984,6 +1073,21 @@ export interface StatusView {
   rows: StatusRow[];
 }
 
+// The status view's sale dialog (5.9): a pending proposal, a buyer outside
+// the genebank by name and town only.
+export interface SaleProposalRow {
+  id: number;
+  individual_id: number;
+  number: string;
+  name: string | null;
+  to_herd: string | null;
+  buyer: { name: string; town: string | null } | null;
+  sale_date: string;
+  buyer_notified_at: string | null; // the buyer's own notice (K7)
+  kopanmalan: PurchaseNotice | null; // the buyer herd's notice that approving settles (fråga 19)
+  kopanmalan_avviker: PurchaseNotice | null; // its notice dated too far off or across 31/12 (M1)
+}
+
 export type StatusFilter = "att_ringa" | "alla" | RowState;
 
 export const parseFilter = (v: string | undefined): StatusFilter =>
@@ -998,15 +1102,17 @@ export const callFrom = (deadline: string): string =>
     .slice(0, 10);
 
 // Spec 5.14: a herd with a draft is phoned from two days before the round's
-// deadline; a herd whose form left out rabbits that decide the support at any
-// time; a herd whose invitation bounced or failed, until it has reported.
+// deadline; a herd whose form left out rabbits that decide the support, or
+// whose rejected sale left such a rabbit to choose again (FB3), at any time; a
+// herd whose invitation bounced or failed, until it has reported.
 
 export function toCall(
   row: StatusRow,
   deadline: string | null,
   today: string,
 ): boolean {
-  if (row.flags.ej_angivna_paverkar) return true;
+  if (row.flags.ej_angivna_paverkar || row.flags.forsaljning_avvisad_paverkar)
+    return true;
   if (
     (row.inbjudan === "studsade" || row.inbjudan === "misslyckades") &&
     row.state !== "inskickad" &&

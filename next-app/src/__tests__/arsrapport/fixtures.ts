@@ -19,6 +19,7 @@ export const rabbit = (
   death_date: null,
   state: "att_valja",
   later: null,
+  kopt: null,
   ...over,
 });
 
@@ -45,6 +46,8 @@ export const view = (over: Partial<ReportView> = {}): ReportView => ({
   rabbits: [rabbit(1), rabbit(2)],
   litters: [],
   sales: [],
+  forslag: [],
+  kopanmalningar: [],
   herds: ["G9002"],
   report: null,
   draft: null,

@@ -226,6 +226,8 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
 {
   "message": "Tre intyg från i våras",
   "sender_address": null,
+  "report_year": null,
+  "ref_data": null,
   "documents": [ { "…": "dokument, se nedan" } ],
   "events": [
     {"id": 1, "at": "2026-11-14T08:01:02+00:00", "kind": "inkommen", "user": {"id": 4, "name": "Test Uppladdare"}, "detail": {"documents": 2}}
@@ -235,7 +237,10 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
 
 `message` är `null` när texten är gallrad (se [Gallring](#gallring)). `sender_address` är avsändarens
 adress för en mejlad post och `null` för uppladdningar. Den nollas när posten är stängd och inget mejl
-till avsändaren väntar, och senast 30 dagar efter stängningen.
+till avsändaren väntar, och senast 30 dagar efter stängningen. `report_year` är årsrapportrundans år
+för en post med `ref_type` `sale_proposal`, vars statusvy avgör förslaget, och för en köpanmälan
+(`kopanmalan`) som ett väntande förslag matchar; annars `null`. `ref_data` är en köpanmälans fält
+(`number`, `from_herd`, `date`, `individual_id`, se [arsrapport.md](arsrapport.md#köpanmälan)), annars `null`.
 
 ### Dokument
 

@@ -6,10 +6,11 @@ the submission's user here; a link code is the other actor the submission can ho
 isort:skip_file
 """
 
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 
 import utils.arsrapport as arsrapport
+import utils.buyer_contact as buyer_contact
 import utils.database as db
 import utils.sale_proposal as sp
 from utils.herd_tracking import HerdTrackingInvalid
@@ -84,6 +85,17 @@ class ProposalTest(ArsrapportTest):
         )
         self.assertIsNone(proposal.buyer)
         self.assertEqual(db.InboxItem.get_by_id(proposal.inbox_item_id).state, "klar")
+
+    def test_approval_keeps_the_time_the_seller_ticked(self):  # L2
+        buyer = {**BUYER, "email": "k@example.invalid", "contact_consent": True, "membership_optin": True}
+        proposal = self.propose(buyer=buyer)
+        self.assertEqual(proposal.created_at, self.submission.created_at)
+        row = sp.approve(proposal, self.manager, now=NOW + timedelta(days=3))
+        contact = db.BuyerContact.get_by_id(row.holder_contact_id)
+        self.assertEqual((contact.contact_consent_at, contact.membership_optin_at), (proposal.created_at,) * 2)
+        only_optin = self.propose(self.other, buyer={**BUYER, "phone": "070-1234567", "membership_optin": True})
+        contact = sp.approve(only_optin, self.manager, now=NOW).holder_contact
+        self.assertEqual((contact.contact_consent_at, contact.membership_optin_at), (None, proposal.created_at))
 
     def test_approve_to_herd_in_genebank(self):
         proposal = self.propose(to_herd=self.g9002, buyer=None)
@@ -180,3 +192,35 @@ class ProposalTest(ArsrapportTest):
         self.assertEqual((retracted.state, retracted.buyer), ("atertagen", None))
         sp.approve(other, self.manager, now=NOW)
         self.assertEqual(db.SaleProposal.get_by_id(other.id).state, "godkand")
+
+    # M2: a pending proposal's buyer goes after 13 months, once the rabbit is dead, or on request
+
+    def logged(self):
+        rows = db.AuditLog.select().where(db.AuditLog.table_name == "sale_proposal").order_by(db.AuditLog.id)
+        return [(row.record_id, row.operation, row.new_data, row.changed_fields, row.changed_by) for row in rows]
+
+    def test_a_pending_buyer_goes_thirteen_months_after_the_proposal(self):
+        old, recent = self.propose(), self.propose(self.other)
+        db.SaleProposal.update(created_at=NOW).execute()
+        night = NOW + timedelta(days=396)
+        self.assertEqual(buyer_contact.purge_proposal_buyers(night), 0)  # 13 months to the hour: not yet
+        db.SaleProposal.update(created_at=NOW - timedelta(hours=1)).where(db.SaleProposal.id == old.id).execute()
+        self.assertEqual(buyer_contact.purge_proposal_buyers(night), 1)
+        self.assertEqual([db.SaleProposal.get_by_id(p.id).buyer for p in (old, recent)], [None, recent.buyer])
+        self.assertEqual(self.logged(), [(str(old.id), "UPDATE", {"action": "gallring_forslag"}, ["buyer"], None)])
+        self.assertEqual(db.SaleProposal.get_by_id(old.id).state, "foreslagen")
+        with self.assertRaises(arsrapport.ArsrapportError) as ctx:  # a sale outside the genebank needs its buyer
+            sp.approve(old, self.manager, now=NOW)
+        self.assertEqual((ctx.exception.status, ctx.exception.detail), (409, sp.BUYER_GONE))
+        self.assertEqual(rows(self.rabbit, "TRANSFER"), [])
+        sp.reject(old, self.manager, reason="Köparen är gallrad", then="valj_igen", now=NOW)  # the way out
+        self.assertEqual(db.SaleProposal.get_by_id(old.id).state, "avvisad")
+
+    def test_a_pending_buyer_goes_once_the_rabbit_is_dead(self):
+        dead, alive = self.propose(), self.propose(self.other)
+        db.Individual.update(death_date=date(2025, 11, 1)).where(db.Individual.id == self.rabbit.id).execute()
+        with mock.patch.object(sp, "_locked", wraps=sp._locked) as locked:  # pylint: disable=protected-access
+            self.assertEqual(buyer_contact.purge_proposal_buyers(NOW), 1)
+        locked.assert_called_once()  # under the decision's locks
+        self.assertEqual([db.SaleProposal.get_by_id(p.id).buyer for p in (dead, alive)], [None, alive.buyer])
+        self.assertEqual(buyer_contact.purge_proposal_buyers(NOW), 0)

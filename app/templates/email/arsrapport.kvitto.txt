@@ -7,7 +7,9 @@ Hej!
 {% if kullar %}
 Kullar som du lade till i Stamboken sedan förra inskicket: {{ kullar|join("; ") }}. De finns kvar även om du drar tillbaka rapporten.
 {% endif %}
-Du kan ändra den så länge rundan är öppen, till och med {{ end_date }}.
+{% if vantar %}Försäljningen väntar på genbanksansvarig. Kaninen står kvar hos dig tills den är godkänd.
+
+{% endif %}Du kan ändra den så länge rundan är öppen, till och med {{ end_date }}.
 
 Var det inte du? Kontakta genbanksansvarig genom att svara på det här mejlet.
 {% endblock %}

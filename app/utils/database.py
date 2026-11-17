@@ -11,6 +11,7 @@ import re
 import sys
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from itertools import groupby
 from zoneinfo import ZoneInfo
 
 from flask_login import UserMixin
@@ -2205,6 +2206,8 @@ class InboxItem(BaseModel):
     missing_proof = BooleanField(default=False)
     ref_type = TextField(null=True)  # kontroll and avisering point at another feature's row
     ref_id = IntegerField(null=True)
+    # A kontroll item's structured fields, with no personal data (the purchase notice's number, seller and date).
+    ref_data = BinaryJSONField(null=True, index=False)
 
     class Meta:
         table_name = "inbox_item"
@@ -4183,6 +4186,19 @@ _ACCESS_CODE_COLUMNS = (
     ("herd_tracking", "voided_by_access_code_id"),
     ("individual_command", "access_code_id"),
 )
+# (table, column, DDL): what migration 42 adds to tables it does not create, grouped by table; the boot's repair
+# adds the ones a database at 42 lacks (S5)
+_ADDED_COLUMNS = (
+    ("yearlyreportround", "deadline", "DATE"),
+    ("publication_consent_change", "submission_id", "INTEGER"),  # Task 11
+    ("breeding", "litter_size6w_preliminary", "BOOLEAN NOT NULL DEFAULT false"),
+    ("inbox_item", "ref_data", "JSONB"),  # 4a Task 5: the purchase notice
+    *(("yearlyherdreport", name, ddl) for name, ddl in _REPORT_V2_COLUMNS),
+    ("herd_tracking", "access_code_id", "INTEGER"),
+    ("herd_tracking", "voided_by_access_code_id", "INTEGER"),
+    ("individual_command", "access_code_id", "INTEGER"),
+)
+ARSRAPPORT_42 = "yearly report v2:"  # how migration 42's schema_history comment starts
 # A voided row has exactly one voider: the account or the report link. PostgreSQL keeps this text in
 # pg_get_constraintdef, so the swap in _create_arsrapport_schema looks for it.
 _HT_VOID_ACTOR = "(voided_by_user_id IS NULL) <> (voided_by_access_code_id IS NULL)"
@@ -4197,31 +4213,20 @@ _HT_VOID_CHECK = (
 def _create_arsrapport_schema():
     """
     Idempotent: the yearly report v2 tables, and what they add to yearlyreportround, yearlyherdreport, breeding,
-    herd_tracking and individual_command, with the names a fresh bootstrap gives them (an FK is
+    herd_tracking, individual_command and inbox_item, with the names a fresh bootstrap gives them (an FK is
     <table>_<column>_fkey). Called from init() and migrate_41_to_42. Skipped on SQLite.
     """
     if isinstance(DATABASE, SqliteDatabase):
         return
     DATABASE.create_tables(ARSRAPPORT_MODELS, safe=True)
     sql = DATABASE.execute_sql
-    sql('ALTER TABLE "yearlyreportround" ADD COLUMN IF NOT EXISTS "deadline" DATE')
-    sql('ALTER TABLE "publication_consent_change" ADD COLUMN IF NOT EXISTS "submission_id" INTEGER')  # Task 11
-    sql('ALTER TABLE "breeding" ADD COLUMN IF NOT EXISTS "litter_size6w_preliminary" BOOLEAN NOT NULL DEFAULT false')
+    _add_columns(_ADDED_COLUMNS)
     sql(
         'ALTER TABLE "yearlyherdreport" '
         + ", ".join(f'ALTER COLUMN "{name}" DROP NOT NULL' for name in _LEGACY_REPORT_FIELDS)
-        + ", "
-        + ", ".join(f'ADD COLUMN IF NOT EXISTS "{name}" {ddl}' for name, ddl in _REPORT_V2_COLUMNS)
     )
     YearlyHerdReport._schema.create_indexes(safe=True)  # the new FK indexes, named as on a fresh bootstrap
-    sql(
-        'ALTER TABLE "herd_tracking" ADD COLUMN IF NOT EXISTS "access_code_id" INTEGER, '
-        'ADD COLUMN IF NOT EXISTS "voided_by_access_code_id" INTEGER'
-    )
-    sql(
-        'ALTER TABLE "individual_command" ALTER COLUMN "actor_id" DROP NOT NULL, '
-        'ADD COLUMN IF NOT EXISTS "access_code_id" INTEGER'
-    )
+    sql('ALTER TABLE "individual_command" ALTER COLUMN "actor_id" DROP NOT NULL')
     constraints = (
         ("yearlyherdreport", "yearlyherdreport_status_check", f"CHECK ({_sql_in('status', REPORT_STATUSES)})"),
         ("yearlyherdreport", "yearlyherdreport_source_check", f"CHECK ({_sql_in('source', REPORT_SOURCES)})"),
@@ -4276,13 +4281,21 @@ def _create_arsrapport_schema():
     )
 
 
+def _add_columns(columns):
+    """ADD COLUMN IF NOT EXISTS for each (table, column, DDL) of `columns`, one ALTER TABLE per table."""
+    for table, group in groupby(columns, key=lambda column: column[0]):
+        DATABASE.execute_sql(
+            f'ALTER TABLE "{table}" ' + ", ".join(f'ADD COLUMN IF NOT EXISTS "{name}" {ddl}' for _, name, ddl in group)
+        )
+
+
 def migrate_41_to_42():
     """Yearly report v2: rounds per genebank, the report row's status and actors, and the tables around it."""
     with DATABASE.atomic():
         _create_arsrapport_schema()
         SchemaHistory.insert(  # pylint: disable=E1120
             version=42,
-            comment="yearly report v2: rounds per genebank, submissions, drafts, sale proposals, access codes, "
+            comment=f"{ARSRAPPORT_42} rounds per genebank, submissions, drafts, sale proposals, access codes, "
             "change requests, consent history",
             applied=datetime.now(),
         ).execute()
@@ -4790,6 +4803,7 @@ def check_migrations():
     )
     try:
         _run_migrations()
+        _repair_arsrapport_columns()
     finally:
         try:
             DATABASE.execute_sql(
@@ -4802,6 +4816,39 @@ def check_migrations():
             # migration error — turning e.g. a fatal ProgrammingError into
             # an OperationalError that connect() swallows.
             logger.warning("Failed to release migration advisory lock", exc_info=True)
+
+
+def _repair_arsrapport_columns():
+    """
+    S5: the yearly report's migration keeps its number while the branch adds columns to it, so a database that ran
+    an earlier 42 (dev and agent stacks) never replays it, and verify() fails on the missing column. The catalog is
+    read first, so a healthy database takes no table lock at boot. A column the migration adds and the database lacks
+    is added alone; a missing table of the yearly report's own reruns the migration's idempotent helper, here under
+    the migration lock rather than in a worker's verify() and init(). Only when schema_history's 42 is this migration:
+    another 42 is a collision of migration numbers, which a repair would hide, so it is logged and left alone. A
+    database not bootstrapped yet has none of the tables and is init()'s.
+    """
+    tables = set(DATABASE.get_tables())
+    if YearlyReportRound._meta.table_name not in tables:
+        return
+    gone = {model._meta.table_name for model in ARSRAPPORT_MODELS} - tables
+    have = {t: {c.name for c in DATABASE.get_columns(t)} for t in {t for t, _, _ in _ADDED_COLUMNS}}  # empty: no table
+    missing = [(t, name, ddl) for t, name, ddl in _ADDED_COLUMNS if have[t] and name not in have[t]]
+    if not (gone or missing):
+        return
+    lacking = ", ".join(sorted(gone) + [f"{table}.{name}" for table, name, _ in missing])
+    comment = SchemaHistory.select(SchemaHistory.comment).where(SchemaHistory.version == 42).scalar()
+    if not (comment or "").startswith(ARSRAPPORT_42):
+        logger.error("Schema version 42 is %r, not the yearly report's migration: not repairing %s", comment, lacking)
+        return
+    logger.warning("Repairing the yearly report's schema at version 42: %s", lacking)
+    with DATABASE.atomic():
+        if gone:
+            _create_arsrapport_schema()
+        else:
+            # shortcut: the columns alone, not an FK, index or CHECK on them nor the helper's in-place changes (the
+            # void CHECK swap); every 42 of this branch had those from the start. Rerun the helper if one changes.
+            _add_columns(missing)
 
 
 def _run_migrations():

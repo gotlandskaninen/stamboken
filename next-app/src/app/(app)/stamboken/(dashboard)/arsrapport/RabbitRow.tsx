@@ -1,13 +1,16 @@
 "use client";
 
 import React from "react";
+import { isOutsideGenebankHerd } from "@/utils/saleRules";
 import {
   EJ_VAGD_REASONS,
   EMPTY_ENTRY,
   HULL_LABELS,
   MONTHS,
+  PENDING_SALE_TEXT,
   ageText,
   fmtDate,
+  fmtDay,
   kgText,
   parseWeight,
   sexText,
@@ -24,6 +27,8 @@ export interface RabbitRowProps {
   ending: boolean;
   year: number;
   canSell: boolean;
+  // The row's sale is, or becomes on Skicka, a proposal for the genebank manager (5.9).
+  proposal?: boolean;
   done: boolean;
   error?: string;
   onChange: (id: number, patch: Partial<Entry>) => void;
@@ -39,9 +44,6 @@ const CHOICES: { val: Val; label: string }[] = [
   { val: "sald", label: "Såld" },
 ];
 
-const CARETAKER_TEXT =
-  "Försäljningen registreras av ägaren eller genbanksansvarig.";
-
 function saleText(e: Entry): string {
   const s = e.sald!;
   const to = s.till === "utanfor" ? "utanför genbanken" : s.till;
@@ -52,12 +54,27 @@ function saleText(e: Entry): string {
   return `Såld till ${to}, ${when}`;
 }
 
+// "Köpt 14 maj", the seller in its title: a mark, not a second list (4a Task 5).
+function BoughtBadge({ kopt }: { kopt: NonNullable<RabbitView["kopt"]> }) {
+  const from = !kopt.fran
+    ? undefined
+    : isOutsideGenebankHerd(kopt.fran)
+      ? "Köpt utanför genbanken"
+      : `Köpt från ${kopt.fran}`;
+  return (
+    <span className="sb-badge" title={from} style={{ marginLeft: 8 }}>
+      Köpt {fmtDay(kopt.datum)}
+    </span>
+  );
+}
+
 function RabbitRowImpl({
   r,
   entry,
   ending,
   year,
   canSell,
+  proposal = false,
   done,
   error,
   onChange,
@@ -70,17 +87,12 @@ function RabbitRowImpl({
   const [annat, setAnnat] = React.useState(
     !!e.ej_vagd && !(EJ_VAGD_REASONS as readonly string[]).includes(e.ej_vagd),
   );
-  const [caretakerHint, setCaretakerHint] = React.useState(false);
   const [prevVikt, setPrevVikt] = React.useState(""); // the weight Ej vägd cleared: back when it is turned off
   const errId = `err-${r.id}`;
   const set = (patch: Partial<Entry>) => onChange(r.id, patch);
 
   const choose = (val: Val) => {
-    if (val === "sald") {
-      if (!canSell) return setCaretakerHint(true);
-      return onSell(r.id); // a dialog; the choice is made when it is saved
-    }
-    setCaretakerHint(false);
+    if (val === "sald") return onSell(r.id); // a dialog; the choice is made when it is saved
     set({
       val,
       dod:
@@ -116,6 +128,7 @@ function RabbitRowImpl({
         {paper && <span className={styles.meta}>{sexText(r)} </span>}
         <span className={styles.num}>{r.number}</span>{" "}
         <span className={styles.name}>{r.name}</span>
+        {r.kopt && <BoughtBadge kopt={r.kopt} />}
         {paper && r.color && <span className={styles.meta}> {r.color}</span>}
         {done && <span className={styles.klar}>✓ Klar</span>}
       </legend>
@@ -149,7 +162,6 @@ function RabbitRowImpl({
                 ]
               : CHOICES
             ).map(({ val, label }) => {
-              const sellBlocked = val === "sald" && !canSell;
               return (
                 <label key={val} className={styles.choice}>
                   <input
@@ -160,7 +172,6 @@ function RabbitRowImpl({
                     value={val}
                     checked={e.val === val}
                     data-need={!e.val || undefined}
-                    aria-disabled={sellBlocked || undefined}
                     onChange={() => choose(val)}
                   />
                   <span>{label}</span>
@@ -168,7 +179,6 @@ function RabbitRowImpl({
               );
             })}
           </div>
-          {caretakerHint && <p className={styles.meta}>{CARETAKER_TEXT}</p>}
         </>
       )}
 
@@ -409,7 +419,7 @@ function RabbitRowImpl({
       {e.val === "sald" && e.sald && (
         <p className={styles.line} style={{ marginTop: 12 }}>
           <span>{saleText(e)}</span>
-          {canSell && (
+          {(canSell || proposal) && (
             <button
               type="button"
               className={`sb-btn sb-btn-ghost ${styles.btn}`}
@@ -419,6 +429,9 @@ function RabbitRowImpl({
             </button>
           )}
         </p>
+      )}
+      {e.val === "sald" && proposal && (
+        <p className={styles.meta}>{PENDING_SALE_TEXT}</p>
       )}
 
       {error && (

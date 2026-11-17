@@ -115,6 +115,15 @@ export interface InboxDetail extends Omit<InboxItem, "documents"> {
   events: InboxEvent[];
   /** A report photo (kontroll, individual): the rabbit as the member registered it, keyed as CertForm; else null. */
   registered?: Partial<Record<keyof CertForm, string | number | null>> | null;
+  /** A sale proposal's round year, or that of the proposal a purchase notice matches. Null for other items. */
+  report_year?: number | null;
+  /** A purchase notice's fields (ref_type "kopanmalan"); null for other items. */
+  ref_data?: {
+    number: string;
+    from_herd: string;
+    date: string;
+    individual_id: number;
+  } | null;
 }
 
 export interface QueueList {

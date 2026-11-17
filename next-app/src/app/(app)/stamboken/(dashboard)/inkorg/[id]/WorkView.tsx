@@ -45,6 +45,7 @@ import {
   type QueueUser,
   type Rect,
 } from "../lib";
+import { fmtDate } from "../../arsrapport/lib";
 import { RowActions } from "../QueueControls";
 import { AskBreeder } from "./AskBreeder";
 import { CertificateForm } from "./CertificateForm";
@@ -82,6 +83,8 @@ function eventText(e: InboxEvent): string {
   if (e.kind === "foralder_inlagd") return `${label}: ${d.individual}`;
   if (e.kind === "kontrollerad")
     return `${label}: ${d.outcome === "rattat" ? "Rättat" : "Stämmer"}`;
+  // The personal link has no account: the history names it instead (a purchase notice).
+  if (e.kind === "inkommen" && d.via) return `${label} via ${d.via}`;
   if (e.kind === "fraga" || e.kind === "svar")
     return d.text ? `${label}: ${d.text}` : label;
   return label;
@@ -608,34 +611,81 @@ export function WorkView({
 
         {/* Right: what the document shows */}
         <section className={`sb-card ${styles.card}`} aria-label="Registrering">
-          {doc && !saving && !checking && !noRole && (
-            <div className={styles.note}>
-              {CLOSED_STATES.includes(item.state)
-                ? "Ärendet är stängt."
-                : item.ref_type && !reportPhoto
-                  ? `Ärendet gäller ${item.ref_type} ${item.ref_id ?? ""} och avgörs där, inte i kön.`
-                  : item.assigned_to?.id === user.id
-                    ? "Ärendet väntar. Arbeta vidare för att spara."
-                    : item.assigned_to
-                      ? `${item.assigned_to.name} har ärendet. Ta över det för att spara.`
-                      : "Ta ärendet för att spara."}
-              {(!item.ref_type || reportPhoto) && takeButtons.length > 0 && (
-                <div className={styles.row} style={{ marginTop: 8 }}>
-                  {takeButtons.map((a) => (
-                    <button
-                      key={a}
-                      type="button"
-                      className="sb-btn sb-btn-sm"
-                      disabled={pending}
-                      onClick={() => doAction(a)}
-                    >
-                      {ACTION_LABEL[a]}
-                    </button>
-                  ))}
-                </div>
+          {item.ref_type === "sale_proposal" && (
+            <p className={styles.note}>
+              Avgörs i årsrapportens statusvy.
+              {item.report_year && item.genebank_id && (
+                <>
+                  {" "}
+                  <Link
+                    href={`/stamboken/arsrapport/status/${item.report_year}?genebank_id=${item.genebank_id}`}
+                  >
+                    Öppna statusvyn
+                  </Link>
+                </>
               )}
-            </div>
+            </p>
           )}
+          {item.ref_type === "kopanmalan" && item.ref_data && (
+            // a purchase notice (4a Task 5): it closes itself once the purchase is registered
+            <p className={styles.note}>
+              Anmält köp: {item.ref_data.number} från {item.ref_data.from_herd},{" "}
+              {fmtDate(item.ref_data.date)}.{" "}
+              {item.report_year && item.genebank_id ? (
+                <>
+                  Säljarens försäljning väntar. Godkänn den i årsrapportens
+                  statusvy.{" "}
+                  <Link
+                    href={`/stamboken/arsrapport/status/${item.report_year}?genebank_id=${item.genebank_id}`}
+                  >
+                    Öppna statusvyn
+                  </Link>
+                </>
+              ) : (
+                <>
+                  Registrera försäljningen på{" "}
+                  <Link
+                    href={`/stamboken/individ/${encodeURIComponent(item.ref_data.number)}`}
+                  >
+                    kaninens sida
+                  </Link>
+                  .
+                </>
+              )}
+            </p>
+          )}
+          {doc &&
+            !saving &&
+            !checking &&
+            !noRole &&
+            item.ref_type !== "sale_proposal" && (
+              <div className={styles.note}>
+                {CLOSED_STATES.includes(item.state)
+                  ? "Ärendet är stängt."
+                  : item.ref_type && !reportPhoto
+                    ? `Ärendet gäller ${item.ref_type} ${item.ref_id ?? ""} och avgörs där, inte i kön.`
+                    : item.assigned_to?.id === user.id
+                      ? "Ärendet väntar. Arbeta vidare för att spara."
+                      : item.assigned_to
+                        ? `${item.assigned_to.name} har ärendet. Ta över det för att spara.`
+                        : "Ta ärendet för att spara."}
+                {(!item.ref_type || reportPhoto) && takeButtons.length > 0 && (
+                  <div className={styles.row} style={{ marginTop: 8 }}>
+                    {takeButtons.map((a) => (
+                      <button
+                        key={a}
+                        type="button"
+                        className="sb-btn sb-btn-sm"
+                        disabled={pending}
+                        onClick={() => doAction(a)}
+                      >
+                        {ACTION_LABEL[a]}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
 
           {!doc ? null : item.registered && doc.doc_type === "intyg" ? (
             <ReportPhotoCheck

@@ -57,6 +57,25 @@ describe("parseWeight", () => {
 describe("isDone", () => {
   const adult = rabbit(1);
   const young = rabbit(2, { adult: false });
+  it("counts an adult a rejected sale left as Finns kvar, and sends it back unchanged (S6)", () => {
+    // as the server stores the entry: Finns kvar with Ej vägd
+    const stored = {
+      val: "kvar",
+      vikt: null,
+      ej_vagd: "Försäljningen avvisades",
+      hull: null,
+      dod: null,
+      sald: null,
+    };
+    const state = fromBody({ rabbits: { "1": stored } } as never);
+    expect(isDone(adult, state.rabbits[1], false)).toBe(true);
+    expect(toBody(state, "k", 2).rabbits["1"]).toEqual({
+      val: "kvar",
+      vikt: null,
+      ej_vagd: "Försäljningen avvisades",
+      hull: null,
+    });
+  });
   it("needs a choice, and a weight or Ej vägd for an adult that stays", () => {
     expect(isDone(adult, undefined, false)).toBe(false);
     expect(isDone(adult, e({ val: "kvar" }), false)).toBe(false);
@@ -90,6 +109,26 @@ describe("isDone", () => {
     expect(isDone(rabbit(3, { state: "via_flytt" }), undefined, false)).toBe(
       true,
     );
+  });
+  it("does not count a sale outside the genebank whose buyer Skicka would miss", () => {
+    const sale = { till: "utanfor", ar: 2026, manad: 6, dag: null };
+    const sold = (more: object) =>
+      e({ val: "sald", sald: { ...sale, kopare: null, ...more } });
+    // only in the draft, which never holds the buyer: restored after a reload
+    expect(isDone(adult, sold({}), false)).toBe(false);
+    expect(isDone(adult, sold({}), false, null)).toBe(false);
+    // the report's own sale, unchanged; changed, it is a new sale
+    expect(isDone(adult, sold({}), false, sale)).toBe(true);
+    expect(isDone(adult, sold({ manad: 7 }), false, sale)).toBe(false);
+    // typed in this session, or a kept buyer only a role that sells may use
+    const buyer = { name: "Ola Köpare", town: "Visby" } as never;
+    expect(isDone(adult, sold({ kopare: buyer }), false)).toBe(true);
+    expect(isDone(adult, sold({ kopare_id: 7 }), false, null, true)).toBe(true);
+    expect(isDone(adult, sold({ kopare_id: 7 }), false, null, false)).toBe(
+      false,
+    );
+    // a sale to a herd in the genebank has no such buyer
+    expect(isDone(adult, sold({ till: "G9002" }), false)).toBe(true);
   });
 });
 
@@ -198,7 +237,13 @@ const state = (): FormState => ({
         ar: 2026,
         manad: 6,
         dag: 14,
-        kopare: { name: "Ola", town: "Visby" },
+        kopare: {
+          name: "Ola",
+          town: "Visby",
+          contact_consent: true,
+          membership_optin: false,
+          email: "ola@example.invalid",
+        },
       },
     }),
   },
@@ -236,6 +281,34 @@ describe("draft and body", () => {
       "kopare",
     );
   });
+  it("sends the buyer's yes as given, never a hard-coded no", () => {
+    expect(toBody(state(), "k", 3).rabbits["3"].sald?.kopare).toEqual({
+      name: "Ola",
+      town: "Visby",
+      contact_consent: true,
+      membership_optin: false,
+      email: "ola@example.invalid",
+    });
+  });
+  it("carries a kept buyer's id through the draft and into the body, for a sale outside only (K1)", () => {
+    const s = state();
+    s.rabbits[3] = {
+      ...s.rabbits[3],
+      sald: { ...s.rabbits[3].sald!, kopare: null, kopare_id: 7 },
+    };
+    const saved = fromBody(toDraft(s));
+    expect(saved.rabbits[3].sald?.kopare_id).toBe(7);
+    expect(toBody(saved, "k", null).rabbits["3"].sald).toMatchObject({
+      kopare_id: 7,
+    });
+    expect(toBody(saved, "k", null).rabbits["3"].sald).not.toHaveProperty(
+      "kopare",
+    );
+    saved.rabbits[3].sald!.till = "G9002";
+    expect(toBody(saved, "k", null).rabbits["3"].sald).not.toHaveProperty(
+      "kopare_id",
+    );
+  });
   it("leaves out a choice that lacks its month, so that the server asks for it", () => {
     const s = state();
     s.rabbits[2] = e({
@@ -243,6 +316,14 @@ describe("draft and body", () => {
       dod: { ar: 2026, manad: null, dag: null, slaktad: false, anteckning: "" },
     });
     expect(toBody(s, "k", null).rabbits).not.toHaveProperty("2");
+  });
+  it("sends only the rabbits on the current list", () => {
+    // FB1: a rabbit whose sale was approved has left the list, but a local copy may still hold it
+    const s = state();
+    s.defects = [...s.defects, { individual_id: 3, beskrivning: "Kort öra" }];
+    const b = toBody(s, "k", null, [1, 2]);
+    expect(Object.keys(b.rabbits).sort()).toEqual(["1", "2"]);
+    expect(b.defects.map((d) => d.individual_id)).toEqual([1]);
   });
   it("sends the weight as a number and Ej vägd instead of a weight", () => {
     const b = toBody(state(), "k", null).rabbits;
