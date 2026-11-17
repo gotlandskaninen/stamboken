@@ -3,7 +3,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "@/i18n"; // BuyerFields' labels
 import { SoldDialog } from "@/app/(app)/stamboken/(dashboard)/arsrapport/SoldDialog";
-import type { SaldState } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
+import type {
+  BodyEntry,
+  SaldState,
+} from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
 
 afterEach(cleanup);
 
@@ -12,7 +15,12 @@ const KEPT_TEXT =
 const ON_SEND_TEXT =
   "Köparens uppgifter sparas när du skickar rapporten, inte innan.";
 
-function dialog(existing: SaldState | null, onSave = vi.fn(), canSell = true) {
+function dialog(
+  existing: SaldState | null,
+  onSave = vi.fn(),
+  canSell = true,
+  submitted: BodyEntry["sald"] | null = null,
+) {
   render(
     <SoldDialog
       open
@@ -22,6 +30,7 @@ function dialog(existing: SaldState | null, onSave = vi.fn(), canSell = true) {
       ownHerd="M9007"
       loadHerds={() => new Promise(() => {})} // never answers
       existing={existing}
+      submitted={submitted}
       canSell={canSell}
       onSave={onSave}
       onClose={vi.fn()}
@@ -133,6 +142,44 @@ describe("SoldDialog", () => {
       expect.objectContaining({
         kopare: expect.objectContaining({ name: "Ola Köpare", town: "Visby" }),
       }),
+    );
+  });
+
+  it("lets the fields stay empty only for the sale the report holds unchanged", () => {
+    const sale = { till: "utanfor", ar: 2025, manad: 10, dag: 10 };
+    const onSave = dialog({ ...sale, kopare: null }, vi.fn(), true, sale);
+    expect(
+      screen.getByText(/Lämna fälten tomma om köparen är rätt/),
+    ).toBeTruthy();
+    save();
+    expect(onSave).toHaveBeenCalledWith({ ...sale, kopare: null });
+    onSave.mockClear();
+    fireEvent.change(screen.getByLabelText("Månad"), {
+      target: { value: "11" },
+    });
+    expect(screen.queryByText(/Lämna fälten tomma/)).toBeNull(); // a changed sale is a new one
+    save();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toBe(
+      "Skriv köparens namn och ort.",
+    );
+  });
+
+  it("asks for the buyer again for a sale only in the draft, after a reload (Codex P2)", () => {
+    // The draft keeps the sale but never its buyer, and Skicka needs one (kopare_saknas).
+    const onSave = dialog({
+      till: "utanfor",
+      ar: 2025,
+      manad: 10,
+      dag: 10,
+      kopare: null,
+    });
+    expect(screen.queryByText(/Lämna fälten tomma/)).toBeNull();
+    expect(screen.getByText(ON_SEND_TEXT)).toBeTruthy();
+    save();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toBe(
+      "Skriv köparens namn och ort.",
     );
   });
 });

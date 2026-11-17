@@ -22,7 +22,7 @@ import {
 } from "@/components/individual/BuyerFields";
 import type { getGenebankHerds } from "../individ/[number]/actions";
 import { isOutsideGenebankHerd, type GenebankHerd } from "@/utils/saleRules";
-import { MONTHS, type SaldState } from "./lib";
+import { MONTHS, type BodyEntry, type SaldState } from "./lib";
 import styles from "./arsrapport.module.css";
 
 interface Props {
@@ -34,6 +34,7 @@ interface Props {
   // The picker's data, as SellRabbitDialog gets it (getGenebankHerds).
   loadHerds: typeof getGenebankHerds;
   existing: SaldState | null; // a saved sale: its buyer fields start empty (Task 6)
+  submitted: BodyEntry["sald"] | null; // the sale in the report's latest submission, whose buyer is stored
   canSell: boolean; // a proposal takes no kept buyer (F1, K1)
   onSave: (s: SaldState) => void;
   onClose: () => void;
@@ -129,6 +130,7 @@ function Body({
   ownHerd,
   loadHerds,
   existing,
+  submitted,
   canSell,
   onSave,
   onClose,
@@ -154,6 +156,14 @@ function Body({
   // proposal cannot take it (F1), so a role that may not sell types the buyer.
   const keptId = existing?.kopare_id != null && !existing.kopare;
   const kept = canSell && keptId;
+  // A sale the report holds, unchanged here: its buyer is stored. A sale only in
+  // the draft, or a changed one, needs the buyer again, as Skicka does.
+  const stored =
+    outside &&
+    submitted?.till === "utanfor" &&
+    submitted.ar === ar &&
+    submitted.manad === manad &&
+    (submitted.dag ?? null) === (dag ? Number(dag) : null);
   const [tried, setTried] = React.useState(false);
   const typed = [
     buyer.name,
@@ -163,8 +173,7 @@ function Body({
     buyer.phone,
   ].some((v) => v.trim());
   const buyerHalf = typed && !buyerComplete(buyer);
-  const buyerMissing =
-    outside && (!existing || (keptId && !canSell)) && !buyerComplete(buyer);
+  const buyerMissing = outside && !kept && !stored && !buyerComplete(buyer);
   const problem =
     // code is only ever the picker's own choice or the saved buyer, so it needs
     // no list: a slow herd list must not turn Spara into a silent refusal
@@ -250,8 +259,7 @@ function Body({
                 eller skriv en ny köpare.
               </p>
             ) : (
-              existing &&
-              !keptId && (
+              stored && (
                 <p className={styles.meta}>
                   Köparens uppgifter sparas inte i rapporten. Lämna fälten tomma
                   om köparen är rätt, och fyll i dem om du vill rätta köparen.

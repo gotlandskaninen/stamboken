@@ -1997,6 +1997,11 @@ export function ReportForm({
         existing={
           soldFor !== null ? (state.rabbits[soldFor]?.sald ?? null) : null
         }
+        submitted={
+          soldFor !== null
+            ? (view.report?.submitted?.rabbits?.[soldFor]?.sald ?? null)
+            : null
+        }
         canSell={view.can_sell}
         onSave={(s: SaldState) => {
           if (syncing) return;
