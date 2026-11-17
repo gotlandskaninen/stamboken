@@ -14,7 +14,7 @@ som PDF. Reglerna finns i `app/utils/arsrapport.py` och endpointsen i
 | `POST /api/v2/arsrapport/besattning/<besättning>/<år>/i-tid` | admin och genbanksansvarig i besättningens genbank. Hjälpare får 403. |
 | `GET /api/v2/arsrapport/besattning/<besättning>/<år>/forslag` | admin och genbanksansvarig i besättningens genbank. Hjälpare får 403. |
 | `POST /api/v2/arsrapport/forslag/<id>/godkann` och `…/avvisa` | admin och genbanksansvarig i besättningens genbank. Hjälpare, ägare och genbanksansvarig i den andra genbanken får 403. |
-| `POST /api/v2/arsrapport/besattning/<besättning>/<år>/kop` | den som får rapportera för besättningen, inloggad eller via länken (`report_actor_required`). Länken når bara sin egen besättning och sitt år. |
+| `POST /api/v2/arsrapport/besattning/<besättning>/<år>/kop` och `…/kop/inskick` | den som får rapportera för besättningen, inloggad eller via länken (`report_actor_required`). Länken når bara sin egen besättning och sitt år. |
 | `GET /api/v2/arsrapport/blankett.pdf` | alla som är inloggade |
 
 ## Statusvyn
@@ -113,9 +113,9 @@ med anmälan.
 
 - Kaninen och säljaren söks bara i besättningens genbank (kaninens ursprungsbesättning), så en
   annan genbanks nummer eller besättning får samma svar som ett som inte finns.
-- Ett nummer som Stamboken saknar ger 422 med `code` `inte_i_stamboken`: köparen kontaktar
-  genbanksansvarig, som registrerar kaninen från intyget i säljarens besättning. Köparen får inte
-  registrera i en annan besättning. En kanin som redan står i besättningen ger 409. En öppen anmälan av samma
+- Ett nummer som Stamboken saknar ger 422 med `code` `inte_i_stamboken`: köparen skickar foton av
+  intyget och överlåtelsebeviset till kön (se nedan), och genbanksansvarig registrerar kaninen i
+  säljarens besättning och för över den. Köparen får inte registrera i en annan besättning. En kanin som redan står i besättningen ger 409. En öppen anmälan av samma
   kanin under året är svaret igen, och en öppen anmälan från ett annat år ger 409.
 - Anmälan skrivs som rapporten, under rapportens lås: medan rundan är öppen, och efter `end_date`
   bara av genbanksansvarig och admin. Annars 409 med `code` `rundan_stangd`.
@@ -133,6 +133,39 @@ med anmälan.
 - Rapportvyns `rabbits` har `kopt: {datum, fran} | null` från den senaste aktiva `TRANSFER` till
   besättningen daterad under året, och `kopanmalningar: [{id, number, from_herd, date, state}]` med
   besättningens anmälningar daterade under året.
+
+### Köpt kanin som Stamboken saknar (S7)
+
+`POST …/besattning/<besättning>/<år>/kop/inskick` med `{"number", "from_herd", "date", "documents":
+[{"id", "doc_type"}]}` skickar ett eller två foton som sessionen laddat upp med
+`…/foto?syfte=inskick` (samma filkontroller, samma gräns på 60 i timmen och samma bindning till
+sessionen som andra foton genom rapporten). `doc_type` är `"intyg"` eller `"bevis"`. Fotona blir en
+vanlig post i kön, `kind` `upload` utan `ref_type`, för besättningen och med kontot som avsändare
+(länken står i historiken, `via`), som om köparen mejlat dem. Köpets fält står i `ref_data`:
+`{number, from_herd, date}`. Intyget läses av bildmodellen som andra intyg, och köns arbetare får
+notisen `ny_post` en gång. Genbanksansvarig eller en hjälpare registrerar kaninen i
+ursprungsbesättningen och för över den till köparen genom kön. Svaret är `{id, number, from_herd,
+date, state}`, och samma begäran igen svarar med posten.
+
+- Ett nummer som finns i genbanken ger 409 (det är en anmälan), saknat foto 400 med `field`
+  `photo`, och sessionens regler för foton gäller som för anmälan (403, 409).
+- Rundan och länken kontrolleras under rapportens lås som för anmälan.
+- Posten stänger sig själv med samma regler som en anmälan, när numret finns i genbanken och en
+  `TRANSFER` av kaninen till besättningen är registrerad, också om en arbetare har posten.
+
+## Ärenden hos genbanksansvarig (S8)
+
+Rapportvyns `arenden: [{id, what, number, photos, state}]` listar köns poster som gäller rapporten,
+öppna först, och en stängd post i 14 dagar efter att den stängdes. Med finns bara besättningens
+egna: vanliga inskick för besättningen från ett konto med rätt till den (`effective_herd_ids`),
+foton som skickats genom rapporten, och rapportens `kontroll`-poster (försäljningsförslag,
+köpanmälningar och foton av kaniner som lagts till från rapporten). Mejl, andras inskick,
+meddelanden och köparuppgifter är inte med. Köp och försäljningar från ett annat år är inte med.
+
+- `what`: `inskick`, `kop_saknas` (S7), `kopanmalan`, `foto` eller `forsaljning`.
+- `state`: `tolkas` (ny, med ett intyg som väntar på bildmodellen), `vantar` (ny), `arbetar`
+  (någon har posten, eller avsändaren har fått en fråga) eller `klart` (stängd, också som
+  dubblett eller skräp).
 
 ## Den tomma blanketten
 

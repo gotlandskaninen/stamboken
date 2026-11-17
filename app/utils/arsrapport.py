@@ -949,6 +949,7 @@ def report_view(herd, round_, access, user):
         "sales": [{**row, "date": _iso(row["date"])} for row in sales.dicts()],
         "forslag": _forslag_json(report),
         "kopanmalningar": purchase_notice.report_notices(herd, round_, access),  # closes the registered ones first
+        "arenden": purchase_notice.report_cases(herd, year),  # after the closing above (S8)
         "herds": [] if access.code else sorted(row.herd for row in others),  # a link sees no other herd
         "report": {**_report_json(report, round_, access, is_open), "villkor": herd_conditions(herd, round_, report)}
         if report

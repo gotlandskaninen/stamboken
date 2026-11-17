@@ -5,6 +5,11 @@ the seller herd's code, the date and the rabbit's id) and no personal data, and 
 or the certificate, a document kept and purged as the queue's are. The genebank's manager registers the
 transfer, or approves the seller's matching sale proposal, and the notice closes once a transfer of the rabbit into
 the herd is registered by any path, dated within 14 days of the notice and with no 31/12 between them.
+
+A rabbit Stamboken lacks is no notice (S7): the buyer sends the photos of its certificate and transfer proof to the
+queue as an ordinary upload of the herd, with the purchase's fields in `ref_data`, and the manager or a helper
+registers it in its birth herd and transfers it; the upload closes as a notice does once that transfer is registered.
+The report lists its herd's queue items in plain words (S8, report_cases).
 """
 
 import datetime
@@ -12,6 +17,7 @@ from collections import Counter
 
 import utils.arsrapport as arsrapport
 import utils.inbox as inbox
+import utils.inbox_interpreter as interpreter
 from utils.arsrapport import ArsrapportError
 from utils.database import (
     DB_PROXY,
@@ -22,7 +28,9 @@ from utils.database import (
     InboxItem,
     Individual,
     SaleProposal,
+    User,
     YearlyHerdReport,
+    YearlyReportRound,
     coerce_date,
     current_holder_row,
     ht_not_voided,
@@ -33,9 +41,15 @@ from utils.database import (
 KIND = "kopanmalan"
 _PURCHASE_LOCK = 0x48424B50  # "HBKP": classid of the advisory lock on a purchase of a rabbit into a herd
 MATCH_DAYS = 14  # mitt val: a notice and a sale proposal of the same rabbit this close in date are one sale
-NOT_IN_STAMBOKEN = "Finns kaninen inte i Stamboken? Kontakta genbanksansvarig, som registrerar den från intyget."
+NOT_IN_STAMBOKEN = (  # S7: the dialog then sends the photos (send_photos)
+    "Kaninen finns inte i Stamboken än. Skicka foto av intyget, och av överlåtelsebeviset om du har det. "
+    "Genbanksansvarig registrerar kaninen och för över den till dig."
+)
 PHOTO_TYPES = ("bevis", "intyg")  # what a notice's photo shows: the transfer proof, or the rabbit's certificate
 REGISTERED = "Köpet är registrerat"
+MAX_PHOTOS = 2  # S7: the certificate, and the transfer proof if the buyer has it
+PHOTO_REQUIRED = "Ladda upp ett foto av intyget eller överlåtelsebeviset."
+CASE_DAYS = 14  # S8: a closed item stays in the report's list this long
 
 
 def _day(item):
@@ -87,6 +101,31 @@ def _locked_photo(herd, document, photos, notice):
     return photo, notice if notice is not None and notice.state not in inbox.CLOSED_STATES else None
 
 
+def _in_genebank(number, genebank_id):
+    """The live rabbit `number` born in the genebank, or None: as the queue's _live_individual, a voided slot is not."""
+    return (
+        Individual.select()
+        .join(Herd, on=(Individual.origin_herd == Herd.id))
+        .where(Individual.number == number, not_voided(), Herd.genebank == genebank_id)
+        .first()
+    )
+
+
+def _seller(herd, year, from_herd, date):
+    """
+    The seller herd's code for `from_herd` ("utanfor": the genebank's GX1 or MX1), another herd of the herd's genebank,
+    with `date` checked to fall in the round's `year` and not after today.
+    """
+    seller = arsrapport._sale_code(herd, from_herd) if isinstance(from_herd, str) else None  # pylint: disable=protected-access
+    sellers = Herd.select().where(Herd.herd == seller, Herd.genebank == herd.genebank_id)
+    if seller is None or seller == herd.herd or not sellers.exists():
+        raise ArsrapportError(400, "Välj säljarens besättning, eller Utanför genbanken.", field="from_herd")
+    last = min(datetime.date(year, 12, 31), arsrapport.today())
+    if not isinstance(date, datetime.date) or not datetime.date(year, 1, 1) <= date <= last:
+        raise ArsrapportError(400, f"Ange ett datum under {year}, inte senare än i dag.", field="date")
+    return seller
+
+
 def report_purchase(
     herd, round_, access, user, *, number, from_herd, date, photo_document_id=None, doc_type=None, photos=()
 ) -> InboxItem:
@@ -103,23 +142,10 @@ def report_purchase(
     request again answers with the notice. The queue's workers hear of a notice once, when its first photo comes.
     """
     year = round_.report_year
-    individual = None
-    if isinstance(number, str):  # as the queue's _live_individual: a voided litter slot is no rabbit
-        individual = (
-            Individual.select()
-            .join(Herd, on=(Individual.origin_herd == Herd.id))
-            .where(Individual.number == number.strip(), not_voided(), Herd.genebank == herd.genebank_id)
-            .first()
-        )
+    individual = _in_genebank(number.strip(), herd.genebank_id) if isinstance(number, str) else None
     if individual is None:
         raise ArsrapportError(422, NOT_IN_STAMBOKEN, code="inte_i_stamboken", field="number")
-    seller = arsrapport._sale_code(herd, from_herd) if isinstance(from_herd, str) else None  # pylint: disable=protected-access
-    sellers = Herd.select().where(Herd.herd == seller, Herd.genebank == herd.genebank_id)
-    if seller is None or seller == herd.herd or not sellers.exists():
-        raise ArsrapportError(400, "Välj säljarens besättning, eller Utanför genbanken.", field="from_herd")
-    last = min(datetime.date(year, 12, 31), arsrapport.today())
-    if not isinstance(date, datetime.date) or not datetime.date(year, 1, 1) <= date <= last:
-        raise ArsrapportError(400, f"Ange ett datum under {year}, inte senare än i dag.", field="date")
+    seller = _seller(herd, year, from_herd, date)
     if photo_document_id is not None and doc_type not in PHOTO_TYPES:
         raise ArsrapportError(400, "Välj om fotot visar överlåtelsebeviset eller intyget.", field="doc_type")
     by_link = access.code is not None
@@ -179,6 +205,88 @@ def report_purchase(
     return item
 
 
+def sent(item):
+    """Photos of a rabbit Stamboken lacks, sent through the report (S7): an upload with the purchase's fields."""
+    return item.kind == "upload" and item.ref_data is not None
+
+
+def _photo_list(documents):
+    """The body's [{id, doc_type}]: one or two distinct photos, each a certificate ("intyg") or a proof ("bevis")."""
+    if (
+        not isinstance(documents, list)
+        or not 1 <= len(documents) <= MAX_PHOTOS
+        or not all(isinstance(d, dict) and type(d.get("id")) is int for d in documents)  # True is an int too
+        or len({d["id"] for d in documents}) != len(documents)
+    ):
+        raise ArsrapportError(400, PHOTO_REQUIRED, field="photo")
+    if any(d.get("doc_type") not in PHOTO_TYPES for d in documents):
+        raise ArsrapportError(400, "Välj om fotot visar överlåtelsebeviset eller intyget.", field="doc_type")
+    return {d["id"]: d["doc_type"] for d in documents}
+
+
+def send_photos(herd, round_, access, user, *, number, from_herd, date, documents, photos=()) -> InboxItem:
+    """
+    S7: the rabbit `number`, bought from `from_herd` on `date` and not in Stamboken, sent to the queue as photos of its
+    certificate and transfer proof (`documents`, [{id, doc_type}]) that this session uploaded through the report
+    (`photos`, their items). As if the buyer had mailed them: an ordinary upload of the herd (`kind` "upload", no
+    ref_type, so the queue registers and transfers from it), its certificates read as usual, the purchase's fields in
+    `ref_data`, and the queue's workers told once. Written as a notice is, while the round is open; `user` is the
+    account or the link, which the item's history names. The same request again answers with the item.
+    """
+    year = round_.report_year
+    number = number.strip().upper() if isinstance(number, str) else ""
+    if not number or len(number) > 40:
+        raise ArsrapportError(400, "Skriv kaninens nummer.", field="number")
+    if _in_genebank(number, herd.genebank_id) is not None:  # a rabbit Stamboken has is a notice
+        raise ArsrapportError(409, f"{number} finns i Stamboken. Anmäl köpet i stället.", field="number")
+    seller = _seller(herd, year, from_herd, date)
+    types = _photo_list(documents)
+    by_link = access.code is not None
+    with DB_PROXY.atomic():
+        round_ = arsrapport._lock_round(round_)  # pylint: disable=protected-access
+        arsrapport.lock_report(round_, herd)  # also two sends of the herd's report, one after the other
+        if by_link:
+            arsrapport.require_valid_code(access.code.id, herd, lock=True)  # E4 under the lock
+        arsrapport.require_open(round_, herd, access, arsrapport.today())
+        found = list(InboxDocument.select().where(InboxDocument.id.in_(sorted(types))))
+        held = sorted({document.item_id for document in found})
+        if len(found) == len(types) and len(held) == 1:  # the same request again: the item they went to
+            item = InboxItem.get_by_id(held[0])
+            if item.herd_id == herd.id and sent(item) and item.ref_data["number"] == number:
+                return item
+        if len(found) != len(types):
+            raise ArsrapportError(409, arsrapport.PHOTO_GONE, field="photo")
+        if any(item_id not in photos for item_id in held):
+            raise ArsrapportError(403, arsrapport.PHOTO_NOT_OURS, field="photo")
+        # each photo's own item locked in one ascending pass, the queue's order, and checked under it (FC1)
+        locked = {i.id: i for i in InboxItem.select().where(InboxItem.id.in_(held)).order_by(InboxItem.id).for_update()}
+        for document in found:
+            staged = locked.get(document.item_id)
+            if staged is None or arsrapport.report_photo_document(staged, herd).id != document.id:
+                raise ArsrapportError(409, arsrapport.PHOTO_GONE, field="photo")
+        item = InboxItem.create(
+            kind="upload",
+            genebank=herd.genebank_id,
+            herd=herd.id,
+            sender_user=None if by_link else user.id,
+            ref_data={"number": number, "from_herd": seller, "date": date.isoformat()},
+        )
+        # read as any upload's certificate: a reading claimed before the move drops (attempts), one made before it goes
+        read = dict.fromkeys(("interpretation", "proposal", "interpreter", "interpreted_at"))
+        for document_id, doc_type in types.items():
+            status = interpreter.initial_status() if doc_type == "intyg" else "av"
+            moved = InboxDocument.update(
+                item=item.id, doc_type=doc_type, interpretation_status=status, attempts=0, **read
+            )
+            moved.where(InboxDocument.id == document_id).execute()
+        InboxItem.delete().where(InboxItem.id.in_(held)).execute()  # the photos' own items, empty now
+        # the link has no account: its name goes in the history, as on a notice
+        detail = {"via": user.username} if by_link else {}
+        inbox.log_event(item, None if by_link else user.id, "inkommen", documents=len(types), **detail)
+        inbox._notify_workers(item, None if by_link else user)  # pylint: disable=protected-access
+    return item
+
+
 def _fits(moved, item):
     """
     A sale or transfer on `moved` is the purchase the notice `item` reports by date: at most MATCH_DAYS apart and no
@@ -235,26 +343,47 @@ def _order(row):
     return coerce_date(row.herd_tracking_date), row.kind != "BIRTH", row.id
 
 
+def _rabbits(items):
+    """
+    {item id: the rabbit's id} for the notices and sent photos among `items`: a notice's own rabbit, and for sent
+    photos the live rabbit their number names in the item's genebank, once Stamboken has it.
+    """
+    rabbits = {item.id: item.ref_data["individual_id"] for item in items if not sent(item)}
+    wanted = [item for item in items if sent(item)]
+    if wanted:
+        query = (
+            Individual.select(Individual.number, Herd.genebank, Individual.id)
+            .join(Herd, on=(Individual.origin_herd == Herd.id))
+            .where(Individual.number.in_(sorted({item.ref_data["number"] for item in wanted})), not_voided())
+        )
+        found = {(number, genebank): rabbit for number, genebank, rabbit in query.tuples()}
+        for item in wanted:
+            if (key := (item.ref_data["number"], item.genebank_id)) in found:
+                rabbits[item.id] = found[key]
+    return rabbits
+
+
 def registered(items):
     """
-    The ids of the notices among `items` whose transfer is registered: an active TRANSFER of the rabbit into the
-    buyer herd whose date fits the notice's (_fits), after which no active row moves the rabbit to another herd on or
-    before that date. One that a later move ended before the purchase is an earlier stay in the herd, also when it was
-    registered after the notice, as for a rabbit bought back. Any other transfer leaves the notice open, for the
-    manager to close by hand. A pure read: the closing calls it again under the locks.
+    The ids of the notices and sent photos among `items` whose transfer is registered: an active TRANSFER of the
+    rabbit into the buyer herd whose date fits the notice's (_fits), after which no active row moves the rabbit to
+    another herd on or before that date. One that a later move ended before the purchase is an earlier stay in the
+    herd, also when it was registered after the notice, as for a rabbit bought back. Any other transfer leaves the
+    notice open, for the manager to close by hand. A pure read: the closing calls it again under the locks.
     """
-    if not items:
+    rabbits = _rabbits(items) if items else {}
+    if not rabbits:
         return set()
     rows = list(
         HerdTracking.select().where(
-            HerdTracking.individual.in_(sorted({item.ref_data["individual_id"] for item in items})),
+            HerdTracking.individual.in_(sorted(set(rabbits.values()))),
             HerdTracking.kind.in_(HOLDER_CHANGING_KINDS),
             ht_not_voided(),
         )
     )
 
     def bought(item, move):
-        day, rabbit = _day(item), item.ref_data["individual_id"]
+        day, rabbit = _day(item), rabbits[item.id]
         if not _fits(coerce_date(move.herd_tracking_date), item):
             return False
         return not any(
@@ -268,9 +397,10 @@ def registered(items):
     return {
         item.id
         for item in items
-        if any(
+        if item.id in rabbits
+        and any(
             move.kind == "TRANSFER"
-            and (move.individual_id, move.herd_id) == (item.ref_data["individual_id"], item.herd_id)
+            and (move.individual_id, move.herd_id) == (rabbits[item.id], item.herd_id)
             and bought(item, move)
             for move in rows
         )
@@ -289,31 +419,37 @@ def close(item_id, user):
 
 def close_registered(items):
     """
-    Self-closing without a trigger: each open notice among `items` whose transfer is registered. The caller holds
-    the items' locks. The rabbits are locked after them, the queue's order (item, then rabbit), and the transfer read
-    again under them, so a void or correction of it, which locks the rabbit first, comes wholly before that read or
-    after the closing. Idempotent.
+    Self-closing without a trigger: each open notice, or upload of sent photos (S7, also one a worker holds), among
+    `items` whose transfer is registered. The caller holds the items' locks. The rabbits are locked after them, the
+    queue's order (item, then rabbit), and the transfer read again under them, so a void or correction of it, which
+    locks the rabbit first, comes wholly before that read or after the closing. Idempotent.
     """
-    notices = [item for item in items if item.ref_type == KIND and item.state in inbox.OPEN_STATES]
+    notices = [item for item in items if (item.ref_type == KIND or sent(item)) and item.state in inbox.OPEN_STATES]
     if not registered(notices):  # a look without the rabbits' locks first, so most opened items take none
         return
-    lock_individuals({item.ref_data["individual_id"] for item in notices})
+    lock_individuals(set(_rabbits(notices).values()))
     for item_id in sorted(registered(notices)):
         close(item_id, None)
 
 
 def report_notices(herd, round_, access):
     """
-    ReportView.kopanmalningar: the herd's notices dated in the round's year, after the registered ones among them are
-    closed. Only that year's notices, which `access` reaches; the closing writes under the report's lock, and a link
-    only while it is valid (E4).
+    ReportView.kopanmalningar: the herd's notices dated in the round's year, after the registered ones among them, and
+    among its sent photos (S7), are closed. Only that year's, which `access` reaches; the closing writes under the
+    report's lock, and a link only while it is valid (E4).
     """
     year = round_.report_year
 
     def of_year(items):
         return [item for item in items if _day(item).year == year]
 
-    mine = of_year(open_notices([herd.id]))
+    uploads = InboxItem.select().where(
+        InboxItem.herd == herd.id,
+        InboxItem.kind == "upload",
+        InboxItem.ref_data.is_null(False),
+        InboxItem.state.in_(inbox.OPEN_STATES),
+    )
+    mine = of_year(open_notices([herd.id]) + list(uploads))
     if registered(mine):  # only then the locks
         with DB_PROXY.atomic():
             arsrapport.lock_report(round_, herd)
@@ -323,6 +459,79 @@ def report_notices(herd, round_, access):
             close_registered(list(locked.for_update()))
     query = InboxItem.select().where(InboxItem.herd == herd.id, InboxItem.ref_type == KIND).order_by(InboxItem.id)
     return [notice_json(item) for item in of_year(query)]
+
+
+def _case_state(item, waiting):
+    """S8's state in plain words: closed, a photo still to be read, waiting for the manager, or someone has it."""
+    if item.state in inbox.CLOSED_STATES:
+        return "klart"
+    if item.state == "ny":
+        return "tolkas" if item.id in waiting else "vantar"
+    return "arbetar"  # held, handed on, or a question out: Mina inskick's under_arbete and fragat
+
+
+def report_cases(herd, year):
+    """
+    ReportView.arenden (S8): the queue items that concern the herd's report, in plain words, open ones first, a closed
+    one for CASE_DAYS after it closed. Only what the herd's own actors sent (an ordinary upload by an account with a
+    right to the herd, or photos sent through the report) and the report's own kontroll items: sale proposals,
+    purchase notices and the photos of rabbits added from the report. A purchase or a sale of another year is left out.
+    A row holds no message, no other sender's item and no buyer. A few queries, whatever the number of items.
+    """
+    since = inbox.now() - datetime.timedelta(days=CASE_DAYS)
+    kontroll = (InboxItem.kind == "kontroll") & (
+        InboxItem.ref_type.in_(("sale_proposal", KIND))
+        | ((InboxItem.ref_type == "individual") & InboxItem.ref_id.is_null(False))  # a photo not yet bound is no case
+    )
+    items = list(
+        InboxItem.select().where(
+            InboxItem.herd == herd.id,
+            kontroll | (InboxItem.kind == "upload"),
+            InboxItem.closed_at.is_null() | (InboxItem.closed_at >= since),
+        )
+    )
+    senders = sorted({item.sender_user_id for item in items if item.kind == "upload" and not sent(item)} - {None})
+    # the herd's own accounts, by the single derivation of herd rights: one check per sender, not per item
+    own = {user.id for user in User.select().where(User.id.in_(senders)) if herd.id in user.effective_herd_ids()}
+    items = [
+        item
+        for item in items
+        if (item.kind == "kontroll" or sent(item) or item.sender_user_id in own)
+        and (item.ref_data is None or _day(item).year == year)
+    ]
+    ids = [item.id for item in items]
+    photos, waiting = Counter(), set()
+    documents = InboxDocument.select(InboxDocument.item, InboxDocument.interpretation_status, InboxDocument.done_at)
+    for item_id, status, done in documents.where(InboxDocument.item.in_(ids)).tuples():
+        photos[item_id] += 1
+        if status == "vantar" and done is None:
+            waiting.add(item_id)
+    proposals = [item.ref_id for item in items if item.ref_type == "sale_proposal"]
+    sales = dict(
+        SaleProposal.select(SaleProposal.id, Individual.number)
+        .join(Individual)
+        .switch(SaleProposal)
+        .join(YearlyHerdReport)
+        .join(YearlyReportRound)
+        .where(SaleProposal.id.in_(proposals), YearlyReportRound.report_year == year)
+        .tuples()
+    )
+    bound = [item.ref_id for item in items if item.ref_type == "individual"]
+    numbers = dict(Individual.select(Individual.id, Individual.number).where(Individual.id.in_(bound)).tuples())
+
+    def row(item):
+        if item.ref_type == "sale_proposal":
+            what, number = "forsaljning", sales[item.ref_id]
+        elif item.ref_type == "individual":
+            what, number = "foto", numbers.get(item.ref_id)
+        else:
+            what = "kopanmalan" if item.ref_type == KIND else "kop_saknas" if sent(item) else "inskick"
+            number = item.ref_data["number"] if item.ref_data else None
+        state = _case_state(item, waiting)
+        return {"id": item.id, "what": what, "number": number, "photos": photos[item.id], "state": state}
+
+    rows = [row(item) for item in items if item.ref_type != "sale_proposal" or item.ref_id in sales]
+    return sorted(rows, key=lambda r: (r["state"] == "klart", -r["id"]))
 
 
 def unsettled(herd_ids, year):

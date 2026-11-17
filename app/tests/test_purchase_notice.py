@@ -10,7 +10,7 @@ isort:skip_file
 import io
 import threading
 import time
-from datetime import date
+from datetime import date, timedelta
 from unittest import mock
 
 import utils.arsrapport as arsrapport
@@ -23,7 +23,7 @@ import utils.purchase_notice as purchase_notice
 import utils.report_code as report_code
 import utils.sale_proposal as sale_proposal
 import utils.settings as settings
-from herdbook import APP
+from herdbook import APP, limiter
 from utils.arsrapport import Access, ArsrapportError
 from utils.report_code import CodeActor
 
@@ -216,8 +216,7 @@ class PurchaseNoticeTest(ArsrapportTest):
         self.assertEqual(response.status_code, 422)
         body = response.get_json()
         self.assertEqual((body["code"], body["field"]), ("inte_i_stamboken", "number"))
-        manager = "Finns kaninen inte i Stamboken? Kontakta genbanksansvarig, som registrerar den från intyget."
-        self.assertEqual(body["detail"], manager)
+        self.assertEqual(body["detail"], purchase_notice.NOT_IN_STAMBOKEN)
         db.Individual.update(voided=True).where(db.Individual.id == self.b.id).execute()  # an unpromoted slot
         self.assertEqual(self.notify(number=self.b.number).status_code, 422)
         self.assertEqual(notices(), [])
@@ -743,3 +742,198 @@ class PurchaseNoticeTest(ArsrapportTest):
         waiting.where(db.InboxDocument.id == uploaded["document_id"]).execute()
         self.assertIsNone(interpreter.interpret_next())
         self.assertEqual(read, [])
+
+    # S7: a rabbit Stamboken lacks. The buyer sends the photos of its certificate and transfer proof to the queue as an
+    # ordinary upload, with the purchase's fields, and the manager registers and transfers it
+
+    NEW = "G9002-25099"  # not in Stamboken
+
+    def send(self, *uploads, number=NEW, types=("intyg", "bevis"), herd="G9001", year=2025, client=None):
+        documents = [{"id": u["document_id"], "doc_type": t} for u, t in zip(uploads, types, strict=False)]
+        body = {"number": number, "from_herd": "G9002", "date": "2025-05-14", "documents": documents}
+        return (client or self.client).post(f"/api/v2/arsrapport/besattning/{herd}/{year}/kop/inskick", json=body)
+
+    @staticmethod
+    def uploads():
+        return list(db.InboxItem.select().where(db.InboxItem.kind == "upload").order_by(db.InboxItem.id))
+
+    def test_owner_sends_photos_as_an_ordinary_upload(self):
+        self.login("owner")
+        first, second = self.upload(purpose="inskick"), self.upload(purpose="inskick")
+        response = self.send(first, second, number=f" {self.NEW.lower()} ")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        (item,) = self.uploads()
+        fields = {"number": self.NEW, "from_herd": "G9002", "date": "2025-05-14"}
+        self.assertEqual(response.get_json(), {"id": item.id, **fields, "state": "ny"})
+        self.assertEqual(
+            (item.state, item.herd_id, item.genebank_id, item.sender_user_id, item.ref_type, item.ref_data),
+            ("ny", self.h.id, self.gotland.id, self.owner.id, None, fields),
+        )
+        documents = [(d.id, d.doc_type) for d in item.documents.order_by(db.InboxDocument.id)]
+        self.assertEqual(documents, [(first["document_id"], "intyg"), (second["document_id"], "bevis")])
+        staged = db.InboxItem.select().where(db.InboxItem.id.in_([first["item_id"], second["item_id"]]))
+        self.assertFalse(staged.exists())  # the photos' own items went
+        (event,) = item.events
+        self.assertEqual((event.kind, event.user_id, event.detail), ("inkommen", self.owner.id, {"documents": 2}))
+        heard = self.heard(item)
+        self.assertIn(self.helper.id, heard)
+        self.assertEqual(len(heard), len(set(heard)))
+        # the same request again, as after a lost answer: the item, with nothing written or told twice
+        again = self.send(first, second)
+        self.assertEqual((again.status_code, again.get_json()["id"]), (200, item.id))
+        self.assertEqual((len(self.uploads()), self.heard(item), item.events.count()), (1, heard, 1))
+        self.assertEqual(notices(), [])  # not a notice
+        # the queue's item view: an upload its workers register from, with the purchase beside it
+        self.login("man")
+        detail = self.client.get(f"/api/v2/inkorg/{item.id}").get_json()
+        self.assertEqual((detail["kind"], detail["ref_type"], detail["ref_data"]), ("upload", None, fields))
+        self.assertEqual(self.client.post(f"/api/v2/inkorg/{item.id}/ta", json={}).status_code, 200)
+
+    def test_link_sends_photos_and_its_code_is_the_sender(self):
+        self.open_link(self.code)
+        uploaded = self.upload(purpose="inskick")
+        response = self.send(uploaded)
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        (item,) = self.uploads()
+        self.assertEqual((item.herd_id, item.sender_user_id), (self.h.id, None))
+        (event,) = item.events
+        self.assertEqual((event.user_id, event.detail), (None, {"via": "länk G9001/2025", "documents": 1}))
+        self.assertIn(self.helper.id, self.heard(item))
+
+    def test_sending_photos_is_refused_for_another_herd_year_round_or_photo(self):
+        self.open_link(self.code)
+        uploaded = self.upload(purpose="inskick")
+        self.assertEqual(self.send(uploaded, herd="G9002").status_code, 404)  # not the link's herd
+        self.assertEqual(self.send(uploaded, year=2024).status_code, 404)  # nor its year
+        known = self.send(uploaded, number=self.a.number)  # a rabbit Stamboken has is a notice
+        self.assertEqual((known.status_code, known.get_json()["field"]), (409, "number"))
+        none = self.send()
+        self.assertEqual((none.status_code, none.get_json()["field"]), (400, "photo"))
+        untyped = self.send(uploaded, types=("annat",))
+        self.assertEqual((untyped.status_code, untyped.get_json()["field"]), (400, "doc_type"))
+        self.login("owner")  # another actor in the same browser: not its photo (FC1)
+        theirs = self.send(uploaded)
+        self.assertEqual((theirs.status_code, theirs.get_json()["detail"]), (403, arsrapport.PHOTO_NOT_OURS))
+        mine = self.upload(purpose="inskick")
+        self.at(date(2026, 4, 1))  # after end_date: the owner's report is read-only
+        closed = self.send(mine)
+        self.assertEqual((closed.status_code, closed.get_json()["code"]), (409, "rundan_stangd"))
+        self.assertEqual(self.uploads(), [])
+        # a revoked link sends nothing either (E4)
+        self.at(DAY0)
+        self.client.get("/api/logout")
+        self.open_link(self.code)
+        db.ReportAccessCode.update(revoked_at=arsrapport.now()).where(db.ReportAccessCode.id == self.code.id).execute()
+        self.assertEqual(self.send(uploaded).status_code, 403)
+        self.assertEqual(self.uploads(), [])
+
+    def test_sent_photos_are_read_as_an_upload(self):
+        read = self.reading_on()
+        self.login("owner")
+        certificate, proof = self.upload(purpose="inskick"), self.upload(purpose="inskick")
+        self.assertIsNone(interpreter.interpret_next())  # not before they are sent
+        self.assertEqual(self.send(certificate, proof).status_code, 200)
+        self.assertEqual(interpreter.interpret_next(), certificate["document_id"])
+        self.assertIsNone(interpreter.interpret_next())  # a transfer proof is not read
+        self.assertEqual(len(read), 1)
+        self.assertEqual(db.InboxDocument.get_by_id(proof["document_id"]).interpretation_status, "av")
+
+    def test_the_photo_limit_is_the_report_uploads(self):
+        limiter.reset()
+        limiter.enabled = True
+        self.addCleanup(limiter.reset)
+        self.addCleanup(setattr, limiter, "enabled", False)
+        self.open_link(self.code)
+        empty = [self.client.post("/api/v2/arsrapport/besattning/G9001/2025/foto").status_code for _ in range(60)]
+        self.assertEqual(empty, [400] * 60)
+        data = {"file": (io.BytesIO(encoded(photo((600, 800)))), "intyg.jpg")}
+        refused = self.client.post(
+            "/api/v2/arsrapport/besattning/G9001/2025/foto?syfte=inskick", data=data, content_type="multipart/form-data"
+        )
+        self.assertEqual(refused.status_code, 429)
+
+    def test_sent_photos_close_when_the_transfer_is_registered(self):
+        self.login("owner")
+        item_id = self.send(self.upload(purpose="inskick")).get_json()["id"]
+        rows = {row["id"]: row for row in self.view()["arenden"]}
+        expected = {"id": item_id, "what": "kop_saknas", "number": self.NEW, "photos": 1, "state": "vantar"}
+        self.assertEqual(rows[item_id], expected)
+        # the manager registers it in its birth herd, and transfers it to the buyer
+        rabbit = db.Individual.create(origin_herd=self.seller, number=self.NEW, sex="female")
+        ht_row("BIRTH", herd=self.seller, individual=rabbit, herd_tracking_date=date(2024, 5, 1))
+        self.view()
+        self.assertEqual(db.InboxItem.get_by_id(item_id).state, "ny")  # registered, not yet transferred
+        ht_row("TRANSFER", from_herd=self.seller, herd=self.h, individual=rabbit, herd_tracking_date=date(2025, 5, 20))
+        rows = {row["id"]: row for row in self.view()["arenden"]}
+        self.assertEqual(rows[item_id]["state"], "klart")
+        item = db.InboxItem.get_by_id(item_id)
+        events = list(item.events.where(db.InboxEvent.kind == "lage"))
+        self.assertEqual([e.detail for e in events], [{"from": "ny", "to": "klar", "note": "Köpet är registrerat"}])
+        self.view()  # idempotent
+        self.assertEqual(item.events.where(db.InboxEvent.kind == "lage").count(), 1)
+
+    # S8: "Ärenden hos genbanksansvarig", the queue items that concern the report
+
+    def item(self, kind="upload", state="ny", sender=None, herd=None, closed_days=None, **fields):
+        """A queue item of `herd` (the buyer's), closed `closed_days` ago if given."""
+        closed = inbox.now() - timedelta(days=closed_days) if closed_days is not None else None
+        return db.InboxItem.create(
+            kind=kind,
+            state=state,
+            genebank=self.gotland,
+            herd=herd or self.h,
+            sender_user=sender,
+            message="Hej, mitt telefonnummer är …",
+            closed_at=closed,
+            **fields,
+        )
+
+    def document(self, item, status="av", done=False):
+        db.InboxDocument.create(
+            item=item,
+            original_path="original/x.jpg",
+            mime="image/jpeg",
+            sha256="0" * 64,
+            interpretation_status=status,
+            done_at=inbox.now() if done else None,
+        )
+
+    def test_report_cases_scope_and_states(self):
+        waiting = self.item(sender=self.owner)  # the owner's own upload, its certificate still to be read
+        self.document(waiting, status="vantar")
+        self.document(waiting, status="klar")
+        held = self.item(sender=self.owner, state="tagen")
+        asked = self.item(sender=self.owner, state="ofullstandig")
+        recent = self.item(sender=self.owner, state="klar", closed_days=13)
+        self.item(sender=self.owner, state="klar", closed_days=15)  # closed too long ago
+        self.item(sender=self.manager)  # the manager's upload for the herd: another sender
+        self.item(sender=self.owner, herd=self.seller)  # the owner's upload for another herd
+        self.item(kind="mail")  # a mail, matched to the herd
+        notice = self.stored_notice(self.a, date(2025, 5, 14))
+        self.stored_notice(self.b, date(2024, 11, 2))  # another year's
+        bound = self.item(kind="kontroll", ref_type="individual", ref_id=self.own.id)
+        self.item(kind="kontroll", ref_type="individual")  # a photo not yet bound to its rabbit
+        self.login("owner")
+        rows = self.view()["arenden"]
+        self.assertEqual(
+            rows,
+            [
+                {"id": bound.id, "what": "foto", "number": self.own.number, "photos": 0, "state": "vantar"},
+                {"id": notice.id, "what": "kopanmalan", "number": self.a.number, "photos": 0, "state": "vantar"},
+                {"id": asked.id, "what": "inskick", "number": None, "photos": 0, "state": "arbetar"},
+                {"id": held.id, "what": "inskick", "number": None, "photos": 0, "state": "arbetar"},
+                {"id": waiting.id, "what": "inskick", "number": None, "photos": 2, "state": "tolkas"},
+                {"id": recent.id, "what": "inskick", "number": None, "photos": 0, "state": "klart"},
+            ],
+        )
+        # the link sees the same list
+        self.client.get("/api/logout")
+        self.open_link(self.code)
+        self.assertEqual(self.view()["arenden"], rows)
+
+    def test_the_sellers_report_lists_its_sale_proposal(self):
+        self.seller_proposes()
+        (row,) = purchase_notice.report_cases(self.seller, 2025)
+        self.assertEqual((row["what"], row["number"], row["state"]), ("forsaljning", self.a.number, "vantar"))
+        self.assertEqual(purchase_notice.report_cases(self.seller, 2026), [])  # another year's report
+        self.assertEqual(purchase_notice.report_cases(self.h, 2025), [])  # not the buyer's

@@ -241,6 +241,29 @@ def report_purchase(herd, year):
     return jsonify(purchase_notice.notice_json(item))
 
 
+# [Next.js] "Skicka till genbanksansvarig" (S7): body {number, from_herd, date, documents: [{id, doc_type}]}; a rabbit
+# Stamboken lacks, its photos uploaded through …/foto?syfte=inskick sent to the queue as an ordinary upload.
+@arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/kop/inskick", methods=["POST"])
+@report_actor_required
+def send_purchase_photos(herd, year):
+    herd, round_, access = _report_target(herd, year)  # a link writes only its own herd and year
+    body = request.get_json(silent=True)
+    if not isinstance(body, dict):
+        raise ArsrapportError(400, "Skicka köpet som JSON.")
+    item = purchase_notice.send_photos(
+        herd,
+        round_,
+        access,
+        _actor(access),
+        number=body.get("number"),
+        from_herd=body.get("from_herd"),
+        date=_dates("date").get("date"),
+        documents=body.get("documents"),
+        photos=_session_photos(access),
+    )
+    return jsonify(purchase_notice.notice_json(item))
+
+
 # [Next.js] The herd's register extract on 31 December as a PDF, for the member to check against (section 9).
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/registerutdrag.pdf", methods=["GET"])
 @report_actor_required
@@ -518,7 +541,8 @@ def upload_photo(herd, year):
     file = request.files.get("file")
     if file is None or not file.filename:
         raise ArsrapportError(400, "Ingen fil bifogad.")
-    purchase = request.args.get("syfte") == "kop"  # a purchase notice's photo, never read by the model
+    # a purchase notice's photo, never read by the model, or a bought rabbit's photo (S7), read once it is sent
+    purchase = request.args.get("syfte") in ("kop", "inskick")
     encoded, stored = [], []
 
     def keep(image):
