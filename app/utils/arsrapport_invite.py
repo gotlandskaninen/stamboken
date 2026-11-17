@@ -118,7 +118,10 @@ def new_link(herd, round_, user, *, now: datetime) -> ReportAccessCode:
 
 def _replace_link(herd, round_, user, now):
     with DB_PROXY.atomic():
-        report_code.lock_herd_codes(herd)  # first: the recipient is read, and the old link revoked, under it
+        # The round row before the codes, as the invitation job: a legacy PATCH of report_year holds the row FOR
+        # UPDATE and then updates the codes, which the replacement's insert (a key-share lock on the row) would cross
+        round_ = arsrapport._lock_round(round_)  # pylint: disable=protected-access
+        report_code.lock_herd_codes(herd)  # then: the recipient is read, and the old link revoked, under it
         member = report_code.invitation_recipient(herd)
         if member is None:
             raise ArsrapportError(409, "Besättningen har ingen huvudmedlem med e-postadress.")
