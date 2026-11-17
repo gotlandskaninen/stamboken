@@ -39,6 +39,7 @@ from utils.database import (
     lock_individuals,
     not_voided,
 )
+from utils.individual_number_v2 import parse_number
 from utils.matrikel import resolve_own_membership
 from utils.report_code import actor_key, invitation_recipient
 
@@ -101,9 +102,7 @@ def _locked_photo(herd, document, photos, notice):
     order, and the photo checked under it as a rabbit's is (FC1): uploaded through the report in this session
     (`photos`, their items) and bound to nothing yet. Returns the photo's item and the notice, None if it has closed.
     """
-    if document is None:
-        raise ArsrapportError(409, arsrapport.PHOTO_GONE, field="photo")
-    if document.item_id not in photos:
+    if document is None or document.item_id not in photos:  # a missing photo answers as another's does
         raise ArsrapportError(403, arsrapport.PHOTO_NOT_OURS, field="photo")
     ids = sorted({document.item_id} | ({notice.id} if notice is not None else set()))
     locked = {
@@ -255,8 +254,8 @@ def send_photos(herd, round_, access, user, *, number, from_herd, date, document
     """
     year = round_.report_year
     number = number.strip().upper() if isinstance(number, str) else ""
-    if not number or len(number) > 40:
-        raise ArsrapportError(400, "Skriv kaninens nummer.", field="number")
+    if not number or parse_number(number) is None:
+        raise ArsrapportError(400, "Skriv kaninens individnummer, till exempel G1234-2501.", field="number")
     if _in_genebank(number, herd.genebank_id) is not None:  # a rabbit Stamboken has is a notice
         raise ArsrapportError(409, f"{number} finns i Stamboken. Anmäl köpet i stället.", field="number")
     seller = _seller(herd, year, from_herd, date)
@@ -273,20 +272,23 @@ def send_photos(herd, round_, access, user, *, number, from_herd, date, document
         found = list(InboxDocument.select().where(InboxDocument.id.in_(sorted(types))))
         held = sorted({document.item_id for document in found})
         if len(found) == len(types) and len(held) == 1:  # maybe the same request again: the item they went to
-            item = InboxItem.get_by_id(held[0])
-            receipt = item.ref_data.get("receipt") if sent(item) else None
+            item = InboxItem.get_or_none(InboxItem.id == held[0])  # a purge may have taken it since
+            receipt = item.ref_data.get("receipt") if item is not None and sent(item) else None
             # its receipt: this actor, herd, year and payload, from photos this session uploaded (photos keeps them)
             if receipt and receipt["request"] == request and set(receipt["staged"]) <= set(photos):
                 return item
-        if len(found) != len(types):
-            raise ArsrapportError(409, arsrapport.PHOTO_GONE, field="photo")
-        if any(item_id not in photos for item_id in held):
+        if len(found) != len(types) or any(item_id not in photos for item_id in held):  # missing is not ours
             raise ArsrapportError(403, arsrapport.PHOTO_NOT_OURS, field="photo")
         # each photo's own item locked in one ascending pass, the queue's order, and checked under it (FC1)
         locked = {i.id: i for i in InboxItem.select().where(InboxItem.id.in_(held)).order_by(InboxItem.id).for_update()}
         for document in found:
             staged = locked.get(document.item_id)
-            if staged is None or arsrapport.report_photo_document(staged, herd).id != document.id:
+            # only a photo held for sending (PURPOSES) moves: a plain report photo may be in reading
+            if (
+                staged is None
+                or (staged.ref_data or {}).get(inbox.PURPOSE) not in inbox.PURPOSES
+                or arsrapport.report_photo_document(staged, herd).id != document.id
+            ):
                 raise ArsrapportError(409, arsrapport.PHOTO_GONE, field="photo")
         item = InboxItem.create(
             kind="upload",

@@ -686,7 +686,7 @@ class PurchaseNoticeTest(ArsrapportTest):
         missing = self.notify_with(mine["document_id"], doc_type=None)
         self.assertEqual((missing.status_code, missing.get_json()["field"]), (400, "doc_type"))
         gone = self.notify_with(mine["document_id"] + 1000)
-        self.assertEqual((gone.status_code, gone.get_json()["detail"]), (409, arsrapport.PHOTO_GONE))
+        self.assertEqual((gone.status_code, gone.get_json()["detail"]), (403, arsrapport.PHOTO_NOT_OURS))
         self.assertEqual(notices(), [])
         # a photo the queue has scrapped can no longer be bound
         db.InboxItem.update(state="skrap").where(db.InboxItem.id == mine["item_id"]).execute()
@@ -938,6 +938,67 @@ class PurchaseNoticeTest(ArsrapportTest):
             "/api/v2/arsrapport/besattning/G9001/2025/foto?syfte=inskick", data=data, content_type="multipart/form-data"
         )
         self.assertEqual(refused.status_code, 429)
+
+    def test_only_held_photos_can_be_sent(self):
+        self.login("owner")
+        plain = self.upload()  # a 4b photo, maybe in reading
+        response = self.send(plain)
+        self.assertEqual((response.status_code, response.get_json()["detail"]), (409, arsrapport.PHOTO_GONE))
+        self.assertEqual(self.uploads(), [])
+        self.assertTrue(db.InboxDocument.select().where(db.InboxDocument.id == plain["document_id"]).exists())
+        self.assertTrue(db.InboxItem.select().where(db.InboxItem.id == plain["item_id"]).exists())
+
+    def test_number_is_a_rabbit_number(self):
+        self.login("owner")
+        uploaded = self.upload(purpose="inskick")
+        refused = self.send(uploaded, number="Kalle Anka")
+        self.assertEqual(refused.status_code, 400)
+        self.assertEqual(
+            (refused.get_json()["field"], refused.get_json()["detail"]),
+            ("number", "Skriv kaninens individnummer, till exempel G1234-2501."),
+        )
+        self.assertEqual(self.uploads(), [])
+
+    def test_a_held_photo_records_its_member(self):
+        self.open_link(self.code)
+        uploaded = self.upload(purpose="inskick")
+        self.assertEqual(db.InboxItem.get_by_id(uploaded["item_id"]).member_id, self.code.member_id)
+        original = os.path.join(self.folder, db.InboxDocument.get_by_id(uploaded["document_id"]).original_path)
+        self.assertTrue(os.path.exists(original))
+        matrikel.anonymize_person(db.Member.get_by_id(self.code.member_id), self.admin)
+        self.assertFalse(db.InboxItem.select().where(db.InboxItem.id == uploaded["item_id"]).exists())
+        self.assertFalse(os.path.exists(original))
+
+    def test_a_missing_photo_answers_as_another_actors(self):
+        self.login("owner")
+        mine = self.upload(purpose="inskick")
+        missing = self.send({"document_id": 999999})
+        self.client.get("/api/logout")
+        self.open_link(self.code)  # the link is not the owner's session
+        theirs = self.send(mine)
+        self.assertEqual((missing.status_code, theirs.status_code), (403, 403))
+        self.assertEqual(missing.get_json(), theirs.get_json())
+        # the notice's photo field too
+        gone = self.notify_with(999999)
+        other = self.notify_with(mine["document_id"])
+        self.assertEqual((gone.status_code, gone.get_json()), (other.status_code, other.get_json()))
+        self.assertEqual(gone.status_code, 403)
+
+    def test_the_send_limit_is_20_per_hour_and_counts_sends_only(self):
+        limiter.reset()
+        limiter.enabled = True
+        self.addCleanup(limiter.reset)
+        self.addCleanup(setattr, limiter, "enabled", False)
+        self.login("owner")
+        for _ in range(3):  # refused sends spend nothing
+            self.assertEqual(self.send(number="Kalle Anka").status_code, 400)
+        for n in range(20):
+            uploaded = self.upload(purpose="inskick")
+            number = f"G9002-25{n + 10:02d}"
+            self.assertEqual(self.send(uploaded, number=number).status_code, 200)
+        refused = self.send(self.upload(purpose="inskick"))
+        self.assertEqual((refused.status_code, refused.mimetype), (429, "application/problem+json"))
+        self.assertIn("Du har skickat många köp den senaste timmen", refused.get_json()["detail"])
 
     def test_sent_photos_show_registered_and_only_the_queue_closes_them(self):
         self.login("owner")

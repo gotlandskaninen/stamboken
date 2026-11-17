@@ -33,6 +33,7 @@ from utils.database import (
     SaleProposal,
     YearlyReportRound,
 )
+from utils.matrikel import resolve_own_membership
 from utils.report_code import CodeActor, actor_key
 
 from .common import check_genebank_access, json_login_required, manager_required, problem
@@ -250,6 +251,8 @@ def send_purchase_photos(herd, year):
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
         raise ArsrapportError(400, "Skicka köpet som JSON.")
+    if (limited := _send_limit(access)) is not None:
+        return limited
     item = purchase_notice.send_photos(
         herd,
         round_,
@@ -261,6 +264,10 @@ def send_purchase_photos(herd, year):
         documents=body.get("documents"),
         photos=_session_photos(access),
     )
+    try:
+        limiter.limiter.hit(SEND_LIMIT, "arsrapport-inskick", _send_key(access))
+    except Exception:  # pylint: disable=broad-except
+        current_app.logger.exception("Send rate limit count failed")
     return jsonify(purchase_notice.notice_json(item))
 
 
@@ -482,6 +489,8 @@ def new_link(herd, year):
 
 PHOTO_LIMIT = parse_limit("60 per hour")  # per code or per user, every request with access, refused or not (mitt val)
 PHOTO_LIMITED = "Du har laddat upp många foton den senaste timmen. Fortsätt efter kl. {at}. Det du skrivit är sparat."
+SEND_LIMIT = parse_limit("20 per hour")  # per actor, as the queue's upload; sends only
+SEND_LIMITED = "Du har skickat många köp den senaste timmen. Fortsätt efter kl. {at}. Det du skrivit är sparat."
 PHOTOS_KEPT = 60  # the session's own uploads a registration may bind (FC1): an hour's worth
 PHOTO_FIRST = "Ladda upp ett foto av intyget först."
 ONE_PAGE = "Ladda upp ett intyg i taget. PDF:en har fler än en sida."
@@ -525,6 +534,26 @@ def _photo_limit(access):
     return problem(429, "För många foton", PHOTO_LIMITED.format(at=f"{at:%H.%M}"), type="rate-limit-exceeded")
 
 
+def _send_key(access):
+    return "/".join(map(str, actor_key(_actor(access))))
+
+
+def _send_limit(access):
+    """The 429 once the actor has made SEND_LIMIT successful sends this hour, else None; fail-open as _photo_limit."""
+    if not (limiter.enabled and limiter.initialized):
+        return None
+    key = _send_key(access)
+    try:
+        if limiter.limiter.test(SEND_LIMIT, "arsrapport-inskick", key):
+            return None
+        reset = limiter.limiter.get_window_stats(SEND_LIMIT, "arsrapport-inskick", key).reset_time
+    except Exception:  # pylint: disable=broad-except  # as the limiter's swallow_errors
+        current_app.logger.exception("Send rate limit check failed, letting the request through")
+        return None
+    at = datetime.fromtimestamp(math.ceil(reset / 60) * 60, arsrapport.STOCKHOLM)
+    return problem(429, "För många inskick", SEND_LIMITED.format(at=f"{at:%H.%M}"), type="rate-limit-exceeded")
+
+
 # [Next.js] The certificate's photo: the queue's checks, a `kontroll` item with an `intyg` document (G5).
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/foto", methods=["POST"])
 @report_actor_required
@@ -559,7 +588,16 @@ def upload_photo(herd, year):
             # the round row under its lock: a round closed while the photo was read is seen here
             arsrapport.require_round_open(herd, arsrapport._lock_round(round_), access)  # pylint: disable=protected-access
             item, documents = inbox.create_upload(
-                sender, herd, None, stored, kind="kontroll", ref_type="individual", held=held, **named
+                sender,
+                herd,
+                None,
+                stored,
+                kind="kontroll",
+                ref_type="individual",
+                held=held,
+                # the person, so an erasure finds a held photo at once
+                member=access.code.member_id if access.code else resolve_own_membership(sender),
+                **named,
             )
     except _Refused as refused:
         inbox.remove_files(path for path, _, _ in stored)
