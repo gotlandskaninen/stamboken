@@ -163,6 +163,14 @@ class TestApprovalMail(MailTest):
         self.assertIn(f"Du har fått medlemsnummer {number}.", body)
         self.assertIn("välkomstbrev som vi sänder via Postnord", body)
 
+    def test_no_welcome_with_the_old_number_once_the_membership_has_ended(self):
+        member = db.Member.get_by_id(self._approve(self.application()).get_json()["created_member_id"])
+        matrikel.retire_membership(member.membership, self.admin)
+        relay = self.relay()
+        mail.send_pending(self.now)
+        self.assertEqual(relay.sent, [])
+        self.assertEqual(db.MailMessage.get(db.MailMessage.kind == "ansokan.godkand").status, "cancelled")
+
     def test_failed_approval_queues_nothing(self):
         a = self.application()
         audit = mock.patch("blueprints.member_applications.write_matrikel_audit", side_effect=RuntimeError("audit"))
