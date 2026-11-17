@@ -353,7 +353,8 @@ class TestKitsAndMoves(LitterApiTest):
             low.get_json()["detail"], "Kullen har redan 5 ungar i registret. Antal födda kan inte vara färre."
         )
         self.assertEqual(db.Breeding.get_by_id(first).litter_size, 5)
-        self.assertEqual(self.api("PATCH", f"{REPORT}/kull/{first}", litter_size=5, litter_size6w=2).status_code, 200)
+        # five registered kits alive: five at 6 weeks too (ConfirmLitterSize's floor)
+        self.assertEqual(self.api("PATCH", f"{REPORT}/kull/{first}", litter_size=5, litter_size6w=5).status_code, 200)
 
     def test_unlinked_roster_slots_count_as_kits(self):
         self.login("owner")

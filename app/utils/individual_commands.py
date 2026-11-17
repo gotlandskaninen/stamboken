@@ -1011,6 +1011,9 @@ class IssueDigitalCertificate(PolicyCommand):
 
 GESTATION_DAYS = 31  # the middle of a rabbit's 26–38 days: the mating is put this long before a litter's birth
 BORN_BELOW_KITS = "Kullen har redan {kits} ungar i registret. Antal födda kan inte vara färre."
+ALIVE_BELOW_KITS = (
+    "Kullen har {kits} registrerade ungar som levde vid 6 veckor. Antal levande vid 6 veckor kan inte vara färre."
+)
 CERTIFIED_LITTER = "Kontakta genbanksansvarig för att ändra en kull med intyg."
 LITTER_DUPLICATE_DAYS = 3  # a litter of the same mother this close may be the same one (spec 5.8, G2)
 _LITTER_LOCK = 0x48424C52  # "HBLR": classid of the advisory lock on the mother while a litter is added
@@ -1172,6 +1175,15 @@ class ConfirmLitterSize(PolicyCommand):
         born = self.litter_size if self.litter_size is not None else litter.litter_size
         if born is None or born < 1 or (self.litter_size6w is not None and not 0 <= self.litter_size6w <= born):
             raise IndividualRefused(LITTER_SIZE6W_ABOVE_BORN)
+        if self.litter_size6w is not None:  # the registered kits alive at 6 weeks are the floor (the roster: #79)
+            six_weeks = litter.birth_date + timedelta(weeks=6)
+            alive = Individual.select().where(
+                (Individual.breeding == litter.id)
+                & not_voided()
+                & (Individual.death_date.is_null(True) | (Individual.death_date >= six_weeks))
+            )
+            if self.litter_size6w < (kits := alive.count()):
+                raise IndividualRefused(ALIVE_BELOW_KITS.format(kits=kits))
         certified = Individual.certificate.is_null(False) | Individual.digital_certificate.is_null(False)
         if Individual.select().where((Individual.breeding == litter.id) & certified).exists():
             raise IndividualRefused(CERTIFIED_LITTER)  # under the litter's lock: a kit's certificate is counted in it

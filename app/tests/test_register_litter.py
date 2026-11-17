@@ -12,6 +12,7 @@ from unittest import mock
 
 import blueprints.individual_v2_create as create
 import utils.arsrapport as arsrapport
+import utils.data_access as da
 import utils.database as db
 import utils.individual_commands as ic
 import utils.report_code as report_code
@@ -20,7 +21,7 @@ from herdbook import APP
 from utils.arsrapport import ReportGrant
 from utils.herd_tracking import record_herd_tracking
 from utils.individual_commands import IndividualRefused, SameLitter, confirm_litter_size, register_litter
-from utils.individual_number_v2 import number_from_certificate
+from utils.individual_number_v2 import NO_LITTER_NUMBER, number_from_certificate
 from utils.report_code import CodeActor
 
 from tests.arsrapport_fixtures import ArsrapportTest
@@ -207,10 +208,12 @@ class TestRegisterLitter(LitterTest):
 
         blocked = False
         try:
-            # the certificate route imported the function by name: patched there too, so B is seen on either path
+            # the certificate route and legacy's writers imported the function by name: patched there too, so B is
+            # seen on every path
             with (
                 mock.patch.object(ic, "lock_mother_litters", side_effect=hold_after_lock),
                 mock.patch.object(create, "lock_mother_litters", side_effect=hold_after_lock),
+                mock.patch.object(da, "lock_mother_litters", side_effect=hold_after_lock),
             ):
                 threads.append(threading.Thread(target=run, args=("a", self.add)))
                 threads[0].start()
@@ -253,6 +256,37 @@ class TestRegisterLitter(LitterTest):
         self.assertEqual(response.status_code, 409, response.get_json())  # the number check sees A's litter
         self.assertIn("duplicate_litter", [c["kind"] for c in response.get_json()["conflicts"]])
         self.assertEqual(self.litters(), 1)
+
+    def test_legacy_birth_waits_for_the_mothers_litter_lock(self):
+        """Opus L5: a birth on a pending mating takes the mother's lock first and decides its dates under it."""
+        mating = db.Breeding.create(
+            breeding_herd_id=self.g1, mother=self.doe, father=self.buck, breed_date=BORN - timedelta(days=29)
+        )
+        form = {"id": mating.id, "date": str(BORN + timedelta(days=2)), "litter_size": 4}
+        result, blocked, first = self.overlap(lambda: da.register_birth(form, self.owner.uuid))
+        self.assertTrue(blocked, "B was not waiting for the lock while A held it")
+        self.assertIsInstance(first, db.Breeding)
+        self.assertEqual(result["status"], "error", result)
+        self.assertIn("inom 35 dagar", result["message"])
+        self.assertIsNone(db.Breeding.get_by_id(mating.id).birth_date)
+
+    def test_legacy_litter_edit_waits_for_the_mothers_litter_lock(self):
+        """Opus L5: moving a litter of the mother's next to the new one takes her lock before the litter's."""
+        old = db.Breeding.create(
+            breeding_herd_id=self.g1,
+            mother=self.doe,
+            father=self.buck,
+            breed_date=BORN - timedelta(days=131),
+            birth_date=BORN - timedelta(days=100),
+            litter_size=3,
+        )
+        form = {"id": old.id, "breed_date": str(BORN - timedelta(days=29)), "birth_date": str(BORN + timedelta(days=2))}
+        result, blocked, first = self.overlap(lambda: da.update_breeding(form, self.owner.uuid))
+        self.assertTrue(blocked, "B was not waiting for the lock while A held it")
+        self.assertIsInstance(first, db.Breeding)
+        self.assertEqual(result["status"], "error", result)
+        self.assertIn("inom 35 dagar", result["message"])
+        self.assertEqual(db.Breeding.get_by_id(old.id).birth_date, BORN - timedelta(days=100))
 
     @staticmethod
     def shortcut_body(born):
@@ -364,6 +398,22 @@ class TestConfirmLitterSize(LitterTest):
         self.assertTrue(db.Breeding.get_by_id(litter.id).litter_size6w_preliminary)
         with self.assertRaises(IndividualRefused):
             confirm_litter_size(self.owner, litter.id + 1000, 3)
+
+    def test_the_count_cannot_go_below_the_registered_kits_alive_at_6_weeks(self):
+        """Opus L6: of four registered kits one died before 6 weeks and one is voided, so 2 is the floor."""
+        litter = self.add()
+        kits = [db.Individual.create(origin_herd=self.g1, breeding=litter, number=f"G1-259{n}") for n in range(1, 5)]
+        db.Individual.update(death_date=BORN + timedelta(days=60)).where(db.Individual.id == kits[1].id).execute()
+        db.Individual.update(death_date=BORN + timedelta(days=10)).where(db.Individual.id == kits[2].id).execute()
+        db.Individual.update(voided=True).where(db.Individual.id == kits[3].id).execute()
+        with self.assertRaises(IndividualRefused) as raised:
+            confirm_litter_size(self.owner, litter.id, 1)
+        self.assertEqual(
+            raised.exception.envelope["message"],
+            "Kullen har 2 registrerade ungar som levde vid 6 veckor. Antal levande vid 6 veckor kan inte vara färre.",
+        )
+        self.assertTrue(db.Breeding.get_by_id(litter.id).litter_size6w_preliminary)
+        self.assertEqual(confirm_litter_size(self.owner, litter.id, 2).litter_size6w, 2)
 
     def test_wrong_report_year_is_refused(self):
         litter = self.add()
@@ -490,6 +540,35 @@ class TestLaterCertificate(LitterTest):
         self.assertEqual((response.status_code, response.get_json()["title"]), (409, "number_conflict"))
         self.assertEqual(self.state(), (None, 5, True, 0))
 
+    def test_a_paper_number_out_of_birth_order_goes_to_manager(self):
+        """Opus M1: kull 1 in January and kull 2 in August; the paper of our May litter says kull 3, which would put it
+        after a litter born later. The manager renumbers, and nothing is written."""
+        self.numbered(1)
+        later = self.numbered(2, born=date(2025, 8, 1))
+        self.assertEqual(number_from_certificate(self.litter, "G1-2531"), (None, later))
+        response = self.register(paper_number="G1-2531", litter_size6w=3)
+        problem = response.get_json()
+        self.assertEqual((response.status_code, problem["title"]), (409, "number_conflict"))
+        self.assertEqual([c["kind"] for c in problem["conflicts"]], ["litter_number_taken"])
+        self.assertEqual(
+            problem["actions"][0]["text"],
+            "Kull 2 finns redan för 2025 och är född efter den här kullen, men har ett lägre nummer än 3. "
+            "Genbanksansvarig rättar numret.",
+        )
+        self.assertEqual(self.state(), (None, 5, True, 0))
+
+    def test_an_old_unnumbered_litter_with_a_rabbit_keeps_the_400(self):
+        """Opus L1: only a litter without rabbits numbers itself; an older one without a number keeps the refusal."""
+        db.Individual.create(origin_herd=self.g1, breeding=self.litter, number="G1-2599")
+        self.numbered(1)
+        response = self.register()
+        self.assertEqual((response.status_code, response.get_json()["detail"]), (400, NO_LITTER_NUMBER))
+        suggestion = self.client.get(f"{URL}/suggest-number", query_string={"breeding_id": self.litter.id})
+        self.assertEqual((suggestion.status_code, suggestion.get_json()["detail"]), (400, NO_LITTER_NUMBER))
+        check = self.client.post(f"{URL}/number-check", json={"breeding_id": self.litter.id, "paper_number": "G1-2551"})
+        self.assertEqual((check.get_json()["status"], check.get_json()["stamboken_number"]), ("uncomputable", None))
+        self.assertEqual(self.state(), (None, 5, True, 1))
+
     def test_suggest_number_knows_a_full_litter(self):
         db.Breeding.update(litter_size6w=0).where(db.Breeding.id == self.litter.id).execute()
         data = self.client.get(f"{URL}/suggest-number", query_string={"breeding_id": self.litter.id}).get_json()
@@ -571,6 +650,13 @@ class TestPromotionNumbersTheLitter(LitterTest):
         with self.assertRaises(IndividualRefused) as refused:
             confirm_litter_size(self.owner, self.litter.id, 4)
         self.assertEqual(refused.exception.envelope["message"], ic.CERTIFIED_LITTER)
+
+    def test_an_unnumbered_litter_with_a_rabbit_is_not_numbered_by_promotion(self):
+        """Opus L1: the roster's promotion keeps the old 400 for a litter without a number that has a rabbit."""
+        db.Individual.create(origin_herd=self.g1, breeding=self.litter, number="G1-2699")
+        response = self.promote(self.bunnies[0], "G1-2661", litter_size6w=3)
+        self.assertEqual((response.status_code, response.get_json()["detail"]), (400, NO_LITTER_NUMBER))
+        self.assertEqual(self.state(), (None, 5, True))
 
     def test_the_register_buttons_check_tolerates_the_paper_gap(self):
         """Round 2: after paper litter 6 (litter 1 exists), the button's check-order passes as promotion does."""

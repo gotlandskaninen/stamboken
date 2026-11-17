@@ -21,6 +21,7 @@ from utils.individual_number_v2 import (
     HARD_CEILING,
     LITTER_BORN_BEFORE_NUMBERED,
     LITTER_SIZE6W_ABOVE_BORN,
+    NO_LITTER_NUMBER,
     PAPER_NUMBER_REQUIRED,
     RosterActionError,
     RosterAliveExceeds6w,
@@ -33,6 +34,7 @@ from utils.individual_number_v2 import (
     number_check,
     number_to_register,
     number_unnumbered_litter,
+    numbered_by_certificate,
     parse_number,
     record_number_choice,
     suggest_individual_number,
@@ -288,6 +290,8 @@ def number_suggestion(args, may, genebank=None):
         return problem(403, "Forbidden", "Åtkomst nekad")
 
     if breeding.litter_number is None:  # a litter added without a certificate: the number it would get now
+        if not numbered_by_certificate(breeding):
+            return problem(400, "Bad Request", NO_LITTER_NUMBER)
         if breeding.birth_date is None:
             return problem(400, "Bad Request", "Breeding record has no birth_date.")
         litter_number = new_litter_number(herd, breeding.birth_date, lock=False)

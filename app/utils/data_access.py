@@ -75,6 +75,7 @@ from utils.individual_commands import update_birth_date_herd_tracking  # isort:s
 from utils.individual_commands import update_bodyfat, update_weights  # isort:skip
 from utils.individual_commands import IndividualRefused, execute, purge_command_free_text  # isort:skip
 from utils.individual_commands import known_color, known_litter, known_origin_herd, known_parent  # isort:skip
+from utils.individual_commands import lock_mother_litters  # isort:skip
 from utils.individual_legacy import translate  # isort:skip
 
 from werkzeug.security import (
@@ -2946,6 +2947,9 @@ def register_birth(form, user_uuid):
         return max(existing_numbers) if existing_numbers else 0
 
     with DATABASE.atomic():
+        # The mother's litters first, as RegisterLitter: the dates are decided again under it below.
+        if breeding.mother_id is not None:
+            lock_mother_litters(breeding.mother_id)
         # Serialise the herd/year litter-number space before reading it,
         # deterministic order to avoid deadlocks — mirrors renumber_litters.
         # This litter is in the same ascending lock call even when its breed date falls in another year.
@@ -2978,6 +2982,17 @@ def register_birth(form, user_uuid):
             Individual.get_by_id(locked.mother_id) if locked.mother_id else None
         ):
             return {"status": "error", "message": not_owned}
+        # The date rules again under the mother's lock: a litter of hers registered meanwhile counts.
+        date_errors, date_warnings = validate_breeding_dates(
+            breed_date=locked.breed_date,
+            birth_date=birth_date,
+            mother=breeding.mother,
+            father=breeding.father,
+            exclude_breeding_id=locked.id,
+            litter_size=litter_size,
+        )
+        if date_errors:
+            return {"status": "error", "message": ", ".join(date_errors)}
 
         suggestion = suggest_litter_number(herd_identifier, birth_date_only, exclude_breeding_id=breeding.id)
         litter_conflicts = suggestion["conflicts"]
@@ -3155,9 +3170,17 @@ def update_breeding(form, user_uuid):
     # refused sibling (HerdTrackingError) must leave every kit and the breeding untouched.
     try:
         with DATABASE.atomic():
+            # The litter's mothers first, as RegisterLitter takes its mother's: the one it has now (read afresh, since a
+            # correction may have come after this request's read) and any new one, in ascending order.
+            now_mother = Breeding.select(Breeding.mother).where(Breeding.id == breeding.id).scalar()
+            mothers = sorted({m for m in (now_mother, getattr(changes.get("mother"), "id", None)) if m})
+            for mother_id in mothers:
+                lock_mother_litters(mother_id)
             # LOCK ORDER: Breeding first, then individuals in ascending id in ONE call — the order
             # delete_breeding and set_litter_number/renumber_litters take.
             stored = Breeding.select().where(Breeding.id == breeding.id).for_update().get()
+            if stored.mother_id is not None and stored.mother_id not in mothers:  # her lock is not ours
+                return {"status": "error", "message": "Kullen ändrades samtidigt. Försök igen."}
             # Authorize again under the lock: the pre-check above read an unlocked herd.
             if not user.can_edit(stored.breeding_herd_id.herd):
                 return {"status": "error", "message": "Forbidden"}
