@@ -7,6 +7,8 @@ isort:skip_file
 """
 
 import json
+import threading
+import time
 from datetime import date, datetime, timedelta
 from unittest import mock
 
@@ -23,6 +25,7 @@ from utils.individual_commands import record_sale
 from utils.report_code import CodeActor
 
 from tests.arsrapport_fixtures import ArsrapportTest
+from tests.database_test import _USE_POSTGRES
 from tests.test_arsrapport_pdf import text_of
 
 DAY0 = date(2026, 1, 10)
@@ -32,6 +35,8 @@ BUYER_TEXTS = ("Zelda", "Keptbuyer", "Klintehamn", "zelda@example")
 OTHER = {"name": "Ylva Newbuyer", "town": "Slite"}
 KEPT_UNTIL = datetime(2026, 4, 1, tzinfo=STOCKHOLM)  # end_date 30 March, plus the night after it and a day
 SOLD_ON = date(2025, 10, 10)
+EXTENDED = date(2026, 4, 30)  # the round's end_date moved a month on
+EXTENDED_UNTIL = datetime(2026, 5, 2, tzinfo=STOCKHOLM)
 
 
 def sales(rabbit, active=None):
@@ -363,3 +368,82 @@ class KeptBuyerTest(ArsrapportTest):
         self.withdrawn(1, reason="Fel i rapporten")
         self.assertEqual(contacts(), {})
         self.assertNotIn("kopare_id", json.dumps(self.draft()))
+
+    # Codex review of 8b19610: a moved end_date against the writers, in two transactions
+
+    def race(self, target, name, first, second):
+        """
+        Two real transactions: `first` runs until `target.name` has returned inside it and holds its locks there while
+        `second` starts, then goes on and commits. Returns each one's result, or the repr of what it raised.
+        """
+        if not _USE_POSTGRES:
+            self.skipTest("row locks need PostgreSQL")
+        barrier, results, original = threading.Barrier(2, timeout=10), {}, getattr(target, name)
+
+        def held(*args, **kwargs):
+            value = original(*args, **kwargs)
+            if threading.current_thread().name == "first":
+                barrier.wait()
+                time.sleep(0.5)  # `second` meets the locks `first` holds
+            return value
+
+        def run(key, call):
+            try:
+                with APP.app_context():
+                    if key == "second":
+                        barrier.wait()
+                    results[key] = call()
+            except Exception as exc:  # noqa: BLE001  # the test reports any failure, a deadlock included
+                results[key] = repr(exc)
+            finally:
+                db.DB_PROXY.close()
+
+        with mock.patch.object(target, name, side_effect=held):
+            threads = [
+                threading.Thread(target=run, args=pair, name=pair[0]) for pair in (("first", first), ("second", second))
+            ]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join(timeout=30)
+        self.assertFalse(any(thread.is_alive() for thread in threads), "hung threads")
+        return results
+
+    def resubmit(self):
+        """Skicka of the withdrawn draft as the owner, which links the kept buyer again: a call for race."""
+        sub = arsrapport.parse_submission(self.resent(), paper=False)
+        access, user = arsrapport.Access("owner"), db.User.get_by_id(self.owner.id)
+        return lambda: bool(arsrapport.submit(self.h, self.round_, access, user, sub))
+
+    def withdraw(self, round_):
+        access, user = arsrapport.Access("owner"), db.User.get_by_id(self.owner.id)
+        return lambda: bool(arsrapport.withdraw(self.h, round_, access, user, revision=1))
+
+    def extend(self):
+        admin = db.User.get_by_id(self.admin.id)
+        return lambda: arsrapport.save_round(2025, admin, end_date=EXTENDED).end_date
+
+    def sent(self):
+        self.ok(self.body(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=BUYER), self.kvar(self.b, vikt=2.8)))
+
+    # Finding 3: a moved end_date and Dra tillbaka take the round row's lock
+
+    def test_withdraw_reads_an_end_date_moved_meanwhile(self):  # the change first; withdraw holds a stale round
+        self.sent()
+        results = self.race(arsrapport, "_move_kept_buyers", self.extend(), self.withdraw(self.round_))
+        self.assertEqual(results, {"first": EXTENDED, "second": True})
+        (sale,) = sales(self.a)
+        self.assertEqual(contacts(), {sale.holder_contact_id: EXTENDED_UNTIL})
+
+    def test_end_date_moved_after_a_withdraw_moves_its_buyer(self):  # withdraw first
+        self.sent()
+        results = self.race(arsrapport, "_mail", self.withdraw(self.round_), self.extend())
+        self.assertEqual(results, {"first": True, "second": EXTENDED})
+        (sale,) = sales(self.a)
+        self.assertEqual(contacts(), {sale.holder_contact_id: EXTENDED_UNTIL})
+
+    def test_end_date_moved_during_a_resubmission_leaves_the_linked_buyer(self):  # five years, not the round's end
+        contact, _ = self.sold_and_withdrawn()
+        results = self.race(arsrapport, "drop_kept_buyers", self.resubmit(), self.extend())
+        self.assertEqual(results, {"first": True, "second": EXTENDED})
+        self.assertEqual(contacts(), {contact.id: db.BuyerContact.purge_at_for(SOLD_ON)})

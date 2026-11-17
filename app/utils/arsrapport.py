@@ -145,27 +145,39 @@ def save_round(year, user, **dates):
     """
     The year's round with `dates` applied: a new round, or a legacy round's missing dates, get the defaults first.
     Only the dates that change are saved, so legacy's is_active is never written (D3) and the genetics trigger
-    sees end_date only when it moves.
+    sees end_date only when it moves. In one transaction: the UPDATE holds the round row until the codes and the
+    kept buyers have followed it, which Dra tillbaka waits for (_lock_round).
     """
     if abs(year - today().year) > 1:
         raise ArsrapportError(400, f"Året ska vara {today().year - 1}, {today().year} eller {today().year + 1}.")
-    round_ = get_round(year) or YearlyReportRound(report_year=year, created_by=user)
-    wanted = {key: getattr(round_, key) or default for key, default in default_dates(year).items()} | dates
-    if not wanted["start_date"] <= wanted["deadline"] <= wanted["end_date"]:
-        raise ArsrapportError(400, "Rundan öppnar först, sedan kommer sista dagen för stödet och sist stängningen.")
-    changed = [key for key in DATE_FIELDS if getattr(round_, key) != wanted[key]]
-    for key in changed:
-        setattr(round_, key, wanted[key])
-    if round_.id is None:
-        round_.save()
-    elif changed:
-        round_.save(only=[getattr(YearlyReportRound, key) for key in changed])
-        if "end_date" in changed:  # R10: the column of an active code follows the round, and K2 the kept buyers
-            ReportAccessCode.update(expires_at=round_.end_date).where(
-                ReportAccessCode.round == round_.id, ReportAccessCode.revoked_at.is_null()
-            ).execute()
-            _move_kept_buyers(round_)
+    with DB_PROXY.atomic():
+        round_ = get_round(year) or YearlyReportRound(report_year=year, created_by=user)
+        wanted = {key: getattr(round_, key) or default for key, default in default_dates(year).items()} | dates
+        if not wanted["start_date"] <= wanted["deadline"] <= wanted["end_date"]:
+            raise ArsrapportError(400, "Rundan öppnar först, sedan kommer sista dagen för stödet och sist stängningen.")
+        changed = [key for key in DATE_FIELDS if getattr(round_, key) != wanted[key]]
+        for key in changed:
+            setattr(round_, key, wanted[key])
+        if round_.id is None:
+            round_.save()
+        elif changed:
+            round_.save(only=[getattr(YearlyReportRound, key) for key in changed])
+            if "end_date" in changed:  # R10: the column of an active code follows the round, and K2 the kept buyers
+                ReportAccessCode.update(expires_at=round_.end_date).where(
+                    ReportAccessCode.round == round_.id, ReportAccessCode.revoked_at.is_null()
+                ).execute()
+                _move_kept_buyers(round_)
     return round_
+
+
+def _lock_round(round_):
+    """
+    The round row FOR SHARE, read again: Dra tillbaka keeps a buyer until the round's end_date (kept_until), and
+    save_round's UPDATE of the row waits for it. A moved end_date is then either read here or comes after the
+    withdrawal, and _move_kept_buyers finds its buyer. Taken first, before the report's lock and the link's code row,
+    which save_round updates after the round row.
+    """
+    return YearlyReportRound.select().where(YearlyReportRound.id == round_.id).for_update("FOR SHARE").get()
 
 
 def kept_until(round_):
@@ -197,8 +209,12 @@ def _move_kept_buyers(round_):
     held = HerdTracking.select(HerdTracking.holder_contact).where(
         HerdTracking.holder_contact.is_null(False), ht_not_voided()
     )
+    # Locked in id order, as the purge locks them, and `held` read after: a resubmission that linked one again has
+    # committed by then, and keeps its five years
+    locked = BuyerContact.select(BuyerContact.id).where(BuyerContact.id.in_(sold)).order_by(BuyerContact.id)
+    ids = [contact_id for (contact_id,) in locked.for_update().tuples()]
     BuyerContact.update(purge_at=kept_until(round_)).where(
-        BuyerContact.id.in_(sold), BuyerContact.id.not_in(held)
+        BuyerContact.id.in_(ids), BuyerContact.id.not_in(held)
     ).execute()
 
 
@@ -2818,6 +2834,7 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
     at = now or globals()["now"]()  # the parameter hides the module's clock, which the tests patch
     on, last = at.astimezone(STOCKHOLM).date(), date(round_.report_year, 12, 31)
     with DB_PROXY.atomic():
+        round_ = _lock_round(round_)  # its end_date as kept_until reads it
         lock_report(round_, herd)
         _recheck_code(access, herd, on)
         report = (
