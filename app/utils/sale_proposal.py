@@ -15,6 +15,7 @@ import utils.purchase_notice as purchase_notice
 from utils.database import (
     DB_PROXY,
     AuditLog,
+    BuyerContact,
     Herd,
     HerdTracking,
     InboxItem,
@@ -39,13 +40,20 @@ NAMED = "Skriv orsaken utan köparens namn."
 BUYER_GONE = "Köparens uppgifter är raderade, så försäljningen kan inte godkännas. Avvisa den i stället."
 
 
-def _stored_buyer(buyer):
-    """The buyer as the sale takes it again at approval: the text fields and the two ticks, checked now."""
-    buyer_contact_fields(buyer)  # contact only with the tick (ADR-0016)
+TICKED = ("contact_consent_at", "membership_optin_at")
+
+
+def _stored_buyer(buyer, at):
+    """
+    The buyer as the sale takes it again at approval: the text fields and the two ticks, checked now, and when each
+    was ticked (`at`, the submission's time), which approval gives the BuyerContact in place of its own time.
+    """
+    fields = buyer_contact_fields(buyer)  # contact only with the tick (ADR-0016)
     return {
         **{key: buyer.get(key) for key in BUYER_TEXT_FIELDS},
         "contact_consent": buyer.get("contact_consent", False),
         "membership_optin": buyer.get("membership_optin", False),
+        **{key: at.isoformat() for key in TICKED if fields[key]},
     }
 
 
@@ -74,7 +82,8 @@ def propose(report, submission, individual, *, to_herd, buyer, sale_date: date) 
     """
     if (to_herd is None) == (buyer is None):
         raise HerdTrackingInvalid("Ange köparens besättning, eller köparens namn och ort utanför genbanken.")
-    stored = _stored_buyer(buyer) if buyer is not None else None
+    at = submission.created_at  # when the seller sent it, and ticked the buyer's boxes
+    stored = _stored_buyer(buyer, at) if buyer is not None else None
     with DB_PROXY.atomic():
         try:
             proposal = SaleProposal.create(
@@ -84,6 +93,7 @@ def propose(report, submission, individual, *, to_herd, buyer, sale_date: date) 
                 to_herd=to_herd.id if to_herd is not None else None,
                 buyer=stored,
                 sale_date=sale_date,
+                created_at=at,
             )
         except IntegrityError as exc:  # idx_sale_proposal_open: one open proposal per rabbit and report
             raise arsrapport.ArsrapportError(409, "Kaninen har redan en försäljning som väntar.") from exc
@@ -197,6 +207,9 @@ def approve(proposal, user, *, now: datetime) -> HerdTracking:
             .order_by(*ht_order_desc())
             .first()
         )
+        ticked = {key: datetime.fromisoformat(buyer[key]) for key in TICKED if buyer and buyer.get(key)}
+        if ticked:  # the consent dates from the seller's tick, not from the approval
+            BuyerContact.update(**ticked).where(BuyerContact.id == row.holder_contact_id).execute()
         SaleProposal.update(herd_tracking_id=row.id).where(SaleProposal.id == proposal.id).execute()
         _close_item(proposal, user, "klar")
         for item_id in notices:  # fråga 19: one approval settles the buyer's notice too

@@ -86,6 +86,17 @@ class ProposalTest(ArsrapportTest):
         self.assertIsNone(proposal.buyer)
         self.assertEqual(db.InboxItem.get_by_id(proposal.inbox_item_id).state, "klar")
 
+    def test_approval_keeps_the_time_the_seller_ticked(self):  # L2
+        buyer = {**BUYER, "email": "k@example.invalid", "contact_consent": True, "membership_optin": True}
+        proposal = self.propose(buyer=buyer)
+        self.assertEqual(proposal.created_at, self.submission.created_at)
+        row = sp.approve(proposal, self.manager, now=NOW + timedelta(days=3))
+        contact = db.BuyerContact.get_by_id(row.holder_contact_id)
+        self.assertEqual((contact.contact_consent_at, contact.membership_optin_at), (proposal.created_at,) * 2)
+        only_optin = self.propose(self.other, buyer={**BUYER, "phone": "070-1234567", "membership_optin": True})
+        contact = sp.approve(only_optin, self.manager, now=NOW).holder_contact
+        self.assertEqual((contact.contact_consent_at, contact.membership_optin_at), (None, proposal.created_at))
+
     def test_approve_to_herd_in_genebank(self):
         proposal = self.propose(to_herd=self.g9002, buyer=None)
         row = sp.approve(proposal, self.manager, now=NOW)
