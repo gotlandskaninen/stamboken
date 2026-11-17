@@ -237,7 +237,9 @@ class TestBuildCertData(unittest.TestCase):
         from utils.cert_service_v2 import build_cert_data
 
         ind = SimpleNamespace(
-            origin_herd=SimpleNamespace(genebank=SimpleNamespace(name="Mellerud"), name="Uppfödare", herd_name=None, herd="M12"),
+            origin_herd=SimpleNamespace(
+                genebank=SimpleNamespace(name="Mellerud"), name="Uppfödare", herd_name=None, herd="M12"
+            ),
             microchip="752098100012345",
             color=None,
             number="G1-1",
