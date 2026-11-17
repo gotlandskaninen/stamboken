@@ -410,7 +410,8 @@ och saknas `accept_warnings` sparas ingenting, och svaret är 409 med varningarn
 `warnings` har en rad per bild, i samma form som `documents` i svaret 201 men utan `id`.
 
 Genbanksansvarig och hjälpare i besättningens genbank får notisen `ny_post`, utom uppladdaren
-själv.
+själv. Ett foto från årsrapporten ger notisen först när kaninen registrerats från det; ett foto som
+aldrig kopplas kan skrotas, och uppfödaren får då ladda upp det igen.
 
 **Fel:**
 
@@ -619,7 +620,9 @@ Ett foto från årsrapporten är jämfört med kaninen som registrerades från d
 `{"outcome": "stammer"}` eller `{"outcome": "rattat"}` (handläggaren har rättat kaninen efter
 intyget). Dokumentet blir klart, händelsen `kontrollerad` loggas och posten blir `klar` som när
 en vanlig posts sista dokument är klart. Postens detalj har då `registered`: kaninen som den
-registrerades, med samma nycklar som intygsformuläret.
+registrerades, med samma nycklar som intygsformuläret. "Öppna igen" (`…/lage` till `tagen`) på ett
+sådant foto gör dokumentet oklart igen, så att det kontrolleras på nytt; att vrida det stänger inte
+posten.
 
 **Vem:** handläggaren (posten tagen). Admin, genbanksansvarig och genbankshjälpare i postens
 genbank kan ta posten, som andra poster.
@@ -627,8 +630,8 @@ genbank kan ta posten, som andra poster.
 **Svar 200:** `{"item": <post i listform>, "document": <dokument>}`.
 
 **Fel:** 400 för ett annat `outcome`; 404 när dokumentet inte hör till posten; 409 när posten inte
-är ett foto från årsrapporten, när anroparen inte är handläggare eller posten inte är tagen, eller
-när dokumentet redan är klart.
+är ett foto från årsrapporten, när anroparen inte är handläggare eller posten inte är tagen, när
+posten och dokumentet inte pekar på samma registrerade kanin, eller när dokumentet redan är klart.
 
 ## Spara det intyget visar
 
@@ -1093,6 +1096,8 @@ Ett foto från årsrapporten som tolkas efter att kaninen sparats jämförs med 
 nummer som än lästes. Varje fält i formuläret får ett värde: `läst` när det stämmer med det som
 registrerades, `avviker` med det registrerade värdet när det inte gör det, och `osäker` när det är
 överstruket eller inte går att läsa. Kontrollerna är desamma som för en kanin som redan finns.
+Tolkades fotot innan kaninen sparades, jämförs den sparade tolkningen med kaninen när fotot kopplas
+till den, utan någon ny tolkning.
 
 **Inställningar** (`.docker/api-variables.env`):
 
