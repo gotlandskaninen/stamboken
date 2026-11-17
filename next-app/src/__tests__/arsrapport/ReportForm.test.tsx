@@ -218,6 +218,13 @@ describe("ReportForm", () => {
         state: "arbetar",
       },
       { id: 6, what: "foto", number: "G9001-3", photos: 1, state: "vantar" },
+      {
+        id: 4,
+        what: "kop_saknas",
+        number: "G9002-2512",
+        photos: 1,
+        state: "registrerad",
+      },
       { id: 5, what: "inskick", number: null, photos: 1, state: "klart" },
     ];
     const { unmount } = render(
@@ -237,6 +244,7 @@ describe("ReportForm", () => {
       "Ärende 8 · Anmält köp: G9002-77 · Väntar på genbanksansvarig",
       "Ärende 7 · Försäljning av G9001-1 · Genbanksansvarig arbetar med det",
       "Ärende 6 · Foto av intyget: G9001-3 · Väntar på genbanksansvarig",
+      "Ärende 4 · Köpt kanin finns inte i registret: G9002-2512 · Registrerad, genbanksansvarig avslutar ärendet",
       "Ärende 5 · Inskick med 1 foto · Klart",
     ]);
     unmount();

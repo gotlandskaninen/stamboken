@@ -62,13 +62,14 @@ export interface ReportCase {
   what: "inskick" | "kop_saknas" | "kopanmalan" | "foto" | "forsaljning";
   number: string | null;
   photos: number;
-  state: "tolkas" | "vantar" | "arbetar" | "klart";
+  state: "tolkas" | "vantar" | "arbetar" | "registrerad" | "klart";
 }
 
 export const CASE_STATE_TEXT: Record<ReportCase["state"], string> = {
   tolkas: "Väntar på att fotot läses",
   vantar: "Väntar på genbanksansvarig",
   arbetar: "Genbanksansvarig arbetar med det",
+  registrerad: "Registrerad, genbanksansvarig avslutar ärendet",
   klart: "Klart",
 };
 
