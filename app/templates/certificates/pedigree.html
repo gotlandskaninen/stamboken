@@ -307,7 +307,7 @@ h1, .sec, .breed { color:var(--skog) !important; }
     <tr><td class="l">Färganteckning</td><td class="v" colspan="3">{{ color_note or '—' }}</td></tr>
     <tr><td class="l">Ögonfärg</td><td class="v">{{ eye_color or '—' }}</td><td class="l">Klofärg</td><td class="v">{{ claw_color or '—' }}</td></tr>
     <tr>{% if rex is defined and rex is not none %}<td class="l">Päls</td><td class="v">{{ 'Rex' if rex else 'Normal' }}</td>{% else %}<td class="l">Hårlag</td><td class="v">{{ hair_notes or '—' }}</td>{% endif %}<td class="l">Färg på buken</td><td class="v">{{ belly_color or '—' }}</td></tr>
-    <tr><td class="l">Foto finns</td><td class="v" colspan="3">{{ photos or '—' }}</td></tr>
+    <tr><td class="l">Foto av kaninen finns</td><td class="v" colspan="3">{{ photos or '—' }}</td></tr>
     <tr><td class="l">Benring</td><td class="v">{{ foot_ring or '—' }}</td><td class="l">Chipnummer</td><td class="v">{{ microchip or '—' }}</td></tr>
     <tr><td class="l">Övriga upplysningar</td><td class="v" colspan="3">{{ notes or '—' }}</td></tr>
   </table>
