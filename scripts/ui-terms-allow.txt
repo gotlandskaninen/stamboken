@@ -1,2 +1,4 @@
 # Undantag för scripts/check-ui-terms.sh: en rad per undantag, "sökväg:regex"
 # (sökväg från repo-roten, ERE som träffraden ska matcha). Kommentera varje rad.
+# Överlåtelsebevis är namnet som står tryckt på pappersblanketten köparen får, och blanketten hänvisar hit.
+next-app/src/app/(app)/(public)/integritetspolicy/page.tsx:överlåtelsebevis

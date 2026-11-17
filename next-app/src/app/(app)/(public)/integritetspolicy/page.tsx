@@ -267,6 +267,59 @@ export default function IntegritetspolicyPage() {
             </p>
           </Section>
 
+          <Section title="När du köper en kanin av en medlem">
+            <p>
+              Köper du en genbankskanin av en medlem fyller ni i ett
+              överlåtelsebevis, och ägarbytet registreras i Stamboken Online.
+              Det gäller också dig som inte är medlem.{" "}
+              <mark>
+                [INTE KLART: avsnittet gäller först när överlåtelsebeviset och
+                registret för köpare är införda.]
+              </mark>
+            </p>
+            <ul>
+              <li>
+                Ditt namn och din ort sparar vi i fem år från köpet, så att det
+                går att följa var genbankskaninerna finns (berättigat intresse).
+                Får vi veta att kaninen har dött tar vi bort dem tidigare.
+                Uppgifterna kan komma från dig eller från säljaren.
+              </li>
+              <li>
+                Din adress, din e-postadress och ditt telefonnummer sparar vi
+                bara om du har kryssat ja på beviset (samtycke), och bara tills
+                kaninen byter ägare igen.
+              </li>
+              <li>
+                Har du kryssat ja till att föreningen får kontakta dig om
+                medlemskap sparar vi det vi behöver för att nå dig i högst 12
+                månader, även om kaninen säljs vidare (samtycke).
+              </li>
+              <li>
+                Är köparen under 18 år skrivs vårdnadshavaren in som köpare. Vi
+                sparar inget om barnet.
+              </li>
+            </ul>
+            <p>
+              Uppgifterna ses av genbanksansvariga och deras hjälpare för rasen
+              och av föreningens systemansvarig. Andra medlemmar ser bara att
+              kaninen är såld utanför genbanken. Vi kan lämna uppgifterna till
+              en myndighet som begär dem med stöd av lag, till exempel vid ett
+              utbrott av en smittsam djursjukdom.
+            </p>
+            <p>
+              Skickas beviset in som foto sparas bilden i högst 12 månader, och
+              den tas bort tidigare om kaninen säljs vidare. Har vi din
+              e-postadress mejlar vi dig när ägarbytet är registrerat och
+              berättar vad vi har sparat.
+            </p>
+            <p>
+              Du kan när som helst ta tillbaka ditt ja, och du kan invända mot
+              att vi sparar ditt namn och din ort. Mejla {contactLink}. Tar vi
+              bort dina uppgifter står försäljningen kvar i stamboken, utan ditt
+              namn.
+            </p>
+          </Section>
+
           <Section title="Ditt konto i Stamboken Online">
             <p>
               Kontot innehåller användarnamn, namn, e-postadress, vad du får
