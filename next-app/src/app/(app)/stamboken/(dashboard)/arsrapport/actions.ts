@@ -10,6 +10,7 @@ import {
   type Father,
   type Litter,
   type LitterBody,
+  type PurchaseBody,
   type PurchaseNotice,
   type Receipt,
   type ReportView,
@@ -212,7 +213,7 @@ export async function getFathers(
 export async function reportPurchase(
   herd: string,
   year: number,
-  body: { number: string; from_herd: string; date: string },
+  body: PurchaseBody,
   env: Mode,
 ) {
   return call<PurchaseNotice>(env, path(herd, year, "/kop"), "POST", body);

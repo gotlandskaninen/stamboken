@@ -7,6 +7,11 @@ import {
   screen,
   waitFor,
 } from "@testing-library/react";
+
+vi.mock("@/app/(app)/stamboken/(dashboard)/inskick/ny/prepare", () => ({
+  prepare: vi.fn(async (file: File) => file),
+}));
+
 import { PurchaseDialog } from "@/app/(app)/stamboken/(dashboard)/arsrapport/PurchaseDialog";
 import {
   NOT_IN_STAMBOKEN_TEXT,
@@ -25,7 +30,7 @@ const herds = () =>
     ],
   });
 
-function dialog(send = vi.fn(), onSent = vi.fn()) {
+function dialog(send = vi.fn(), onSent = vi.fn(), upload = vi.fn()) {
   render(
     <PurchaseDialog
       open
@@ -34,11 +39,12 @@ function dialog(send = vi.fn(), onSent = vi.fn()) {
       ownHerd="G9001"
       loadHerds={herds}
       send={send}
+      upload={upload}
       onSent={onSent}
       onClose={vi.fn()}
     />,
   );
-  return { send, onSent };
+  return { send, onSent, upload };
 }
 
 const click = () =>
@@ -128,5 +134,105 @@ describe("PurchaseDialog", () => {
       NOT_IN_STAMBOKEN_TEXT,
     );
     expect(screen.getAllByText(NOT_IN_STAMBOKEN_TEXT)).toHaveLength(1);
+  });
+
+  it("sends a photo of the proof or the certificate once it is uploaded, with what it shows", async () => {
+    let uploaded: (v: unknown) => void = () => undefined;
+    const upload = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          uploaded = resolve;
+        }),
+    );
+    const send = vi.fn().mockResolvedValue({
+      ok: true,
+      data: {
+        id: 1,
+        number: "G9002-2501",
+        from_herd: "GX1",
+        date: "2025-05-14",
+        state: "ny",
+      },
+    });
+    dialog(send, vi.fn(), upload);
+    fill("Kaninens nummer", "G9002-2501");
+    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+    fill("Datum för köpet", "2025-05-14");
+    const file = new File(["x"], "bevis.jpg", { type: "image/jpeg" });
+    fireEvent.change(
+      screen.getByLabelText(
+        "Foto av överlåtelsebeviset eller intyget (om du har)",
+      ),
+      { target: { files: [file] } },
+    );
+    await waitFor(() => expect(upload).toHaveBeenCalled());
+    expect((upload.mock.calls[0] as unknown[])[0]).toBeInstanceOf(FormData);
+    expect(
+      (
+        screen.getByRole("button", {
+          name: "Skicka anmälan",
+        }) as HTMLButtonElement
+      ).disabled,
+    ).toBe(true); // waits for the photo
+    uploaded({ ok: true, data: { item_id: 7, document_id: 31 } });
+    expect((await screen.findByRole("status")).textContent).toBe(
+      "Fotot är uppladdat.",
+    );
+    click();
+    expect(screen.getByRole("alert").textContent).toBe(
+      "Välj om fotot visar överlåtelsebeviset eller intyget.",
+    );
+    expect(send).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByLabelText("Intyg"));
+    click();
+    await waitFor(() =>
+      expect(send).toHaveBeenCalledWith({
+        number: "G9002-2501",
+        from_herd: "utanfor",
+        date: "2025-05-14",
+        document_id: 31,
+        doc_type: "intyg",
+      }),
+    );
+  });
+
+  it("asks for the photo again when the server no longer takes it", async () => {
+    const upload = vi
+      .fn()
+      .mockResolvedValue({ ok: true, data: { item_id: 7, document_id: 31 } });
+    const send = vi.fn().mockResolvedValue({
+      ok: false,
+      problem: {
+        status: 409,
+        title: "Konflikt",
+        detail: "Fotot kan inte användas längre. Ladda upp det igen.",
+        extensions: { field: "photo" },
+      },
+    });
+    dialog(send, vi.fn(), upload);
+    fill("Kaninens nummer", "G9002-2501");
+    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+    fill("Datum för köpet", "2025-05-14");
+    fireEvent.change(
+      screen.getByLabelText(
+        "Foto av överlåtelsebeviset eller intyget (om du har)",
+      ),
+      {
+        target: {
+          files: [new File(["x"], "bevis.jpg", { type: "image/jpeg" })],
+        },
+      },
+    );
+    await screen.findByText("Fotot är uppladdat.");
+    fireEvent.click(screen.getByLabelText("Överlåtelsebevis"));
+    click();
+    expect((await screen.findByRole("alert")).textContent).toBe(
+      "Fotot kan inte användas längre. Ladda upp det igen.",
+    );
+    expect(screen.queryByLabelText("Överlåtelsebevis")).toBeNull();
+    expect(send.mock.calls[0][0]).toMatchObject({
+      document_id: 31,
+      doc_type: "bevis",
+    });
   });
 });

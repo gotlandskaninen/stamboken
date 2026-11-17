@@ -56,6 +56,7 @@ import { ReportStatus, type StatusKind } from "./ReportStatus";
 import { SoldDialog } from "./SoldDialog";
 import { ConfirmCountDialog, LitterDialog } from "./LitterDialog";
 import { AddRabbitDialog, AddRabbitPrompt } from "./AddRabbit";
+import { uploadPhoto } from "./rabbitActions";
 import styles from "./arsrapport.module.css";
 
 export type ReportActions = Pick<
@@ -2173,6 +2174,9 @@ export function ReportForm({
         ownHerd={herd.herd}
         loadHerds={actions.getGenebankHerds}
         send={(body) => actions.reportPurchase(herd.herd, year, body, env)}
+        upload={(data) =>
+          uploadPhoto(herd.herd, year, data, link ? undefined : env)
+        }
         onSent={() => router.refresh()}
         onClose={() => setBuying(false)}
       />

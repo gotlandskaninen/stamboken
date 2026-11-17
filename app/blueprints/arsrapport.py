@@ -29,7 +29,6 @@ from utils.database import (
     OUTSIDE_GENEBANK_HERDS,
     Genebank,
     Herd,
-    InboxDocument,
     ReportAccessCode,
     SaleProposal,
     YearlyReportRound,
@@ -214,7 +213,8 @@ def buyer_herds(herd, year):
     return jsonify({"herds": arsrapport.buyer_herds(herd)})
 
 
-# [Next.js] "Anmäl köpet": body {number, from_herd, date}; a purchase notice in the genebank's queue (4a Task 5).
+# [Next.js] "Anmäl köpet": body {number, from_herd, date, document_id?, doc_type?}; a purchase notice in the genebank's
+# queue (4a Task 5), with the photo of its proof or certificate that this session uploaded through …/foto.
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/kop", methods=["POST"])
 @report_actor_required
 def report_purchase(herd, year):
@@ -223,8 +223,20 @@ def report_purchase(herd, year):
     if not isinstance(body, dict):
         raise ArsrapportError(400, "Skicka köpet som JSON.")
     when = _dates("date").get("date")
+    photo = body.get("document_id")
+    if photo is not None and type(photo) is not int:  # True is an int too
+        raise ArsrapportError(400, arsrapport.PHOTO_GONE, field="photo")
     item = purchase_notice.report_purchase(
-        herd, round_, access, _actor(access), number=body.get("number"), from_herd=body.get("from_herd"), date=when
+        herd,
+        round_,
+        access,
+        _actor(access),
+        number=body.get("number"),
+        from_herd=body.get("from_herd"),
+        date=when,
+        photo_document_id=photo,
+        doc_type=body.get("doc_type"),
+        photos=_session_photos(access),
     )
     return jsonify(purchase_notice.notice_json(item))
 
@@ -449,9 +461,6 @@ PHOTO_LIMIT = parse_limit("60 per hour")  # per code or per user, every request 
 PHOTO_LIMITED = "Du har laddat upp många foton den senaste timmen. Fortsätt efter kl. {at}. Det du skrivit är sparat."
 PHOTOS_KEPT = 60  # the session's own uploads a registration may bind (FC1): an hour's worth
 PHOTO_FIRST = "Ladda upp ett foto av intyget först."
-PHOTO_NOT_OURS = "Fotot hör inte till den här rapporten. Ladda upp det igen."
-PHOTO_USED = "Fotot gäller redan en annan kanin. Ladda upp ett nytt foto av intyget."
-PHOTO_GONE = "Fotot kan inte användas längre. Ladda upp det igen."
 ONE_PAGE = "Ladda upp ett intyg i taget. PDF:en har fler än en sida."
 PAPER_IN_QUEUE = "Intyg på papper läggs in i kön."
 NO_RIGHT_TO_ADD = "Du har inte rätt att lägga till kaniner i besättningen."
@@ -466,6 +475,12 @@ def too_large(_exc):
 def _photo_key(access):
     """Who a photo is the session's for (FC1): the actor (a code or an account) and the environment (FA2)."""
     return [*actor_key(_actor(access)), _environment()]
+
+
+def _session_photos(access):
+    """The items of the photos this session's actor uploaded here (FC1): the only ones a request may bind."""
+    key = _photo_key(access)
+    return {entry[0] for entry in session.get("rapport_foton") or [] if entry[1:] == key}
 
 
 def _photo_limit(access):
@@ -544,8 +559,8 @@ def add_rabbit(herd, year):
     item_id = body.get("item_id")
     if type(item_id) is not int:  # True is an int too
         raise ArsrapportError(400, PHOTO_FIRST, field="photo")
-    if [item_id, *_photo_key(access)] not in (session.get("rapport_foton") or []):
-        raise ArsrapportError(403, PHOTO_NOT_OURS, field="photo")
+    if item_id not in _session_photos(access):
+        raise ArsrapportError(403, arsrapport.PHOTO_NOT_OURS, field="photo")
     actor = _actor(access)
     form = {key: body[key] for key in REGISTRATION_FIELDS if key in body}
     form["certificate_type"] = "paper"  # from the paper certificate only, a link above all (FC1)
@@ -553,19 +568,7 @@ def add_rabbit(herd, year):
 
     def write(_grant):
         item = inbox.lock_item(item_id)  # after the report's lock and the code's recheck, as a sale proposal's
-        if (item.herd_id, item.kind, item.ref_type) != (herd.id, "kontroll", "individual"):
-            raise ArsrapportError(403, PHOTO_NOT_OURS, field="photo")
-        if item.ref_id is not None:
-            raise ArsrapportError(409, PHOTO_USED, field="photo")
-        document = item.documents.order_by(InboxDocument.id).first()
-        # only a photo the queue can still check: scrapped, retyped, its original gone or dismissed, it is no longer
-        if (
-            item.state in inbox.CLOSED_STATES
-            or document is None
-            or (document.doc_type, document.done_at) != ("intyg", None)
-            or document.original_path is None
-        ):
-            raise ArsrapportError(409, PHOTO_GONE, field="photo")
+        document = arsrapport.report_photo_document(item, herd)
 
         def bind(individual):  # in the registration's transaction: the photo, the rabbit and its receipt together
             inbox.bind_report_photo(item, document, None if access.code else actor, individual)

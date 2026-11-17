@@ -7,6 +7,7 @@ import {
   DialogContent,
   DialogTitle,
   IconButton,
+  LinearProgress,
   useMediaQuery,
   useTheme,
 } from "@mui/material";
@@ -17,16 +18,20 @@ import {
   NOT_IN_STAMBOKEN_TEXT,
   PURCHASE_SENT_TEXT,
   todayStockholm,
+  type PurchaseBody,
   type PurchaseNotice,
 } from "./lib";
 import { HerdPicker } from "./SoldDialog";
+import { MAX_BYTES } from "./AddRabbit";
+import { prepare } from "../inskick/ny/prepare";
 import styles from "./arsrapport.module.css";
 
-export interface PurchaseBody {
-  number: string;
-  from_herd: string; // a herd's number, or "utanfor"
-  date: string;
-}
+type Photo = {
+  status: "tom" | "skickar" | "klar" | "fel";
+  document_id?: number;
+  error?: string;
+};
+const PHOTO_TYPE_TEXT = "Välj om fotot visar överlåtelsebeviset eller intyget.";
 
 interface Props {
   open: boolean;
@@ -35,6 +40,9 @@ interface Props {
   ownHerd: string; // the buyer's herd: not a seller
   loadHerds: typeof getGenebankHerds; // as SoldDialog gets it; the link's own list behind the link
   send: (body: PurchaseBody) => Promise<ActionResult<PurchaseNotice>>;
+  upload: (
+    data: FormData,
+  ) => Promise<ActionResult<{ item_id: number; document_id: number }>>; // the report's photo upload (4b)
   onSent: () => void;
   onClose: () => void;
 }
@@ -47,6 +55,7 @@ function Body({
   ownHerd,
   loadHerds,
   send,
+  upload,
   onSent,
   onClose,
 }: Props) {
@@ -61,6 +70,9 @@ function Body({
   const [refused, setRefused] = React.useState<string | null>(null);
   const [missing, setMissing] = React.useState(false); // the number is not in Stamboken
   const [sent, setSent] = React.useState(false);
+  const [photo, setPhoto] = React.useState<Photo>({ status: "tom" });
+  const [docType, setDocType] = React.useState<"bevis" | "intyg" | null>(null);
+  const attempt = React.useRef(0); // a newer photo's upload drops an earlier one's answer
   const today = todayStockholm();
   const last = `${year}-12-31` < today ? `${year}-12-31` : today;
   const problem =
@@ -69,11 +81,35 @@ function Body({
       !code &&
       "Välj en besättning i genbanken, eller Utanför genbanken.") ||
     (!date && "Välj datum för köpet.") ||
+    (photo.status === "klar" && !docType && PHOTO_TYPE_TEXT) ||
     null;
+
+  const pick = async (file: File | undefined) => {
+    if (!file) return;
+    const mine = ++attempt.current;
+    setPhoto({ status: "skickar" });
+    let next: Photo;
+    try {
+      const prepared = await prepare(file);
+      if (prepared.size > MAX_BYTES)
+        next = { status: "fel", error: "Filen är för stor. Max 10 MB." };
+      else {
+        const data = new FormData();
+        data.set("file", prepared);
+        const res = await upload(data);
+        next = res.ok
+          ? { status: "klar", document_id: res.data.document_id }
+          : { status: "fel", error: res.problem.detail };
+      }
+    } catch {
+      next = { status: "fel", error: "Uppladdningen avbröts. Försök igen." };
+    }
+    if (attempt.current === mine) setPhoto(next);
+  };
 
   const submit = async () => {
     setTried(true);
-    if (problem || busy) return;
+    if (problem || busy || photo.status === "skickar") return;
     setBusy(true);
     setRefused(null);
     setMissing(false);
@@ -82,12 +118,17 @@ function Body({
         number: number.trim(),
         from_herd: outside ? "utanfor" : code,
         date,
+        ...(photo.status === "klar" && docType
+          ? { document_id: photo.document_id, doc_type: docType }
+          : {}),
       });
       if (res.ok) {
         setSent(true);
         onSent();
       } else if (res.problem.extensions?.code === "inte_i_stamboken")
         setMissing(true);
+      else if (res.problem.extensions?.field === "photo")
+        setPhoto({ status: "fel", error: res.problem.detail }); // chosen again
       else setRefused(res.problem.detail || res.problem.title);
     } catch {
       setRefused("Det gick inte att nå servern. Försök igen.");
@@ -187,6 +228,57 @@ function Body({
                 onChange={(e) => setDate(e.target.value)}
               />
             </label>
+            <label className={styles.label}>
+              Foto av överlåtelsebeviset eller intyget (om du har)
+              <input
+                type="file"
+                accept="image/*,.heic,.pdf"
+                disabled={busy}
+                onChange={(e) => {
+                  pick(e.target.files?.[0]);
+                  e.target.value = "";
+                }}
+              />
+            </label>
+            {photo.status === "skickar" && (
+              <LinearProgress aria-label="Fotot laddas upp" />
+            )}
+            {photo.status === "fel" && (
+              <p className={styles.errorText} role="alert">
+                {photo.error}
+              </p>
+            )}
+            {photo.status === "klar" && (
+              <>
+                <p className={styles.meta} role="status">
+                  Fotot är uppladdat.
+                </p>
+                <div
+                  className={styles.choices}
+                  role="radiogroup"
+                  aria-label="Vad visar fotot?"
+                >
+                  <label className={styles.choice}>
+                    <input
+                      type="radio"
+                      name="photo-type"
+                      checked={docType === "bevis"}
+                      onChange={() => setDocType("bevis")}
+                    />
+                    <span>Överlåtelsebevis</span>
+                  </label>
+                  <label className={styles.choice}>
+                    <input
+                      type="radio"
+                      name="photo-type"
+                      checked={docType === "intyg"}
+                      onChange={() => setDocType("intyg")}
+                    />
+                    <span>Intyg</span>
+                  </label>
+                </div>
+              </>
+            )}
             {((tried && problem) || refused) && (
               <p className={styles.errorText} role="alert">
                 {(tried && problem) || refused}
@@ -226,7 +318,7 @@ function Body({
               type="button"
               className={`sb-btn ${styles.btn}`}
               onClick={submit}
-              disabled={busy}
+              disabled={busy || photo.status === "skickar"}
             >
               {busy ? "Skickar…" : "Skicka anmälan"}
             </button>

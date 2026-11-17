@@ -435,7 +435,7 @@ class TestPhotoBinding(AddRabbitTest):
                 refused = self.kit(item_id)
                 problem = refused.get_json()
                 self.assertEqual(
-                    (refused.status_code, problem["detail"], problem["field"]), (409, report_routes.PHOTO_GONE, "photo")
+                    (refused.status_code, problem["detail"], problem["field"]), (409, arsrapport.PHOTO_GONE, "photo")
                 )
                 self.assertIsNone(self.reload(item_id).ref_id)
         self.assertEqual(self.kits(), 0)

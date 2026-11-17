@@ -7,6 +7,7 @@ Synthetic herds and rabbits only.
 isort:skip_file
 """
 
+import io
 import threading
 import time
 from datetime import date
@@ -28,6 +29,7 @@ from utils.report_code import CodeActor
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.database_test import _USE_POSTGRES
 from tests.ht_helpers import ht_row
+from tests.inbox_fixtures import encoded, photo
 
 DAY0 = date(2026, 1, 10)
 
@@ -584,3 +586,80 @@ class PurchaseNoticeTest(ArsrapportTest):
         response = self.notify()
         self.assertEqual((response.status_code, response.get_json()["code"]), (409, "rundan_stangd"))
         self.assertEqual([item.ref_data["individual_id"] for item in notices()], [self.b.id])
+
+    # The photo field (4a Task 5, wired to 4b's report upload): a photo of the transfer proof or the certificate, bound
+    # to the notice under the photo's item lock and the session's own uploads, as a rabbit's photo is (FC1)
+
+    def upload(self, client=None):
+        data = {"file": (io.BytesIO(encoded(photo((600, 800)))), "bevis.jpg")}
+        response = (client or self.client).post(
+            "/api/v2/arsrapport/besattning/G9001/2025/foto", data=data, content_type="multipart/form-data"
+        )
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        return response.get_json()
+
+    def notify_with(self, document_id, doc_type="bevis", number=None, client=None):
+        body = {"number": number or self.a.number, "from_herd": "G9002", "date": "2025-05-14"}
+        body |= {"document_id": document_id, "doc_type": doc_type}
+        return (client or self.client).post("/api/v2/arsrapport/besattning/G9001/2025/kop", json=body)
+
+    @staticmethod
+    def heard(item):
+        """The queue's workers told of `item` (ny_post), one row per notice."""
+        rows = db.Notice.select().where(db.Notice.item == item.id, db.Notice.kind == "ny_post")
+        return sorted(row.user_id for row in rows)
+
+    def test_photo_is_bound_to_the_notice_and_the_queue_hears_of_it_once(self):
+        self.open_link(self.code)
+        uploaded = self.upload()
+        response = self.notify_with(uploaded["document_id"])
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        (item,) = notices()
+        (document,) = item.documents
+        self.assertEqual(
+            (document.id, document.doc_type, document.interpretation_status), (uploaded["document_id"], "bevis", "av")
+        )
+        self.assertFalse(db.InboxItem.select().where(db.InboxItem.id == uploaded["item_id"]).exists())
+        (event,) = item.events
+        self.assertEqual((event.kind, event.detail), ("inkommen", {"via": "länk G9001/2025", "documents": 1}))
+        heard = self.heard(item)
+        self.assertIn(self.helper.id, heard)
+        self.assertEqual(len(heard), len(set(heard)))
+        # the same request again, as after a lost answer: the notice, with nothing written or told twice
+        again = self.notify_with(uploaded["document_id"])
+        self.assertEqual((again.status_code, again.get_json()["id"]), (200, item.id))
+        self.assertEqual((self.heard(item), item.documents.count(), item.events.count()), (heard, 1, 1))
+
+    def test_a_notice_without_a_photo_is_told_with_its_first_photo(self):
+        self.login("owner")
+        item_id = self.notify().get_json()["id"]
+        (item,) = notices()
+        self.assertEqual(self.heard(item), [])  # as before the photo field: nobody hears of a notice without one
+        first = self.upload()
+        self.assertEqual(self.notify_with(first["document_id"], "intyg").get_json()["id"], item_id)
+        heard = self.heard(item)
+        self.assertIn(self.helper.id, heard)
+        self.assertEqual([d.doc_type for d in item.documents.order_by(db.InboxDocument.id)], ["intyg"])
+        second = self.upload()
+        self.assertEqual(self.notify_with(second["document_id"]).get_json()["id"], item_id)
+        self.assertEqual(self.heard(item), heard)  # once
+        self.assertEqual(item.documents.count(), 2)
+
+    def test_the_photo_must_be_this_sessions_own_and_still_unbound(self):
+        self.open_link(self.code)
+        theirs = self.upload()  # the link's session
+        self.login("owner")  # another actor in the same browser: not its photo (FC1)
+        refused = self.notify_with(theirs["document_id"])
+        self.assertEqual((refused.status_code, refused.get_json()["field"]), (403, "photo"))
+        self.assertEqual(refused.get_json()["detail"], arsrapport.PHOTO_NOT_OURS)
+        mine = self.upload()
+        missing = self.notify_with(mine["document_id"], doc_type=None)
+        self.assertEqual((missing.status_code, missing.get_json()["field"]), (400, "doc_type"))
+        gone = self.notify_with(mine["document_id"] + 1000)
+        self.assertEqual((gone.status_code, gone.get_json()["detail"]), (409, arsrapport.PHOTO_GONE))
+        self.assertEqual(notices(), [])
+        # a photo the queue has scrapped can no longer be bound
+        db.InboxItem.update(state="skrap").where(db.InboxItem.id == mine["item_id"]).execute()
+        scrapped = self.notify_with(mine["document_id"])
+        self.assertEqual((scrapped.status_code, scrapped.get_json()["detail"]), (409, arsrapport.PHOTO_GONE))
+        self.assertEqual(notices(), [])

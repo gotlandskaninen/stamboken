@@ -30,6 +30,15 @@ export interface RabbitView {
 
 // A purchase notice the herd sent ("Anmäl köpet"): a queue item for the
 // genebank manager until the transfer is registered.
+// "Anmäl köpet" (4a Task 5): the body of …/kop.
+export interface PurchaseBody {
+  number: string;
+  from_herd: string; // a herd's number, or "utanfor"
+  date: string;
+  document_id?: number; // a photo this session uploaded through …/foto, and what it shows
+  doc_type?: "bevis" | "intyg";
+}
+
 export interface PurchaseNotice {
   id: number;
   number: string;

@@ -35,7 +35,7 @@ export const ADD_FROM_CERTIFICATE =
   "Finns kaninen inte i listan, lägg till den från intyget.";
 export const RABBIT_SAVED =
   "Kaninen är registrerad i Stamboken nu. Den finns kvar även om du drar tillbaka rapporten.";
-const MAX_BYTES = 10 * 1024 * 1024; // the server's limit, checked before the photo is sent
+export const MAX_BYTES = 10 * 1024 * 1024; // the server's limit, checked before the photo is sent
 const INTRO: Record<Parent, string> = {
   mother: "Modern till ungen. När hon är sparad visas ungens uppgifter igen.",
   father: "Fadern till ungen. När han är sparad visas ungens uppgifter igen.",

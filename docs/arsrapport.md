@@ -100,6 +100,14 @@ eller MX1) på dagen `date` under året. Anmälan blir en post i kön, `kind` `k
 `kopanmalan` och fälten i `ref_data`: `{number, from_herd, date, individual_id}`, utan personuppgifter.
 Svaret är `{id, number, from_herd, date, state}`.
 
+Kroppen kan också ha `document_id` och `doc_type` (`"bevis"` eller `"intyg"`): ett foto av
+överlåtelsebeviset eller intyget som sessionen laddat upp med `…/foto`. Fotot flyttar till anmälans
+post med den typen, och fotots egen post tas bort. Samma regler gäller som när en kanin registreras
+från ett foto: bara sessionens egna uppladdningar (403), och bara ett foto som inte är kopplat och som
+kön fortfarande kan kontrollera (409), båda med `field` `photo`. Kön får notisen `ny_post` en gång,
+när anmälan får sitt första foto; en anmälan utan foto ger ingen notis. Samma begäran igen svarar
+med anmälan.
+
 - Kaninen och säljaren söks bara i besättningens genbank (kaninens ursprungsbesättning), så en
   annan genbanks nummer eller besättning får samma svar som ett som inte finns.
 - Ett nummer som Stamboken saknar ger 422 med `code` `inte_i_stamboken`: kaninen läggs till från

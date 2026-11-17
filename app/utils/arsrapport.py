@@ -3282,6 +3282,32 @@ def require_round_open(herd, round_, access):
     return on
 
 
+PHOTO_NOT_OURS = "Fotot hör inte till den här rapporten. Ladda upp det igen."
+PHOTO_USED = "Fotot gäller redan en annan kanin. Ladda upp ett nytt foto av intyget."
+PHOTO_GONE = "Fotot kan inte användas längre. Ladda upp det igen."
+
+
+def report_photo_document(item, herd):
+    """
+    The document of a photo uploaded through the report (…/foto, G5) in `item`, which the caller has locked: the
+    herd's own, bound to nothing yet, and one the queue can still check (scrapped, retyped, dismissed or with its
+    original gone, it is no longer). The rabbit's registration and the purchase notice bind it under these rules.
+    """
+    if (item.herd_id, item.kind, item.ref_type) != (herd.id, "kontroll", "individual"):
+        raise ArsrapportError(403, PHOTO_NOT_OURS, field="photo")
+    if item.ref_id is not None:
+        raise ArsrapportError(409, PHOTO_USED, field="photo")
+    document = item.documents.order_by(InboxDocument.id).first()
+    if (
+        item.state in inbox.CLOSED_STATES
+        or document is None
+        or (document.doc_type, document.done_at) != ("intyg", None)
+        or document.original_path is None
+    ):
+        raise ArsrapportError(409, PHOTO_GONE, field="photo")
+    return document
+
+
 def _litter_write(herd, round_, access, user, write):
     """
     Runs `write(grant)` under the report's lock, as a report writes: the link's code read again (E4), a paper

@@ -17,6 +17,7 @@ from utils.database import (
     HOLDER_CHANGING_KINDS,
     Herd,
     HerdTracking,
+    InboxDocument,
     InboxItem,
     Individual,
     SaleProposal,
@@ -32,6 +33,7 @@ KIND = "kopanmalan"
 _PURCHASE_LOCK = 0x48424B50  # "HBKP": classid of the advisory lock on a purchase of a rabbit into a herd
 MATCH_DAYS = 14  # mitt val: a notice and a sale proposal of the same rabbit this close in date are one sale
 NOT_IN_STAMBOKEN = "Finns kaninen inte i Stamboken? Lägg till den från intyget."
+PHOTO_TYPES = ("bevis", "intyg")  # what a notice's photo shows: the transfer proof, or the rabbit's certificate
 REGISTERED = "Köpet är registrerat"
 
 
@@ -63,7 +65,30 @@ def lock_purchase(herd_id, individual_id):
     )
 
 
-def report_purchase(herd, round_, access, user, *, number, from_herd, date, photo_document_id=None) -> InboxItem:
+def _locked_photo(herd, document, photos, notice):
+    """
+    The photo's item and the open `notice` (or None) locked in one ascending pass after the purchase lock, the queue's
+    order, and the photo checked under it as a rabbit's is (FC1): uploaded through the report in this session
+    (`photos`, their items) and bound to nothing yet. Returns the photo's item and the notice, None if it has closed.
+    """
+    if document is None:
+        raise ArsrapportError(409, arsrapport.PHOTO_GONE, field="photo")
+    if document.item_id not in photos:
+        raise ArsrapportError(403, arsrapport.PHOTO_NOT_OURS, field="photo")
+    ids = sorted({document.item_id} | ({notice.id} if notice is not None else set()))
+    locked = {
+        item.id: item for item in InboxItem.select().where(InboxItem.id.in_(ids)).order_by(InboxItem.id).for_update()
+    }
+    photo = locked.get(document.item_id)
+    if photo is None or arsrapport.report_photo_document(photo, herd).id != document.id:
+        raise ArsrapportError(409, arsrapport.PHOTO_GONE, field="photo")
+    notice = locked.get(notice.id) if notice is not None else None
+    return photo, notice if notice is not None and notice.state not in inbox.CLOSED_STATES else None
+
+
+def report_purchase(
+    herd, round_, access, user, *, number, from_herd, date, photo_document_id=None, doc_type=None, photos=()
+) -> InboxItem:
     """
     The notice that `herd` bought the rabbit `number` from the herd `from_herd` ("utanfor": the genebank's GX1 or
     MX1) on `date`, in the round's year. A number Stamboken lacks is the certificate's form, not a notice; a rabbit
@@ -71,9 +96,11 @@ def report_purchase(herd, round_, access, user, *, number, from_herd, date, phot
     a 409. The rabbit and the seller are looked up in the herd's genebank only, so another genebank's existing
     number or herd is answered as a missing one. Written as the report is, while the round is open (`access`);
     `user` is the account or the link (CodeActor), which the item's history names.
+
+    `photo_document_id` is a photo of the transfer proof or the certificate (`doc_type` "bevis" or "intyg") that this
+    session uploaded through the report (`photos`, its items). It moves to the notice, and its own item goes; the same
+    request again answers with the notice. The queue's workers hear of a notice once, when its first photo comes.
     """
-    # shortcut: no photo field until 4b's report upload is merged into this branch; wire it then
-    del photo_document_id
     year = round_.report_year
     individual = None
     if isinstance(number, str):  # as the queue's _live_individual: a voided litter slot is no rabbit
@@ -92,6 +119,8 @@ def report_purchase(herd, round_, access, user, *, number, from_herd, date, phot
     last = min(datetime.date(year, 12, 31), arsrapport.today())
     if not isinstance(date, datetime.date) or not datetime.date(year, 1, 1) <= date <= last:
         raise ArsrapportError(400, f"Ange ett datum under {year}, inte senare än i dag.", field="date")
+    if photo_document_id is not None and doc_type not in PHOTO_TYPES:
+        raise ArsrapportError(400, "Välj om fotot visar överlåtelsebeviset eller intyget.", field="doc_type")
     by_link = access.code is not None
     with DB_PROXY.atomic():
         # The round row first, as Dra tillbaka takes it: an end_date moved meanwhile is read here, not the one before
@@ -110,23 +139,40 @@ def report_purchase(herd, round_, access, user, *, number, from_herd, date, phot
             raise ArsrapportError(
                 409, f"Köpet av {individual.number} är redan anmält för {_day(other).year}.", field="number"
             )
-        if same:
-            return same[0]
-        item = InboxItem.create(
-            kind="kontroll",
-            state="ny",
-            genebank=herd.genebank_id,
-            herd=herd.id,
-            ref_type=KIND,
-            ref_data={
-                "number": individual.number,
-                "from_herd": seller,
-                "date": date.isoformat(),
-                "individual_id": individual.id,
-            },
-        )
+        item, photo = same[0] if same else None, None
+        if photo_document_id is not None:
+            document = InboxDocument.get_or_none(InboxDocument.id == photo_document_id)
+            if item is not None and document is not None and document.item_id == item.id:
+                return item  # the photo is already this notice's: the same request again
+            photo, item = _locked_photo(herd, document, photos, item)
+        elif item is not None:
+            return item
+        first = item is None or not item.documents.exists()  # the queue hears of a notice with its first photo
+        if item is None:
+            item = InboxItem.create(
+                kind="kontroll",
+                state="ny",
+                genebank=herd.genebank_id,
+                herd=herd.id,
+                ref_type=KIND,
+                ref_data={
+                    "number": individual.number,
+                    "from_herd": seller,
+                    "date": date.isoformat(),
+                    "individual_id": individual.id,
+                },
+            )
         # the link has no account: its name goes in the history, as _audit_as names it to the audit log
-        inbox.log_event(item, None if by_link else user.id, "inkommen", **({"via": user.username} if by_link else {}))
+        detail = {"via": user.username} if by_link else {}
+        if photo is not None:
+            unread = {} if doc_type == "intyg" else {"interpretation_status": "av"}  # only an intyg is read
+            moved = InboxDocument.update(item=item.id, doc_type=doc_type, **unread)
+            moved.where(InboxDocument.id == photo_document_id).execute()
+            InboxItem.delete().where(InboxItem.id == photo.id).execute()  # the photo's own item, empty now
+            detail["documents"] = 1
+        inbox.log_event(item, None if by_link else user.id, "inkommen", **detail)
+        if photo is not None and first:
+            inbox._notify_workers(item, None if by_link else user)  # pylint: disable=protected-access
     return item
 
 
