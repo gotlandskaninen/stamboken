@@ -17,11 +17,12 @@ import utils.inbox as inbox  # noqa: E402
 import utils.inbox_purge as purge  # noqa: E402
 from herdbook import APP, limiter  # noqa: E402
 from peewee import IntegrityError  # noqa: E402
-from utils import buyer_contact  # noqa: E402
+from utils import buyer_contact, herd_tracking  # noqa: E402
 from utils.herd_tracking import (  # noqa: E402
     UNDO_REASON,
     HerdTrackingConflict,
     HerdTrackingInvalid,
+    QueueChanged,
     correct_herd_tracking,
     herd_tracking_history,
     new_operation_id,
@@ -740,11 +741,15 @@ class TestQueueDocuments(PurgeTest):
         buyer_contact.purge_expired(NOW + timedelta(days=5 * 366))
         self.assertScrubbed([self.certificate, self.photo], [self.proof, self.other])
 
-    def test_the_purge_finds_an_item_linked_after_its_scan_and_takes_the_items_first(self):  # Codex P2, finding 4
+    def against_a_late_item(self, job):
+        """
+        `job` in one transaction and the queue in another: while `job` holds the rabbit, the queue links another item
+        to the sale, locks that item and waits for the rabbit, its own order. Returns both results and the document.
+        """
         if not _USE_POSTGRES:
             self.skipTest("row locks need PostgreSQL")
-        (late,) = self.make().documents  # another item, linked to the sale while the purge holds the rabbit
-        held, original, results = threading.Event(), buyer_contact.lock_individuals, {}
+        (late,) = self.make().documents
+        held, original, results = threading.Event(), herd_tracking.lock_individuals, {}
 
         def rabbit_held(ids):
             value = original(ids)
@@ -752,9 +757,6 @@ class TestQueueDocuments(PurgeTest):
                 held.set()
                 until(lock_waiter)  # the queue holds its item and waits for the rabbit
             return value
-
-        def purge_job():
-            return buyer_contact.purge_expired(NOW + timedelta(days=5 * 366))
 
         def queue():  # the queue's own order: its item, then the rabbit
             held.wait(10)
@@ -764,11 +766,31 @@ class TestQueueDocuments(PurgeTest):
                 db.lock_individuals([self.rabbit.id])
             return "ok"
 
-        with mock.patch.object(buyer_contact, "lock_individuals", side_effect=rabbit_held):
-            done = run_all(in_thread(results, "purge", purge_job), in_thread(results, "queue", queue))
+        with mock.patch.object(herd_tracking, "lock_individuals", side_effect=rabbit_held):
+            done = run_all(in_thread(results, "job", job), in_thread(results, "queue", queue))
         self.assertTrue(done, "hung threads")
-        self.assertEqual(results, {"purge": 1, "queue": "ok"})
+        self.assertTrue(held.is_set())
+        return results, late
+
+    def test_the_purge_finds_an_item_linked_after_its_scan_and_takes_the_items_first(self):  # Codex P2, finding 4
+        results, late = self.against_a_late_item(lambda: buyer_contact.purge_expired(NOW + timedelta(days=5 * 366)))
+        self.assertEqual(results, {"job": 1, "queue": "ok"})
         self.assertScrubbed([self.certificate, self.photo, late], [self.proof, self.other])
+
+    def test_an_erasure_finds_an_item_linked_after_its_scan_and_starts_again(self):  # Codex: item scans
+        def erase():
+            buyer_contact.erase_buyer_contact(self.sale.holder_contact_id, self.manager)
+            return "ok"
+
+        results, late = self.against_a_late_item(erase)
+        self.assertEqual(results, {"job": "ok", "queue": "ok"})
+        self.assertScrubbed([self.certificate, self.photo, self.proof, late], [self.other])
+
+    def test_a_void_answers_409_for_an_item_linked_after_its_scan(self):  # Codex: item scans
+        results, _late = self.against_a_late_item(lambda: void_herd_tracking(self.sale.id, self.manager, "Fel"))
+        self.assertEqual(results, {"job": repr(QueueChanged()), "queue": "ok"})
+        self.assertIsNone(db.HerdTracking.get_by_id(self.sale.id).voided_at)
+        self.assertIsNotNone(db.BuyerContact.get_or_none(db.BuyerContact.id == self.sale.holder_contact_id))
 
     def test_after_the_originals_purge_only_what_is_left_is_cleared(self):
         purge.purge_originals(PURGE_NOW + timedelta(days=400))  # certificates and proofs, not other photos

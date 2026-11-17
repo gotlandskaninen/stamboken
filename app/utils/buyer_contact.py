@@ -10,14 +10,15 @@ from datetime import timedelta
 
 from peewee import Case, fn
 
-from utils.database import DB_PROXY, BuyerContact, HerdTracking, Individual, ht_sort_key, lock_individuals
+from utils.database import DB_PROXY, BuyerContact, HerdTracking, Individual, ht_sort_key
 from utils.herd_tracking import (
     HerdTrackingForbidden,
     HerdTrackingNotFound,
-    buyer_items,
+    QueueChanged,
     can_see_buyer,
     delete_buyer_contacts,
     is_manager_of,
+    lock_buyer_rows,
     log_buyer_contact,
     log_buyer_read,
     sold_on,
@@ -68,20 +69,29 @@ def erase_buyer_contact(contact_id, user):
     TRANSFER row stay.
     """
     _managed_contact(contact_id, user, "radera")
+    _retried(lambda: _erase_once(contact_id, user))
+
+
+def _erase_once(contact_id, user):
     with DB_PROXY.atomic():
         # The locks a correction takes, in its order (the queue's items, then the rabbits), so the two queue up.
         holding = list(HerdTracking.select().where(HerdTracking.holder_contact == contact_id))
-        buyer_items(holding, lock=True)
-        lock_individuals([r.individual_id for r in holding])
+        lock_buyer_rows(holding, [r.individual_id for r in holding])
         _count, paths = delete_buyer_contacts([contact_id], "radering", user, whole_items=True)
     remove_originals(paths)  # only after the commit: a row never names a removed file
 
 
-class _QueueChanged(Exception):
-    """A buyer's item appeared after the purge locked its items: nothing has gone yet, and the purge starts again."""
+ATTEMPTS = 3  # a busy queue: the next night tries again, and an erasure answers 409
 
 
-ATTEMPTS = 3  # a busy queue: the next night tries again
+def _retried(attempt):
+    """`attempt` again while the queue changes under it (QueueChanged, rolled back before anything went)."""
+    for _ in range(ATTEMPTS - 1):
+        try:
+            return attempt()
+        except QueueChanged:
+            pass
+    return attempt()
 
 
 def _delete_locked(rule, action):
@@ -93,22 +103,14 @@ def _delete_locked(rule, action):
     that an undo holds while the undo waits on the buyer. An item linked to a sale or rabbit after the items were
     locked would be locked after the rabbit, against the queue's order, so the purge rolls back and starts again.
     """
-    for _ in range(ATTEMPTS - 1):
-        try:
-            return _delete_once(rule, action)
-        except _QueueChanged:
-            pass  # rolled back before anything went
-    return _delete_once(rule, action)
+    return _retried(lambda: _delete_once(rule, action))
 
 
 def _delete_once(rule, action):
     with DB_PROXY.atomic():
         ids = [contact_id for (contact_id,) in BuyerContact.select(BuyerContact.id).where(rule).tuples()]
         holding = list(HerdTracking.select().where(HerdTracking.holder_contact.in_(ids)))
-        items = buyer_items(holding, lock=True)
-        lock_individuals({row.individual_id for row in holding})
-        if not buyer_items(holding) <= items:
-            raise _QueueChanged
+        lock_buyer_rows(holding, {row.individual_id for row in holding})
         still = BuyerContact.select(BuyerContact.id).where(BuyerContact.id.in_(ids) & rule).order_by(BuyerContact.id)
         count, paths = delete_buyer_contacts([contact_id for (contact_id,) in still.for_update().tuples()], action)
     remove_originals(paths)

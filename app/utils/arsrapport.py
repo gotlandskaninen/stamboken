@@ -71,6 +71,7 @@ from utils.herd_tracking import (
     REPORT_LATER_ROW,
     HerdTrackingError,
     HerdTrackingInvalid,
+    QueueChanged,
     _reject_buyer_name,
     buyer_contact_fields,
     buyer_items,
@@ -717,7 +718,10 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
             for field, value in _by(user, "updated_by_user", "updated_by_access_code").items():
                 setattr(draft, field, value)
             draft.save()
-            drop_kept_buyers(gone, user, lock=True)  # FB6: a cleared sale takes its kept buyer now
+            try:
+                drop_kept_buyers(gone, user, lock=True)  # FB6: a cleared sale takes its kept buyer now
+            except QueueChanged as exc:
+                raise ArsrapportError(409, QUEUE_CHANGED) from exc
             return draft
         if report is not None and draft is None:
             raise ArsrapportError(409, "Rapporten är redan inskickad.", draft=None)

@@ -140,8 +140,7 @@ def drop_kept_buyers(contact_ids, user, *, lock=False):
         return
     if lock:
         holding = list(HerdTracking.select().where(HerdTracking.holder_contact.in_(list(contact_ids))))
-        buyer_items(holding, lock=True)
-        lock_individuals(sorted({row.individual_id for row in holding}))
+        lock_buyer_rows(holding, {row.individual_id for row in holding})
     _remove_after_commit(_drop_orphan_buyers(contact_ids, VOID_ACTION, user))
 
 
@@ -188,6 +187,28 @@ def lock_buyer_items(individual_ids):
 
 
 QUEUE_CHANGED = "Inkorgen ändrades under tiden. Försök igen."
+
+
+class QueueChanged(HerdTrackingConflict):
+    """An item was linked to the rabbits after lock_buyer_rows locked their items; nothing is written yet."""
+
+    def __init__(self):
+        super().__init__(QUEUE_CHANGED)
+
+
+def lock_buyer_rows(rows, individual_ids):
+    """
+    The queue's order for a caller that voids `rows` or deletes their buyers: their items (buyer_items), then the
+    rabbits, then the item set read again. An item linked to the rabbits or their sales after the first read would be
+    locked after the rabbit, and its holder may wait for the rabbit: QueueChanged then, before anything is written,
+    for the caller to roll back and start again (utils.buyer_contact) or answer 409. Returns the items.
+    """
+    rows = list(rows)
+    items = buyer_items(rows, lock=True)
+    lock_individuals(individual_ids)
+    if not buyer_items(rows) <= items:
+        raise QueueChanged
+    return items
 
 
 def void_all_for_unpromote(individual, user, operation_id=None, files=None, items=None):
@@ -743,8 +764,7 @@ def void_herd_tracking(ht_id, user, reason, operation_id=None, typed=True, *, re
     if row is None:
         raise HerdTrackingNotFound("Raden finns inte.")
     with DB_PROXY.atomic():
-        buyer_items([row], lock=True)
-        lock_individuals([row.individual_id])
+        lock_buyer_rows([row], [row.individual_id])
         done = _operation_rows([row.individual_id], op)
         if done:
             return next((r for r in done if r.voided_operation_id == op), done[0])
@@ -912,8 +932,7 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
     cleaned = require_reason(reason) if void_ids else None
     op = new_operation_id(operation_id)
     with DB_PROXY.atomic():
-        buyer_items(HerdTracking.select().where(HerdTracking.id.in_(void_ids)), lock=True)
-        lock_individuals([ind_id])
+        lock_buyer_rows(HerdTracking.select().where(HerdTracking.id.in_(void_ids)), [ind_id])
         ind = Individual.get_by_id(ind_id)
         if _operation_rows([ind_id], op):
             return list(
@@ -1085,8 +1104,7 @@ def undo_herd_tracking_operation(operation_id, user, reason, undo_operation_id=N
     with DB_PROXY.atomic():
         # The rows this undo may void: those the operation wrote or restored.
         redone = (HerdTracking.operation_id == op) | (HerdTracking.restored_operation_id == op)
-        buyer_items(HerdTracking.select().where(redone), lock=True)
-        lock_individuals(ind_ids)
+        lock_buyer_rows(HerdTracking.select().where(redone), ind_ids)
         individuals = {i.id: i for i in Individual.select().where(Individual.id.in_(ind_ids))}
         if any(not is_manager_of(user, i.origin_herd.genebank_id) for i in individuals.values()):
             raise HerdTrackingForbidden("Bara genbanksansvarig eller administratör kan ångra en åtgärd.")
