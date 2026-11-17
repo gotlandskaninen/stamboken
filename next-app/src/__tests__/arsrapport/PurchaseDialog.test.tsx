@@ -136,6 +136,43 @@ describe("PurchaseDialog", () => {
     expect(screen.getAllByText(NOT_IN_STAMBOKEN_TEXT)).toHaveLength(1);
   });
 
+  it("opens the report's form for a rabbit from its certificate when the number is not in Stamboken", async () => {
+    const send = vi.fn().mockResolvedValue({
+      ok: false,
+      problem: {
+        status: 422,
+        title: "Kan inte sparas",
+        detail: NOT_IN_STAMBOKEN_TEXT,
+        extensions: { code: "inte_i_stamboken" },
+      },
+    });
+    const onAddRabbit = vi.fn();
+    render(
+      <PurchaseDialog
+        open
+        year={2025}
+        genebankId={1}
+        ownHerd="G9001"
+        loadHerds={herds}
+        send={send}
+        upload={vi.fn()}
+        onAddRabbit={onAddRabbit}
+        onSent={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const button = () =>
+      screen.queryByRole("button", { name: "Lägg till från intyget" });
+    expect(button()).toBeNull(); // only once the number is known to be missing
+    fill("Kaninens nummer", "G9002-9999");
+    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+    fill("Datum för köpet", "2025-05-14");
+    click();
+    await screen.findByRole("alert");
+    fireEvent.click(button()!);
+    expect(onAddRabbit).toHaveBeenCalled();
+  });
+
   it("sends a photo of the proof or the certificate once it is uploaded, with what it shows", async () => {
     let uploaded: (v: unknown) => void = () => undefined;
     const upload = vi.fn(

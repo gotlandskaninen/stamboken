@@ -43,6 +43,7 @@ interface Props {
   upload: (
     data: FormData,
   ) => Promise<ActionResult<{ item_id: number; document_id: number }>>; // the report's photo upload (4b)
+  onAddRabbit?: () => void; // the report's "Lägg till kanin från intyget", where the report offers it
   onSent: () => void;
   onClose: () => void;
 }
@@ -56,6 +57,7 @@ function Body({
   loadHerds,
   send,
   upload,
+  onAddRabbit,
   onSent,
   onClose,
 }: Props) {
@@ -175,13 +177,21 @@ function Body({
                 }}
               />
             </label>
-            {/* shortcut: the "Lägg till från intyget" button opens 4b's AddRabbit once merged */}
             <p
               className={missing ? styles.errorText : styles.meta}
               role={missing ? "alert" : undefined}
             >
               {NOT_IN_STAMBOKEN_TEXT}
             </p>
+            {missing && onAddRabbit && (
+              <button
+                type="button"
+                className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+                onClick={onAddRabbit}
+              >
+                Lägg till från intyget
+              </button>
+            )}
             <div
               className={styles.choices}
               role="radiogroup"
