@@ -503,6 +503,43 @@ class PurchaseNoticeTest(ArsrapportTest):
         self.assertEqual((response.status_code, response.get_json()["code"]), (403, "lank_ogiltig"))
         self.assertEqual(db.InboxItem.get_by_id(item_id).state, "ny")
 
+    def test_a_notice_reads_an_end_date_moved_earlier_meanwhile(self):  # Codex round 2, P2
+        if not _USE_POSTGRES:
+            self.skipTest("row locks need PostgreSQL")
+        original, results, moved = arsrapport.follow_end_date, {}, threading.Event()
+
+        def held(round_):
+            original(round_)
+            moved.set()
+            until(lock_waiter)  # the notice waits for the round row
+            return None
+
+        def close():  # the round ends on 5 January, before DAY0
+            day = date(2026, 1, 5)
+            return arsrapport.save_round(2025, db.User.get_by_id(self.admin.id), deadline=day, end_date=day).end_date
+
+        def report():
+            moved.wait(10)
+            try:
+                purchase_notice.report_purchase(
+                    self.h,
+                    self.round_,
+                    Access("owner"),
+                    self.owner,
+                    number=self.a.number,
+                    from_herd="G9002",
+                    date=date(2025, 5, 14),
+                )
+            except ArsrapportError as exc:
+                return exc.status, exc.extra.get("code")
+            return "created"
+
+        with mock.patch.object(arsrapport, "follow_end_date", side_effect=held):
+            done = run_all(in_thread(results, "close", close), in_thread(results, "notice", report))
+        self.assertTrue(done, "hung threads")
+        self.assertEqual(results, {"close": date(2026, 1, 5), "notice": (409, "rundan_stangd")})
+        self.assertEqual(notices(), [])
+
     def test_a_closed_or_unactivated_round_takes_no_notice(self):
         """The report's own rule for writing, under its lock (finding 7)."""
         self.login("owner")

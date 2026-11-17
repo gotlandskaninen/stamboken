@@ -95,6 +95,8 @@ def report_purchase(herd, round_, access, user, *, number, from_herd, date, phot
         raise ArsrapportError(400, f"Ange ett datum under {year}, inte senare än i dag.", field="date")
     by_link = access.code is not None
     with DB_PROXY.atomic():
+        # The round row first, as Dra tillbaka takes it: an end_date moved meanwhile is read here, not the one before
+        round_ = arsrapport._lock_round(round_)  # pylint: disable=protected-access
         arsrapport.lock_report(round_, herd)
         if by_link:
             arsrapport.require_valid_code(access.code.id, herd, lock=True)  # E4 under the lock
