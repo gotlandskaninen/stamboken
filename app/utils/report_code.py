@@ -39,9 +39,10 @@ def lock_herd_codes(herd: Herd) -> None:
     """
     Serializes issuing and replacing a herd's link (issue_code, new_link) until the transaction ends, taken before the
     recipient is read and before any revoke, so a stale selection cannot revoke the code of the member who replaced it.
-    Lock order: this lock first, then code rows. It is never taken under the report lock, and nothing holding it takes
-    the report lock, so a submission (report lock, then FOR SHARE on its code row in _recheck_code) can wait for a
-    revoke to commit but never form a cycle with it.
+    Lock order: this lock first, then code rows; only the invitation job takes the round row before it, as a moved
+    end_date takes the row before the codes (arsrapport.follow_end_date). It is never taken under the report lock,
+    and nothing holding it takes the report lock, so a submission (report lock, then FOR SHARE on its code row in
+    _recheck_code) can wait for a revoke to commit but never form a cycle with it.
     """
     DB_PROXY.execute_sql("SELECT pg_advisory_xact_lock(%s, %s)", (_HERD_CODE_LOCK, herd.id))
 

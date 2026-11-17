@@ -31,9 +31,12 @@ def _herds(genebank_id):
 
 
 def _invite_genebank(activation, now):
-    round_, count = activation.round, 0
-    year = round_.report_year
+    count = 0
     with DB_PROXY.atomic():  # all or nothing, so sent_at never says more than was queued
+        # The round row first, as Dra tillbaka takes it: a moved end_date updates it before the codes, so the two
+        # never take the codes in different orders, and each code gets the end_date read here
+        round_ = arsrapport._lock_round(activation.round)  # pylint: disable=protected-access
+        year = round_.report_year
         # A second job on the same activation waits here, then finds it sent: it must not reissue any code.
         locked = (
             YearlyReportRoundGenebank.select().where(YearlyReportRoundGenebank.id == activation.id).for_update().get()

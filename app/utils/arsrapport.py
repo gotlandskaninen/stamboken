@@ -187,7 +187,8 @@ def _lock_round(round_):
     The round row FOR SHARE, read again: Dra tillbaka keeps a buyer until the round's end_date (kept_until), and
     save_round's UPDATE of the row waits for it. A moved end_date is then either read here or comes after the
     withdrawal, and _move_kept_buyers finds its buyer. Taken first, before the report's lock and the link's code row,
-    which save_round updates after the round row.
+    which save_round updates after the round row. The invitation job takes it first too, before the activation row
+    and the codes it issues and revokes herd by herd.
     """
     return YearlyReportRound.select().where(YearlyReportRound.id == round_.id).for_update("FOR SHARE").get()
 

@@ -13,6 +13,7 @@ from datetime import date, datetime, timedelta
 from unittest import mock
 
 import utils.arsrapport as arsrapport
+import utils.arsrapport_invite as arsrapport_invite
 import utils.buyer_contact as buyer_contact
 import utils.database as db
 import utils.herd_tracking as herd_tracking
@@ -559,3 +560,23 @@ class KeptBuyerTest(ArsrapportTest):
         results = self.race(individual_commands, "record_herd_tracking", resubmit, self.extend())
         self.assertEqual(results, {"first": True, "second": EXTENDED})
         self.assertEqual(contacts(), dict.fromkeys(kept, db.BuyerContact.purge_at_for(SOLD_ON)))
+
+    def test_end_date_moved_during_the_invitations(self):  # Codex P2, finding 6: the job takes the round row first
+        # G9000 is newer than G9001 but first in the job's herd order, and G9001's code is the older: the job revokes
+        # G9000's and then G9001's, against the order of the herds' ids and of the codes' rows alike
+        g9000 = db.Herd.create(genebank=self.gotland, herd="G9000", is_active=True)
+        self.main_member(g9000, "g9000@example.invalid")
+        for herd in (self.h, g9000):
+            member = report_code.invitation_recipient(herd)
+            report_code.issue_code(herd, self.round_, member, now=arsrapport.now())
+            db.Member.update(end_date=DAY0).where(db.Member.id == member.id).execute()  # a new main member since
+            new = {"first_name": "Ny", "last_name": "Ny", "email": f"ny.{herd.herd}@example.invalid"}
+            db.Member.create(**new, membership=herd.membership, role="huvudmedlem")
+
+        def job():
+            return arsrapport_invite.send_due_invitations(arsrapport.now())
+
+        results = self.race(report_code, "revoke", job, self.extend())
+        self.assertEqual(results, {"first": 2, "second": EXTENDED})  # the job's failure would be 0, logged
+        active = db.ReportAccessCode.select().where(db.ReportAccessCode.revoked_at.is_null())
+        self.assertEqual([(code.member.first_name, code.expires_at) for code in active], [("Ny", EXTENDED)] * 2)
