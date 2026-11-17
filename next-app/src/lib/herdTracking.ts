@@ -34,6 +34,8 @@ export interface HerdTrackingRow {
   can_void: boolean;
   can_undo_sale: boolean;
   can_undo_operation: boolean;
+  /** A void by this viewer stores the system's reason, not a typed one: a buyer outside the genebank is on the rabbit. */
+  reason_replaced?: boolean;
   /** The submitted yearly report that wrote the row; changed there, not here. */
   report: ReportRef | null;
 }

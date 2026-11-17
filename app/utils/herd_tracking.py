@@ -1457,6 +1457,7 @@ def herd_tracking_history(individual, user, include_voided=None):
     buyer_keys = _buyer_keys(rows)  # once per call, as the invariants of the active rows
     known = {(v.code, v.row_id) for v in check_invariants(individual, active, buyer_keys)}
     lost = _buyer_deleted([r.id for r in rows if r.voided_at is not None])
+    holds_buyer = any(r.holder_contact_id for r in rows)  # _holds_buyer, on the rows already read
     out = []
     for row in rows:
         if row.voided_at is not None and not show_voided:
@@ -1486,6 +1487,8 @@ def herd_tracking_history(individual, user, include_voided=None):
                 "notes": row.notes,
                 "buyer": resolve_buyer(row, user, row_genebank),
                 "can_void": can_void,
+                # void_herd_tracking would put its system reason in place of this user's: the page asks for none
+                "reason_replaced": holds_buyer and not can_see_buyer(user, row_genebank),
                 "can_undo_sale": bool(
                     can_void and row.kind == "TRANSFER" and row.transfer_id is None and row.id == latest_id
                 ),
