@@ -21,7 +21,7 @@ som PDF. Reglerna finns i `app/utils/arsrapport.py` och endpointsen i
 
 `GET /api/v2/arsrapport/<år>/status?genebank_id=<id>` svarar med
 
-```
+```text
 {round, genebank_id, activated, counts: {läge: antal},
  rows: [{herd, herd_name, state, source, membership_after_end, received_at, on_time_override,
          inbox_item_id, telefon (bara för genbanksansvariga och administratör),

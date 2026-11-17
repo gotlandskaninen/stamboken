@@ -182,8 +182,8 @@ async function markSold(
     await dialog.getByLabel("Köparens namn").fill(to.outside);
     await dialog.getByLabel(/^Ort/).fill("Mellerud");
   }
-  await dialog.getByLabel("År").selectOption(when.ar);
-  await dialog.getByLabel("Månad").selectOption(when.manad);
+  await dialog.getByLabel(/^År/).selectOption(when.ar);
+  await dialog.getByLabel(/^Månad/).selectOption(when.manad);
   if (when.dag) await dialog.getByLabel("Dag (frivillig)").fill(when.dag);
   await dialog.getByRole("button", { name: "Spara försäljningen" }).click();
   await expect(dialog).toBeHidden();
@@ -591,7 +591,7 @@ test("9. Typ G: död och försäljning vid årsskiftet", async ({
 
   // a) Both leave on 1 January 2026: they lived on 31 December, so the herd has a male and a female.
   await male.getByRole("radio", { name: "Död", exact: true }).check();
-  await male.getByLabel("År").selectOption("2026");
+  await male.getByLabel(/^År/).selectOption("2026");
   await male.locator('select[id^="month-"]').selectOption("1");
   await male.getByLabel("Dag (frivillig)").fill("1");
   await markSold(
@@ -612,13 +612,13 @@ test("9. Typ G: död och försäljning vid årsskiftet", async ({
   await loginInline(page, context, USERS.owner);
   await page.goto("/stamboken/arsrapport/M9007/2025");
   await page.getByRole("button", { name: "Ändra", exact: true }).click();
-  await male.getByLabel("År").selectOption("2025");
+  await male.getByLabel(/^År/).selectOption("2025");
   await male.locator('select[id^="month-"]').selectOption("12");
   await male.getByLabel("Dag (frivillig)").fill("31");
   await female.getByRole("button", { name: "Ändra", exact: true }).click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByLabel("År").selectOption("2025");
-  await dialog.getByLabel("Månad").selectOption("12");
+  await dialog.getByLabel(/^År/).selectOption("2025");
+  await dialog.getByLabel(/^Månad/).selectOption("12");
   await dialog.getByLabel("Dag (frivillig)").fill("31");
   await dialog.getByRole("button", { name: "Spara försäljningen" }).click();
   await expect(dialog).toBeHidden();
