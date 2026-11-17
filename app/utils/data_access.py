@@ -3315,18 +3315,23 @@ def update_yearly_report_round(round_id, form, user_uuid):
     Updates an existing YearlyReportRound with data from the form.
     Only accessible to admin or manager users.
     """
+    import utils.arsrapport as arsrapport  # pylint: disable=import-outside-toplevel  # it imports half the app
+
     user = fetch_user_info(user_uuid)
     if not (user.is_admin or user.is_manager):
         return {"status": "error", "message": "Forbidden"}
     try:
-        yr_round = YearlyReportRound.get(YearlyReportRound.id == round_id)
-        yr_round.start_date = form.get("start_date", yr_round.start_date)
-        yr_round.end_date = form.get("end_date", yr_round.end_date)
-        yr_round.is_active = form.get("is_active", yr_round.is_active)
-        yr_round.manually_activated = form.get("manually_activated", yr_round.manually_activated)
-        yr_round.report_year = form.get("report_year", yr_round.report_year)
-        # Do not update 'created_by' or 'creation_date'
-        yr_round.save()
+        with DATABASE.atomic():  # as save_round: the UPDATE holds the round row until the end_date has been followed
+            yr_round = YearlyReportRound.get(YearlyReportRound.id == round_id)
+            yr_round.start_date = form.get("start_date", yr_round.start_date)
+            yr_round.end_date = form.get("end_date", yr_round.end_date)
+            yr_round.is_active = form.get("is_active", yr_round.is_active)
+            yr_round.manually_activated = form.get("manually_activated", yr_round.manually_activated)
+            yr_round.report_year = form.get("report_year", yr_round.report_year)
+            # Do not update 'created_by' or 'creation_date'
+            yr_round.save()
+            if "end_date" in form:  # read back under the row's lock: the form's text as a date, whatever it was before
+                arsrapport.follow_end_date(YearlyReportRound.get_by_id(round_id))
         return {"status": "success", "round": yr_round.id}
     except YearlyReportRound.DoesNotExist:
         return {"status": "error", "message": "YearlyReportRound not found."}

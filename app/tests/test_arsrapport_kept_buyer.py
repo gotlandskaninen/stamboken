@@ -243,6 +243,23 @@ class KeptBuyerTest(ArsrapportTest):
         arsrapport.save_round(2025, self.admin, end_date=date(2026, 5, 15))
         self.assertEqual(contacts(), {contact.id: db.BuyerContact.purge_at_for(SOLD_ON)})
 
+    def test_legacy_round_patch_moves_kept_buyer_and_codes(self):  # Codex P1: the legacy endpoint is live
+        contact, _ = self.sold_and_withdrawn()
+        code = report_code.issue_code(self.h, self.round_, self.member, now=arsrapport.now())
+        self.login("admin")
+
+        def patched(end_date):
+            response = self.client.patch(f"/api/manage/yearly_report_round/{self.round_.id}", json=end_date)
+            self.assertEqual(response.get_json(), {"status": "success", "round": self.round_.id})  # legacy's contract
+            return contacts(), db.ReportAccessCode.get_by_id(code.id).expires_at
+
+        self.assertEqual(patched({"end_date": "2026-04-30"}), ({contact.id: EXTENDED_UNTIL}, EXTENDED))
+        shortened = datetime(2026, 3, 17, tzinfo=STOCKHOLM)
+        self.assertEqual(patched({"end_date": "2026-03-15"}), ({contact.id: shortened}, date(2026, 3, 15)))
+        self.assertEqual(patched({"is_active": True}), ({contact.id: shortened}, date(2026, 3, 15)))
+        buyer_contact.run(datetime(2026, 3, 17, 3, 50, tzinfo=STOCKHOLM))  # gone on 17 March, not on 1 April
+        self.assertEqual(contacts(), {})
+
     def test_undoing_the_withdraws_void_gives_the_buyer_five_years_again(self):
         contact, _ = self.sold_and_withdrawn()
         (sale,) = sales(self.a)

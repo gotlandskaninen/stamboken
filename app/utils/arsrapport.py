@@ -146,7 +146,7 @@ def save_round(year, user, **dates):
     The year's round with `dates` applied: a new round, or a legacy round's missing dates, get the defaults first.
     Only the dates that change are saved, so legacy's is_active is never written (D3) and the genetics trigger
     sees end_date only when it moves. In one transaction: the UPDATE holds the round row until the codes and the
-    kept buyers have followed it, which Dra tillbaka waits for (_lock_round).
+    kept buyers have followed it (follow_end_date), which Dra tillbaka waits for (_lock_round).
     """
     if abs(year - today().year) > 1:
         raise ArsrapportError(400, f"Året ska vara {today().year - 1}, {today().year} eller {today().year + 1}.")
@@ -162,12 +162,24 @@ def save_round(year, user, **dates):
             round_.save()
         elif changed:
             round_.save(only=[getattr(YearlyReportRound, key) for key in changed])
-            if "end_date" in changed:  # R10: the column of an active code follows the round, and K2 the kept buyers
-                ReportAccessCode.update(expires_at=round_.end_date).where(
-                    ReportAccessCode.round == round_.id, ReportAccessCode.revoked_at.is_null()
-                ).execute()
-                _move_kept_buyers(round_)
+            if "end_date" in changed:
+                follow_end_date(round_)
     return round_
+
+
+def follow_end_date(round_):
+    """
+    R10: the column of the round's active codes follows its end_date, and K2: so do the kept buyers. In the caller's
+    transaction, after its UPDATE of the round row, which holds the row to the commit: save_round, and legacy's
+    PATCH (data_access.update_yearly_report_round). A cleared end_date (legacy only) moves neither: a code without
+    one is invalid anyway (report_code.refusal), and a kept buyer keeps the purge_at it has.
+    """
+    if round_.end_date is None:
+        return
+    ReportAccessCode.update(expires_at=round_.end_date).where(
+        ReportAccessCode.round == round_.id, ReportAccessCode.revoked_at.is_null()
+    ).execute()
+    _move_kept_buyers(round_)
 
 
 def _lock_round(round_):
