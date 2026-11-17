@@ -47,8 +47,14 @@ def until(condition, timeout=5):
 
 
 def lock_waiter():
-    """A session waits for a lock (pg_locks): the other thread is blocked where the test expects it."""
-    (count,) = db.DB_PROXY.execute_sql("SELECT count(*) FROM pg_locks WHERE NOT granted").fetchone()
+    """
+    A session of this database waits for a lock (pg_locks): the other thread is blocked where the test expects it.
+    Another xdist worker's database does not count.
+    """
+    (count,) = db.DB_PROXY.execute_sql(
+        "SELECT count(*) FROM pg_locks l JOIN pg_stat_activity a ON a.pid = l.pid "
+        "WHERE NOT l.granted AND a.datname = current_database()"
+    ).fetchone()
     return count > 0
 
 
