@@ -158,6 +158,12 @@ class TestArsrapportMigration(IsolatedSchemaTest):
         self.assertEqual(snapshot(), self.bootstrapped)
         self.assertEqual(db.SchemaHistory.select(db.fn.MAX(db.SchemaHistory.version)).scalar(), 42)  # pylint: disable=E1120
 
+    def test_boot_creates_a_yearly_report_table_a_database_at_42_lacks(self):  # Codex round 2, P2
+        """Under the migration lock, not by a worker's verify() and init() racing for it."""
+        _sql('DROP TABLE "sale_proposal"')
+        self.assertTrue(db.verify(try_init=False))  # no init(): the boot's repair made it
+        self.assertEqual(snapshot(), self.bootstrapped)
+
     def test_one_submitted_report_per_herd_and_round(self):
         self._report()
         with self.assertRaises(IntegrityError), db.DB_PROXY.atomic():

@@ -4813,9 +4813,17 @@ def _repair_arsrapport_columns():
     S5: the yearly report's migration keeps its number while the branch adds columns to it, so a database that ran
     an earlier 42 (dev and agent stacks) never replays it, and verify() fails on the missing column. When a table
     the migration changes exists but lacks a column of its model, the migration's idempotent helper runs again,
-    with its ADD COLUMN IF NOT EXISTS statements. The catalog is read first, so a healthy database takes no table
-    lock at boot; one not bootstrapped yet has none of the tables and is init()'s.
+    with its ADD COLUMN IF NOT EXISTS statements; so it does when one of the yearly report's own tables is missing,
+    here under the migration lock rather than in a worker's verify() and init(). The catalog is read first, so a
+    healthy database takes no table lock at boot; one not bootstrapped yet has none of the tables and is init()'s.
     """
+    tables = set(DATABASE.get_tables())
+    wanted = {model._meta.table_name for model in ARSRAPPORT_MODELS}
+    if YearlyReportRound._meta.table_name in tables and wanted - tables:
+        logger.info("Creating the yearly report's missing tables: %s", ", ".join(sorted(wanted - tables)))
+        with DATABASE.atomic():
+            _create_arsrapport_schema()
+        return
     for model in (
         YearlyReportRound,
         YearlyHerdReport,
