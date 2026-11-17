@@ -8,7 +8,8 @@ the herd is registered by any path, dated within 14 days of the notice and with 
 
 A rabbit Stamboken lacks is no notice (S7): the buyer sends the photos of its certificate and transfer proof to the
 queue as an ordinary upload of the herd, with the purchase's fields in `ref_data`, and the manager or a helper
-registers it in its birth herd and transfers it; the upload closes as a notice does once that transfer is registered.
+registers it in its birth herd and transfers it; the queue closes the upload, and the report shows it as registered
+once that transfer is.
 The report lists its herd's queue items in plain words (S8, report_cases).
 """
 
@@ -65,6 +66,17 @@ def open_notices(herd_ids):
     """The open notices of the herds, oldest first."""
     query = InboxItem.select().where(
         InboxItem.herd.in_(sorted(herd_ids)), InboxItem.ref_type == KIND, InboxItem.state.in_(inbox.OPEN_STATES)
+    )
+    return list(query.order_by(InboxItem.id))
+
+
+def open_sent(herd_ids):
+    """The herds' open uploads of sent photos (S7), oldest first."""
+    query = InboxItem.select().where(
+        InboxItem.herd.in_(sorted(herd_ids)),
+        InboxItem.kind == "upload",
+        InboxItem.ref_data.is_null(False),
+        InboxItem.state.in_(inbox.OPEN_STATES),
     )
     return list(query.order_by(InboxItem.id))
 
@@ -419,37 +431,31 @@ def close(item_id, user):
 
 def close_registered(items):
     """
-    Self-closing without a trigger: each open notice, or upload of sent photos (S7, also one a worker holds), among
-    `items` whose transfer is registered. The caller holds the items' locks. The rabbits are locked after them, the
-    queue's order (item, then rabbit), and the transfer read again under them, so a void or correction of it, which
-    locks the rabbit first, comes wholly before that read or after the closing. Idempotent.
+    Self-closing without a trigger: each open notice among `items` whose transfer is registered. The caller holds
+    the items' locks. The rabbits are locked after them, the queue's order (item, then rabbit), and the transfer read
+    again under them, so a void or correction of it, which locks the rabbit first, comes wholly before that read or
+    after the closing. Idempotent. Sent photos (S7) are an ordinary upload, which only the queue closes.
     """
-    notices = [item for item in items if (item.ref_type == KIND or sent(item)) and item.state in inbox.OPEN_STATES]
+    notices = [item for item in items if item.ref_type == KIND and item.state in inbox.OPEN_STATES]
     if not registered(notices):  # a look without the rabbits' locks first, so most opened items take none
         return
-    lock_individuals(set(_rabbits(notices).values()))
+    lock_individuals({item.ref_data["individual_id"] for item in notices})
     for item_id in sorted(registered(notices)):
         close(item_id, None)
 
 
 def report_notices(herd, round_, access):
     """
-    ReportView.kopanmalningar: the herd's notices dated in the round's year, after the registered ones among them, and
-    among its sent photos (S7), are closed. Only that year's, which `access` reaches; the closing writes under the
-    report's lock, and a link only while it is valid (E4).
+    ReportView.kopanmalningar: the herd's notices dated in the round's year, after the registered ones among them are
+    closed. Only that year's notices, which `access` reaches; the closing writes under the report's lock, and a link
+    only while it is valid (E4).
     """
     year = round_.report_year
 
     def of_year(items):
         return [item for item in items if _day(item).year == year]
 
-    uploads = InboxItem.select().where(
-        InboxItem.herd == herd.id,
-        InboxItem.kind == "upload",
-        InboxItem.ref_data.is_null(False),
-        InboxItem.state.in_(inbox.OPEN_STATES),
-    )
-    mine = of_year(open_notices([herd.id]) + list(uploads))
+    mine = of_year(open_notices([herd.id]))
     if registered(mine):  # only then the locks
         with DB_PROXY.atomic():
             arsrapport.lock_report(round_, herd)
@@ -461,10 +467,15 @@ def report_notices(herd, round_, access):
     return [notice_json(item) for item in of_year(query)]
 
 
-def _case_state(item, waiting):
-    """S8's state in plain words: closed, a photo still to be read, waiting for the manager, or someone has it."""
+def _case_state(item, waiting, done):
+    """
+    S8's state in plain words: closed; sent photos whose transfer is registered (`done`), which the queue closes; a
+    photo still to be read; waiting for the manager; or someone has it.
+    """
     if item.state in inbox.CLOSED_STATES:
         return "klart"
+    if item.id in done:
+        return "registrerad"
     if item.state == "ny":
         return "tolkas" if item.id in waiting else "vantar"
     return "arbetar"  # held, handed on, or a question out: Mina inskick's under_arbete and fragat
@@ -518,6 +529,7 @@ def report_cases(herd, year):
     )
     bound = [item.ref_id for item in items if item.ref_type == "individual"]
     numbers = dict(Individual.select(Individual.id, Individual.number).where(Individual.id.in_(bound)).tuples())
+    done = registered([item for item in items if sent(item) and item.state in inbox.OPEN_STATES])
 
     def row(item):
         if item.ref_type == "sale_proposal":
@@ -527,7 +539,7 @@ def report_cases(herd, year):
         else:
             what = "kopanmalan" if item.ref_type == KIND else "kop_saknas" if sent(item) else "inskick"
             number = item.ref_data["number"] if item.ref_data else None
-        state = _case_state(item, waiting)
+        state = _case_state(item, waiting, done)
         return {"id": item.id, "what": what, "number": number, "photos": photos[item.id], "state": state}
 
     rows = [row(item) for item in items if item.ref_type != "sale_proposal" or item.ref_id in sales]
@@ -536,14 +548,16 @@ def report_cases(herd, year):
 
 def unsettled(herd_ids, year):
     """
-    The status view's kop_anmalt per herd: open notices dated in `year`, neither registered nor matched by a pending
-    sale proposal. A matched one is shown with its sale in the seller's sale dialog.
+    The status view's kop_anmalt per herd: open notices and sent photos (S7) dated in `year`, not registered, and a
+    notice not matched by a pending sale proposal either. A matched one is shown with its sale in the seller's sale
+    dialog; sent photos are of a rabbit Stamboken lacked, which no proposal sells.
     """
     items = [item for item in open_notices(herd_ids) if _day(item).year == year]
-    done = registered(items)
+    uploads = [item for item in open_sent(herd_ids) if _day(item).year == year]
+    done = registered(items + uploads)
     proposals = _pending_of({item.ref_data["individual_id"] for item in items}) if items else []
     return Counter(
         item.herd_id
-        for item in items
-        if item.id not in done and not any(_matches(p, p.report.herd.herd, item) for p in proposals)
+        for item in items + uploads
+        if item.id not in done and (sent(item) or not any(_matches(p, p.report.herd.herd, item) for p in proposals))
     )

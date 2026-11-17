@@ -150,9 +150,13 @@ date, state}`, och samma begäran igen svarar med posten.
 - Ett nummer som finns i genbanken ger 409 (det är en anmälan), saknat foto 400 med `field`
   `photo`, och sessionens regler för foton gäller som för anmälan (403, 409).
 - Rundan och länken kontrolleras under rapportens lås som för anmälan.
-- Posten stänger sig själv med samma regler som en anmälan, när numret finns i genbanken och en
-  `TRANSFER` av kaninen till besättningen är registrerad. Det görs bara i rapportvyn, också om en
-  arbetare har posten, aldrig när posten öppnas i kön.
+- Posten stängs av kön, som andra inskick, aldrig av rapportvyn. När numret finns i genbanken och en
+  `TRANSFER` av kaninen till besättningen är registrerad (samma regler som för en anmälan) visar
+  rapportvyn den som `registrerad` tills kön stänger den. Statusvyns `kop_anmalt` räknar öppna
+  inskick som inte är registrerade.
+- Ett foto uppladdat med `syfte=kop` eller `syfte=inskick` bär syftet i postens `ref_data`
+  (`{"syfte": …}`) tills det skickas, blir en anmälans eller binds till en kanin. Under tiden läses det
+  aldrig: varken en ny typ, Tolka igen eller ett läge satt till `vantar` får bildmodellen att läsa det.
 
 ## Ärenden hos genbanksansvarig (S8)
 
@@ -165,8 +169,9 @@ meddelanden och köparuppgifter är inte med. Köp och försäljningar från ett
 
 - `what`: `inskick`, `kop_saknas` (S7), `kopanmalan`, `foto` eller `forsaljning`.
 - `state`: `tolkas` (ny, med ett intyg som väntar på bildmodellen), `vantar` (ny), `arbetar`
-  (någon har posten, eller avsändaren har fått en fråga) eller `klart` (stängd, också som
-  dubblett eller skräp).
+  (någon har posten, eller avsändaren har fått en fråga), `registrerad` (skickade foton vars
+  `TRANSFER` är registrerad, medan posten är öppen) eller `klart` (stängd, också som dubblett eller
+  skräp).
 
 ## Den tomma blanketten
 

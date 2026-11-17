@@ -857,25 +857,66 @@ class PurchaseNoticeTest(ArsrapportTest):
         )
         self.assertEqual(refused.status_code, 429)
 
-    def test_sent_photos_close_when_the_transfer_is_registered(self):
+    def test_sent_photos_show_registered_and_only_the_queue_closes_them(self):
         self.login("owner")
-        item_id = self.send(self.upload(purpose="inskick")).get_json()["id"]
-        rows = {row["id"]: row for row in self.view()["arenden"]}
+        uploaded = self.upload(purpose="inskick")
+        item_id = self.send(uploaded).get_json()["id"]
+
+        def state():
+            return {row["id"]: row for row in self.view()["arenden"]}[item_id]["state"]
+
         expected = {"id": item_id, "what": "kop_saknas", "number": self.NEW, "photos": 1, "state": "vantar"}
-        self.assertEqual(rows[item_id], expected)
-        # the manager registers it in its birth herd, and transfers it to the buyer
+        self.assertEqual({row["id"]: row for row in self.view()["arenden"]}[item_id], expected)
+        self.assertEqual(self.kop_anmalt(), 1)  # the status view counts it as a purchase reported
+        # the manager registers it in its birth herd, takes the item, and transfers the rabbit to the buyer
         rabbit = db.Individual.create(origin_herd=self.seller, number=self.NEW, sex="female")
         ht_row("BIRTH", herd=self.seller, individual=rabbit, herd_tracking_date=date(2024, 5, 1))
-        self.view()
-        self.assertEqual(db.InboxItem.get_by_id(item_id).state, "ny")  # registered, not yet transferred
+        self.assertEqual(self.client.post(f"/api/v2/inkorg/{item_id}/ta", json={}).status_code, 200)
         ht_row("TRANSFER", from_herd=self.seller, herd=self.h, individual=rabbit, herd_tracking_date=date(2025, 5, 20))
-        rows = {row["id"]: row for row in self.view()["arenden"]}
-        self.assertEqual(rows[item_id]["state"], "klart")
+        self.assertEqual(self.kop_anmalt(), 0)
+        # the member reloads the report while the worker holds the item: it stays open in the worker's hands
+        self.login("owner")
+        self.assertEqual(state(), "registrerad")
         item = db.InboxItem.get_by_id(item_id)
-        events = list(item.events.where(db.InboxEvent.kind == "lage"))
-        self.assertEqual([e.detail for e in events], [{"from": "ny", "to": "klar", "note": "Köpet är registrerat"}])
-        self.view()  # idempotent
-        self.assertEqual(item.events.where(db.InboxEvent.kind == "lage").count(), 1)
+        self.assertEqual((item.state, item.assigned_to_id), ("tagen", self.manager.id))
+        self.assertFalse(item.events.where(db.InboxEvent.kind == "lage").exists())
+        # the queue closes it, the way it closes an upload: its last document done
+        self.login("man")
+        path = f"/api/v2/inkorg/{item_id}/dokument/{uploaded['document_id']}"
+        self.assertEqual(self.client.patch(path, json={"dismissed": True}).status_code, 200)
+        self.login("owner")
+        self.assertEqual(state(), "klart")
+
+    def test_a_held_purchase_photo_is_never_read_before_it_is_sent(self):
+        """Codex round 2: a handler who retypes a held photo, or asks for a new reading, has the worker read nothing."""
+        read = self.reading_on()
+        for purpose in ("kop", "inskick"):
+            with self.subTest(purpose=purpose):
+                self.login("owner")
+                uploaded = self.upload(purpose=purpose)
+                self.assertEqual(db.InboxItem.get_by_id(uploaded["item_id"]).ref_data, {"syfte": purpose})
+                self.login("man")
+                item_path = f"/api/v2/inkorg/{uploaded['item_id']}"
+                self.assertEqual(self.client.post(f"{item_path}/ta", json={}).status_code, 200)
+                path = f"{item_path}/dokument/{uploaded['document_id']}"
+                for doc_type in ("bevis", "intyg"):  # Typ away from Intyg and back
+                    retyped = self.client.patch(path, json={"doc_type": doc_type})
+                    self.assertEqual(retyped.status_code, 200, retyped.get_data(as_text=True))
+                self.assertEqual(db.InboxDocument.get_by_id(uploaded["document_id"]).interpretation_status, "av")
+                again = self.client.post(f"{path}/tolka-igen", json={})
+                self.assertEqual((again.status_code, again.get_json()["detail"]), (409, inbox.NOTICE_UNREAD))
+                waiting = db.InboxDocument.update(interpretation_status="vantar")
+                waiting.where(db.InboxDocument.id == uploaded["document_id"]).execute()
+                self.assertIsNone(interpreter.interpret_next())
+                db.InboxDocument.update(interpretation_status="av").where(
+                    db.InboxDocument.id == uploaded["document_id"]
+                ).execute()
+        self.assertEqual(read, [])
+        # sent, the certificate is an ordinary upload's and is read; a held photo's item is gone
+        self.login("owner")
+        held = self.upload(purpose="inskick")
+        self.assertEqual(self.send(held).status_code, 200)
+        self.assertEqual(interpreter.interpret_next(), held["document_id"])
 
     # S8: "Ärenden hos genbanksansvarig", the queue items that concern the report
 

@@ -541,8 +541,8 @@ def upload_photo(herd, year):
     file = request.files.get("file")
     if file is None or not file.filename:
         raise ArsrapportError(400, "Ingen fil bifogad.")
-    # a purchase notice's photo, never read by the model, or a bought rabbit's photo (S7), read once it is sent
-    purchase = request.args.get("syfte") in ("kop", "inskick")
+    # held for a purchase notice, never read by the model, or for sending a bought rabbit's photos, read once sent (S7)
+    held = request.args.get("syfte") if request.args.get("syfte") in inbox.PURPOSES else None
     encoded, stored = [], []
 
     def keep(image):
@@ -559,7 +559,7 @@ def upload_photo(herd, year):
             # the round row under its lock: a round closed while the photo was read is seen here
             arsrapport.require_round_open(herd, arsrapport._lock_round(round_), access)  # pylint: disable=protected-access
             item, documents = inbox.create_upload(
-                sender, herd, None, stored, kind="kontroll", ref_type="individual", unread=purchase, **named
+                sender, herd, None, stored, kind="kontroll", ref_type="individual", held=held, **named
             )
     except _Refused as refused:
         inbox.remove_files(path for path, _, _ in stored)

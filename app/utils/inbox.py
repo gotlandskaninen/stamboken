@@ -85,6 +85,8 @@ NOTICE_TEXTS = {
 DOC_TYPES = ("intyg", "bevis", "arsblankett", "annat")
 CERT_FORMATS = ("handskrivet", "datorskrivet", "v1_pdf", "intyg_b", "digitalt_v2")
 OPENED_EVERY = timedelta(hours=1)
+PURPOSE = "syfte"  # ref_data's key on a report photo held for a purchase: "kop" (a notice's) or "inskick" (S7, to send)
+PURPOSES = ("kop", "inskick")
 # An item left "ofullstandig" is deleted this long after its retention_start (utils/inbox_purge.py),
 # and its sender is reminded after REMIND_MONTHS.
 INCOMPLETE_MONTHS = 12
@@ -241,12 +243,13 @@ def handlers():
     return sorted((_person(w.id, names) for w in workers), key=lambda p: p["name"].casefold())
 
 
-def create_upload(user, herd, message, stored, *, kind="upload", ref_type=None, unread=False, **detail):
+def create_upload(user, herd, message, stored, *, kind="upload", ref_type=None, held=None, **detail):
     """
     The item of an upload: one document per stored image ((path, sha256, quality)), and its notices. The report's
     photo (4b) is a `kontroll` item with `ref_type`; its `user` is None for the report link, which `detail` names
-    (access_code_id), as an account would be named. Its notices wait for its rabbit (bind_report_photo). An `unread`
-    upload (a purchase notice's photo) is never read: its documents are off from the start, so no reading claims them.
+    (access_code_id), as an account would be named. Its notices wait for its rabbit (bind_report_photo). A photo
+    `held` for a purchase (PURPOSES, kept in `ref_data`) is not read while it is held (unread): its documents are
+    off from the start, so no reading claims them.
     """
     item = InboxItem.create(
         kind=kind,
@@ -255,8 +258,9 @@ def create_upload(user, herd, message, stored, *, kind="upload", ref_type=None, 
         sender_user=user,
         message=mask_tokens(message),
         ref_type=ref_type,
+        ref_data={PURPOSE: held} if held else None,
     )
-    off = {"interpretation_status": "av"} if unread else {}
+    off = {"interpretation_status": "av"} if held else {}
     documents = [
         InboxDocument.create(item=item, original_path=path, mime="image/jpeg", sha256=sha256, quality=quality, **off)
         for path, sha256, quality in stored
@@ -617,7 +621,7 @@ def update_document(item, document, user, changes):
     if "dismissed" in changes and not isinstance(changes["dismissed"], bool):
         raise InboxError(400, "dismissed är true eller false.")
     if changes.get("doc_type", document.doc_type) != document.doc_type:  # only certificates are read, never a notice's
-        read = changes["doc_type"] == "intyg" and item.ref_type != "kopanmalan"
+        read = changes["doc_type"] == "intyg" and not unread(item)
         document.interpretation_status = interpreter.initial_status() if read else "av"
         document.attempts = 0
     for key in ("doc_type", "cert_format", "rotation"):
@@ -639,12 +643,20 @@ def update_document(item, document, user, changes):
 NOTICE_UNREAD = "Fotot till ett anmält köp tolkas inte."
 
 
+def unread(item):
+    """
+    The model never reads the item's photos: a purchase notice's, and a report photo held for a purchase (`ref_data`
+    PURPOSE) until the notice takes it, its sending makes it an ordinary upload (S7), or a rabbit is registered from it.
+    """
+    return item.ref_type == "kopanmalan" or bool(item.ref_data and item.ref_data.get(PURPOSE))
+
+
 def reinterpret(item, document, user):
     """ "Tolka igen", after a turn: the certificate waits for the image reading again, its old proposal gone."""
     require_handler(item, user)
     if not interpreter.enabled():
         raise InboxError(409, "Bildtolkningen är avstängd.")
-    if item.ref_type == "kopanmalan":
+    if unread(item):
         raise InboxError(409, NOTICE_UNREAD)
     saved_elsewhere = document.individual_id is not None and not report_photo(item)
     if document.doc_type != "intyg" or document.done_at is not None or saved_elsewhere:
@@ -1038,8 +1050,8 @@ def bind_report_photo(item, document, user, individual):
     transaction: a reading already made is set beside the rabbit again from what was read (no new reading), and only
     now do the queue's workers hear of it; a photo never bound may be scrapped, which asks for a new upload.
     """
-    InboxItem.update(ref_id=individual.id).where(InboxItem.id == item.id).execute()
-    item.ref_id = individual.id
+    InboxItem.update(ref_id=individual.id, ref_data=None).where(InboxItem.id == item.id).execute()
+    item.ref_id, item.ref_data = individual.id, None  # held for a purchase no longer: a rabbit's photo is read
     saved(item, document, user, individual, "ny_kanin")
     if document.interpretation_status == "av":  # uploaded for a purchase notice (unread): a rabbit's photo is read (G5)
         document.interpretation_status = interpreter.initial_status()
