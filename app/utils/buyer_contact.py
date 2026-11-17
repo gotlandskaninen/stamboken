@@ -10,7 +10,8 @@ from datetime import timedelta
 
 from peewee import Case, fn
 
-from utils.database import DB_PROXY, BuyerContact, HerdTracking, Individual, ht_sort_key
+import utils.sale_proposal as sale_proposal
+from utils.database import DB_PROXY, BuyerContact, HerdTracking, Individual, SaleProposal, ht_sort_key
 from utils.herd_tracking import (
     HerdTrackingForbidden,
     HerdTrackingNotFound,
@@ -24,11 +25,13 @@ from utils.herd_tracking import (
     sold_on,
 )
 from utils.inbox_purge import remove_originals
+from utils.individual_commands import FREE_TEXT_RETENTION
 from utils.mail import forget_recipient
 
 logger = logging.getLogger("herdbook.buyer_contact")
 
 MEMBERSHIP_OPTIN_FOR = timedelta(days=365)  # at most 12 months
+PROPOSAL_BUYER_FOR = FREE_TEXT_RETENTION  # spec section 6: 13 months, as the command log's free text
 
 
 def buyer_genebank(contact_id):
@@ -122,16 +125,32 @@ def purge_expired(now):
     return _delete_locked(BuyerContact.purge_at <= now, "gallring_fem_ar")
 
 
+def _dead():
+    return (Individual.death_date.is_null(False)) | (fn.COALESCE(Individual.death_note, "") != "")
+
+
 def purge_dead(now):  # pylint: disable=unused-argument  # every rule takes the clock
     """Once the association learns the rabbit is dead, its buyers' names and towns go before the five years."""
-    dead = (Individual.death_date.is_null(False)) | (fn.COALESCE(Individual.death_note, "") != "")
     held = (
         HerdTracking.select(HerdTracking.holder_contact)
         .join(Individual, on=(Individual.id == HerdTracking.individual))
-        .where(HerdTracking.holder_contact.is_null(False) & dead)
+        .where(HerdTracking.holder_contact.is_null(False) & _dead())
         .distinct()
     )
     return _delete_locked(BuyerContact.id.in_(held), "gallring_dod")
+
+
+def purge_proposal_buyers(now):
+    """
+    A pending sale proposal's buyer, not yet a BuyerContact: 13 months after the proposal, or once the association
+    learns the rabbit is dead, as purge_dead. One proposal at a time, under its locks (sale_proposal.clear_buyer).
+    """
+    due = (SaleProposal.created_at < now - PROPOSAL_BUYER_FOR) | SaleProposal.individual.in_(
+        Individual.select(Individual.id).where(_dead())
+    )
+    found = SaleProposal.select().where(SaleProposal.state == "foreslagen", SaleProposal.buyer.is_null(False), due)
+    found = list(found.order_by(SaleProposal.id))
+    return sum(sale_proposal.clear_buyer(proposal, "gallring_forslag", still=due) for proposal in found)
 
 
 def _null_fields(where, changes, action):
@@ -193,7 +212,7 @@ def purge_membership_optin(now):
     return _null_fields(BuyerContact.membership_optin_at < now - MEMBERSHIP_OPTIN_FOR, changes, "gallring_medlemskap")
 
 
-RULES = (purge_membership_optin, purge_sold_on, purge_dead, purge_expired)
+RULES = (purge_membership_optin, purge_sold_on, purge_dead, purge_expired, purge_proposal_buyers)
 
 
 def run(now):

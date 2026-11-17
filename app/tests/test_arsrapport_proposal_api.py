@@ -145,6 +145,31 @@ class ProposalApiTest(ArsrapportTest):
             },
         )
 
+    def test_manager_erases_a_pending_buyer_on_request(self):  # M2: a buyer no BuyerContact holds yet
+        proposal = self.first(self.sald(self.a, "utanfor", 2025, 10, 3, kopare=BUYER))
+        path = f"/api/v2/arsrapport/forslag/{proposal.id}/kopare"
+        for who in ("hjalp", "owner"):
+            self.login(who)
+            self.assertEqual(self.client.delete(path).status_code, 403, who)
+        self.assertEqual(db.SaleProposal.get_by_id(proposal.id).buyer["name"], BUYER["name"])
+        self.login("man")
+        self.assertEqual(self.client.delete(path).status_code, 204)
+        self.assertEqual(self.client.delete(path).status_code, 204)  # nothing left: logged once
+        self.assertIsNone(db.SaleProposal.get_by_id(proposal.id).buyer)
+        (logged,) = db.AuditLog.select().where(db.AuditLog.table_name == "sale_proposal")
+        manager = db.User.get_by_id(self.manager.id)
+        self.assertEqual(
+            (logged.record_id, logged.new_data, logged.changed_by),
+            (str(proposal.id), {"action": "radering"}, manager.username or manager.email),
+        )
+        self.assertNotIn("Zelda", json.dumps(logged.new_data))
+        (row,) = self.client.get("/api/v2/arsrapport/besattning/G9001/2025/forslag").get_json()["forslag"]
+        self.assertIsNone(row["buyer"])
+        response = self.decide(proposal, "godkann")
+        self.assertEqual((response.status_code, response.get_json()["detail"]), (409, sp.BUYER_GONE))
+        response = self.decide(proposal, "avvisa", reason="Köparen vill inte stå med", then="valj_igen")
+        self.assertEqual(response.status_code, 200)
+
     def test_approve_after_withdraw_gets_409(self):  # Review Focus 1
         proposal = self.first()
         self.day(1)

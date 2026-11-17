@@ -450,3 +450,15 @@ def reject_sale(proposal_id):
         raise ArsrapportError(400, "Skicka orsak och val som JSON.")
     sale_proposal.reject(proposal, current_user, reason=body.get("reason"), then=body.get("then"), now=arsrapport.now())
     return jsonify({"id": proposal.id, "state": "avvisad"})
+
+
+# [API] A pending sale's buyer erased on request or objection (ADR-0016), by proposal: a buyer only a proposal names
+# has no BuyerContact yet, so DELETE /v2/buyer-contacts cannot reach it. The sale can then only be rejected.
+@arsrapport_bp.route("/v2/arsrapport/forslag/<int:proposal_id>/kopare", methods=["DELETE"])
+@json_login_required
+def erase_sale_buyer(proposal_id):
+    proposal, denied = _deciding(proposal_id)
+    if denied:
+        return denied
+    sale_proposal.clear_buyer(proposal, "radering", current_user)
+    return "", 204

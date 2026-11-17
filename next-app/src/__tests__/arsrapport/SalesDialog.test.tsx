@@ -160,6 +160,26 @@ describe("SalesDialog", () => {
     expect(within(first).queryByText(/Köparen har anmält köpet,/)).toBeNull();
   });
 
+  it("says so when the buyer outside the genebank is erased (M2)", async () => {
+    saleProposals.mockResolvedValue({
+      ok: true,
+      data: { forslag: [{ ...outside, buyer: null }] },
+    });
+    render(
+      <SalesDialog
+        herd="G9001"
+        year={2025}
+        env="demo"
+        onDecided={vi.fn()}
+        onClose={vi.fn()}
+      />,
+    );
+    const row = await screen.findByRole("region", { name: "G9001-2402" });
+    expect(row.textContent).toContain(
+      "utanför genbanken, köparens uppgifter är raderade",
+    );
+  });
+
   it("approves a sale and reloads the list", async () => {
     approveSale.mockResolvedValue({
       ok: true,

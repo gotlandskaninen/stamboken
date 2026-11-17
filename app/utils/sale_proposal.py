@@ -14,6 +14,7 @@ import utils.inbox as inbox
 import utils.purchase_notice as purchase_notice
 from utils.database import (
     DB_PROXY,
+    AuditLog,
     Herd,
     HerdTracking,
     InboxItem,
@@ -21,11 +22,13 @@ from utils.database import (
     YearlyHerdReport,
     ht_not_voided,
     ht_order_desc,
+    lock_individuals,
 )
 from utils.herd_tracking import (
     BUYER_TEXT_FIELDS,
     HerdTrackingError,
     HerdTrackingInvalid,
+    _audit_user,
     _reject_buyer_name,
     buyer_contact_fields,
 )
@@ -33,6 +36,7 @@ from utils.individual_commands import IndividualRefused, lock_individual_for_edi
 
 DECIDED = "Förslaget är redan avgjort."
 NAMED = "Skriv orsaken utan köparens namn."
+BUYER_GONE = "Köparens uppgifter är raderade, så försäljningen kan inte godkännas. Avvisa den i stället."
 
 
 def _stored_buyer(buyer):
@@ -170,6 +174,8 @@ def approve(proposal, user, *, now: datetime) -> HerdTracking:
         proposal, report, notices = _locked(proposal, buyer=True)
         if proposal.state != "foreslagen":
             raise arsrapport.ArsrapportError(409, DECIDED)
+        if proposal.to_herd_id is None and proposal.buyer is None:  # erased or purged (clear_buyer)
+            raise arsrapport.ArsrapportError(409, BUYER_GONE)
         buyer = proposal.buyer
         code = proposal.to_herd.herd if proposal.to_herd_id else arsrapport._sale_code(report.herd, "utanfor")  # pylint: disable=protected-access
         _claim(proposal, user, now, state="godkand")
@@ -228,6 +234,32 @@ def reject(proposal, user, *, reason: str, then: Literal["kvar", "valj_igen"], n
         _close_item(proposal, user, "klar")
         params, ref = {"proposal_id": proposal.id, "kvar": int(then == "kvar")}, ("sale_proposal", proposal.id)
         arsrapport._mail("arsrapport.forsaljning_avvisad", report.herd, user, params, ref)  # pylint: disable=protected-access
+
+
+def clear_buyer(proposal, action, user=None, still=None) -> int:
+    """
+    The pending proposal's buyer goes (spec section 6), under a decision's locks: the report lock and row, the
+    report's items (_locked), then the rabbit, with `still` (SQL), the rule that chose it, read again under them. One
+    audit_log row without the buyer, as for a BuyerContact. Returns 1 when it went, else 0. A sale outside the
+    genebank without its buyer can only be rejected (BUYER_GONE).
+    """
+    with DB_PROXY.atomic():
+        proposal, _, _ = _locked(proposal)
+        lock_individuals([proposal.individual_id])  # a death is read under the rabbit's lock
+        query = SaleProposal.update(buyer=None).where(
+            SaleProposal.id == proposal.id, SaleProposal.state == "foreslagen", SaleProposal.buyer.is_null(False)
+        )
+        changed = (query.where(still) if still is not None else query).execute()
+        if changed:
+            AuditLog.create(
+                table_name=SaleProposal._meta.table_name,
+                record_id=str(proposal.id),
+                operation="UPDATE",
+                new_data={"action": action},
+                changed_fields=["buyer"],
+                changed_by=_audit_user(user) if user is not None else None,
+            )
+    return changed
 
 
 def decisions(report) -> list[dict]:
