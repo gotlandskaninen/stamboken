@@ -151,7 +151,8 @@ date, state}`, och samma begäran igen svarar med posten.
   `photo`, och sessionens regler för foton gäller som för anmälan (403, 409).
 - Rundan och länken kontrolleras under rapportens lås som för anmälan.
 - Posten stänger sig själv med samma regler som en anmälan, när numret finns i genbanken och en
-  `TRANSFER` av kaninen till besättningen är registrerad, också om en arbetare har posten.
+  `TRANSFER` av kaninen till besättningen är registrerad. Det görs bara i rapportvyn, också om en
+  arbetare har posten, aldrig när posten öppnas i kön.
 
 ## Ärenden hos genbanksansvarig (S8)
 
