@@ -196,6 +196,15 @@ class TestPedigreeTemplateV2(unittest.TestCase):
         self.assertIn("752098100012345", html)
         self.assertIn('<td class="l">Benring</td><td class="v">—</td>', html)
 
+    def test_coat_is_pals_once_rex_is_known(self):
+        self.assertIn('<td class="l">Päls</td><td class="v">Rex</td>', self._html(rex=True))
+        self.assertIn('<td class="l">Päls</td><td class="v">Normal</td>', self._html(rex=False))
+
+    def test_coat_note_until_rex_exists(self):
+        html = self._html(hair_notes="Normalhårig")
+        self.assertIn('<td class="l">Hårlag</td><td class="v">Normalhårig</td>', html)
+        self.assertNotIn("Päls", html)
+
     def test_neither_foot_ring_nor_chip(self):
         # the row stays, so "no ring" is not read as "not printed"
         html = self._html()

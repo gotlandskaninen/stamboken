@@ -84,6 +84,8 @@ def build_cert_data(individual, ind_data, user_id):
     cert_data["notes"] = raw_notes
     cert_data["color_note"] = raw_color_note
     cert_data["foot_ring"] = ind_data.get("foot_ring") or ""
+    # None until the rex column exists (colour atlas PR 2); then the certificate prints Päls: Normal or Rex
+    cert_data["rex"] = getattr(individual, "rex", None)
     cert_data["microchip"] = individual.microchip or ""
     cert_data["breed"] = _breed_for(individual).capitalize()
     # The colour's id is its atlas number; the template skips the chip when empty.
