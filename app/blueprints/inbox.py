@@ -351,9 +351,16 @@ def item_detail(item_id):
     item = InboxItem.get_or_none(InboxItem.id == item_id)
     if item is None:
         return problem(404, "Hittades inte", "Posten finns inte.")
-    with DB_PROXY.atomic():
-        inbox.open_item(item, current_user)
-        purchase_notice.close_registered([item])  # a purchase notice whose transfer is registered closes itself
+    try:
+        with DB_PROXY.atomic():
+            if item.ref_type == purchase_notice.KIND:
+                # locked before the opening's event, whose FK takes KEY SHARE: two first openings would then both
+                # wait for the other's to close it; held through the closing
+                item = inbox.lock_item(item.id)
+            inbox.open_item(item, current_user)
+            purchase_notice.close_registered([item])  # a purchase notice whose transfer is registered closes itself
+    except inbox.InboxError as exc:  # the purge took it meanwhile
+        return problem(exc.status, exc.title, exc.detail)
     return jsonify(inbox.item_detail(InboxItem.get_by_id(item.id)))
 
 

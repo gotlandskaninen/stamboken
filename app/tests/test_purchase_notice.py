@@ -7,19 +7,26 @@ Synthetic herds and rabbits only.
 isort:skip_file
 """
 
+import threading
+import time
 from datetime import date
 from unittest import mock
 
 import utils.arsrapport as arsrapport
 import utils.database as db
+import utils.herd_tracking as herd_tracking
+import utils.inbox as inbox
 import utils.mail as mail
 import utils.purchase_notice as purchase_notice
 import utils.report_code as report_code
+import utils.sale_proposal as sale_proposal
 import utils.settings as settings
 from herdbook import APP
+from utils.arsrapport import Access, ArsrapportError
 from utils.report_code import CodeActor
 
 from tests.arsrapport_fixtures import ArsrapportTest
+from tests.database_test import _USE_POSTGRES
 from tests.ht_helpers import ht_row
 
 DAY0 = date(2026, 1, 10)
@@ -27,6 +34,45 @@ DAY0 = date(2026, 1, 10)
 
 def notices():
     return list(db.InboxItem.select().where(db.InboxItem.ref_type == "kopanmalan").order_by(db.InboxItem.id))
+
+
+def until(condition, timeout=5):
+    """Polls `condition` until it holds; False after `timeout` seconds."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if condition():
+            return True
+        time.sleep(0.05)
+    return False
+
+
+def lock_waiter():
+    """A session waits for a lock (pg_locks): the other thread is blocked where the test expects it."""
+    (count,) = db.DB_PROXY.execute_sql("SELECT count(*) FROM pg_locks WHERE NOT granted").fetchone()
+    return count > 0
+
+
+def in_thread(results, key, work):
+    """Runs `work` on its own connection; its result, or the exception's repr, goes to results[key]."""
+
+    def run():
+        try:
+            with APP.app_context():
+                results[key] = work()
+        except Exception as exc:  # noqa: BLE001  # the test reports any failure, a deadlock included
+            results[key] = repr(exc)
+        finally:
+            db.DB_PROXY.close()
+
+    return threading.Thread(target=run)
+
+
+def run_all(*threads):
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=30)
+    return not any(thread.is_alive() for thread in threads)
 
 
 class PurchaseNoticeTest(ArsrapportTest):
@@ -64,10 +110,10 @@ class PurchaseNoticeTest(ArsrapportTest):
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         return response.get_json()
 
-    def seller_proposes(self, month=5, day=10):
+    def seller_proposes(self, month=5, day=10, year=2025):
         """G9002's link reports a sold to G9001: a sale proposal (5.9)."""
         access = arsrapport.code_access(self.seller, self.round_, [self.seller_code.id])
-        body = self.body(self.sald(self.a, "G9001", 2025, month, day), self.kvar(self.b, vikt=2.8))
+        body = self.body(self.sald(self.a, "G9001", year, month, day), self.kvar(self.b, vikt=2.8))
         arsrapport.submit(
             self.seller,
             self.round_,
@@ -76,6 +122,16 @@ class PurchaseNoticeTest(ArsrapportTest):
             arsrapport.parse_submission(body, paper=False),
         )
         return db.SaleProposal.get(db.SaleProposal.individual == self.a.id)
+
+    def stored_notice(self, rabbit, when):
+        """An open notice of the buyer herd as report_purchase writes it, dated `when` (another year's, here)."""
+        data = {"number": rabbit.number, "from_herd": "G9002", "date": when.isoformat(), "individual_id": rabbit.id}
+        return db.InboxItem.create(
+            kind="kontroll", state="ny", genebank=self.gotland, herd=self.h, ref_type="kopanmalan", ref_data=data
+        )
+
+    def state(self, item):
+        return db.InboxItem.get_by_id(item.id).state
 
     def kop_anmalt(self):
         self.login("man")
@@ -260,3 +316,198 @@ class PurchaseNoticeTest(ArsrapportTest):
         # this purchase, registered after the notice with another date
         ht_row("TRANSFER", from_herd=self.seller, herd=self.h, individual=self.a, herd_tracking_date=date(2025, 4, 1))
         self.assertEqual(purchase_notice.registered(notices()), {notices()[0].id})
+
+    def test_another_genebanks_rabbit_or_herd_is_answered_as_missing(self):
+        """A Gotland report cannot learn whether a Mellerud number or herd exists (finding 1)."""
+        mellerud = db.Herd.create(genebank=self.mellerud, herd="M9001", is_active=True)
+        db.Herd.create(genebank=self.mellerud, herd="MX1", is_active=True)
+        (foreign,) = self.rabbits(mellerud, 1)
+        self.login("owner")
+
+        def answer(**body):
+            response = self.notify(**body)
+            return response.status_code, response.get_json()
+
+        self.assertEqual(answer(number=foreign.number), answer(number="M9001-99999"))
+        self.assertEqual(answer(number=foreign.number)[0], 422)
+        missing = answer(from_herd="M0000")
+        self.assertEqual(missing[0], 400)
+        self.assertEqual(answer(from_herd="M9001"), missing)
+        self.assertEqual(answer(from_herd="MX1"), missing)  # another genebank's outside herd too
+        self.assertEqual(notices(), [])
+
+    def test_a_stay_that_ended_before_the_purchase_does_not_close_it(self):
+        """In 1 May, out 5 May, bought again 10 May: the first stay is not this purchase (finding 2)."""
+        ht_row("TRANSFER", from_herd=self.seller, herd=self.h, individual=self.a, herd_tracking_date=date(2025, 5, 1))
+        ht_row("TRANSFER", from_herd=self.h, herd=self.seller, individual=self.a, herd_tracking_date=date(2025, 5, 5))
+        self.login("owner")
+        self.notify(when="2025-05-10")
+        # the same stay registered after the notice (backfilled) is no more this purchase
+        self.notify(number=self.b.number, when="2025-05-10")
+        first, second = notices()
+        ht_row("TRANSFER", from_herd=self.seller, herd=self.h, individual=self.b, herd_tracking_date=date(2025, 5, 1))
+        ht_row("TRANSFER", from_herd=self.h, herd=self.seller, individual=self.b, herd_tracking_date=date(2025, 5, 5))
+        self.assertEqual(purchase_notice.registered(notices()), set())
+        self.assertEqual([row["state"] for row in self.view()["kopanmalningar"]], ["ny", "ny"])
+        # the purchase itself, registered on the reported day
+        ht_row("TRANSFER", from_herd=self.seller, herd=self.h, individual=self.b, herd_tracking_date=date(2025, 5, 10))
+        self.assertEqual(purchase_notice.registered(notices()), {second.id})
+        self.assertEqual((self.state(first), self.state(second)), ("ny", "ny"))
+
+    def test_two_first_openings_in_the_queue_do_not_deadlock(self):
+        """Both log their opening, then close the notice: the item's lock comes before the event (finding 3)."""
+        if not _USE_POSTGRES:
+            self.skipTest("row locks need PostgreSQL")
+        self.login("owner")
+        item_id = self.notify().get_json()["id"]
+        ht_row("TRANSFER", from_herd=self.seller, herd=self.h, individual=self.a, herd_tracking_date=date(2025, 5, 14))
+        opened, original, results = [], inbox.open_item, {}
+
+        def opened_then_wait(item, user):
+            original(item, user)
+            opened.append(user.id)
+            # both events are in before either closes it, unless the other waits for the item's lock
+            until(lambda: len(opened) == 2 or lock_waiter())
+
+        def look(username):
+            def work():
+                client = APP.test_client(use_cookies=True)
+                client.post("/api/login", json={"username": username, "password": "pass"})
+                return client.get(f"/api/v2/inkorg/{item_id}").status_code
+
+            return work
+
+        with mock.patch.object(inbox, "open_item", side_effect=opened_then_wait):
+            done = run_all(in_thread(results, "man", look("man")), in_thread(results, "admin", look("admin")))
+        self.assertTrue(done, "hung threads")
+        self.assertEqual(results, {"man": 200, "admin": 200})
+        item = db.InboxItem.get_by_id(item_id)
+        self.assertEqual(item.state, "klar")
+        self.assertEqual(item.events.where(db.InboxEvent.kind == "lage").count(), 1)
+
+    def test_a_void_of_the_transfer_comes_before_the_closing_or_after(self):
+        """The closing reads the transfer again under the rabbit's lock, which the void holds (finding 4)."""
+        if not _USE_POSTGRES:
+            self.skipTest("row locks need PostgreSQL")
+        self.login("owner")
+        item_id = self.notify().get_json()["id"]
+        move = ht_row(
+            "TRANSFER", from_herd=self.seller, herd=self.h, individual=self.a, herd_tracking_date=date(2025, 5, 14)
+        )
+        voided, original, results = threading.Event(), herd_tracking._assert_no_new_violations, {}
+
+        def void_held_open(*args, **kwargs):
+            original(*args, **kwargs)
+            voided.set()
+            until(lock_waiter)  # the closing waits for the rabbit before the void commits
+
+        def void():
+            herd_tracking.void_herd_tracking(move.id, db.User.get_by_id(self.admin.id), "Fel rad", typed=False)
+            return "ok"
+
+        def look():
+            voided.wait(10)
+            client = APP.test_client(use_cookies=True)
+            client.post("/api/login", json={"username": "man", "password": "pass"})
+            return client.get(f"/api/v2/inkorg/{item_id}").status_code
+
+        with mock.patch.object(herd_tracking, "_assert_no_new_violations", side_effect=void_held_open):
+            done = run_all(in_thread(results, "void", void), in_thread(results, "look", look))
+        self.assertTrue(done, "hung threads")
+        self.assertEqual(results, {"void": "ok", "look": 200})
+        self.assertEqual(db.InboxItem.get_by_id(item_id).state, "ny")
+
+    def test_approval_and_a_notice_of_another_year_are_one_after_the_other(self):
+        """
+        A January sale in the seller's 2025 report and the buyer's 2026 notice of it take no common report lock;
+        the purchase's own lock makes "one approval settles both" hold (finding 5).
+        """
+        if not _USE_POSTGRES:
+            self.skipTest("advisory locks need PostgreSQL")
+        proposal = self.seller_proposes(1, 8, year=2026)
+        round_2026 = self.round(2026)
+        self.at(date(2027, 1, 10))  # the 2026 round is open; the 2025 sale is approved after its end_date
+        original, results, locked = arsrapport._lock_items, {}, threading.Event()
+
+        def items_after_the_notice_waits(*args, **kwargs):
+            locked.set()  # the approval has read the buyer's notices, under the purchase's lock
+            until(lock_waiter)  # the notice waits for that lock
+            return original(*args, **kwargs)
+
+        def approve():
+            sale_proposal.approve(proposal, db.User.get_by_id(self.manager.id), now=arsrapport.now())
+            return "ok"
+
+        def report():
+            try:
+                purchase_notice.report_purchase(
+                    self.h,
+                    round_2026,
+                    Access("owner"),
+                    self.owner,
+                    number=self.a.number,
+                    from_herd="G9002",
+                    date=date(2026, 1, 12),
+                )
+            except ArsrapportError as exc:
+                return exc.status, exc.detail
+            return "created"
+
+        with mock.patch.object(arsrapport, "_lock_items", side_effect=items_after_the_notice_waits):
+            approving = in_thread(results, "approve", approve)
+            approving.start()
+            locked.wait(10)
+            done = run_all(in_thread(results, "notice", report))
+            approving.join(timeout=30)
+        self.assertTrue(done and not approving.is_alive(), "hung threads")
+        self.assertEqual(results, {"approve": "ok", "notice": (409, f"{self.a.number} står redan i din besättning.")})
+        self.assertEqual([item.state for item in notices()], [])
+
+    def test_an_open_notice_of_another_year_is_a_409(self):
+        """A 2025 link neither gets a 2024 notice back nor makes a second one (finding 6)."""
+        old = self.stored_notice(self.a, date(2024, 11, 2))
+        self.open_link(self.code)
+        response = self.notify()
+        self.assertEqual(response.status_code, 409, response.get_data(as_text=True))
+        self.assertEqual(
+            (response.get_json()["field"], response.get_json()["detail"]),
+            ("number", f"Köpet av {self.a.number} är redan anmält för 2024."),
+        )
+        self.assertEqual(notices(), [old])
+
+    def test_the_report_view_closes_only_its_own_years_notices(self):
+        """GET 2025 closes a registered 2025 notice and leaves a registered 2024 one alone (finding 6)."""
+        old = self.stored_notice(self.b, date(2024, 11, 2))
+        ht_row("TRANSFER", from_herd=self.seller, herd=self.h, individual=self.b, herd_tracking_date=date(2024, 11, 2))
+        self.login("owner")
+        new = self.notify().get_json()
+        ht_row("TRANSFER", from_herd=self.seller, herd=self.h, individual=self.a, herd_tracking_date=date(2025, 5, 14))
+        self.assertEqual(self.view()["kopanmalningar"], [{**new, "state": "klar"}])
+        self.assertEqual(self.state(old), "ny")
+
+    def test_a_link_revoked_since_its_check_closes_nothing(self):
+        """The view's closing is a write: E4 again under the report's lock (finding 6)."""
+        self.open_link(self.code)
+        item_id = self.notify().get_json()["id"]
+        ht_row("TRANSFER", from_herd=self.seller, herd=self.h, individual=self.a, herd_tracking_date=date(2025, 5, 14))
+        db.ReportAccessCode.update(revoked_at=arsrapport.now()).where(db.ReportAccessCode.id == self.code.id).execute()
+        stale = Access("code", code=db.ReportAccessCode.get_by_id(self.code.id))  # as read before the revoke
+        with mock.patch.object(arsrapport, "code_access", return_value=stale):
+            response = self.api("GET", "/besattning/G9001/2025")
+        self.assertEqual((response.status_code, response.get_json()["code"]), (403, "lank_ogiltig"))
+        self.assertEqual(db.InboxItem.get_by_id(item_id).state, "ny")
+
+    def test_a_closed_or_unactivated_round_takes_no_notice(self):
+        """The report's own rule for writing, under its lock (finding 7)."""
+        self.login("owner")
+        self.at(date(2026, 4, 1))  # after end_date: the owner's report is read-only
+        response = self.notify()
+        self.assertEqual((response.status_code, response.get_json()["code"]), (409, "rundan_stangd"))
+        self.login("man")  # an editor still writes after end_date, as in the report
+        self.assertEqual(self.notify(number=self.b.number).status_code, 200)
+        self.at(DAY0)
+        db.YearlyReportRoundGenebank.delete().where(db.YearlyReportRoundGenebank.round == self.round_.id).execute()
+        self.login("owner")
+        response = self.notify()
+        self.assertEqual((response.status_code, response.get_json()["code"]), (409, "rundan_stangd"))
+        self.assertEqual([item.ref_data["individual_id"] for item in notices()], [self.b.id])

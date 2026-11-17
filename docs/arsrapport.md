@@ -100,15 +100,24 @@ eller MX1) på dagen `date` under året. Anmälan blir en post i kön, `kind` `k
 `kopanmalan` och fälten i `ref_data`: `{number, from_herd, date, individual_id}`, utan personuppgifter.
 Svaret är `{id, number, from_herd, date, state}`.
 
+- Kaninen och säljaren söks bara i besättningens genbank (kaninens ursprungsbesättning), så en
+  annan genbanks nummer eller besättning får samma svar som ett som inte finns.
 - Ett nummer som Stamboken saknar ger 422 med `code` `inte_i_stamboken`: kaninen läggs till från
-  intyget i stället. En kanin som redan står i besättningen ger 409, och en öppen anmälan av samma
-  kanin är svaret igen.
+  intyget i stället. En kanin som redan står i besättningen ger 409. En öppen anmälan av samma
+  kanin under året är svaret igen, och en öppen anmälan från ett annat år ger 409.
+- Anmälan skrivs som rapporten, under rapportens lås: medan rundan är öppen, och efter `end_date`
+  bara av genbanksansvarig och admin. Annars 409 med `code` `rundan_stangd`.
 - En anmälan **matchar** ett väntande försäljningsförslag för samma kanin från `from_herd` till
   besättningen när datumen skiljer högst 14 dagar. Godkänns förslaget stängs anmälan i samma
-  transaktion; dess post låses i samma stigande pass som förslagets.
+  transaktion; dess post låses i samma stigande pass som förslagets. Förslaget och anmälan kan höra
+  till olika års rapporter, så både anmälan och godkännandet tar köpets eget lås (köparens
+  besättning och kaninen) efter rapportlåsen och före posterna.
 - En anmälan **stänger sig själv** ("Köpet är registrerat") när en aktiv `TRANSFER` av kaninen till
-  besättningen finns, registrerad efter anmälan eller daterad högst 14 dagar före anmälans datum.
-  Kontrollen görs i rapportvyn och när posten öppnas i kön, utan trigger, under postens lås.
+  besättningen finns, registrerad efter anmälan eller daterad högst 14 dagar före anmälans datum,
+  och ingen senare aktiv rad flyttar kaninen till en annan besättning senast anmälans datum. En
+  vistelse som slutade före köpet är inte köpet, också när den registrerades efter anmälan.
+  Kontrollen görs utan trigger i rapportvyn, för årets anmälningar under rapportens lås, och när
+  posten öppnas i kön. Posten låses före kaninen, och flytten läses igen under båda låsen.
 - Rapportvyns `rabbits` har `kopt: {datum, fran} | null` från den senaste aktiva `TRANSFER` till
   besättningen daterad under året, och `kopanmalningar: [{id, number, from_herd, date, state}]` med
   besättningens anmälningar daterade under året.

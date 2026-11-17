@@ -136,8 +136,9 @@ def _locked(proposal, buyer=False):
     and every pending proposal's item, this one's too. Returns the proposal and its report as they are under them,
     and the ids of the buyer's purchase notices that the sale settles.
     With `buyer` the buying herd's report lock too, both in herd id order, the only place that takes two (P2): the
-    buyer's Skicka, and a purchase notice of the buyer's, then come wholly before the approval or after it, and those
-    notices join the item pass.
+    buyer's Skicka then comes wholly before the approval or after it. A purchase notice of the buyer's may be in
+    another year's report, so the purchase's own lock serializes those, and the notices read under it join the item
+    pass.
     """
     report = proposal.report
     herds = {report.herd_id} | ({proposal.to_herd_id} if buyer and proposal.to_herd_id else set())
@@ -146,6 +147,7 @@ def _locked(proposal, buyer=False):
     report = YearlyHerdReport.select().where(YearlyHerdReport.id == report.id).for_update().get()
     notices = []
     if buyer and proposal.to_herd_id:
+        purchase_notice.lock_purchase(proposal.to_herd_id, proposal.individual_id)
         found = purchase_notice.open_notices([proposal.to_herd_id])
         notices = [item.id for item in purchase_notice.matching(proposal, report.herd.herd, found)]
     arsrapport._lock_items([proposal.individual_id], report=report, notices=notices)  # pylint: disable=protected-access

@@ -218,7 +218,7 @@ def report_purchase(herd, year):
         raise ArsrapportError(400, "Skicka köpet som JSON.")
     when = _dates("date").get("date")
     item = purchase_notice.report_purchase(
-        herd, round_, _actor(access), number=body.get("number"), from_herd=body.get("from_herd"), date=when
+        herd, round_, access, _actor(access), number=body.get("number"), from_herd=body.get("from_herd"), date=when
     )
     return jsonify(purchase_notice.notice_json(item))
 

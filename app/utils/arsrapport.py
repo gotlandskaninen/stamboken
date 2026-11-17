@@ -638,6 +638,19 @@ def draft_json(draft, user):
     }
 
 
+def require_open(round_, herd, access, day):
+    """
+    D11, P39c: the report is written on `day` only while the round is open, or after end_date by an editor or a
+    helper on paper; otherwise a 409 with code rundan_stangd.
+    """
+    end = round_.end_date
+    late_ok = access.editor or access.role == "helper"  # a helper's access always comes through the post
+    # round_open on end_date itself: the genebank has activated the round and its dates are set
+    late = late_ok and end is not None and day > end and round_open(round_, herd.genebank_id, end)
+    if not (round_open(round_, herd.genebank_id, day) or late):
+        raise ArsrapportError(409, "Rundan är inte öppen.", code="rundan_stangd")
+
+
 def save_draft(herd, round_, access, user, data, updated_at, submission_key, revision):
     """
     The herd's server draft (5.1), saved under the report's lock. `updated_at` is the version the client saw (None
@@ -647,12 +660,8 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
     paper (D11, P39c); otherwise a 409 with code rundan_stangd. A kept buyer's id is the server's alone (K1): the
     client's is dropped, the stored one stays on a sale still outside the genebank, and goes with a cleared one.
     """
-    day, end = today(), round_.end_date
-    late_ok = access.editor or access.role == "helper"  # a helper's access always comes through the post
-    # round_open on end_date itself: the genebank has activated the round and its dates are set
-    late = late_ok and end is not None and day > end and round_open(round_, herd.genebank_id, end)
-    if not (round_open(round_, herd.genebank_id, day) or late):
-        raise ArsrapportError(409, "Rundan är inte öppen.", code="rundan_stangd")
+    day = today()
+    require_open(round_, herd, access, day)
     if not isinstance(data, dict):
         raise ArsrapportError(400, "Utkastet ska vara ett objekt.")
     if "form" in data and not isinstance(data["form"], dict):
@@ -902,7 +911,7 @@ def report_view(herd, round_, access, user):
         "litters": [{**row, "birth_date": _iso(row["birth_date"])} for row in litters.dicts()],
         "sales": [{**row, "date": _iso(row["date"])} for row in sales.dicts()],
         "forslag": _forslag_json(report),
-        "kopanmalningar": purchase_notice.report_notices(herd, year),  # closes the registered ones first
+        "kopanmalningar": purchase_notice.report_notices(herd, round_, access),  # closes the registered ones first
         "herds": [] if access.code else sorted(row.herd for row in others),  # a link sees no other herd
         "report": {**_report_json(report, round_, access, is_open), "villkor": herd_conditions(herd, round_, report)}
         if report
