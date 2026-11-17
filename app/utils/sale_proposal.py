@@ -168,7 +168,7 @@ def approve(proposal, user, *, now: datetime) -> HerdTracking:
     """
     Registers the sale (record_sale, as the manager's or admin's own right, grant=None) and closes the item, also after
     the round's end_date (5.9). A sale on or before 31/12 into a herd whose report is in is mailed to its main member,
-    who then changes the report (FB4).
+    who then changes the report (FB4), while the round is open for it: after end_date only the status flag shows it.
     """
     with DB_PROXY.atomic():
         proposal, report, notices = _locked(proposal, buyer=True)
@@ -202,7 +202,12 @@ def approve(proposal, user, *, now: datetime) -> HerdTracking:
         for item_id in notices:  # fråga 19: one approval settles the buyer's notice too
             purchase_notice.close(item_id, user)
         buyer_report = arsrapport.current_report(proposal.to_herd, report.round) if proposal.to_herd_id else None
-        if buyer_report is not None and proposal.sale_date <= date(report.round.report_year, 12, 31):
+        day = now.astimezone(arsrapport.STOCKHOLM).date()
+        if (
+            buyer_report is not None
+            and proposal.sale_date <= date(report.round.report_year, 12, 31)
+            and arsrapport.round_open(report.round, proposal.to_herd.genebank_id, day)  # the mail asks for a change
+        ):
             ref = ("sale_proposal", proposal.id)
             arsrapport._mail("arsrapport.kop_godkant", proposal.to_herd, user, {"proposal_id": proposal.id}, ref)  # pylint: disable=protected-access
     return row

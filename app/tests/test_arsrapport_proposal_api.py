@@ -357,6 +357,14 @@ class ProposalApiTest(ArsrapportTest):
         self.assertEqual(self.flags("G9002")["kopt_efter_inskick"], 0)
         self.assertEqual(rows(self.a, "ATTESTATION")[0].herd_id, self.g9002.id)
 
+    def test_approval_after_end_date_flags_the_buyer_without_a_mail(self):  # L1: the buyer cannot change it now
+        self.reported(self.g9002)
+        proposal = self.first()
+        self.at(self.round_.end_date + timedelta(days=1))
+        self.assertEqual(self.decide(proposal, "godkann").status_code, 200)
+        self.assertEqual(mails("arsrapport.kop_godkant"), [])
+        self.assertEqual(self.flags("G9002")["kopt_efter_inskick"], 1)
+
     # Codex review of 9e55e5b..f638e7a, and S6
 
     def test_reject_kvar_leaves_a_klar_row(self):  # S6
