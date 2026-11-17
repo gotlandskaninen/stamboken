@@ -4,6 +4,7 @@ isort:skip_file
 """
 
 import os
+import threading
 from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 from zoneinfo import ZoneInfo
@@ -31,12 +32,13 @@ from utils.herd_tracking import (  # noqa: E402
 )
 from utils.individual_commands import RecordAttestation, Undo, execute, record_sale  # noqa: E402
 
-from tests.database_test import DatabaseTest  # noqa: E402
+from tests.database_test import _USE_POSTGRES, DatabaseTest  # noqa: E402
 from tests.test_bunny_v2_api import _old_litter, _promote_without_certificate
 from tests.test_herd_tracking_locks import capture_sql
 from tests.test_inbox_erasure import ErasureTest
 from tests.test_inbox_purge import NOW as PURGE_NOW  # noqa: E402
 from tests.test_inbox_purge import PurgeTest
+from tests.test_purchase_notice import in_thread, lock_waiter, run_all, until
 
 limiter.enabled = False
 
@@ -737,6 +739,36 @@ class TestQueueDocuments(PurgeTest):
     def test_the_five_year_purge_too(self):
         buyer_contact.purge_expired(NOW + timedelta(days=5 * 366))
         self.assertScrubbed([self.certificate, self.photo], [self.proof, self.other])
+
+    def test_the_purge_finds_an_item_linked_after_its_scan_and_takes_the_items_first(self):  # Codex P2, finding 4
+        if not _USE_POSTGRES:
+            self.skipTest("row locks need PostgreSQL")
+        (late,) = self.make().documents  # another item, linked to the sale while the purge holds the rabbit
+        held, original, results = threading.Event(), buyer_contact.lock_individuals, {}
+
+        def rabbit_held(ids):
+            value = original(ids)
+            if not held.is_set():
+                held.set()
+                until(lock_waiter)  # the queue holds its item and waits for the rabbit
+            return value
+
+        def purge_job():
+            return buyer_contact.purge_expired(NOW + timedelta(days=5 * 366))
+
+        def queue():  # the queue's own order: its item, then the rabbit
+            held.wait(10)
+            db.InboxDocument.update(herd_tracking_id=self.sale.id).where(db.InboxDocument.id == late.id).execute()
+            with db.DB_PROXY.atomic():
+                inbox.lock_item(late.item_id)
+                db.lock_individuals([self.rabbit.id])
+            return "ok"
+
+        with mock.patch.object(buyer_contact, "lock_individuals", side_effect=rabbit_held):
+            done = run_all(in_thread(results, "purge", purge_job), in_thread(results, "queue", queue))
+        self.assertTrue(done, "hung threads")
+        self.assertEqual(results, {"purge": 1, "queue": "ok"})
+        self.assertScrubbed([self.certificate, self.photo, late], [self.proof, self.other])
 
     def test_after_the_originals_purge_only_what_is_left_is_cleared(self):
         purge.purge_originals(PURGE_NOW + timedelta(days=400))  # certificates and proofs, not other photos

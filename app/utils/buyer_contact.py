@@ -77,19 +77,38 @@ def erase_buyer_contact(contact_id, user):
     remove_originals(paths)  # only after the commit: a row never names a removed file
 
 
+class _QueueChanged(Exception):
+    """A buyer's item appeared after the purge locked its items: nothing has gone yet, and the purge starts again."""
+
+
+ATTEMPTS = 3  # a busy queue: the next night tries again
+
+
 def _delete_locked(rule, action):
     """
     Deletes the buyers that match `rule`, under the writers' locks in their order (the queue's items, the rabbits,
     then the buyers, as erase_buyer_contact takes them), with `rule` read again under them before any buyer or
     document goes. A resubmission that links a kept buyer again, an undo of its sale's void and a longer round all
     move purge_at under those locks, so the buyer stays; and the delete's ON DELETE SET NULL never waits on a sale
-    that an undo holds while the undo waits on the buyer.
+    that an undo holds while the undo waits on the buyer. An item linked to a sale or rabbit after the items were
+    locked would be locked after the rabbit, against the queue's order, so the purge rolls back and starts again.
     """
+    for _ in range(ATTEMPTS - 1):
+        try:
+            return _delete_once(rule, action)
+        except _QueueChanged:
+            pass  # rolled back before anything went
+    return _delete_once(rule, action)
+
+
+def _delete_once(rule, action):
     with DB_PROXY.atomic():
         ids = [contact_id for (contact_id,) in BuyerContact.select(BuyerContact.id).where(rule).tuples()]
         holding = list(HerdTracking.select().where(HerdTracking.holder_contact.in_(ids)))
-        buyer_items(holding, lock=True)
+        items = buyer_items(holding, lock=True)
         lock_individuals({row.individual_id for row in holding})
+        if not buyer_items(holding) <= items:
+            raise _QueueChanged
         still = BuyerContact.select(BuyerContact.id).where(BuyerContact.id.in_(ids) & rule).order_by(BuyerContact.id)
         count, paths = delete_buyer_contacts([contact_id for (contact_id,) in still.for_update().tuples()], action)
     remove_originals(paths)
