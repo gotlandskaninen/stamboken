@@ -2123,12 +2123,12 @@ export function ReportForm({
             if (!registered.length) return;
             setRabbitSaved(true);
             router.refresh(); // the list, with the new rabbits
-            // "var är kaninen nu" as the row's choice, for those on the list; a sale opens its dialog
+            // "var är kaninen nu" as the row's choice, for those on the list; a sale opens its dialog, as the row's
+            // Såld does for every role (a link's or a caretaker's sale is a proposal there)
             for (const [rabbit, where] of registered) {
               if (!rabbit.listed || !where) continue;
-              if (where === "sald") {
-                if (view.can_sell) onSell(rabbit.id);
-              } else if (where === "dod") {
+              if (where === "sald") onSell(rabbit.id);
+              else if (where === "dod") {
                 const dod = {
                   ar: year,
                   manad: null,

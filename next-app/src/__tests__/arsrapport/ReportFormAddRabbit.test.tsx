@@ -13,6 +13,7 @@ import {
 // to the page. The dialog itself is AddRabbit.test.tsx; here it stands in with what it hands back on closing.
 const refresh = vi.fn();
 vi.mock("next/navigation", () => ({ useRouter: () => ({ refresh }) }));
+let where = "hos_mig"; // what the stand-in hands back as "var är kaninen nu"
 vi.mock(
   "@/app/(app)/stamboken/(dashboard)/arsrapport/AddRabbit",
   async (original) => ({
@@ -26,7 +27,7 @@ vi.mock(
         type="button"
         onClick={() =>
           onClose([
-            [{ id: 2, number: "G9001-2", item_id: 7, listed: true }, "hos_mig"],
+            [{ id: 2, number: "G9001-2", item_id: 7, listed: true }, where],
           ])
         }
       >
@@ -54,7 +55,9 @@ const actions = () =>
     dryRun: vi.fn(),
     submitReport: vi.fn(),
     withdrawReport: vi.fn(),
-    getGenebankHerds: vi.fn(),
+    getGenebankHerds: vi.fn(() =>
+      Promise.resolve({ success: true, herds: [] }),
+    ), // the sale dialog's herd picker
   }) as never;
 
 // a helper's paper form, as paper.test.tsx sets it up
@@ -75,6 +78,7 @@ beforeEach(() => {
   window.scrollTo = vi.fn(); // jsdom does not implement it
   window.localStorage.clear();
   refresh.mockReset();
+  where = "hos_mig";
 });
 afterEach(cleanup);
 
@@ -118,5 +122,30 @@ describe("Lägg till kanin från intyget in the report", () => {
     expect(
       within(row).getByRole("radio", { name: "Finns kvar" }),
     ).toBeChecked();
+  });
+
+  it("a rabbit registered as sold opens the sale dialog for a link and a caretaker too, whose sale is a proposal", () => {
+    where = "sald";
+    for (const [link, access] of [
+      [true, "code"],
+      [false, "caretaker"],
+    ] as const) {
+      render(
+        <ReportForm
+          link={link || undefined}
+          env="demo"
+          view={view({ access, can_sell: false })}
+          actions={actions()}
+        />,
+      );
+      fireEvent.click(
+        screen.getByRole("button", { name: "Lägg till kanin från intyget" }),
+      );
+      fireEvent.click(screen.getByRole("button", { name: "Registrerad" }));
+      expect(
+        screen.getByRole("dialog", { name: "Såld: G9001-2" }),
+      ).toBeTruthy();
+      cleanup();
+    }
   });
 });
