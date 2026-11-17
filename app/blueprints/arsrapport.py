@@ -518,6 +518,7 @@ def upload_photo(herd, year):
     file = request.files.get("file")
     if file is None or not file.filename:
         raise ArsrapportError(400, "Ingen fil bifogad.")
+    purchase = request.args.get("syfte") == "kop"  # a purchase notice's photo, never read by the model
     encoded, stored = [], []
 
     def keep(image):
@@ -532,7 +533,7 @@ def upload_photo(herd, year):
         sender, named = (None, {"access_code_id": access.code.id}) if access.code else (_actor(access), {})
         with DATABASE.atomic():
             item, documents = inbox.create_upload(
-                sender, herd, None, stored, kind="kontroll", ref_type="individual", **named
+                sender, herd, None, stored, kind="kontroll", ref_type="individual", unread=purchase, **named
             )
     except _Refused as refused:
         inbox.remove_files(path for path, _, _ in stored)

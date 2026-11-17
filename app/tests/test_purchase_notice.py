@@ -17,6 +17,7 @@ import utils.arsrapport as arsrapport
 import utils.database as db
 import utils.herd_tracking as herd_tracking
 import utils.inbox as inbox
+import utils.inbox_interpreter as interpreter
 import utils.mail as mail
 import utils.purchase_notice as purchase_notice
 import utils.report_code as report_code
@@ -590,10 +591,11 @@ class PurchaseNoticeTest(ArsrapportTest):
     # The photo field (4a Task 5, wired to 4b's report upload): a photo of the transfer proof or the certificate, bound
     # to the notice under the photo's item lock and the session's own uploads, as a rabbit's photo is (FC1)
 
-    def upload(self, client=None):
+    def upload(self, client=None, purpose=None):
         data = {"file": (io.BytesIO(encoded(photo((600, 800)))), "bevis.jpg")}
+        query = f"?syfte={purpose}" if purpose else ""
         response = (client or self.client).post(
-            "/api/v2/arsrapport/besattning/G9001/2025/foto", data=data, content_type="multipart/form-data"
+            f"/api/v2/arsrapport/besattning/G9001/2025/foto{query}", data=data, content_type="multipart/form-data"
         )
         self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
         return response.get_json()
@@ -679,3 +681,44 @@ class PurchaseNoticeTest(ArsrapportTest):
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         self.assertEqual(self.state(db.InboxItem.get_by_id(item_id)), "klar")
         self.assertEqual(self.kop_anmalt(), 0)
+
+
+class PurchasePhotoReadingTest(PurchaseNoticeTest):
+    """A notice's photo is never read by the model, with the image reading on (Codex P1 and P2)."""
+
+    def setUp(self):
+        super().setUp()
+        self.read = []
+
+        def model(image, schema):
+            self.read.append(image)
+            return {"genbanksnr": "G9002", "ar_kull_individ": "2501", "namn": "Läst"}
+
+        for patcher in (
+            mock.patch.object(settings.interpretation, "interpreter", "gemma"),
+            mock.patch.dict(interpreter.INTERPRETERS, {"gemma": model}),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_a_purchase_upload_is_never_read(self):
+        self.login("owner")
+        uploaded = self.upload(purpose="kop")
+        self.assertEqual(db.InboxDocument.get_by_id(uploaded["document_id"]).interpretation_status, "av")
+        self.assertIsNone(interpreter.interpret_next())  # not between the upload and the notice either
+        self.assertEqual(self.notify_with(uploaded["document_id"], "intyg").status_code, 200)
+        self.assertIsNone(interpreter.interpret_next())
+        self.assertEqual(self.read, [])
+
+    def test_a_reading_made_before_the_photo_became_a_notice_goes(self):
+        self.login("owner")
+        uploaded = self.upload()  # a rabbit's photo, which waits for the reading
+        self.assertEqual(interpreter.interpret_next(), uploaded["document_id"])
+        self.assertEqual(db.InboxDocument.get_by_id(uploaded["document_id"]).interpretation_status, "klar")
+        self.assertEqual(self.notify_with(uploaded["document_id"], "intyg").status_code, 200)
+        document = db.InboxDocument.get_by_id(uploaded["document_id"])
+        self.assertEqual(
+            (document.interpretation_status, document.interpretation, document.proposal, document.interpreted_at),
+            ("av", None, None, None),
+        )
+        self.assertIsNone(interpreter.interpret_next())

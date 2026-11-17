@@ -671,6 +671,21 @@ class TestReportPhotoReading(AddRabbitTest):
         self.assertEqual(detail["documents"][0]["proposal"], read.proposal)
         self.assertIsNone(inbox.item_detail(queued)["registered"])
 
+    def test_a_photo_uploaded_for_a_purchase_is_read_once_a_rabbit_is_registered_from_it(self):
+        """The purpose is the client's word: a rabbit's photo is read whatever it was uploaded for (G5)."""
+        self.open_link()
+        data = {"file": (io.BytesIO(encoded(photo((600, 800)))), "intyg.jpg")}
+        response = self.client.post(
+            f"/api/v2/arsrapport{REPORT}/foto?syfte=kop", data=data, content_type="multipart/form-data"
+        )
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        item_id, document_id = response.get_json()["item_id"], response.get_json()["document_id"]
+        self.assertEqual(db.InboxDocument.get_by_id(document_id).interpretation_status, "av")
+        self.assertIsNone(interpreter.interpret_next())
+        self.assertEqual(self.kit(item_id).status_code, 201)
+        self.assertEqual(db.InboxDocument.get_by_id(document_id).interpretation_status, "vantar")
+        self.assertEqual(interpreter.interpret_next(), document_id)
+
     def read_registered(self, **reading):
         """The report photo of the kit, registered first and then read as `reading` says."""
         self.READING = reading

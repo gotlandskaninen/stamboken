@@ -29,6 +29,7 @@ import {
   withdrawReport,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/actions";
 import { getGenebankHerds as linkHerds } from "@/app/(app)/rapport/actions";
+import { uploadPhoto } from "@/app/(app)/stamboken/(dashboard)/arsrapport/rabbitActions";
 import { ApiError } from "@/lib/api";
 import {
   SUBMIT_TIMEOUT_MS,
@@ -175,5 +176,16 @@ describe("the link's herd picker", () => {
     fetchApi.mockClear();
     expect((await linkHerds("../x", 2025, 1)).success).toBe(false);
     expect(fetchApi).not.toHaveBeenCalled();
+  });
+});
+
+describe("the report's photo upload", () => {
+  it("names a purchase notice's photo, which the server never reads", async () => {
+    await uploadPhoto("G9001", 2025, new FormData(), undefined, "kop");
+    await uploadPhoto("G9001", 2025, new FormData());
+    expect(fetchApi.mock.calls.map((c) => c[0])).toEqual([
+      "/v2/arsrapport/besattning/G9001/2025/foto?syfte=kop",
+      "/v2/arsrapport/besattning/G9001/2025/foto",
+    ]);
   });
 });

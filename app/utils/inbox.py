@@ -241,11 +241,12 @@ def handlers():
     return sorted((_person(w.id, names) for w in workers), key=lambda p: p["name"].casefold())
 
 
-def create_upload(user, herd, message, stored, *, kind="upload", ref_type=None, **detail):
+def create_upload(user, herd, message, stored, *, kind="upload", ref_type=None, unread=False, **detail):
     """
     The item of an upload: one document per stored image ((path, sha256, quality)), and its notices. The report's
     photo (4b) is a `kontroll` item with `ref_type`; its `user` is None for the report link, which `detail` names
-    (access_code_id), as an account would be named. Its notices wait for its rabbit (bind_report_photo).
+    (access_code_id), as an account would be named. Its notices wait for its rabbit (bind_report_photo). An `unread`
+    upload (a purchase notice's photo) is never read: its documents are off from the start, so no reading claims them.
     """
     item = InboxItem.create(
         kind=kind,
@@ -255,8 +256,9 @@ def create_upload(user, herd, message, stored, *, kind="upload", ref_type=None, 
         message=mask_tokens(message),
         ref_type=ref_type,
     )
+    off = {"interpretation_status": "av"} if unread else {}
     documents = [
-        InboxDocument.create(item=item, original_path=path, mime="image/jpeg", sha256=sha256, quality=quality)
+        InboxDocument.create(item=item, original_path=path, mime="image/jpeg", sha256=sha256, quality=quality, **off)
         for path, sha256, quality in stored
     ]
     log_event(item, user, "inkommen", documents=len(documents), **detail)
@@ -1033,6 +1035,9 @@ def bind_report_photo(item, document, user, individual):
     InboxItem.update(ref_id=individual.id).where(InboxItem.id == item.id).execute()
     item.ref_id = individual.id
     saved(item, document, user, individual, "ny_kanin")
+    if document.interpretation_status == "av":  # uploaded for a purchase notice (unread): a rabbit's photo is read (G5)
+        document.interpretation_status = interpreter.initial_status()
+        document.save()
     if document.interpretation_status == "klar" and document.interpretation is not None:
         document.proposal = build_proposal(document.interpretation, item.genebank_id, item.herd_id, individual)
         document.save()

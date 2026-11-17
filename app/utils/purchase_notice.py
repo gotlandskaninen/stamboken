@@ -166,8 +166,10 @@ def report_purchase(
         # the link has no account: its name goes in the history, as _audit_as names it to the audit log
         detail = {"via": user.username} if by_link else {}
         if photo is not None:
-            # not read by the model: the queue saves nothing from a notice, and a reading claimed before the move drops
-            moved = InboxDocument.update(item=item.id, doc_type=doc_type, interpretation_status="av")
+            # not read by the model: the queue saves nothing from a notice, a reading claimed before the move drops, and
+            # one made before it goes
+            read = dict.fromkeys(("interpretation", "proposal", "interpreter", "interpreted_at"))
+            moved = InboxDocument.update(item=item.id, doc_type=doc_type, interpretation_status="av", **read)
             moved.where(InboxDocument.id == photo_document_id).execute()
             InboxItem.delete().where(InboxItem.id == photo.id).execute()  # the photo's own item, empty now
             detail["documents"] = 1

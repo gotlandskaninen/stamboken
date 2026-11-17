@@ -2175,7 +2175,7 @@ export function ReportForm({
         loadHerds={actions.getGenebankHerds}
         send={(body) => actions.reportPurchase(herd.herd, year, body, env)}
         upload={(data) =>
-          uploadPhoto(herd.herd, year, data, link ? undefined : env)
+          uploadPhoto(herd.herd, year, data, link ? undefined : env, "kop")
         }
         onSent={() => router.refresh()}
         onAddRabbit={
