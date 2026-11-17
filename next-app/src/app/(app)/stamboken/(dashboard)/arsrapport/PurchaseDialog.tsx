@@ -356,7 +356,9 @@ function Body({
                   photo={photos[0]}
                   onChange={setPhotoAt(0)}
                 />
-                {photos[0].status === "klar" && (
+                {/* the second once the first is uploaded, and while it holds a photo */}
+                {(photos[0].status === "klar" ||
+                  photos[1].status !== "tom") && (
                   <PhotoField
                     label="Foto 2 (om du har)"
                     typeLabel="Vad visar foto 2?"

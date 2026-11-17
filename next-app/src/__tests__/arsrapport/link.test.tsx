@@ -178,6 +178,35 @@ describe("ReportForm in link mode", () => {
     ).toBeTruthy();
   });
 
+  it("shows the herd's cases with the queue on the link page too (S8)", () => {
+    const arenden = [
+      {
+        id: 12,
+        what: "kop_saknas" as const,
+        number: "G9002-2511",
+        photos: 1,
+        state: "vantar" as const,
+      },
+    ];
+    render(
+      <ReportForm
+        link
+        env="prod"
+        view={view({ access: "code", source: "link", arenden })}
+        actions={actions()}
+        stickyTop={0}
+      />,
+    );
+    expect(
+      screen.getByRole("heading", { name: "Ärenden hos genbanksansvarig" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Ärende 12 · Köpt kanin finns inte i registret: G9002-2511 · Väntar på genbanksansvarig",
+      ),
+    ).toBeTruthy();
+  });
+
   it("links the register extract above the rabbits", () => {
     render(linkForm(actions()));
     const a = screen.getByRole("link", { name: "Registerutdraget (PDF)" });
