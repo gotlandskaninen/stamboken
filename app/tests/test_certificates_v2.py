@@ -180,7 +180,7 @@ class TestPedigreeTemplateV2(unittest.TestCase):
 
     def test_reissue_of_v1(self):
         html = self._html(replaces_v1=True, digital_certificate="345", issue_date="2026-12-01")
-        self.assertIn("Återutfärdat av föreningen 2026-12-01. Ersätter det tidigare digitala intyget nr 345.", html)
+        self.assertIn("Återutfärdat av föreningen 2026-12-01 i ny utformning. Intygsnumret är detsamma", html)
         self.assertNotIn("Ersätter det tidigare", self._html())
         both = self._html(replaces_v1=True, replaces_date="2026-11-01")
         self.assertIn("Ersätter intyg utfärdat 2026-11-01", both)
@@ -189,17 +189,18 @@ class TestPedigreeTemplateV2(unittest.TestCase):
     def test_only_foot_ring(self):
         html = self._html(foot_ring="FGK 218")
         self.assertIn("FGK 218", html)
-        self.assertNotIn("Chipnummer", html)
+        self.assertIn('<td class="l">Chipnummer</td><td class="v">—</td>', html)
 
     def test_only_chip(self):
         html = self._html(microchip="752098100012345")
         self.assertIn("752098100012345", html)
-        self.assertNotIn("Benring", html)
+        self.assertIn('<td class="l">Benring</td><td class="v">—</td>', html)
 
     def test_neither_foot_ring_nor_chip(self):
+        # the row stays, so "no ring" is not read as "not printed"
         html = self._html()
-        self.assertNotIn("Benring", html)
-        self.assertNotIn("Chipnummer", html)
+        self.assertIn('<td class="l">Benring</td><td class="v">—</td>', html)
+        self.assertIn('<td class="l">Chipnummer</td><td class="v">—</td>', html)
 
     def test_missing_sex_is_not_none(self):
         self.assertNotIn("None", self._html(sex=""))
@@ -209,7 +210,7 @@ class TestPedigreeTemplateV2(unittest.TestCase):
 
     def test_breed_under_title(self):
         html = self._html(breed="Mellerudskanin", genebank="Mellerud")
-        self.assertIn('<p class="breed">Mellerudskanin</p>', html)
+        self.assertIn('<p class="breed">Ras: Mellerudskanin</p>', html)
 
     def test_individual_number_in_one_field(self):
         self.assertIn("G1274-2301", self._html())

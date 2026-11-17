@@ -8,9 +8,16 @@
    STAMBOKEN — Genbanksintyg v2
    Design tokens from the Stamboken Design System (Föreningen Gotlandskaninen).
    Target: WeasyPrint >= 65 (flexbox + tables only, no CSS grid).
-   Fonts fetched at render time; falls back to DejaVu (bundled with WeasyPrint).
+   Fonts are static files in fonts/ beside this template; no network at render time.
    ========================================================================= */
-@import url('https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+/* Static fonts beside the template (fonts/), so the PDF looks the same without network access */
+@font-face { font-family: 'Source Serif 4'; font-weight: 400; font-style: normal; src: url('fonts/SourceSerif4-Regular.ttf') format('truetype'); }
+@font-face { font-family: 'Source Serif 4'; font-weight: 600; font-style: normal; src: url('fonts/SourceSerif4-Semibold.ttf') format('truetype'); }
+@font-face { font-family: 'IBM Plex Sans'; font-weight: 400; font-style: normal; src: url('fonts/IBMPlexSans-Regular.ttf') format('truetype'); }
+@font-face { font-family: 'IBM Plex Sans'; font-weight: 500; font-style: normal; src: url('fonts/IBMPlexSans-Medium.ttf') format('truetype'); }
+@font-face { font-family: 'IBM Plex Sans'; font-weight: 600; font-style: normal; src: url('fonts/IBMPlexSans-SemiBold.ttf') format('truetype'); }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 400; font-style: normal; src: url('fonts/IBMPlexMono-Regular.ttf') format('truetype'); }
+@font-face { font-family: 'IBM Plex Mono'; font-weight: 500; font-style: normal; src: url('fonts/IBMPlexMono-Medium.ttf') format('truetype'); }
 
 @page { size: A4 portrait; margin: 0; }
 
@@ -74,7 +81,7 @@ body {
 .head-mid { flex: 1; }
 .eyebrow {
   font-family: var(--mono);
-  font-size: 7pt; font-weight: 500;
+  font-size: 7.5pt; font-weight: 500;
   text-transform: uppercase; letter-spacing: 0.16em;
   color: var(--ink-3);
   margin: 0 0 1mm 0;
@@ -104,10 +111,15 @@ body {
 }
 .cert-nr .num {
   font-family: var(--serif);
-  font-size: 17pt; font-weight: 600;
-  color: var(--lera);
+  font-size: 17pt; font-weight: 400;
+  color: var(--ink);
   line-height: 1.1;
 }
+.cert-nr .num b { font-weight: 600; }
+.fields .vname { font-family: var(--serif); font-size: 11pt; font-weight: 600; }
+.head-mid .breed { font-size: 10.5pt; }
+.cert-nr .lbl { font-family: var(--sans); font-size: 8.5pt; font-weight: 600; text-transform: none; letter-spacing: 0; color: var(--ink); }
+.cert-nr .sub { font-size: 7.5pt; color: var(--ink-2); margin-top: .8mm; }
 
 /* double rule under header — classic ledger */
 .rule-thick { height: 0; border-top: 1.4pt solid var(--ink); margin-top: 3.5mm; }
@@ -131,14 +143,14 @@ body {
 }
 .sec .no {
   font-family: var(--mono);
-  font-size: 7pt; font-weight: 500;
+  font-size: 7.5pt; font-weight: 500;
   color: var(--skog);
   letter-spacing: 0.16em;
   margin-right: 2.5mm;
 }
 .sec .t {
   font-family: var(--mono);
-  font-size: 7pt; font-weight: 500;
+  font-size: 7.5pt; font-weight: 500;
   text-transform: uppercase; letter-spacing: 0.16em;
   color: var(--ink-2);
   margin-right: 3mm;
@@ -147,12 +159,11 @@ body {
 
 /* === Field tables ====================================================== */
 .fields { width: 100%; border-collapse: collapse; }
-.fields td { border-bottom: 0.4pt solid var(--line-faint); vertical-align: bottom; }
+.fields td { border-bottom: 0.4pt solid var(--line-faint); vertical-align: top; }
 .fields .l {
-  font-family: var(--mono);
-  font-size: 7.5pt; font-weight: 400;
-  text-transform: uppercase; letter-spacing: 0.05em;
-  color: var(--ink-3);
+  font-family: var(--sans);
+  font-size: 8pt; font-weight: 400;
+  color: var(--ink-2);
   width: 21%;
   padding: 1.6mm 2mm 1mm 0;
 }
@@ -177,13 +188,13 @@ body {
 }
 .p-role {
   font-family: var(--mono);
-  font-size: 6.5pt; font-weight: 500;
+  font-size: 7.5pt; font-weight: 500;
   text-transform: uppercase; letter-spacing: 0.14em;
   color: var(--skog);
   margin-bottom: 0.8mm;
 }
 .p-num  { font-family: var(--mono); font-size: 9pt; font-weight: 500; color: var(--skog-deep); }
-.p-aki  { font-family: var(--mono); font-size: 8pt; color: var(--ink-3); }
+.p-aki  { font-family: var(--mono); font-size: 9pt; color: var(--skog-deep); }
 .p-name { font-family: var(--serif); font-size: 11pt; font-weight: 600; color: var(--ink); line-height: 1.15; }
 .p-color { font-size: 8pt; color: var(--ink-3); font-style: italic; }
 
@@ -195,7 +206,8 @@ body {
   margin: 0 0 1.5mm 4mm;
 }
 .g-card .p-role { color: var(--ink-3); }
-.g-card .p-num  { font-size: 8pt; }
+.p-none { font-size: 8.5pt; color: var(--ink-2); margin-top: 1.5mm; }
+.g-card .p-num, .g-card .p-aki { font-size: 8pt; }
 .g-card .p-name { font-family: var(--sans); font-size: 8.5pt; font-weight: 600; }
 .g-card .p-color { font-size: 7.5pt; }
 
@@ -211,9 +223,9 @@ body {
 .sign-wrap .cols { flex: 1; }
 .sign { border-collapse: collapse; width: 100%; }
 .sign .sl {
-  font-family: var(--mono);
-  font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.05em;
-  color: var(--ink-3);
+  font-family: var(--sans);
+  font-size: 8pt;
+  color: var(--ink-2);
   padding: 1mm 4mm 1mm 0; vertical-align: bottom; width: 34mm;
 }
 .sign .sv {
@@ -222,13 +234,13 @@ body {
   padding: 1mm 0; vertical-align: bottom;
 }
 .sign-note {
-  font-size: 7pt; color: var(--ink-3); margin-top: 1.8mm; padding-right: 6mm;
+  font-size: 8pt; color: var(--ink-2); margin-top: 1.8mm; padding-right: 6mm;
 }
 .qr { text-align: center; margin-left: 5mm; }
-.qr svg { width: 21mm; height: 21mm; }
+.qr svg { width: 25mm; height: 25mm; }
 .qr .qt {
   font-family: var(--mono);
-  font-size: 5.5pt; text-transform: uppercase; letter-spacing: 0.12em;
+  font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.12em;
   color: var(--ink-3); margin-top: 0.6mm;
 }
 
@@ -239,9 +251,9 @@ body {
   border: 0.4pt solid var(--line-strong); border-radius: 1mm;
   padding: 0 1.2mm;
 }
-.perma { font-family: var(--mono); font-size: 7pt; color: var(--ink-2); margin: 1.5mm 0 0 0; }
-.perma .pl { font-size: 6pt; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-3); margin-right: 1.5mm; }
-.reissue { font-size: 7pt; font-style: italic; color: var(--lera); margin: 0.8mm 0 0 0; }
+.perma { font-family: var(--mono); font-size: 7.5pt; color: var(--ink-2); margin: 1.5mm 0 0 0; }
+.perma .pl { font-size: 7.5pt; text-transform: uppercase; letter-spacing: 0.1em; color: var(--ink-3); margin-right: 1.5mm; }
+.reissue { font-size: 8pt; font-weight: 600; color: var(--ink); margin: 0.8mm 0 0 0; }
 
 /* === EU emblem ========================================================= */
 .eu-strip { text-align: center; margin-top: 1.5mm; }
@@ -254,7 +266,10 @@ body {
   font-size: 7.5pt; color: var(--ink-3);
   line-height: 1.5; text-align: center;
 }
-.fingerprint { font-family: var(--mono); font-size: 6pt; letter-spacing: 0.04em; color: var(--ink-3); }
+.footrow { display: flex; align-items: center; gap: 5mm; margin-top: 4mm; padding-top: 2mm; border-top: 0.4pt solid var(--line); }
+.footrow .eu-strip { margin: 0; flex: none; }
+.footrow .disc { margin: 0; padding: 0; border: 0; text-align: left; }
+.fingerprint { font-family: var(--mono); font-size: 7.5pt; letter-spacing: 0.04em; color: var(--ink-3); }
 </style>
 <style>
 /* Print-first: white paper and the paper certificate B's colours (green parents, grey signature), as approved in the board film (stamboken-drift research/film/docs/make.py, V2_PRINT_CSS). */
@@ -278,9 +293,9 @@ h1, .sec, .breed { color:var(--skog) !important; } .rule-thick { border-top-colo
     <div class="head-mid">
       <p class="eyebrow">Föreningen Gotlandskaninen</p>
       <h1>Genbanksintyg</h1>
-      <p class="breed">{{ breed }}</p>
+      <p class="breed">Ras: {{ breed }}</p>
     </div>
-    <div class="cert-nr"><div class="lbl">Intyg nr</div><div class="num">{{ digital_certificate }}</div></div>
+    <div class="cert-nr"><div class="lbl">Kaninens individnummer</div><div class="num"><b>{{ genebank_number }}</b>-{{ genebank_aki }}</div></div>
   </div>
   <div class="rule-thick"></div>
   <div class="microline">{% for _ in range(14) %}Föreningen Gotlandskaninen · Genbanksintyg {{ digital_certificate }} · {{ genebank_number }}-{{ genebank_aki }} · Verifiera på gotlandskaninen.se · {% endfor %}</div>
@@ -288,17 +303,14 @@ h1, .sec, .breed { color:var(--skog) !important; } .rule-thick { border-top-colo
 
   <div class="sec"><span class="no">01</span><span class="t">Identitet</span><span class="fill"></span></div>
   <table class="fields">
-    <tr><td class="l">Individnummer</td><td class="v">{{ genebank_number }}-{{ genebank_aki }}</td><td class="l">Namn</td><td class="v">{{ name or '—' }}</td></tr>
-    <tr><td class="l">Kön</td><td class="v">{{ sex }}</td><td class="l">Födelsedatum</td><td class="v">{{ birth_date }}</td></tr>
-    <tr><td class="l">Antal födda i kullen</td><td class="v">{{ litter_size }}</td><td class="l">Antal levande (6 v)</td><td class="v">{{ litter_size6w }}</td></tr>
-    <tr><td class="l">Färg / kännetecken</td><td class="v">{% if color_code %}<span class="chip">{{ color_code }}</span> {% endif %}{{ color }}</td><td class="l">Färganteckning</td><td class="v">{{ color_note or '—' }}</td></tr>
+    <tr><td class="l">Namn</td><td class="v vname">{{ name or '—' }}</td><td class="l">Födelsedatum</td><td class="v">{{ birth_date }}</td></tr>
+    <tr><td class="l">Kön</td><td class="v">{{ sex }}</td><td class="l">Födda i kullen</td><td class="v">{{ litter_size }}</td></tr>
+    <tr><td class="l">Levande vid 6 veckor</td><td class="v">{{ litter_size6w }}</td><td class="l">Färg / kännetecken</td><td class="v">{% if color_code %}<span class="chip">{{ color_code }}</span> {% endif %}{{ color }}</td></tr>
+    <tr><td class="l">Färganteckning</td><td class="v" colspan="3">{{ color_note or '—' }}</td></tr>
     <tr><td class="l">Ögonfärg</td><td class="v">{{ eye_color or '—' }}</td><td class="l">Klofärg</td><td class="v">{{ claw_color or '—' }}</td></tr>
     <tr><td class="l">Hårlag</td><td class="v">{{ hair_notes or '—' }}</td><td class="l">Färg på buken</td><td class="v">{{ belly_color or '—' }}</td></tr>
-    {% if foot_ring and microchip %}<tr><td class="l">Benring</td><td class="v">{{ foot_ring }}</td><td class="l">Chipnummer</td><td class="v">{{ microchip }}</td></tr>
     <tr><td class="l">Foto finns</td><td class="v" colspan="3">{{ photos or '—' }}</td></tr>
-    {% elif foot_ring %}<tr><td class="l">Benring</td><td class="v">{{ foot_ring }}</td><td class="l">Foto finns</td><td class="v">{{ photos or '—' }}</td></tr>
-    {% elif microchip %}<tr><td class="l">Chipnummer</td><td class="v">{{ microchip }}</td><td class="l">Foto finns</td><td class="v">{{ photos or '—' }}</td></tr>
-    {% else %}<tr><td class="l">Foto finns</td><td class="v" colspan="3">{{ photos or '—' }}</td></tr>{% endif %}
+    <tr><td class="l">Benring</td><td class="v">{{ foot_ring or '—' }}</td><td class="l">Chipnummer</td><td class="v">{{ microchip or '—' }}</td></tr>
     <tr><td class="l">Övriga upplysningar</td><td class="v" colspan="3">{{ notes or '—' }}</td></tr>
   </table>
 
@@ -313,15 +325,15 @@ h1, .sec, .breed { color:var(--skog) !important; } .rule-thick { border-top-colo
       </div>
       <div class="g-card">
         <div class="p-role">Farfar</div>
-        <span class="p-num">{{ FF_genebank_number or '—' }}</span><span class="p-aki">{% if FF_genebank_aki %}-{{ FF_genebank_aki }}{% endif %}</span>
+        {% if FF_genebank_number %}<span class="p-num">{{ FF_genebank_number or '—' }}</span><span class="p-aki">{% if FF_genebank_aki %}-{{ FF_genebank_aki }}{% endif %}</span>
         <div class="p-name">{{ FF_name or '—' }}</div>
-        <div class="p-color">{{ FF_color or '—' }}</div>
+        <div class="p-color">{{ FF_color or '—' }}</div>{% else %}<div class="p-none">Okänd</div>{% endif %}
       </div>
       <div class="g-card">
         <div class="p-role">Farmor</div>
-        <span class="p-num">{{ FM_genebank_number or '—' }}</span><span class="p-aki">{% if FM_genebank_aki %}-{{ FM_genebank_aki }}{% endif %}</span>
+        {% if FM_genebank_number %}<span class="p-num">{{ FM_genebank_number or '—' }}</span><span class="p-aki">{% if FM_genebank_aki %}-{{ FM_genebank_aki }}{% endif %}</span>
         <div class="p-name">{{ FM_name or '—' }}</div>
-        <div class="p-color">{{ FM_color or '—' }}</div>
+        <div class="p-color">{{ FM_color or '—' }}</div>{% else %}<div class="p-none">Okänd</div>{% endif %}
       </div>
     </div>
     <div class="ped-col">
@@ -333,15 +345,15 @@ h1, .sec, .breed { color:var(--skog) !important; } .rule-thick { border-top-colo
       </div>
       <div class="g-card">
         <div class="p-role">Morfar</div>
-        <span class="p-num">{{ MF_genebank_number or '—' }}</span><span class="p-aki">{% if MF_genebank_aki %}-{{ MF_genebank_aki }}{% endif %}</span>
+        {% if MF_genebank_number %}<span class="p-num">{{ MF_genebank_number or '—' }}</span><span class="p-aki">{% if MF_genebank_aki %}-{{ MF_genebank_aki }}{% endif %}</span>
         <div class="p-name">{{ MF_name or '—' }}</div>
-        <div class="p-color">{{ MF_color or '—' }}</div>
+        <div class="p-color">{{ MF_color or '—' }}</div>{% else %}<div class="p-none">Okänd</div>{% endif %}
       </div>
       <div class="g-card">
         <div class="p-role">Mormor</div>
-        <span class="p-num">{{ MM_genebank_number or '—' }}</span><span class="p-aki">{% if MM_genebank_aki %}-{{ MM_genebank_aki }}{% endif %}</span>
+        {% if MM_genebank_number %}<span class="p-num">{{ MM_genebank_number or '—' }}</span><span class="p-aki">{% if MM_genebank_aki %}-{{ MM_genebank_aki }}{% endif %}</span>
         <div class="p-name">{{ MM_name or '—' }}</div>
-        <div class="p-color">{{ MM_color or '—' }}</div>
+        <div class="p-color">{{ MM_color or '—' }}</div>{% else %}<div class="p-none">Okänd</div>{% endif %}
       </div>
     </div>
   </div>
@@ -352,15 +364,17 @@ h1, .sec, .breed { color:var(--skog) !important; } .rule-thick { border-top-colo
       <table class="sign">
         <tr><td class="sl">Intygas av</td><td class="sv">{{ fullname }}</td></tr>
         <tr><td class="sl">Besättningsnummer</td><td class="sv">{{ herd }}</td></tr>
-        <tr><td class="sl">Datum</td><td class="sv">{{ issue_date }}</td></tr>
+        <tr><td class="sl">Utfärdat</td><td class="sv">{{ issue_date }}</td></tr>
+        <tr><td class="sl">Intygsnummer</td><td class="sv">{{ digital_certificate }}</td></tr>
       </table>
-      <p class="sign-note">Intyget är digitalt signerat av Föreningen Gotlandskaninen. Skanna QR-koden för att verifiera äktheten.</p>
-      <p class="perma"><span class="pl">Permanent sida</span>{{ public_url }}</p>
-      {% if replaces_date %}<p class="reissue">Ersätter intyg utfärdat {{ replaces_date }}</p>{% elif replaces_v1 %}<p class="reissue">Återutfärdat av föreningen {{ issue_date }}. Ersätter det tidigare digitala intyget nr {{ digital_certificate }}.</p>{% endif %}
+      <p class="sign-note">Intyget är digitalt signerat av Föreningen Gotlandskaninen. Skanna QR-koden för att verifiera det; äktheten avgörs av verifieringen, inte av papperet.</p>
+      <p class="perma"><span class="pl">Kaninens sida i Stamboken</span>{{ public_url }}</p>
+      {% if replaces_date %}<p class="reissue">Ersätter intyg utfärdat {{ replaces_date }}</p>{% elif replaces_v1 %}<p class="reissue">Återutfärdat av föreningen {{ issue_date }} i ny utformning. Intygsnumret är detsamma; detta exemplar ersätter tidigare utskrifter.</p>{% endif %}
     </div>
-    <div class="qr">{{ qr_svg|safe }}<div class="qt">Verifiera</div></div>
+    <div class="qr">{{ qr_svg|safe }}<div class="qt">Kontrollera</div></div>
   </div>
 
+  <div class="footrow">
   <div class="eu-strip">
     <img src="medfinansieras-av-eu-horizontal.svg" alt="Medfinansieras av Europeiska unionen">
   </div>
@@ -368,8 +382,8 @@ h1, .sec, .breed { color:var(--skog) !important; } .rule-thick { border-top-colo
   <div class="disc">
     Genbanksintyget följer kaninen. Ägarbyten skrivs på överlåtelsebeviset och i Stamboken.<br>
     Får endast utfärdas av innehavare av godkänd besättning. Båda föräldrarna ska vara registrerade.<br>
-    Eftertryck förbjudet utan Föreningen Gotlandskaninens medgivande.<br>
-    <span class="fingerprint">Dokument-ID {{ digital_certificate }} · SHA-256 {{ doc_hash_stub }} · Äktheten avgörs alltid av verifieringen på gotlandskaninen.se — inte av papperet.</span>
+    <span class="fingerprint">Intygsnummer {{ digital_certificate }} · kontrollsumma {{ doc_hash_stub }}</span>
+  </div>
   </div>
 
 </div>

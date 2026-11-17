@@ -53,7 +53,7 @@ class CertificateGeneratorV2:
             version=2,
             error_correction=qrcode.constants.ERROR_CORRECT_H,
             box_size=10,
-            border=2,
+            border=4,
         )
         qr.add_data(url)
         qr.make(fit=True)
