@@ -2976,14 +2976,17 @@ def settle_rejection(report, user, rabbit, then, at):
     S1: the rabbit of a rejected proposal, rewritten in a submission of the manager's on the same report, under the
     caller's locks (report row, items, rabbit), and the revision moved, so a page opened before it gets 409 and never
     proposes the rejected sale again. "kvar" writes what Finns kvar writes through the report's diff, its operations
-    in report_ops (FB2), with Ej vägd, so the member's row is klar and may still get a weight (S6); the register's
-    refusal is a 409 with its reason. "valj_igen" clears the entry (FB3). An open draft gets the same entry and a new
-    version.
+    in report_ops (FB2), with the entry's weight and hull (a January sale's), else Ej vägd, so the member's row is
+    klar and may still get a weight (S6); the register's refusal is a 409 with its reason. "valj_igen" clears the
+    entry (FB3). An open draft gets the same entry and a new version.
     """
     herd, round_ = report.herd, report.round
     year, on = round_.report_year, at.astimezone(STOCKHOLM).date()
     last, latest, key = date(year, 12, 31), _submissions(report)[-1], str(rabbit)
-    kvar = {"val": "kvar", "ej_vagd": REJECTED_KVAR}
+    # a January sale's 31/12 weight and hull stay; Ej vägd only without a weight
+    prev = (latest.data.get("rabbits") or {}).get(key) or {}
+    measured = {name: prev[name] for name in ("vikt", "hull") if prev.get(name) is not None}
+    kvar = {"val": "kvar", "ej_vagd": None if "vikt" in measured else REJECTED_KVAR, **measured}
     raw = dict.fromkeys(ENTRY_KEYS) | (kvar if then == "kvar" else {"val": None})  # as submitted_body stores it
     grant, added = ReportGrant(), []
     if then == "kvar":
@@ -3017,7 +3020,7 @@ def settle_rejection(report, user, rabbit, then, at):
     )
     body = json.loads(report.data)  # the report's not_weighed comes from the entries, as parse_submission makes it
     body["not_weighed"] = {k: v for k, v in (body.get("not_weighed") or {}).items() if k != key}
-    body["not_weighed"] |= {key: REJECTED_KVAR} if then == "kvar" else {}
+    body["not_weighed"] |= {key: raw["ej_vagd"]} if raw["ej_vagd"] else {}
     report.revision, report.data = report.revision + 1, json.dumps(body)
     report.save(only=[YearlyHerdReport.revision, YearlyHerdReport.data])
     draft = _draft(herd, round_)

@@ -383,6 +383,24 @@ class ProposalApiTest(ArsrapportTest):
         self.send(self.kvar(self.a, vikt=2.9), self.kvar(self.b, vikt=3.0), self.kvar(self.c, vikt=2.8), revision=3)
         self.assertEqual([round(w.weight, 2) for w in weighed], [2.9])
 
+    def test_reject_kvar_keeps_a_january_sales_weight_and_hull(self):  # L3
+        key, entry = self.sald(self.a, "G9002", 2026, 1, 5)
+        proposal = self.first((key, {**entry, "vikt": 2.8, "hull": "normal"}))  # 31/12 still in the herd
+
+        def measured():
+            weights = db.Weight.select().where(db.Weight.individual == self.a.id)
+            fat = db.Bodyfat.select().where(db.Bodyfat.individual == self.a.id)
+            return [(w.weight_date, round(w.weight, 2)) for w in weights], [(b.bodyfat_date, b.bodyfat) for b in fat]
+
+        self.assertEqual(measured(), ([(LAST, 2.8)], [(LAST, "normal")]))
+        self.assertEqual(self.decide(proposal, "avvisa", reason="Fel datum", then="kvar").status_code, 200)
+        self.assertEqual(measured(), ([(LAST, 2.8)], [(LAST, "normal")]))
+        stored = self.latest()[str(self.a.id)]
+        self.assertEqual(
+            (stored["val"], stored["vikt"], stored["hull"], stored["ej_vagd"]), ("kvar", 2.8, "normal", None)
+        )
+        self.assertNotIn(str(self.a.id), json.loads(self.report().data)["not_weighed"])
+
     def test_rejections_locked_in_another_order_than_started(self):  # P1
         self.first(self.sald(self.a, "G9002", 2025, 10, 3), self.sald(self.b, "G9002", 2025, 11, 5))
         (first,), (second,) = proposals(self.a), proposals(self.b)
