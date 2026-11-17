@@ -242,7 +242,8 @@ class PurchaseNoticeTest(ArsrapportTest):
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         (item,) = notices()
         (event,) = item.events
-        self.assertEqual((item.herd_id, event.user_id, event.detail), (self.h.id, None, {"via": "länk G9001/2025"}))
+        detail = {"via": "länk G9001/2025", "access_code_id": self.code.id}
+        self.assertEqual((item.herd_id, event.user_id, event.detail), (self.h.id, None, detail))
         # another herd, or another year, is not the link's: nothing is written
         self.assertEqual(self.notify(herd="G9002", number=self.own.number, from_herd="G9001").status_code, 404)
         self.assertEqual(self.notify(year=2024).status_code, 404)
@@ -627,7 +628,9 @@ class PurchaseNoticeTest(ArsrapportTest):
         )
         self.assertFalse(db.InboxItem.select().where(db.InboxItem.id == uploaded["item_id"]).exists())
         (event,) = item.events
-        self.assertEqual((event.kind, event.detail), ("inkommen", {"via": "länk G9001/2025", "documents": 1}))
+        detail = {"via": "länk G9001/2025", "access_code_id": self.code.id, "documents": 1}
+        self.assertEqual((event.kind, event.detail), ("inkommen", detail))
+        self.assertEqual(item.member_id, self.code.member_id)
         heard = self.heard(item)
         self.assertIn(self.helper.id, heard)
         self.assertEqual(len(heard), len(set(heard)))
@@ -635,6 +638,26 @@ class PurchaseNoticeTest(ArsrapportTest):
         again = self.notify_with(uploaded["document_id"])
         self.assertEqual((again.status_code, again.get_json()["id"]), (200, item.id))
         self.assertEqual((self.heard(item), item.documents.count(), item.events.count()), (heard, 1, 1))
+
+    def test_erasing_the_links_member_removes_its_notice_and_photo(self):
+        """An erasure of the member the link went to finds the notice sent through it; the photo's file goes too."""
+        self.open_link(self.code)
+        uploaded = self.upload()
+        item_id = self.notify_with(uploaded["document_id"]).get_json()["id"]
+        original = os.path.join(self.folder, db.InboxDocument.get_by_id(uploaded["document_id"]).original_path)
+        self.assertTrue(os.path.exists(original))
+        matrikel.anonymize_person(db.Member.get_by_id(self.code.member_id), self.admin)
+        self.assertFalse(db.InboxItem.select().where(db.InboxItem.id == item_id).exists())
+        self.assertFalse(db.InboxDocument.select().where(db.InboxDocument.id == uploaded["document_id"]).exists())
+        self.assertFalse(os.path.exists(original))
+
+    def test_an_accounts_notice_records_its_person(self):
+        holder = db.Member.get_by_id(self.code.member_id)
+        db.Member.update(user=self.owner).where(db.Member.id == holder.id).execute()
+        self.login("owner")
+        item_id = self.notify().get_json()["id"]
+        item = db.InboxItem.get_by_id(item_id)
+        self.assertEqual((item.member_id, item.events.get().user_id), (holder.id, self.owner.id))
 
     def test_a_notice_without_a_photo_is_told_with_its_first_photo(self):
         self.login("owner")

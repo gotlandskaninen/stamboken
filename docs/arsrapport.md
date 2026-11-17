@@ -98,7 +98,9 @@ skrevs under rapportens lås, inte efter `created_at`. Vägrar registret `kvar` 
 besättningen köpt kaninen `number` från besättningen `from_herd` (`"utanfor"` blir genbankens GX1
 eller MX1) på dagen `date` under året. Anmälan blir en post i kön, `kind` `kontroll` med `ref_type`
 `kopanmalan` och fälten i `ref_data`: `{number, from_herd, date, individual_id}`, utan personuppgifter.
-Svaret är `{id, number, from_herd, date, state}`.
+Postens `member` är den som anmälde: länkens medlem, eller kontots person i matrikeln, så att en
+radering hittar anmälan. Länken står i historiken med `via` och `access_code_id`. Svaret är `{id,
+number, from_herd, date, state}`.
 
 Kroppen kan också ha `document_id` och `doc_type` (`"bevis"` eller `"intyg"`): ett foto av
 överlåtelsebeviset eller intyget som sessionen laddat upp med `…/foto?syfte=kop`. Fotot flyttar till

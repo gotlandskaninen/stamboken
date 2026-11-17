@@ -150,7 +150,8 @@ def report_purchase(
     the herd already holds needs none; an open notice of the same rabbit is the answer again, and one of another year
     a 409. The rabbit and the seller are looked up in the herd's genebank only, so another genebank's existing
     number or herd is answered as a missing one. Written as the report is, while the round is open (`access`);
-    `user` is the account or the link (CodeActor), which the item's history names.
+    `user` is the account or the link (CodeActor), which the item's history names; the notice's `member` is the
+    link's member or the account's person, who sent it.
 
     `photo_document_id` is a photo of the transfer proof or the certificate (`doc_type` "bevis" or "intyg") that this
     session uploaded through the report (`photos`, its items). It moves to the notice, and its own item goes; the same
@@ -196,6 +197,8 @@ def report_purchase(
                 state="ny",
                 genebank=herd.genebank_id,
                 herd=herd.id,
+                # who sent it: the link's member or the account's person, whom an erasure finds
+                member=access.code.member_id if by_link else resolve_own_membership(user),
                 ref_type=KIND,
                 ref_data={
                     "number": individual.number,
@@ -204,8 +207,8 @@ def report_purchase(
                     "individual_id": individual.id,
                 },
             )
-        # the link has no account: its name goes in the history, as _audit_as names it to the audit log
-        detail = {"via": user.username} if by_link else {}
+        # the link has no account: its name and code go in the history, as _audit_as names it to the audit log
+        detail = {"via": user.username, "access_code_id": access.code.id} if by_link else {}
         if photo is not None:
             # not read by the model: the queue saves nothing from a notice, a reading claimed before the move drops, and
             # one made before it goes

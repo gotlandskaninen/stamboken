@@ -1190,8 +1190,8 @@ huvudmedlem i matrikeln. Finns en kopia är den det enda som blir kvar, med säl
 täckt.
 
 Det personen själv har skickat in raderas också: poster där personen är den matchade avsändaren av ett
-mejl eller den som skickade (`member`, också foton som skickats med personens årsrapportlänk) och poster
-som personens konto har laddat upp. En sådan post som inte har lagt något på
+mejl eller den som skickade (`member`, också foton och köpanmälningar som skickats genom
+årsrapporten) och poster som personens konto har laddat upp. En sådan post som inte har lagt något på
 en kanin raderas med sina filer. En post som har det står kvar utan original, text och
 `sender_address`, och mejl till avsändaren som ännu inte har gått stoppas (`cancelled`), och mejlkön
 glömmer adressen.
