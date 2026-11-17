@@ -544,14 +544,15 @@ class AndraTest(ArsrapportTest):
         before = self.counts()
         self.ok(self.body(self.sald(a, "utanfor", 2025, 11, 20), revision=2))  # without kopare: nothing
         self.assertEqual(self.counts()[:5], before[:5])
-        # a reason naming the buyer is refused for the report (kopare's privacy rule), in the dry run too (I3)
+        # a reason naming the buyer is refused for the report (kopare's privacy rule), in the dry run too (I3); the
+        # owner's reason is the system's, so only a role that reads buyers types one
         named = NAMED
         body = self.body(self.kvar(a, vikt=2.8), revision=3, reason="Annan Köpare ångrade sig")
+        self.login("man")
         dry = self.api("POST", "/besattning/G9001/2025/torrkorning", **body).get_json()
         self.assertEqual(dry["refusals"], named)
         response = self.skicka(body)
         self.assertEqual((response.status_code, response.get_json()["refusals"]), (422, named))
-        self.login("man")
         response = self.withdraw(3, "Annan Köpare ångrade sig")
         self.assertEqual((response.status_code, response.get_json()["refusals"]), (422, named))
         self.assertEqual(self.counts()[:5], before[:5])
@@ -595,6 +596,7 @@ class AndraTest(ArsrapportTest):
         (a,) = self.rabbits(self.h, 1)
         self.ok(self.body(self.kvar(a, vikt=2.8)))
         before = self.counts()
+        self.login("man")  # the owner's reason is the system's (without_reason)
         body = self.body(
             self.sald(a, "utanfor", 2025, 11, 20, kopare=BUYER), revision=1, reason="Test Köpare köpte den"
         )

@@ -446,19 +446,22 @@ class ProposalsTest(ArsrapportTest):
         entries = (self.sald(self.a, "utanfor", 2025, 10, 3), self.kvar(self.b, vikt=2.8), self.kvar(self.c, vikt=2.8))
         self.send(self.sald(self.a, "utanfor", 2025, 10, 3, kopare=BUYER), *entries[1:], who="caretaker")
         self.day(1)
-        access, user = self.actor("caretaker")
         body = self.body(*entries, revision=1, reason="Zelda hämtar den i mars")
-        refusals, _ = arsrapport.check(
-            self.h,
-            self.round_,
-            access,
-            self.report(),
-            arsrapport.parse_submission(body, paper=False),
-            on=arsrapport.today(),
+        sub = arsrapport.parse_submission(body, paper=False)
+        manager = arsrapport.Access("manager")
+
+        def codes(access):
+            refusals, _ = arsrapport.check(self.h, self.round_, access, self.report(), sub, on=arsrapport.today())
+            return [(r.individual_id, r.code) for r in refusals]
+
+        self.assertEqual(codes(self.actor("caretaker")[0]), [])  # a seller's reason is the system's (without_reason)
+        self.assertEqual(codes(manager), [(None, "orsak_kopare")])
+        refused = self.refused(lambda: arsrapport.submit(self.h, self.round_, manager, self.decider, sub))
+        self.assertEqual(refused, [(None, "orsak_kopare")])
+        reason = "Zelda ångrade sig"
+        refused = self.refused(
+            lambda: arsrapport.withdraw(self.h, self.round_, manager, self.decider, revision=1, reason=reason)
         )
-        self.assertEqual([(r.individual_id, r.code) for r in refusals], [(None, "orsak_kopare")])
-        self.assertEqual(self.refused(lambda: self.send(body=body, who="caretaker")), [(None, "orsak_kopare")])
-        refused = self.refused(lambda: self.withdraw(1, who="caretaker", reason="Zelda ångrade sig"))
         self.assertEqual(refused, [(None, "orsak_kopare")])
         self.assertEqual(db.YearlyReportSubmission.select().count(), 1)
         self.assertEqual(self.report().revision, 1)

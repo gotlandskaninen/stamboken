@@ -322,6 +322,40 @@ class KeptBuyerTest(ArsrapportTest):
         self.assertEqual((proposal.state, proposal.buyer["name"]), ("foreslagen", OTHER["name"]))
         self.assertEqual(contacts(), {})  # the kept buyer went with the draft
 
+    def caretaker(self):
+        """An account with a herd-access grant to G9001 through the membership: the caretaker (skötare)."""
+        user = self.user("skotare")
+        person = db.Member.create(
+            first_name="Test", last_name="Skötare", membership=self.h.membership, role="skotare", user=user
+        )
+        db.HerdAccessGrant.create(member=person, herd=self.h, granted_by=self.admin)
+        return user
+
+    def test_a_seller_cannot_probe_the_kept_buyer_through_the_reason(self):  # Codex P1: the system reason
+        self.sold_and_withdrawn()
+        self.caretaker()
+
+        def answers(path):
+            sent = [{**self.resent(), "reason": reason} for reason in ("Zelda hämtar den i mars", "Ingen hämtar den")]
+            return [(r.status_code, r.get_json()) for r in (self.api("POST", path, **body) for body in sent)]
+
+        for who in ("skotare", "owner"):
+            self.login(who)
+            with self.subTest(who):
+                named, other = answers("/besattning/G9001/2025/torrkorning")
+                self.assertEqual(named, other)
+        self.login("skotare")  # a proposal takes no kept buyer: refused alike, whatever the reason says
+        named, other = answers("/besattning/G9001/2025/skicka")
+        self.assertEqual((named[0], named), (422, other))
+        self.login("owner")
+        self.ok({**self.resent(), "reason": "Zelda hämtar den i mars"})
+        self.login("skotare")
+        self.withdrawn(2, reason="Zelda ångrade sig")
+        stored = [row.voided_reason for row in db.HerdTracking.select()]
+        stored += [row.void_reason for row in db.YearlyHerdReport.select()]
+        stored += [json.dumps(row.data) for row in db.YearlyReportSubmission.select()]
+        self.assertFalse([text for text in stored if text and "Zelda" in text])
+
     def test_late_withdraw_keeps_nothing(self):  # after kept_until only an editor withdraws, and nothing is kept
         self.ok(self.body(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=BUYER), self.kvar(self.b, vikt=2.8)))
         self.at(KEPT_UNTIL + timedelta(hours=12))

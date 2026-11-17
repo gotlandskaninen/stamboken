@@ -351,7 +351,8 @@ class CodeReportTest(ArsrapportTest):
             refusals, _ = arsrapport.check(self.h, self.round_, access, report, probe, on=arsrapport.today())
             return [r.code for r in refusals]
 
-        self.assertIn("orsak_kopare", codes(arsrapport.Access("owner")))  # the account is told, as before
+        self.assertIn("orsak_kopare", codes(arsrapport.Access("manager")))  # a role that reads buyers is told
+        self.assertNotIn("orsak_kopare", codes(arsrapport.Access("owner")))  # a seller's reason is the system's too
         self.assertNotIn("orsak_kopare", codes(self.access()))
         self.assertIsNone(arsrapport.without_reason(probe).reason)
 

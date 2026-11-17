@@ -270,6 +270,10 @@ class Access:
     def editor(self):
         return self.role in ("manager", "admin")
 
+    @property
+    def reads_buyers(self):
+        return self.role in ("manager", "admin", "helper")  # can_see_buyer: the herd's genebank, or admin
+
 
 def _form_item(item, user, herd):
     """
@@ -348,7 +352,11 @@ def _recheck_code(access, herd, on=None):
 
 
 def without_reason(sub):
-    """A link's correction reason is the system's: a client-supplied one would let the dry run probe buyer names."""
+    """
+    The system's reason in place of a typed one, for a role that may not read buyers (not reads_buyers): the name check
+    on a typed reason would let the dry run, Skicka and Dra tillbaka probe the names of the rabbits' buyers, a kept
+    one too, and a reason that is never stored never carries one.
+    """
     return replace(sub, reason=None) if sub.reason else sub
 
 
@@ -1833,7 +1841,7 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
     The dry run (5.4 point 1): (refusals, warnings) for the submission `sub` on the herd's current `report`, as of
     `on`. It takes no lock and writes nothing; Skicka runs it again under the locks.
     """
-    if access.code is not None:
+    if not access.reads_buyers:
         sub = without_reason(sub)
     year, end = round_.report_year, round_.end_date
     last, late = date(year, 12, 31), end is not None and on > end
@@ -2646,6 +2654,8 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
     if access.code is not None:
         sub = without_reason(sub)
     last, digest, paper = date(year, 12, 31), request_hash(sub), access.source == "paper"
+    if not access.reads_buyers:  # after the hash, which the route's retry makes before it knows the role
+        sub = without_reason(sub)
     same = (YearlyHerdReport.herd == herd.id) & (YearlyHerdReport.round == round_.id)
     with DB_PROXY.atomic():
         lock_report(round_, herd)
@@ -2802,7 +2812,7 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
 
     if access.role == "helper":
         raise ArsrapportError(403, "Genbankshjälpare kan inte dra tillbaka en rapport.")
-    reason = None if access.code is not None else _text(reason, "reason")
+    reason = _text(reason, "reason") if access.reads_buyers else None  # without_reason
     if access.editor and not reason:
         raise _bad("reason", "Skriv varför rapporten dras tillbaka.")
     at = now or globals()["now"]()  # the parameter hides the module's clock, which the tests patch
