@@ -354,6 +354,15 @@ class TestMothers(LitterApiTest):
         offered = {d["id"] for d in self.api("GET", f"{REPORT}/honor").get_json()["honor"]}
         self.assertEqual(offered, {self.doe.id, self.doe2.id, sold_in_year.id, came.id, untracked.id})
 
+    def test_an_untracked_doe_sold_in_the_year_is_offered_and_her_litter_saved(self):
+        """Codex P2: no birth row, so the origin herd holds her until her first row, a sale in June; a May litter."""
+        doe = db.Individual.create(origin_herd=self.h, breeding=self.doe.breeding, number="G9001-2498", sex="female")
+        ht_row("TRANSFER", from_herd=self.h, herd=self.h2, individual=doe, herd_tracking_date=date(2025, 6, 1))
+        self.login("owner")
+        self.assertIn(doe.id, [d["id"] for d in self.api("GET", f"{REPORT}/honor").get_json()["honor"]])
+        saved = self.litter(mother=doe)
+        self.assertEqual(saved.status_code, 201, saved.get_data(as_text=True))
+
     def test_the_mother_list_needs_a_session_for_the_herd(self):
         self.assertEqual(self.api("GET", f"{REPORT}/honor").status_code, 401)
         self.login("hjalp")

@@ -2805,8 +2805,9 @@ def report_mothers(herd, year):
         holder, on=((holder.c.i_id == Individual.id) & (holder.c.rank == 1))
     )
     on_first = on_first.where(holder.c.herd == herd.id)
-    tracked = rows.where(HerdTracking.individual == Individual.id, HerdTracking.herd_tracking_date <= last)
-    untracked = (Individual.origin_herd == herd.id) & ~fn.EXISTS(tracked)  # then the origin herd is the holder
+    # no row by 1 January: the origin herd holds her then, and until her first row, as the command's fallback
+    tracked = rows.where(HerdTracking.individual == Individual.id, HerdTracking.herd_tracking_date <= first)
+    untracked = (Individual.origin_herd == herd.id) & ~fn.EXISTS(tracked)
     does = (
         Individual.select(Individual.id, Individual.number, Individual.name)
         .where(
