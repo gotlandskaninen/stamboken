@@ -698,6 +698,8 @@ def save_draft(herd, round_, access, user, data, updated_at, submission_key, rev
     if len(json.dumps(stored, ensure_ascii=False).encode()) > DRAFT_MAX_BYTES:
         raise ArsrapportError(400, "Utkastet är för stort.")
     with DB_PROXY.atomic():
+        round_ = _lock_round(round_)  # first, as Skicka: a round closed meanwhile is read here
+        require_open(round_, herd, access, day)
         lock_report(round_, herd)
         _recheck_code(access, herd, day)
         draft = _draft(herd, round_)
@@ -2724,6 +2726,7 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         sub = without_reason(sub)
     same = (YearlyHerdReport.herd == herd.id) & (YearlyHerdReport.round == round_.id)
     with DB_PROXY.atomic():
+        round_ = _lock_round(round_)  # the dates check() reads under the locks: a round closed meanwhile is seen
         lock_report(round_, herd)
         _recheck_code(access, herd, on)  # E4 before a retry's receipt too; the paper item's exception is below
         saved = find_submission(sub.key, herd, round_, user, digest)
@@ -3310,12 +3313,13 @@ def report_photo_document(item, herd):
 
 def _litter_write(herd, round_, access, user, write):
     """
-    Runs `write(grant)` under the report's lock, as a report writes: the link's code read again (E4), a paper
-    item locked and checked, the round open (an editor or a helper also after its last day, as Skicka). It never
-    touches the report row, so a litter moves no `received_at`.
+    Runs `write(grant)` under the report's lock, as a report writes: the round row read under its lock and open (an
+    editor or a helper also after its last day, as Skicka), the link's code read again (E4), a paper item locked and
+    checked. It never touches the report row, so a litter moves no `received_at`.
     """
-    on = require_round_open(herd, round_, access)
     with DB_PROXY.atomic():
+        round_ = _lock_round(round_)  # first, as Skicka: a round closed meanwhile is read here
+        on = require_round_open(herd, round_, access)
         lock_report(round_, herd)
         _recheck_code(access, herd, on)
         paper = access.item is not None

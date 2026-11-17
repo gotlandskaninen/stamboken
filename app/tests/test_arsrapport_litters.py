@@ -6,6 +6,8 @@ through the report's endpoints, by a login, by a link and by a helper on a paper
 isort:skip_file
 """
 
+import io
+import threading
 from datetime import date, datetime, timedelta
 from datetime import time as clock
 from unittest import mock
@@ -19,8 +21,10 @@ import utils.settings as settings
 from utils.individual_commands import LITTER_CHANGED, IndividualRefused
 
 from tests.arsrapport_fixtures import ArsrapportTest
+from tests.database_test import _USE_POSTGRES
 from tests.ht_helpers import ht_row
-from tests.inbox_fixtures import QUALITY
+from tests.inbox_fixtures import QUALITY, encoded, photo
+from tests.test_purchase_notice import in_thread, lock_waiter, run_all, until
 
 NOW = datetime.combine(date(2026, 1, 15), clock(12), arsrapport.STOCKHOLM)
 BORN = "2025-05-10"
@@ -590,3 +594,83 @@ class TestMinBesattning(LitterApiTest):
         self.assertEqual(done.status_code, 200, done.get_data(as_text=True))
         self.assertEqual(done.get_json()["litter_size6w_preliminary"], False)
         self.assertFalse(db.Breeding.get_by_id(first).litter_size6w_preliminary)
+
+
+class TestRoundClosedMeanwhile(LitterApiTest):
+    """
+    Codex P2: every write from the report reads the round row under its lock, before the report's lock, so a round
+    closed while the write waited refuses it (rundan_stangd) instead of writing with the round it read before.
+    """
+
+    CLOSED = date(2026, 1, 10)  # before NOW
+
+    def closed_meanwhile(self, write):
+        """
+        Two real transactions: save_round moves end_date before today and holds the round row until `write`, started
+        after that UPDATE, waits for the row. Returns what `write` returned.
+        """
+        if not _USE_POSTGRES:
+            self.skipTest("row locks need PostgreSQL")
+        original, results, moved = arsrapport.follow_end_date, {}, threading.Event()
+
+        def held(round_):
+            original(round_)
+            moved.set()
+            until(lock_waiter)  # the write waits for the round row
+
+        def close():
+            admin = db.User.get_by_id(self.admin.id)
+            return arsrapport.save_round(2025, admin, deadline=self.CLOSED, end_date=self.CLOSED).end_date
+
+        def later():
+            moved.wait(10)
+            try:
+                return write()
+            except arsrapport.ArsrapportError as exc:
+                return exc.status, exc.extra.get("code") or [r["code"] for r in exc.extra.get("refusals", [])]
+
+        with mock.patch.object(arsrapport, "follow_end_date", side_effect=held):
+            done = run_all(in_thread(results, "close", close), in_thread(results, "write", later))
+        self.assertTrue(done, "hung threads")
+        self.assertEqual(results["close"], self.CLOSED)
+        return results["write"]
+
+    @staticmethod
+    def answer(response):
+        return response.status_code, response.get_json().get("code")
+
+    def test_a_litter(self):
+        self.login("owner")
+        self.assertEqual(self.closed_meanwhile(lambda: self.answer(self.litter())), (409, "rundan_stangd"))
+        self.assertEqual(self.litters(), 0)
+
+    def test_a_photo(self):
+        self.login("owner")
+
+        def upload():
+            data = {"file": (io.BytesIO(encoded(photo((600, 800)))), "intyg.jpg")}
+            path = f"/api/v2/arsrapport{REPORT}/foto"
+            return self.answer(self.client.post(path, data=data, content_type="multipart/form-data"))
+
+        self.assertEqual(self.closed_meanwhile(upload), (409, "rundan_stangd"))
+        self.assertFalse(db.InboxItem.select().where(db.InboxItem.ref_type == "individual").exists())
+
+    def test_a_draft(self):
+        owner = db.User.get_by_id(self.owner.id)
+        data = {"rabbits": {}}
+
+        def save():
+            return arsrapport.save_draft(self.h, self.round_, arsrapport.Access("owner"), owner, data, None, None, None)
+
+        self.assertEqual(self.closed_meanwhile(save), (409, "rundan_stangd"))
+        self.assertFalse(db.YearlyReportDraft.select().exists())
+
+    def test_skicka(self):
+        owner = db.User.get_by_id(self.owner.id)
+        sub = arsrapport.parse_submission(self.body_for(), paper=False)
+
+        def send():
+            return arsrapport.submit(self.h, self.round_, arsrapport.Access("owner"), owner, sub)
+
+        self.assertEqual(self.closed_meanwhile(send), (422, ["rundan_stangd"]))
+        self.assertFalse(db.YearlyHerdReport.select().exists())

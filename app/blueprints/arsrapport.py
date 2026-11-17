@@ -532,6 +532,8 @@ def upload_photo(herd, year):
         # a link has no account: the item names its code, as an account would be named
         sender, named = (None, {"access_code_id": access.code.id}) if access.code else (_actor(access), {})
         with DATABASE.atomic():
+            # the round row under its lock: a round closed while the photo was read is seen here
+            arsrapport.require_round_open(herd, arsrapport._lock_round(round_), access)  # pylint: disable=protected-access
             item, documents = inbox.create_upload(
                 sender, herd, None, stored, kind="kontroll", ref_type="individual", unread=purchase, **named
             )
