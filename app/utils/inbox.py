@@ -243,9 +243,10 @@ def handlers():
     return sorted((_person(w.id, names) for w in workers), key=lambda p: p["name"].casefold())
 
 
-def create_upload(user, herd, message, stored, *, kind="upload", ref_type=None, held=None, **detail):
+def create_upload(user, herd, message, stored, *, kind="upload", ref_type=None, held=None, member=None, **detail):
     """
-    The item of an upload: one document per stored image ((path, sha256, quality)), and its notices. The report's
+    The item of an upload: one document per stored image ((path, sha256, quality)), and its notices; `member` is the
+    person who sent it, recorded as it comes in (the report's Ärenden lists the herd's main member's). The report's
     photo (4b) is a `kontroll` item with `ref_type`; its `user` is None for the report link, which `detail` names
     (access_code_id), as an account would be named. Its notices wait for its rabbit (bind_report_photo). A photo
     `held` for a purchase (PURPOSES, kept in `ref_data`) is not read while it is held (unread): its documents are
@@ -256,6 +257,7 @@ def create_upload(user, herd, message, stored, *, kind="upload", ref_type=None, 
         genebank=herd.genebank_id,
         herd=herd,
         sender_user=user,
+        member=member,
         message=mask_tokens(message),
         ref_type=ref_type,
         ref_data={PURPOSE: held} if held else None,

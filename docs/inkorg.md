@@ -382,7 +382,9 @@ räknas sida för sida. En bild får ha högst 40 megapixlar.
 bildpunkter), `suddig`, `for_mork`, `for_ljus`. Gränserna är preliminära. Har någon bild en varning
 och saknas `accept_warnings` sparas ingenting, och svaret är 409 med varningarna. Visa till exempel
 "Bilden ser suddig ut. Ta om den?" med "Skicka ändå", som skickar samma filer igen med
-`accept_warnings=1`. Utan varningar sparas inskicket direkt.
+`accept_warnings=1`. Utan varningar sparas inskicket direkt, och postens `member` blir
+uppladdarens person i matrikeln, om kontot har en: årsrapportens ärendelista visar huvudmedlemmens
+inskick efter den.
 
 **Svar 201** (inskicket är sparat):
 

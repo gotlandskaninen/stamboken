@@ -45,6 +45,7 @@ from utils.individual_commands import (
     record_sale,
 )
 from utils.individual_number_v2 import PAPER_NUMBER_REQUIRED, parse_number
+from utils.matrikel import resolve_own_membership
 
 from .common import json_login_required, problem
 from .individual_v2_create import register_individual
@@ -225,7 +226,10 @@ def upload():
         for data, result in zip(encoded, results, strict=True):
             stored.append((*inbox.write_jpeg(data, "original"), result["quality"]))
         with DB_PROXY.atomic():
-            item, documents = inbox.create_upload(current_user, herd, message, stored)
+            # who sent it, as of now: the report's "Ärenden" lists the herd's main member's uploads, never a grant's
+            item, documents = inbox.create_upload(
+                current_user, herd, message, stored, member=resolve_own_membership(current_user)
+            )
     except _Refused as refused:
         inbox.remove_files(path for path, _, _ in stored)
         return refused.response

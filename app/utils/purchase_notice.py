@@ -31,7 +31,6 @@ from utils.database import (
     InboxItem,
     Individual,
     SaleProposal,
-    User,
     YearlyHerdReport,
     YearlyReportRound,
     coerce_date,
@@ -40,7 +39,8 @@ from utils.database import (
     lock_individuals,
     not_voided,
 )
-from utils.report_code import actor_key
+from utils.matrikel import resolve_own_membership
+from utils.report_code import actor_key, invitation_recipient
 
 KIND = "kopanmalan"
 _PURCHASE_LOCK = 0x48424B50  # "HBKP": classid of the advisory lock on a purchase of a rabbit into a herd
@@ -290,7 +290,8 @@ def send_photos(herd, round_, access, user, *, number, from_herd, date, document
             genebank=herd.genebank_id,
             herd=herd.id,
             sender_user=None if by_link else user.id,
-            member=access.code.member_id if by_link else None,  # the link's: its mails go there, an erasure finds it
+            # who sent it: the link's member (its mails go there, an erasure finds it), or the account's person
+            member=access.code.member_id if by_link else resolve_own_membership(user),
             ref_data={
                 "number": number,
                 "from_herd": seller,
@@ -499,10 +500,11 @@ def _case_state(item, waiting, done):
 def report_cases(herd, year):
     """
     ReportView.arenden (S8): the queue items that concern the herd's report, in plain words, open ones first, a closed
-    one for CASE_DAYS after it closed. Only what the herd's own actors sent (an ordinary upload by an account with a
-    right to the herd, or photos sent through the report) and the report's own kontroll items: sale proposals,
-    purchase notices and the photos of rabbits added from the report. A purchase or a sale of another year is left out.
-    A row holds no message, no other sender's item and no buyer. A few queries, whatever the number of items.
+    one for CASE_DAYS after it closed. What came through the report (photos sent, and its kontroll items: sale
+    proposals, purchase notices and the photos of rabbits added from it), and an ordinary upload its recipient sent:
+    the member recorded when it came in, or for an older one without, the recipient's account. Never through a right to
+    the herd, which a later grant or revoke would change. A purchase or a sale of another year is left out. A row holds
+    no message, no other sender's item and no buyer. A few queries, whatever the number of items.
     """
     since = inbox.now() - datetime.timedelta(days=CASE_DAYS)
     kontroll = (InboxItem.kind == "kontroll") & (
@@ -516,13 +518,19 @@ def report_cases(herd, year):
             InboxItem.closed_at.is_null() | (InboxItem.closed_at >= since),
         )
     )
-    senders = sorted({item.sender_user_id for item in items if item.kind == "upload" and not sent(item)} - {None})
-    # the herd's own accounts, by the single derivation of herd rights: one check per sender, not per item
-    own = {user.id for user in User.select().where(User.id.in_(senders)) if herd.id in user.effective_herd_ids()}
+    recipient = invitation_recipient(herd)  # the member the herd's report goes to now
+
+    def from_recipient(item):
+        if recipient is None:
+            return False
+        if item.member_id is not None:
+            return item.member_id == recipient.id
+        return recipient.user_id is not None and item.sender_user_id == recipient.user_id  # an older upload
+
     items = [
         item
         for item in items
-        if (item.kind == "kontroll" or sent(item) or item.sender_user_id in own)
+        if (item.kind == "kontroll" or sent(item) or from_recipient(item))
         and (item.ref_data is None or _day(item).year == year)
     ]
     ids = [item.id for item in items]

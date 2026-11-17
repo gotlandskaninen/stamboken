@@ -11,7 +11,7 @@ import io
 import os
 import threading
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from unittest import mock
 
 import utils.arsrapport as arsrapport
@@ -32,7 +32,7 @@ from utils.report_code import CodeActor
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.database_test import _USE_POSTGRES
 from tests.ht_helpers import ht_row
-from tests.inbox_fixtures import encoded, photo
+from tests.inbox_fixtures import InboxTest, encoded, photo
 
 DAY0 = date(2026, 1, 10)
 
@@ -1003,6 +1003,7 @@ class PurchaseNoticeTest(ArsrapportTest):
         )
 
     def test_report_cases_scope_and_states(self):
+        db.Member.update(user=self.owner).where(db.Member.id == self.code.member_id).execute()  # the main member's
         waiting = self.item(sender=self.owner)  # the owner's own upload, its certificate still to be read
         self.document(waiting, status="vantar")
         self.document(waiting, status="klar")
@@ -1034,6 +1035,50 @@ class PurchaseNoticeTest(ArsrapportTest):
         self.client.get("/api/logout")
         self.open_link(self.code)
         self.assertEqual(self.view()["arenden"], rows)
+
+    def inskick(self):
+        """An upload for the buyer herd on the member upload page (Skicka in): its item's id."""
+        response = InboxTest.upload(self, herd="G9001")
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        return response.get_json()["item"]["id"]
+
+    def test_report_cases_follow_who_sent_an_upload_not_todays_rights(self):
+        """
+        Codex P2: an ordinary upload is the report's case when the herd's report recipient sent it, as recorded when it
+        came in, or for an older upload by the recipient's account. A right to the herd never counts: a grant given
+        after a helper's upload does not show it, a revoke hides nothing, and a new main member sees none of the old.
+        """
+        holder = db.Member.get_by_id(self.code.member_id)
+        db.Member.update(user=self.owner).where(db.Member.id == holder.id).execute()
+        self.login("hjalp")  # a genebank helper uploads for the herd, as the queue's workers may
+        early = self.inskick()
+        self.login("owner")
+        mine = self.inskick()
+        older = self.item(sender=self.owner)  # from before the sender was recorded: by the recipient's account
+        self.item(sender=self.helper)  # the helper's, from before: never through a grant
+
+        def listed():
+            return sorted(row["id"] for row in purchase_notice.report_cases(self.h, 2025))
+
+        self.assertEqual([db.InboxItem.get_by_id(i).member_id for i in (early, mine)], [None, holder.id])
+        self.assertEqual(listed(), sorted([mine, older.id]))
+        person = db.Member.create(
+            first_name="Test", last_name="Skötare", membership=self.h.membership, role="skotare", user=self.helper
+        )
+        grant = db.HerdAccessGrant.create(member=person, herd=self.h, granted_by=self.admin)
+        self.assertIn(self.h.id, db.User.get_by_id(self.helper.id).effective_herd_ids())
+        self.assertEqual(listed(), sorted([mine, older.id]))  # the caretaker's grant shows none of the helper's
+        self.login("hjalp")
+        cared = self.inskick()  # as a caretaker now: recorded as the caretaker's
+        self.assertEqual(db.InboxItem.get_by_id(cared).member_id, person.id)
+        self.assertEqual(listed(), sorted([mine, older.id]))
+        db.HerdAccessGrant.update(revoked_at=datetime.now()).where(db.HerdAccessGrant.id == grant.id).execute()
+        self.assertEqual(listed(), sorted([mine, older.id]))  # a revoke hides nothing
+        # a new main member: the herd's report goes to them, and the old one's uploads leave its list
+        db.Member.update(end_date=date(2026, 1, 9)).where(db.Member.id == holder.id).execute()
+        new = {"first_name": "Test", "last_name": "Ny", "email": "g3@example.invalid", "role": "huvudmedlem"}
+        db.Member.create(membership=self.h.membership, **new)
+        self.assertEqual(listed(), [])
 
     def test_the_sellers_report_lists_its_sale_proposal(self):
         self.seller_proposes()

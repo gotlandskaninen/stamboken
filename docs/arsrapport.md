@@ -164,10 +164,13 @@ i den session som laddade upp fotona, för samma besättning och år och med sam
 ## Ärenden hos genbanksansvarig (S8)
 
 Rapportvyns `arenden: [{id, what, number, photos, state}]` listar köns poster som gäller rapporten,
-öppna först, och en stängd post i 14 dagar efter att den stängdes. Med finns bara besättningens
-egna: vanliga inskick för besättningen från ett konto med rätt till den (`effective_herd_ids`),
-foton som skickats genom rapporten, och rapportens `kontroll`-poster (försäljningsförslag,
-köpanmälningar och foton av kaniner som lagts till från rapporten). Mejl, andras inskick,
+öppna först, och en stängd post i 14 dagar efter att den stängdes. Med finns det som kom genom
+rapporten: foton som skickats (S7) och rapportens `kontroll`-poster (försäljningsförslag,
+köpanmälningar och foton av kaniner som lagts till från rapporten). Dessutom vanliga inskick som
+rapportens mottagare har skickat, huvudmedlemmen som länken går till: den person som sparades som
+avsändare när inskicket kom in (`member`), eller för ett äldre inskick utan den, mottagarens konto.
+En rätt till besättningen räcker aldrig, så en skötarrätt som ges senare visar inget och en som
+återkallas döljer inget, och en ny huvudmedlem ser inte den förras inskick. Mejl, andras inskick,
 meddelanden och köparuppgifter är inte med. Köp och försäljningar från ett annat år är inte med.
 
 - `what`: `inskick`, `kop_saknas` (S7), `kopanmalan`, `foto` eller `forsaljning`.
