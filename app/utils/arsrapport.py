@@ -2687,12 +2687,9 @@ def _litter_write(herd, round_, access, user, write):
 def add_litter(herd, round_, access, user, body):
     """POST kull: a litter without a certificate in the herd; the new litter's id and the year's litters."""
     fields = _litter_body(body, new=True)
-    litter = _litter_write(
-        herd,
-        round_,
-        access,
-        user,
-        lambda grant: register_litter(
+
+    def write(grant):
+        litter = register_litter(
             user,
             fields["mother_id"],
             fields["father_id"],
@@ -2702,9 +2699,45 @@ def add_litter(herd, round_, access, user, body):
             herd.herd,
             year=round_.report_year,
             grant=grant,
-        ),
-    )
+        )
+        mail_added(herd, user, "breeding", litter.id)
+        return litter
+
+    litter = _litter_write(herd, round_, access, user, write)
     return {"id": litter.id, "litters": report_litters(herd, round_.report_year)}
+
+
+ADDED_KINDS = {"breeding": "arsrapport.ny_kull", "individual": "arsrapport.ny_kanin"}
+
+
+def mail_added(herd, user, ref_type, ref_id):
+    """
+    Spec 5.8: the receipt of a litter or a rabbit added through the report, whoever added it, to the herd's main member
+    as the report's own receipts go, in the addition's transaction and once per addition.
+    """
+    _mail(ADDED_KINDS[ref_type], herd, user, {f"{ref_type}_id": ref_id}, (ref_type, ref_id))
+
+
+@mail_kind("arsrapport.ny_kull", priority=0, category="T")
+def _ny_kull(params):
+    """The receipt of a litter added through the report: the herd, the mother and the birth date as they stand."""
+    litter = Breeding.get_or_none(Breeding.id == params["breeding_id"])
+    if litter is None or litter.mother_id is None or litter.birth_date is None:
+        return None
+    return {
+        "herd": litter.breeding_herd_id.herd,
+        "mother": litter.mother.number,
+        "birth_date": litter.birth_date.isoformat(),
+    }
+
+
+@mail_kind("arsrapport.ny_kanin", priority=0, category="T")
+def _ny_kanin(params):
+    """The receipt of a rabbit added through the report from its certificate: the herd and the rabbit's number."""
+    rabbit = Individual.get_or_none(Individual.id == params["individual_id"])
+    if rabbit is None or rabbit.voided:
+        return None
+    return {"herd": rabbit.origin_herd.herd, "number": rabbit.number}
 
 
 def change_litter(herd, round_, access, user, breeding_id, body):

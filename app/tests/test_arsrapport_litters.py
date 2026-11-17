@@ -412,6 +412,43 @@ class TestKitsAndMoves(LitterApiTest):
         self.assertEqual((litter.litter_size6w, litter.litter_size6w_preliminary), (5, True))
 
 
+class TestAddedReceipt(LitterApiTest):
+    def test_each_litter_added_through_the_report_gets_a_receipt(self):
+        """Spec 5.8 (Opus L2): one receipt per litter added, by a link or an account; none for a changed count."""
+        self.open_link()
+        first = self.litter().get_json()["id"]
+        (row,) = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.ny_kull")
+        self.assertEqual(
+            (row.recipient_kind, row.recipient_id, row.params, (row.ref_type, row.ref_id), row.priority),
+            ("member", self.member.id, {"breeding_id": first}, ("breeding", first), 0),
+        )
+        self.assertEqual(row.dedupe_key, f"arsrapport.ny_kull:{first}")
+        subject, body = mail.render("arsrapport.ny_kull", mail.MAIL_KINDS["arsrapport.ny_kull"].build(row.params))
+        self.assertEqual(subject, "En kull är registrerad i G9001")
+        self.assertIn(
+            f"Kullen efter {self.doe.number} född {BORN} är registrerad i Stamboken för besättning G9001. Den lades "
+            "till i årsrapporten. Den finns kvar även om du drar tillbaka rapporten.",
+            body,
+        )
+        self.assertEqual(self.api("PATCH", f"{REPORT}/kull/{first}", litter_size6w=3).status_code, 200)
+        self.login("owner")
+        second = self.litter(born="2025-08-20").get_json()["id"]
+        rows = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.ny_kull").order_by(db.MailMessage.id)
+        self.assertEqual([row.params["breeding_id"] for row in rows], [first, second])
+
+    def test_a_refused_litter_gets_no_receipt(self):
+        self.login("owner")
+        self.assertEqual(self.litter(size=0).status_code, 422)
+        self.assertEqual(self.litter(born="2027-01-01").status_code, 422)
+        self.assertFalse(db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.ny_kull").exists())
+
+    def test_a_deleted_litter_cancels_its_receipt(self):
+        self.login("owner")
+        first = self.litter().get_json()["id"]
+        db.Breeding.delete().where(db.Breeding.id == first).execute()
+        self.assertIsNone(mail.MAIL_KINDS["arsrapport.ny_kull"].build({"breeding_id": first}))
+
+
 class TestReceiptSnapshot(LitterApiTest):
     def test_the_receipt_mail_kinds_build(self):
         """Review P1: the mail worker calls the registered builder with the row's params."""

@@ -263,6 +263,30 @@ class TestRegister(AddRabbitTest):
         saved = item.events.where(db.InboxEvent.kind == "sparad").get()
         self.assertEqual((saved.user_id, saved.detail["individual"]), (None, "G9001-2511"))
 
+    def test_each_rabbit_added_through_the_report_gets_a_receipt(self):
+        """Spec 5.8 (Opus L2): the rabbit's own receipt to the herd's main member; a refused registration has none."""
+        self.open_link()
+        item_id = self.photo_item()
+        self.assertEqual(self.kit(item_id, paper_number="G9001-2521").status_code, 409)  # nothing written, no mail
+        self.assertFalse(db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.ny_kanin").exists())
+        kit_id = self.kit(item_id).get_json()["id"]
+        (row,) = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.ny_kanin")
+        self.assertEqual(
+            (row.recipient_kind, row.recipient_id, row.params, (row.ref_type, row.ref_id), row.priority),
+            ("member", inbox.herd_holder(self.h.id).id, {"individual_id": kit_id}, ("individual", kit_id), 0),
+        )
+        self.assertEqual(row.dedupe_key, f"arsrapport.ny_kanin:{kit_id}")
+        subject, body = mail.render("arsrapport.ny_kanin", mail.MAIL_KINDS["arsrapport.ny_kanin"].build(row.params))
+        self.assertEqual(subject, "G9001-2511 är registrerad i G9001")
+        self.assertIn(
+            "Kaninen G9001-2511 är registrerad i Stamboken för besättning G9001. Den lades till i årsrapporten från "
+            "ett foto av intyget. Den finns kvar även om du drar tillbaka rapporten.",
+            body,
+        )
+        self.assertFalse(db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.ny_kull").exists())
+        db.Individual.update(voided=True).where(db.Individual.id == kit_id).execute()
+        self.assertIsNone(mail.MAIL_KINDS["arsrapport.ny_kanin"].build(row.params))  # an unpromoted rabbit: cancelled
+
     def test_owner_registers_with_own_right(self):
         self.login("owner")
         response = self.kit(self.photo_item())

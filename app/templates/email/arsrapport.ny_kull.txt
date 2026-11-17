@@ -1,0 +1,9 @@
+{% block subject %}En kull är registrerad i {{ herd }}{% endblock %}
+
+{% block body %}
+Hej!
+
+Kullen efter {{ mother }} född {{ birth_date }} är registrerad i Stamboken för besättning {{ herd }}. Den lades till i årsrapporten. Den finns kvar även om du drar tillbaka rapporten.
+
+Var det inte du? Kontakta genbanksansvarig genom att svara på det här mejlet.
+{% endblock %}

@@ -541,8 +541,9 @@ def add_rabbit(herd, year):
         ):
             raise ArsrapportError(409, PHOTO_GONE, field="photo")
 
-        def bind(individual):  # in the registration's transaction: the photo and the rabbit commit together
+        def bind(individual):  # in the registration's transaction: the photo, the rabbit and its receipt together
             inbox.bind_report_photo(item, document, None if access.code else actor, individual)
+            arsrapport.mail_added(herd, actor, "individual", individual.id)
             created.append(individual)
 
         return register_individual_as(actor, herd, form, bind)
