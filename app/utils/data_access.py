@@ -4356,8 +4356,8 @@ APPLICATION_RETENTION = "12 months"  # a PostgreSQL interval: calendar months, a
 
 def purge_member_applications(now) -> int:
     """
-    Deletes member_application rows that never led to membership: rejected ones 12 calendar months after the
-    decision (reviewed_at, created_at if missing), pending ones 12 months after submission. Approved rows stay.
+    Deletes member_application rows that never led to membership (rejected or pending) 12 calendar months after
+    submission, as the privacy policy promises; the decision date does not matter. Approved rows stay.
     The table is not in AUDITED_TABLES, so audit_log holds no copy; matrikel_audit has no row for these.
     Returns the rows deleted.
     """
@@ -4369,10 +4369,9 @@ def purge_member_applications(now) -> int:
     cursor = DATABASE.execute_sql(
         """
         DELETE FROM member_application
-        WHERE (status = 'rejected' AND COALESCE(reviewed_at, created_at) + %s::interval <= %s)
-           OR (status = 'pending' AND created_at + %s::interval <= %s)
+        WHERE status IN ('rejected', 'pending') AND created_at + %s::interval <= %s
         """,
-        (APPLICATION_RETENTION, cutoff, APPLICATION_RETENTION, cutoff),
+        (APPLICATION_RETENTION, cutoff),
     )
     return cursor.rowcount or 0
 

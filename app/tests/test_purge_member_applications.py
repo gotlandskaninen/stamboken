@@ -44,11 +44,11 @@ class TestPurgeMemberApplications(DatabaseTest):
     def test_old_rejected_and_pending_go_young_and_approved_stay(self):
         rejected_old = _application("rejected", OLD, reviewed_at=OLD)
         pending_old = _application("pending", OLD)
-        rejected_young = _application("rejected", OLD, reviewed_at=YOUNG)  # counted from the decision
+        rejected_young = _application("rejected", YOUNG, reviewed_at=YOUNG)
         pending_young = _application("pending", YOUNG)
         approved_old = _application("approved", OLD, reviewed_at=OLD)
 
-        self.assertEqual(da.purge_member_applications(NOW), 2)
+        self.assertEqual(da.purge_member_applications(NOW), 2)  # rejected_old and pending_old
 
         self.assertEqual(_ids(), {rejected_young, pending_young, approved_old})
         self.assertNotIn(rejected_old, _ids())
@@ -62,8 +62,8 @@ class TestPurgeMemberApplications(DatabaseTest):
         self.assertEqual(_ids(), {kept})
         self.assertNotIn(last_day, _ids())
 
-    def test_rejected_without_reviewed_at_counts_from_submission(self):
-        gone = _application("rejected", OLD)
+    def test_rejected_counts_from_submission_not_from_the_decision(self):
+        gone = _application("rejected", OLD, reviewed_at=YOUNG)  # decided late, submitted over 12 months ago
         kept = _application("rejected", YOUNG)
         da.purge_member_applications(NOW)
         self.assertEqual(_ids(), {kept})
