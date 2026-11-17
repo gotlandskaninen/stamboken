@@ -534,6 +534,20 @@ describe("WorkView: a purchase notice (4a Task 5)", () => {
     expect(screen.getByText(/Inkommet via länk G9001\/2025/)).toBeTruthy();
   });
 
+  it("shows a photo sent with it, and nothing to work on from it in the queue", () => {
+    render(
+      view(
+        { ...notice, documents: [doc({ doc_type: "bevis", status: "ny" })] },
+        boss,
+        false,
+        2026,
+      ),
+    );
+    expect(screen.getByText(/Anmält köp: G9002-2501/)).toBeTruthy();
+    expect(screen.queryByText(/Ärendet gäller kopanmalan/)).toBeNull();
+    expect(screen.queryByText("Försäljning")).toBeNull(); // the queue's sale panel
+  });
+
   it("links to the status view when a pending sale matches it", () => {
     render(view({ ...notice, report_year: 2025 }, boss, false, 2026));
     expect(

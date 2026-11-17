@@ -639,7 +639,8 @@ class PurchaseNoticeTest(ArsrapportTest):
         self.assertEqual(self.notify_with(first["document_id"], "intyg").get_json()["id"], item_id)
         heard = self.heard(item)
         self.assertIn(self.helper.id, heard)
-        self.assertEqual([d.doc_type for d in item.documents.order_by(db.InboxDocument.id)], ["intyg"])
+        (document,) = item.documents
+        self.assertEqual((document.doc_type, document.interpretation_status), ("intyg", "av"))  # not read on a notice
         second = self.upload()
         self.assertEqual(self.notify_with(second["document_id"]).get_json()["id"], item_id)
         self.assertEqual(self.heard(item), heard)  # once
@@ -663,3 +664,18 @@ class PurchaseNoticeTest(ArsrapportTest):
         scrapped = self.notify_with(mine["document_id"])
         self.assertEqual((scrapped.status_code, scrapped.get_json()["detail"]), (409, arsrapport.PHOTO_GONE))
         self.assertEqual(notices(), [])
+
+    def test_a_notice_with_a_photo_closes_in_the_queue_once_its_photo_is_dismissed(self):
+        """The queue's rule: an item closes by hand once its documents are done; dismissing the photo closes it."""
+        self.login("owner")
+        uploaded = self.upload()
+        item_id = self.notify_with(uploaded["document_id"]).get_json()["id"]
+        self.login("man")
+        self.assertEqual(self.client.post(f"/api/v2/inkorg/{item_id}/ta", json={}).status_code, 200)
+        refused = self.client.post(f"/api/v2/inkorg/{item_id}/lage", json={"state": "klar"})
+        self.assertEqual(refused.status_code, 400)  # with a document, "klar" comes from its documents only
+        path = f"/api/v2/inkorg/{item_id}/dokument/{uploaded['document_id']}"
+        response = self.client.patch(path, json={"dismissed": True})
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(self.state(db.InboxItem.get_by_id(item_id)), "klar")
+        self.assertEqual(self.kop_anmalt(), 0)

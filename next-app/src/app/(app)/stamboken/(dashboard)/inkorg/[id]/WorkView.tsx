@@ -658,7 +658,8 @@ export function WorkView({
             !saving &&
             !checking &&
             !noRole &&
-            item.ref_type !== "sale_proposal" && (
+            item.ref_type !== "sale_proposal" &&
+            item.ref_type !== "kopanmalan" && (
               <div className={styles.note}>
                 {CLOSED_STATES.includes(item.state)
                   ? "Ärendet är stängt."
@@ -687,7 +688,9 @@ export function WorkView({
               </div>
             )}
 
-          {!doc ? null : item.registered && doc.doc_type === "intyg" ? (
+          {/* a purchase notice's photo is looked at; the purchase is registered on the rabbit's page */}
+          {!doc || item.ref_type === "kopanmalan" ? null : item.registered &&
+            doc.doc_type === "intyg" ? (
             <ReportPhotoCheck
               doc={doc}
               registered={item.registered}

@@ -1,7 +1,8 @@
 """
 Purchase notices (step 4a Task 5, fråga 19): the buyer reports a rabbit bought during the report's year that Stamboken
 has not moved into the herd. A notice is a `kontroll` item of the buyer herd, its fields in `ref_data` (the number,
-the seller herd's code, the date and the rabbit's id) and no personal data. The genebank's manager registers the
+the seller herd's code, the date and the rabbit's id) and no personal data, and maybe a photo of the transfer proof
+or the certificate, a document kept and purged as the queue's are. The genebank's manager registers the
 transfer, or approves the seller's matching sale proposal, and the notice closes once a transfer of the rabbit into
 the herd is registered by any path, dated within 14 days of the notice and with no 31/12 between them.
 """
@@ -165,8 +166,8 @@ def report_purchase(
         # the link has no account: its name goes in the history, as _audit_as names it to the audit log
         detail = {"via": user.username} if by_link else {}
         if photo is not None:
-            unread = {} if doc_type == "intyg" else {"interpretation_status": "av"}  # only an intyg is read
-            moved = InboxDocument.update(item=item.id, doc_type=doc_type, **unread)
+            # not read by the model: the queue saves nothing from a notice, and a reading claimed before the move drops
+            moved = InboxDocument.update(item=item.id, doc_type=doc_type, interpretation_status="av")
             moved.where(InboxDocument.id == photo_document_id).execute()
             InboxItem.delete().where(InboxItem.id == photo.id).execute()  # the photo's own item, empty now
             detail["documents"] = 1
