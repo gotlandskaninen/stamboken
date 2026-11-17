@@ -646,6 +646,26 @@ describe("ReportForm", () => {
     ).toBeTruthy();
   });
 
+  it("takes empty buyer fields on Ändra for the sale outside the report holds", () => {
+    const sale = { till: "utanfor", ar: 2026, manad: 6, dag: null };
+    const report = {
+      ...submittedReport(),
+      submitted: { rabbits: { "1": { val: "sald", sald: sale } } as never },
+    };
+    render(
+      <ReportForm env="demo" view={view({ report })} actions={actions()} />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Ändra" }));
+    fireEvent.click(within(row(1)).getByRole("button", { name: "Ändra" }));
+    expect(
+      screen.getByText(/Lämna fälten tomma om köparen är rätt/),
+    ).toBeTruthy();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Spara försäljningen" }),
+    );
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
   it("offers Dra tillbaka to a caretaker with a sale, and says a pending sale waits", () => {
     // FB5: the withdrawal leaves the owner's sale standing, so it is offered
     const sale = {
