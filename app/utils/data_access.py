@@ -3162,6 +3162,7 @@ def update_breeding(form, user_uuid):
         return {"status": "error", "message": ", ".join(errors)}
 
     parents_changed = "mother" in changes or "father" in changes
+    litter_dates_changed = bool(changes.keys() & {"mother", "father", "breed_date", "birth_date"})
     validation_input_changed = bool(changes.keys() & {"mother", "father", "breed_date", "birth_date", "litter_size"})
     # The BIRTH rows move below, in the same transaction as the breeding save.
     new_birth_date = changes.get("birth_date")
@@ -3170,16 +3171,20 @@ def update_breeding(form, user_uuid):
     # refused sibling (HerdTrackingError) must leave every kit and the breeding untouched.
     try:
         with DATABASE.atomic():
-            # The litter's mothers first, as RegisterLitter takes its mother's: the one it has now (read afresh, since a
-            # correction may have come after this request's read) and any new one, in ascending order.
-            now_mother = Breeding.select(Breeding.mother).where(Breeding.id == breeding.id).scalar()
-            mothers = sorted({m for m in (now_mother, getattr(changes.get("mother"), "id", None)) if m})
+            # A parent or date change takes the litter's mothers first, as RegisterLitter takes its mother's (the 3- and
+            # 35-day rules): the one it has now (read afresh, since a correction may have come after this request's
+            # read) and any new one, in ascending order. A count alone takes none: a certificate calls this holding
+            # the litter's row already, and that row lock serializes it with ConfirmLitterSize.
+            mothers = []
+            if litter_dates_changed:
+                now_mother = Breeding.select(Breeding.mother).where(Breeding.id == breeding.id).scalar()
+                mothers = sorted({m for m in (now_mother, getattr(changes.get("mother"), "id", None)) if m})
             for mother_id in mothers:
                 lock_mother_litters(mother_id)
             # LOCK ORDER: Breeding first, then individuals in ascending id in ONE call — the order
             # delete_breeding and set_litter_number/renumber_litters take.
             stored = Breeding.select().where(Breeding.id == breeding.id).for_update().get()
-            if stored.mother_id is not None and stored.mother_id not in mothers:  # her lock is not ours
+            if litter_dates_changed and stored.mother_id is not None and stored.mother_id not in mothers:  # not ours
                 return {"status": "error", "message": "Kullen ändrades samtidigt. Försök igen."}
             # Authorize again under the lock: the pre-check above read an unlocked herd.
             if not user.can_edit(stored.breeding_herd_id.herd):

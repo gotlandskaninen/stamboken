@@ -18,6 +18,7 @@ import utils.individual_commands as ic
 import utils.report_code as report_code
 import utils.settings as settings
 from herdbook import APP
+from moto import mock_aws
 from utils.arsrapport import ReportGrant
 from utils.herd_tracking import record_herd_tracking
 from utils.individual_commands import IndividualRefused, SameLitter, confirm_litter_size, register_litter
@@ -194,9 +195,10 @@ class TestRegisterLitter(LitterTest):
         row = cursor.fetchone()
         return bool(row and row[0])
 
-    def overlap(self, second):
+    def overlap(self, second, first=None):
         """
-        Transaction A takes the mother's advisory lock and is held there; `second()` runs in B meanwhile.
+        Transaction A (`first()`, by default a litter registered) takes the mother's advisory lock and is held there;
+        `second()` runs in B meanwhile.
         Returns (B's outcome, whether B was seen waiting for that lock, blocked by A, while A held it, A's outcome).
         """
         locked, release = threading.Event(), threading.Event()
@@ -232,7 +234,7 @@ class TestRegisterLitter(LitterTest):
                 mock.patch.object(create, "lock_mother_litters", side_effect=hold_after_lock),
                 mock.patch.object(da, "lock_mother_litters", side_effect=hold_after_lock),
             ):
-                threads.append(threading.Thread(target=run, args=("a", self.add)))
+                threads.append(threading.Thread(target=run, args=("a", first or self.add)))
                 threads[0].start()
                 self.assertTrue(locked.wait(10), "A never took the lock")
                 threads.append(threading.Thread(target=run, args=("b", second)))
@@ -304,6 +306,40 @@ class TestRegisterLitter(LitterTest):
         self.assertEqual(result["status"], "error", result)
         self.assertIn("inom 35 dagar", result["message"])
         self.assertEqual(db.Breeding.get_by_id(old.id).birth_date, BORN - timedelta(days=100))
+
+    def test_a_certificate_setting_the_count_does_not_wait_for_the_mothers_litter_lock(self):
+        """
+        Codex P2: a date edit holds the mother's lock and then wants the litter, while a certificate holds the litter
+        and sets its 6-week count. A count alone takes no mother lock, so the two do not deadlock.
+        """
+        litter = db.Breeding.create(
+            breeding_herd_id=self.g1,
+            mother=self.doe,
+            father=self.buck,
+            breed_date=BORN - timedelta(days=31),
+            birth_date=BORN,
+            litter_size=5,
+            litter_size6w=5,
+        )
+        kit = db.Individual.create(origin_herd=self.g1, breeding=litter, number="G1-2551", sex="female")
+        ht_row("BIRTH", herd=self.g1, individual=kit, herd_tracking_date=BORN)
+        for patcher in (mock_aws(), mock.patch.object(settings.s3, "endpoint", None)):  # as CertV2Mixin
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        form = {"id": litter.id, "breed_date": str(BORN - timedelta(days=30))}
+
+        def issue():
+            client = APP.test_client(use_cookies=True)
+            client.post("/api/login", json={"username": "owner", "password": "pass"})
+            return client.post(f"/api/v2/certificates/issue/{kit.number}", json={"litter_size6w": 4})
+
+        response, blocked, edited = self.overlap(issue, first=lambda: da.update_breeding(form, self.owner.uuid))
+        self.assertFalse(blocked, "the certificate waited for the mother's lock")
+        self.assertNotIsInstance(response, Exception, response)
+        self.assertEqual(response.status_code, 201, response.get_json())
+        self.assertEqual(edited, {"status": "success"})
+        after = db.Breeding.get_by_id(litter.id)
+        self.assertEqual((after.breed_date, after.litter_size6w), (BORN - timedelta(days=30), 4))
 
     @staticmethod
     def shortcut_body(born):
