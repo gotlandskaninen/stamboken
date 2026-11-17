@@ -101,9 +101,11 @@ eller MX1) på dagen `date` under året. Anmälan blir en post i kön, `kind` `k
 Svaret är `{id, number, from_herd, date, state}`.
 
 Kroppen kan också ha `document_id` och `doc_type` (`"bevis"` eller `"intyg"`): ett foto av
-överlåtelsebeviset eller intyget som sessionen laddat upp med `…/foto`. Fotot flyttar till anmälans
-post med den typen, och fotots egen post tas bort. Bildmodellen läser det inte, och kön visar det
-bara: köpet registreras på kaninens sida. Samma regler gäller som när en kanin registreras
+överlåtelsebeviset eller intyget som sessionen laddat upp med `…/foto?syfte=kop`. Fotot flyttar till
+anmälans post med den typen, och fotots egen post tas bort. Bildmodellen läser det aldrig: inte
+efter uppladdningen, och en tidigare läsning tas bort vid flytten. Kön visar det bara, utan typ,
+format och Tolka igen, och servern låter inte kön skicka det till läsning: köpet registreras på
+kaninens sida. Ett foto uppladdat med `syfte=kop` som i stället blir en kanins läses som andra. Samma regler gäller som när en kanin registreras
 från ett foto: bara sessionens egna uppladdningar (403), och bara ett foto som inte är kopplat och som
 kön fortfarande kan kontrollera (409), båda med `field` `photo`. Kön får notisen `ny_post` en gång,
 när anmälan får sitt första foto; en anmälan utan foto ger ingen notis. Samma begäran igen svarar
