@@ -288,3 +288,96 @@ test("8. The session ends in the middle of input and the link continues", async 
     .toContain('"2,9"');
   await context.close();
 });
+
+// 4b Task 4 (L10): through the link, with no account, a kit and its mother are added from photos of their
+// certificates, and the report is sent. On M9202, which nothing after step 5 counts. The photo is drawn here.
+test("9. A kit and its mother from their certificates, then the report", async ({
+  browser,
+}) => {
+  const context = await browser.newContext();
+  const page = await context.newPage();
+  await page.goto(links["M9202"]);
+  await expect(page.getByText("Besättning M9202")).toBeVisible();
+  await expect(rows(page)).toHaveCount(6);
+  await hydrated(page);
+  const drawn = await page.evaluate(() => {
+    const canvas = document.createElement("canvas");
+    canvas.width = 800;
+    canvas.height = 600;
+    const g = canvas.getContext("2d")!;
+    g.fillStyle = "#f4f1e6";
+    g.fillRect(0, 0, 800, 600);
+    g.fillStyle = "#1b1b24";
+    g.font = "32px sans-serif";
+    g.fillText("Härstamningsbevis (prov)", 40, 80);
+    return canvas.toDataURL("image/png").split(",")[1];
+  });
+  const photo = {
+    name: "intyg.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(drawn, "base64"),
+  };
+  const dialog = page.getByRole("dialog", {
+    name: "Lägg till kanin från intyget",
+  });
+  const field = (label: RegExp) => dialog.getByLabel(label);
+  const sendPhoto = async () => {
+    await dialog.getByLabel("Foto av intyget").setInputFiles(photo);
+    await expect(dialog.getByText("Fotot är uppladdat.")).toBeVisible({
+      timeout: 30_000,
+    });
+  };
+
+  await page
+    .getByRole("button", { name: "Lägg till kanin från intyget" })
+    .click();
+  await sendPhoto();
+  await field(/^Individnummer på pappret/).fill("M9202-2511");
+  await field(/^Intygsnummer/).fill("E2E-2511");
+  await field(/^Namn/).fill("Ungen");
+  await field(/^Födelsedatum/).fill("2025-06-20");
+  await field(/^Far(?!-)/).fill("M9202-2412");
+  await field(/^Antal födda/).fill("4");
+  await field(/^Levande i kullen/).fill("3");
+  await field(/^Mor/).fill("M9202-2416");
+  await expect(dialog.getByText("Finns inte i Stamboken.")).toBeVisible();
+  await dialog
+    .getByRole("button", { name: "Lägg till modern från hennes intyg nu" })
+    .click();
+
+  // the mother, from her own certificate
+  await expect(field(/^Individnummer på pappret/)).toHaveValue("M9202-2416");
+  await sendPhoto();
+  await field(/^Intygsnummer/).fill("E2E-2416");
+  await field(/^Födelsedatum/).fill("2024-12-01");
+  await field(/^Mor/).fill("M9202-2411");
+  await field(/^Far(?!-)/).fill("M9202-2412");
+  await field(/^Antal födda/).fill("4");
+  await field(/^Levande i kullen/).fill("4");
+  await dialog.getByLabel("Hos mig").check();
+  await dialog.getByRole("button", { name: "Spara", exact: true }).click();
+
+  // the kit's form again, as it was typed
+  await expect(field(/^Namn/)).toHaveValue("Ungen", { timeout: 30_000 });
+  await expect(field(/^Mor/)).toHaveValue("M9202-2416");
+  await expect(dialog.getByText(/^Registret:/).first()).toBeVisible();
+  await dialog.getByLabel("Hos mig").check();
+  await dialog.getByRole("button", { name: "Spara", exact: true }).click();
+
+  await expect(
+    page.getByText(
+      "Kaninen är registrerad i Stamboken nu. Den finns kvar även om du drar tillbaka rapporten.",
+    ),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(rows(page)).toHaveCount(8, { timeout: 30_000 });
+  for (const n of [2411, 2412, 2413, 2414, 2415, 2416, 2511]) {
+    const r = rows(page).filter({ hasText: `M9202-${n}` });
+    await kvar(r).check();
+    if (await weight(r).isVisible()) await weight(r).fill("2,8");
+  }
+  await kvar(rows(page).filter({ hasText: "M9202-2520" })).check();
+  await page.getByRole("radio", { name: NO_DISEASE }).check();
+  await page.getByRole("button", { name: SEND }).click();
+  await expect(page.getByText(/^Inskickad/)).toBeVisible({ timeout: 30_000 });
+  await context.close();
+});

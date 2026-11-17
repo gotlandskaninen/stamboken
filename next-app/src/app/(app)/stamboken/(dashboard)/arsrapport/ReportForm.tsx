@@ -35,6 +35,7 @@ import {
   type DraftData,
   type Entry,
   type FormState,
+  type Litter,
   type Membership,
   type PaperField,
   type PaperFields,
@@ -50,12 +51,20 @@ import { RabbitRow } from "./RabbitRow";
 import { Receipt } from "./Receipt";
 import { ReportStatus, type StatusKind } from "./ReportStatus";
 import { SoldDialog } from "./SoldDialog";
+import { ConfirmCountDialog, LitterDialog } from "./LitterDialog";
+import { AddRabbitDialog, AddRabbitPrompt } from "./AddRabbit";
 import styles from "./arsrapport.module.css";
 
 export type ReportActions = Pick<
   typeof Actions,
   "saveDraft" | "dryRun" | "submitReport" | "withdrawReport"
-> & { getGenebankHerds: typeof getGenebankHerds }; // the sale dialog's herd picker
+> & { getGenebankHerds: typeof getGenebankHerds } & Partial<
+    // the sale dialog's herd picker
+    Pick<
+      typeof Actions,
+      "addLitter" | "changeLitter" | "getFathers" | "getMothers"
+    >
+  >; // "Kullar under Y"
 
 // "Från blankett": what the page around the form supplies (PaperEntry).
 export interface PaperProps {
@@ -274,6 +283,12 @@ export function ReportForm({
   // Paper over a report, or after the last day: Skicka needs a reason (D11).
   const late = !!round.end_date && todayStockholm() > round.end_date;
   const needReason = isPaper && (!!view.report || late);
+  const canLitter =
+    canEdit &&
+    !!actions.addLitter &&
+    !!actions.changeLitter &&
+    !!actions.getFathers &&
+    !!actions.getMothers;
 
   const [state, setState] = React.useState<FormState>(() =>
     startFrom(view, isPaper),
@@ -314,6 +329,18 @@ export function ReportForm({
   const [snapshot, setSnapshot] = React.useState<Set<number>>(new Set());
   const [search, setSearch] = React.useState("");
   const [soldFor, setSoldFor] = React.useState<number | null>(null);
+  // "Kullar under Y": a litter is written at once, so the list comes from the answer until the page is read again
+  const [saved, setSaved] = React.useState<{
+    base: Litter[];
+    list: Litter[];
+  } | null>(null);
+  const litters = saved?.base === view.litters ? saved.list : view.litters;
+  const setLitters = (list: Litter[]) => setSaved({ base: view.litters, list });
+  const [litterOpen, setLitterOpen] = React.useState(false);
+  // "Lägg till kanin från intyget" (4b): registered at once, so the note says it stays
+  const [rabbitOpen, setRabbitOpen] = React.useState(false);
+  const [rabbitSaved, setRabbitSaved] = React.useState(false);
+  const [confirming, setConfirming] = React.useState<Litter | null>(null);
   const [seenEnd, setSeenEnd] = React.useState(false);
   const [askRest, setAskRest] = React.useState(false);
   const [focusTick, setFocusTick] = React.useState(0);
@@ -703,6 +730,16 @@ export function ReportForm({
     [edit],
   );
   const onSell = React.useCallback((id: number) => setSoldFor(id), []);
+  const canAddRabbit = canEdit && !isPaper;
+  const addRabbit = canAddRabbit && (
+    <AddRabbitPrompt
+      saved={rabbitSaved}
+      onOpen={() => {
+        setRabbitSaved(false);
+        setRabbitOpen(true);
+      }}
+    />
+  );
   const onNextWeight = React.useCallback((id: number) => {
     const ids = visibleIds.current;
     const s = stateRef.current;
@@ -1578,11 +1615,14 @@ export function ReportForm({
                 </MbCard>
               </>
             ) : rabbits.length === 0 ? (
-              <p>
-                Stamboken har inga kaniner registrerade i {herd.herd} den 31
-                december {year}. Saknas kaniner? Kontakta genbanksansvarig. Har
-                du inga kaniner kvar? Välj Jag avslutar min genbank.
-              </p>
+              <>
+                <p>
+                  Stamboken har inga kaniner registrerade i {herd.herd} den 31
+                  december {year}. Saknas kaniner? Kontakta genbanksansvarig.
+                  Har du inga kaniner kvar? Välj Jag avslutar min genbank.
+                </p>
+                {addRabbit}
+              </>
             ) : (
               <div className="sb-card-flat">
                 <div className={styles.list}>
@@ -1652,14 +1692,14 @@ export function ReportForm({
               )}
 
             <MbCard title={`Kullar under ${year}`}>
-              {view.litters.length === 0 ? (
+              {litters.length === 0 ? (
                 <p>
                   Inga kullar under {year} i Stamboken. Minst en kull krävs för
                   stödet.
                 </p>
               ) : (
                 <ul className={styles.cardList}>
-                  {view.litters.map((l) => (
+                  {litters.map((l) => (
                     <li key={l.id}>
                       Född {fmtDate(l.birth_date)}
                       {l.litter_number != null
@@ -1671,9 +1711,31 @@ export function ReportForm({
                       {l.litter_size6w != null
                         ? `, ${l.litter_size6w} efter sex veckor`
                         : ""}
+                      {l.preliminary ? " (preliminärt)" : ""}
+                      {l.preliminary && canLitter && (
+                        <>
+                          {" "}
+                          <button
+                            type="button"
+                            className="sb-btn sb-btn-secondary sb-btn-sm"
+                            onClick={() => setConfirming(l)}
+                          >
+                            Bekräfta antalet
+                          </button>
+                        </>
+                      )}
                     </li>
                   ))}
                 </ul>
+              )}
+              {canLitter && (
+                <button
+                  type="button"
+                  className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+                  onClick={() => setLitterOpen(true)}
+                >
+                  Lägg till kull
+                </button>
               )}
             </MbCard>
 
@@ -1693,6 +1755,7 @@ export function ReportForm({
                   ))}
                 </ul>
               )}
+              {addRabbit}
             </MbCard>
 
             <MbCard title="Hälsa">
@@ -1937,6 +2000,62 @@ export function ReportForm({
             )}
           </div>
         </div>
+      )}
+
+      {canLitter && (
+        <>
+          <LitterDialog
+            open={litterOpen && !syncing}
+            year={year}
+            loadMothers={() => actions.getMothers!(herd.herd, year, env, post)}
+            loadFathers={() => actions.getFathers!(herd.herd, year, env, post)}
+            litters={litters}
+            add={(body) => actions.addLitter!(herd.herd, year, body, env, post)}
+            change={(id, body) =>
+              actions.changeLitter!(herd.herd, year, id, body, env, post)
+            }
+            onSaved={setLitters}
+            onClose={() => setLitterOpen(false)}
+          />
+          <ConfirmCountDialog
+            litter={syncing ? null : confirming}
+            change={(id, body) =>
+              actions.changeLitter!(herd.herd, year, id, body, env, post)
+            }
+            onSaved={setLitters}
+            onClose={() => setConfirming(null)}
+          />
+        </>
+      )}
+
+      {rabbitOpen && (
+        <AddRabbitDialog
+          herd={herd.herd}
+          year={year}
+          env={link ? undefined : env}
+          onClose={(registered) => {
+            setRabbitOpen(false);
+            if (!registered.length) return;
+            setRabbitSaved(true);
+            router.refresh(); // the list, with the new rabbits
+            // "var är kaninen nu" as the row's choice, for those on the list; a sale opens its dialog
+            for (const [rabbit, where] of registered) {
+              if (!rabbit.listed || !where) continue;
+              if (where === "sald") {
+                if (view.can_sell) onSell(rabbit.id);
+              } else if (where === "dod") {
+                const dod = {
+                  ar: year,
+                  manad: null,
+                  dag: null,
+                  slaktad: false,
+                  anteckning: "",
+                };
+                onRow(rabbit.id, { val: "dod", dod });
+              } else onRow(rabbit.id, { val: "kvar" });
+            }
+          }}
+        />
       )}
 
       <SoldDialog

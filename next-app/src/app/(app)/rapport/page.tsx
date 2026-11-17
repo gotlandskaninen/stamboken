@@ -1,8 +1,12 @@
 import { redirect } from "next/navigation";
 import { LinkGate, type Missing } from "./LinkGate";
 import {
+  addLitter,
+  changeLitter,
   dryRun,
+  getFathers,
   getGenebankHerds,
+  getMothers,
   getMine,
   getReport,
   saveDraft,
@@ -20,6 +24,10 @@ const actions = {
   submitReport,
   withdrawReport,
   getGenebankHerds,
+  addLitter,
+  changeLitter,
+  getFathers,
+  getMothers,
 };
 
 // The page behind a member's personal link. The server renders from the code session in the cookie; LinkGate, in the

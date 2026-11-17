@@ -60,6 +60,7 @@ interface Breeding {
   litter_number?: number | null;
   litter_size?: number | null;
   litter_size6w?: number | null;
+  litter_size6w_preliminary?: boolean;
 }
 
 interface RegisterRabbitDialogProps {
@@ -235,6 +236,10 @@ export function RegisterRabbitDialog({
     birthDateIso,
   ]);
 
+  // A litter's count alive at 6 weeks is asked for when missing or only preliminary: the certificate's replaces it
+  const needsCount =
+    !!breeding &&
+    (breeding.litter_size6w == null || !!breeding.litter_size6w_preliminary);
   // The litter_size6w field lifts "litter_size6w_required": it is saved with the registration
   const canIssueCertificate =
     !!suggestion?.can_issue_certificate ||
@@ -813,8 +818,8 @@ export function RegisterRabbitDialog({
               fullWidth
             />
 
-            {/* Litter size 6w (conditional) */}
-            {breeding && breeding.litter_size6w == null && (
+            {/* Litter size 6w: missing, or preliminary until the certificate confirms it */}
+            {needsCount && (
               <Box
                 sx={{
                   display: "flex",
@@ -996,6 +1001,7 @@ export function RegisterRabbitDialog({
               (!(suggestion?.can_register && canIssueCertificate) &&
                 !(litterOrder && paper)) ||
               (shortcut && (!litterSize || !litterSize6w)) ||
+              (needsCount && !litterSize6w) ||
               (paper && (!paperCertificate || !paperNumberReady)) ||
               (showUnlocked && selectedPosition == null)
             }

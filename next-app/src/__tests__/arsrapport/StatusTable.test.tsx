@@ -198,4 +198,27 @@ describe("StatusTable", () => {
     show(false);
     expect(screen.queryByText("Ny länk")).toBeNull();
   });
+
+  it("flags a preliminary count, and not a confirmed one", () => {
+    const row = (preliminart: boolean): StatusRow => ({
+      ...sent,
+      flags: { ej_angivna: 0, ej_angivna_paverkar: false },
+      statistik: { ...base.statistik, preliminart },
+    });
+    const table = (preliminart: boolean) => (
+      <StatusTable
+        view={view([row(preliminart)])}
+        year={2026}
+        genebankId={1}
+        filter="alla"
+        canEdit={false}
+        env="demo"
+      />
+    );
+    const { unmount } = render(table(true));
+    expect(screen.getByText("Preliminärt antal")).toBeTruthy();
+    unmount();
+    render(table(false));
+    expect(screen.queryByText("Preliminärt antal")).toBeNull();
+  });
 });

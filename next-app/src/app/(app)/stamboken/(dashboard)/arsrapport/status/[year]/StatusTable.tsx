@@ -298,6 +298,11 @@ function Row({
             Ingen e-post
           </span>
         )}
+        {row.statistik.preliminart && (
+          <span className="sb-badge" style={{ marginRight: 8 }}>
+            Preliminärt antal
+          </span>
+        )}
         {row.flags.ej_angivna > 0 ? (
           <span
             className={`sb-badge ${
@@ -308,7 +313,7 @@ function Row({
             {row.flags.ej_angivna_paverkar && " (påverkar stödet)"}
           </span>
         ) : (
-          !flagNoEmail && "–"
+          !flagNoEmail && !row.statistik.preliminart && "–"
         )}
       </td>
       <td data-label="Mottagen">

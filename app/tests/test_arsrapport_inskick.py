@@ -563,6 +563,7 @@ class InskickTest(ArsrapportTest):
                 "diseases": {},
                 "defects": [],
                 "message": "Allt väl",
+                "litters_added": [],  # the litters the receipt lists (4b)
             },
         )
         self.assertEqual(len(ops), 1)  # the attestation; measurements are logged in added_measurements

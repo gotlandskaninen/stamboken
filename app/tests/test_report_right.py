@@ -204,8 +204,16 @@ class TestReportUndo(ReportRightTest):
 
 class TestReportRole(unittest.TestCase):
     def test_rapport_alone_has_only_the_reports_commands(self):
-        """The link's role (step 3, FA1): the report's three commands and Undo, never in GX1/MX1, and nothing else."""
-        report_commands = {"Entry", "RecordAttestation", "RecordDeath", "SetMeasurements", "Undo"}
+        """The link's role (step 3, FA1; 4b): the report's three commands, the litter ones and Undo, never in GX1/MX1"""
+        report_commands = {
+            "Entry",
+            "RecordAttestation",
+            "RecordDeath",
+            "SetMeasurements",
+            "Undo",
+            "RegisterLitter",
+            "ConfirmLitterSize",
+        }
         for command in ("Entry", *COMMAND_FIELDS):
             for state in STATES:
                 with self.subTest(command=command, state=str(state)):

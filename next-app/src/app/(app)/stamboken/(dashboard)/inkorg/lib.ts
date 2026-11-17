@@ -113,6 +113,8 @@ export interface InboxDetail extends Omit<InboxItem, "documents"> {
   sender_authenticated: boolean | null;
   documents: InboxDocument[];
   events: InboxEvent[];
+  /** A report photo (kontroll, individual): the rabbit as the member registered it, keyed as CertForm; else null. */
+  registered?: Partial<Record<keyof CertForm, string | number | null>> | null;
 }
 
 export interface QueueList {

@@ -10,6 +10,7 @@ import {
 
 const actions = vi.hoisted(() => ({
   changeState: vi.fn(),
+  checkReportPhoto: vi.fn(),
   confirmMask: vi.fn(),
   reinterpretDocument: vi.fn(),
   takeItem: vi.fn(),
@@ -257,5 +258,208 @@ describe("WorkView: an annual form", () => {
     expect(
       screen.queryByRole("link", { name: "Mata in årsrapporten" }),
     ).toBeNull();
+  });
+});
+
+// A certificate photo from the yearly report (4b, G5): already registered, so the reading is set beside the
+// registration instead of the masking of a saved certificate. An ordinary saved upload keeps its masking.
+describe("WorkView on a report photo", () => {
+  const registered = {
+    paper_number: "G9001-2511",
+    paper_certificate: "P-2511",
+    name: "Kulla",
+    sex: "female",
+    birth_date: "2025-05-10",
+    color: null,
+    mother: "G9001-24001",
+    father: "G9001-24002",
+    litter_size: 5,
+    litter_size6w: 4,
+  };
+  // As Flask builds it for a photo read after its rabbit was saved (test_arsrapport_add_rabbit.py,
+  // test_every_field_beside_the_registered_rabbit): every field, the paper's own text in `read`.
+  const reading = {
+    fields: {
+      sex: { read: "Hona", value: "female", source: "läst" as const },
+      name: {
+        read: "Bella",
+        value: null,
+        source: "avviker" as const,
+        registry: "Kulla",
+      },
+      father: {
+        read: "G9001 24002",
+        value: "G9001-24002",
+        source: "läst" as const,
+      },
+      mother: {
+        read: "G9001 24001",
+        value: "G9001-24001",
+        source: "läst" as const,
+      },
+      birth_date: {
+        read: "250510",
+        value: "2025-05-10",
+        source: "läst" as const,
+      },
+      litter_size: { read: "5", value: 5, source: "läst" as const },
+      paper_number: {
+        read: "G9001 2511",
+        value: "G9001-2511",
+        source: "läst" as const,
+      },
+      litter_size6w: { read: "fyra", value: null, source: "osäker" as const },
+      paper_certificate: {
+        read: "P-2511",
+        value: "P-2511",
+        source: "läst" as const,
+      },
+    },
+    checks: [
+      { ok: null, text: "G9001-2511 finns redan i Stamboken." },
+      {
+        ok: false,
+        text: "Namnet på intyget är inte registrets för G9001-2511 (Kulla).",
+      },
+      { ok: true, text: "Intygsnumret är kaninens." },
+    ],
+  };
+  const photoItem = (proposal: InboxDocument["proposal"]) =>
+    item({
+      kind: "kontroll",
+      ref_type: "individual",
+      ref_id: 51,
+      assigned_to: null,
+      state: "ny",
+      registered,
+      documents: [
+        doc({
+          individual: "G9001-2511",
+          interpretation_status: "klar",
+          proposal,
+        }),
+      ],
+    });
+  const row = (label: string) =>
+    Array.from(
+      screen
+        .getByRole("table", { name: "Tolkningen och registreringen" })
+        .querySelectorAll("tr"),
+    ).find((tr) => tr.querySelector("th")?.textContent === label)!;
+
+  it("shows every field read beside the registered rabbit, what differs, what is unsure, and the checks", () => {
+    render(view(photoItem(reading)));
+    expect(row("Namn")).toHaveAttribute("data-differs", "true");
+    expect(row("Namn")).toHaveTextContent("BellaKulla Avviker");
+    expect(row("Levande i kullen efter 6 veckor")).toHaveTextContent(
+      "fyra (osäker)4",
+    );
+    expect(row("Levande i kullen efter 6 veckor")).not.toHaveAttribute(
+      "data-differs",
+    );
+    for (const [label, text] of [
+      ["Individnummer", "G9001-2511G9001-2511"],
+      ["Intygsnummer", "P-2511P-2511"],
+      ["Kön", "HonaHona"],
+      ["Födelsedatum", "2025-05-102025-05-10"],
+      ["Mor", "G9001-24001G9001-24001"],
+      ["Far", "G9001-24002G9001-24002"],
+      ["Antal födda", "55"],
+    ]) {
+      expect(row(label)).toHaveTextContent(text);
+      expect(row(label)).not.toHaveAttribute("data-differs");
+    }
+    expect(row("Färg")).toHaveTextContent("––");
+    const checks = screen.getByRole("list", { name: "Kontroller" });
+    expect(checks).toHaveTextContent(
+      "✗ Namnet på intyget är inte registrets för G9001-2511 (Kulla).",
+    );
+    expect(checks).toHaveTextContent("✓ Intygsnumret är kaninens.");
+    expect(screen.getByRole("link", { name: "G9001-2511" })).toBeVisible();
+    expect(screen.queryByText("Dölj säljare och köpare")).toBeNull();
+  });
+
+  it("a value read before the rabbit was saved is compared with what was registered", () => {
+    render(
+      view(
+        photoItem({
+          fields: { name: { value: "Kalla", source: "läst", read: "Kalla" } },
+          checks: [],
+        }),
+      ),
+    );
+    expect(row("Namn")).toHaveAttribute("data-differs", "true");
+    expect(row("Namn")).toHaveTextContent("KallaKulla Avviker");
+    expect(screen.queryByRole("list", { name: "Kontroller" })).toBeNull();
+  });
+
+  it("an ordinary saved certificate still opens the masking", () => {
+    render(view(item({ registered: null })));
+    expect(screen.getByText("Dölj säljare och köpare")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("table", { name: "Tolkningen och registreringen" }),
+    ).toBeNull();
+  });
+});
+
+// Closing a report photo: its handler compares and closes it, or has it read again (4b).
+describe("ReportPhotoCheck's buttons", () => {
+  const photoItem = (changes: Partial<InboxDetail> = {}) =>
+    item({
+      kind: "kontroll",
+      ref_type: "individual",
+      ref_id: 51,
+      registered: { paper_number: "G9001-2511", name: "Kulla" },
+      documents: [doc({ status: "sparad", interpretation_status: "klar" })],
+      ...changes,
+    });
+
+  beforeEach(() => {
+    actions.reinterpretDocument.mockResolvedValue({ ok: true, data: {} });
+  });
+
+  it("for the handler: Stämmer and Rättat close it, Tolka igen reads it again", async () => {
+    const checkReportPhoto = vi.mocked(actions.checkReportPhoto);
+    checkReportPhoto.mockResolvedValue({ ok: true, data: {} });
+    render(view(photoItem()));
+    // one at a time: the buttons wait while a call is out
+    const press = async (name: string) => {
+      const button = screen.getByRole("button", { name });
+      await waitFor(() => expect(button).toBeEnabled());
+      fireEvent.click(button);
+    };
+    await press("Stämmer");
+    await waitFor(() =>
+      expect(checkReportPhoto).toHaveBeenCalledWith(12, 31, "stammer"),
+    );
+    await press("Rättat");
+    await waitFor(() =>
+      expect(checkReportPhoto).toHaveBeenCalledWith(12, 31, "rattat"),
+    );
+    await press("Tolka igen");
+    await waitFor(() =>
+      expect(actions.reinterpretDocument).toHaveBeenCalledWith(12, 31),
+    );
+  });
+
+  it("before it is taken: no closing, and the take button where the note is", () => {
+    render(view(photoItem({ assigned_to: null, state: "ny" }), boss));
+    expect(screen.queryByRole("button", { name: "Stämmer" })).toBeNull();
+    expect(screen.getAllByRole("button", { name: "Jag tar den" }).length).toBe(
+      2,
+    ); // the header and the note
+  });
+
+  it("checked or closed: no buttons", () => {
+    render(
+      view(
+        photoItem({
+          state: "klar",
+          documents: [doc({ status: "klar", interpretation_status: "klar" })],
+        }),
+      ),
+    );
+    expect(screen.queryByRole("button", { name: "Stämmer" })).toBeNull();
+    expect(screen.getByText("Ärendet är stängt.")).toBeInTheDocument();
   });
 });

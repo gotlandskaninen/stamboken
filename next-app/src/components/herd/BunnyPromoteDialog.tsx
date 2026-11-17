@@ -66,6 +66,7 @@ interface BunnyPromoteDialogProps {
     litter_number?: number | null;
     litter_size?: number | null;
     litter_size6w?: number | null;
+    litter_size6w_preliminary?: boolean;
   };
   herdId: string;
 }
@@ -138,9 +139,11 @@ export function BunnyPromoteDialog({
   );
   const paper = certificateType === "paper";
   const paperNumberReady = PAPER_NUMBER.test(paperNumber.trim());
-  // A certificate needs "alive at 6 weeks" on the litter: asked for here when missing
+  // A certificate needs "alive at 6 weeks" on the litter: asked for here when missing, or only preliminary (the
+  // count born, until confirmed), since the certificate's count replaces that one
   const [litterSize6w, setLitterSize6w] = useState("");
-  const needsLitterSize6w = breeding.litter_size6w == null;
+  const needsLitterSize6w =
+    breeding.litter_size6w == null || !!breeding.litter_size6w_preliminary;
 
   // Outcome state
   const [error, setError] = useState<string | null>(null);

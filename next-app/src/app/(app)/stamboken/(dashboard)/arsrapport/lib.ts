@@ -25,6 +25,34 @@ export interface RabbitView {
   later: { kind: string; date: string } | null;
 }
 
+// "Kullar under Y": one litter of the herd; `preliminary` while the 6-week count is still the count born.
+export interface Litter {
+  id: number;
+  litter_number: number | null;
+  birth_date: string;
+  mother: string | null;
+  father: string | null;
+  litter_size: number | null;
+  litter_size6w: number | null;
+  preliminary: boolean;
+}
+
+// POST kull; an empty litter_size6w is a preliminary count.
+export interface LitterBody {
+  mother_id: number;
+  father_id: number;
+  birth_date: string;
+  litter_size: number;
+  litter_size6w: number | null;
+}
+
+// A father of the picker: the genebank's living males, and nothing else about them.
+export interface Father {
+  id: number;
+  number: string;
+  name: string | null;
+}
+
 export interface Refusal {
   individual_id: number | null;
   code: string;
@@ -117,15 +145,7 @@ export interface ReportView {
   can_sell: boolean;
   other_active_herd: boolean;
   rabbits: RabbitView[];
-  litters: {
-    id: number;
-    litter_number: number | null;
-    birth_date: string;
-    mother: string | null;
-    father: string | null;
-    litter_size: number | null;
-    litter_size6w: number | null;
-  }[];
+  litters: Litter[];
   sales: {
     individual_id: number;
     number: string;
@@ -933,6 +953,7 @@ export interface StatusRow {
     kullar: number;
     ungar: number;
     levande_6v: number;
+    preliminart?: boolean; // a litter's 6-week count is still a guess
     honor: number;
     hanar: number;
   };

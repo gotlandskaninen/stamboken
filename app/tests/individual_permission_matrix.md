@@ -187,6 +187,36 @@ Fält: `herd`, `origin_herd`, `reason`
 | handlaggare | – | – | – | – |
 | rapport | – | – | – | – |
 
+## RegisterLitter
+
+Fält: `litter`
+
+| Roll | ocertifierad | certifierad | ocertifierad, GX1/MX1 | certifierad, GX1/MX1 |
+|---|---|---|---|---|
+| admin | ✓ | ✓ | ✓ | ✓ |
+| manager_current | ✓ | ✓ | ✓ | ✓ |
+| manager_origin | – | – | – | – |
+| owner | ✓ | ✓ | – | – |
+| caretaker | ✓ | ✓ | – | – |
+| actor | – | – | – | – |
+| handlaggare | ✓ | ✓ | – | – |
+| rapport | ✓ | ✓ | – | – |
+
+## ConfirmLitterSize
+
+Fält: `litter_size6w`
+
+| Roll | ocertifierad | certifierad | ocertifierad, GX1/MX1 | certifierad, GX1/MX1 |
+|---|---|---|---|---|
+| admin | ✓ | ✓ | ✓ | ✓ |
+| manager_current | ✓ | ✓ | ✓ | ✓ |
+| manager_origin | – | – | – | – |
+| owner | ✓ | ✓ | – | – |
+| caretaker | ✓ | ✓ | – | – |
+| actor | – | – | – | – |
+| handlaggare | ✓ | ✓ | – | – |
+| rapport | ✓ | ✓ | – | – |
+
 ## Undo
 
 Fält: `undo`

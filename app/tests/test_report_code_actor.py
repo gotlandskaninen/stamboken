@@ -120,12 +120,12 @@ class CodeActorTest(ArsrapportTest):
                 self.run_as_code(rabbit, command)
         self.assertEqual(db.IndividualCommand.select().count(), 0)
 
-    def test_policy_gives_the_link_three_commands_and_undo(self):
+    def test_policy_gives_the_link_three_commands_the_litter_commands_and_undo(self):
         for rabbit in self.rabbits_:
             roles = roles_for(self.actor, db.Individual.get_by_id(rabbit.id), ReportGrant(code=self.code))
             self.assertEqual(roles, frozenset({Role.RAPPORT}))
         state = state_for(db.Individual.get_by_id(self.rabbits_[0].id))
-        yes = {"RecordAttestation", "RecordDeath", "SetMeasurements", "Undo"}
+        yes = {"RecordAttestation", "RecordDeath", "SetMeasurements", "Undo", "RegisterLitter", "ConfirmLitterSize"}
         for command in COMMAND_FIELDS:
             self.assertIs(allowed(command, frozenset({Role.RAPPORT}), state), command in yes, command)
 

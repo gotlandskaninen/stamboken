@@ -98,15 +98,15 @@ def _decoding():
         raise _Refused(problem(422, "Unprocessable Content", "Filen kunde inte läsas. Den kan vara skadad.")) from None
 
 
-def _each_page(data, room, handle):
+def _each_page(data, room, handle, too_many):
     """handle(page) for each page as an RGB image, at PDF_DPI but at most PDF_MAX_SIDE pixels a side."""
     with _PDFIUM, _decoding():
         pdf = pypdfium2.PdfDocument(data)
     try:
         with _PDFIUM:
             count = len(pdf)
-        if count > room:
-            raise _Refused(_too_many_images())
+        if count > room:  # before any page is rendered
+            raise _Refused(too_many())
         for index in range(count):
             with _PDFIUM, _decoding():  # shortcut: no time limit on rendering, pypdfium2 has none short of ctypes
                 page = pdf[index]
@@ -130,11 +130,13 @@ def _too_many_images():
     return problem(400, "Bad Request", f"Högst {MAX_FILES} bilder per inskick. En PDF räknas sida för sida.")
 
 
-def _each_image(file, room, handle):
+def _each_image(file, room, handle, too_many=None):
     """
     handle(image) for each of the file's images, RGB and turned upright as the phone saw it, a PDF page by page:
-    one decoded image at a time, each closed before the next is decoded. Returns how many there were.
+    one decoded image at a time, each closed before the next is decoded. Returns how many there were. More than
+    `room` images is refused with the problem `too_many()` (the queue's own by default).
     """
+    too_many = too_many or _too_many_images
     file.seek(0, os.SEEK_END)
     size = file.tell()
     file.seek(0)
@@ -144,9 +146,9 @@ def _each_image(file, room, handle):
     if kind is None:
         raise _Refused(problem(415, "Unsupported Media Type", "Otillåten filtyp. Bara JPEG, PNG, WebP, HEIC och PDF."))
     if kind == "pdf":
-        return _each_page(file.read(), room, handle)
+        return _each_page(file.read(), room, handle, too_many)
     if room < 1:
-        raise _Refused(_too_many_images())
+        raise _Refused(too_many())
     with _decoding():
         if kind == "webp" and _webp_pixels(file.read(30)) > MAX_PIXELS:
             raise _Refused(_too_many_pixels())
@@ -439,6 +441,19 @@ def reinterpret(item_id, document_id):
         document = inbox.document_of(item, document_id)
         inbox.reinterpret(item, document, current_user)
         return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document])[0]})
+
+    return _locked(item_id, action)
+
+
+# [Next.js] A report photo compared with its rabbit (4b): "Stämmer" or "Rättat" closes it.
+@inbox_bp.route("/inkorg/<int:item_id>/dokument/<int:document_id>/kontrollerad", methods=["POST"])
+@json_login_required
+@_queue_worker
+def check_report_photo(item_id, document_id):
+    def action(item):
+        document = inbox.document_of(item, document_id)
+        inbox.check_report_photo(item, document, current_user, _body().get("outcome"))
+        return jsonify({"item": inbox.items_json([item])[0], "document": inbox.documents_json([document], True)[0]})
 
     return _locked(item_id, action)
 

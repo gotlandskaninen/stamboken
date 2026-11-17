@@ -164,6 +164,20 @@ export async function saveCertificate(
   return call<DocResult>(id, `/${id}/dokument/${doc}/spara`, "POST", payload);
 }
 
+/** A report photo compared with its rabbit: "Stämmer", or "Rättat" when the rabbit was corrected; it closes. */
+export async function checkReportPhoto(
+  id: number,
+  doc: number,
+  outcome: "stammer" | "rattat",
+) {
+  if (!isId(id) || !isId(doc)) return refused("Ogiltigt dokument.");
+  if (outcome !== "stammer" && outcome !== "rattat")
+    return refused("Välj Stämmer eller Rättat.");
+  return call<DocResult>(id, `/${id}/dokument/${doc}/kontrollerad`, "POST", {
+    outcome,
+  });
+}
+
 export async function registerSale(
   id: number,
   doc: number,

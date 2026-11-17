@@ -7,6 +7,9 @@ import type { ActionResult } from "../inkorg/actions";
 import {
   SUBMIT_TIMEOUT_MS,
   type DraftData,
+  type Father,
+  type Litter,
+  type LitterBody,
   type Receipt,
   type ReportView,
   type Refusal,
@@ -138,6 +141,68 @@ export async function withdrawReport(
     "POST",
     { revision, reason: reason ?? null },
     SUBMIT_TIMEOUT_MS,
+  );
+}
+
+// "Kullar under Y": a litter is registered at once; the answer is the year's litters again.
+export async function addLitter(
+  herd: string,
+  year: number,
+  body: LitterBody,
+  env: Mode,
+  post?: number,
+) {
+  return call<{ id: number; litters: Litter[] }>(
+    env,
+    path(herd, year, "/kull", post),
+    "POST",
+    body,
+  );
+}
+
+export async function changeLitter(
+  herd: string,
+  year: number,
+  breedingId: number,
+  body: { litter_size?: number; litter_size6w: number | null },
+  env: Mode,
+  post?: number,
+) {
+  return call<{ id: number; litters: Litter[] }>(
+    env,
+    Number.isSafeInteger(breedingId) && breedingId > 0
+      ? path(herd, year, `/kull/${breedingId}`, post)
+      : null,
+    "PATCH",
+    body,
+  );
+}
+
+export async function getMothers(
+  herd: string,
+  year: number,
+  env: Mode,
+  post?: number,
+) {
+  return call<{ honor: Father[] }>(
+    env,
+    path(herd, year, "/honor", post),
+    "GET",
+    undefined,
+  );
+}
+
+export async function getFathers(
+  herd: string,
+  year: number,
+  env: Mode,
+  post?: number,
+) {
+  return call<{ hanar: Father[] }>(
+    env,
+    path(herd, year, "/hanar", post),
+    "GET",
+    undefined,
   );
 }
 

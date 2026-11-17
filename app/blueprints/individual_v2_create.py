@@ -11,14 +11,17 @@ from datetime import date as date_type
 from datetime import timedelta
 
 import utils.data_access as da
-from flask import Blueprint, jsonify, request, session
+from flask import Blueprint, jsonify, request
 from flask_login import current_user
 from peewee import DataError, DoesNotExist, IntegrityError
 from utils.database import DATABASE, Breeding, Color, Herd, Individual, lock_individuals, not_voided
 from utils.herd_tracking import record_herd_tracking
+from utils.individual_commands import GESTATION_DAYS, lock_mother_litters
 from utils.individual_number_v2 import (
     HARD_CEILING,
+    LITTER_BORN_BEFORE_NUMBERED,
     LITTER_SIZE6W_ABOVE_BORN,
+    NO_LITTER_NUMBER,
     PAPER_NUMBER_REQUIRED,
     RosterActionError,
     RosterAliveExceeds6w,
@@ -30,6 +33,8 @@ from utils.individual_number_v2 import (
     new_litter_number,
     number_check,
     number_to_register,
+    number_unnumbered_litter,
+    numbered_by_certificate,
     parse_number,
     record_number_choice,
     suggest_individual_number,
@@ -42,13 +47,10 @@ from .common import json_login_required, problem
 
 logger = logging.getLogger(__name__)
 
-GESTATION_DAYS = 31  # the middle of a rabbit's 26–38 days
-LITTER_BORN_BEFORE_NUMBERED = (
-    "Kullen är född före en kull som redan har kullnummer det året. Registrera den med "
-    "+ Ny kull under Kullar och parningar och numrera om kullarna."
-)
 
 individual_v2_create_bp = Blueprint("individual_v2_create", __name__, url_prefix="/api")
+
+CERTIFICATE_UNUSABLE = "Intygsnumret kan inte användas. Kontakta genbanksansvarig."
 
 
 @individual_v2_create_bp.route("/v2/individual", methods=["POST"])
@@ -67,10 +69,39 @@ def register_individual(form, may_register=None, created=None):
     `may_register(herd)`, the herds the caller may register in (its grant), and `created(individual)`, called
     in the transaction once the rabbit exists.
     """
+    return _register(form, current_user, lambda herd: _may_register(herd, may_register), created)
+
+
+def register_individual_as(actor, herd, form, created=None):
+    """
+    The report's registration (4b, L1): with `actor`'s own right only (a user, or the link's CodeActor), and only
+    into `herd`, where the new rabbit and its litter are born. No current_user, so an account never lends a link
+    its rights, nor a link an account its herd. Parents and litters outside the herd's genebank read as missing.
+    """
+    return _register(form, actor, may_register_in(actor, herd), created, herd.genebank_id)
+
+
+def may_register_in(actor, herd):
+    """The report's rule as a predicate: `herd` only, with the actor's own right there (a code's: its own herd)."""
+
+    def may(target):
+        if target is None or target.id != herd.id:
+            return False
+        code = getattr(actor, "code", None)
+        return code.herd_id == herd.id if code is not None else _can_register_in_herd(actor, target)
+
+    return may
+
+
+def _register(form, actor, may, created, genebank=None):
+    """
+    A registration with `actor` as the signer and `may(herd)` deciding every herd it writes in; with `genebank`, the
+    parents and the litter are looked up in that genebank only (_in_genebank).
+    """
     breeding_id = form.get("breeding_id")
     new_litter = None  # "Lägg till kanin": the litter to create, when no breeding_id and no matching litter
     if breeding_id is None:
-        breeding, new_litter, refusal = _shortcut_litter(form, may_register)
+        breeding, new_litter, refusal = _shortcut_litter(form, may, genebank)
         if refusal:
             return refusal
     else:
@@ -79,12 +110,11 @@ def register_individual(form, may_register=None, created=None):
         except (TypeError, ValueError):
             return problem(400, "Bad Request", "breeding_id must be an integer")
 
-        try:
-            breeding = Breeding.get_by_id(breeding_id)
-        except DoesNotExist:
+        breeding = _litter_in(Breeding.get_or_none(Breeding.id == breeding_id), genebank)
+        if breeding is None:
             return problem(404, "Not Found", f"Breeding {breeding_id} not found")
 
-    if breeding is not None and (refusal := _registration_refusal(breeding, may_register)):
+    if breeding is not None and (refusal := _registration_refusal(breeding, may)):
         return refusal
 
     # Generate individual number (optionally with explicit position)
@@ -98,6 +128,8 @@ def register_individual(form, may_register=None, created=None):
     certificate_type = form.get("certificate_type")
     paper_number, resolution = form.get("paper_number"), form.get("resolution")
     if refusal := certificate_choice_problem(certificate_type, form.get("paper_certificate"), paper_number, resolution):
+        return refusal
+    if certificate_type == "paper" and (refusal := _paper_outside(paper_number, genebank)):
         return refusal
 
     form_litter_size6w = form.get("litter_size6w")
@@ -114,6 +146,8 @@ def register_individual(form, may_register=None, created=None):
     paper_certificate = form.get("paper_certificate") if certificate_type == "paper" else None
     if paper_certificate is not None and (not isinstance(paper_certificate, str) or len(paper_certificate) > 20):
         return problem(400, "Bad Request", "paper_certificate must be a string of at most 20 characters")
+    # The report's scope: no lookup by certificate number, which reaches every genebank; the unique index decides.
+    checked_certificate = paper_certificate if genebank is None else None
 
     sex = form.get("sex")  # "male", "female", or None
     color_name = form.get("color")
@@ -126,33 +160,46 @@ def register_individual(form, may_register=None, created=None):
             # a 409 and nothing is written. A paper certificate takes the paper's position when free, not the form's.
             check = None
             if new_litter is not None:
+                # Serialized with RegisterLitter (the same lock); _create_litter decides the dates again under it
+                lock_mother_litters(new_litter["mother"].id)
                 lock_herd_year(new_litter["herd"], new_litter["birth_date"].year)
                 if certificate_type == "paper":
                     litter = {key: new_litter[key] for key in ("herd", "birth_date", "mother", "father")}
-                    check = number_check(current_user, paper_number, paper_certificate=paper_certificate, **litter)
+                    check = number_check(actor, paper_number, paper_certificate=checked_certificate, **litter)
                     position = parse_number(number_to_register(check, resolution))[3]
                 breeding = _create_litter(**new_litter)
             else:
                 breeding = lock_litter(breeding.id)
                 # Decided again on the locked litter: it may have moved to another herd (or been renumbered or
                 # re-dated) since the check above, and the rabbit is born in the locked litter's herd.
-                if refusal := _registration_refusal(breeding, may_register):
+                if refusal := _registration_refusal(breeding, may):
                     return refusal
             herd = breeding.breeding_herd_id
 
-            # If form provides litter_size6w and breeding doesn't have it yet,
-            # persist BEFORE certificate validation so the quota check sees it.
-            if form_litter_size6w is not None and breeding.litter_size6w is None:
+            # If form provides litter_size6w and breeding doesn't have it yet, or has only a preliminary one
+            # (L5: the certificate's count is the confirmed one), persist BEFORE certificate validation so the
+            # quota check sees it.
+            if form_litter_size6w is not None and (
+                breeding.litter_size6w is None or breeding.litter_size6w_preliminary
+            ):
                 if breeding.litter_size is not None and form_litter_size6w > breeding.litter_size:
                     raise ValueError(LITTER_SIZE6W_ABOVE_BORN)
                 breeding.litter_size6w = form_litter_size6w
-                breeding.save(only=[Breeding.litter_size6w])
+                breeding.litter_size6w_preliminary = False
+                breeding.save(only=[Breeding.litter_size6w, Breeding.litter_size6w_preliminary])
+
+            if breeding.litter_number is None:  # a litter added without a certificate: its first one numbers it (L4)
+                check, numbered_position = number_unnumbered_litter(
+                    actor, breeding, certificate_type, paper_number, checked_certificate, resolution
+                )
+                if certificate_type == "paper":  # a digital certificate keeps the position the request chose
+                    position = numbered_position
 
             # Validate certificate eligibility before creating anything: the same first-certificate
             # rules as promote (litter_size6w, roster in sync, quota).
             validate_first_certificate(breeding)
             if certificate_type == "paper" and check is None:
-                check = number_check(current_user, paper_number, breeding=breeding, paper_certificate=paper_certificate)
+                check = number_check(actor, paper_number, breeding=breeding, paper_certificate=checked_certificate)
                 position = parse_number(number_to_register(check, resolution))[3]
 
             individual = _create_individual_record(
@@ -168,10 +215,10 @@ def register_individual(form, may_register=None, created=None):
                 belly_color=form.get("belly_color"),
                 hair_notes=form.get("hair_notes"),
                 paper_certificate=paper_certificate,
-                signature=current_user,
+                signature=actor,
             )
             if check is not None and check["status"] != "match":
-                record_number_choice(individual, current_user, check)
+                record_number_choice(individual, actor, check)
             if created is not None:
                 created(individual)
     except RosterActionError as e:
@@ -181,6 +228,8 @@ def register_individual(form, may_register=None, created=None):
     except ValueError as e:
         return problem(400, "Bad Request", str(e))
     except IntegrityError:
+        if genebank is not None:  # the same answer whichever genebank holds the number
+            return problem(409, "Conflict", CERTIFICATE_UNUSABLE, field="paper_certificate")
         return problem(
             409, "Conflict", "A conflict prevented registration — a certificate number may already be in use"
         )
@@ -189,7 +238,8 @@ def register_individual(form, may_register=None, created=None):
 
     # The certificate after the commit, as promote does: a failed digital issuance keeps the rabbit
     # and comes back as certificate_error.
-    certificate, certificate_error = _apply_certificate(individual, certificate_type, session.get("user_id"))
+    # session["user_id"] is the account's uuid; a link has none, and registers only with a paper certificate
+    certificate, certificate_error = _apply_certificate(individual, certificate_type, getattr(actor, "uuid", None))
     response_data = {
         "individual": individual.as_dict(),
         "certificate": certificate,
@@ -217,29 +267,43 @@ def suggest_number():
     Without breeding_id the litter is named by mother, father and birth_date, as for a registration
     without breeding_id: an existing litter's suggestion, or the first number of the litter to be created.
     """
-    breeding_id = request.args.get("breeding_id", type=int)
+    return number_suggestion(request.args, lambda herd: _can_register_in_herd(current_user, herd))
+
+
+def number_suggestion(args, may, genebank=None):
+    """
+    suggest-number's answer for the query `args`, with `may(herd)` deciding the litter's herd (the report's too) and
+    `genebank` scoping the lookups (_in_genebank).
+    """
+    breeding_id = args.get("breeding_id", type=int)
     if breeding_id:
-        try:
-            breeding = Breeding.get_by_id(breeding_id)
-        except DoesNotExist:
+        breeding = _litter_in(Breeding.get_or_none(Breeding.id == breeding_id), genebank)
+        if breeding is None:
             return problem(404, "Not Found", f"Breeding {breeding_id} not found")
-    elif "mother" in request.args:
-        key, refusal = _litter_key(request.args)
+    elif "mother" in args:
+        key, refusal = _litter_key(args, genebank)
         if refusal:
             return refusal
         mother, father, birth_date = key
         breeding = Breeding.get_or_none(mother=mother, father=father, birth_date=birth_date)
         if breeding is None:
-            return _new_litter_suggestion(mother.current_herd, father, birth_date)
+            return _new_litter_suggestion(mother.current_herd, father, birth_date, may)
     else:
         return problem(400, "Bad Request", "breeding_id query parameter is required")
 
     herd = breeding.breeding_herd_id
-    if not _can_register_in_herd(current_user, herd):
+    if not may(herd):
         return problem(403, "Forbidden", "Åtkomst nekad")
 
-    if breeding.litter_number is None:
-        return problem(400, "Bad Request", "Breeding record has no litter_number. Assign one first.")
+    if breeding.litter_number is None:  # a litter added without a certificate: the number it would get now
+        if not numbered_by_certificate(breeding):
+            return problem(400, "Bad Request", NO_LITTER_NUMBER)
+        if breeding.birth_date is None:
+            return problem(400, "Bad Request", "Breeding record has no birth_date.")
+        litter_number = new_litter_number(herd, breeding.birth_date, lock=False)
+        if litter_number is None:
+            return problem(409, "litter_order_conflict", LITTER_BORN_BEFORE_NUMBERED)
+        return jsonify(_first_slot_suggestion(herd, breeding.birth_date, litter_number, breeding)), 200
 
     try:
         result = suggest_individual_number(herd.herd, breeding)
@@ -260,18 +324,28 @@ def number_check_route():
     form = request.get_json(silent=True)
     if not isinstance(form, dict):
         return problem(400, "Bad Request", "Request body must be a JSON object")
+    return paper_number_check(form, current_user, lambda herd: _can_register_in_herd(current_user, herd))
+
+
+def paper_number_check(form, actor, may, genebank=None):
+    """
+    number-check's answer for the body `form`, as `actor` sees the holders, with `may(herd)` deciding the herd and
+    `genebank` scoping the lookups (_in_genebank).
+    """
     paper_number, paper_certificate = form.get("paper_number"), form.get("paper_certificate")
     if parse_number(paper_number) is None:
         return problem(400, "Bad Request", PAPER_NUMBER_REQUIRED)
+    if refusal := _paper_outside(paper_number, genebank):
+        return refusal
     if paper_certificate is not None and not isinstance(paper_certificate, str):
         return problem(400, "Bad Request", "paper_certificate must be a string")
     if form.get("breeding_id") is not None:
-        breeding = Breeding.get_or_none(Breeding.id == _as_int(form["breeding_id"]))
+        breeding = _litter_in(Breeding.get_or_none(Breeding.id == _as_int(form["breeding_id"])), genebank)
         if breeding is None:
             return problem(404, "Not Found", f"Breeding {form['breeding_id']} not found")
         litter, herd = {"breeding": breeding}, breeding.breeding_herd_id
     else:
-        key, refusal = _litter_key(form)
+        key, refusal = _litter_key(form, genebank)
         if refusal:
             return refusal
         mother, father, birth_date = key
@@ -282,9 +356,9 @@ def number_check_route():
             if breeding is not None
             else {"herd": herd, "birth_date": birth_date, "mother": mother, "father": father}
         )
-    if not _can_register_in_herd(current_user, herd):
+    if not may(herd):
         return problem(403, "Forbidden", "Åtkomst nekad")
-    return jsonify(number_check(current_user, paper_number, paper_certificate=paper_certificate, **litter)), 200
+    return jsonify(number_check(actor, paper_number, paper_certificate=paper_certificate, **litter)), 200
 
 
 @individual_v2_create_bp.route("/v2/individual/import", methods=["POST"])
@@ -468,15 +542,11 @@ def import_individual():
     return jsonify(response_data), 201
 
 
-def _registration_refusal(breeding, may_register=None):
+def _registration_refusal(breeding, may):
     """The problem response refusing a direct registration into `breeding` now, or None."""
-    # Authorization: check user can edit in this herd
-    if not _may_register(breeding.breeding_herd_id, may_register):
+    # Authorization: may the caller register in this herd
+    if not may(breeding.breeding_herd_id):
         return problem(403, "Forbidden", "Åtkomst nekad")
-
-    # Validate litter_number exists
-    if breeding.litter_number is None:
-        return problem(400, "Bad Request", "Breeding record has no litter_number. Assign one first.")
 
     # Same minimum age as roster promotion — direct registration from litter
     # context must not bypass the 42-day rule. (The manual import route is
@@ -486,11 +556,37 @@ def _registration_refusal(breeding, may_register=None):
     return None
 
 
-def _live_individual(number):
-    """The registered (not voided) individual with this number, or None."""
+def _live_individual(number, genebank=None):
+    """The registered (not voided) individual with this number, or None; with `genebank`, only one of that genebank."""
     if not isinstance(number, str):
         return None
-    return Individual.get_or_none((Individual.number == number) & not_voided())
+    found = Individual.get_or_none((Individual.number == number) & not_voided())
+    return found if found is not None and _in_genebank(found.origin_herd, genebank) else None
+
+
+def _in_genebank(herd, genebank):
+    """
+    The report's scope (4b): with `genebank`, a parent or litter of another genebank reads exactly as a missing one,
+    before anything about it is said, so a link learns nothing outside its own genebank.
+    """
+    return genebank is None or (herd is not None and herd.genebank_id == genebank)
+
+
+def _paper_outside(paper_number, genebank):
+    """
+    The report's scope (4b) for the paper's own number: a herd outside `genebank`, or no such herd, is refused alike
+    before anything is looked up by the number, so a link never learns whether another genebank's rabbit holds it.
+    None when the herd is the genebank's, or without `genebank`.
+    """
+    paper = parse_number(paper_number)
+    if genebank is None or paper is None or _in_genebank(Herd.get_or_none(Herd.herd == paper[0]), genebank):
+        return None
+    detail = "Besättningen i individnumret finns inte i genbanken. Kontrollera numret på intyget."
+    return problem(400, "Bad Request", detail, field="paper_number")
+
+
+def _litter_in(breeding, genebank):
+    return breeding if breeding is not None and _in_genebank(breeding.breeding_herd_id, genebank) else None
 
 
 def _as_int(value):
@@ -500,9 +596,9 @@ def _as_int(value):
         return None
 
 
-def _litter_key(values):
+def _litter_key(values, genebank=None):
     """((mother, father, birth_date), None) naming the litter of a registration without breeding_id, or (None, 400)."""
-    mother, father = _live_individual(values.get("mother")), _live_individual(values.get("father"))
+    mother, father = _live_individual(values.get("mother"), genebank), _live_individual(values.get("father"), genebank)
     if mother is None or father is None:
         return None, problem(400, "Bad Request", "Välj mor och far bland registrerade kaniner.")
     try:
@@ -512,9 +608,9 @@ def _litter_key(values):
     return (mother, father, birth_date), None
 
 
-def _new_litter_refusal(herd, father, birth_date, may_register=None):
+def _new_litter_refusal(herd, father, birth_date, may):
     """The refusal of a new litter born in `herd` (the mother's) to `father`, or None."""
-    if not _may_register(herd, may_register):
+    if not may(herd):
         return problem(403, "Forbidden", "Modern finns inte i en besättning där du får registrera kaniner.")
     # Any registered buck of the genebank may be the father, alive or not (as for "Ny parning").
     if father.origin_herd.genebank_id != herd.genebank_id:
@@ -526,14 +622,14 @@ def _new_litter_refusal(herd, father, birth_date, may_register=None):
     return None
 
 
-def _shortcut_litter(form, may_register=None):
+def _shortcut_litter(form, may, genebank=None):
     """The litter of a registration without breeding_id ("Lägg till kanin", the legacy add form's shortcut).
 
     The body names the litter by mother, father and birth_date, unique in the litter table: an existing litter
     is reused (legacy's "Kull hittad"). Otherwise the new litter, in the mother's herd, is validated here before
     anything is written. Returns (existing_breeding, new_litter_fields, refusal) with exactly one set.
     """
-    key, refusal = _litter_key(form)
+    key, refusal = _litter_key(form, genebank)
     if refusal:
         return None, None, refusal
     mother, father, birth_date = key
@@ -542,7 +638,7 @@ def _shortcut_litter(form, may_register=None):
         return existing, None, None
 
     herd = mother.current_herd
-    if refusal := _new_litter_refusal(herd, father, birth_date, may_register):
+    if refusal := _new_litter_refusal(herd, father, birth_date, may):
         return None, None, refusal
     litter_size, litter_size6w = _as_int(form.get("litter_size")), _as_int(form.get("litter_size6w"))
     if litter_size is None or litter_size < 1:
@@ -588,6 +684,12 @@ def _create_litter(herd, mother, father, birth_date, breed_date, litter_size, li
     mother_now, father_now = Individual.get_by_id(mother.id), Individual.get_by_id(father.id)
     if mother_now.voided or father_now.voided or mother_now.current_herd.id != herd.id:
         raise RosterActionError(409, "Conflict", "Mor eller far ändrades samtidigt. Försök igen.")
+    # _shortcut_litter looked before any lock: a litter of the mother's (35-day rule) or a parent may have changed
+    errors, _warnings = da.validate_breeding_dates(
+        breed_date=breed_date, birth_date=birth_date, mother=mother_now, father=father_now, litter_size=litter_size
+    )
+    if errors:
+        raise ValueError(" ".join(errors))
     if litter_number is None:
         raise RosterActionError(409, "litter_order_conflict", LITTER_BORN_BEFORE_NUMBERED)
     return Breeding.create(
@@ -602,14 +704,38 @@ def _create_litter(herd, mother, father, birth_date, breed_date, litter_size, li
     )
 
 
-def _new_litter_suggestion(herd, father, birth_date):
+def _new_litter_suggestion(herd, father, birth_date, may):
     """The number suggestion for the first rabbit of a litter not created yet: position 1 of the year's next."""
-    if refusal := _new_litter_refusal(herd, father, birth_date):
+    if refusal := _new_litter_refusal(herd, father, birth_date, may):
         return refusal
     litter_number = new_litter_number(herd, birth_date, lock=False)
     if litter_number is None:
         return problem(409, "litter_order_conflict", LITTER_BORN_BEFORE_NUMBERED)
-    suggestion = {
+    return jsonify(_first_slot_suggestion(herd, birth_date, litter_number)), 200
+
+
+def _first_slot_suggestion(herd, birth_date, litter_number, breeding=None):
+    """The suggestion for the first rabbit of a litter that has no number yet (`breeding`: one that exists)."""
+    blocked = "litter_size6w_required"  # a new litter: lifted by the litter_size6w the form sends with it
+    certified = 0
+    if breeding is not None:  # the quota of validate_first_certificate, which skips a litter with no number
+        certified = (
+            Individual.select()
+            .where(
+                (Individual.breeding == breeding.id)
+                & not_voided()
+                & (Individual.certificate.is_null(False) | Individual.digital_certificate.is_null(False))
+            )
+            .count()
+        )
+        blocked = (
+            "litter_size6w_required"
+            if breeding.litter_size6w is None
+            else "certificate_quota_exceeded"
+            if certified >= breeding.litter_size6w
+            else None
+        )
+    return {
         "suggested": f"{herd.herd}-{birth_date:%y}{litter_number}1",
         "suggested_position": 1,
         "used_positions": [],
@@ -618,16 +744,14 @@ def _new_litter_suggestion(herd, father, birth_date):
         "max_count": HARD_CEILING,
         "limited_by": "ceiling",
         "can_register": True,
-        "certified_count": 0,
-        "certified_max_count": None,
+        "certified_count": certified,
+        "certified_max_count": breeding.litter_size6w if breeding is not None else None,
         "past_6w": True,
-        # Lifted by the litter_size6w the form sends with the new litter.
-        "can_issue_certificate": False,
-        "certificate_blocked_reason": "litter_size6w_required",
-        "breeding_id": None,
+        "can_issue_certificate": blocked is None,
+        "certificate_blocked_reason": blocked,
+        "breeding_id": breeding.id if breeding is not None else None,
         "litter_number": litter_number,
     }
-    return jsonify(suggestion), 200
 
 
 def _may_register(herd, may_register):

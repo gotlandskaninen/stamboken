@@ -1076,4 +1076,61 @@ describe("ReportForm", () => {
       await screen.findAllByText(/Dragen tillbaka .* Inte inskickad/),
     ).not.toHaveLength(0);
   });
+
+  it("adds a litter from Kullar under Y and confirms a preliminary count", async () => {
+    const preliminary = {
+      id: 7,
+      litter_number: null,
+      birth_date: "2026-05-10",
+      mother: "G9001-1",
+      father: "G9001-3",
+      litter_size: 5,
+      litter_size6w: 5,
+      preliminary: true,
+    };
+    const a = actions();
+    const changed = { ...preliminary, litter_size6w: 4, preliminary: false };
+    const changeLitter = vi.fn(() => ok({ id: 7, litters: [changed] }));
+    const withLitters: ReportActions = {
+      ...a,
+      addLitter: vi.fn() as never,
+      getFathers: vi.fn(() => ok({ hanar: [] })) as never,
+      getMothers: vi.fn(() => ok({ honor: [] })) as never,
+      changeLitter: changeLitter as never,
+    };
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ litters: [preliminary] })}
+        actions={withLitters}
+      />,
+    );
+    expect(screen.getByText(/\(preliminärt\)/)).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Lägg till kull" })).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Bekräfta antalet" }));
+    fireEvent.change(screen.getByLabelText("Levande vid 6 veckor"), {
+      target: { value: "4" },
+    });
+    // the dialog's own button is the last one with the name
+    const buttons = screen.getAllByRole("button", { name: "Bekräfta antalet" });
+    fireEvent.click(buttons[buttons.length - 1]);
+    await waitFor(() =>
+      expect(changeLitter).toHaveBeenCalledWith(
+        "G9001",
+        2026,
+        7,
+        { litter_size6w: 4 },
+        "demo",
+        undefined,
+      ),
+    );
+    await waitFor(() =>
+      expect(screen.queryByText(/\(preliminärt\)/)).toBeNull(),
+    );
+  });
+
+  it("offers no litter button without the litter actions", () => {
+    render(<ReportForm env="demo" view={view()} actions={actions()} />);
+    expect(screen.queryByRole("button", { name: "Lägg till kull" })).toBeNull();
+  });
 });
