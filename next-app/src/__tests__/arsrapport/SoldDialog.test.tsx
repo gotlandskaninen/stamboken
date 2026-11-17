@@ -99,23 +99,40 @@ describe("SoldDialog", () => {
     const onSave = dialog(kept);
     expect(screen.getByText(KEPT_TEXT)).toBeTruthy();
     expect(screen.queryByText(/sparas inte i rapporten/)).toBeNull();
+    expect(screen.queryByText(ON_SEND_TEXT)).toBeNull(); // not beside "finns sparad"
     save();
     expect(onSave).toHaveBeenCalledWith({ ...kept });
   });
 
-  it("shows no kept buyer to a role whose sale is a proposal", () => {
-    dialog(
-      {
-        till: "utanfor",
-        ar: 2025,
-        manad: 10,
-        dag: 10,
-        kopare: null,
-        kopare_id: 7,
-      },
-      vi.fn(),
-      false,
-    );
+  it("asks a role whose sale is a proposal to type the buyer, as a kept one is not theirs", () => {
+    const kept: SaldState = {
+      till: "utanfor",
+      ar: 2025,
+      manad: 10,
+      dag: 10,
+      kopare: null,
+      kopare_id: 7,
+    };
+    const onSave = dialog(kept, vi.fn(), false);
     expect(screen.queryByText(KEPT_TEXT)).toBeNull();
+    expect(screen.queryByText(/Lämna fälten tomma/)).toBeNull();
+    expect(screen.getByText(ON_SEND_TEXT)).toBeTruthy();
+    save();
+    expect(onSave).not.toHaveBeenCalled();
+    expect(screen.getByRole("alert").textContent).toBe(
+      "Skriv köparens namn och ort.",
+    );
+    fireEvent.change(screen.getByLabelText(/Köparens namn/), {
+      target: { value: "Ola Köpare" },
+    });
+    fireEvent.change(screen.getByLabelText(/^Ort/), {
+      target: { value: "Visby" },
+    });
+    save();
+    expect(onSave).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kopare: expect.objectContaining({ name: "Ola Köpare", town: "Visby" }),
+      }),
+    );
   });
 });

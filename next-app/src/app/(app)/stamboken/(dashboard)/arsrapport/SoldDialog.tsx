@@ -150,8 +150,10 @@ function Body({
     ...EMPTY_BUYER,
     ...existing?.kopare,
   });
-  // K1: a buyer kept across Dra tillbaka, which the seller never reads back
-  const kept = canSell && existing?.kopare_id != null && !existing.kopare;
+  // K1: a buyer kept across Dra tillbaka, which the seller never reads back. A
+  // proposal cannot take it (F1), so a role that may not sell types the buyer.
+  const keptId = existing?.kopare_id != null && !existing.kopare;
+  const kept = canSell && keptId;
   const [tried, setTried] = React.useState(false);
   const typed = [
     buyer.name,
@@ -161,7 +163,8 @@ function Body({
     buyer.phone,
   ].some((v) => v.trim());
   const buyerHalf = typed && !buyerComplete(buyer);
-  const buyerMissing = outside && !existing && !buyerComplete(buyer);
+  const buyerMissing =
+    outside && (!existing || (keptId && !canSell)) && !buyerComplete(buyer);
   const problem =
     // code is only ever the picker's own choice or the saved buyer, so it needs
     // no list: a slow herd list must not turn Spara into a silent refusal
@@ -247,7 +250,8 @@ function Body({
                 eller skriv en ny köpare.
               </p>
             ) : (
-              existing && (
+              existing &&
+              !keptId && (
                 <p className={styles.meta}>
                   Köparens uppgifter sparas inte i rapporten. Lämna fälten tomma
                   om köparen är rätt, och fyll i dem om du vill rätta köparen.
@@ -255,9 +259,11 @@ function Body({
               )
             )}
             <BuyerFields value={buyer} onChange={setBuyer} />
-            <p className={styles.meta}>
-              Köparens uppgifter sparas när du skickar rapporten, inte innan.
-            </p>
+            {!kept && (
+              <p className={styles.meta}>
+                Köparens uppgifter sparas när du skickar rapporten, inte innan.
+              </p>
+            )}
           </>
         )}
         <div className={styles.grid2}>
