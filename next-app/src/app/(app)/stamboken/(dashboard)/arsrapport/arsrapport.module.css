@@ -891,7 +891,7 @@ table.statusTable th {
   padding: 4px 0;
 }
 .litterTable td::before {
-  content: attr(data-label);
+  content: attr(data-label) / "";
   flex: 0 0 9em;
   color: var(--sb-ink-2);
 }
@@ -941,4 +941,12 @@ table.statusTable th {
 }
 .litterNote {
   color: var(--sb-ink-2);
+}
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }

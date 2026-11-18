@@ -1796,21 +1796,34 @@ export function ReportForm({
                   <p className={styles.litterSummary}>
                     {litterSummary(litters)}
                   </p>
-                  <table className={styles.litterTable}>
-                    <thead>
-                      <tr>
-                        <th scope="col">Kull</th>
-                        <th scope="col">Född</th>
-                        <th scope="col">Mor</th>
-                        <th scope="col">Far</th>
-                        <th scope="col">Födda</th>
-                        <th scope="col">Levande vid 6 veckor</th>
+                  <table className={styles.litterTable} role="table">
+                    <thead role="rowgroup">
+                      <tr role="row">
+                        <th scope="col" role="columnheader">
+                          Kull
+                        </th>
+                        <th scope="col" role="columnheader">
+                          Född
+                        </th>
+                        <th scope="col" role="columnheader">
+                          Mor
+                        </th>
+                        <th scope="col" role="columnheader">
+                          Far
+                        </th>
+                        <th scope="col" role="columnheader">
+                          Födda
+                        </th>
+                        <th scope="col" role="columnheader">
+                          Levande vid 6 veckor
+                        </th>
                       </tr>
                     </thead>
-                    <tbody>
+                    <tbody role="rowgroup">
                       {litters.map((l) => (
-                        <tr key={l.id}>
-                          <td data-label="Kull">
+                        <tr key={l.id} role="row">
+                          <td role="cell" data-label="Kull">
+                            <span className={styles.srOnly}>Kull: </span>
                             {l.litter_number != null ? (
                               l.litter_number
                             ) : (
@@ -1822,11 +1835,26 @@ export function ReportForm({
                               </>
                             )}
                           </td>
-                          <td data-label="Född">{fmtDate(l.birth_date)}</td>
-                          <td data-label="Mor">{l.mother ?? "–"}</td>
-                          <td data-label="Far">{l.father ?? "–"}</td>
-                          <td data-label="Födda">{l.litter_size ?? "–"}</td>
-                          <td data-label="Levande vid 6 veckor">
+                          <td role="cell" data-label="Född">
+                            <span className={styles.srOnly}>Född: </span>
+                            {fmtDate(l.birth_date)}
+                          </td>
+                          <td role="cell" data-label="Mor">
+                            <span className={styles.srOnly}>Mor: </span>
+                            {l.mother ?? "–"}
+                          </td>
+                          <td role="cell" data-label="Far">
+                            <span className={styles.srOnly}>Far: </span>
+                            {l.father ?? "–"}
+                          </td>
+                          <td role="cell" data-label="Födda">
+                            <span className={styles.srOnly}>Födda: </span>
+                            {l.litter_size ?? "–"}
+                          </td>
+                          <td role="cell" data-label="Levande vid 6 veckor">
+                            <span className={styles.srOnly}>
+                              Levande vid 6 veckor:{" "}
+                            </span>
                             {l.litter_size6w ?? "–"}
                             {l.preliminary && (
                               <span className={styles.litterNote}>
