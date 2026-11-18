@@ -56,7 +56,11 @@ import { Receipt } from "./Receipt";
 import { ReportStatus, type StatusKind } from "./ReportStatus";
 import { SoldDialog } from "./SoldDialog";
 import { ConfirmCountDialog, LitterDialog } from "./LitterDialog";
-import { AddRabbitDialog, AddRabbitPrompt } from "./AddRabbit";
+import {
+  ADD_FROM_CERTIFICATE,
+  AddRabbitDialog,
+  AddRabbitPrompt,
+} from "./AddRabbit";
 import { uploadPhoto } from "./rabbitActions";
 import styles from "./arsrapport.module.css";
 
@@ -780,6 +784,7 @@ export function ReportForm({
   const canAddRabbit = canEdit && !isPaper;
   const addRabbit = canAddRabbit && (
     <AddRabbitPrompt
+      lead={rabbits.length > 0} // an empty list says it in its own words, just above
       saved={rabbitSaved}
       onOpen={() => {
         setRabbitSaved(false);
@@ -1681,14 +1686,14 @@ export function ReportForm({
                 </MbCard>
               </>
             ) : rabbits.length === 0 ? (
-              <>
-                <p>
-                  Stamboken har inga kaniner registrerade i {herd.herd} den 31
-                  december {year}. Saknas kaniner? Kontakta genbanksansvarig.
-                  Har du inga kaniner kvar? Välj Jag avslutar min besättning.
-                </p>
-                {addRabbit}
-              </>
+              <p>
+                Stamboken har inga kaniner registrerade i {herd.herd} den 31
+                december {year}.{" "}
+                {canAddRabbit
+                  ? ADD_FROM_CERTIFICATE
+                  : "Saknas kaniner? Kontakta genbanksansvarig."}{" "}
+                Har du inga kaniner kvar? Välj Jag avslutar min besättning.
+              </p>
             ) : (
               <div className="sb-card-flat">
                 <div className={styles.list}>
@@ -1716,18 +1721,21 @@ export function ReportForm({
                 </div>
               </div>
             )}
-            {!isPaper && canNotify && (
+            {!isPaper && (canAddRabbit || canNotify) && (
               <div className={styles.detail}>
-                <p className={styles.line}>
-                  <span>Saknas ett köp?</span>
-                  <button
-                    type="button"
-                    className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
-                    onClick={() => setBuying(true)}
-                  >
-                    Anmäl köpet
-                  </button>
-                </p>
+                {addRabbit}
+                {canNotify && (
+                  <p className={styles.line}>
+                    <span>Saknas ett köp?</span>
+                    <button
+                      type="button"
+                      className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+                      onClick={() => setBuying(true)}
+                    >
+                      Anmäl köpet
+                    </button>
+                  </p>
+                )}
               </div>
             )}
             {!isPaper &&
@@ -1908,7 +1916,6 @@ export function ReportForm({
                   ))}
                 </ul>
               )}
-              {addRabbit}
             </MbCard>
 
             <MbCard title="Hälsa">

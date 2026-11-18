@@ -83,9 +83,20 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("Lägg till kanin från intyget in the report", () => {
-  it("is offered under Sålda under Y, and in an empty list too", () => {
+  it("is offered under the rabbit list beside Anmäl köpet, and in an empty list too", () => {
+    const button = () =>
+      screen.getByRole("button", { name: "Lägg till kanin från intyget" });
     render(<ReportForm env="demo" view={view()} actions={actions()} />);
     expect(screen.getAllByText(ADD_FROM_CERTIFICATE)).toHaveLength(1);
+    const purchase = screen.getByRole("button", { name: "Anmäl köpet" });
+    expect(button().closest("div")).toBe(purchase.closest("div"));
+    expect(
+      within(
+        screen
+          .getByRole("heading", { name: /^Sålda under/ })
+          .closest("section") ?? document.body,
+      ).queryByRole("button", { name: "Lägg till kanin från intyget" }),
+    ).toBeNull();
     cleanup();
     render(
       <ReportForm
@@ -94,7 +105,15 @@ describe("Lägg till kanin från intyget in the report", () => {
         actions={actions()}
       />,
     );
-    expect(screen.getAllByText(ADD_FROM_CERTIFICATE)).toHaveLength(2);
+    // the empty list says it once, in its own words, just above the button
+    expect(
+      screen.getAllByText(
+        (_, el) =>
+          !!el?.matches("p") && el.textContent!.includes(ADD_FROM_CERTIFICATE),
+      ),
+    ).toHaveLength(1);
+    expect(screen.queryByText(/Kontakta genbanksansvarig/)).toBeNull();
+    expect(button()).toBeTruthy();
   });
 
   it("is not offered on a paper form, which the queue registers from", () => {

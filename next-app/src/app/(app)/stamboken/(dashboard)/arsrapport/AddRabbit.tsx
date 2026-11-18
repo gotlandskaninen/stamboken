@@ -32,7 +32,7 @@ import {
 import styles from "./arsrapport.module.css";
 
 export const ADD_FROM_CERTIFICATE =
-  "Finns kaninen inte i listan, lägg till den från intyget.";
+  "Saknas en kanin? Lägg till den från intyget.";
 export const RABBIT_SAVED =
   "Kaninen är registrerad i Stamboken nu. Den finns kvar även om du drar tillbaka rapporten.";
 export const MAX_BYTES = 10 * 1024 * 1024; // the server's limit, checked before the photo is sent
@@ -510,25 +510,29 @@ export function AddRabbitDialog({
   );
 }
 
-/** Under "Sålda under Y" and in an empty list: the way to a rabbit that is not in Stamboken. */
+/** Under the rabbit list, beside Anmäl köpet: the way to a rabbit that is not in Stamboken; `lead` says why. */
 export function AddRabbitPrompt({
+  lead,
   saved,
   onOpen,
 }: {
+  lead: boolean;
   saved: boolean;
   onOpen: () => void;
 }) {
   return (
-    <div className={styles.detail}>
-      <p>{ADD_FROM_CERTIFICATE}</p>
-      <button
-        type="button"
-        className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
-        onClick={onOpen}
-      >
-        Lägg till kanin från intyget
-      </button>
+    <>
+      <p className={styles.line}>
+        {lead && <span>{ADD_FROM_CERTIFICATE}</span>}
+        <button
+          type="button"
+          className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+          onClick={onOpen}
+        >
+          Lägg till kanin från intyget
+        </button>
+      </p>
       {saved && <p role="status">{RABBIT_SAVED}</p>}
-    </div>
+    </>
   );
 }
