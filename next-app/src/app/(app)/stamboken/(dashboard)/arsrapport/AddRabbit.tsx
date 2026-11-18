@@ -36,6 +36,8 @@ export const ADD_FROM_CERTIFICATE =
 export const RABBIT_SAVED =
   "Kaninen är registrerad i Stamboken nu. Den finns kvar även om du drar tillbaka rapporten.";
 export const MAX_BYTES = 10 * 1024 * 1024; // the server's limit, checked before the photo is sent
+export const PHOTO_FIRST = "Ladda upp fotot av intyget först.";
+const PHOTO_SENDING = "Fotot laddas upp. Spara när det är klart.";
 const INTRO: Record<Parent, string> = {
   mother: "Modern till ungen. När hon är sparad visas ungens uppgifter igen.",
   father: "Fadern till ungen. När han är sparad visas ungens uppgifter igen.",
@@ -226,6 +228,25 @@ export function AddRabbitDialog({
     else leave();
   };
 
+  // Spara without an uploaded photo: said at the photo field, which takes the focus (the draft it was said for).
+  const photoInput = React.useRef<HTMLInputElement>(null);
+  const [askedPhoto, setAskedPhoto] = React.useState<number | null>(null);
+  const photoReady = () => {
+    if (top.photo.status === "klar") return true;
+    setAskedPhoto(top.id);
+    photoInput.current?.scrollIntoView?.({ block: "center" });
+    photoInput.current?.focus();
+    return false;
+  };
+  const photoAsk =
+    askedPhoto !== top.id
+      ? null
+      : top.photo.status === "tom"
+        ? PHOTO_FIRST
+        : top.photo.status === "skickar"
+          ? PHOTO_SENDING
+          : null; // "fel" says its own error there
+
   const updateDraft = (id: number, change: (d: Draft) => Draft) =>
     setStack((s) => s.map((d) => (d.id === id ? change(d) : d)));
   const touch = () => setTouched(true);
@@ -335,8 +356,11 @@ export function AddRabbitDialog({
       <label className={styles.label}>
         Foto av intyget
         <input
+          ref={photoInput}
           type="file"
           accept="image/*,.heic,.pdf"
+          aria-invalid={!!photoAsk}
+          aria-describedby={photoAsk ? "kanin-photo-ask" : undefined}
           onChange={(e) => {
             pick(e.target.files?.[0]);
             e.target.value = "";
@@ -344,6 +368,11 @@ export function AddRabbitDialog({
         />
       </label>
       <p className={styles.meta}>Fotot laddas upp medan du fyller i resten.</p>
+      {photoAsk && (
+        <p id="kanin-photo-ask" className={styles.errorText} role="alert">
+          {photoAsk}
+        </p>
+      )}
       {restored && top.photo.status === "tom" && (
         <p className={styles.meta} role="status">
           Utkastet är tillbaka. Ladda upp fotot av intyget igen.
@@ -440,7 +469,8 @@ export function AddRabbitDialog({
               lookup={lookup}
               suggest={suggest}
               onSave={save}
-              canSave={top.photo.status === "klar"}
+              canSave
+              beforeSubmit={photoReady}
               submitLabel="Spara"
               conflictHint="Stämmer pappret? Kontakta genbanksansvarig."
               photo={photo}

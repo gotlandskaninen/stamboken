@@ -26,7 +26,10 @@ vi.mock("@/app/(app)/stamboken/(dashboard)/inskick/ny/prepare", () => ({
   prepare: vi.fn(async (file: File) => file),
 }));
 
-import { AddRabbitDialog } from "@/app/(app)/stamboken/(dashboard)/arsrapport/AddRabbit";
+import {
+  AddRabbitDialog,
+  PHOTO_FIRST,
+} from "@/app/(app)/stamboken/(dashboard)/arsrapport/AddRabbit";
 import { prepare } from "@/app/(app)/stamboken/(dashboard)/inskick/ny/prepare";
 import {
   findRabbit,
@@ -75,6 +78,23 @@ const back = () =>
   act(() => {
     window.dispatchEvent(new PopStateEvent("popstate"));
   });
+// Spara is never greyed out: without an uploaded photo it saves nothing, says so at the photo field (`text`, or the
+// upload's own error) and moves the focus there.
+function sparaAsksForPhoto(text: string | null = PHOTO_FIRST) {
+  const calls = register.mock.calls.length;
+  const spara = screen.getByRole("button", { name: "Spara" });
+  expect(spara).toBeEnabled();
+  fireEvent.click(spara);
+  expect(register).toHaveBeenCalledTimes(calls);
+  const photo = input("Foto av intyget");
+  expect(document.activeElement).toBe(photo);
+  if (text) {
+    expect(photo).toHaveAttribute("aria-invalid", "true");
+    expect(
+      document.getElementById(photo.getAttribute("aria-describedby")!),
+    ).toHaveTextContent(text);
+  }
+}
 const uploaded = (item_id: number) =>
   ({ ok: true, data: { item_id, document_id: item_id + 100 } }) as const;
 
@@ -103,6 +123,19 @@ const pending = <T,>() => {
 };
 
 describe("the photo", () => {
+  it("Spara on an untouched form asks for the photo at its field, and while it uploads asks to wait", async () => {
+    const late = pending<Awaited<ReturnType<typeof uploadPhoto>>>();
+    upload.mockReturnValueOnce(late.promise);
+    await opened();
+    sparaAsksForPhoto(PHOTO_FIRST);
+    choosePhoto();
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+    sparaAsksForPhoto("Fotot laddas upp. Spara när det är klart.");
+    await act(async () => late.resolve(uploaded(7)));
+    expect(screen.queryByText(PHOTO_FIRST)).toBeNull();
+    expect(input("Foto av intyget")).toHaveAttribute("aria-invalid", "false");
+  });
+
   it("a failed upload keeps what was typed, and Försök igen sends only the photo", async () => {
     upload
       .mockResolvedValueOnce({
@@ -121,7 +154,7 @@ describe("the photo", () => {
     expect(
       await screen.findByText(/Det gick inte att nå servern/),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Spara" })).toBeDisabled();
+    sparaAsksForPhoto(null); // the upload's error is already there
     fireEvent.click(screen.getByRole("button", { name: "Försök igen" }));
     expect(await screen.findByText("Fotot är uppladdat.")).toBeInTheDocument();
     expect(upload).toHaveBeenCalledTimes(2);
@@ -254,7 +287,7 @@ describe("the draft in the browser", () => {
         "Utkastet är tillbaka. Ladda upp fotot av intyget igen.",
       ),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Spara" })).toBeDisabled();
+    sparaAsksForPhoto();
   });
 
   it("is another actor's own: a different code or account does not get it", async () => {
@@ -523,7 +556,7 @@ describe("a late answer", () => {
     );
     await act(async () => late.resolve(uploaded(7)));
     expect(screen.queryByText("Fotot är uppladdat.")).toBeNull();
-    expect(screen.getByRole("button", { name: "Spara" })).toBeDisabled();
+    sparaAsksForPhoto();
   });
 
   it("of a parent's registration: Avbryt waits for it, and the kit's form comes back", async () => {
@@ -680,7 +713,7 @@ describe("a missing parent", () => {
     ).toBeInTheDocument();
     expect(input(/^Individnummer på pappret/)).toHaveValue("G9001-2411");
     expect(input(/^Namn/)).toHaveValue("");
-    expect(screen.getByRole("button", { name: "Spara" })).toBeDisabled(); // her own photo first
+    sparaAsksForPhoto(); // her own photo first
     choosePhoto();
     await screen.findByText("Fotot är uppladdat.");
     type(/^Intygsnummer/, "P-2411");

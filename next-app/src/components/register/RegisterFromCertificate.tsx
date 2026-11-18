@@ -175,6 +175,7 @@ export function RegisterFromCertificate({
   lookup,
   onSave,
   canSave,
+  beforeSubmit,
   submitLabel,
   conflictHint,
   proposed = {},
@@ -195,6 +196,8 @@ export function RegisterFromCertificate({
   lookup: Lookup;
   onSave: (payload: Record<string, unknown>) => Promise<SaveResult>;
   canSave: boolean;
+  /** On Spara, before the browser's own checks: false stops the save, and the caller shows why. */
+  beforeSubmit?: () => boolean;
   submitLabel: string;
   /** Under the form when the paper's number is refused: what to do if the paper is right. */
   conflictHint: string;
@@ -489,7 +492,14 @@ export function RegisterFromCertificate({
       )}
       {errors.paper_number && <p className={styles.muted}>{conflictHint}</p>}
       <div className={styles.submitRow}>
-        <button type="submit" className="sb-btn" disabled={!canSave || pending}>
+        <button
+          type="submit"
+          className="sb-btn"
+          disabled={!canSave || pending}
+          onClick={(e) => {
+            if (beforeSubmit && !beforeSubmit()) e.preventDefault();
+          }}
+        >
           {pending ? "Sparar…" : submitLabel}
         </button>
         {typeof buttons === "function" ? buttons(pending) : buttons}
