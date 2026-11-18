@@ -320,18 +320,91 @@ button.confirmDanger:hover:not(:disabled) {
   border-style: dashed;
   color: var(--sb-ink-2);
 }
-/* "Var är kaninen nu?" in Lägg till kanin: the row's choices, outside .root (a dialog), so sized here */
-.whereSet {
+/* "Var är kaninen nu?" and Kön in Lägg till kanin: the row's choices, outside .root (a dialog), so sized here */
+.choiceSet {
   border: 0;
   margin: 0;
   padding: 0;
   min-width: 0;
   font-size: 16px;
 }
-.whereSet legend {
+.choiceSet legend {
   padding: 0;
   margin-bottom: 6px;
 }
+/* Three choices fit 375 px: less room around the words, the check mark after them */
+.choiceSet .choice span {
+  padding: 4px 8px;
+  gap: 4px;
+}
+.choiceSet .choice input:checked + span::after {
+  position: static;
+}
+/* The member's form fields (the report's Lägg till kanin and the buyer of a sale) on MUI's TextField: the label
+   above at 16 px, a 48 px white field with 16 px text, a 1 px --sb-ink-3 border and the report's radius, and the
+   helper text at 15 px under it. Outside .root (a dialog), so sized here; deep enough to beat the theme's
+   overrides (theme/stamboken.ts: the label's transforms are three classes deep). */
+.memberFields {
+  font-size: 16px;
+}
+.memberFields
+  :global(.MuiFormControl-root .MuiInputLabel-root.MuiFormLabel-root) {
+  position: static;
+  display: block;
+  transform: none;
+  max-width: none;
+  overflow: visible;
+  white-space: normal;
+  pointer-events: auto;
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--sb-ink-2);
+  margin-bottom: 6px;
+}
+.memberFields
+  :global(.MuiFormControl-root .MuiInputBase-root.MuiInputBase-formControl) {
+  min-height: 48px;
+  font-size: 16px;
+  background: #fff;
+  border-radius: 6px;
+}
+.memberFields :global(.MuiInputBase-root .MuiInputBase-input) {
+  padding-top: 12px;
+  padding-bottom: 12px;
+  padding-left: 12px;
+}
+.memberFields :global(.MuiInputBase-root .MuiOutlinedInput-notchedOutline) {
+  top: 0;
+  border-color: var(--sb-ink-3);
+  border-radius: 6px;
+}
+.memberFields :global(.MuiOutlinedInput-notchedOutline legend) {
+  display: none;
+}
+.memberFields
+  :global(.MuiInputBase-root.Mui-focused .MuiOutlinedInput-notchedOutline) {
+  border-color: var(--sb-skog);
+  border-width: 2px;
+}
+.memberFields
+  :global(.MuiInputBase-root.Mui-error .MuiOutlinedInput-notchedOutline) {
+  border-color: var(--sb-danger);
+}
+.memberFields :global(.MuiFormControl-root .MuiFormHelperText-root) {
+  font-size: 15px;
+  line-height: 1.4;
+  margin: 6px 0 0;
+  color: var(--sb-ink-2);
+}
+.memberFields :global(.MuiFormHelperText-root) span {
+  font-size: inherit;
+  color: inherit;
+}
+.memberFields :global(.MuiFormControl-root .MuiFormHelperText-root.Mui-error) {
+  color: var(--sb-danger);
+}
+
 /* Lägg till kanin: the photo of the certificate first, as large buttons; its thumbnail once uploaded */
 .photoPick {
   flex: 1 1 12em;

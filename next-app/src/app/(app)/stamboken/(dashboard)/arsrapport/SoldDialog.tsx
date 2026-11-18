@@ -290,6 +290,7 @@ function Body({
               )
             )}
             <BuyerFields
+              variant="member"
               value={buyer}
               onChange={setBuyer}
               errors={{

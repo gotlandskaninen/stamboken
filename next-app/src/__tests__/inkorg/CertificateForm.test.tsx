@@ -95,6 +95,14 @@ describe("CertificateForm with the image reading's proposal", () => {
     expect(input(/^Födelsedatum/)).toHaveValue("");
   });
 
+  it("keeps the queue's compact look: Kön a menu, not the member's choices", () => {
+    show(doc({ proposal: null, interpretation_status: "vantar" }));
+    const form = input(/^Namn/).closest("form")!;
+    expect(form.className).not.toContain("memberFields");
+    expect(screen.getByRole("combobox", { name: /^Kön/ })).toBeTruthy();
+    expect(screen.queryByRole("group", { name: "Kön" })).toBeNull();
+  });
+
   it("keeps the queue's hint for the count at 6 weeks: the queue asks for it", () => {
     show(doc({ proposal: null, interpretation_status: "vantar" }));
     expect(screen.getByText("Står inte alltid på intyget.")).toBeTruthy();

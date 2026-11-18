@@ -98,7 +98,9 @@ describe("SoldDialog", () => {
   it("takes the buyer outside the genebank in BuyerFields, with the buyer's yes", () => {
     const onSave = dialog(null);
     fireEvent.click(screen.getByLabelText("Utanför genbanken"));
-    expect(screen.getByTestId("sell-buyer")).toBeTruthy();
+    expect(screen.getByTestId("sell-buyer").className).toContain(
+      "memberFields",
+    ); // the member's larger fields
     expect(screen.getByText(ON_SEND_TEXT)).toBeTruthy();
     expect(screen.queryByLabelText(/E-post/)).toBeNull(); // only with a yes
     fireEvent.change(screen.getByLabelText(/Köparens namn/), {

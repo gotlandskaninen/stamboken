@@ -449,6 +449,31 @@ describe("the lookups", () => {
     ).toBeNull();
   });
 
+  it("is the member's variant: larger fields, and Kön as choices", async () => {
+    open();
+    const form = input(/^Namn/).closest("form")!;
+    expect(form.className).toContain("memberFields");
+    const sex = screen.getByRole("group", { name: "Kön" });
+    const radios = Array.from(
+      sex.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
+    );
+    expect(radios.map((r) => r.closest("label")?.textContent)).toEqual([
+      "Hona",
+      "Hane",
+      "Inte angivet",
+    ]);
+    expect(screen.queryByRole("combobox", { name: "Kön" })).toBeNull();
+    fireEvent.click(screen.getByLabelText("Hane"));
+    expect(screen.getByLabelText("Hane")).toBeChecked();
+    // the paper's number first, the certificate's second, as in the queue
+    const labels = Array.from(form.querySelectorAll("label")).map(
+      (l) => l.textContent,
+    );
+    expect(
+      labels.findIndex((l) => l?.startsWith("Individnummer på pappret")),
+    ).toBeLessThan(labels.findIndex((l) => l?.startsWith("Intygsnummer")));
+  });
+
   it("asks Var är kaninen nu? with the rabbit row's words, in its order", async () => {
     open();
     const group = screen.getByRole("group", { name: "Var är kaninen nu?" });

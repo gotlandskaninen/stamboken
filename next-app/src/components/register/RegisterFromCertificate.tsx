@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useId, useRef, useState, useTransition } from "react";
 import {
   Autocomplete,
   MenuItem,
@@ -47,7 +47,7 @@ export type SaveResult = { ok: true } | { ok: false; problem: Problem | null };
 /** "Var är kaninen nu" (spec 5.8). */
 export type Where = "hos_mig" | "sald" | "dod";
 export type Parent = "mother" | "father";
-/** The yearly report's member, not the queue's handler: the report's rules and, later, its look. */
+/** The yearly report's member, not the queue's handler: the report's rules, and its larger fields (labels above). */
 export type Variant = "member";
 export const COUNT_LEFT_EMPTY =
   "Står det inte på intyget, lämna tomt. Då räknas alla som levande tills du bekräftar antalet.";
@@ -151,6 +151,11 @@ const WHERE: [Where, string][] = [
   ["dod", "Död"],
   ["sald", "Såld"],
 ];
+const SEXES: [string, string][] = [
+  ["female", "Hona"],
+  ["male", "Hane"],
+  ["", "Inte angivet"],
+];
 const ADD_PARENT: Record<Parent, string> = {
   mother: "Lägg till modern från hennes intyg nu",
   father: "Lägg till fadern från hans intyg nu",
@@ -232,6 +237,8 @@ export function RegisterFromCertificate({
   const [formError, setFormError] = useState<string | null>(null);
   const [conflict, setConflict] = useState<NumberCheck | null>(null);
   const [pending, start] = useTransition();
+  const member = variant === "member";
+  const sexName = useId();
   const registry = {
     individual: useRegistry(
       mode === "pappersintyg" ? form.individual : "",
@@ -378,7 +385,7 @@ export function RegisterFromCertificate({
 
   return (
     <form
-      className={styles.card}
+      className={`${styles.card} ${member ? report.memberFields : ""}`}
       onSubmit={(e) => {
         e.preventDefault();
         submit();
@@ -406,20 +413,42 @@ export function RegisterFromCertificate({
             {text("name", "Namn", {
               slotProps: { htmlInput: { maxLength: 50 } },
             })}
-            {text("sex", "Kön", {
-              select: true,
-              children: [
-                <MenuItem key="" value="">
-                  Inte angivet
-                </MenuItem>,
-                <MenuItem key="female" value="female">
-                  Hona
-                </MenuItem>,
-                <MenuItem key="male" value="male">
-                  Hane
-                </MenuItem>,
-              ],
-            })}
+            {member ? (
+              // the report's choices, not a menu: Hona and Hane at a tap
+              <Field source={sources.sex}>
+                <fieldset className={report.choiceSet}>
+                  <legend className={report.label}>Kön</legend>
+                  <div className={report.choices}>
+                    {SEXES.map(([value, label]) => (
+                      <label key={value} className={report.choice}>
+                        <input
+                          type="radio"
+                          name={sexName}
+                          checked={form.sex === value}
+                          onChange={() => onChange("sex", value)}
+                        />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </fieldset>
+              </Field>
+            ) : (
+              text("sex", "Kön", {
+                select: true,
+                children: [
+                  <MenuItem key="" value="">
+                    Inte angivet
+                  </MenuItem>,
+                  <MenuItem key="female" value="female">
+                    Hona
+                  </MenuItem>,
+                  <MenuItem key="male" value="male">
+                    Hane
+                  </MenuItem>,
+                ],
+              })
+            )}
             {text("birth_date", "Födelsedatum", {
               required: true,
               type: "date",
@@ -485,7 +514,7 @@ export function RegisterFromCertificate({
             })}
             {onWhere && (
               <Field wide>
-                <fieldset className={report.whereSet}>
+                <fieldset className={report.choiceSet}>
                   <legend className={report.label}>Var är kaninen nu?</legend>
                   <div className={report.choices}>
                     {WHERE.map(([value, label]) => (
