@@ -1296,7 +1296,7 @@ export function ReportForm({
   const sending = phase === "checking" || phase === "sending";
   const lower = <ReportStatus status={status} />;
   const endCard = (
-    <MbCard title="Jag avslutar min genbank">
+    <MbCard title="Jag avslutar min besättning">
       <div className={styles.detail}>
         <label className={styles.line} style={{ minHeight: 48 }}>
           <input
@@ -1304,13 +1304,13 @@ export function ReportForm({
             checked={state.ending}
             onChange={(e) => edit((s) => ({ ...s, ending: e.target.checked }))}
           />
-          Jag avslutar min genbank
+          Jag avslutar min besättning
         </label>
         {state.ending && (
           <>
             <p className={styles.lead}>
               Fyll gärna i döda och sålda kaniner också, så att registret
-              stämmer. Genbanken kan väckas igen genom att kontakta
+              stämmer. Besättningen kan väckas igen genom att kontakta
               genbanksansvarig, med samma besättningsnummer.
             </p>
             {!view.other_active_herd && (
@@ -1323,7 +1323,7 @@ export function ReportForm({
                   [
                     [
                       "kvar_utan_genbank",
-                      "Jag vill vara kvar i föreningen som medlem utan genbank",
+                      "Jag vill vara kvar i föreningen som medlem utan besättning",
                     ],
                     [
                       "avsluta_medlemskap",
@@ -1685,7 +1685,7 @@ export function ReportForm({
                 <p>
                   Stamboken har inga kaniner registrerade i {herd.herd} den 31
                   december {year}. Saknas kaniner? Kontakta genbanksansvarig.
-                  Har du inga kaniner kvar? Välj Jag avslutar min genbank.
+                  Har du inga kaniner kvar? Välj Jag avslutar min besättning.
                 </p>
                 {addRabbit}
               </>

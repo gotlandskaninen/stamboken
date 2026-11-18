@@ -635,7 +635,7 @@ describe("ReportForm on paper", () => {
   it("ends a genebank with no rabbit choices", async () => {
     const a = actions();
     renderPaper(paperView(), a);
-    fireEvent.click(screen.getByLabelText("Jag avslutar min genbank"));
+    fireEvent.click(screen.getByLabelText("Jag avslutar min besättning"));
     fireEvent.click(screen.getByLabelText(/även avsluta mitt medlemskap/));
     fireEvent.click(sendButton());
     await waitFor(() => expect(a.submitReport).toHaveBeenCalled());

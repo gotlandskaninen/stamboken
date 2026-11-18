@@ -709,7 +709,7 @@ Rapporten för ett avelsår. Dina kaniner står redan i listan; för varje kanin
 och om kaninen slaktades) eller **Såld** (till en besättning i genbanken, eller köparens namn och
 ort utanför genbanken). Har du 15 kaniner eller fler kan du söka med **Hitta en kanin**. Filtrera listan och se
 hur många som är klara. Under **Hälsa** svarar du **Inga sjukdomsfall eller defekter**
-eller **Ja, fyll i**. Avslutar du genbanken kryssar du **Jag avslutar min genbank** och
+eller **Ja, fyll i**. Avslutar du besättningen kryssar du **Jag avslutar min besättning** och
 väljer vad som händer med medlemskapet; då behöver kaninerna inget val.
 
 Det du fyller i sparas medan du skriver. **Skicka årsrapporten** visar ett kvitto.

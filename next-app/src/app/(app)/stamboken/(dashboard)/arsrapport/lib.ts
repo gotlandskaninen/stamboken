@@ -324,7 +324,7 @@ export const SUBMIT_TIMEOUT_MS = 30_000;
 // The wording of the blankett's question about the listing in Koharen
 // (CONSENT_TEXT_VERSION "2026-11-16" on the server). Only the paper form shows it.
 export const CONSENT_TEXT =
-  "Får din genbank stå med i Koharens lista över aktiva genbanker? Koharen är föreningens tidning på papper och går bara till medlemmar. Listan gör det lättare för genbankerna att hitta varandra. Den visar innehavarens namn och genbankens nummer, och dessutom postnummer och ort, telefonnummer och e-postadress ur medlemsregistret.";
+  "Får din besättning stå med i Koharens lista över aktiva besättningar? Koharen är föreningens tidning på papper och går bara till medlemmar. Listan gör det lättare för besättningarna att hitta varandra. Den visar innehavarens namn och besättningens nummer, och dessutom postnummer och ort, telefonnummer och e-postadress ur medlemsregistret.";
 
 export const EJ_VAGD_REASONS = [
   "Hann inte väga",

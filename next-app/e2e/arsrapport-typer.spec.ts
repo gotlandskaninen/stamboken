@@ -459,11 +459,11 @@ test("6. Typ D: avslutar besättningen", async ({ page, context }) => {
   await expect(rows(page)).toHaveCount(3);
   await hydrated(page);
   await page
-    .getByRole("checkbox", { name: "Jag avslutar min genbank" })
+    .getByRole("checkbox", { name: "Jag avslutar min besättning" })
     .check();
   await page
     .getByRole("radio", {
-      name: "Jag vill vara kvar i föreningen som medlem utan genbank",
+      name: "Jag vill vara kvar i föreningen som medlem utan besättning",
     })
     .check();
   await shot(page, "typ-d-formular");
