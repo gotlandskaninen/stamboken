@@ -122,6 +122,7 @@ def _information_mail(params, attempt=1):
         "name": _one_line(rabbit.name),
         "number": rabbit.number,
         "until": _swedish_date(contact.purge_at),
+        "address": bool(contact.postal_address),  # kept with the name since #111; an older buyer has only a town
         "token": link_token(ERASE_PURPOSE, contact.id),
         "consent": contact.contact_consent_at is not None,
         "membership": contact.membership_optin_at is not None,

@@ -240,7 +240,7 @@ class TestInformationSent(BuyerMailTest):
             (pdf.get_filename(), pdf.get_content_type(), pdf.get_content()),
             ("genbanksintyg-G1-2111.pdf", "application/pdf", PDF),
         )
-        link = re.search(r"även namn och ort: https://stambok\.example\.org/kopare/ta-bort#(\S+)\n", body)
+        link = re.search(r"även namn och postadress: https://stambok\.example\.org/kopare/ta-bort#(\S+)\n", body)
         self.assertEqual(mail.verify_link(ERASE_PURPOSE, link.group(1)), self.contact_id)
         self.assertIn("Du kan också skriva till dataskydd@gotlandskaninen.se.\n\nHälsningar\n", body)
         self.assertEqual(self.mails()[0].status, "sent")
@@ -305,7 +305,20 @@ class TestInformationSent(BuyerMailTest):
         for purge_at, shown in cases:
             with self.subTest(shown=shown):
                 db.BuyerContact.update(purge_at=purge_at).where(db.BuyerContact.id == self.contact_id).execute()
-                self.assertIn(f"sparar ditt namn och din ort till och med {shown}. Då vet vi", self.text()[1])
+                self.assertIn(f"sparar ditt namn och din postadress till och med {shown}. Då vet vi", self.text()[1])
+
+    def test_a_postal_address_is_kept_with_the_name_and_not_on_consent(self):
+        mine = db.BuyerContact.id == self.contact_id
+        db.BuyerContact.update(contact_consent_at=datetime.now(timezone.utc)).where(mine).execute()
+        body = self.text()[1]
+        self.assertIn("sparar ditt namn och din postadress till och med", body)
+        self.assertIn("även namn och postadress: https://", body)
+        self.assertIn("Din e-postadress, och telefon om du har lämnat den, sparar vi bara för att du har sagt ja", body)
+        self.assertNotIn("postadress och telefon", body)  # the address is not kept on the buyer's yes (#111)
+        db.BuyerContact.update(postal_address=None).where(mine).execute()  # a manager's sale may lack the address
+        body = self.text()[1]
+        self.assertIn("sparar ditt namn och din ort till och med", body)
+        self.assertIn("även namn och ort: https://", body)
 
     def test_a_rabbit_without_a_name_goes_by_its_number(self):
         db.Individual.update(name=None).where(db.Individual.id == self.rabbit.id).execute()
