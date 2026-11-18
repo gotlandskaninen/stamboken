@@ -676,7 +676,10 @@ export function WorkView({
         </section>
 
         {/* Right: what the document shows */}
-        <section className={`sb-card ${styles.card}`} aria-label="Registrering">
+        <section
+          className={`sb-card ${styles.card} ${styles.hideEmpty}`}
+          aria-label="Registrering"
+        >
           {item.ref_type === "sale_proposal" && (
             <p className={styles.note}>
               Avgörs i årsrapportens statusvy.

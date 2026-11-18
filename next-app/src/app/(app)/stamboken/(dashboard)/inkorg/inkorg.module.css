@@ -436,6 +436,10 @@
   flex: 1;
   justify-content: center;
 }
+/* A column with nothing to show (a purchase notice's right column): no empty card */
+.hideEmpty:empty {
+  display: none;
+}
 /* A purchase notice in the main column: its facts at reading size, the number unbroken */
 .purchase {
   display: flex;
