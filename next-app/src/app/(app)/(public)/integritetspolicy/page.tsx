@@ -391,7 +391,10 @@ export default function IntegritetspolicyPage() {
                 Safespring, som tillhandahåller servrar och lagring för
                 Stamboken Online i datacenter i Stockholm.
               </li>
-              <li>Tryckeriet som skickar ut Koharen.</li>
+              <li>
+                Tryckeriet som trycker och skickar ut Koharen. Det får
+                adresserna och tidningens innehåll.
+              </li>
               <li>
                 Jordbruksverket, om myndigheten begär att få se underlaget för
                 stödet vid en kontroll.
