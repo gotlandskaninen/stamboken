@@ -392,14 +392,14 @@ test("9. A kit and its mother from their certificates, then the report", async (
   await field(/^Far(?!-)/).fill("M9202-2412");
   await field(/^Antal födda/).fill("4");
   await field(/^Levande i kullen/).fill("4");
-  await dialog.getByLabel("Hos mig").check();
+  await dialog.getByLabel("Finns kvar").check();
   await dialog.getByRole("button", { name: "Spara", exact: true }).click();
 
   // the kit's form again, as it was typed
   await expect(field(/^Namn/)).toHaveValue("Ungen", { timeout: 30_000 });
   await expect(field(/^Mor/)).toHaveValue("M9202-2416");
   await expect(dialog.getByText(/^Registret:/).first()).toBeVisible();
-  await dialog.getByLabel("Hos mig").check();
+  await dialog.getByLabel("Finns kvar").check();
   await dialog.getByRole("button", { name: "Spara", exact: true }).click();
 
   await expect(

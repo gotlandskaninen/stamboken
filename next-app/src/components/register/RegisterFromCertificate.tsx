@@ -27,6 +27,7 @@ import {
   type Source,
 } from "@/app/(app)/stamboken/(dashboard)/inkorg/lib";
 import styles from "@/app/(app)/stamboken/(dashboard)/inkorg/inkorg.module.css";
+import report from "@/app/(app)/stamboken/(dashboard)/arsrapport/arsrapport.module.css";
 
 /** One of the mother's litters, as the report's lookup gives them: picking it fills in the kit's litter. */
 export type ParentLitter = {
@@ -143,10 +144,11 @@ function RegistryHint({ rabbit }: { rabbit: Found | null | undefined }) {
   );
 }
 
+// The rabbit row's words and order (RabbitRow's CHOICES)
 const WHERE: [Where, string][] = [
-  ["hos_mig", "Hos mig"],
-  ["sald", "Såld"],
+  ["hos_mig", "Finns kvar"],
   ["dod", "Död"],
+  ["sald", "Såld"],
 ];
 const ADD_PARENT: Record<Parent, string> = {
   mother: "Lägg till modern från hennes intyg nu",
@@ -481,19 +483,21 @@ export function RegisterFromCertificate({
             })}
             {onWhere && (
               <Field wide>
-                <fieldset className={styles.segment}>
-                  <legend>Var är kaninen nu?</legend>
-                  {WHERE.map(([value, label]) => (
-                    <label key={value}>
-                      <input
-                        type="radio"
-                        name="where"
-                        checked={where === value}
-                        onChange={() => onWhere(value)}
-                      />{" "}
-                      {label}
-                    </label>
-                  ))}
+                <fieldset className={report.whereSet}>
+                  <legend className={report.label}>Var är kaninen nu?</legend>
+                  <div className={report.choices}>
+                    {WHERE.map(([value, label]) => (
+                      <label key={value} className={report.choice}>
+                        <input
+                          type="radio"
+                          name="where"
+                          checked={where === value}
+                          onChange={() => onWhere(value)}
+                        />
+                        <span>{label}</span>
+                      </label>
+                    ))}
+                  </div>
                 </fieldset>
               </Field>
             )}

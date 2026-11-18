@@ -355,6 +355,21 @@ describe("the lookups", () => {
     ).toBeNull();
   });
 
+  it("asks Var är kaninen nu? with the rabbit row's words, in its order", async () => {
+    open();
+    const group = screen.getByRole("group", { name: "Var är kaninen nu?" });
+    const radios = Array.from(
+      group.querySelectorAll<HTMLInputElement>('input[type="radio"]'),
+    );
+    expect(radios.map((r) => r.closest("label")?.textContent)).toEqual([
+      "Finns kvar",
+      "Död",
+      "Såld",
+    ]);
+    fireEvent.click(screen.getByLabelText("Död"));
+    expect(screen.getByLabelText("Död")).toBeChecked();
+  });
+
   it("says an empty count alive at 6 weeks counts them all, for a new litter", async () => {
     open();
     expect(
@@ -738,7 +753,7 @@ describe("a missing parent", () => {
     type(/^Födelsedatum/, "2024-05-01");
     type(/^Mor/, "G9001-2201");
     type(/^Far(?!-)/, "G9001-2202");
-    fireEvent.click(screen.getByLabelText("Hos mig"));
+    fireEvent.click(screen.getByLabelText("Finns kvar"));
     motherIn = true;
     fireEvent.click(screen.getByRole("button", { name: "Spara" }));
 
