@@ -7,7 +7,7 @@ Only runs on PostgreSQL (interval arithmetic). Addresses are from the reserved e
 
 import os
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from unittest import mock
 
 import herdbook
