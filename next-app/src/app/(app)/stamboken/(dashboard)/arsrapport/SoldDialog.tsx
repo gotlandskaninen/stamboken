@@ -49,6 +49,7 @@ export function HerdPicker({
   label,
   value,
   onChange,
+  error,
 }: {
   genebankId: number;
   ownHerd: string;
@@ -56,6 +57,7 @@ export function HerdPicker({
   label: string;
   value: string;
   onChange: (herd: string) => void;
+  error?: string | null; // beside the field, as its description
 }) {
   const [loaded, setLoaded] = React.useState<Awaited<
     ReturnType<typeof getGenebankHerds>
@@ -103,7 +105,14 @@ export function HerdPicker({
         loading={loaded === null}
         loadingText="Hämtar besättningar …"
         noOptionsText="Ingen besättning matchar"
-        renderInput={(params) => <TextField {...params} label={label} />}
+        renderInput={(params) => (
+          <TextField
+            {...params}
+            label={label}
+            error={!!error}
+            helperText={error}
+          />
+        )}
       />
       {loaded && !loaded.success && (
         <p className={styles.errorText} role="alert">
@@ -174,21 +183,34 @@ function Body({
   ].some((v) => v.trim());
   const buyerHalf = typed && !buyerComplete(buyer);
   const buyerMissing = outside && !kept && !stored && !buyerComplete(buyer);
-  const problem =
+  const buyerWanted = outside && (buyerMissing || buyerHalf);
+  // Each refusal beside its field, all at once once Spara is pressed.
+  const errors = {
     // code is only ever the picker's own choice or the saved buyer, so it needs
     // no list: a slow herd list must not turn Spara into a silent refusal
-    (!outside &&
-      !code &&
-      "Välj en besättning i genbanken, eller Utanför genbanken.") ||
-    (manad === null && "Välj månad.") ||
-    (outside &&
-      (buyerMissing || buyerHalf) &&
-      "Skriv köparens namn och ort.") ||
-    null;
+    herd:
+      !outside && !code
+        ? "Välj en besättning i genbanken, eller Utanför genbanken."
+        : null,
+    name: buyerWanted && !buyer.name.trim() ? "Skriv köparens namn." : null,
+    town: buyerWanted && !buyer.town.trim() ? "Skriv köparens ort." : null,
+    month: manad === null ? "Välj månad." : null,
+  };
+  const problem = Object.values(errors).some(Boolean);
+  const shown = (e: string | null) => (tried ? e : null);
+  const content = React.useRef<HTMLDivElement>(null);
+  const [attempt, setAttempt] = React.useState(0);
+  React.useEffect(() => {
+    // Spara refused: the first field in error takes the focus, and is scrolled to
+    if (attempt)
+      content.current
+        ?.querySelector<HTMLElement>('[aria-invalid="true"]')
+        ?.focus();
+  }, [attempt]);
 
   const save = () => {
     setTried(true);
-    if (problem) return;
+    if (problem) return setAttempt((n) => n + 1);
     onSave({
       till: outside ? "utanfor" : code,
       ar,
@@ -220,7 +242,7 @@ function Body({
           <CloseIcon />
         </IconButton>
       </DialogTitle>
-      <DialogContent dividers={mobile} className={styles.detail}>
+      <DialogContent ref={content} dividers={mobile} className={styles.detail}>
         <div className={styles.choices} role="radiogroup" aria-label="Köparen">
           <label className={styles.choice}>
             <input
@@ -249,6 +271,7 @@ function Body({
             label="Köparens besättning"
             value={code}
             onChange={setCode}
+            error={shown(errors.herd)}
           />
         )}
         {outside && (
@@ -266,7 +289,14 @@ function Body({
                 </p>
               )
             )}
-            <BuyerFields value={buyer} onChange={setBuyer} />
+            <BuyerFields
+              value={buyer}
+              onChange={setBuyer}
+              errors={{
+                name: shown(errors.name) ?? undefined,
+                town: shown(errors.town) ?? undefined,
+              }}
+            />
             {!kept && (
               <p className={styles.meta}>
                 Köparens uppgifter sparas när du skickar rapporten, inte innan.
@@ -290,24 +320,35 @@ function Body({
               ))}
             </select>
           </label>
-          <label className={styles.label}>
-            Månad
-            <select
-              className={styles.field}
-              style={{ width: "100%" }}
-              value={manad ?? ""}
-              onChange={(e) =>
-                setManad(e.target.value ? Number(e.target.value) : null)
-              }
-            >
-              <option value="">Välj månad</option>
-              {MONTHS.map((m, i) => (
-                <option key={m} value={i + 1}>
-                  {m}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div>
+            <label className={styles.label}>
+              Månad
+              <select
+                className={styles.field}
+                style={{ width: "100%" }}
+                value={manad ?? ""}
+                aria-invalid={!!shown(errors.month)}
+                aria-describedby={
+                  shown(errors.month) ? "sold-month-error" : undefined
+                }
+                onChange={(e) =>
+                  setManad(e.target.value ? Number(e.target.value) : null)
+                }
+              >
+                <option value="">Välj månad</option>
+                {MONTHS.map((m, i) => (
+                  <option key={m} value={i + 1}>
+                    {m}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {shown(errors.month) && (
+              <p id="sold-month-error" className={styles.errorText}>
+                {errors.month}
+              </p>
+            )}
+          </div>
           <label className={styles.label}>
             Dag (frivillig)
             <input
@@ -320,11 +361,6 @@ function Body({
             />
           </label>
         </div>
-        {tried && problem && (
-          <p className={styles.errorText} role="alert">
-            {problem}
-          </p>
-        )}
       </DialogContent>
       <DialogActions
         sx={{

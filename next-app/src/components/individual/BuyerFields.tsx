@@ -59,10 +59,13 @@ export function BuyerFields({
   value,
   onChange,
   size,
+  errors,
 }: {
   value: BuyerDraft;
   onChange: (value: BuyerDraft) => void;
   size?: "small" | "medium";
+  /** A refusal beside its field: aria-invalid, and the text as the field's description. */
+  errors?: Partial<Record<"name" | "town", string>>;
 }) {
   const { t } = useTranslation();
   const set = (changes: Partial<BuyerDraft>) =>
@@ -77,6 +80,8 @@ export function BuyerFields({
       value={value[key]}
       onChange={(e) => set({ [key]: e.target.value })}
       required={required}
+      error={!!errors?.[key as "name" | "town"]}
+      helperText={errors?.[key as "name" | "town"]}
       fullWidth
       size={size}
       slotProps={{ htmlInput: { maxLength: 200 } }}

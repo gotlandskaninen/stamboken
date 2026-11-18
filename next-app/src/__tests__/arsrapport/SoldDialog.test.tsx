@@ -42,7 +42,45 @@ function dialog(
 const save = () =>
   fireEvent.click(screen.getByRole("button", { name: "Spara försäljningen" }));
 
+// The name and the town each say what is missing, at the field.
+function expectBuyerAsked() {
+  const name = screen.getByLabelText(/Köparens namn/);
+  const town = screen.getByLabelText(/^Ort/);
+  for (const [field, text] of [
+    [name, "Skriv köparens namn."],
+    [town, "Skriv köparens ort."],
+  ] as const) {
+    expect(field.getAttribute("aria-invalid")).toBe("true");
+    const described = field.getAttribute("aria-describedby") ?? "";
+    expect(document.getElementById(described)?.textContent).toBe(text);
+  }
+  expect(document.activeElement).toBe(name);
+}
+
 describe("SoldDialog", () => {
+  it("shows every refusal at its field at once, and focuses the first", () => {
+    const onSave = dialog(null);
+    const month = screen.getByLabelText("Månad");
+    expect(month.getAttribute("aria-invalid")).toBe("false"); // nothing before Spara
+    save();
+    expect(onSave).not.toHaveBeenCalled();
+    const herd = screen.getByLabelText("Köparens besättning");
+    expect(herd.getAttribute("aria-invalid")).toBe("true");
+    expect(
+      document.getElementById(herd.getAttribute("aria-describedby") ?? "")
+        ?.textContent,
+    ).toBe("Välj en besättning i genbanken, eller Utanför genbanken.");
+    expect(month.getAttribute("aria-invalid")).toBe("true");
+    expect(
+      document.getElementById(month.getAttribute("aria-describedby") ?? "")
+        ?.textContent,
+    ).toBe("Välj månad.");
+    expect(document.activeElement).toBe(herd);
+    fireEvent.change(month, { target: { value: "6" } });
+    expect(screen.queryByText("Välj månad.")).toBeNull(); // gone once chosen
+    expect(month.getAttribute("aria-invalid")).toBe("false");
+  });
+
   it("saves a changed sale to a herd at once, before the herd list has arrived", () => {
     const onSave = dialog({
       till: "M9001",
@@ -128,9 +166,7 @@ describe("SoldDialog", () => {
     expect(screen.getByText(ON_SEND_TEXT)).toBeTruthy();
     save();
     expect(onSave).not.toHaveBeenCalled();
-    expect(screen.getByRole("alert").textContent).toBe(
-      "Skriv köparens namn och ort.",
-    );
+    expectBuyerAsked();
     fireEvent.change(screen.getByLabelText(/Köparens namn/), {
       target: { value: "Ola Köpare" },
     });
@@ -160,9 +196,7 @@ describe("SoldDialog", () => {
     expect(screen.queryByText(/Lämna fälten tomma/)).toBeNull(); // a changed sale is a new one
     save();
     expect(onSave).not.toHaveBeenCalled();
-    expect(screen.getByRole("alert").textContent).toBe(
-      "Skriv köparens namn och ort.",
-    );
+    expectBuyerAsked();
   });
 
   it("asks for the buyer again for a sale only in the draft, after a reload (Codex P2)", () => {
@@ -178,8 +212,6 @@ describe("SoldDialog", () => {
     expect(screen.getByText(ON_SEND_TEXT)).toBeTruthy();
     save();
     expect(onSave).not.toHaveBeenCalled();
-    expect(screen.getByRole("alert").textContent).toBe(
-      "Skriv köparens namn och ort.",
-    );
+    expectBuyerAsked();
   });
 });
