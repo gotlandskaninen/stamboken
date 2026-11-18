@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   Card,
   CardContent,
@@ -10,6 +10,11 @@ import {
   Grid,
 } from "@mui/material";
 import type { Individual } from "@/redux/api/apiSlice";
+import { ColorPicker, colorsFor } from "@/components/herd/ColorPicker";
+import {
+  getColors,
+  type ColorOption,
+} from "@/app/(app)/stamboken/(dashboard)/min-besattning/actions";
 
 interface IdentitySectionProps {
   individual: Individual;
@@ -80,6 +85,32 @@ export function IdentitySection({
   formData,
   onFieldChange,
 }: IdentitySectionProps) {
+  const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
+  const [colorsLoading, setColorsLoading] = useState(true);
+  useEffect(() => {
+    if (!isEditing) return;
+    getColors()
+      .then((all) =>
+        setColorOptions(
+          colorsFor(
+            all,
+            individual.genebank,
+            typeof individual.herd === "string"
+              ? individual.herd
+              : individual.herd.herd,
+          ),
+        ),
+      )
+      .catch(() => setColorOptions([]))
+      .finally(() => setColorsLoading(false));
+  }, [isEditing, individual.genebank, individual.herd]);
+
+  const colorName = "color" in formData ? formData.color : individual.color;
+  const colorDisplay =
+    colorName && individual.color_id && colorName === individual.color
+      ? `${individual.color_id} ${colorName}`
+      : colorName;
+
   return (
     <Card>
       <CardContent sx={{ "&:last-child": { pb: 2 } }}>
@@ -88,15 +119,27 @@ export function IdentitySection({
         </Typography>
 
         <Grid container spacing={isEditing ? 2 : 1}>
-          <Grid size={{ xs: 6, sm: 4 }}>
-            <FieldRow
-              label="Färg"
-              value={individual.color}
-              field="color"
-              isEditing={isEditing}
-              formData={formData}
-              onFieldChange={onFieldChange}
-            />
+          <Grid size={{ xs: isEditing ? 12 : 6, sm: 4 }}>
+            {isEditing ? (
+              <ColorPicker
+                options={colorOptions}
+                loading={colorsLoading}
+                value={colorName ?? ""}
+                valueId={
+                  colorName === individual.color ? individual.color_id : null
+                }
+                onChange={(name) => onFieldChange("color", name)}
+                genebank={individual.genebank ?? ""}
+              />
+            ) : (
+              <FieldRow
+                label="Färg"
+                value={colorDisplay}
+                isEditing={false}
+                formData={formData}
+                onFieldChange={onFieldChange}
+              />
+            )}
           </Grid>
           <Grid size={{ xs: 6, sm: 4 }}>
             <FieldRow

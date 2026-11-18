@@ -17,7 +17,7 @@ type Level = PrivilegeEntry["level"];
 
 /**
  * Grant-role picker. Level select + conditional secondary picker
- * (genebank for manager/viewer, herd for owner). Submits NUMERIC ids —
+ * (genebank for manager/helper/viewer, herd for owner). Submits NUMERIC ids —
  * `owner.herd` is the integer Herd.id primary key, never the "G12" code
  * Options arrive as props from the RSC page (no
  * client-side data fetching); MUI Autocomplete filters locally.
@@ -39,7 +39,8 @@ export function RolePicker({
   const [genebank, setGenebank] = useState<GenebankOption | null>(null);
   const [herd, setHerd] = useState<HerdOption | null>(null);
 
-  const needsGenebank = level === "manager" || level === "viewer";
+  const needsGenebank =
+    level === "manager" || level === "helper" || level === "viewer";
   const needsHerd = level === "owner";
   const incomplete = (needsGenebank && !genebank) || (needsHerd && !herd);
 
@@ -74,6 +75,7 @@ export function RolePicker({
         <MenuItem value="admin">Administratör</MenuItem>
         <MenuItem value="matrikel_admin">Matrikeladministratör</MenuItem>
         <MenuItem value="manager">Genbanksansvarig</MenuItem>
+        <MenuItem value="helper">Genbankshjälpare</MenuItem>
         <MenuItem value="viewer">Granskare</MenuItem>
         <MenuItem value="owner">Besättningsägare</MenuItem>
       </TextField>

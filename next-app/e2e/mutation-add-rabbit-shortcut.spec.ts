@@ -79,7 +79,9 @@ test("Lägga till en kanin utan registrerad kull", async ({ page }) => {
     // Kön är första listan, Intyg den som visar "Digitalt" (förvalt här).
     await dialog.getByRole("combobox").filter({ hasText: "Hona" }).click();
     await page.getByRole("option", { name: "Hona" }).click();
-    await dialog.getByRole("textbox", { name: /^Färg/ }).first().fill("Blå");
+    const color = dialog.getByRole("combobox", { name: /^Färg/ });
+    await color.fill("Viltgrå");
+    await page.getByRole("option", { name: /^\d+ Viltgrå(\s|$)/ }).click();
   });
   await test.step('5. Välj Intyg "Papper", skriv Intygsnummer och Individnummer på pappret', async () => {
     await dialog.getByRole("combobox").filter({ hasText: "Digitalt" }).click();

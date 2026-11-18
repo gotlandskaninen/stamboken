@@ -63,8 +63,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # history algorithm version (33) + genetics epoch (34) + the individual command log (35) +
 # Individual.microchip (36) + billing address on membership and member_application (37) +
 # retiring the PDF rows of digital certificates that a paper certificate replaced (38) +
-# audit_log IP retention index (39) + herd bank privacy reset (40).
-CURRENT_SCHEMA_VERSION = 40
+# audit_log IP retention index (39) + herd bank privacy reset (40) + the mail queue (41) +
+# the intake queue (42) and its retention (43).
+CURRENT_SCHEMA_VERSION = 43
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -386,6 +387,7 @@ class Herd(BaseModel):
         """
 
         access_level = "public"
+        effective = None  # the user's herd ids, fetched at most once
         if user and user.is_admin:
             access_level = "private"
         elif user:
@@ -418,7 +420,18 @@ class Herd(BaseModel):
         # legacy herd response (ADR-0006: don't perturb legacy contracts).
         data.pop("membership", None)
 
-        return remove_fields_by_privacy(data, access_level)
+        raw = data
+        data = remove_fields_by_privacy(raw, access_level)
+        # Bank details: whole for admin, matrikel_admin (who has no genebank role, so only these
+        # fields are added, not the other private ones) and the herd's own users. The genebank
+        # manager (private level, but none of those) sees the last two digits of the account.
+        if user and effective is None and not (user.is_admin or user.is_matrikel_admin):
+            effective = user.effective_herd_ids()
+        if user and (user.is_admin or user.is_matrikel_admin or self.id in effective):
+            data.update({f: raw[f] for f in ("bank_account_number", "bank_name") if f in raw})
+        elif "bank_account_number" in data:
+            data["bank_account_number"] = account_end(data["bank_account_number"])
+        return data
 
     class Meta:  # pylint: disable=too-few-public-methods
         """
@@ -433,6 +446,23 @@ PRIVACY_LEVELS = ("public", "authenticated", "private")
 # The bank details are only for support payouts: never shown to other members,
 # whatever the stored level says (issue #33).
 BANK_PRIVACY_FIELDS = ("bank_account_number_privacy", "bank_name_privacy")
+
+
+ACCOUNT_MASK = "••"
+
+
+def account_end(value):
+    """
+    Only the last two digits of a bank account number, for readers who must not see all of it.
+
+    >>> account_end("8327-9, 123 456 789 12")
+    '••12'
+    >>> account_end(None) is None
+    True
+    """
+    if not value:
+        return value
+    return ACCOUNT_MASK + re.sub(r"\D", "", str(value))[-2:]
 
 
 def remove_fields_by_privacy(data, access_level):
@@ -752,7 +782,16 @@ class Individual(BaseModel):
 
     def save(self, *args, **kwargs):
         self.updated_at = datetime.now()
-        return super().save(*args, **kwargs)
+        if self.id is not None:
+            return super().save(*args, **kwargs)
+        # Here, so that every way a rabbit is created wakes the intake queue's items waiting for it, in one
+        # transaction with the insert even when the caller has none.
+        from utils.inbox import parent_registered  # pylint: disable=import-outside-toplevel  # it imports us
+
+        with DB_PROXY.atomic():
+            saved = super().save(*args, **kwargs)
+            parent_registered(self.number)
+        return saved
 
     @property
     def current_herd(self):
@@ -881,6 +920,7 @@ class Individual(BaseModel):
             }
         )
         data["color"] = self.color.name if self.color else None
+        data["color_id"] = self.color_id
         data["weights"] = [{"weight": w.weight, "date": w.weight_date.strftime("%Y-%m-%d")} for w in self.weight_set]  # pylint: disable=no-member
         data["bodyfat"] = [
             {"bodyfat": b.bodyfat, "date": b.bodyfat_date.strftime("%Y-%m-%d")} for b in self.bodyfat_set
@@ -1127,7 +1167,7 @@ class User(BaseModel, UserMixin):
         The privileges are a list of roles, formatted as:
         [
             {'level': 'admin'} |
-            {'level': 'viewer' | 'manager', 'genebank': id} |
+            {'level': 'viewer' | 'manager' | 'helper', 'genebank': id} |
             {'level': 'owner', 'herd': id}
         ]
         """
@@ -1162,15 +1202,16 @@ class User(BaseModel, UserMixin):
             - level: matrikel_admin, (no target)
             - level: viewer, genebank: target_id
             - level: manager, genebank: target_id
+            - level: helper, genebank: target_id
             - level: owner, herd: target_id
         """
 
         privs = self.privileges
-        if level not in ["admin", "viewer", "manager", "owner", "matrikel_admin"]:
+        if level not in ["admin", "viewer", "manager", "helper", "owner", "matrikel_admin"]:
             logger.error("Unknown role level %s", level)
             return
         role = {"level": level}
-        if level in ["viewer", "manager"]:
+        if level in ["viewer", "manager", "helper"]:
             role["genebank"] = target_id
         elif level == "owner":
             role["herd"] = target_id
@@ -1188,13 +1229,14 @@ class User(BaseModel, UserMixin):
             - level: matrikel_admin, (no target)
             - level: viewer, genebank: target_id
             - level: manager, genebank: target_id
+            - level: helper, genebank: target_id
             - level: owner, herd: target_id
         """
         for role in self.privileges:
             if role["level"] == level:
                 if level in ("admin", "matrikel_admin"):
                     return True
-                if level in ["viewer", "manager"] and target_id == role["genebank"]:
+                if level in ["viewer", "manager", "helper"] and target_id == role["genebank"]:
                     return True
                 if level == "owner" and target_id == role["herd"]:
                     return True
@@ -1210,6 +1252,7 @@ class User(BaseModel, UserMixin):
             - level: matrikel_admin, (no target)
             - level: viewer, genebank: target_id
             - level: manager, genebank: target_id
+            - level: helper, genebank: target_id
             - level: owner, herd: target_id
         """
         new_privs = []
@@ -1217,7 +1260,7 @@ class User(BaseModel, UserMixin):
             if role["level"] == level:
                 if level in ("admin", "matrikel_admin"):
                     continue
-                if level in ["viewer", "manager"] and target_id == role["genebank"]:
+                if level in ["viewer", "manager", "helper"] and target_id == role["genebank"]:
                     continue
                 if level == "owner" and target_id == role["herd"]:
                     continue
@@ -1253,6 +1296,15 @@ class User(BaseModel, UserMixin):
             if role["level"] == "manager":
                 genebanks += [role["genebank"]]
         return genebanks or None
+
+    @property
+    def is_helper(self):
+        """
+        The ids of the genebanks where the user is a genebank helper (genbankshjälpare), or `None`. A helper
+        works in the intake queue and writes only through an item they have taken (utils.inbox.InboxGrant),
+        never through can_edit.
+        """
+        return [role["genebank"] for role in self.privileges if role["level"] == "helper"] or None
 
     @property
     def is_owner(self):
@@ -1372,7 +1424,7 @@ class User(BaseModel, UserMixin):
             return [g.id for g in Genebank(database=DATABASE).select()]
         has_access = []
         for role in self.privileges:
-            if role["level"] in ["viewer", "manager"]:
+            if role["level"] in ["viewer", "manager", "helper"]:
                 has_access += [role["genebank"]]
         herd_ids = self.effective_herd_ids()
         if herd_ids:
@@ -2047,6 +2099,236 @@ class IndividualCommand(BaseModel):
         indexes = ((("individual", "created_at"), False),)
 
 
+def _utcnow():
+    return datetime.now(timezone.utc)
+
+
+class MailMessage(BaseModel):
+    """One outgoing mail (docs/mejl.md): template, ids and a recipient reference, never an address or a text."""
+
+    id = AutoField()
+    kind = TextField()
+    params = BinaryJSONField(default=dict, index=False)  # ids and flags only, never searched
+    recipient_kind = TextField()
+    recipient_id = IntegerField()
+    ref_type = TextField(null=True)
+    ref_id = IntegerField(null=True)
+    # SET NULL: a queued mail must never make a write fail.
+    herd = ForeignKeyField(Herd, null=True, on_delete="SET NULL")
+    genebank = ForeignKeyField(Genebank, null=True, on_delete="SET NULL")
+    priority = SmallIntegerField()
+    category = CharField(1)  # T transaction, N notice
+    dedupe_key = TextField(null=True, unique=True)
+    status = TextField(default="queued")
+    attempts = SmallIntegerField(default=0)
+    next_attempt_at = TimestampTZField(default=_utcnow)
+    claimed_at = TimestampTZField(null=True)
+    claim_token = UUIDField(null=True)
+    sent_at = TimestampTZField(null=True)
+    address_hash = TextField(null=True)
+    last_error = TextField(null=True)
+    created_at = TimestampTZField(default=_utcnow)
+    created_by = ForeignKeyField(User, null=True, on_delete="SET NULL", column_name="created_by")
+
+    class Meta:
+        table_name = "mail_message"
+        indexes = (
+            (("status", "next_attempt_at", "priority", "id"), False),
+            (("ref_type", "ref_id"), False),
+            (("recipient_kind", "recipient_id"), False),
+        )
+
+
+class MailAttempt(BaseModel):
+    """One SMTP attempt or bounce of a mail."""
+
+    id = AutoField()
+    message = ForeignKeyField(MailMessage, on_delete="CASCADE")
+    at = TimestampTZField(default=_utcnow)
+    source = TextField()  # smtp, bounce
+    result = TextField()  # sent, temporary, permanent, systemic, bounce
+    smtp_code = TextField(null=True)
+    detail = TextField(null=True)  # scrubbed of addresses
+
+    class Meta:
+        table_name = "mail_attempt"
+
+
+class MailSender(BaseModel):
+    """The mail sender's one row: its heartbeat, for the "queue stalled" alarm, and its pause after a systemic error."""
+
+    id = IntegerField(primary_key=True, default=1, constraints=[Check("id = 1")])
+    last_run_at = TimestampTZField(null=True)
+    paused_until = TimestampTZField(null=True)
+
+    class Meta:
+        table_name = "mail_sender"
+
+
+# The intake queue (docs/inkorg.md). None of these tables is audited: inbox_event is the history, and audit
+# copies would keep personal data after the purge.
+
+
+class InboxItem(BaseModel):
+    """What came in at one go (an upload or a mail), with its state and its handler."""
+
+    id = AutoField()
+    kind = TextField()  # upload, mail, meddelande, kontroll, avisering
+    state = TextField(default="ny")
+    genebank = ForeignKeyField(Genebank, null=True, on_delete="SET NULL")
+    herd = ForeignKeyField(Herd, null=True, on_delete="SET NULL")
+    member = ForeignKeyField(Member, null=True, on_delete="SET NULL")  # the matched sender of a mail
+    sender_user = ForeignKeyField(User, null=True, on_delete="SET NULL", backref="+")  # the uploader
+    sender_address = TextField(null=True)  # mail only
+    # Gmail authenticated the From address's domain (SPF or DKIM); None for an upload. Mail goes back only then.
+    sender_authenticated = BooleanField(null=True)
+    message = TextField(null=True)
+    gmail_message_id = TextField(null=True, unique=True)
+    received_at = TimestampTZField(default=_utcnow)
+    assigned_to = ForeignKeyField(User, null=True, on_delete="SET NULL", backref="+", column_name="assigned_to")
+    assigned_at = TimestampTZField(null=True)
+    state_changed_at = TimestampTZField(default=_utcnow)
+    closed_at = TimestampTZField(null=True)
+    duplicate_of = ForeignKeyField("self", null=True, on_delete="SET NULL", backref="+", column_name="duplicate_of")
+    stalled = BooleanField(default=False)
+    missing_proof = BooleanField(default=False)
+    ref_type = TextField(null=True)  # kontroll and avisering point at another feature's row
+    ref_id = IntegerField(null=True)
+
+    class Meta:
+        table_name = "inbox_item"
+        indexes = ((("state", "received_at"), False),)
+
+
+def _initial_interpretation():
+    """A new document waits for the image reading when it is on, however it came in (docs/inkorg.md, "Tolkning")."""
+    from utils.inbox_interpreter import initial_status  # pylint: disable=import-outside-toplevel  # it imports us
+
+    return initial_status()
+
+
+class InboxDocument(BaseModel):
+    """One image of an item (a photo, or a page of a PDF), under PRIVATE_UPLOAD_FOLDER."""
+
+    id = AutoField()
+    item = ForeignKeyField(InboxItem, on_delete="CASCADE", backref="documents")
+    original_path = TextField(null=True)  # NULL once the original is purged or erased (utils/inbox_purge.py)
+    public_path = TextField(null=True)  # the masked copy shown on the rabbit
+    mime = TextField()
+    sha256 = CharField(64, index=True)
+    quality = BinaryJSONField(null=True, index=False)
+    doc_type = TextField(default="intyg")
+    cert_format = TextField(null=True)
+    rotation = SmallIntegerField(default=0)
+    mask_rects = BinaryJSONField(null=True, index=False)
+    interpretation_status = TextField(default=_initial_interpretation)  # av, vantar, klar or misslyckad
+    attempts = SmallIntegerField(default=0)
+    interpreter = TextField(null=True)
+    interpretation = BinaryJSONField(null=True, index=False)
+    proposal = BinaryJSONField(null=True, index=False)
+    interpreted_at = TimestampTZField(null=True)
+    waiting_for = BinaryJSONField(null=True)  # the parents' numbers; GIN, searched with @> on every registration
+    individual = ForeignKeyField(Individual, null=True, on_delete="SET NULL", backref="+")
+    # The sale a proof (bevis) belongs to. No FK: herd_tracking rows are never deleted, and one would stop
+    # TRUNCATE herd_tracking, as for its own reserved links (transfer_id, holder_contact_id).
+    herd_tracking_id = IntegerField(null=True)
+    purge_after = TimestampTZField(null=True)
+    done_at = TimestampTZField(null=True)
+    # The members the photo shows, recorded when it is saved through the queue, so an erasure finds it.
+    seller_member = ForeignKeyField(Member, null=True, on_delete="SET NULL", backref="+")
+    buyer_member = ForeignKeyField(Member, null=True, on_delete="SET NULL", backref="+")
+
+    class Meta:
+        table_name = "inbox_document"
+
+
+class InboxEvent(BaseModel):
+    """An item's history: came in, taken, assigned, state, saved, opened."""
+
+    id = BigAutoField()
+    item = ForeignKeyField(InboxItem, on_delete="CASCADE", backref="events")
+    at = TimestampTZField(default=_utcnow)
+    user = ForeignKeyField(User, null=True, on_delete="SET NULL", backref="+")
+    kind = TextField()
+    detail = BinaryJSONField(null=True, index=False)
+
+    class Meta:
+        table_name = "inbox_event"
+        indexes = ((("item", "at"), False),)
+
+
+class InboxOperation(BaseModel):
+    """The trace "inlagd från foto av": a write's operation id, its handler and document. Outlives both."""
+
+    id = BigAutoField()
+    operation_id = UUIDField(index=True)
+    user = ForeignKeyField(User, null=True, on_delete="SET NULL", backref="+")
+    document = ForeignKeyField(InboxDocument, null=True, on_delete="SET NULL", backref="+")
+    created_at = TimestampTZField(default=_utcnow)
+
+    class Meta:
+        table_name = "inbox_operation"
+
+
+class Notice(BaseModel):
+    """A notice in Stamboken, mailed in the daily digest unless the user turned that off."""
+
+    id = AutoField()
+    user = ForeignKeyField(User, on_delete="CASCADE", backref="+")
+    kind = TextField()
+    item = ForeignKeyField(InboxItem, null=True, on_delete="CASCADE", backref="+")
+    created_at = TimestampTZField(default=_utcnow)
+    read_at = TimestampTZField(null=True)
+    mailed_at = TimestampTZField(null=True)
+
+    class Meta:
+        indexes = ((("user", "read_at"), False),)
+
+
+class NoticeSetting(BaseModel):
+    user = ForeignKeyField(User, primary_key=True, on_delete="CASCADE", backref="+")
+    mail_enabled = BooleanField(default=True)
+
+    class Meta:
+        table_name = "notice_setting"
+
+
+class GmailSync(BaseModel):
+    """The Gmail reader's one row (a later part of the queue)."""
+
+    id = IntegerField(primary_key=True, default=1, constraints=[Check("id = 1")])
+    history_id = TextField(null=True)
+    last_run_at = TimestampTZField(null=True)
+    last_error = TextField(null=True)
+
+    class Meta:
+        table_name = "gmail_sync"
+
+
+class GmailProcessed(BaseModel):
+    """One row per Gmail message handled, so a message read twice is handled once."""
+
+    gmail_message_id = TextField(primary_key=True)
+    kind = TextField()  # item, reply, bounce, ignored; retry (its content failed) and failed (FAILED_AFTER times)
+    failures = SmallIntegerField(default=0)  # runs in a row in which the message's content could not be read
+    item = ForeignKeyField(InboxItem, null=True, on_delete="SET NULL", backref="+")
+    at = TimestampTZField(default=_utcnow)
+
+    class Meta:
+        table_name = "gmail_processed"
+
+
+INBOX_MODELS = [
+    InboxItem,
+    InboxDocument,
+    InboxEvent,
+    InboxOperation,
+    Notice,
+    NoticeSetting,
+    GmailSync,
+    GmailProcessed,
+]
+
 MODELS = [
     Genebank,
     Membership,
@@ -2077,6 +2359,10 @@ MODELS = [
     HerdAccessGrant,
     MatrikelAudit,
     IndividualCommand,
+    MailMessage,
+    MailAttempt,
+    MailSender,
+    *INBOX_MODELS,
 ]
 
 
@@ -3666,9 +3952,12 @@ def migrate_39_to_40():
     """Issue #33: the bank details are always private, so reset any stored level."""
     with DATABASE.atomic():
         # The audit trigger would copy every account number into a new audit row without a user.
-        audited = not isinstance(DATABASE, SqliteDatabase) and DATABASE.execute_sql(
-            "SELECT 1 FROM pg_trigger WHERE tgrelid = 'herd'::regclass AND tgname = 'audit_trigger'"
-        ).fetchone()
+        audited = (
+            not isinstance(DATABASE, SqliteDatabase)
+            and DATABASE.execute_sql(
+                "SELECT 1 FROM pg_trigger WHERE tgrelid = 'herd'::regclass AND tgname = 'audit_trigger'"
+            ).fetchone()
+        )
         if audited:
             DATABASE.execute_sql('ALTER TABLE "herd" DISABLE TRIGGER "audit_trigger"')
         # NULL stays NULL (reads treat it as private).
@@ -3682,6 +3971,48 @@ def migrate_39_to_40():
             DATABASE.execute_sql('ALTER TABLE "herd" ENABLE TRIGGER "audit_trigger"')
         SchemaHistory.insert(  # pylint: disable=E1120
             version=40, comment="herd bank privacy reset to private", applied=datetime.now()
+        ).execute()
+
+
+def migrate_40_to_41():
+    """The outgoing mail queue (docs/mejl.md). Not audited: no addresses or texts, purged after 13 months."""
+    with DATABASE.atomic():
+        DATABASE.create_tables([MailMessage, MailAttempt, MailSender], safe=True)
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=41, comment="mail queue: mail_message, mail_attempt, mail_sender", applied=datetime.now()
+        ).execute()
+
+
+def migrate_41_to_42():
+    """The intake queue (docs/inkorg.md), and the Gmail reader's tables for a later part of it. Not audited."""
+    with DATABASE.atomic():
+        DATABASE.create_tables(INBOX_MODELS, safe=True)
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=42, comment="intake queue: inbox_*, notice, notice_setting, gmail_*", applied=datetime.now()
+        ).execute()
+
+
+def migrate_42_to_43():
+    """The intake queue's retention (docs/inkorg.md, "Gallring"): an original can be gone, and a document records the
+    members it shows (seller and buyer), so an erasure finds it. A mailed item records whether Gmail authenticated
+    its sender, the only one mail goes back to. The Gmail reader counts the runs a message failed in."""
+    with DATABASE.atomic():
+        DATABASE.execute_sql("ALTER TABLE inbox_document ALTER COLUMN original_path DROP NOT NULL")
+        DATABASE.execute_sql("ALTER TABLE inbox_item ADD COLUMN IF NOT EXISTS sender_authenticated BOOLEAN")
+        DATABASE.execute_sql(
+            "ALTER TABLE gmail_processed ADD COLUMN IF NOT EXISTS failures SMALLINT NOT NULL DEFAULT 0"
+        )
+        for column in ("seller_member_id", "buyer_member_id"):
+            DATABASE.execute_sql(
+                f"ALTER TABLE inbox_document ADD COLUMN IF NOT EXISTS {column} INTEGER "
+                "REFERENCES member (member_id) ON DELETE SET NULL"
+            )
+        InboxDocument._schema.create_indexes(safe=True)  # same names as a fresh bootstrap
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=43,
+            comment="inbox_document: original_path nullable, seller and buyer members; "
+            "inbox_item.sender_authenticated; gmail_processed.failures",
+            applied=datetime.now(),
         ).execute()
 
 
@@ -4162,6 +4493,9 @@ MIGRATIONS = {
     (37, 38): migrate_37_to_38,  # ADR-0019 retire replaced certificate PDFs
     (38, 39): migrate_38_to_39,  # audit_log IP retention index
     (39, 40): migrate_39_to_40,  # bank privacy reset
+    (40, 41): migrate_40_to_41,  # mail queue
+    (41, 42): migrate_41_to_42,  # intake queue
+    (42, 43): migrate_42_to_43,  # intake queue retention
 }
 
 

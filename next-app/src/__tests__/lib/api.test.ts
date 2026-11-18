@@ -289,3 +289,20 @@ describe("fetchApi client address", () => {
     expect((await sentHeaders())["x-forwarded-for"]).toBeUndefined();
   });
 });
+
+describe("fetchApi HEAD", () => {
+  it("resolves on a 200 without a body, and throws ApiError on 404", async () => {
+    vi.resetModules();
+    cookieGetMock.mockReturnValue(undefined);
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(new Response(null, { status: 200 }))
+      .mockResolvedValueOnce(new Response(null, { status: 404 }));
+    vi.stubGlobal("fetch", fetchMock);
+    const { fetchApi } = await import("@/lib/api");
+    await expect(fetchApi("/x", { method: "HEAD" })).resolves.toBeUndefined();
+    await expect(fetchApi("/x", { method: "HEAD" })).rejects.toMatchObject({
+      status: 404,
+    });
+  });
+});

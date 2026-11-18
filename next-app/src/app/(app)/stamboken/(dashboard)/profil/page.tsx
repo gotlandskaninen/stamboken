@@ -6,6 +6,7 @@ import { MedlemskapCard } from "./MedlemskapCard";
 import { KontaktClient } from "./KontaktClient";
 import { PubliceringClient } from "./PubliceringClient";
 import { PersonerClient } from "./PersonerClient";
+import { NotisClient } from "./NotisClient";
 import type { Me, MyMembership } from "./types";
 import styles from "./profil.module.css";
 
@@ -36,9 +37,13 @@ function InfoCard({ children }: { children: React.ReactNode }) {
 
 export default async function ProfilPage() {
   const user = await requireUser();
-  const [me, myMembership] = await Promise.all([
+  const [me, myMembership, notice] = await Promise.all([
     fetchOr404Null<Me>("/v2/members/me"),
     fetchOr404Null<MyMembership>("/v2/my-membership"),
+    // Everyone has notices, member record or not; a failure just hides the card.
+    fetchApi<{ mail_enabled: boolean }>("/v2/inkorg/notiser/installning").catch(
+      () => null,
+    ),
   ]);
   // After migrate_28_to_29 both endpoints resolve the same row; a mismatch
   // is an integrity state, never a normal UI state.
@@ -90,6 +95,7 @@ export default async function ProfilPage() {
                 />
               </>
             )}
+            {notice && <NotisClient initial={notice.mail_enabled} />}
           </div>
         </div>
       </div>

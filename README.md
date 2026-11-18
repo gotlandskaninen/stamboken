@@ -53,7 +53,7 @@ as CI does), start the stack, then load the demo data and the test users:
 
 ```console
 for f in .docker/*.env.default; do cp "$f" "${f%.default}"; done
-mkdir -p config logs uppladdningar
+mkdir -p config logs uppladdningar skyddat
 docker compose run --rm api python3 -c "from utils.database import init, DATABASE; DATABASE.connect(reuse_if_open=True); init()"
 docker compose up -d
 docker compose exec api flask seed create
@@ -94,7 +94,10 @@ the rules in `app/utils/legacy_compat.py`):
 
 Open to every logged-in account on every host: `/api/user`, `/api/logout`,
 the login routes, linking Google to one's own account, the public certificate
-verification, posting a membership application and the health check
+verification, posting a membership application, uploading certificates to the
+intake queue, reading one's own uploads and unread-notice count there and
+marking those notices seen (the queue's work and the original photos stay
+gated), and the health check
 (`EXEMPT_ENDPOINTS`).
 Anonymous requests are not affected. Each refusal is logged at warning level
 with the endpoint and method only.

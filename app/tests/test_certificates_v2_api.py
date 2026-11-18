@@ -86,7 +86,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
             response = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
                 json={
-                    "color_id": 3,
+                    "color_id": 1,
                     "litter_size": 5,
                     "litter_size6w": 4,
                 },
@@ -110,12 +110,12 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
             # First issue
             context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
             )
             # Second issue — should fail
             response = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
             )
             self.assertEqual(response.status_code, 400)
 
@@ -142,7 +142,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
             ) as spy:
                 response = context.post(
                     f"/api/v2/certificates/issue/{individual.number}",
-                    json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                    json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
                 )
             self.assertEqual(response.status_code, 201)
             cert_data = spy.call_args.args[0]
@@ -176,7 +176,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
             ):
                 response = context.post(
                     f"/api/v2/certificates/issue/{individual.number}",
-                    json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                    json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
                 )
             self.assertEqual(response.status_code, 201)
             self.assertTrue(spy.call_args.args[0]["demo_watermark"])
@@ -199,7 +199,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
             ) as spy:
                 response = context.post(
                     f"/api/v2/certificates/issue/{individual.number}",
-                    json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                    json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
                 )
             self.assertEqual(response.status_code, 201)
             self.assertFalse(spy.call_args.args[0]["demo_watermark"])
@@ -216,7 +216,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
             )
             response = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
             )
             self.assertEqual(response.status_code, 201)
             token = response.get_json()["verification_token"]
@@ -250,7 +250,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
                 try:
                     response = context.post(
                         f"/api/v2/certificates/issue/{individual.number}",
-                        json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                        json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
                     )
                     self.assertGreaterEqual(response.status_code, 500)
                 except _S3Down:
@@ -316,7 +316,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
             )
             response = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
             )
             # Manager should succeed if individual is in their genebank
             self.assertIn(response.status_code, [201, 403])
@@ -336,7 +336,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
             with patch("utils.cert_service_v2.sign_pdf", side_effect=SigningUnavailableError("no creds")):
                 response = context.post(
                     f"/api/v2/certificates/issue/{individual.number}",
-                    json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                    json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
                 )
                 self.assertEqual(response.status_code, 503)
 
@@ -359,7 +359,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
                 context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
                 response = context.post(
                     f"/api/v2/certificates/issue/{individual.number}",
-                    json={"color_id": 3, "litter_size": 0, "litter_size6w": 0},
+                    json={"color_id": 1, "litter_size": 0, "litter_size6w": 0},
                 )
         self.assertEqual(response.status_code, 400, response.get_json())
         self.assertEqual(response.get_json()["detail"], "Litter size must be larger than zero.")
@@ -374,7 +374,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
 
         self._start_mock_aws()
         individual = self.individuals[3]  # G1-2112, born and held in G1
-        body = {"color_id": 3, "origin_herd": {"herd": "G2"}}
+        body = {"color_id": 1, "origin_herd": {"herd": "G2"}}
         with self.app as context:
             context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
             response = context.post(f"/api/v2/certificates/issue/{individual.number}", json=body)
@@ -411,7 +411,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
         _, rabbit = self._full_roster_litter()
         with self.app as context:
             context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
-            response = context.post(f"/api/v2/certificates/issue/{rabbit.number}", json={"color_id": 3})
+            response = context.post(f"/api/v2/certificates/issue/{rabbit.number}", json={"color_id": 1})
         self.assertIsNone(
             db.Individual.get_by_id(rabbit.id).digital_certificate,
             f"issue returned {response.status_code}: litter_size6w=1 but a second kit got a certificate",
@@ -439,7 +439,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
         )
         with self.app as context:
             context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
-            missing = context.post(f"/api/v2/certificates/issue/{rabbit.number}", json={"color_id": 3})
+            missing = context.post(f"/api/v2/certificates/issue/{rabbit.number}", json={"color_id": 1})
         self.assertIsNone(
             db.Individual.get_by_id(rabbit.id).digital_certificate,
             f"issue returned {missing.status_code}: a certificate in a litter without litter_size6w",
@@ -461,7 +461,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
             herd_tracking_date=datetime.now(),
         )
         responses = {}
-        for path, user, body in (("editor", self.admin, {"color_id": 3}), ("breeder", self.owner, {})):
+        for path, user, body in (("editor", self.admin, {"color_id": 1}), ("breeder", self.owner, {})):
             with self.app as context:
                 context.post("/api/login", json={"username": user.email, "password": "pass"})
                 responses[path] = context.post(f"/api/v2/certificates/issue/{rabbit.number}", json=body)
@@ -504,12 +504,12 @@ class TestCertificateV2Update(CertV2Mixin, FlaskTest):
             # First issue to get a v1 cert
             context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
             )
             # Update (v1→v2 upgrade)
             response = context.patch(
                 f"/api/v2/certificates/update/{individual.number}",
-                json={"color_id": 3, "litter_size": 6, "litter_size6w": 5},
+                json={"color_id": 1, "litter_size": 6, "litter_size6w": 5},
             )
             self.assertEqual(response.status_code, 200)
             data = response.get_json()
@@ -597,14 +597,14 @@ class TestCertificateV2Update(CertV2Mixin, FlaskTest):
             # Issue
             issue_resp = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
             )
             old_token = issue_resp.get_json()["verification_token"]
 
             # Update
             context.patch(
                 f"/api/v2/certificates/update/{individual.number}",
-                json={"color_id": 3, "litter_size": 6, "litter_size6w": 5},
+                json={"color_id": 1, "litter_size": 6, "litter_size6w": 5},
             )
 
             # Old cert should no longer be current
@@ -627,13 +627,13 @@ class TestCertificateV2Update(CertV2Mixin, FlaskTest):
             )
             issue_resp = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
             )
             old_token = issue_resp.get_json()["verification_token"]
 
             update_resp = context.patch(
                 f"/api/v2/certificates/update/{individual.number}",
-                json={"color_id": 3, "litter_size": 6, "litter_size6w": 5},
+                json={"color_id": 1, "litter_size": 6, "litter_size6w": 5},
             )
             new_issued_at = update_resp.get_json()["issued_at"]
 
@@ -662,7 +662,7 @@ class TestCertificateV2Download(CertV2Mixin, FlaskTest):
             # Issue first
             context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
             )
             # Download
             response = context.get(f"/api/v2/certificates/{individual.number}")
@@ -685,7 +685,7 @@ class TestCertificateV2Download(CertV2Mixin, FlaskTest):
             )
             context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
             )
             cert = (
                 db.DigitalCertificateV2.select()
@@ -718,7 +718,7 @@ class TestCertificateV2Download(CertV2Mixin, FlaskTest):
             )
             context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
             )
             cert = (
                 db.DigitalCertificateV2.select()
@@ -857,7 +857,7 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
             )
             issue_resp = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
             )
             token = issue_resp.get_json()["verification_token"]
 
@@ -881,7 +881,7 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
             )
             issue_resp = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
             )
             token = issue_resp.get_json()["verification_token"]
 
@@ -908,7 +908,7 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
             )
             issue_resp = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
             )
             token = issue_resp.get_json()["verification_token"]
 
@@ -944,7 +944,7 @@ class TestCertificateV2Authorization(CertV2Mixin, FlaskTest):
             )
             response = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
             )
             # Owner should succeed (origin_herd check)
             self.assertEqual(response.status_code, 201)
@@ -962,7 +962,7 @@ class TestCertificateV2Authorization(CertV2Mixin, FlaskTest):
             )
             response = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
             )
             self.assertEqual(response.status_code, 403)
 
@@ -992,7 +992,7 @@ class TestCertificateV2Authorization(CertV2Mixin, FlaskTest):
             # Form edits require edit rights on the current herd — rejected.
             response = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 3},
+                json={"color_id": 1},
             )
             self.assertEqual(response.status_code, 403)
             # Plain issuance (no edits) is the breeder's right.
@@ -1070,7 +1070,7 @@ class TestCertificateV2Authorization(CertV2Mixin, FlaskTest):
             )
             response = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
             )
             self.assertEqual(response.status_code, 403)
 
@@ -1095,7 +1095,7 @@ class TestCertificateV2ViewAuthorization(CertV2Mixin, FlaskTest):
             context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
             response = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 3, "litter_size": 5, "litter_size6w": 4},
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
             )
             self.assertEqual(response.status_code, 201)
 
@@ -1182,7 +1182,7 @@ class TestCertificateLockOrder(CertV2Mixin, FlaskTest):
         response, statements = self._capture(
             "post",
             f"/api/v2/certificates/issue/{individual.number}",
-            {"color_id": 3, "litter_size": 5, "litter_size6w": 1},
+            {"color_id": 1, "litter_size": 5, "litter_size6w": 1},
         )
         self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
         self._assert_order(statements, individual)
