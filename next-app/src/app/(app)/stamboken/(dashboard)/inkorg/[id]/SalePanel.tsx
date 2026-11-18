@@ -35,12 +35,15 @@ export function SalePanel({
   herds,
   canSave,
   onDone,
+  addressRequired = false,
 }: {
   itemId: number;
   doc: InboxDocument;
   herds: GenebankHerd[];
   canSave: boolean;
   onDone: (document: InboxDocument) => void;
+  /** As the API: a new sale needs the buyer's postal address unless a manager or admin registers it (#111). */
+  addressRequired?: boolean;
 }) {
   const [form, setForm] = useState<SaleForm>({
     individual: doc.individual ?? "",
@@ -164,7 +167,12 @@ export function SalePanel({
                 Sparas på {outsideHerd(form.individual) ?? "GX1 eller MX1"}.
               </p>
               {!saleRegistered && (
-                <BuyerFields value={buyer} onChange={setBuyer} size="small" />
+                <BuyerFields
+                  value={buyer}
+                  onChange={setBuyer}
+                  size="small"
+                  addressRequired={addressRequired}
+                />
               )}
             </>
           ) : (
@@ -213,7 +221,9 @@ export function SalePanel({
           disabled={
             !canSave ||
             pending ||
-            (form.outside && !saleRegistered && !buyerComplete(buyer)) ||
+            (form.outside &&
+              !saleRegistered &&
+              !buyerComplete(buyer, addressRequired)) ||
             (form.outside && (lookupFailed || (proof && !lookedUp)))
           }
         >

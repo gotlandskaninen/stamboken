@@ -198,6 +198,28 @@ describe("SellRabbitDialog", () => {
       });
     });
 
+    it("drops e-mail and phone when both boxes are unticked, keeps the address", async () => {
+      const onConfirm = await chooseOutside();
+      type(/Köparens namn/, "Anna Köpare");
+      type(/^Ort/, "Visby");
+      type(/^Postadress/, "Väg 1");
+      fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
+      type(/E-post/, "anna@example.org");
+      type(/^Telefon/, "0700000000");
+      fireEvent.click(screen.getByRole("checkbox", { name: CONSENT })); // takes it back, no other yes
+      acknowledge();
+      await waitFor(() => expect(confirmButton().disabled).toBe(false));
+      fireEvent.click(confirmButton());
+      const sent = onConfirm.mock.calls[0][2];
+      expect(sent).toMatchObject({
+        postal_address: "Väg 1",
+        contact_consent: false,
+        membership_optin: false,
+      });
+      expect(sent.email ?? "").toBe("");
+      expect(sent.phone ?? "").toBe("");
+    });
+
     it("offers GX1 again for a rabbit already in GX1, to a manager only", async () => {
       const inGx1 = { currentHerd: { herd: "GX1", herd_name: null } };
       const { unmount } = render(dialog(inGx1));

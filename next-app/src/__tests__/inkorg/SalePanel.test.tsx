@@ -61,10 +61,17 @@ const sale = {
 const found = (...sales: object[]) => ({ ok: true, data: { sales } });
 const registered = found(sale);
 
-function panel(answer: object = found()) {
+function panel(answer: object = found(), addressRequired = false) {
   rabbitSales.mockResolvedValue(answer);
   render(
-    <SalePanel itemId={12} doc={doc} herds={[]} canSave onDone={vi.fn()} />,
+    <SalePanel
+      itemId={12}
+      doc={doc}
+      herds={[]}
+      canSave
+      onDone={vi.fn()}
+      addressRequired={addressRequired}
+    />,
   );
   fireEvent.change(screen.getByLabelText(/Säljdatum/), {
     target: { value: "2026-10-03" },
@@ -94,6 +101,19 @@ describe("SalePanel with a buyer outside the association", () => {
     expect(screen.queryByLabelText("E-post")).toBeNull();
     fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
     expect(screen.getByLabelText("E-post")).toBeInTheDocument();
+  });
+
+  it("needs the address from a helper, as the API does (#111)", async () => {
+    panel(found(), true);
+    fireEvent.click(
+      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
+    );
+    type(/Köparens namn/, "Anna Köpare");
+    type(/^Ort/, "Visby");
+    await new Promise((r) => setTimeout(r, 400)); // the lookup that says it is a new sale
+    expect(save().disabled).toBe(true);
+    type(/^Postadress/, "Väg 1");
+    await waitFor(() => expect(save().disabled).toBe(false));
   });
 
   it("needs name and town, and sends the buyer with GX1", async () => {

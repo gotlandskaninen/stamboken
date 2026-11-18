@@ -4078,6 +4078,8 @@ def _create_buyer_contact_guards():
     if isinstance(DATABASE, SqliteDatabase):
         return
     BuyerContact.create_table(safe=True)
+    # An earlier build of migration 44 tied the address to the consent (#111 dropped that); safe to repeat.
+    DATABASE.execute_sql('ALTER TABLE "buyer_contact" DROP CONSTRAINT IF EXISTS "buyer_contact_address_needs_consent"')
     DATABASE.execute_sql(
         """DO $$ BEGIN
                ALTER TABLE "herd_tracking" ADD CONSTRAINT "herd_tracking_holder_contact_id_fkey"
