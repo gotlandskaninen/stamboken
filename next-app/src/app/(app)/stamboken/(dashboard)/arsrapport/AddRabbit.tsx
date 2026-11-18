@@ -457,6 +457,7 @@ export function AddRabbitDialog({
             <RegisterFromCertificate
               key={top.id}
               mode="ny_kanin"
+              variant="member"
               form={top.form}
               onChange={(field, value) => {
                 touch();

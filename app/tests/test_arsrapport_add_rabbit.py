@@ -341,6 +341,25 @@ class TestRegister(AddRabbitTest):
         command = db.IndividualCommand.get(db.IndividualCommand.command == "UseStambokenNumber")
         self.assertEqual((command.actor_id, command.access_code_id), (None, self.code.id))
 
+    def test_an_empty_count_makes_a_new_litter_preliminary(self):
+        """
+        Item 4: the count alive at 6 weeks is not always on the certificate. Left empty for a new litter, it is the
+        count born, preliminary, as "Lägg till kull" makes it; a count given is not preliminary.
+        """
+        self.open_link()
+        response = self.kit(self.photo_item(), litter_size6w=None)
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        litter = db.Individual.get_by_id(response.get_json()["id"]).breeding
+        self.assertEqual((litter.litter_size, litter.litter_size6w, litter.litter_size6w_preliminary), (5, 5, True))
+        listed = {row["id"]: row for row in arsrapport.report_litters(self.h, 2025)}[litter.id]
+        self.assertEqual((listed["litter_size6w"], listed["preliminary"]), (5, True))
+        given = self.kit(
+            self.photo_item(), birth_date="2025-08-10", paper_number="G9001-2521", paper_certificate="P-2521"
+        )
+        self.assertEqual(given.status_code, 201, given.get_data(as_text=True))
+        litter = db.Individual.get_by_id(given.get_json()["id"]).breeding
+        self.assertEqual((litter.litter_size6w, litter.litter_size6w_preliminary), (4, False))
+
     def test_an_old_unnumbered_litter_is_refused_in_swedish(self):
         """
         Option 1: a litter without a number that already has rabbits keeps its refusal, but the report's member reads

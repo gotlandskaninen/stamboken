@@ -355,6 +355,16 @@ describe("the lookups", () => {
     ).toBeNull();
   });
 
+  it("says an empty count alive at 6 weeks counts them all, for a new litter", async () => {
+    open();
+    expect(
+      screen.getByText(
+        "Står det inte på intyget, lämna tomt. Då räknas alla som levande tills du bekräftar antalet.",
+      ),
+    ).toBeInTheDocument();
+    expect(input(/^Levande i kullen/)).not.toBeRequired();
+  });
+
   it("the mother's litters fill in the date, the father and the counts", async () => {
     find.mockImplementation(async (_h, _y, number) =>
       number === "G9001-2411"

@@ -45,6 +45,10 @@ export type SaveResult = { ok: true } | { ok: false; problem: Problem };
 /** "Var är kaninen nu" (spec 5.8). */
 export type Where = "hos_mig" | "sald" | "dod";
 export type Parent = "mother" | "father";
+/** The yearly report's member, not the queue's handler: the report's rules and, later, its look. */
+export type Variant = "member";
+export const COUNT_LEFT_EMPTY =
+  "Står det inte på intyget, lämna tomt. Då räknas alla som levande tills du bekräftar antalet.";
 
 /** What the reading saw and what the registry says, beside a field that is not simply läst; null otherwise. */
 export function proposalHint(field?: ProposedField) {
@@ -169,6 +173,7 @@ const litterLabel = (l: ParentLitter) =>
  */
 export function RegisterFromCertificate({
   mode,
+  variant,
   form,
   onChange,
   colors,
@@ -190,6 +195,7 @@ export function RegisterFromCertificate({
   footer,
 }: {
   mode: SaveMode;
+  variant?: Variant;
   form: CertForm;
   onChange: (key: keyof CertForm, value: string) => void;
   colors: string[];
@@ -469,7 +475,9 @@ export function RegisterFromCertificate({
               required: !!picked?.preliminary,
               helperText: picked?.preliminary
                 ? "Kullens antal är preliminärt. Skriv antalet som står på intyget."
-                : "Står inte alltid på intyget.",
+                : variant === "member" && !picked
+                  ? COUNT_LEFT_EMPTY // a new litter's empty count is the count born, preliminary (as Lägg till kull)
+                  : "Står inte alltid på intyget.",
             })}
             {onWhere && (
               <Field wide>

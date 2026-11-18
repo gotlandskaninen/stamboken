@@ -658,9 +658,11 @@ def _shortcut_litter(form, may, genebank=None):
     litter_size, litter_size6w = _as_int(form.get("litter_size")), _as_int(form.get("litter_size6w"))
     if litter_size is None or litter_size < 1:
         return None, None, problem(400, "Bad Request", "Ange antal födda (minst 1).")
-    if litter_size6w is None or litter_size6w < 1:
+    # The report's member may leave the count empty: it is the count born, preliminary, as in "Lägg till kull"
+    # (RegisterLitter); elsewhere it is asked for.
+    if (litter_size6w is None and genebank is None) or (litter_size6w is not None and litter_size6w < 1):
         return None, None, problem(400, "Bad Request", "Ange antal levande vid 6 veckor (minst 1).")
-    if litter_size6w > litter_size:
+    if litter_size6w is not None and litter_size6w > litter_size:
         return None, None, problem(400, "Bad Request", LITTER_SIZE6W_ABOVE_BORN)
     try:
         # Rabbit gestation is 26–38 days: without a mating date, the mating is put 31 days before the birth
@@ -691,7 +693,10 @@ def _shortcut_litter(form, may, genebank=None):
 
 
 def _create_litter(herd, mother, father, birth_date, breed_date, litter_size, litter_size6w):
-    """Create the litter validated by _shortcut_litter. Call inside the registration's transaction."""
+    """
+    Create the litter validated by _shortcut_litter, a count alive at 6 weeks of None as the count born, preliminary.
+    Call inside the registration's transaction.
+    """
     litter_number = new_litter_number(herd, birth_date, lock=True)
     # Breeding rows before Individual rows (the global lock order); the parents re-read under their lock,
     # as "Ny parning" does (a sale or an unpromote may have changed them since the check).
@@ -714,7 +719,8 @@ def _create_litter(herd, mother, father, birth_date, breed_date, litter_size, li
         breed_date=breed_date,
         birth_date=birth_date,
         litter_size=litter_size,
-        litter_size6w=litter_size6w,
+        litter_size6w=litter_size if litter_size6w is None else litter_size6w,
+        litter_size6w_preliminary=litter_size6w is None,
         litter_number=litter_number,
     )
 
