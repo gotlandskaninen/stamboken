@@ -320,6 +320,15 @@ button.confirmDanger:hover:not(:disabled) {
   border-style: dashed;
   color: var(--sb-ink-2);
 }
+/* Choices with long labels, one to a line at every width (Jag avslutar min besättning) */
+.stacked .choice {
+  flex: 1 1 100%;
+}
+.stacked .choice span {
+  justify-content: flex-start;
+  text-align: left;
+  padding: 8px 40px 8px 16px;
+}
 .small {
   min-height: 48px;
   min-width: 44px;

@@ -1298,14 +1298,18 @@ export function ReportForm({
   const endCard = (
     <MbCard title="Jag avslutar min besättning">
       <div className={styles.detail}>
-        <label className={styles.line} style={{ minHeight: 48 }}>
-          <input
-            type="checkbox"
-            checked={state.ending}
-            onChange={(e) => edit((s) => ({ ...s, ending: e.target.checked }))}
-          />
-          Jag avslutar min besättning
-        </label>
+        <div className={`${styles.choices} ${styles.stacked}`}>
+          <label className={styles.choice}>
+            <input
+              type="checkbox"
+              checked={state.ending}
+              onChange={(e) =>
+                edit((s) => ({ ...s, ending: e.target.checked }))
+              }
+            />
+            <span>Jag avslutar min besättning</span>
+          </label>
+        </div>
         {state.ending && (
           <>
             <p className={styles.lead}>
@@ -1317,7 +1321,7 @@ export function ReportForm({
               <div
                 role="radiogroup"
                 aria-label="Medlemskapet"
-                className={styles.detail}
+                className={`${styles.choices} ${styles.stacked}`}
               >
                 {(
                   [
@@ -1331,18 +1335,14 @@ export function ReportForm({
                     ],
                   ] as [Membership, string][]
                 ).map(([v, label]) => (
-                  <label
-                    key={v}
-                    className={styles.line}
-                    style={{ minHeight: 48 }}
-                  >
+                  <label key={v} className={styles.choice}>
                     <input
                       type="radio"
                       name="membership"
                       checked={state.membership === v}
                       onChange={() => edit((s) => ({ ...s, membership: v }))}
                     />
-                    {label}
+                    <span>{label}</span>
                   </label>
                 ))}
               </div>
