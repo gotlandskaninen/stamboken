@@ -167,6 +167,34 @@ describe("the photo", () => {
     expect(screen.getByRole("button", { name: "Spara" })).toBeEnabled();
   });
 
+  it("a photo refused at Spara (purged after a day) is asked for again at the photo field", async () => {
+    const gone = "Fotot kan inte användas längre. Ladda upp det igen.";
+    upload.mockResolvedValueOnce(uploaded(7));
+    register.mockResolvedValueOnce({
+      ok: false,
+      problem: {
+        status: 409,
+        title: "Konflikt",
+        detail: gone,
+        extensions: { field: "photo" },
+      },
+    });
+    await opened();
+    choosePhoto();
+    await screen.findByText("Fotot är uppladdat.");
+    type(/^Individnummer på pappret/, "G9001-2511");
+    type(/^Intygsnummer/, "P-2511");
+    type(/^Födelsedatum/, "2025-05-10");
+    type(/^Mor/, "G9001-2411");
+    type(/^Far(?!-)/, "G9001-2412");
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    expect(await screen.findByText(gone)).toBeInTheDocument();
+    expect(screen.getAllByText(gone)).toHaveLength(1); // at the photo, not again under the form
+    expect(screen.queryByText("Fotot är uppladdat.")).toBeNull();
+    expect(document.activeElement).toBe(input("Foto av intyget"));
+    expect(screen.getByRole("button", { name: "Försök igen" })).toBeTruthy();
+  });
+
   it("a refusal shows the server's words, the rate limit's too", async () => {
     const limit =
       "Du har laddat upp många foton den senaste timmen. Fortsätt efter kl. 15.40. Det du skrivit är sparat.";

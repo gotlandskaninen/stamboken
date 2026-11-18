@@ -87,6 +87,7 @@ CERT_FORMATS = ("handskrivet", "datorskrivet", "v1_pdf", "intyg_b", "digitalt_v2
 OPENED_EVERY = timedelta(hours=1)
 PURPOSE = "syfte"  # ref_data's key on a report photo held for a purchase: "kop" (a notice's) or "inskick" (S7, to send)
 PURPOSES = ("kop", "inskick")
+HELD_RABBIT = "kanin"  # PURPOSE of a photo for "Lägg till kanin", held until Spara registers the rabbit (not sent)
 # An item left "ofullstandig" is deleted this long after its retention_start (utils/inbox_purge.py),
 # and its sender is reminded after REMIND_MONTHS.
 INCOMPLETE_MONTHS = 12
@@ -249,8 +250,8 @@ def create_upload(user, herd, message, stored, *, kind="upload", ref_type=None, 
     person who sent it, recorded as it comes in (the report's Ärenden lists the herd's main member's). The report's
     photo (4b) is a `kontroll` item with `ref_type`; its `user` is None for the report link, which `detail` names
     (access_code_id), as an account would be named. Its notices wait for its rabbit (bind_report_photo). A photo
-    `held` for a purchase (PURPOSES, kept in `ref_data`) is not read while it is held (unread): its documents are
-    off from the start, so no reading claims them.
+    `held` for a purchase (PURPOSES) or for a rabbit (HELD_RABBIT), kept in `ref_data`, is not read while it is held
+    (unread) nor listed as the queue's work: its documents are off from the start, so no reading claims them.
     """
     item = InboxItem.create(
         kind=kind,
@@ -650,8 +651,9 @@ NOTICE_UNREAD = "Fotot till ett anmält köp tolkas inte."
 
 def unread(item):
     """
-    The model never reads the item's photos: a purchase notice's, and a report photo held for a purchase (`ref_data`
-    PURPOSE) until the notice takes it, its sending makes it an ordinary upload (S7), or a rabbit is registered from it.
+    The model never reads the item's photos: a purchase notice's, and a report photo held (`ref_data` PURPOSE) for a
+    purchase or a rabbit until the notice takes it, its sending makes it an ordinary upload (S7), or a rabbit is
+    registered from it.
     """
     return item.ref_type == "kopanmalan" or bool(item.ref_data and item.ref_data.get(PURPOSE))
 

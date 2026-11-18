@@ -164,7 +164,12 @@ kontrolleras som nya.
   (`{"syfte": …}`) tills det skickas, blir en anmälans eller binds till en kanin. Under tiden läses det
   aldrig: varken en ny typ, Tolka igen eller ett läge satt till `vantar` får bildmodellen att läsa det.
   Ett sådant foto som efter ett dygn varken har skickats, blivit en anmälans eller bundits raderas med
-  sin fil av nattjobbet (`purge_held`). Dialogen tar med ett foto som laddats upp till anmälan när
+  sin fil av nattjobbet (`purge_held`).
+- Ett foto till "Lägg till kanin från intyget" (`…/foto` utan `syfte`) hålls på samma sätt med
+  `{"syfte": "kanin"}` tills Spara registrerar kaninen. Först då blir det en vanlig `kontroll`-post
+  i kön, en per kanin, som läses och som köns arbetare får notis om. Ett hållet foto listas inte i
+  kön, kan inte skickas som ett köps foto, och raderas efter ett dygn om ingen kanin har sparats från
+  det (Släng eller en stängd flik). Spara på ett raderat foto ger 409 med `field` `photo`. Dialogen tar med ett foto som laddats upp till anmälan när
   numret visar sig saknas, så att det skickas med de andra.
 
 ## Ärenden hos genbanksansvarig (S8)

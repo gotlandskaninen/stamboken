@@ -484,8 +484,9 @@ def new_link(herd, year):
     return jsonify({"sent": True})
 
 
-# "Lägg till kanin från intyget" (4b Task 4, spec 5.8): the certificate's photo first, a `kontroll` item in the queue
-# (G5), then the rabbit, registered at once with the report actor's own right and bound to that photo.
+# "Lägg till kanin från intyget" (4b Task 4, spec 5.8): the certificate's photo first, a `kontroll` item held from the
+# queue (G5, inbox.HELD_RABBIT), then the rabbit, registered at once with the report actor's own right and bound to
+# that photo, which only then becomes the queue's work.
 
 PHOTO_LIMIT = parse_limit("60 per hour")  # per code or per user, every request with access, refused or not (mitt val)
 PHOTO_LIMITED = "Du har laddat upp många foton den senaste timmen. Fortsätt efter kl. {at}. Det du skrivit är sparat."
@@ -570,8 +571,9 @@ def upload_photo(herd, year):
     file = request.files.get("file")
     if file is None or not file.filename:
         raise ArsrapportError(400, "Ingen fil bifogad.")
-    # held for a purchase notice, never read by the model, or for sending a bought rabbit's photos, read once sent (S7)
-    held = request.args.get("syfte") if request.args.get("syfte") in inbox.PURPOSES else None
+    # held for a purchase notice, never read by the model, or for sending a bought rabbit's photos, read once sent (S7);
+    # else for "Lägg till kanin": read and the queue's once Spara registers the rabbit, purged a day later if not
+    held = request.args.get("syfte") if request.args.get("syfte") in inbox.PURPOSES else inbox.HELD_RABBIT
     encoded, stored = [], []
 
     def keep(image):
@@ -632,7 +634,10 @@ def add_rabbit(herd, year):
     created = []
 
     def write(_grant):
-        item = inbox.lock_item(item_id)  # after the report's lock and the code's recheck, as a sale proposal's
+        try:
+            item = inbox.lock_item(item_id)  # after the report's lock and the code's recheck, as a sale proposal's
+        except inbox.InboxError as exc:  # a held photo left a day is purged (purge_held)
+            raise ArsrapportError(409, arsrapport.PHOTO_GONE, field="photo") from exc
         document = arsrapport.report_photo_document(item, herd)
 
         def bind(individual):  # in the registration's transaction: the photo, the rabbit and its receipt together

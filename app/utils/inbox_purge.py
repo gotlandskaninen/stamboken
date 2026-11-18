@@ -43,7 +43,7 @@ GMAIL_PROCESSED_AFTER = timedelta(days=60)
 CHANGE_REQUEST_AFTER = timedelta(days=30)  # the mail queue's limit (spec 6)
 STALLED_AFTER = timedelta(days=14)
 ORPHAN_AFTER = timedelta(days=1)  # an upload in progress has written its files but not committed its rows
-HELD_AFTER = timedelta(days=1)  # a report photo held for a purchase whose dialog was left
+HELD_AFTER = timedelta(days=1)  # a report photo held for a purchase or a rabbit whose dialog was left
 VIEWS = ("oppnad", "original_visat")  # looking at an item is not something happening to it
 
 
@@ -249,9 +249,9 @@ def purge_junk(now):
 
 def purge_held(now):
     """
-    A report photo held for a purchase (`ref_data` inbox.PURPOSE) a day after it came in, with its file: never sent
-    (S7), taken by a notice or bound to a rabbit, so its dialog was left, and nothing saved from it in the queue. Read
-    again under the items' locks, so one sent or bound meanwhile stays as it is.
+    A report photo held for a purchase or a rabbit (`ref_data` inbox.PURPOSE) a day after it came in, with its file:
+    never sent (S7), taken by a notice or bound to a rabbit, so its dialog was left (Släng, a closed tab), and nothing
+    saved from it in the queue. Read again under the items' locks, so one sent or bound meanwhile stays as it is.
     """
     held = (
         (InboxItem.kind == "kontroll")

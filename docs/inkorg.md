@@ -441,7 +441,8 @@ kräver att anroparen arbetar i kön (annars 403).
 
 ### `GET /api/v2/inkorg`
 
-Kölistan, äldst först (`received_at`).
+Kölistan, äldst först (`received_at`). Ett foto från årsrapporten som hålls (`ref_data` `syfte`)
+är inget arbete än och listas inte, och räknas inte i `counts`.
 
 | Parameter | |
 |---|---|
@@ -1155,7 +1156,7 @@ text på en gammal post) och när posten senast markerades `ofullstandig`.
 | Händelsen `oppnad` | 13 månader efter händelsen |
 | Ett stängt meddelande (`kind: "meddelande"`) utan dokument | 13 månader efter stängningen |
 | En post i läget `skrap` | 30 dagar efter stängningen |
-| Ett foto från årsrapporten som hålls för ett köp (`ref_data` `syfte`) och inte har skickats, blivit en anmälans eller bundits till en kanin | ett dygn efter att det kom in, med sin fil, om inget har sparats från det i kön |
+| Ett foto från årsrapporten som hålls för ett köp eller en kanin (`ref_data` `syfte`) och inte har skickats, blivit en anmälans eller bundits till en kanin | ett dygn efter att det kom in, med sin fil, om inget har sparats från det i kön |
 | En post i läget `ofullstandig` | 12 månader efter postens gallringsstart; mejl när den markeras och efter 11 månader (se [Mejl](#mejl)) |
 | `sender_address` på en stängd post | när inget mejl till avsändaren väntar, senast 30 dagar efter stängningen, också när Gmail-läsningen är avstängd |
 | `gmail_processed` | 60 dagar |

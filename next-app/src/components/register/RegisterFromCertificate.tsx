@@ -42,7 +42,8 @@ export type ParentLitter = {
 export type Found = RegistryRabbit & { litters?: ParentLitter[] };
 /** The registry's record of a number: null when there is no such rabbit, undefined when the lookup could not tell. */
 export type Lookup = (number: string) => Promise<Found | null | undefined>;
-export type SaveResult = { ok: true } | { ok: false; problem: Problem };
+/** A refusal; `problem` null when the caller has shown it itself (the report's photo field). */
+export type SaveResult = { ok: true } | { ok: false; problem: Problem | null };
 /** "Var är kaninen nu" (spec 5.8). */
 export type Where = "hos_mig" | "sald" | "dod";
 export type Parent = "mother" | "father";
@@ -256,6 +257,7 @@ export function RegisterFromCertificate({
         return;
       }
       const problem = res.problem;
+      if (!problem) return;
       // pappersintyg takes no resolution: there the conflict is only shown.
       setConflict(mode === "ny_kanin" ? numberCheckOf(problem) : null);
       const field = problemField(problem);

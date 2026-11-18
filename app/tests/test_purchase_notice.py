@@ -740,7 +740,12 @@ class PurchaseNoticeTest(ArsrapportTest):
     def test_a_reading_made_before_the_photo_became_a_notice_goes(self):
         self.reading_on()
         self.login("owner")
-        uploaded = self.upload()  # a rabbit's photo, which waits for the reading
+        uploaded = self.upload()  # a rabbit's photo
+        # uploaded before they were held (item 12): an ordinary one, which waits for the reading
+        db.InboxItem.update(ref_data=None).where(db.InboxItem.id == uploaded["item_id"]).execute()
+        db.InboxDocument.update(interpretation_status="vantar").where(
+            db.InboxDocument.id == uploaded["document_id"]
+        ).execute()
         self.assertEqual(interpreter.interpret_next(), uploaded["document_id"])
         self.assertEqual(db.InboxDocument.get_by_id(uploaded["document_id"]).interpretation_status, "klar")
         self.assertEqual(self.notify_with(uploaded["document_id"], "intyg").status_code, 200)
@@ -941,7 +946,7 @@ class PurchaseNoticeTest(ArsrapportTest):
 
     def test_only_held_photos_can_be_sent(self):
         self.login("owner")
-        plain = self.upload()  # a 4b photo, maybe in reading
+        plain = self.upload()  # a rabbit's photo, held for its registration (item 12), not for sending
         response = self.send(plain)
         self.assertEqual((response.status_code, response.get_json()["detail"]), (409, arsrapport.PHOTO_GONE))
         self.assertEqual(self.uploads(), [])
@@ -1064,26 +1069,26 @@ class PurchaseNoticeTest(ArsrapportTest):
     def test_a_held_photo_left_a_day_goes_with_its_file(self):
         """
         Codex P2: a photo held for a purchase whose dialog was left, never sent, taken or bound, goes with its file
-        in the nightly purge a day after it came in. A sent, bound, fresh or rabbit's photo stays.
+        in the nightly purge a day after it came in, as one held for a rabbit (item 12). A sent, bound or fresh one
+        stays.
         """
         self.assertIn(inbox_purge.purge_held, inbox_purge.RULES)
         self.login("owner")
-        left = [self.upload(purpose="kop"), self.upload(purpose="inskick")]
+        left = [self.upload(purpose="kop"), self.upload(purpose="inskick"), self.upload()]  # the last a rabbit's
         fresh = self.upload(purpose="inskick")
-        plain = self.upload()  # a rabbit's photo, not held for a purchase
         bound = self.upload(purpose="kop")
         db.InboxItem.update(ref_id=self.own.id, ref_data=None).where(db.InboxItem.id == bound["item_id"]).execute()
         sent_photo = self.upload(purpose="kop")  # a notice's photo, sent with the rabbit Stamboken lacks (S7)
         self.assertEqual(self.send(sent_photo, types=("intyg",)).status_code, 200)
         files = {
             u["document_id"]: os.path.join(self.folder, db.InboxDocument.get_by_id(u["document_id"]).original_path)
-            for u in (*left, fresh, plain, bound, sent_photo)
+            for u in (*left, fresh, bound, sent_photo)
         }
-        old = [u["item_id"] for u in (*left, plain, bound)]
+        old = [u["item_id"] for u in (*left, bound)]
         two_days_ago = inbox.now() - timedelta(days=2)
         db.InboxItem.update(received_at=two_days_ago).where(db.InboxItem.id.in_(old)).execute()
         db.InboxItem.update(received_at=two_days_ago).where(db.InboxItem.kind == "upload").execute()
-        self.assertEqual(inbox_purge.purge_held(inbox.now()), 2)
+        self.assertEqual(inbox_purge.purge_held(inbox.now()), 3)
         remaining = {d.id for d in db.InboxDocument.select()}
         for document_id, path in files.items():
             gone = document_id in {u["document_id"] for u in left}

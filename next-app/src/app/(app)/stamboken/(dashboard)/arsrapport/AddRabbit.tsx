@@ -328,6 +328,13 @@ export function AddRabbitDialog({
     } finally {
       committing.current = false;
     }
+    if (!res.ok && res.problem.extensions?.field === "photo") {
+      // gone (purged a day after it came in) or not this session's: chosen again, at the photo field
+      const photo: Photo = { status: "fel", error: res.problem.detail };
+      updateDraft(draft.id, (d) => ({ ...d, photo }));
+      photoInput.current?.focus();
+      return { ok: false, problem: null };
+    }
     if (!res.ok) return res;
     registered.current.push([res.data, draft.where]);
     if (draft.parent) {

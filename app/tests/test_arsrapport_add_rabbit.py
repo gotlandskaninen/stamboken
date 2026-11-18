@@ -8,6 +8,7 @@ isort:skip_file
 """
 
 import io
+import os
 import re
 from datetime import date, datetime, timedelta
 from datetime import time as clock
@@ -19,6 +20,7 @@ import utils.arsrapport as arsrapport
 import utils.database as db
 import utils.inbox as inbox
 import utils.inbox_interpreter as interpreter
+import utils.inbox_purge as inbox_purge
 import utils.mail as mail
 import utils.report_code as report_code
 import utils.settings as settings
@@ -815,8 +817,11 @@ class TestReportPhotoReading(AddRabbitTest):
         }
         self.open_link()
         item_id = self.photo_item()
+        # a photo uploaded before they were held (item 12): an ordinary one, read while nothing is registered from it
+        db.InboxItem.update(ref_data=None).where(db.InboxItem.id == item_id).execute()
         (document,) = self.reload(item_id).documents
-        self.assertEqual(interpreter.interpret_next(), document.id)  # read while nothing is registered from it
+        db.InboxDocument.update(interpretation_status="vantar").where(db.InboxDocument.id == document.id).execute()
+        self.assertEqual(interpreter.interpret_next(), document.id)
         self.assertEqual(db.InboxDocument.get_by_id(document.id).interpretation_status, "klar")
         response = self.kit(item_id, color="viltgrå")
         self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
@@ -851,6 +856,69 @@ class TestReportPhotoReading(AddRabbitTest):
         inbox.take(queued, self.helper, over=False)
         with self.assertRaises(inbox.InboxError):  # an ordinary saved certificate stays as it was
             inbox.reinterpret(queued, queued_doc, self.helper)
+
+
+class TestHeldPhoto(TestReportPhotoReading):
+    """
+    Item 12: the photo of "Lägg till kanin" is held (inbox.HELD_RABBIT) until Spara registers the rabbit: not read and
+    not the queue's work meanwhile, purged a day after it came in if nothing was saved, and an ordinary item once its
+    rabbit is registered. One item per rabbit, as before.
+    """
+
+    def listed(self):
+        """The ids and the count of new items the queue lists for a manager of the genebank."""
+        client = APP.test_client(use_cookies=True)  # not the link's session, which holds its photos
+        client.post("/api/login", json={"username": "man", "password": "pass"})
+        body = client.get("/api/v2/inkorg?scope=alla&state=alla").get_json()
+        return {item["id"] for item in body["items"]}, body["counts"].get("ny", 0)
+
+    def test_a_held_photo_is_neither_read_nor_the_queues_work(self):
+        self.open_link()
+        item_id = self.photo_item()
+        item = self.reload(item_id)
+        (document,) = item.documents
+        self.assertEqual((item.ref_data, document.interpretation_status), ({"syfte": "kanin"}, "av"))
+        self.assertTrue(inbox.unread(item))
+        db.InboxDocument.update(interpretation_status="vantar").where(db.InboxDocument.id == document.id).execute()
+        self.assertIsNone(interpreter.interpret_next())  # held: not read whatever its status says
+        db.InboxDocument.update(interpretation_status="av").where(db.InboxDocument.id == document.id).execute()
+        self.assertEqual(self.listed(), (set(), 0))
+        self.assertFalse(db.Notice.select().where(db.Notice.item == item_id).exists())
+
+    def test_spara_makes_it_an_ordinary_item_that_is_read(self):
+        self.open_link()
+        first, second = self.photo_item(), self.photo_item()
+        self.assertEqual(self.kit(first).status_code, 201)
+        item = self.reload(first)
+        (document,) = item.documents
+        self.assertEqual((item.ref_data, item.ref_id is not None), (None, True))
+        self.assertFalse(inbox.unread(item))
+        self.assertEqual(db.InboxDocument.get_by_id(document.id).interpretation_status, "vantar")
+        self.assertEqual(interpreter.interpret_next(), document.id)
+        self.assertEqual(self.listed(), ({first}, 1))  # the other rabbit's photo is still held
+        kit2 = self.kit(second, paper_number="G9001-2512", paper_certificate="P-2512")
+        self.assertEqual(kit2.status_code, 201, kit2.get_data(as_text=True))
+        self.assertEqual(self.listed(), ({first, second}, 2))  # one item per rabbit
+
+    def test_a_held_photo_left_a_day_is_purged_with_its_file(self):
+        self.open_link()
+        left, fresh, bound = self.photo_item(), self.photo_item(), self.photo_item()
+        self.assertEqual(self.kit(bound).status_code, 201)
+        files = {i: os.path.join(self.folder, self.reload(i).documents[0].original_path) for i in (left, fresh, bound)}
+        two_days_ago = inbox.now() - timedelta(days=2)
+        db.InboxItem.update(received_at=two_days_ago).where(db.InboxItem.id.in_([left, bound])).execute()
+        self.assertEqual(inbox_purge.purge_held(inbox.now()), 1)
+        remaining = {row.id for row in db.InboxItem.select()}
+        self.assertEqual(
+            {i: (i in remaining, os.path.exists(path)) for i, path in files.items()},
+            {left: (False, False), fresh: (True, True), bound: (True, True)},
+        )
+        # the dialog still open on the purged photo: Spara asks for the photo again, at the photo field
+        refused = self.kit(left, paper_number="G9001-2512", paper_certificate="P-2512")
+        self.assertEqual(
+            (refused.status_code, refused.get_json()["detail"], refused.get_json()["field"]),
+            (409, arsrapport.PHOTO_GONE, "photo"),
+        )
 
 
 class TestReportPhotoCheck(AddRabbitTest):
