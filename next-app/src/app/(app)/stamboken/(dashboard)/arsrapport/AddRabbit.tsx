@@ -231,11 +231,16 @@ export function AddRabbitDialog({
   // Spara without an uploaded photo: said at the photo field, which takes the focus (the draft it was said for).
   const photoInput = React.useRef<HTMLInputElement>(null);
   const [askedPhoto, setAskedPhoto] = React.useState<number | null>(null);
+  const [photoFocus, setPhotoFocus] = React.useState(0); // after the render that shows the photo's button
+  React.useEffect(() => {
+    if (!photoFocus) return;
+    photoInput.current?.scrollIntoView?.({ block: "center" });
+    photoInput.current?.focus();
+  }, [photoFocus]);
   const photoReady = () => {
     if (top.photo.status === "klar") return true;
     setAskedPhoto(top.id);
-    photoInput.current?.scrollIntoView?.({ block: "center" });
-    photoInput.current?.focus();
+    setPhotoFocus((n) => n + 1);
     return false;
   };
   const photoAsk =
@@ -332,7 +337,7 @@ export function AddRabbitDialog({
       // gone (purged a day after it came in) or not this session's: chosen again, at the photo field
       const photo: Photo = { status: "fel", error: res.problem.detail };
       updateDraft(draft.id, (d) => ({ ...d, photo }));
-      photoInput.current?.focus();
+      setPhotoFocus((n) => n + 1);
       return { ok: false, problem: null };
     }
     if (!res.ok) return res;
@@ -358,22 +363,55 @@ export function AddRabbitDialog({
     return { ok: true };
   };
 
+  const fileInput = (
+    props: React.InputHTMLAttributes<HTMLInputElement> & {
+      ref?: React.Ref<HTMLInputElement>;
+    },
+  ) => (
+    <input
+      type="file"
+      accept="image/*,.heic,.pdf"
+      className={styles.srOnly}
+      onChange={(e) => {
+        pick(e.target.files?.[0]);
+        e.target.value = "";
+      }}
+      {...props}
+    />
+  );
   const photo = (
     <div className={styles.detail}>
-      <label className={styles.label}>
-        Foto av intyget
-        <input
-          ref={photoInput}
-          type="file"
-          accept="image/*,.heic,.pdf"
-          aria-invalid={!!photoAsk}
-          aria-describedby={photoAsk ? "kanin-photo-ask" : undefined}
-          onChange={(e) => {
-            pick(e.target.files?.[0]);
-            e.target.value = "";
-          }}
-        />
-      </label>
+      {top.photo.status === "klar" && top.file ? (
+        <div className={styles.photoDone}>
+          <PhotoThumb file={top.file} />
+          <label
+            className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.photoPick}`}
+          >
+            Byt foto
+            {fileInput({})}
+          </label>
+        </div>
+      ) : (
+        <div className={styles.line}>
+          <label className={`sb-btn ${styles.btn} ${styles.photoPick}`}>
+            Ta foto av intyget
+            {/* the camera at once on a phone; a computer gets its file chooser */}
+            {fileInput({
+              ref: photoInput,
+              accept: "image/*",
+              capture: "environment",
+              "aria-invalid": !!photoAsk,
+              "aria-describedby": photoAsk ? "kanin-photo-ask" : undefined,
+            })}
+          </label>
+          <label
+            className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.photoPick}`}
+          >
+            Välj en fil
+            {fileInput({})}
+          </label>
+        </div>
+      )}
       <p className={styles.meta}>Fotot laddas upp medan du fyller i resten.</p>
       {photoAsk && (
         <p id="kanin-photo-ask" className={styles.errorText} role="alert">
@@ -528,6 +566,32 @@ export function AddRabbitDialog({
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+// The uploaded photo, from the member's own copy: its object URL is freed when the photo is replaced or the form
+// goes (made in the effect, so StrictMode's second run makes a new one). A PDF, or an image the browser cannot
+// show (HEIC), is named instead.
+function PhotoThumb({ file }: { file: File }) {
+  const img = React.useRef<HTMLImageElement>(null);
+  const [broken, setBroken] = React.useState<File | null>(null);
+  const shown = file.type.startsWith("image/") && broken !== file;
+  React.useEffect(() => {
+    if (!shown || !img.current) return;
+    const url = URL.createObjectURL(file);
+    img.current.src = url;
+    return () => URL.revokeObjectURL(url);
+  }, [file, shown]);
+  return shown ? (
+    // eslint-disable-next-line @next/next/no-img-element -- a local blob, not an optimisable image
+    <img
+      ref={img}
+      className={styles.photoThumb}
+      alt="Fotot av intyget"
+      onError={() => setBroken(file)}
+    />
+  ) : (
+    <p className={styles.meta}>{file.name}</p>
   );
 }
 

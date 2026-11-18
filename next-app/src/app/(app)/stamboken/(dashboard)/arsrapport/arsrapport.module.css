@@ -332,6 +332,30 @@ button.confirmDanger:hover:not(:disabled) {
   padding: 0;
   margin-bottom: 6px;
 }
+/* Lägg till kanin: the photo of the certificate first, as large buttons; its thumbnail once uploaded */
+.photoPick {
+  flex: 1 1 12em;
+  justify-content: center;
+  cursor: pointer;
+  position: relative;
+}
+.photoPick:focus-within {
+  outline: 2px solid var(--sb-skog);
+  outline-offset: 2px;
+}
+.photoDone {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: flex-end;
+}
+.photoThumb {
+  display: block;
+  max-width: 100%;
+  max-height: 200px;
+  border: 1px solid var(--sb-ink-3);
+  border-radius: 6px;
+}
 /* Choices with long labels, one to a line at every width (Jag avslutar min besättning) */
 .stacked .choice {
   flex: 1 1 100%;

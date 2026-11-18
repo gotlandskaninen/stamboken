@@ -360,7 +360,7 @@ test("9. A kit and its mother from their certificates, then the report", async (
   });
   const field = (label: RegExp) => dialog.getByLabel(label);
   const sendPhoto = async () => {
-    await dialog.getByLabel("Foto av intyget").setInputFiles(photo);
+    await dialog.getByLabel("Ta foto av intyget").setInputFiles(photo);
     await expect(dialog.getByText("Fotot är uppladdat.")).toBeVisible({
       timeout: 30_000,
     });

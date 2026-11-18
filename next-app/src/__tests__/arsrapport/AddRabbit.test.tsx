@@ -47,7 +47,12 @@ const setup = vi.mocked(getFormSetup);
 const suggest = vi.mocked(suggestNumber);
 const prepared = vi.mocked(prepare);
 
-beforeEach(() => localStorage.clear());
+beforeEach(() => {
+  localStorage.clear();
+  // jsdom has no object URLs: the thumbnail's
+  URL.createObjectURL = vi.fn(() => "blob:thumb");
+  URL.revokeObjectURL = vi.fn();
+});
 afterEach(async () => {
   cleanup();
   // a closed dialog's history.back() lands as a popstate later: not in the next test
@@ -69,10 +74,12 @@ const photoFile = (name = "intyg.jpg") =>
   new File([new Uint8Array([0xff, 0xd8, 0xff])], name, {
     type: "image/jpeg",
   });
+// Ta foto av intyget before a photo, Byt foto after one
 const choosePhoto = (file = photoFile()) =>
-  fireEvent.change(input("Foto av intyget"), {
-    target: { files: [file] },
-  });
+  fireEvent.change(
+    screen.queryByLabelText("Ta foto av intyget") ?? input("Byt foto"),
+    { target: { files: [file] } },
+  );
 // the browser's Back: the event comes from outside React
 const back = () =>
   act(() => {
@@ -86,7 +93,7 @@ function sparaAsksForPhoto(text: string | null = PHOTO_FIRST) {
   expect(spara).toBeEnabled();
   fireEvent.click(spara);
   expect(register).toHaveBeenCalledTimes(calls);
-  const photo = input("Foto av intyget");
+  const photo = input("Ta foto av intyget");
   expect(document.activeElement).toBe(photo);
   if (text) {
     expect(photo).toHaveAttribute("aria-invalid", "true");
@@ -123,6 +130,38 @@ const pending = <T,>() => {
 };
 
 describe("the photo", () => {
+  it("is taken with a large button, or chosen as a file, and shown as a thumbnail with Byt foto", async () => {
+    upload
+      .mockResolvedValueOnce(uploaded(7))
+      .mockResolvedValueOnce(uploaded(8));
+    await opened();
+    const take = input("Ta foto av intyget");
+    expect(take).toHaveAttribute("accept", "image/*");
+    expect(take).toHaveAttribute("capture", "environment"); // the camera at once on a phone
+    const file = input("Välj en fil");
+    expect(file).toHaveAttribute("accept", "image/*,.heic,.pdf"); // a PDF too
+    expect(file).not.toHaveAttribute("capture");
+    expect(screen.queryByRole("img")).toBeNull();
+    choosePhoto();
+    await screen.findByText("Fotot är uppladdat.");
+    expect(
+      screen.getByRole("img", { name: "Fotot av intyget" }),
+    ).toHaveAttribute("src", "blob:thumb");
+    expect(screen.queryByLabelText("Ta foto av intyget")).toBeNull();
+    expect(input("Byt foto")).not.toHaveAttribute("capture"); // a phone offers the camera and the files
+    choosePhoto(photoFile("andra.jpg"));
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(2));
+    await screen.findByText("Fotot är uppladdat.");
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:thumb"); // the first photo's copy is freed
+    const pdf = new File(["%PDF"], "intyg.pdf", { type: "application/pdf" });
+    upload.mockResolvedValueOnce(uploaded(9));
+    choosePhoto(pdf);
+    await waitFor(() =>
+      expect(screen.getByText("intyg.pdf")).toBeInTheDocument(),
+    );
+    expect(screen.queryByRole("img")).toBeNull();
+  });
+
   it("Spara on an untouched form asks for the photo at its field, and while it uploads asks to wait", async () => {
     const late = pending<Awaited<ReturnType<typeof uploadPhoto>>>();
     upload.mockReturnValueOnce(late.promise);
@@ -133,7 +172,7 @@ describe("the photo", () => {
     sparaAsksForPhoto("Fotot laddas upp. Spara när det är klart.");
     await act(async () => late.resolve(uploaded(7)));
     expect(screen.queryByText(PHOTO_FIRST)).toBeNull();
-    expect(input("Foto av intyget")).toHaveAttribute("aria-invalid", "false");
+    expect(screen.queryByLabelText("Ta foto av intyget")).toBeNull(); // uploaded: its thumbnail now
   });
 
   it("a failed upload keeps what was typed, and Försök igen sends only the photo", async () => {
@@ -191,7 +230,7 @@ describe("the photo", () => {
     expect(await screen.findByText(gone)).toBeInTheDocument();
     expect(screen.getAllByText(gone)).toHaveLength(1); // at the photo, not again under the form
     expect(screen.queryByText("Fotot är uppladdat.")).toBeNull();
-    expect(document.activeElement).toBe(input("Foto av intyget"));
+    expect(document.activeElement).toBe(input("Ta foto av intyget"));
     expect(screen.getByRole("button", { name: "Försök igen" })).toBeTruthy();
   });
 
