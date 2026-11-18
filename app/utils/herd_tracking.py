@@ -502,6 +502,8 @@ _PHONE = re.compile(r"(?:\+|(?<![\w-]))\(?(?:46[\s.()/-]*(?:\(0\)\s*)?|0)[1-9][\
 _PHONE_MIN_DIGITS = 9
 # A link: a scheme, "www." or a host such as "example.se" (a lower-case top domain, so "St.Olof" is none).
 _URL = re.compile(r"(?i:[a-z][a-z0-9+.-]*://|www\.)|\b[\w-]+\.[a-z]{2,}\b")
+# In an address only a scheme or "www." is a link: "2.th", "lgh.nr" and "St.gatan" are ordinary address text.
+_LINK = re.compile(r"(?i:[a-z][a-z0-9+.-]*://|www\.)")
 
 
 def reject_contact_details(text):
@@ -1189,8 +1191,9 @@ def buyer_contact_fields(buyer, address_required=False):
         except HerdTrackingInvalid:
             raise HerdTrackingInvalid(message) from None
     address = fields["postal_address"] or ""
-    if _URL.search(address) or _EMAIL.search(address):  # not a way round the yes for e-mail; digits are a postcode
-        raise HerdTrackingInvalid("Postadress får inte innehålla en länk eller en e-postadress.")
+    phone = any(len(re.sub(r"\D", "", m.group(0))) >= _PHONE_MIN_DIGITS for m in _PHONE.finditer(address))
+    if _LINK.search(address) or _EMAIL.search(address) or phone:  # no way round the yes; a postcode is no phone
+        raise HerdTrackingInvalid("Postadress får inte innehålla en länk, en e-postadress eller ett telefonnummer.")
     consent, optin = buyer.get("contact_consent", False), buyer.get("membership_optin", False)
     if not isinstance(consent, bool) or not isinstance(optin, bool):
         raise HerdTrackingInvalid("Köparens kryss ska vara ja eller nej.")

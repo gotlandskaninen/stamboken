@@ -25,6 +25,7 @@ from utils.herd_tracking import (  # noqa: E402
     HerdTrackingError,
     HerdTrackingInvalid,
     attach_buyer,
+    buyer_contact_fields,
     correct_herd_tracking,
     herd_tracking_history,
     new_operation_id,
@@ -113,6 +114,17 @@ class BuyerBase(DatabaseTest):
 
 
 class TestSchema(BuyerBase):
+    def test_a_table_from_the_earlier_migration_44_loses_the_address_check(self):
+        sql = db.DATABASE.execute_sql
+        sql(
+            'ALTER TABLE buyer_contact ADD CONSTRAINT "buyer_contact_address_needs_consent" '
+            "CHECK (postal_address IS NULL OR contact_consent_at IS NOT NULL)"
+        )
+        db._create_buyer_contact_guards()  # pylint: disable=protected-access  # what init() runs on every start
+        names = [r[0] for r in sql("SELECT conname FROM pg_constraint WHERE conrelid = 'buyer_contact'::regclass")]
+        self.assertNotIn("buyer_contact_address_needs_consent", names)
+        self.assertIn("buyer_contact_email_phone_need_consent", names)
+
     def test_migration_creates_the_table_and_the_set_null_fk(self):
         self.addCleanup(db.check_migrations)
         sql = db.DATABASE.execute_sql
@@ -223,8 +235,20 @@ class TestRegistration(BuyerBase):
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         self.assertIsNone(self._contact(self._latest().holder_contact_id).postal_address)
 
+    def test_ordinary_addresses_with_dots_are_accepted(self):
+        for address in (
+            "Nørregade 12, 2.th, 8000 Aarhus C",
+            "Storgata 5, 2.etg",
+            "Storgatan 1 lgh.nr 1201",
+            "St.gatan 3",
+        ):
+            self.assertEqual(
+                buyer_contact_fields({**BUYER, "postal_address": address}, address_required=True)["postal_address"],
+                address,
+            )
+
     def test_the_address_is_no_way_round_the_yes_for_e_mail(self):
-        for address in ("kim@example.com", "https://example.com"):
+        for address in ("kim@example.com", "https://example.com", "www.example.com", "Väg 1, tel 070-123 45 67"):
             response = self._sell(buyer={**BUYER, "postal_address": address})
             self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
             self.assertIn("Postadress får inte innehålla", response.get_json()["detail"])
