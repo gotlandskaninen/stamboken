@@ -416,7 +416,10 @@ export function IndividualDetail({
   const [formData, setFormData] = React.useState<Partial<Individual>>({});
   const [discardDialogOpen, setDiscardDialogOpen] = React.useState(false);
   const [deathDialogOpen, setDeathDialogOpen] = React.useState(false);
-  const [sellDialogOpen, setSellDialogOpen] = React.useState(false);
+  // ?salj=1&till=<herd>&datum=<date>: the queue's purchase notice opens the sale, filled in (Registrera försäljningen)
+  const [sellDialogOpen, setSellDialogOpen] = React.useState(
+    () => searchParams.get("salj") === "1",
+  );
   const [sellError, setSellError] = React.useState<string | null>(null);
 
   const displayName = individual.name || individual.number || "";
@@ -838,7 +841,11 @@ export function IndividualDetail({
       )}
 
       <SellRabbitDialog
-        open={sellDialogOpen}
+        open={sellDialogOpen && canSell}
+        initial={{
+          herd: searchParams.get("till"),
+          date: searchParams.get("datum"),
+        }}
         onClose={() => setSellDialogOpen(false)}
         onConfirm={handleSell}
         loadHerds={loadHerds}

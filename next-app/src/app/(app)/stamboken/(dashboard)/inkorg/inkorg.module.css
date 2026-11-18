@@ -422,6 +422,32 @@
   flex: 1;
   justify-content: center;
 }
+/* A purchase notice in the main column: its facts at reading size, the number unbroken */
+.purchase {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  align-items: flex-start;
+  font-size: 16px;
+}
+.purchase p {
+  margin: 0;
+}
+.purchaseFacts {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 16px;
+  margin: 0;
+}
+.purchaseFacts dt {
+  color: var(--sb-ink-2);
+}
+.purchaseFacts dd {
+  margin: 0;
+}
+.number {
+  white-space: nowrap;
+}
 .note {
   font-size: 13px;
   color: #7a5410;

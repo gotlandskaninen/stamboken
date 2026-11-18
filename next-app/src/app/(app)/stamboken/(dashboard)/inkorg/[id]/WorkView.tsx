@@ -90,6 +90,64 @@ function eventText(e: InboxEvent): string {
   return label;
 }
 
+// Who sent the item: its account, else the link or the account its arrival names (a purchase notice has no
+// sender_user: a link's history says `via`, an account's is the event's user), else the mail's address.
+function senderText(item: InboxDetail): string {
+  const arrived = item.events.find((e) => e.kind === "inkommen");
+  const via = arrived?.detail?.via;
+  return (
+    item.sender?.name ??
+    (typeof via === "string" ? via : null) ??
+    arrived?.user?.name ??
+    item.sender_address ??
+    "–"
+  );
+}
+
+// A purchase notice (4a Task 5) in the main column: the rabbit, both herds and the date, and the way to register
+// the sale, filled in on the rabbit's page (?salj=1&till&datum), or to approve the seller's pending one.
+function PurchaseCard({ item }: { item: InboxDetail }) {
+  const data = item.ref_data!;
+  const pendingSale = !!(item.report_year && item.genebank_id);
+  const sale = new URLSearchParams({
+    salj: "1",
+    till: item.herd ?? "",
+    datum: data.date,
+  });
+  return (
+    <div className={styles.purchase}>
+      <h2 className={styles.cardTitle}>Anmält köp</h2>
+      <dl className={styles.purchaseFacts}>
+        <dt>Kanin</dt>
+        <dd className={styles.number}>{data.number}</dd>
+        <dt>Säljare</dt>
+        <dd>{data.from_herd}</dd>
+        <dt>Köpare</dt>
+        <dd>{item.herd ?? "–"}</dd>
+        <dt>Datum</dt>
+        <dd>{fmtDate(data.date)}</dd>
+      </dl>
+      {pendingSale ? (
+        <p>
+          Säljarens försäljning väntar. Godkänn den i årsrapportens statusvy.{" "}
+          <Link
+            href={`/stamboken/arsrapport/status/${item.report_year}?genebank_id=${item.genebank_id}`}
+          >
+            Öppna statusvyn
+          </Link>
+        </p>
+      ) : (
+        <Link
+          className="sb-btn"
+          href={`/stamboken/individ/${encodeURIComponent(data.number)}?${sale}`}
+        >
+          Registrera försäljningen
+        </Link>
+      )}
+    </div>
+  );
+}
+
 // What the asking actions ask for before they change the state.
 const ASK: Partial<Record<ItemAction, string>> = {
   vantar_foralder: "Förälderns individnummer (två med komma emellan)",
@@ -317,7 +375,7 @@ export function WorkView({
             <dd>{item.assigned_to?.name ?? "ingen"}</dd>
             <dt>Inskickat av</dt>
             <dd>
-              {item.sender?.name ?? item.sender_address ?? "–"}
+              {senderText(item)}
               <SenderUnconfirmed item={item} />
             </dd>
             <MailFacts item={item} />
@@ -457,6 +515,7 @@ export function WorkView({
 
         {/* Middle: the photo */}
         <section className={`sb-card ${styles.card}`} aria-label="Fotot">
+          {purchase && item.ref_data && <PurchaseCard item={item} />}
           {doc ? (
             <>
               <PhotoViewer
@@ -611,7 +670,7 @@ export function WorkView({
                 </div>
               )}
             </>
-          ) : (
+          ) : purchase ? null : (
             <p className={styles.muted}>Ärendet har inga dokument.</p>
           )}
         </section>
@@ -629,34 +688,6 @@ export function WorkView({
                   >
                     Öppna statusvyn
                   </Link>
-                </>
-              )}
-            </p>
-          )}
-          {item.ref_type === "kopanmalan" && item.ref_data && (
-            // a purchase notice (4a Task 5): it closes itself once the purchase is registered
-            <p className={styles.note}>
-              Anmält köp: {item.ref_data.number} från {item.ref_data.from_herd},{" "}
-              {fmtDate(item.ref_data.date)}.{" "}
-              {item.report_year && item.genebank_id ? (
-                <>
-                  Säljarens försäljning väntar. Godkänn den i årsrapportens
-                  statusvy.{" "}
-                  <Link
-                    href={`/stamboken/arsrapport/status/${item.report_year}?genebank_id=${item.genebank_id}`}
-                  >
-                    Öppna statusvyn
-                  </Link>
-                </>
-              ) : (
-                <>
-                  Registrera försäljningen på{" "}
-                  <Link
-                    href={`/stamboken/individ/${encodeURIComponent(item.ref_data.number)}`}
-                  >
-                    kaninens sida
-                  </Link>
-                  .
                 </>
               )}
             </p>

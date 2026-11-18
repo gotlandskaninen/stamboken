@@ -6,6 +6,7 @@ import {
   render,
   screen,
   waitFor,
+  within,
 } from "@testing-library/react";
 
 const actions = vi.hoisted(() => ({
@@ -533,14 +534,24 @@ describe("WorkView: a purchase notice (4a Task 5)", () => {
     },
   });
 
-  it("shows its fields and the rabbit's page, where the sale is registered", () => {
+  it("shows its fields in the main column, and opens the rabbit's sale filled in", () => {
     render(view(notice, boss, false, 2026));
+    const main = screen.getByRole("region", { name: "Fotot" });
+    const facts = within(main)
+      .getAllByRole("term")
+      .map((dt) => `${dt.textContent}: ${dt.nextElementSibling?.textContent}`);
+    expect(facts).toEqual([
+      "Kanin: G9002-2501",
+      "Säljare: G9002",
+      "Köpare: G9001",
+      "Datum: 14 maj 2025",
+    ]);
+    expect(within(main).queryByText("Ärendet har inga dokument.")).toBeNull();
     expect(
-      screen.getByText(/Anmält köp: G9002-2501 från G9002, 14 maj 2025/),
-    ).toBeTruthy();
-    expect(screen.getByRole("link", { name: "kaninens sida" })).toHaveAttribute(
+      within(main).getByRole("link", { name: "Registrera försäljningen" }),
+    ).toHaveAttribute(
       "href",
-      "/stamboken/individ/G9002-2501",
+      "/stamboken/individ/G9002-2501?salj=1&till=G9001&datum=2025-05-14",
     );
     expect(screen.queryByRole("link", { name: "Öppna statusvyn" })).toBeNull();
   });
@@ -555,6 +566,19 @@ describe("WorkView: a purchase notice (4a Task 5)", () => {
     };
     render(view({ ...notice, events: [event] }, boss, false, 2026));
     expect(screen.getByText(/Inkommet via länk G9001\/2025/)).toBeTruthy();
+    // and as its sender: a notice has no sender account
+    const sender = screen.getByText("Inskickat av").nextElementSibling;
+    expect(sender?.textContent).toBe("länk G9001/2025");
+    cleanup();
+    const byAccount = {
+      ...event,
+      user: { id: 9, name: "Ägare Ett" },
+      detail: {},
+    };
+    render(view({ ...notice, events: [byAccount] }, boss, false, 2026));
+    expect(
+      screen.getByText("Inskickat av").nextElementSibling?.textContent,
+    ).toBe("Ägare Ett");
   });
 
   it("shows a photo sent with it, and nothing to work on from it in the queue", () => {
@@ -566,7 +590,7 @@ describe("WorkView: a purchase notice (4a Task 5)", () => {
         2026,
       ),
     );
-    expect(screen.getByText(/Anmält köp: G9002-2501/)).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "Anmält köp" })).toBeTruthy();
     expect(screen.queryByText(/Ärendet gäller kopanmalan/)).toBeNull();
     expect(screen.queryByText("Försäljning")).toBeNull(); // the queue's sale panel
   });
