@@ -387,6 +387,14 @@ describe("the lookups", () => {
     expect(input(/^Far(?!-)/)).toHaveValue("G9001-2412");
     expect(input(/^Antal födda/)).toHaveValue(5);
     expect(input(/^Levande i kullen/)).toHaveValue(4);
+    // Annan kull: the chosen litter's values go, so another one can be typed
+    fireEvent.mouseDown(screen.getByRole("combobox", { name: "Kull" }));
+    fireEvent.click(screen.getByRole("option", { name: "Annan kull" }));
+    expect(input(/^Födelsedatum/)).toHaveValue("");
+    expect(input(/^Far(?!-)/)).toHaveValue("");
+    expect(input(/^Antal födda/)).toHaveValue(null);
+    expect(input(/^Levande i kullen/)).toHaveValue(null);
+    expect(input(/^Mor/)).toHaveValue("G9001-2411");
   });
 
   const withLitter = (litter: Record<string, unknown>) =>

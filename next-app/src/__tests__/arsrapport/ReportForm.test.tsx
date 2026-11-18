@@ -1456,7 +1456,7 @@ describe("ReportForm", () => {
     const rows = screen.getAllByRole("row");
     expect(rows).toHaveLength(3);
     expect(rows[1].textContent).toContain("12");
-    expect(rows[2].textContent).toContain("utan nummer");
+    expect(rows[2].textContent).toContain("Får nummer när ett intyg skrivs");
     expect(rows[2].textContent).toContain("(preliminärt)");
     expect(rows[1].textContent).not.toContain("preliminärt");
   });

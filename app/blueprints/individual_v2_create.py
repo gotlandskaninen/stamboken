@@ -72,6 +72,19 @@ def register_individual(form, may_register=None, created=None):
     return _register(form, current_user, lambda herd: _may_register(herd, may_register), created)
 
 
+# The report's member never reads NO_LITTER_NUMBER: an older litter without a number that has rabbits (option 1).
+NO_LITTER_NUMBER_REPORT = (
+    "Kullen har inget kullnummer än och redan registrerade kaniner. Välj Annan kull, eller kontakta genbanksansvarig."
+)
+
+
+def _no_litter_number(genebank):
+    """NO_LITTER_NUMBER's refusal: in Swedish at the birth date on the report's path (`genebank`), else as before."""
+    if genebank is not None:
+        return problem(400, "Bad Request", NO_LITTER_NUMBER_REPORT, field="birth_date")
+    return problem(400, "Bad Request", NO_LITTER_NUMBER)
+
+
 def register_individual_as(actor, herd, form, created=None):
     """
     The report's registration (4b, L1): with `actor`'s own right only (a user, or the link's CodeActor), and only
@@ -222,6 +235,8 @@ def _register(form, actor, may, created, genebank=None):
             if created is not None:
                 created(individual)
     except RosterActionError as e:
+        if e.detail == NO_LITTER_NUMBER:
+            return _no_litter_number(genebank)
         return problem(e.status, e.title, e.detail, **e.extra)
     except RosterAliveExceeds6w as e:
         return problem(400, "Bad Request", str(e), must_mark_dead=e.must_mark_dead)
@@ -297,7 +312,7 @@ def number_suggestion(args, may, genebank=None):
 
     if breeding.litter_number is None:  # a litter added without a certificate: the number it would get now
         if not numbered_by_certificate(breeding):
-            return problem(400, "Bad Request", NO_LITTER_NUMBER)
+            return _no_litter_number(genebank)
         if breeding.birth_date is None:
             return problem(400, "Bad Request", "Breeding record has no birth_date.")
         litter_number = new_litter_number(herd, breeding.birth_date, lock=False)

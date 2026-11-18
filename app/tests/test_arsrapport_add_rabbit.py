@@ -22,6 +22,7 @@ import utils.inbox_interpreter as interpreter
 import utils.mail as mail
 import utils.report_code as report_code
 import utils.settings as settings
+from blueprints.individual_v2_create import NO_LITTER_NUMBER_REPORT
 from herdbook import APP, limiter
 from utils.inbox_proposal import build_proposal
 
@@ -339,6 +340,35 @@ class TestRegister(AddRabbitTest):
         self.assertEqual(chosen.status_code, 201, chosen.get_data(as_text=True))
         command = db.IndividualCommand.get(db.IndividualCommand.command == "UseStambokenNumber")
         self.assertEqual((command.actor_id, command.access_code_id), (None, self.code.id))
+
+    def test_an_old_unnumbered_litter_is_refused_in_swedish(self):
+        """
+        Option 1: a litter without a number that already has rabbits keeps its refusal, but the report's member reads
+        it in Swedish at the birth date, from the registration and the suggestion alike. Nothing is written. The other
+        routes keep NO_LITTER_NUMBER (test_register_litter).
+        """
+        self.open_link()
+        litter = db.Breeding.create(
+            breeding_herd_id=self.h,
+            mother=self.doe,
+            father=self.buck,
+            birth_date=date(2025, 5, 10),
+            litter_size=5,
+            litter_size6w=5,
+        )
+        db.Individual.create(origin_herd=self.h, breeding=litter, number="G9001-2599")
+        item_id = self.photo_item()
+        response = self.kit(item_id)
+        problem = response.get_json()
+        self.assertEqual(
+            (response.status_code, problem["detail"], problem["field"]),
+            (400, NO_LITTER_NUMBER_REPORT, "birth_date"),
+        )
+        self.assertNotIn("litter_number", problem["detail"])
+        self.assertEqual((self.kits(), db.Breeding.get_by_id(litter.id).litter_number), (1, None))
+        self.assertIsNone(self.reload(item_id).ref_id)
+        suggestion = self.client.get(f"/api/v2/arsrapport{REPORT}/nummerforslag?breeding_id={litter.id}")
+        self.assertEqual((suggestion.status_code, suggestion.get_json()["detail"]), (400, NO_LITTER_NUMBER_REPORT))
 
     def test_number_routes_for_a_code_session(self):
         """FC1: the number check and the suggestion answer a link for its own herd, and refuse another herd's litter."""

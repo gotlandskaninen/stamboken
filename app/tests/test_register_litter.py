@@ -546,9 +546,11 @@ class TestLaterCertificate(LitterTest):
         self.assertEqual(self.state(), (None, 5, True, 0))  # nothing written: not the number, not the count
 
     def test_a_higher_number_goes_to_manager(self):
+        """Birth order (M1): kull 6 is born before our May litter, whose paper says the lower kull 5."""
         self.numbered(6)
         response = self.register()
         self.assertEqual((response.status_code, response.get_json()["title"]), (409, "number_conflict"))
+        self.assertEqual([c["kind"] for c in response.get_json()["conflicts"]], ["litter_number_taken"])
         self.assertEqual(self.state(), (None, 5, True, 0))
 
     def test_number_check_handles_an_unnumbered_litter(self):

@@ -277,7 +277,17 @@ export function RegisterFromCertificate({
   const pickLitter = (id: string) => {
     const request = ++asked.current;
     const l = litters.find((x) => String(x.id) === id);
-    if (!l) return;
+    if (!l) {
+      // "Annan kull": the chosen litter's values go, so another litter can be typed
+      for (const key of [
+        "birth_date",
+        "father",
+        "litter_size",
+        "litter_size6w",
+      ] as const)
+        onChange(key, "");
+      return;
+    }
     onChange("birth_date", l.birth_date);
     onChange("father", l.father ?? "");
     onChange("litter_size", l.litter_size == null ? "" : String(l.litter_size));

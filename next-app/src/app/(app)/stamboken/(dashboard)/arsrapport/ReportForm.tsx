@@ -1830,7 +1830,7 @@ export function ReportForm({
                               <>
                                 –{" "}
                                 <span className={styles.litterNote}>
-                                  utan nummer
+                                  Får nummer när ett intyg skrivs
                                 </span>
                               </>
                             )}
