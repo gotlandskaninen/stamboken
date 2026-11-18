@@ -412,12 +412,12 @@ export function AddRabbitDialog({
           </label>
         </div>
       )}
-      <p className={styles.meta}>Fotot laddas upp medan du fyller i resten.</p>
       {photoAsk && (
         <p id="kanin-photo-ask" className={styles.errorText} role="alert">
           {photoAsk}
         </p>
       )}
+      <p className={styles.meta}>Fotot laddas upp medan du fyller i resten.</p>
       {restored && top.photo.status === "tom" && (
         <p className={styles.meta} role="status">
           Utkastet är tillbaka. Ladda upp fotot av intyget igen.
@@ -607,7 +607,7 @@ export function AddRabbitPrompt({
 }) {
   return (
     <>
-      <p className={styles.line}>
+      <p className={styles.line} style={{ margin: 0 }}>
         {lead && <span>{ADD_FROM_CERTIFICATE}</span>}
         <button
           type="button"

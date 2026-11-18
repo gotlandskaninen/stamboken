@@ -1726,7 +1726,7 @@ export function ReportForm({
               <div className={styles.detail}>
                 {addRabbit}
                 {canNotify && (
-                  <p className={styles.line}>
+                  <p className={styles.line} style={{ margin: 0 }}>
                     <span>Saknas ett köp?</span>
                     <button
                       type="button"
