@@ -23,8 +23,9 @@ logger = logging.getLogger(__name__)
 
 CONSENT_KEYS = ("name", "phone", "email", "address")
 # the blankett's wording: one consent, one purpose (fråga 33). Bumped 2026-11-16: the question now says Koharen is the
-# paper magazine for members only, so the answer covers a narrower scope than "2026-11" did.
-CONSENT_TEXT_VERSION = "2026-11-16"
+# paper magazine for members only, so the answer covers a narrower scope than "2026-11" did. Bumped 2026-11-18: the
+# question says "besättning" where it said "genbank" (same scope), on the form v5 and in the report alike.
+CONSENT_TEXT_VERSION = "2026-11-18"
 PROFILE_CONSENT_TEXT_VERSION = "profil-2025"  # the profile's text ("Medlemsmatrikeln trycks i Koharen") for now
 
 # Only Phase 9-provisioned Workspace addresses may auto-link. The
