@@ -455,6 +455,20 @@ export function AddRabbitDialog({
                 }}
               >
                 Släng
+              </button>{" "}
+              <button
+                type="button"
+                className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+                onClick={() => {
+                  // back to the form as it was; after Back, the dialog's history entry is put back
+                  if (!pushed.current) {
+                    window.history.pushState({ kanin: true }, "");
+                    pushed.current = true;
+                  }
+                  setAsk(false);
+                }}
+              >
+                Fortsätt fylla i
               </button>
             </div>
           </div>

@@ -269,6 +269,33 @@ describe("Back", () => {
     expect(input(/^Namn/)).toHaveValue("Kulla");
   });
 
+  it("Fortsätt fylla i returns to the form as it was, from Avbryt and from Back", async () => {
+    upload.mockResolvedValueOnce(uploaded(7));
+    const onClose = await opened();
+    choosePhoto();
+    await screen.findByText("Fotot är uppladdat.");
+    type(/^Namn/, "Kulla");
+    const push = vi.spyOn(window.history, "pushState");
+    // from Avbryt: the history entry is still the dialog's
+    fireEvent.click(screen.getByRole("button", { name: "Avbryt" }));
+    fireEvent.click(screen.getByRole("button", { name: "Fortsätt fylla i" }));
+    expect(input(/^Namn/)).toHaveValue("Kulla");
+    expect(screen.getByText("Fotot är uppladdat.")).toBeInTheDocument();
+    expect(push).not.toHaveBeenCalled();
+    // from Back: the browser took the entry, so it is put back, and Back asks again
+    back();
+    fireEvent.click(screen.getByRole("button", { name: "Fortsätt fylla i" }));
+    expect(push).toHaveBeenCalledTimes(1);
+    expect(input(/^Namn/)).toHaveValue("Kulla");
+    back();
+    expect(
+      screen.getByText("Spara som utkast eller släng?"),
+    ).toBeInTheDocument();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(localStorage.getItem(KEY)).toBeNull(); // nothing kept by continuing
+    push.mockRestore();
+  });
+
   it("Släng forgets what was typed", async () => {
     await opened();
     type(/^Namn/, "Kulla");
