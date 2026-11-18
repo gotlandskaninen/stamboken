@@ -856,3 +856,89 @@ table.statusTable th {
     margin-top: 0;
   }
 }
+
+/* "Kullar under Y": a card per litter on a phone, a table from 640 px. */
+.litterSummary {
+  margin: 0 0 12px;
+  font-weight: 600;
+}
+.litterTable,
+.litterTable thead,
+.litterTable tbody,
+.litterTable tr,
+.litterTable td {
+  display: block;
+}
+.litterTable thead {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+}
+.litterTable tr {
+  padding: 12px;
+  margin-bottom: 8px;
+  background: var(--sb-card);
+  border: 1px solid var(--sb-ink-3);
+  border-radius: 6px;
+}
+.litterTable td {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+  align-items: center;
+  padding: 4px 0;
+}
+.litterTable td::before {
+  content: attr(data-label);
+  flex: 0 0 9em;
+  color: var(--sb-ink-2);
+}
+.addLitter {
+  margin-top: 24px;
+}
+@media (min-width: 640px) {
+  .litterTable {
+    display: table;
+    width: 100%;
+    border-collapse: collapse;
+  }
+  .litterTable thead {
+    display: table-header-group;
+    position: static;
+    width: auto;
+    height: auto;
+    overflow: visible;
+    clip-path: none;
+  }
+  .litterTable tbody {
+    display: table-row-group;
+  }
+  .litterTable tr {
+    display: table-row;
+    padding: 0;
+    margin: 0;
+    background: none;
+    border: 0;
+    border-radius: 0;
+  }
+  .litterTable td {
+    display: table-cell;
+    padding: 8px 6px;
+    border-top: 1px solid var(--sb-ink-3);
+    vertical-align: middle;
+  }
+  .litterTable td::before {
+    content: none;
+  }
+  .litterTable th {
+    text-align: left;
+    padding: 6px;
+    font-size: var(--sb-fs-xs);
+    color: var(--sb-ink-2);
+  }
+}
+.litterNote {
+  color: var(--sb-ink-2);
+}

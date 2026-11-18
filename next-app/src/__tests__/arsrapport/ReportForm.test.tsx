@@ -1397,7 +1397,7 @@ describe("ReportForm", () => {
         actions={withLitters}
       />,
     );
-    expect(screen.getByText(/\(preliminärt\)/)).toBeTruthy();
+    expect(screen.getAllByText(/\(preliminärt\)/).length).toBeGreaterThan(0);
     expect(screen.getByRole("button", { name: "Lägg till kull" })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "Bekräfta antalet" }));
     fireEvent.change(screen.getByLabelText("Levande vid 6 veckor"), {
@@ -1417,8 +1417,48 @@ describe("ReportForm", () => {
       ),
     );
     await waitFor(() =>
-      expect(screen.queryByText(/\(preliminärt\)/)).toBeNull(),
+      expect(screen.queryAllByText(/\(preliminärt\)/)).toHaveLength(0),
     );
+  });
+
+  it("lists litters as a table with a summary line", () => {
+    const l = (id: number, n: number | null, size: number, pre: boolean) => ({
+      id,
+      litter_number: n,
+      birth_date: "2026-05-10",
+      mother: "G9001-1",
+      father: null,
+      litter_size: size,
+      litter_size6w: size - 1,
+      preliminary: pre,
+    });
+    render(
+      <ReportForm
+        env="demo"
+        view={view({ litters: [l(1, 12, 5, false), l(2, null, 3, true)] })}
+        actions={actions()}
+      />,
+    );
+    expect(
+      screen.getByText(
+        "2 kullar, 8 födda, 6 levande vid 6 veckor (preliminärt)",
+      ),
+    ).toBeTruthy();
+    for (const h of [
+      "Kull",
+      "Född",
+      "Mor",
+      "Far",
+      "Födda",
+      "Levande vid 6 veckor",
+    ])
+      expect(screen.getByRole("columnheader", { name: h })).toBeTruthy();
+    const rows = screen.getAllByRole("row");
+    expect(rows).toHaveLength(3);
+    expect(rows[1].textContent).toContain("12");
+    expect(rows[2].textContent).toContain("utan nummer");
+    expect(rows[2].textContent).toContain("(preliminärt)");
+    expect(rows[1].textContent).not.toContain("preliminärt");
   });
 
   it("offers no litter button without the litter actions", () => {

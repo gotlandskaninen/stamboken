@@ -1792,40 +1792,71 @@ export function ReportForm({
                   stödet.
                 </p>
               ) : (
-                <ul className={styles.cardList}>
-                  {litters.map((l) => (
-                    <li key={l.id}>
-                      Född {fmtDate(l.birth_date)}
-                      {l.litter_number != null
-                        ? `, kull ${l.litter_number}`
-                        : ""}
-                      {l.mother ? `, mor ${l.mother}` : ""}
-                      {l.father ? `, far ${l.father}` : ""}
-                      {l.litter_size != null ? `, ${l.litter_size} födda` : ""}
-                      {l.litter_size6w != null
-                        ? `, ${l.litter_size6w} efter sex veckor`
-                        : ""}
-                      {l.preliminary ? " (preliminärt)" : ""}
-                      {l.preliminary && canLitter && (
-                        <>
-                          {" "}
-                          <button
-                            type="button"
-                            className="sb-btn sb-btn-secondary sb-btn-sm"
-                            onClick={() => setConfirming(l)}
-                          >
-                            Bekräfta antalet
-                          </button>
-                        </>
-                      )}
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <p className={styles.litterSummary}>
+                    {litterSummary(litters)}
+                  </p>
+                  <table className={styles.litterTable}>
+                    <thead>
+                      <tr>
+                        <th scope="col">Kull</th>
+                        <th scope="col">Född</th>
+                        <th scope="col">Mor</th>
+                        <th scope="col">Far</th>
+                        <th scope="col">Födda</th>
+                        <th scope="col">Levande vid 6 veckor</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {litters.map((l) => (
+                        <tr key={l.id}>
+                          <td data-label="Kull">
+                            {l.litter_number != null ? (
+                              l.litter_number
+                            ) : (
+                              <>
+                                –{" "}
+                                <span className={styles.litterNote}>
+                                  utan nummer
+                                </span>
+                              </>
+                            )}
+                          </td>
+                          <td data-label="Född">{fmtDate(l.birth_date)}</td>
+                          <td data-label="Mor">{l.mother ?? "–"}</td>
+                          <td data-label="Far">{l.father ?? "–"}</td>
+                          <td data-label="Födda">{l.litter_size ?? "–"}</td>
+                          <td data-label="Levande vid 6 veckor">
+                            {l.litter_size6w ?? "–"}
+                            {l.preliminary && (
+                              <span className={styles.litterNote}>
+                                {" "}
+                                (preliminärt)
+                              </span>
+                            )}
+                            {l.preliminary && canLitter && (
+                              <>
+                                {" "}
+                                <button
+                                  type="button"
+                                  className="sb-btn sb-btn-secondary sb-btn-sm"
+                                  onClick={() => setConfirming(l)}
+                                >
+                                  Bekräfta antalet
+                                </button>
+                              </>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
               )}
               {canLitter && (
                 <button
                   type="button"
-                  className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+                  className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary} ${styles.addLitter}`}
                   onClick={() => setLitterOpen(true)}
                 >
                   Lägg till kull
@@ -2196,4 +2227,14 @@ export function ReportForm({
       />
     </div>
   );
+}
+
+// "3 kullar, 12 födda, 10 levande vid 6 veckor"; preliminary while any 6-week count is a guess.
+function litterSummary(list: Litter[]): string {
+  const sum = (f: (l: Litter) => number | null) =>
+    list.reduce((n, l) => n + (f(l) ?? 0), 0);
+  const born = sum((l) => l.litter_size);
+  const alive = sum((l) => l.litter_size6w);
+  const prelim = list.some((l) => l.preliminary) ? " (preliminärt)" : "";
+  return `${list.length} ${list.length === 1 ? "kull" : "kullar"}, ${born} ${born === 1 ? "född" : "födda"}, ${alive} levande vid 6 veckor${prelim}`;
 }
