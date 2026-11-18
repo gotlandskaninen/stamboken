@@ -303,6 +303,8 @@ def decisions(report) -> list[dict]:
             if proposal.buyer
             else None,
             "sale_date": proposal.sale_date.isoformat(),
+            # without its day in the report (5.3): the date is the month's last day, or the day it was sent
+            "day_known": not arsrapport.dayless(proposal.submission.data, proposal.individual_id, "sald"),
             "buyer_notified_at": proposal.buyer_notified_at.isoformat() if proposal.buyer_notified_at else None,
             "kopanmalan": first(purchase_notice.matching(proposal, seller, notices)),
             # M1: the buyer's notice of the same purchase with a date too far off or across 31/12, shown with a warning

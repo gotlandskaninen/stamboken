@@ -10,6 +10,7 @@ import {
   PENDING_SALE_TEXT,
   ageText,
   fmtDate,
+  fmtDayOrMonth,
   fmtDay,
   kgText,
   parseWeight,
@@ -135,7 +136,7 @@ function RabbitRowImpl({
       <p className={styles.meta}>{meta}</p>
       {r.death_date && (
         <p className={styles.meta}>
-          Dödsfall registrerat {fmtDate(r.death_date)}
+          Dödsfall registrerat {fmtDayOrMonth(r.death_date, r.death_day_known)}
         </p>
       )}
 

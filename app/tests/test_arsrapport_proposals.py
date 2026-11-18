@@ -106,6 +106,36 @@ class ProposalsTest(ArsrapportTest):
         self.assertEqual(caught.exception.status, 422)
         return [(r["individual_id"], r["code"]) for r in caught.exception.extra["refusals"]]
 
+    def test_a_sale_or_death_without_its_day_says_so(self):  # item 15
+        """
+        A sale or a death given without its day (maj 2025) has a made-up day in the register (partial_date): the
+        report's Sålda under Y and the row's later death say day_known false, so only the month is shown. One with
+        its day says true.
+        """
+        self.send(
+            self.sald(self.a, "G9002", 2025, 5),
+            self.sald(self.b, "G9002", 2025, 6, 14),
+            self.dod(self.c, 2026, 1),
+            who="owner",
+        )
+        view = arsrapport.report_view(self.h, self.round_, *self.actor("owner"))
+        self.assertEqual(
+            {row["number"]: (row["date"], row["day_known"]) for row in view["sales"]},
+            {self.a.number: ("2025-05-31", False), self.b.number: ("2025-06-14", True)},
+        )
+        (dead,) = [row for row in view["rabbits"] if row["id"] == self.c.id]
+        self.assertEqual((dead["death_date"], dead["death_day_known"]), ("2026-01-10", False))
+
+    def test_a_proposed_sale_without_its_day_says_so_before_and_after_approval(self):  # item 15
+        self.send(
+            self.sald(self.a, "G9002", 2025, 5), self.kvar(self.b, vikt=2.8), self.kvar(self.c, vikt=2.8), who="code"
+        )
+        (row,) = sp.decisions(self.report())
+        self.assertEqual((row["sale_date"], row["day_known"]), ("2025-05-31", False))
+        sp.approve(proposals(self.a)[0], self.decider, now=arsrapport.now())
+        view = arsrapport.report_view(self.h, self.round_, *self.actor("code"))
+        self.assertEqual([(row["date"], row["day_known"]) for row in view["sales"]], [("2025-05-31", False)])
+
     def test_caretaker_sale_becomes_proposal(self):
         receipt = self.send(
             self.sald(self.a, "G9002", 2025, 10, 3),

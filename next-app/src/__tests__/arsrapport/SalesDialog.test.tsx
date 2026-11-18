@@ -34,6 +34,7 @@ const inGenebank: SaleProposalRow = {
   to_herd: "G9002",
   buyer: null,
   sale_date: "2025-10-03",
+  day_known: true,
   buyer_notified_at: null,
   kopanmalan: null,
   kopanmalan_avviker: null,
@@ -46,7 +47,8 @@ const outside: SaleProposalRow = {
   name: null,
   to_herd: null,
   buyer: { name: "Zelda Uniquebuyer", town: "Visby" },
-  sale_date: "2025-11-20",
+  sale_date: "2025-11-30",
+  day_known: false, // "november 2025" in the report: the 30th is made up
   buyer_notified_at: "2026-01-11T10:00:00+00:00",
 };
 
@@ -78,6 +80,9 @@ describe("SalesDialog", () => {
     expect(second.textContent).toContain(
       "utanför genbanken, Zelda Uniquebuyer, Visby",
     );
+    // given without its day: the month only, never a made-up "30 november"
+    expect(second.textContent).toContain(" · november 2025");
+    expect(second.textContent).not.toContain("30 november");
     expect(within(second).getByText("Köparen har anmält köpet")).toBeTruthy();
     expect(within(first).queryByText("Köparen har anmält köpet")).toBeNull();
   });

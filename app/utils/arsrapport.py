@@ -429,6 +429,16 @@ def report_ops(report):
     return {str(op) for submission in _submissions(report) for op in submission.operation_ids}
 
 
+def dayless(data, individual_id, key):
+    """
+    A submission's `data` gives the rabbit's death or sale (`key` dod or sald) without its day (5.3): the register's
+    date of it is made up (partial_date), so only its month is shown. False without the data.
+    """
+    entry = ((data or {}).get("rabbits") or {}).get(str(individual_id))
+    when = entry.get(key) if isinstance(entry, dict) else None
+    return isinstance(when, dict) and when.get("dag") is None
+
+
 def _listed_5_2(herd, last):
     """
     Spec 5.2's list for `herd` on `last` (31 December), with innehav's filters: H holds the rabbit then, it has a
@@ -461,11 +471,12 @@ def report_list(herd, year, report=None):
     latest active TRANSFER into H dated in the year: its date and the seller herd (Task 5).
     """
     last = date(year, 12, 31)
-    ids, ops = _listed_5_2(herd, last), set()
+    ids, written = _listed_5_2(herd, last), {}
     if report is not None:
         submissions = _submissions(report)
-        ops = {str(op) for submission in submissions for op in submission.operation_ids}
+        written = {str(op): submission.data for submission in submissions for op in submission.operation_ids}
         ids |= {int(key) for key in (submissions[-1].data.get("rabbits") or {})} if submissions else set()
+    ops = set(written)
     rabbits = (
         Individual.select(
             Individual.id,
@@ -497,6 +508,10 @@ def report_list(herd, year, report=None):
             "adult": birth is None or birth < date(year, 1, 1),
             "last_reported": None,
             "death_date": _iso(death) if death is not None and death > last else None,
+            # a death the report wrote without its day: its month only (5.3)
+            "death_day_known": death is None
+            or death <= last
+            or not dayless(written.get(str(latest_death_op(rabbit["id"]))), rabbit["id"], "dod"),
             "state": "att_valja",
             "later": None,
             "kopt": None,
@@ -900,6 +915,8 @@ def report_view(herd, round_, access, user):
     # shortcut: a sale is found by from_herd, which older rows may lack; read the holder before it if they matter.
     sales = (
         HerdTracking.select(
+            HerdTracking.id,
+            HerdTracking.operation_id,
             HerdTracking.individual.alias("individual_id"),
             Individual.number,
             ToHerd.herd.alias("to_herd"),
@@ -946,7 +963,7 @@ def report_view(herd, round_, access, user):
         "other_active_herd": other_active,
         "rabbits": report_list(herd, year, report),
         "litters": report_litters(herd, year),
-        "sales": [{**row, "date": _iso(row["date"])} for row in sales.dicts()],
+        "sales": _sales_json(report, sales.dicts()),
         "forslag": _forslag_json(report),
         "kopanmalningar": purchase_notice.report_notices(herd, round_, access),  # closes the registered ones first
         "arenden": purchase_notice.report_cases(herd, year),  # after the closing above (S8)
@@ -964,6 +981,34 @@ def report_view(herd, round_, access, user):
         if item
         else None,
     }
+
+
+def _sales_json(report, rows):
+    """
+    ReportView.sales: the sale `rows` with `day_known`, false for a sale the report gave without its day (5.3), whose
+    date is made up: one a submission wrote (by its operation id) or an approved proposal's (by its row).
+    """
+    written, approved = {}, {}
+    if report is not None:
+        written = {str(op): submission.data for submission in _submissions(report) for op in submission.operation_ids}
+        proposals = (
+            SaleProposal.select(SaleProposal.herd_tracking_id, YearlyReportSubmission.data)
+            .join(YearlyReportSubmission, on=(SaleProposal.submission == YearlyReportSubmission.id))
+            .where(SaleProposal.report == report.id, SaleProposal.herd_tracking_id.is_null(False))
+        )
+        approved = dict(proposals.tuples())
+    return [
+        {
+            "individual_id": row["individual_id"],
+            "number": row["number"],
+            "to_herd": row["to_herd"],
+            "date": _iso(row["date"]),
+            "day_known": not dayless(
+                written.get(str(row["operation_id"])) or approved.get(row["id"]), row["individual_id"], "sald"
+            ),
+        }
+        for row in rows
+    ]
 
 
 def my_reports(user):

@@ -17,6 +17,7 @@ export const rabbit = (
   adult: true,
   last_reported: "2025-12-31",
   death_date: null,
+  death_day_known: true,
   state: "att_valja",
   later: null,
   kopt: null,

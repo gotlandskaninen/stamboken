@@ -22,6 +22,7 @@ export interface RabbitView {
   adult: boolean;
   last_reported: string | null;
   death_date: string | null;
+  death_day_known: boolean; // false: the report gave it without its day, so its month is shown
   state: "att_valja" | "redan_rapporterad" | "via_flytt";
   later: { kind: string; date: string } | null;
   // The latest transfer into the herd dated in the year: "Köpt 14 maj" (4a Task 5).
@@ -209,6 +210,7 @@ export interface ReportView {
     number: string;
     to_herd: string;
     date: string;
+    day_known: boolean; // false: the report gave it without its day (5.3), so its month is shown
   }[];
   // The report's sale proposals not taken back (5.9), without the buyer.
   forslag: {
@@ -865,6 +867,15 @@ export const fmtDate = (iso: string): string =>
     year: "numeric",
     timeZone: iso.length > 10 ? STOCKHOLM : "UTC",
   }).format(new Date(iso));
+// A sale or death given without its day has a made-up one in the register (5.3): its month only, "maj 2025".
+export const fmtDayOrMonth = (iso: string, dayKnown: boolean): string =>
+  dayKnown
+    ? fmtDate(iso)
+    : new Intl.DateTimeFormat("sv-SE", {
+        month: "long",
+        year: "numeric",
+        timeZone: "UTC",
+      }).format(new Date(iso));
 // Today's calendar date in Stockholm, "YYYY-MM-DD" (sv-SE formats that way).
 export const todayStockholm = (): string =>
   new Intl.DateTimeFormat("sv-SE", { timeZone: STOCKHOLM }).format(new Date());
@@ -1126,6 +1137,7 @@ export interface SaleProposalRow {
   to_herd: string | null;
   buyer: { name: string; town: string | null } | null;
   sale_date: string;
+  day_known: boolean; // false: the report gave it without its day (5.3), so its month is shown
   buyer_notified_at: string | null; // the buyer's own notice (K7)
   kopanmalan: PurchaseNotice | null; // the buyer herd's notice that approving settles (fråga 19)
   kopanmalan_avviker: PurchaseNotice | null; // its notice dated too far off or across 31/12 (M1)

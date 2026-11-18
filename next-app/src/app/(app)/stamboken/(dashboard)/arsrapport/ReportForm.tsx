@@ -17,6 +17,7 @@ import {
   emptyPaperFields,
   emptyState,
   fmtDate,
+  fmtDayOrMonth,
   fmtTime,
   fromBody,
   isDone,
@@ -1911,7 +1912,7 @@ export function ReportForm({
                       {s.to_herd === "GX1" || s.to_herd === "MX1"
                         ? "utanför genbanken"
                         : s.to_herd}
-                      , {fmtDate(s.date)}
+                      , {fmtDayOrMonth(s.date, s.day_known)}
                     </li>
                   ))}
                 </ul>

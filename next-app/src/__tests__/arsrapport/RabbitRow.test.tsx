@@ -40,6 +40,21 @@ describe("RabbitRow", () => {
     expect(radios.some((r) => r.checked)).toBe(false);
   });
 
+  it("shows a later death given without its day as its month only", () => {
+    const later = { death_date: "2027-01-10", death_day_known: false };
+    render(<RabbitRow {...props({ r: rabbit(1, later) })} />);
+    expect(screen.getByText("Dödsfall registrerat januari 2027")).toBeTruthy();
+    cleanup();
+    render(
+      <RabbitRow
+        {...props({ r: rabbit(1, { ...later, death_day_known: true }) })}
+      />,
+    );
+    expect(
+      screen.getByText("Dödsfall registrerat 10 januari 2027"),
+    ).toBeTruthy();
+  });
+
   it("opens the month for Död and keeps the year preselected", () => {
     const onChange = vi.fn();
     const { rerender } = render(<RabbitRow {...props({ onChange })} />);

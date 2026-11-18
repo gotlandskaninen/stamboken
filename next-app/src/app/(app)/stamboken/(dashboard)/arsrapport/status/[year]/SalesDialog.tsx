@@ -19,7 +19,7 @@ import {
 import type { Mode } from "@/lib/mode";
 import type { ActionResult } from "../../../inkorg/actions";
 import { approveSale, rejectSale, saleProposals } from "../../actions";
-import { fmtDate, type SaleProposalRow } from "../../lib";
+import { fmtDate, fmtDayOrMonth, type SaleProposalRow } from "../../lib";
 import inkorg from "../../../inkorg/inkorg.module.css";
 
 type Then = "kvar" | "valj_igen";
@@ -118,7 +118,7 @@ export function SalesDialog({
                 ? `till ${p.to_herd}`
                 : `utanför genbanken, ${p.buyer ? [p.buyer.name, p.buyer.town].filter(Boolean).join(", ") : "köparens uppgifter är raderade"}`}
               {" · "}
-              {fmtDate(p.sale_date)}
+              {fmtDayOrMonth(p.sale_date, p.day_known)}
             </p>
             {(p.buyer_notified_at || p.kopanmalan) && (
               <p className={inkorg.muted} style={{ margin: "0 0 4px" }}>

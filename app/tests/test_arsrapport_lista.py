@@ -283,8 +283,20 @@ class ListaTest(ArsrapportTest):
         self.assertEqual(
             view["sales"],
             [
-                {"individual_id": kits[0].id, "number": kits[0].number, "to_herd": "G2", "date": "2025-08-01"},
-                {"individual_id": kits[1].id, "number": kits[1].number, "to_herd": "GX1", "date": "2025-09-01"},
+                {
+                    "individual_id": kits[0].id,
+                    "number": kits[0].number,
+                    "to_herd": "G2",
+                    "date": "2025-08-01",
+                    "day_known": True,
+                },
+                {
+                    "individual_id": kits[1].id,
+                    "number": kits[1].number,
+                    "to_herd": "GX1",
+                    "date": "2025-09-01",
+                    "day_known": True,
+                },
             ],
         )
         self.assertEqual(view["herds"], ["G2"])  # active, in the genebank, not G1 itself and not GX1

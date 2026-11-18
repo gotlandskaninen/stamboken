@@ -194,6 +194,25 @@ describe("ReportForm", () => {
     expect(refresh).toHaveBeenCalled();
   });
 
+  it("lists a sale given without its day under Sålda by its month (5.3)", () => {
+    const sale = { individual_id: 2, number: "G9001-2", to_herd: "G9002" };
+    render(
+      <ReportForm
+        env="demo"
+        view={view({
+          sales: [
+            { ...sale, date: "2026-05-31", day_known: false },
+            { ...sale, individual_id: 3, date: "2026-06-14", day_known: true },
+          ],
+        })}
+        actions={actions()}
+      />,
+    );
+    const items = screen.getAllByRole("listitem").map((li) => li.textContent);
+    expect(items).toContain("G9001-2 till G9002, maj 2026");
+    expect(items).toContain("G9001-2 till G9002, 14 juni 2026");
+  });
+
   it("lists the herd's cases with the queue in plain words (S8)", () => {
     const arenden: ReportCase[] = [
       {

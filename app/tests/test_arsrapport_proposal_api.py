@@ -139,6 +139,7 @@ class ProposalApiTest(ArsrapportTest):
                 "to_herd": None,
                 "buyer": BUYER,
                 "sale_date": "2025-10-03",
+                "day_known": True,
                 "buyer_notified_at": "2026-01-11T00:00:00+00:00",
                 "kopanmalan": None,  # a buyer outside the genebank sends no purchase notice
                 "kopanmalan_avviker": None,
