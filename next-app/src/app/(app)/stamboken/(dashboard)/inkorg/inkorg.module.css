@@ -109,6 +109,20 @@
   border-bottom: 1px solid var(--sb-line);
   vertical-align: top;
 }
+/* The report photo's check (ReportPhotoCheck): the field names at reading size, a differing row marked */
+.photoCheck th {
+  font-family: var(--sb-body);
+  font-size: 14px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--sb-ink-2);
+}
+.photoCheck tr[data-differs] {
+  background: var(--sb-warning-soft);
+}
+.photoCheck tr[data-differs] > th {
+  border-left: 4px solid var(--sb-warning);
+}
 .caseLink {
   font-weight: 600;
   color: var(--sb-ink);

@@ -17,6 +17,14 @@ const ROWS: [keyof CertForm, string][] = [
   ["litter_size6w", "Levande i kullen efter 6 veckor"],
 ];
 const SEX: Record<string, string> = { female: "Hona", male: "Hane" };
+const NUMBERS: (keyof CertForm)[] = ["paper_number", "mother", "father"]; // never broken at the hyphen
+// A value as the table shows it, an individual number in one piece.
+const cell = (key: keyof CertForm, value: unknown) =>
+  NUMBERS.includes(key) ? (
+    <span className={styles.number}>{shown(key, value)}</span>
+  ) : (
+    shown(key, value)
+  );
 const shown = (key: keyof CertForm, value: unknown) =>
   value == null || value === ""
     ? "–"
@@ -73,7 +81,7 @@ export function ReportPhotoCheck({
         </p>
       )}
       <table
-        className={styles.table}
+        className={`${styles.table} ${styles.photoCheck}`}
         aria-label="Tolkningen och registreringen"
       >
         <thead>
@@ -98,14 +106,14 @@ export function ReportPhotoCheck({
               <tr key={key} data-differs={differs || undefined}>
                 <th scope="row">{label}</th>
                 <td>
-                  {shown(key, fromPhoto)}
+                  {cell(key, fromPhoto)}
                   {(read?.source === "osäker" ||
                     read?.source === "härlett") && (
                     <span className={styles.muted}> ({read.source})</span>
                   )}
                 </td>
                 <td>
-                  {shown(key, registered[key])}
+                  {cell(key, registered[key])}
                   {differs && <strong> Avviker</strong>}
                 </td>
               </tr>

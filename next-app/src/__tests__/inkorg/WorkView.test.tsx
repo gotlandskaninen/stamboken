@@ -371,6 +371,16 @@ describe("WorkView on a report photo", () => {
       expect(row(label)).not.toHaveAttribute("data-differs");
     }
     expect(row("Färg")).toHaveTextContent("––");
+    // the field names at reading size, a differing row marked, numbers kept whole (14)
+    expect(
+      screen.getByRole("table", { name: "Tolkningen och registreringen" })
+        .className,
+    ).toContain("photoCheck");
+    for (const cellText of within(row("Mor")).getAllByText("G9001-24001"))
+      expect(cellText.className).toContain("number");
+    expect(within(row("Namn")).getByText("Kulla").className).not.toContain(
+      "number",
+    );
     const checks = screen.getByRole("list", { name: "Kontroller" });
     expect(checks).toHaveTextContent(
       "✗ Namnet på intyget är inte registrets för G9001-2511 (Kulla).",
