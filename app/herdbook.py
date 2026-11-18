@@ -3071,7 +3071,12 @@ def get_yearly_reports(round_id, genebank_id):
 
         # Get the report round to include the year
         report_round = da.YearlyReportRound.get_by_id(round_id)
-        reports = da.get_yearly_reports(round_id, genebank_id)
+        reports = da.get_yearly_reports(
+            round_id,
+            genebank_id,
+            current_user.is_admin or current_user.is_matrikel_admin,
+            frozenset() if current_user.is_admin else current_user.effective_herd_ids(),
+        )
 
         return jsonify(
             {
@@ -3099,7 +3104,12 @@ def export_yearly_reports(round_id, genebank_id):
 
         # Get the report round to include the year in the filename
         report_round = da.YearlyReportRound.get_by_id(round_id)
-        csv_data = da.export_yearly_reports_csv(round_id, genebank_id)
+        csv_data = da.export_yearly_reports_csv(
+            round_id,
+            genebank_id,
+            current_user.is_admin or current_user.is_matrikel_admin,
+            frozenset() if current_user.is_admin else current_user.effective_herd_ids(),
+        )
 
         return Response(
             csv_data,

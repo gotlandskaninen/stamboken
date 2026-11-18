@@ -65,6 +65,10 @@ en roll, och med poster utan genbank. Att ta, ta över eller arbeta vidare på e
 ger 403 (admin undantagen). `GET /api/v2/inkorg/notiser/antal` svarar
 `works_in_queue` så att gränssnittet vet om kön ska visas.
 
+Uppladdningen, Mina inskick och `GET /api/v2/inkorg/notiser/antal` kräver inte `v2_prod_access`
+(README, Access rules): sidorna Skicka in intyg och Mina inskick går alltid till produktionen, också
+i testmiljön. Allt annat i kön, notislistan och originalen kräver den.
+
 Rollen genbankshjälpare delas ut som andra roller: `POST /api/v2/admin/role` med
 `{"operation": "add", "user_id": 5, "role": {"level": "helper", "genebank": 1}}` (admin), eller
 den äldre `POST /api/manage/role` (genbanksansvarig i sin egen genbank). Användarlistan
@@ -751,7 +755,7 @@ En köpare utanför föreningen:
 | `individual` | kaninens nummer |
 | `herd` | köparens besättningsnummer. En köpare utanför föreningen: genbankens besättning för kaniner sålda utanför genbanken, `GX1` (gotlandskanin) eller `MX1` (mellerudskanin). |
 | `date` | försäljningsdatumet |
-| `buyer` | valfritt, bara till GX1/MX1: köparen utanför föreningen ([ADR-0016](adr/0016-agarbyte-flytt-dag-0-och-berattigat-intresse.md)). `name` och `town` krävs; `postal_address` bara med `contact_consent: true`, `email` och `phone` med `contact_consent` eller `membership_optin`. Annars 400. Med `buyer` går också GX1 till GX1, för genbanksansvarig och admin. När beviset kopplas till en försäljning som redan finns sätts köparen på den bara om försäljningen saknar köpare (registrerad i gamla appen); har den redan en köpare blir svaret 409 |
+| `buyer` | valfritt, bara till GX1/MX1: köparen utanför föreningen ([ADR-0016](adr/0016-agarbyte-flytt-dag-0-och-berattigat-intresse.md)). `name` och `town` krävs, och `postal_address` när den som registrerar varken är genbanksansvarig eller admin; `email` och `phone` bara med `contact_consent` eller `membership_optin`. Annars 400. Med `buyer` går också GX1 till GX1, för genbanksansvarig och admin. När beviset kopplas till en försäljning som redan finns sätts köparen på den bara om försäljningen saknar köpare (registrerad i gamla appen); har den redan en köpare blir svaret 409 |
 
 **Vem:** handläggaren, med samma krav på posten som för `…/spara` men för alla dokumenttyper.
 En hjälpare får sälja kaniner i sin genbank som en ägare får.
@@ -931,8 +935,12 @@ läsningen är på och inte har gått igenom de senaste 20 minuterna. Gränssnit
 
 ### `GET /api/v2/inkorg/mina-inskick`
 
-**Vem:** inloggad. Anroparens egna inskick, nyast först, i klartext. Anropet läser också
-anroparens notiser av typen `klar`.
+**Vem:** inloggad. Anroparens egna inskick, nyast först, i klartext. Anropet ändrar ingenting.
+
+`POST /api/v2/inkorg/mina-inskick/sedda` markerar anroparens notiser av typen `klar` som
+lästa och svarar `{"read": <antal>}`. Sidan "Mina inskick" anropar det från webbläsaren när den
+visas, inte när servern bygger sidan: varken en länk till listan eller en hämtning av sidan
+ska kunna kvittera någons notiser.
 
 ```json
 {

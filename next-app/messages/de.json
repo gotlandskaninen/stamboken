@@ -140,7 +140,7 @@
       "summaryOutside": "Das Kaninchen verlässt die Genbank.",
       "buyerName": "Name des Käufers",
       "buyerTown": "Ort",
-      "buyerContactConsent": "Der Käufer hat ja angekreuzt: Der Verein darf Adresse, E-Mail und Telefon speichern, solange der Käufer das Kaninchen hat",
+      "buyerContactConsent": "Der Käufer hat ja angekreuzt: Der Verein darf E-Mail und Telefon speichern, solange der Käufer das Kaninchen hat",
       "buyerMembershipOptin": "Der Käufer hat ja angekreuzt: Der Verein darf den Käufer wegen einer Mitgliedschaft kontaktieren",
       "buyerAddress": "Postanschrift",
       "buyerEmail": "E-Mail",

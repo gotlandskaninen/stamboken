@@ -29,7 +29,7 @@ afterEach(() => {
 });
 
 const CONSENT =
-  "Köparen har kryssat ja: föreningen får spara adress, e-post och telefon så länge köparen har kaninen";
+  "Köparen har kryssat ja: föreningen får spara e-post och telefon så länge köparen har kaninen";
 const OPTIN =
   "Köparen har kryssat ja: föreningen får kontakta köparen om medlemskap";
 
@@ -90,9 +90,10 @@ describe("SalePanel with a buyer outside the association", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.queryByText(/sparas inte/)).toBeNull();
-    expect(screen.queryByLabelText("Postadress")).toBeNull();
-    fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
     expect(screen.getByLabelText("Postadress")).toBeInTheDocument();
+    expect(screen.queryByLabelText("E-post")).toBeNull();
+    fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
+    expect(screen.getByLabelText("E-post")).toBeInTheDocument();
   });
 
   it("needs name and town, and sends the buyer with GX1", async () => {

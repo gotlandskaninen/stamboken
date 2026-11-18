@@ -21,6 +21,7 @@ from werkzeug.routing import RequestRedirect
 
 from tests.database_test import DatabaseTest
 from tests.google_login import ID_TOKEN, redirect_login, token_login
+from tests.inbox_fixtures import InboxTest, encoded, photo
 
 limiter.enabled = False
 
@@ -201,6 +202,70 @@ class TestAccessRules(DatabaseTest):
             self.assertEqual(client.get("/api/genebanks", base_url=NEW).status_code, 200)
 
 
+class TestOwnUploadsUnpromoted(InboxTest):
+    """Skicka in intyg and Mina inskick reach production for every account; the queue's work does not."""
+
+    OWN_HERDS_ONLY = "Du kan bara skicka in för dina egna besättningar."
+
+    def setUp(self):
+        super().setUp()
+        for patcher in (mock.patch.object(settings.service, "access_rules", "enforce"), mock.patch.dict(os.environ)):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        os.environ.pop("LEGACY_HOSTS", None)
+
+    def client_of(self, user, base_url=NEW):
+        client = APP.test_client(use_cookies=True)
+        resp = client.post("/api/login", json={"username": user.email, "password": "pass"}, base_url=base_url)
+        self.assertEqual(resp.status_code, 200, resp.data)
+        return client
+
+    def send(self, client, base_url=NEW, herd="G1"):
+        data = {"herd": herd, "files": [(io.BytesIO(encoded(photo())), "intyg.jpg")]}
+        return client.post("/api/v2/inkorg/upload", data=data, content_type="multipart/form-data", base_url=base_url)
+
+    def test_an_unpromoted_owner_uploads_and_reads_only_her_own(self):
+        other = self.item(herd=1, sender=self.manager)
+        # Neither promoted nor validated: on a legacy host the exemption comes before the course check.
+        for base in (NEW, LEGACY):
+            with self.subTest(base):
+                client = self.client_of(self.owner, base)
+                resp = self.send(client, base)
+                self.assertEqual(resp.status_code, 201, resp.get_json())
+                listed = client.get("/api/v2/inkorg/mina-inskick", base_url=base)
+                self.assertEqual(listed.status_code, 200, listed.data)
+                ids = [item["id"] for item in listed.get_json()["items"]]
+                self.assertIn(resp.get_json()["item"]["id"], ids)
+                self.assertNotIn(other.id, ids)
+                count = client.get("/api/v2/inkorg/notiser/antal", base_url=base)
+                self.assertEqual(count.get_json(), {"unread": 0, "works_in_queue": False})
+                refused = self.send(client, base, herd="G2")
+                self.assertEqual((refused.status_code, refused.get_json()["detail"]), (403, self.OWN_HERDS_ONLY))
+
+    def test_the_queue_its_items_and_originals_stay_gated(self):
+        own = self.item(herd=0, sender=self.owner)
+        other = self.item(herd=1, sender=self.manager)
+        document = other.documents.get()
+        paths = ("", f"/{other.id}", f"/{own.id}", f"/{other.id}/dokument/{document.id}/original", "/notiser")
+        # The helper works in the queue: her role alone would let her in.
+        for user in (self.owner, self.helper):
+            client = self.client_of(user)
+            for path in paths:
+                with self.subTest(user=user.email, path=path):
+                    resp = client.get(f"/api/v2/inkorg{path}", base_url=NEW)
+                    self.assertEqual(resp.status_code, 403, resp.data)
+                    self.assertEqual(resp.get_json(), {"status": "error", "message": NOT_PROMOTED})
+        db.User.update(v2_prod_access=True).where(db.User.id == self.helper.id).execute()
+        self.assertEqual(self.client_of(self.helper).get("/api/v2/inkorg", base_url=NEW).status_code, 200)
+
+    def test_anonymous_requests_are_untouched(self):
+        anonymous = APP.test_client()
+        self.assertEqual(self.send(anonymous).status_code, 401)
+        for path in ("/mina-inskick", "/notiser/antal", ""):
+            with self.subTest(path):
+                self.assertEqual(anonymous.get(f"/api/v2/inkorg{path}", base_url=NEW).status_code, 401)
+
+
 class TestAccessRulesSetting(unittest.TestCase):
     def resolve(self, demo=False, **env):
         with mock.patch.dict(os.environ), mock.patch.object(settings.service, "demo_instance", demo):
@@ -269,6 +334,10 @@ class TestLegacyList(unittest.TestCase):
                 ("certificates_v2.verify_certificate_post", "POST"),
                 ("member_applications.create_application", "POST"),
                 ("member_applications.list_public_genebanks", "GET"),
+                ("inbox.upload", "POST"),
+                ("inbox.my_uploads", "GET"),
+                ("inbox.uploads_seen", "POST"),
+                ("inbox.notice_count", "GET"),
                 ("health_check", "GET"),
                 ("main", "GET"),
                 ("static", "GET"),

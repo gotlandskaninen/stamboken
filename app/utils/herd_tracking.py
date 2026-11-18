@@ -384,7 +384,11 @@ def record_herd_tracking(
     reject_contact_details(notes)
     if buyer is not None and (kind != "TRANSFER" or target.herd not in OUTSIDE_GENEBANK_HERDS):
         raise HerdTrackingInvalid("Köparens namn och ort registreras bara vid försäljning utanför genbanken.")
-    contact_fields = buyer_contact_fields(buyer) if buyer is not None else None
+    contact_fields = None
+    if buyer is not None:
+        # A new sale needs the address, except from a manager or admin (old paper certificates); corrections never.
+        address_required = not is_manager_of(user, target.genebank_id)
+        contact_fields = buyer_contact_fields(buyer, address_required=address_required)
     individual_id = individual.id if isinstance(individual, Individual) else int(individual)
     with DB_PROXY.atomic():
         lock_individuals([individual_id])
@@ -1156,19 +1160,16 @@ BUYER_TEXT_FIELDS = {
     "phone": "Telefon",
 }
 BUYER_TEXT_MAX = 200
-CONTACT_CONSENT_NEEDED = (
-    "Postadress, e-post och telefon sparas bara om köparen har kryssat ja till att föreningen får spara dem."
-)
 CONTACT_OR_MEMBERSHIP_NEEDED = (
     "E-post och telefon sparas bara om köparen har kryssat ja till att föreningen får spara dem "
     "eller kontakta köparen om medlemskap."
 )
 
 
-def buyer_contact_fields(buyer):
+def buyer_contact_fields(buyer, address_required=False):
     """
-    The BuyerContact columns from a sale's `buyer` object: name and town required; postal_address only with
-    contact_consent, email and phone with contact_consent or membership_optin (ADR-0016). Swedish 400s.
+    The BuyerContact columns from a sale's `buyer` object: name and town required, postal_address too when
+    `address_required`; email and phone only with contact_consent or membership_optin (ADR-0016). Swedish 400s.
     """
     if not isinstance(buyer, dict):
         raise HerdTrackingInvalid("Köparens uppgifter ska skickas som ett objekt.")
@@ -1183,6 +1184,8 @@ def buyer_contact_fields(buyer):
         fields[key] = value or None
     if not fields["name"] or not fields["town"]:
         raise HerdTrackingInvalid("Ange köparens namn och ort.")
+    if address_required and not fields["postal_address"]:
+        raise HerdTrackingInvalid("Ange köparens postadress.")
     if fields["email"] and not is_address(fields["email"]):  # or the buyer's mails are cancelled when they go
         raise HerdTrackingInvalid("Ange en e-postadress till köparen, bara adressen och bara en.")
     for key in ("name", "town"):  # the name goes into a mail from the association: never a link or a contact
@@ -1193,11 +1196,12 @@ def buyer_contact_fields(buyer):
             reject_contact_details(fields[key])
         except HerdTrackingInvalid:
             raise HerdTrackingInvalid(message) from None
+    address = fields["postal_address"] or ""
+    if _URL.search(address) or _EMAIL.search(address):  # not a way round the yes for e-mail; digits are a postcode
+        raise HerdTrackingInvalid("Postadress får inte innehålla en länk eller en e-postadress.")
     consent, optin = buyer.get("contact_consent", False), buyer.get("membership_optin", False)
     if not isinstance(consent, bool) or not isinstance(optin, bool):
         raise HerdTrackingInvalid("Köparens kryss ska vara ja eller nej.")
-    if fields["postal_address"] and not consent:
-        raise HerdTrackingInvalid(CONTACT_CONSENT_NEEDED)
     if (fields["email"] or fields["phone"]) and not (consent or optin):
         raise HerdTrackingInvalid(CONTACT_OR_MEMBERSHIP_NEEDED)
     now = _now_utc()

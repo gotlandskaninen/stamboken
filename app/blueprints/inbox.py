@@ -460,8 +460,16 @@ def reinterpret(item_id, document_id):
 @inbox_bp.route("/inkorg/mina-inskick", methods=["GET"])
 @json_login_required
 def my_uploads():
+    return jsonify({"items": inbox.my_uploads(current_user)})
+
+
+# [Next.js] The page "Mina inskick" was opened: the user's "klar" notices are read. A POST of its own, so a link
+# to the list (a GET, which a browser follows with the session cookie) changes nothing.
+@inbox_bp.route("/inkorg/mina-inskick/sedda", methods=["POST"])
+@json_login_required
+def uploads_seen():
     with DB_PROXY.atomic():
-        return jsonify({"items": inbox.my_uploads(current_user)})
+        return jsonify({"read": inbox.uploads_seen(current_user)})
 
 
 @inbox_bp.route("/inkorg/notiser", methods=["GET"])

@@ -1,0 +1,14 @@
+{% block subject %}Du har lagts in i ett medlemskap i Föreningen Gotlandskaninen{% endblock %}
+{# GDPR art. 14: the person did not give us the details. The policy at /dataskydd holds the rest. #}
+{% block body %}
+Hej!
+
+Du har lagts in som {{ role }} i ett medlemskap i Föreningen Gotlandskaninen.{% if main %} Huvudmedlem är {{ main }}.{% endif %} Det var huvudmedlemmen eller föreningens matrikelansvarig som lade in dig.
+
+Vi har sparat ditt namn och din e-postadress{% if phone %}, och ditt telefonnummer{% endif %}. De står i föreningens medlemsregister, och vi använder dem för att sköta medlemskapet.
+
+Hur vi behandlar personuppgifter och vilka rättigheter du har kan du läsa här:
+{{ base_url }}/dataskydd
+
+Stämmer något inte, eller vill du inte stå med? Skriv till dataskydd@gotlandskaninen.se.
+{% endblock %}

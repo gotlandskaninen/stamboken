@@ -70,7 +70,10 @@ interface SellRabbitDialogProps {
   birthDate: string | null | undefined;
   herdTracking: { date: string | null }[] | null | undefined;
   isRegistered: boolean;
-  /** Admin or a manager of the rabbit's genebank: only they may sell on from GX1 to GX1 (ADR-0016). */
+  /**
+   * Admin or a manager of the rabbit's genebank: only they may sell on from GX1 to GX1, or sell without the
+   * buyer's address (ADR-0016).
+   */
   canResellOutside?: boolean;
   isSaving: boolean;
   /** Problem detail from the last failed attempt; shown inline (the snackbar sits behind the modal). */
@@ -173,11 +176,13 @@ function SellRabbitDialogContent({
   const dateProblem = validateSaleDate(date, minDate, today);
   const outsideCode = options.find((h) => isOutsideGenebankHerd(h.herd))?.herd;
   const targetOutside = target ? isOutsideGenebankHerd(target.herd) : false;
+  // canResellOutside is "admin or manager of the genebank": they may sell without an address (old papers).
+  const addressRequired = !canResellOutside;
   const canSubmit =
     !!target &&
     !dateProblem &&
     acknowledged &&
-    (!targetOutside || buyerComplete(buyer)) &&
+    (!targetOutside || buyerComplete(buyer, addressRequired)) &&
     !isSaving;
 
   const optionLabel = (h: GenebankHerd) =>
@@ -360,7 +365,11 @@ function SellRabbitDialogContent({
 
         {targetOutside && (
           <Box sx={{ mt: 2.5 }}>
-            <BuyerFields value={buyer} onChange={setBuyer} />
+            <BuyerFields
+              value={buyer}
+              onChange={setBuyer}
+              addressRequired={addressRequired}
+            />
           </Box>
         )}
 

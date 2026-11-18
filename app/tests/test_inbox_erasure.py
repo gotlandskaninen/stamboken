@@ -65,7 +65,7 @@ class ErasureTest(PurgeTest):
         item, document = self.uploaded()
         self.client.patch(f"/api/v2/inkorg/{item.id}/dokument/{document.id}", json={"doc_type": "bevis"})
         # A sale outside the association needs its buyer (ADR-0016).
-        buyer = {"name": "Köpare Test", "town": "Visby"} if herd in ("GX1", "MX1") else None
+        buyer = {"name": "Köpare Test", "town": "Visby", "postal_address": "Väg 1"} if herd in ("GX1", "MX1") else None
         resp = self.post(
             f"/{item.id}/dokument/{document.id}/overlat",
             individual="G1-2111",

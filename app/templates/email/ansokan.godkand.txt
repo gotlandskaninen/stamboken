@@ -3,7 +3,7 @@
 {% block body %}
 Hej!
 
-Din ansökan om medlemskap i Föreningen Gotlandskaninen är godkänd. Välkommen som medlem!
+Din ansökan om medlemskap i Föreningen Gotlandskaninen är godkänd, och vi har fått din årsavgift. Välkommen som medlem!
 
 Föreningen hör av sig till dig om hur du får tillgång till Stamboken och medlemsregistret.
 {% endblock %}

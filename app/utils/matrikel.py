@@ -36,7 +36,7 @@ from utils.database import (
     User,
 )
 from utils.inbox_purge import erase_person_from_inbox, remove_originals
-from utils.mail import forget_recipient
+from utils.mail import cancel_member_added, forget_recipient, queue_member_added
 from utils.membership_lifecycle import Event, Status, next_state, state_of
 from utils.postal import (  # noqa: F401 — public helpers
     format_postal_address,
@@ -313,6 +313,7 @@ def add_person(membership, data, actor):
                 "role": person.role,
             },
         )
+        queue_member_added(person)
     return person
 
 
@@ -337,6 +338,7 @@ def soft_delete_person(member, actor):
         if member.end_date is None:
             member.end_date = date.today()
             member.save()
+        cancel_member_added([member.id])
         now = datetime.now()
         revoked = (
             HerdAccessGrant.update(revoked_at=now, updated_at=now)
@@ -384,6 +386,7 @@ def swap_main_member(membership, new_main, actor):
             current.save()
         new_main.role = "huvudmedlem"
         new_main.save()
+        cancel_member_added([new_main.id])
         write_matrikel_audit(
             actor,
             "main_member_changed",
@@ -479,9 +482,9 @@ def anonymize_person(member, actor):
                 address=None, postal_code=None, city=None, notes=None, **dict.fromkeys(BILLING_FIELDS), updated_at=now
             ).where(Membership.id == membership.id).execute()
             redact_household_from_audits(membership)
-        application_ids = [a.id for a in MemberApplication.select(MemberApplication.id).where(applications_to_redact)]
-        applications_redacted = (
-            MemberApplication.update(
+        application_ids = [
+            row.id
+            for row in MemberApplication.update(
                 first_name=ANONYMIZED_FIRST_NAME,
                 last_name=ANONYMIZED_LAST_NAME,
                 email="[borttagen]",
@@ -498,8 +501,12 @@ def anonymize_person(member, actor):
                 status=Case(None, [(MemberApplication.status == "pending", "rejected")], MemberApplication.status),
             )
             .where(applications_to_redact)
+            # the rows this statement redacted, not a list read before it: an application committed in between
+            # is redacted here too, and its mail must be forgotten with it
+            .returning(MemberApplication.id)
             .execute()
-        )
+        ]
+        applications_redacted = len(application_ids)
         forget_recipient("member", person.id)  # the queue keeps no address hash or dedupe key of the erased
         for application_id in application_ids:
             forget_recipient("application", application_id)
@@ -610,6 +617,7 @@ def retire_membership(membership, actor):
             ).execute()
             person.end_date = date.today()
             person.save()
+        cancel_member_added([p.id for p in persons])
         membership.membership_status = "inactive"
         # `membership` is the CALLER's pre-lock instance — a full-row save would
         # overwrite a notes/address PATCH that committed while we waited for the

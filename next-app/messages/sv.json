@@ -143,7 +143,7 @@
       "summaryOutside": "Kaninen lämnar genbanken.",
       "buyerName": "Köparens namn",
       "buyerTown": "Ort",
-      "buyerContactConsent": "Köparen har kryssat ja: föreningen får spara adress, e-post och telefon så länge köparen har kaninen",
+      "buyerContactConsent": "Köparen har kryssat ja: föreningen får spara e-post och telefon så länge köparen har kaninen",
       "buyerMembershipOptin": "Köparen har kryssat ja: föreningen får kontakta köparen om medlemskap",
       "buyerAddress": "Postadress",
       "buyerEmail": "E-post",

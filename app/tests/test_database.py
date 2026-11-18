@@ -395,6 +395,7 @@ class TestDatabase(DatabaseTest):
         data["mother"] = mother
         data["father"] = father
         data["color"] = self.colors[0].name
+        data["color_id"] = self.colors[0].id
         data["alive"] = not self.individuals[0].death_date and not self.individuals[0].death_note
         data["is_active"] = False
         data["is_registered"] = bool(self.individuals[0].certificate or self.individuals[0].digital_certificate)

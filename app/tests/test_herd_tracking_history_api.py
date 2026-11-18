@@ -136,7 +136,7 @@ class TestBuyerVisibility(HistoryBase):
         super().setUp()
         self.out = make_individual(self.g1, "G1-2404", date(2024, 1, 1))
         ht_row("BIRTH", individual=self.out, herd=self.g1, herd_tracking_date=date(2024, 1, 1))
-        buyer = {"name": "Anna Köpare", "town": "Visby"}
+        buyer = {"name": "Anna Köpare", "town": "Visby", "postal_address": "Väg 1"}
         self.out_row = record_herd_tracking(self.out, self.gx1, date(2024, 9, 30), "TRANSFER", self.owner, buyer=buyer)
 
     def test_manager_of_another_genebank_never_sees_buyer(self):

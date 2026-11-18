@@ -25,7 +25,7 @@ limiter.enabled = False
 REGISTERED = "G1-2111"
 UNREGISTERED = "G1-2112"
 VALID_DATE = "2021-06-01"
-BUYER = {"name": "Köpare Test", "town": "Visby"}  # synthetic
+BUYER = {"name": "Köpare Test", "town": "Visby", "postal_address": "Väg 1"}  # synthetic
 
 
 def with_buyer(body):

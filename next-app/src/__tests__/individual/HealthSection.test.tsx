@@ -1,6 +1,12 @@
 import React from "react";
 import { describe, it, expect, afterEach } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import {
+  render,
+  screen,
+  cleanup,
+  fireEvent,
+  within,
+} from "@testing-library/react";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import { HealthSection } from "@/components/individual/HealthSection";
 import type { Individual } from "@/redux/api/apiSlice";
@@ -41,6 +47,22 @@ describe("HealthSection", () => {
     cleanup();
     renderWithTheme(<HealthSection individual={withBodyfat("high")} />);
     expect(screen.getByText("Fet")).toBeDefined();
+  });
+
+  it("labels hull in the history as on the paper form", () => {
+    const individual = {
+      weights: [],
+      bodyfat: [
+        { date: "2024-03-15", bodyfat: "low" },
+        { date: "2023-09-01", bodyfat: "high" },
+      ],
+    } as unknown as Individual;
+    renderWithTheme(<HealthSection individual={individual} />);
+    fireEvent.click(screen.getByText("Visa alla mätvärden"));
+    const history = screen.getByText("Alla hullbedömningar")
+      .nextElementSibling as HTMLElement;
+    expect(within(history).getByText("Mager")).toBeDefined();
+    expect(within(history).getByText("Fet")).toBeDefined();
   });
 
   it("shows expand button when history exists", () => {
