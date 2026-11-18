@@ -40,6 +40,9 @@ export const NOT_IN_STAMBOKEN_TEXT =
 export const PHOTOS_SENT_TEXT =
   "Fotona är skickade till genbanksansvarig. Kaninen kommer in i din besättning när den är registrerad och överförd.";
 const PHOTO_REQUIRED_TEXT = "Ladda upp ett foto av intyget.";
+// The number first: a typo is corrected before any photo is asked for.
+export const notInStamboken = (number: string) =>
+  `${number} finns inte i Stamboken. Stämmer numret?`;
 
 type Upload = (
   data: FormData,
@@ -178,6 +181,7 @@ function Body({
   const theme = useTheme();
   const mobile = useMediaQuery(theme.breakpoints.down("sm"));
   const [number, setNumber] = React.useState("");
+  const numberField = React.useRef<HTMLInputElement>(null);
   const [outside, setOutside] = React.useState(false);
   const [code, setCode] = React.useState("");
   const [date, setDate] = React.useState("");
@@ -246,6 +250,7 @@ function Body({
         onSent();
       } else if (res.problem.extensions?.code === "inte_i_stamboken") {
         setMissing(true);
+        setTried(false); // the photos are asked for, not yet missing
         if (photo.status === "klar") {
           // the photo already uploaded is sent with the others, with what it shows, not left held
           setPhotos((all) => {
@@ -292,6 +297,7 @@ function Body({
             <label className={styles.label}>
               Kaninens nummer
               <input
+                ref={numberField}
                 className={styles.field}
                 style={{ width: "100%", boxSizing: "border-box" }}
                 autoComplete="off"
@@ -352,9 +358,18 @@ function Body({
               // Not "Lägg till från intyget": a rabbit of another herd's litter is registered for that herd, never
               // by its buyer. Its photos go to the queue as an upload, and the manager registers and transfers it.
               <>
-                <p className={styles.meta} role="status">
-                  {NOT_IN_STAMBOKEN_TEXT}
-                </p>
+                <p role="status">{notInStamboken(number.trim())}</p>
+                <button
+                  type="button"
+                  className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+                  onClick={() => {
+                    setMissing(false);
+                    numberField.current?.focus();
+                  }}
+                >
+                  Ändra numret
+                </button>
+                <p className={styles.meta}>{NOT_IN_STAMBOKEN_TEXT}</p>
                 <PhotoField
                   label="Foto 1"
                   typeLabel="Vad visar foto 1?"

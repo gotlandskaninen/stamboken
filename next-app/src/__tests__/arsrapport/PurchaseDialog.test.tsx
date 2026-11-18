@@ -153,9 +153,21 @@ describe("PurchaseDialog", () => {
     fireEvent.click(screen.getByLabelText("Utanför genbanken"));
     fill("Datum för köpet", "2025-05-14");
     click();
+    // the number first, in plain text, and nothing in red before the photos are asked for
     expect((await screen.findByRole("status")).textContent).toBe(
-      NOT_IN_STAMBOKEN_TEXT,
+      "G9002-9999 finns inte i Stamboken. Stämmer numret?",
     );
+    expect(screen.getByText(NOT_IN_STAMBOKEN_TEXT)).toBeTruthy();
+    expect(screen.queryByRole("alert")).toBeNull();
+    // Ändra numret: back to the number, which keeps what was typed
+    fireEvent.click(screen.getByRole("button", { name: "Ändra numret" }));
+    expect(screen.queryByText(NOT_IN_STAMBOKEN_TEXT)).toBeNull();
+    expect(screen.queryByLabelText("Foto 1")).toBeNull();
+    const numberField = screen.getByLabelText("Kaninens nummer");
+    expect(document.activeElement).toBe(numberField);
+    expect(numberField).toHaveProperty("value", "G9002-9999");
+    click();
+    await screen.findByText(NOT_IN_STAMBOKEN_TEXT);
     // the buyer never registers into the seller's herd (Codex P2): no form for it here
     expect(
       screen.queryByRole("button", { name: "Lägg till från intyget" }),
@@ -210,7 +222,7 @@ describe("PurchaseDialog", () => {
       PHOTOS_SENT_TEXT,
     );
     expect(onSent).toHaveBeenCalled();
-    expect(send).toHaveBeenCalledTimes(1); // the notice was not sent again
+    expect(send).toHaveBeenCalledTimes(2); // once more after Ändra numret, never with the photos
   });
 
   it("carries a photo already uploaded into the photos sent when Stamboken lacks the rabbit (S7)", async () => {
