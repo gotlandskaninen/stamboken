@@ -317,6 +317,13 @@ export default function IntegritetspolicyPage() {
               berättar vad vi har sparat.
             </p>
             <p>
+              Registrerar vi en försäljning från ett äldre intyg där köparen
+              står ifylld för vi in namn och postadress, om försäljningen är
+              högst fem år gammal. E-postadress och telefonnummer för vi inte
+              in. Vi skriver till köparen inom en månad och berättar det, med
+              mejl om intyget har en e-postadress och annars med brev.
+            </p>
+            <p>
               Du kan när som helst ta tillbaka ditt ja, och du kan invända mot
               att vi sparar ditt namn och din postadress. Mejla {contactLink}.
               Tar vi bort dina uppgifter står försäljningen kvar i stamboken,
