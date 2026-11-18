@@ -207,7 +207,8 @@ class TestCopyIsFixed(CopyTest):
         self.post(f"/{item.id}/ta")
         self.patch(item, document, doc_type="bevis")
         today = datetime.date.today().isoformat()
-        buyer = {"name": "Köpare Test", "town": "Visby"}  # a sale outside the association needs its buyer (ADR-0016)
+        # A sale outside the association needs its buyer (ADR-0016), and from an owner the address.
+        buyer = {"name": "Köpare Test", "town": "Visby", "postal_address": "Väg 1"}
         resp = self.post(
             f"/{item.id}/dokument/{document.id}/overlat", individual="G1-2111", herd="GX1", date=today, buyer=buyer
         )

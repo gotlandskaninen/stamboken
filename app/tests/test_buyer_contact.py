@@ -62,8 +62,9 @@ def recent(days):
 
 SALE_DATE = on(0)
 NAME = "Zelda Uniquebuyer"  # ASCII, so a text search of audit_log finds every trace
-BUYER = {"name": NAME, "town": "Visby"}
-OTHER = {"name": "Other Buyer", "town": "Slite"}
+BUYER = {"name": NAME, "town": "Visby", "postal_address": "Väg 1"}  # an owner's new sale needs the address
+NO_ADDRESS = {"name": NAME, "town": "Visby"}
+OTHER = {"name": "Other Buyer", "town": "Slite", "postal_address": "Väg 2"}
 NOW = datetime.now(timezone.utc)
 PURGE = NOW + timedelta(days=5 * 365)
 
@@ -131,7 +132,8 @@ class TestSchema(BuyerBase):
         ).fetchone()
         self.assertEqual(delete_rule, ("n",))  # ON DELETE SET NULL
         checks = {r[0] for r in sql("SELECT conname FROM pg_constraint WHERE conrelid = 'buyer_contact'::regclass")}
-        self.assertTrue({"buyer_contact_address_needs_consent", "buyer_contact_email_phone_need_consent"} <= checks)
+        self.assertIn("buyer_contact_email_phone_need_consent", checks)
+        self.assertNotIn("buyer_contact_address_needs_consent", checks)  # the address is kept on legitimate interest
         db.check_migrations()  # replay-safe
 
     def test_purge_at_is_five_years_after_a_backdated_sale(self):
@@ -142,28 +144,11 @@ class TestSchema(BuyerBase):
         )
         self.assertEqual(db.BuyerContact.purge_at_for("2024-02-29").date(), date(2029, 2, 28))
 
-    def test_address_needs_the_contact_consent(self):
-        with self.assertRaises(IntegrityError), db.DATABASE.atomic():
-            db.BuyerContact.create(
-                name=NAME, town="Visby", purge_at=PURGE, postal_address="Väg 1", created_by_user=self.owner
-            )
-        with self.assertRaises(IntegrityError), db.DATABASE.atomic():
-            db.BuyerContact.create(
-                name=NAME,
-                town="Visby",
-                postal_address="Väg 1",
-                membership_optin_at=NOW,
-                created_by_user=self.owner,
-                purge_at=PURGE,
-            )
-        db.BuyerContact.create(
-            name=NAME,
-            town="Visby",
-            postal_address="Väg 1",
-            contact_consent_at=NOW,
-            created_by_user=self.owner,
-            purge_at=PURGE,
+    def test_the_address_needs_no_consent(self):
+        contact = db.BuyerContact.create(
+            name=NAME, town="Visby", purge_at=PURGE, postal_address="Väg 1", created_by_user=self.owner
         )
+        self.assertEqual(self._contact(contact.id).postal_address, "Väg 1")
 
     def test_email_and_phone_need_a_consent_or_the_membership_optin(self):
         for field in ("email", "phone"):
@@ -229,6 +214,36 @@ class TestRegistration(BuyerBase):
         self.assertEqual(contact.created_by_user_id, self.owner.id)
         self.assertEqual(sale.kind, "TRANSFER")
 
+    def test_an_owner_must_give_the_address_a_manager_need_not(self):
+        response = self._sell(buyer=NO_ADDRESS)
+        self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()["detail"], "Ange köparens postadress.")
+        self.assertEqual(db.BuyerContact.select().count(), 0)
+        response = self._sell(buyer=NO_ADDRESS, username="man")  # e.g. from an old paper certificate
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertIsNone(self._contact(self._latest().holder_contact_id).postal_address)
+
+    def test_the_address_is_no_way_round_the_yes_for_e_mail(self):
+        for address in ("kim@example.com", "https://example.com"):
+            response = self._sell(buyer={**BUYER, "postal_address": address})
+            self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+            self.assertIn("Postadress får inte innehålla", response.get_json()["detail"])
+        self.assertEqual(db.BuyerContact.select().count(), 0)
+
+    def test_a_correction_needs_no_address(self):
+        event = {"kind": "TRANSFER", "date": SALE_DATE, "herd": "GX1", "buyer": NO_ADDRESS}
+        (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [], [event])
+        self.assertIsNone(self._contact(written.holder_contact_id).postal_address)
+
+    def test_a_proof_of_a_sale_registered_without_a_buyer_needs_no_address(self):
+        legacy = record_herd_tracking(self.rabbit, self.gx1, SALE_DATE, "TRANSFER", self.manager)  # no buyer
+        self.assertIsNone(attach_buyer(legacy, NO_ADDRESS, self.owner).postal_address)
+
+    def test_a_postal_address_without_any_yes_is_stored(self):
+        contact = self._contact(self._sale({**BUYER, "postal_address": " Väg 1, 621 00 Visby "}).holder_contact_id)
+        self.assertEqual(contact.postal_address, "Väg 1, 621 00 Visby")
+        self.assertEqual((contact.contact_consent_at, contact.membership_optin_at), (None, None))
+
     def test_a_name_or_town_with_a_link_or_contact_details_is_400(self):
         for field, value in (
             ("name", "Anna https://example.se"),
@@ -245,7 +260,6 @@ class TestRegistration(BuyerBase):
 
     def test_contact_fields_without_the_matching_yes_are_400_and_nothing_is_written(self):
         cases = (
-            {**BUYER, "postal_address": "Väg 1", "membership_optin": True},
             {**BUYER, "email": "z@example.org"},
             {**BUYER, "phone": "0701234567", "contact_consent": False},
             {"name": NAME},
@@ -798,12 +812,13 @@ class TestRetention(BuyerBase):
         self.assertEqual(buyer_contact.purge_sold_on(NOW), 1)
         contact = self._contact(self.contact_id)
         self.assertEqual((contact.name, contact.town), (NAME, "Visby"))
-        self.assertEqual((contact.postal_address, contact.contact_consent_at), (None, None))
+        self.assertEqual(contact.postal_address, "Väg 1")  # kept on legitimate interest, like name and town
+        self.assertIsNone(contact.contact_consent_at)
         self.assertEqual(contact.phone, "070123")  # kept while the membership yes holds
         self.assertIsNotNone(contact.membership_optin_at)
         self.assertEqual(buyer_contact.purge_sold_on(NOW), 0)  # one audit row, not one a night
         (log,) = self._buyer_log(self.contact_id, "UPDATE")
-        self.assertEqual(sorted(log.changed_fields), ["contact_consent_at", "postal_address"])  # not the phone kept
+        self.assertEqual(log.changed_fields, ["contact_consent_at"])  # not the phone kept
         buyer_contact.purge_membership_optin(NOW + timedelta(days=366))
         contact = self._contact(self.contact_id)
         self.assertEqual((contact.phone, contact.membership_optin_at), (None, None))
@@ -818,6 +833,7 @@ class TestRetention(BuyerBase):
         forget.assert_called_once_with("buyer_contact", self.contact_id)
         contact = self._contact(self.contact_id)
         self.assertEqual((contact.email, contact.phone), (None, None))
+        self.assertEqual(contact.postal_address, "Väg 1")
 
     def test_a_correction_moving_the_rabbit_on_counts_as_sold_on(self):
         event = {"kind": "CORRECTION", "date": on(214), "herd": "G2"}
@@ -1027,7 +1043,7 @@ class TestQueueSale(ErasureTest):
         self.assertEqual(db.InboxDocument.get_by_id(self.document.id).herd_tracking_id, sale.id)
 
     def test_contact_details_without_the_yes_are_400_and_nothing_is_written(self):
-        resp = self._sale(buyer={**BUYER, "postal_address": "Väg 1"})
+        resp = self._sale(buyer={**BUYER, "phone": "0701234567"})
         self.assertEqual(resp.status_code, 400, resp.get_json())
         self.assertIn("kryssat ja", resp.get_json()["detail"])
         self.assertEqual(db.BuyerContact.select().count(), 0)

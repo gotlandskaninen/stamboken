@@ -1653,8 +1653,9 @@ BUYER_CONTACT_YEARS = 5
 
 class BuyerContact(BaseModel):
     """
-    A buyer outside the association, on a sale to GX1/MX1 (ADR-0016): name and town always, the contact details
-    only with the buyer's yes. Not in AUDITED_TABLES, so erased values never stay in audit_log.
+    A buyer outside the association, on a sale to GX1/MX1 (ADR-0016): name, town and postal address on legitimate
+    interest, e-mail and phone only with the buyer's yes. Not in AUDITED_TABLES, so erased values never stay in
+    audit_log.
     """
 
     id = AutoField()
@@ -1663,7 +1664,7 @@ class BuyerContact(BaseModel):
     postal_address = TextField(null=True)
     email = TextField(null=True)
     phone = TextField(null=True)
-    contact_consent_at = TimestampTZField(null=True)  # may keep address, e-mail and phone while the buyer has it
+    contact_consent_at = TimestampTZField(null=True)  # may keep e-mail and phone while the buyer has it
     membership_optin_at = TimestampTZField(null=True)  # may be contacted about membership
     created_at = TimestampTZField(constraints=[SQL("DEFAULT now()")])
     created_by_user = ForeignKeyField(User, column_name="created_by_user_id", backref="+")
@@ -1683,10 +1684,6 @@ class BuyerContact(BaseModel):
     class Meta:  # pylint: disable=too-few-public-methods
         table_name = "buyer_contact"
         constraints = [
-            SQL(
-                "CONSTRAINT buyer_contact_address_needs_consent "
-                "CHECK (postal_address IS NULL OR contact_consent_at IS NOT NULL)"
-            ),
             SQL(
                 "CONSTRAINT buyer_contact_email_phone_need_consent CHECK ((email IS NULL AND phone IS NULL) "
                 "OR contact_consent_at IS NOT NULL OR membership_optin_at IS NOT NULL)"

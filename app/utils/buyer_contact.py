@@ -200,7 +200,8 @@ def _null_fields(where, changes, action):
 def purge_sold_on(now):  # pylint: disable=unused-argument  # every rule takes the clock
     """
     The contact consent once the rabbit has another holder: a later active TRANSFER or CORRECTION to another herd
-    or another buyer. Address, e-mail and phone go with it; e-mail and phone stay while the membership yes does.
+    or another buyer. E-mail and phone go with it unless the membership yes holds; the postal address stays, on
+    legitimate interest like name and town.
     """
     sale, later = HerdTracking, HerdTracking.alias()
     moved_on = (
@@ -209,13 +210,10 @@ def purge_sold_on(now):  # pylint: disable=unused-argument  # every rule takes t
         .where(sale.holder_contact.is_null(False) & sale.voided_at.is_null(True) & sold_on(sale, later))
     )
     no_membership = BuyerContact.membership_optin_at.is_null(True)
-    kept = (
-        BuyerContact.postal_address.is_null(False)
-        | BuyerContact.contact_consent_at.is_null(False)
-        | (no_membership & (BuyerContact.email.is_null(False) | BuyerContact.phone.is_null(False)))
+    kept = BuyerContact.contact_consent_at.is_null(False) | (
+        no_membership & (BuyerContact.email.is_null(False) | BuyerContact.phone.is_null(False))
     )
     changes = {
-        BuyerContact.postal_address: None,
         BuyerContact.contact_consent_at: None,
         BuyerContact.email: Case(None, [(no_membership, None)], BuyerContact.email),
         BuyerContact.phone: Case(None, [(no_membership, None)], BuyerContact.phone),
