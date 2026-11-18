@@ -279,15 +279,17 @@ export default function IntegritetspolicyPage() {
             </p>
             <ul>
               <li>
-                Ditt namn och din ort sparar vi i fem år från köpet, så att det
-                går att följa var genbankskaninerna finns (berättigat intresse).
-                Får vi veta att kaninen har dött tar vi bort dem tidigare.
-                Uppgifterna kan komma från dig eller från säljaren.
+                Ditt namn och din postadress sparar vi i fem år från köpet, så
+                att genbankskaninerna går att spåra, till exempel vid ett
+                utbrott av en smittsam djursjukdom (berättigat intresse). Vet vi
+                att kaninen har dött tar vi bort dem tidigare. Uppgifterna kan
+                komma från dig eller från säljaren. Utan namn och postadress
+                skrivs inget bevis.
               </li>
               <li>
-                Din adress, din e-postadress och ditt telefonnummer sparar vi
-                bara om du har kryssat ja på beviset (samtycke), och bara tills
-                kaninen byter ägare igen.
+                Din e-postadress och ditt telefonnummer sparar vi bara om du har
+                kryssat ja på beviset (samtycke), och bara tills kaninen byter
+                ägare igen.
               </li>
               <li>
                 Har du kryssat ja till att föreningen får kontakta dig om
@@ -307,6 +309,8 @@ export default function IntegritetspolicyPage() {
               utbrott av en smittsam djursjukdom.
             </p>
             <p>
+              Säljaren kan skriva sina egna kontaktuppgifter på beviset. De är
+              till för dig som köper, och vi för inte in dem i Stamboken Online.
               Skickas beviset in som foto sparas bilden i högst 12 månader, och
               den tas bort tidigare om kaninen säljs vidare. Har vi din
               e-postadress mejlar vi dig när ägarbytet är registrerat och
@@ -314,9 +318,9 @@ export default function IntegritetspolicyPage() {
             </p>
             <p>
               Du kan när som helst ta tillbaka ditt ja, och du kan invända mot
-              att vi sparar ditt namn och din ort. Mejla {contactLink}. Tar vi
-              bort dina uppgifter står försäljningen kvar i stamboken, utan ditt
-              namn.
+              att vi sparar ditt namn och din postadress. Mejla {contactLink}.
+              Tar vi bort dina uppgifter står försäljningen kvar i stamboken,
+              utan ditt namn.
             </p>
           </Section>
 
