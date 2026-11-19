@@ -79,6 +79,14 @@ class PdfTest(ArsrapportTest):
         self.assertIn("2025-10-03", text)
         self.assertNotIn(BUYER["name"], text)
 
+    def test_extract_shows_the_month_of_a_sale_or_death_given_without_its_day(self):
+        kept, sold, dead = self.rabbits(self.h, 3)
+        self.reported(self.h, self.kvar(kept, vikt=2.8), self.sald(sold, "utanfor", 2025, 5, kopare=BUYER), self.dod(dead, 2025, 6))
+        text = text_of(register_extract_pdf(self.h, self.round_))
+        for month in ("2025-05", "2025-06"):
+            self.assertRegex(text, rf"{month}(?!-)")  # the month, not a made-up day such as -31 or -30
+        self.assertNotRegex(text, r"2025-0[56]-\d\d")
+
     def receipt_text(self, **report_fields):
         kept, other = self.rabbits(self.h, 2)
         report = self.reported(self.h, self.kvar(kept, vikt=2.8), self.ej_angiven(other), **report_fields)

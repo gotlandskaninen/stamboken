@@ -12,6 +12,7 @@ from weasyprint import HTML
 
 import utils.arsrapport as arsrapport
 from utils.database import Breeding, HerdTracking, Individual, Weight, ht_not_voided
+from utils.herd_tracking import latest_death_op
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates" / "arsrapport"
 # nosemgrep: python.flask.security.xss.audit.direct-use-of-jinja2.direct-use-of-jinja2
@@ -35,11 +36,18 @@ def _latest_weights(ids):
     return {row.individual_id: row.weight for row in rows}
 
 
-def _sold_and_dead(herd, year):
+def _sold_and_dead(herd, round_):
     """The rabbits the herd sold (a TRANSFER out of it) or lost (a death date, held by it then) during the year."""
+    year = round_.report_year
     first, last = date(year, 1, 1), date(year, 12, 31)
+    report = arsrapport.current_report(herd, round_)
+    written = (  # the submissions' data by operation id: a sale or death given without its day shows its month (5.3)
+        {str(op): sub.data for sub in arsrapport._submissions(report) for op in sub.operation_ids}  # pylint: disable=protected-access
+        if report
+        else {}
+    )
     sold = (
-        HerdTracking.select(HerdTracking.individual, HerdTracking.herd_tracking_date)
+        HerdTracking.select(HerdTracking.individual, HerdTracking.herd_tracking_date, HerdTracking.operation_id)
         .where(
             HerdTracking.kind == "TRANSFER",
             HerdTracking.from_herd == herd.id,
@@ -48,17 +56,24 @@ def _sold_and_dead(herd, year):
         )
         .order_by(HerdTracking.herd_tracking_date, HerdTracking.id)
     )
-    sold = [(row.individual_id, row.herd_tracking_date) for row in sold]
+    sold = [
+        (
+            row.individual_id,
+            row.herd_tracking_date,
+            arsrapport.dayless(written.get(str(row.operation_id)), row.individual_id, "sald"),
+        )
+        for row in sold
+    ]
     deaths = Individual.select(Individual.id, Individual.death_date).where(Individual.death_date.between(first, last))
     dead = [
-        (row.id, row.death_date)
+        (row.id, row.death_date, arsrapport.dayless(written.get(str(latest_death_op(row.id))), row.id, "dod"))
         for row in deaths.order_by(Individual.death_date, Individual.id)
         if arsrapport._holder_on(row.id, row.death_date, set()) == herd.id  # pylint: disable=protected-access
     ]
-    numbers = _numbers([i for i, _ in sold + dead])
+    numbers = _numbers([i for i, _, _ in sold + dead])
     return (
-        [{"number": numbers[i], "date": day.isoformat()} for i, day in sold],
-        [{"number": numbers[i], "date": day.isoformat()} for i, day in dead],
+        [{"number": numbers[i], "date": day.isoformat()[: 7 if dayless_ else 10]} for i, day, dayless_ in sold],
+        [{"number": numbers[i], "date": day.isoformat()[: 7 if dayless_ else 10]} for i, day, dayless_ in dead],
     )
 
 
@@ -90,7 +105,7 @@ def register_extract_pdf(herd, round_) -> bytes:
     year = round_.report_year
     rows = arsrapport.report_list(herd, year)
     weights = _latest_weights(row["id"] for row in rows)
-    sold, dead = _sold_and_dead(herd, year)
+    sold, dead = _sold_and_dead(herd, round_)
     rabbits = [
         {
             "number": row["number"],
