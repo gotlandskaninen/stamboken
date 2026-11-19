@@ -65,7 +65,7 @@ const STEPS: Array<{
   {
     title: "Bli medlem",
     body: [
-      "Ansök på webben eller med posten och betala medlemsavgiften. Avgiften gäller hela familjen.",
+      "Ansök på webben och betala medlemsavgiften, eller ansök med posten genom att betala avgiften och skriva namn och postadress på inbetalningen. Avgiften gäller hela familjen.",
     ],
     links: [{ href: "/bli-medlem", label: "Bli medlem →" }],
   },
@@ -114,7 +114,7 @@ const YEARLY = [
   },
   {
     title: "Årsrapport senast 31 januari",
-    desc: "Du lämnar den i Stamboken Online eller på pappersblanketten, som du skickar till genbanksansvarig. I Stamboken Online är dina kaniner redan ifyllda. Årsrapporten är också grunden för Jordbruksverkets stöd, som kräver minst en kull under året, hane och hona vid årsskiftet och betald medlemsavgift. Ett år utan kull ger inget stöd.",
+    desc: "Du lämnar den i Stamboken Online eller på pappersblanketten, som du skickar till genbanksansvarig. Årsrapporten är också grunden för Jordbruksverkets stöd, som kräver minst en kull under året, hane och hona vid årsskiftet och betald medlemsavgift. Ett år utan kull ger inget stöd.",
   },
 ];
 
