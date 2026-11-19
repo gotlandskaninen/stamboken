@@ -12,7 +12,7 @@ export default function AnsokPage() {
       <PageHeader
         section="Bli medlem"
         title="Ansök om medlemskap"
-        lede="Fyll i formuläret nedan för att ansöka om medlemskap i Föreningen Gotlandskaninen."
+        lede="Ansök om medlemskap i Föreningen Gotlandskaninen i formuläret nedan, eller med posten: betala årsavgiften till plusgirot och skriv namn och adress på inbetalningen."
       />
       <Box component="section" sx={{ p: { xs: "40px 24px", md: "80px 56px" } }}>
         <Box

@@ -65,15 +65,15 @@ const STEPS: Array<{
   {
     title: "Bli medlem",
     body: [
-      "Fyll i ansökan på webben och betala medlemsavgiften. Avgiften gäller hela familjen.",
+      "Ansök på webben eller med posten och betala medlemsavgiften. Avgiften gäller hela familjen.",
     ],
     links: [{ href: "/bli-medlem", label: "Bli medlem →" }],
   },
   {
     title: "Kontakta genbanksansvarig",
     body: [
-      "Mejla genbanksansvarig för den ras du vill föda upp och be om ansökningshandlingarna: en instruktion om ansökan och avel, själva genbankskontraktet i två exemplar och en bilaga.",
-      "Ofta följer handlingarna redan med välkomstbrevet till nya medlemmar.",
+      "Mejla eller skriv till genbanksansvarig för den ras du vill föda upp och be om ansökningshandlingarna: en instruktion om ansökan och avel, själva genbankskontraktet i två exemplar och en bilaga.",
+      "Ofta följer handlingarna redan med välkomstbrevet till nya medlemmar. Postadressen till genbanksansvarig står i Koharen.",
     ],
     links: [
       { href: `mailto:${GOTLAND_MAIL}`, label: GOTLAND_MAIL },
@@ -114,7 +114,7 @@ const YEARLY = [
   },
   {
     title: "Årsrapport senast 31 januari",
-    desc: "Sedan 2024 lämnar du den direkt i Stamboken Online. Årsrapporten är också grunden för Jordbruksverkets stöd, som kräver minst en kull under året, hane och hona vid årsskiftet och betald medlemsavgift. Ett år utan kull ger inget stöd.",
+    desc: "Du lämnar den i Stamboken Online eller på pappersblanketten, som du skickar till genbanksansvarig. I Stamboken Online är dina kaniner redan ifyllda. Årsrapporten är också grunden för Jordbruksverkets stöd, som kräver minst en kull under året, hane och hona vid årsskiftet och betald medlemsavgift. Ett år utan kull ger inget stöd.",
   },
 ];
 

@@ -85,7 +85,7 @@ const NEXT_STEPS: Record<string, NextStepsContent> = {
   },
   "bli-medlem": {
     title: "Redo att bli medlem?",
-    text: "Fyll i ansökan, så hör vi av oss.",
+    text: "Ansök på webben eller med posten, så hör vi av oss.",
     primary: { label: "Ansök om medlemskap", href: "/ansok" },
     more: [
       {
