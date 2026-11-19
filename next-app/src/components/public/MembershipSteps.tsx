@@ -5,8 +5,8 @@ export const MEMBERSHIP_PAYMENT =
 
 const STEPS = [
   {
-    title: "Ansök på webben eller med posten",
-    text: "På webben fyller du i formuläret. Med posten är inbetalningen din ansökan: skriv namn och postadress när du betalar årsavgiften, så behövs inget mer. Vi behöver adressen för att Koharen ska hitta fram.",
+    title: "Fyll i ansökan",
+    text: "Vi behöver din adress för att Koharen ska hitta fram.",
   },
   {
     title: "Betala årsavgiften",
