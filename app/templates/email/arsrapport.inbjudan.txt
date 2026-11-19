@@ -17,7 +17,7 @@ I bilagan finns registerutdraget: det Stamboken har om din besättning. Det är 
 
 Länken gäller bara din besättning. Ge den bara till någon som ska rapportera åt dig.
 
-Rapporterar du hellre på papper? Ladda ned blanketten på gotlandskaninen.se. Rapportera antingen här eller på papper, inte båda.
+Du kan också rapportera på papper. Blanketten kom med det senaste numret av Koharen, och du skickar den med posten till genbanksansvarig. Rapportera på ett av sätten, inte båda.
 
 Har du frågor? Svara på det här mejlet.
 {% endblock %}
