@@ -362,6 +362,33 @@ describe("the draft in the browser", () => {
     expect(localStorage.length).toBe(0);
   });
 
+  it("warns before the tab is left while an uploaded photo is unsent, and says so in the close question", async () => {
+    upload.mockResolvedValueOnce(uploaded(7));
+    const add = vi.spyOn(window, "addEventListener");
+    const remove = vi.spyOn(window, "removeEventListener");
+    const unloads = (spy: typeof add) =>
+      spy.mock.calls.filter(([type]) => type === "beforeunload").length;
+    await opened();
+    expect(unloads(add)).toBe(0); // no photo yet
+    choosePhoto();
+    await screen.findByText("Fotot är uppladdat.");
+    expect(unloads(add)).toBe(1);
+    const event = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(event);
+    expect(event.defaultPrevented).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Avbryt" }));
+    expect(
+      screen.getByText(
+        "Fotot är inte inskickat. Utkastet sparar inte fotot, så du väljer det igen.",
+      ),
+    ).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Släng" }));
+    cleanup();
+    expect(unloads(remove)).toBeGreaterThanOrEqual(1);
+    add.mockRestore();
+    remove.mockRestore();
+  });
+
   it("is kept on Spara som utkast without the photo, and asks for the photo again", async () => {
     upload.mockResolvedValueOnce(uploaded(7));
     await opened();

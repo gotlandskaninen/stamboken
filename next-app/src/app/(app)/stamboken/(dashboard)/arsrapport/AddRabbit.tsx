@@ -29,6 +29,7 @@ import {
   uploadPhoto,
   type Registered,
 } from "./rabbitActions";
+import { useLeaveWarning } from "./useLeaveWarning";
 import styles from "./arsrapport.module.css";
 
 export const ADD_FROM_CERTIFICATE =
@@ -160,6 +161,9 @@ export function AddRabbitDialog({
   const [colors, setColors] = React.useState<string[]>([]);
   const [key, setKey] = React.useState<string | null>(null); // known once the server has said who the actor is
   const top = stack[stack.length - 1];
+  // an uploaded photo is held, not sent, until Spara registers the rabbit
+  const unsentPhoto = stack.some((d) => d.photo.status === "klar");
+  useLeaveWarning(unsentPhoto);
 
   // The colours, and a draft this actor saved, put back if nothing is typed yet.
   const touchedRef = React.useRef(touched);
@@ -471,6 +475,12 @@ export function AddRabbitDialog({
         {ask ? (
           <div role="alertdialog" aria-label="Spara som utkast eller släng?">
             <p>Spara som utkast eller släng?</p>
+            {unsentPhoto && (
+              <p className={styles.meta}>
+                Fotot är inte inskickat. Utkastet sparar inte fotot, så du
+                väljer det igen.
+              </p>
+            )}
             <div className={styles.detail}>
               <button
                 type="button"

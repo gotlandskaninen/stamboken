@@ -304,7 +304,7 @@ def queue():
     if scope not in ("mina", "alla"):
         return problem(400, "Bad Request", "scope är mina eller alla.")
     # a report photo held (inbox.PURPOSE) is no work until it is sent, a notice's, or a rabbit's (bind_report_photo)
-    query = InboxItem.select().where(InboxItem.ref_data.is_null() | ~InboxItem.ref_data.has_key(inbox.PURPOSE))
+    query = InboxItem.select().where(inbox.not_held())
     if scope == "mina":  # a narrower view only: anyone in the queue may still open any item
         query = query.where(InboxItem.genebank.in_(mine) | InboxItem.genebank.is_null(True))
     if args.get("mine") in ("1", "true"):

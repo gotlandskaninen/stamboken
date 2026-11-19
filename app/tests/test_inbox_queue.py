@@ -442,6 +442,16 @@ class TestUploaderAndNotices(InboxTest):
         self.assertNotIn(other.id, [i["id"] for i in resp.get_json()["items"]])
         self.assertNotIn("assigned_to", resp.get_json()["items"][0])
 
+    def test_my_uploads_leave_out_a_held_photo_of_every_purpose(self):
+        sent = self.item(0)
+        held = [self.item(0) for _ in (*inbox.PURPOSES, inbox.HELD_RABBIT)]
+        for item, purpose in zip(held, (*inbox.PURPOSES, inbox.HELD_RABBIT), strict=True):
+            item.ref_data = {inbox.PURPOSE: purpose}
+            item.save()
+        self.login("owner")
+        ids = [i["id"] for i in self.client.get("/api/v2/inkorg/mina-inskick").get_json()["items"]]
+        self.assertEqual(ids, [sent.id])
+
     def test_notices_list_read_and_mail_setting(self):
         first, second = self.item(0), self.item(0)
         self.login("hjalp")

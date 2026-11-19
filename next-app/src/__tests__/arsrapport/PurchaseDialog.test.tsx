@@ -287,6 +287,62 @@ describe("PurchaseDialog", () => {
     expect((upload.mock.calls[0] as unknown[])[1]).toBe("kop");
   });
 
+  it("asks before closing with an unsent photo, and warns before the tab is left", async () => {
+    const upload = vi.fn(async () => ({
+      ok: true as const,
+      data: { item_id: 7, document_id: 31 },
+    }));
+    const onClose = vi.fn();
+    render(
+      <PurchaseDialog
+        open
+        year={2025}
+        genebankId={1}
+        ownHerd="G9001"
+        loadHerds={herds}
+        send={vi.fn()}
+        sendPhotos={vi.fn()}
+        upload={upload}
+        onSent={vi.fn()}
+        onClose={onClose}
+      />,
+    );
+    fill("Kaninens nummer", "G9002-2501");
+    fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+    fill("Datum för köpet", "2025-05-14");
+    const beforeAny = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(beforeAny);
+    expect(beforeAny.defaultPrevented).toBe(false); // nothing uploaded yet
+    fireEvent.click(screen.getByRole("button", { name: "Avbryt" }));
+    expect(onClose).toHaveBeenCalledTimes(1); // no photo: closes at once
+    fireEvent.change(
+      screen.getByLabelText(
+        "Foto av överlåtelsebeviset eller intyget (om du har)",
+      ),
+      { target: { files: [new File(["x"], "b.jpg", { type: "image/jpeg" })] } },
+    );
+    await waitFor(() => expect(upload).toHaveBeenCalled());
+    await waitFor(() => {
+      const e = new Event("beforeunload", { cancelable: true });
+      window.dispatchEvent(e);
+      expect(e.defaultPrevented).toBe(true);
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Avbryt" }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(
+      screen.getByText("Anmälan är inte skickad. Stäng ändå?"),
+    ).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Fortsätt" }));
+    expect(screen.getByLabelText("Kaninens nummer")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Avbryt" }));
+    fireEvent.click(screen.getByText("Stäng")); // the question's, not the cross
+    expect(onClose).toHaveBeenCalledTimes(2);
+    cleanup();
+    const after = new Event("beforeunload", { cancelable: true });
+    window.dispatchEvent(after);
+    expect(after.defaultPrevented).toBe(false); // removed with the dialog
+  });
+
   it("sends a photo of the proof or the certificate once it is uploaded, with what it shows", async () => {
     let uploaded: (v: unknown) => void = () => undefined;
     const upload = vi.fn(

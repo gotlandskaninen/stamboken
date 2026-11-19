@@ -24,6 +24,7 @@ import {
 import { HerdPicker } from "./SoldDialog";
 import { MAX_BYTES } from "./AddRabbit";
 import { prepare } from "../inskick/ny/prepare";
+import { useLeaveWarning } from "./useLeaveWarning";
 import styles from "./arsrapport.module.css";
 
 type Photo = {
@@ -198,6 +199,11 @@ function Body({
   const last = `${year}-12-31` < today ? `${year}-12-31` : today;
   const uploaded = photos.filter((p) => p.status === "klar");
   const uploading = [photo, ...photos].some((p) => p.status === "skickar");
+  // an uploaded photo is held, not sent, until the notice is
+  const unsent = !sent && [photo, ...photos].some((p) => p.status === "klar");
+  const [asking, setAsking] = React.useState(false);
+  useLeaveWarning(unsent);
+  const close = () => (unsent ? setAsking(true) : onClose());
   const problem =
     (!number.trim() && "Skriv kaninens nummer.") ||
     (!outside &&
@@ -272,7 +278,7 @@ function Body({
   return (
     <Dialog
       open
-      onClose={busy ? undefined : onClose}
+      onClose={busy ? undefined : close}
       fullScreen={mobile}
       fullWidth
       maxWidth="sm"
@@ -282,7 +288,7 @@ function Body({
         Anmäl ett köp
         <IconButton
           aria-label="Stäng"
-          onClick={onClose}
+          onClick={close}
           disabled={busy}
           sx={{ position: "absolute", right: 8, top: 8 }}
         >
@@ -290,7 +296,11 @@ function Body({
         </IconButton>
       </DialogTitle>
       <DialogContent dividers={mobile} className={styles.detail}>
-        {sent ? (
+        {asking ? (
+          <p role="alertdialog" aria-label="Anmälan är inte skickad">
+            Anmälan är inte skickad. Stäng ändå?
+          </p>
+        ) : sent ? (
           <p role="status">{sent}</p>
         ) : (
           <>
@@ -421,7 +431,24 @@ function Body({
           "& > *": mobile ? { width: "100%", ml: "0 !important" } : {},
         }}
       >
-        {sent ? (
+        {asking ? (
+          <>
+            <button
+              type="button"
+              className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
+              onClick={() => setAsking(false)}
+            >
+              Fortsätt
+            </button>
+            <button
+              type="button"
+              className={`sb-btn ${styles.btn}`}
+              onClick={onClose}
+            >
+              Stäng
+            </button>
+          </>
+        ) : sent ? (
           <button
             type="button"
             className={`sb-btn ${styles.btn}`}
@@ -434,7 +461,7 @@ function Body({
             <button
               type="button"
               className={`sb-btn sb-btn-secondary ${styles.btn} ${styles.secondary}`}
-              onClick={onClose}
+              onClick={close}
               disabled={busy}
             >
               Avbryt

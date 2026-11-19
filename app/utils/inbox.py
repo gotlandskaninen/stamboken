@@ -649,6 +649,11 @@ def update_document(item, document, user, changes):
 NOTICE_UNREAD = "Fotot till ett anmält köp tolkas inte."
 
 
+def not_held():
+    """The items that are not a held report photo (`ref_data` PURPOSE): the queue's work and a sender's own list."""
+    return InboxItem.ref_data.is_null() | ~InboxItem.ref_data.has_key(PURPOSE)
+
+
 def unread(item):
     """
     The model never reads the item's photos: a purchase notice's, and a report photo held (`ref_data` PURPOSE) for a
@@ -908,7 +913,11 @@ def open_item(item, user):
 
 def my_uploads(user):
     """ "Mina inskick": the user's own items in plain words, and the rabbits registered from them."""
-    items = list(InboxItem.select().where(InboxItem.sender_user == user.id).order_by(InboxItem.received_at.desc()))
+    items = list(
+        InboxItem.select()
+        .where(InboxItem.sender_user == user.id, not_held())  # a held photo is not sent yet
+        .order_by(InboxItem.received_at.desc())
+    )
     listed = {row["id"]: row for row in items_json(items)}
     rabbits = {}
     if items:
