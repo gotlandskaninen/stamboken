@@ -70,8 +70,9 @@ export default function IntegritetspolicyPage() {
               Stamboken Online och på den här webbplatsen. Medlemsregistret och
               Stamboken Online är två delar av samma system. Har du frågor om
               hur vi behandlar dina uppgifter, eller vill du använda någon av
-              dina rättigheter, mejla {contactLink}. Vill du ha den här texten
-              på papper kan du be genbanksansvarig eller mejla samma adress.
+              dina rättigheter, mejla {contactLink}. Du kan lika gärna skriva
+              till genbanksansvarig för rasen, som också kan ge dig den här
+              texten på papper.
             </p>
           </Section>
 
