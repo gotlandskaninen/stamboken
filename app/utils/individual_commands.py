@@ -1203,7 +1203,13 @@ class ConfirmLitterSize(PolicyCommand):
             if self.litter_size6w < (kits := alive.count()):
                 raise IndividualRefused(ALIVE_BELOW_KITS.format(kits=kits))
         certified = Individual.certificate.is_null(False) | Individual.digital_certificate.is_null(False)
-        if Individual.select().where((Individual.breeding == litter.id) & certified).exists():
+        # confirming a preliminary count is no correction (5.8): the born count stays and the 6-week count is given
+        confirms = (
+            litter.litter_size6w_preliminary
+            and self.litter_size6w is not None
+            and self.litter_size in (None, litter.litter_size)
+        )
+        if not confirms and Individual.select().where((Individual.breeding == litter.id) & certified).exists():
             raise IndividualRefused(CERTIFIED_LITTER)  # under the litter's lock: a kit's certificate is counted in it
         # shortcut: no roster lock yet (4b Task 3, issue #79); add the refusal when count_at_6_weeks exists
 

@@ -199,15 +199,25 @@ class TestSameLitter(LitterApiTest):
         high = self.api("PATCH", f"{REPORT}/kull/{first}", litter_size6w=9)
         self.assertEqual(high.status_code, 422)
 
-    def test_patch_refused_for_certified_litter(self):
-        """FC4: a litter with a certified kit is the manager's; nothing changes."""
+    def test_patch_of_certified_litter(self):
+        """FC4: a certified litter is the manager's, except confirming its preliminary count (5.8)."""
         self.login("owner")
         first = self.litter().get_json()["id"]
         db.Individual.create(origin_herd=self.h, breeding=first, number="G9001-2551", certificate="SC-1")
-        refused = self.api("PATCH", f"{REPORT}/kull/{first}", litter_size6w=3)
-        self.assertEqual(refused.status_code, 422)
-        self.assertEqual(refused.get_json()["detail"], "Kontakta genbanksansvarig för att ändra en kull med intyg.")
+        changed = self.api("PATCH", f"{REPORT}/kull/{first}", litter_size=6, litter_size6w=3)
+        self.assertEqual(changed.status_code, 422)
+        self.assertEqual(changed.get_json()["detail"], "Kontakta genbanksansvarig för att ändra en kull med intyg.")
         self.assertTrue(db.Breeding.get_by_id(first).litter_size6w_preliminary)
+        below = self.api("PATCH", f"{REPORT}/kull/{first}", litter_size6w=0)
+        self.assertEqual(below.status_code, 422)
+        self.assertNotEqual(below.get_json()["detail"], "Kontakta genbanksansvarig för att ändra en kull med intyg.")  # the floor: the kit alive
+        done = self.api("PATCH", f"{REPORT}/kull/{first}", litter_size6w=3)
+        self.assertEqual(done.status_code, 200, done.get_data(as_text=True))
+        self.assertFalse(db.Breeding.get_by_id(first).litter_size6w_preliminary)
+        again = self.api("PATCH", f"{REPORT}/kull/{first}", litter_size6w=2)  # now confirmed: a correction
+        self.assertEqual(again.status_code, 422)
+        self.assertEqual(again.get_json()["detail"], "Kontakta genbanksansvarig för att ändra en kull med intyg.")
+        self.assertEqual(db.Breeding.get_by_id(first).litter_size6w, 3)
 
     def test_patch_of_another_herds_litter_is_a_404(self):
         self.login("owner")

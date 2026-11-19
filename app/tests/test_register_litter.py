@@ -424,18 +424,29 @@ class TestConfirmLitterSize(LitterTest):
         )
         self.assertEqual((command.before["litter_size6w"], command.after["litter_size6w"]), (5, 3))
 
-    def test_patch_refused_for_certified_litter(self):
-        """FC4: a litter with a certified kit is the manager's, whoever asks; nothing changes."""
+    def test_certified_litter_confirms_only_its_preliminary_count(self):
+        """FC4: a certified litter is the manager's, whoever asks; confirming a preliminary count is not a correction."""
         litter = self.add()
         db.Individual.create(origin_herd=self.g1, breeding=litter, number="G1-2551", certificate="SC-1")
+        refused = "Kontakta genbanksansvarig för att ändra en kull med intyg."
+
+        def refuse(user, *args, **kwargs):
+            with self.assertRaises(IndividualRefused) as raised:
+                confirm_litter_size(user, litter.id, *args, **kwargs)
+            return raised.exception.envelope["message"]
+
         for user in (self.owner, self.manager, self.admin):
-            with self.subTest(user=user.username), self.assertRaises(IndividualRefused) as raised:
-                confirm_litter_size(user, litter.id, 3)
-            self.assertEqual(
-                raised.exception.envelope["message"], "Kontakta genbanksansvarig för att ändra en kull med intyg."
-            )
+            with self.subTest(user=user.username):
+                self.assertEqual(refuse(user, 3, litter_size=6), refused)  # the count born changed
+                self.assertEqual(refuse(user, 3, litter_size=4), refused)  # a lower count born
+                self.assertEqual(refuse(user, None), refused)  # re-marked as preliminary
         after = db.Breeding.get_by_id(litter.id)
-        self.assertEqual((after.litter_size6w, after.litter_size6w_preliminary), (5, True))
+        self.assertEqual((after.litter_size, after.litter_size6w, after.litter_size6w_preliminary), (5, 5, True))
+        self.assertNotEqual(refuse(self.owner, 0), refused)  # the kit alive is the floor
+        done = confirm_litter_size(self.owner, litter.id, 3, litter_size=5)  # the same count born: a confirmation
+        self.assertEqual((done.litter_size6w, done.litter_size6w_preliminary), (3, False))
+        self.assertEqual(refuse(self.owner, 2), refused)  # confirmed: changing it is a correction
+        self.assertEqual(db.Breeding.get_by_id(litter.id).litter_size6w, 3)
 
     def test_refusals(self):
         litter = self.add()
