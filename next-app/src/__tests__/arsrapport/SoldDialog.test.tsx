@@ -2,7 +2,10 @@ import React from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import "@/i18n"; // BuyerFields' labels
-import { SoldDialog } from "@/app/(app)/stamboken/(dashboard)/arsrapport/SoldDialog";
+import {
+  HerdPicker,
+  SoldDialog,
+} from "@/app/(app)/stamboken/(dashboard)/arsrapport/SoldDialog";
 import type {
   BodyEntry,
   SaldState,
@@ -58,6 +61,27 @@ function expectBuyerAsked() {
 }
 
 describe("SoldDialog", () => {
+  it("gives the herd picker the member look, and leaves other pickers as they are", () => {
+    dialog(null);
+    expect(screen.getByTestId("herd-picker").className).toContain(
+      "memberFields",
+    );
+    cleanup();
+    render(
+      <HerdPicker
+        genebankId={2}
+        ownHerd="M9007"
+        loadHerds={async () => ({ success: true as const, herds: [] })}
+        label="Säljarens besättning"
+        value=""
+        onChange={() => {}}
+      />,
+    );
+    expect(screen.getByTestId("herd-picker").className).not.toContain(
+      "memberFields",
+    );
+  });
+
   it("shows every refusal at its field at once, and focuses the first", () => {
     const onSave = dialog(null);
     const month = screen.getByLabelText("Månad");

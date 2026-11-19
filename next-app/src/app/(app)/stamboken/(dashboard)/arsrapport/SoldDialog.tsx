@@ -50,6 +50,7 @@ export function HerdPicker({
   value,
   onChange,
   error,
+  variant,
 }: {
   genebankId: number;
   ownHerd: string;
@@ -58,6 +59,7 @@ export function HerdPicker({
   value: string;
   onChange: (herd: string) => void;
   error?: string | null; // beside the field, as its description
+  variant?: "member"; // the report's member fields, as BuyerFields' (the sale dialog)
 }) {
   const [loaded, setLoaded] = React.useState<Awaited<
     ReturnType<typeof getGenebankHerds>
@@ -96,24 +98,29 @@ export function HerdPicker({
 
   return (
     <>
-      <Autocomplete
-        options={options}
-        value={target}
-        onChange={(_, h) => onChange(h?.herd ?? "")}
-        getOptionLabel={optionLabel}
-        isOptionEqualToValue={(a, b) => a.herd === b.herd}
-        loading={loaded === null}
-        loadingText="Hämtar besättningar …"
-        noOptionsText="Ingen besättning matchar"
-        renderInput={(params) => (
-          <TextField
-            {...params}
-            label={label}
-            error={!!error}
-            helperText={error}
-          />
-        )}
-      />
+      <div
+        className={variant === "member" ? styles.memberFields : undefined}
+        data-testid="herd-picker"
+      >
+        <Autocomplete
+          options={options}
+          value={target}
+          onChange={(_, h) => onChange(h?.herd ?? "")}
+          getOptionLabel={optionLabel}
+          isOptionEqualToValue={(a, b) => a.herd === b.herd}
+          loading={loaded === null}
+          loadingText="Hämtar besättningar …"
+          noOptionsText="Ingen besättning matchar"
+          renderInput={(params) => (
+            <TextField
+              {...params}
+              label={label}
+              error={!!error}
+              helperText={error}
+            />
+          )}
+        />
+      </div>
       {loaded && !loaded.success && (
         <p className={styles.errorText} role="alert">
           Det gick inte att hämta besättningarna.{" "}
@@ -265,6 +272,7 @@ function Body({
         </div>
         {!outside && (
           <HerdPicker
+            variant="member"
             genebankId={genebankId}
             ownHerd={ownHerd}
             loadHerds={loadHerds}
