@@ -591,6 +591,20 @@ describe("WorkView: a purchase notice (4a Task 5)", () => {
     ).toBe("Ägare Ett");
   });
 
+  it("names the personal link by its herd for a photo that has no sender account", () => {
+    render(
+      view(
+        { ...notice, ref_type: "individual", herd: "M9202", sender: null },
+        boss,
+        false,
+        2026,
+      ),
+    );
+    expect(
+      screen.getByText("Inskickat av").nextElementSibling?.textContent,
+    ).toBe("Länken för besättning M9202");
+  });
+
   it("shows a photo sent with it, and nothing to work on from it in the queue", () => {
     render(
       view(

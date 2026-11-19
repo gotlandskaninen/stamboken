@@ -226,6 +226,18 @@ export const WARNING_LABEL: Record<string, string> = {
 
 export const kindLabel = (kind: string) => KIND_LABEL[kind] ?? kind;
 
+// Who sent an item with an account; the report's photo through a member's personal link has none, so the
+// link is named by the herd of its report code (old items too: no event is read).
+export const accountOrLink = (item: {
+  kind: string;
+  herd: string | null;
+  sender: Person | null;
+}): string | null =>
+  item.sender?.name ??
+  (item.kind === "kontroll" && item.herd
+    ? `Länken för besättning ${item.herd}`
+    : null);
+
 /** Time since `from`, in plain words. */
 export function waited(from: string, now = Date.now()): string {
   const hours = (now - Date.parse(from)) / 3_600_000;

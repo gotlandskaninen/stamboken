@@ -23,6 +23,7 @@ import {
   turn,
 } from "../image";
 import {
+  accountOrLink,
   ACTION_LABEL,
   canEditDocuments,
   canSave,
@@ -99,6 +100,7 @@ function senderText(item: InboxDetail): string {
     item.sender?.name ??
     (typeof via === "string" ? via : null) ??
     arrived?.user?.name ??
+    accountOrLink(item) ??
     item.sender_address ??
     "–"
   );
