@@ -4396,7 +4396,7 @@ def purge_member_applications(now) -> int:
     # row's date so the 29 February case lands on 28 February instead of rounding down from today.
     # One day of margin: the job runs nightly, so a normal run keeps every row within its 12 months (the policy's
     # upper bound); a missed run can still leave one a day too long.
-    cutoff = (now + timedelta(days=1)).astimezone().replace(tzinfo=None)
+    cutoff = now.astimezone().replace(tzinfo=None) + timedelta(days=1)  # a calendar day in the local clock
     cursor = DATABASE.execute_sql(
         """
         DELETE FROM member_application
