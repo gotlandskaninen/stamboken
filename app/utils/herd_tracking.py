@@ -423,6 +423,19 @@ def _moves_across_genebanks(individual, before, after):
     )
 
 
+def sale_months(individual):
+    """
+    "YYYY-MM" of each sale for the public certificate check page (stamboken #6): an active TRANSFER that stays
+    in the genebank. A CORRECTION, and a TRANSFER between genebanks (an admin's register fix), is no sale.
+    """
+    rows = _active_rows(individual.id)
+    return [
+        coerce_date(r.herd_tracking_date).strftime("%Y-%m")
+        for r in rows
+        if r.kind == "TRANSFER" and not _changes_genebank(r, individual, rows)
+    ]
+
+
 def void_denial(user, row, active_rows, individual, transfer_herd_ids=None):
     """The void permission table. None = allowed."""
     if row.kind == "BIRTH":

@@ -939,6 +939,14 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
             individual=individual,
             herd_tracking_date=date(2026, 9, 1),
         )
+        ht_row(  # an admin's register fix into the other genebank, no sale
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[2],
+            signature=self.admin,
+            individual=individual,
+            herd_tracking_date=date(2026, 10, 1),
+        )
         url = f"/api/v2/herd/{self.herds[0].herd}/herd-name-on-certificate"
         owner = self.app.application.test_client(use_cookies=True)
         login = owner.post("/api/login", json={"username": self.owner.email, "password": "pass"})
@@ -948,9 +956,12 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
 
         data = self.app.get(f"/api/v2/certificates/verify/{token}").get_json()
         self.assertEqual(data["breeder"], "Gotlandsherd1")
-        self.assertEqual(data["transferred"], ["2026-03"])  # a CORRECTION is no sale
+        self.assertEqual(data["transferred"], ["2026-03"])  # no CORRECTION, no move between genebanks
         self.assertNotIn("owner1", str(data))  # the contact person's name, never on the public page
         self.assertNotIn("2026-03-15", str(data))
+        with patch.object(settings.service, "demo_instance", True):  # a day-old copy: no choice, no sales
+            demo = self.app.get(f"/api/v2/certificates/verify/{token}").get_json()
+        self.assertEqual((demo["breeder"], demo["transferred"]), (None, []))
 
         db.Herd.update(herd_name="  ").where(db.Herd.id == self.herds[0].id).execute()
         self.assertIsNone(self.app.get(f"/api/v2/certificates/verify/{token}").get_json()["breeder"])
