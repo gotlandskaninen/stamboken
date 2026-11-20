@@ -645,6 +645,9 @@ class TestCertificateV2Update(CertV2Mixin, FlaskTest):
         self.assertTrue(data["verified"])
         self.assertFalse(data["is_current"])
         self.assertEqual(data["replaced_by_date"], new_issued_at)
+        # An old QR code tells nothing about the breeder's choice or later sales (stamboken #6)
+        self.assertIsNone(data["breeder"])
+        self.assertEqual(data["transferred"], [])
 
 
 class TestCertificateV2Download(CertV2Mixin, FlaskTest):
@@ -921,11 +924,16 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
             individual=individual,
             herd_tracking_date=date(2026, 9, 1),
         )
-        db.Herd.update(herd_name_on_certificate=True).where(db.Herd.id == self.herds[0].id).execute()
+        url = f"/api/v2/herd/{self.herds[0].herd}/herd-name-on-certificate"
+        owner = self.app.application.test_client(use_cookies=True)
+        login = owner.post("/api/login", json={"username": self.owner.email, "password": "pass"})
+        self.assertEqual(login.status_code, 200)
+        self.assertEqual(owner.put(url, json={"show": "true"}).status_code, 400)
+        self.assertEqual(owner.put(url, json={"show": True}).status_code, 204)
 
         data = self.app.get(f"/api/v2/certificates/verify/{token}").get_json()
         self.assertEqual(data["breeder"], "Gotlandsherd1")
-        self.assertEqual(data["transferred"], ["2026-03", "2026-06"])
+        self.assertEqual(data["transferred"], ["2026-03"])  # a CORRECTION is no sale
         self.assertNotIn("owner1", str(data))  # the contact person's name, never on the public page
         self.assertNotIn("2026-03-15", str(data))
 

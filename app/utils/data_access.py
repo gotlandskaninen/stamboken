@@ -1544,6 +1544,7 @@ def add_herd(form, user_uuid):
         if "id" in form:
             del form["id"]
         form = {k: v for k, v in form.items() if k not in BANK_PRIVACY_FIELDS}  # fixed 'private', issue #33
+        form.pop(HERD_NAME_ON_CERTIFICATE, None)  # off until the breeder chooses it (stamboken #6)
         bad = invalid_privacy_field(form)
         if bad:
             return {"status": "error", "message": f"Invalid value for {bad}"}
@@ -1663,6 +1664,24 @@ def save_yearly_report(herd_id, form_data, user):
         return {"status": "error", "message": "Failed to save report"}
 
 
+HERD_NAME_ON_CERTIFICATE = "herd_name_on_certificate"
+
+
+def set_herd_name_on_certificate(herd_id, show, user_uuid):
+    """
+    The breeder's own choice to show the herd name on the public certificate check page (stamboken #6).
+    Only the herd's owner (legacy owner or huvudmedlem, as for a sale): never a caretaker, manager or admin.
+    Returns None, "not_found" or "forbidden".
+    """
+    user = fetch_user_info(user_uuid)
+    if user is None or herd_id not in user.transfer_herd_ids():
+        return "forbidden"
+    if not Herd.update(herd_name_on_certificate=show).where(Herd.id == herd_id).execute():
+        return "not_found"
+    logger.info(f"User:{user.id} set herd_name_on_certificate={show} on herd: {herd_id}")
+    return None
+
+
 def update_herd(form, user_uuid):
     """
     Updates a herd, identified by `form.id`, by the values in `form`, if the
@@ -1698,13 +1717,8 @@ def update_herd(form, user_uuid):
             bad = invalid_privacy_field(form)
             if bad:
                 return {"status": "error", "message": f"Invalid value for {bad}"}
-            # Showing the herd name on the public check page is the breeder's own choice (stamboken #6): only the
-            # herd's own users set it. Others' echoes (legacy SPA, manager edits) are dropped, not refused.
-            if "herd_name_on_certificate" in form:
-                if herd.id not in user.effective_herd_ids():
-                    del form["herd_name_on_certificate"]
-                elif not isinstance(form["herd_name_on_certificate"], bool):
-                    return {"status": "error", "message": "Invalid value for herd_name_on_certificate"}
+            # Only set_herd_name_on_certificate writes the breeder's choice: a stale echo must not turn it back on.
+            form.pop(HERD_NAME_ON_CERTIFICATE, None)
 
             # Real columns only (hasattr also matches genebank_id, membership_id and
             # methods such as save). Identity/ownership columns are admin-only; the
@@ -4017,6 +4031,7 @@ _AUDIT_UNDO_SKIP = {
         "is_active",
     },
     "breeding": {"birth_date", "breeding_herd_id", "litter_number"},
+    "herd": {HERD_NAME_ON_CERTIFICATE},
 }
 
 
@@ -4046,6 +4061,8 @@ def _audit_undo_refusal(table_name, values, is_admin):
     Why an audit revert/restore that writes `values` (column -> value) to `table_name` is refused,
     or None. A restore leaves the locked columns out of `values` first: it skips them.
     """
+    if table_name == "herd" and HERD_NAME_ON_CERTIFICATE in values:
+        return "Valet att visa besättningsnamnet på kontrollsidan gör bara uppfödaren, under Min besättning."
     held = ", ".join(sorted(set(values) & _audit_undo_locked(table_name, is_admin)))
     if held and table_name == "herd":
         return f"Bara admin kan ändra {held} på en besättning."

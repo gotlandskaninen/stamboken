@@ -379,18 +379,17 @@ def verify_certificate_get(token):
         )
         replaced_by_date = newest.issued_at.isoformat() if newest else None
 
-    # Public page (ADR-0016): month and year of each change of holder, never the day or the herd.
+    # Public page (ADR-0016): month and year of each sale, never the day or the herd. A CORRECTION fixes the
+    # register and is no sale.
     moves = (
         db.HerdTracking.select()
-        .where(
-            (db.HerdTracking.individual == individual)
-            & db.ht_not_voided()
-            & db.HerdTracking.kind.in_(("TRANSFER", "CORRECTION"))
-        )
+        .where((db.HerdTracking.individual == individual) & db.ht_not_voided() & (db.HerdTracking.kind == "TRANSFER"))
         .order_by(db.HerdTracking.herd_tracking_date, db.HerdTracking.id)
     )
     breeder = individual.origin_herd
     breeder_name = (breeder.herd_name or "").strip() if breeder and breeder.herd_name_on_certificate else ""
+    if not cert.is_current:  # an old QR code tells nothing about the rabbit's later sales
+        moves, breeder_name = [], ""
 
     return jsonify(
         {

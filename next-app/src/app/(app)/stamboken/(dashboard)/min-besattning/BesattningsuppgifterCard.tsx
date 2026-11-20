@@ -3,7 +3,10 @@
 import React, { useTransition } from "react";
 
 import { useUser } from "@/lib/user-context";
-import { updateHerd as updateHerdAction } from "./actions";
+import {
+  setHerdNameOnCertificate,
+  updateHerd as updateHerdAction,
+} from "./actions";
 import { useNotifications } from "@/contexts/NotificationContext";
 import { useSnackbar } from "@/components/SnackbarProvider";
 import { getErrorDetails, formatErrorForAdmin } from "@/utils/errorHandling";
@@ -124,10 +127,18 @@ export default function BesattningsuppgifterCard({
         wire_phone_privacy: contactData.wire_phone_privacy,
         www_privacy: contactData.www_privacy,
         physical_address_privacy: contactData.physical_address_privacy,
-        herd_name_on_certificate: contactData.herd_name_on_certificate,
       };
 
-      const result = await updateHerdAction(herdNumber, updateData);
+      let result = await updateHerdAction(herdNumber, updateData);
+      // Sent only when the box changed: an unchanged (maybe stale) value is never written back.
+      const show = contactData.herd_name_on_certificate;
+      if (
+        result.success &&
+        show !== contactFromHerd(herd).herd_name_on_certificate
+      ) {
+        const choice = await setHerdNameOnCertificate(herdNumber, show);
+        if (!choice.success) result = choice;
+      }
 
       if (result.success) {
         setIsEditingContact(false);

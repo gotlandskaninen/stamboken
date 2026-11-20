@@ -214,19 +214,34 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
         self.assertEqual(herd.bank_account_number_privacy, "private")
         self.assertEqual(herd.bank_name_privacy, "private")
 
-    def test_herd_name_on_certificate_is_the_breeders_own_choice(self):
-        """Stamboken #6: only the herd's own users set it; others' values are dropped, a non-bool is refused."""
+    def test_herd_name_on_certificate_is_the_owners_own_choice(self):
+        """Stamboken #6: only the herd's owner sets it, and only through its own call."""
         herd = self.herds[0]
-        for user in (self.manager, self.admin):
+        caretaker = self._caretaker_with_grant("cert-caretaker@example.com", herd)
+        for user in (self.manager, self.admin, caretaker):
+            with self.subTest(user=user.email):
+                self.assertEqual(da.set_herd_name_on_certificate(herd.id, True, user.uuid), "forbidden")
+                self.assertFalse(db.Herd.get(herd.id).herd_name_on_certificate)
+        self.assertIsNone(da.set_herd_name_on_certificate(herd.id, True, self.owner.uuid))
+        self.assertTrue(db.Herd.get(herd.id).herd_name_on_certificate)
+        self.assertIsNone(da.set_herd_name_on_certificate(herd.id, False, self.owner.uuid))
+        self.assertFalse(db.Herd.get(herd.id).herd_name_on_certificate)
+
+    def test_herd_name_on_certificate_ignored_by_generic_writes(self):
+        """A stale echo (old tab, legacy SPA), a new herd or an audit undo never turns the choice on."""
+        herd = self.herds[0]
+        for user in (self.owner, self.manager, self.admin):
             result = da.update_herd({"id": herd.id, "www": "w", "herd_name_on_certificate": True}, user.uuid)
             self.assertEqual(result, {"status": "updated"})
             self.assertFalse(db.Herd.get(herd.id).herd_name_on_certificate)
-        result = da.update_herd({"id": herd.id, "herd_name_on_certificate": "true"}, self.owner.uuid)
-        self.assertEqual(result["status"], "error")
-        self.assertFalse(db.Herd.get(herd.id).herd_name_on_certificate)
-        result = da.update_herd({"id": herd.id, "herd_name_on_certificate": True}, self.owner.uuid)
-        self.assertEqual(result, {"status": "updated"})
-        self.assertTrue(db.Herd.get(herd.id).herd_name_on_certificate)
+        result = da.add_herd(
+            {"herd": "ZZ98", "genebank": self.genebanks[0].id, "herd_name_on_certificate": True}, self.admin.uuid
+        )
+        self.assertEqual(result, {"status": "success"})
+        self.assertFalse(db.Herd.get(db.Herd.herd == "ZZ98").herd_name_on_certificate)
+        for is_admin in (True, False):
+            self.assertIn("herd_name_on_certificate", da._audit_undo_locked("herd", is_admin))
+            self.assertIsNotNone(da._audit_undo_refusal("herd", {"herd_name_on_certificate": True}, is_admin))
 
     def test_update_herd_ignores_bank_privacy_as_manager_even_if_stored_value_is_bad(self):
         herd = self.herds[0]

@@ -510,8 +510,9 @@ Kontaktuppgifterna på Min besättning ser andra uppfödare. Du väljer själv v
    och **Adress**.
 3. Välj för varje uppgift vem som ser den: **Endast genbanksansvarig** eller
    **Inloggade besättningar**.
-4. Kryssa i **Visa besättningsnamnet på intygens kontrollsida** om besättningens namn
-   ska stå på [kontrollsidan](#verifiera-intyg). Utan krysset står där "Uppfödare".
+4. Kryssa i **Visa besättningsnamnet (…) på intygens kontrollsida** om besättningens
+   namn ska stå på [kontrollsidan](#verifiera-intyg). Utan krysset står där "Uppfödare".
+   Bara besättningens ägare kan ändra valet.
 5. Klicka **Klar**. Bekräftelsen "Kontaktinformation sparad" visas.
 
 Ändringar här når inte föreningens medlemsmatrikel. Har du flyttat eller bytt e-post

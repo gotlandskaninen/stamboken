@@ -107,6 +107,7 @@ class TestDatabase(DatabaseTest):
                 "genebank": self.herds[index].__dict__["__data__"]["genebank"],
                 "herd": self.herds[index].herd,
                 "herd_name": self.herds[index].herd_name,
+                "herd_name_on_certificate": self.herds[index].herd_name_on_certificate,
                 "is_active": self.herds[index].is_active,
                 "start_date": self.herds[index].start_date,
                 "name": self.herds[index].name,
