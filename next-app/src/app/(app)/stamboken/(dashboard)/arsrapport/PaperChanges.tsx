@@ -2,13 +2,13 @@
 
 import React from "react";
 import { MbCard } from "../min-besattning/min-besattning-ui";
-import { CONSENT_TEXT, type PaperFields, type Utom } from "./lib";
+import { CONSENT_TEXT, UTOM_ALL, type PaperFields, type Utom } from "./lib";
 import styles from "./arsrapport.module.css";
 
 const UTOM_LABEL: Record<Utom, string> = {
-  phone: "Telefonnummer",
-  email: "E-postadress",
-  address: "Postnummer och ort",
+  phone: "telefonnummer",
+  email: "e-postadress",
+  address: "postnummer och ort",
 };
 
 // The form's contact part. The page never reads the stored values: it shows
@@ -68,7 +68,9 @@ export function PaperChanges({
                   type="radio"
                   name="consent"
                   checked={fields.consent === v}
-                  onChange={() => set({ consent: v, utom: [] })}
+                  onChange={() =>
+                    set({ consent: v, utom: v === "ja" ? UTOM_ALL : [] })
+                  }
                 />
                 <span>{label}</span>
               </label>
@@ -76,18 +78,21 @@ export function PaperChanges({
           </div>
         </div>
         {fields.consent === "ja" && (
-          <div role="group" aria-label="Ska inte visas">
-            <span className={styles.label}>Ja, men inte:</span>
+          <div role="group" aria-label="Får stå med">
+            <span className={styles.label}>
+              Om ja står ditt namn och besättningens nummer med. Kryssa också
+              det ur medlemsregistret som får stå med:
+            </span>
             {(Object.keys(UTOM_LABEL) as Utom[]).map((k) => (
               <label key={k} className={styles.line} style={{ minHeight: 48 }}>
                 <input
                   type="checkbox"
-                  checked={fields.utom.includes(k)}
+                  checked={!fields.utom.includes(k)}
                   onChange={(e) =>
                     set({
                       utom: e.target.checked
-                        ? [...fields.utom, k]
-                        : fields.utom.filter((x) => x !== k),
+                        ? fields.utom.filter((x) => x !== k)
+                        : [...fields.utom, k],
                     })
                   }
                 />
@@ -96,6 +101,11 @@ export function PaperChanges({
             ))}
           </div>
         )}
+        <p className={styles.label} style={{ margin: 0 }}>
+          Kryssar du varken ja eller nej gäller ditt senaste svar. Har du aldrig
+          svarat publicerar vi ingenting. Du kan ändra ditt svar när som helst i
+          Stamboken eller hos genbanksansvarig.
+        </p>
 
         {text("E-post", fields.epost, (v) => set({ epost: v }), {
           type: "email",

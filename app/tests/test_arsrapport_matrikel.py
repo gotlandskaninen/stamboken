@@ -76,7 +76,7 @@ class MatrikelTest(PaperTest):
                 change = self.changes()[-1]
                 self.assertEqual(
                     (change.membership_id, change.value, change.source, change.text_version),
-                    (ms.id, NONE, "paper", "2026-11-18"),
+                    (ms.id, NONE, "paper", "2026-11-20"),
                 )
                 self.assertEqual(
                     (change.user_id, change.report_id, change.submission_id, change.at),
@@ -99,7 +99,7 @@ class MatrikelTest(PaperTest):
         (change,) = self.changes()
         self.assertEqual(
             (change.value, change.source, change.text_version, change.user_id),
-            (expected, "paper", "2026-11-18", self.helper.id),
+            (expected, "paper", "2026-11-20", self.helper.id),
         )
         (row,) = self.a23()
         self.assertEqual(

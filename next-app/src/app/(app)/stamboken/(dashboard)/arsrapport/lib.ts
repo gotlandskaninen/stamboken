@@ -165,6 +165,8 @@ export interface DraftData {
 // The form's contact changes, as the API takes them (paper only). Never in a
 // draft and never in localStorage: the page keeps them in memory.
 export type Utom = "phone" | "email" | "address";
+// The API takes what is left out; the form asks what may appear, none ticked at first.
+export const UTOM_ALL: Utom[] = ["phone", "email", "address"];
 export interface Matrikel {
   adress?: { address?: string; postal_code?: string; city?: string };
   telefon?: string;
@@ -324,9 +326,9 @@ export interface BodyEntry {
 export const SUBMIT_TIMEOUT_MS = 30_000;
 
 // The wording of the blankett's question about the listing in Koharen
-// (CONSENT_TEXT_VERSION "2026-11-16" on the server). Only the paper form shows it.
+// (CONSENT_TEXT_VERSION "2026-11-20" on the server). Only the paper form shows it.
 export const CONSENT_TEXT =
-  "Får din besättning stå med i Koharens lista över aktiva besättningar? Koharen är föreningens tidning på papper och går bara till medlemmar. Listan gör det lättare för besättningarna att hitta varandra. Den visar innehavarens namn och besättningens nummer, och dessutom postnummer och ort, telefonnummer och e-postadress ur medlemsregistret.";
+  "Får din besättning stå med i Koharens lista över aktiva besättningar? Koharen är föreningens tidning på papper och går bara till medlemmar. Listan gör det lättare för besättningarna att hitta varandra.";
 
 export const EJ_VAGD_REASONS = [
   "Hann inte väga",
