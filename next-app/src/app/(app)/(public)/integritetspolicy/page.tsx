@@ -161,12 +161,15 @@ export default function IntegritetspolicyPage() {
                 kan följa med.
               </li>
               <li>
-                I listan över aktiva genbanker i Koharen står innehavarens namn
-                och besättningens nummer, och dessutom postnummer och ort,
-                telefon och e-postadress, bara om innehavaren har sagt ja, i
-                årsrapporten eller i sin profil (samtycke). Svaret gäller tills
-                det ändras, och den som aldrig har svarat publiceras inte. Det
-                som redan är tryckt går inte att ta tillbaka.
+                I listan över aktiva besättningar i Koharen står bara de
+                innehavare som har sagt ja, i årsrapporten eller i sin profil
+                (samtycke). Då står namn och besättningsnummer, och dessutom de
+                kontaktuppgifter innehavaren har godkänt: postnummer och ort,
+                telefonnummer och e-postadress. Svaret gäller tills det ändras,
+                och den som aldrig har svarat publiceras inte. Du kan ändra ditt
+                svar när som helst i Stamboken Online eller hos
+                genbanksansvarig. Det som redan är tryckt går inte att ta
+                tillbaka.
               </li>
             </ul>
             <p>
