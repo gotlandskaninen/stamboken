@@ -426,13 +426,14 @@ def _moves_across_genebanks(individual, before, after):
 def sale_months(individual):
     """
     "YYYY-MM" of each sale for the public certificate check page (stamboken #6): an active TRANSFER that stays
-    in the genebank. A CORRECTION, and a TRANSFER between genebanks (an admin's register fix), is no sale.
+    in the genebank. A CORRECTION, a TRANSFER between genebanks (an admin's register fix) and a migrated row
+    without a receiving herd are no sale.
     """
     rows = _active_rows(individual.id)
     return [
         coerce_date(r.herd_tracking_date).strftime("%Y-%m")
         for r in rows
-        if r.kind == "TRANSFER" and not _changes_genebank(r, individual, rows)
+        if r.kind == "TRANSFER" and r.herd_id is not None and not _changes_genebank(r, individual, rows)
     ]
 
 

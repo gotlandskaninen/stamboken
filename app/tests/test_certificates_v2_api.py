@@ -939,6 +939,14 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
             individual=individual,
             herd_tracking_date=date(2026, 9, 1),
         )
+        ht_row(  # migrated history without a receiving herd, no sale
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=None,
+            signature=self.admin,
+            individual=individual,
+            herd_tracking_date=date(2026, 9, 15),
+        )
         ht_row(  # an admin's register fix into the other genebank, no sale
             "TRANSFER",
             from_herd=self.herds[0],
