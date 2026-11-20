@@ -387,7 +387,7 @@ def verify_certificate_get(token):
             "individual_number": individual.number,
             "genebank": individual.origin_herd.genebank.name if individual.origin_herd else "",
             "digital_certificate": individual.digital_certificate,
-            "issued_by": cert.issued_by.fullname or "Uppfödare",
+            # No person's name on the public page: the breeder's name only by the breeder's own choice (stamboken #6).
             "issued_at": cert.issued_at.isoformat(),
             "is_current": cert.is_current,
             "replaced_by_date": replaced_by_date,

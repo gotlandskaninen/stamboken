@@ -720,8 +720,8 @@ Sidan som QR-koden på ett digitalt intyg leder till. Den kräver ingen inloggni
 visar ett av fyra besked:
 
 - **Äkta genbanksintyg** – intyget är utfärdat i Stamboken och signerat av föreningen.
-  Kortet visar **Individnummer**, namn, **Ras**, **Intygsnummer**, **Utfärdat av** och
-  **Datum**. **Visa kaninens sida i Stamboken →** kräver inloggning.
+  Kortet visar **Individnummer**, namn, **Ras**, **Intygsnummer** och **Datum**, men
+  ingen person. **Visa kaninens sida i Stamboken →** kräver inloggning.
 - **Äkta, men ersatt** – ett nyare intyg har utfärdats för kaninen. Be säljaren om
   den senaste versionen.
 - **Äkta, men gäller inte längre** – intyget har ersatts av ett pappersintyg. Be
