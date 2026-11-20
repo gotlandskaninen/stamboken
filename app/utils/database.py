@@ -64,8 +64,8 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # Individual.microchip (36) + billing address on membership and member_application (37) +
 # retiring the PDF rows of digital certificates that a paper certificate replaced (38) +
 # audit_log IP retention index (39) + herd bank privacy reset (40) + the mail queue (41) +
-# the intake queue (42) and its retention (43).
-CURRENT_SCHEMA_VERSION = 43
+# the intake queue (42) and its retention (43) + herd.herd_name_on_certificate (44).
+CURRENT_SCHEMA_VERSION = 44
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -343,6 +343,9 @@ class Herd(BaseModel):
     membership = ForeignKeyField(Membership, null=True, backref="herds")
     herd = CharField(10)
     herd_name = TextField(null=True)
+    # The breeder's own choice to show herd_name on the public certificate check page (stamboken #6).
+    # Not a *_privacy column: remove_fields_by_privacy would then hide herd_name from other members.
+    herd_name_on_certificate = BooleanField(default=False, constraints=[SQL("DEFAULT false")])
     is_active = BooleanField(null=True, default=False)
     start_date = DateField(null=True)
     name = TextField(null=True)
@@ -4016,6 +4019,20 @@ def migrate_42_to_43():
         ).execute()
 
 
+def migrate_43_to_44():
+    """The breeder's choice to show the herd name on the public certificate check page (stamboken #6). Off for
+    every herd: the page shows no name until the breeder chooses it."""
+    with DATABASE.atomic():
+        DATABASE.execute_sql(
+            "ALTER TABLE herd ADD COLUMN IF NOT EXISTS herd_name_on_certificate BOOLEAN NOT NULL DEFAULT false"
+        )
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=44,
+            comment="herd.herd_name_on_certificate",
+            applied=datetime.now(),
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4496,6 +4513,7 @@ MIGRATIONS = {
     (40, 41): migrate_40_to_41,  # mail queue
     (41, 42): migrate_41_to_42,  # intake queue
     (42, 43): migrate_42_to_43,  # intake queue retention
+    (43, 44): migrate_43_to_44,  # herd name on the certificate check page
 }
 
 

@@ -379,6 +379,19 @@ def verify_certificate_get(token):
         )
         replaced_by_date = newest.issued_at.isoformat() if newest else None
 
+    # Public page (ADR-0016): month and year of each change of holder, never the day or the herd.
+    moves = (
+        db.HerdTracking.select()
+        .where(
+            (db.HerdTracking.individual == individual)
+            & db.ht_not_voided()
+            & db.HerdTracking.kind.in_(("TRANSFER", "CORRECTION"))
+        )
+        .order_by(db.HerdTracking.herd_tracking_date, db.HerdTracking.id)
+    )
+    breeder = individual.origin_herd
+    breeder_name = (breeder.herd_name or "").strip() if breeder and breeder.herd_name_on_certificate else ""
+
     return jsonify(
         {
             "verified": True,
@@ -387,7 +400,9 @@ def verify_certificate_get(token):
             "individual_number": individual.number,
             "genebank": individual.origin_herd.genebank.name if individual.origin_herd else "",
             "digital_certificate": individual.digital_certificate,
-            # No person's name on the public page: the breeder's name only by the breeder's own choice (stamboken #6).
+            # The herd name only by the breeder's own choice (stamboken #6); never a person's name.
+            "breeder": breeder_name or None,
+            "transferred": [db.coerce_date(m.herd_tracking_date).strftime("%Y-%m") for m in moves],
             "issued_at": cert.issued_at.isoformat(),
             "is_current": cert.is_current,
             "replaced_by_date": replaced_by_date,

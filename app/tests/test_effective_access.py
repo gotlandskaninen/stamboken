@@ -214,6 +214,20 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
         self.assertEqual(herd.bank_account_number_privacy, "private")
         self.assertEqual(herd.bank_name_privacy, "private")
 
+    def test_herd_name_on_certificate_is_the_breeders_own_choice(self):
+        """Stamboken #6: only the herd's own users set it; others' values are dropped, a non-bool is refused."""
+        herd = self.herds[0]
+        for user in (self.manager, self.admin):
+            result = da.update_herd({"id": herd.id, "www": "w", "herd_name_on_certificate": True}, user.uuid)
+            self.assertEqual(result, {"status": "updated"})
+            self.assertFalse(db.Herd.get(herd.id).herd_name_on_certificate)
+        result = da.update_herd({"id": herd.id, "herd_name_on_certificate": "true"}, self.owner.uuid)
+        self.assertEqual(result["status"], "error")
+        self.assertFalse(db.Herd.get(herd.id).herd_name_on_certificate)
+        result = da.update_herd({"id": herd.id, "herd_name_on_certificate": True}, self.owner.uuid)
+        self.assertEqual(result, {"status": "updated"})
+        self.assertTrue(db.Herd.get(herd.id).herd_name_on_certificate)
+
     def test_update_herd_ignores_bank_privacy_as_manager_even_if_stored_value_is_bad(self):
         herd = self.herds[0]
         herd.bank_account_number_privacy = "Public "  # invalid legacy value echoed back by the SPA

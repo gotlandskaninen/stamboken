@@ -6,6 +6,7 @@ and require app/certs/key.pem + app/certs/ca.pem in the test container.
 """
 
 import unittest
+import uuid
 from contextlib import contextmanager
 from datetime import date, datetime
 from unittest.mock import patch
@@ -869,6 +870,67 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
             # No person on the public page: neither the issuing user's name nor an email
             self.assertNotIn("issued_by", data)
             self.assertNotIn("@", str(data))
+
+    def test_verify_breeder_and_transfers(self):
+        """Stamboken #6: the herd name only by the breeder's choice, each transfer as month and year only."""
+        self._start_mock_aws()
+        individual = self.individuals[3]  # born in herds[0]
+        with self.app as context:
+            context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
+            token = context.post(
+                f"/api/v2/certificates/issue/{individual.number}",
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
+            ).get_json()["verification_token"]
+
+        data = self.app.get(f"/api/v2/certificates/verify/{token}").get_json()
+        self.assertIsNone(data["breeder"])
+        self.assertEqual(data["transferred"], [])
+
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[1],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 3, 15),
+        )
+        ht_row(
+            "CORRECTION",
+            from_herd=self.herds[1],
+            herd=self.herds[0],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 6, 9),
+        )
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[1],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 8, 20),
+            voided_at=datetime.now(),
+            voided_by_user=self.manager,
+            voided_reason="fel kanin",
+            voided_operation_id=uuid.uuid4(),
+        )
+        ht_row(
+            "ATTESTATION",
+            herd=self.herds[0],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 9, 1),
+        )
+        db.Herd.update(herd_name_on_certificate=True).where(db.Herd.id == self.herds[0].id).execute()
+
+        data = self.app.get(f"/api/v2/certificates/verify/{token}").get_json()
+        self.assertEqual(data["breeder"], "Gotlandsherd1")
+        self.assertEqual(data["transferred"], ["2026-03", "2026-06"])
+        self.assertNotIn("owner1", str(data))  # the contact person's name, never on the public page
+        self.assertNotIn("2026-03-15", str(data))
+
+        db.Herd.update(herd_name="  ").where(db.Herd.id == self.herds[0].id).execute()
+        self.assertIsNone(self.app.get(f"/api/v2/certificates/verify/{token}").get_json()["breeder"])
 
     def test_verify_post_with_pdf(self):
         """POST verify with actual PDF bytes checks checksum + signature."""

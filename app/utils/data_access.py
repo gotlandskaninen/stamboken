@@ -1698,6 +1698,13 @@ def update_herd(form, user_uuid):
             bad = invalid_privacy_field(form)
             if bad:
                 return {"status": "error", "message": f"Invalid value for {bad}"}
+            # Showing the herd name on the public check page is the breeder's own choice (stamboken #6): only the
+            # herd's own users set it. Others' echoes (legacy SPA, manager edits) are dropped, not refused.
+            if "herd_name_on_certificate" in form:
+                if herd.id not in user.effective_herd_ids():
+                    del form["herd_name_on_certificate"]
+                elif not isinstance(form["herd_name_on_certificate"], bool):
+                    return {"status": "error", "message": "Invalid value for herd_name_on_certificate"}
 
             # Real columns only (hasattr also matches genebank_id, membership_id and
             # methods such as save). Identity/ownership columns are admin-only; the

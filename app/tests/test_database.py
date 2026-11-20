@@ -1311,6 +1311,30 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertIn(("gmail_processed", "failures", False), fresh[0])
         self.assertIn(("seller_member_id", "member", "member_id"), fresh[2])
 
+    def test_replay_adds_herd_name_on_certificate_off(self):
+        """Stamboken #6: an older database gets the breeder's choice switched off, as a fresh bootstrap."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        herd = self.herds[0]
+
+        def column():
+            return {
+                (c.name, c.null, c.default)
+                for c in db.DATABASE.get_columns("herd")
+                if c.name == "herd_name_on_certificate"
+            }
+
+        fresh = column()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= db.CURRENT_SCHEMA_VERSION).execute()
+        db.DATABASE.execute_sql("ALTER TABLE herd DROP COLUMN herd_name_on_certificate")
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(column(), fresh)
+        self.assertFalse(db.Herd.get(herd.id).herd_name_on_certificate)
+
     def _max_schema_version(self):
         return db.SchemaHistory.select(  # pylint: disable=E1120
             db.fn.MAX(db.SchemaHistory.version)

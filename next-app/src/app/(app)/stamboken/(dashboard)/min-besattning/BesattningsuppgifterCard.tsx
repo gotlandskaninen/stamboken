@@ -25,6 +25,7 @@ interface ContactData {
   wire_phone_privacy: Privacy;
   www_privacy: Privacy;
   physical_address_privacy: Privacy;
+  herd_name_on_certificate: boolean;
 }
 
 interface BesattningsuppgifterCardProps {
@@ -57,6 +58,7 @@ const contactFromHerd = (h: any): ContactData => ({
   wire_phone_privacy: h?.wire_phone_privacy || "private",
   www_privacy: h?.www_privacy || "private",
   physical_address_privacy: h?.physical_address_privacy || "private",
+  herd_name_on_certificate: h?.herd_name_on_certificate === true,
 });
 
 export default function BesattningsuppgifterCard({
@@ -82,7 +84,7 @@ export default function BesattningsuppgifterCard({
     }
   }, [herd]);
 
-  const handleContactChange = (field: string, value: string) => {
+  const handleContactChange = (field: string, value: string | boolean) => {
     setContactData((prev) => ({ ...prev, [field]: value }));
   };
 
@@ -122,6 +124,7 @@ export default function BesattningsuppgifterCard({
         wire_phone_privacy: contactData.wire_phone_privacy,
         www_privacy: contactData.www_privacy,
         physical_address_privacy: contactData.physical_address_privacy,
+        herd_name_on_certificate: contactData.herd_name_on_certificate,
       };
 
       const result = await updateHerdAction(herdNumber, updateData);
@@ -198,6 +201,13 @@ export default function BesattningsuppgifterCard({
         )
       }
     >
+      {!isEditingContact && herd?.herd_name && (
+        <p className="sb-meta" style={{ margin: "0 0 8px" }}>
+          {contactData.herd_name_on_certificate
+            ? `Intygens kontrollsida visar besättningsnamnet ${herd.herd_name}.`
+            : "Intygens kontrollsida visar inte besättningsnamnet."}
+        </p>
+      )}
       {!isEditingContact ? (
         filledRows.length === 0 ? (
           <p className="sb-meta" style={{ margin: 0 }}>
@@ -267,6 +277,27 @@ export default function BesattningsuppgifterCard({
               </div>
             </div>
           ))}
+
+          {herd?.herd_name && (
+            <label
+              style={{ display: "flex", gap: 8, alignItems: "flex-start" }}
+            >
+              <input
+                type="checkbox"
+                checked={contactData.herd_name_on_certificate}
+                onChange={(e) =>
+                  handleContactChange(
+                    "herd_name_on_certificate",
+                    e.target.checked,
+                  )
+                }
+              />
+              <span>
+                Visa besättningsnamnet ({herd.herd_name}) på intygens
+                kontrollsida. Den sidan kan alla med intygets QR-kod se.
+              </span>
+            </label>
+          )}
 
           {/* Kept from the pre-B7 card: the medlemsmatrikel notice is real
               user guidance, not MUI chrome, so it survives the rebuild. */}
