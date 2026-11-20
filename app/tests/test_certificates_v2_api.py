@@ -638,6 +638,21 @@ class TestCertificateV2Update(CertV2Mixin, FlaskTest):
             )
             new_issued_at = update_resp.get_json()["issued_at"]
 
+            new_token = update_resp.get_json()["verification_token"]
+
+        # The breeder shows the herd name and the rabbit is sold (stamboken #6)
+        db.Herd.update(herd_name_on_certificate=True).where(db.Herd.id == self.herds[0].id).execute()
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[1],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 3, 15),
+        )
+        current = self.app.get(f"/api/v2/certificates/verify/{new_token}").get_json()
+        self.assertEqual((current["breeder"], current["transferred"]), ("Gotlandsherd1", ["2026-03"]))
+
         # Public endpoint — no auth
         response = self.app.get(f"/api/v2/certificates/verify/{old_token}")
         self.assertEqual(response.status_code, 200)
@@ -645,7 +660,7 @@ class TestCertificateV2Update(CertV2Mixin, FlaskTest):
         self.assertTrue(data["verified"])
         self.assertFalse(data["is_current"])
         self.assertEqual(data["replaced_by_date"], new_issued_at)
-        # An old QR code tells nothing about the breeder's choice or later sales (stamboken #6)
+        # An old QR code tells nothing about the breeder's choice or later sales
         self.assertIsNone(data["breeder"])
         self.assertEqual(data["transferred"], [])
 

@@ -129,15 +129,18 @@ export default function BesattningsuppgifterCard({
         physical_address_privacy: contactData.physical_address_privacy,
       };
 
-      let result = await updateHerdAction(herdNumber, updateData);
-      // Sent only when the box changed: an unchanged (maybe stale) value is never written back.
+      // The owner's choice goes first and alone: a refusal (not the owner) saves nothing, and a form
+      // whose contact fields are unchanged is not sent, so it cannot write stale values back.
+      const before = contactFromHerd(herd);
       const show = contactData.herd_name_on_certificate;
-      if (
-        result.success &&
-        show !== contactFromHerd(herd).herd_name_on_certificate
-      ) {
-        const choice = await setHerdNameOnCertificate(herdNumber, show);
-        if (!choice.success) result = choice;
+      let result: { success: boolean; error?: string } = { success: true };
+      if (show !== before.herd_name_on_certificate) {
+        result = await setHerdNameOnCertificate(herdNumber, show);
+      }
+      const contactOnly = (c: ContactData) =>
+        JSON.stringify({ ...c, herd_name_on_certificate: false });
+      if (result.success && contactOnly(contactData) !== contactOnly(before)) {
+        result = await updateHerdAction(herdNumber, updateData);
       }
 
       if (result.success) {
