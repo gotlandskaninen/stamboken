@@ -1629,7 +1629,11 @@ def external_login_handler(service):
         )
         generation = da.google_login_generation(user, service, persistent_id, verified_email)
         if generation is None:
-            da.auth_log.warning("Login refused: %s, inactive or identity changed, user id=%s", service, user.id)
+            da.auth_log.warning(
+                "Login refused: %s, inactive, identity changed or a role outside the domain, user id=%s",
+                service,
+                user.id,
+            )
             return "null"
         da.auth_log.info("Login ok: %s, user id=%s", service, user.id)
         establish_session(user, service, generation)
