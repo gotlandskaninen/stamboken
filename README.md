@@ -229,7 +229,10 @@ domain (`google_email`); the domain is fixed in code:
   are not enough, since a password session can link a first Google identity,
   and that login stays. An admin also removes the account's Google login
   (`DELETE /api/v2/admin/users/<id>/google`, after removing any role) unless it
-  is known to be the holder's.
+  is known to be the holder's. The demo's copy of the account is up to a day
+  old, so the old password or Google link still signs in there, with the
+  account's current mark: after the demo's next nightly copy, use Logga ut
+  överallt for the account once more.
 - Before giving a role, an admin checks that the account's Google address
   (`google_email`) is the holder's.
 
