@@ -34,3 +34,8 @@ cd next-app && pnpm exec playwright test --config playwright.legacy.config.ts
 | `test-gk-owner` | `test-gk-owner-pass` | owner(G-herd) |
 
 **OBS:** Rate limiting är avstängt i local-production (`RATELIMIT_ENABLED=false`).
+
+**OBS:** Ett konto med roll loggar bara in med Google, så `test-admin` och
+`test-gk-manager` nekas lösenordet. Lägg `ALLOW_ROLE_PASSWORD_LOGIN=true` i
+`.docker/api-variables.env` innan API:t startar, som CI gör. API:t vägrar starta
+med den när `FLASK_ENV=production`.
