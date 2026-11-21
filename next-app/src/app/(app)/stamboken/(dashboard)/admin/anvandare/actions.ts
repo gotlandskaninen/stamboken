@@ -193,8 +193,9 @@ export async function resetPassword(
     if (e instanceof ApiError) return { error: e.detail };
     throw e;
   }
-  revalidateUser(userId);
-  // Exception: NO redirect — the plaintext is shown exactly
-  // once; [Klar] in the client returns to the detail view.
+  // Exception: NO redirect and no revalidation — the plaintext is shown
+  // exactly once, and a reset of the admin's own password has already ended
+  // her session, so a re-render would drop the page before she saw it.
+  // [Klar] in the client refreshes the detail view.
   return { plaintext };
 }
