@@ -123,6 +123,14 @@ class TestSession(SessionTest):
         self.assertEqual(client.get("/api/user", headers=auth).get_json()["auth_method"], None)
         self.assertEqual(client.get("/api/active_users", headers=auth).status_code, 200)
 
+    def test_basic_auth_changes_no_password(self):
+        """Its one-request session has no mark, so the re-check under the account's row lock refuses the change."""
+        auth = {"Authorization": "Basic " + base64.b64encode(b"spec:pass").decode()}
+        form = {"oldpassword": "pass", "newpassword": "ny", "password": "ny"}
+        res = APP.test_client().post("/api/manage/setpassword/", headers=auth, json=form)
+        self.assertIsNone(res.get_json())
+        self.assertIsNotNone(da.authenticate_user("spec", "pass")[0])
+
     def test_a_login_flask_login_refuses_writes_no_session(self):
         """login_user refuses an inactive account; establish_session then writes nothing, not even the mark."""
         inactive = db.User.get_by_id(self.viewer.id)
