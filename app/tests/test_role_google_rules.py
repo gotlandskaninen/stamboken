@@ -15,7 +15,7 @@ import utils.settings as settings
 from herdbook import APP, limiter
 
 from tests.database_test import DatabaseTest
-from tests.google_login import ID_TOKEN, redirect_login
+from tests.google_login import ID_TOKEN, google_session, redirect_login
 
 limiter.enabled = False
 
@@ -75,7 +75,7 @@ class RoleRulesTest(DatabaseTest):
 
     def grant(self, user, level="manager"):
         role = {"level": level} if level in ("admin", "matrikel_admin") else {"level": level, "genebank": 1}
-        return self.login("admin").post(
+        return google_session(self.admin).post(
             "/api/v2/admin/role", json={"operation": "add", "user_id": user.id, "role": role}
         )
 
@@ -94,7 +94,7 @@ class TestRoleNeedsGoogle(RoleRulesTest):
                 for level in da.ROLE_LEVELS:
                     resp = self.grant(self.member, level)
                     self.assertEqual((resp.status_code, resp.get_json()["type"]), (409, "google-required"), level)
-                legacy = self.login("admin").post(
+                legacy = google_session(self.admin).post(
                     "/api/manage/role", json={"action": "add", "role": "manager", "user": self.member.id, "genebank": 1}
                 )
                 self.assertEqual(legacy.status_code, 409)
@@ -231,21 +231,20 @@ class TestGoogleIdentity(RoleRulesTest):
         return False
 
     def test_a_role_account_with_only_a_password_adds_its_first_google_identity(self):
+        """From a session that is no Google session, as a password session was before the role rule refused it."""
         self.member.add_role("manager", 1)
-        client = self.login()
-        self.assertEqual(google_link(client, "sub-medlem", DOMAIN_ADDRESS), str(self.member.id))
+        before = da.login_generation(self.member.uuid)
+        self.assertTrue(da.link_account(self.member, "google", "sub-medlem", email=DOMAIN_ADDRESS))
         self.assertEqual(self.identities(self.member), ["sub-medlem"])
         self.assertEqual(db.User.get_by_id(self.member.id).google_email, DOMAIN_ADDRESS)
-        self.assertEqual(client.get("/api/user").status_code, 200)  # adding is no occasion to revoke
+        self.assertEqual(da.account_generation(self.member.uuid), before)  # adding is no occasion to revoke
 
     def test_a_domain_address_without_the_domains_hd_is_no_proof(self):
         """Whatever auth.ini says, google_email holds an address on the domain only from a token of the domain."""
         no_hd = {"sub": "google-sub", "email": DOMAIN_ADDRESS, "email_verified": True}
         manager = da.register_user("ansvarig@example.org", "pass", validated=True)
         manager.add_role("manager", 1)
-        self.assertEqual(
-            google_link(self.login("ansvarig@example.org"), "sub-ansvarig", DOMAIN_ADDRESS, hd=None), "null"
-        )
+        self.assertEqual(google_link(google_session(manager), "sub-ansvarig", DOMAIN_ADDRESS, hd=None), "null")
         self.assertEqual(self.identities(manager), [])
 
         self.assertEqual(google_link(self.login(), "google-sub", DOMAIN_ADDRESS, hd=None), str(self.member.id))
@@ -291,11 +290,11 @@ class TestGoogleIdentity(RoleRulesTest):
 
     def test_a_role_account_takes_no_identity_outside_the_domain(self):
         self.member.add_role("manager", 1)
-        password = self.login()
-        self.assertEqual(google_link(password, "sub-utanfor", OUTSIDE_ADDRESS), "null")
-        self.assertEqual(google_link(password, "sub-utanfor", None), "null")  # no verified address
+        # The first identity, from a session that is no Google session (link_account).
+        self.assertIsNone(da.link_account(self.member, "google", "sub-utanfor", email=OUTSIDE_ADDRESS))
+        self.assertIsNone(da.link_account(self.member, "google", "sub-utanfor"))  # no verified address
         self.assertEqual(self.identities(self.member), [])
-        self.assertEqual(google_link(password, "sub-medlem", DOMAIN_ADDRESS), str(self.member.id))
+        self.assertTrue(da.link_account(self.member, "google", "sub-medlem", email=DOMAIN_ADDRESS))
         google = self.google_login()
         self.assertEqual(google_link(google, "sub-utanfor", OUTSIDE_ADDRESS), "null")
         self.assertEqual(self.identities(self.member), ["sub-medlem"])
@@ -305,7 +304,7 @@ class TestGoogleIdentity(RoleRulesTest):
 
 class TestAdminRemovesGoogle(RoleRulesTest):
     def remove(self, user):
-        return self.login("admin").delete(f"/api/v2/admin/users/{user.id}/google")
+        return google_session(self.admin).delete(f"/api/v2/admin/users/{user.id}/google")
 
     def test_only_on_an_account_without_a_role(self):
         self.give_google(self.member)
