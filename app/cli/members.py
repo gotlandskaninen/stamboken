@@ -63,7 +63,7 @@ import re
 import click
 from flask.cli import AppGroup
 from peewee import IntegrityError, fn
-from utils.database import DB_PROXY, Herd, Member, Membership, User
+from utils.database import DB_PROXY, Genebank, Herd, Member, Membership, User
 from utils.matrikel import (
     ANONYMIZED_FIRST_NAME,
     ANONYMIZED_LAST_NAME,
@@ -808,10 +808,13 @@ def _print_report(report: dict, dry_run: bool) -> None:
 def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None) -> None:
     """Link accounts to the main member of the membership whose herd they own.
 
-    The account that is the only `owner` of herd G<Nr>/M<Nr> and whose name
-    equals the main member's name of membership Nr is linked with mode "cli".
-    Everything else is listed for the register manager. Each link commits on
-    its own, so the command is safe to re-run.
+    The only account with role `owner` on herd G<Nr>/M<Nr> whose name equals the
+    name of membership Nr's main member is proposed as that member's account.
+    THE NAME IS NO PROOF: the account holder can edit it, and so can a genebank
+    manager, who can also hand out `owner`. Read every printed pair before
+    running with --apply. Without --apply nothing is written and the plan is
+    exactly what --apply then does; everything else is listed for the register
+    manager. Each link commits on its own (mode "cli"), so a re-run is safe.
     """
     actor = None
     if apply_links:
@@ -822,69 +825,137 @@ def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None) -> None:
             raise click.UsageError(
                 f"--actor-user-id {actor_user_id}: måste vara ett aktivt konto med rollen admin eller matrikel_admin"
             )
-    dry_run = not apply_links
 
-    owners: dict[int, list[User]] = {}
-    for user in User.select().order_by(User.id):
-        for role in user.privileges:
-            if role["level"] == "owner" and "herd" in role:  # skip a malformed entry
-                owners.setdefault(role["herd"], []).append(user)
+    to_link, listed, already = _plan_herd_links()
 
-    report = {"linked": 0, "already": 0, "listed": []}
-    memberships = Membership.select().where(
-        Membership.member_number.is_null(False), Membership.membership_status == Status.ACTIVE
-    )
-    for membership in memberships.order_by(Membership.member_number):
-        for prefix in ("G", "M"):
-            herd = Herd.get_or_none(Herd.herd == f"{prefix}{membership.member_number}")
-            if herd is not None:
-                _link_herd_owner(herd, membership, owners.get(herd.id, []), actor, report)
+    linked = []
+    for main, user, codes in to_link:
+        try:
+            if apply_links:
+                link_member_user(main.id, user.id, actor=actor, mode="cli")
+        except (ConfirmRequired, LinkError, IntegrityError) as exc:
+            listed.append((codes, f"länkningen avvisades ({type(exc).__name__})"))
+        else:
+            linked.append((main, user, codes))
 
     click.echo(
-        f"Kopplade: {report['linked']}, Redan kopplade: {report['already']}, Till granskning: {len(report['listed'])}"
+        f"{'Kopplade' if apply_links else 'Att koppla'}: {len(linked)}, "
+        f"Redan kopplade: {already}, Till granskning: {len(listed)}"
     )
-    for code, reason in report["listed"]:
-        click.echo(f"  {code}: {reason}")
-    if dry_run:
-        click.echo("(endast plan — inget skrevs; kör om med --apply)")
+    for main, user, codes in linked:
+        click.echo(f"  {'/'.join(codes)}: {_member_label(main)} -> user {_user_label(user)}")
+    if listed:
+        click.echo("Till granskning:")
+        for codes, reason in listed:
+            click.echo(f"  {'/'.join(codes)}: {reason}")
+    if not apply_links:
+        click.echo("(endast plan — läs paren ovan, inget skrevs; kör om med --apply)")
 
 
 def _norm_name(name: str | None) -> str:
     return " ".join((name or "").split()).casefold()
 
 
-def _link_herd_owner(herd, membership, owners: list, actor, report: dict) -> None:
-    mains = list(Member.select().where(Member.membership == membership, Member.role == "huvudmedlem"))
-    if mains and all(m.end_date is not None for m in mains):
-        return  # the main member has left
-    main = next((m for m in mains if m.end_date is None), None)
+def _user_label(user) -> str:
+    return user.username or user.email
 
-    def listed(reason: str) -> None:
-        report["listed"].append((herd.herd, reason))
 
-    if main is None:
-        listed("medlemskapet saknar huvudmedlem")
-    elif not owners:
-        listed("inget konto har rollen ägare på besättningen")
-    elif len(owners) > 1:
-        listed("flera konton har rollen ägare på besättningen")
-    elif main.user_id == owners[0].id:
-        report["already"] += 1
-    elif not _norm_name(owners[0].fullname) or _norm_name(owners[0].fullname) != _norm_name(
+def _member_label(member) -> str:
+    name = f"{member.first_name} {member.last_name}".strip()
+    return f"member {member.id}: {name} <{member.email}>"
+
+
+def _owner_index() -> tuple[dict[int, dict[int, User]], set[int]]:
+    """Herd id -> {user id: user} with role owner, and the users with an incomplete owner role."""
+    owners: dict[int, dict[int, User]] = {}
+    incomplete: set[int] = set()
+    for user in User.select().order_by(User.id):
+        for role in user.privileges:
+            if role.get("level") != "owner":
+                continue
+            try:
+                herd_id = int(role["herd"])  # older rows may store the id as a string
+            except (KeyError, TypeError, ValueError):
+                incomplete.add(user.id)
+                continue
+            owners.setdefault(herd_id, {})[user.id] = user
+    return owners, incomplete
+
+
+def _plan_herd_links() -> tuple[list, list, int]:
+    """Decide every link first: returns (to_link [(main, user, codes)], listed [(codes, reason)], already)."""
+    owners, incomplete = _owner_index()
+    memberships = {m.member_number: m for m in Membership.select().where(Membership.member_number.is_null(False))}
+    herds_by_code: dict[str, list] = {}
+    for herd in Herd.select(Herd, Genebank).join(Genebank):
+        found = re.fullmatch(r"([GM])(\d+)", herd.herd or "")
+        # The prefix names the genebank by its initial, as in data_access._genebank_letters.
+        if found and herd.genebank.name[:1].upper() == found.group(1):
+            herds_by_code.setdefault(herd.herd, []).append(herd)
+
+    listed: list = []
+    already: set[tuple[int, int]] = set()
+    pairs: dict[tuple[int, int], list] = {}  # (main id, user id) -> [main, user, codes]
+    for code in sorted(herds_by_code, key=lambda c: (int(c[1:]), c[0])):
+        herds = herds_by_code[code]
+        owner_users = {uid: u for h in herds for uid, u in owners.get(h.id, {}).items()}
+        not_inactive = any(h.is_active is not False for h in herds)
+        membership = memberships.get(int(code[1:]))
+        active = membership is not None and membership.membership_status == Status.ACTIVE
+        main = None
+        if active:
+            main = Member.select().where(
+                Member.membership == membership, Member.role == "huvudmedlem", Member.end_date.is_null(True)
+            ).first()
+
+        if len(herds) > 1:
+            listed.append(([code], "flera besättningar har samma kod"))
+        elif herds[0].membership_id not in (None, getattr(membership, "id", None)):
+            listed.append(([code], "besättningen tillhör ett annat medlemskap"))
+        elif not active:
+            if owner_users and not_inactive:
+                listed.append(([code], "inget aktivt medlemskap har det numret, kontot förblir okopplat"))
+        elif main is None:
+            if owner_users and not_inactive:
+                listed.append(([code], "medlemskapet har ingen kvarvarande huvudmedlem, kontot förblir okopplat"))
+        elif not owner_users:
+            listed.append(([code], "inget konto har rollen ägare på besättningen"))
+        elif len(owner_users) > 1:
+            listed.append(([code], "flera konton har rollen ägare på besättningen"))
+        else:
+            _check_owner(code, main, next(iter(owner_users.values())), incomplete, listed, already, pairs)
+
+    # Several possible links for one member or one account: none of them is made.
+    by_main, by_user = {}, {}
+    for key in pairs:
+        by_main.setdefault(key[0], []).append(key)
+        by_user.setdefault(key[1], []).append(key)
+    to_link = []
+    for key, (main, user, codes) in pairs.items():
+        if len(by_main[key[0]]) > 1 or len(by_user[key[1]]) > 1:
+            listed.append((codes, f"flera möjliga kopplingar ({_member_label(main)} -> user {_user_label(user)})"))
+        elif link_access_delta(main, user):
+            listed.append((codes, "länken skulle ge kontot åtkomst till fler besättningar"))
+        else:
+            to_link.append((main, user, codes))
+    return to_link, listed, len(already)
+
+
+def _check_owner(code, main, user, incomplete, listed, already, pairs) -> None:
+    """One herd with one owner account and one active main member: already done, listed or a candidate pair."""
+    if main.user_id == user.id:
+        already.add((main.id, user.id))
+    elif user.id in incomplete:
+        listed.append(([code], "kontots ägarroll är ofullständig"))
+    elif not user.is_active:
+        listed.append(([code], "kontot är inaktivt"))
+    elif not _norm_name(user.fullname) or _norm_name(user.fullname) != _norm_name(
         f"{main.first_name} {main.last_name}"
     ):
-        listed("namnet skiljer sig mellan kontot och huvudmedlemmen")
+        listed.append(([code], "namnet skiljer sig mellan kontot och huvudmedlemmen"))
     elif main.user_id is not None:
-        listed("huvudmedlemmen är redan kopplad till ett annat konto")
-    elif Member.select().where(Member.user == owners[0]).exists():
-        listed("kontot är redan kopplat till en annan medlem")
-    elif link_access_delta(main, owners[0]):
-        listed("länken skulle ge kontot åtkomst till fler besättningar")
+        listed.append(([code], "huvudmedlemmen är redan kopplad till ett annat konto"))
+    elif Member.select().where(Member.user == user).exists():
+        listed.append(([code], "kontot är redan kopplat till en annan medlem"))
     else:
-        try:
-            if actor is not None:
-                link_member_user(main.id, owners[0].id, actor=actor, mode="cli")
-        except (ConfirmRequired, LinkError, IntegrityError) as exc:
-            listed(f"länkningen avvisades ({type(exc).__name__})")
-        else:
-            report["linked"] += 1
+        pairs.setdefault((main.id, user.id), [main, user, []])[2].append(code)

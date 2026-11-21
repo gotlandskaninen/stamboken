@@ -36,8 +36,8 @@ class TestMembersLinkByHerd(DatabaseTest):
         )
         return membership, person
 
-    def _herd(self, code, genebank=0):
-        return db.Herd.create(genebank=self.genebanks[genebank], herd=code)
+    def _herd(self, code, genebank=0, **kwargs):
+        return db.Herd.create(genebank=self.genebanks[genebank], herd=code, **{"is_active": True, **kwargs})
 
     def _account(self, fullname="Anna Svensson", owns=None):
         self._n += 1
@@ -133,7 +133,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         result = self._apply()
 
         self.assertEqual(db.Member.select().where(db.Member.user.is_null(False), db.Member.membership == membership).count(), 0)
-        self.assertIn("saknar huvudmedlem", result.output)
+        self.assertIn("ingen kvarvarande huvudmedlem", result.output)
 
     def test_g_and_m_herds_with_same_number_go_to_their_memberships(self):
         _, g_person = self._membership(901, first="Gunnar", last="Gran")
@@ -189,18 +189,27 @@ class TestMembersLinkByHerd(DatabaseTest):
         self.assertEqual(self._linked_user_id(elsewhere), user.id)
         self.assertIn("kontot är redan kopplat till en annan medlem", result.output)
 
-    def test_ended_membership_and_left_member_are_skipped(self):
+    def test_ended_membership_and_left_member_are_skipped_but_not_silent_with_an_owner(self):
         _, ended = self._membership(901, status="inactive")
-        self._account(owns=self._herd("G901"))
+        self._herd("G901")
         _, left = self._membership(902, end_date=date(2026, 1, 1))
-        self._account(owns=self._herd("G902"))
+        self._herd("G902")
 
         result = self._apply()
-
         self.assertIsNone(self._linked_user_id(ended))
         self.assertIsNone(self._linked_user_id(left))
         self.assertIn("Kopplade: 0", result.output)
-        self.assertIn("Till granskning: 0", result.output)
+        self.assertIn("Till granskning: 0", result.output)  # no owner account: silent
+
+        self._account(owns=self._herd("G903"))  # owner, no membership 903
+        self._account(owns=self._herd("G904", is_active=False))  # inactive herd: silent
+        self._membership(905, end_date=date(2026, 1, 1))
+        self._account(owns=self._herd("G905"))
+        result = self._apply()
+        self.assertIn("Till granskning: 2", result.output)
+        self.assertIn("G903", result.output)
+        self.assertIn("G905", result.output)
+        self.assertNotIn("G904", result.output)
 
     def test_plan_only_run_prints_same_plan_and_writes_nothing(self):
         _, person = self._membership(901)
@@ -213,7 +222,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIsNone(self._linked_user_id(person))
         self.assertEqual(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_user_linked").count(), 0)
-        self.assertIn("Kopplade: 1", result.output)
+        self.assertIn("Att koppla: 1", result.output)
         self.assertIn("G902", result.output)
         self.assertIn("endast plan", result.output)
 
@@ -283,3 +292,166 @@ class TestMembersLinkByHerd(DatabaseTest):
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(self._linked_user_id(person), user.id)
+
+    def test_family_member_with_the_owners_name_is_not_the_target(self):
+        membership, main = self._membership(901, first="Gunnar", last="Gran")
+        family = db.Member.create(membership=membership, role="familjemedlem", first_name="Anna", last_name="Svensson")
+        self._account(fullname="Anna Svensson", owns=self._herd("G901"))
+
+        result = self._apply()
+
+        self.assertIsNone(self._linked_user_id(family))
+        self.assertIsNone(self._linked_user_id(main))
+        self.assertIn("namnet skiljer sig", result.output)
+
+    def test_inactive_sole_owner_is_listed_in_both_modes(self):
+        _, person = self._membership(901)
+        user = self._account(owns=self._herd("G901"))
+        user.is_active = False
+        user.save()
+
+        for result in (self._run(), self._apply()):
+            self.assertIn("kontot är inaktivt", result.output)
+            self.assertIn("Till granskning: 1", result.output)
+        self.assertIsNone(self._linked_user_id(person))
+
+    def test_one_account_owning_g_and_m_of_a_membership_gives_one_link(self):
+        _, person = self._membership(901)
+        user = self._account(owns=self._herd("G901"))
+        user.add_role("owner", self._herd("M901", genebank=1).id)
+
+        result = self._apply()
+
+        self.assertEqual(self._linked_user_id(person), user.id)
+        self.assertIn("Kopplade: 1", result.output)
+        self.assertIn("G901/M901", result.output)
+        self.assertEqual(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_user_linked").count(), 1)
+
+    def test_two_accounts_on_g_and_m_with_the_main_members_name_are_both_listed(self):
+        _, person = self._membership(901)
+        self._account(owns=self._herd("G901"))
+        self._account(owns=self._herd("M901", genebank=1))
+
+        result = self._apply()
+
+        self.assertIsNone(self._linked_user_id(person))
+        self.assertIn("Kopplade: 0", result.output)
+        self.assertEqual(result.output.count("flera möjliga kopplingar"), 2)
+
+    def test_account_sole_owner_in_two_memberships_with_same_main_name_is_listed_for_both(self):
+        _, p1 = self._membership(901)
+        _, p2 = self._membership(902)
+        user = self._account(owns=self._herd("G901"))
+        user.add_role("owner", self._herd("G902").id)
+
+        result = self._apply()
+
+        self.assertIsNone(self._linked_user_id(p1))
+        self.assertIsNone(self._linked_user_id(p2))
+        self.assertEqual(result.output.count("flera möjliga kopplingar"), 2)
+
+    def test_herd_belonging_to_another_membership_is_listed(self):
+        _, person = self._membership(901)
+        other, _ = self._membership(902)
+        self._account(owns=self._herd("G901", membership=other))
+
+        result = self._apply()
+
+        self.assertIsNone(self._linked_user_id(person))
+        self.assertIn("tillhör ett annat medlemskap", result.output)
+
+    def test_two_herd_rows_with_the_same_code_are_listed(self):
+        _, person = self._membership(901)
+        self._account(owns=self._herd("G901"))
+        self.genebanks.append(db.Genebank.create(name="Gotland2"))
+        db.Herd.create(genebank=self.genebanks[2], herd="G901", is_active=True)
+
+        result = self._apply()
+
+        self.assertIsNone(self._linked_user_id(person))
+        self.assertIn("flera besättningar har samma kod", result.output)
+
+    def test_herd_in_the_genebank_the_prefix_does_not_name_is_ignored(self):
+        _, person = self._membership(901)
+        self._account(owns=self._herd("G901", genebank=1))  # Mellerud holds a G code
+
+        result = self._apply()
+
+        self.assertIsNone(self._linked_user_id(person))
+        self.assertIn("Till granskning: 0", result.output)
+
+    def test_herd_id_stored_as_string_counts_as_the_same_herd(self):
+        _, person = self._membership(901)
+        herd = self._herd("G901")
+        a = self._account()
+        a.privileges = [{"level": "owner", "herd": herd.id}]
+        a.save()
+        b = self._account()
+        b.privileges = [{"level": "owner", "herd": str(herd.id)}]
+        b.save()
+
+        result = self._apply()
+
+        self.assertIsNone(self._linked_user_id(person))
+        self.assertIn("flera konton", result.output)
+
+    def test_duplicate_owner_entries_count_one_account_once(self):
+        _, person = self._membership(901)
+        herd = self._herd("G901")
+        user = self._account()
+        user.privileges = [{"level": "owner", "herd": herd.id}, {"level": "owner", "herd": herd.id}]
+        user.save()
+
+        self._apply()
+
+        self.assertEqual(self._linked_user_id(person), user.id)
+
+    def test_malformed_owner_entry_lists_the_account_and_does_not_stop_the_next(self):
+        _, p1 = self._membership(901)
+        _, p2 = self._membership(902, first="Eva", last="Lund")
+        broken = self._account(owns=self._herd("G901"))
+        broken.privileges = broken.privileges + [{"level": "owner"}, {"level": "owner", "herd": "abc"}]
+        broken.save()
+        good = self._account(fullname="Eva Lund", owns=self._herd("G902"))
+
+        result = self._apply()
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIsNone(self._linked_user_id(p1))
+        self.assertEqual(self._linked_user_id(p2), good.id)
+        self.assertIn("ägarroll är ofullständig", result.output)
+
+    def test_plan_lines_and_counts_equal_what_apply_does(self):
+        self._membership(901)
+        self._account(owns=self._herd("G901"))
+        self._membership(902)
+        self._account(fullname="Eva Lund", owns=self._herd("G902"))
+        self._membership(903)
+        self._herd("G903")
+        self._membership(904)
+        self._account(owns=self._herd("G904"))
+        self._membership(905, first="Maja", last="Malm")
+        self._account(fullname="Maja Malm", owns=self._herd("M905", genebank=1))
+
+        plan = self._run()
+        applied = self._apply()
+
+        self.assertEqual(applied.exit_code, 0, applied.output)
+        self.assertEqual(db.Member.select().where(db.Member.user.is_null(False)).count(), 3)
+
+        def lines(output):
+            return [x for x in output.splitlines() if x.startswith("  ")]
+
+        self.assertEqual(lines(plan.output), lines(applied.output))
+        self.assertIn("Att koppla: 3", plan.output)
+        self.assertIn("Kopplade: 3", applied.output)
+        self.assertIn("Till granskning: 2", plan.output)
+        self.assertIn("Till granskning: 2", applied.output)
+
+    def test_plan_without_apply_lists_every_proposed_pair(self):
+        _, person = self._membership(901, email="anna@example.org")
+        self._account(owns=self._herd("G901"))
+
+        result = self._run()
+
+        self.assertIn(f"G901: member {person.id}: Anna Svensson <anna@example.org> -> user konto1", result.output)
