@@ -15,6 +15,7 @@ import {
 } from "../../_components/RolePicker";
 import {
   grantRole,
+  logoutEverywhere,
   resetPassword,
   revokeRole,
   setAccountActive,
@@ -335,6 +336,21 @@ export function UserEditClient({
                 </div>
               </div>
             )}
+          </DetailCard>
+
+          <DetailCard title="Sessioner">
+            <p className={ds["ad-hint"]}>
+              Avslutar kontots alla sessioner, i riktiga stamboken och i
+              testmiljön. Användaren kan logga in igen direkt.
+            </p>
+            <button
+              type="button"
+              className="sb-btn sb-btn-secondary"
+              disabled={pending}
+              onClick={() => run(() => logoutEverywhere(detail.id))}
+            >
+              Logga ut överallt
+            </button>
           </DetailCard>
         </div>
 

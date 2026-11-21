@@ -3,11 +3,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 const revokeRole = vi.hoisted(() => vi.fn());
+const logoutEverywhere = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
 vi.mock("@/app/(app)/stamboken/(dashboard)/admin/anvandare/actions", () => ({
   grantRole: vi.fn(),
+  logoutEverywhere,
   resetPassword: vi.fn(),
   revokeRole,
   setAccountActive: vi.fn(),
@@ -59,5 +61,22 @@ describe("UserEditClient roles", () => {
       screen.getByRole("button", { name: "Ta bort Matrikeladministratör" }),
     );
     expect(revokeRole).toHaveBeenCalledWith(7, { level: "matrikel_admin" });
+  });
+});
+
+describe("UserEditClient sessions", () => {
+  it("logs the account out everywhere", () => {
+    render(
+      <UserEditClient
+        detail={detail}
+        actorId={1}
+        genebanks={[]}
+        herds={[]}
+        recentAudit={[]}
+        concurrentEditWarning={null}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Logga ut överallt" }));
+    expect(logoutEverywhere).toHaveBeenCalledWith(7);
   });
 });
