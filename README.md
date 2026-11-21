@@ -234,10 +234,13 @@ domain (`google_email`); the domain is fixed in code:
   are not enough, since a password session can link a first Google identity,
   and that login stays. An admin also removes the account's Google login
   (`DELETE /api/v2/admin/users/<id>/google`, after removing any role) unless it
-  is known to be the holder's. The demo's copy of the account is up to a day
-  old, so the old password or Google link still signs in there, with the
-  account's current mark: after the demo's next nightly copy, use Logga ut
-  överallt for the account once more.
+  is known to be the holder's. There is no button for it yet: a signed-in
+  admin sends it from the browser's console on the site,
+  `fetch("/api/v2/admin/users/<id>/google", {method: "DELETE"})`. The demo's
+  copy of the account is up to a day old, so the old password or Google link
+  still signs in there, with the account's current mark: after the demo's
+  next copy (the nightly one, or `scripts/sync-demo-db.sh` run at once), use
+  Logga ut överallt for the account once more.
 - Before giving a role, an admin checks that the account's Google address
   (`google_email`) is the holder's.
 
@@ -297,9 +300,15 @@ only):
    A row with a Google identity but an empty `google_email` is counted although
    it may get in: its Google login judges the token's address and then stores
    it. Count those apart (`u.google_email IS NULL` together with the role and
-   `google` conditions above); ask each holder to sign in with Google once on
-   this version, then count again. A row that still counts is a real case: fix
-   it while the password still works, before the release.
+   `google` conditions above); ask each holder to sign in with Google once,
+   then count again. That sign-in has to happen before the role rule is on:
+   either release the sessions' marks (above) first and the role rule later,
+   or have the holders use the Google button on the new site on the release
+   that runs today, which stores the address too. A row that still counts is
+   a real case: fix it while the password still works. Released together
+   with the marks, the role rule leaves no such moment, and an account whose
+   Google address is not on the domain is locked out with no password to
+   fall back on.
 2. Active accounts with a role and a password: the password stops working for
    them, at the login and as Basic auth, so a client that uses Basic auth with
    such an account stops working. The API logs each Basic auth login as
