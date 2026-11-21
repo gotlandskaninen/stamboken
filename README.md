@@ -231,9 +231,13 @@ The role rule: Google is the only way into an account with a role.
   wrong password's answer (`null` on a legacy host).
 - Basic auth for it is refused where the header is read: the request is
   anonymous, so 401 wherever a login is needed, also under `/api/v2/`.
-- A session of it that did not sign in with Google is emptied at its next
-  request (`_session_revoked`), so giving a role ends the account's password
-  sessions. `is_admin` and the other role properties are unchanged: they also
+- A session of it that did not sign in with Google on the domain is emptied
+  at its next request (`_session_revoked`), also when the role came without a
+  new mark, as a data fix or the demo's nightly copy writes it. A Google login
+  stamps the session (`google_domain`) when it verified the domain, so a role
+  holder's Google session from before this stamp ends: the holder signs in
+  again.
+  `is_admin` and the other role properties are unchanged: they also
   answer for an account that is not the caller. The demo API, whose roles are
   a copy up to a day old, applies this only to sessions it made itself; a
   session production made is judged by production's rule.
