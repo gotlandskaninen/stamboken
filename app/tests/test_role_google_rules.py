@@ -342,6 +342,14 @@ class TestAdminRemovesGoogle(RoleRulesTest):
         self.assertEqual(self.remove(only_google).status_code, 409)
         self.assertEqual(self.identities(only_google), ["sub-bara"])
 
+    def test_an_account_without_a_google_login_has_none_to_remove(self):
+        admin = self.login("admin")
+        before = da.login_generation(self.member.uuid)
+        with self.assertNoLogs("herdbook.auth", "INFO"):
+            resp = admin.delete(f"/api/v2/admin/users/{self.member.id}/google")
+        self.assertEqual((resp.status_code, resp.get_json()["type"]), (409, "no-google-login"))
+        self.assertEqual(da.account_generation(self.member.uuid), before)
+
 
 class TestAddRoleCommand(RoleRulesTest):
     def add_role(self, konto=DOMAIN_ADDRESS, roll="admin"):
