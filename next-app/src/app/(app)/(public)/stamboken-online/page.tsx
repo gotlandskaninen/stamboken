@@ -1,7 +1,6 @@
 import { Box, Link, Typography } from "@mui/material";
 import { LinkButton } from "@/components/public/LinkButton";
 import { PageHeader } from "@/components/public/PageHeader";
-import GoogleOneTap from "@/components/GoogleOneTap";
 import { WipBanner } from "@/components/public/WipBanner.client";
 import type { Metadata } from "next";
 
@@ -10,8 +9,6 @@ export const metadata: Metadata = { title: "Stamboken Online" };
 export default function StambokenOnlinePage() {
   return (
     <>
-      {/* App-entry page: surface Google One Tap so members can sign in fast. */}
-      <GoogleOneTap />
       {/* Beta notice belongs to the Stamboken entry + app, not the association site. */}
       <WipBanner />
       <PageHeader
