@@ -147,6 +147,66 @@ suite with the rules enforced.
      AND NOT EXISTS (SELECT 1 FROM authenticators a WHERE a.user_id = u.user_id AND a.auth = 'google');
    ```
 
+### Sessions
+
+Every login goes through `establish_session` (`app/herdbook.py`). It stamps
+the session with how it signed in, `auth_method` (`google` or `losenord`,
+also in `/api/user`), and with the account's mark: a random value per account
+in the sessions' Redis, `generation:<uuid>` beside `logout-epoch`. A session
+is valid only while its mark is the account's, and an account without a mark
+has no valid session. The one-request session of Basic auth is not checked.
+
+The mark is replaced, which ends every session of the account on both APIs,
+when the account is deactivated (activating it again brings none back), when
+its Google identity is replaced or removed, when its password is changed or
+reset by an admin, and with **Logga ut överallt** on the admin user page
+(`POST /api/v2/admin/users/<id>/logga-ut`). Changing one's own password or
+Google identity ends one's own session too. Only the production API replaces
+a mark; the demo API reads the marks and may create a missing one, and refuses
+Logga ut överallt.
+
+**Releasing this:**
+
+- Everybody is signed out: no session from before has `auth_method`. Say so
+  in advance.
+- Release the API and the demo API together. They share the session store, and
+  the new one refuses every session the old one makes.
+- Migration 44 makes a Google identity unique to one account. If two accounts
+  hold one, it stops with an error and leaves the schema at 43. Count first
+  (numbers only); it should be 0:
+
+  ```sql
+  SELECT count(*) FROM (SELECT auth_data FROM authenticators WHERE auth = 'google'
+    GROUP BY auth_data HAVING count(*) > 1) AS shared;
+  ```
+
+### Roles and Google
+
+The roles `admin`, `matrikel_admin`, `manager` and `helper` (not `viewer` or
+`owner`) need a Google login whose verified address is on the association's
+domain (`google_email`); the domain is fixed in code:
+
+- A role is given only to such an account; otherwise 409 `google-required`.
+- An account with a role cannot unlink its Google login, and links or switches
+  only to an identity with a verified address on the domain.
+- Replacing or removing a Google identity needs a session that signed in with
+  Google. Adding a first identity works from a password session.
+- An admin can remove the Google login of an account without a role
+  (`DELETE /api/v2/admin/users/<id>/google`, no button yet). An account whose
+  only way in is Google gets a password first (Återställ lösenord); it then
+  signs in with it and links its new identity.
+
+`ALLOW_ROLE_PASSWORD_LOGIN=true` lifts these role rules for development and
+tests, where the seed's accounts with roles have only passwords. The
+development and pytest compose files and the CI pytest job set it. The API
+refuses to start with it when `FLASK_ENV=production`, which the demo API has
+too.
+
+`flask users add-role <konto> <roll>` is the way back when the only admin has
+lost the Google account: it gives `admin` or `matrikel_admin` to an account
+(e-mail address or username) that has a Google login on the domain and is
+validated, and refuses any other.
+
 ## External authenticators
 
 ### Google
