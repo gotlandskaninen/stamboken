@@ -525,6 +525,7 @@ class TestRoleRule(RoleRulesTest):
 
         production, _ = login()  # the role is gone in production
         key = "session:" + production.get_cookie(APP.config["SESSION_COOKIE_NAME"]).value
+        stamped = google_session(self.member)  # made by production too, with Google on the domain
         set_role(["manager"])  # still in the demo's copy
         with mock.patch.object(settings.service, "demo_instance", True):
             # /api/manage/users reads session["user_id"] itself.
@@ -534,7 +535,7 @@ class TestRoleRule(RoleRulesTest):
                     self.assertEqual(resp.status_code, 403)
                     self.assertIn("Google", resp.get_json()["message"])
             self.assertTrue(session_redis.exists(key))
-            self.assertEqual(google_session(self.member).get("/api/user").status_code, 200)
+            self.assertEqual(stamped.get("/api/user").status_code, 200)
         set_role([])
         self.assertEqual(production.get("/api/user").status_code, 200)
         set_role(["manager"])
