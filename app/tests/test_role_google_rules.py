@@ -331,6 +331,20 @@ class TestAddRoleCommand(RoleRulesTest):
         self.assertTrue(self.has_level(self.member, "admin"))
         self.assertNotEqual(self.add_role(roll="manager").exit_code, 0)  # needs a genebank: the panel gives it
 
+    def test_refuses_a_name_two_accounts_answer_to_and_a_deactivated_account(self):
+        self.give_google(self.member)
+        twin = da.register_user("tvilling@example.org", None, username="medlem@example.org", validated=True)
+        self.give_google(twin, sub="sub-tvilling")
+        result = self.add_role()
+        self.assertNotEqual(result.exit_code, 0, result.output)
+        self.assertFalse(self.has_level(self.member, "admin") or self.has_level(twin, "admin"))
+
+        db.User.update(is_active=False).where(db.User.id == twin.id).execute()
+        result = self.add_role("tvilling@example.org")
+        self.assertNotEqual(result.exit_code, 0, result.output)
+        self.assertIn("inaktiverat", result.output)
+        self.assertFalse(self.has_level(twin, "admin"))
+
 
 class TestAllowRolePasswordLoginGuard(unittest.TestCase):
     def _run(self, **env):
