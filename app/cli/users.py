@@ -6,12 +6,13 @@ Usage:
 
 `add-role` is the way back when the only admin has lost the Google account. It gives admin or matrikel_admin to an
 account that can sign in: an active one with a Google login on the association's domain
-(data_access.has_role_google_login), that is validated. <konto> is the account's e-mail address or username, and
-exactly one account may answer to it.
+(data_access.has_role_google_login), that is validated. <konto> is the account's verified Google address
+(google_email), never the contact address or username the holder can edit, and exactly one account may hold it.
 """
 
 import click
 from flask.cli import AppGroup
+from peewee import fn
 from utils import data_access as da
 from utils.database import DB_PROXY, User
 
@@ -22,15 +23,15 @@ users_cli = AppGroup("users", help="Accounts.")
 @click.argument("konto")
 @click.argument("roll", type=click.Choice(["admin", "matrikel_admin"]))
 def add_role(konto, roll):
-    """Give ROLL to KONTO, an active account with a Google login on the association's domain that is validated."""
+    """Give ROLL to the account whose verified Google address is KONTO: active, validated, on the domain."""
     with DB_PROXY.atomic():
         # The account's row, as update_role and an unlink take it: the Google login cannot go meanwhile.
-        # E-mail is not unique, and a username can be another account's e-mail: exactly one account answers.
-        matches = list(User.select().where((User.email == konto) | (User.username == konto)).for_update())
+        # Only the verified Google address: the holder can set the contact address to anyone's.
+        matches = list(User.select().where(fn.LOWER(User.google_email) == konto.lower()).for_update())
         if not matches:
-            raise click.ClickException(f"Inget konto med e-postadressen eller användarnamnet {konto}.")
+            raise click.ClickException(f"Inget konto har {konto} som verifierad Google-adress.")
         if len(matches) > 1:
-            raise click.ClickException(f"{len(matches)} konton svarar på {konto}. Ange ett som bara ett konto har.")
+            raise click.ClickException(f"{len(matches)} konton har {konto} som Google-adress. Rätta det först.")
         user = matches[0]
         if not user.is_active:
             raise click.ClickException("Kontot är inaktiverat.")

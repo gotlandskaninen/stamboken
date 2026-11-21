@@ -312,7 +312,7 @@ class TestAdminRemovesGoogle(RoleRulesTest):
 
 
 class TestAddRoleCommand(RoleRulesTest):
-    def add_role(self, konto="medlem@example.org", roll="admin"):
+    def add_role(self, konto=DOMAIN_ADDRESS, roll="admin"):
         return APP.test_cli_runner().invoke(args=["users", "add-role", konto, roll])
 
     def test_refuses_an_account_without_google_or_without_the_course(self):
@@ -333,16 +333,28 @@ class TestAddRoleCommand(RoleRulesTest):
         self.assertTrue(self.has_level(self.member, "admin"))
         self.assertNotEqual(self.add_role(roll="manager").exit_code, 0)  # needs a genebank: the panel gives it
 
-    def test_refuses_a_name_two_accounts_answer_to_and_a_deactivated_account(self):
+    def test_finds_the_account_by_its_verified_google_address_only(self):
+        """The contact address is the holder's to edit: an account that set it to another's Google address is not it."""
         self.give_google(self.member)
-        twin = da.register_user("tvilling@example.org", None, username="medlem@example.org", validated=True)
-        self.give_google(twin, sub="sub-tvilling")
+        impostor = da.register_user(DOMAIN_ADDRESS, "pass", username="annan", validated=True)
+        self.give_google(impostor, sub="sub-annan", email="annan@gotlandskaninen.se")
+        result = self.add_role()
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertTrue(self.has_level(self.member, "admin"))
+        self.assertFalse(self.has_level(impostor, "admin"))
+        self.assertNotEqual(self.add_role("medlem@example.org").exit_code, 0)  # the contact address: no account
+
+    def test_refuses_an_address_two_accounts_hold_and_a_deactivated_account(self):
+        self.give_google(self.member)
+        twin = da.register_user("tvilling@example.org", None, validated=True)
+        self.give_google(twin, sub="sub-tvilling")  # the same verified address, as older rows can have
         result = self.add_role()
         self.assertNotEqual(result.exit_code, 0, result.output)
         self.assertFalse(self.has_level(self.member, "admin") or self.has_level(twin, "admin"))
 
+        db.User.update(google_email=None).where(db.User.id == self.member.id).execute()
         db.User.update(is_active=False).where(db.User.id == twin.id).execute()
-        result = self.add_role("tvilling@example.org")
+        result = self.add_role()
         self.assertNotEqual(result.exit_code, 0, result.output)
         self.assertIn("inaktiverat", result.output)
         self.assertFalse(self.has_level(twin, "admin"))

@@ -221,9 +221,10 @@ refuses to start with it when `FLASK_ENV=production`, which the demo API has
 too.
 
 `flask users add-role <konto> <roll>` is the way back when the only admin has
-lost the Google account: it gives `admin` or `matrikel_admin` to an account
-(e-mail address or username) that has a Google login on the domain and is
-validated, and refuses any other.
+lost the Google account: it gives `admin` or `matrikel_admin` to the one active,
+validated account whose verified Google address (`google_email`) is `<konto>`,
+on the domain, and refuses any other. It never looks at the contact address or
+the username, which the holder can edit.
 
 ## External authenticators
 
