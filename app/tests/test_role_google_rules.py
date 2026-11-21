@@ -433,23 +433,27 @@ class TestRoleRule(RoleRulesTest):
         self.assertEqual(self.google_login().get("/api/user").get_json()["id"], self.member.id)
 
     def test_a_password_is_refused_for_every_role_as_a_wrong_one_is(self):
-        def login(password, base_url):
+        def login(username, password, base_url):
             client = APP.test_client(use_cookies=True)
-            form = {"username": "medlem@example.org", "password": password}
+            form = {"username": username, "password": password}
             resp = client.post("/api/login", json=form, base_url=base_url)
             return resp.status_code, resp.get_json(), client.get("/api/user", base_url=base_url).status_code
 
         self.member.add_role("viewer", 1)
         self.member.add_role("owner", self.herds[0].id)
-        self.assertEqual(login("pass", NEW)[0], 200)  # not roles that count
+        self.assertEqual(login("medlem@example.org", "pass", NEW)[0], 200)  # not roles that count
         for level in da.ROLE_LEVELS:
             with self.subTest(level):
-                db.User.update(_privileges="[]").where(db.User.id == self.member.id).execute()
-                self.member.add_role(level, None if level in ("admin", "matrikel_admin") else 1)
-                self.assertEqual(login("pass", NEW), login("fel", NEW))
-                self.assertEqual(login("pass", NEW)[0], 401)
-                self.assertEqual(login("pass", LEGACY), (200, None, 401))  # legacy reads any JSON body as the user
-                self.assertEqual(login("pass", LEGACY), login("fel", LEGACY))
+                # An account of its own: it holds this role and no other.
+                username = f"{level}@example.org"
+                account = da.register_user(username, "pass", validated=True)
+                account.add_role(level, None if level in ("admin", "matrikel_admin") else 1)
+                self.assertEqual([p["level"] for p in db.User.get_by_id(account.id).privileges], [level])
+                self.assertEqual(login(username, "pass", NEW), login(username, "fel", NEW))
+                self.assertEqual(login(username, "pass", NEW)[0], 401)
+                # Legacy reads any JSON body as the user.
+                self.assertEqual(login(username, "pass", LEGACY), (200, None, 401))
+                self.assertEqual(login(username, "pass", LEGACY), login(username, "fel", LEGACY))
 
     def test_basic_auth_is_refused_for_an_account_with_a_role(self):
         auth = {"Authorization": "Basic " + base64.b64encode(b"medlem@example.org:pass").decode()}
@@ -502,7 +506,9 @@ class TestRoleRule(RoleRulesTest):
                 codes = [client.get("/api/active_users", headers=auth).status_code for _ in range(6)]
                 self.assertEqual(codes, [401] * 5 + [429])
 
-    def test_a_google_login_outside_the_domain_is_refused_on_both_routes(self):
+    def test_a_role_account_is_refused_a_google_login_outside_the_domain(self):
+        """The role's check is in google_login_generation, which the legacy route reaches. The Next.js route answers
+        403 to every identity outside the domain before it looks the account up, so its part only records that."""
         self.give_google(self.member, sub="google-sub")
         self.member.add_role("manager", 1)
 
