@@ -161,8 +161,11 @@ login through Basic auth is refused.
 The mark is replaced, which ends every session of the account on both APIs,
 when the account is deactivated (activating it again brings none back), when
 its Google identity is replaced or removed, when its password is changed or
-reset by an admin, and with **Logga ut överallt** on the admin user page
-(`POST /api/v2/admin/users/<id>/logga-ut`). Changing one's own password or
+reset by an admin, when it is given one of the roles under "Roles and Google"
+(also by `flask users add-role`; through the API not where
+`ALLOW_ROLE_PASSWORD_LOGIN` lifts the role rules), and with **Logga ut
+överallt** on the admin user page (`POST /api/v2/admin/users/<id>/logga-ut`).
+The holder of a new role signs in again. Changing one's own password or
 Google identity ends one's own session too. Only the production API replaces
 a mark; the demo API reads the marks and may create a missing one, and refuses
 Logga ut överallt.
