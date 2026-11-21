@@ -58,13 +58,14 @@ def setup_google(app, config):
     """
 
     hdparam = {}
+    # The verified address, always: google_email and a role account's first link need it.
     scopes = [
         "openid",
+        "https://www.googleapis.com/auth/userinfo.email",
     ]
 
     if config["google"].get("autocreate", None):
         scopes.append("https://www.googleapis.com/auth/userinfo.profile")
-        scopes.append("https://www.googleapis.com/auth/userinfo.email")
 
     if config["google"].get("domain", None):
         hdparam["hosted_domain"] = config["google"]["domain"]

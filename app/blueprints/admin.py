@@ -437,12 +437,15 @@ def admin_reset_password(u_id):
             f"Ingen användare med id {u_id}.",
             type="user-not-found",
         )
-    # Live signature: change_password(active_user, changed_user, form).
+    # Live signature: change_password(active_user, changed_user, form, session_stamps). The session goes along: one
+    # revoked while the request waited changes nothing, and Basic auth, which has no mark, is refused.
     # BOTH keys required: the INSERT branch (Google-only
     # target) reads form["password"], the UPDATE branch reads
     # form["newpassword"]. current_user.is_admin skips the old-password
     # check on the admin path.
-    ok = da.change_password(current_user, u_id, {"password": new_password, "newpassword": new_password})
+    ok = da.change_password(
+        current_user, u_id, {"password": new_password, "newpassword": new_password}, session_stamps=session
+    )
     if not ok:
         return problem(
             500,
@@ -451,6 +454,50 @@ def admin_reset_password(u_id):
             type="password-reset-failed",
         )
     auth_log.info("password reset actor=%s target=%s", current_user.id, u_id)
+    return "", 204
+
+
+@admin_bp.route("/users/<int:u_id>/logga-ut", methods=["POST"])
+@admin_required
+def logout_everywhere(u_id):
+    """
+    "Logga ut överallt": a new mark for the account (da.revoke_sessions) ends every session it has, on the demo too.
+    204 No Content.
+    """
+    if settings.service.demo_instance:
+        # Only production changes a mark; the demo shares the session store.
+        return problem(
+            403,
+            "Inte på demon",
+            "Utloggning görs i produktion; demon delar sessioner med den.",
+            type="demo-instance",
+        )
+    if not da.revoke_sessions(u_id):
+        return problem(404, "Användare saknas", f"Ingen användare med id {u_id}.", type="user-not-found")
+    auth_log.info("logged out everywhere actor=%s target=%s", current_user.id, u_id)
+    return "", 204
+
+
+@admin_bp.route("/users/<int:u_id>/google", methods=["DELETE"])
+@admin_required
+def remove_google_login(u_id):
+    """
+    Removes the account's Google identity, the way back for a member whose Google account got a new one: set a
+    password first, then she signs in with it and links the new identity. Refused for an account with a role and for
+    the account's last way to sign in (da.unlink_account), which also ends its sessions, and when the admin's own
+    session ended while the request waited for the account's row. 204 No Content.
+    """
+    target = db.User.get_or_none(db.User.id == u_id)
+    if target is None:
+        return problem(404, "Användare saknas", f"Ingen användare med id {u_id}.", type="user-not-found")
+    if not da.unlink_account(target, "google", session_stamps=session):
+        return problem(
+            409,
+            "Google-inloggningen kan inte tas bort",
+            "Ett konto med roll behåller sin Google-inloggning, och ett konto utan lösenord behöver ett först.",
+            type="google-unlink-refused",
+        )
+    auth_log.info("google login removed actor=%s target=%s", current_user.id, u_id)
     return "", 204
 
 

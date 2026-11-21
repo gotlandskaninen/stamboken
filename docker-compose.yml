@@ -47,6 +47,8 @@ services:
       - RATELIMIT_STORAGE_URL=redis://redis:6379/3
       # api-variables.env may be a copy of prod's (the local-production bootstrap); the dev stack never mails.
       - MAIL_MODE=log
+      # The seed's admin and genebank managers sign in with a password.
+      - ALLOW_ROLE_PASSWORD_LOGIN=true
     ports:
       - "127.0.0.1:9090:9090"
     volumes:

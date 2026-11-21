@@ -147,6 +147,93 @@ suite with the rules enforced.
      AND NOT EXISTS (SELECT 1 FROM authenticators a WHERE a.user_id = u.user_id AND a.auth = 'google');
    ```
 
+### Sessions
+
+Every login goes through `establish_session` (`app/herdbook.py`). It stamps
+the session with how it signed in, `auth_method` (`google` or `losenord`,
+also in `/api/user`), and with the account's mark: a random value per account
+in the sessions' Redis, `generation:<uuid>` beside `logout-epoch`. A session
+is valid only while its mark is the account's, and an account without a mark
+has no valid session. The one-request session of Basic auth is not checked,
+and it has no mark: a password change, a reset or the removal of a Google
+login through Basic auth is refused.
+
+The mark is replaced, which ends every session of the account on both APIs,
+when the account is deactivated (activating it again brings none back), when
+its Google identity is replaced or removed, when its password is changed or
+reset by an admin, and with **Logga ut överallt** on the admin user page
+(`POST /api/v2/admin/users/<id>/logga-ut`). Changing one's own password or
+Google identity ends one's own session too. Only the production API replaces
+a mark; the demo API reads the marks and may create a missing one, and refuses
+Logga ut överallt.
+
+**Releasing this:**
+
+- Everybody is signed out: no session from before has `auth_method`. Say so
+  in advance.
+- Release the API and the demo API together. They share the session store, and
+  the new one refuses every session the old one makes.
+- Before rolling back to a version without the mark check: close both APIs to
+  user traffic and let running requests finish, then run the mass logout on
+  the production API (`POST /api/v2/admin/sessions/mass-logout`), and open
+  traffic again only when both APIs run the older version. Otherwise revoked
+  sessions come back: one nobody has used since is still in the store with its
+  old epoch, and a login in flight can save a session after the mass logout.
+- Migration 44 makes a Google identity unique to one account. If two accounts
+  hold one, the migration fails, the schema stays at 43 and **the API does not
+  start**; the demo API does not either, on its copy of the database. Before
+  deploying, count read-only (numbers only); it must be 0:
+
+  ```sql
+  SELECT count(*) FROM (SELECT auth_data FROM authenticators WHERE auth = 'google'
+    GROUP BY auth_data HAVING count(*) > 1) AS shared;
+  ```
+
+  If it is not 0, do not deploy. While the old release still runs, decide for
+  each shared identity which account keeps it: the holder of the other account
+  unlinks Google from it, or a data fix (ADR-0013) removes that account's
+  `google` row in `authenticators`. Count again, and on the demo database too
+  until its next copy.
+
+### Roles and Google
+
+The roles `admin`, `matrikel_admin`, `manager` and `helper` (not `viewer` or
+`owner`) need a Google login whose verified address is on the association's
+domain (`google_email`); the domain is fixed in code:
+
+- A role is given only to such an account; otherwise 409 `google-required`.
+- An account with a role cannot unlink its Google login, and links or switches
+  only to an identity with a verified address on the domain.
+- Replacing or removing a Google identity needs a session that signed in with
+  Google. Adding a first identity works from a password session.
+- An admin can remove the Google login of an account without a role
+  (`DELETE /api/v2/admin/users/<id>/google`, no button yet). An account whose
+  only way in is Google gets a password first (Återställ lösenord); it then
+  signs in with it and links its new identity.
+- `google_email` values written before this version are no proof of the
+  domain: an identity switched on the older code kept its old address until
+  the next Google sign-in, which now rewrites it under the account's lock.
+  Give a role only after the account has signed in with Google on this
+  version.
+- To change the Google identity of an account with a role: it cannot unlink
+  Google, and the legacy link flow reuses the Google token it already holds,
+  so it cannot pick another Google account. An admin removes the role, sets a
+  password (Återställ lösenord) and removes the Google login; the holder signs
+  in with the password and links the new identity; the admin gives the role
+  back.
+
+`ALLOW_ROLE_PASSWORD_LOGIN=true` lifts these role rules for development and
+tests, where the seed's accounts with roles have only passwords. The
+development and pytest compose files and the CI pytest job set it. The API
+refuses to start with it when `FLASK_ENV=production`, which the demo API has
+too.
+
+`flask users add-role <konto> <roll>` is the way back when the only admin has
+lost the Google account: it gives `admin` or `matrikel_admin` to the one active,
+validated account whose verified Google address (`google_email`) is `<konto>`,
+on the domain, and refuses any other. It never looks at the contact address or
+the username, which the holder can edit.
+
 ## External authenticators
 
 ### Google
@@ -161,8 +248,9 @@ Once selected, you'll need to supply an application name (e.g. Herdbook) and a s
 
 Once filled in, you can save and continue.
 
-Next, you'll need to select the scopes provided. Select "Add and remove scopes" and pick `openid`.
-If you want to support automatic account creation, you also need to select ".../auth/userinfo.email"
+Next, you'll need to select the scopes provided. Select "Add and remove scopes" and pick `openid` and
+".../auth/userinfo.email": the login always asks for the verified address. Automatic account creation also asks for
+".../auth/userinfo.profile".
 
 Once done, select save and continue to finish configuration of the consent screen.
 
@@ -198,7 +286,7 @@ autocreate = yes
 
 in the `[google]` section.
 
-In short, you need to set up OAuth 2.0 with the `openid` scope (and optionally the `.../userinfo.email` scope to allow automatic creation). Once you've done that, provide the `Client secret` as `secret` and `Client ID` as `key` in the `[google]` section in `auth.ini`.
+In short, you need to set up OAuth 2.0 with the `openid` and `.../userinfo.email` scopes (and `.../userinfo.profile` to allow automatic creation). Once you've done that, provide the `Client secret` as `secret` and `Client ID` as `key` in the `[google]` section in `auth.ini`.
 
 #### Automatic herd ownerships
 

@@ -1311,6 +1311,39 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertIn(("gmail_processed", "failures", False), fresh[0])
         self.assertIn(("seller_member_id", "member", "member_id"), fresh[2])
 
+    def test_replay_43_to_44_makes_a_google_identity_unique(self):
+        """A database stamped at 43 gets the fresh bootstrap's index; one where two accounts hold an identity stays at
+        43 without it, and the next start after the extra one is unlinked migrates."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("index introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+
+        def index():
+            return [(i.columns, i.unique) for i in db.DATABASE.get_indexes("authenticators") if "google" in i.name]
+
+        fresh = index()
+        self.assertEqual(fresh, [(["auth_data"], True)])
+        first, second = da.register_user("ett@example.org", None), da.register_user("tva@example.org", None)
+        db.Authenticators.create(user=first.id, auth="google", auth_data="sub-delad")
+        with self.assertRaises(peewee.IntegrityError), db.DATABASE.atomic():
+            db.Authenticators.create(user=second.id, auth="google", auth_data="sub-delad")
+        db.Authenticators.create(user=second.id, auth="password", auth_data="sub-delad")  # other methods may repeat
+
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 44).execute()
+        db.DATABASE.execute_sql('DROP INDEX "idx_authenticators_google"')
+        duplicate = db.Authenticators.create(user=second.id, auth="google", auth_data="sub-delad")
+        self.addCleanup(duplicate.delete_instance)  # runs before check_migrations if an assert below fails
+
+        with self.assertRaises(peewee.IntegrityError):
+            db.check_migrations()
+        self.assertEqual(self._max_schema_version(), 43)
+        self.assertEqual(index(), [])
+
+        duplicate.delete_instance()
+        db.check_migrations()
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(index(), fresh)
+
     def _max_schema_version(self):
         return db.SchemaHistory.select(  # pylint: disable=E1120
             db.fn.MAX(db.SchemaHistory.version)

@@ -94,6 +94,24 @@ export async function setAccountActive(
   redirect(LIST_PATH);
 }
 
+export async function logoutEverywhere(
+  userId: number,
+): Promise<ActionError | void> {
+  await requireAdminProdMode();
+  try {
+    // A new mark for the account ends every session it has, also in the demo.
+    await fetchApi(`/v2/admin/users/${userId}/logga-ut`, {
+      method: "POST",
+      forceProd: true,
+    });
+  } catch (e) {
+    if (e instanceof ApiError) return { error: e.detail };
+    throw e;
+  }
+  revalidateUser(userId);
+  redirect(LIST_PATH);
+}
+
 export async function grantRole(
   userId: number,
   role: PrivilegeEntry,
@@ -175,8 +193,9 @@ export async function resetPassword(
     if (e instanceof ApiError) return { error: e.detail };
     throw e;
   }
-  revalidateUser(userId);
-  // Exception: NO redirect — the plaintext is shown exactly
-  // once; [Klar] in the client returns to the detail view.
+  // Exception: NO redirect and no revalidation — the plaintext is shown
+  // exactly once, and a reset of the admin's own password has already ended
+  // her session, so a re-render would drop the page before she saw it.
+  // [Klar] in the client refreshes the detail view.
   return { plaintext };
 }

@@ -23,7 +23,6 @@ from urllib.parse import urlparse
 
 import apscheduler.schedulers.background
 import click
-import redis
 import requests
 from flask import (
     Flask,
@@ -79,7 +78,7 @@ from utils import inbox_purge  # isort:skip
 from utils.inbox_interpreter import interpret_next  # isort:skip
 from utils.members import try_auto_link_member  # isort:skip
 from utils.legacy_compat import course_message, is_legacy_host, legacy_classroom_url, legacy_hosts, refusal  # isort:skip
-from utils.redis_retry import reconnect_on_drop  # isort:skip
+from extensions import session_redis  # isort:skip
 
 APP = Flask(__name__, static_folder="/static")
 app_logging.setup()  # before any APP.logger use, or Flask adds its own stderr handler
@@ -117,7 +116,6 @@ APP.wsgi_app = ProxyFix(APP.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 # cookie options at https://flask.palletsprojects.com/en/1.1.x/security/
 # Configurable directories (for CI/testing compatibility)
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
-SESSION_REDIS_URL = os.getenv("SESSION_REDIS_URL", "redis://redis:6379/2")
 UPLOAD_DIR = os.getenv("UPLOAD_FOLDER", "/app/uppladdningar")
 
 # Expected audience for Google ID tokens from the Next.js sign-in (the GIS
@@ -127,6 +125,7 @@ UPLOAD_DIR = os.getenv("UPLOAD_FOLDER", "/app/uppladdningar")
 # string (e.g. a bare "GOOGLE_CLIENT_ID=" env line) must normalize to None:
 settings.refuse_committed_signing_key()
 settings.refuse_auto_validate_outside_demo()
+settings.refuse_role_password_login_in_production()
 settings.refuse_unsafe_mail_settings()
 settings.refuse_unsafe_gmail_settings()
 settings.refuse_private_folder_under_uploads()
@@ -150,15 +149,7 @@ APP.config.update(
     # Lax: every frontend is same-site, and it keeps cross-site form posts from carrying the session.
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_TYPE="redis",
-    # Timeouts so a hung (not down) Redis fails requests instead of
-    # deadlocking every gunicorn worker — session I/O is on every request.
-    SESSION_REDIS=redis.Redis.from_url(
-        SESSION_REDIS_URL,
-        socket_connect_timeout=2,
-        socket_timeout=2,
-        health_check_interval=30,
-        **reconnect_on_drop(),
-    ),
+    SESSION_REDIS=session_redis,
     SESSION_PERMANENT=True,
     PERMANENT_SESSION_LIFETIME=datetime.timedelta(days=31),
     SESSION_REFRESH_EACH_REQUEST=True,
@@ -218,6 +209,10 @@ APP.cli.add_command(breeding_cli)
 from cli.gmail import gmail_cli  # noqa: E402
 
 APP.cli.add_command(gmail_cli)
+
+from cli.users import users_cli  # noqa: E402
+
+APP.cli.add_command(users_cli)
 
 
 @genetics_cli.command("recompute-history")
@@ -602,7 +597,7 @@ def load_user_from_request(request):
         if not _login_rate_limit("test"):
             abort(429)
         try:
-            user = da.authenticate_user(username, password)
+            user, _ = da.authenticate_user(username, password)
         except da.InactiveAccountError:
             # Lager 1 — deaktiverat konto får inte logga in via
             # Basic Auth heller; None ⇒ 401 nedströms.
@@ -658,9 +653,14 @@ def _session_revoked():
     """
     Every login stamps the logout epoch into the session, and a mass
     logout increments it, so a session from before the last mass logout is
-    dead even if an in-flight request wrote its key back after the sweep. A
-    session without the stamp predates this check and dies at the first mass
-    logout; until then it lives on, so deploying logs nobody out.
+    dead even if an in-flight request wrote its key back after the sweep.
+
+    A session with a user is valid only with the sign-in method, the
+    account's current mark (establish_session, da.login_generation) and the
+    latest epoch, as da.session_holds answers. Changing the account's
+    credentials replaces the mark, and an account without one has no valid
+    session, so emptying Redis never brings one back. Sessions from before
+    these stamps are refused: deploying them signs everybody out.
 
     A session minted by the demo API counts as revoked in production: the
     stores are shared, but demo account state (passwords, Google links,
@@ -669,7 +669,33 @@ def _session_revoked():
     if session.get("demo_login") and not settings.service.demo_instance:
         da.auth_log.warning("Refused a session minted by the demo API")
         return True
+    if "user_id" in session:
+        return "auth_method" not in session or not da.session_holds(session)
     return session.get("logout_epoch", 0) < _logout_epoch()
+
+
+def establish_session(user, method, generation):
+    """
+    The one way a login becomes a session: marks a demo login, stamps the
+    logout epoch, the sign-in method ("google" or "losenord") and the
+    account's mark read under its row lock, then rotates the sid. A session's
+    stamps are never rewritten; a change of credentials revokes it instead.
+    """
+    if not user.is_active:
+        # login_user refuses it too: a refused login must not leave a user and a mark that wake on reactivation.
+        return
+    _stamp_login()
+    session["auth_method"] = method
+    session["generation"] = generation
+    session["user_id"] = user.uuid
+    session.modified = True
+    login_user(user)
+    # regenerate() rotates the sid to prevent session fixation.
+    # Known benign race, accepted: a concurrent request still carrying the
+    # pre-login sid can re-upsert that (anonymous) key under SESSION_REFRESH_
+    # EACH_REQUEST; the authenticated session is unaffected and the orphan
+    # expires via TTL. Inherent to sid rotation (cf. Django cycle_key).
+    APP.session_interface.regenerate(session)
 
 
 def _stamp_login():
@@ -812,7 +838,8 @@ def get_user():
     user = da.fetch_user_info(session.get("user_id", None))
     if user is None:
         return jsonify({"status": "error", "message": "Authentication required"}), 401
-    return jsonify(user.frontend_data())
+    # How this session signed in: "google" or "losenord" (None for Basic auth).
+    return jsonify({**user.frontend_data(), "auth_method": session.get("auth_method")})
 
 
 @APP.route("/api/active_users", methods=["GET"])
@@ -918,7 +945,8 @@ def change_userpassword(u_id):
 
     if not u_id:
         u_id = current_user.id
-    retval = da.change_password(current_user, u_id, form)
+    # Basic auth's one-request session has no mark, so it never holds here: no password change through Basic auth.
+    retval = da.change_password(current_user, u_id, form, session_stamps=session)
     if retval:
         auth_log.info("password changed actor=%s target=%s", current_user.id, u_id)
     return jsonify(retval)
@@ -1362,7 +1390,7 @@ def login_handler():
     form = request.json
     # Authenticate the user and return a user object
     try:
-        user = da.authenticate_user(form.get("username"), form.get("password"))
+        user, generation = da.authenticate_user(form.get("username"), form.get("password"))
     except da.InactiveAccountError:
         # Layer 1 — deactivated account; same shape as the existing
         # 401 failure path, Swedish message per spec.
@@ -1376,16 +1404,7 @@ def login_handler():
             401,
         )
     if user:
-        _stamp_login()
-        session["user_id"] = user.uuid
-        session.modified = True
-        login_user(user)
-        # regenerate() rotates the sid to prevent session fixation.
-        # Known benign race, accepted: a concurrent request still carrying the
-        # pre-login sid can re-upsert that (anonymous) key under SESSION_REFRESH_
-        # EACH_REQUEST; the authenticated session is unaffected and the orphan
-        # expires via TTL. Inherent to sid rotation (cf. Django cycle_key).
-        APP.session_interface.regenerate(session)
+        establish_session(user, "losenord", generation)
         da.auth_log.info("Login ok: password, user id=%s", user.id)
     else:
         if is_legacy_host():
@@ -1399,7 +1418,13 @@ def login_handler():
 # The Google profile columns the login routes refresh. They save only these: the
 # user row was read without a lock, so a full-row save would write back a stale
 # is_active/_privileges and undo a concurrent deactivation or role change.
-_GOOGLE_PROFILE_COLUMNS = [db.User.google_picture, db.User.google_name, db.User.google_email]
+# google_email is no profile column: da.google_login_generation writes it under the row lock.
+_GOOGLE_PROFILE_COLUMNS = [db.User.google_picture, db.User.google_name]
+
+
+def _storable_google_email(verified_email):
+    """The legacy route's verified address as google_email may hold it, judged by its token's hd."""
+    return da.storable_google_email(verified_email, (utils.external_auth.google_idtoken() or {}).get("hd"))
 
 
 def _link_member_if_any(user, verified_email) -> None:
@@ -1502,20 +1527,19 @@ def google_token_login():
                 # 401, not 403: the Next.js caller maps 403 to the domain-restriction text.
                 return jsonify({"error": course_message()}), 401
 
-        if user:
+        # None also when the identity was switched or removed after the lookup above.
+        stored = da.storable_google_email(email, hosted_domain)
+        generation = da.google_login_generation(user, "google", google_user_id, stored) if user else None
+
+        if generation:
             # Update user with Google profile data in database
             user.google_picture = picture
             user.google_name = name
-            user.google_email = email
             user.save(only=_GOOGLE_PROFILE_COLUMNS)
 
             # After the save: a save that raises must not leave a session that
             # carries user_id without flask-login's _user_id.
-            _stamp_login()
-            session["user_id"] = user.uuid
-            session.modified = True
-            login_user(user)
-            APP.session_interface.regenerate(session)
+            establish_session(user, "google", generation)
             da.auth_log.info("Login ok: Google, user id=%s", user.id)
             # Phase 8: link a pre-provisioned Member to this OAuth-verified
             # user. get_user() re-fetches from the DB, so a newly granted
@@ -1578,31 +1602,33 @@ def external_login_handler(service):
             return _not_validated_response()
 
     if user and user.validated:
+        # google_email is the CMS identity: only ever a verified address, written under the row lock. The member link
+        # takes the same address: auth.ini may name no domain, so nothing upstream checked the token's hd.
+        verified_email = (
+            _storable_google_email(utils.external_auth.google_verified_email()) if service == "google" else None
+        )
+        generation = da.google_login_generation(user, service, persistent_id, verified_email)
+        if generation is None:
+            da.auth_log.warning("Login refused: %s, inactive or identity changed, user id=%s", service, user.id)
+            return "null"
         da.auth_log.info("Login ok: %s, user id=%s", service, user.id)
-        _stamp_login()
-        session["user_id"] = user.uuid
-        session.modified = True
-        login_user(user)
-        APP.session_interface.regenerate(session)
+        establish_session(user, service, generation)
         # Phase 8: auto-link Member on OAuth completion, then reload so the
         # profile save below writes fresh privileges — saving this stale
         # in-memory instance would clobber the just-granted owner role.
-        verified_email = utils.external_auth.google_verified_email() if service == "google" else None
         _link_member_if_any(user, verified_email)
         # Reload unfiltered: fetch_user_info hides an account deactivated mid-login (the
         # provider calls above can take long), and the profile save below writes only
         # _GOOGLE_PROFILE_COLUMNS, so it cannot undo that deactivation.
         user = db.User.get_by_id(user.id)
 
-        # Save Google profile data (picture, name, email)
+        # Save Google profile data (picture, name)
         # The id_token may not contain picture/name — fetch from userinfo endpoint instead
-        # google_email is the CMS identity: only ever a verified address.
         if service == "google":
             userinfo = utils.external_auth.google_userinfo()
             if userinfo:
                 user.google_picture = userinfo.get("picture") or user.google_picture
                 user.google_name = userinfo.get("name") or user.google_name
-                user.google_email = verified_email or user.google_email
                 user.save(only=_GOOGLE_PROFILE_COLUMNS)
             else:
                 # Fallback to id_token if userinfo fails
@@ -1612,8 +1638,6 @@ def external_login_handler(service):
                         user.google_picture = idtoken["picture"]
                     if idtoken.get("name"):
                         user.google_name = idtoken["name"]
-                    if verified_email:
-                        user.google_email = verified_email
                     user.save(only=_GOOGLE_PROFILE_COLUMNS)
 
         # Check for saved return_to URL from before OAuth
@@ -1664,7 +1688,9 @@ def external_login_handler(service):
             da.auth_log.error("Automatic registering of user for service %s FAILED", service)
             return None
 
-        linked = da.link_account(user, service, persistent_id)
+        # google_email is the CMS identity; google_details() verified this address. The member link below takes it too.
+        verified_email = _storable_google_email(accountdetails["email"])
+        linked = da.link_account(user, service, persistent_id, email=verified_email)
 
         if not linked:
             # Without its identity the new account has no way in, and its address
@@ -1672,9 +1698,8 @@ def external_login_handler(service):
             creation.rollback()
             da.auth_log.error("Linking user id=%s for service %s FAILED", user.id, service)
             return "Inloggningen gick inte att slutföra. Försök igen, eller kontakta admin@gotlandskaninen.se", 500
-
-    # google_email is the CMS identity; google_details() verified this address.
-    db.User.update(google_email=accountdetails["email"]).where(db.User.id == user.id).execute()
+        # The account and its identity are still this transaction's own: nothing can come between them and the mark.
+        generation = da.login_generation(user.uuid)
 
     da.auth_log.info("Automatically registered user id=%s for service %s", user.id, service)
 
@@ -1696,14 +1721,11 @@ def external_login_handler(service):
 
     # FIXME: this is how we "really" log in the user
     if user.validated:
-        _stamp_login()
-        session["user_id"] = user.uuid
-        login_user(user)
-        APP.session_interface.regenerate(session)
+        establish_session(user, service, generation)
         # Phase 8: auto-link Member on first OAuth login of an auto-
         # registered user (domain guard lives in try_auto_link_member).
         # google_details() returns only an email_verified address.
-        _link_member_if_any(user, accountdetails.get("email"))
+        _link_member_if_any(user, verified_email)
         return_to = session.pop("return_to_after_oauth", None)  # Get the return_to url and remove it from the session
         if return_to:
             return redirect(_safe_redirect_url(return_to))
@@ -1736,7 +1758,16 @@ def external_link_handler(service):
         return redirect(f"/api/login/{service}")
 
     persistent = utils.external_auth.get_persistent(service)
-    linked = da.link_account(current_user, service, persistent)
+    # Adding a first identity works from any session; replacing one needs a session from Google (link_account).
+    linked = da.link_account(
+        current_user,
+        service,
+        persistent,
+        email=_storable_google_email(utils.external_auth.google_verified_email()) if service == "google" else None,
+        from_google_session=session.get("auth_method") == "google",
+        # Basic auth's one-request session has no mark, so it never holds here.
+        session_stamps=session,
+    )
 
     if not linked:
         # Not linked
@@ -1773,7 +1804,11 @@ def external_unlink_handler(service):
     if not current_user.is_authenticated:
         return "null"  # FIXME: 403 instead?
 
-    unlinked = da.unlink_account(current_user, service)
+    if service == "google" and session.get("auth_method") != "google":
+        da.auth_log.warning("Refusing to unlink google from a password session for user #%d", current_user.id)
+        return "null"
+
+    unlinked = da.unlink_account(current_user, service, session_stamps=session)
     if not unlinked:
         return "null"  # FIXME: Error code instead?
     return "1"
