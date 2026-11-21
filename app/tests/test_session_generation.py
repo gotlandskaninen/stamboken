@@ -537,3 +537,25 @@ class TestLostMarkAndRaces(SessionTest):
                 return True
             time.sleep(0.05)
         return False
+
+
+class TestMassLogoutCommand(SessionTest):
+    """flask users mass-logout: the admin's mass logout without a session, for when signing in does not work."""
+
+    def mass_logout(self):
+        return APP.test_cli_runner().invoke(args=["users", "mass-logout"])
+
+    def test_signs_everybody_out(self):
+        client = self.login()
+        key = self.session_key(client)
+        result = self.mass_logout()
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertFalse(self.session_redis.exists(key))
+        self.assertFalse(self.signed_in(client))
+        self.assertTrue(db.AuditLog.select().where(db.AuditLog.record_id.startswith("mass-logout-")).exists())
+
+    def test_not_on_the_demo(self):
+        client = self.login()
+        with as_demo():
+            self.assertNotEqual(self.mass_logout().exit_code, 0)
+        self.assertTrue(self.signed_in(client))
