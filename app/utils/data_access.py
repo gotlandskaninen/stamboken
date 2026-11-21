@@ -4592,10 +4592,11 @@ def google_login_generation(user, method, ident, email=None):
     login_generation for a login through `method` (Google): under the account's row lock the identity is looked up
     once more, and a deactivation, switch or removal that got there first refuses the login (None). The identity's
     verified address `email` becomes google_email under the same lock, so it can never land on a newer identity; ""
-    (a contradicted domain address, storable_google_email) clears it, and None keeps it.
+    (a contradicted domain address, storable_google_email) clears it, and None keeps it. An account with a role
+    (holds_role, read under the lock) is then refused unless `email` is on the association's domain.
     """
     with DATABASE.atomic():
-        account = User.select(User.id, User.is_active).where(User.id == user.id).for_update().get()
+        account = User.select(User.id, User.is_active, User._privileges).where(User.id == user.id).for_update().get()
         if not account.is_active:
             return None
         generation = login_generation(user.uuid)
@@ -4604,6 +4605,9 @@ def google_login_generation(user, method, ident, email=None):
             return None
         if email is not None:
             User.update(google_email=email or None).where(User.id == user.id).execute()
+        if holds_role(account) and not on_role_domain(email):
+            auth_log.warning("Login refused: Google identity outside the domain for user #%d, who has a role", user.id)
+            return None
     return generation
 
 

@@ -445,6 +445,35 @@ class TestRoleRule(RoleRulesTest):
             with self.subTest(path):
                 self.assertEqual(client.get(path, headers=auth).status_code, 401)
 
+    def test_a_google_login_outside_the_domain_is_refused_on_both_routes(self):
+        self.give_google(self.member, sub="google-sub")
+        self.member.add_role("manager", 1)
+
+        def legacy_login(idtoken):
+            client = APP.test_client(use_cookies=True)
+            redirect_login(client, da.authenticate_with_credentials, idtoken=lambda: idtoken)
+            return client.get("/api/user").status_code
+
+        outside = {"sub": "google-sub", "email": OUTSIDE_ADDRESS, "email_verified": True}
+        # The address is written as for any account before the refusal: google_email stays the identity's.
+        for name, idtoken, google_email in (
+            ("an address outside the domain", outside, OUTSIDE_ADDRESS),
+            ("the domain's address from another Workspace", {**ID_TOKEN, "hd": "example.org"}, None),
+            ("no verified address", {"sub": "google-sub", "email_verified": False}, DOMAIN_ADDRESS),
+        ):
+            with self.subTest(name):
+                db.User.update(google_email=DOMAIN_ADDRESS).where(db.User.id == self.member.id).execute()
+                self.assertEqual(legacy_login(idtoken), 401)
+                self.assertEqual(db.User.get_by_id(self.member.id).google_email, google_email)
+        self.assertEqual(legacy_login(dict(ID_TOKEN)), 200)
+
+        # The Next.js route refuses every identity outside the domain before it looks for the account.
+        token = {**ID_TOKEN, "email": OUTSIDE_ADDRESS, "hd": None}
+        with mock.patch("google.oauth2.id_token.verify_oauth2_token", return_value=token):
+            self.assertEqual(APP.test_client().post("/api/auth/google", json={"credential": "t"}).status_code, 403)
+        self.assertIsNone(da.google_login_generation(self.member, "google", "google-sub", OUTSIDE_ADDRESS))
+        self.assertTrue(da.google_login_generation(self.member, "google", "google-sub", DOMAIN_ADDRESS))
+
 
 class TestLegacyGoogleScope(unittest.TestCase):
     def test_the_legacy_google_login_always_asks_for_the_verified_address(self):
