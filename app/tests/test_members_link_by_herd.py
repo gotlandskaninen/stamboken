@@ -1,6 +1,7 @@
 """Tests for flask members link-by-herd (links accounts to the register via herd ownership)."""
 
 from datetime import date
+from uuid import uuid4
 
 import utils.data_access as da
 import utils.database as db
@@ -455,3 +456,76 @@ class TestMembersLinkByHerd(DatabaseTest):
         result = self._run()
 
         self.assertIn(f"G901: member {person.id}: Anna Svensson <anna@example.org> -> user konto1", result.output)
+
+    def test_sole_owner_in_one_membership_and_co_owner_in_another_is_not_linked(self):
+        _, p1 = self._membership(901)
+        _, p2 = self._membership(902)
+        user = self._account(owns=self._herd("G901"))
+        shared = self._herd("G902")
+        user.add_role("owner", shared.id)
+        self._account(fullname="Someone Else", owns=shared)
+
+        result = self._apply()
+
+        self.assertIsNone(self._linked_user_id(p1))
+        self.assertIsNone(self._linked_user_id(p2))
+        self.assertIn("flera möjliga kopplingar", result.output)
+
+    def test_herd_code_with_leading_zero_is_not_the_members_herd(self):
+        _, person = self._membership(901)
+        self._account(owns=self._herd("G0901"))
+
+        result = self._apply()
+
+        self.assertIsNone(self._linked_user_id(person))
+        self.assertIn("Till granskning: 0", result.output)
+
+    def test_leading_zero_herd_does_not_disturb_the_real_one(self):
+        _, person = self._membership(901)
+        user = self._account(owns=self._herd("G901"))
+        self._account(owns=self._herd("G0901"))
+
+        self._apply()
+
+        self.assertEqual(self._linked_user_id(person), user.id)
+
+    def test_decimal_herd_id_in_a_role_is_not_ownership(self):
+        _, person = self._membership(901)
+        herd = self._herd("G901")
+        user = self._account()
+        user.privileges = [{"level": "owner", "herd": herd.id + 0.75}]
+        user.save()
+
+        result = self._apply()
+
+        self.assertIsNone(self._linked_user_id(person))
+        self.assertEqual(result.exit_code, 0, result.output)
+
+    def test_role_without_level_marks_the_account_incomplete_and_the_run_goes_on(self):
+        _, p1 = self._membership(901)
+        _, p2 = self._membership(902, first="Eva", last="Lund")
+        broken = self._account(owns=self._herd("G901"))
+        broken.privileges = broken.privileges + [{"herd": 5}, "owner"]
+        broken.save()
+        good = self._account(fullname="Eva Lund", owns=self._herd("G902"))
+
+        result = self._apply()
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIsNone(self._linked_user_id(p1))
+        self.assertEqual(self._linked_user_id(p2), good.id)
+        self.assertIn("ägarroll är ofullständig", result.output)
+
+    def test_accounts_sharing_an_address_are_printed_with_their_own_ids(self):
+        self._membership(901)
+        self._membership(902, first="Eva", last="Lund")
+        users = [
+            db.User.create(email="delad@example.org", uuid=uuid4(), fullname=name) for name in ("Anna Svensson", "Eva Lund")
+        ]
+        for user, code in zip(users, ("G901", "G902")):
+            user.add_role("owner", self._herd(code).id)
+
+        result = self._run()
+
+        for user in users:
+            self.assertIn(f"delad@example.org (id {user.id})", result.output)

@@ -857,7 +857,8 @@ def _norm_name(name: str | None) -> str:
 
 
 def _user_label(user) -> str:
-    return user.username or user.email
+    # The id always identifies the account: several can share an address.
+    return f"{user.username or user.email} (id {user.id})"
 
 
 def _member_label(member) -> str:
@@ -871,11 +872,15 @@ def _owner_index() -> tuple[dict[int, dict[int, User]], set[int]]:
     incomplete: set[int] = set()
     for user in User.select().order_by(User.id):
         for role in user.privileges:
-            if role.get("level") != "owner":
+            if not isinstance(role, dict) or "level" not in role:
+                incomplete.add(user.id)  # link_access_delta reads role["level"]
                 continue
-            try:
-                herd_id = int(role["herd"])  # older rows may store the id as a string
-            except (KeyError, TypeError, ValueError):
+            if role["level"] != "owner":
+                continue
+            herd_id = role.get("herd")
+            if isinstance(herd_id, str) and re.fullmatch(r"[0-9]+", herd_id):
+                herd_id = int(herd_id)  # older rows may store the id as a string
+            if isinstance(herd_id, bool) or not isinstance(herd_id, int):
                 incomplete.add(user.id)
                 continue
             owners.setdefault(herd_id, {})[user.id] = user
@@ -888,7 +893,7 @@ def _plan_herd_links() -> tuple[list, list, int]:
     memberships = {m.member_number: m for m in Membership.select().where(Membership.member_number.is_null(False))}
     herds_by_code: dict[str, list] = {}
     for herd in Herd.select(Herd, Genebank).join(Genebank):
-        found = re.fullmatch(r"([GM])(\d+)", herd.herd or "")
+        found = re.fullmatch(r"([GM])([1-9][0-9]*)", herd.herd or "")
         # The prefix names the genebank by its initial, as in data_access._genebank_letters.
         if found and herd.genebank.name[:1].upper() == found.group(1):
             herds_by_code.setdefault(herd.herd, []).append(herd)
@@ -896,6 +901,7 @@ def _plan_herd_links() -> tuple[list, list, int]:
     listed: list = []
     already: set[tuple[int, int]] = set()
     pairs: dict[tuple[int, int], list] = {}  # (main id, user id) -> [main, user, codes]
+    possible: set[tuple[int, int]] = set()  # co-owners whose name matches: counterparts, never linked
     for code in sorted(herds_by_code, key=lambda c: (int(c[1:]), c[0])):
         herds = herds_by_code[code]
         owner_users = {uid: u for h in herds for uid, u in owners.get(h.id, {}).items()}
@@ -922,12 +928,14 @@ def _plan_herd_links() -> tuple[list, list, int]:
             listed.append(([code], "inget konto har rollen ägare på besättningen"))
         elif len(owner_users) > 1:
             listed.append(([code], "flera konton har rollen ägare på besättningen"))
+            wanted = _norm_name(f"{main.first_name} {main.last_name}")
+            possible |= {(main.id, uid) for uid, u in owner_users.items() if wanted and _norm_name(u.fullname) == wanted}
         else:
             _check_owner(code, main, next(iter(owner_users.values())), incomplete, listed, already, pairs)
 
     # Several possible links for one member or one account: none of them is made.
     by_main, by_user = {}, {}
-    for key in pairs:
+    for key in pairs.keys() | possible:
         by_main.setdefault(key[0], []).append(key)
         by_user.setdefault(key[1], []).append(key)
     to_link = []
