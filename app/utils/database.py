@@ -4018,14 +4018,16 @@ def migrate_42_to_43():
 
 
 _REX_MENTION = r"\mrex"
+# Ambiguous rows are deliberately left for manual review: "mor är rex" and the like stay excluded.
+# Distances stay inside a clause: [\s:-] does not cross a comma, semicolon or full stop.
 _REX_EXCLUDED = (  # carriers, "not rex", parent references: each tied to the rex word, judged per field
     r"rex\w*(bär|anlag|inslag|split)",
-    r"(bär\w*|anlag|inslag|split)\W+(\w+\W+){0,2}rex",
-    r"rex\W+(\w+\W+){0,2}(bär\w*|anlag|inslag|split)",
-    r"\m(ej|inte|inget|ingen|icke|utan|nej)\W+(\w+\W+){0,1}rex",
-    r"rex\W*(nej|ej)\M",
+    r"(bär\w*|anlag|inslag|split)[\s:-]+(\w+[\s:-]+){0,2}rex",
+    r"rex[\s:-]+(\w+[\s:-]+){0,2}(bär\w*|anlag|inslag|split)",
+    r"\m(ej|inte|inget|ingen|icke|utan|nej)[\s:-]+(\w+[\s:-]+){0,1}rex",
+    r"rex\w*[\s:-]*(nej|ej)\M",
     r"icke-rex",
-    r"\m(far|mor|fadern|modern|föräldrar?)\W+(\w+\W+){0,1}rex",
+    r"\m(far|mor|fadern|modern|föräld\w*)[\s:-]+(\w+[\s:-]+){0,1}rex",
 )
 
 
