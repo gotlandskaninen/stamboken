@@ -161,8 +161,11 @@ login through Basic auth is refused.
 The mark is replaced, which ends every session of the account on both APIs,
 when the account is deactivated (activating it again brings none back), when
 its Google identity is replaced or removed, when its password is changed or
-reset by an admin, and with **Logga ut överallt** on the admin user page
-(`POST /api/v2/admin/users/<id>/logga-ut`). Changing one's own password or
+reset by an admin, when it is given one of the roles under "Roles and Google"
+(also by `flask users add-role`; through the API not where
+`ALLOW_ROLE_PASSWORD_LOGIN` lifts the role rules), and with **Logga ut
+överallt** on the admin user page (`POST /api/v2/admin/users/<id>/logga-ut`).
+The holder of a new role signs in again. Changing one's own password or
 Google identity ends one's own session too. Only the production API replaces
 a mark; the demo API reads the marks and may create a missing one, and refuses
 Logga ut överallt.
@@ -174,11 +177,17 @@ Logga ut överallt.
 - Release the API and the demo API together. They share the session store, and
   the new one refuses every session the old one makes.
 - Before rolling back to a version without the mark check: close both APIs to
-  user traffic and let running requests finish, then run the mass logout on
-  the production API (`POST /api/v2/admin/sessions/mass-logout`), and open
+  user traffic and let running requests finish, then run the mass logout in
+  the production API's container (`flask users mass-logout`, which needs no
+  session, unlike `POST /api/v2/admin/sessions/mass-logout`), and open
   traffic again only when both APIs run the older version. Otherwise revoked
   sessions come back: one nobody has used since is still in the store with its
   old epoch, and a login in flight can save a session after the mass logout.
+  If the new version never started (it refuses to without `GOOGLE_CLIENT_ID`
+  in production), it made no sessions, and no mass logout is needed.
+- After an unclean restart of the sessions' Redis, run `flask users
+  mass-logout`: an older snapshot brings old marks and old sessions back
+  together.
 - Migration 44 makes a Google identity unique to one account. If two accounts
   hold one, the migration fails, the schema stays at 43 and **the API does not
   start**; the demo API does not either, on its copy of the database. Before
@@ -221,12 +230,108 @@ domain (`google_email`); the domain is fixed in code:
   password (Återställ lösenord) and removes the Google login; the holder signs
   in with the password and links the new identity; the admin gives the role
   back.
+- An account suspected to be compromised: Logga ut överallt and a new password
+  are not enough, since a password session can link a first Google identity,
+  and that login stays. An admin also removes the account's Google login
+  (`DELETE /api/v2/admin/users/<id>/google`, after removing any role) unless it
+  is known to be the holder's. There is no button for it yet: a signed-in
+  admin sends it from the browser's console on the site,
+  `fetch("/api/v2/admin/users/<id>/google", {method: "DELETE"})`. The demo's
+  copy of the account is up to a day old, so the old password or Google link
+  still signs in there, with the account's current mark: after the demo's
+  next copy (the nightly one, or `scripts/sync-demo-db.sh` run at once), use
+  Logga ut överallt for the account once more.
+- Before giving a role, an admin checks that the account's Google address
+  (`google_email`) is the holder's.
+
+The role rule: Google is the only way into an account with a role.
+
+- A password login to it is refused after the password is checked, with a
+  wrong password's answer (`null` on a legacy host).
+- Basic auth for it is refused where the header is read: the request is
+  anonymous, so 401 wherever a login is needed, also under `/api/v2/`.
+- A session of it that did not sign in with Google on the domain is emptied
+  at its next request (`_session_revoked`), also when the role came without a
+  new mark, as a data fix or the demo's nightly copy writes it. A Google login
+  stamps the session (`google_domain`) when it verified the domain, so a role
+  holder's Google session from before this stamp ends: the holder signs in
+  again.
+  `is_admin` and the other role properties are unchanged: they also
+  answer for an account that is not the caller. The demo API, whose roles are
+  a copy up to a day old, empties only sessions it made itself. A session
+  production made is judged by production's rule; when it did not sign in with
+  Google on the domain and the account has a role in the demo's copy, the demo
+  answers its requests with 403 (logging out still works) and leaves the
+  session in the shared store.
+- A Google login to it, on either Google route, needs a verified address on
+  the domain from a token of the domain, whatever `auth.ini` says.
+- The CMS admits only a session that signed in with Google (`auth_method` in
+  `/api/user`). Set for next-app, `ALLOW_ROLE_PASSWORD_LOGIN=true` lifts this
+  outside a production build (`NODE_ENV=production`), which ignores it.
 
 `ALLOW_ROLE_PASSWORD_LOGIN=true` lifts these role rules for development and
 tests, where the seed's accounts with roles have only passwords. The
-development and pytest compose files and the CI pytest job set it. The API
-refuses to start with it when `FLASK_ENV=production`, which the demo API has
-too.
+development compose file (for api and next-app), the pytest compose file, the
+CI pytest job, the API the Playwright jobs start and `scripts/ci-local.sh` set
+it. The local Playwright runs against `docker-compose.local-production.yml`
+(legacy, admin and demo suites) need it in `.docker/api-variables.env`, never
+in that compose file. The API refuses to start with it when
+`FLASK_ENV=production`, which the demo API has too.
+
+**Releasing the role rule.** Count read-only against production (numbers
+only):
+
+1. Active accounts with a role that may be locked out: no Google login whose
+   `google_email` is on the domain, or not `validated` (the legacy frontend
+   needs it). It should be 0:
+
+   ```sql
+   SELECT count(*) FROM hbuser u WHERE u.is_active
+     AND EXISTS (SELECT 1 FROM jsonb_array_elements(u.privileges::jsonb) p
+       WHERE p->>'level' IN ('admin', 'matrikel_admin', 'manager', 'helper'))
+     AND (NOT u.validated OR coalesce(lower(u.google_email), '') NOT LIKE '%@gotlandskaninen.se'
+       OR NOT EXISTS (SELECT 1 FROM authenticators a WHERE a.user_id = u.user_id AND a.auth = 'google'));
+   ```
+
+   The count trusts `google_email`. A value written before Google sign-ins
+   rewrote it under the account's lock (see above) is no proof, so a role
+   holder who has not signed in with Google since can still be locked out.
+
+   A row with a Google identity but an empty `google_email` is counted although
+   it may get in: its Google login judges the token's address and then stores
+   it. Count those apart (`u.google_email IS NULL` together with the role and
+   `google` conditions above); ask each holder to sign in with Google once,
+   then count again. That sign-in has to happen before the role rule is on:
+   either release the sessions' marks (above) first and the role rule later,
+   or have the holders use the Google button on the new site on the release
+   that runs today, which stores the address too. A row that still counts is
+   a real case: fix it while the password still works. Released together
+   with the marks, the role rule leaves no such moment, and an account whose
+   Google address is not on the domain is locked out with no password to
+   fall back on.
+2. Active accounts with a role and a password: the password stops working for
+   them, at the login and as Basic auth, so a client that uses Basic auth with
+   such an account stops working. The API logs each Basic auth login as
+   `Login ok: header, user id=<id>`.
+
+   ```sql
+   SELECT count(*) FROM hbuser u WHERE u.is_active
+     AND EXISTS (SELECT 1 FROM jsonb_array_elements(u.privileges::jsonb) p
+       WHERE p->>'level' IN ('admin', 'matrikel_admin', 'manager', 'helper'))
+     AND EXISTS (SELECT 1 FROM authenticators a WHERE a.user_id = u.user_id AND a.auth = 'password');
+   ```
+3. `GOOGLE_CLIENT_ID` is set for the API and for the demo API, each in its own
+   env file (`.docker/api-variables.env`, `.docker/api-test-variables.env` in
+   the production compose file). With `FLASK_ENV=production` the API refuses
+   to start without it; unset, the Google token route would accept tokens of
+   any OAuth app.
+
+A role account that is locked out gets back through an admin: remove its role,
+set a password (Återställ lösenord) and remove its Google login if it has one,
+since a password session can add a first Google identity but not replace one.
+The holder then signs in with the password and links a Google login on the
+domain, and the admin gives the role back. When no admin can sign in to do
+that, `flask users add-role` below makes an account that can sign in an admin.
 
 `flask users add-role <konto> <roll>` is the way back when the only admin has
 lost the Google account: it gives `admin` or `matrikel_admin` to the one active,

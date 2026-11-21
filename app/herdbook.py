@@ -121,11 +121,12 @@ UPLOAD_DIR = os.getenv("UPLOAD_FOLDER", "/app/uppladdningar")
 # Expected audience for Google ID tokens from the Next.js sign-in (the GIS
 # client — same value as next-app's NEXT_PUBLIC_GOOGLE_CLIENT_ID, NOT the
 # Flask OAuth client in auth.ini). Unset skips the audience check, so any
-# Google app's tokens would verify — warn loudly in production. An empty
+# Google app's tokens would verify — production refuses to start without it. An empty
 # string (e.g. a bare "GOOGLE_CLIENT_ID=" env line) must normalize to None:
 settings.refuse_committed_signing_key()
 settings.refuse_auto_validate_outside_demo()
 settings.refuse_role_password_login_in_production()
+settings.refuse_missing_google_client_id_in_production()
 settings.refuse_unsafe_mail_settings()
 settings.refuse_unsafe_gmail_settings()
 settings.refuse_private_folder_under_uploads()
@@ -133,8 +134,6 @@ settings.report_unwritable_private_folder()
 
 # verify_oauth2_token would otherwise enforce audience "" and fail every login.
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID") or None
-if not GOOGLE_CLIENT_ID and os.getenv("FLASK_ENV") == "production":
-    APP.logger.warning("GOOGLE_CLIENT_ID is not set — Google ID token audience is not pinned")
 
 # Create directories if they don't exist (will fail silently if no permissions)
 for d in [UPLOAD_DIR]:
@@ -516,6 +515,24 @@ def enforce_access_rules():
     return None
 
 
+@APP.before_request
+def refuse_demo_role_without_google():
+    """
+    The role rule on the demo for a session production made, which _session_revoked leaves to production: without
+    Google on the association's domain, a role in the demo's copy of the account is refused here, request by request,
+    and the session stays in the shared store for production to judge. Logging out still works.
+    """
+    if not settings.service.demo_instance or session.get("demo_login") or "user_id" not in session:
+        return None
+    if (session.get("auth_method") == "google" and session.get("google_domain")) or request.endpoint == "logout":
+        return None
+    account = db.User.get_or_none(db.User.uuid == session["user_id"])
+    if account is None or not da.holds_role(account):
+        return None
+    message = "Kontot har en roll. Logga in med föreningens Google-konto för att använda den i testmiljön."
+    return jsonify({"status": "error", "message": message}), 403
+
+
 @APP.teardown_request
 def teardown_request(exc=None):
     """Clear audit session variables after each request."""
@@ -604,6 +621,12 @@ def load_user_from_request(request):
             _login_rate_limit("hit")
             return None
 
+        if user and da.holds_role(user):
+            # The role rule: an account with a role signs in with Google only. It spends the budget as a wrong
+            # password does below, so the limit tells neither apart.
+            da.auth_log.warning("Login refused: header, user id=%s has a role", user.id)
+            user = None
+
         if user:
             da.auth_log.info("Login ok: header, user id=%s", user.id)
 
@@ -660,7 +683,11 @@ def _session_revoked():
     latest epoch, as da.session_holds answers. Changing the account's
     credentials replaces the mark, and an account without one has no valid
     session, so emptying Redis never brings one back. Sessions from before
-    these stamps are refused: deploying them signs everybody out.
+    these stamps are refused: deploying them signs everybody out. The role
+    rule: a session of an account with a role (da.holds_role) is valid only
+    when it signed in with Google on the association's domain (google_domain),
+    also when the role came without a new mark, as a data fix or the demo's
+    nightly copy writes it.
 
     A session minted by the demo API counts as revoked in production: the
     stores are shared, but demo account state (passwords, Google links,
@@ -670,22 +697,38 @@ def _session_revoked():
         da.auth_log.warning("Refused a session minted by the demo API")
         return True
     if "user_id" in session:
-        return "auth_method" not in session or not da.session_holds(session)
+        if "auth_method" not in session or not da.session_holds(session):
+            return True
+        on_domain = session["auth_method"] == "google" and session.get("google_domain")
+        if on_domain or settings.service.allow_role_password_login:
+            return False
+        if settings.service.demo_instance and not session.get("demo_login"):
+            # The demo's roles are a copy up to a day old: production judges the sessions it made, in the shared store,
+            # and refuse_demo_role_without_google refuses their requests here.
+            return False
+        account = db.User.get_or_none(db.User.uuid == session["user_id"])
+        return account is not None and da.holds_role(account)
     return session.get("logout_epoch", 0) < _logout_epoch()
 
 
-def establish_session(user, method, generation):
+def establish_session(user, method, generation, on_domain=False):
     """
     The one way a login becomes a session: marks a demo login, stamps the
-    logout epoch, the sign-in method ("google" or "losenord") and the
-    account's mark read under its row lock, then rotates the sid. A session's
-    stamps are never rewritten; a change of credentials revokes it instead.
+    logout epoch, the sign-in method ("google" or "losenord"), whether a
+    Google login verified the association's domain (`on_domain`, stored
+    only when true) and the account's mark read under its row lock, then
+    rotates the sid. A session's stamps are never rewritten; a change of
+    credentials revokes it instead.
     """
     if not user.is_active:
         # login_user refuses it too: a refused login must not leave a user and a mark that wake on reactivation.
         return
     _stamp_login()
     session["auth_method"] = method
+    # A session an inactive account left uncleared must not lend its stamp to this login.
+    session.pop("google_domain", None)
+    if on_domain:
+        session["google_domain"] = True
     session["generation"] = generation
     session["user_id"] = user.uuid
     session.modified = True
@@ -1403,6 +1446,10 @@ def login_handler():
             jsonify({"status": "error", "message": "Kontot är inaktiverat. Kontakta styrelsen."}),
             401,
         )
+    if user and da.holds_role(user):
+        # The role rule: an account with a role signs in with Google only. The answer is a wrong password's.
+        da.auth_log.warning("Login refused: password, user id=%s has a role", user.id)
+        user = None
     if user:
         establish_session(user, "losenord", generation)
         da.auth_log.info("Login ok: password, user id=%s", user.id)
@@ -1539,7 +1586,7 @@ def google_token_login():
 
             # After the save: a save that raises must not leave a session that
             # carries user_id without flask-login's _user_id.
-            establish_session(user, "google", generation)
+            establish_session(user, "google", generation, on_domain=True)  # the domain's hd and address, above
             da.auth_log.info("Login ok: Google, user id=%s", user.id)
             # Phase 8: link a pre-provisioned Member to this OAuth-verified
             # user. get_user() re-fetches from the DB, so a newly granted
@@ -1609,10 +1656,17 @@ def external_login_handler(service):
         )
         generation = da.google_login_generation(user, service, persistent_id, verified_email)
         if generation is None:
-            da.auth_log.warning("Login refused: %s, inactive or identity changed, user id=%s", service, user.id)
+            da.auth_log.warning(
+                "Login refused: %s, inactive, identity changed or a role outside the domain, user id=%s",
+                service,
+                user.id,
+            )
+            if service == "google":
+                # Else the next attempt reuses this token and skips Google's account chooser.
+                utils.external_auth.forget_google_token()
             return "null"
         da.auth_log.info("Login ok: %s, user id=%s", service, user.id)
-        establish_session(user, service, generation)
+        establish_session(user, service, generation, on_domain=da.on_role_domain(verified_email))
         # Phase 8: auto-link Member on OAuth completion, then reload so the
         # profile save below writes fresh privileges — saving this stale
         # in-memory instance would clobber the just-granted owner role.
@@ -1721,7 +1775,7 @@ def external_login_handler(service):
 
     # FIXME: this is how we "really" log in the user
     if user.validated:
-        establish_session(user, service, generation)
+        establish_session(user, service, generation, on_domain=da.on_role_domain(verified_email))
         # Phase 8: auto-link Member on first OAuth login of an auto-
         # registered user (domain guard lives in try_auto_link_member).
         # google_details() returns only an email_verified address.

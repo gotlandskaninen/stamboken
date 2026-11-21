@@ -155,6 +155,17 @@ class TestRevocation(SessionTest):
     def admin_client(self):
         return self.login("admin")
 
+    def test_only_an_admin_sets_another_accounts_password(self):
+        """Otherwise a right guess of another account's old password changes it and signs its holder out."""
+        holder = self.login()
+        before = self.mark()
+        form = {"oldpassword": "pass", "newpassword": "ny", "password": "ny"}
+        answer = self.login("man").post(f"/api/manage/setpassword/{self.viewer.id}", json=form)
+        self.assertEqual((answer.status_code, answer.get_json()), (200, None))
+        self.assertIsNotNone(da.authenticate_user("spec", "pass")[0])
+        self.assertEqual(self.mark(), before)
+        self.assertTrue(self.signed_in(holder))
+
     def occasions(self):
         uid = self.viewer.id
         return {
@@ -265,11 +276,11 @@ class TestLostMarkAndRaces(SessionTest):
         real = herdbook.establish_session
         calls = []
 
-        def paused(user, method, generation):
+        def paused(user, method, generation, **stamps):
             calls.append(method)
             if len(calls) == 1:
                 change()
-            return real(user, method, generation)
+            return real(user, method, generation, **stamps)
 
         return mock.patch.object(herdbook, "establish_session", paused)
 
@@ -537,3 +548,25 @@ class TestLostMarkAndRaces(SessionTest):
                 return True
             time.sleep(0.05)
         return False
+
+
+class TestMassLogoutCommand(SessionTest):
+    """flask users mass-logout: the admin's mass logout without a session, for when signing in does not work."""
+
+    def mass_logout(self):
+        return APP.test_cli_runner().invoke(args=["users", "mass-logout"])
+
+    def test_signs_everybody_out(self):
+        client = self.login()
+        key = self.session_key(client)
+        result = self.mass_logout()
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertFalse(self.session_redis.exists(key))
+        self.assertFalse(self.signed_in(client))
+        self.assertTrue(db.AuditLog.select().where(db.AuditLog.record_id.startswith("mass-logout-")).exists())
+
+    def test_not_on_the_demo(self):
+        client = self.login()
+        with as_demo():
+            self.assertNotEqual(self.mass_logout().exit_code, 0)
+        self.assertTrue(self.signed_in(client))

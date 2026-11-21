@@ -589,9 +589,13 @@ def change_password(active_user, changed_user, form, session_stamps=None):
     A request passes the session it came through (session_stamps): one
     revoked while the request waited for the account's row changes nothing,
     as in link_account. An admin is asked no old password, also for her own.
+    Anyone else changes only her own: another account's old password is
+    never checked here, so it cannot be guessed outside the login's limit.
     """
     if not active_user or not changed_user or not form:
         logger.info("Bad call to change_password, somethings is missing)")
+        return None
+    if not active_user.is_admin and str(changed_user) != str(active_user.id):
         return None
 
     # The account's row, as a login takes it: the new password and the new mark (new_generation) are one change.
@@ -693,6 +697,8 @@ def link_account(user, method, ident, email=None, from_google_session=False, ses
         with DATABASE.atomic():
             # The account's row first, as unlink_account does, then the identity.
             account = User.select().where(User.id == user.id).for_update().get()
+            # Beside the unique index, which nothing checks at start: two accounts never take one identity at once.
+            DATABASE.execute_sql("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"authenticator:{method}:{ident}",))
             if _revoked_meanwhile(account, session_stamps):
                 return None
             old = Authenticators.get_or_none((Authenticators.user == user.id) & (Authenticators.auth == method))
@@ -1285,6 +1291,9 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                         f"target:{operation.get(target)}"
                     )
                     target_user.add_role(operation["role"], operation.get(target))
+                    if operation["role"] in ROLE_LEVELS and not settings.service.allow_role_password_login:
+                        # Every earlier session ends, also on the demo, which leaves production's sessions to it.
+                        new_generation(target_user.uuid)
                     updated = True
 
             return {"status": "updated" if updated else "unchanged"}
@@ -4592,10 +4601,11 @@ def google_login_generation(user, method, ident, email=None):
     login_generation for a login through `method` (Google): under the account's row lock the identity is looked up
     once more, and a deactivation, switch or removal that got there first refuses the login (None). The identity's
     verified address `email` becomes google_email under the same lock, so it can never land on a newer identity; ""
-    (a contradicted domain address, storable_google_email) clears it, and None keeps it.
+    (a contradicted domain address, storable_google_email) clears it, and None keeps it. An account with a role
+    (holds_role, read under the lock) is then refused unless `email` is on the association's domain.
     """
     with DATABASE.atomic():
-        account = User.select(User.id, User.is_active).where(User.id == user.id).for_update().get()
+        account = User.select(User.id, User.is_active, User._privileges).where(User.id == user.id).for_update().get()
         if not account.is_active:
             return None
         generation = login_generation(user.uuid)
@@ -4604,6 +4614,9 @@ def google_login_generation(user, method, ident, email=None):
             return None
         if email is not None:
             User.update(google_email=email or None).where(User.id == user.id).execute()
+        if holds_role(account) and not on_role_domain(email):
+            auth_log.warning("Login refused: Google identity outside the domain for user #%d, who has a role", user.id)
+            return None
     return generation
 
 

@@ -99,6 +99,8 @@ services:
       - ./.docker/next-app-variables.env
     environment:
       - NODE_ENV=development
+      # The CMS admits the seed's password sessions too, as the api lets them sign in.
+      - ALLOW_ROLE_PASSWORD_LOGIN=true
       - API_INTERNAL_URL=http://api:9090
       - CMS_DATABASE_URL=postgres://herdbook_cms:herdbook_cms_insecure@cms-database:5432/herdbook_cms
     volumes:

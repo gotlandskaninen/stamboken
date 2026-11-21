@@ -490,6 +490,14 @@ def remove_google_login(u_id):
     target = db.User.get_or_none(db.User.id == u_id)
     if target is None:
         return problem(404, "Användare saknas", f"Ingen användare med id {u_id}.", type="user-not-found")
+    if (
+        not db.Authenticators.select()
+        .where((db.Authenticators.user == u_id) & (db.Authenticators.auth == "google"))
+        .exists()
+    ):
+        return problem(
+            409, "Ingen Google-inloggning", "Kontot har ingen Google-inloggning att ta bort.", type="no-google-login"
+        )
     if not da.unlink_account(target, "google", session_stamps=session):
         return problem(
             409,

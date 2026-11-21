@@ -1,26 +1,34 @@
 """An account with a role keeps a Google login on the association's domain. ALLOW_ROLE_PASSWORD_LOGIN lifts these rules
 for development and tests, and production refuses to start with it."""
 
+import base64
 import configparser
+import json
 import os
 import threading
 import time
 import unittest
 from unittest import mock
+from urllib.parse import urlparse
 
+import redis
 import utils.data_access as da
 import utils.database as db
 import utils.external_auth as external_auth
 import utils.settings as settings
+from extensions import session_redis
+from flask import url_for
 from herdbook import APP, limiter
 
 from tests.database_test import DatabaseTest
-from tests.google_login import ID_TOKEN, redirect_login
+from tests.google_login import ID_TOKEN, google_session, redirect_login
 
 limiter.enabled = False
 
 DOMAIN_ADDRESS = ID_TOKEN["email"]
 OUTSIDE_ADDRESS = "medlem@example.org"
+LEGACY = "https://stamboken.gotlandskaninen.se"
+NEW = "https://gotlandskaninen.se"
 # This database only: under xdist, other workers' databases share the server.
 WAITING_FOR_A_LOCK = (
     "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'"
@@ -75,12 +83,28 @@ class RoleRulesTest(DatabaseTest):
 
     def grant(self, user, level="manager"):
         role = {"level": level} if level in ("admin", "matrikel_admin") else {"level": level, "genebank": 1}
-        return self.login("admin").post(
+        return google_session(self.admin).post(
             "/api/v2/admin/role", json={"operation": "add", "user_id": user.id, "role": role}
         )
 
     def has_level(self, user, level="manager"):
         return any(p["level"] == level for p in db.User.get_by_id(user.id).privileges)
+
+    def member_sessions(self):
+        """A password session and a session from Google of the member, one of each to use on each API."""
+        return {
+            (api, method): login()
+            for api in ("production", "demo")
+            for method, login in (("losenord", self.login), ("google", self.google_login))
+        }
+
+    def assertEnded(self, sessions):
+        for (api, method), client in sessions.items():
+            with (
+                self.subTest(api=api, method=method),
+                mock.patch.object(settings.service, "demo_instance", api == "demo"),
+            ):
+                self.assertEqual(client.get("/api/user").status_code, 401)
 
 
 class TestRoleNeedsGoogle(RoleRulesTest):
@@ -94,7 +118,7 @@ class TestRoleNeedsGoogle(RoleRulesTest):
                 for level in da.ROLE_LEVELS:
                     resp = self.grant(self.member, level)
                     self.assertEqual((resp.status_code, resp.get_json()["type"]), (409, "google-required"), level)
-                legacy = self.login("admin").post(
+                legacy = google_session(self.admin).post(
                     "/api/manage/role", json={"action": "add", "role": "manager", "user": self.member.id, "genebank": 1}
                 )
                 self.assertEqual(legacy.status_code, 409)
@@ -231,21 +255,20 @@ class TestGoogleIdentity(RoleRulesTest):
         return False
 
     def test_a_role_account_with_only_a_password_adds_its_first_google_identity(self):
+        """From a session that is no Google session, as a password session was before the role rule refused it."""
         self.member.add_role("manager", 1)
-        client = self.login()
-        self.assertEqual(google_link(client, "sub-medlem", DOMAIN_ADDRESS), str(self.member.id))
+        before = da.login_generation(self.member.uuid)
+        self.assertTrue(da.link_account(self.member, "google", "sub-medlem", email=DOMAIN_ADDRESS))
         self.assertEqual(self.identities(self.member), ["sub-medlem"])
         self.assertEqual(db.User.get_by_id(self.member.id).google_email, DOMAIN_ADDRESS)
-        self.assertEqual(client.get("/api/user").status_code, 200)  # adding is no occasion to revoke
+        self.assertEqual(da.account_generation(self.member.uuid), before)  # adding is no occasion to revoke
 
     def test_a_domain_address_without_the_domains_hd_is_no_proof(self):
         """Whatever auth.ini says, google_email holds an address on the domain only from a token of the domain."""
         no_hd = {"sub": "google-sub", "email": DOMAIN_ADDRESS, "email_verified": True}
         manager = da.register_user("ansvarig@example.org", "pass", validated=True)
         manager.add_role("manager", 1)
-        self.assertEqual(
-            google_link(self.login("ansvarig@example.org"), "sub-ansvarig", DOMAIN_ADDRESS, hd=None), "null"
-        )
+        self.assertEqual(google_link(google_session(manager), "sub-ansvarig", DOMAIN_ADDRESS, hd=None), "null")
         self.assertEqual(self.identities(manager), [])
 
         self.assertEqual(google_link(self.login(), "google-sub", DOMAIN_ADDRESS, hd=None), str(self.member.id))
@@ -291,11 +314,11 @@ class TestGoogleIdentity(RoleRulesTest):
 
     def test_a_role_account_takes_no_identity_outside_the_domain(self):
         self.member.add_role("manager", 1)
-        password = self.login()
-        self.assertEqual(google_link(password, "sub-utanfor", OUTSIDE_ADDRESS), "null")
-        self.assertEqual(google_link(password, "sub-utanfor", None), "null")  # no verified address
+        # The first identity, from a session that is no Google session (link_account).
+        self.assertIsNone(da.link_account(self.member, "google", "sub-utanfor", email=OUTSIDE_ADDRESS))
+        self.assertIsNone(da.link_account(self.member, "google", "sub-utanfor"))  # no verified address
         self.assertEqual(self.identities(self.member), [])
-        self.assertEqual(google_link(password, "sub-medlem", DOMAIN_ADDRESS), str(self.member.id))
+        self.assertTrue(da.link_account(self.member, "google", "sub-medlem", email=DOMAIN_ADDRESS))
         google = self.google_login()
         self.assertEqual(google_link(google, "sub-utanfor", OUTSIDE_ADDRESS), "null")
         self.assertEqual(self.identities(self.member), ["sub-medlem"])
@@ -305,7 +328,7 @@ class TestGoogleIdentity(RoleRulesTest):
 
 class TestAdminRemovesGoogle(RoleRulesTest):
     def remove(self, user):
-        return self.login("admin").delete(f"/api/v2/admin/users/{user.id}/google")
+        return google_session(self.admin).delete(f"/api/v2/admin/users/{user.id}/google")
 
     def test_only_on_an_account_without_a_role(self):
         self.give_google(self.member)
@@ -342,10 +365,47 @@ class TestAdminRemovesGoogle(RoleRulesTest):
         self.assertEqual(self.remove(only_google).status_code, 409)
         self.assertEqual(self.identities(only_google), ["sub-bara"])
 
+    def test_an_account_without_a_google_login_has_none_to_remove(self):
+        admin = google_session(self.admin)
+        before = da.login_generation(self.member.uuid)
+        with self.assertNoLogs("herdbook.auth", "INFO"):
+            resp = admin.delete(f"/api/v2/admin/users/{self.member.id}/google")
+        self.assertEqual((resp.status_code, resp.get_json()["type"]), (409, "no-google-login"))
+        self.assertEqual(da.account_generation(self.member.uuid), before)
+
+    def test_the_way_back_with_the_access_rules_enforced(self):
+        """Neither validated nor promoted: given a password, its Google login removed, it signs in and links anew."""
+        stray = da.register_user("tillbaka@example.org", None)
+        self.give_google(stray, sub="sub-gammal")
+        with mock.patch.object(settings.service, "access_rules", "enforce"):
+            admin = google_session(self.admin)
+            reset = admin.post(f"/api/v2/admin/users/{stray.id}/password-reset", json={"password": "nytt"})
+            self.assertEqual(reset.status_code, 204)
+            self.assertEqual(self.remove(stray).status_code, 204)
+            client = APP.test_client(use_cookies=True)
+            resp = client.post("/api/login", json={"username": "tillbaka@example.org", "password": "nytt"})
+            self.assertEqual(resp.get_json()["id"], stray.id)
+            self.assertEqual(google_link(client, "sub-ny", DOMAIN_ADDRESS), str(stray.id))
+        self.assertEqual(self.identities(stray), ["sub-ny"])
+        self.assertEqual(db.User.get_by_id(stray.id).google_email, DOMAIN_ADDRESS)
+
 
 class TestAddRoleCommand(RoleRulesTest):
     def add_role(self, konto=DOMAIN_ADDRESS, roll="admin"):
         return APP.test_cli_runner().invoke(args=["users", "add-role", konto, roll])
+
+    def test_ends_every_session_the_account_had(self):
+        self.give_google(self.member)
+        sessions = self.member_sessions()
+        result = self.add_role(roll="matrikel_admin")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEnded(sessions)  # the role is in the demo's data too
+
+    def test_saves_nothing_when_the_mark_cannot_be_replaced(self):
+        self.give_google(self.member)
+        with mock.patch.object(da, "new_generation", side_effect=redis.exceptions.ConnectionError):
+            self.assertNotEqual(self.add_role().exit_code, 0)
+        self.assertFalse(self.has_level(self.member, "admin"))
 
     def test_refuses_an_account_without_google_or_without_the_course(self):
         result = self.add_role()
@@ -392,6 +452,247 @@ class TestAddRoleCommand(RoleRulesTest):
         self.assertFalse(self.has_level(twin, "admin"))
 
 
+class TestRoleRule(RoleRulesTest):
+    """With the rules on, the only way into an account with a role is a session from Google."""
+
+    def test_a_password_session_ends_at_the_next_request_once_the_account_has_a_role(self):
+        """The role is written without a new mark, as a data fix or the demo's nightly copy writes it: the role rule
+        alone ends the session. Giving a role also replaces the mark (test_giving_a_role_ends_every_session_...)."""
+        self.give_google(self.member)
+        manage_role = {"action": "add", "role": "viewer", "user": self.member.id, "genebank": 1}
+        manager = json.dumps([{"level": "manager", "genebank": 1}])
+        for path, call in (
+            ("/api/user", lambda client: client.get("/api/user")),
+            ("/api/manage/role", lambda client: client.post("/api/manage/role", json=manage_role)),
+        ):
+            with self.subTest(path):
+                db.User.update(_privileges="[]").where(db.User.id == self.member.id).execute()
+                client = self.login()
+                self.assertEqual(client.get("/api/user").status_code, 200)
+                db.User.update(_privileges=manager).where(db.User.id == self.member.id).execute()
+                key = "session:" + client.get_cookie(APP.config["SESSION_COOKIE_NAME"]).value
+                self.assertEqual(call(client).status_code, 401)
+                self.assertFalse(session_redis.exists(key), "refused session left in the store")
+        self.assertEqual(self.google_login().get("/api/user").get_json()["id"], self.member.id)
+
+    def test_a_password_is_refused_for_every_role_as_a_wrong_one_is(self):
+        def login(username, password, base_url):
+            client = APP.test_client(use_cookies=True)
+            form = {"username": username, "password": password}
+            resp = client.post("/api/login", json=form, base_url=base_url)
+            return resp.status_code, resp.get_json(), client.get("/api/user", base_url=base_url).status_code
+
+        self.member.add_role("viewer", 1)
+        self.member.add_role("owner", self.herds[0].id)
+        self.assertEqual(login("medlem@example.org", "pass", NEW)[0], 200)  # not roles that count
+        for level in da.ROLE_LEVELS:
+            with self.subTest(level):
+                # An account of its own: it holds this role and no other.
+                username = f"{level}@example.org"
+                account = da.register_user(username, "pass", validated=True)
+                account.add_role(level, None if level in ("admin", "matrikel_admin") else 1)
+                self.assertEqual([p["level"] for p in db.User.get_by_id(account.id).privileges], [level])
+                self.assertEqual(login(username, "pass", NEW), login(username, "fel", NEW))
+                self.assertEqual(login(username, "pass", NEW)[0], 401)
+                # Legacy reads any JSON body as the user.
+                self.assertEqual(login(username, "pass", LEGACY), (200, None, 401))
+                self.assertEqual(login(username, "pass", LEGACY), login(username, "fel", LEGACY))
+
+    def test_basic_auth_is_refused_for_an_account_with_a_role(self):
+        auth = {"Authorization": "Basic " + base64.b64encode(b"medlem@example.org:pass").decode()}
+        client = APP.test_client()
+        # Without a role it works, on an older address and under /api/v2/ (404: no membership, but signed in).
+        self.assertEqual(client.get("/api/active_users", headers=auth).status_code, 200)
+        self.assertEqual(client.get("/api/v2/my-membership", headers=auth).status_code, 404)
+        self.member.add_role("manager", 1)
+        for path in ("/api/active_users", "/api/v2/my-membership"):
+            with self.subTest(path):
+                self.assertEqual(client.get(path, headers=auth).status_code, 401)
+
+    def test_the_demo_refuses_a_role_to_a_production_session_without_google_and_leaves_it(self):
+        """The demo's roles are a copy up to a day old, and the session store is shared with production: the demo
+        refuses a request of a session production made without Google on the domain, and leaves the session to
+        production. A session the demo made it judges by its own copy."""
+
+        def set_role(levels):
+            privileges = [{"level": level, "genebank": 1} for level in levels]
+            db.User.update(_privileges=json.dumps(privileges)).where(db.User.id == self.member.id).execute()
+
+        def login():
+            client = APP.test_client(use_cookies=True)
+            form = {"username": "medlem@example.org", "password": "pass"}
+            return client, client.post("/api/login", json=form).status_code
+
+        production, _ = login()  # the role is gone in production
+        key = "session:" + production.get_cookie(APP.config["SESSION_COOKIE_NAME"]).value
+        stamped = google_session(self.member)  # made by production too, with Google on the domain
+        set_role(["manager"])  # still in the demo's copy
+        with mock.patch.object(settings.service, "demo_instance", True):
+            # /api/manage/users reads session["user_id"] itself.
+            for path in ("/api/user", "/api/manage/users"):
+                with self.subTest(path):
+                    resp = production.get(path)
+                    self.assertEqual(resp.status_code, 403)
+                    self.assertIn("Google", resp.get_json()["message"])
+            self.assertTrue(session_redis.exists(key))
+            self.assertEqual(stamped.get("/api/user").status_code, 200)
+        set_role([])
+        self.assertEqual(production.get("/api/user").status_code, 200)
+        set_role(["manager"])
+        with mock.patch.object(settings.service, "demo_instance", True):
+            self.assertEqual(production.get("/api/logout").status_code, 200)
+        set_role([])
+
+        with mock.patch.object(settings.service, "demo_instance", True):
+            demo, _ = login()
+            set_role(["manager"])
+            self.assertEqual(demo.get("/api/user").status_code, 401)
+            self.assertEqual(login()[1], 401)  # a password login on the demo to an account with a role there
+
+    def test_giving_a_role_ends_every_session_the_account_had(self):
+        """Also a session from Google, and on the demo, which leaves production's sessions to production's rule."""
+        self.give_google(self.member)
+        sessions = self.member_sessions()
+        self.assertEqual(self.grant(self.member, "matrikel_admin").status_code, 200)
+        self.assertEnded(sessions)  # the role is in the demo's data too
+        self.assertEqual(self.google_login().get("/api/user").status_code, 200)  # the holder signs in again
+
+    def test_giving_a_role_saves_nothing_when_the_mark_cannot_be_replaced(self):
+        grant = {"action": "add", "role": "matrikel_admin", "user": self.member.id}
+        self.give_google(self.member)
+        with (
+            mock.patch.object(da, "new_generation", side_effect=redis.exceptions.ConnectionError),
+            self.assertRaises(redis.exceptions.ConnectionError),
+        ):
+            da.update_role(grant, self.admin.uuid)
+        self.assertFalse(self.has_level(self.member, "matrikel_admin"))
+
+    def test_a_google_session_holds_a_role_only_when_its_login_verified_the_domain(self):
+        """A role written without a new mark, as a data fix or the demo's nightly copy writes it."""
+        self.give_google(self.member, sub="google-sub")
+        outside = {"sub": "google-sub", "email": OUTSIDE_ADDRESS, "email_verified": True}
+
+        def legacy_session(idtoken):
+            client = APP.test_client(use_cookies=True)
+            redirect_login(client, da.authenticate_with_credentials, idtoken=lambda: idtoken)
+            return client
+
+        for api in ("production", "demo"):
+            with self.subTest(api), mock.patch.object(settings.service, "demo_instance", api == "demo"):
+                db.User.update(_privileges="[]").where(db.User.id == self.member.id).execute()
+                unstamped, stamped = legacy_session(outside), legacy_session(dict(ID_TOKEN))
+                self.assertEqual(unstamped.get("/api/user").status_code, 200)  # without a role it needs no stamp
+                manager = json.dumps([{"level": "manager", "genebank": 1}])
+                db.User.update(_privileges=manager).where(db.User.id == self.member.id).execute()
+                self.assertEqual(unstamped.get("/api/user").status_code, 401)
+                self.assertEqual(stamped.get("/api/user").status_code, 200)
+
+    def test_every_google_login_stamps_the_domain_exactly_when_it_verified_it(self):
+        def stamps(client):
+            with client.session_transaction() as sess:
+                return sess.get("auth_method"), sess.get("google_domain")
+
+        def legacy(idtoken, **kwargs):
+            client = APP.test_client(use_cookies=True)
+            redirect_login(
+                client, kwargs.pop("authenticate", da.authenticate_with_credentials), idtoken=lambda: idtoken, **kwargs
+            )
+            return stamps(client)
+
+        self.give_google(self.member, sub="google-sub")
+        self.assertEqual(stamps(self.google_login("google-sub")), ("google", True))  # the token route needs the domain
+        no_hd = {"sub": "google-sub", "email": DOMAIN_ADDRESS, "email_verified": True}
+        self.assertEqual(legacy(dict(ID_TOKEN)), ("google", True))
+        self.assertEqual(legacy({**ID_TOKEN, "email": OUTSIDE_ADDRESS}), ("google", None))
+        self.assertEqual(legacy(no_hd), ("google", None))
+
+        db.Authenticators.delete().where(db.Authenticators.user == self.member.id).execute()  # frees the identity
+        new = {"authenticate": lambda m, i: None, "auto_validate": True}
+        self.assertEqual(
+            legacy(dict(ID_TOKEN), account={"email": DOMAIN_ADDRESS, "username": "ny"}, **new), ("google", True)
+        )
+        db.Authenticators.delete().where(db.Authenticators.auth_data == "google-sub").execute()
+        self.assertEqual(
+            legacy(no_hd, account={"email": "annan@gotlandskaninen.se", "username": "ny2"}, **new), ("google", None)
+        )
+
+    def test_basic_auth_spends_the_login_budget_on_the_right_password_as_on_a_wrong_one(self):
+        """Otherwise the limit tells a role account's right password from a wrong one."""
+        self.member.add_role("manager", 1)
+        limiter.enabled = True
+        self.addCleanup(limiter.reset)
+        self.addCleanup(setattr, limiter, "enabled", False)
+        client = APP.test_client()
+        for password in ("pass", "fel"):
+            with self.subTest(password):
+                limiter.reset()
+                credentials = base64.b64encode(f"medlem@example.org:{password}".encode()).decode()
+                auth = {"Authorization": "Basic " + credentials}
+                codes = [client.get("/api/active_users", headers=auth).status_code for _ in range(6)]
+                self.assertEqual(codes, [401] * 5 + [429])
+
+    def test_a_role_account_is_refused_a_google_login_outside_the_domain(self):
+        """The role's check is in google_login_generation, which the legacy route reaches. The Next.js route answers
+        403 to every identity outside the domain before it looks the account up, so its part only records that."""
+        self.give_google(self.member, sub="google-sub")
+        self.member.add_role("manager", 1)
+
+        def legacy_login(idtoken):
+            client = APP.test_client(use_cookies=True)
+            redirect_login(client, da.authenticate_with_credentials, idtoken=lambda: idtoken)
+            return client.get("/api/user").status_code
+
+        outside = {"sub": "google-sub", "email": OUTSIDE_ADDRESS, "email_verified": True}
+        # The address is written as for any account before the refusal: google_email stays the identity's.
+        for name, idtoken, google_email in (
+            ("an address outside the domain", outside, OUTSIDE_ADDRESS),
+            ("the domain's address from another Workspace", {**ID_TOKEN, "hd": "example.org"}, None),
+            ("no verified address", {"sub": "google-sub", "email_verified": False}, DOMAIN_ADDRESS),
+        ):
+            with self.subTest(name):
+                db.User.update(google_email=DOMAIN_ADDRESS).where(db.User.id == self.member.id).execute()
+                self.assertEqual(legacy_login(idtoken), 401)
+                self.assertEqual(db.User.get_by_id(self.member.id).google_email, google_email)
+        self.assertEqual(legacy_login(dict(ID_TOKEN)), 200)
+
+        # The Next.js route refuses every identity outside the domain before it looks for the account.
+        token = {**ID_TOKEN, "email": OUTSIDE_ADDRESS, "hd": None}
+        with mock.patch("google.oauth2.id_token.verify_oauth2_token", return_value=token):
+            self.assertEqual(APP.test_client().post("/api/auth/google", json={"credential": "t"}).status_code, 403)
+        self.assertIsNone(da.google_login_generation(self.member, "google", "google-sub", OUTSIDE_ADDRESS))
+        self.assertTrue(da.google_login_generation(self.member, "google", "google-sub", DOMAIN_ADDRESS))
+
+    def test_a_refused_legacy_google_login_drops_the_google_token(self):
+        """Otherwise the next attempt reuses the refused identity's token and never reaches Google's account chooser."""
+        self.give_google(self.member, sub="google-sub")
+        self.member.add_role("manager", 1)
+        claims = {"sub": "google-sub", "email": OUTSIDE_ADDRESS, "email_verified": True}
+        id_token = "x." + base64.b64encode(json.dumps(claims).encode()).decode().rstrip("=") + ".y"
+        client = APP.test_client(use_cookies=True)
+        with client.session_transaction() as sess:  # where Flask-Dance keeps the token Google sent back
+            sess["google_oauth_token"] = {"access_token": "a", "token_type": "Bearer", "id_token": id_token}
+        with mock.patch("utils.external_auth.google_userinfo", return_value=None):
+            self.assertEqual(client.get("/api/login/google").get_data(as_text=True), "null")
+            again = client.get("/api/login/google")
+        with APP.test_request_context():
+            oauth_flow = url_for("google.login")
+        self.assertEqual((again.status_code, urlparse(again.location).path), (302, oauth_flow))
+
+    def test_the_roles_of_an_account_without_a_session_still_count(self):
+        """The rule is on sessions: is_admin and the other properties answer for an account that is not signed in."""
+        form = {"id": self.admin.id, "email": "ny@example.org", "validated": True}
+        resp = google_session(self.manager).patch(f"/api/manage/user/{self.admin.id}", json=form)
+        self.assertEqual(resp.get_json(), {"status": "error", "message": "forbidden"})
+        self.assertEqual(db.User.get_by_id(self.admin.id).email, "admin")
+
+        self.member.add_role("matrikel_admin")
+        application = {"first_name": "Test", "last_name": "Sökande", "email": "sokande@example.org"}
+        resp = APP.test_client().post("/api/v2/member-applications", json={**application, "gdpr_consent": True})
+        self.assertEqual(resp.status_code, 201)
+        notices = db.MailMessage.select().where(db.MailMessage.kind == "ansokan.ny")
+        self.assertEqual([notice.recipient_id for notice in notices], [self.member.id])
+
+
 class TestLegacyGoogleScope(unittest.TestCase):
     def test_the_legacy_google_login_always_asks_for_the_verified_address(self):
         """Without the e-mail scope its token has no address: no google_email, and a role account's first link fails."""
@@ -422,3 +723,25 @@ class TestAllowRolePasswordLoginGuard(unittest.TestCase):
         self.assertEqual(self._run(FLASK_ENV="production", ALLOW_ROLE_PASSWORD_LOGIN="false"), "started")
         self.assertEqual(self._run(FLASK_ENV="development", ALLOW_ROLE_PASSWORD_LOGIN="true"), "started")
         self.assertEqual(self._run(FLASK_ENV="testing", ALLOW_ROLE_PASSWORD_LOGIN="true"), "started")
+
+
+class TestGoogleClientIdGuard(unittest.TestCase):
+    """Without GOOGLE_CLIENT_ID the Next.js Google route accepts tokens minted for any OAuth app."""
+
+    def _run(self, **env):
+        with mock.patch.dict(os.environ, env):
+            try:
+                settings.refuse_missing_google_client_id_in_production()
+                return "started"
+            except RuntimeError:
+                return "refused"
+
+    def test_production_needs_it(self):
+        self.assertEqual(self._run(FLASK_ENV="production", GOOGLE_CLIENT_ID=""), "refused")
+        self.assertEqual(
+            self._run(FLASK_ENV="production", GOOGLE_CLIENT_ID="klient.apps.googleusercontent.com"), "started"
+        )
+
+    def test_elsewhere_it_may_be_missing(self):
+        self.assertEqual(self._run(FLASK_ENV="development", GOOGLE_CLIENT_ID=""), "started")
+        self.assertEqual(self._run(FLASK_ENV="testing", GOOGLE_CLIENT_ID=""), "started")
