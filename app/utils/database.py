@@ -4018,11 +4018,17 @@ def migrate_42_to_43():
 
 
 _REX_MENTION = r"\mrex"
-# A field that mentions rex is clean only if rex (or rexpäls) is its last token, at most five words in, and it
-# has none of the doubts below: carriers, negations, relatives, questions. A "normal" anywhere in the row blocks too.
-# Everything else is deliberately left rex = false for manual review. Those rows stay findable afterwards by a
-# read-only query (rex false and the text mentions rex), so the migration logs counts only, never ids.
-_REX_SHAPE = r"^\W*(\w+\W+){0,5}rex(-?päls\w*)?[.\s]*$"
+# A field that contains rex anywhere (ickerex too) is clean only if it is colour words from a closed vocabulary
+# followed by rex or rexpäls as the last token, and it has none of the doubts below: carriers, negations,
+# relatives, questions. A "normal" anywhere in the row blocks too. Everything else is deliberately left
+# rex = false for manual review. Those rows stay findable afterwards by a read-only query (rex false and the
+# text mentions rex), so the migration logs counts only, never ids.
+_REX_SEP = r"[\s/,.-]+"
+_REX_WORDS = (
+    r"ja|sv[aä]rt|bl[åa]\w*|brun\w*|gul\w*|vit\w*|gr[åa]\w*|havanna|madagaskar|tegel\w*|orange|lila|choklad\w*"
+    r"|chinchilla|agouti|japan\w*|harlekin|tricolor|r[öo]d\w*|albino|hermelin|siames\w*|dalmatiner|vildf[äa]rgad"
+)
+_REX_SHAPE = r"^" + _REX_SEP.replace("+", "*") + r"((" + _REX_WORDS + r")" + _REX_SEP + r")*rex(-?päls\w*)?[.\s]*$"
 _REX_DOUBT = (
     r"b[äÄ]r",
     r"anlag",
@@ -4037,17 +4043,20 @@ _REX_DOUBT = (
     r"mamma|pappa|bror|syster|mormor|farfar|morfar|moster|faster|avkomma|kull|syskon|dotter",
     r"eventuellt|troligen|m[öÖ]jligen|os[äÄ]ker|oklart|ok[äÄ]nt|\mkan\M|inga|aldrig|\mnot\M|\mnon\M",
     r"fri\M|fr[åÅ]n|tecken|halv|\x25|\mgen|linje|korsning|hetero|negativ|\mliknande",
+    r"\m(far|mor)|sakna|\mno\M",
 )
 
 
 def _rex_sql(template):
     """One condition over hair_notes and color_note, each judged on its own: template with FIELD."""
-    return " OR ".join(template.replace("FIELD", f"coalesce({f}, '')") for f in ("hair_notes", "color_note"))
+    return " OR ".join(
+        template.replace("FIELD", f"normalize(coalesce({f}, ''), NFC)") for f in ("hair_notes", "color_note")
+    )
 
 
 _REX_MENTIONED = _rex_sql("FIELD ~* '" + _REX_MENTION + "'")
-_REX_DOUBTFUL = _rex_sql(  # a field that mentions rex and is not clean, or a "normal" in any field
-    "(FIELD ~* '" + _REX_MENTION + "' AND (FIELD !~* '" + _REX_SHAPE + "' OR FIELD ~* '" + "|".join(_REX_DOUBT) + "'))"
+_REX_DOUBTFUL = _rex_sql(  # a field with rex in it that is not clean, or a "normal" in any field
+    "(FIELD ~* 'rex' AND (FIELD !~* '" + _REX_SHAPE + "' OR FIELD ~* '" + "|".join(_REX_DOUBT) + "'))"
     " OR FIELD ~* 'normal'"
 )
 
