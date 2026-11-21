@@ -1272,6 +1272,12 @@ class TestLegacyAdapter(IndividualTest, FlaskTest):
         self.assertEqual((response.status_code, response.get_json()), (200, error("Individual number already exists")))
         self.assertEqual((self._stored().number, self._stored(other).number), ("G1-2112", "G1-2111"))
 
+    def test_legacy_patch_never_changes_rex(self):
+        db.Individual.update(rex=True).where(db.Individual.id == self.ind.id).execute()
+        response = self._client(self.owner).patch("/api/individual", json=self._body(notes="ny", rex=False))
+        self.assertEqual((response.status_code, response.get_json()["status"]), (200, "success"))
+        self.assertEqual((self._stored().notes, self._stored().rex), ("ny", True))
+
     def test_numeric_certificate_echo_is_a_collision(self):
         """IR-49: 12 for the stored "12" is no AssignPaperCertificate, but LegacyFormChecks compares it raw."""
         ind = self.individuals[0]
