@@ -4,6 +4,7 @@ Flask CLI for member registry operations.
 Usage:
     flask members import <csv_path> [--dry-run]
     flask members link-users [--apply]
+    flask members link-by-herd [--dry-run]
 
 `import` expects the MATR2026 paper-matrikel layout (headers matched
 case-insensitively after normalization):
@@ -984,3 +985,80 @@ def _print_link_report(report: dict, apply_links: bool) -> None:
     )
     if not apply_links:
         click.echo("(dry-run — no writes performed; re-run with --apply)")
+
+
+@members_cli.command("link-by-herd")
+@click.option("--dry-run", is_flag=True, help="Print the full plan without writing.")
+def link_by_herd_cmd(dry_run: bool) -> None:
+    """Link accounts to the main member of the membership whose herd they own.
+
+    The account that is the only `owner` of herd G<Nr>/M<Nr> and whose name
+    equals the main member's name of membership Nr is linked with mode "cli".
+    Everything else is listed for the register manager. Each link commits on
+    its own, so the command is safe to re-run.
+    """
+    owners: dict[int, list[User]] = {}
+    for user in User.select().order_by(User.id):
+        for role in user.privileges:
+            if role["level"] == "owner":
+                owners.setdefault(role["herd"], []).append(user)
+
+    report = {"linked": 0, "already": 0, "listed": []}
+    memberships = Membership.select().where(
+        Membership.member_number.is_null(False), Membership.membership_status == Status.ACTIVE
+    )
+    for membership in memberships.order_by(Membership.member_number):
+        for prefix in ("G", "M"):
+            herd = Herd.get_or_none(Herd.herd == f"{prefix}{membership.member_number}")
+            if herd is not None:
+                _link_herd_owner(herd, membership, owners.get(herd.id, []), dry_run, report)
+
+    click.echo(
+        f"Kopplade: {report['linked']}, Redan kopplade: {report['already']}, Till granskning: {len(report['listed'])}"
+    )
+    for code, reason in report["listed"]:
+        click.echo(f"  {code}: {reason}")
+    if dry_run:
+        click.echo("(dry-run — inga skrivningar gjordes)")
+
+
+def _norm_name(name: str | None) -> str:
+    return " ".join((name or "").split()).casefold()
+
+
+def _link_herd_owner(herd, membership, owners: list, dry_run: bool, report: dict) -> None:
+    mains = list(Member.select().where(Member.membership == membership, Member.role == "huvudmedlem"))
+    if mains and all(m.end_date is not None for m in mains):
+        return  # the main member has left
+    main = next((m for m in mains if m.end_date is None), None)
+
+    def listed(reason: str) -> None:
+        report["listed"].append((herd.herd, reason))
+
+    if main is None:
+        listed("medlemskapet saknar huvudmedlem")
+    elif not owners:
+        listed("inget konto har rollen ägare på besättningen")
+    elif len(owners) > 1:
+        listed("flera konton har rollen ägare på besättningen")
+    elif main.user_id == owners[0].id:
+        report["already"] += 1
+    elif not _norm_name(owners[0].fullname) or _norm_name(owners[0].fullname) != _norm_name(
+        f"{main.first_name} {main.last_name}"
+    ):
+        listed("namnet skiljer sig mellan kontot och huvudmedlemmen")
+    elif main.user_id is not None:
+        listed("huvudmedlemmen är redan kopplad till ett annat konto")
+    elif Member.select().where(Member.user == owners[0]).exists():
+        listed("kontot är redan kopplat till en annan medlem")
+    elif link_access_delta(main, owners[0]):
+        listed("länken skulle ge kontot åtkomst till fler besättningar")
+    else:
+        try:
+            if not dry_run:
+                # The account is its own audit actor, as in the oauth link.
+                link_member_user(main.id, owners[0].id, actor=owners[0], mode="cli")
+        except (ConfirmRequired, LinkError, IntegrityError) as exc:
+            listed(f"länkningen avvisades ({type(exc).__name__})")
+        else:
+            report["linked"] += 1
