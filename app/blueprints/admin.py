@@ -442,7 +442,9 @@ def admin_reset_password(u_id):
     # target) reads form["password"], the UPDATE branch reads
     # form["newpassword"]. current_user.is_admin skips the old-password
     # check on the admin path.
-    ok = da.change_password(current_user, u_id, {"password": new_password, "newpassword": new_password})
+    ok = da.change_password(
+        current_user, u_id, {"password": new_password, "newpassword": new_password}, session_stamps=session
+    )
     if not ok:
         return problem(
             500,

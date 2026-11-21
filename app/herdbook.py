@@ -945,7 +945,7 @@ def change_userpassword(u_id):
 
     if not u_id:
         u_id = current_user.id
-    retval = da.change_password(current_user, u_id, form)
+    retval = da.change_password(current_user, u_id, form, session_stamps=session)
     if retval:
         auth_log.info("password changed actor=%s target=%s", current_user.id, u_id)
     return jsonify(retval)

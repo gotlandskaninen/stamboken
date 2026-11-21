@@ -578,10 +578,14 @@ def authenticate_user(name, password):
     return None, None
 
 
-def change_password(active_user, changed_user, form):
+def change_password(active_user, changed_user, form, session_stamps=None):
     """
     Changes password for user changed_user. Returns
     something that evaluates as True on success.
+
+    A request passes the session it came through (session_stamps): one
+    revoked while the request waited for the account's row changes nothing,
+    as in link_account. An admin is asked no old password, also for her own.
     """
     if not active_user or not changed_user or not form:
         logger.info("Bad call to change_password, somethings is missing)")
@@ -592,6 +596,8 @@ def change_password(active_user, changed_user, form):
         try:
             target = User.select(User.id, User.uuid).where(User.id == changed_user).for_update().get()
         except DoesNotExist:
+            return None
+        if _revoked_meanwhile(target, session_stamps):
             return None
 
         if not active_user.is_admin:

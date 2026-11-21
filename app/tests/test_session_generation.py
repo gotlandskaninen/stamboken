@@ -462,6 +462,26 @@ class TestLostMarkAndRaces(SessionTest):
                     self.assertEqual(request(), "null")
                 self.assertEqual(self.identities(), [ID_TOKEN["sub"]])
 
+    def test_a_password_change_that_waited_while_its_session_ended_is_refused(self):
+        """Admin A changes her own password (an admin is asked no old one) while admin B resets it, or while a mass
+        logout runs: a revoked session must not decide the password once it gets the row."""
+        self.addCleanup(self.session_redis.delete, da.LOGOUT_EPOCH_KEY)
+        real = da.change_password
+        other = da.register_user("admin2@example.org", "pass", username="admin2")
+        other.add_role("admin", None)
+        revocations = {
+            "reset by another admin": lambda: real(other, self.admin.id, {"password": "satt", "newpassword": "satt"}),
+            "mass logout": lambda: da.mass_logout_sessions(da.session_redis, "test"),
+        }
+        for name, revoke in revocations.items():
+            with self.subTest(name):
+                real(other, self.admin.id, {"password": "pass", "newpassword": "pass"})
+                own = self.login("admin")
+                with mock.patch.object(da, "change_password", self.first(revoke, real)):
+                    answer = own.post("/api/manage/setpassword/", json={"password": "egen", "newpassword": "egen"})
+                self.assertIsNone(answer.get_json())
+                self.assertEqual(da.authenticate_user("admin", "egen"), (None, None))
+
     def test_logout_everywhere_waits_for_the_account(self):
         """It takes the account's row lock, as every change of credentials does."""
         before = da.login_generation(self.viewer.uuid)
