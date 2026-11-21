@@ -271,9 +271,9 @@ demo API has too.
 **Releasing the role rule.** Count read-only against production (numbers
 only):
 
-1. Active accounts with a role that would be locked out: no Google login whose
+1. Active accounts with a role that may be locked out: no Google login whose
    `google_email` is on the domain, or not `validated` (the legacy frontend
-   needs it). It must be 0:
+   needs it). It should be 0:
 
    ```sql
    SELECT count(*) FROM hbuser u WHERE u.is_active
@@ -286,6 +286,13 @@ only):
    The count trusts `google_email`. A value written before Google sign-ins
    rewrote it under the account's lock (see above) is no proof, so a role
    holder who has not signed in with Google since can still be locked out.
+
+   A row with a Google identity but an empty `google_email` is counted although
+   it may get in: its Google login judges the token's address and then stores
+   it. Count those apart (`u.google_email IS NULL` together with the role and
+   `google` conditions above); ask each holder to sign in with Google once on
+   this version, then count again. A row that still counts is a real case: fix
+   it while the password still works, before the release.
 2. Active accounts with a role and a password: the password stops working for
    them, at the login and as Basic auth, so a client that uses Basic auth with
    such an account stops working. The API logs each Basic auth login as
