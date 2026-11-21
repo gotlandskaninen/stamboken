@@ -64,7 +64,7 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # Individual.microchip (36) + billing address on membership and member_application (37) +
 # retiring the PDF rows of digital certificates that a paper certificate replaced (38) +
 # audit_log IP retention index (39) + herd bank privacy reset (40) + the mail queue (41) +
-# the intake queue (42) and its retention (43).
+# the intake queue (42) and its retention (43) + the coat column individual.rex (44).
 CURRENT_SCHEMA_VERSION = 44
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
@@ -4018,9 +4018,11 @@ def migrate_42_to_43():
 
 
 _REX_MENTION = r"\mrex"
-# A field that mentions rex and also has any of these is doubtful: carriers, negations, relatives, questions.
-# Anything doubtful is deliberately left rex = false for manual review. Those rows stay findable afterwards by a
+# A field that mentions rex is clean only if rex (or rexpäls) is its last token, at most five words in, and it
+# has none of the doubts below: carriers, negations, relatives, questions. A "normal" anywhere in the row blocks too.
+# Everything else is deliberately left rex = false for manual review. Those rows stay findable afterwards by a
 # read-only query (rex false and the text mentions rex), so the migration logs counts only, never ids.
+_REX_SHAPE = r"^\W*(\w+\W+){0,5}rex(-?päls\w*)?[.\s]*$"
 _REX_DOUBT = (
     r"b[äÄ]r",
     r"anlag",
@@ -4032,6 +4034,9 @@ _REX_DOUBT = (
     r"hane|hona",
     r"rex(fri|mor|far)",
     r"\?",
+    r"mamma|pappa|bror|syster|mormor|farfar|morfar|moster|faster|avkomma|kull|syskon|dotter",
+    r"eventuellt|troligen|m[öÖ]jligen|os[äÄ]ker|oklart|ok[äÄ]nt|\mkan\M|inga|aldrig|\mnot\M|\mnon\M",
+    r"fri\M|fr[åÅ]n|tecken|halv|\x25|\mgen|linje|korsning|hetero|negativ|\mliknande",
 )
 
 
@@ -4041,7 +4046,10 @@ def _rex_sql(template):
 
 
 _REX_MENTIONED = _rex_sql("FIELD ~* '" + _REX_MENTION + "'")
-_REX_DOUBTFUL = _rex_sql("(FIELD ~* '" + _REX_MENTION + "' AND FIELD ~* '(" + "|".join(_REX_DOUBT) + ")')")
+_REX_DOUBTFUL = _rex_sql(  # a field that mentions rex and is not clean, or a "normal" in any field
+    "(FIELD ~* '" + _REX_MENTION + "' AND (FIELD !~* '" + _REX_SHAPE + "' OR FIELD ~* '" + "|".join(_REX_DOUBT) + "'))"
+    " OR FIELD ~* 'normal'"
+)
 
 
 def migrate_43_to_44():
@@ -4051,7 +4059,6 @@ def migrate_43_to_44():
     with DATABASE.atomic():
         created = "rex" not in {c.name for c in DATABASE.get_columns("individual")}
         DATABASE.execute_sql("ALTER TABLE individual ADD COLUMN IF NOT EXISTS rex BOOLEAN NOT NULL DEFAULT false")
-        done = excluded = 0
         if created:
             excluded = DATABASE.execute_sql(
                 f"SELECT count(*) FROM individual WHERE ({_REX_MENTIONED}) AND ({_REX_DOUBTFUL})"
@@ -4059,10 +4066,13 @@ def migrate_43_to_44():
             done = DATABASE.execute_sql(
                 f"UPDATE individual SET rex = true WHERE ({_REX_MENTIONED}) AND NOT ({_REX_DOUBTFUL})"
             ).rowcount
-        logger.info(f"rex set on {done} individuals, {excluded} excluded")
+            note = f"set from free text on {done}, {excluded} excluded"
+        else:
+            note = "column existed, free text not read"
+        logger.info(f"rex: {note}")
         SchemaHistory.insert(  # pylint: disable=E1120
             version=44,
-            comment=f"individual.rex; set from free text on {done}, {excluded} excluded",
+            comment=f"individual.rex; {note}",
             applied=datetime.now(),
         ).execute()
 

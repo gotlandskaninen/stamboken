@@ -1405,6 +1405,26 @@ class TestDatabaseMigration(DatabaseTest):
             ("rexmor", None),
             ("rexfri", None),
             ("REXBÄRARE", None),
+            ("mamman är rex", None),
+            ("Inga tecken på rex", None),
+            ("rexliknande", None),
+            ("rex", "Inga tecken på rex"),
+            ("rex negativt", None),
+            ("okänt om rex", None),
+            ("mormor rex", None),
+            ("rex eller normal", None),
+            ("Rex: -", None),
+            ("Rex: 0", None),
+            ("rex-fri", None),
+            ("fri från rex", None),
+            ("rex oklart", None),
+            ("har rexgen", None),
+            ("rexkorsning", None),
+            ("50% rex", None),
+            ("kan vara rex", None),
+            ("Normalt", "svart rex"),
+            ("Normalpäls", "rex"),
+            ("Rex", "mamma rex"),
         ]
         ids = {}
         for i, (hair, color_note) in enumerate(yes + no):
@@ -1425,7 +1445,7 @@ class TestDatabaseMigration(DatabaseTest):
                 "SELECT hair_notes, color_note FROM individual WHERE individual_id = %s", (individual_id,)
             ).fetchone()
             self.assertEqual(row, (hair, color_note))
-        self.assertIn(f"rex set on {len(yes)} individuals, 31 excluded", "\n".join(logged.output))
+        self.assertIn(f"rex: set from free text on {len(yes)}, 51 excluded", "\n".join(logged.output))
 
     def test_rex_replay_keeps_corrections(self):
         """A replay of 43 -> 44 on a database that already has the column does not set rex again or log rows."""
