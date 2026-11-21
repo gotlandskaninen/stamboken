@@ -264,6 +264,24 @@ class TestGoogleIdentity(RoleRulesTest):
         redirect_login(APP.test_client(), lambda m, i: None, idtoken=lambda: no_hd, auto_validate=True, account=account)
         self.assertIsNone(db.User.get(db.User.username == "ny").google_email)
 
+    def test_a_token_that_contradicts_the_domain_proof_clears_it(self):
+        """A later token of the same identity with the domain address but another hd takes the proof away; one with no
+        verified address leaves it."""
+        self.give_google(self.member, sub="google-sub", email=None)
+
+        def legacy_login(idtoken):
+            redirect_login(APP.test_client(), da.authenticate_with_credentials, idtoken=lambda: idtoken)
+            return db.User.get_by_id(self.member.id).google_email
+
+        self.assertEqual(legacy_login(dict(ID_TOKEN)), DOMAIN_ADDRESS)
+        self.assertEqual(legacy_login({"sub": "google-sub", "email_verified": False}), DOMAIN_ADDRESS)
+        self.assertIsNone(legacy_login({**ID_TOKEN, "hd": "example.org"}))
+        self.assertEqual(self.grant(self.member).status_code, 409)
+
+        self.assertEqual(legacy_login(dict(ID_TOKEN)), DOMAIN_ADDRESS)
+        self.assertEqual(google_link(self.login(), "google-sub", DOMAIN_ADDRESS, hd=None), str(self.member.id))
+        self.assertIsNone(db.User.get_by_id(self.member.id).google_email)  # linked again, contradicted the same way
+
     def test_the_address_follows_the_identity(self):
         self.give_google(self.member)
         self.assertTrue(da.link_account(self.member, "google", "sub-medlem"))  # the same one, no verified address

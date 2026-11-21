@@ -397,9 +397,12 @@ def storable_google_email(email, hosted_domain):
     """
     A Google token's verified address as google_email may hold it: one on the association's domain only from a token
     whose hd is that domain, whatever auth.ini says, so google_email on the domain is always the proof
-    has_role_google_login reads.
+    has_role_google_login reads. "" when the token contradicts it (the domain's address, another hd or none): the
+    stored address is cleared. None when the token has no verified address: the same identity keeps the stored one.
     """
-    return None if on_role_domain(email) and hosted_domain != ROLE_HOSTED_DOMAIN else email
+    if on_role_domain(email) and hosted_domain != ROLE_HOSTED_DOMAIN:
+        return ""
+    return email
 
 
 def holds_role(user):
@@ -713,9 +716,10 @@ def link_account(user, method, ident, email=None, from_google_session=False, ses
             # the account as it was.
             Authenticators.delete().where((Authenticators.user == user.id) & (Authenticators.auth == method)).execute()
             Authenticators.create(user=user.id, auth=method, auth_data=ident)
-            # The same identity linked again without a verified address keeps its address; another never keeps it.
-            if method == "google" and (email or old is None or switch):
-                User.update(google_email=email).where(User.id == user.id).execute()
+            # The same identity linked again without a verified address keeps its address; another never keeps it,
+            # and a contradicted one ("", storable_google_email) goes.
+            if method == "google" and (email is not None or old is None or switch):
+                User.update(google_email=email or None).where(User.id == user.id).execute()
             if switch:
                 new_generation(account.uuid)
         auth_log.info("Linked user id=%s to service %s", user.id, method)
@@ -4587,7 +4591,8 @@ def google_login_generation(user, method, ident, email=None):
     """
     login_generation for a login through `method` (Google): under the account's row lock the identity is looked up
     once more, and a deactivation, switch or removal that got there first refuses the login (None). The identity's
-    verified address `email` becomes google_email under the same lock, so it can never land on a newer identity.
+    verified address `email` becomes google_email under the same lock, so it can never land on a newer identity; ""
+    (a contradicted domain address, storable_google_email) clears it, and None keeps it.
     """
     with DATABASE.atomic():
         account = User.select(User.id, User.is_active).where(User.id == user.id).for_update().get()
@@ -4597,8 +4602,8 @@ def google_login_generation(user, method, ident, email=None):
         again = authenticate_with_credentials(method, ident)
         if not again or again.id != user.id:
             return None
-        if email:
-            User.update(google_email=email).where(User.id == user.id).execute()
+        if email is not None:
+            User.update(google_email=email or None).where(User.id == user.id).execute()
     return generation
 
 
