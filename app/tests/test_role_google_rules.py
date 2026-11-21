@@ -3,6 +3,7 @@ for development and tests, and production refuses to start with it."""
 
 import base64
 import configparser
+import json
 import os
 import threading
 import time
@@ -460,6 +461,31 @@ class TestRoleRule(RoleRulesTest):
         for path in ("/api/active_users", "/api/v2/my-membership"):
             with self.subTest(path):
                 self.assertEqual(client.get(path, headers=auth).status_code, 401)
+
+    def test_the_demo_judges_by_its_copy_of_the_roles_only_the_sessions_it_made(self):
+        """The demo's roles are a copy up to a day old, and the session store is shared with production."""
+
+        def set_role(levels):
+            privileges = [{"level": level, "genebank": 1} for level in levels]
+            db.User.update(_privileges=json.dumps(privileges)).where(db.User.id == self.member.id).execute()
+
+        def login():
+            client = APP.test_client(use_cookies=True)
+            form = {"username": "medlem@example.org", "password": "pass"}
+            return client, client.post("/api/login", json=form).status_code
+
+        production, _ = login()  # the role is gone in production
+        set_role(["manager"])  # still in the demo's copy
+        with mock.patch.object(settings.service, "demo_instance", True):
+            self.assertEqual(production.get("/api/user").status_code, 200)
+        set_role([])
+        self.assertEqual(production.get("/api/user").status_code, 200)
+
+        with mock.patch.object(settings.service, "demo_instance", True):
+            demo, _ = login()
+            set_role(["manager"])
+            self.assertEqual(demo.get("/api/user").status_code, 401)
+            self.assertEqual(login()[1], 401)  # a password login on the demo to an account with a role there
 
     def test_basic_auth_spends_the_login_budget_on_the_right_password_as_on_a_wrong_one(self):
         """Otherwise the limit tells a role account's right password from a wrong one."""

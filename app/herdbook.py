@@ -682,6 +682,9 @@ def _session_revoked():
             return True
         if session["auth_method"] == "google" or settings.service.allow_role_password_login:
             return False
+        if settings.service.demo_instance and not session.get("demo_login"):
+            # The demo's roles are a copy up to a day old: production judges the sessions it made, in the shared store.
+            return False
         account = db.User.get_or_none(db.User.uuid == session["user_id"])
         return account is not None and da.holds_role(account)
     return session.get("logout_epoch", 0) < _logout_epoch()
