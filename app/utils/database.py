@@ -64,8 +64,8 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # Individual.microchip (36) + billing address on membership and member_application (37) +
 # retiring the PDF rows of digital certificates that a paper certificate replaced (38) +
 # audit_log IP retention index (39) + herd bank privacy reset (40) + the mail queue (41) +
-# the intake queue (42) and its retention (43).
-CURRENT_SCHEMA_VERSION = 43
+# the intake queue (42) and its retention (43) + one account per Google identity (44).
+CURRENT_SCHEMA_VERSION = 44
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -1835,6 +1835,13 @@ class Authenticators(BaseModel):
     auth_data = TextField(null=True)
 
 
+# A Google identity is its "sub", stored as is. Two accounts linking one at once each lock only their own row.
+GOOGLE_IDENTITY_INDEX_SQL = (
+    'CREATE UNIQUE INDEX IF NOT EXISTS "idx_authenticators_google" ON "authenticators" (auth_data) '
+    "WHERE auth = 'google'"
+)
+
+
 class SchemaHistory(BaseModel):
     """
     Contains schema migration history for the database.
@@ -2430,6 +2437,9 @@ def init():
 
     # Unique litter_number index for fresh databases (migration won't run)
     _create_breeding_litter_number_index()
+
+    # Same for the unique Google identity (migrate_43_to_44)
+    DATABASE.execute_sql(GOOGLE_IDENTITY_INDEX_SQL)
 
     # 999.5: herd_tracking CHECKs, partial indexes, created_at default (migration won't run)
     _create_herd_tracking_guards()
@@ -4016,6 +4026,16 @@ def migrate_42_to_43():
         ).execute()
 
 
+def migrate_43_to_44():
+    """One account per Google identity. A database where two accounts hold one stops here, at 43, until an admin
+    unlinks the extra one (README, "Access rules")."""
+    with DATABASE.atomic():
+        DATABASE.execute_sql(GOOGLE_IDENTITY_INDEX_SQL)
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=44, comment="authenticators: unique Google identity", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4496,6 +4516,7 @@ MIGRATIONS = {
     (40, 41): migrate_40_to_41,  # mail queue
     (41, 42): migrate_41_to_42,  # intake queue
     (42, 43): migrate_42_to_43,  # intake queue retention
+    (43, 44): migrate_43_to_44,  # unique Google identity
 }
 
 
