@@ -171,10 +171,12 @@ Logga ut överallt.
   in advance.
 - Release the API and the demo API together. They share the session store, and
   the new one refuses every session the old one makes.
-- Before rolling back to a version without the mark check, run the mass logout
-  on the production API (`POST /api/v2/admin/sessions/mass-logout`), so both
-  APIs start with the raised logout epoch. Otherwise revoked sessions come
-  back: one nobody has used since is still in the store with its old epoch.
+- Before rolling back to a version without the mark check: close both APIs to
+  user traffic and let running requests finish, then run the mass logout on
+  the production API (`POST /api/v2/admin/sessions/mass-logout`), and open
+  traffic again only when both APIs run the older version. Otherwise revoked
+  sessions come back: one nobody has used since is still in the store with its
+  old epoch, and a login in flight can save a session after the mass logout.
 - Migration 44 makes a Google identity unique to one account. If two accounts
   hold one, the migration fails, the schema stays at 43 and **the API does not
   start**; the demo API does not either, on its copy of the database. Before
