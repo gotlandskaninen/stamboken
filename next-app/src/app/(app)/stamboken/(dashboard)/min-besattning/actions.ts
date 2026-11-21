@@ -135,6 +135,28 @@ export async function updateHerd(
   }
 }
 
+/** The breeder's own choice to show the herd name on the certificate check
+ *  page (stamboken #6). Its own call, so a stale form never turns it back on. */
+export async function setHerdNameOnCertificate(
+  herdId: string,
+  show: boolean,
+): Promise<ActionResult> {
+  try {
+    await fetchApi(
+      `/v2/herd/${encodeURIComponent(herdId)}/herd-name-on-certificate`,
+      { method: "PUT", body: JSON.stringify({ show }) },
+    );
+    revalidatePath("/stamboken/min-besattning");
+    return { success: true, data: undefined };
+  } catch (e) {
+    if (e instanceof ApiError) {
+      return { success: false, error: e.detail };
+    }
+    console.error("setHerdNameOnCertificate failed:", e);
+    return { success: false, error: "unexpected_error" };
+  }
+}
+
 /** The litter of a registration: an existing one, or ("Lägg till kanin") the
  *  parents and birth of a litter the API reuses or creates. */
 export type RegisterLitter =

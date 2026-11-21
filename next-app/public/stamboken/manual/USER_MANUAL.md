@@ -510,7 +510,10 @@ Kontaktuppgifterna på Min besättning ser andra uppfödare. Du väljer själv v
    och **Adress**.
 3. Välj för varje uppgift vem som ser den: **Endast genbanksansvarig** eller
    **Inloggade besättningar**.
-4. Klicka **Klar**. Bekräftelsen "Kontaktinformation sparad" visas.
+4. Kryssa i **Visa besättningsnamnet (…) på intygens kontrollsida** om besättningens
+   namn ska stå på [kontrollsidan](#verifiera-intyg). Utan krysset står där "Uppfödare".
+   Bara besättningens ägare kan ändra valet.
+5. Klicka **Klar**. Bekräftelsen "Kontaktinformation sparad" visas.
 
 Ändringar här når inte föreningens medlemsmatrikel. Har du flyttat eller bytt e-post
 ändrar du det också under [Min profil](#min-profil) eller meddelar kassören.
@@ -720,8 +723,10 @@ Sidan som QR-koden på ett digitalt intyg leder till. Den kräver ingen inloggni
 visar ett av fyra besked:
 
 - **Äkta genbanksintyg** – intyget är utfärdat i Stamboken och signerat av föreningen.
-  Kortet visar **Individnummer**, namn, **Ras**, **Intygsnummer** och **Datum**, men
-  ingen person. **Visa kaninens sida i Stamboken →** kräver inloggning.
+  Kortet visar **Individnummer**, namn, **Ras**, **Intygsnummer**, **Datum** och
+  **Intygas av**: besättningens namn om uppfödaren har valt det, annars "Uppfödare".
+  Varje försäljning står som **Såld** med månad och år, aldrig dag eller namn.
+  **Visa kaninens sida i Stamboken →** kräver inloggning.
 - **Äkta, men ersatt** – ett nyare intyg har utfärdats för kaninen. Be säljaren om
   den senaste versionen.
 - **Äkta, men gäller inte längre** – intyget har ersatts av ett pappersintyg. Be

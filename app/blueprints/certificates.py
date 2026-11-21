@@ -10,6 +10,7 @@ import os
 
 import utils.data_access as da
 import utils.database as db
+import utils.settings as settings
 from flask import Blueprint, jsonify, request, session
 from peewee import DoesNotExist
 from utils.cert_service_v2 import (
@@ -27,6 +28,7 @@ from utils.certificates_v2 import (
     compute_checksum,
     verify_pdf_signature,
 )
+from utils.herd_tracking import sale_months
 from utils.individual_commands import assign_certificate_number
 from utils.individual_number_v2 import RosterAliveExceeds6w
 
@@ -379,6 +381,15 @@ def verify_certificate_get(token):
         )
         replaced_by_date = newest.issued_at.isoformat() if newest else None
 
+    # Public page (ADR-0016): month and year of each sale, never the day or the herd.
+    sales = sale_months(individual)
+    breeder = individual.origin_herd
+    breeder_name = (breeder.herd_name or "").strip() if breeder and breeder.herd_name_on_certificate else ""
+    # An old QR code tells nothing about later sales. The demo API answers the same QR codes from a copy up to a
+    # day old, which can hold a choice the breeder has withdrawn since.
+    if not cert.is_current or settings.service.demo_instance:
+        sales, breeder_name = [], ""
+
     return jsonify(
         {
             "verified": True,
@@ -387,7 +398,9 @@ def verify_certificate_get(token):
             "individual_number": individual.number,
             "genebank": individual.origin_herd.genebank.name if individual.origin_herd else "",
             "digital_certificate": individual.digital_certificate,
-            # No person's name on the public page: the breeder's name only by the breeder's own choice (stamboken #6).
+            # The herd name only by the breeder's own choice (stamboken #6); never a person's name.
+            "breeder": breeder_name or None,
+            "transferred": sales,
             "issued_at": cert.issued_at.isoformat(),
             "is_current": cert.is_current,
             "replaced_by_date": replaced_by_date,

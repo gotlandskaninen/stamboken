@@ -423,6 +423,29 @@ def _moves_across_genebanks(individual, before, after):
     )
 
 
+def sale_months(individual):
+    """
+    "YYYY-MM" of each sale for the public certificate check page (stamboken #6): an active TRANSFER to another
+    herd in the same genebank. The sender is the row's from_herd, else the last known holder (migrated rows lack
+    it). A CORRECTION, a TRANSFER between genebanks (an admin's register fix), a row without a receiving herd and
+    a return to the same herd are no sale.
+    """
+    months, holder = [], individual.origin_herd
+    for r in _active_rows(individual.id):
+        if r.herd_id is None or r.kind not in HOLDER_CHANGING_KINDS:
+            continue
+        source = r.from_herd if r.from_herd_id is not None else holder
+        if (
+            r.kind == "TRANSFER"
+            and source is not None
+            and r.herd_id != source.id
+            and r.herd.genebank_id == source.genebank_id
+        ):
+            months.append(coerce_date(r.herd_tracking_date).strftime("%Y-%m"))
+        holder = r.herd
+    return months
+
+
 def void_denial(user, row, active_rows, individual, transfer_herd_ids=None):
     """The void permission table. None = allowed."""
     if row.kind == "BIRTH":
