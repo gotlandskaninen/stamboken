@@ -974,6 +974,19 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
         db.Herd.update(herd_name="  ").where(db.Herd.id == self.herds[0].id).execute()
         self.assertIsNone(self.app.get(f"/api/v2/certificates/verify/{token}").get_json()["breeder"])
 
+    def test_sale_months_on_migrated_history(self):
+        """Migrated rows lack from_herd: a row without a herd, and a return to the same herd, are no sale."""
+        from utils.herd_tracking import sale_months
+
+        individual = self.individuals[3]  # born in herds[0]
+        for day, herd in (
+            (date(2026, 2, 1), None),
+            (date(2026, 3, 1), self.herds[0]),
+            (date(2026, 4, 1), self.herds[1]),
+        ):
+            ht_row("TRANSFER", herd=herd, signature=self.manager, individual=individual, herd_tracking_date=day)
+        self.assertEqual(sale_months(individual), ["2026-04"])
+
     def test_verify_post_with_pdf(self):
         """POST verify with actual PDF bytes checks checksum + signature."""
         self._start_mock_aws()
