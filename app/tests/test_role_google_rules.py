@@ -12,6 +12,7 @@ import utils.data_access as da
 import utils.database as db
 import utils.external_auth as external_auth
 import utils.settings as settings
+from extensions import session_redis
 from herdbook import APP, limiter
 
 from tests.database_test import DatabaseTest
@@ -389,6 +390,27 @@ class TestAddRoleCommand(RoleRulesTest):
         self.assertNotEqual(result.exit_code, 0, result.output)
         self.assertIn("inaktiverat", result.output)
         self.assertFalse(self.has_level(twin, "admin"))
+
+
+class TestRoleRule(RoleRulesTest):
+    """With the rules on, the only way into an account with a role is a session from Google."""
+
+    def test_a_password_session_ends_at_the_next_request_once_the_account_has_a_role(self):
+        self.give_google(self.member)
+        manage_role = {"action": "add", "role": "viewer", "user": self.member.id, "genebank": 1}
+        for path, call in (
+            ("/api/user", lambda client: client.get("/api/user")),
+            ("/api/manage/role", lambda client: client.post("/api/manage/role", json=manage_role)),
+        ):
+            with self.subTest(path):
+                db.User.update(_privileges="[]").where(db.User.id == self.member.id).execute()
+                client = self.login()
+                self.assertEqual(client.get("/api/user").status_code, 200)
+                self.assertEqual(self.grant(self.member).status_code, 200)
+                key = "session:" + client.get_cookie(APP.config["SESSION_COOKIE_NAME"]).value
+                self.assertEqual(call(client).status_code, 401)
+                self.assertFalse(session_redis.exists(key), "refused session left in the store")
+        self.assertEqual(self.google_login().get("/api/user").get_json()["id"], self.member.id)
 
 
 class TestLegacyGoogleScope(unittest.TestCase):

@@ -660,7 +660,9 @@ def _session_revoked():
     latest epoch, as da.session_holds answers. Changing the account's
     credentials replaces the mark, and an account without one has no valid
     session, so emptying Redis never brings one back. Sessions from before
-    these stamps are refused: deploying them signs everybody out.
+    these stamps are refused: deploying them signs everybody out. The role
+    rule: a session of an account with a role (da.holds_role) is valid only
+    when it signed in with Google, so giving a role ends its password sessions.
 
     A session minted by the demo API counts as revoked in production: the
     stores are shared, but demo account state (passwords, Google links,
@@ -670,7 +672,12 @@ def _session_revoked():
         da.auth_log.warning("Refused a session minted by the demo API")
         return True
     if "user_id" in session:
-        return "auth_method" not in session or not da.session_holds(session)
+        if "auth_method" not in session or not da.session_holds(session):
+            return True
+        if session["auth_method"] == "google" or settings.service.allow_role_password_login:
+            return False
+        account = db.User.get_or_none(db.User.uuid == session["user_id"])
+        return account is not None and da.holds_role(account)
     return session.get("logout_epoch", 0) < _logout_epoch()
 
 
