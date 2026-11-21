@@ -105,6 +105,13 @@ mejl, 2 för massutskick. **Kategori:** `T` (transaktion) eller `N` (notis).
 **Bilagor:** byggfunktionen kan returnera nyckeln `attachments` med en lista
 av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas.
 
+**Försök och notering:** en byggfunktion som tar nyckelordet `attempt` får
+veta vilket försök det är (1 vid första), de andra får det inte. Ett fel i
+byggfunktionen räknas som ett tillfälligt fel, men en funktion kan fånga det
+på ett sent försök och ändå bygga mejlet, till exempel utan bilaga. Nyckeln
+`sent_note` bland variablerna sparas i `last_error` när mejlet har skickats
+eller, i läget `log`, loggats.
+
 ## Mejltyper om medlemskap
 
 - `ansokan.mottagen`, `ansokan.ny` och `ansokan.godkand` följer en ansökan om
@@ -126,8 +133,10 @@ av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas.
 
 `recipient_kind` säger var adressen finns. Inbyggda: `member`
 (`Member.email`), `user` (`hbuser.email`), `application` (ansökan om
-medlemskap) och `inbox_sender` (avsändaren av en mejlad post i
-inläsningskön, [inkorg-gmail.md](inkorg-gmail.md)). En ny sort registreras med
+medlemskap), `inbox_sender` (avsändaren av en mejlad post i
+inläsningskön, [inkorg-gmail.md](inkorg-gmail.md)) och `buyer_contact`
+(köparen utanför föreningen, `BuyerContact.email`, i statusvyn
+`Köpare <id>`). En ny sort registreras med
 `@recipient_kind("<namn>")` och en funktion som tar id:t och returnerar
 `Recipient(address, label)` eller `None`. `label` är det statusvyn visar, ett
 namn, aldrig adressen. Saknas mottagaren, adressen eller
@@ -144,7 +153,82 @@ koden när mejlet skickas, så en påminnelse kan skicka samma länk igen.
 `verify_link(syfte, token)` ger rad-id:t om koden är äkta, annars `None`.
 Funktionen som tar emot länken hämtar raden och kontrollerar själv
 `expires_at` och `revoked_at`. Byts `LINK_SECRET` slutar alla skickade länkar
-att fungera.
+att fungera. Den första länken är [raderingslänken](#raderingslänken).
+
+## Mejl till en köpare utanför föreningen
+
+En köpare utanför föreningen (`BuyerContact`,
+[ADR-0016](adr/0016-agarbyte-flytt-dag-0-och-berattigat-intresse.md)) kan få
+två mejl. `utils/buyer_mail.py` köar dem i samma transaktion som köparen
+skapas, från försäljningen (`record_herd_tracking`) och från en korrigering
+som skriver in en ny köpare (`correct_herd_tracking`), och bara när köparen
+har lämnat sin e-post. En korrigering som behåller köparen köar inget, och
+`dedupe_key` gör att samma köpare aldrig får samma mejl två gånger: båda
+mejlen köas en gång per köpare (`<typ>:<köparens id>`), och en köpare är en
+post per försäljning. Den som har köpt flera kaniner får alltså ett
+`kopare.information` per försäljning. `kopare.medlemskap` går en gång per
+adress: när mejlet ska gå och ett `kopare.medlemskap` redan är skickat till
+samma adress blir det `cancelled`. Varje köpare har sin egen inbjudan i kön,
+så att en köpare som raderas aldrig tar med sig en annan köpares. En köpare
+som skrivs in på nytt i en rättning är en ny köpare och får båda mejlen
+igen. Är köparen raderad när mejlet ska gå blir det `cancelled`.
+
+- **`kopare.information`** berättar vad föreningen sparar om köparen och
+  varför, och till vilket datum namn och postadress sparas (namn och ort för
+  en köpare utan postadress): radens `purge_at` som svenskt datum. E-post och
+  telefon sägs vara sparade med köparens ja, postadressen inte (#111). Mejlet har [raderingslänken](#raderingslänken). Har kaninen
+  ett digitalt intyg ligger det som PDF, hämtat när mejlet går, på samma sätt
+  som när intyget laddas ner; annars går mejlet utan bilaga och utan meningen
+  om den. Går intyget inte att hämta räknas det som ett tillfälligt fel och
+  mejlet försöks igen, men från tredje försöket går det utan bilaga och utan
+  meningen om den: informationen till köparen väger tyngre än intyget. Mejlet
+  blir `sent` och `last_error` får noteringen "skickat utan bilaga: intyget
+  kunde inte hämtas", så att det syns i statusvyn. Utan `LINK_SECRET` kan mejlet
+  inte byggas.
+- **`kopare.medlemskap`** går när köparen har sagt ja till att föreningen
+  hör av sig om medlemskap (`membership_optin_at`). Är ja:et gallrat när
+  mejlet ska gå blir det `cancelled`.
+
+### Raderingslänken
+
+`<HERDBOOK_HOST>/kopare/ta-bort#<länkkod>`, med
+`link_token("kopare_invandning", <köparens id>)`. Koden står efter `#`, så
+webbläsaren skickar den aldrig till någon server, och ingen åtkomstlogg kan
+få med den. Sidan tar koden ur adressfältet och historiken direkt och
+raderar inget förrän köparen trycker på knappen, så att en förhandsvisning
+av länken i mejlprogrammet inte raderar köparen. Knappen skickar koden i
+kroppen:
+
+```text
+POST /api/v2/kopare/ta-bort
+{"token": "<länkkod>"}
+```
+
+Ingen inloggning; högst 10 anrop i timmen från en IP-adress. En äkta kod
+raderar köparen med samma funktion som när genbanksansvarig raderar
+(`delete_buyer_contacts` med åtgärden `invandning` och utan användare):
+bevisets original, adressen i mejlkön (`forget_recipient`) och en rad i
+`audit_log` följer med. Varje försäljning ger en egen köparrad, så köparens
+alla rader med samma e-postadress (versaler och blanksteg räknas inte)
+raderas i samma transaktion.
+
+Varje genbanksansvarig i försäljningens genbank får en notis i Stamboken,
+`kopare_borttagen`, med kaninens nummer (en notis per genbanksansvarig och
+kanin). Notisen säger inget om köparen. Bara köparens eget invändande ger den:
+när genbanksansvarig raderar köparen, eller en gallring gör det, kommer ingen
+notis. Den dagliga notismejlen följer den vanliga strömbrytaren.
+
+| Svar | När |
+|---|---|
+| 200 `{"result": "removed"}` | köparen raderades nu |
+| 200 `{"result": "already_removed"}` | koden är äkta men köparen finns inte längre. Sidan säger att länken redan har använts eller ersatts, eftersom en ångrad och ny försäljning ger en ny köpare och ett nytt mejl, och hänvisar till länken i det nyare mejlet och annars till `dataskydd@gotlandskaninen.se` |
+| 404 med `detail` "Länken gäller inte längre. Skriv till `dataskydd@gotlandskaninen.se`." | allt annat: förfalskad, trasig eller saknad kod, eller en kod för ett annat syfte. Svaret är detsamma vilket id koden än nämner |
+| 429 | för många anrop |
+
+Både sidan och API:ts svar har `Cache-Control: no-store` och
+`Referrer-Policy: no-referrer`. `app/tests/test_buyer_mail.py` kontrollerar
+att koden inte hamnar i appens loggar. Åtkomstloggen testas inte: koden står i
+kroppen, så den loggade raden är bara sökvägen.
 
 ## Utskicksläge
 

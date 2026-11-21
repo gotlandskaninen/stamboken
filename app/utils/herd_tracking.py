@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo
 
 from peewee import Expression, IntegrityError, fn
 
+from utils.buyer_mail import queue_buyer_mails
 from utils.database import (
     DB_PROXY,
     HOLDER_CHANGING_KINDS,
@@ -32,7 +33,7 @@ from utils.database import (
     ht_sort_key,
     lock_individuals,
 )
-from utils.mail import forget_recipient
+from utils.mail import forget_recipient, is_address
 
 UNPROMOTE_REASON = "avpromoverad"
 
@@ -435,6 +436,8 @@ def record_herd_tracking(
             if _violated_constraint(exc) != "idx_herdtracking_report_attestation":
                 raise
             raise HerdTrackingConflict("Kaninen har redan en aktiv rad för den här rapporten.") from exc
+        if contact is not None:
+            queue_buyer_mails(contact, row)
         _assert_no_new_violations(ind, before, before + [row])
     return row
 
@@ -890,6 +893,8 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
                 if _violated_constraint(exc) != "herd_tracking_holder_contact_id_fkey":
                     raise
                 raise HerdTrackingConflict(BUYER_GONE) from exc
+            if event["buyer"]:
+                queue_buyer_mails(row.holder_contact, row)
             if index in carried:  # a corrected sale's buyer: five years from the sale's corrected date
                 BuyerContact.update(purge_at=BuyerContact.purge_at_for(event["date"])).where(
                     BuyerContact.id == carried[index]
@@ -952,6 +957,7 @@ def attach_buyer(row, buyer, user):
     HerdTracking.update(holder_contact=contact, buyer_removed=contact is None).where(
         HerdTracking.id == row.id, HerdTracking.holder_contact.is_null(True)
     ).execute()
+    queue_buyer_mails(contact, row)
     return contact
 
 
@@ -1182,6 +1188,8 @@ def buyer_contact_fields(buyer, address_required=False):
         raise HerdTrackingInvalid("Ange köparens namn och ort.")
     if address_required and not fields["postal_address"]:
         raise HerdTrackingInvalid("Ange köparens postadress.")
+    if fields["email"] and not is_address(fields["email"]):  # or the buyer's mails are cancelled when they go
+        raise HerdTrackingInvalid("Ange en e-postadress till köparen, bara adressen och bara en.")
     for key in ("name", "town"):  # the name goes into a mail from the association: never a link or a contact
         message = f"{BUYER_TEXT_FIELDS[key]} får inte innehålla en länk, en e-postadress eller ett telefonnummer."
         if _URL.search(fields[key]):
