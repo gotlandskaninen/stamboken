@@ -4017,26 +4017,42 @@ def migrate_42_to_43():
         ).execute()
 
 
-# A rex mention in the free text, minus the carriers and the "not rex" notes (rexbärare, anlag, inslag, split, ej rex).
-_REX_IN_TEXT = r"(hair_notes ~* '\mrex' OR color_note ~* '\mrex')"
-_NOT_REX = (
-    r"((coalesce(hair_notes,'') || ' ' || coalesce(color_note,'')) ~* "
-    r"'(bär|anlag|inslag|split|\m(ej|inte|ingen|icke)\s+rex)')"
+_REX_MENTION = r"\mrex"
+_REX_EXCLUDED = (  # carriers, "not rex", parent references: each tied to the rex word, judged per field
+    r"rex\w*(bär|anlag|inslag|split)",
+    r"(bär\w*|anlag|inslag|split)\W+(\w+\W+){0,2}rex",
+    r"rex\W+(\w+\W+){0,2}(bär\w*|anlag|inslag|split)",
+    r"\m(ej|inte|inget|ingen|icke|utan|nej)\W+(\w+\W+){0,1}rex",
+    r"rex\W*(nej|ej)\M",
+    r"icke-rex",
+    r"\m(far|mor|fadern|modern|föräldrar?)\W+(\w+\W+){0,1}rex",
 )
+
+
+def _rex_sql(template):
+    """One condition over hair_notes and color_note, each judged on its own: template with FIELD."""
+    return " OR ".join(template.replace("FIELD", f"coalesce({f}, '')") for f in ("hair_notes", "color_note"))
+
+
+_REX_MENTIONED = _rex_sql("FIELD ~* '" + _REX_MENTION + "'")
+_REX_EXCLUDED_SQL = _rex_sql("FIELD ~* '(" + "|".join(_REX_EXCLUDED) + ")'")
 
 
 def migrate_43_to_44():
     """individual.rex: the coat, rex or normal. Rabbits whose notes say rex get true; the notes are not touched.
-    The column is added in raw SQL (no audit rows); the UPDATE is audited, so the rows it set can be found."""
+    The column is added in raw SQL (no audit rows); the UPDATE is audited, so the rows it set can be found.
+    Only the run that creates the column sets rex from text; a replay must not undo later corrections."""
     with DATABASE.atomic():
+        created = "rex" not in {c.name for c in DATABASE.get_columns("individual")}
         DATABASE.execute_sql("ALTER TABLE individual ADD COLUMN IF NOT EXISTS rex BOOLEAN NOT NULL DEFAULT false")
-        excluded = DATABASE.execute_sql(
-            f"SELECT count(*) FROM individual WHERE {_REX_IN_TEXT} AND {_NOT_REX}"
-        ).fetchone()[0]
-        # AND NOT rex: a replay does not log the rows again.
-        done = DATABASE.execute_sql(
-            f"UPDATE individual SET rex = true WHERE NOT rex AND {_REX_IN_TEXT} AND NOT {_NOT_REX}"
-        ).rowcount
+        done = excluded = 0
+        if created:
+            excluded = DATABASE.execute_sql(
+                f"SELECT count(*) FROM individual WHERE ({_REX_MENTIONED}) AND ({_REX_EXCLUDED_SQL})"
+            ).fetchone()[0]
+            done = DATABASE.execute_sql(
+                f"UPDATE individual SET rex = true WHERE ({_REX_MENTIONED}) AND NOT ({_REX_EXCLUDED_SQL})"
+            ).rowcount
         logger.info(f"rex set on {done} individuals, {excluded} excluded")
         SchemaHistory.insert(  # pylint: disable=E1120
             version=44,

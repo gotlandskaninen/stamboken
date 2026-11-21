@@ -1320,7 +1320,7 @@ class TestDatabaseMigration(DatabaseTest):
             ).fetchone()
         )
         db.DATABASE.execute_sql("ALTER TABLE individual DROP COLUMN rex")
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 44).execute()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= db.CURRENT_SCHEMA_VERSION).execute()
 
     def _individual_audit_rows(self):
         return db.AuditLog.select().where(db.AuditLog.table_name == "individual").count()
@@ -1344,7 +1344,7 @@ class TestDatabaseMigration(DatabaseTest):
             db.DATABASE.execute_sql("SELECT count(*) FROM individual WHERE rex IS DISTINCT FROM false").fetchone()[0], 0
         )
         self.assertEqual(self._individual_audit_rows(), audit_before)  # the ALTER fires no row trigger
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 44).execute()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= db.CURRENT_SCHEMA_VERSION).execute()
         db.check_migrations()  # a second run changes nothing and does not fail
         self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
         (default,) = db.DATABASE.execute_sql(
@@ -1366,6 +1366,9 @@ class TestDatabaseMigration(DatabaseTest):
             (None, "svart rex"),
             (None, "madagaskar-rex"),
             (None, "gul / svart japan, rexpälsad"),
+            ("rexpälsad", "svart med vita inslag"),
+            ("Rex", "bär blått"),
+            ("Rex", "anlag för japan"),
         ]
         no = [
             ("nej", None),
@@ -1376,6 +1379,13 @@ class TestDatabaseMigration(DatabaseTest):
             (None, "anlag för rex"),
             (None, "ej rex"),
             (None, "havanna med rexinslag"),
+            ("icke-rex", None),
+            ("inte en rex", None),
+            ("utan rex", None),
+            ("inget rex", None),
+            ("Rex: nej", None),
+            ("far rex", None),
+            ("Rex", "bär rex"),
         ]
         ids = {}
         for i, (hair, color_note) in enumerate(yes + no):
@@ -1396,7 +1406,22 @@ class TestDatabaseMigration(DatabaseTest):
                 "SELECT hair_notes, color_note FROM individual WHERE individual_id = %s", (individual_id,)
             ).fetchone()
             self.assertEqual(row, (hair, color_note))
-        self.assertIn(f"rex set on {len(yes)} individuals, 5 excluded", "\n".join(logged.output))
+        self.assertIn(f"rex set on {len(yes)} individuals, 12 excluded", "\n".join(logged.output))
+
+    def test_rex_replay_keeps_corrections(self):
+        """A replay of 43 -> 44 on a database that already has the column does not set rex again or log rows."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("regular expressions require PostgreSQL")
+        rabbit = db.Individual.create(origin_herd=self.herds[0], number="G1-7790", hair_notes="rex")
+        self._drop_rex_column()
+        db.check_migrations()
+        self.assertTrue(self._rex(rabbit.id))
+        db.DATABASE.execute_sql("UPDATE individual SET rex = false WHERE individual_id = %s", (rabbit.id,))
+        audit_before = self._individual_audit_rows()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= db.CURRENT_SCHEMA_VERSION).execute()
+        db.check_migrations()
+        self.assertFalse(self._rex(rabbit.id))
+        self.assertEqual(self._individual_audit_rows(), audit_before)
 
     def _rex(self, individual_id):
         return db.DATABASE.execute_sql(
