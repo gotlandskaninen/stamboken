@@ -285,9 +285,10 @@ export default function IntegritetspolicyPage() {
               <li>
                 Ditt namn och din postadress sparar vi i fem år från köpet, så
                 att genbankskaninerna går att spåra, till exempel vid ett
-                utbrott av en smittsam djursjukdom (berättigat intresse). Vet vi
-                att kaninen har dött tar vi bort dem tidigare. Uppgifterna kan
-                komma från dig eller från säljaren. Utan namn och postadress
+                utbrott av en smittsam djursjukdom, och så att kaninerna följer
+                med om du startar en egen besättning (berättigat intresse). Vet
+                vi att kaninen har dött tar vi bort dem tidigare. Uppgifterna
+                kan komma från dig eller från säljaren. Utan namn och postadress
                 skrivs inget bevis.
               </li>
               <li>
