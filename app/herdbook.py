@@ -1758,6 +1758,8 @@ def external_link_handler(service):
         persistent,
         email=utils.external_auth.google_verified_email() if service == "google" else None,
         from_google_session=session.get("auth_method") == "google",
+        # "" for Basic auth's session, which has no mark: never the account's.
+        session_generation=session.get("generation", ""),
     )
 
     if not linked:
@@ -1799,7 +1801,7 @@ def external_unlink_handler(service):
         da.auth_log.warning("Refusing to unlink google from a password session for user #%d", current_user.id)
         return "null"
 
-    unlinked = da.unlink_account(current_user, service)
+    unlinked = da.unlink_account(current_user, service, session_generation=session.get("generation", ""))
     if not unlinked:
         return "null"  # FIXME: Error code instead?
     return "1"

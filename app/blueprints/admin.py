@@ -458,7 +458,7 @@ def admin_reset_password(u_id):
 @admin_required
 def logout_everywhere(u_id):
     """
-    "Logga ut överallt": a new mark for the account (da.new_generation) ends every session it has, on the demo too.
+    "Logga ut överallt": a new mark for the account (da.revoke_sessions) ends every session it has, on the demo too.
     204 No Content.
     """
     if settings.service.demo_instance:
@@ -469,10 +469,8 @@ def logout_everywhere(u_id):
             "Utloggning görs i produktion; demon delar sessioner med den.",
             type="demo-instance",
         )
-    target = db.User.get_or_none(db.User.id == u_id)
-    if target is None:
+    if not da.revoke_sessions(u_id):
         return problem(404, "Användare saknas", f"Ingen användare med id {u_id}.", type="user-not-found")
-    da.new_generation(target.uuid)
     auth_log.info("logged out everywhere actor=%s target=%s", current_user.id, u_id)
     return "", 204
 

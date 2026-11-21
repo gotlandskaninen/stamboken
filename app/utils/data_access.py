@@ -645,7 +645,15 @@ def authenticate_with_credentials(method, ident):
     return None
 
 
-def link_account(user, method, ident, email=None, from_google_session=False):
+def _revoked_meanwhile(account, session_generation):
+    """The holder's own request (a mark given) whose session was revoked while it waited for the locked `account`."""
+    if session_generation is None or session_generation == account_generation(account.uuid):
+        return False
+    auth_log.warning("Refusing a change from a session revoked meanwhile for user #%d", account.id)
+    return True
+
+
+def link_account(user, method, ident, email=None, from_google_session=False, session_generation=None):
     """
     Registers an account linked to an external authentication service. Returns
     something that evaluates as True on success.
@@ -654,7 +662,9 @@ def link_account(user, method, ident, email=None, from_google_session=False):
     replacing an identity needs a session from Google, an account with a role
     takes only an identity whose verified address `email` is on the
     association's domain, and google_email follows the identity. Replacing
-    one revokes the account's sessions (new_generation).
+    one revokes the account's sessions (new_generation). The holder's own
+    request passes its session's mark (session_generation), and a session
+    revoked while the request waited for the lock changes nothing.
     """
     if not method or not ident or not user:
         return None
@@ -663,6 +673,8 @@ def link_account(user, method, ident, email=None, from_google_session=False):
         with DATABASE.atomic():
             # The account's row first, as unlink_account does, then the identity.
             account = User.select().where(User.id == user.id).for_update().get()
+            if _revoked_meanwhile(account, session_generation):
+                return None
             old = Authenticators.get_or_none((Authenticators.user == user.id) & (Authenticators.auth == method))
             switch = old is not None and old.auth_data != ident
             if method == "google" and switch and not from_google_session:
@@ -697,7 +709,7 @@ def link_account(user, method, ident, email=None, from_google_session=False):
     return None
 
 
-def unlink_account(user, method):
+def unlink_account(user, method, session_generation=None):
     """
     Removes any linked identities for method method. Return somethings that
     evaluates to false on failure. Never the account's last way to sign in:
@@ -705,6 +717,7 @@ def unlink_account(user, method):
     admin could let the holder back in. Never the Google identity of an
     account with a role (holds_role). A removal revokes the account's
     sessions (new_generation), and google_email goes with the Google identity.
+    The holder's own request passes its session's mark, as for link_account.
     """
     if not method or not user:
         return None
@@ -713,6 +726,8 @@ def unlink_account(user, method):
             # The account's row is the lock: two unlinks of different methods wait for each other, and a role grant
             # (update_role) and an unlink wait for each other.
             account = User.select().where(User.id == user.id).for_update().get()
+            if _revoked_meanwhile(account, session_generation):
+                return None
             if method == "google" and holds_role(account):
                 auth_log.warning("Refusing to unlink google for user #%d, who has a role", user.id)
                 return None
@@ -4522,6 +4537,19 @@ def new_generation(user_uuid):
     """
     if not settings.service.demo_instance:
         session_redis.set(_generation_key(user_uuid), uuid.uuid4().hex)
+
+
+def revoke_sessions(user_id):
+    """
+    For Logga ut överallt: a new mark under the account's row lock, as a change of credentials takes it. False when
+    there is no such account.
+    """
+    with DATABASE.atomic():
+        account = User.select(User.id, User.uuid).where(User.id == user_id).for_update().first()
+        if account is None:
+            return False
+        new_generation(account.uuid)
+    return True
 
 
 def google_login_generation(user, method, ident):

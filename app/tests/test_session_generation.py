@@ -371,6 +371,77 @@ class TestLostMarkAndRaces(SessionTest):
         self.assertFalse(self.signed_in(results["client"]))
         self.assertTrue(self.signed_in(self.login(password="ny")))
 
+    def identities(self):
+        rows = db.Authenticators.select().where(
+            (db.Authenticators.user == self.viewer.id) & (db.Authenticators.auth == "google")
+        )
+        return [row.auth_data for row in rows]
+
+    def test_a_link_that_waited_for_the_account_while_its_sessions_ended_is_refused(self):
+        """The admin removes the Google login while the holder's link waits for the account's row: without the
+        session's mark the link would count as a first one, open to a password session."""
+        real = da.link_account
+
+        def after_the_removal(*args, **kwargs):
+            self.assertTrue(da.unlink_account(self.viewer, "google"))  # the admin's removal takes the row first
+            return real(*args, **kwargs)
+
+        password = self.login()
+        with mock.patch.object(da, "link_account", after_the_removal):
+            self.assertEqual(google_link(password, "sub-ny", ID_TOKEN["email"]), "null")
+        self.assertEqual(self.identities(), [])
+
+    def test_an_unlink_that_waited_for_the_account_while_its_sessions_ended_is_refused(self):
+        real = da.unlink_account
+
+        def after_logout_everywhere(*args, **kwargs):
+            da.new_generation(self.viewer.uuid)  # what Logga ut överallt does once it has the row
+            return real(*args, **kwargs)
+
+        google = self.google_login()
+        with mock.patch.object(da, "unlink_account", after_logout_everywhere):
+            self.assertEqual(google.post("/api/unlink/google").get_data(as_text=True), "null")
+        self.assertEqual(self.identities(), [ID_TOKEN["sub"]])
+
+    def test_logout_everywhere_waits_for_the_account(self):
+        """It takes the account's row lock, as every change of credentials does."""
+        before = da.login_generation(self.viewer.uuid)
+        admin = self.admin_client()
+        held, release, answers = threading.Event(), threading.Event(), []
+
+        def hold():
+            try:
+                with db.DATABASE.atomic():
+                    db.User.select().where(db.User.id == self.viewer.id).for_update().get()
+                    held.set()
+                    release.wait(10)
+            finally:
+                db.DATABASE.close()
+
+        def logout_everywhere():
+            try:
+                answers.append(admin.post(f"/api/v2/admin/users/{self.viewer.id}/logga-ut").status_code)
+            finally:
+                db.DATABASE.close()
+
+        holder = threading.Thread(target=hold)
+        holder.start()
+        self.assertTrue(held.wait(10))
+        logout = threading.Thread(target=logout_everywhere)
+        logout.start()
+        try:
+            self.assertTrue(self._wait_for_lock_waiter(), "Logga ut överallt never waited for the account's row")
+            self.assertEqual(self.mark(), before)
+        finally:
+            release.set()
+            holder.join(10)
+            logout.join(10)
+        self.assertEqual(answers, [204])
+        self.assertNotEqual(self.mark(), before)
+
+    def admin_client(self):
+        return self.login("admin")
+
     def _wait_for_lock_waiter(self, timeout=10):
         """Poll until a session of this database waits for a lock, as test_database's migration-lock test does."""
         deadline = time.time() + timeout
