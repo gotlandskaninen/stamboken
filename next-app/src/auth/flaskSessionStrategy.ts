@@ -54,11 +54,13 @@ export const flaskSessionStrategy: AuthStrategy = {
           const body = (await res.json()) as {
             google_email?: string | null;
             validated?: boolean;
+            auth_method?: string | null;
           };
           return {
             ok: true,
             google_email: body?.google_email,
             validated: body?.validated,
+            auth_method: body?.auth_method,
           };
         } catch {
           return { ok: false };

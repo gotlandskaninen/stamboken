@@ -8,6 +8,7 @@ function makeDeps(over: Partial<Parameters<typeof resolveFlaskUser>[0]> = {}) {
       ok: true,
       google_email: "admin@gotlandskaninen.se",
       validated: true,
+      auth_method: "google",
     })),
     findUserByEmail: vi.fn(async (email: string) =>
       email === "admin@gotlandskaninen.se"
@@ -34,6 +35,7 @@ describe("resolveFlaskUser", () => {
         ok: true,
         google_email: "stranger@example.com",
         validated: true,
+        auth_method: "google",
       })),
     });
     expect(await resolveFlaskUser(deps)).toBeNull();
@@ -45,6 +47,7 @@ describe("resolveFlaskUser", () => {
         email: "admin.privat@example.se",
         google_email: "admin@gotlandskaninen.se",
         validated: true,
+        auth_method: "google",
       })),
     });
     const user = await resolveFlaskUser(deps);
@@ -56,6 +59,7 @@ describe("resolveFlaskUser", () => {
         ok: true,
         google_email: "Admin@Gotlandskaninen.SE",
         validated: true,
+        auth_method: "google",
       })),
     });
     const user = await resolveFlaskUser(deps);
@@ -73,10 +77,24 @@ describe("resolveFlaskUser", () => {
         email: "admin@gotlandskaninen.se",
         google_email: "eve@gotlandskaninen.se",
         validated: true,
+        auth_method: "google",
       })),
     });
     expect(await resolveFlaskUser(deps)).toBeNull();
     expect(deps.findUserByEmail).toHaveBeenCalledWith("eve@gotlandskaninen.se");
+  });
+  it("refuses a session that did not sign in with Google, whatever its google_email says", async () => {
+    for (const auth_method of ["losenord", null, undefined]) {
+      const deps = makeDeps({
+        fetchUser: vi.fn(async () => ({
+          ok: true,
+          google_email: "admin@gotlandskaninen.se",
+          validated: true,
+          auth_method,
+        })),
+      });
+      expect(await resolveFlaskUser(deps)).toBeNull();
+    }
   });
   it("requires validated === true", async () => {
     const deps = makeDeps({
@@ -85,6 +103,7 @@ describe("resolveFlaskUser", () => {
         email: "admin@gotlandskaninen.se",
         google_email: "admin@gotlandskaninen.se",
         validated: false,
+        auth_method: "google",
       })),
     });
     expect(await resolveFlaskUser(deps)).toBeNull();
