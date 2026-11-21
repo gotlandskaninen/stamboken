@@ -154,7 +154,9 @@ the session with how it signed in, `auth_method` (`google` or `losenord`,
 also in `/api/user`), and with the account's mark: a random value per account
 in the sessions' Redis, `generation:<uuid>` beside `logout-epoch`. A session
 is valid only while its mark is the account's, and an account without a mark
-has no valid session. The one-request session of Basic auth is not checked.
+has no valid session. The one-request session of Basic auth is not checked,
+and it has no mark: a password change, a reset or the removal of a Google
+login through Basic auth is refused.
 
 The mark is replaced, which ends every session of the account on both APIs,
 when the account is deactivated (activating it again brings none back), when

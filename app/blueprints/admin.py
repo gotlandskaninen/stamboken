@@ -437,7 +437,8 @@ def admin_reset_password(u_id):
             f"Ingen användare med id {u_id}.",
             type="user-not-found",
         )
-    # Live signature: change_password(active_user, changed_user, form).
+    # Live signature: change_password(active_user, changed_user, form, session_stamps). The session goes along: one
+    # revoked while the request waited changes nothing, and Basic auth, which has no mark, is refused.
     # BOTH keys required: the INSERT branch (Google-only
     # target) reads form["password"], the UPDATE branch reads
     # form["newpassword"]. current_user.is_admin skips the old-password
