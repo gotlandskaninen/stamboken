@@ -605,9 +605,10 @@ def load_user_from_request(request):
             return None
 
         if user and da.holds_role(user):
-            # The role rule: an account with a role signs in with Google only; None ⇒ 401 downstream.
+            # The role rule: an account with a role signs in with Google only. It spends the budget as a wrong
+            # password does below, so the limit tells neither apart.
             da.auth_log.warning("Login refused: header, user id=%s has a role", user.id)
-            return None
+            user = None
 
         if user:
             da.auth_log.info("Login ok: header, user id=%s", user.id)

@@ -461,6 +461,21 @@ class TestRoleRule(RoleRulesTest):
             with self.subTest(path):
                 self.assertEqual(client.get(path, headers=auth).status_code, 401)
 
+    def test_basic_auth_spends_the_login_budget_on_the_right_password_as_on_a_wrong_one(self):
+        """Otherwise the limit tells a role account's right password from a wrong one."""
+        self.member.add_role("manager", 1)
+        limiter.enabled = True
+        self.addCleanup(limiter.reset)
+        self.addCleanup(setattr, limiter, "enabled", False)
+        client = APP.test_client()
+        for password in ("pass", "fel"):
+            with self.subTest(password):
+                limiter.reset()
+                credentials = base64.b64encode(f"medlem@example.org:{password}".encode()).decode()
+                auth = {"Authorization": "Basic " + credentials}
+                codes = [client.get("/api/active_users", headers=auth).status_code for _ in range(6)]
+                self.assertEqual(codes, [401] * 5 + [429])
+
     def test_a_google_login_outside_the_domain_is_refused_on_both_routes(self):
         self.give_google(self.member, sub="google-sub")
         self.member.add_role("manager", 1)
