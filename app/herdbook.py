@@ -516,6 +516,24 @@ def enforce_access_rules():
     return None
 
 
+@APP.before_request
+def refuse_demo_role_without_google():
+    """
+    The role rule on the demo for a session production made, which _session_revoked leaves to production: without
+    Google on the association's domain, a role in the demo's copy of the account is refused here, request by request,
+    and the session stays in the shared store for production to judge. Logging out still works.
+    """
+    if not settings.service.demo_instance or session.get("demo_login") or "user_id" not in session:
+        return None
+    if (session.get("auth_method") == "google" and session.get("google_domain")) or request.endpoint == "logout":
+        return None
+    account = db.User.get_or_none(db.User.uuid == session["user_id"])
+    if account is None or not da.holds_role(account):
+        return None
+    message = "Kontot har en roll. Logga in med föreningens Google-konto för att använda den i testmiljön."
+    return jsonify({"status": "error", "message": message}), 403
+
+
 @APP.teardown_request
 def teardown_request(exc=None):
     """Clear audit session variables after each request."""
@@ -686,7 +704,8 @@ def _session_revoked():
         if on_domain or settings.service.allow_role_password_login:
             return False
         if settings.service.demo_instance and not session.get("demo_login"):
-            # The demo's roles are a copy up to a day old: production judges the sessions it made, in the shared store.
+            # The demo's roles are a copy up to a day old: production judges the sessions it made, in the shared store,
+            # and refuse_demo_role_without_google refuses their requests here.
             return False
         account = db.User.get_or_none(db.User.uuid == session["user_id"])
         return account is not None and da.holds_role(account)

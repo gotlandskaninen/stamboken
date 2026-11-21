@@ -501,8 +501,10 @@ class TestRoleRule(RoleRulesTest):
             with self.subTest(path):
                 self.assertEqual(client.get(path, headers=auth).status_code, 401)
 
-    def test_the_demo_judges_by_its_copy_of_the_roles_only_the_sessions_it_made(self):
-        """The demo's roles are a copy up to a day old, and the session store is shared with production."""
+    def test_the_demo_refuses_a_role_to_a_production_session_without_google_and_leaves_it(self):
+        """The demo's roles are a copy up to a day old, and the session store is shared with production: the demo
+        refuses a request of a session production made without Google on the domain, and leaves the session to
+        production. A session the demo made it judges by its own copy."""
 
         def set_role(levels):
             privileges = [{"level": level, "genebank": 1} for level in levels]
@@ -514,11 +516,23 @@ class TestRoleRule(RoleRulesTest):
             return client, client.post("/api/login", json=form).status_code
 
         production, _ = login()  # the role is gone in production
+        key = "session:" + production.get_cookie(APP.config["SESSION_COOKIE_NAME"]).value
         set_role(["manager"])  # still in the demo's copy
         with mock.patch.object(settings.service, "demo_instance", True):
-            self.assertEqual(production.get("/api/user").status_code, 200)
+            # /api/manage/users reads session["user_id"] itself.
+            for path in ("/api/user", "/api/manage/users"):
+                with self.subTest(path):
+                    resp = production.get(path)
+                    self.assertEqual(resp.status_code, 403)
+                    self.assertIn("Google", resp.get_json()["message"])
+            self.assertTrue(session_redis.exists(key))
+            self.assertEqual(google_session(self.member).get("/api/user").status_code, 200)
         set_role([])
         self.assertEqual(production.get("/api/user").status_code, 200)
+        set_role(["manager"])
+        with mock.patch.object(settings.service, "demo_instance", True):
+            self.assertEqual(production.get("/api/logout").status_code, 200)
+        set_role([])
 
         with mock.patch.object(settings.service, "demo_instance", True):
             demo, _ = login()

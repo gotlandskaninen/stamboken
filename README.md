@@ -239,8 +239,11 @@ The role rule: Google is the only way into an account with a role.
   again.
   `is_admin` and the other role properties are unchanged: they also
   answer for an account that is not the caller. The demo API, whose roles are
-  a copy up to a day old, applies this only to sessions it made itself; a
-  session production made is judged by production's rule.
+  a copy up to a day old, empties only sessions it made itself. A session
+  production made is judged by production's rule; when it did not sign in with
+  Google on the domain and the account has a role in the demo's copy, the demo
+  answers its requests with 403 (logging out still works) and leaves the
+  session in the shared store.
 - A Google login to it, on either Google route, needs a verified address on
   the domain from a token of the domain, whatever `auth.ini` says.
 - The CMS admits only a session that signed in with Google (`auth_method` in
