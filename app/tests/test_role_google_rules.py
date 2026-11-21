@@ -1,6 +1,7 @@
 """An account with a role keeps a Google login on the association's domain. ALLOW_ROLE_PASSWORD_LOGIN lifts these rules
 for development and tests, and production refuses to start with it."""
 
+import configparser
 import os
 import threading
 import time
@@ -9,6 +10,7 @@ from unittest import mock
 
 import utils.data_access as da
 import utils.database as db
+import utils.external_auth as external_auth
 import utils.settings as settings
 from herdbook import APP, limiter
 
@@ -344,6 +346,19 @@ class TestAddRoleCommand(RoleRulesTest):
         self.assertNotEqual(result.exit_code, 0, result.output)
         self.assertIn("inaktiverat", result.output)
         self.assertFalse(self.has_level(twin, "admin"))
+
+
+class TestLegacyGoogleScope(unittest.TestCase):
+    def test_the_legacy_google_login_always_asks_for_the_verified_address(self):
+        """Without the e-mail scope its token has no address: no google_email, and a role account's first link fails."""
+        config = configparser.ConfigParser()
+        config.read_dict({"google": {"key": "klient", "secret": "x"}})  # no autocreate
+        with (
+            mock.patch("flask_dance.contrib.google.make_google_blueprint") as make,
+            mock.patch.object(external_auth, "_active", []),
+        ):
+            external_auth.setup_google(mock.Mock(), config)
+        self.assertIn("https://www.googleapis.com/auth/userinfo.email", make.call_args.kwargs["scope"])
 
 
 class TestAllowRolePasswordLoginGuard(unittest.TestCase):
