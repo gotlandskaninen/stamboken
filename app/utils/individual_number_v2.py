@@ -410,6 +410,7 @@ def _create_individual_record(
     claw_color=None,
     belly_color=None,
     hair_notes=None,
+    rex=False,
     paper_certificate=None,
     signature,
 ) -> Individual:
@@ -425,6 +426,7 @@ def _create_individual_record(
         sex: "male", "female", or None
         color: Color name string or None; resolved against herd.genebank
         name, color_note, eye_color, claw_color, belly_color, hair_notes: Optional trait fields
+        rex: The coat, True for rex, False for normal
         paper_certificate: When given, stored as individual.certificate
         signature: HbUser instance written to HerdTracking.signature
 
@@ -447,6 +449,7 @@ def _create_individual_record(
         claw_color=claw_color,
         belly_color=belly_color,
         hair_notes=hair_notes,
+        rex=rex,
         is_active=True,
     )
 

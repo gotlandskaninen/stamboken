@@ -385,6 +385,16 @@ class TestEditDescription(IndividualTest):
         self._run(self.manager, EditDescription({"notes": "av manager"}))
         self.assertEqual(self._stored().notes, "av manager")
 
+    def test_edit_description_rex(self):
+        """rex is a description field: stored, and the command log has the change."""
+        self._run(self.owner, EditDescription({"rex": True}))
+        self.assertTrue(self._stored().rex)
+        entry = db.IndividualCommand.get(
+            db.IndividualCommand.individual == self.ind.id, db.IndividualCommand.command == "EditDescription"
+        )
+        self.assertEqual(entry.before, {"rex": False})
+        self.assertEqual(entry.after, {"rex": True})
+
     def test_unknown_color_message(self):
         refusal = self._refusal(self.owner, EditDescription({"color": "finns-inte"}))
         self.assertEqual(refusal.envelope, error("Unknown color: 'finns-inte''"))

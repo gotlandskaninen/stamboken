@@ -120,6 +120,16 @@ def problem(status, title, detail, **extra):
     return jsonify(body), status, {"Content-Type": "application/problem+json"}
 
 
+REX_MUST_BE_BOOLEAN = "rex must be true or false"
+
+
+def rex_problem(body):
+    """A 400 when the body carries rex that is not a real boolean (null, 0, 1 and "false" included), else None."""
+    if "rex" in body and not isinstance(body["rex"], bool):
+        return problem(400, "Bad Request", REX_MUST_BE_BOOLEAN)
+    return None
+
+
 def admin_required(f):
     """Route decorator for admin-only API endpoints.
 

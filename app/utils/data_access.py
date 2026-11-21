@@ -2038,6 +2038,9 @@ def update_individual(form, user_uuid, issue_digital=False, genebank_change_reas
     if not user.can_edit(form["id"]):
         return {"status": "error", "message": "Forbidden"}
     form.pop("new_individual", None)  # an update is never a creation
+    # Before translate keeps only the changed fields: null, 0, 1 and "false" would pass for "unchanged" or truthy.
+    if "rex" in form and not isinstance(form["rex"], bool):
+        return {"status": "error", "message": "rex must be true or false"}
     if "breeding" in form:  # one canonical id for the lock set and the write
         try:
             form["breeding"] = canonical_breeding_id(form["breeding"])

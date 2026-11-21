@@ -1311,6 +1311,98 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertIn(("gmail_processed", "failures", False), fresh[0])
         self.assertIn(("seller_member_id", "member", "member_id"), fresh[2])
 
+    def _drop_rex_column(self):
+        """The schema before 43 -> 44: no rex column, the audit trigger on, and the version row gone."""
+        self.addCleanup(db.check_migrations)
+        self.assertTrue(
+            db.DATABASE.execute_sql(
+                "SELECT 1 FROM pg_trigger WHERE tgrelid = 'individual'::regclass AND tgname = 'audit_trigger'"
+            ).fetchone()
+        )
+        db.DATABASE.execute_sql("ALTER TABLE individual DROP COLUMN rex")
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 44).execute()
+
+    def _individual_audit_rows(self):
+        return db.AuditLog.select().where(db.AuditLog.table_name == "individual").count()
+
+    def test_rex_kolumn(self):
+        """A database stamped at 43 gets individual.rex, false for old rows, without audit rows, twice over."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self._drop_rex_column()
+        names = lambda: {c.name for c in db.DATABASE.get_columns("individual")}  # noqa: E731
+        self.assertNotIn("rex", names())
+        rows = db.DATABASE.execute_sql("SELECT count(*) FROM individual").fetchone()[0]
+        self.assertGreater(rows, 0)
+        audit_before = self._individual_audit_rows()
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertIn("rex", names())
+        self.assertEqual(
+            db.DATABASE.execute_sql("SELECT count(*) FROM individual WHERE rex IS DISTINCT FROM false").fetchone()[0], 0
+        )
+        self.assertEqual(self._individual_audit_rows(), audit_before)  # the ALTER fires no row trigger
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 44).execute()
+        db.check_migrations()  # a second run changes nothing and does not fail
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        (default,) = db.DATABASE.execute_sql(
+            "SELECT column_default FROM information_schema.columns "
+            "WHERE table_name = 'individual' AND column_name = 'rex'"
+        ).fetchone()
+        self.assertEqual(default, "false")
+        self.assertEqual(db.Individual.get_by_id(self.individuals[0].id).rex, False)
+
+    def test_rex_ur_fritext(self):
+        """Rex in a free-text note becomes rex = true; carriers, ej rex and the like do not. Text is untouched."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("regular expressions require PostgreSQL")
+        yes = [
+            ("rex", None),
+            ("Rexpäls", None),
+            ("rex-pälsad", None),
+            ("ja, rexpälsad.", None),
+            (None, "svart rex"),
+            (None, "madagaskar-rex"),
+            (None, "gul / svart japan, rexpälsad"),
+        ]
+        no = [
+            ("nej", None),
+            ("normal", None),
+            ("-", None),
+            (None, "bär rex"),
+            (None, "rexbärare"),
+            (None, "anlag för rex"),
+            (None, "ej rex"),
+            (None, "havanna med rexinslag"),
+        ]
+        ids = {}
+        for i, (hair, color_note) in enumerate(yes + no):
+            ids[(hair, color_note)] = db.Individual.create(
+                origin_herd=self.herds[0], number=f"G1-77{i:02d}", hair_notes=hair, color_note=color_note
+            ).id
+        self._drop_rex_column()
+
+        with self.assertLogs("herdbook.db", level="INFO") as logged:
+            db.check_migrations()
+
+        for key in yes:
+            self.assertTrue(self._rex(ids[key]), key)
+        for key in no:
+            self.assertFalse(self._rex(ids[key]), key)
+        for (hair, color_note), individual_id in ids.items():
+            row = db.DATABASE.execute_sql(
+                "SELECT hair_notes, color_note FROM individual WHERE individual_id = %s", (individual_id,)
+            ).fetchone()
+            self.assertEqual(row, (hair, color_note))
+        self.assertIn(f"rex set on {len(yes)} individuals, 5 excluded", "\n".join(logged.output))
+
+    def _rex(self, individual_id):
+        return db.DATABASE.execute_sql(
+            "SELECT rex FROM individual WHERE individual_id = %s", (individual_id,)
+        ).fetchone()[0]
+
     def _max_schema_version(self):
         return db.SchemaHistory.select(  # pylint: disable=E1120
             db.fn.MAX(db.SchemaHistory.version)

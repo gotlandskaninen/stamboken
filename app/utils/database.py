@@ -65,7 +65,7 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # retiring the PDF rows of digital certificates that a paper certificate replaced (38) +
 # audit_log IP retention index (39) + herd bank privacy reset (40) + the mail queue (41) +
 # the intake queue (42) and its retention (43).
-CURRENT_SCHEMA_VERSION = 43
+CURRENT_SCHEMA_VERSION = 44
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -772,6 +772,7 @@ class Individual(BaseModel):
     claw_color = TextField(null=True)
     belly_color = TextField(null=True)
     hair_notes = TextField(null=True)
+    rex = BooleanField(default=False, constraints=[SQL("DEFAULT false")])  # the coat: rex, else normal
     is_active = BooleanField(null=True, default=True)
     has_photo = BooleanField(null=True, default=False)
     butchered = BooleanField(null=True, default=False)
@@ -4016,6 +4017,34 @@ def migrate_42_to_43():
         ).execute()
 
 
+# A rex mention in the free text, minus the carriers and the "not rex" notes (rexbärare, anlag, inslag, split, ej rex).
+_REX_IN_TEXT = r"(hair_notes ~* '\mrex' OR color_note ~* '\mrex')"
+_NOT_REX = (
+    r"((coalesce(hair_notes,'') || ' ' || coalesce(color_note,'')) ~* "
+    r"'(bär|anlag|inslag|split|\m(ej|inte|ingen|icke)\s+rex)')"
+)
+
+
+def migrate_43_to_44():
+    """individual.rex: the coat, rex or normal. Rabbits whose notes say rex get true; the notes are not touched.
+    The column is added in raw SQL (no audit rows); the UPDATE is audited, so the rows it set can be found."""
+    with DATABASE.atomic():
+        DATABASE.execute_sql("ALTER TABLE individual ADD COLUMN IF NOT EXISTS rex BOOLEAN NOT NULL DEFAULT false")
+        excluded = DATABASE.execute_sql(
+            f"SELECT count(*) FROM individual WHERE {_REX_IN_TEXT} AND {_NOT_REX}"
+        ).fetchone()[0]
+        # AND NOT rex: a replay does not log the rows again.
+        done = DATABASE.execute_sql(
+            f"UPDATE individual SET rex = true WHERE NOT rex AND {_REX_IN_TEXT} AND NOT {_NOT_REX}"
+        ).rowcount
+        logger.info(f"rex set on {done} individuals, {excluded} excluded")
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=44,
+            comment=f"individual.rex; set from free text on {done}, {excluded} excluded",
+            applied=datetime.now(),
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4496,6 +4525,7 @@ MIGRATIONS = {
     (40, 41): migrate_40_to_41,  # mail queue
     (41, 42): migrate_41_to_42,  # intake queue
     (42, 43): migrate_42_to_43,  # intake queue retention
+    (43, 44): migrate_43_to_44,  # individual.rex
 }
 
 
