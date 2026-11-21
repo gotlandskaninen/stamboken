@@ -693,6 +693,8 @@ def link_account(user, method, ident, email=None, from_google_session=False, ses
         with DATABASE.atomic():
             # The account's row first, as unlink_account does, then the identity.
             account = User.select().where(User.id == user.id).for_update().get()
+            # Beside the unique index, which nothing checks at start: two accounts never take one identity at once.
+            DATABASE.execute_sql("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"authenticator:{method}:{ident}",))
             if _revoked_meanwhile(account, session_stamps):
                 return None
             old = Authenticators.get_or_none((Authenticators.user == user.id) & (Authenticators.auth == method))
