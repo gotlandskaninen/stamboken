@@ -22,6 +22,8 @@ limiter.enabled = False
 
 DOMAIN_ADDRESS = ID_TOKEN["email"]
 OUTSIDE_ADDRESS = "medlem@example.org"
+LEGACY = "https://stamboken.gotlandskaninen.se"
+NEW = "https://gotlandskaninen.se"
 # This database only: under xdist, other workers' databases share the server.
 WAITING_FOR_A_LOCK = (
     "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'"
@@ -411,6 +413,25 @@ class TestRoleRule(RoleRulesTest):
                 self.assertEqual(call(client).status_code, 401)
                 self.assertFalse(session_redis.exists(key), "refused session left in the store")
         self.assertEqual(self.google_login().get("/api/user").get_json()["id"], self.member.id)
+
+    def test_a_password_is_refused_for_every_role_as_a_wrong_one_is(self):
+        def login(password, base_url):
+            client = APP.test_client(use_cookies=True)
+            form = {"username": "medlem@example.org", "password": password}
+            resp = client.post("/api/login", json=form, base_url=base_url)
+            return resp.status_code, resp.get_json(), client.get("/api/user", base_url=base_url).status_code
+
+        self.member.add_role("viewer", 1)
+        self.member.add_role("owner", self.herds[0].id)
+        self.assertEqual(login("pass", NEW)[0], 200)  # not roles that count
+        for level in da.ROLE_LEVELS:
+            with self.subTest(level):
+                db.User.update(_privileges="[]").where(db.User.id == self.member.id).execute()
+                self.member.add_role(level, None if level in ("admin", "matrikel_admin") else 1)
+                self.assertEqual(login("pass", NEW), login("fel", NEW))
+                self.assertEqual(login("pass", NEW)[0], 401)
+                self.assertEqual(login("pass", LEGACY), (200, None, 401))  # legacy reads any JSON body as the user
+                self.assertEqual(login("pass", LEGACY), login("fel", LEGACY))
 
 
 class TestLegacyGoogleScope(unittest.TestCase):

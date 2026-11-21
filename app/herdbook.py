@@ -1409,6 +1409,10 @@ def login_handler():
             jsonify({"status": "error", "message": "Kontot är inaktiverat. Kontakta styrelsen."}),
             401,
         )
+    if user and da.holds_role(user):
+        # The role rule: an account with a role signs in with Google only. The answer is a wrong password's.
+        da.auth_log.warning("Login refused: password, user id=%s has a role", user.id)
+        user = None
     if user:
         establish_session(user, "losenord", generation)
         da.auth_log.info("Login ok: password, user id=%s", user.id)
