@@ -86,6 +86,7 @@ export function UserEditClient({
   const [fullname, setFullname] = useState(detail.fullname ?? "");
   const [email, setEmail] = useState(detail.email ?? "");
   const [activeDialogOpen, setActiveDialogOpen] = useState(false);
+  const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
   const [selfRevoke, setSelfRevoke] = useState<PrivilegeEntry | null>(null);
   // Google-only accounts can lack a username (hbuser.username is nullable).
   const displayName = detail.username ?? detail.email;
@@ -347,7 +348,7 @@ export function UserEditClient({
               type="button"
               className="sb-btn sb-btn-secondary"
               disabled={pending}
-              onClick={() => run(() => logoutEverywhere(detail.id))}
+              onClick={() => setLogoutDialogOpen(true)}
             >
               Logga ut överallt
             </button>
@@ -489,6 +490,26 @@ export function UserEditClient({
         onConfirm={() => {
           setActiveDialogOpen(false);
           run(() => setAccountActive(detail.id, !detail.is_active));
+        }}
+      />
+
+      {/* Logga ut överallt, also on the admin's own account. */}
+      <ConfirmDialog
+        open={logoutDialogOpen}
+        title="Logga ut överallt?"
+        body={
+          `${displayName} loggas ut överallt, i riktiga stamboken och i ` +
+          "testmiljön." +
+          (detail.id === actorId
+            ? " Det är ditt eget konto, så du loggas också ut här."
+            : "")
+        }
+        confirmLabel="Logga ut"
+        confirmColor="error"
+        onClose={() => setLogoutDialogOpen(false)}
+        onConfirm={() => {
+          setLogoutDialogOpen(false);
+          run(() => logoutEverywhere(detail.id));
         }}
       />
 

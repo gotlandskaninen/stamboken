@@ -1,6 +1,12 @@
 import "@testing-library/jest-dom/vitest";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 
 const revokeRole = vi.hoisted(() => vi.fn());
 const logoutEverywhere = vi.hoisted(() => vi.fn());
@@ -65,11 +71,12 @@ describe("UserEditClient roles", () => {
 });
 
 describe("UserEditClient sessions", () => {
-  it("logs the account out everywhere", () => {
+  // The admin's own page: the dialog says she is logged out too.
+  const openLogoutDialog = () => {
     render(
       <UserEditClient
         detail={detail}
-        actorId={1}
+        actorId={7}
         genebanks={[]}
         herds={[]}
         recentAudit={[]}
@@ -77,6 +84,22 @@ describe("UserEditClient sessions", () => {
       />,
     );
     fireEvent.click(screen.getByRole("button", { name: "Logga ut överallt" }));
+    return screen.getByRole("dialog");
+  };
+
+  it("asks first, and Avbryt logs nobody out", () => {
+    logoutEverywhere.mockClear();
+    const dialog = openLogoutDialog();
+    expect(logoutEverywhere).not.toHaveBeenCalled();
+    expect(dialog).toHaveTextContent("du loggas också ut här");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Avbryt" }));
+    expect(logoutEverywhere).not.toHaveBeenCalled();
+  });
+
+  it("logs the account out everywhere once the admin confirms", () => {
+    logoutEverywhere.mockClear();
+    const dialog = openLogoutDialog();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Logga ut" }));
     expect(logoutEverywhere).toHaveBeenCalledWith(7);
   });
 });
