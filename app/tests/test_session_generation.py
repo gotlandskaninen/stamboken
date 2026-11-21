@@ -187,16 +187,20 @@ class TestRevocation(SessionTest):
         for name, occasion in self.occasions().items():
             with self.subTest(name):
                 self.setUp()  # the Google identity back, and a fresh account state
-                old_production, old_demo = self.login(), self.login()
+                old_production = self.login()
+                with as_demo():
+                    old_demo = self.login()  # a session the demo made
+                    self.assertTrue(self.signed_in(old_demo))
                 before = self.mark()
                 self.assertTrue(occasion(), name)
                 self.assertNotEqual(self.mark(), before)
                 self.assertFalse(self.signed_in(old_production))
                 with as_demo():
                     self.assertFalse(self.signed_in(old_demo))
-                new_production, new_demo = self.login(), self.login()
+                new_production = self.login()
                 self.assertTrue(self.signed_in(new_production))
                 with as_demo():
+                    new_demo = self.login()
                     self.assertTrue(self.signed_in(new_demo))
 
     def test_logout_everywhere_needs_an_admin(self):
