@@ -155,6 +155,17 @@ class TestRevocation(SessionTest):
     def admin_client(self):
         return self.login("admin")
 
+    def test_only_an_admin_sets_another_accounts_password(self):
+        """Otherwise a right guess of another account's old password changes it and signs its holder out."""
+        holder = self.login()
+        before = self.mark()
+        form = {"oldpassword": "pass", "newpassword": "ny", "password": "ny"}
+        answer = self.login("man").post(f"/api/manage/setpassword/{self.viewer.id}", json=form)
+        self.assertEqual((answer.status_code, answer.get_json()), (200, None))
+        self.assertIsNotNone(da.authenticate_user("spec", "pass")[0])
+        self.assertEqual(self.mark(), before)
+        self.assertTrue(self.signed_in(holder))
+
     def occasions(self):
         uid = self.viewer.id
         return {
