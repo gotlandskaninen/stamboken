@@ -345,6 +345,22 @@ class TestAdminRemovesGoogle(RoleRulesTest):
         self.assertEqual(self.remove(only_google).status_code, 409)
         self.assertEqual(self.identities(only_google), ["sub-bara"])
 
+    def test_the_way_back_with_the_access_rules_enforced(self):
+        """Neither validated nor promoted: given a password, its Google login removed, it signs in and links anew."""
+        stray = da.register_user("tillbaka@example.org", None)
+        self.give_google(stray, sub="sub-gammal")
+        with mock.patch.object(settings.service, "access_rules", "enforce"):
+            admin = google_session(self.admin)
+            reset = admin.post(f"/api/v2/admin/users/{stray.id}/password-reset", json={"password": "nytt"})
+            self.assertEqual(reset.status_code, 204)
+            self.assertEqual(self.remove(stray).status_code, 204)
+            client = APP.test_client(use_cookies=True)
+            resp = client.post("/api/login", json={"username": "tillbaka@example.org", "password": "nytt"})
+            self.assertEqual(resp.get_json()["id"], stray.id)
+            self.assertEqual(google_link(client, "sub-ny", DOMAIN_ADDRESS), str(stray.id))
+        self.assertEqual(self.identities(stray), ["sub-ny"])
+        self.assertEqual(db.User.get_by_id(stray.id).google_email, DOMAIN_ADDRESS)
+
 
 class TestAddRoleCommand(RoleRulesTest):
     def add_role(self, konto=DOMAIN_ADDRESS, roll="admin"):
@@ -473,6 +489,20 @@ class TestRoleRule(RoleRulesTest):
             self.assertEqual(APP.test_client().post("/api/auth/google", json={"credential": "t"}).status_code, 403)
         self.assertIsNone(da.google_login_generation(self.member, "google", "google-sub", OUTSIDE_ADDRESS))
         self.assertTrue(da.google_login_generation(self.member, "google", "google-sub", DOMAIN_ADDRESS))
+
+    def test_the_roles_of_an_account_without_a_session_still_count(self):
+        """The rule is on sessions: is_admin and the other properties answer for an account that is not signed in."""
+        form = {"id": self.admin.id, "email": "ny@example.org", "validated": True}
+        resp = google_session(self.manager).patch(f"/api/manage/user/{self.admin.id}", json=form)
+        self.assertEqual(resp.get_json(), {"status": "error", "message": "forbidden"})
+        self.assertEqual(db.User.get_by_id(self.admin.id).email, "admin")
+
+        self.member.add_role("matrikel_admin")
+        application = {"first_name": "Test", "last_name": "Sökande", "email": "sokande@example.org"}
+        resp = APP.test_client().post("/api/v2/member-applications", json={**application, "gdpr_consent": True})
+        self.assertEqual(resp.status_code, 201)
+        notices = db.MailMessage.select().where(db.MailMessage.kind == "ansokan.ny")
+        self.assertEqual([notice.recipient_id for notice in notices], [self.member.id])
 
 
 class TestLegacyGoogleScope(unittest.TestCase):
