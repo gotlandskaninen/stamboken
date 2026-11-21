@@ -17,8 +17,12 @@ from tests.google_login import ID_TOKEN
 
 limiter.enabled = False
 
-DOMAIN_ADDRESS = "ansvarig@gotlandskaninen.se"
-OUTSIDE_ADDRESS = "ansvarig@example.org"
+DOMAIN_ADDRESS = ID_TOKEN["email"]
+OUTSIDE_ADDRESS = "medlem@example.org"
+# This database only: under xdist, other workers' databases share the server.
+WAITING_FOR_A_LOCK = (
+    "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'"
+)
 
 
 def google_link(client, sub, email):
@@ -215,10 +219,10 @@ class TestGoogleIdentity(RoleRulesTest):
         self.assertEqual(self.identities(other), ["sub-krock"])
 
     def _wait_for_lock_waiter(self, timeout=10):
-        """Poll pg_locks until a session waits for a lock, as test_database's migration-lock test does."""
+        """Poll until a session of this database waits for a lock, as test_database's migration-lock test does."""
         deadline = time.time() + timeout
         while time.time() < deadline:
-            if db.DATABASE.execute_sql("SELECT count(*) FROM pg_locks WHERE NOT granted").fetchone()[0]:
+            if db.DATABASE.execute_sql(WAITING_FOR_A_LOCK).fetchone()[0]:
                 return True
             time.sleep(0.05)
         return False

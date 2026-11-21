@@ -20,6 +20,11 @@ from tests.google_login import ID_TOKEN, token_login
 
 limiter.enabled = False
 
+# This database only: under xdist, other workers' databases share the server.
+WAITING_FOR_A_LOCK = (
+    "SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'"
+)
+
 
 def as_demo(on=True):
     return mock.patch.object(settings.service, "demo_instance", on)
@@ -358,10 +363,10 @@ class TestLostMarkAndRaces(SessionTest):
         self.assertTrue(self.signed_in(self.login(password="ny")))
 
     def _wait_for_lock_waiter(self, timeout=10):
-        """Poll pg_locks until a session waits for a lock, as test_database's migration-lock test does."""
+        """Poll until a session of this database waits for a lock, as test_database's migration-lock test does."""
         deadline = time.time() + timeout
         while time.time() < deadline:
-            if db.DATABASE.execute_sql("SELECT count(*) FROM pg_locks WHERE NOT granted").fetchone()[0]:
+            if db.DATABASE.execute_sql(WAITING_FOR_A_LOCK).fetchone()[0]:
                 return True
             time.sleep(0.05)
         return False
