@@ -48,6 +48,7 @@ describe("flaskSessionStrategy", () => {
       email: "jonas.privat@example.se",
       google_email: "CMS-Admin@gotlandskaninen.se",
       validated: true,
+      auth_method: "google",
     });
     expect(find.mock.calls[0]?.[0].where).toEqual({
       email: { equals: CMS_ADMIN },
@@ -89,6 +90,7 @@ describe("flaskSessionStrategy client address", () => {
               email: "editor@gotlandskaninen.se",
               google_email: "editor@gotlandskaninen.se",
               validated: true,
+              auth_method: "google",
             }),
             {
               status: 200,
@@ -139,6 +141,7 @@ async function authenticateCrossSite(headers: Record<string, string>) {
           email: R021_ADMIN_ROW.email,
           google_email: R021_ADMIN_ROW.email,
           validated: true,
+          auth_method: "google",
         }),
         { status: 200 },
       ),
