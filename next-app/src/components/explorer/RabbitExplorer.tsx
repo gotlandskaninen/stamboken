@@ -58,6 +58,11 @@ const GENEBANK_OPTIONS = [
   { value: 2, label: "Mellerudskanin" },
 ] as const;
 
+const COAT_OPTIONS = [
+  { value: "", label: "Alla" },
+  { value: "rex", label: "Rex" },
+] as const;
+
 const SEX_OPTIONS = [
   { value: "", label: "Alla" },
   { value: "female", label: "Hona" },
@@ -326,6 +331,7 @@ export default function RabbitExplorer({ initialData }: RabbitExplorerProps) {
   const [selectedGenebank, setSelectedGenebank] = useState(0);
   const [selectedStatus, setSelectedStatus] = useState("");
   const [selectedSex, setSelectedSex] = useState("");
+  const [selectedCoat, setSelectedCoat] = useState("");
 
   // Track whether user has interacted (sort, filter, search, paginate)
   const [userHasInteracted, setUserHasInteracted] = useState(false);
@@ -349,6 +355,7 @@ export default function RabbitExplorer({ initialData }: RabbitExplorerProps) {
     search: debouncedSearch || undefined,
     status: selectedStatus || null,
     sex: selectedSex || null,
+    rex: selectedCoat === "rex",
   };
   const listQueryKey = JSON.stringify(listQuery);
 
@@ -417,6 +424,12 @@ export default function RabbitExplorer({ initialData }: RabbitExplorerProps) {
   const handleSexChange = useCallback((value: string) => {
     setUserHasInteracted(true);
     setSelectedSex(value);
+    setPaginationModel((prev) => ({ ...prev, page: 0 }));
+  }, []);
+
+  const handleCoatChange = useCallback((value: string) => {
+    setUserHasInteracted(true);
+    setSelectedCoat(value);
     setPaginationModel((prev) => ({ ...prev, page: 0 }));
   }, []);
 
@@ -531,6 +544,25 @@ export default function RabbitExplorer({ initialData }: RabbitExplorerProps) {
                 label={t("explorer.sex", "Kön")}
               >
                 {SEX_OPTIONS.map((opt) => (
+                  <MenuItem key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+
+            {/* Coat filter */}
+            <FormControl size="small" sx={{ minWidth: 120 }}>
+              <InputLabel id="explorer-coat-label">
+                {t("coat.label")}
+              </InputLabel>
+              <Select
+                labelId="explorer-coat-label"
+                value={selectedCoat}
+                onChange={(e) => handleCoatChange(e.target.value)}
+                label={t("coat.label")}
+              >
+                {COAT_OPTIONS.map((opt) => (
                   <MenuItem key={opt.value} value={opt.value}>
                     {opt.label}
                   </MenuItem>

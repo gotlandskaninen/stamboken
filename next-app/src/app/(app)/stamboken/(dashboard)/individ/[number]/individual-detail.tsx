@@ -430,7 +430,7 @@ export function IndividualDetail({
     }
   }, [individual.number, isEditing]);
 
-  const handleFieldChange = (field: string, value: string | null) => {
+  const handleFieldChange = (field: string, value: string | boolean | null) => {
     setFormData((prev) => ({ ...prev, [field]: value }));
   };
 
