@@ -9,6 +9,7 @@ import threading
 import time
 import unittest
 from unittest import mock
+from urllib.parse import urlparse
 
 import redis
 import utils.data_access as da
@@ -16,6 +17,7 @@ import utils.database as db
 import utils.external_auth as external_auth
 import utils.settings as settings
 from extensions import session_redis
+from flask import url_for
 from herdbook import APP, limiter
 
 from tests.database_test import DatabaseTest
@@ -636,6 +638,22 @@ class TestRoleRule(RoleRulesTest):
             self.assertEqual(APP.test_client().post("/api/auth/google", json={"credential": "t"}).status_code, 403)
         self.assertIsNone(da.google_login_generation(self.member, "google", "google-sub", OUTSIDE_ADDRESS))
         self.assertTrue(da.google_login_generation(self.member, "google", "google-sub", DOMAIN_ADDRESS))
+
+    def test_a_refused_legacy_google_login_drops_the_google_token(self):
+        """Otherwise the next attempt reuses the refused identity's token and never reaches Google's account chooser."""
+        self.give_google(self.member, sub="google-sub")
+        self.member.add_role("manager", 1)
+        claims = {"sub": "google-sub", "email": OUTSIDE_ADDRESS, "email_verified": True}
+        id_token = "x." + base64.b64encode(json.dumps(claims).encode()).decode().rstrip("=") + ".y"
+        client = APP.test_client(use_cookies=True)
+        with client.session_transaction() as sess:  # where Flask-Dance keeps the token Google sent back
+            sess["google_oauth_token"] = {"access_token": "a", "token_type": "Bearer", "id_token": id_token}
+        with mock.patch("utils.external_auth.google_userinfo", return_value=None):
+            self.assertEqual(client.get("/api/login/google").get_data(as_text=True), "null")
+            again = client.get("/api/login/google")
+        with APP.test_request_context():
+            oauth_flow = url_for("google.login")
+        self.assertEqual((again.status_code, urlparse(again.location).path), (302, oauth_flow))
 
     def test_the_roles_of_an_account_without_a_session_still_count(self):
         """The rule is on sessions: is_admin and the other properties answer for an account that is not signed in."""

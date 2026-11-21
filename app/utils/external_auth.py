@@ -163,6 +163,13 @@ def google_persistent():
     return idtoken["sub"]
 
 
+def forget_google_token():
+    """Drop the Google token Flask-Dance keeps in the session, so the next login starts a new OAuth flow."""
+    blueprint = flask_dance.contrib.google.google.blueprint
+    if blueprint.token:  # its session storage raises KeyError for a token that is not there
+        del blueprint.token
+
+
 def google_verified_email():
     """
     Return the Google account's address only when Google marks it verified,

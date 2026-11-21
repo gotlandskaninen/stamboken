@@ -1643,6 +1643,9 @@ def external_login_handler(service):
                 service,
                 user.id,
             )
+            if service == "google":
+                # Else the next attempt reuses this token and skips Google's account chooser.
+                utils.external_auth.forget_google_token()
             return "null"
         da.auth_log.info("Login ok: %s, user id=%s", service, user.id)
         establish_session(user, service, generation, on_domain=da.on_role_domain(verified_email))
