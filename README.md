@@ -271,10 +271,11 @@ only):
      AND EXISTS (SELECT 1 FROM authenticators a WHERE a.user_id = u.user_id AND a.auth = 'password');
    ```
 
-A role account that is locked out gets back in with `flask users add-role`
-below, or an admin removes its role: without one the account signs in with a
-password again (Återställ lösenord sets one), links a Google login on the
-domain, and gets the role back.
+A role account that is locked out gets back when an admin removes its role:
+without one the account signs in with a password again (Återställ lösenord
+sets one) and links a Google login on the domain, and the admin gives the role
+back. When no admin can sign in to do that, `flask users add-role` below makes
+an account that can sign in an admin.
 
 `flask users add-role <konto> <roll>` is the way back when the only admin has
 lost the Google account: it gives `admin` or `matrikel_admin` to the one active,
