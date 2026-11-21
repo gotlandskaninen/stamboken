@@ -304,6 +304,20 @@ class TestAdminRemovesGoogle(RoleRulesTest):
         self.assertEqual((resp.status_code, resp.get_json()["type"]), (409, "google-unlink-refused"))
         self.assertEqual(self.identities(manager), ["sub-ansvarig"])
 
+    def test_an_admin_whose_session_ended_meanwhile_removes_nothing(self):
+        self.give_google(self.member)
+        before = da.login_generation(self.member.uuid)
+        real = da.unlink_account
+
+        def after_the_admins_logout(*args, **kwargs):
+            da.revoke_sessions(self.admin.id)  # the admin's sessions end while the request waits for the row
+            return real(*args, **kwargs)
+
+        with mock.patch.object(da, "unlink_account", after_the_admins_logout):
+            self.assertEqual(self.remove(self.member).status_code, 409)
+        self.assertEqual(self.identities(self.member), ["sub-medlem"])
+        self.assertEqual(da.account_generation(self.member.uuid), before)
+
     def test_never_the_last_way_to_sign_in(self):
         only_google = da.register_user("bara-google@example.org", None, validated=True)
         self.give_google(only_google, sub="sub-bara")

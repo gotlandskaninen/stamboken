@@ -483,12 +483,13 @@ def remove_google_login(u_id):
     """
     Removes the account's Google identity, the way back for a member whose Google account got a new one: set a
     password first, then she signs in with it and links the new identity. Refused for an account with a role and for
-    the account's last way to sign in (da.unlink_account), which also ends its sessions. 204 No Content.
+    the account's last way to sign in (da.unlink_account), which also ends its sessions, and when the admin's own
+    session ended while the request waited for the account's row. 204 No Content.
     """
     target = db.User.get_or_none(db.User.id == u_id)
     if target is None:
         return problem(404, "Användare saknas", f"Ingen användare med id {u_id}.", type="user-not-found")
-    if not da.unlink_account(target, "google"):
+    if not da.unlink_account(target, "google", session_stamps=session):
         return problem(
             409,
             "Google-inloggningen kan inte tas bort",
