@@ -13,7 +13,7 @@ import utils.settings as settings
 from herdbook import APP, limiter
 
 from tests.database_test import DatabaseTest
-from tests.google_login import ID_TOKEN
+from tests.google_login import ID_TOKEN, redirect_login
 
 limiter.enabled = False
 
@@ -25,13 +25,14 @@ WAITING_FOR_A_LOCK = (
 )
 
 
-def google_link(client, sub, email):
-    """GET /api/link/google as Google's OAuth redirect lands, with Google mocked out."""
+def google_link(client, sub, email, hd=ID_TOKEN["hd"]):
+    """GET /api/link/google as Google's OAuth redirect lands, with Google mocked out; `hd` is the token's Workspace."""
     with (
         mock.patch("utils.external_auth.available_methods", return_value=["google"]),
         mock.patch("utils.external_auth.authorized", return_value=True),
         mock.patch("utils.external_auth.get_persistent", return_value=sub),
         mock.patch("utils.external_auth.google_verified_email", return_value=email),
+        mock.patch("utils.external_auth.google_idtoken", return_value={"sub": sub, "hd": hd} if hd else {"sub": sub}),
     ):
         return client.get("/api/link/google").get_data(as_text=True)
 
@@ -234,6 +235,32 @@ class TestGoogleIdentity(RoleRulesTest):
         self.assertEqual(self.identities(self.member), ["sub-medlem"])
         self.assertEqual(db.User.get_by_id(self.member.id).google_email, DOMAIN_ADDRESS)
         self.assertEqual(client.get("/api/user").status_code, 200)  # adding is no occasion to revoke
+
+    def test_a_domain_address_without_the_domains_hd_is_no_proof(self):
+        """Whatever auth.ini says, google_email holds an address on the domain only from a token of the domain."""
+        no_hd = {"sub": "google-sub", "email": DOMAIN_ADDRESS, "email_verified": True}
+        manager = da.register_user("ansvarig@example.org", "pass", validated=True)
+        manager.add_role("manager", 1)
+        self.assertEqual(
+            google_link(self.login("ansvarig@example.org"), "sub-ansvarig", DOMAIN_ADDRESS, hd=None), "null"
+        )
+        self.assertEqual(self.identities(manager), [])
+
+        self.assertEqual(google_link(self.login(), "google-sub", DOMAIN_ADDRESS, hd=None), str(self.member.id))
+        self.assertIsNone(db.User.get_by_id(self.member.id).google_email)
+        self.assertEqual(self.grant(self.member).status_code, 409)
+
+        redirect_login(APP.test_client(), da.authenticate_with_credentials, idtoken=lambda: no_hd)
+        self.assertIsNone(db.User.get_by_id(self.member.id).google_email)
+        redirect_login(APP.test_client(), da.authenticate_with_credentials, idtoken=lambda: {**no_hd, "hd": "x.org"})
+        self.assertIsNone(db.User.get_by_id(self.member.id).google_email)
+        redirect_login(APP.test_client(), da.authenticate_with_credentials, idtoken=lambda: {**no_hd, **ID_TOKEN})
+        self.assertEqual(db.User.get_by_id(self.member.id).google_email, DOMAIN_ADDRESS)
+
+        db.Authenticators.delete().where(db.Authenticators.user == self.member.id).execute()  # frees the identity
+        account = {"email": DOMAIN_ADDRESS, "username": "ny"}
+        redirect_login(APP.test_client(), lambda m, i: None, idtoken=lambda: no_hd, auto_validate=True, account=account)
+        self.assertIsNone(db.User.get(db.User.username == "ny").google_email)
 
     def test_the_address_follows_the_identity(self):
         self.give_google(self.member)

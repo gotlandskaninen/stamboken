@@ -1422,6 +1422,11 @@ def login_handler():
 _GOOGLE_PROFILE_COLUMNS = [db.User.google_picture, db.User.google_name]
 
 
+def _storable_google_email(verified_email):
+    """The legacy route's verified address as google_email may hold it, judged by its token's hd."""
+    return da.storable_google_email(verified_email, (utils.external_auth.google_idtoken() or {}).get("hd"))
+
+
 def _link_member_if_any(user, verified_email) -> None:
     """
     Auto-link a Member to this freshly-authenticated User by matching the
@@ -1522,9 +1527,9 @@ def google_token_login():
                 # 401, not 403: the Next.js caller maps 403 to the domain-restriction text.
                 return jsonify({"error": course_message()}), 401
 
-        # None also when the identity was switched or removed after the lookup above. The token's hd and address are
-        # on the domain (checked above), so the address it writes is the domain proof.
-        generation = da.google_login_generation(user, "google", google_user_id, email) if user else None
+        # None also when the identity was switched or removed after the lookup above.
+        stored = da.storable_google_email(email, hosted_domain)
+        generation = da.google_login_generation(user, "google", google_user_id, stored) if user else None
 
         if generation:
             # Update user with Google profile data in database
@@ -1599,7 +1604,7 @@ def external_login_handler(service):
     if user and user.validated:
         # google_email is the CMS identity: only ever a verified address, written under the row lock.
         verified_email = utils.external_auth.google_verified_email() if service == "google" else None
-        generation = da.google_login_generation(user, service, persistent_id, verified_email)
+        generation = da.google_login_generation(user, service, persistent_id, _storable_google_email(verified_email))
         if generation is None:
             da.auth_log.warning("Login refused: %s, inactive or identity changed, user id=%s", service, user.id)
             return "null"
@@ -1681,7 +1686,7 @@ def external_login_handler(service):
             return None
 
         # google_email is the CMS identity; google_details() verified this address.
-        linked = da.link_account(user, service, persistent_id, email=accountdetails["email"])
+        linked = da.link_account(user, service, persistent_id, email=_storable_google_email(accountdetails["email"]))
 
         if not linked:
             # Without its identity the new account has no way in, and its address
@@ -1754,7 +1759,7 @@ def external_link_handler(service):
         current_user,
         service,
         persistent,
-        email=utils.external_auth.google_verified_email() if service == "google" else None,
+        email=_storable_google_email(utils.external_auth.google_verified_email()) if service == "google" else None,
         from_google_session=session.get("auth_method") == "google",
         # "" for Basic auth's session, which has no mark: never the account's.
         session_generation=session.get("generation", ""),

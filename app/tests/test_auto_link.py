@@ -266,7 +266,8 @@ class TestOAuthAutoLinkRoutes(FlaskTest):
     ):
         """GET /api/login/google after flask-dance's callback: an existing account
         (`user`), or a first login that auto-registers from `account_details`."""
-        idtoken = {"sub": sub, "email": verified_email, "email_verified": email_verified}
+        # A Workspace token of the domain: only one carries hd, and google_email takes a domain address only with it.
+        idtoken = {"sub": sub, "email": verified_email, "email_verified": email_verified, "hd": "gotlandskaninen.se"}
         with (
             mock.patch("herdbook._should_auto_validate_users", return_value=auto_validate),
             mock.patch("utils.external_auth.authorized", return_value=True),

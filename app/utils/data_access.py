@@ -389,7 +389,17 @@ def validate_breeding_dates(
 # The roles that keep an account on the association's Google login. Viewer and the older owner do not count.
 ROLE_LEVELS = ("admin", "matrikel_admin", "manager", "helper")
 # Fixed in code for accounts with a role, never a setting that can be missing.
-ROLE_DOMAIN = "@gotlandskaninen.se"
+ROLE_HOSTED_DOMAIN = "gotlandskaninen.se"
+ROLE_DOMAIN = "@" + ROLE_HOSTED_DOMAIN
+
+
+def storable_google_email(email, hosted_domain):
+    """
+    A Google token's verified address as google_email may hold it: one on the association's domain only from a token
+    whose hd is that domain, whatever auth.ini says, so google_email on the domain is always the proof
+    has_role_google_login reads.
+    """
+    return None if on_role_domain(email) and hosted_domain != ROLE_HOSTED_DOMAIN else email
 
 
 def holds_role(user):

@@ -31,12 +31,13 @@ def as_demo(on=True):
 
 
 def google_link(client, sub, email):
-    """GET /api/link/google as Google's OAuth redirect lands, with Google mocked out."""
+    """GET /api/link/google as Google's OAuth redirect lands, with Google (a token of the domain) mocked out."""
     with (
         mock.patch("utils.external_auth.available_methods", return_value=["google"]),
         mock.patch("utils.external_auth.authorized", return_value=True),
         mock.patch("utils.external_auth.get_persistent", return_value=sub),
         mock.patch("utils.external_auth.google_verified_email", return_value=email),
+        mock.patch("utils.external_auth.google_idtoken", return_value={"sub": sub, "hd": ID_TOKEN["hd"]}),
     ):
         return client.get("/api/link/google").get_data(as_text=True)
 
