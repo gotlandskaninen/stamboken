@@ -10,6 +10,7 @@ import time
 import unittest
 from unittest import mock
 
+import redis
 import utils.data_access as da
 import utils.database as db
 import utils.external_auth as external_auth
@@ -390,6 +391,12 @@ class TestAddRoleCommand(RoleRulesTest):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEnded(sessions)  # the role is in the demo's data too
 
+    def test_saves_nothing_when_the_mark_cannot_be_replaced(self):
+        self.give_google(self.member)
+        with mock.patch.object(da, "new_generation", side_effect=redis.exceptions.ConnectionError):
+            self.assertNotEqual(self.add_role().exit_code, 0)
+        self.assertFalse(self.has_level(self.member, "admin"))
+
     def test_refuses_an_account_without_google_or_without_the_course(self):
         result = self.add_role()
         self.assertNotEqual(result.exit_code, 0, result.output)
@@ -524,6 +531,16 @@ class TestRoleRule(RoleRulesTest):
         self.assertEqual(self.grant(self.member, "matrikel_admin").status_code, 200)
         self.assertEnded(sessions)  # the role is in the demo's data too
         self.assertEqual(self.google_login().get("/api/user").status_code, 200)  # the holder signs in again
+
+    def test_giving_a_role_saves_nothing_when_the_mark_cannot_be_replaced(self):
+        grant = {"action": "add", "role": "matrikel_admin", "user": self.member.id}
+        self.give_google(self.member)
+        with (
+            mock.patch.object(da, "new_generation", side_effect=redis.exceptions.ConnectionError),
+            self.assertRaises(redis.exceptions.ConnectionError),
+        ):
+            da.update_role(grant, self.admin.uuid)
+        self.assertFalse(self.has_level(self.member, "matrikel_admin"))
 
     def test_basic_auth_spends_the_login_budget_on_the_right_password_as_on_a_wrong_one(self):
         """Otherwise the limit tells a role account's right password from a wrong one."""
