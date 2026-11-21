@@ -3,7 +3,7 @@ Flask CLI for member registry operations.
 
 Usage:
     flask members import <csv_path> [--dry-run]
-    flask members link-by-herd [--dry-run]
+    flask members link-by-herd [--apply --actor-user-id <id>]
 
 `import` expects the MATR2026 paper-matrikel layout (headers matched
 case-insensitively after normalization):
@@ -53,7 +53,7 @@ Rules (Member Model v2 design spec):
 `link-by-herd` links existing accounts to member rows through herd
 ownership: the only account with role `owner` on herd G<Nr>/M<Nr> whose name
 equals the name of membership Nr's main member is linked (mode "cli"). Other
-cases are listed for the register manager. Supports --dry-run.
+cases are listed for the register manager. Plan only unless --apply.
 """
 
 import csv
@@ -798,8 +798,14 @@ def _print_report(report: dict, dry_run: bool) -> None:
 
 
 @members_cli.command("link-by-herd")
-@click.option("--dry-run", is_flag=True, help="Print the full plan without writing.")
-def link_by_herd_cmd(dry_run: bool) -> None:
+@click.option("--apply", "apply_links", is_flag=True, help="Write the links (default prints the plan only).")
+@click.option(
+    "--actor-user-id",
+    type=int,
+    default=None,
+    help="Admin/matrikel_admin user recorded as audit actor (required with --apply).",
+)
+def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None) -> None:
     """Link accounts to the main member of the membership whose herd they own.
 
     The account that is the only `owner` of herd G<Nr>/M<Nr> and whose name
@@ -807,10 +813,21 @@ def link_by_herd_cmd(dry_run: bool) -> None:
     Everything else is listed for the register manager. Each link commits on
     its own, so the command is safe to re-run.
     """
+    actor = None
+    if apply_links:
+        if actor_user_id is None:
+            raise click.UsageError("--apply kräver --actor-user-id <id> (auditloggens aktör)")
+        actor = User.get_or_none(User.id == actor_user_id)
+        if actor is None or not actor.is_active or not (actor.is_admin or actor.is_matrikel_admin):
+            raise click.UsageError(
+                f"--actor-user-id {actor_user_id}: måste vara ett aktivt konto med rollen admin eller matrikel_admin"
+            )
+    dry_run = not apply_links
+
     owners: dict[int, list[User]] = {}
     for user in User.select().order_by(User.id):
         for role in user.privileges:
-            if role["level"] == "owner":
+            if role["level"] == "owner" and "herd" in role:  # skip a malformed entry
                 owners.setdefault(role["herd"], []).append(user)
 
     report = {"linked": 0, "already": 0, "listed": []}
@@ -821,7 +838,7 @@ def link_by_herd_cmd(dry_run: bool) -> None:
         for prefix in ("G", "M"):
             herd = Herd.get_or_none(Herd.herd == f"{prefix}{membership.member_number}")
             if herd is not None:
-                _link_herd_owner(herd, membership, owners.get(herd.id, []), dry_run, report)
+                _link_herd_owner(herd, membership, owners.get(herd.id, []), actor, report)
 
     click.echo(
         f"Kopplade: {report['linked']}, Redan kopplade: {report['already']}, Till granskning: {len(report['listed'])}"
@@ -829,14 +846,14 @@ def link_by_herd_cmd(dry_run: bool) -> None:
     for code, reason in report["listed"]:
         click.echo(f"  {code}: {reason}")
     if dry_run:
-        click.echo("(dry-run — inga skrivningar gjordes)")
+        click.echo("(endast plan — inget skrevs; kör om med --apply)")
 
 
 def _norm_name(name: str | None) -> str:
     return " ".join((name or "").split()).casefold()
 
 
-def _link_herd_owner(herd, membership, owners: list, dry_run: bool, report: dict) -> None:
+def _link_herd_owner(herd, membership, owners: list, actor, report: dict) -> None:
     mains = list(Member.select().where(Member.membership == membership, Member.role == "huvudmedlem"))
     if mains and all(m.end_date is not None for m in mains):
         return  # the main member has left
@@ -865,9 +882,8 @@ def _link_herd_owner(herd, membership, owners: list, dry_run: bool, report: dict
         listed("länken skulle ge kontot åtkomst till fler besättningar")
     else:
         try:
-            if not dry_run:
-                # The account is its own audit actor, as in the oauth link.
-                link_member_user(main.id, owners[0].id, actor=owners[0], mode="cli")
+            if actor is not None:
+                link_member_user(main.id, owners[0].id, actor=actor, mode="cli")
         except (ConfirmRequired, LinkError, IntegrityError) as exc:
             listed(f"länkningen avvisades ({type(exc).__name__})")
         else:

@@ -19,11 +19,15 @@ class TestMembersLinkByHerd(DatabaseTest):
         self._n = 0
 
     def _run(self, *extra):
+        """Plan only, unless extra says otherwise."""
         return self.runner.invoke(
             members_cli,
             ["link-by-herd", *extra],
             obj=ScriptInfo(create_app=lambda: APP),
         )
+
+    def _apply(self):
+        return self._run("--apply", "--actor-user-id", str(self.admin.id))
 
     def _membership(self, number, first="Anna", last="Svensson", status="active", **member_kwargs):
         membership = db.Membership.create(member_number=number, membership_status=status)
@@ -49,19 +53,20 @@ class TestMembersLinkByHerd(DatabaseTest):
         _, person = self._membership(901)
         user = self._account(owns=self._herd("G901"))
 
-        result = self._run()
+        result = self._apply()
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(self._linked_user_id(person), user.id)
         audit = db.MatrikelAudit.get(db.MatrikelAudit.action == "person_user_linked")
         self.assertEqual((audit.payload["source"], audit.payload["person_id"]), ("cli", person.id))
+        self.assertEqual(audit.actor_id, self.admin.id)
         self.assertIn("Kopplade: 1", result.output)
 
     def test_name_match_ignores_case_and_spacing(self):
         _, person = self._membership(901)
         user = self._account(fullname="  anna   SVENSSON ", owns=self._herd("G901"))
 
-        result = self._run()
+        result = self._apply()
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(self._linked_user_id(person), user.id)
@@ -70,7 +75,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         _, person = self._membership(901)
         self._account(fullname="Eva Svensson", owns=self._herd("G901"))
 
-        result = self._run()
+        result = self._apply()
 
         self.assertIsNone(self._linked_user_id(person))
         self.assertIn("Kopplade: 0", result.output)
@@ -82,7 +87,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         _, person = self._membership(901)
         self._account(fullname="Anna", owns=self._herd("G901"))
 
-        result = self._run()
+        result = self._apply()
 
         self.assertIsNone(self._linked_user_id(person))
         self.assertIn("namnet skiljer sig", result.output)
@@ -93,7 +98,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         _, person2 = self._membership(902)
         self._account(fullname=None, owns=self._herd("G902"))
 
-        result = self._run()
+        result = self._apply()
 
         self.assertIsNone(self._linked_user_id(person))
         self.assertIsNone(self._linked_user_id(person2))
@@ -105,7 +110,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         self._account(owns=herd)
         self._account(owns=herd)
 
-        result = self._run()
+        result = self._apply()
 
         self.assertIsNone(self._linked_user_id(person))
         self.assertIn("flera konton", result.output)
@@ -115,7 +120,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         _, person = self._membership(901)
         self._herd("G901")
 
-        result = self._run()
+        result = self._apply()
 
         self.assertIsNone(self._linked_user_id(person))
         self.assertIn("inget konto", result.output)
@@ -125,7 +130,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         membership = db.Membership.create(member_number=901)
         self._account(owns=self._herd("G901"))
 
-        result = self._run()
+        result = self._apply()
 
         self.assertEqual(db.Member.select().where(db.Member.user.is_null(False), db.Member.membership == membership).count(), 0)
         self.assertIn("saknar huvudmedlem", result.output)
@@ -138,7 +143,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         m_user = self._account(fullname="Maja Malm", owns=self._herd("M902", genebank=1))
         self._account(fullname="Maja Malm", owns=self._herd("M901", genebank=1))
 
-        result = self._run()
+        result = self._apply()
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(self._linked_user_id(g_person), g_user.id)
@@ -153,7 +158,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         person.user = user
         person.save()
 
-        result = self._run()
+        result = self._apply()
 
         self.assertIn("Redan kopplade: 1", result.output)
         self.assertIn("Till granskning: 0", result.output)
@@ -166,7 +171,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         person.save()
         self._account(owns=self._herd("G901"))
 
-        result = self._run()
+        result = self._apply()
 
         self.assertEqual(self._linked_user_id(person), other.id)
         self.assertIn("redan kopplad till ett annat konto", result.output)
@@ -178,7 +183,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         elsewhere.user = user
         elsewhere.save()
 
-        result = self._run()
+        result = self._apply()
 
         self.assertIsNone(self._linked_user_id(person))
         self.assertEqual(self._linked_user_id(elsewhere), user.id)
@@ -190,27 +195,27 @@ class TestMembersLinkByHerd(DatabaseTest):
         _, left = self._membership(902, end_date=date(2026, 1, 1))
         self._account(owns=self._herd("G902"))
 
-        result = self._run()
+        result = self._apply()
 
         self.assertIsNone(self._linked_user_id(ended))
         self.assertIsNone(self._linked_user_id(left))
         self.assertIn("Kopplade: 0", result.output)
         self.assertIn("Till granskning: 0", result.output)
 
-    def test_dry_run_prints_same_plan_and_writes_nothing(self):
+    def test_plan_only_run_prints_same_plan_and_writes_nothing(self):
         _, person = self._membership(901)
         self._account(owns=self._herd("G901"))
         self._membership(902)
         self._herd("G902")
 
-        result = self._run("--dry-run")
+        result = self._run()
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIsNone(self._linked_user_id(person))
         self.assertEqual(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_user_linked").count(), 0)
         self.assertIn("Kopplade: 1", result.output)
         self.assertIn("G902", result.output)
-        self.assertIn("dry-run", result.output)
+        self.assertIn("endast plan", result.output)
 
     def test_second_run_changes_nothing(self):
         _, person = self._membership(901)
@@ -218,8 +223,8 @@ class TestMembersLinkByHerd(DatabaseTest):
         self._membership(902)
         self._herd("G902")
 
-        self._run()
-        result = self._run()
+        self._apply()
+        result = self._apply()
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(self._linked_user_id(person), user.id)
@@ -238,7 +243,43 @@ class TestMembersLinkByHerd(DatabaseTest):
         m.save()
         self._account(owns=g)
 
-        result = self._run()
+        result = self._apply()
 
         self.assertIsNone(self._linked_user_id(person))
         self.assertIn("fler besättningar", result.output)
+
+    def test_apply_without_actor_is_a_usage_error(self):
+        _, person = self._membership(901)
+        self._account(owns=self._herd("G901"))
+
+        result = self._run("--apply")
+
+        self.assertEqual(result.exit_code, 2, result.output)
+        self.assertIn("--actor-user-id", result.output)
+        self.assertIsNone(self._linked_user_id(person))
+
+    def test_inactive_or_unprivileged_actor_is_refused(self):
+        _, person = self._membership(901)
+        self._account(owns=self._herd("G901"))
+        plain = self._account()
+        inactive = self._account()
+        inactive.add_role("admin", None)
+        inactive.is_active = False
+        inactive.save()
+
+        for actor in (plain, inactive):
+            result = self._run("--apply", "--actor-user-id", str(actor.id))
+            self.assertEqual(result.exit_code, 2, result.output)
+        self.assertIsNone(self._linked_user_id(person))
+
+    def test_owner_entry_without_herd_is_skipped(self):
+        _, person = self._membership(901)
+        user = self._account(owns=self._herd("G901"))
+        broken = self._account()
+        broken.privileges = [{"level": "owner"}]
+        broken.save()
+
+        result = self._apply()
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(self._linked_user_id(person), user.id)
