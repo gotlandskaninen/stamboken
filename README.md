@@ -183,6 +183,8 @@ Logga ut överallt.
   traffic again only when both APIs run the older version. Otherwise revoked
   sessions come back: one nobody has used since is still in the store with its
   old epoch, and a login in flight can save a session after the mass logout.
+  If the new version never started (it refuses to without `GOOGLE_CLIENT_ID`
+  in production), it made no sessions, and no mass logout is needed.
 - After an unclean restart of the sessions' Redis, run `flask users
   mass-logout`: an older snapshot brings old marks and old sessions back
   together.
