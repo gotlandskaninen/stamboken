@@ -231,7 +231,9 @@ The role rule: Google is the only way into an account with a role.
 - A session of it that did not sign in with Google is emptied at its next
   request (`_session_revoked`), so giving a role ends the account's password
   sessions. `is_admin` and the other role properties are unchanged: they also
-  answer for an account that is not the caller.
+  answer for an account that is not the caller. The demo API, whose roles are
+  a copy up to a day old, applies this only to sessions it made itself; a
+  session production made is judged by production's rule.
 - A Google login to it, on either Google route, needs a verified address on
   the domain from a token of the domain, whatever `auth.ini` says.
 - The CMS admits only a session that signed in with Google (`auth_method` in
@@ -275,11 +277,12 @@ only):
      AND EXISTS (SELECT 1 FROM authenticators a WHERE a.user_id = u.user_id AND a.auth = 'password');
    ```
 
-A role account that is locked out gets back when an admin removes its role:
-without one the account signs in with a password again (Återställ lösenord
-sets one) and links a Google login on the domain, and the admin gives the role
-back. When no admin can sign in to do that, `flask users add-role` below makes
-an account that can sign in an admin.
+A role account that is locked out gets back through an admin: remove its role,
+set a password (Återställ lösenord) and remove its Google login if it has one,
+since a password session can add a first Google identity but not replace one.
+The holder then signs in with the password and links a Google login on the
+domain, and the admin gives the role back. When no admin can sign in to do
+that, `flask users add-role` below makes an account that can sign in an admin.
 
 `flask users add-role <konto> <roll>` is the way back when the only admin has
 lost the Google account: it gives `admin` or `matrikel_admin` to the one active,
