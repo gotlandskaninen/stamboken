@@ -35,12 +35,12 @@ export default function StambokenOnlinePage() {
         >
           <Typography sx={{ fontSize: "17px", lineHeight: 1.65 }}>
             Stamboken Online är vårt digitala register för de två svenska
-            lantraskaninerna. Uppfödarna lägger själva in sina individer, kullar
-            och härstamningar, och varje kanin som får ett genbanksintyg
-            utfärdat hamnar i föreningens centrala register – ett för
-            gotlandskanin, ett för mellerudskanin. Uppfödare kan också göra en
-            provparning i registret för att se hur nära släkt två tänkta
-            avelsdjur är innan de paras.
+            lantraskaninerna. Uppfödarna lägger in sina individer, kullar och
+            härstamningar själva i Stamboken eller skickar in dem på papper, och
+            varje kanin som får ett genbanksintyg hamnar i föreningens centrala
+            register – ett för gotlandskanin, ett för mellerudskanin. Uppfödare
+            kan också göra en provparning i registret för att se hur nära släkt
+            två tänkta avelsdjur är innan de paras.
           </Typography>
           <Box sx={{ mt: 8, display: "flex", gap: 3, flexWrap: "wrap" }}>
             <LinkButton href="/stamboken/min-besattning" variant="contained">
