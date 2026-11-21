@@ -225,6 +225,13 @@ domain (`google_email`); the domain is fixed in code:
   password (Återställ lösenord) and removes the Google login; the holder signs
   in with the password and links the new identity; the admin gives the role
   back.
+- An account suspected to be compromised: Logga ut överallt and a new password
+  are not enough, since a password session can link a first Google identity,
+  and that login stays. An admin also removes the account's Google login
+  (`DELETE /api/v2/admin/users/<id>/google`, after removing any role) unless it
+  is known to be the holder's.
+- Before giving a role, an admin checks that the account's Google address
+  (`google_email`) is the holder's.
 
 `ALLOW_ROLE_PASSWORD_LOGIN=true` lifts these role rules for development and
 tests, where the seed's accounts with roles have only passwords. The
