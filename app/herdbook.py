@@ -1602,9 +1602,12 @@ def external_login_handler(service):
             return _not_validated_response()
 
     if user and user.validated:
-        # google_email is the CMS identity: only ever a verified address, written under the row lock.
-        verified_email = utils.external_auth.google_verified_email() if service == "google" else None
-        generation = da.google_login_generation(user, service, persistent_id, _storable_google_email(verified_email))
+        # google_email is the CMS identity: only ever a verified address, written under the row lock. The member link
+        # takes the same address: auth.ini may name no domain, so nothing upstream checked the token's hd.
+        verified_email = (
+            _storable_google_email(utils.external_auth.google_verified_email()) if service == "google" else None
+        )
+        generation = da.google_login_generation(user, service, persistent_id, verified_email)
         if generation is None:
             da.auth_log.warning("Login refused: %s, inactive or identity changed, user id=%s", service, user.id)
             return "null"
@@ -1685,8 +1688,9 @@ def external_login_handler(service):
             da.auth_log.error("Automatic registering of user for service %s FAILED", service)
             return None
 
-        # google_email is the CMS identity; google_details() verified this address.
-        linked = da.link_account(user, service, persistent_id, email=_storable_google_email(accountdetails["email"]))
+        # google_email is the CMS identity; google_details() verified this address. The member link below takes it too.
+        verified_email = _storable_google_email(accountdetails["email"])
+        linked = da.link_account(user, service, persistent_id, email=verified_email)
 
         if not linked:
             # Without its identity the new account has no way in, and its address
@@ -1721,7 +1725,7 @@ def external_login_handler(service):
         # Phase 8: auto-link Member on first OAuth login of an auto-
         # registered user (domain guard lives in try_auto_link_member).
         # google_details() returns only an email_verified address.
-        _link_member_if_any(user, accountdetails.get("email"))
+        _link_member_if_any(user, verified_email)
         return_to = session.pop("return_to_after_oauth", None)  # Get the return_to url and remove it from the session
         if return_to:
             return redirect(_safe_redirect_url(return_to))

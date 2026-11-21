@@ -263,11 +263,12 @@ class TestOAuthAutoLinkRoutes(FlaskTest):
         userinfo=None,
         auto_validate=True,
         sub="sub-dance",
+        hd="gotlandskaninen.se",
     ):
         """GET /api/login/google after flask-dance's callback: an existing account
         (`user`), or a first login that auto-registers from `account_details`."""
-        # A Workspace token of the domain: only one carries hd, and google_email takes a domain address only with it.
-        idtoken = {"sub": sub, "email": verified_email, "email_verified": email_verified, "hd": "gotlandskaninen.se"}
+        # A Workspace token of the domain by default: only one carries its hd, which a domain address needs.
+        idtoken = {"sub": sub, "email": verified_email, "email_verified": email_verified, "hd": hd}
         with (
             mock.patch("herdbook._should_auto_validate_users", return_value=auto_validate),
             mock.patch("utils.external_auth.authorized", return_value=True),
@@ -328,6 +329,19 @@ class TestOAuthAutoLinkRoutes(FlaskTest):
 
         self.assertEqual(resp.status_code, 302)
         self.assertEqual(self._linked_to(), anna.id)
+
+    def test_dance_login_links_no_member_without_the_domains_hd(self):
+        """auth.ini may name no domain, so nothing upstream checks the token's hd: the member link does."""
+        anna = da.register_user("anna.privat@example.se", "pass", username="anna")
+        for hd in (None, "example.org"):
+            self.assertEqual(self._dance_login(anna, "anna@gotlandskaninen.se", hd=hd).status_code, 302)
+            self.assertIsNone(self._linked_to(), f"linked with hd={hd}")
+            self.app.get("/api/logout")
+
+        first = {"email": "anna@gotlandskaninen.se", "username": "anna2"}
+        self._dance_login(None, "anna@gotlandskaninen.se", account_details=first, sub="sub-anna2", hd=None)
+        self.assertTrue(db.User.select().where(db.User.username == "anna2").exists())  # registered all the same
+        self.assertIsNone(self._linked_to())
 
     def test_dance_first_login_refuses_an_email_twin_in_another_casing(self):
         eve = da.register_user("Anna@gotlandskaninen.se", "pass", username="eve")
