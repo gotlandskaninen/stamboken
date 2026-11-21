@@ -122,6 +122,15 @@ class TestSession(SessionTest):
         self.assertEqual(client.get("/api/user", headers=auth).get_json()["auth_method"], None)
         self.assertEqual(client.get("/api/active_users", headers=auth).status_code, 200)
 
+    def test_a_login_flask_login_refuses_writes_no_session(self):
+        """login_user refuses an inactive account; establish_session then writes nothing, not even the mark."""
+        inactive = db.User.get_by_id(self.viewer.id)
+        inactive.is_active = False
+        with APP.test_request_context():
+            herdbook.establish_session(inactive, "losenord", da.login_generation(inactive.uuid))
+            written = {"user_id", "_user_id", "generation", "auth_method", "logout_epoch"} & set(herdbook.session)
+            self.assertEqual(written, set())
+
     def test_a_demo_login_holds_on_the_demo_after_the_generation_changed(self):
         old = self.login()
         da.new_generation(self.viewer.uuid)

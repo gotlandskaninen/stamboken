@@ -682,6 +682,9 @@ def establish_session(user, method, generation):
     account's mark read under its row lock, then rotates the sid. A session's
     stamps are never rewritten; a change of credentials revokes it instead.
     """
+    if not user.is_active:
+        # login_user refuses it too: a refused login must not leave a user and a mark that wake on reactivation.
+        return
     _stamp_login()
     session["auth_method"] = method
     session["generation"] = generation
@@ -1595,7 +1598,7 @@ def external_login_handler(service):
     if user and user.validated:
         generation = da.google_login_generation(user, service, persistent_id)
         if generation is None:
-            da.auth_log.warning("Login refused: %s, identity changed meanwhile, user id=%s", service, user.id)
+            da.auth_log.warning("Login refused: %s, inactive or identity changed, user id=%s", service, user.id)
             return "null"
         da.auth_log.info("Login ok: %s, user id=%s", service, user.id)
         establish_session(user, service, generation)

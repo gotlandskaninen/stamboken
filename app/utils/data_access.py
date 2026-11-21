@@ -4527,10 +4527,12 @@ def new_generation(user_uuid):
 def google_login_generation(user, method, ident):
     """
     login_generation for a login through `method` (Google): under the account's row lock the identity is looked up
-    once more, and a switch or removal that got there first refuses the login (None).
+    once more, and a deactivation, switch or removal that got there first refuses the login (None).
     """
     with DATABASE.atomic():
-        User.select(User.id).where(User.id == user.id).for_update().get()
+        account = User.select(User.id, User.is_active).where(User.id == user.id).for_update().get()
+        if not account.is_active:
+            return None
         generation = login_generation(user.uuid)
         again = authenticate_with_credentials(method, ident)
     return generation if again and again.id == user.id else None
