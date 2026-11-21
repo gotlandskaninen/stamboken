@@ -3,7 +3,7 @@ Flask CLI for member registry operations.
 
 Usage:
     flask members import <csv_path> [--dry-run]
-    flask members link-users [--apply]
+    flask members link-by-herd [--apply --actor-user-id <id>]
 
 `import` expects the MATR2026 paper-matrikel layout (headers matched
 case-insensitively after normalization):
@@ -50,17 +50,10 @@ Rules (Member Model v2 design spec):
   so imported persons always have NULL.
 - Import never sets Member.user and never calls the auto-link helper.
 
-`link-users` is the manual follow-up to that last rule: it links existing
-herdbook accounts to imported person rows on the CONTACT email, so
-User.effective_herd_ids() and /medlem/profil work for them. It is a
-dry run unless --apply is given, never overwrites an existing
-Member.user, never touches workspace_email and never calls the auto-link
-helper (which matches workspace_email only — imported rows have none).
-Because the spreadsheet email is unverified, a link may never convey herd
-access the account does not already hold: candidates whose link_access_delta
-is non-empty are parked for manual review, where the matrikel-admin UI is
-the only path that can confirm them. --apply writes through
-link_member_user() and therefore requires --actor-user-id.
+`link-by-herd` links existing accounts to member rows through herd
+ownership: the only account with role `owner` on herd G<Nr>/M<Nr> whose name
+equals the name of membership Nr's main member is linked (mode "cli"). Other
+cases are listed for the register manager. Plan only unless --apply.
 """
 
 import csv
@@ -70,7 +63,7 @@ import re
 import click
 from flask.cli import AppGroup
 from peewee import IntegrityError, fn
-from utils.database import DB_PROXY, Herd, Member, Membership, User
+from utils.database import DB_PROXY, Genebank, Herd, Member, Membership, User
 from utils.matrikel import (
     ANONYMIZED_FIRST_NAME,
     ANONYMIZED_LAST_NAME,
@@ -347,7 +340,7 @@ def _find_adoptable_membership(main: dict):
             Member.role == "huvudmedlem",
             Member.end_date.is_null(True),
             Membership.member_number.is_null(True),
-            Membership.membership_status == "active",
+            Membership.membership_status == Status.ACTIVE,
             fn.LOWER(Member.email) == main["email"],
         )
     )
@@ -727,7 +720,7 @@ def _leftover_numberless(adopted_ids: set[int]) -> list[tuple[int, str]]:
         Membership.select()
         .where(
             Membership.member_number.is_null(True),
-            Membership.membership_status == "active",
+            Membership.membership_status == Status.ACTIVE,
         )
         .order_by(Membership.id)
     )
@@ -804,7 +797,7 @@ def _print_report(report: dict, dry_run: bool) -> None:
         click.echo("(dry-run — no writes performed)")
 
 
-@members_cli.command("link-users")
+@members_cli.command("link-by-herd")
 @click.option("--apply", "apply_links", is_flag=True, help="Write the links (default prints the plan only).")
 @click.option(
     "--actor-user-id",
@@ -812,17 +805,16 @@ def _print_report(report: dict, dry_run: bool) -> None:
     default=None,
     help="Admin/matrikel_admin user recorded as audit actor (required with --apply).",
 )
-def link_users_cmd(apply_links: bool, actor_user_id: int | None) -> None:
-    """Link existing herdbook users to member rows on the contact email.
+def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None) -> None:
+    """Link accounts to the main member of the membership whose herd they own.
 
-    The contact email is UNVERIFIED (spreadsheet), so a match may never
-    convey herd access the account does not already hold: candidates whose
-    link would convey herds (link_access_delta) are parked for manual review
-    — the matrikel-admin UI is the path that can confirm them.
-
-    --apply commits ONE TRANSACTION PER CANDIDATE (link_member_user's own),
-    not one for the run: a crashed run keeps the links it already made and a
-    re-run simply continues from there.
+    The only account with role `owner` on herd G<Nr>/M<Nr> whose name equals the
+    name of membership Nr's main member is proposed as that member's account.
+    THE NAME IS NO PROOF: the account holder can edit it, and so can a genebank
+    manager, who can also hand out `owner`. Read every printed pair before
+    running with --apply. Without --apply nothing is written and the plan is
+    exactly what --apply then does; everything else is listed for the register
+    manager. Each link commits on its own (mode "cli"), so a re-run is safe.
     """
     actor = None
     if apply_links:
@@ -834,105 +826,39 @@ def link_users_cmd(apply_links: bool, actor_user_id: int | None) -> None:
                 f"--actor-user-id {actor_user_id}: måste vara ett aktivt konto med rollen admin eller matrikel_admin"
             )
 
-    report = _plan_user_links()
+    to_link, listed, already = _plan_herd_links()
 
-    if apply_links and report["linked"]:
-        applied, raced, parked = [], [], []
-        # NO outer transaction for the run — a deliberate deviation:
-        # link_member_user() opens its own
-        # DB_PROXY.atomic() and each candidate therefore commits on its own.
-        # A batch under one outer transaction would hold every membership →
-        # user → person row lock it took until the last candidate committed
-        # (RELEASE SAVEPOINT retains the locks a savepoint acquired), blocking
-        # every concurrent admin action on those rows for the length of the run
-        # and risking a deadlock against a writer taking them in between.
-        # Per candidate is safe because each link is audited on its own and the
-        # command is idempotent: a crashed run leaves the links it already made
-        # in place, and a re-run re-plans (linked rows drop out) and continues.
-        for member, user in report["linked"]:
-            # No pre-locks — the operation owns them. A refused or raced
-            # candidate rolls back only its own transaction and never blocks a
-            # later one: the unique-index backstop surfaces as
-            # the mapped LinkError or as a raw IntegrityError, both -> raced.
-            # Invalidation: mode="cli" can never convey — a
-            # non-empty delta raises ConfirmRequired before any write — so the
-            # operation's post-commit _invalidate_genebanks() always sees an
-            # empty set here and nothing is ever invalidated by this command.
-            try:
-                link_member_user(member.id, user.id, actor=actor, mode="cli")
-            except ConfirmRequired as needs:
-                parked.append((member, user, [h["herd"] for h in needs.conveys]))
-            except (LinkError, IntegrityError):
-                raced.append((member, user))
-            else:
-                applied.append((member, user))
-        report["linked"] = applied
-        report["raced"] = raced
-        report["needs_review"].extend(parked)
-
-    _print_link_report(report, apply_links)
-
-
-def _plan_user_links() -> dict:
-    """Match unlinked active person rows to users by contact email.
-
-    Candidates are grouped by lowercased email, so a user (matched on that
-    same lowercased email) can never appear in more than one group — which
-    is what guarantees at most one member row per user.
-    """
-    report = {
-        "linked": [],  # (member, user)
-        "ambiguous": [],  # (email, reason, [member, ...])
-        "already_linked": [],  # (member, user, existing member)
-        "needs_review": [],  # (member, user, herd codes) — link would grant new herd access
-        "raced": [],  # (member, user) — plan invalidated by a concurrent write during --apply
-        "unmatched": 0,
-    }
-    groups: dict[str, list] = {}
-    candidates = (
-        Member.select()
-        .where(
-            Member.end_date.is_null(True),
-            Member.user.is_null(True),
-            Member.email.is_null(False),
-        )
-        .order_by(Member.id)
-    )
-    for member in candidates:
-        groups.setdefault(member.email.strip().lower(), []).append(member)
-
-    for email, members in sorted(groups.items()):
-        users = list(User.select().where(fn.LOWER(User.email) == email).order_by(User.id))
-        if not users:
-            report["unmatched"] += len(members)
-        elif len(users) > 1:
-            labels = ", ".join(_user_label(u) for u in users)
-            report["ambiguous"].append((email, f"{len(users)} users share this email ({labels})", members))
-        elif len(members) > 1:
-            reason = f"user {_user_label(users[0])} matches {len(members)} member rows"
-            report["ambiguous"].append((email, reason, members))
+    linked = []
+    for main, user, codes in to_link:
+        try:
+            if apply_links:
+                link_member_user(main.id, user.id, actor=actor, mode="cli")
+        except (ConfirmRequired, LinkError, IntegrityError) as exc:
+            listed.append((codes, f"länkningen avvisades ({type(exc).__name__})"))
         else:
-            # An existing link (active OR ended person row) is never
-            # overwritten — one user, at most one member row.
-            existing = Member.select().where(Member.user == users[0]).first()
-            if existing is not None:
-                report["already_linked"].append((members[0], users[0], existing))
-                continue
-            # Escalation guard: the unverified spreadsheet email must never
-            # convey herd access the account does not already hold. The plan
-            # uses the same delta the operation re-computes under its locks
-            # (link_access_delta) — a non-empty delta is parked for the
-            # matrikel-admin UI, the only path that can confirm it.
-            delta = link_access_delta(members[0], users[0])
-            if delta:
-                report["needs_review"].append((members[0], users[0], [h["herd"] for h in delta]))
-            else:
-                report["linked"].append((members[0], users[0]))
-    return report
+            linked.append((main, user, codes))
+
+    click.echo(
+        f"{'Kopplade' if apply_links else 'Att koppla'}: {len(linked)}, "
+        f"Redan kopplade: {already}, Till granskning: {len(listed)}"
+    )
+    for main, user, codes in linked:
+        click.echo(f"  {'/'.join(codes)}: {_member_label(main)} -> user {_user_label(user)}")
+    if listed:
+        click.echo("Till granskning:")
+        for codes, reason in listed:
+            click.echo(f"  {'/'.join(codes)}: {reason}")
+    if not apply_links:
+        click.echo("(endast plan — läs paren ovan, inget skrevs; kör om med --apply)")
+
+
+def _norm_name(name: str | None) -> str:
+    return " ".join((name or "").split()).casefold()
 
 
 def _user_label(user) -> str:
-    return user.username or user.email
+    # The id always identifies the account: several can share an address.
+    return f"{user.username or user.email} (id {user.id})"
 
 
 def _member_label(member) -> str:
@@ -940,47 +866,108 @@ def _member_label(member) -> str:
     return f"member {member.id}: {name} <{member.email}>"
 
 
-def _print_link_report(report: dict, apply_links: bool) -> None:
-    if not apply_links:
-        click.echo("DRY-RUN — planned user links (re-run with --apply to write):")
+def _owner_index() -> tuple[dict[int, dict[int, User]], set[int]]:
+    """Herd id -> {user id: user} with role owner, and the users with an incomplete owner role."""
+    owners: dict[int, dict[int, User]] = {}
+    incomplete: set[int] = set()
+    for user in User.select().order_by(User.id):
+        for role in user.privileges:
+            if not isinstance(role, dict) or "level" not in role:
+                incomplete.add(user.id)  # link_access_delta reads role["level"]
+                continue
+            if role["level"] != "owner":
+                continue
+            herd_id = role.get("herd")
+            if isinstance(herd_id, str) and re.fullmatch(r"[0-9]+", herd_id):
+                herd_id = int(herd_id)  # older rows may store the id as a string
+            if isinstance(herd_id, bool) or not isinstance(herd_id, int):
+                incomplete.add(user.id)
+                continue
+            owners.setdefault(herd_id, {})[user.id] = user
+    return owners, incomplete
 
-    if report["linked"]:
-        click.echo("Linked:" if apply_links else "Would link:")
-        for member, user in report["linked"]:
-            click.echo(f"  {_member_label(member)} -> user {_user_label(user)}")
 
-    if report["ambiguous"]:
-        click.echo("Ambiguous (nothing linked — needs manual resolution):")
-        for email, reason, members in report["ambiguous"]:
-            click.echo(f"  {email}: {reason}")
-            for member in members:
-                click.echo(f"    {_member_label(member)}")
+def _plan_herd_links() -> tuple[list, list, int]:
+    """Decide every link first: returns (to_link [(main, user, codes)], listed [(codes, reason)], already)."""
+    owners, incomplete = _owner_index()
+    memberships = {m.member_number: m for m in Membership.select().where(Membership.member_number.is_null(False))}
+    herds_by_code: dict[str, list] = {}
+    for herd in Herd.select(Herd, Genebank).join(Genebank):
+        found = re.fullmatch(r"([GM])([1-9][0-9]*)", herd.herd or "")
+        # The prefix names the genebank by its initial, as in data_access._genebank_letters.
+        if found and herd.genebank.name[:1].upper() == found.group(1):
+            herds_by_code.setdefault(herd.herd, []).append(herd)
 
-    if report["already_linked"]:
-        click.echo("Already linked (skipped — an existing link is never overwritten):")
-        for member, user, existing in report["already_linked"]:
-            click.echo(f"  {_member_label(member)} — user {_user_label(user)} already linked to member {existing.id}")
+    listed: list = []
+    already: set[tuple[int, int]] = set()
+    pairs: dict[tuple[int, int], list] = {}  # (main id, user id) -> [main, user, codes]
+    possible: set[tuple[int, int]] = set()  # every name-matching owner: a counterpart, linked only through pairs
+    for code in sorted(herds_by_code, key=lambda c: (int(c[1:]), c[0])):
+        herds = herds_by_code[code]
+        owner_users = {uid: u for h in herds for uid, u in owners.get(h.id, {}).items()}
+        not_inactive = any(h.is_active is not False for h in herds)
+        membership = memberships.get(int(code[1:]))
+        active = membership is not None and membership.membership_status == Status.ACTIVE
+        main = None
+        if active:
+            main = Member.select().where(
+                Member.membership == membership, Member.role == "huvudmedlem", Member.end_date.is_null(True)
+            ).first()
 
-    if report["needs_review"]:
-        click.echo(
-            "Needs manual review (the link would convey herd access the account "
-            "does not have — confirm it in the matrikel UI):"
-        )
-        for member, user, herd_codes in report["needs_review"]:
-            click.echo(f"  {_member_label(member)} — user {_user_label(user)}, herds {'/'.join(herd_codes)}")
+        if main is not None:
+            # Decided before anything is sorted out: whatever else is wrong with the
+            # herd or the account, a name-matching owner is a possible counterpart.
+            wanted = _norm_name(f"{main.first_name} {main.last_name}")
+            possible |= {(main.id, uid) for uid, u in owner_users.items() if wanted and _norm_name(u.fullname) == wanted}
 
-    if report["raced"]:
-        click.echo("Skipped (changed since the plan was made — re-run to re-check):")
-        for member, user in report["raced"]:
-            click.echo(f"  {_member_label(member)} — user {_user_label(user)}")
+        if len(herds) > 1:
+            listed.append(([code], "flera besättningar har samma kod"))
+        elif herds[0].membership_id not in (None, getattr(membership, "id", None)):
+            listed.append(([code], "besättningen tillhör ett annat medlemskap"))
+        elif not active:
+            if owner_users and not_inactive:
+                listed.append(([code], "inget aktivt medlemskap har det numret, kontot förblir okopplat"))
+        elif main is None:
+            if owner_users and not_inactive:
+                listed.append(([code], "medlemskapet har ingen kvarvarande huvudmedlem, kontot förblir okopplat"))
+        elif not owner_users:
+            listed.append(([code], "inget konto har rollen ägare på besättningen"))
+        elif len(owner_users) > 1:
+            listed.append(([code], "flera konton har rollen ägare på besättningen"))
+        else:
+            _check_owner(code, main, next(iter(owner_users.values())), incomplete, listed, already, pairs)
 
-    ambiguous_rows = sum(len(members) for _, _, members in report["ambiguous"])
-    click.echo(
-        f"Linked: {len(report['linked'])}, "
-        f"Ambiguous: {len(report['ambiguous'])} ({ambiguous_rows} member rows), "
-        f"Already linked: {len(report['already_linked'])}, "
-        f"Needs review: {len(report['needs_review'])}, "
-        f"Unmatched candidates: {report['unmatched']}"
-    )
-    if not apply_links:
-        click.echo("(dry-run — no writes performed; re-run with --apply)")
+    # Several possible links for one member or one account: none of them is made.
+    by_main, by_user = {}, {}
+    for key in pairs.keys() | possible:
+        by_main.setdefault(key[0], []).append(key)
+        by_user.setdefault(key[1], []).append(key)
+    to_link = []
+    for key, (main, user, codes) in pairs.items():
+        if len(by_main[key[0]]) > 1 or len(by_user[key[1]]) > 1:
+            listed.append((codes, f"flera möjliga kopplingar ({_member_label(main)} -> user {_user_label(user)})"))
+        elif link_access_delta(main, user):
+            listed.append((codes, "länken skulle ge kontot åtkomst till fler besättningar"))
+        else:
+            to_link.append((main, user, codes))
+    return to_link, listed, len(already)
+
+
+def _check_owner(code, main, user, incomplete, listed, already, pairs) -> None:
+    """One herd with one owner account and one active main member: already done, listed or a candidate pair."""
+    if main.user_id == user.id:
+        already.add((main.id, user.id))
+    elif user.id in incomplete:
+        listed.append(([code], "kontots ägarroll är ofullständig"))
+    elif not user.is_active:
+        listed.append(([code], "kontot är inaktivt"))
+    elif not _norm_name(user.fullname) or _norm_name(user.fullname) != _norm_name(
+        f"{main.first_name} {main.last_name}"
+    ):
+        listed.append(([code], "namnet skiljer sig mellan kontot och huvudmedlemmen"))
+    elif main.user_id is not None:
+        listed.append(([code], "huvudmedlemmen är redan kopplad till ett annat konto"))
+    elif Member.select().where(Member.user == user).exists():
+        listed.append(([code], "kontot är redan kopplat till en annan medlem"))
+    else:
+        pairs.setdefault((main.id, user.id), [main, user, []])[2].append(code)
