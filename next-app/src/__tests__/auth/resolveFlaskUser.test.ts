@@ -96,6 +96,18 @@ describe("resolveFlaskUser", () => {
       expect(await resolveFlaskUser(deps)).toBeNull();
     }
   });
+  it("admits a password session when allowPasswordSession lifts the rule (development, tests)", async () => {
+    const deps = makeDeps({
+      allowPasswordSession: true,
+      fetchUser: vi.fn(async () => ({
+        ok: true,
+        google_email: "admin@gotlandskaninen.se",
+        validated: true,
+        auth_method: "losenord",
+      })),
+    });
+    expect(await resolveFlaskUser(deps)).toMatchObject({ id: 1 });
+  });
   it("requires validated === true", async () => {
     const deps = makeDeps({
       fetchUser: vi.fn(async () => ({

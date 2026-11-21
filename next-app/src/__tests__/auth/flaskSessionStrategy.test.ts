@@ -57,6 +57,30 @@ describe("flaskSessionStrategy", () => {
   });
 });
 
+describe("flaskSessionStrategy and ALLOW_ROLE_PASSWORD_LOGIN", () => {
+  const passwordSession = {
+    id: 1,
+    google_email: CMS_ADMIN,
+    validated: true,
+    auth_method: "losenord",
+  };
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("admits a password session with the setting outside a production build", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("ALLOW_ROLE_PASSWORD_LOGIN", "true");
+    const { user } = await authenticateWith(passwordSession);
+    expect(user).toMatchObject({ id: 1, role: "admin" });
+  });
+
+  it("ignores the setting in a production build", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ALLOW_ROLE_PASSWORD_LOGIN", "true");
+    const { user } = await authenticateWith(passwordSession);
+    expect(user).toBeNull();
+  });
+});
+
 // Payload's session check calls Flask's /api/user for every /admin and
 // /cms-api request. It sent only the Cookie, so Flask rate-limited all editors
 // as one address.

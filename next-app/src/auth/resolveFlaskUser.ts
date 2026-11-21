@@ -9,6 +9,8 @@ export type ResolveDeps = {
   findUserByEmail: (
     email: string,
   ) => Promise<{ id: number | string; email: string; role: string } | null>;
+  /** ALLOW_ROLE_PASSWORD_LOGIN outside production: admit a session whatever its auth_method. */
+  allowPasswordSession?: boolean;
 };
 
 /**
@@ -23,7 +25,7 @@ export async function resolveFlaskUser(deps: ResolveDeps) {
   if (
     !flask.ok ||
     flask.validated !== true ||
-    flask.auth_method !== "google" ||
+    (flask.auth_method !== "google" && !deps.allowPasswordSession) ||
     !flask.google_email
   )
     return null;
