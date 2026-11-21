@@ -306,6 +306,11 @@ only):
        WHERE p->>'level' IN ('admin', 'matrikel_admin', 'manager', 'helper'))
      AND EXISTS (SELECT 1 FROM authenticators a WHERE a.user_id = u.user_id AND a.auth = 'password');
    ```
+3. `GOOGLE_CLIENT_ID` is set for the API and for the demo API, each in its own
+   env file (`.docker/api-variables.env`, `.docker/api-test-variables.env` in
+   the production compose file). With `FLASK_ENV=production` the API refuses
+   to start without it; unset, the Google token route would accept tokens of
+   any OAuth app.
 
 A role account that is locked out gets back through an admin: remove its role,
 set a password (Återställ lösenord) and remove its Google login if it has one,

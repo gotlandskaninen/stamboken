@@ -722,3 +722,25 @@ class TestAllowRolePasswordLoginGuard(unittest.TestCase):
         self.assertEqual(self._run(FLASK_ENV="production", ALLOW_ROLE_PASSWORD_LOGIN="false"), "started")
         self.assertEqual(self._run(FLASK_ENV="development", ALLOW_ROLE_PASSWORD_LOGIN="true"), "started")
         self.assertEqual(self._run(FLASK_ENV="testing", ALLOW_ROLE_PASSWORD_LOGIN="true"), "started")
+
+
+class TestGoogleClientIdGuard(unittest.TestCase):
+    """Without GOOGLE_CLIENT_ID the Next.js Google route accepts tokens minted for any OAuth app."""
+
+    def _run(self, **env):
+        with mock.patch.dict(os.environ, env):
+            try:
+                settings.refuse_missing_google_client_id_in_production()
+                return "started"
+            except RuntimeError:
+                return "refused"
+
+    def test_production_needs_it(self):
+        self.assertEqual(self._run(FLASK_ENV="production", GOOGLE_CLIENT_ID=""), "refused")
+        self.assertEqual(
+            self._run(FLASK_ENV="production", GOOGLE_CLIENT_ID="klient.apps.googleusercontent.com"), "started"
+        )
+
+    def test_elsewhere_it_may_be_missing(self):
+        self.assertEqual(self._run(FLASK_ENV="development", GOOGLE_CLIENT_ID=""), "started")
+        self.assertEqual(self._run(FLASK_ENV="testing", GOOGLE_CLIENT_ID=""), "started")

@@ -134,6 +134,13 @@ def refuse_role_password_login_in_production():
         raise RuntimeError("ALLOW_ROLE_PASSWORD_LOGIN=true is refused when FLASK_ENV=production.")
 
 
+def refuse_missing_google_client_id_in_production():
+    """Fail-safe at startup: without the audience, /api/auth/google would accept a Google token of any OAuth app,
+    and Google is the only way to a role."""
+    if os.environ.get("FLASK_ENV") == "production" and not os.environ.get("GOOGLE_CLIENT_ID"):
+        raise RuntimeError("GOOGLE_CLIENT_ID must be set when FLASK_ENV=production (the Google token's audience).")
+
+
 def refuse_auto_validate_outside_demo():
     """Fail-safe at startup: auto-validation lets any domain Google account in,
     which is acceptable only on the demo, whose sessions production refuses."""

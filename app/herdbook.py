@@ -121,11 +121,12 @@ UPLOAD_DIR = os.getenv("UPLOAD_FOLDER", "/app/uppladdningar")
 # Expected audience for Google ID tokens from the Next.js sign-in (the GIS
 # client — same value as next-app's NEXT_PUBLIC_GOOGLE_CLIENT_ID, NOT the
 # Flask OAuth client in auth.ini). Unset skips the audience check, so any
-# Google app's tokens would verify — warn loudly in production. An empty
+# Google app's tokens would verify — production refuses to start without it. An empty
 # string (e.g. a bare "GOOGLE_CLIENT_ID=" env line) must normalize to None:
 settings.refuse_committed_signing_key()
 settings.refuse_auto_validate_outside_demo()
 settings.refuse_role_password_login_in_production()
+settings.refuse_missing_google_client_id_in_production()
 settings.refuse_unsafe_mail_settings()
 settings.refuse_unsafe_gmail_settings()
 settings.refuse_private_folder_under_uploads()
@@ -133,8 +134,6 @@ settings.report_unwritable_private_folder()
 
 # verify_oauth2_token would otherwise enforce audience "" and fail every login.
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID") or None
-if not GOOGLE_CLIENT_ID and os.getenv("FLASK_ENV") == "production":
-    APP.logger.warning("GOOGLE_CLIENT_ID is not set — Google ID token audience is not pinned")
 
 # Create directories if they don't exist (will fail silently if no permissions)
 for d in [UPLOAD_DIR]:
