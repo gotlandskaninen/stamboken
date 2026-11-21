@@ -235,6 +235,13 @@ class TestGoogleIdentity(RoleRulesTest):
         self.assertEqual(db.User.get_by_id(self.member.id).google_email, DOMAIN_ADDRESS)
         self.assertEqual(client.get("/api/user").status_code, 200)  # adding is no occasion to revoke
 
+    def test_the_address_follows_the_identity(self):
+        self.give_google(self.member)
+        self.assertTrue(da.link_account(self.member, "google", "sub-medlem"))  # the same one, no verified address
+        self.assertEqual(db.User.get_by_id(self.member.id).google_email, DOMAIN_ADDRESS)
+        self.assertTrue(da.link_account(self.member, "google", "sub-ny", from_google_session=True))
+        self.assertIsNone(db.User.get_by_id(self.member.id).google_email)  # never the old identity's
+
     def test_a_role_account_takes_no_identity_outside_the_domain(self):
         self.member.add_role("manager", 1)
         password = self.login()

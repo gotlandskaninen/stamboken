@@ -1418,7 +1418,8 @@ def login_handler():
 # The Google profile columns the login routes refresh. They save only these: the
 # user row was read without a lock, so a full-row save would write back a stale
 # is_active/_privileges and undo a concurrent deactivation or role change.
-_GOOGLE_PROFILE_COLUMNS = [db.User.google_picture, db.User.google_name, db.User.google_email]
+# google_email is no profile column: da.google_login_generation writes it under the row lock.
+_GOOGLE_PROFILE_COLUMNS = [db.User.google_picture, db.User.google_name]
 
 
 def _link_member_if_any(user, verified_email) -> None:
@@ -1521,14 +1522,14 @@ def google_token_login():
                 # 401, not 403: the Next.js caller maps 403 to the domain-restriction text.
                 return jsonify({"error": course_message()}), 401
 
-        # None also when the identity was switched or removed after the lookup above.
-        generation = da.google_login_generation(user, "google", google_user_id) if user else None
+        # None also when the identity was switched or removed after the lookup above. The token's hd and address are
+        # on the domain (checked above), so the address it writes is the domain proof.
+        generation = da.google_login_generation(user, "google", google_user_id, email) if user else None
 
         if generation:
             # Update user with Google profile data in database
             user.google_picture = picture
             user.google_name = name
-            user.google_email = email
             user.save(only=_GOOGLE_PROFILE_COLUMNS)
 
             # After the save: a save that raises must not leave a session that
@@ -1596,7 +1597,9 @@ def external_login_handler(service):
             return _not_validated_response()
 
     if user and user.validated:
-        generation = da.google_login_generation(user, service, persistent_id)
+        # google_email is the CMS identity: only ever a verified address, written under the row lock.
+        verified_email = utils.external_auth.google_verified_email() if service == "google" else None
+        generation = da.google_login_generation(user, service, persistent_id, verified_email)
         if generation is None:
             da.auth_log.warning("Login refused: %s, inactive or identity changed, user id=%s", service, user.id)
             return "null"
@@ -1605,22 +1608,19 @@ def external_login_handler(service):
         # Phase 8: auto-link Member on OAuth completion, then reload so the
         # profile save below writes fresh privileges — saving this stale
         # in-memory instance would clobber the just-granted owner role.
-        verified_email = utils.external_auth.google_verified_email() if service == "google" else None
         _link_member_if_any(user, verified_email)
         # Reload unfiltered: fetch_user_info hides an account deactivated mid-login (the
         # provider calls above can take long), and the profile save below writes only
         # _GOOGLE_PROFILE_COLUMNS, so it cannot undo that deactivation.
         user = db.User.get_by_id(user.id)
 
-        # Save Google profile data (picture, name, email)
+        # Save Google profile data (picture, name)
         # The id_token may not contain picture/name — fetch from userinfo endpoint instead
-        # google_email is the CMS identity: only ever a verified address.
         if service == "google":
             userinfo = utils.external_auth.google_userinfo()
             if userinfo:
                 user.google_picture = userinfo.get("picture") or user.google_picture
                 user.google_name = userinfo.get("name") or user.google_name
-                user.google_email = verified_email or user.google_email
                 user.save(only=_GOOGLE_PROFILE_COLUMNS)
             else:
                 # Fallback to id_token if userinfo fails
@@ -1630,8 +1630,6 @@ def external_login_handler(service):
                         user.google_picture = idtoken["picture"]
                     if idtoken.get("name"):
                         user.google_name = idtoken["name"]
-                    if verified_email:
-                        user.google_email = verified_email
                     user.save(only=_GOOGLE_PROFILE_COLUMNS)
 
         # Check for saved return_to URL from before OAuth

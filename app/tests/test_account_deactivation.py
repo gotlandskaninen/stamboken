@@ -3,6 +3,7 @@
 import inspect
 from unittest import mock
 
+import flask
 import utils.data_access as da
 import utils.database as db
 from herdbook import APP, limiter
@@ -278,9 +279,10 @@ class TestStaleUserWriters(DatabaseTest):
         self._validate(self.viewer)
 
         def idtoken():
-            # The handler reads the id_token twice (verified email for auto-link, then the
-            # profile fallback); the admin deactivates once, during the first read.
-            if not self.fired:
+            # The handler reads the id_token for the verified address before the login, and for the
+            # profile fallback after it; the admin deactivates once, during the read after the login
+            # (one before it refuses the login under the row lock).
+            if flask.session.get("user_id") and not self.fired:
                 self.fired.append(self._deactivate(self.viewer)())
             return {"picture": "https://example.com/ny.png"}
 

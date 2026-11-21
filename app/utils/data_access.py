@@ -407,7 +407,7 @@ def on_role_domain(email):
 def has_role_google_login(user):
     """
     A Google identity whose verified address is on the association's domain. The identity stores no address, so the
-    address is google_email, which link_account and unlink_account keep in step with it.
+    address is google_email, which link_account, unlink_account and google_login_generation keep in step with it.
     """
     return (
         on_role_domain(user.google_email)
@@ -696,7 +696,8 @@ def link_account(user, method, ident, email=None, from_google_session=False, ses
             # the account as it was.
             Authenticators.delete().where((Authenticators.user == user.id) & (Authenticators.auth == method)).execute()
             Authenticators.create(user=user.id, auth=method, auth_data=ident)
-            if method == "google":
+            # The same identity linked again without a verified address keeps its address; another never keeps it.
+            if method == "google" and (email or old is None or switch):
                 User.update(google_email=email).where(User.id == user.id).execute()
             if switch:
                 new_generation(account.uuid)
@@ -4552,10 +4553,11 @@ def revoke_sessions(user_id):
     return True
 
 
-def google_login_generation(user, method, ident):
+def google_login_generation(user, method, ident, email=None):
     """
     login_generation for a login through `method` (Google): under the account's row lock the identity is looked up
-    once more, and a deactivation, switch or removal that got there first refuses the login (None).
+    once more, and a deactivation, switch or removal that got there first refuses the login (None). The identity's
+    verified address `email` becomes google_email under the same lock, so it can never land on a newer identity.
     """
     with DATABASE.atomic():
         account = User.select(User.id, User.is_active).where(User.id == user.id).for_update().get()
@@ -4563,7 +4565,11 @@ def google_login_generation(user, method, ident):
             return None
         generation = login_generation(user.uuid)
         again = authenticate_with_credentials(method, ident)
-    return generation if again and again.id == user.id else None
+        if not again or again.id != user.id:
+            return None
+        if email:
+            User.update(google_email=email).where(User.id == user.id).execute()
+    return generation
 
 
 def mass_logout_sessions(redis_client, changed_by):

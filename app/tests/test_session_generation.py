@@ -16,7 +16,7 @@ import utils.settings as settings
 from herdbook import APP, limiter
 
 from tests.database_test import DatabaseTest
-from tests.google_login import ID_TOKEN, token_login
+from tests.google_login import ID_TOKEN, redirect_login, token_login
 
 limiter.enabled = False
 
@@ -402,6 +402,32 @@ class TestLostMarkAndRaces(SessionTest):
         with mock.patch.object(da, "unlink_account", after_logout_everywhere):
             self.assertEqual(google.post("/api/unlink/google").get_data(as_text=True), "null")
         self.assertEqual(self.identities(), [ID_TOKEN["sub"]])
+
+    def test_a_google_login_never_writes_its_address_after_a_switch(self):
+        """google_email is the domain proof for a role: a login that checked identity A must not write A's address
+        once the holder has switched to an identity outside the domain."""
+        idtoken = {"sub": ID_TOKEN["sub"], "email": ID_TOKEN["email"], "email_verified": True, "hd": ID_TOKEN["hd"]}
+        logins = {
+            "token": lambda: token_login(APP.test_client(), da.authenticate_with_credentials),
+            "legacy": lambda: redirect_login(
+                APP.test_client(), da.authenticate_with_credentials, idtoken=lambda: idtoken
+            ),
+        }
+        real = da.google_login_generation
+
+        def then_switch(*args, **kwargs):
+            generation = real(*args, **kwargs)
+            da.link_account(self.viewer, "google", "sub-utanfor", email="medlem@example.org", from_google_session=True)
+            return generation
+
+        for name, login in logins.items():
+            with self.subTest(name):
+                self.setUp()
+                db.User.update(validated=True).where(db.User.id == self.viewer.id).execute()
+                with mock.patch.object(da, "google_login_generation", then_switch):
+                    login()
+                self.assertEqual(self.identities(), ["sub-utanfor"])
+                self.assertEqual(db.User.get_by_id(self.viewer.id).google_email, "medlem@example.org")
 
     def test_logout_everywhere_waits_for_the_account(self):
         """It takes the account's row lock, as every change of credentials does."""
