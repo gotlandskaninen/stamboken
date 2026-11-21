@@ -74,7 +74,10 @@ pnpm exec playwright test --config playwright.legacy.config.ts  # legacy regress
 CI runs the default suite as a gate and the legacy suite as an advisory
 job (`.github/workflows/playwright.yml`). The local-production suites
 (admin, demo) never run in CI and need
-`bootstrap-local-production.sh` (in stamboken-drift) first.
+`bootstrap-local-production.sh` (in stamboken-drift) first. They sign in
+`test-admin` and `test-gk-manager` with a password, which the role rule
+refuses: add `ALLOW_ROLE_PASSWORD_LOGIN=true` to `../.docker/api-variables.env`
+before the API starts (not to the compose file).
 
 ## Payload CMS schema
 

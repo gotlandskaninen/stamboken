@@ -265,8 +265,10 @@ The role rule: Google is the only way into an account with a role.
 tests, where the seed's accounts with roles have only passwords. The
 development compose file (for api and next-app), the pytest compose file, the
 CI pytest job, the API the Playwright jobs start and `scripts/ci-local.sh` set
-it. The API refuses to start with it when `FLASK_ENV=production`, which the
-demo API has too.
+it. The local Playwright runs against `docker-compose.local-production.yml`
+(legacy, admin and demo suites) need it in `.docker/api-variables.env`, never
+in that compose file. The API refuses to start with it when
+`FLASK_ENV=production`, which the demo API has too.
 
 **Releasing the role rule.** Count read-only against production (numbers
 only):
