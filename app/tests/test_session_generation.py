@@ -1,0 +1,367 @@
+"""A session with a user is valid only with its sign-in method and the account's current mark, its generation, in the
+sessions' Redis. Changing the account's credentials replaces the mark, a missing mark validates nothing, and only
+production changes one."""
+
+import base64
+import os
+import threading
+import time
+from unittest import mock
+
+import herdbook
+import redis
+import utils.data_access as da
+import utils.database as db
+import utils.settings as settings
+from herdbook import APP, limiter
+
+from tests.database_test import DatabaseTest
+from tests.google_login import ID_TOKEN, token_login
+
+limiter.enabled = False
+
+
+def as_demo(on=True):
+    return mock.patch.object(settings.service, "demo_instance", on)
+
+
+def google_link(client, sub, email):
+    """GET /api/link/google as Google's OAuth redirect lands, with Google mocked out."""
+    with (
+        mock.patch("utils.external_auth.available_methods", return_value=["google"]),
+        mock.patch("utils.external_auth.authorized", return_value=True),
+        mock.patch("utils.external_auth.get_persistent", return_value=sub),
+        mock.patch("utils.external_auth.google_verified_email", return_value=email),
+    ):
+        return client.get("/api/link/google").get_data(as_text=True)
+
+
+class SessionTest(DatabaseTest):
+    def setUp(self):
+        # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
+        APP.config["TESTING"] = True
+        super().setUp()
+        self.session_redis = redis.Redis.from_url(
+            os.getenv("SESSION_REDIS_URL", "redis://redis:6379/2"), socket_connect_timeout=2
+        )
+        # "spec" (a viewer, no role) also signs in with Google as ID_TOKEN's identity.
+        db.Authenticators.create(user=self.viewer.id, auth="google", auth_data=ID_TOKEN["sub"])
+        db.User.update(google_email=ID_TOKEN["email"]).where(db.User.id == self.viewer.id).execute()
+
+    def login(self, username="spec", password="pass"):  # nosemgrep: hardcoded-password-default-argument
+        client = APP.test_client(use_cookies=True)
+        client.post("/api/login", json={"username": username, "password": password})
+        return client
+
+    def google_login(self):
+        client = APP.test_client(use_cookies=True)
+        token_login(client, da.authenticate_with_credentials)
+        return client
+
+    def signed_in(self, client):
+        return client.get("/api/user").status_code == 200
+
+    def mark(self):
+        return da.account_generation(self.viewer.uuid)
+
+    def drop_mark(self):
+        self.session_redis.delete(da._generation_key(self.viewer.uuid))  # pylint: disable=protected-access
+
+    def session_key(self, client):
+        return "session:" + client.get_cookie(APP.config["SESSION_COOKIE_NAME"]).value
+
+
+class TestSession(SessionTest):
+    def test_every_login_stamps_its_method_and_the_mark(self):
+        for name, login, method in (
+            ("password", self.login, "losenord"),
+            ("google", self.google_login, "google"),
+        ):
+            with self.subTest(name):
+                client = login()
+                with client.session_transaction() as sess:
+                    self.assertEqual((sess["auth_method"], sess["generation"]), (method, self.mark()))
+                self.assertEqual(client.get("/api/user").get_json()["auth_method"], method)
+
+    def test_a_session_without_auth_method_is_emptied(self):
+        """Every session from before the stamps lacks auth_method (and generation): deploying signs everybody out."""
+        variants = {
+            "no auth_method": ("auth_method",),
+            "from before the stamps": ("auth_method", "generation"),
+            "half login": ("auth_method", "_user_id"),
+        }
+        for name, dropped in variants.items():
+            with self.subTest(name):
+                client = self.login()
+                with client.session_transaction() as sess:
+                    for key in dropped:
+                        sess.pop(key)
+                key = self.session_key(client)
+                self.assertEqual(client.get("/api/user").status_code, 401)
+                self.assertEqual(client.get("/api/active_users").status_code, 401)
+                self.assertFalse(self.session_redis.exists(key), "refused session left in the store")
+
+    def test_a_session_without_a_user_keeps_the_google_login_state(self):
+        client = APP.test_client(use_cookies=True)
+        state = {"google_oauth_state": "tillstand", "return_to_after_oauth": "/stamboken", "link_account": True}
+        with client.session_transaction() as sess:
+            sess.update(state)
+        self.assertEqual(client.get("/api/user").status_code, 401)
+        with client.session_transaction() as sess:
+            self.assertEqual({k: sess.get(k) for k in state}, state)
+
+    def test_basic_auth_needs_no_stamps(self):
+        """The one-request session Basic auth makes is not checked by _session_revoked, as before."""
+        auth = {"Authorization": "Basic " + base64.b64encode(b"spec:pass").decode()}
+        client = APP.test_client()
+        self.assertEqual(client.get("/api/user", headers=auth).get_json()["auth_method"], None)
+        self.assertEqual(client.get("/api/active_users", headers=auth).status_code, 200)
+
+    def test_a_demo_login_holds_on_the_demo_after_the_generation_changed(self):
+        old = self.login()
+        da.new_generation(self.viewer.uuid)
+        with as_demo():
+            demo = self.login()
+            self.assertTrue(self.signed_in(demo))
+            self.assertFalse(self.signed_in(old))
+
+
+class TestRevocation(SessionTest):
+    """Each occasion replaces the mark: older sessions end on production and on the demo, newer ones hold on both."""
+
+    def admin_client(self):
+        return self.login("admin")
+
+    def occasions(self):
+        uid = self.viewer.id
+        return {
+            "deactivated and activated again": lambda: (
+                [
+                    self.admin_client().patch(f"/api/v2/admin/users/{uid}/active", json={"active": active}).status_code
+                    for active in (False, True)
+                ]
+                == [200, 200]
+            ),
+            "Google identity switched": lambda: (
+                google_link(self.google_login(), "sub-ny", ID_TOKEN["email"]) == str(uid)
+            ),
+            "Google identity removed by the holder": lambda: (
+                self.google_login().post("/api/unlink/google").get_data(as_text=True) == "1"
+            ),
+            "Google login removed by an admin": lambda: (
+                self.admin_client().delete(f"/api/v2/admin/users/{uid}/google").status_code == 204
+            ),
+            "password changed by the holder": lambda: (
+                self.login()
+                .post("/api/manage/setpassword/", json={"oldpassword": "pass", "newpassword": "pass"})
+                .get_json()
+                is True
+            ),
+            "password reset by an admin": lambda: (
+                self.admin_client()
+                .post(f"/api/v2/admin/users/{uid}/password-reset", json={"password": "pass"})
+                .status_code
+                == 204
+            ),
+            "Logga ut överallt": lambda: (
+                self.admin_client().post(f"/api/v2/admin/users/{uid}/logga-ut").status_code == 204
+            ),
+        }
+
+    def test_every_occasion_replaces_the_mark(self):
+        for name, occasion in self.occasions().items():
+            with self.subTest(name):
+                self.setUp()  # the Google identity back, and a fresh account state
+                old_production, old_demo = self.login(), self.login()
+                before = self.mark()
+                self.assertTrue(occasion(), name)
+                self.assertNotEqual(self.mark(), before)
+                self.assertFalse(self.signed_in(old_production))
+                with as_demo():
+                    self.assertFalse(self.signed_in(old_demo))
+                new_production, new_demo = self.login(), self.login()
+                self.assertTrue(self.signed_in(new_production))
+                with as_demo():
+                    self.assertTrue(self.signed_in(new_demo))
+
+    def test_logout_everywhere_needs_an_admin(self):
+        before = self.mark() or da.login_generation(self.viewer.uuid)
+        for client in (APP.test_client(), self.login("man"), self.login("spec")):
+            self.assertIn(client.post(f"/api/v2/admin/users/{self.viewer.id}/logga-ut").status_code, (401, 403))
+        self.assertEqual(self.mark(), before)
+
+    def test_no_call_to_the_demo_changes_a_mark(self):
+        production = self.login()
+        before = self.mark()
+        uid = self.viewer.id
+        with as_demo():
+            admin = self.admin_client()
+            refused = admin.post(f"/api/v2/admin/users/{uid}/logga-ut")
+            self.assertEqual((refused.status_code, refused.get_json()["type"]), (403, "demo-instance"))
+            reset = admin.post(f"/api/v2/admin/users/{uid}/password-reset", json={"password": "pass"})
+            self.assertEqual(reset.status_code, 204)
+            for sub in ("sub-ny", ID_TOKEN["sub"]):  # two switches
+                self.assertTrue(da.link_account(self.viewer, "google", sub, from_google_session=True))
+            self.assertEqual(self.google_login().post("/api/unlink/google").get_data(as_text=True), "1")
+            for active in (False, True):
+                admin.patch(f"/api/v2/admin/users/{uid}/active", json={"active": active})
+        self.assertEqual(self.mark(), before)
+        self.assertTrue(self.signed_in(production))
+
+
+class TestLostMarkAndRaces(SessionTest):
+    def test_without_the_mark_no_session_of_the_account_holds(self):
+        first, second, other = self.login(), self.google_login(), self.login("man")
+        self.drop_mark()
+        self.assertFalse(self.signed_in(first))
+        self.assertFalse(self.signed_in(second))
+        self.assertTrue(self.signed_in(other))
+
+    def test_a_session_written_back_after_redis_was_emptied_is_refused(self):
+        victim = self.login()
+        key = self.session_key(victim)
+        written = self.session_redis.get(key)
+        # Redis emptied, as far as this account goes, while a request was in flight.
+        self.session_redis.delete(key)
+        self.drop_mark()
+        self.session_redis.set(key, written)  # what the in-flight save_session does
+        self.assertFalse(self.signed_in(victim))
+        self.assertTrue(self.signed_in(self.login()))  # a new login gets a new mark
+        self.session_redis.set(key, written)
+        self.assertFalse(self.signed_in(victim))
+
+    def pause_login(self, change):
+        """
+        Runs `change` after the first login checked the credential and read the mark, before its session is made.
+        A login inside `change` passes straight through.
+        """
+        real = herdbook.establish_session
+        calls = []
+
+        def paused(user, method, generation):
+            calls.append(method)
+            if len(calls) == 1:
+                change()
+            return real(user, method, generation)
+
+        return mock.patch.object(herdbook, "establish_session", paused)
+
+    def test_a_password_login_paused_while_the_password_changes_is_refused(self):
+        for had_mark in (True, False):
+            with self.subTest(had_mark=had_mark):
+                self.login()
+                if not had_mark:
+                    self.drop_mark()
+                with self.pause_login(
+                    lambda: da.change_password(self.admin, self.viewer.id, {"password": "ny", "newpassword": "ny"})
+                ):
+                    client = self.login()
+                self.assertFalse(self.signed_in(client))
+                self.assertTrue(self.signed_in(self.login(password="ny")))
+                da.change_password(self.admin, self.viewer.id, {"password": "pass", "newpassword": "pass"})
+
+    def test_a_google_login_while_the_identity_switches_is_refused(self):
+        def switch():
+            self.assertTrue(da.link_account(self.viewer, "google", "sub-ny", from_google_session=True))
+
+        with self.pause_login(switch):
+            client = self.google_login()
+        self.assertFalse(self.signed_in(client))
+
+        # A switch before the login takes the account's lock: the identity looked up again is gone.
+        db.Authenticators.update(auth_data=ID_TOKEN["sub"]).where(db.Authenticators.user == self.viewer.id).execute()
+        real = da.google_login_generation
+
+        def switched_first(*args):
+            switch()
+            return real(*args)
+
+        client = APP.test_client(use_cookies=True)
+        with mock.patch.object(da, "google_login_generation", switched_first):
+            self.assertEqual(token_login(client, da.authenticate_with_credentials).status_code, 401)
+        self.assertFalse(self.signed_in(client))
+
+    def test_two_first_logins_without_a_mark_both_hold(self):
+        self.drop_mark()
+        second = []
+        with self.pause_login(lambda: second.append(self.google_login())):
+            first = self.login()
+        self.assertTrue(self.signed_in(first))
+        self.assertTrue(self.signed_in(second[0]))
+
+    def test_the_demo_never_overwrites_a_mark(self):
+        mark = da.login_generation(self.viewer.uuid)
+        with as_demo():
+            self.assertEqual(da.login_generation(self.viewer.uuid), mark)
+            self.assertTrue(self.signed_in(self.login()))
+            da.new_generation(self.viewer.uuid)
+        self.assertEqual(self.mark(), mark)
+        # The demo may create a missing one, which production then reads.
+        self.drop_mark()
+        with as_demo():
+            demo = self.login()
+        created = self.mark()
+        self.assertIsNotNone(created)
+        self.assertTrue(self.signed_in(self.login()))
+        self.assertEqual(self.mark(), created)
+        with as_demo():
+            self.assertTrue(self.signed_in(demo))
+
+    def test_a_mark_that_cannot_be_replaced_leaves_the_password(self):
+        with mock.patch.object(da, "new_generation", side_effect=redis.ConnectionError):
+            with self.assertRaises(redis.ConnectionError):
+                da.change_password(self.admin, self.viewer.id, {"password": "ny", "newpassword": "ny"})
+            with self.assertRaises(redis.ConnectionError):
+                da.set_account_active(self.viewer.id, False, actor_user_id=self.admin.id)
+        self.assertEqual(da.authenticate_user("spec", "ny"), (None, None))
+        self.assertIsNotNone(da.authenticate_user("spec", "pass")[0])
+        self.assertTrue(db.User.get_by_id(self.viewer.id).is_active)
+
+    def test_a_login_during_a_password_change_waits_and_does_not_take_the_old_password(self):
+        """The change has replaced the mark but not committed: the login waits on the account's row."""
+        swapped, release, done = threading.Event(), threading.Event(), threading.Event()
+        real = da.new_generation
+        results = {}
+
+        def hold(user_uuid):
+            real(user_uuid)
+            swapped.set()
+            release.wait(10)
+
+        def change():
+            try:
+                with mock.patch.object(da, "new_generation", hold):
+                    da.change_password(self.admin, self.viewer.id, {"password": "ny", "newpassword": "ny"})
+            finally:
+                db.DATABASE.close()
+
+        def login():
+            try:
+                results["client"] = self.login()
+            finally:
+                done.set()
+                db.DATABASE.close()
+
+        changer = threading.Thread(target=change)
+        changer.start()
+        self.assertTrue(swapped.wait(10), "the change never replaced the mark")
+        waiter = threading.Thread(target=login)
+        waiter.start()
+        try:
+            self.assertTrue(self._wait_for_lock_waiter(), "the login never waited on the account's row")
+            self.assertFalse(done.is_set())
+        finally:
+            release.set()
+            changer.join(10)
+            waiter.join(10)
+        self.assertFalse(self.signed_in(results["client"]))
+        self.assertTrue(self.signed_in(self.login(password="ny")))
+
+    def _wait_for_lock_waiter(self, timeout=10):
+        """Poll pg_locks until a session waits for a lock, as test_database's migration-lock test does."""
+        deadline = time.time() + timeout
+        while time.time() < deadline:
+            if db.DATABASE.execute_sql("SELECT count(*) FROM pg_locks WHERE NOT granted").fetchone()[0]:
+                return True
+            time.sleep(0.05)
+        return False

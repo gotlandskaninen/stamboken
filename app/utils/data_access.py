@@ -77,6 +77,8 @@ from utils.individual_commands import update_bodyfat, update_weights  # isort:sk
 from utils.individual_commands import IndividualRefused, execute, purge_command_free_text  # isort:skip
 from utils.individual_commands import known_color, known_litter, known_origin_herd, known_parent  # isort:skip
 from utils.individual_legacy import translate  # isort:skip
+from utils import settings  # isort:skip
+from extensions import session_redis  # isort:skip
 
 from werkzeug.security import (
     check_password_hash,
@@ -384,6 +386,34 @@ def validate_breeding_dates(
 
 # User functions
 
+# The roles that keep an account on the association's Google login. Viewer and the older owner do not count.
+ROLE_LEVELS = ("admin", "matrikel_admin", "manager", "helper")
+# Fixed in code for accounts with a role, never a setting that can be missing.
+ROLE_DOMAIN = "@gotlandskaninen.se"
+
+
+def holds_role(user):
+    """The account has a role in ROLE_LEVELS, and ALLOW_ROLE_PASSWORD_LOGIN (development, tests) is off."""
+    return not settings.service.allow_role_password_login and any(
+        p.get("level") in ROLE_LEVELS for p in user.privileges
+    )
+
+
+def on_role_domain(email):
+    """A verified Google address on the association's domain."""
+    return bool(email) and email.lower().endswith(ROLE_DOMAIN)
+
+
+def has_role_google_login(user):
+    """
+    A Google identity whose verified address is on the association's domain. The identity stores no address, so the
+    address is google_email, which link_account and unlink_account keep in step with it.
+    """
+    return (
+        on_role_domain(user.google_email)
+        and Authenticators.select().where((Authenticators.user == user.id) & (Authenticators.auth == "google")).exists()
+    )
+
 
 def add_user(form, user_uuid=None):
     """
@@ -507,32 +537,35 @@ class AddressInUseError(Exception):
 def authenticate_user(name, password):
     """
     Authenticates an email or username and password against the database.
-    Returns the user info for the authenticated user on success, or None on
-    failure.
+    Returns (user, generation) for the authenticated user on success, or
+    (None, None) on failure. The account's row is locked from reading its
+    mark (login_generation) to checking the password, so a password change
+    cannot fall between them.
     """
     if not name or not password:
-        return None
+        return None, None
     user_info = None
     try:
         with DATABASE.atomic():
-            user_info = User.select().where((User.email == name) | (User.username == name)).get()
+            user_info = User.select().where((User.email == name) | (User.username == name)).for_update().get()
             if user_info and not user_info.is_active:
                 auth_log.info("Login refused: inactive account id=%s", user_info.id)
                 raise InactiveAccountError()
             if user_info:
+                generation = login_generation(user_info.uuid)
                 authenticator = (
                     Authenticators.select()
                     .where((Authenticators.auth == "password") & (Authenticators.user == user_info.id))
                     .get()
                 )
-        if check_password_hash(authenticator.auth_data, password):
-            return user_info
+                if check_password_hash(authenticator.auth_data, password):
+                    return user_info, generation
     except DoesNotExist:
         # Perform password check regardless of username to prevent timing
         # attacks
         check_password_hash("This-always-fails", password)
     auth_log.info("Login failed: %s", f"user id={user_info.id}" if user_info else "unknown user")
-    return None
+    return None, None
 
 
 def change_password(active_user, changed_user, form):
@@ -544,37 +577,44 @@ def change_password(active_user, changed_user, form):
         logger.info("Bad call to change_password, somethings is missing)")
         return None
 
-    if not active_user.is_admin:
+    # The account's row, as a login takes it: the new password and the new mark (new_generation) are one change.
+    with DATABASE.atomic():
         try:
+            target = User.select(User.id, User.uuid).where(User.id == changed_user).for_update().get()
+        except DoesNotExist:
+            return None
+
+        if not active_user.is_admin:
+            try:
+                authenticator = (
+                    Authenticators.select()
+                    .where((Authenticators.user == changed_user) & (Authenticators.auth == "password"))
+                    .get()
+                )
+                if not check_password_hash(authenticator.auth_data, form["oldpassword"]):
+                    # Incorrect password supplied
+                    return None
+            except PeeweeException:
+                # Non-users need a password set to change it. Fall out on any other
+                # exception as well.
+                return None
+
+        try:
+            # If we have a password authenticator already, update it instead of creating a new.
             authenticator = (
                 Authenticators.select()
                 .where((Authenticators.user == changed_user) & (Authenticators.auth == "password"))
                 .get()
             )
-            if not check_password_hash(authenticator.auth_data, form["oldpassword"]):
-                # Incorrect password supplied
-                return None
-        except PeeweeException:
-            # Non-users need a password set to change it. Fall out on any other
-            # exception as well.
-            return None
-
-    try:
-        # If we have a password authenticator already, update it instead of creating a new.
-        authenticator = (
-            Authenticators.select()
-            .where((Authenticators.user == changed_user) & (Authenticators.auth == "password"))
-            .get()
-        )
-        authenticator.auth_data = generate_password_hash(form["newpassword"])
-    except DoesNotExist:
-        authenticator = Authenticators(
-            user=changed_user,
-            auth="password",
-            auth_data=generate_password_hash(form["password"]),
-        )
-    with DATABASE.atomic():
+            authenticator.auth_data = generate_password_hash(form["newpassword"])
+        except DoesNotExist:
+            authenticator = Authenticators(
+                user=changed_user,
+                auth="password",
+                auth_data=generate_password_hash(form["password"]),
+            )
         authenticator.save()
+        new_generation(target.uuid)
 
     return True
 
@@ -605,20 +645,32 @@ def authenticate_with_credentials(method, ident):
     return None
 
 
-def link_account(user, method, ident):
+def link_account(user, method, ident, email=None, from_google_session=False):
     """
     Registers an account linked to an external authentication service. Returns
     something that evaluates as True on success.
+
+    For Google, under the account's row lock (update_role takes it too):
+    replacing an identity needs a session from Google, an account with a role
+    takes only an identity whose verified address `email` is on the
+    association's domain, and google_email follows the identity. Replacing
+    one revokes the account's sessions (new_generation).
     """
     if not method or not ident or not user:
         return None
 
     try:
         with DATABASE.atomic():
-            # The account's row first, as unlink_account does, then the identity:
-            # no unique index stops two accounts from taking it at the same time.
-            User.select(User.id).where(User.id == user.id).for_update().get()
-            DATABASE.execute_sql("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"authenticator:{method}:{ident}",))
+            # The account's row first, as unlink_account does, then the identity.
+            account = User.select().where(User.id == user.id).for_update().get()
+            old = Authenticators.get_or_none((Authenticators.user == user.id) & (Authenticators.auth == method))
+            switch = old is not None and old.auth_data != ident
+            if method == "google" and switch and not from_google_session:
+                auth_log.warning("Refusing to switch google from a password session for user #%d", user.id)
+                return None
+            if method == "google" and holds_role(account) and not on_role_domain(email):
+                auth_log.warning("Refusing a Google identity outside the domain for user #%d, who has a role", user.id)
+                return None
             taken = Authenticators.select().where(
                 (Authenticators.auth == method) & (Authenticators.auth_data == ident) & (Authenticators.user != user.id)
             )
@@ -627,9 +679,15 @@ def link_account(user, method, ident):
                 # for multiple users
                 return None
             # At most one identity for each method. The old one goes in the new
-            # one's transaction: a link that fails leaves the account as it was.
+            # one's transaction: a link that fails, also on the unique index
+            # when another account takes the identity at the same time, leaves
+            # the account as it was.
             Authenticators.delete().where((Authenticators.user == user.id) & (Authenticators.auth == method)).execute()
             Authenticators.create(user=user.id, auth=method, auth_data=ident)
+            if method == "google":
+                User.update(google_email=email).where(User.id == user.id).execute()
+            if switch:
+                new_generation(account.uuid)
         auth_log.info("Linked user id=%s to service %s", user.id, method)
         return user
     except PeeweeException as auth_except:
@@ -644,14 +702,20 @@ def unlink_account(user, method):
     Removes any linked identities for method method. Return somethings that
     evaluates to false on failure. Never the account's last way to sign in:
     the legacy Google login does not adopt an existing account, so only an
-    admin could let the holder back in.
+    admin could let the holder back in. Never the Google identity of an
+    account with a role (holds_role). A removal revokes the account's
+    sessions (new_generation), and google_email goes with the Google identity.
     """
     if not method or not user:
         return None
     try:
         with DATABASE.atomic():
-            # The account's row is the lock: two unlinks of different methods wait for each other.
-            User.select(User.id).where(User.id == user.id).for_update().get()
+            # The account's row is the lock: two unlinks of different methods wait for each other, and a role grant
+            # (update_role) and an unlink wait for each other.
+            account = User.select().where(User.id == user.id).for_update().get()
+            if method == "google" and holds_role(account):
+                auth_log.warning("Refusing to unlink google for user #%d, who has a role", user.id)
+                return None
             others = Authenticators.select().where((Authenticators.user == user.id) & (Authenticators.auth != method))
             if not others.exists():
                 auth_log.warning("Refusing to unlink %s, the last way to sign in, for user #%d", method, user.id)
@@ -661,6 +725,10 @@ def unlink_account(user, method):
                 .where((Authenticators.user == user.id) & (Authenticators.auth == method))
                 .execute()
             )
+            if removed and method == "google":
+                User.update(google_email=None).where(User.id == user.id).execute()
+            if removed:
+                new_generation(account.uuid)
 
         if removed:
             auth_log.info("Unlinked user id=%s from service %s", user.id, method)
@@ -1028,6 +1096,9 @@ def set_account_active(u_id, active, actor_user_id=None):
                     )
                 target.is_active = bool(active)
                 target.save()
+                if not active:
+                    # Activating again never brings the sessions back.
+                    new_generation(target.uuid)
                 return {"id": target.id, "is_active": bool(target.is_active)}
         except OperationalError as exc:
             # SQLSTATE 40P01 (deadlock_detected) — rare re-ordering under
@@ -1161,6 +1232,16 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                     target_user.remove_role(operation["role"], operation.get(target))
                     updated = True
                 elif not has_role and operation["action"] == "add":
+                    if (
+                        operation["role"] in ROLE_LEVELS
+                        and not settings.service.allow_role_password_login
+                        and not has_role_google_login(target_user)
+                    ):
+                        raise ValidationError(
+                            "google-required",
+                            "En roll kan bara ges till ett konto som loggar in med föreningens Google-konto. "
+                            "Kontot kopplar sitt Google-konto först.",
+                        )
                     auth_log.info(
                         f"User:{user.id} UPDATE: Role added on user: "
                         f"{target_user.id} added: {operation['role']} "
@@ -4410,6 +4491,49 @@ def purge_member_applications(now) -> int:
 # Session-store counter of mass logouts. Outside 'session:*', so the sweep never
 # deletes it, and without a TTL: it must outlive every session issued before it.
 LOGOUT_EPOCH_KEY = "logout-epoch"
+
+
+def _generation_key(user_uuid):
+    # Beside LOGOUT_EPOCH_KEY, for the same reasons. Keyed on the uuid the session holds, read before any user is.
+    return f"generation:{uuid.UUID(str(user_uuid)).hex}"
+
+
+def account_generation(user_uuid):
+    """The account's mark: a session is valid only while it carries this one. None when the account has none."""
+    mark = session_redis.get(_generation_key(user_uuid))
+    return mark.decode() if mark else None
+
+
+def login_generation(user_uuid):
+    """
+    The mark a login stamps, read under the account's row lock before the credential is checked. A missing mark is
+    created without overwriting one someone else has set (SET NX, then GET), so two first logins get the same one, and
+    one a password change replaces in between leaves the login with the old.
+    """
+    session_redis.set(_generation_key(user_uuid), uuid.uuid4().hex, nx=True)
+    return account_generation(user_uuid)
+
+
+def new_generation(user_uuid):
+    """
+    Revokes every session of the account. Called inside the transaction that changes its credentials, after the
+    write: a Redis error rolls the change back. Only production changes a mark: the demo's accounts are a copy, and
+    the store is shared.
+    """
+    if not settings.service.demo_instance:
+        session_redis.set(_generation_key(user_uuid), uuid.uuid4().hex)
+
+
+def google_login_generation(user, method, ident):
+    """
+    login_generation for a login through `method` (Google): under the account's row lock the identity is looked up
+    once more, and a switch or removal that got there first refuses the login (None).
+    """
+    with DATABASE.atomic():
+        User.select(User.id).where(User.id == user.id).for_update().get()
+        generation = login_generation(user.uuid)
+        again = authenticate_with_credentials(method, ident)
+    return generation if again and again.id == user.id else None
 
 
 def mass_logout_sessions(redis_client, changed_by):

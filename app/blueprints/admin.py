@@ -454,6 +454,51 @@ def admin_reset_password(u_id):
     return "", 204
 
 
+@admin_bp.route("/users/<int:u_id>/logga-ut", methods=["POST"])
+@admin_required
+def logout_everywhere(u_id):
+    """
+    "Logga ut överallt": a new mark for the account (da.new_generation) ends every session it has, on the demo too.
+    204 No Content.
+    """
+    if settings.service.demo_instance:
+        # Only production changes a mark; the demo shares the session store.
+        return problem(
+            403,
+            "Inte på demon",
+            "Utloggning görs i produktion; demon delar sessioner med den.",
+            type="demo-instance",
+        )
+    target = db.User.get_or_none(db.User.id == u_id)
+    if target is None:
+        return problem(404, "Användare saknas", f"Ingen användare med id {u_id}.", type="user-not-found")
+    da.new_generation(target.uuid)
+    auth_log.info("logged out everywhere actor=%s target=%s", current_user.id, u_id)
+    return "", 204
+
+
+@admin_bp.route("/users/<int:u_id>/google", methods=["DELETE"])
+@admin_required
+def remove_google_login(u_id):
+    """
+    Removes the account's Google identity, the way back for a member whose Google account got a new one: set a
+    password first, then she signs in with it and links the new identity. Refused for an account with a role and for
+    the account's last way to sign in (da.unlink_account), which also ends its sessions. 204 No Content.
+    """
+    target = db.User.get_or_none(db.User.id == u_id)
+    if target is None:
+        return problem(404, "Användare saknas", f"Ingen användare med id {u_id}.", type="user-not-found")
+    if not da.unlink_account(target, "google"):
+        return problem(
+            409,
+            "Google-inloggningen kan inte tas bort",
+            "Ett konto med roll behåller sin Google-inloggning, och ett konto utan lösenord behöver ett först.",
+            type="google-unlink-refused",
+        )
+    auth_log.info("google login removed actor=%s target=%s", current_user.id, u_id)
+    return "", 204
+
+
 # Session mass logout.
 
 
