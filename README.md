@@ -172,13 +172,20 @@ Logga ut överallt.
 - Release the API and the demo API together. They share the session store, and
   the new one refuses every session the old one makes.
 - Migration 44 makes a Google identity unique to one account. If two accounts
-  hold one, it stops with an error and leaves the schema at 43. Count first
-  (numbers only); it should be 0:
+  hold one, the migration fails, the schema stays at 43 and **the API does not
+  start**; the demo API does not either, on its copy of the database. Before
+  deploying, count read-only (numbers only); it must be 0:
 
   ```sql
   SELECT count(*) FROM (SELECT auth_data FROM authenticators WHERE auth = 'google'
     GROUP BY auth_data HAVING count(*) > 1) AS shared;
   ```
+
+  If it is not 0, do not deploy. While the old release still runs, decide for
+  each shared identity which account keeps it: the holder of the other account
+  unlinks Google from it, or a data fix (ADR-0013) removes that account's
+  `google` row in `authenticators`. Count again, and on the demo database too
+  until its next copy.
 
 ### Roles and Google
 

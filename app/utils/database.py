@@ -4027,8 +4027,9 @@ def migrate_42_to_43():
 
 
 def migrate_43_to_44():
-    """One account per Google identity. A database where two accounts hold one stops here, at 43, until an admin
-    unlinks the extra one (README, "Access rules")."""
+    """One account per Google identity. Where two accounts hold one, creating the index fails: the schema stays at 43
+    and the API does not start (nor the demo API on its copy). Count before deploying and fix the data while the old
+    release still runs (README, "Sessions")."""
     with DATABASE.atomic():
         DATABASE.execute_sql(GOOGLE_IDENTITY_INDEX_SQL)
         SchemaHistory.insert(  # pylint: disable=E1120
