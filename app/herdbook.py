@@ -668,7 +668,9 @@ def _session_revoked():
     session, so emptying Redis never brings one back. Sessions from before
     these stamps are refused: deploying them signs everybody out. The role
     rule: a session of an account with a role (da.holds_role) is valid only
-    when it signed in with Google, so giving a role ends its password sessions.
+    when it signed in with Google on the association's domain (google_domain),
+    also when the role came without a new mark, as a data fix or the demo's
+    nightly copy writes it.
 
     A session minted by the demo API counts as revoked in production: the
     stores are shared, but demo account state (passwords, Google links,
@@ -680,7 +682,8 @@ def _session_revoked():
     if "user_id" in session:
         if "auth_method" not in session or not da.session_holds(session):
             return True
-        if session["auth_method"] == "google" or settings.service.allow_role_password_login:
+        on_domain = session["auth_method"] == "google" and session.get("google_domain")
+        if on_domain or settings.service.allow_role_password_login:
             return False
         if settings.service.demo_instance and not session.get("demo_login"):
             # The demo's roles are a copy up to a day old: production judges the sessions it made, in the shared store.
@@ -690,18 +693,24 @@ def _session_revoked():
     return session.get("logout_epoch", 0) < _logout_epoch()
 
 
-def establish_session(user, method, generation):
+def establish_session(user, method, generation, on_domain=False):
     """
     The one way a login becomes a session: marks a demo login, stamps the
-    logout epoch, the sign-in method ("google" or "losenord") and the
-    account's mark read under its row lock, then rotates the sid. A session's
-    stamps are never rewritten; a change of credentials revokes it instead.
+    logout epoch, the sign-in method ("google" or "losenord"), whether a
+    Google login verified the association's domain (`on_domain`, stored
+    only when true) and the account's mark read under its row lock, then
+    rotates the sid. A session's stamps are never rewritten; a change of
+    credentials revokes it instead.
     """
     if not user.is_active:
         # login_user refuses it too: a refused login must not leave a user and a mark that wake on reactivation.
         return
     _stamp_login()
     session["auth_method"] = method
+    # A session an inactive account left uncleared must not lend its stamp to this login.
+    session.pop("google_domain", None)
+    if on_domain:
+        session["google_domain"] = True
     session["generation"] = generation
     session["user_id"] = user.uuid
     session.modified = True
@@ -1559,7 +1568,7 @@ def google_token_login():
 
             # After the save: a save that raises must not leave a session that
             # carries user_id without flask-login's _user_id.
-            establish_session(user, "google", generation)
+            establish_session(user, "google", generation, on_domain=True)  # the domain's hd and address, above
             da.auth_log.info("Login ok: Google, user id=%s", user.id)
             # Phase 8: link a pre-provisioned Member to this OAuth-verified
             # user. get_user() re-fetches from the DB, so a newly granted
@@ -1636,7 +1645,7 @@ def external_login_handler(service):
             )
             return "null"
         da.auth_log.info("Login ok: %s, user id=%s", service, user.id)
-        establish_session(user, service, generation)
+        establish_session(user, service, generation, on_domain=da.on_role_domain(verified_email))
         # Phase 8: auto-link Member on OAuth completion, then reload so the
         # profile save below writes fresh privileges — saving this stale
         # in-memory instance would clobber the just-granted owner role.
@@ -1745,7 +1754,7 @@ def external_login_handler(service):
 
     # FIXME: this is how we "really" log in the user
     if user.validated:
-        establish_session(user, service, generation)
+        establish_session(user, service, generation, on_domain=da.on_role_domain(verified_email))
         # Phase 8: auto-link Member on first OAuth login of an auto-
         # registered user (domain guard lives in try_auto_link_member).
         # google_details() returns only an email_verified address.

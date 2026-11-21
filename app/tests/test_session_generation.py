@@ -265,11 +265,11 @@ class TestLostMarkAndRaces(SessionTest):
         real = herdbook.establish_session
         calls = []
 
-        def paused(user, method, generation):
+        def paused(user, method, generation, **stamps):
             calls.append(method)
             if len(calls) == 1:
                 change()
-            return real(user, method, generation)
+            return real(user, method, generation, **stamps)
 
         return mock.patch.object(herdbook, "establish_session", paused)
 

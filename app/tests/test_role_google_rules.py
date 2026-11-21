@@ -542,6 +542,55 @@ class TestRoleRule(RoleRulesTest):
             da.update_role(grant, self.admin.uuid)
         self.assertFalse(self.has_level(self.member, "matrikel_admin"))
 
+    def test_a_google_session_holds_a_role_only_when_its_login_verified_the_domain(self):
+        """A role written without a new mark, as a data fix or the demo's nightly copy writes it."""
+        self.give_google(self.member, sub="google-sub")
+        outside = {"sub": "google-sub", "email": OUTSIDE_ADDRESS, "email_verified": True}
+
+        def legacy_session(idtoken):
+            client = APP.test_client(use_cookies=True)
+            redirect_login(client, da.authenticate_with_credentials, idtoken=lambda: idtoken)
+            return client
+
+        for api in ("production", "demo"):
+            with self.subTest(api), mock.patch.object(settings.service, "demo_instance", api == "demo"):
+                db.User.update(_privileges="[]").where(db.User.id == self.member.id).execute()
+                unstamped, stamped = legacy_session(outside), legacy_session(dict(ID_TOKEN))
+                self.assertEqual(unstamped.get("/api/user").status_code, 200)  # without a role it needs no stamp
+                manager = json.dumps([{"level": "manager", "genebank": 1}])
+                db.User.update(_privileges=manager).where(db.User.id == self.member.id).execute()
+                self.assertEqual(unstamped.get("/api/user").status_code, 401)
+                self.assertEqual(stamped.get("/api/user").status_code, 200)
+
+    def test_every_google_login_stamps_the_domain_exactly_when_it_verified_it(self):
+        def stamps(client):
+            with client.session_transaction() as sess:
+                return sess.get("auth_method"), sess.get("google_domain")
+
+        def legacy(idtoken, **kwargs):
+            client = APP.test_client(use_cookies=True)
+            redirect_login(
+                client, kwargs.pop("authenticate", da.authenticate_with_credentials), idtoken=lambda: idtoken, **kwargs
+            )
+            return stamps(client)
+
+        self.give_google(self.member, sub="google-sub")
+        self.assertEqual(stamps(self.google_login("google-sub")), ("google", True))  # the token route needs the domain
+        no_hd = {"sub": "google-sub", "email": DOMAIN_ADDRESS, "email_verified": True}
+        self.assertEqual(legacy(dict(ID_TOKEN)), ("google", True))
+        self.assertEqual(legacy({**ID_TOKEN, "email": OUTSIDE_ADDRESS}), ("google", None))
+        self.assertEqual(legacy(no_hd), ("google", None))
+
+        db.Authenticators.delete().where(db.Authenticators.user == self.member.id).execute()  # frees the identity
+        new = {"authenticate": lambda m, i: None, "auto_validate": True}
+        self.assertEqual(
+            legacy(dict(ID_TOKEN), account={"email": DOMAIN_ADDRESS, "username": "ny"}, **new), ("google", True)
+        )
+        db.Authenticators.delete().where(db.Authenticators.auth_data == "google-sub").execute()
+        self.assertEqual(
+            legacy(no_hd, account={"email": "annan@gotlandskaninen.se", "username": "ny2"}, **new), ("google", None)
+        )
+
     def test_basic_auth_spends_the_login_budget_on_the_right_password_as_on_a_wrong_one(self):
         """Otherwise the limit tells a role account's right password from a wrong one."""
         self.member.add_role("manager", 1)

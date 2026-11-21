@@ -17,9 +17,10 @@ ID_TOKEN = {
 
 
 def google_session(user):
-    """A client with a session from Google for `user`, stamped by establish_session as the Google logins stamp it."""
+    """A client with a session from Google on the association's domain for `user`, stamped by establish_session as
+    the Google logins stamp it."""
     with APP.test_request_context():
-        herdbook.establish_session(user, "google", da.login_generation(user.uuid))
+        herdbook.establish_session(user, "google", da.login_generation(user.uuid), on_domain=True)
         stamps = dict(herdbook.session)
     client = APP.test_client(use_cookies=True)
     with client.session_transaction() as sess:
