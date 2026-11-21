@@ -22,6 +22,11 @@
     "matrikel": "Matrikel",
     "medlemsstatistik": "Statistik"
   },
+  "coat": {
+    "label": "Päls",
+    "normal": "Normal",
+    "rex": "Rex"
+  },
   "explorer": {
     "title": "Alla kaniner",
     "subtitle": "Utforska alla kaniner i genbanken",

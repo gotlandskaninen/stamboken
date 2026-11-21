@@ -47,6 +47,7 @@ const dead: Individual = {
   eye_color: null,
   claw_color: null,
   hair_notes: "",
+  rex: false,
   breeding: 1,
   butchered: false,
   castration_date: null,

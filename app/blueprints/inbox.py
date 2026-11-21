@@ -519,6 +519,7 @@ REGISTRATION_FIELDS = (
     "claw_color",
     "belly_color",
     "hair_notes",
+    "rex",
 )
 _REFUSED_AS_FORBIDDEN = {"Forbidden", AssignPaperCertificate(None).denied().envelope["message"]}
 

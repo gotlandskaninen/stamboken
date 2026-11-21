@@ -385,6 +385,16 @@ class TestEditDescription(IndividualTest):
         self._run(self.manager, EditDescription({"notes": "av manager"}))
         self.assertEqual(self._stored().notes, "av manager")
 
+    def test_edit_description_rex(self):
+        """rex is a description field: stored, and the command log has the change."""
+        self._run(self.owner, EditDescription({"rex": True}))
+        self.assertTrue(self._stored().rex)
+        entry = db.IndividualCommand.get(
+            db.IndividualCommand.individual == self.ind.id, db.IndividualCommand.command == "EditDescription"
+        )
+        self.assertEqual(entry.before, {"rex": False})
+        self.assertEqual(entry.after, {"rex": True})
+
     def test_unknown_color_message(self):
         refusal = self._refusal(self.owner, EditDescription({"color": "finns-inte"}))
         self.assertEqual(refusal.envelope, error("Unknown color: 'finns-inte''"))
@@ -1261,6 +1271,12 @@ class TestLegacyAdapter(IndividualTest, FlaskTest):
         response = self._client(self.owner).patch("/api/individual", json=self._body(number=other.number))
         self.assertEqual((response.status_code, response.get_json()), (200, error("Individual number already exists")))
         self.assertEqual((self._stored().number, self._stored(other).number), ("G1-2112", "G1-2111"))
+
+    def test_legacy_patch_never_changes_rex(self):
+        db.Individual.update(rex=True).where(db.Individual.id == self.ind.id).execute()
+        response = self._client(self.owner).patch("/api/individual", json=self._body(notes="ny", rex=False))
+        self.assertEqual((response.status_code, response.get_json()["status"]), (200, "success"))
+        self.assertEqual((self._stored().notes, self._stored().rex), ("ny", True))
 
     def test_numeric_certificate_echo_is_a_collision(self):
         """IR-49: 12 for the stored "12" is no AssignPaperCertificate, but LegacyFormChecks compares it raw."""

@@ -43,6 +43,7 @@ def paginated_individuals():
     sex = request.args.get("sex", None)
     herd_id = request.args.get("herd_id", None)
     include_historical = request.args.get("include_historical", "false").lower() == "true"
+    rex = request.args.get("rex", "").lower() == "true"
 
     result = da.get_paginated_individuals(
         user_id,
@@ -56,6 +57,7 @@ def paginated_individuals():
         sex=sex,
         herd_id=herd_id,
         include_historical=include_historical,
+        rex=rex,
     )
     if result is None:
         return jsonify({"status": "error", "message": "Not authenticated"}), 401

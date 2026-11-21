@@ -1311,6 +1311,200 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertIn(("gmail_processed", "failures", False), fresh[0])
         self.assertIn(("seller_member_id", "member", "member_id"), fresh[2])
 
+    def _drop_rex_column(self):
+        """The schema before 43 -> 44: no rex column, the audit trigger on, and the version row gone."""
+        self.addCleanup(db.check_migrations)
+        self.assertTrue(
+            db.DATABASE.execute_sql(
+                "SELECT 1 FROM pg_trigger WHERE tgrelid = 'individual'::regclass AND tgname = 'audit_trigger'"
+            ).fetchone()
+        )
+        db.DATABASE.execute_sql("ALTER TABLE individual DROP COLUMN rex")
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= db.CURRENT_SCHEMA_VERSION).execute()
+
+    def _individual_audit_rows(self):
+        return db.AuditLog.select().where(db.AuditLog.table_name == "individual").count()
+
+    def test_rex_kolumn(self):
+        """A database stamped at 43 gets individual.rex, false for old rows, without audit rows, twice over."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self._drop_rex_column()
+        names = lambda: {c.name for c in db.DATABASE.get_columns("individual")}  # noqa: E731
+        self.assertNotIn("rex", names())
+        rows = db.DATABASE.execute_sql("SELECT count(*) FROM individual").fetchone()[0]
+        self.assertGreater(rows, 0)
+        audit_before = self._individual_audit_rows()
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertIn("rex", names())
+        self.assertEqual(
+            db.DATABASE.execute_sql("SELECT count(*) FROM individual WHERE rex IS DISTINCT FROM false").fetchone()[0], 0
+        )
+        self.assertEqual(self._individual_audit_rows(), audit_before)  # the ALTER fires no row trigger
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= db.CURRENT_SCHEMA_VERSION).execute()
+        db.check_migrations()  # a second run changes nothing and does not fail
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        (default,) = db.DATABASE.execute_sql(
+            "SELECT column_default FROM information_schema.columns "
+            "WHERE table_name = 'individual' AND column_name = 'rex'"
+        ).fetchone()
+        self.assertEqual(default, "false")
+        self.assertEqual(db.Individual.get_by_id(self.individuals[0].id).rex, False)
+
+    def test_rex_ur_fritext(self):
+        """Rex in a free-text note becomes rex = true; carriers, ej rex and the like do not. Text is untouched."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("regular expressions require PostgreSQL")
+        yes = [
+            ("rex", None),
+            ("Rexpäls", None),
+            ("rex-pälsad", None),
+            ("ja, rexpälsad.", None),
+            (None, "svart rex"),
+            (None, "madagaskar-rex"),
+            (None, "gul / svart japan, rexpälsad"),
+            ("rexpälsad", "svart med vita inslag"),
+            ("Rex", "bär blått"),
+            ("Rex", "anlag för japan"),
+        ]
+        no = [
+            ("nej", None),
+            ("normal", None),
+            ("-", None),
+            (None, "bär rex"),
+            (None, "rexbärare"),
+            (None, "anlag för rex"),
+            (None, "ej rex"),
+            (None, "havanna med rexinslag"),
+            ("icke-rex", None),
+            ("inte en rex", None),
+            ("utan rex", None),
+            ("inget rex", None),
+            ("Rex: nej", None),
+            ("far rex", None),
+            ("Rex", "bär rex"),
+            ("Rexpäls: nej", None),
+            ("Normalpäls, förälder är rex", None),
+            ("Rex, bär blått", None),
+            ("Rex, med vita inslag", None),
+            ("Rex", "mor rex"),
+            ("bär (rex)", None),
+            ("Rex (nej)", None),
+            ("Rex? nej", None),
+            ("Rex \u2013 nej", None),
+            ('ej "rex"', None),
+            ("rex/japan-bärare", None),
+            ("kanske rex", None),
+            ("ev. rex", None),
+            ("testad för rex, negativ", None),
+            ("kullsyskon är rex", None),
+            ("efter rexhane", None),
+            ("rexmor", None),
+            ("rexfri", None),
+            ("REXBÄRARE", None),
+            ("mamman är rex", None),
+            ("Inga tecken på rex", None),
+            ("rexliknande", None),
+            ("rex", "Inga tecken på rex"),
+            ("rex negativt", None),
+            ("okänt om rex", None),
+            ("mormor rex", None),
+            ("rex eller normal", None),
+            ("Rex: -", None),
+            ("Rex: 0", None),
+            ("rex-fri", None),
+            ("fri från rex", None),
+            ("rex oklart", None),
+            ("har rexgen", None),
+            ("rexkorsning", None),
+            ("50% rex", None),
+            ("kan vara rex", None),
+            ("Normalt", "svart rex"),
+            ("Normalpäls", "rex"),
+            ("Rex", "mamma rex"),
+            ("Saknar rex", None),
+            ("Saknar rexpäls", None),
+            ("farmor har rex", None),
+            ("Eventuell rex", None),
+            ("Möjlig rex", None),
+            ("Trolig rex", None),
+            ("Förmodligen rex", None),
+            ("Verkar vara rex", None),
+            ("Ser ut som rex", None),
+            ("Ska testas för rex", None),
+            ("Uppges vara rex", None),
+            ("Vanlig eller rex", None),
+            ("Paras med rex", None),
+            ("Korsad med rex", None),
+            ("Gotland x rex", None),
+            ("1/2 rex", None),
+            ("F1 rex", None),
+            ("No rex", None),
+            ("rex", "ickerex"),
+            ("ba\u0308r rex", None),
+            ("blandras rex", None),
+            ("blandning rex", None),
+            ("gravid rex", None),
+            ("rexpälsliknande", None),
+            ("rexpälsmor", None),
+            ("ja, rexpälsgen", None),
+            ("-rex", None),
+            ("svart -rex", None),
+            ("- rex", None),
+            ("vit/-rex", None),
+            ("nej", "svart rex"),
+            ("inga avvikelser", "svart rex"),
+            ("ickerex", None),
+        ]
+        ids = {}
+        for i, (hair, color_note) in enumerate(yes + no):
+            ids[(hair, color_note)] = db.Individual.create(
+                origin_herd=self.herds[0], number=f"G1-77{i:02d}", hair_notes=hair, color_note=color_note
+            ).id
+        noted = db.Individual.create(
+            origin_herd=self.herds[0], number="G1-7600", hair_notes="rex", notes="normalpäls, rex var felskrivet"
+        ).id
+        self._drop_rex_column()
+
+        with self.assertLogs("herdbook.db", level="INFO") as logged:
+            db.check_migrations()
+
+        self.assertFalse(self._rex(noted))
+        for key in yes:
+            self.assertTrue(self._rex(ids[key]), key)
+        for key in no:
+            self.assertFalse(self._rex(ids[key]), key)
+        for (hair, color_note), individual_id in ids.items():
+            row = db.DATABASE.execute_sql(
+                "SELECT hair_notes, color_note FROM individual WHERE individual_id = %s", (individual_id,)
+            ).fetchone()
+            self.assertEqual(row, (hair, color_note))
+        excluded = 1 + sum(1 for h, c in no if "rex" in f"{h}{c}".lower())  # +1: the notes rabbit
+        self.assertIn(f"rex: set from free text on {len(yes)}, {excluded} excluded", "\n".join(logged.output))
+
+    def test_rex_replay_keeps_corrections(self):
+        """A replay of 43 -> 44 on a database that already has the column does not set rex again or log rows."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("regular expressions require PostgreSQL")
+        rabbit = db.Individual.create(origin_herd=self.herds[0], number="G1-7790", hair_notes="rex")
+        self._drop_rex_column()
+        db.check_migrations()
+        self.assertTrue(self._rex(rabbit.id))
+        db.DATABASE.execute_sql("UPDATE individual SET rex = false WHERE individual_id = %s", (rabbit.id,))
+        audit_before = self._individual_audit_rows()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= db.CURRENT_SCHEMA_VERSION).execute()
+        db.check_migrations()
+        self.assertFalse(self._rex(rabbit.id))
+        self.assertEqual(self._individual_audit_rows(), audit_before)
+
+    def _rex(self, individual_id):
+        return db.DATABASE.execute_sql(
+            "SELECT rex FROM individual WHERE individual_id = %s", (individual_id,)
+        ).fetchone()[0]
+
     def _max_schema_version(self):
         return db.SchemaHistory.select(  # pylint: disable=E1120
             db.fn.MAX(db.SchemaHistory.version)

@@ -30,7 +30,7 @@ from utils.individual_number_v2 import (
     validate_first_certificate,
 )
 
-from .common import check_genebank_access, json_login_required, problem
+from .common import check_genebank_access, json_login_required, problem, rex_problem
 
 logger = logging.getLogger(__name__)
 
@@ -340,6 +340,7 @@ def promote_bunny(
     claw_color=None,
     belly_color=None,
     hair_notes=None,
+    rex=False,
 ):
     """Promote a bunny to a registered Individual.
 
@@ -472,6 +473,7 @@ def promote_bunny(
                 claw_color=claw_color,
                 belly_color=belly_color,
                 hair_notes=hair_notes,
+                rex=rex,
                 paper_certificate=paper_certificate if certificate_type == "paper" else None,
                 signature=user,
             )
@@ -753,6 +755,8 @@ def promote_bunny_route(id):
     detail = _validate_string_fields(body, _PROMOTE_STRING_FIELDS)
     if detail:
         return problem(400, "Bad Request", detail)
+    if refusal := rex_problem(body):
+        return refusal
     litter_size6w = body.get("litter_size6w")
     if litter_size6w is not None:
         try:
@@ -778,6 +782,7 @@ def promote_bunny_route(id):
             claw_color=body.get("claw_color"),
             belly_color=body.get("belly_color"),
             hair_notes=body.get("hair_notes"),
+            rex=body.get("rex", False),
         )
     except RosterActionError as exc:
         return problem(exc.status, exc.title, exc.detail, **exc.extra)

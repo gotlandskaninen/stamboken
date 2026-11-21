@@ -51,6 +51,7 @@ export interface FetchIndividualsParams {
   status?: string | null;
   sex?: string | null;
   herd_id?: string | null;
+  rex?: boolean;
   include_historical?: boolean;
 }
 
@@ -132,6 +133,7 @@ export interface Individual extends LimitedIndividual {
   MK?: string | null; // API returns "%.2f" strings
   children?: number;
   hair_notes: string;
+  rex: boolean;
   breeding: number | null;
   butchered: boolean;
   castration_date: string | null;
@@ -164,6 +166,7 @@ export type UpdateIndividualPayload = {
     | "claw_color"
     | "belly_color"
     | "hair_notes"
+    | "rex"
     | "notes"
     | "has_photo"
   >
@@ -512,6 +515,7 @@ export const apiSlice = createApi({
         if (params.status) searchParams.set("status", params.status);
         if (params.sex) searchParams.set("sex", params.sex);
         if (params.herd_id) searchParams.set("herd_id", params.herd_id);
+        if (params.rex) searchParams.set("rex", "true");
         if (params.include_historical)
           searchParams.set("include_historical", "true");
         const qs = searchParams.toString();
