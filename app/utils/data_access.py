@@ -2282,6 +2282,7 @@ def get_paginated_individuals(
     sex=None,
     herd_id=None,
     include_historical=False,
+    rex=False,
 ):
     """
     Returns paginated individuals with filtering, sorting, and search.
@@ -2359,6 +2360,10 @@ def get_paginated_individuals(
         # Sex filter
         if sex:
             core_query = core_query.where(Individual.sex == sex)
+
+        # Rex filter: only rex-coated rabbits; False means no filter
+        if rex:
+            core_query = core_query.where(Individual.rex == True)  # noqa: E712
 
         # Status filter
         max_report_time = (datetime.now() - timedelta(days=ACTIVE_WINDOW_DAYS)).date()
