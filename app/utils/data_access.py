@@ -655,15 +655,16 @@ def authenticate_with_credentials(method, ident):
     return None
 
 
-def _revoked_meanwhile(account, session_generation):
-    """The holder's own request (a mark given) whose session was revoked while it waited for the locked `account`."""
-    if session_generation is None or session_generation == account_generation(account.uuid):
+def _revoked_meanwhile(account, session_stamps):
+    """A request made through a session (`session_stamps`, its stamps) that the session no longer holds for: it was
+    revoked while the request waited for the locked `account`."""
+    if session_stamps is None or session_holds(session_stamps):
         return False
-    auth_log.warning("Refusing a change from a session revoked meanwhile for user #%d", account.id)
+    auth_log.warning("Refusing a change of user #%d from a session revoked meanwhile", account.id)
     return True
 
 
-def link_account(user, method, ident, email=None, from_google_session=False, session_generation=None):
+def link_account(user, method, ident, email=None, from_google_session=False, session_stamps=None):
     """
     Registers an account linked to an external authentication service. Returns
     something that evaluates as True on success.
@@ -673,8 +674,8 @@ def link_account(user, method, ident, email=None, from_google_session=False, ses
     takes only an identity whose verified address `email` is on the
     association's domain, and google_email follows the identity. Replacing
     one revokes the account's sessions (new_generation). The holder's own
-    request passes its session's mark (session_generation), and a session
-    revoked while the request waited for the lock changes nothing.
+    request passes its session (session_stamps), and a session revoked while
+    the request waited for the lock changes nothing (session_holds).
     """
     if not method or not ident or not user:
         return None
@@ -683,7 +684,7 @@ def link_account(user, method, ident, email=None, from_google_session=False, ses
         with DATABASE.atomic():
             # The account's row first, as unlink_account does, then the identity.
             account = User.select().where(User.id == user.id).for_update().get()
-            if _revoked_meanwhile(account, session_generation):
+            if _revoked_meanwhile(account, session_stamps):
                 return None
             old = Authenticators.get_or_none((Authenticators.user == user.id) & (Authenticators.auth == method))
             switch = old is not None and old.auth_data != ident
@@ -720,7 +721,7 @@ def link_account(user, method, ident, email=None, from_google_session=False, ses
     return None
 
 
-def unlink_account(user, method, session_generation=None):
+def unlink_account(user, method, session_stamps=None):
     """
     Removes any linked identities for method method. Return somethings that
     evaluates to false on failure. Never the account's last way to sign in:
@@ -728,7 +729,7 @@ def unlink_account(user, method, session_generation=None):
     admin could let the holder back in. Never the Google identity of an
     account with a role (holds_role). A removal revokes the account's
     sessions (new_generation), and google_email goes with the Google identity.
-    The holder's own request passes its session's mark, as for link_account.
+    The holder's own request passes its session, as for link_account.
     """
     if not method or not user:
         return None
@@ -737,7 +738,7 @@ def unlink_account(user, method, session_generation=None):
             # The account's row is the lock: two unlinks of different methods wait for each other, and a role grant
             # (update_role) and an unlink wait for each other.
             account = User.select().where(User.id == user.id).for_update().get()
-            if _revoked_meanwhile(account, session_generation):
+            if _revoked_meanwhile(account, session_stamps):
                 return None
             if method == "google" and holds_role(account):
                 auth_log.warning("Refusing to unlink google for user #%d, who has a role", user.id)
@@ -4528,6 +4529,19 @@ def account_generation(user_uuid):
     """The account's mark: a session is valid only while it carries this one. None when the account has none."""
     mark = session_redis.get(_generation_key(user_uuid))
     return mark.decode() if mark else None
+
+
+def session_holds(stamps):
+    """
+    Whether a session with a user still holds, by its stamps (the session itself): the account's current mark and the
+    latest logout epoch. herdbook._session_revoked asks it before every request; a change of credentials asks it again
+    under the account's row lock, for a request that waited there while its session was revoked.
+    """
+    if not stamps.get("user_id"):
+        return False
+    generation = account_generation(stamps["user_id"])
+    epoch = int(session_redis.get(LOGOUT_EPOCH_KEY) or 0)
+    return generation is not None and stamps.get("generation") == generation and stamps.get("logout_epoch", 0) >= epoch
 
 
 def login_generation(user_uuid):

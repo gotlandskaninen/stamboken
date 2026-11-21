@@ -655,11 +655,12 @@ def _session_revoked():
     logout increments it, so a session from before the last mass logout is
     dead even if an in-flight request wrote its key back after the sweep.
 
-    A session with a user is valid only with the sign-in method and the
-    account's current mark (establish_session, da.login_generation). Changing
-    the account's credentials replaces the mark, and an account without one
-    has no valid session, so emptying Redis never brings one back. Sessions
-    from before these stamps are refused: deploying them signs everybody out.
+    A session with a user is valid only with the sign-in method, the
+    account's current mark (establish_session, da.login_generation) and the
+    latest epoch, as da.session_holds answers. Changing the account's
+    credentials replaces the mark, and an account without one has no valid
+    session, so emptying Redis never brings one back. Sessions from before
+    these stamps are refused: deploying them signs everybody out.
 
     A session minted by the demo API counts as revoked in production: the
     stores are shared, but demo account state (passwords, Google links,
@@ -669,9 +670,7 @@ def _session_revoked():
         da.auth_log.warning("Refused a session minted by the demo API")
         return True
     if "user_id" in session:
-        generation = da.account_generation(session["user_id"])
-        if "auth_method" not in session or generation is None or session.get("generation") != generation:
-            return True
+        return "auth_method" not in session or not da.session_holds(session)
     return session.get("logout_epoch", 0) < _logout_epoch()
 
 
@@ -1765,8 +1764,8 @@ def external_link_handler(service):
         persistent,
         email=_storable_google_email(utils.external_auth.google_verified_email()) if service == "google" else None,
         from_google_session=session.get("auth_method") == "google",
-        # "" for Basic auth's session, which has no mark: never the account's.
-        session_generation=session.get("generation", ""),
+        # Basic auth's one-request session has no mark, so it never holds here.
+        session_stamps=session,
     )
 
     if not linked:
@@ -1808,7 +1807,7 @@ def external_unlink_handler(service):
         da.auth_log.warning("Refusing to unlink google from a password session for user #%d", current_user.id)
         return "null"
 
-    unlinked = da.unlink_account(current_user, service, session_generation=session.get("generation", ""))
+    unlinked = da.unlink_account(current_user, service, session_stamps=session)
     if not unlinked:
         return "null"  # FIXME: Error code instead?
     return "1"

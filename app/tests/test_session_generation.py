@@ -434,6 +434,34 @@ class TestLostMarkAndRaces(SessionTest):
                 self.assertEqual(self.identities(), ["sub-utanfor"])
                 self.assertEqual(db.User.get_by_id(self.viewer.id).google_email, "medlem@example.org")
 
+    @staticmethod
+    def first(change, real):
+        """`real`, after `change` has taken the account's row: what a request waiting for the lock meets."""
+
+        def after(*args, **kwargs):
+            change()
+            return real(*args, **kwargs)
+
+        return after
+
+    def test_a_change_that_waited_through_a_mass_logout_is_refused(self):
+        """The mass logout raises the logout epoch and leaves the marks alone; a change that waited for the account's
+        row asks the same question as every request: is the session still valid."""
+        self.addCleanup(self.session_redis.delete, da.LOGOUT_EPOCH_KEY)
+        changes = {
+            "link": ("link_account", lambda: google_link(self.google_login(), "sub-ny", ID_TOKEN["email"])),
+            "unlink": ("unlink_account", lambda: self.google_login().post("/api/unlink/google").get_data(as_text=True)),
+        }
+        for name, (function, request) in changes.items():
+            with self.subTest(name):
+                self.setUp()
+                mass_logout = self.first(
+                    lambda: da.mass_logout_sessions(da.session_redis, "test"), getattr(da, function)
+                )
+                with mock.patch.object(da, function, mass_logout):
+                    self.assertEqual(request(), "null")
+                self.assertEqual(self.identities(), [ID_TOKEN["sub"]])
+
     def test_logout_everywhere_waits_for_the_account(self):
         """It takes the account's row lock, as every change of credentials does."""
         before = da.login_generation(self.viewer.uuid)
