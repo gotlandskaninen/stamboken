@@ -220,11 +220,61 @@ domain (`google_email`); the domain is fixed in code:
   in with the password and links the new identity; the admin gives the role
   back.
 
+The role rule: Google is the only way into an account with a role.
+
+- A password login to it is refused after the password is checked, with a
+  wrong password's answer (`null` on a legacy host).
+- Basic auth for it is refused where the header is read: the request is
+  anonymous, so 401 wherever a login is needed, also under `/api/v2/`.
+- A session of it that did not sign in with Google is emptied at its next
+  request (`_session_revoked`), so giving a role ends the account's password
+  sessions. `is_admin` and the other role properties are unchanged: they also
+  answer for an account that is not the caller.
+- A Google login to it, on either Google route, needs a verified address on
+  the domain from a token of the domain, whatever `auth.ini` says.
+- The CMS admits only a session that signed in with Google (`auth_method` in
+  `/api/user`).
+
 `ALLOW_ROLE_PASSWORD_LOGIN=true` lifts these role rules for development and
 tests, where the seed's accounts with roles have only passwords. The
-development and pytest compose files and the CI pytest job set it. The API
-refuses to start with it when `FLASK_ENV=production`, which the demo API has
-too.
+development and pytest compose files, the CI pytest job, the API the
+Playwright jobs start and `scripts/ci-local.sh` set it. The API refuses to
+start with it when `FLASK_ENV=production`, which the demo API has too.
+
+**Releasing the role rule.** Count read-only against production (numbers
+only):
+
+1. Active accounts with a role that would be locked out: no Google login whose
+   `google_email` is on the domain, or not `validated` (the legacy frontend
+   needs it). It must be 0:
+
+   ```sql
+   SELECT count(*) FROM hbuser u WHERE u.is_active
+     AND EXISTS (SELECT 1 FROM jsonb_array_elements(u.privileges::jsonb) p
+       WHERE p->>'level' IN ('admin', 'matrikel_admin', 'manager', 'helper'))
+     AND (NOT u.validated OR coalesce(lower(u.google_email), '') NOT LIKE '%@gotlandskaninen.se'
+       OR NOT EXISTS (SELECT 1 FROM authenticators a WHERE a.user_id = u.user_id AND a.auth = 'google'));
+   ```
+
+   The count trusts `google_email`. A value written before Google sign-ins
+   rewrote it under the account's lock (see above) is no proof, so a role
+   holder who has not signed in with Google since can still be locked out.
+2. Active accounts with a role and a password: the password stops working for
+   them, at the login and as Basic auth, so a client that uses Basic auth with
+   such an account stops working. The API logs each Basic auth login as
+   `Login ok: header, user id=<id>`.
+
+   ```sql
+   SELECT count(*) FROM hbuser u WHERE u.is_active
+     AND EXISTS (SELECT 1 FROM jsonb_array_elements(u.privileges::jsonb) p
+       WHERE p->>'level' IN ('admin', 'matrikel_admin', 'manager', 'helper'))
+     AND EXISTS (SELECT 1 FROM authenticators a WHERE a.user_id = u.user_id AND a.auth = 'password');
+   ```
+
+A role account that is locked out gets back in with `flask users add-role`
+below, or an admin removes its role: without one the account signs in with a
+password again (Återställ lösenord sets one), links a Google login on the
+domain, and gets the role back.
 
 `flask users add-role <konto> <roll>` is the way back when the only admin has
 lost the Google account: it gives `admin` or `matrikel_admin` to the one active,
