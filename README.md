@@ -202,6 +202,17 @@ domain (`google_email`); the domain is fixed in code:
   (`DELETE /api/v2/admin/users/<id>/google`, no button yet). An account whose
   only way in is Google gets a password first (Återställ lösenord); it then
   signs in with it and links its new identity.
+- `google_email` values written before this version are no proof of the
+  domain: an identity switched on the older code kept its old address until
+  the next Google sign-in, which now rewrites it under the account's lock.
+  Give a role only after the account has signed in with Google on this
+  version.
+- To change the Google identity of an account with a role: it cannot unlink
+  Google, and the legacy link flow reuses the Google token it already holds,
+  so it cannot pick another Google account. An admin removes the role, sets a
+  password (Återställ lösenord) and removes the Google login; the holder signs
+  in with the password and links the new identity; the admin gives the role
+  back.
 
 `ALLOW_ROLE_PASSWORD_LOGIN=true` lifts these role rules for development and
 tests, where the seed's accounts with roles have only passwords. The
@@ -228,8 +239,9 @@ Once selected, you'll need to supply an application name (e.g. Herdbook) and a s
 
 Once filled in, you can save and continue.
 
-Next, you'll need to select the scopes provided. Select "Add and remove scopes" and pick `openid`.
-If you want to support automatic account creation, you also need to select ".../auth/userinfo.email"
+Next, you'll need to select the scopes provided. Select "Add and remove scopes" and pick `openid` and
+".../auth/userinfo.email": the login always asks for the verified address. Automatic account creation also asks for
+".../auth/userinfo.profile".
 
 Once done, select save and continue to finish configuration of the consent screen.
 
@@ -265,7 +277,7 @@ autocreate = yes
 
 in the `[google]` section.
 
-In short, you need to set up OAuth 2.0 with the `openid` scope (and optionally the `.../userinfo.email` scope to allow automatic creation). Once you've done that, provide the `Client secret` as `secret` and `Client ID` as `key` in the `[google]` section in `auth.ini`.
+In short, you need to set up OAuth 2.0 with the `openid` and `.../userinfo.email` scopes (and `.../userinfo.profile` to allow automatic creation). Once you've done that, provide the `Client secret` as `secret` and `Client ID` as `key` in the `[google]` section in `auth.ini`.
 
 #### Automatic herd ownerships
 
