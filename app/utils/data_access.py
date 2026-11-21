@@ -1285,6 +1285,9 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                         f"target:{operation.get(target)}"
                     )
                     target_user.add_role(operation["role"], operation.get(target))
+                    if operation["role"] in ROLE_LEVELS and not settings.service.allow_role_password_login:
+                        # Every earlier session ends, also on the demo, which leaves production's sessions to it.
+                        new_generation(target_user.uuid)
                     updated = True
 
             return {"status": "updated" if updated else "unchanged"}

@@ -43,5 +43,6 @@ def add_role(konto, roll):
             click.echo(f"Kontot har redan rollen {roll}.")
             return
         user.add_role(roll)
+        da.new_generation(user.uuid)  # every earlier session ends, as update_role does
     da.auth_log.info("Role %s given from the command line to user id=%s", roll, user.id)
     click.echo(f"Kontot har fått rollen {roll}.")

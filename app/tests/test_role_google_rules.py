@@ -87,6 +87,22 @@ class RoleRulesTest(DatabaseTest):
     def has_level(self, user, level="manager"):
         return any(p["level"] == level for p in db.User.get_by_id(user.id).privileges)
 
+    def member_sessions(self):
+        """A password session and a session from Google of the member, one of each to use on each API."""
+        return {
+            (api, method): login()
+            for api in ("production", "demo")
+            for method, login in (("losenord", self.login), ("google", self.google_login))
+        }
+
+    def assertEnded(self, sessions):
+        for (api, method), client in sessions.items():
+            with (
+                self.subTest(api=api, method=method),
+                mock.patch.object(settings.service, "demo_instance", api == "demo"),
+            ):
+                self.assertEqual(client.get("/api/user").status_code, 401)
+
 
 class TestRoleNeedsGoogle(RoleRulesTest):
     def test_a_role_is_only_given_to_an_account_with_google_on_the_domain(self):
@@ -367,6 +383,13 @@ class TestAddRoleCommand(RoleRulesTest):
     def add_role(self, konto=DOMAIN_ADDRESS, roll="admin"):
         return APP.test_cli_runner().invoke(args=["users", "add-role", konto, roll])
 
+    def test_ends_every_session_the_account_had(self):
+        self.give_google(self.member)
+        sessions = self.member_sessions()
+        result = self.add_role(roll="matrikel_admin")
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEnded(sessions)  # the role is in the demo's data too
+
     def test_refuses_an_account_without_google_or_without_the_course(self):
         result = self.add_role()
         self.assertNotEqual(result.exit_code, 0, result.output)
@@ -416,8 +439,11 @@ class TestRoleRule(RoleRulesTest):
     """With the rules on, the only way into an account with a role is a session from Google."""
 
     def test_a_password_session_ends_at_the_next_request_once_the_account_has_a_role(self):
+        """The role is written without a new mark, as a data fix or the demo's nightly copy writes it: the role rule
+        alone ends the session. Giving a role also replaces the mark (test_giving_a_role_ends_every_session_...)."""
         self.give_google(self.member)
         manage_role = {"action": "add", "role": "viewer", "user": self.member.id, "genebank": 1}
+        manager = json.dumps([{"level": "manager", "genebank": 1}])
         for path, call in (
             ("/api/user", lambda client: client.get("/api/user")),
             ("/api/manage/role", lambda client: client.post("/api/manage/role", json=manage_role)),
@@ -426,7 +452,7 @@ class TestRoleRule(RoleRulesTest):
                 db.User.update(_privileges="[]").where(db.User.id == self.member.id).execute()
                 client = self.login()
                 self.assertEqual(client.get("/api/user").status_code, 200)
-                self.assertEqual(self.grant(self.member).status_code, 200)
+                db.User.update(_privileges=manager).where(db.User.id == self.member.id).execute()
                 key = "session:" + client.get_cookie(APP.config["SESSION_COOKIE_NAME"]).value
                 self.assertEqual(call(client).status_code, 401)
                 self.assertFalse(session_redis.exists(key), "refused session left in the store")
@@ -490,6 +516,14 @@ class TestRoleRule(RoleRulesTest):
             set_role(["manager"])
             self.assertEqual(demo.get("/api/user").status_code, 401)
             self.assertEqual(login()[1], 401)  # a password login on the demo to an account with a role there
+
+    def test_giving_a_role_ends_every_session_the_account_had(self):
+        """Also a session from Google, and on the demo, which leaves production's sessions to production's rule."""
+        self.give_google(self.member)
+        sessions = self.member_sessions()
+        self.assertEqual(self.grant(self.member, "matrikel_admin").status_code, 200)
+        self.assertEnded(sessions)  # the role is in the demo's data too
+        self.assertEqual(self.google_login().get("/api/user").status_code, 200)  # the holder signs in again
 
     def test_basic_auth_spends_the_login_budget_on_the_right_password_as_on_a_wrong_one(self):
         """Otherwise the limit tells a role account's right password from a wrong one."""
