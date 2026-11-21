@@ -1445,17 +1445,34 @@ class TestDatabaseMigration(DatabaseTest):
             ("No rex", None),
             ("rex", "ickerex"),
             ("ba\u0308r rex", None),
+            ("blandras rex", None),
+            ("blandning rex", None),
+            ("gravid rex", None),
+            ("rexpälsliknande", None),
+            ("rexpälsmor", None),
+            ("ja, rexpälsgen", None),
+            ("-rex", None),
+            ("svart -rex", None),
+            ("- rex", None),
+            ("vit/-rex", None),
+            ("nej", "svart rex"),
+            ("inga avvikelser", "svart rex"),
+            ("ickerex", None),
         ]
         ids = {}
         for i, (hair, color_note) in enumerate(yes + no):
             ids[(hair, color_note)] = db.Individual.create(
                 origin_herd=self.herds[0], number=f"G1-77{i:02d}", hair_notes=hair, color_note=color_note
             ).id
+        noted = db.Individual.create(
+            origin_herd=self.herds[0], number="G1-7600", hair_notes="rex", notes="normalpäls, rex var felskrivet"
+        ).id
         self._drop_rex_column()
 
         with self.assertLogs("herdbook.db", level="INFO") as logged:
             db.check_migrations()
 
+        self.assertFalse(self._rex(noted))
         for key in yes:
             self.assertTrue(self._rex(ids[key]), key)
         for key in no:
@@ -1465,7 +1482,8 @@ class TestDatabaseMigration(DatabaseTest):
                 "SELECT hair_notes, color_note FROM individual WHERE individual_id = %s", (individual_id,)
             ).fetchone()
             self.assertEqual(row, (hair, color_note))
-        self.assertIn(f"rex: set from free text on {len(yes)}, 71 excluded", "\n".join(logged.output))
+        excluded = 1 + sum(1 for h, c in no if "rex" in f"{h}{c}".lower())  # +1: the notes rabbit
+        self.assertIn(f"rex: set from free text on {len(yes)}, {excluded} excluded", "\n".join(logged.output))
 
     def test_rex_replay_keeps_corrections(self):
         """A replay of 43 -> 44 on a database that already has the column does not set rex again or log rows."""

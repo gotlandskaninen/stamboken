@@ -4017,18 +4017,22 @@ def migrate_42_to_43():
         ).execute()
 
 
-_REX_MENTION = r"\mrex"
-# A field that contains rex anywhere (ickerex too) is clean only if it is colour words from a closed vocabulary
-# followed by rex or rexpäls as the last token, and it has none of the doubts below: carriers, negations,
-# relatives, questions. A "normal" anywhere in the row blocks too. Everything else is deliberately left
-# rex = false for manual review. Those rows stay findable afterwards by a read-only query (rex false and the
-# text mentions rex), so the migration logs counts only, never ids.
-_REX_SEP = r"[\s/,.-]+"
+_REX_MENTION = "rex"  # unanchored: "ickerex" and "dvärgrex" are candidates too, and fail the shape below
+# Reads individual.hair_notes, color_note and (for the "normal" check only) notes; nothing else.
+# A field that contains rex anywhere is clean only if it is colour words from a closed vocabulary followed by rex or
+# rexpäls(ad|ade|en) as the last token, and it has none of the doubts below: carriers, negations, relatives,
+# questions. A "normal" in hair_notes, color_note or notes blocks the row, and so does a hair_notes that is
+# exactly an explicit no ("nej", "ej", "inga avvikelser", "inga", "-", "normal"), even when rex is only in
+# color_note. Everything else is deliberately left rex = false for manual review. Those rows stay findable
+# afterwards by a read-only query (rex false and the text mentions rex), so the migration logs counts only, never ids.
 _REX_WORDS = (
-    r"ja|sv[aä]rt|bl[åa]\w*|brun\w*|gul\w*|vit\w*|gr[åa]\w*|havanna|madagaskar|tegel\w*|orange|lila|choklad\w*"
-    r"|chinchilla|agouti|japan\w*|harlekin|tricolor|r[öo]d\w*|albino|hermelin|siames\w*|dalmatiner|vildf[äa]rgad"
+    r"sv[aä]rt|sv[aä]rta|bl[åa]|bl[åa]tt|bl[åa]a|brun|bruna|brunt|gul|gula|gult|vit|vita|vitt|gr[åa]|gr[åa]tt|gr[åa]a"
+    r"|r[öo]d|r[öo]da|r[öo]tt|tegel(r[öo]d)?|choklad(brun)?|japan|siames|agouti|havanna|madagaskar|orange|lila"
+    r"|chinchilla|harlekin|tricolor|albino|hermelin|dalmatiner|vildf[äa]rgad|ja"
 )
-_REX_SHAPE = r"^" + _REX_SEP.replace("+", "*") + r"((" + _REX_WORDS + r")" + _REX_SEP + r")*rex(-?päls\w*)?[.\s]*$"
+# Words are joined by whitespace, "/", "," or "."; a "-" only joins one colour word directly to rex.
+_REX_SHAPE = r"^\s*((" + _REX_WORDS + r")[\s/,.]+)*((" + _REX_WORDS + r")-)?rex(-?päls(ad|ade|en)?)?[.\s]*$"
+_REX_NO = r"^\s*(nej|ej|inga avvikelser|inga|-|normal)\s*$"
 _REX_DOUBT = (
     r"b[äÄ]r",
     r"anlag",
@@ -4047,17 +4051,28 @@ _REX_DOUBT = (
 )
 
 
-def _rex_sql(template):
-    """One condition over hair_notes and color_note, each judged on its own: template with FIELD."""
-    return " OR ".join(
-        template.replace("FIELD", f"normalize(coalesce({f}, ''), NFC)") for f in ("hair_notes", "color_note")
-    )
+def _rex_sql(template, fields=("hair_notes", "color_note")):
+    """One condition over the fields, each judged on its own: template with FIELD."""
+    return " OR ".join(template.replace("FIELD", f"normalize(coalesce({f}, ''), NFC)") for f in fields)
 
 
 _REX_MENTIONED = _rex_sql("FIELD ~* '" + _REX_MENTION + "'")
-_REX_DOUBTFUL = _rex_sql(  # a field with rex in it that is not clean, or a "normal" in any field
-    "(FIELD ~* 'rex' AND (FIELD !~* '" + _REX_SHAPE + "' OR FIELD ~* '" + "|".join(_REX_DOUBT) + "'))"
-    " OR FIELD ~* 'normal'"
+_REX_DOUBTFUL = (  # a field with rex in it that is not clean, a "normal" in any field, or an explicit no in hair_notes
+    "("
+    + _rex_sql(
+        "(FIELD ~* '"
+        + _REX_MENTION
+        + "' AND (FIELD !~* '"
+        + _REX_SHAPE
+        + "' OR FIELD ~* '"
+        + "|".join(_REX_DOUBT)
+        + "'))"
+    )
+    + ") OR ("
+    + _rex_sql("FIELD ~* 'normal'", ("hair_notes", "color_note", "notes"))
+    + ") OR ("
+    + _rex_sql("FIELD ~* '" + _REX_NO + "'", ("hair_notes",))
+    + ")"
 )
 
 
