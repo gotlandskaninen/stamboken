@@ -1,6 +1,7 @@
 """An account with a role keeps a Google login on the association's domain. ALLOW_ROLE_PASSWORD_LOGIN lifts these rules
 for development and tests, and production refuses to start with it."""
 
+import base64
 import configparser
 import os
 import threading
@@ -432,6 +433,17 @@ class TestRoleRule(RoleRulesTest):
                 self.assertEqual(login("pass", NEW)[0], 401)
                 self.assertEqual(login("pass", LEGACY), (200, None, 401))  # legacy reads any JSON body as the user
                 self.assertEqual(login("pass", LEGACY), login("fel", LEGACY))
+
+    def test_basic_auth_is_refused_for_an_account_with_a_role(self):
+        auth = {"Authorization": "Basic " + base64.b64encode(b"medlem@example.org:pass").decode()}
+        client = APP.test_client()
+        # Without a role it works, on an older address and under /api/v2/ (404: no membership, but signed in).
+        self.assertEqual(client.get("/api/active_users", headers=auth).status_code, 200)
+        self.assertEqual(client.get("/api/v2/my-membership", headers=auth).status_code, 404)
+        self.member.add_role("manager", 1)
+        for path in ("/api/active_users", "/api/v2/my-membership"):
+            with self.subTest(path):
+                self.assertEqual(client.get(path, headers=auth).status_code, 401)
 
 
 class TestLegacyGoogleScope(unittest.TestCase):
