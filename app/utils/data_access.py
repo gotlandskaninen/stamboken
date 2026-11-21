@@ -589,9 +589,13 @@ def change_password(active_user, changed_user, form, session_stamps=None):
     A request passes the session it came through (session_stamps): one
     revoked while the request waited for the account's row changes nothing,
     as in link_account. An admin is asked no old password, also for her own.
+    Anyone else changes only her own: another account's old password is
+    never checked here, so it cannot be guessed outside the login's limit.
     """
     if not active_user or not changed_user or not form:
         logger.info("Bad call to change_password, somethings is missing)")
+        return None
+    if not active_user.is_admin and str(changed_user) != str(active_user.id):
         return None
 
     # The account's row, as a login takes it: the new password and the new mark (new_generation) are one change.
