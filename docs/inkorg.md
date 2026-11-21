@@ -661,7 +661,7 @@ Vad på intyget som hör till vilket fält:
 
 Valfria fält i övrigt: `breeding_id` (en känd kull, i stället för `mother`, `father` och
 `birth_date`), `breed_date` (parningsdatum; standard 31 dagar före födseln), `position` (platsen i
-kullen), `color_note`, `eye_color`, `claw_color`, `belly_color`, `hair_notes` och `resolution`.
+kullen), `color_note`, `eye_color`, `claw_color`, `belly_color`, `hair_notes`, `rex` (boolean, standard false) och `resolution`.
 
 Kullen skapas i moderns besättning, och kaninen föds där. Kaninen måste vara minst 42 dagar.
 

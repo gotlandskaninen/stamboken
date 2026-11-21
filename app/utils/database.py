@@ -4018,16 +4018,20 @@ def migrate_42_to_43():
 
 
 _REX_MENTION = r"\mrex"
-# Ambiguous rows are deliberately left for manual review: "mor är rex" and the like stay excluded.
-# Distances stay inside a clause: [\s:-] does not cross a comma, semicolon or full stop.
-_REX_EXCLUDED = (  # carriers, "not rex", parent references: each tied to the rex word, judged per field
-    r"rex\w*(bär|anlag|inslag|split)",
-    r"(bär\w*|anlag|inslag|split)[\s:-]+(\w+[\s:-]+){0,2}rex",
-    r"rex[\s:-]+(\w+[\s:-]+){0,2}(bär\w*|anlag|inslag|split)",
-    r"\m(ej|inte|inget|ingen|icke|utan|nej)[\s:-]+(\w+[\s:-]+){0,1}rex",
-    r"rex\w*[\s:-]*(nej|ej)\M",
-    r"icke-rex",
-    r"\m(far|mor|fadern|modern|föräld\w*)[\s:-]+(\w+[\s:-]+){0,1}rex",
+# A field that mentions rex and also has any of these is doubtful: carriers, negations, relatives, questions.
+# Anything doubtful is deliberately left rex = false for manual review. Those rows stay findable afterwards by a
+# read-only query (rex false and the text mentions rex), so the migration logs counts only, never ids.
+_REX_DOUBT = (
+    r"b[äÄ]r",
+    r"anlag",
+    r"inslag",
+    r"\msplit",
+    r"\m(ej|inte|inget|ingen|icke|utan|nej|ev|kanske|negativ|testad|känt|efter|syskon|kullsyskon|far|mor|dotter|son)\M",
+    r"f[öÖ]r[äÄ]ld",
+    r"fader|moder",
+    r"hane|hona",
+    r"rex(fri|mor|far)",
+    r"\?",
 )
 
 
@@ -4037,7 +4041,7 @@ def _rex_sql(template):
 
 
 _REX_MENTIONED = _rex_sql("FIELD ~* '" + _REX_MENTION + "'")
-_REX_EXCLUDED_SQL = _rex_sql("FIELD ~* '(" + "|".join(_REX_EXCLUDED) + ")'")
+_REX_DOUBTFUL = _rex_sql("(FIELD ~* '" + _REX_MENTION + "' AND FIELD ~* '(" + "|".join(_REX_DOUBT) + ")')")
 
 
 def migrate_43_to_44():
@@ -4050,10 +4054,10 @@ def migrate_43_to_44():
         done = excluded = 0
         if created:
             excluded = DATABASE.execute_sql(
-                f"SELECT count(*) FROM individual WHERE ({_REX_MENTIONED}) AND ({_REX_EXCLUDED_SQL})"
+                f"SELECT count(*) FROM individual WHERE ({_REX_MENTIONED}) AND ({_REX_DOUBTFUL})"
             ).fetchone()[0]
             done = DATABASE.execute_sql(
-                f"UPDATE individual SET rex = true WHERE ({_REX_MENTIONED}) AND NOT ({_REX_EXCLUDED_SQL})"
+                f"UPDATE individual SET rex = true WHERE ({_REX_MENTIONED}) AND NOT ({_REX_DOUBTFUL})"
             ).rowcount
         logger.info(f"rex set on {done} individuals, {excluded} excluded")
         SchemaHistory.insert(  # pylint: disable=E1120
