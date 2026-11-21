@@ -104,7 +104,7 @@ export function PaperChanges({
         <p className={styles.label} style={{ margin: 0 }}>
           Kryssar du varken ja eller nej gäller ditt senaste svar. Har du aldrig
           svarat publicerar vi ingenting. Du kan ändra ditt svar när som helst i
-          Stamboken eller hos genbanksansvarig.
+          Stamboken Online eller hos genbanksansvarig.
         </p>
 
         {text("E-post", fields.epost, (v) => set({ epost: v }), {
