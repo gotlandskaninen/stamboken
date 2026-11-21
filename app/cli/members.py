@@ -901,7 +901,7 @@ def _plan_herd_links() -> tuple[list, list, int]:
     listed: list = []
     already: set[tuple[int, int]] = set()
     pairs: dict[tuple[int, int], list] = {}  # (main id, user id) -> [main, user, codes]
-    possible: set[tuple[int, int]] = set()  # co-owners whose name matches: counterparts, never linked
+    possible: set[tuple[int, int]] = set()  # every name-matching owner: a counterpart, linked only through pairs
     for code in sorted(herds_by_code, key=lambda c: (int(c[1:]), c[0])):
         herds = herds_by_code[code]
         owner_users = {uid: u for h in herds for uid, u in owners.get(h.id, {}).items()}
@@ -913,6 +913,12 @@ def _plan_herd_links() -> tuple[list, list, int]:
             main = Member.select().where(
                 Member.membership == membership, Member.role == "huvudmedlem", Member.end_date.is_null(True)
             ).first()
+
+        if main is not None:
+            # Decided before anything is sorted out: whatever else is wrong with the
+            # herd or the account, a name-matching owner is a possible counterpart.
+            wanted = _norm_name(f"{main.first_name} {main.last_name}")
+            possible |= {(main.id, uid) for uid, u in owner_users.items() if wanted and _norm_name(u.fullname) == wanted}
 
         if len(herds) > 1:
             listed.append(([code], "flera besättningar har samma kod"))
@@ -928,8 +934,6 @@ def _plan_herd_links() -> tuple[list, list, int]:
             listed.append(([code], "inget konto har rollen ägare på besättningen"))
         elif len(owner_users) > 1:
             listed.append(([code], "flera konton har rollen ägare på besättningen"))
-            wanted = _norm_name(f"{main.first_name} {main.last_name}")
-            possible |= {(main.id, uid) for uid, u in owner_users.items() if wanted and _norm_name(u.fullname) == wanted}
         else:
             _check_owner(code, main, next(iter(owner_users.values())), incomplete, listed, already, pairs)
 

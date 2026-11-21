@@ -529,3 +529,28 @@ class TestMembersLinkByHerd(DatabaseTest):
 
         for user in users:
             self.assertIn(f"delad@example.org (id {user.id})", result.output)
+
+    def test_other_owner_with_a_broken_role_still_blocks_the_link(self):
+        _, person = self._membership(901)
+        a = self._account(owns=self._herd("G901"))
+        b = self._account(owns=self._herd("M901", genebank=1))
+        b.privileges = b.privileges + [{"level": "owner"}]
+        b.save()
+
+        for result in (self._run(), self._apply()):
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertIn("Kopplade: 0" if "Kopplade" in result.output else "Att koppla: 0", result.output)
+        self.assertIsNone(self._linked_user_id(person))
+        self.assertIsNone(db.Member.select().where(db.Member.user == a).first())
+
+    def test_other_owner_on_a_duplicated_herd_code_still_blocks_the_link(self):
+        _, person = self._membership(901)
+        self._account(owns=self._herd("G901"))
+        m1 = self._herd("M901", genebank=1)
+        self._account(owns=m1)
+        self.genebanks.append(db.Genebank.create(name="Mellerud2"))
+        db.Herd.create(genebank=self.genebanks[2], herd="M901", is_active=True)
+
+        for result in (self._run(), self._apply()):
+            self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIsNone(self._linked_user_id(person))
