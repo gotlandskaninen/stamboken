@@ -226,8 +226,8 @@ Kod: `testbreed` · Legacy-manual: "Provparning", "provpara" · Legacy: "Provpar
 
 **Päls (normal, rex)**\
 Kaninens päls är antingen normal eller rex, ett val med två alternativ, inte en kryssruta. Normal är
-standardvärdet. "Hårlag" och "rexpäls" används inte i gränssnittet; avvikande hårlag i övrigt
-skrivs i fritext (`hair_notes`).\
+standardvärdet. "Hårlag" är det äldre fritextfältet (`hair_notes`) och används inte för valet
+Normal eller Rex; "rexpäls" används inte i gränssnittet.\
 Kod: `rex` (boolean) · Legacy-manual: – · Legacy: fritext i hårlag · Nytt UI: "Päls", "Normal", "Rex"
 
 **Registrera / registrerad kanin**\
