@@ -9,7 +9,7 @@ Rapportera här, i mobilen eller datorn. Du behöver inte logga in:
 {{ link }}{% if prov %}
 (Det här är en provlänk. I det riktiga mejlet öppnar den besättningens rapport.){% endif %}
 
-Dina kaniner är redan ifyllda. Välj för varje kanin om den finns kvar, är död eller såld, och skriv vikten på de vuxna. Det du fyller i sparas, så du kan fortsätta senare med samma länk.
+Kaninerna som står registrerade på din besättning är redan ifyllda. Välj för varje kanin om den finns kvar, är död eller såld, och skriv vikten på de vuxna. Saknas en kanin eller en kull, till exempel en köpt kanin eller en ny kull, lägger du till den i rapporten. Det du fyller i sparas, så du kan fortsätta senare med samma länk.
 
 Sista dag för stödet är {{ deadline }}. Länken gäller till och med {{ end_date }}.
 
