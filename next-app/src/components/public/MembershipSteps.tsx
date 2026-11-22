@@ -1,4 +1,5 @@
 import { Box, Typography } from "@mui/material";
+import Link from "next/link";
 
 export const MEMBERSHIP_PAYMENT =
   "Årsavgiften är 200 kr och betalas till Plusgiro\u00a035\u00a003\u00a044-8 eller Swish\u00a0123\u00a0095\u00a070\u00a050. Ange namn och adress.";
@@ -104,6 +105,15 @@ export function MembershipSteps() {
           );
         })}
       </Box>
+      <Typography
+        sx={{ mt: 6, color: "ink.2", fontSize: "15px", lineHeight: 1.55 }}
+      >
+        (Det går också att bli medlem på papper. Kontakta{" "}
+        <Link href="/styrelsen" style={{ color: "inherit" }}>
+          genbanksansvarig
+        </Link>
+        .)
+      </Typography>
     </Box>
   );
 }
