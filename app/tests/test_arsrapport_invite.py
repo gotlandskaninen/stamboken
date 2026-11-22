@@ -134,7 +134,7 @@ class InviteTest(ArsrapportTest):
         (token,) = re.findall(r"/rapport#(\S+)", body)
         self.assertEqual(report_code.resolve(token).id, self.codes(row.herd)[0].id)
         self.assertEqual(subject, f"Årsrapporten 2025 för {row.herd.herd}: rapportera senast 2026-01-31")
-        self.assertIn("Dina kaniner är redan ifyllda. Välj för varje kanin", body)
+        self.assertIn("Kaninerna som står registrerade på din besättning är redan ifyllda. Välj för varje kanin", body)
         ((name, mime, data),) = variables["attachments"]
         self.assertEqual((mime, data[:4]), ("application/pdf", b"%PDF"))
 
