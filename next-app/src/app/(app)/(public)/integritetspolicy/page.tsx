@@ -314,8 +314,6 @@ export default function IntegritetspolicyPage() {
               utbrott av en smittsam djursjukdom.
             </p>
             <p>
-              Säljaren kan skriva sina egna kontaktuppgifter på beviset. De är
-              till för dig som köper, och vi för inte in dem i Stamboken Online.
               Skickas beviset in som foto sparas bilden i högst 12 månader, och
               den tas bort tidigare om kaninen säljs vidare. Har vi din
               e-postadress mejlar vi dig när ägarbytet är registrerat och
