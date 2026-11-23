@@ -9,7 +9,11 @@ const TITLE = "Tyck till om Stamboken";
 const APP = "/stamboken/min-besattning";
 const LOGGED_OUT = { cookies: [], origins: [] };
 
-const dialog = (page: Page) => page.getByRole("dialog", { name: TITLE });
+// The dialog takes the receipt's heading as its name once it is sent.
+const dialog = (page: Page) =>
+  page.getByRole("dialog", {
+    name: new RegExp(`^(${TITLE}|Tack! Vi har fått din synpunkt\\.)$`),
+  });
 
 // The Next.js dev indicator sits over the footer at 375 px and takes the
 // clicks (as in e2e/manual/screenshots.spec.ts); it never ships.
@@ -103,7 +107,10 @@ test.describe("Tyck till, inloggad", () => {
     ).toBeVisible();
     await expect(dialog(page)).toBeHidden();
 
-    const box = await page.locator("main h1, main h2").first().boundingBox();
+    // Opening from the footer scrolled the page down: bring the heading back into view.
+    const target = page.locator("main h1, main h2").first();
+    await target.scrollIntoViewIfNeeded();
+    const box = await target.boundingBox();
     await page.mouse.click(box!.x + 8, box!.y + box!.height / 2);
     await expect(page.getByText(/Du har valt/)).toBeVisible();
     await page.getByRole("button", { name: "Använd" }).click();
