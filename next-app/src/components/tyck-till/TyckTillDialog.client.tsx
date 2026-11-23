@@ -653,7 +653,7 @@ function Sheet({
                         <strong>Alla</strong>
                         <small>
                           Den läggs ut öppet på GitHub, utan ditt namn. Skriv
-                          inte andras namn eller kaninnummer.
+                          inte andras namn eller individnummer.
                         </small>
                       </span>
                     </label>
