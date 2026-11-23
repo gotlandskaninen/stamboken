@@ -221,8 +221,12 @@ class TestChecks(TyckTillTest):
         self.login("hjalp")
         self.send(vem="publik", email="annan@example.org", pekat="Anna Svensson G123")
         issue = self.github.created[0]
-        for private in ("Anna Svensson", "annan@example.org", "hjalp", str(self.helper.id)):
-            self.assertNotIn(private, issue["title"] + issue["body"])
+        text = issue["title"] + issue["body"]
+        for private in ("Anna Svensson", "annan@example.org", "hjalp", "Konto"):
+            self.assertNotIn(private, text)
+        # The id as a word of its own, outside the version and the reference, whose digits it may share.
+        rest = "\n".join(line for line in text.splitlines() if not line.startswith(("Version:", "Referens:")))
+        self.assertNotRegex(rest, rf"\b{self.helper.id}\b")
 
     def test_images_are_reencoded_without_exif(self):
         exif = Image.Exif()
