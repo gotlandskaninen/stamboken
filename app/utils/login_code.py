@@ -207,15 +207,16 @@ def purge(now):
 
 
 # Every address a person holds for login, or will hold once a wait is over (utils.matrikel.set_member_email): her
-# address, and a previous one while it still counts. A holder is a person not ended who is the main member of her
-# membership or has an account. That is wider than who gets a code (the membership must not be inactive too), so
-# reactivating a membership cannot give a main member an address another person holds.
+# address, and a previous one while it still counts; an empty string is none. A holder is a person not ended who is
+# the main member of her membership or has an account. That is wider than who gets a code (the membership must not
+# be inactive too), so reactivating a membership cannot give a main member an address another person holds.
 _ADDRESSES = """
     SELECT m.member_id, lower(btrim(m.email)) AS address FROM member m
-    WHERE m.end_date IS NULL AND (m.role = 'huvudmedlem' OR m.user_id IS NOT NULL) AND m.email IS NOT NULL
+    WHERE m.end_date IS NULL AND (m.role = 'huvudmedlem' OR m.user_id IS NOT NULL) AND btrim(m.email) <> ''
     UNION
     SELECT m.member_id, lower(btrim(r.address)) FROM member_previous_address r JOIN member m USING (member_id)
     WHERE m.end_date IS NULL AND (m.role = 'huvudmedlem' OR m.user_id IS NOT NULL) AND r.login_until > %(now)s
+        AND btrim(r.address) <> ''
 """
 
 

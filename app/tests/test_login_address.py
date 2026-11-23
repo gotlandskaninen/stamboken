@@ -449,6 +449,14 @@ class TestCollisions(LoginAddressTest):
             alarm, [{"code": "adresskrock", "message": "2 inloggningsadresser hör till fler än en person"}]
         )
 
+    def test_an_empty_string_is_no_address(self):
+        _mk_person(_mk_membership(number=11), "Bo", "Tom", "")
+        _mk_person(_mk_membership(number=12), "Cid", "Tom", "  ")
+        now = datetime.now(timezone.utc)
+        later = now + timedelta(days=1)
+        db.MemberPreviousAddress.create(member=self.holder, address="", login_until=later, purge_at=now)
+        self.assertEqual(lc.address_collisions(), 0)
+
     def test_the_nightly_job_logs_the_count_only(self):
         _mk_person(_mk_membership(number=11), "Bo", "Other", TAKEN)
         with (
