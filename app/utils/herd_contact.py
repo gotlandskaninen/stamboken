@@ -11,11 +11,23 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Literal
 
-from utils.database import Herd, HerdAccessGrant, Member, Membership, User
+from utils.database import DB_PROXY, PRIVACY_LEVELS, Herd, HerdAccessGrant, Member, Membership, User
 
 CONTACT_FIELDS = ("name", "email", "mobile_phone", "physical_address")
+# the flat keys of a general PATCH that only `contact` may change on a compared herd
+CONTACT_KEYS = frozenset((*CONTACT_FIELDS, *(f"{f}_privacy" for f in CONTACT_FIELDS)))
 Source = Literal["egen", "person", "medlemskap"]
 Mode = Literal["ej_jamford", "person", "fritext", "ingen"]
+
+STALE = "Kontaktuppgifterna har ändrats sedan sidan öppnades. Ladda om sidan och försök igen."
+
+
+class ContactConflict(Exception):
+    """The form showed another state than the one under the lock: 409 contact-changed."""
+
+
+class ContactForbidden(Exception):
+    """The user may not make this change of the contact: 403 contact-forbidden."""
 
 
 @dataclass(frozen=True)
@@ -165,6 +177,16 @@ def _person_json(person) -> dict:
     return {"id": person.id, "name": f"{person.first_name} {person.last_name}", "role": person.role}
 
 
+def may_choose_contact(user: User, herd: Herd, persons: Sequence[Member]) -> bool:
+    """Spec, Beslut om personerna: admin, the genebank's manager and the active main member on the herd's active
+    membership (`persons` = active_persons(herd)) choose the contact person."""
+    return bool(
+        user.is_admin
+        or herd.genebank_id in (user.is_manager or [])
+        or any(p.user_id == user.id and p.role == "huvudmedlem" for p in persons)
+    )
+
+
 def contact_field(user: User, herd: Herd, contact: HerdContact, *, reader: bool, private_access: bool) -> dict | None:
     """The `contact` object of a herd response: whole for a matrikel reader, a smaller one for others with
     private access (no mode, person, fetched values or their privacy), none for anyone else."""
@@ -180,11 +202,7 @@ def contact_field(user: User, herd: Herd, contact: HerdContact, *, reader: bool,
         }
         return {"rows": rows}
     persons = active_persons(herd)
-    chooses = (
-        user.is_admin
-        or herd.genebank_id in (user.is_manager or [])
-        or any(p.user_id == user.id and p.role == "huvudmedlem" for p in persons)
-    )
+    chooses = may_choose_contact(user, herd, persons)
     current = next((p for p in persons if p.id == contact.contact_member_id), None)
     data = {
         "mode": contact.mode,
@@ -226,3 +244,240 @@ def normalize(field: str, value: str | None) -> object:
     if field == "name":
         return frozenset(value.lower().split())
     raise ValueError(f"no normalisation for {field}")
+
+
+def lock_herd(herd_id: int) -> Herd:
+    """Lock the herd's membership and then the herd (SELECT ... FOR UPDATE), the order of soft_delete_person and
+    _relock_me, and return the herd as it is under the locks. Call it inside a transaction."""
+    membership_id = Herd.select(Herd.membership).where(Herd.id == herd_id).get().membership_id
+    if membership_id is not None:
+        Membership.select(Membership.id).where(Membership.id == membership_id).for_update().get()
+    herd = Herd.select().where(Herd.id == herd_id).for_update().get()
+    if herd.membership_id != membership_id:  # linked in between: its membership is not the one locked
+        raise ContactConflict(STALE)
+    return herd
+
+
+def check_flat_fields(herd: Herd, fields, contact) -> None:
+    """On a compared herd the contact rows and their privacy change only through `contact`, and never both ways
+    in one call: ValueError (400)."""
+    flat = sorted(CONTACT_KEYS & set(fields))
+    if flat and (herd.contact_pending is not None or contact is not None):
+        raise ValueError(f"Kontaktuppgifterna ändras med fältet contact, inte med {', '.join(flat)}.")
+
+
+def _given(value):
+    """A value the form filled in; blank counts as none."""
+    return value if isinstance(value, str) and value.strip() else None
+
+
+def _parse(patch) -> dict:
+    """The rows of a well-formed patch, or ValueError (400)."""
+    if not isinstance(patch, dict):
+        raise ValueError("contact måste vara ett objekt.")
+    rows = patch.get("rows", {})
+    if not isinstance(rows, dict) or not set(rows) <= set(CONTACT_FIELDS):
+        raise ValueError(f"contact.rows tar bara {', '.join(CONTACT_FIELDS)}.")
+    member = patch.get("contact_member")
+    if (
+        (member is not None and (isinstance(member, bool) or not isinstance(member, int)))
+        or not isinstance(patch.get("name"), (str, type(None)))
+        or not isinstance(patch.get("shown", {}), dict)
+        or (member is not None and _given(patch.get("name")))  # a person contact has no name of its own
+    ):
+        raise ValueError("contact: contact_member är ett id eller null, name en text eller null, shown ett objekt.")
+    for field, row in rows.items():
+        if (
+            not isinstance(row, dict)
+            or not isinstance(row.get("shown"), dict)
+            or row.get("source") not in ("egen", "medlemskap")
+            or not isinstance(row.get("value"), (str, type(None)))
+            or row.get("privacy") not in (None, *PRIVACY_LEVELS)
+            or row.get("answer") not in (None, "behall", "anvand")
+            or (row.get("answer") is not None and (row["answer"] == "anvand") != (row["source"] == "medlemskap"))
+            or (row.get("answer") == "behall" and "value" in row and not _given(row["value"]))  # keep, not empty
+        ):
+            raise ValueError(f"contact.rows.{field}: source, value, privacy, answer eller shown är fel.")
+    return rows
+
+
+def apply_contact_patch(herd_id: int, patch: dict, user: User, *, legacy: bool = False) -> None:
+    """Apply the `contact` object of a PATCH (spec: Skrivningar) in the caller's transaction, so that a refusal
+    rolls back the whole call. Under the locks it decides, in this order: the permission (403, before any value
+    is compared, so that a refusal never tells whether a guess was right), the state the form showed (409), the
+    chosen person (400). It writes only the columns that change.
+
+    A row the patch leaves out is unchanged. `legacy` is the old app's route, #117 Task 5."""
+    if legacy:
+        raise NotImplementedError("the old app's contact rules come with #117 Task 5")
+    rows = _parse(patch)
+    with DB_PROXY.atomic():
+        herd = lock_herd(herd_id)
+        current = herd_contact(herd)
+        compared = herd.contact_pending is not None
+        persons = active_persons(herd)
+        reader = is_matrikel_reader(user, herd)
+        chooses = may_choose_contact(user, herd, persons)
+        own_name = _given(current.rows["name"].value) if current.rows["name"].source == "egen" else None
+        top = "contact_member" in patch or "name" in patch
+        target = (
+            (patch.get("contact_member"), _given(patch.get("name"))) if top else (current.contact_member_id, own_name)
+        )
+        name_row = rows.get("name")
+        if (
+            reader
+            and name_row
+            and name_row["source"] == "egen"
+            and current.rows["name"].source != "egen"
+            and target == (current.contact_member_id, own_name)
+            and _given(name_row.get("value"))
+            and normalize("name", name_row["value"]) == normalize("name", current.rows["name"].value)
+        ):  # the contact person's name sent back is an echo, not a contact outside the register
+            name_row = {**name_row, "source": "medlemskap", "value": None}
+            rows = {**rows, "name": name_row}
+        typed = {}  # the own value each row will hold
+        # own values the call changes: only those are set equal to the register's ("Ja, behåll" and echoes are not)
+        sent = {
+            f
+            for f, r in rows.items()
+            if r["source"] == "egen"
+            and _given(r.get("value"))
+            and (current.rows[f].source != "egen" or normalize(f, r["value"]) != normalize(f, current.rows[f].value))
+        }
+        for field, row in rows.items():
+            if row["source"] == "egen":
+                # `value` left out: the own value stays (a privacy change, "Ja, behåll")
+                kept = current.rows[field].value if current.rows[field].source == "egen" else None
+                value = _given(row["value"]) if "value" in row else _given(kept)
+                if value:
+                    typed[field] = value
+
+        # Every refusal that can depend on the register (the main member's id in from_row included) comes after
+        # the 403s, so that a 403 never depends on whether a guess was right.
+        if (
+            compared
+            and not reader
+            and (
+                {"contact_member", "name", "shown"} & set(patch)
+                or any(f not in typed or r.get("answer") or r["shown"].get("source") != "egen" for f, r in rows.items())
+            )
+        ):  # decision 11: a value from the register is chosen, compared or shown only by those who read it
+            raise ContactForbidden("Uppgifter från medlemskapet kan bara väljas av den som ser dem.")
+
+        # the contact asked for (person id, fritext name): the top level, or the name row
+        from_row = None
+        if name_row and name_row["source"] == "egen":
+            from_row = (None, typed.get("name"))  # an own name is a contact outside the register
+        elif name_row and current.rows["name"].source == "egen":  # "Använd medlemskapets": the main member
+            from_row = (next((p.id for p in persons if p.role == "huvudmedlem"), None), None)
+        member, name = from_row or target
+        if not compared:  # every row is the herd's own: nothing is fetched, nobody is chosen
+            if member is not None or any(r["source"] != "egen" or r.get("answer") for r in rows.values()):
+                raise ValueError("Besättningen är inte jämförd med matrikeln: bara egna uppgifter kan ändras.")
+            change = False
+        else:  # another person, or to or from fritext; a new fritext text is an own-row edit
+            change = member != current.contact_member_id or (
+                member is None and (name is None) != (current.mode != "fritext")
+            )
+        if change and not chooses:
+            raise ContactForbidden("Bara huvudmedlemmen, genbanksansvarig och admin byter kontaktperson.")
+        if from_row and top and from_row != target:
+            raise ValueError("contact och contact.rows.name väljer olika kontakter.")
+        own_only = not top and all(
+            f in typed and not r.get("answer") and r["shown"].get("source") == "egen" for f, r in rows.items()
+        )
+        if compared and "shown" not in patch and not own_only:
+            raise ValueError("contact.shown krävs när kontakten eller en rads källa byts.")
+
+        shown = patch.get("shown")
+        if shown is not None and (shown.get("mode"), shown.get("contact_member"), _given(shown.get("name"))) != (
+            current.mode,
+            current.contact_member_id,
+            own_name,
+        ):
+            raise ContactConflict(STALE)
+        # own rows the patch hands over to the register
+        switching = {f for f in rows if compared and current.rows[f].source == "egen" and f not in typed}
+        for field, row in rows.items():
+            now, seen = current.rows[field], row["shown"]
+            # as this user's read reports the row (contact_field); a non-reader's form shows own rows only
+            expected = (now.source, _given(now.value), getattr(herd, f"{field}_privacy") or "private")
+            got = (seen.get("source"), _given(seen.get("value")), seen.get("privacy"))
+            if field in switching or row.get("answer"):  # decided against the register's value: it counts
+                alternative = None if field == "name" and current.mode == "fritext" and not chooses else now.alternative
+                expected, got = (*expected, alternative), (*got, _given(seen.get("alternative")))
+            if got != expected or (row.get("answer") and field not in herd.contact_pending):
+                raise ContactConflict(STALE)
+            if row["source"] == "egen" and "value" not in row and now.source != "egen":
+                raise ValueError(f"contact.rows.{field}: value krävs när raden blir egen.")
+            # a value on a "medlemskap" row is only an echo of the fetched value the row shows
+            if (
+                row["source"] == "medlemskap"
+                and _given(row.get("value"))
+                and (now.source == "egen" or normalize(field, row["value"]) != normalize(field, now.value))
+            ):
+                raise ValueError(f"contact.rows.{field}: ett annat värde än medlemskapets kan inte hämtas.")
+        if change and member is not None and member not in {p.id for p in persons}:
+            raise ValueError("Kontaktpersonen måste vara en aktiv person på besättningens medlemskap.")
+        if change and member is None and name is None:
+            raise ValueError("Välj en kontaktperson eller skriv kontaktens namn.")
+
+        new = Herd(**herd.__data__)
+        if (member, name) != (current.contact_member_id, own_name):
+            new.contact_member, new.name = member, name
+        for field in rows.keys() - {"name"}:
+            setattr(new, field, typed.get(field))  # an own value, or none: fetched
+        if compared:
+            fetched = herd_contact(Herd(**{**new.__data__, **dict.fromkeys(CONTACT_FIELDS[1:])})).rows
+            for field in CONTACT_FIELDS[1:]:
+                own, register = getattr(new, field), fetched[field].value
+                # no own copy of the register's value: one a reader writes, or the new contact person's
+                if (
+                    own
+                    and register
+                    and normalize(field, own) == normalize(field, register)
+                    and ((reader and field in sent) or (change and field != "physical_address"))
+                ):
+                    setattr(new, field, None)
+        final = herd_contact(new)
+        for field, row in rows.items():
+            if field in switching:
+                # the own value gives way to the register's: only to the value the form showed
+                after, wanted = final.rows[field].value, _given(row["shown"].get("alternative"))
+                if row["source"] == "medlemskap":
+                    wanted = wanted or _given(row["shown"].get("value"))  # no alternative: the two were equal
+                    if after is None:
+                        raise ContactConflict(STALE)
+                if after is not None and normalize(field, after) != normalize(field, wanted):
+                    raise ContactConflict(STALE)
+
+        changes = {
+            column: new.__data__.get(column)
+            for column in ("contact_member", *CONTACT_FIELDS)
+            if new.__data__.get(column) != herd.__data__.get(column)
+        }
+        for field in CONTACT_FIELDS:
+            chosen = rows.get(field, {}).get("privacy")
+            written = field in typed or (field == "name" and member is None and name is not None)
+            # decisions 4 and 14: another value than the one shown starts hidden when it is fetched, when the user
+            # did not write it, and after a change of contact person
+            if normalize(field, current.rows[field].value) != normalize(field, final.rows[field].value) and (
+                final.rows[field].source != "egen" or not written or (change and field != "physical_address")
+            ):
+                chosen = "private"
+            if chosen and chosen != (getattr(herd, f"{field}_privacy") or "private"):
+                changes[f"{field}_privacy"] = chosen
+        if compared:
+            pending = [
+                f
+                for f in herd.contact_pending
+                if final.rows[f].source == "egen"
+                and not rows.get(f, {}).get("answer")
+                and new.__data__.get(f) == herd.__data__.get(f)
+            ]
+            if pending != herd.contact_pending:
+                changes["contact_pending"] = pending
+        if changes:
+            for column, value in changes.items():
+                setattr(herd, column, value)
+            herd.save(only=list(changes))

@@ -10,8 +10,9 @@ import logging
 import utils.data_access as da
 from flask import Blueprint, jsonify, request, session
 from utils.database import Bunny
+from utils.herd_contact import ContactConflict, ContactForbidden
 
-from .common import json_login_required, problem
+from .common import contact_problem, json_login_required, problem
 
 breeding_bp = Blueprint("breeding", __name__, url_prefix="/api")
 
@@ -203,7 +204,10 @@ def update_herd_v2(herd_id):
         return problem(404, "Not Found", f"Herd {herd_id} not found")
 
     form["id"] = numeric_id
-    result = da.update_herd(form, user_uuid)
+    try:
+        result = da.update_herd(form, user_uuid)
+    except (ContactConflict, ContactForbidden) as err:
+        return contact_problem(err)
 
     if result.get("status") == "error":
         msg = result.get("message", "Unknown error")

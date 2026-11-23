@@ -50,7 +50,8 @@ from utils.database import ACCOUNT_MASK, BANK_PRIVACY_FIELDS, PRIVACY_LEVELS, ac
 from utils.database import ht_not_voided  # isort: skip
 from utils.database import ht_order_desc  # isort: skip
 from utils.database import latest_ht_per_individual  # isort: skip
-from utils.herd_contact import contact_field, herd_contact, herd_contacts  # isort: skip
+from utils.herd_contact import ContactConflict, apply_contact_patch, check_flat_fields  # isort: skip
+from utils.herd_contact import contact_field, herd_contact, herd_contacts, lock_herd  # isort: skip
 from utils.database import lock_individuals  # isort: skip
 from utils.database import not_voided  # isort: skip
 from utils.database import validate_date  # isort: skip
@@ -1226,6 +1227,7 @@ HERD_EDITABLE_FIELDS = {
     "wire_phone",
     "www",
     "is_active",
+    "contact",  # the contact rows of a compared herd (#117): apply_contact_patch
 }
 
 
@@ -1350,23 +1352,34 @@ def edit_herd(herd, fields, actor):
     bad = invalid_privacy_field(fields)
     if bad:
         raise ValueError(f"Fältet {bad} måste vara public, authenticated, private eller null.")
-    # Only write fields whose value actually changed, and skip the UPDATE
-    # entirely when nothing did — avoids a redundant full-row write. No explicit
-    # type cast is needed: every HERD_EDITABLE_FIELDS value
-    # already arrives correctly typed from the RSC action (JSON bool for
-    # is_active, strings for the rest), so payload and column types match.
-    changed = []
-    for key, value in fields.items():
-        if getattr(herd, key) != value:
-            setattr(herd, key, value)
-            changed.append(key)
-    if changed:
-        # only= : a full-row save would write the stale ownership columns back
-        # over a membership/genebank change committed since the row was loaded.
-        with DATABASE.atomic():
+    contact = fields.get("contact")
+    fields = {k: v for k, v in fields.items() if k != "contact"}
+    with DATABASE.atomic():
+        # One transaction, decided on the row under the membership and herd locks (#117); ContactConflict,
+        # ContactForbidden and ValueError roll back the whole call.
+        herd = lock_herd(herd.id)
+        # the route checked the herd it read; an admin may have moved it to another genebank since
+        if not (actor.is_admin or herd.genebank_id in (actor.is_manager or [])):
+            raise PermissionError(f"Kräver manager(gb={herd.genebank_id}) eller admin.")
+        check_flat_fields(herd, fields, contact)
+        if contact is not None:
+            apply_contact_patch(herd.id, contact, actor)
+        # Only write fields whose value actually changed, and skip the UPDATE
+        # entirely when nothing did — avoids a redundant full-row write. No explicit
+        # type cast is needed: every HERD_EDITABLE_FIELDS value
+        # already arrives correctly typed from the RSC action (JSON bool for
+        # is_active, strings for the rest), so payload and column types match.
+        changed = []
+        for key, value in fields.items():
+            if getattr(herd, key) != value:
+                setattr(herd, key, value)
+                changed.append(key)
+        if changed:
+            # only= : a full-row save would write the stale ownership columns back
+            # over a membership/genebank change committed since the row was loaded.
             herd.save(only=changed)
-    logger.info(f"User:{actor.id} edited herd {herd.id} via adminpanel")
-    return get_herd_for_admin(actor, herd)
+        logger.info(f"User:{actor.id} edited herd {herd.id} via adminpanel")
+        return get_herd_for_admin(actor, Herd.get_by_id(herd.id))  # read under the locks it was decided on
 
 
 # Genebank functions
@@ -1673,17 +1686,22 @@ def save_yearly_report(herd_id, form_data, user):
         return {"status": "error", "message": "Failed to save report"}
 
 
-def update_herd(form, user_uuid):
+def update_herd(form, user_uuid, *, legacy=False):
     """
     Updates a herd, identified by `form.id`, by the values in `form`, if the
     given `user` has sufficient permissions to do so.
+
+    One transaction, decided on the row under the membership and herd locks (#117). `legacy` is the old app's
+    route, saved as before until #117 Task 5. Otherwise (v2) `contact` goes to apply_contact_patch, flat contact
+    fields are refused on a compared herd, and membership is never written; ContactConflict and ContactForbidden
+    are raised for the route to answer, after the rollback.
     """
     user = fetch_user_info(user_uuid)
     if user is None:
         return {"status": "error", "message": "Not logged in"}
     try:
         with DATABASE.atomic():
-            herd = Herd.get(form["id"])
+            herd = lock_herd(form["id"])
 
             if not user.can_edit(herd.herd):
                 return {"status": "error", "message": "Forbidden"}
@@ -1708,12 +1726,19 @@ def update_herd(form, user_uuid):
             bad = invalid_privacy_field(form)
             if bad:
                 return {"status": "error", "message": f"Invalid value for {bad}"}
+            contact = None if legacy else form.get("contact")
+            if not legacy:
+                check_flat_fields(herd, form, contact)
+            if contact is not None:
+                apply_contact_patch(herd.id, contact, user)
 
             # Real columns only (hasattr also matches genebank_id, membership_id and
             # methods such as save). Identity/ownership columns are admin-only; the
             # legacy SPA echoes the whole herd object, so locked keys are dropped, not refused.
-            locked = {"contact_member", "contact_pending"} | (
-                set() if user.is_admin else {"id", "herd", "genebank", "membership"}
+            locked = (
+                {"id", "contact_member", "contact_pending"}
+                | (set() if legacy else {"membership"})
+                | (set() if user.is_admin else {"herd", "genebank", "membership"})
             )  # the contact columns are written only by the contact paths, never by a general call
             written = [key for key in form if key in Herd._meta.fields and key not in locked]
             for key in written:
@@ -1726,6 +1751,12 @@ def update_herd(form, user_uuid):
         return {"status": "updated"}
     except DoesNotExist:
         return {"status": "error", "message": "Unknown herd"}
+    except ValueError as err:
+        return {"status": "error", "message": str(err)}
+    except ContactConflict as err:  # on the old app's route only lock_herd's (a herd linked meanwhile)
+        if legacy:
+            return {"status": "error", "message": str(err)}
+        raise
 
 
 # Individual functions

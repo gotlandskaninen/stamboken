@@ -233,7 +233,7 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
         echoed = herd.filtered_dict(self.manager)
         self.assertEqual(echoed["bank_account_number"], "••45")
         echoed.update(www="new-www", id=herd.id)
-        self.assertEqual(da.update_herd(echoed, self.manager.uuid), {"status": "updated"})
+        self.assertEqual(da.update_herd(echoed, self.manager.uuid, legacy=True), {"status": "updated"})
         herd = db.Herd.get_by_id(herd.id)
         self.assertEqual((herd.bank_account_number, herd.www), ("1234-5", "new-www"))
 
@@ -260,7 +260,9 @@ class TestEffectiveAccessConsumers(EffectiveAccessTest):
         self.assertEqual(result, {"status": "updated"})
         self.assertEqual(db.Herd.get_by_id(herd.id).bank_account_number, "9876-54")
         # An admin sees the whole account and may clear it.
-        self.assertEqual(da.update_herd({"id": herd.id, "bank_account_number": ""}, self.admin.uuid)["status"], "updated")
+        self.assertEqual(
+            da.update_herd({"id": herd.id, "bank_account_number": ""}, self.admin.uuid)["status"], "updated"
+        )
 
     def test_yearly_report_shows_the_whole_account_for_the_readers_own_herd_only(self):
         a, b = self.herds[0], self.herds[1]
