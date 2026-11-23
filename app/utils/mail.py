@@ -29,7 +29,16 @@ from urllib.parse import urlparse
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 import utils.settings as settings
-from utils.database import DB_PROXY, MailAttempt, MailMessage, MailSender, Member, MemberApplication, User
+from utils.database import (
+    DB_PROXY,
+    MailAttempt,
+    MailMessage,
+    MailSender,
+    Member,
+    MemberApplication,
+    MemberPreviousAddress,
+    User,
+)
 from utils.log_masking import mask_tokens
 
 logger = logging.getLogger("herdbook.mail")
@@ -747,6 +756,13 @@ def _application(application_id):
     return Recipient(a.email, f"{a.first_name} {a.last_name}") if a else None
 
 
+@recipient_kind("member_previous_address")
+def _previous_address(row_id):
+    """An address a person had (utils.matrikel.set_member_email); gone once the row is purged or the person erased."""
+    r = MemberPreviousAddress.get_or_none(MemberPreviousAddress.id == row_id)
+    return Recipient(r.address, f"{r.member.first_name} {r.member.last_name}") if r else None
+
+
 # --- Kinds ---
 
 
@@ -800,6 +816,12 @@ def _member_added(params):
         "main": " ".join(f"{main.first_name} {main.last_name}".split()) if main else None,
         "phone": bool(person.phone),
     }
+
+
+@mail_kind("kontakt.epost_besked", priority=0, category="T")
+def _address_changed(params):
+    """To the previous address: it was changed, and by whom. Never the new address."""
+    return {"by": "self" if params["by_self"] else "matrikel" if params["by_matrikel"] else "other"}
 
 
 ADDED_A_DAY = 10  # medlemskap.tillagd mails one membership can cause in a day

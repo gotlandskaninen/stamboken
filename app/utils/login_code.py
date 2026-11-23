@@ -16,7 +16,7 @@ from peewee import fn
 
 import utils.settings as settings
 from utils.database import DB_PROXY, LoginCode
-from utils.mail import address_hash, forget_recipient, one_time_code
+from utils.mail import Recipient, address_hash, forget_recipient, mail_kind, one_time_code, recipient_kind
 
 logger = logging.getLogger("herdbook.login_code")
 
@@ -231,6 +231,27 @@ def reserve_login_address(address, person_id):
     ).fetchone()
     if taken:
         raise AddressTaken(AddressTaken.title)
+
+
+@recipient_kind("login_code")
+def _code_recipient(row_id):
+    """
+    The address the code goes to, read when it goes: none once the code is used, voided or too old, or the person's
+    account has changed. Only a new address (ny_adress) has one yet; the login code's comes with the login page.
+    """
+    row = LoginCode.get_or_none(LoginCode.id == row_id)
+    if row is None or row.used_at or row.created_at <= _utcnow() - VALID_FOR or row.purpose != "ny_adress":
+        return None
+    person = row.member
+    if person.user_id != row.user_id:
+        return None
+    return Recipient(row.new_address, f"{person.first_name} {person.last_name}")
+
+
+@mail_kind("konto.kod", priority=0, category="T")
+def _code_mail(params):
+    row = LoginCode.get_or_none(LoginCode.id == params["code_id"])
+    return {"code": shown(code(row))} if row else None
 
 
 def alarms(now=None):

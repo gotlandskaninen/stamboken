@@ -6,6 +6,7 @@ Synthetic data only.
 isort:skip_file
 """
 
+import logging
 import os
 import tempfile
 import threading
@@ -23,6 +24,7 @@ import utils.mail as mail  # noqa: E402
 import utils.settings as settings  # noqa: E402
 
 from tests.database_test import _USE_POSTGRES, DatabaseTest  # noqa: E402
+from tests.test_mail_queue import FakeRelay  # noqa: E402
 
 SECRET = "test-link-secret"
 
@@ -40,6 +42,7 @@ class LoginCodeTest(DatabaseTest):
             mock.patch.multiple(settings.mail, mode="live", link_secret=SECRET, allowlist=[]),
             mock.patch.object(settings.service, "host", "https://stambok.example.org"),
             mock.patch.object(lc, "_utcnow", side_effect=lambda: self.now),
+            mock.patch.object(mail, "_utcnow", side_effect=lambda: self.now),
         ):
             patch.start()
             self.addCleanup(patch.stop)
@@ -296,3 +299,97 @@ class TestPurge(LoginCodeTest):
         calls = scheduler_cls.return_value.add_job.call_args_list
         (job,) = [c for c in calls if herdbook._expire_login_codes in c.args]
         self.assertEqual((job.kwargs["minutes"], job.kwargs["id"]), (1, "login_code_expire"))
+
+
+class TestMails(LoginCodeTest):
+    def setUp(self):
+        super().setUp()
+        self.fake = FakeRelay()
+        patch = mock.patch.object(mail.smtplib, "SMTP", self.fake)
+        patch.start()
+        self.addCleanup(patch.stop)
+
+    def queue_code(self, **kwargs):
+        row = self.issue(**kwargs)
+        return row, mail.enqueue_mail("konto.kod", "login_code", row.id, {"code_id": row.id})
+
+    def status(self, mail_id):
+        return db.MailMessage.get_by_id(mail_id).status
+
+    def test_the_new_address_gets_the_code_and_no_link(self):
+        row, mail_id = self.queue_code()
+        mail.send_pending()
+        ((msg, _sender, to),) = self.fake.sent
+        self.assertEqual(to, ["ny@example.org"])
+        self.assertEqual(msg["Subject"], "Din kod för att byta e-postadress i Stamboken")
+        body = msg.get_content()
+        self.assertIn(f"\n{lc.shown(lc.code(row))}\n", body)
+        self.assertIn("Du har bett om att byta e-postadress i Stamboken.", body)
+        self.assertNotIn("http", body)
+        self.assertEqual(db.MailMessage.get_by_id(mail_id).priority, 0)
+
+    def test_no_mail_once_the_code_is_too_old_used_voided_or_the_account_changed(self):
+        old, old_mail = self.queue_code(browser="w1")
+        used, used_mail = self.queue_code(browser="w2")
+        voided, voided_mail = self.queue_code(person=self.person_row("Bo", "bo@example.org"), browser="w3")
+        moved, moved_mail = self.queue_code(person=self.person_row("Cid", "cid@example.org"), browser="w4")
+        db.LoginCode.update(created_at=self.now - timedelta(minutes=10)).where(db.LoginCode.id == old.id).execute()
+        with db.DB_PROXY.atomic():
+            lc.consume(used)
+        lc.void(voided.member_id)
+        user = herdbook.da.register_user("cid@example.org", "pass", username="cid")
+        db.Member.update(user=user.id).where(db.Member.id == moved.member_id).execute()
+
+        mail.send_pending()
+
+        self.assertEqual(self.fake.sent, [])
+        for mail_id in (old_mail, used_mail, voided_mail, moved_mail):
+            self.assertEqual(self.status(mail_id), "cancelled")
+
+    def test_a_login_code_has_no_mail_yet(self):
+        _row, mail_id = self.queue_code(purpose="login")
+        mail.send_pending()
+        self.assertEqual((self.fake.sent, self.status(mail_id)), ([], "cancelled"))
+
+    def test_the_code_is_in_the_log_in_development_only(self):
+        row, _ = self.queue_code(browser="w1")
+        with mock.patch.object(settings.mail, "mode", "log"), self.assertLogs(level="DEBUG") as logs:
+            mail.send_pending()
+        self.assertIn(lc.shown(lc.code(row)), "\n".join(logs.output))
+
+        row, _ = self.queue_code(browser="w2")
+        with mock.patch.dict(os.environ, {"FLASK_ENV": "production"}), self.assertLogs(level="DEBUG") as logs:
+            mail.send_pending()
+            logging.getLogger("tests").info("sent")
+        self.assertEqual(len(self.fake.sent), 1)
+        logged = "\n".join(logs.output)
+        self.assertNotIn(lc.code(row), logged.replace(" ", ""))
+
+    def besked(self, **params):
+        previous = db.MemberPreviousAddress.create(
+            member=self.person, address="gammal@example.org", login_until=None, purge_at=self.now
+        )
+        params = {"previous_id": previous.id, "by_self": False, "by_matrikel": False, **params}
+        return previous, mail.enqueue_mail("kontakt.epost_besked", "member_previous_address", previous.id, params)
+
+    def test_the_previous_address_hears_who_changed_it_and_never_the_new_one(self):
+        for params, said in (
+            ({"by_self": True}, "Du bytte den själv."),
+            ({"by_matrikel": True}, "Det var matrikelansvarig som bytte den."),
+            ({}, "Det var någon annan än du som bytte den."),
+        ):
+            self.fake.sent.clear()
+            self.besked(**params)
+            mail.send_pending()
+            ((msg, _sender, to),) = self.fake.sent
+            self.assertEqual(to, ["gammal@example.org"])
+            self.assertEqual(msg["Subject"], "Din e-postadress i Stamboken är bytt")
+            body = msg.get_content()
+            self.assertIn(said, body)
+            self.assertNotIn(self.person.email, body)
+
+    def test_no_besked_once_the_row_is_gone(self):
+        previous, mail_id = self.besked(by_self=True)
+        previous.delete_instance()
+        mail.send_pending()
+        self.assertEqual((self.fake.sent, self.status(mail_id)), ([], "cancelled"))
