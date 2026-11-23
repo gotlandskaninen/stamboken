@@ -137,6 +137,13 @@ test("the short address /dataskydd leads to the privacy policy", async ({
   await expect(page).toHaveURL(/\/integritetspolicy$/);
 });
 
+test("the contact page's old address /styrelsen leads to /kontakt", async ({
+  page,
+}) => {
+  await page.goto("/styrelsen");
+  await expect(page).toHaveURL(/\/kontakt$/);
+});
+
 test.describe("Landing page CTA above fold", () => {
   for (const viewport of VIEWPORTS) {
     test(`Bli medlem visible above fold at ${viewport.name} (${viewport.width}px)`, async ({

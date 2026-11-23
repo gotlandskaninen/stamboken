@@ -50,6 +50,7 @@ namespaces.
 | `/integritetspolicy` | Publik sida: hur föreningen behandlar personuppgifter | Ingen | `(app)/(public)/integritetspolicy` | Next.js |
 | `/dataskydd` | Kort adress för trycksaker; permanent omdirigering till `/integritetspolicy` | Ingen | `(app)/(public)/dataskydd` | Next.js |
 | `/bli-genbank` | Sidans tidigare adress; permanent omdirigering till `/bli-genbanksbesattning` | Ingen | `(app)/(public)/bli-genbank` | Next.js |
+| `/styrelsen` | Kontaktsidans tidigare adress; permanent omdirigering till CMS-sidan med sluggen kontakt | Ingen | `(app)/(public)/styrelsen` | Next.js |
 | `/auth/*` | Inloggning | Ingen | `(app)/(auth)/auth` | Next.js |
 | `/error/*` | Felsidor (404, 500) | Ingen | `(app)/(error)/error` | Next.js |
 | `/preview/*` | Payload draft-preview | Inloggad editor/admin | `(app)/(public)/preview` | Next.js |
@@ -89,7 +90,7 @@ med tabellen ovan:
 ```text
 admin, ansok, api, api-test, cms-api, cms-graphql, auth, stamboken,
 stamboken-online, medlem, medlemsforum, bli-genbank, bli-genbanksbesattning,
-integritetspolicy, dataskydd, v2, uppladdningar, _next, static, favicon.ico,
+integritetspolicy, dataskydd, styrelsen, v2, uppladdningar, _next, static, favicon.ico,
 robots.txt, sitemap.xml, error, not-found, preview
 ```
 

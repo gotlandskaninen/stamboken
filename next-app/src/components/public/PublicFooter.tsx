@@ -44,7 +44,7 @@ const FOOTER_ROWS: Array<{ heading: string; links: FooterLink[] }> = [
   },
   {
     heading: "Kontakt",
-    links: [{ label: "Styrelse / Kontakt", href: "/styrelsen" }],
+    links: [{ label: "Kontakt och styrelse", href: "/kontakt" }],
   },
 ];
 
