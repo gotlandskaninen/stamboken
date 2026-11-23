@@ -6,12 +6,12 @@ app's log (utils.app_logging) and gunicorn's access log write the request path.
 import logging
 import re
 
-# `<row id>.<22 base64url characters>`: the row id is no secret, the mac is.
-_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])(\d{1,19})\.[A-Za-z0-9_-]{22}(?![A-Za-z0-9_-])")
+# Keep the public prefix of each mail link, mask its MAC.
+_TOKEN = re.compile(r"((?<![A-Za-z0-9_-])\d{1,19}\.|/auth/kod#)[A-Za-z0-9_-]{22}(?![A-Za-z0-9_-])")
 
 
 def mask_tokens(text):
-    return _TOKEN.sub(r"\1.***", text) if text else text
+    return _TOKEN.sub(r"\1***", text) if text else text
 
 
 class TokenMaskFilter(logging.Filter):

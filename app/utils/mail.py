@@ -159,7 +159,7 @@ def _mac(message):
     return hmac.new(secret.encode(), message.encode(), hashlib.sha256)
 
 
-def _link_mac(purpose, row_id):
+def link_mac(purpose, row_id):
     # The hostname binds a link to its environment: the demo is a copy of production with the same row ids.
     message = f"link:{_hostname()}:{purpose}:{row_id}"
     return base64.urlsafe_b64encode(_mac(message).digest()[:16]).rstrip(b"=").decode()
@@ -167,7 +167,7 @@ def _link_mac(purpose, row_id):
 
 def link_token(purpose, row_id):
     """`<row id>.<mac>`, mac = base64url(HMAC-SHA256(LINK_SECRET, "link:<host>:<purpose>:<row id>")) cut to 128 bits."""
-    return f"{row_id}.{_link_mac(purpose, row_id)}"
+    return f"{row_id}.{link_mac(purpose, row_id)}"
 
 
 _LINK_TOKEN = re.compile(r"([1-9][0-9]{0,18})\.([A-Za-z0-9_-]{22})")
@@ -182,7 +182,7 @@ def verify_link(purpose, token):
     if match is None or not settings.mail.link_secret:
         return None
     row_id = int(match.group(1))
-    return row_id if hmac.compare_digest(_link_mac(purpose, row_id), match.group(2)) else None
+    return row_id if hmac.compare_digest(link_mac(purpose, row_id), match.group(2)) else None
 
 
 def _hostname():

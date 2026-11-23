@@ -163,7 +163,9 @@ Koden finns i `app/utils/login_code.py` och `set_member_email` i
   och överlämningen till reläet kan mejlet ändå gå till den indragna adressen.
   Sändaren håller inga adresslås under SMTP-anropet. Vid inlösen kontrolleras
   adressen på nytt, så både koden och länken nekas om adressen har dragits in.
-  Länken läggs i URL-fragmentet och tas bort ur historiken när sidan öppnas.
+  URL-fragmentet innehåller enbart länkens HMAC och tas bort ur historiken när
+  sidan öppnas. Servern hittar kodraden via kakan och använder radens id och
+  slumptal för att kontrollera länken.
   Uppslagningen visar namnet i webbläsaren som begärde mejlet. Först när
   medlemmen trycker på knappen förbrukas koden. Byte från ett annat inloggat
   konto kräver bekräftelse.

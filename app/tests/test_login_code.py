@@ -407,8 +407,10 @@ class TestMails(LoginCodeTest):
         self.assertEqual(msg["Subject"], "Logga in i Stamboken")
         body = msg.get_content()
         self.assertIn(f"\n{lc.shown(lc.code(row))}\n", body)
-        token = mail.link_token(f"login:{row.nonce}", row.id)
+        token = lc.login_link_token(row)
+        self.assertRegex(token, r"^[A-Za-z0-9_-]{22}$")
         self.assertIn(f"\n{settings.service.host}/auth/kod#{token}\n", body)
+        self.assertNotIn(token, mail.mask_tokens(body))
         self.assertEqual(self.status(mail_id), "sent")
         self.assertEqual(db.MailMessage.get_by_id(mail_id).params, {"code_id": row.id})
 
