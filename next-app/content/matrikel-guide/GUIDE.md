@@ -202,7 +202,9 @@ Under **Personer** står hushållets personer med roll, kontakt, konto och
   - **Gör till huvudmedlem** byter huvudmedlem i hushållet.
   - **Ta bort** avslutar personen i medlemskapet och drar in hens åtkomster.
   - **Anonymisera** ersätter personens namn med en platshållare, tar bort
-    kontaktuppgifterna och drar in åtkomsterna. Det går inte att ångra.
+    kontaktuppgifterna och drar in åtkomsterna. Det går inte att ångra. Är
+    personen den sista som är kvar i hushållet töms också hushållets adress,
+    fakturaadress och anteckningar direkt.
 - **Åtkomster:** i kolumnen **Åtkomster** drar **Återkalla** in en åtkomst, och
   **Förnya** förlänger en skötares tidsbegränsade åtkomst.
 
@@ -230,8 +232,10 @@ annan.
 ### Anonymisering efter 12 månader
 
 Stamboken anonymiserar personer automatiskt: namnen ersätts med en platshållare
-och kontaktuppgifterna tas bort. Tiden räknas från när personerna avslutades,
-alltså från **Avsluta medlemskap** eller **Ta bort**. Att bara välja status
+och kontaktuppgifterna tas bort. Intyg och bevis i inkorgen där personen står
+som säljare eller köpare förlorar sina original, och det personen själv har
+skickat in tas bort. Tiden räknas från när personerna avslutades, alltså från
+**Avsluta medlemskap**, **Ta bort** eller **Anonymisera**. Att bara välja status
 Inaktiv avslutar ingen, och då börjar ingen tid räknas.
 
 - **Ett avslutat medlemskap** anonymiseras när det har gått 12 månader sedan den
@@ -246,8 +250,9 @@ Stamboken hoppar över ett avslutat medlemskap där någon av personerna har
 rollen administratör, matrikeladministratör eller genbanksansvarig eller äger
 en aktiv besättning, eller där en av hushållets besättningar fortfarande är
 aktiv. En borttagen person hoppas över om hens eget konto har en sådan roll
-eller äger en aktiv besättning. Undantaget gäller bara så länge rollen eller
-den aktiva besättningen finns. Försvinner den anonymiseras uppgifterna vid nästa
+eller äger en aktiv besättning. Ett undantag som kommer från ett konto gäller
+bara så länge kontot är kopplat till personen och har kvar rollen eller den
+aktiva besättningen. När undantaget upphör anonymiseras uppgifterna vid nästa
 nattliga körning. Systemansvarig kan bedöma fallen medan undantaget gäller.
 
 Besättningens egna kontaktuppgifter tas inte bort av den här regeln.
