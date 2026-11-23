@@ -22,9 +22,13 @@ vi.mock("@/contexts/NotificationContext", () => ({
 }));
 vi.mock("@/app/(app)/stamboken/(dashboard)/profil/actions", () => ({
   updateContact: vi.fn(),
+  verifyEmailCode: vi.fn(),
 }));
 
-import { updateContact } from "@/app/(app)/stamboken/(dashboard)/profil/actions";
+import {
+  updateContact,
+  verifyEmailCode,
+} from "@/app/(app)/stamboken/(dashboard)/profil/actions";
 import { KontaktClient } from "@/app/(app)/stamboken/(dashboard)/profil/KontaktClient";
 
 const initial = {
@@ -81,7 +85,7 @@ describe("KontaktClient", () => {
   });
 
   it("saves all five fields and confirms with a snackbar", async () => {
-    vi.mocked(updateContact).mockResolvedValue({ ok: true });
+    vi.mocked(updateContact).mockResolvedValue({ ok: true, codeSent: false });
     renderIt();
     fireEvent.change(screen.getByLabelText("Postort"), {
       target: { value: "Lärbro" },
@@ -98,7 +102,7 @@ describe("KontaktClient", () => {
   });
 
   it("omits an empty e-mail from the patch so a member without one can save", async () => {
-    vi.mocked(updateContact).mockResolvedValue({ ok: true });
+    vi.mocked(updateContact).mockResolvedValue({ ok: true, codeSent: false });
     render(
       <ThemeProvider theme={stambokenTheme}>
         <KontaktClient initial={{ ...initial, email: "" }} />
@@ -122,6 +126,55 @@ describe("KontaktClient", () => {
       postal_code: "621 45",
       city: initial.city,
     });
+  });
+
+  it("asks for the code a new address got, and says to sign in again once it is changed", async () => {
+    vi.mocked(updateContact).mockResolvedValue({ ok: true, codeSent: true });
+    vi.mocked(verifyEmailCode).mockResolvedValue({ ok: true });
+    renderIt();
+    expect(screen.queryByLabelText("Kod")).toBeNull();
+    fireEvent.change(screen.getByLabelText("E-post"), {
+      target: { value: "ny@example.org" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    const input = (await screen.findByLabelText("Kod")) as HTMLInputElement;
+    // type=number would drop leading zeros; the phone gets digits and may offer the code
+    expect(input.type).toBe("text");
+    expect(input.getAttribute("inputmode")).toBe("numeric");
+    expect(input.getAttribute("autocomplete")).toBe("one-time-code");
+    fireEvent.change(input, { target: { value: "0482 7195" } });
+    fireEvent.click(screen.getByRole("button", { name: "Byt adress" }));
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain(
+        "E-postadressen är bytt",
+      ),
+    );
+    expect(verifyEmailCode).toHaveBeenCalledWith("0482 7195");
+    expect(
+      screen.getByRole("link", { name: "Logga in" }).getAttribute("href"),
+    ).toBe("/auth/sign-in?return_to=/stamboken/profil");
+  });
+
+  it("keeps the code step and shows the error on a wrong code", async () => {
+    vi.mocked(updateContact).mockResolvedValue({ ok: true, codeSent: true });
+    vi.mocked(verifyEmailCode).mockResolvedValue({
+      ok: false,
+      error: "Koden stämmer inte eller har gått ut.",
+    });
+    renderIt();
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    fireEvent.change(await screen.findByLabelText("Kod"), {
+      target: { value: "12345678" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Byt adress" }));
+    await waitFor(() =>
+      expect(showSnackbar).toHaveBeenCalledWith(
+        "Koden stämmer inte eller har gått ut.",
+        "error",
+      ),
+    );
+    expect(screen.getByLabelText("Kod")).toBeDefined();
+    expect(screen.queryByRole("status")).toBeNull();
   });
 
   it("locks every field and explains why when readOnly", () => {

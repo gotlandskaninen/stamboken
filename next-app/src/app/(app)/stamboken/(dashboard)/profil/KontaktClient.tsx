@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useSnackbar } from "@/components/SnackbarProvider";
 import { useNotifications } from "@/contexts/NotificationContext";
 import { formatPostalCode, isValidPostalCode } from "@/lib/postal";
-import { updateContact } from "./actions";
+import { updateContact, verifyEmailCode } from "./actions";
 import styles from "./profil.module.css";
 
 export type Contact = {
@@ -23,6 +23,9 @@ export function KontaktClient({
   initial: Contact;
 }) {
   const [contact, setContact] = useState(initial);
+  // "code": a code went to the new address; "done": the address is changed and the session has ended.
+  const [emailStep, setEmailStep] = useState<"none" | "code" | "done">("none");
+  const [code, setCode] = useState("");
   const [pending, start] = useTransition();
   const { showSnackbar } = useSnackbar();
   const { addNotification } = useNotifications();
@@ -44,7 +47,16 @@ export function KontaktClient({
       if (!patch.email) delete patch.email;
       const result = await updateContact(patch);
       if (result.ok) {
-        showSnackbar("Kontaktuppgifter sparade", "success");
+        showSnackbar(
+          result.codeSent
+            ? "Sparat. Skriv koden för att byta e-postadress."
+            : "Kontaktuppgifter sparade",
+          "success",
+        );
+        if (result.codeSent) {
+          setCode("");
+          setEmailStep("code");
+        }
       } else {
         showSnackbar(result.error, "error");
         addNotification({
@@ -52,6 +64,16 @@ export function KontaktClient({
           message: result.error,
           type: "error",
         });
+      }
+    });
+
+  const verify = () =>
+    start(async () => {
+      const result = await verifyEmailCode(code);
+      if (result.ok) {
+        setEmailStep("done");
+      } else {
+        showSnackbar(result.error, "error");
       }
     });
 
@@ -152,12 +174,55 @@ export function KontaktClient({
           <button
             type="button"
             className="sb-btn"
-            disabled={readOnly || pending || !postalOk}
+            disabled={readOnly || pending || !postalOk || emailStep === "done"}
             onClick={save}
           >
             {pending ? "Sparar..." : "Spara"}
           </button>
         </div>
+        {emailStep === "code" && (
+          <div className={styles.form} style={{ marginTop: 16 }}>
+            <p className={styles.note}>
+              Vi har skickat en kod till den nya e-postadressen. Skriv koden
+              här. Den gäller i tio minuter. Adressen byts när du har skrivit
+              koden.
+            </p>
+            <div className={styles.field}>
+              <label className="sb-label" htmlFor="kontakt-kod">
+                Kod
+              </label>
+              <input
+                id="kontakt-kod"
+                className={`sb-input ${styles.mono}`}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                maxLength={9}
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+              />
+            </div>
+            <div className={styles.actions}>
+              <button
+                type="button"
+                className="sb-btn"
+                disabled={pending || !code.trim()}
+                onClick={verify}
+              >
+                Byt adress
+              </button>
+            </div>
+          </div>
+        )}
+        {emailStep === "done" && (
+          <div
+            className={`${styles.banner} ${styles.bannerInfo}`}
+            role="status"
+            style={{ marginTop: 16 }}
+          >
+            E-postadressen är bytt. Du har loggats ut och behöver logga in igen.{" "}
+            <a href="/auth/sign-in?return_to=/stamboken/profil">Logga in</a>
+          </div>
+        )}
       </div>
     </section>
   );

@@ -9,14 +9,32 @@ Member row and address/consent on the Membership. See ADR-0007 and ADR-0008.
 
 import csv
 import io
+import secrets
 from datetime import date
 
-from flask import Blueprint, Response, jsonify, request
+from flask import Blueprint, Response, jsonify, request, session
 from flask_login import current_user
 from peewee import IntegrityError
 from utils.csv_safe import csv_safe
-from utils.database import BILLING_FIELDS, DB_PROXY, Herd, HerdAccessGrant, Member, Membership
-from utils.matrikel import AddressValidationError, is_anonymized, parse_postal_fields, set_membership_status
+from utils.database import BILLING_FIELDS, DB_PROXY, Herd, HerdAccessGrant, Member, Membership, User
+from utils.login_code import (
+    AddressTaken,
+    CodeLoginClosed,
+    CodeRefused,
+    check,
+    consume,
+    issue,
+    refuse_unsafe,
+    reserve_login_address,
+)
+from utils.mail import enqueue_mail
+from utils.matrikel import (
+    AddressValidationError,
+    is_anonymized,
+    parse_postal_fields,
+    set_member_email,
+    set_membership_status,
+)
 from utils.members import CONSENT_KEYS, consent_answered, effective_consent, stored_consent
 from utils.membership_lifecycle import Status, TransitionRefused
 
@@ -363,6 +381,8 @@ def patch_me_contact():
     if "phone" in body:
         person_updates["phone"] = (body["phone"] or "").strip() or None
 
+    # The e-mail is never written here: a new address gets a code (_ask_for_code), and the change waits for it.
+    new_email = None
     if "email" in body:
         raw_email = body["email"]
         if not isinstance(raw_email, str):
@@ -370,7 +390,13 @@ def patch_me_contact():
         new_email = raw_email.strip().lower()
         if not EMAIL_RE.match(new_email):
             return problem(400, "Ogiltig e-postadress", f"'{new_email}' är inte en giltig e-postadress")
-        person_updates["email"] = new_email
+        if new_email == (m.email or "").strip().lower():
+            new_email = None  # the form sends the address on every save
+    if new_email is not None:
+        try:
+            refuse_unsafe()
+        except CodeRefused:
+            return _codes_unavailable()
 
     try:
         # Split keys only — the postal_address alias is an admin/legacy input,
@@ -406,6 +432,8 @@ def patch_me_contact():
             if membership_updates:
                 ms.save(only=[getattr(Membership, f) for f in membership_updates] + [Membership.updated_at])
             m.save(only=[getattr(Member, f) for f in person_updates] + [Member.updated_at])
+            if new_email is not None:
+                _ask_for_code(m, new_email)
     except IntegrityError:
         # DEAD BACKSTOP: the legacy
         # per-genebank contact-email index `idx_member_genebank_email_unique`
@@ -420,6 +448,78 @@ def patch_me_contact():
             "E-postadressen används redan",
             "En annan medlem använder redan e-postadressen.",
         )
+    # The same answer whether a code went or not: the member cannot test which addresses are in the matrikel.
+    return jsonify({**_me_response(m), "email_code_sent": new_email is not None})
+
+
+def _codes_unavailable():
+    return problem(503, "E-postadressen kan inte bytas just nu", "Försök igen senare.")
+
+
+def _ask_for_code(m, address):
+    """
+    A code to `address` for the member's own change of address (purpose ny_adress), in the caller's transaction,
+    bound to this session: a new request replaces the browser's secret, so only the latest code works. No code and
+    no mail when another person holds the address or a limit stops it; the caller answers the same.
+    """
+    token = secrets.token_urlsafe(32)
+    session["login_request"] = token
+    try:
+        with DB_PROXY.atomic():
+            reserve_login_address(address, m.id)  # only a check here: nothing is written under the lock
+    except AddressTaken:
+        return
+    row = issue(m, "ny_adress", token, address)
+    if row is not None:
+        enqueue_mail("konto.kod", "login_code", row.id, {"code_id": row.id}, ref=("membership", m.membership_id))
+
+
+def _wrong_code():
+    return problem(400, "Koden stämmer inte", "Koden stämmer inte eller har gått ut. Be om en ny kod om det behövs.")
+
+
+@members_bp.route("/v2/members/me/contact/verifiera", methods=["POST"])
+@json_login_required
+def verify_me_email():
+    """
+    The member's code for her new address: the change is made (set_member_email, by="self"), and with it every
+    session of her account ends, this one too. A wrong code, one from another browser, and an address another person
+    has taken since all answer the same.
+    """
+    m = _member_for_current_user()
+    if m is None or m.membership_id is None:
+        return problem(404, "Medlem saknas", "Ingen medlemspost är kopplad till ditt konto.")
+    if m.role != "huvudmedlem":
+        return problem(403, "Endast huvudmedlem", "Endast huvudmedlemmen kan ändra medlemskapets uppgifter.")
+    body = request.get_json(silent=True)
+    entered = body.get("code") if isinstance(body, dict) else None
+    if not isinstance(entered, str):
+        return problem(400, "Ogiltigt fält", "code måste vara en sträng")
+    token = session.get("login_request")
+    try:
+        row = check("ny_adress", token, entered, m.id) if token else None
+    except CodeRefused:
+        return _codes_unavailable()
+    except CodeLoginClosed:
+        return problem(503, "Koder tas inte emot just nu", "Försök igen om en timme.")
+    if row is None:
+        return _wrong_code()
+    person_id, membership_id = m.id, m.membership_id
+    with DB_PROXY.atomic():
+        # membership → user → person, as set_member_email takes them
+        Membership.select().where(Membership.id == membership_id).for_update().get()
+        User.select().where(User.id == current_user.id).for_update().get()
+        m, _ms, err = _relock_me(membership_id, person_id)
+        if err is not None:
+            return err
+        if row.user_id != m.user_id or not consume(row):
+            return _wrong_code()
+        try:
+            with DB_PROXY.atomic():
+                m = set_member_email(m, row.new_address, current_user, by="self")
+        except AddressTaken:
+            return _wrong_code()  # taken since the code went; the code stays used (the return commits)
+    session.pop("login_request", None)
     return jsonify(_me_response(m))
 
 
