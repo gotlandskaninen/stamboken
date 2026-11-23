@@ -156,6 +156,9 @@ class TestMembersImport(DatabaseTest):
         m3 = db.Membership.get(db.Membership.member_number == 3)
         self.assertEqual(herd_g1.membership_id, m1.id)
         self.assertEqual(herd_m3.membership_id, m3.id)
+        # #117: the link compares the contact: the herd's name "owner1" is nobody on the membership
+        self.assertEqual(herd_g1.contact_pending, ["name"])
+        self.assertIn("Contact name fritext: 2", result.output)
 
     def test_missing_flag_herd_warns_but_creates_membership(self):
         csv = HEADER + _row(g="x", nr="7", name="Doris Al")
@@ -559,6 +562,79 @@ class TestMembersImport(DatabaseTest):
         self.assertIn("Ulla Berg", result.output)
         self.assertIn("Memberships created: 1", result.output)
         self.assertIn("(dry-run — no writes performed)", result.output)
+
+    def test_import_counts_only_matches_real_run(self):
+        """#117, Torrkörning: --counts-only runs the real import, persons, counter and links included, in a
+        transaction it rolls back, and prints only counts: no name, e-mail, address or herd code, also for a row
+        that fails. A real run on the same input gives the same counts."""
+        herds = {code: db.Herd.get(db.Herd.herd == code).id for code in ("G1", "G2", "M3")}
+        contact = dict.fromkeys(("name", "email", "mobile_phone", "physical_address"))
+        db.Herd.update(
+            **{**contact, "name": "Anna Exempel", "email": "anna@example.invalid", "mobile_phone": "070-999 99 99"}
+        ).where(db.Herd.id == herds["G1"]).execute()
+        db.Herd.update(**contact).where(db.Herd.id == herds["M3"]).execute()
+        rows = [
+            _row(
+                g="x",
+                nr="1",
+                name="Anna Exempel",
+                adress="Byvägen 1",
+                postadress="62300 Roma",
+                telefon="070-111 11 11",
+                epost="anna@example.invalid",
+            ),
+            _row(nr="1", name="Ida Exempel", epost="ida@example.invalid"),
+            _row(g="x", nr="2", name="Bo Prov", adress="Prästgatan 2", postadress="Okändort"),
+            _row(m="x", nr="3", name="Cesar Test", telefon="073-333 33 33"),
+            _row(nr="4", name="Dora Fel", adress="Stigen 4", epost="dora@example.invalid"),
+            _row(g="x", nr="5", name="Eva Utan"),  # no herd G5
+        ]
+        secrets = ("Exempel", "Prov", "Cesar", "Dora", "example.invalid", "Byvägen", "Stigen", "Okändort", "070-")
+        real_new_membership = members_cli_module.new_membership
+
+        def new_membership(status, **fields):
+            if fields.get("member_number") == 4:  # a database error carries the row's values
+                raise ValueError(f"duplicate key (address)=({fields['address']}) for Dora Fel")
+            return real_new_membership(status, **fields)
+
+        def snapshot():
+            return (
+                db.MemberNumberCounter.select().first().value,
+                db.Membership.select().count(),
+                db.Member.select().count(),
+                [db.Herd.get_by_id(h).__data__ for h in herds.values()],
+            )
+
+        def counts(output):
+            return [line for line in output.splitlines() if line.startswith(("Memberships created", "Herd", "Contact"))]
+
+        before = snapshot()
+        with patch.object(members_cli_module, "new_membership", new_membership):
+            dry = self._run_import(HEADER + "".join(rows), ["--counts-only"])
+            self.assertEqual(snapshot(), before)  # rolled back, the member-number counter too
+            real = self._run_import(HEADER + "".join(rows))
+
+        self.assertNotEqual(dry.exit_code, 0)  # the failed row
+        for text in (*secrets, "G1", "G2", "G5", "M3"):
+            self.assertNotIn(text, dry.output)
+            self.assertNotIn(text, dry.stderr)
+        self.assertIn("Dora Fel", real.output)  # the real run does name it
+        self.assertIn("Okändort", real.output)
+        self.assertEqual(counts(dry.output), counts(real.output))
+        for line in (
+            "Herd links: 3",
+            "Errors: 1",
+            "Contact name person: 1",
+            "Contact name fritext: 1",
+            "Contact name bara_matrikeln: 1",
+            "Contact email lika: 1",
+            "Contact mobile_phone olika: 1",
+            "Contact mobile_phone bara_matrikeln: 1",
+            "Contact physical_address bara_matrikeln: 2",
+        ):
+            self.assertIn(line, "\n".join(counts(dry.output)))
+        self.assertEqual(db.MemberNumberCounter.select().first().value, 5)
+        self.assertEqual(db.Herd.get_by_id(herds["G1"]).contact_pending, ["mobile_phone"])
 
     def test_import_never_auto_links_user(self):
         """Per design spec: import does not auto-link. OAuth login does."""

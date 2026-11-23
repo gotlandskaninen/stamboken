@@ -272,6 +272,65 @@ def lock_herd(herd_id: int) -> Herd:
     return herd
 
 
+def compare_with_register(herd: Herd) -> tuple[dict, dict[str, str]]:
+    """Spec, Överflyttning: the first comparison of a linked herd's contact with the register. `herd` needs only
+    its id, membership, contact columns and their privacy, so the migration can pass a row with those alone.
+
+    Returns the columns to write and the case per row: "lika", "olika", "bara_besattningen", "bara_matrikeln" or
+    "bada_tomma", and for the name "person" or "fritext" when the name is filled in."""
+    persons = active_persons(herd)
+    main = next((p for p in persons if p.role == "huvudmedlem"), None)
+    name = herd.name if normalize("name", herd.name) else None
+    same = [p for p in persons if normalize("name", f"{p.first_name} {p.last_name}") == normalize("name", name)]
+    # step 1, the contact person: the main member for an empty name, the one person the name is, else fritext
+    if name is None:
+        contact, cases = main, {"name": "bara_matrikeln" if main else "bada_tomma"}
+    elif len(same) == 1:
+        contact, name, cases = same[0], None, {"name": "person"}
+    else:
+        contact, cases = None, {"name": "fritext"}
+    # step 2: each row against what the read gives afterwards, without the herd's own values
+    contact_id = contact.id if contact is not None else None
+    probe = Herd(id=herd.id, membership=herd.membership_id, contact_member=contact_id, name=name, contact_pending=[])
+    fetched = herd_contact(probe).rows
+    for field in CONTACT_FIELDS[1:]:
+        own, register = normalize(field, getattr(herd, field)), normalize(field, fetched[field].value)
+        if own is None:
+            cases[field] = "bada_tomma" if register is None else "bara_matrikeln"
+        elif register is None:
+            cases[field] = "bara_besattningen"
+        else:
+            cases[field] = "lika" if own == register else "olika"
+    changes = {"contact_pending": [f for f in CONTACT_FIELDS if cases[f] in ("fritext", "olika")]}
+    if contact_id is not None:
+        changes["contact_member"] = contact_id
+    for field in CONTACT_FIELDS:
+        if cases[field] not in ("fritext", "olika", "bara_besattningen") and getattr(herd, field):
+            changes[field] = None  # a copy of the register's value, or blank
+        # decision 4: a row that was empty starts hidden, so a value added later is not shown before anyone chose
+        privacy = f"{field}_privacy"
+        if cases[field] in ("bara_matrikeln", "bada_tomma") and (getattr(herd, privacy) or "private") != "private":
+            changes[privacy] = "private"
+    return changes, cases
+
+
+def link_herd(herd_id: int, membership_id: int, herd_code: str | None = None) -> dict[str, str]:
+    """Spec, Livscykel: the one function that sets Herd.membership. Links a herd without membership and compares
+    its contact with the register (compare_with_register); returns the case per row. A herd already linked, to
+    this membership or another, is left as it is: {} (a move is #153). So is one whose code is no longer
+    `herd_code`, the G/M code the caller found it by (renumbered meanwhile). Locks the membership and then the
+    herd, re-reads the herd under the locks and writes only the columns that change."""
+    with DB_PROXY.atomic():
+        Membership.select(Membership.id).where(Membership.id == membership_id).for_update().get()
+        herd = Herd.select().where(Herd.id == herd_id).for_update().get()
+        if herd.membership_id is not None or herd_code not in (None, herd.herd):
+            return {}
+        herd.membership = membership_id
+        changes, cases = compare_with_register(herd)
+        Herd.update(membership=membership_id, **changes).where(Herd.id == herd_id).execute()
+    return cases
+
+
 def check_flat_fields(herd: Herd, fields, contact) -> None:
     """On a compared herd the contact rows and their privacy change only through `contact`, and never both ways
     in one call: ValueError (400)."""

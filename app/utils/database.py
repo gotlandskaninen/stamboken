@@ -4270,12 +4270,34 @@ def _add_herd_contact_member_fk():
     )
 
 
+def _compare_linked_herds():
+    """#117, Överflyttning: herds linked before the comparison existed are compared once (contact_pending NULL).
+    Version 47's columns only, read and written by name, so a replay works after later migrations add columns.
+    membership and member are locked by the LOCKs and herd by the ALTER in migrate_46_to_47, so the register
+    cannot change while the herds are compared."""
+    from utils.herd_contact import compare_with_register  # pylint: disable=import-outside-toplevel
+
+    columns = ("name", "email", "mobile_phone", "physical_address")
+    rows = Herd.select(
+        Herd.id,
+        Herd.membership,
+        *(getattr(Herd, c) for c in columns),
+        *(getattr(Herd, f"{c}_privacy") for c in columns),
+    ).where(Herd.membership.is_null(False), Herd.contact_pending.is_null(True))
+    for herd in rows:
+        changes, _ = compare_with_register(herd)
+        Herd.update(**changes).where(Herd.id == herd.id, Herd.contact_pending.is_null(True)).execute()
+
+
 def migrate_46_to_47():
     """#117: herd.contact_member and herd.contact_pending; herd contact values leave the audit history.
     The columns are added in raw SQL (no audit rows). The contact columns become snapshot_excluded, and the
-    values already in audit_log are removed with the purge_user_audit_pii mechanism (rule lifted, same transaction)."""
+    values already in audit_log are removed with the purge_user_audit_pii mechanism (rule lifted, same transaction).
+    Then the herds already linked are compared with the register, with the new triggers in place."""
     with DATABASE.atomic():
         if not isinstance(DATABASE, SqliteDatabase):
+            # membership first: the comparison reads its status twice and must see one (order membership, member, herd)
+            DATABASE.execute_sql("LOCK TABLE membership IN SHARE MODE")
             # Take member's lock first: ALTER herd then ADD FOREIGN KEY on member, in that order, could
             # deadlock with a matrikel import that inserts a member and then reads herd.
             DATABASE.execute_sql("LOCK TABLE member IN SHARE ROW EXCLUSIVE MODE")
@@ -4291,6 +4313,7 @@ def migrate_46_to_47():
                 (list(HERD_CONTACT_COLUMNS), list(HERD_CONTACT_COLUMNS)),
             )
             DATABASE.execute_sql(AUDIT_LOG_NO_UPDATE_RULE)
+            _compare_linked_herds()
         SchemaHistory.insert(  # pylint: disable=E1120
             version=47,
             comment="herd.contact_member, herd.contact_pending; herd contact values out of audit_log",

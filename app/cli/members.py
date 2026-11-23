@@ -2,7 +2,7 @@
 Flask CLI for member registry operations.
 
 Usage:
-    flask members import <csv_path> [--dry-run]
+    flask members import <csv_path> [--dry-run | --counts-only]
     flask members link-by-herd [--apply --actor-user-id <id> --plan <value>]
 
 `import` expects the MATR2026 paper-matrikel layout (headers matched
@@ -61,11 +61,13 @@ import hashlib
 import logging
 import re
 import unicodedata
+from collections import Counter
 
 import click
 from flask.cli import AppGroup
 from peewee import IntegrityError, fn
 from utils.database import DB_PROXY, Genebank, Herd, Member, Membership, User
+from utils.herd_contact import link_herd
 from utils.matrikel import (
     ANONYMIZED_FIRST_NAME,
     ANONYMIZED_LAST_NAME,
@@ -88,17 +90,47 @@ members_cli = AppGroup("members", help="Member registry operations.")
 @members_cli.command("import")
 @click.argument("csv_path", type=click.Path(exists=True, dir_okay=False))
 @click.option("--dry-run", is_flag=True, help="Print the full import plan without writing.")
-def import_cmd(csv_path: str, dry_run: bool) -> None:
+@click.option(
+    "--counts-only",
+    is_flag=True,
+    help="Run the real import in a transaction that is rolled back; print only counts, no names (#117).",
+)
+def import_cmd(csv_path: str, dry_run: bool, counts_only: bool) -> None:
     """Import memberships from a MATR2026 CSV file."""
+    if dry_run and counts_only:
+        raise click.UsageError("--dry-run och --counts-only går inte att kombinera")
     rows, errors, file_errors = _read_rows(csv_path)
     if file_errors:
         # The whole file is unusable (no header row, duplicate columns, an
         # address layout we cannot read). Abort here — before _group_rows and
         # before the counter is raised — so a rejected file leaves nothing
         # behind, not even a moved member-number high-water mark.
-        for line in file_errors:
+        for line in [f"{len(file_errors)} file error(s)"] if counts_only else file_errors:
             click.echo(f"Error: {line}", err=True)
         raise click.ClickException("filen avvisades — inga rader importerade")
+    if counts_only:
+        # nested atomic() blocks become savepoints: persons, links and the counter all roll back
+        with DB_PROXY.atomic() as outer:
+            report = _import(rows, errors, dry_run=False)
+            outer.rollback()
+        for line in _count_lines(report):
+            click.echo(line)
+        click.echo("(counts-only — rolled back, nothing written)")
+    else:
+        report = _import(rows, errors, dry_run)
+        _print_report(report, dry_run)
+
+    # Non-zero exit code when any rows errored — lets CI detect bad imports.
+    if report["errors"]:
+        if counts_only:
+            raise click.ClickException(f"{len(report['errors'])} row(s) failed to import")
+        for line in report["errors"]:
+            click.echo(f"Error: {line}", err=True)
+        raise click.ClickException(f"{len(report['errors'])} row(s) failed to import — see stderr for details")
+
+
+def _import(rows: list[dict], errors: list[str], dry_run: bool) -> dict:
+    """Write the groups (unless dry_run) and return the report."""
     groups, friexemplar_groups = _group_rows(rows)
 
     report = {
@@ -114,6 +146,7 @@ def import_cmd(csv_path: str, dry_run: bool) -> None:
         "name_splits": [],  # (raw, first, last)
         "postal_review": [],  # (label, raw Postadress) — legacy value that did not parse
         "herd_links": 0,
+        "contact_cases": Counter(),  # (row, case) -> herds linked, from link_herd
         "errors": errors,
     }
     for row in rows:
@@ -145,14 +178,7 @@ def import_cmd(csv_path: str, dry_run: bool) -> None:
             _import_friexemplar_group(name_key, group, dry_run, report)
         except Exception as e:  # pylint: disable=broad-exception-caught
             report["errors"].append(f"friexemplar {name_key!r}: {e}")
-
-    _print_report(report, dry_run)
-
-    # Non-zero exit code when any rows errored — lets CI detect bad imports.
-    if report["errors"]:
-        for line in report["errors"]:
-            click.echo(f"Error: {line}", err=True)
-        raise click.ClickException(f"{len(report['errors'])} row(s) failed to import — see stderr for details")
+    return report
 
 
 LEGACY_LAYOUT = "legacy"  # single "Postadress" column (paper matrikel)
@@ -598,7 +624,8 @@ def _add_family_members(membership, rows: list[dict], dry_run: bool, report: dic
 
 
 def _link_flag_herds(nr: int, group: list[dict], membership, dry_run: bool, report: dict) -> None:
-    """G/M flags link herd G<Nr>/M<Nr>. A missing herd is a warning, never a row skip."""
+    """G/M flags link herd G<Nr>/M<Nr> with link_herd, which compares the herd's contact with the register (#117).
+    A missing herd is a warning, never a row skip."""
     for key, prefix in (("g", "G"), ("m", "M")):
         if not any(row[key] for row in group):
             continue
@@ -612,10 +639,15 @@ def _link_flag_herds(nr: int, group: list[dict], membership, dry_run: bool, repo
                 continue  # already linked (re-import)
             report["herd_warnings"].append(f"herd {code} already linked to membership {herd.membership_id}")
             continue
+        if dry_run or membership is None:
+            report["herd_links"] += 1
+            continue
+        cases = link_herd(herd.id, membership.id, herd_code=code)
+        if not cases:  # linked or renumbered by someone else since the read above
+            report["herd_warnings"].append(f"herd {code} changed or linked meanwhile — not linked")
+            continue
         report["herd_links"] += 1
-        if not dry_run and membership is not None:
-            herd.membership = membership
-            herd.save()
+        report["contact_cases"].update(cases.items())
 
 
 _FRIEXEMPLAR_COMPARE_KEYS = (
@@ -785,7 +817,15 @@ def _print_report(report: dict, dry_run: bool) -> None:
         for membership_id, name in leftovers:
             click.echo(f"  membership {membership_id}: {name}")
 
-    click.echo(
+    for line in _count_lines(report):
+        click.echo(line)
+    if dry_run:
+        click.echo("(dry-run — no writes performed)")
+
+
+def _count_lines(report: dict) -> list[str]:
+    """The report's counts, without names, addresses or herd codes: all that --counts-only prints."""
+    return [
         f"Memberships created: {report['memberships_created']}, "
         f"Persons created: {report['persons_created']}, "
         f"Friexemplar created: {report['friexemplar_created']}, "
@@ -793,10 +833,10 @@ def _print_report(report: dict, dry_run: bool) -> None:
         f"Matched existing (skipped): {report['matched_existing']}, "
         f"Manual review: {len(report['review'])}, "
         f"Herd links: {report['herd_links']}, "
-        f"Errors: {len(report['errors'])}"
-    )
-    if dry_run:
-        click.echo("(dry-run — no writes performed)")
+        f"Errors: {len(report['errors'])}",
+        f"Herd warnings: {len(report['herd_warnings'])}",
+        *(f"Contact {field} {case}: {n}" for (field, case), n in sorted(report["contact_cases"].items())),
+    ]
 
 
 @members_cli.command("link-by-herd")

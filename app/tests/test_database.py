@@ -1237,10 +1237,70 @@ class TestDatabaseMigration(DatabaseTest):
         db.DATABASE.execute_sql("UPDATE audit_log SET old_data = '{}' WHERE id = %s", (old.id,))
         self.assertEqual(db.AuditLog.get_by_id(old.id).old_data, {"herd_name": "H"})
 
+    def test_replay_46_to_47_compares_linked_herds(self):
+        """A herd linked on version 46 is compared by the replay (contact_pending a list), without its contact
+        values in the audit history; a herd without membership is not. Once compared it is never compared again:
+        a replay after the breeder answered changes nothing."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("trigger requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        membership = db.Membership.create(member_number=4747, address="Byvägen 1", postal_code="62300", city="Roma")
+        main = db.Member.create(
+            membership=membership,
+            first_name="Anna",
+            last_name="Exempel",
+            role="huvudmedlem",
+            email="anna@example.invalid",
+            phone="070-111 11 11",
+        )
+        gb = db.Genebank.create(name="Replay47d")
+        linked = db.Herd.create(
+            genebank=gb,
+            herd="R47D",
+            membership=membership,
+            name="Anna Exempel",
+            email="anna@example.invalid",
+            email_privacy="authenticated",
+            mobile_phone="070-999 99 99",
+        )
+        unlinked = db.Herd.create(genebank=gb, herd="R47E", name="Anna Exempel", email="anna@example.invalid")
+
+        def replay():
+            """Replay 46 -> 47 with a herd field that only a later migration adds to the table."""
+            db.SchemaHistory.delete().where(db.SchemaHistory.version >= 47).execute()
+            db.Herd._meta.add_field("added_later", peewee.TextField(null=True))  # pylint: disable=protected-access
+            try:
+                db.check_migrations()
+            finally:
+                db.Herd._meta.remove_field("added_later")  # pylint: disable=protected-access
+
+        replay()
+
+        herd = db.Herd.get_by_id(linked.id)
+        self.assertEqual((herd.contact_member_id, herd.contact_pending), (main.id, ["mobile_phone"]))
+        self.assertEqual((herd.name, herd.email, herd.email_privacy), (None, None, "authenticated"))
+        self.assertEqual(herd.physical_address_privacy, None)  # NULL already counts as private
+        self.assertIsNone(db.Herd.get_by_id(unlinked.id).contact_pending)
+        entry = (
+            db.AuditLog.select()
+            .where(db.AuditLog.table_name == "herd", db.AuditLog.record_id == str(linked.id))
+            .order_by(db.AuditLog.id.desc())
+            .get()
+        )
+        self.assertIn("email", entry.changed_fields)
+        self.assertNotIn("email", entry.old_data)
+
+        # the breeder answers "Ja, behåll" for the mobile; the next replay leaves the answer alone
+        db.Herd.update(contact_pending=[]).where(db.Herd.id == linked.id).execute()
+        replay()
+        herd = db.Herd.get_by_id(linked.id)
+        self.assertEqual((herd.contact_pending, herd.mobile_phone), ([], "070-999 99 99"))
+
     def _contact_member_fk(self):
         return db.DATABASE.execute_sql(
             "SELECT pg_get_constraintdef(oid) FROM pg_constraint"
-            " WHERE conrelid = 'herd'::regclass AND contype = 'f' AND pg_get_constraintdef(oid) LIKE '%%contact_member_id%%'"
+            " WHERE conrelid = 'herd'::regclass AND contype = 'f'"
+            " AND pg_get_constraintdef(oid) LIKE '%%contact_member_id%%'"
         ).fetchall()
 
     def test_contact_member_fk_set_null(self):
