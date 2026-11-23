@@ -202,9 +202,14 @@ Under **Personer** står hushållets personer med roll, kontakt, konto och
   - **Gör till huvudmedlem** byter huvudmedlem i hushållet.
   - **Ta bort** avslutar personen i medlemskapet och drar in hens åtkomster.
   - **Anonymisera** ersätter personens namn med en platshållare, tar bort
-    kontaktuppgifterna och drar in åtkomsterna. Det går inte att ångra. Är
-    personen den sista som är kvar i hushållet töms också hushållets adress,
-    fakturaadress och anteckningar direkt.
+    kontaktuppgifterna och drar in åtkomsterna. Ansökningar med personens namn
+    och e-post anonymiseras också, och en sådan ansökan som väntar avslås.
+    Intyg och bevis i inkorgen som är kopplade till personen förlorar sina
+    original. Är ingen i hushållet kvar efteråt töms hushållets adress,
+    fakturaadress och anteckningar direkt, även om medlemskapet redan är
+    avslutat. Inget av det går att ångra. Behöver ingen bli borttagen tidigare
+    sköter Stamboken anonymiseringen själv efter 12 månader, se [Anonymisering
+    efter 12 månader](#anonymisering-efter-12-månader).
 - **Åtkomster:** i kolumnen **Åtkomster** drar **Återkalla** in en åtkomst, och
   **Förnya** förlänger en skötares tidsbegränsade åtkomst.
 
@@ -232,9 +237,8 @@ annan.
 ### Anonymisering efter 12 månader
 
 Stamboken anonymiserar personer automatiskt: namnen ersätts med en platshållare
-och kontaktuppgifterna tas bort. Intyg och bevis i inkorgen där personen står
-som säljare eller köpare förlorar sina original, och det personen själv har
-skickat in tas bort. Tiden räknas från när personerna avslutades, alltså från
+och kontaktuppgifterna tas bort. Intyg och bevis i inkorgen som är kopplade
+till personen förlorar sina original. Tiden räknas från när personerna avslutades, alltså från
 **Avsluta medlemskap**, **Ta bort** eller **Anonymisera**. Att bara välja status
 Inaktiv avslutar ingen, och då börjar ingen tid räknas.
 
