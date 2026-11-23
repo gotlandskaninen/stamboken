@@ -7,5 +7,5 @@ Din e-postadress i Stamboken är bytt. {% if by == "self" %}Du bytte den själv.
 
 Vi skickar det här till din gamla adress, så att du vet om det.
 
-Stämmer det inte? Skriv till info@gotlandskaninen.se.
+Stämmer det inte? Svara på det här mejlet.
 {% endblock %}

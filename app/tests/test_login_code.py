@@ -414,7 +414,8 @@ class TestMails(LoginCodeTest):
             self.assertEqual(msg["Subject"], "Din e-postadress i Stamboken är bytt")
             body = msg.get_content()
             self.assertIn(said, body)
-            self.assertNotIn(self.person.email, body)
+            self.assertIn("Stämmer det inte? Svara på det här mejlet.", body)
+            self.assertNotIn("@", body)  # neither the new address nor any other
 
     def test_no_besked_once_the_row_is_gone(self):
         previous, mail_id = self.besked(by_self=True)
