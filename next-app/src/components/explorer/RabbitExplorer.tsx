@@ -53,9 +53,9 @@ const STATUS_OPTIONS: {
 ];
 
 const GENEBANK_OPTIONS = [
-  { value: 0, label: "Alla" },
   { value: 1, label: "Gotlandskanin" },
   { value: 2, label: "Mellerudskanin" },
+  { value: 0, label: "Alla" },
 ] as const;
 
 const COAT_OPTIONS = [
@@ -306,9 +306,14 @@ function nextMobileList(
 
 interface RabbitExplorerProps {
   initialData: PaginatedIndividualsResponse | null;
+  // Genebank the server fetched initialData for (0 = Alla)
+  initialGenebank: number;
 }
 
-export default function RabbitExplorer({ initialData }: RabbitExplorerProps) {
+export default function RabbitExplorer({
+  initialData,
+  initialGenebank,
+}: RabbitExplorerProps) {
   const { t } = useTranslation();
   const router = useRouter();
   // CSS picks list vs grid on first paint; after hydration phones also
@@ -323,13 +328,14 @@ export default function RabbitExplorer({ initialData }: RabbitExplorerProps) {
     page: 0,
     pageSize: DEFAULT_PAGE_SIZE,
   });
+  // Defaults follow the old Stamboken's genebank list: active, newest first
   const [sortModel, setSortModel] = useState<GridSortModel>([
-    { field: "name", sort: "asc" },
+    { field: "birth_date", sort: "desc" },
   ]);
   const [search, setSearch] = useState("");
   const debouncedSearch = useDebounce(search, 300);
-  const [selectedGenebank, setSelectedGenebank] = useState(0);
-  const [selectedStatus, setSelectedStatus] = useState("");
+  const [selectedGenebank, setSelectedGenebank] = useState(initialGenebank);
+  const [selectedStatus, setSelectedStatus] = useState("active");
   const [selectedSex, setSelectedSex] = useState("");
   const [selectedCoat, setSelectedCoat] = useState("");
 
@@ -349,8 +355,8 @@ export default function RabbitExplorer({ initialData }: RabbitExplorerProps) {
 
   const listQuery = {
     per_page: paginationModel.pageSize,
-    sort: sortModel[0]?.field || "name",
-    order: sortModel[0]?.sort || "asc",
+    sort: sortModel[0]?.field || "birth_date",
+    order: sortModel[0]?.sort || "desc",
     genebank_id: selectedGenebank || null,
     search: debouncedSearch || undefined,
     status: selectedStatus || null,
