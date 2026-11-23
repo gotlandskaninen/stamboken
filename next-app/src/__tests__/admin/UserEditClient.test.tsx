@@ -10,12 +10,14 @@ import {
 
 const revokeRole = vi.hoisted(() => vi.fn());
 const logoutEverywhere = vi.hoisted(() => vi.fn());
+const removeGoogleLogin = vi.hoisted(() => vi.fn());
 vi.mock("next/navigation", () => ({
   useRouter: () => ({ refresh: vi.fn(), push: vi.fn() }),
 }));
 vi.mock("@/app/(app)/stamboken/(dashboard)/admin/anvandare/actions", () => ({
   grantRole: vi.fn(),
   logoutEverywhere,
+  removeGoogleLogin,
   resetPassword: vi.fn(),
   revokeRole,
   setAccountActive: vi.fn(),
@@ -101,5 +103,39 @@ describe("UserEditClient sessions", () => {
     const dialog = openLogoutDialog();
     fireEvent.click(within(dialog).getByRole("button", { name: "Logga ut" }));
     expect(logoutEverywhere).toHaveBeenCalledWith(7);
+  });
+});
+
+describe("UserEditClient Google login", () => {
+  const openGoogleDialog = () => {
+    render(
+      <UserEditClient
+        detail={detail}
+        actorId={1}
+        genebanks={[]}
+        herds={[]}
+        recentAudit={[]}
+        concurrentEditWarning={null}
+      />,
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ta bort Google-inloggningen" }),
+    );
+    return screen.getByRole("dialog");
+  };
+
+  it("asks first, and Avbryt removes nothing", () => {
+    removeGoogleLogin.mockClear();
+    const dialog = openGoogleDialog();
+    expect(dialog).toHaveTextContent("Ta bort Google-inloggningen?");
+    fireEvent.click(within(dialog).getByRole("button", { name: "Avbryt" }));
+    expect(removeGoogleLogin).not.toHaveBeenCalled();
+  });
+
+  it("removes the Google login once the admin confirms", () => {
+    removeGoogleLogin.mockClear();
+    const dialog = openGoogleDialog();
+    fireEvent.click(within(dialog).getByRole("button", { name: "Ta bort" }));
+    expect(removeGoogleLogin).toHaveBeenCalledWith(7);
   });
 });

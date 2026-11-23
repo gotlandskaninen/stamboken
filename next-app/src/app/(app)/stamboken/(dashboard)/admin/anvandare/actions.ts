@@ -112,6 +112,23 @@ export async function logoutEverywhere(
   redirect(LIST_PATH);
 }
 
+export async function removeGoogleLogin(
+  userId: number,
+): Promise<ActionError | void> {
+  await requireAdminProdMode();
+  try {
+    await fetchApi(`/v2/admin/users/${userId}/google`, {
+      method: "DELETE",
+      forceProd: true,
+    });
+  } catch (e) {
+    if (e instanceof ApiError) return { error: e.detail };
+    throw e;
+  }
+  revalidateUser(userId);
+  redirect(LIST_PATH);
+}
+
 export async function grantRole(
   userId: number,
   role: PrivilegeEntry,

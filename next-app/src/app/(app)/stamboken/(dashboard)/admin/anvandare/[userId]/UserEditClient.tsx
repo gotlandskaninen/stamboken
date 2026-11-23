@@ -16,6 +16,7 @@ import {
 import {
   grantRole,
   logoutEverywhere,
+  removeGoogleLogin,
   resetPassword,
   revokeRole,
   setAccountActive,
@@ -87,6 +88,7 @@ export function UserEditClient({
   const [email, setEmail] = useState(detail.email ?? "");
   const [activeDialogOpen, setActiveDialogOpen] = useState(false);
   const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
+  const [googleDialogOpen, setGoogleDialogOpen] = useState(false);
   const [selfRevoke, setSelfRevoke] = useState<PrivilegeEntry | null>(null);
   // Google-only accounts can lack a username (hbuser.username is nullable).
   const displayName = detail.username ?? detail.email;
@@ -352,6 +354,14 @@ export function UserEditClient({
             >
               Logga ut överallt
             </button>
+            <button
+              type="button"
+              className="sb-btn sb-btn-secondary"
+              disabled={pending}
+              onClick={() => setGoogleDialogOpen(true)}
+            >
+              Ta bort Google-inloggningen
+            </button>
           </DetailCard>
         </div>
 
@@ -510,6 +520,20 @@ export function UserEditClient({
         onConfirm={() => {
           setLogoutDialogOpen(false);
           run(() => logoutEverywhere(detail.id));
+        }}
+      />
+
+      {/* Ta bort Google-inloggningen: the API refuses with a 409 text shown as an error. */}
+      <ConfirmDialog
+        open={googleDialogOpen}
+        title="Ta bort Google-inloggningen?"
+        body="Kontot loggas ut överallt och kan inte logga in med Google förrän en ny Google-inloggning har kopplats. Har kontot inget lösenord behöver det ett först (Återställ lösenord)."
+        confirmLabel="Ta bort"
+        confirmColor="error"
+        onClose={() => setGoogleDialogOpen(false)}
+        onConfirm={() => {
+          setGoogleDialogOpen(false);
+          run(() => removeGoogleLogin(detail.id));
         }}
       />
 
