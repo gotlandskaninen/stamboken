@@ -759,7 +759,9 @@ def _application_new(params):
 
 @mail_kind("ansokan.godkand", priority=1, category="T")
 def _application_approved(params):
-    return {} if Member.select().where(Member.id == params["member_id"]).exists() else None
+    # None once the person has left: the number is that of the membership the application was approved into.
+    person = Member.get_or_none((Member.id == params["member_id"]) & Member.end_date.is_null(True))
+    return {"member_number": person.membership.member_number} if person else None
 
 
 _ADDED_AS = {"familjemedlem": "familjemedlem", "skotare": "skötare"}
