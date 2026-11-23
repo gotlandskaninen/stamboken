@@ -8,6 +8,7 @@ isort:skip_file
 
 import logging
 import os
+import smtplib
 import tempfile
 import threading
 import unittest
@@ -353,6 +354,9 @@ class TestMails(LoginCodeTest):
         patch = mock.patch.object(mail.smtplib, "SMTP", self.fake)
         patch.start()
         self.addCleanup(patch.stop)
+        patch = mock.patch.object(lc, "enabled", return_value=True)
+        self.enabled = patch.start()
+        self.addCleanup(patch.stop)
 
     def queue_code(self, **kwargs):
         row = self.issue(**kwargs)
@@ -391,10 +395,52 @@ class TestMails(LoginCodeTest):
         for mail_id in (old_mail, used_mail, voided_mail, moved_mail):
             self.assertEqual(self.status(mail_id), "cancelled")
 
-    def test_a_login_code_has_no_mail_yet(self):
-        _row, mail_id = self.queue_code(purpose="login")
+    def test_login_mail_sends_digits_and_a_fragment_link_to_the_requested_address(self):
+        previous = "tidigare@example.org"
+        db.MemberPreviousAddress.create(
+            member=self.person, address=previous, login_until=self.now + timedelta(days=1), purge_at=self.now
+        )
+        row, mail_id = self.queue_code(purpose="login", address=previous)
+        mail.send_pending()
+        ((msg, _, to),) = self.fake.sent
+        self.assertEqual(to, [previous])
+        self.assertEqual(msg["Subject"], "Logga in i Stamboken")
+        body = msg.get_content()
+        self.assertIn(f"\n{lc.shown(lc.code(row))}\n", body)
+        token = mail.link_token(f"login:{row.nonce}", row.id)
+        self.assertIn(f"\n{settings.service.host}/auth/kod#{token}\n", body)
+        self.assertEqual(self.status(mail_id), "sent")
+        self.assertEqual(db.MailMessage.get_by_id(mail_id).params, {"code_id": row.id})
+
+    def test_login_mail_is_cancelled_when_the_address_changes_before_sending(self):
+        _, mail_id = self.queue_code(purpose="login", address=self.person.email)
+        db.Member.update(email="andrad@example.org").where(db.Member.id == self.person.id).execute()
         mail.send_pending()
         self.assertEqual((self.fake.sent, self.status(mail_id)), ([], "cancelled"))
+
+    def test_retry_at_expiry_cancels_login_mail(self):
+        _, mail_id = self.queue_code(purpose="login", address=self.person.email)
+        self.fake.replies.append(smtplib.SMTPDataError(451, b"4.3.0 try again later"))
+        mail.send_pending()
+        self.assertEqual(self.status(mail_id), "queued")
+        self.assertEqual(db.MailMessage.get_by_id(mail_id).attempts, 1)
+        self.now += lc.VALID_FOR
+        mail.send_pending()
+        self.assertEqual((self.fake.sent, self.status(mail_id)), ([], "cancelled"))
+
+    def test_login_mail_is_cancelled_if_login_is_disabled_closed_or_out_of_tries(self):
+        _, disabled = self.queue_code(purpose="login", address=self.person.email)
+        self.enabled.return_value = False
+        mail.send_pending()
+        self.enabled.return_value = True
+        _, closed = self.queue_code(purpose="login", address=self.person.email)
+        with mock.patch.object(lc, "closed", return_value=True):
+            mail.send_pending()
+        row, exhausted = self.queue_code(purpose="login", address=self.person.email)
+        db.LoginCode.update(failed=lc.TRIES).where(db.LoginCode.id == row.id).execute()
+        mail.send_pending()
+        self.assertEqual([self.status(m) for m in (disabled, closed, exhausted)], ["cancelled"] * 3)
+        self.assertEqual(self.fake.sent, [])
 
     def test_the_code_is_in_the_log_in_development_only(self):
         row, _ = self.queue_code(browser="w1")

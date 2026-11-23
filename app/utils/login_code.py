@@ -345,23 +345,32 @@ def login_link_token(row):
 
 @recipient_kind("login_code")
 def _code_recipient(row_id):
-    """
-    The address the code goes to, read when it goes: none once the code is used, voided or too old, or the person's
-    account has changed. Only a new address (ny_adress) has one yet; the login code's comes with the login page.
-    """
+    """Recheck the row, account and original destination on each delivery attempt."""
     row = LoginCode.get_or_none(LoginCode.id == row_id)
-    if row is None or row.used_at or row.created_at <= _utcnow() - VALID_FOR or row.purpose != "ny_adress":
+    if row is None or row.used_at or row.created_at <= _utcnow() - VALID_FOR:
         return None
     person = row.member
     if person.user_id != row.user_id:
         return None
-    return Recipient(row.new_address, f"{person.first_name} {person.last_name}")
+    if row.purpose == "ny_adress":
+        address = row.new_address
+    elif row.purpose == "login" and enabled() and row.failed < TRIES and not closed():
+        try:
+            refuse_unsafe()
+        except CodeRefused:
+            return None
+        address = login_address(person, row.address_hash)
+    else:
+        return None
+    return Recipient(address, f"{person.first_name} {person.last_name}") if address else None
 
 
 @mail_kind("konto.kod", priority=0, category="T")
 def _code_mail(params):
     row = LoginCode.get_or_none(LoginCode.id == params["code_id"])
-    return {"code": shown(code(row))} if row else None
+    if row is None:
+        return None
+    return {"code": shown(code(row)), "token": login_link_token(row) if row.purpose == "login" else None}
 
 
 def address_collisions(now=None):
