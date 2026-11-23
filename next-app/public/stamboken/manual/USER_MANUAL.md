@@ -533,9 +533,12 @@ medlemskapets uppgifter.
 - **Notiser**: slå på eller av **Skicka notiser per e-post en gång om dagen**. Notiserna
   syns i Stamboken oavsett. Inställningen stänger inte av mejlet om att ditt eget inskick
   är klart; det skickas ändå.
-- **Intygens kontrollsida**: slå på **Visa mitt namn på kontrollsidan** om ditt namn ska
-  stå som **Intygas av** på [kontrollsidan](#verifiera-intyg) för intyg som du har
-  utfärdat. Annars står där "Uppfödaren". På själva intyget står ditt namn alltid.
+- **Intygens kontrollsida**: välj om ditt namn ska stå som **Intygas av** på
+  [kontrollsidan](#verifiera-intyg) för intyg som du har utfärdat. Annars står din roll
+  där, till exempel "Uppfödaren". Har du inte valt än väljer du med **Visa mitt namn**
+  eller **Visa inte mitt namn**, sedan ändrar du med **Visa mitt namn på kontrollsidan**.
+  Konton som fanns före valet visar namnet tills du ändrar det. På själva intyget står
+  ditt namn alltid.
 - **Personer i medlemskapet**: huvudmedlemmen lägger till familjemedlemmar och skötare
   med **Lägg till person** (**Förnamn**, **Efternamn**, **Roll**), ger dem rätt att
   sköta en besättning med **Ge åtkomst**, förnyar en skötares tidsbegränsade åtkomst

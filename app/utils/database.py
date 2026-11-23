@@ -1158,8 +1158,9 @@ class User(BaseModel, UserMixin):
     # flag flips MUST produce audit rows, so NOT change_detection_excluded.
     is_active = BooleanField(default=True)
     # The person's own choice to show her full name as "Intygas av" on the public certificate check page
-    # (stamboken #6). Only she sets it, through its own endpoint; nothing else writes it.
-    name_on_check_page = BooleanField(default=False, constraints=[SQL("DEFAULT false")])
+    # (stamboken #6). NULL = not chosen yet (every new account), shown as not chosen. Only she sets it, through its
+    # own endpoint; anonymisation switches it off.
+    name_on_check_page = BooleanField(null=True)
 
     def update_last_active(self):
         self.last_active = datetime.now()
@@ -1461,6 +1462,8 @@ class User(BaseModel, UserMixin):
             "google_email": self.google_email,
             "use_google_picture": self.use_google_picture,
             "v2_prod_access": self.v2_promoted,
+            # The check page choice (stamboken #6): None until she has chosen.
+            "name_on_check_page": self.name_on_check_page,
         }
 
     @property
@@ -4208,11 +4211,14 @@ def migrate_45_to_46():
 
 def migrate_46_to_47():
     """A person's choice to show her name as "Intygas av" on the public certificate check page (stamboken #6),
-    off for everyone until she chooses it, and the role a certificate was issued in (NULL on older rows)."""
+    and the role a certificate was issued in (NULL on older rows). Accounts that exist now keep showing their name,
+    as the check page did before (Jonas 2026-11-23), until they change it; a new account starts as not chosen (NULL)."""
     with DATABASE.atomic():
-        DATABASE.execute_sql(
-            "ALTER TABLE hbuser ADD COLUMN IF NOT EXISTS name_on_check_page BOOLEAN NOT NULL DEFAULT false"
-        )
+        if "name_on_check_page" not in {c.name for c in DATABASE.get_columns("hbuser")}:
+            # The default fills the existing rows without firing the audit row trigger (no per-user audit copy);
+            # dropping it leaves NULL for every account created afterwards.
+            DATABASE.execute_sql("ALTER TABLE hbuser ADD COLUMN name_on_check_page BOOLEAN DEFAULT true")
+            DATABASE.execute_sql("ALTER TABLE hbuser ALTER COLUMN name_on_check_page DROP DEFAULT")
         if "digitalcertificatev2" in DATABASE.get_tables():
             DATABASE.execute_sql("ALTER TABLE digitalcertificatev2 ADD COLUMN IF NOT EXISTS issued_as VARCHAR(20)")
         SchemaHistory.insert(  # pylint: disable=E1120

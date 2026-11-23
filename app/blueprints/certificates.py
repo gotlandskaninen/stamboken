@@ -434,15 +434,16 @@ def _attested_by(cert, may_name):
     says "Uppfödaren": a role judged at the scan could change under an unchanged certificate.
     """
     user = cert.issued_by
-    if may_name and user.is_active and user.name_on_check_page and (user.fullname or "").strip():
+    if may_name and user.is_active and user.name_on_check_page is True and (user.fullname or "").strip():
         return user.fullname.strip()
-    return ROLE_LABELS[cert.issued_as or "breeder"]
+    return ROLE_LABELS.get(cert.issued_as, ROLE_LABELS["breeder"])
 
 
 @certificates_bp.route("/v2/certificates/check-page-name", methods=["GET", "PUT"])  # [Next.js]
 @json_login_required
 def check_page_name():
-    """The signed-in person's own choice to show her name as "Intygas av" on the check page (stamboken #6)."""
+    """The signed-in person's own choice to show her name as "Intygas av" on the check page (stamboken #6); `show` is
+    null until she has chosen."""
     user = da.fetch_user_info(session.get("user_id"))
     if request.method == "PUT":
         show = (request.get_json(silent=True) or {}).get("show")

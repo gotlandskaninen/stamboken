@@ -22,6 +22,7 @@ import {
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import { useTranslation } from "react-i18next";
+import { CheckPageNameHint } from "@/components/herd/CheckPageNameHint";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useMode } from "@/lib/mode-context";
@@ -646,6 +647,7 @@ export function BunnyPromoteDialog({
                   {t("addRabbit.certificateAttester")}
                 </Typography>
               )}
+              {certificateType === "digital" && <CheckPageNameHint />}
 
               {/* Paper certificate number */}
               {certificateType === "paper" && (
