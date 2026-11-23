@@ -1345,16 +1345,16 @@ class TestAuditBlueprint(DatabaseTest):
         skipped by revert and restore, and does not block the other fields."""
         herd = self.herds[0]
         db.Herd.update(bank_name_privacy="Public ").where(db.Herd.id == herd.id).execute()
-        entry = self._audit_update("herd", herd.id, bank_account_number_privacy="public", www="old")
+        entry = self._audit_update("herd", herd.id, bank_account_number_privacy="public", location="old")
         self._login_as("man")
         self.assertEqual(self._revert(entry).status_code, 200)
-        self.assertEqual(db.Herd.get_by_id(herd.id).www, "old")
+        self.assertEqual(db.Herd.get_by_id(herd.id).location, "old")
         db.Herd.update(bank_name_privacy="private").where(db.Herd.id == herd.id).execute()
         resp = self._restore("herd", herd.id, entry)
         self.assertEqual(resp.status_code, 200, resp.get_json())
         row = db.Herd.get_by_id(herd.id)
         self.assertEqual((row.bank_account_number_privacy, row.bank_name_privacy), ("private", "private"))
-        self.assertEqual(row.www, "old")  # the other field was restored
+        self.assertEqual(row.location, "old")  # the other field was restored
 
     def test_revert_of_a_bank_privacy_only_entry_is_a_silent_success(self):
         """A migration 40 style entry that changed only bank privacy: nothing to write, no 400."""
@@ -1887,6 +1887,35 @@ class TestUpdateHerdV2(DatabaseTest):
         self.assertIn("herd", data)
         self.assertIn("herd_name", data)
         self.assertEqual(data["herd_name"], "Updated Herd Name")
+
+    def test_general_calls_never_write_contact_columns(self):
+        """contact_member and contact_pending are not writable through POST/PATCH /api/manage/herd or PATCH
+        /api/v2/herd (any role); the other fields of the same call are saved."""
+        self.login("admin")
+        member = db.Member.create(membership=db.Membership.create(member_number=4747), first_name="A", last_name="B")
+        extra = {"contact_member": member.id, "contact_pending": ["email"]}
+        herd = self.herds[0]
+
+        def untouched(h):
+            row = db.Herd.get_by_id(h.id)
+            self.assertIsNone(row.contact_member_id)
+            self.assertIsNone(row.contact_pending)
+
+        resp = self.client.patch("/api/manage/herd", json={"id": herd.id, "location": "Legacy", **extra})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(db.Herd.get_by_id(herd.id).location, "Legacy")
+        untouched(herd)
+        resp = self.client.patch(f"/api/v2/herd/{herd.herd}", json={"herd_name": "V2 name", **extra})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(db.Herd.get_by_id(herd.id).herd_name, "V2 name")
+        untouched(herd)
+        resp = self.client.post(
+            "/api/manage/herd", json={"herd": "N47", "genebank": self.genebanks[0].id, "location": "New", **extra}
+        )
+        self.assertEqual(resp.get_json()["status"], "success", resp.data)
+        created = db.Herd.get(db.Herd.herd == "N47")
+        self.assertEqual(created.location, "New")
+        untouched(created)
 
     def test_forbidden_returns_403(self):
         """PATCH by user without permission returns 403."""

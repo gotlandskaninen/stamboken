@@ -1549,7 +1549,7 @@ def add_herd(form, user_uuid):
             return {"status": "error", "message": f"Invalid value for {bad}"}
         # Real columns only: Herd(**form) also took _pk, genebank_id and __data__, which let a
         # manager overwrite another genebank's herd. membership is admin-only, as in update_herd.
-        locked = {"id"} | (set() if user.is_admin else {"membership"})
+        locked = {"id", "contact_member", "contact_pending"} | (set() if user.is_admin else {"membership"})
         herd = Herd(**{k: v for k, v in form.items() if k in Herd._meta.fields and k not in locked})
         try:
             herd.save(force_insert=True)
@@ -1702,7 +1702,9 @@ def update_herd(form, user_uuid):
             # Real columns only (hasattr also matches genebank_id, membership_id and
             # methods such as save). Identity/ownership columns are admin-only; the
             # legacy SPA echoes the whole herd object, so locked keys are dropped, not refused.
-            locked = set() if user.is_admin else {"id", "herd", "genebank", "membership"}
+            locked = {"contact_member", "contact_pending"} | (
+                set() if user.is_admin else {"id", "herd", "genebank", "membership"}
+            )  # the contact columns are written only by the contact paths, never by a general call
             written = [key for key in form if key in Herd._meta.fields and key not in locked]
             for key in written:
                 setattr(herd, key, form[key])

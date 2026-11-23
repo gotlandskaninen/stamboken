@@ -1164,6 +1164,142 @@ class TestDatabaseMigration(DatabaseTest):
         membership = db.Membership.create(member_number=4141)
         self.assertIsNone(db.MatrikelAudit.create(actor=None, action="x", membership=membership).actor_id)
 
+    def test_replay_46_to_47_adds_contact_columns(self):
+        """A database stamped at 46 gets herd.contact_member_id and herd.contact_pending."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        db.DATABASE.execute_sql("ALTER TABLE herd DROP COLUMN IF EXISTS contact_member_id")
+        db.DATABASE.execute_sql("ALTER TABLE herd DROP COLUMN IF EXISTS contact_pending")
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 47).execute()
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), 47)
+        self.assertTrue({"contact_member_id", "contact_pending"} <= {c.name for c in db.DATABASE.get_columns("herd")})
+
+    def test_replay_46_to_47_keeps_contact_values_out_of_audit(self):
+        """After the migration an UPDATE of herd.email is listed in changed_fields without its value."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("trigger requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        gb = db.Genebank.create(name="Replay47a")
+        herd = db.Herd.create(genebank=gb, herd="R47A", email="a@example.invalid", herd_name="H")
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 47).execute()
+        db.check_migrations()
+
+        db.DATABASE.execute_sql("UPDATE herd SET email = 'x@example.invalid' WHERE herd_id = %s", (herd.id,))
+
+        entry = (
+            db.AuditLog.select()
+            .where(db.AuditLog.table_name == "herd", db.AuditLog.record_id == str(herd.id))
+            .where(db.AuditLog.operation == "UPDATE")
+            .order_by(db.AuditLog.id.desc())
+            .get()
+        )
+        self.assertIn("email", entry.changed_fields)
+        self.assertNotIn("email", entry.old_data)
+        self.assertNotIn("email", entry.new_data)
+        self.assertIn("herd_name", entry.new_data)  # other columns are still snapshotted
+
+    def test_replay_46_to_47_purges_old_herd_contact_values(self):
+        """A herd audit row written before the migration loses its contact keys; other rows are untouched."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("trigger requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        old = db.AuditLog.create(
+            table_name="herd",
+            record_id="990047",
+            operation="UPDATE",
+            old_data={"email": "a@example.invalid", "www": "w", "herd_name": "H"},
+            new_data={"email": "b@example.invalid", "name": "N", "herd_name": "H"},
+            changed_fields=["email"],
+        )
+        other = db.AuditLog.create(
+            table_name="genebank", record_id="990047", operation="UPDATE", old_data={"email": "keep"}
+        )
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 47).execute()
+
+        db.check_migrations()
+
+        old = db.AuditLog.get_by_id(old.id)
+        self.assertEqual(old.old_data, {"herd_name": "H"})
+        self.assertEqual(old.new_data, {"herd_name": "H"})
+        self.assertEqual(db.AuditLog.get_by_id(other.id).old_data, {"email": "keep"})
+        # the append-only rule is back
+        db.DATABASE.execute_sql("UPDATE audit_log SET old_data = '{}' WHERE id = %s", (old.id,))
+        self.assertEqual(db.AuditLog.get_by_id(old.id).old_data, {"herd_name": "H"})
+
+    def _contact_member_fk(self):
+        return db.DATABASE.execute_sql(
+            "SELECT pg_get_constraintdef(oid) FROM pg_constraint"
+            " WHERE conrelid = 'herd'::regclass AND contype = 'f' AND pg_get_constraintdef(oid) LIKE '%%contact_member_id%%'"
+        ).fetchall()
+
+    def test_contact_member_fk_set_null(self):
+        """herd.contact_member_id references member(member_id) ON DELETE SET NULL, after init() and after replay."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("pg_constraint requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+
+        def check():
+            rows = self._contact_member_fk()
+            self.assertEqual(len(rows), 1, rows)
+            self.assertIn("REFERENCES member(member_id)", rows[0][0])
+            self.assertIn("ON DELETE SET NULL", rows[0][0])
+
+        check()  # the pytest database was bootstrapped by init()
+        db.DATABASE.execute_sql("ALTER TABLE herd DROP CONSTRAINT herd_contact_member_id_fkey")
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 47).execute()
+        db.check_migrations()
+        check()
+
+    def test_init_restores_contact_member_fk_after_interrupted_bootstrap(self):
+        """A restart after an init() that died before member existed (schema_history empty or missing) adds the FK."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("pg_constraint requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        rows = [(r.version, r.comment, r.applied) for r in db.SchemaHistory.select()]
+
+        def restore():
+            db.SchemaHistory.delete().execute()
+            for version, comment, applied in rows:
+                db.SchemaHistory.insert(version=version, comment=comment, applied=applied).execute()  # pylint: disable=E1120
+
+        for empty_or_missing in ("empty", "missing"):
+            with self.subTest(schema_history=empty_or_missing):
+                db.DATABASE.execute_sql("ALTER TABLE herd DROP CONSTRAINT IF EXISTS herd_contact_member_id_fkey")
+                if empty_or_missing == "empty":
+                    db.SchemaHistory.delete().execute()
+                else:
+                    db.SchemaHistory.drop_table()
+                db.init()
+                self.assertEqual(len(self._contact_member_fk()), 1)
+                restore()
+
+    def test_init_skips_contact_member_fk_on_an_old_herd_table(self):
+        """On a database without herd.contact_member_id (before 46 -> 47) init() adds nothing and does not fail."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        db.DATABASE.execute_sql("ALTER TABLE herd DROP COLUMN IF EXISTS contact_member_id")
+        db.DATABASE.execute_sql("ALTER TABLE herd DROP COLUMN IF EXISTS contact_pending")
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 47).execute()
+
+        db.init()
+
+        self.assertNotIn("contact_member_id", {c.name for c in db.DATABASE.get_columns("herd")})
+        db.check_migrations()
+        self.assertEqual(len(self._contact_member_fk()), 1)
+
+    def test_herd_as_dict_has_no_internal_keys(self):
+        gb = db.Genebank.create(name="Replay47c")
+        herd = db.Herd.create(genebank=gb, herd="R47C", contact_pending=["email"])
+        data = db.Herd.get_by_id(herd.id).as_dict()
+        self.assertNotIn("contact_member", data)
+        self.assertNotIn("contact_pending", data)
+        self.assertEqual(db.Herd.get_by_id(herd.id).contact_pending, ["email"])
+
     def test_replay_32_to_33_adds_the_history_algorithm_version(self):
         """
         A database stamped at 32 gets genetics_history_state.algorithm_version,
@@ -1338,7 +1474,7 @@ class TestDatabaseMigration(DatabaseTest):
             ).fetchone()
         )
         db.DATABASE.execute_sql("ALTER TABLE individual DROP COLUMN rex")
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= db.CURRENT_SCHEMA_VERSION).execute()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 46).execute()
 
     def _individual_audit_rows(self):
         return db.AuditLog.select().where(db.AuditLog.table_name == "individual").count()
@@ -1362,7 +1498,7 @@ class TestDatabaseMigration(DatabaseTest):
             db.DATABASE.execute_sql("SELECT count(*) FROM individual WHERE rex IS DISTINCT FROM false").fetchone()[0], 0
         )
         self.assertEqual(self._individual_audit_rows(), audit_before)  # the ALTER fires no row trigger
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= db.CURRENT_SCHEMA_VERSION).execute()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 46).execute()
         db.check_migrations()  # a second run changes nothing and does not fail
         self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
         (default,) = db.DATABASE.execute_sql(
@@ -1513,7 +1649,7 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertTrue(self._rex(rabbit.id))
         db.DATABASE.execute_sql("UPDATE individual SET rex = false WHERE individual_id = %s", (rabbit.id,))
         audit_before = self._individual_audit_rows()
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= db.CURRENT_SCHEMA_VERSION).execute()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 46).execute()
         db.check_migrations()
         self.assertFalse(self._rex(rabbit.id))
         self.assertEqual(self._individual_audit_rows(), audit_before)

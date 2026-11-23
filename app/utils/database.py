@@ -68,7 +68,7 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # the intake queue (42) and its retention (43) + buyer_contact (44) +
 # matrikel_audit rows without a user, written by the nightly anonymization (45) +
 # the coat column individual.rex (46).
-CURRENT_SCHEMA_VERSION = 46
+CURRENT_SCHEMA_VERSION = 47
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -370,6 +370,18 @@ class Herd(BaseModel):
     bank_account_number_privacy = CharField(15, null=True, default="private")
     bank_name = TextField(null=True)
     bank_name_privacy = CharField(15, null=True, default="private")
+    # Contact from the member register (#117). contact_member is the person whose details the herd shows;
+    # its FK constraint is added after both tables exist (see init and migrate_46_to_47).
+    contact_member = DeferredForeignKey("Member", null=True, on_delete="SET NULL")
+    # NULL: not compared with the register yet. A list: compared, holding the rows waiting for an answer.
+    contact_pending = BinaryJSONField(null=True)
+
+    def as_dict(self):
+        """The row as a dict, without the contact plumbing (contact_member, contact_pending)."""
+        data = super().as_dict()
+        data.pop("contact_member", None)
+        data.pop("contact_pending", None)
+        return data
 
     def short_info(self):
         """
@@ -443,6 +455,9 @@ class Herd(BaseModel):
 
         indexes = ((("herd", "genebank"), True),)
 
+
+# The herd's own contact values: kept out of audit snapshots, so the register can retire them (#117).
+HERD_CONTACT_COLUMNS = ("name", "email", "mobile_phone", "wire_phone", "physical_address", "www")
 
 PRIVACY_LEVELS = ("public", "authenticated", "private")
 
@@ -2448,6 +2463,8 @@ def init():
         # pylint: disable=protected-access
         Breeding._schema.create_foreign_key(Breeding.mother)
         Breeding._schema.create_foreign_key(Breeding.father)
+    if not isinstance(DATABASE, SqliteDatabase):
+        _add_herd_contact_member_fk()  # every init: an interrupted first one may have died before member existed
 
     # Stamp the bootstrap version — but ONLY on a database this call created
     # from nothing. Stamping an existing (possibly partially migrated) database
@@ -3031,7 +3048,7 @@ AUDITED_TABLES = {
     "individual": ("individual_id", [], ["updated_at"]),
     "breeding": ("breeding_id", [], ["updated_at"]),
     "bunny": ("bunny_id", [], ["updated_at"]),  # from develop (22→23 roster)
-    "herd": ("herd_id", [], []),
+    "herd": ("herd_id", list(HERD_CONTACT_COLUMNS), []),
     "weight": ("weight_id", [], []),
     "bodyfat": ("bodyfat_id", [], []),
     "individualdisease": ("individual_disease_id", [], []),
@@ -4201,6 +4218,55 @@ def migrate_45_to_46():
         ).execute()
 
 
+def _add_herd_contact_member_fk():
+    """herd.contact_member_id -> member, added once both tables exist (a deferred FK is not in CREATE TABLE).
+    Safe on every init(): does nothing while the column or the member table is missing or the constraint exists."""
+    DATABASE.execute_sql(
+        """
+        DO $$ BEGIN
+            IF to_regclass('member') IS NOT NULL
+               AND EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_schema = current_schema() AND table_name = 'herd'
+                             AND column_name = 'contact_member_id')
+               AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'herd_contact_member_id_fkey'
+                               AND conrelid = 'herd'::regclass) THEN
+                ALTER TABLE herd ADD CONSTRAINT herd_contact_member_id_fkey
+                    FOREIGN KEY (contact_member_id) REFERENCES member (member_id) ON DELETE SET NULL;
+            END IF;
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+        """
+    )
+
+
+def migrate_46_to_47():
+    """#117: herd.contact_member and herd.contact_pending; herd contact values leave the audit history.
+    The columns are added in raw SQL (no audit rows). The contact columns become snapshot_excluded, and the
+    values already in audit_log are removed with the purge_user_audit_pii mechanism (rule lifted, same transaction)."""
+    with DATABASE.atomic():
+        if not isinstance(DATABASE, SqliteDatabase):
+            # Take member's lock first: ALTER herd then ADD FOREIGN KEY on member, in that order, could
+            # deadlock with a matrikel import that inserts a member and then reads herd.
+            DATABASE.execute_sql("LOCK TABLE member IN SHARE ROW EXCLUSIVE MODE")
+        DATABASE.execute_sql('ALTER TABLE herd ADD COLUMN IF NOT EXISTS "contact_member_id" INTEGER')
+        DATABASE.execute_sql('ALTER TABLE herd ADD COLUMN IF NOT EXISTS "contact_pending" JSONB')
+        if not isinstance(DATABASE, SqliteDatabase):
+            _add_herd_contact_member_fk()
+            _create_audit_table_and_triggers()  # re-runnable; picks up the new snapshot_excluded list
+            DATABASE.execute_sql("DROP RULE IF EXISTS audit_log_no_update ON audit_log")
+            DATABASE.execute_sql(
+                "UPDATE audit_log SET old_data = old_data - %s::text[], new_data = new_data - %s::text[]"
+                " WHERE table_name = 'herd'",
+                (list(HERD_CONTACT_COLUMNS), list(HERD_CONTACT_COLUMNS)),
+            )
+            DATABASE.execute_sql(AUDIT_LOG_NO_UPDATE_RULE)
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=47,
+            comment="herd.contact_member, herd.contact_pending; herd contact values out of audit_log",
+            applied=datetime.now(),
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4684,6 +4750,7 @@ MIGRATIONS = {
     (43, 44): migrate_43_to_44,  # buyer contact
     (44, 45): migrate_44_to_45,  # matrikel_audit actor NULL for the nightly job
     (45, 46): migrate_45_to_46,  # individual.rex
+    (46, 47): migrate_46_to_47,  # herd contact from the matrikel
 }
 
 
