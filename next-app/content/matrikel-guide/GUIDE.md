@@ -107,7 +107,7 @@ Statusarna:
 | Status | Betyder |
 |---|---|
 | Aktiv | Medlem. |
-| Inaktiv | Medlemskapet är avslutat. |
+| Inaktiv | Inte medlem. Status Inaktiv avslutar inte personerna; det gör **Avsluta medlemskap**. |
 | Väntar | Inlagt men ännu inte aktivt. |
 | Friexemplar | Får Koharen utan att vara medlem, till exempel tidningsutbyten. Räknas inte i medlemsantalen. |
 
@@ -230,7 +230,9 @@ annan.
 ### Anonymisering efter 12 månader
 
 Stamboken anonymiserar personer automatiskt: namnen ersätts med en platshållare
-och kontaktuppgifterna tas bort.
+och kontaktuppgifterna tas bort. Tiden räknas från när personerna avslutades,
+alltså från **Avsluta medlemskap** eller **Ta bort**. Att bara välja status
+Inaktiv avslutar ingen, och då börjar ingen tid räknas.
 
 - **Ett avslutat medlemskap** anonymiseras när det har gått 12 månader sedan den
   sista personen i det avslutades. Alla personer anonymiseras då samtidigt, och
