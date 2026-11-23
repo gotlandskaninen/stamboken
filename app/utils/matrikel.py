@@ -460,6 +460,8 @@ def anonymize_person(member, actor, deferred_originals=None):
         person, user = _lock_for_detach(member.id)
         membership = person.membership
         before = user.effective_herd_ids() if user is not None else set()
+        if user is not None:  # her name leaves the public certificate check page too (stamboken #6)
+            User.update(name_on_check_page=False).where(User.id == user.id).execute()
         redact_person_from_audits(person)
         now = datetime.now()
         HerdAccessGrant.update(revoked_at=now, updated_at=now).where(

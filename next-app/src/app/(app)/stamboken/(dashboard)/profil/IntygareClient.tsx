@@ -38,6 +38,8 @@ export function IntygareClient({ initial }: { initial: boolean }) {
         </p>
         <FormControlLabel
           className={styles.switchRow}
+          /* ADR-0010 touch target: the one-line label alone is 42 px */
+          sx={{ minHeight: 44 }}
           labelPlacement="start"
           label="Visa mitt namn på kontrollsidan"
           control={

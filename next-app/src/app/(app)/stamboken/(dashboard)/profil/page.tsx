@@ -46,9 +46,9 @@ export default async function ProfilPage() {
       () => null,
     ),
     // Everyone who can issue a certificate has the choice; a failure just hides the card.
-    fetchApi<{ show: boolean }>("/v2/certificates/check-page-name").catch(
-      () => null,
-    ),
+    fetchApi<{ show: boolean }>("/v2/certificates/check-page-name", {
+      forceProd: true,
+    }).catch(() => null),
   ]);
   // After migrate_28_to_29 both endpoints resolve the same row; a mismatch
   // is an integrity state, never a normal UI state.
@@ -101,10 +101,12 @@ export default async function ProfilPage() {
               </>
             )}
             {notice && <NotisClient initial={notice.mail_enabled} />}
+            {/* Shown while the name is public, also once her roles are gone, so she can always withdraw it. */}
             {checkPage &&
-              (user.is_admin || user.is_manager || user.is_owner) && (
-                <IntygareClient initial={checkPage.show} />
-              )}
+              (checkPage.show ||
+                user.is_admin ||
+                user.is_manager ||
+                user.is_owner) && <IntygareClient initial={checkPage.show} />}
           </div>
         </div>
       </div>

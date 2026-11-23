@@ -67,7 +67,7 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # audit_log IP retention index (39) + herd bank privacy reset (40) + the mail queue (41) +
 # the intake queue (42) and its retention (43) + buyer_contact (44) +
 # matrikel_audit rows without a user, written by the nightly anonymization (45) +
-# the coat column individual.rex (46) + hbuser.name_on_check_page (47).
+# the coat column individual.rex (46) + hbuser.name_on_check_page and digitalcertificatev2.issued_as (47).
 CURRENT_SCHEMA_VERSION = 47
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
@@ -1949,6 +1949,8 @@ class DigitalCertificateV2(BaseModel):
     verification_token = UUIDField(unique=True, default=uuid.uuid4)
     certificate_type = CharField(default="pedigree")
     issued_by = ForeignKeyField(User)
+    # The role she issued in (stamboken #6): "breeder", "admin" or "manager". NULL on rows issued before it existed.
+    issued_as = CharField(max_length=20, null=True)
     issued_at = DateTimeField(default=datetime.now)
     file_path = CharField()
     checksum = CharField(64)
@@ -4205,15 +4207,17 @@ def migrate_45_to_46():
 
 
 def migrate_46_to_47():
-    """A person's choice to show her name as "Intygas av" on the public certificate check page (stamboken #6).
-    Off for everyone: the page shows no name until the person chooses it."""
+    """A person's choice to show her name as "Intygas av" on the public certificate check page (stamboken #6),
+    off for everyone until she chooses it, and the role a certificate was issued in (NULL on older rows)."""
     with DATABASE.atomic():
         DATABASE.execute_sql(
             "ALTER TABLE hbuser ADD COLUMN IF NOT EXISTS name_on_check_page BOOLEAN NOT NULL DEFAULT false"
         )
+        if "digitalcertificatev2" in DATABASE.get_tables():
+            DATABASE.execute_sql("ALTER TABLE digitalcertificatev2 ADD COLUMN IF NOT EXISTS issued_as VARCHAR(20)")
         SchemaHistory.insert(  # pylint: disable=E1120
             version=47,
-            comment="hbuser.name_on_check_page",
+            comment="hbuser.name_on_check_page, digitalcertificatev2.issued_as",
             applied=datetime.now(),
         ).execute()
 

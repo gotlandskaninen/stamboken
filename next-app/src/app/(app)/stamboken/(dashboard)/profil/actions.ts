@@ -203,7 +203,8 @@ export async function setNameOnCheckPage(
   try {
     const res = await fetchApi<{ show: boolean }>(
       "/v2/certificates/check-page-name",
-      { method: "PUT", body: JSON.stringify({ show }) },
+      // The QR page reads production: the choice is always saved there, also from the demo.
+      { method: "PUT", body: JSON.stringify({ show }), forceProd: true },
     );
     return { ok: true, show: res.show };
   } catch (e) {

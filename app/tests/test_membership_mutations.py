@@ -100,7 +100,9 @@ class TestMatrikelDomainFunctions(DatabaseTest):
         self.family.user = user
         self.family.save()
         grant = db.HerdAccessGrant.create(member=self.family, herd=self.herds[0], granted_by=self.admin)
+        db.User.update(name_on_check_page=True).where(db.User.id == user.id).execute()
         matrikel.anonymize_person(self.family, self.admin)
+        self.assertFalse(db.User.get_by_id(user.id).name_on_check_page)  # off the public check page (#6)
         person = db.Member.get_by_id(self.family.id)
         self.assertEqual(person.first_name, "Borttagen")
         self.assertEqual(person.last_name, "person")

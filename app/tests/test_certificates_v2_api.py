@@ -978,18 +978,48 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
         self.assertEqual(self.app.get(f"/api/v2/certificates/verify/{token}").get_json()["attested_by"], "Uppfödaren")
 
     def test_attester_role_without_a_name(self):
-        """Without her choice: the breeder for anyone with the origin herd, else the association's role."""
+        """Without her choice: the role she issued in, stored on the certificate, not her roles at the scan."""
+        from utils.cert_service_v2 import issuer_role
+
         individual = self.individuals[3]  # born in herds[0]
-        for user, expected in (
-            (self.owner, "Uppfödaren"),
-            (self.admin, "Föreningen Gotlandskaninen (administratör)"),
-            (self.manager, "Föreningen Gotlandskaninen (genbanksansvarig)"),
-        ):
+        for user, role in ((self.owner, "breeder"), (self.admin, "admin"), (self.manager, "manager")):
             with self.subTest(user=user.email):
-                self.assertEqual(certificates._attested_by(user, individual, may_name=True), expected)
-        db.User.update(fullname="  ", name_on_check_page=True).where(db.User.id == self.owner.id).execute()
-        owner = db.User.get_by_id(self.owner.id)
-        self.assertEqual(certificates._attested_by(owner, individual, may_name=True), "Uppfödaren")  # no blank name
+                self.assertEqual(issuer_role(user, individual), role)
+        cert = db.DigitalCertificateV2.create(
+            individual=individual, issued_by=self.manager, issued_as="manager", file_path="x", checksum="0" * 64
+        )
+        self.assertEqual(
+            certificates._attested_by(cert, may_name=True), "Föreningen Gotlandskaninen (genbanksansvarig)"
+        )
+        self.manager.remove_role("manager", self.genebanks[0].id)  # she steps down; the certificate keeps its role
+        cert = db.DigitalCertificateV2.get_by_id(cert.id)
+        self.assertEqual(
+            certificates._attested_by(cert, may_name=True), "Föreningen Gotlandskaninen (genbanksansvarig)"
+        )
+        db.DigitalCertificateV2.update(issued_as=None).where(db.DigitalCertificateV2.id == cert.id).execute()
+        cert = db.DigitalCertificateV2.get_by_id(cert.id)
+        self.assertEqual(certificates._attested_by(cert, may_name=True), "Uppfödaren")  # an older row: judged now
+        db.User.update(fullname="Maja Ansvarig", name_on_check_page=True, is_active=False).where(
+            db.User.id == self.manager.id
+        ).execute()
+        cert = db.DigitalCertificateV2.get_by_id(cert.id)
+        self.assertEqual(certificates._attested_by(cert, may_name=True), "Uppfödaren")  # a deactivated account
+        db.User.update(fullname="  ", is_active=True).where(db.User.id == self.manager.id).execute()
+        cert = db.DigitalCertificateV2.get_by_id(cert.id)
+        self.assertEqual(certificates._attested_by(cert, may_name=True), "Uppfödaren")  # no blank name
+
+    def test_check_page_name_reaches_production_without_production_access(self):
+        """She can always read and withdraw her choice, also once her production access is gone."""
+        db.User.update(name_on_check_page=True, v2_prod_access=False).where(db.User.id == self.owner.id).execute()
+        client = self.app.application.test_client(use_cookies=True)
+        self.assertEqual(
+            client.post("/api/login", json={"username": self.owner.email, "password": "pass"}).status_code, 200
+        )
+        self.assertEqual(client.get("/api/v2/certificates/check-page-name").get_json(), {"show": True})
+        self.assertEqual(
+            client.put("/api/v2/certificates/check-page-name", json={"show": False}).get_json(), {"show": False}
+        )
+        self.assertFalse(db.User.get_by_id(self.owner.id).name_on_check_page)
 
     def test_sale_months_on_migrated_history(self):
         """Migrated rows lack from_herd: a row without a herd, and a return to the same herd, are no sale."""
