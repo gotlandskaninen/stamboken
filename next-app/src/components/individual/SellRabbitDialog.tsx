@@ -23,6 +23,14 @@ import {
 } from "@mui/x-date-pickers/hooks";
 import { useTranslation } from "react-i18next";
 import {
+  BuyerFields,
+  EMPTY_BUYER,
+  buyerComplete,
+  buyerPayload,
+  type BuyerDraft,
+  type SaleBuyer,
+} from "./BuyerFields";
+import {
   type GenebankHerd,
   isOutsideGenebankHerd,
   minSaleDate,
@@ -54,7 +62,7 @@ type LoadHerdsResult =
 interface SellRabbitDialogProps {
   open: boolean;
   onClose: () => void;
-  onConfirm: (herd: string, sellingDate: string) => void;
+  onConfirm: (herd: string, sellingDate: string, buyer?: SaleBuyer) => void;
   loadHerds: () => Promise<LoadHerdsResult>;
   individualName: string;
   individualNumber: string;
@@ -62,6 +70,11 @@ interface SellRabbitDialogProps {
   birthDate: string | null | undefined;
   herdTracking: { date: string | null }[] | null | undefined;
   isRegistered: boolean;
+  /**
+   * Admin or a manager of the rabbit's genebank: only they may sell on from GX1 to GX1, or sell without the
+   * buyer's address (ADR-0016).
+   */
+  canResellOutside?: boolean;
   isSaving: boolean;
   /** Problem detail from the last failed attempt; shown inline (the snackbar sits behind the modal). */
   error?: string | null;
@@ -103,6 +116,7 @@ function SellRabbitDialogContent({
   birthDate,
   herdTracking,
   isRegistered,
+  canResellOutside = false,
   isSaving,
   error,
 }: SellRabbitDialogProps) {
@@ -123,6 +137,7 @@ function SellRabbitDialogContent({
   const [target, setTarget] = React.useState<GenebankHerd | null>(null);
   const [date, setDate] = React.useState<Date | null>(() => stockholmToday());
   const [acknowledged, setAcknowledged] = React.useState(false);
+  const [buyer, setBuyer] = React.useState<BuyerDraft>(EMPTY_BUYER);
 
   // Load the herd list when the dialog opens (picker data is not needed earlier).
   React.useEffect(() => {
@@ -143,7 +158,9 @@ function SellRabbitDialogContent({
       (herds ?? [])
         .filter(
           (h) =>
-            h.herd !== currentHerd.herd &&
+            // GX1 to GX1 too, for a manager: a buyer outside the association sells to another.
+            (h.herd !== currentHerd.herd ||
+              (canResellOutside && isOutsideGenebankHerd(h.herd))) &&
             (isRegistered || isOutsideGenebankHerd(h.herd)),
         )
         // The outside-genebank herd first: it is the common choice.
@@ -153,13 +170,20 @@ function SellRabbitDialogContent({
               Number(isOutsideGenebankHerd(a.herd)) ||
             a.herd.localeCompare(b.herd, "sv", { numeric: true }),
         ),
-    [herds, currentHerd.herd, isRegistered],
+    [herds, currentHerd.herd, isRegistered, canResellOutside],
   );
 
   const dateProblem = validateSaleDate(date, minDate, today);
   const outsideCode = options.find((h) => isOutsideGenebankHerd(h.herd))?.herd;
   const targetOutside = target ? isOutsideGenebankHerd(target.herd) : false;
-  const canSubmit = !!target && !dateProblem && acknowledged && !isSaving;
+  // canResellOutside is "admin or manager of the genebank": they may sell without an address (old papers).
+  const addressRequired = !canResellOutside;
+  const canSubmit =
+    !!target &&
+    !dateProblem &&
+    acknowledged &&
+    (!targetOutside || buyerComplete(buyer, addressRequired)) &&
+    !isSaving;
 
   const optionLabel = (h: GenebankHerd) =>
     herdText(
@@ -182,7 +206,11 @@ function SellRabbitDialogContent({
     if (!target || !date || validateSaleDate(date, minDate, stockholmToday())) {
       return;
     }
-    onConfirm(target.herd, toIsoDate(date));
+    if (!targetOutside) {
+      onConfirm(target.herd, toIsoDate(date));
+      return;
+    }
+    onConfirm(target.herd, toIsoDate(date), buyerPayload(buyer));
   };
 
   const displayName = individualName || individualNumber;
@@ -334,6 +362,16 @@ function SellRabbitDialogContent({
             slots={{ actionBar: StockholmTodayActionBar }}
           />
         </Box>
+
+        {targetOutside && (
+          <Box sx={{ mt: 2.5 }}>
+            <BuyerFields
+              value={buyer}
+              onChange={setBuyer}
+              addressRequired={addressRequired}
+            />
+          </Box>
+        )}
 
         {target && !dateProblem && date && (
           <Box

@@ -12,7 +12,8 @@ from flask import Blueprint, jsonify, request, session
 from flask_login import current_user
 from peewee import DataError, DoesNotExist, IntegrityError, fn
 from utils.database import DATABASE, Breeding, Bunny, Color, Individual, User, lock_individuals
-from utils.herd_tracking import HerdTrackingError, void_all_for_unpromote
+from utils.herd_tracking import HerdTrackingError, lock_buyer_items, void_all_for_unpromote
+from utils.inbox_purge import remove_originals
 from utils.individual_number_v2 import (
     CHOICES,
     LITTER_SIZE6W_ABOVE_BORN,
@@ -514,8 +515,11 @@ def unpromote_bunny(bunny_id):
     except DoesNotExist as exc:
         raise RosterActionError(404, "Not Found", f"Bunny {bunny_id} not found") from exc
     breeding_id = bunny.breeding_id
+    files = []  # queue originals of the rabbit's sales: removed after the commit
 
     with DATABASE.atomic():
+        # The queue's lock order, item before rabbit, when a sale holds a buyer (the bunny is re-read below).
+        items = lock_buyer_items([bunny.individual_id]) if bunny.individual_id is not None else set()
         try:
             breeding = Breeding.select().where(Breeding.id == breeding_id).for_update().get()
         except DoesNotExist as exc:
@@ -552,7 +556,7 @@ def unpromote_bunny(bunny_id):
         individual.save()
 
         try:
-            void_all_for_unpromote(individual, User.get_by_id(current_user.id))
+            void_all_for_unpromote(individual, User.get_by_id(current_user.id), files=files, items=items)
         except HerdTrackingError as exc:  # e.g. an admin's genebank correction: rolled back with the void above
             raise RosterActionError(exc.status, exc.title, exc.detail) from exc
 
@@ -560,6 +564,7 @@ def unpromote_bunny(bunny_id):
         bunny.fate = "undecided"
         bunny.save()
 
+    remove_originals(files)
     return individual, bunny
 
 

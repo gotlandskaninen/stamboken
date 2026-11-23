@@ -765,6 +765,7 @@ export function WorkView({
                     herds={herds}
                     canSave={saving}
                     onDone={() => undefined}
+                    addressRequired={!manages(user, null)}
                   />
                 </details>
               )}
@@ -787,6 +788,7 @@ export function WorkView({
               herds={herds}
               canSave={saving}
               onDone={(d) => advance(d)}
+              addressRequired={!manages(user, null)}
             />
           ) : (
             <div className={styles.card}>

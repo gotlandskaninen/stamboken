@@ -64,6 +64,8 @@ export interface InboxDocument {
   interpretation_status: InterpretationStatus;
   proposal: Proposal | null;
   individual: string | null;
+  /** The sale registered from the document (for a proof: the sale it shows). */
+  herd_tracking_id?: number | null;
   has_copy: boolean;
 }
 
@@ -469,6 +471,30 @@ export function buildSalePayload(form: SaleForm) {
       : number(form.herd.trim().split(/\s/)[0]),
     date: form.date,
   };
+}
+
+/**
+ * The rule of the API's proven_sale: the sale a proof shows when it is already
+ * registered, from the item or anywhere else, an active move of the rabbit (its
+ * active rows, `sales`) to the same herd on the same date; null when there is
+ * none. Its buyer came with that sale, unless it has none (`buyer`).
+ */
+export function provenSale<
+  S extends { herd: string; date: string | null; kind: string },
+>(
+  doc: InboxDocument,
+  payload: { herd: string; date: string },
+  sales: S[],
+): S | null {
+  if (doc.doc_type !== "bevis") return null;
+  return (
+    sales.find(
+      (s) =>
+        (s.kind === "TRANSFER" || s.kind === "CORRECTION") &&
+        s.herd === payload.herd &&
+        s.date === payload.date,
+    ) ?? null
+  );
 }
 
 // ---------------------------------------------------------------------------

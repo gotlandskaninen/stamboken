@@ -202,6 +202,11 @@ har ett medlemsnummer och kan omfatta en huvudmedlem, familjemedlemmar och sköt
 Besättningsnumret är medlemsnumret med rasens bokstav framför.\
 Kod: `Membership`, `member_number`, `Member` · Legacy-manual: "medlemsregistret" · Legacy: "medlemsmatrikeln" · Nytt UI: "Matrikel", "Medlemsmatrikel", "Medlemsnummer"
 
+**Medlemsavgift**\
+Avgiften för ett års medlemskap i Föreningen Gotlandskaninen. Samma avgift har också kallats
+årsavgift; skriv medlemsavgift, som inte går att blanda ihop med årsrapporten.\
+Kod: – · Nytt UI: "Medlemsavgiften", "Betala medlemsavgiften"
+
 **Oregistrerad unge**\
 Gamla manualen: en unge som ännu inte fått ett intyg. I nya Stamboken är det en rad i kullistan
 som inte registrerats än; den har bara ett preliminärt individnummer.\
@@ -413,6 +418,7 @@ Projektägaren beslutade 2026-10-30:
 12. **Brokig**, inte scheck, om vita kaniner med färgade fläckar, som i färgatlasen och färgnamnen
     (beslutat 2026-11-12).
 13. Beslutat 2026-11-12: **Besättning** om en enskild uppfödares kaniner, aldrig genbank. **Genbank** är hela rasens bevarade population, och föreningen har två. **Genbanksbesättning** får användas som förtydligande. Orden följer handlingsplanen och FAO, se posterna Besättning och Genbank.
+14. **Medlemsavgift**, inte årsavgift, om avgiften för ett års medlemskap (beslutat 2026-11-18).
 
 ## Öppna frågor
 
