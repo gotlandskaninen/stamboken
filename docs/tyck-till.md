@@ -32,12 +32,18 @@ Det är grinden: ingen separat flagga slår funktionen på eller av.
    reserveras mappen `PRIVATE_UPLOAD_FOLDER/tyck-till/<inskick_id>/` med ett
    `flock`; ett inskick som redan pågår ger 409. Inget av detta drar på gränserna.
 4. Gränserna: inloggad 5 per timme och konto, utloggad 3 per timme och IP och
-   30 per timme sammanlagt. Svarar räknaren inte blir det 503. Det dolda fältet
-   `webbplats` ger samma 202 men skapar inget, och räknas mot gränserna.
+   30 per timme sammanlagt. De kontrolleras före arbetet men förbrukas först
+   när inskicket lyckas (202), så ett avslag eller ett GitHub-fel kostar inget.
+   Svarar räknaren inte blir det 503. Det dolda fältet `webbplats` ger samma
+   202 men skapar inget, och räknas mot gränserna. Dessutom räknas varje anrop
+   som kommer förbi låset: högst 20 per timme och IP, så att avvisade bilder
+   inte kan avkodas obegränsat.
 5. Ett inskick åt gången per gunicorn-process (annars 503). Bilderna (högst
    fyra, JPEG, PNG, WebP eller HEIC) kodas om utan EXIF.
-6. Issuen skapas (efter ett uppslag på referensen `tt-<8 hex>`, så att ett
-   omförsök efter ett förlorat svar inte ger en dublett), publika läggs i
+6. Issuen skapas (efter ett uppslag i båda reposen, publikt först, på en issue
+   vars sista rad är `Referens: tt-<8 hex>`, så att ett omförsök efter ett
+   förlorat svar inte ger en dublett; hittas en issue gäller dess repo och
+   synlighet, oavsett vad omförsöket valde), publika läggs i
    projektet, mejlet köas och svaret sparas. GitHub-anropen har tillsammans
    högst 10 sekunder. Går de inte tas mappen bort och svaret är 503; samma
    `inskick_id` kan skickas igen.

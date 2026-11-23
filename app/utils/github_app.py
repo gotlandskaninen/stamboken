@@ -5,6 +5,7 @@ is a fake that succeeds, for development, CI and e2e.
 """
 
 import base64
+import functools
 import itertools
 import json
 import logging
@@ -13,6 +14,7 @@ from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 
 import requests
+from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.asymmetric import padding
 from cryptography.hazmat.primitives.serialization import load_pem_private_key
@@ -33,6 +35,19 @@ _fake_numbers = itertools.count(1)
 
 class GitHubError(Exception):
     """GitHub failed, or its outcome is not known."""
+
+
+def _github_errors(func):
+    """An answer that is not the JSON we expect is a GitHub failure, not a 500."""
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except (KeyError, TypeError, ValueError, AttributeError) as exc:
+            raise GitHubError(type(exc).__name__) from exc
+
+    return wrapper
 
 
 def configured():
@@ -61,17 +76,18 @@ def _call(method, url, deadline, token=None, **kwargs):
     if remaining < 1:
         raise GitHubError("no time left")
     headers = {"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28"}
-    headers["Authorization"] = f"Bearer {token or _jwt()}"
     try:
+        headers["Authorization"] = f"Bearer {token or _jwt()}"
         # shortcut: the read timeout holds between received bytes, so a call can overrun by one such gap
         response = requests.request(method, url, headers=headers, timeout=(3, remaining), **kwargs)
-    except (RequestException, OSError, ValueError) as exc:  # OSError and ValueError: the key file and the PEM
+    except (RequestException, OSError, ValueError, TypeError, UnsupportedAlgorithm) as exc:  # the key file and the PEM
         raise GitHubError(type(exc).__name__) from exc
     if response.status_code >= 400:
         raise GitHubError(f"HTTP {response.status_code}")
     return response
 
 
+@_github_errors
 def _installation_token(deadline):
     if _token_cache.get("expires", 0) > time.time():
         return _token_cache["token"]
@@ -83,8 +99,14 @@ def _installation_token(deadline):
     return answer["token"]
 
 
+def _last_line(body):
+    lines = [line.strip() for line in (body or "").splitlines() if line.strip()]
+    return lines[-1] if lines else ""
+
+
+@_github_errors
 def find_issue(repo, ref, deadline):
-    """The issue labelled `tyck till`, open or closed and updated since yesterday, whose body has `ref`; else None."""
+    """The issue labelled `tyck till`, open or closed and updated since yesterday, whose body ends with the line `Referens: <ref>`; else None."""
     if settings.tyck_till.github == "logg":
         return None
     token = _installation_token(deadline)
@@ -93,12 +115,13 @@ def find_issue(repo, ref, deadline):
     while url:
         response = _call("GET", url, deadline, token, params=params)
         for item in response.json():
-            if "pull_request" not in item and ref in (item.get("body") or ""):
+            if "pull_request" not in item and _last_line(item.get("body")) == f"Referens: {ref}":
                 return Issue(item["number"], item["node_id"], item["html_url"])
         url, params = response.links.get("next", {}).get("url"), None
     return None
 
 
+@_github_errors
 def create_issue(repo, title, body, labels, deadline):
     if settings.tyck_till.github == "logg":
         number = next(_fake_numbers)
@@ -124,7 +147,7 @@ def add_to_project(node_id, deadline):
             token,
             json={"query": _PROJECT_MUTATION, "variables": {"p": settings.tyck_till.project_id, "c": node_id}},
         ).json()
-    except GitHubError:
+    except (GitHubError, ValueError):
         logger.warning("tyck till: adding to the project failed")
         return False
-    return not answer.get("errors")
+    return isinstance(answer, dict) and not answer.get("errors")

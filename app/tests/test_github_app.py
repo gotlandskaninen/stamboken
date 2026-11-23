@@ -99,7 +99,7 @@ class GitHubAppTest(unittest.TestCase):
     def test_find_issue_lists_open_and_closed_with_the_label_since_yesterday(self):
         self._answers(
             _token_answer(),
-            _response([_issue(1, "tt-aaaaaaaa", pull_request={}), _issue(2, "tt-bbbbbbbb"), _issue(3, None)]),
+            _response([_issue(1, "tt-aaaaaaaa", pull_request={}), _issue(2, "Text\n\nReferens: tt-bbbbbbbb"), _issue(3, None)]),
         )
         found = github_app.find_issue(REPO, "tt-bbbbbbbb", self.deadline)
         self.assertEqual(found.number, 2)
@@ -110,6 +110,42 @@ class GitHubAppTest(unittest.TestCase):
         since = datetime.strptime(params["since"], "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
         self.assertAlmostEqual(since.timestamp(), (datetime.now(timezone.utc) - timedelta(days=1)).timestamp(), delta=60)
 
+    def test_find_issue_wants_the_reference_on_the_last_line_only(self):
+        pasted = "Jag skrev\n```\nReferens: tt-bbbbbbbb\n```\nsen mer text\n\nReferens: tt-cccccccc\n"
+        own = "Text\n\nReferens: tt-bbbbbbbb\n"
+        self._answers(_token_answer(), _response([_issue(1, pasted), _issue(2, own)]))
+        self.assertEqual(github_app.find_issue(REPO, "tt-bbbbbbbb", self.deadline).number, 2)
+
+    def test_a_broken_key_file_and_answers_that_are_not_json_are_github_errors(self):
+        broken = github_app.settings.tyck_till.key_path
+        broken.write_text("inte en nyckel")
+        with self.assertRaises(GitHubError):
+            github_app.create_issue(REPO, "t", "b", [], self.deadline)
+        self.requests.request.assert_not_called()
+        self.assertFalse(github_app.add_to_project("N7", self.deadline))
+        broken.unlink()
+        with self.assertRaises(GitHubError):  # the file is gone
+            github_app.create_issue(REPO, "t", "b", [], self.deadline)
+        broken.write_bytes(
+            self.key.private_bytes(
+                serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()
+            )
+        )
+        not_json = mock.Mock(status_code=200, links={}, json=mock.Mock(side_effect=ValueError("no json")))
+        self._answers(not_json)
+        with self.assertRaises(GitHubError):
+            github_app.create_issue(REPO, "t", "b", [], self.deadline)
+        github_app._token_cache.update(token="t", expires=time.time() + 600)
+        for answer in (not_json, _response([1, 2]), _response({"nummer": 1})):
+            self._answers(answer)
+            with self.assertRaises(GitHubError):
+                github_app.find_issue(REPO, "tt-aaaaaaaa", self.deadline)
+            self._answers(answer)
+            with self.assertRaises(GitHubError):
+                github_app.create_issue(REPO, "t", "b", [], self.deadline)
+        self._answers(not_json)
+        self.assertFalse(github_app.add_to_project("N7", self.deadline))
+
     def test_find_issue_skips_pull_requests(self):
         self._answers(_token_answer(), _response([_issue(1, "tt-aaaaaaaa", pull_request={})]))
         self.assertIsNone(github_app.find_issue(REPO, "tt-aaaaaaaa", self.deadline))
@@ -117,7 +153,7 @@ class GitHubAppTest(unittest.TestCase):
     def test_find_issue_on_page_two(self):
         next_url = f"https://api.github.com/repos/{REPO}/issues?page=2"
         self._answers(
-            _token_answer(), _response([_issue(1)], links={"next": {"url": next_url}}), _response([_issue(2, "tt-cccccccc")])
+            _token_answer(), _response([_issue(1)], links={"next": {"url": next_url}}), _response([_issue(2, "Referens: tt-cccccccc")])
         )
         self.assertEqual(github_app.find_issue(REPO, "tt-cccccccc", self.deadline).number, 2)
         self.assertEqual(self._calls()[2][1], next_url)

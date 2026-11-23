@@ -4,6 +4,7 @@ import io
 import json
 import os
 import re
+import shutil
 import threading
 import time
 import unittest
@@ -11,6 +12,7 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
+import blueprints.tyck_till as blueprint
 import utils.database as db
 import utils.github_app as github_app
 import utils.settings as settings
@@ -42,7 +44,7 @@ class FakeGitHub:
         self.looked_up += 1
         if self.down:
             raise GitHubError("down")
-        return self.by_ref.get(ref)
+        return self.by_ref.get((repo, ref))
 
     def create_issue(self, repo, title, body, labels, deadline):
         if self.wait is not None:
@@ -52,7 +54,7 @@ class FakeGitHub:
         number = len(self.created) + 1
         issue = Issue(number, f"N{number}", f"https://github.com/{repo}/issues/{number}")
         self.created.append({"repo": repo, "title": title, "body": body, "labels": labels, "issue": issue})
-        self.by_ref[re.search(r"tt-[0-9a-f]{8}", body).group()] = issue
+        self.by_ref[(repo, re.search(r"tt-[0-9a-f]{8}", body).group())] = issue
         if self.lose_response:
             self.lose_response = False
             raise GitHubError("lost")
@@ -282,6 +284,18 @@ class TestLimits(TyckTillTest):
         self.assertEqual(response.status_code, 429)
         self.assertEqual(response.get_json()["type"], "rate-limit-exceeded")
 
+    def test_refusals_do_not_use_the_quota_but_each_call_past_the_lock_counts(self):
+        self.limits_on()
+        self.github.down = True
+        self.assertEqual([self.send(ip="10.0.0.1").status_code for _ in range(3)], [503] * 3)
+        self.github.down = False
+        self.assertEqual(self.send(ip="10.0.0.1").status_code, 202)
+        self.assertEqual(self.send(ip="10.0.0.1").status_code, 202)  # 5 calls past the lock, 2 of them counted
+        bad = [("a.png", b"inte en bild")]
+        codes = [self.send(files=bad, ip="10.0.0.2").status_code for _ in range(21)]
+        self.assertEqual(codes[:20], [415] * 20)
+        self.assertEqual(codes[20], 429)
+
     def test_honeypot_gives_202_creates_nothing_and_counts_against_the_limit(self):
         self.limits_on()
         for _ in range(3):
@@ -341,6 +355,35 @@ class TestRetries(TyckTillTest):
         for _ in range(5):
             self.assertEqual(self.send(inskick_id=inskick_id, ip="10.0.0.1").status_code, 202)
         self.assertEqual([self.send(ip="10.0.0.1").status_code for _ in range(3)], [202, 202, 429])
+
+    def test_lost_response_in_public_then_retry_choosing_private_gives_the_public_issue(self):
+        self.login("hjalp")
+        self.github.lose_response = True
+        inskick_id = str(uuid.uuid4())
+        self.assertEqual(self.send(inskick_id=inskick_id, vem="publik", email=None).status_code, 503)
+        response = self.send(inskick_id=inskick_id, vem="privat", email=None)
+        self.assertEqual(response.status_code, 202, response.get_data(as_text=True))
+        self.assertEqual(len(self.github.created), 1)
+        self.assertEqual(response.get_json()["visibility"], "publik")
+        self.assertEqual(response.get_json()["issue_url"], "https://github.com/gotlandskaninen/stamboken/issues/1")
+        self.assertEqual(self.mails()[0].params["repo"], 0)
+        self.assertEqual(self.github.projected, ["N1"])
+
+    def test_lock_file_replaced_while_waiting_gives_409(self):
+        inskick_id = uuid.uuid4()
+        real_flock = blueprint.fcntl.flock
+
+        def swap_then_lock(fd, how):
+            folder = tt.folder(inskick_id)
+            shutil.rmtree(folder)
+            folder.mkdir()
+            (folder / "lock").touch()
+            real_flock(fd, how)
+
+        with mock.patch.object(blueprint.fcntl, "flock", swap_then_lock):
+            response = self.send(inskick_id=str(inskick_id))
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(self.github.created, [])
 
     def test_lost_response_then_retry_finds_the_issue(self):
         self.github.lose_response = True

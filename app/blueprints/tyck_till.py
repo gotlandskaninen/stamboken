@@ -38,6 +38,7 @@ IMAGE_KINDS = ("jpeg", "png", "webp", "heic")
 LOGGED_IN_LIMIT = "5 per hour"
 LOGGED_OUT_LIMIT = "3 per hour"
 ALL_LOGGED_OUT_LIMIT = "30 per hour"
+REACHED_LIMIT = "20 per hour"  # every call that gets past the lock, so rejected images cannot be decoded without end
 _ONE_AT_A_TIME = threading.BoundedSemaphore(1)  # per gunicorn process: the others keep their threads for the rest
 
 
@@ -62,12 +63,34 @@ def _hit(limit, *identifiers):
     return limiter.limiter.hit(parse_limit(limit), *identifiers, "tyck-till")
 
 
-def _within_limits(user_id):
-    """True, or False when over; raises when the counter does not answer (the caller closes: 503)."""
+def _limits(user_id):
+    """The (limit, identifier) pairs a successful submission is counted against."""
     if user_id:
-        return _hit(LOGGED_IN_LIMIT, f"user:{user_id}")
-    # An address already over its limit does not draw on the total, or one noisy address would shut the rest out.
-    return _hit(LOGGED_OUT_LIMIT, f"ip:{request.remote_addr}") and _hit(ALL_LOGGED_OUT_LIMIT, "logged-out")
+        return [(LOGGED_IN_LIMIT, f"user:{user_id}")]
+    return [(LOGGED_OUT_LIMIT, f"ip:{request.remote_addr}"), (ALL_LOGGED_OUT_LIMIT, "logged-out")]
+
+
+def _under_limits(user_id):
+    """True, or False when over; raises when the counter does not answer (the caller closes: 503)."""
+    return all(limiter.limiter.test(parse_limit(limit), ident, "tyck-till") for limit, ident in _limits(user_id))
+
+
+def _count(user_id):
+    """Counts one finished submission. It is done, so a counter that fails now only costs the count."""
+    try:
+        for limit, ident in _limits(user_id):
+            _hit(limit, ident)
+    except Exception:  # pylint: disable=broad-except
+        logger.exception("The Tyck till limit could not be counted")
+
+
+def _too_many():
+    return problem(
+        429,
+        "För många anrop",
+        "Du har skickat för många synpunkter. Försök igen om en stund.",
+        type="rate-limit-exceeded",
+    )
 
 
 def _answer(visibility, issue_url, images, reply_to):
@@ -178,6 +201,13 @@ def send():
     except BlockingIOError:
         os.close(lock)
         return problem(409, "Conflict", "Skickas redan.")
+    try:  # the folder may have been removed and made again while this one waited: then the lock is on a dead file
+        same = os.fstat(lock).st_ino == os.stat(folder / "lock").st_ino
+    except FileNotFoundError:
+        same = False
+    if not same:
+        os.close(lock)
+        return problem(409, "Conflict", "Skickas redan.")
     try:
         saved = _saved_answer(folder, inskick_id)  # finished while this one waited to open the lock
         if saved:
@@ -195,27 +225,27 @@ def _submit(inskick_id, folder, fields, created):
 
     if not github.configured():
         return refuse(_unavailable())
-    if limiter.enabled and limiter.initialized:
+    limited = limiter.enabled and limiter.initialized
+    if limited:
         try:
-            within = _within_limits(fields["user_id"])
+            if not _hit(REACHED_LIMIT, f"reached:{request.remote_addr}"):
+                return refuse(_too_many())
+            if not _under_limits(fields["user_id"]):
+                return refuse(_too_many())
         except Exception:  # pylint: disable=broad-except  # the limiter swallows errors and would let everything in
             logger.exception("The Tyck till limit could not be checked")
             return refuse(_unavailable())
-        if not within:
-            return refuse(
-                problem(
-                    429,
-                    "För många anrop",
-                    "Du har skickat för många synpunkter. Försök igen om en stund.",
-                    type="rate-limit-exceeded",
-                )
-            )
     if request.form.get("webbplats"):  # the hidden field: only a bot fills it in, and gets the same answer
+        if limited:
+            _count(fields["user_id"])
         return refuse(_answer("privat", None, 0, None)), 202
     if not _ONE_AT_A_TIME.acquire(blocking=False):
         return refuse(_unavailable())
     try:
-        return _create(inskick_id, folder, fields)
+        response = _create(inskick_id, folder, fields)
+        if limited:
+            _count(fields["user_id"])
+        return response
     except _Refused as refusal:
         shutil.rmtree(folder, ignore_errors=True)
         return refusal.response
@@ -230,27 +260,36 @@ def _create(inskick_id, folder, fields):
     reply_to = fields["email"] or None
     if fields["contact"] and not reply_to:
         reply_to = (current_user.email or "").strip().lower() or None
-    visibility, ref = fields["visibility"], tt.reference(inskick_id)
+    ref = tt.reference(inskick_id)
     saved = {**fields, "images": [f"bild-{n}.jpg" for n in range(len(images))], "reply_to": reply_to}
     (folder / "inskick.json").write_text(json.dumps(saved))
-    repo, deadline = tt.REPOS[visibility], time.monotonic() + GITHUB_SECONDS
+    deadline = time.monotonic() + GITHUB_SECONDS
+    visibility = fields["visibility"]
     try:
-        issue = github.find_issue(repo, ref, deadline) or github.create_issue(
-            repo,
-            tt.issue_title(fields["kind"], visibility, fields["text"]),
-            tt.issue_body(
-                fields["kind"],
-                visibility,
-                fields["text"],
-                fields["path"],
-                fields["version"],
-                fields["device"],
-                len(images),
-                ref,
-            ),
-            tt.labels(fields["kind"]),
-            deadline,
+        # An earlier attempt may have made the issue in the other repo: what exists wins over what this one chose.
+        found = next(
+            ((v, issue) for v in ("publik", "privat") if (issue := github.find_issue(tt.REPOS[v], ref, deadline))),
+            None,
         )
+        if found:
+            visibility, issue = found
+        else:
+            issue = github.create_issue(
+                tt.REPOS[visibility],
+                tt.issue_title(fields["kind"], visibility, fields["text"]),
+                tt.issue_body(
+                    fields["kind"],
+                    visibility,
+                    fields["text"],
+                    fields["path"],
+                    fields["version"],
+                    fields["device"],
+                    len(images),
+                    ref,
+                ),
+                tt.labels(fields["kind"]),
+                deadline,
+            )
     except github.GitHubError:
         logger.warning("Tyck till: GitHub did not answer, the submission is refused")
         raise _Refused(_unavailable()) from None

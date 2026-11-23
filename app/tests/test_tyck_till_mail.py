@@ -66,6 +66,19 @@ class TestTyckTillMail(MailTest):
         ((msg, _, _),) = self.send()
         self.assertEqual(msg["Subject"], f"[Tyck till] stamboken-drift#45 {tt.reference(self.id)}")
 
+    def test_log_mode_logs_no_free_text_and_no_reply_address(self):
+        self.submit(text="Syntetisk fritext XYZZY", email="svar-xyzzy@example.org", contact=False)
+        with (
+            mock.patch.multiple(settings.mail, mode="log"),
+            mock.patch.dict("os.environ", {"FLASK_ENV": "development"}),
+            self.assertLogs("herdbook.mail", "INFO") as logs,
+        ):
+            mail.send_pending(self.now)
+        text = "\n".join(logs.output)
+        self.assertIn("tyck_till.inskick", text)
+        self.assertNotIn("XYZZY", text)
+        self.assertNotIn("xyzzy@", text)
+
     def test_public_repo_in_the_subject(self):
         self.submit(repo=0)
         ((msg, _, _),) = self.send()
