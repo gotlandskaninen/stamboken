@@ -204,6 +204,21 @@ class TestVerify(MyEmailTest):
         self.assertEqual(resp.status_code, 400, resp.data)
         self.assertEqual(self.email(), "a@example.org")
 
+    def same_session(self):
+        """A second client on this session, as another tab of the same browser."""
+        tab = APP.test_client(use_cookies=True)
+        tab.set_cookie("session", self.client.get_cookie("session").value)
+        return tab
+
+    def test_a_logout_meanwhile_stops_the_change(self):
+        """The verification has read its session and waits; the member logs out in another tab, which only deletes
+        this session: its pending code goes with it, so the change is not made."""
+        self.patch_contact({"email": NEW})
+        tab = self.same_session()
+        resp = self.paused_verify(self.code(), lambda: self.assertEqual(tab.get("/api/logout").status_code, 200))
+        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertEqual(self.email(), "a@example.org")
+
     def test_a_session_revoked_meanwhile_cannot_finish_the_change(self):
         """Logga ut överallt while the request is past the code check: under the account's lock the session no
         longer holds, so nothing is written and the code is not used."""

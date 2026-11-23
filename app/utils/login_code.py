@@ -180,6 +180,17 @@ def _void(where):
     return LoginCode.update(used_at=_utcnow(), new_address=None).where(where).execute()
 
 
+def cancel(browser, purpose="ny_adress"):
+    """The browser's unused codes for `purpose` stop working: on logout, and when the member cancels her change."""
+    if not browser:
+        return 0
+    return _void(
+        (LoginCode.browser_hash == browser_hash(browser))
+        & (LoginCode.purpose == purpose)
+        & LoginCode.used_at.is_null(True)
+    )
+
+
 def void(member_id):
     """The person's address changed: none of her unused codes works any more, wherever it was sent."""
     return _void((LoginCode.member == member_id) & LoginCode.used_at.is_null(True))

@@ -1847,6 +1847,8 @@ def logout():
     Logs out the current user from the system.
     """
     logout_user()
+    # A verification of a new address that already read this session must not finish after the logout.
+    login_code.cancel(session.get("login_request"))
     # Full clear (not just a user_id pop) so save_session deletes the Redis
     # record outright instead of leaving an anonymous shell with up to 31
     # days of TTL.
