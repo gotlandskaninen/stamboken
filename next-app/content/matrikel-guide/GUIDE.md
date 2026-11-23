@@ -205,11 +205,10 @@ Under **Personer** står hushållets personer med roll, kontakt, konto och
     kontaktuppgifterna och drar in åtkomsterna. Ansökningar med personens namn
     och e-post anonymiseras också, och en sådan ansökan som väntar avslås.
     Intyg och bevis i inkorgen som är kopplade till personen förlorar sina
-    original. Är ingen i hushållet kvar efteråt töms hushållets adress,
-    fakturaadress och anteckningar direkt, även om medlemskapet redan är
-    avslutat. Inget av det går att ångra. Behöver ingen bli borttagen tidigare
-    sköter Stamboken anonymiseringen själv efter 12 månader, se [Anonymisering
-    efter 12 månader](#anonymisering-efter-12-månader).
+    original, och ett inskick från personen som inte har använts på någon kanin
+    försvinner helt, med meddelande och bilagor. Är ingen i hushållet kvar
+    efteråt töms hushållets adress, fakturaadress och anteckningar direkt, även
+    om medlemskapet redan är avslutat. Inget av det går att ångra.
 - **Åtkomster:** i kolumnen **Åtkomster** drar **Återkalla** in en åtkomst, och
   **Förnya** förlänger en skötares tidsbegränsade åtkomst.
 
