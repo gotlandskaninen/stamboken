@@ -76,17 +76,24 @@ def shown(digits):
     return f"{digits[:4]} {digits[4:]}"
 
 
-def issue(person, purpose, browser, address):
+def issue(person, purpose, browser, address, replaces=None):
     """
     A code for `person`, to `address`, bound to the browser holding the secret `browser`, in the caller's
-    transaction (which queues its mail). None when a limit stops it: A_PERSON_A_DAY for the person, AN_HOUR in all,
-    or code login closed. The caller answers the same either way.
+    transaction (which queues its mail). The browser's earlier unused codes for `purpose`, made with its previous
+    secret `replaces`, stop working first, also when no new code is made. None when a limit stops it:
+    A_PERSON_A_DAY for the person, AN_HOUR in all, or code login closed. The caller answers the same either way.
     """
     refuse_unsafe()
     if not DB_PROXY.in_transaction():
         raise RuntimeError("issue() runs in the transaction that queues the code's mail")
     _lock()
     now = _utcnow()
+    if replaces:
+        LoginCode.update(used_at=now, new_address=None).where(
+            (LoginCode.browser_hash == browser_hash(replaces))
+            & (LoginCode.purpose == purpose)
+            & LoginCode.used_at.is_null(True)
+        ).execute()
     if closed(now):
         logger.warning("No code for member %s: code login is closed", person.id)
         return None

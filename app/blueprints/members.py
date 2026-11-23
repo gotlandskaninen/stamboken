@@ -460,11 +460,11 @@ def _codes_unavailable():
 def _ask_for_code(m, address):
     """
     A code to `address` for the member's own change of address (purpose ny_adress), in the caller's transaction,
-    bound to this session: a new request replaces the browser's secret, so only the latest code works. No mail when
+    bound to this session: a new request replaces the browser's secret and voids its earlier code. No mail when
     another person holds the address or a limit stops it; the caller answers the same. A held address still spends
     one of the member's codes a day, or the limit would tell her which addresses are in the matrikel.
     """
-    token = secrets.token_urlsafe(32)
+    token, previous = secrets.token_urlsafe(32), session.get("login_request")
     session["login_request"] = token
     try:
         with DB_PROXY.atomic():
@@ -472,7 +472,7 @@ def _ask_for_code(m, address):
         held = False
     except AddressTaken:
         held = True
-    row = issue(m, "ny_adress", token, address)
+    row = issue(m, "ny_adress", token, address, replaces=previous)
     if row is not None and not held:
         enqueue_mail("konto.kod", "login_code", row.id, {"code_id": row.id}, ref=("membership", m.membership_id))
 
@@ -517,7 +517,7 @@ def verify_me_email():
         m, _ms, err = _relock_me(membership_id, person_id)
         if err is not None:
             return err
-        if row.user_id != m.user_id or not consume(row):
+        if not row.new_address or row.user_id != m.user_id or not consume(row):
             return _wrong_code()
         try:
             with DB_PROXY.atomic():

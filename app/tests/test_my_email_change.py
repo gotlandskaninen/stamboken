@@ -146,16 +146,15 @@ class TestVerify(MyEmailTest):
         self.assertIsNotNone(db.LoginCode.get().used_at)
         self.assertFalse(db.MemberPreviousAddress.select().exists())
 
-    def test_a_session_revoked_meanwhile_cannot_finish_the_change(self):
-        """Logga ut överallt while the request is past the code check: under the account's lock the session no
-        longer holds, so nothing is written and the code is not used."""
-        self.patch_contact({"email": NEW})
-        code = self.code()
+    def paused_verify(self, code, meanwhile, change_row=None):
+        """Runs the verification with a pause after its code check, does `meanwhile`, and returns the response."""
         checked, release, responses = threading.Event(), threading.Event(), []
         original = members_routes.check
 
         def paused_check(*args, **kwargs):
             row = original(*args, **kwargs)
+            if change_row and row is not None:
+                change_row(row)
             checked.set()
             assert release.wait(timeout=10), "the test never released the paused request"
             return row
@@ -170,10 +169,35 @@ class TestVerify(MyEmailTest):
             thread = threading.Thread(target=run)
             thread.start()
             self.assertTrue(checked.wait(timeout=10), "the request never reached the code check")
-            da.revoke_sessions(self.user.id)
+            meanwhile()
             release.set()
             thread.join(timeout=20)
         self.assertFalse(thread.is_alive())
-        self.assertEqual(responses[0].status_code, 401, responses[0].data)
+        return responses[0]
+
+    def test_a_new_request_voids_the_earlier_code(self):
+        self.patch_contact({"email": NEW})
+        first = db.LoginCode.get()
+        self.patch_contact({"email": "annan@example.org"})
+        self.assertIsNotNone(db.LoginCode.get_by_id(first.id).used_at)
+
+    def test_a_check_already_past_cannot_use_a_code_a_new_request_replaced(self):
+        self.patch_contact({"email": NEW})
+        resp = self.paused_verify(self.code(), lambda: self.patch_contact({"email": "annan@example.org"}))
+        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertEqual(self.email(), "a@example.org")
+
+    def test_nothing_is_written_without_a_new_address_on_the_row(self):
+        self.patch_contact({"email": NEW})
+        resp = self.paused_verify(self.code(), lambda: None, change_row=lambda row: setattr(row, "new_address", None))
+        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertEqual(self.email(), "a@example.org")
+
+    def test_a_session_revoked_meanwhile_cannot_finish_the_change(self):
+        """Logga ut överallt while the request is past the code check: under the account's lock the session no
+        longer holds, so nothing is written and the code is not used."""
+        self.patch_contact({"email": NEW})
+        resp = self.paused_verify(self.code(), lambda: da.revoke_sessions(self.user.id))
+        self.assertEqual(resp.status_code, 401, resp.data)
         self.assertEqual(self.email(), "a@example.org")
         self.assertIsNone(db.LoginCode.get().used_at)
