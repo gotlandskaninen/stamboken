@@ -706,3 +706,15 @@ class TestMembersLinkByHerd(DatabaseTest):
             self.assertIn("flera personer i medlemskapet har kontots namn", result.output)
         self.assertIsNone(self._linked_user_id(person))
         self.assertIsNone(self._linked_user_id(family))
+
+    def test_herd_with_an_odd_code_stored_on_another_membership_counts_as_counterpart(self):
+        _, p1 = self._membership(901)
+        m902, p2 = self._membership(902)
+        user = self._account(owns=self._herd("G901"))
+        user.add_role("owner", self._herd("GX9", membership=m902).id)
+
+        for result in (self._run(), self._apply()):
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertIn("flera möjliga kopplingar", result.output)
+        self.assertIsNone(self._linked_user_id(p1))
+        self.assertIsNone(self._linked_user_id(p2))
