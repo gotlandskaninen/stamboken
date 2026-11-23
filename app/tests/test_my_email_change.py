@@ -8,12 +8,14 @@ isort:skip_file
 
 import json
 import os
+import threading
 from unittest import mock
 
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
 import utils.login_code as lc  # noqa: E402
 import utils.settings as settings  # noqa: E402
+from blueprints import members as members_routes  # noqa: E402
 from herdbook import APP  # noqa: E402
 
 from tests.test_member_api import MatrikelApiTest, _mk_membership, _mk_person  # noqa: E402
@@ -143,3 +145,35 @@ class TestVerify(MyEmailTest):
         self.assertEqual(self.email(), "a@example.org")
         self.assertIsNotNone(db.LoginCode.get().used_at)
         self.assertFalse(db.MemberPreviousAddress.select().exists())
+
+    def test_a_session_revoked_meanwhile_cannot_finish_the_change(self):
+        """Logga ut överallt while the request is past the code check: under the account's lock the session no
+        longer holds, so nothing is written and the code is not used."""
+        self.patch_contact({"email": NEW})
+        code = self.code()
+        checked, release, responses = threading.Event(), threading.Event(), []
+        original = members_routes.check
+
+        def paused_check(*args, **kwargs):
+            row = original(*args, **kwargs)
+            checked.set()
+            assert release.wait(timeout=10), "the test never released the paused request"
+            return row
+
+        def run():
+            try:
+                responses.append(self.verify(code))
+            finally:
+                db.DATABASE.close()
+
+        with mock.patch.object(members_routes, "check", paused_check):
+            thread = threading.Thread(target=run)
+            thread.start()
+            self.assertTrue(checked.wait(timeout=10), "the request never reached the code check")
+            da.revoke_sessions(self.user.id)
+            release.set()
+            thread.join(timeout=20)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(responses[0].status_code, 401, responses[0].data)
+        self.assertEqual(self.email(), "a@example.org")
+        self.assertIsNone(db.LoginCode.get().used_at)

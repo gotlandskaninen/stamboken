@@ -16,6 +16,7 @@ from flask import Blueprint, Response, jsonify, request, session
 from flask_login import current_user
 from peewee import IntegrityError
 from utils.csv_safe import csv_safe
+from utils.data_access import session_holds
 from utils.database import BILLING_FIELDS, DB_PROXY, Herd, HerdAccessGrant, Member, Membership, User
 from utils.login_code import (
     AddressTaken,
@@ -511,6 +512,8 @@ def verify_me_email():
         # membership → user → person, as set_member_email takes them
         Membership.select().where(Membership.id == membership_id).for_update().get()
         User.select().where(User.id == current_user.id).for_update().get()
+        if not session_holds(session):  # revoked while the request waited for the account's row
+            return problem(401, "Sessionen gäller inte längre", "Logga in igen.")
         m, _ms, err = _relock_me(membership_id, person_id)
         if err is not None:
             return err
