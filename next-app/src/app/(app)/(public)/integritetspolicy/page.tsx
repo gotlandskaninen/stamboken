@@ -176,12 +176,7 @@ export default function IntegritetspolicyPage() {
               Vi sparar uppgifterna så länge du är medlem. När medlemskapet
               upphör tar vi bort eller anonymiserar uppgifterna inom 12 månader.
               Äldre medlemsförteckningar som finns kvar som filer eller på
-              papper tar vi bort efter två år.{" "}
-              <mark>
-                [INTE KLART: gallringen efter 12 månader, av ansökningar,
-                medlemmar och avslutade besättningar, ska vara byggd innan sidan
-                släpps.]
-              </mark>
+              papper tar vi bort efter två år.
             </p>
           </Section>
 
@@ -275,11 +270,7 @@ export default function IntegritetspolicyPage() {
             <p>
               Köper du en genbankskanin av en medlem fyller ni i ett
               överlåtelsebevis, och ägarbytet registreras i Stamboken Online.
-              Det gäller också dig som inte är medlem.{" "}
-              <mark>
-                [INTE KLART: överlåtelsebeviset och mejlet till köparen är inte
-                införda än.]
-              </mark>
+              Det gäller också dig som inte är medlem.
             </p>
             <ul>
               <li>
