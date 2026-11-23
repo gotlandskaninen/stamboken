@@ -10,6 +10,7 @@ import os
 
 import utils.data_access as da
 import utils.database as db
+import utils.settings as settings
 from flask import Blueprint, jsonify, request, session
 from peewee import DoesNotExist
 from utils.cert_service_v2 import (
@@ -27,6 +28,7 @@ from utils.certificates_v2 import (
     compute_checksum,
     verify_pdf_signature,
 )
+from utils.herd_tracking import sale_months
 from utils.individual_commands import assign_certificate_number
 from utils.individual_number_v2 import RosterAliveExceeds6w
 
@@ -396,6 +398,10 @@ def verify_certificate_get(token):
         )
         replaced_by_date = newest.issued_at.isoformat() if newest else None
 
+    # An old QR code tells nothing about later sales. The demo API answers the same QR codes from a copy up to a
+    # day old, which can hold a choice withdrawn since: no name there either.
+    current = cert.is_current and not settings.service.demo_instance
+
     return jsonify(
         {
             "verified": True,
@@ -404,12 +410,48 @@ def verify_certificate_get(token):
             "individual_number": individual.number,
             "genebank": individual.origin_herd.genebank.name if individual.origin_herd else "",
             "digital_certificate": individual.digital_certificate,
-            # No person's name on the public page: the breeder's name only by the breeder's own choice (stamboken #6).
+            "attested_by": _attested_by(cert, may_name=current),
+            # Public page (ADR-0016): month and year of each change of holder, never the day or the herd.
+            "transferred": sale_months(individual) if current else [],
             "issued_at": cert.issued_at.isoformat(),
             "is_current": cert.is_current,
             "replaced_by_date": replaced_by_date,
         }
     )
+
+
+ROLE_LABELS = {
+    "breeder": "Uppfödaren",
+    "admin": "Föreningen Gotlandskaninen (administratör)",
+    "manager": "Föreningen Gotlandskaninen (genbanksansvarig)",
+}
+
+
+def _attested_by(cert, may_name):
+    """
+    "Intygas av" on the public check page (stamboken #6, Jonas 2026-11-23): the person who issued the certificate,
+    by her full name only when she chose it; otherwise the role she issued in. A row from before issued_as existed
+    says "Uppfödaren": a role judged at the scan could change under an unchanged certificate.
+    """
+    user = cert.issued_by
+    if may_name and user.is_active and user.name_on_check_page and (user.fullname or "").strip():
+        return user.fullname.strip()
+    return ROLE_LABELS[cert.issued_as or "breeder"]
+
+
+@certificates_bp.route("/v2/certificates/check-page-name", methods=["GET", "PUT"])  # [Next.js]
+@json_login_required
+def check_page_name():
+    """The signed-in person's own choice to show her name as "Intygas av" on the check page (stamboken #6)."""
+    user = da.fetch_user_info(session.get("user_id"))
+    if request.method == "PUT":
+        show = (request.get_json(silent=True) or {}).get("show")
+        if not isinstance(show, bool):
+            return problem(400, "Bad Request", "show måste vara true eller false")
+        db.User.update(name_on_check_page=show).where(db.User.id == user.id).execute()
+        logger.info(f"User:{user.id} set name_on_check_page={show}")
+        user = db.User.get_by_id(user.id)
+    return jsonify({"show": user.name_on_check_page})
 
 
 @certificates_bp.route("/v2/certificates/verify/<token>", methods=["POST"])  # [Next.js]

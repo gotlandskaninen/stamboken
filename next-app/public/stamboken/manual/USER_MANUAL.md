@@ -534,6 +534,9 @@ medlemskapets uppgifter.
 - **Notiser**: slå på eller av **Skicka notiser per e-post en gång om dagen**. Notiserna
   syns i Stamboken oavsett. Inställningen stänger inte av mejlet om att ditt eget inskick
   är klart; det skickas ändå.
+- **Intygens kontrollsida**: slå på **Visa mitt namn på kontrollsidan** om ditt namn ska
+  stå som **Intygas av** på [kontrollsidan](#verifiera-intyg) för intyg som du har
+  utfärdat. Annars står där "Uppfödaren". På själva intyget står ditt namn alltid.
 - **Personer i medlemskapet**: huvudmedlemmen lägger till familjemedlemmar och skötare
   med **Lägg till person** (**Förnamn**, **Efternamn**, **Roll**), ger dem rätt att
   sköta en besättning med **Ge åtkomst**, förnyar en skötares tidsbegränsade åtkomst
@@ -729,8 +732,12 @@ Sidan som QR-koden på ett digitalt intyg leder till. Den kräver ingen inloggni
 visar ett av fyra besked:
 
 - **Äkta genbanksintyg** – intyget är utfärdat i Stamboken och signerat av föreningen.
-  Kortet visar **Individnummer**, namn, **Ras**, **Intygsnummer** och **Datum**, men
-  ingen person. **Visa kaninens sida i Stamboken →** kräver inloggning.
+  Kortet visar **Individnummer**, namn, **Ras**, **Intygsnummer**, **Datum** och
+  **Intygas av**: namnet på den som utfärdade intyget om hen har valt det, annars
+  "Uppfödaren" eller, när föreningen utfärdade det, "Föreningen Gotlandskaninen" med
+  rollen. Varje byte av besättning står som **Såld** med månad och år, aldrig dag eller
+  namn.
+  **Visa kaninens sida i Stamboken →** kräver inloggning.
 - **Äkta, men ersatt** – ett nyare intyg har utfärdats för kaninen. Be säljaren om
   den senaste versionen.
 - **Äkta, men gäller inte längre** – intyget har ersatts av ett pappersintyg. Be

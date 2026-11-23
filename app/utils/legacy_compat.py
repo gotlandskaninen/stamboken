@@ -122,6 +122,10 @@ EXEMPT_ENDPOINTS = frozenset(
         ("inbox.my_uploads", "GET"),
         ("inbox.uploads_seen", "POST"),
         ("inbox.notice_count", "GET"),
+        # A person's choice to show her name on the public check page (stamboken #6): she must always be able to
+        # read and withdraw it in production, also once her production access is gone.
+        ("certificates_v2.check_page_name", "GET"),
+        ("certificates_v2.check_page_name", "PUT"),
         ("health_check", "GET"),
         # No data: the SPA shell, which also answers every unknown GET with 404.
         ("main", "GET"),

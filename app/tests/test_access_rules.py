@@ -338,6 +338,8 @@ class TestLegacyList(unittest.TestCase):
                 ("inbox.my_uploads", "GET"),
                 ("inbox.uploads_seen", "POST"),
                 ("inbox.notice_count", "GET"),
+                ("certificates_v2.check_page_name", "GET"),
+                ("certificates_v2.check_page_name", "PUT"),
                 ("health_check", "GET"),
                 ("main", "GET"),
                 ("static", "GET"),

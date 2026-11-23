@@ -233,3 +233,19 @@ function describe(err: unknown): string {
   }
   return "Kunde inte spara.";
 }
+
+export async function setNameOnCheckPage(
+  show: boolean,
+): Promise<{ ok: true; show: boolean } | { ok: false; error: string }> {
+  try {
+    const res = await fetchApi<{ show: boolean }>(
+      "/v2/certificates/check-page-name",
+      // The QR page reads production: the choice is always saved there, also from the demo.
+      { method: "PUT", body: JSON.stringify({ show }), forceProd: true },
+    );
+    return { ok: true, show: res.show };
+  } catch (e) {
+    if (e instanceof ApiError) return { ok: false, error: e.detail };
+    throw e;
+  }
+}

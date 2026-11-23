@@ -67,9 +67,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # audit_log IP retention index (39) + herd bank privacy reset (40) + the mail queue (41) +
 # the intake queue (42) and its retention (43) + buyer_contact (44) +
 # matrikel_audit rows without a user, written by the nightly anonymization (45) +
-# the coat column individual.rex (46) + one account per Google identity (47) +
-# one-time codes and members' previous addresses (48).
-CURRENT_SCHEMA_VERSION = 48
+# the coat column individual.rex (46) + hbuser.name_on_check_page and digitalcertificatev2.issued_as (47) +
+# one account per Google identity (48) + one-time codes and members' previous addresses (49).
+CURRENT_SCHEMA_VERSION = 49
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -1158,6 +1158,9 @@ class User(BaseModel, UserMixin):
     # login_user() natively refuses inactive users. Normal audited column —
     # flag flips MUST produce audit rows, so NOT change_detection_excluded.
     is_active = BooleanField(default=True)
+    # The person's own choice to show her full name as "Intygas av" on the public certificate check page
+    # (stamboken #6). Only she sets it, through its own endpoint; nothing else writes it.
+    name_on_check_page = BooleanField(default=False, constraints=[SQL("DEFAULT false")])
 
     def update_last_active(self):
         self.last_active = datetime.now()
@@ -1222,7 +1225,7 @@ class User(BaseModel, UserMixin):
             role["herd"] = target_id
         privs += [role]
         self.privileges = privs
-        self.save()
+        self.save(only=[User._privileges])
 
     def has_role(self, level, target_id=None):
         """
@@ -1271,7 +1274,7 @@ class User(BaseModel, UserMixin):
                     continue
             new_privs += [role]
         self.privileges = new_privs
-        self.save()
+        self.save(only=[User._privileges])
 
     @property
     def is_admin(self):
@@ -1954,6 +1957,8 @@ class DigitalCertificateV2(BaseModel):
     verification_token = UUIDField(unique=True, default=uuid.uuid4)
     certificate_type = CharField(default="pedigree")
     issued_by = ForeignKeyField(User)
+    # The role she issued in (stamboken #6): "breeder", "admin" or "manager". NULL on rows issued before it existed.
+    issued_as = CharField(max_length=20, null=True)
     issued_at = DateTimeField(default=datetime.now)
     file_path = CharField()
     checksum = CharField(64)
@@ -4252,24 +4257,40 @@ def migrate_45_to_46():
 
 
 def migrate_46_to_47():
-    """One account per Google identity. Where two accounts hold one, creating the index fails: the schema stays at 46
+    """A person's choice to show her name as "Intygas av" on the public certificate check page (stamboken #6),
+    off for everyone until she chooses it, and the role a certificate was issued in (NULL on older rows)."""
+    with DATABASE.atomic():
+        DATABASE.execute_sql(
+            "ALTER TABLE hbuser ADD COLUMN IF NOT EXISTS name_on_check_page BOOLEAN NOT NULL DEFAULT false"
+        )
+        if "digitalcertificatev2" in DATABASE.get_tables():
+            DATABASE.execute_sql("ALTER TABLE digitalcertificatev2 ADD COLUMN IF NOT EXISTS issued_as VARCHAR(20)")
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=47,
+            comment="hbuser.name_on_check_page, digitalcertificatev2.issued_as",
+            applied=datetime.now(),
+        ).execute()
+
+
+def migrate_47_to_48():
+    """One account per Google identity. Where two accounts hold one, creating the index fails: the schema stays at 47
     and the API does not start (nor the demo API on its copy). Count before deploying and fix the data while the old
     release still runs (README, "Sessions")."""
     with DATABASE.atomic():
         DATABASE.execute_sql(GOOGLE_IDENTITY_INDEX_SQL)
         SchemaHistory.insert(  # pylint: disable=E1120
-            version=47, comment="authenticators: unique Google identity", applied=datetime.now()
+            version=48, comment="authenticators: unique Google identity", applied=datetime.now()
         ).execute()
 
 
-def migrate_47_to_48():
+def migrate_48_to_49():
     """One-time codes by mail, members' previous addresses and when a member's address starts to count for login.
     Not audited: the rows hold addresses, and both tables are purged."""
     with DATABASE.atomic():
         DATABASE.execute_sql("ALTER TABLE member ADD COLUMN IF NOT EXISTS email_login_from TIMESTAMPTZ")
         DATABASE.create_tables([LoginCode, MemberPreviousAddress], safe=True)
         SchemaHistory.insert(  # pylint: disable=E1120
-            version=48, comment="login_code, member_previous_address, member.email_login_from", applied=datetime.now()
+            version=49, comment="login_code, member_previous_address, member.email_login_from", applied=datetime.now()
         ).execute()
 
 
@@ -4756,8 +4777,9 @@ MIGRATIONS = {
     (43, 44): migrate_43_to_44,  # buyer contact
     (44, 45): migrate_44_to_45,  # matrikel_audit actor NULL for the nightly job
     (45, 46): migrate_45_to_46,  # individual.rex
-    (46, 47): migrate_46_to_47,  # unique Google identity
-    (47, 48): migrate_47_to_48,  # one-time codes, previous addresses
+    (46, 47): migrate_46_to_47,  # the attester's name on the certificate check page
+    (47, 48): migrate_47_to_48,  # unique Google identity
+    (48, 49): migrate_48_to_49,  # one-time codes, previous addresses
 }
 
 

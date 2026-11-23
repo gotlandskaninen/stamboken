@@ -9,6 +9,7 @@ isort:skip_file
 # pylint: disable=too-many-public-methods
 # pylint: disable=too-many-statements
 
+import inspect
 import threading
 import time
 from datetime import datetime
@@ -1338,7 +1339,9 @@ class TestDatabaseMigration(DatabaseTest):
             ).fetchone()
         )
         db.DATABASE.execute_sql("ALTER TABLE individual DROP COLUMN rex")
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 46).execute()
+        db.SchemaHistory.delete().where(
+            db.SchemaHistory.version >= self._migration_version('comment=f"individual.rex;')
+        ).execute()
 
     def _individual_audit_rows(self):
         return db.AuditLog.select().where(db.AuditLog.table_name == "individual").count()
@@ -1513,7 +1516,9 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertTrue(self._rex(rabbit.id))
         db.DATABASE.execute_sql("UPDATE individual SET rex = false WHERE individual_id = %s", (rabbit.id,))
         audit_before = self._individual_audit_rows()
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 46).execute()
+        db.SchemaHistory.delete().where(
+            db.SchemaHistory.version >= self._migration_version('comment=f"individual.rex;')
+        ).execute()
         db.check_migrations()
         self.assertFalse(self._rex(rabbit.id))
         self.assertEqual(self._individual_audit_rows(), audit_before)
@@ -1523,9 +1528,9 @@ class TestDatabaseMigration(DatabaseTest):
             "SELECT rex FROM individual WHERE individual_id = %s", (individual_id,)
         ).fetchone()[0]
 
-    def test_replay_46_to_47_makes_a_google_identity_unique(self):
-        """A database stamped at 46 gets the fresh bootstrap's index; one where two accounts hold an identity stays at
-        46 without it, and the next start after the extra one is unlinked migrates."""
+    def test_replay_47_to_48_makes_a_google_identity_unique(self):
+        """A database stamped at 47 gets the fresh bootstrap's index; one where two accounts hold an identity stays at
+        47 without it, and the next start after the extra one is unlinked migrates."""
         if not isinstance(db.DATABASE, db.PostgresqlDatabase):
             self.skipTest("index introspection requires PostgreSQL")
         self.addCleanup(db.check_migrations)
@@ -1541,14 +1546,14 @@ class TestDatabaseMigration(DatabaseTest):
             db.Authenticators.create(user=second.id, auth="google", auth_data="sub-delad")
         db.Authenticators.create(user=second.id, auth="password", auth_data="sub-delad")  # other methods may repeat
 
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 47).execute()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 48).execute()
         db.DATABASE.execute_sql('DROP INDEX "idx_authenticators_google"')
         duplicate = db.Authenticators.create(user=second.id, auth="google", auth_data="sub-delad")
         self.addCleanup(duplicate.delete_instance)  # runs before check_migrations if an assert below fails
 
         with self.assertRaises(peewee.IntegrityError):
             db.check_migrations()
-        self.assertEqual(self._max_schema_version(), 46)
+        self.assertEqual(self._max_schema_version(), 47)
         self.assertEqual(index(), [])
 
         duplicate.delete_instance()
@@ -1556,8 +1561,8 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
         self.assertEqual(index(), fresh)
 
-    def test_replay_47_to_48_creates_login_codes_and_previous_addresses(self):
-        """A database stamped at 47 gets the two tables and the member column as a fresh bootstrap has them, with
+    def test_replay_48_to_49_creates_login_codes_and_previous_addresses(self):
+        """A database stamped at 48 gets the two tables and the member column as a fresh bootstrap has them, with
         their indexes and foreign keys, unaudited."""
         if not isinstance(db.DATABASE, db.PostgresqlDatabase):
             self.skipTest("column introspection requires PostgreSQL")
@@ -1573,7 +1578,7 @@ class TestDatabaseMigration(DatabaseTest):
             return columns, indexes, keys
 
         fresh = shape()
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 48).execute()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 49).execute()
         db.DATABASE.execute_sql("DROP TABLE login_code, member_previous_address")
         db.DATABASE.execute_sql("ALTER TABLE member DROP COLUMN email_login_from")
 
@@ -1585,6 +1590,38 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertIn(("login_code", "logincode_browser_hash", ("browser_hash",), False), fresh[1])
         self.assertIn(("member_previous_address", "member_id", "member"), fresh[2])
         self.assertTrue(set(tables).isdisjoint(db.AUDITED_TABLES))
+
+    def test_replay_adds_name_on_check_page_off(self):
+        """Stamboken #6: an older database gets the person's choice switched off and the issuing role, as a fresh
+        bootstrap."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+
+        def column():
+            return {
+                (t, c.name, c.null, c.default)
+                for t in ("hbuser", "digitalcertificatev2")
+                for c in db.DATABASE.get_columns(t)
+                if c.name in ("name_on_check_page", "issued_as")
+            }
+
+        fresh = column()
+        version = self._migration_version("name_on_check_page")
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= version).execute()
+        db.DATABASE.execute_sql("ALTER TABLE hbuser DROP COLUMN name_on_check_page")
+        db.DATABASE.execute_sql("ALTER TABLE digitalcertificatev2 DROP COLUMN issued_as")
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(column(), fresh)
+        self.assertFalse(db.User.get_by_id(self.owner.id).name_on_check_page)
+
+    @staticmethod
+    def _migration_version(marker):
+        """The version the migration whose source names `marker` stamps: survives renumbering and later migrations."""
+        return next(to for (_, to), fn in db.MIGRATIONS.items() if marker in inspect.getsource(fn))
 
     def _max_schema_version(self):
         return db.SchemaHistory.select(  # pylint: disable=E1120

@@ -190,8 +190,8 @@ Logga ut överallt.
 - After an unclean restart of the sessions' Redis, run `flask users
   mass-logout`: an older snapshot brings old marks and old sessions back
   together.
-- Migration 47 makes a Google identity unique to one account. If two accounts
-  hold one, the migration fails, the schema stays at 46 and **the API does not
+- Migration 48 makes a Google identity unique to one account. If two accounts
+  hold one, the migration fails, the schema stays at 47 and **the API does not
   start**; the demo API does not either, on its copy of the database. Before
   deploying, count read-only (numbers only); it must be 0:
 
