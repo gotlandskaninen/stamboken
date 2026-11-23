@@ -702,7 +702,6 @@ class TestDatabase(DatabaseTest):
                 "use_google_picture": True,
                 # Admins are implicitly promoted regardless of the stored flag
                 "v2_prod_access": True,
-                "name_on_check_page": None,
             },
         )
         self.assertDictEqual(
@@ -723,7 +722,6 @@ class TestDatabase(DatabaseTest):
                 "google_email": None,
                 "use_google_picture": True,
                 "v2_prod_access": False,
-                "name_on_check_page": None,
             },
         )
         self.assertDictEqual(
@@ -744,7 +742,6 @@ class TestDatabase(DatabaseTest):
                 "google_email": None,
                 "use_google_picture": True,
                 "v2_prod_access": False,
-                "name_on_check_page": None,
             },
         )
         self.assertDictEqual(
@@ -765,7 +762,6 @@ class TestDatabase(DatabaseTest):
                 "google_email": None,
                 "use_google_picture": True,
                 "v2_prod_access": False,
-                "name_on_check_page": None,
             },
         )
 
@@ -1532,7 +1528,7 @@ class TestDatabaseMigration(DatabaseTest):
             "SELECT rex FROM individual WHERE individual_id = %s", (individual_id,)
         ).fetchone()[0]
 
-    def test_replay_adds_name_on_check_page_off(self):
+    def test_replay_adds_name_on_check_page(self):
         """Stamboken #6: an older database gets the person's choice, on for the accounts it has, and the issuing
         role, shaped as a fresh bootstrap."""
         if not isinstance(db.DATABASE, db.PostgresqlDatabase):

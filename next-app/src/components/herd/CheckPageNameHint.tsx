@@ -17,7 +17,13 @@ export function CheckPageNameHint() {
       sx={{ color: "text.secondary", display: "block", mt: 0.5, ml: 1.5 }}
     >
       {t("addRabbit.checkPageNameHint")}{" "}
-      <Link className="sb-link" href="/stamboken/profil">
+      {/* A new tab: the dialog's half-filled form stays */}
+      <Link
+        className="sb-link"
+        href="/stamboken/profil"
+        target="_blank"
+        rel="noopener"
+      >
         {t("addRabbit.checkPageNameHintLink")}
       </Link>
     </Typography>

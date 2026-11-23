@@ -18,7 +18,7 @@ export interface UserContext {
   google_email: string | null;
   use_google_picture: boolean;
   v2_prod_access: boolean;
-  name_on_check_page?: boolean | null; // the check page choice (stamboken #6); null = not chosen yet
+  name_on_check_page?: boolean | null; // set by the dashboard layout from production (stamboken #6); null = not chosen
 }
 
 const UserCtx = createContext<UserContext | null>(null);

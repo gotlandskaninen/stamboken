@@ -1462,8 +1462,6 @@ class User(BaseModel, UserMixin):
             "google_email": self.google_email,
             "use_google_picture": self.use_google_picture,
             "v2_prod_access": self.v2_promoted,
-            # The check page choice (stamboken #6): None until she has chosen.
-            "name_on_check_page": self.name_on_check_page,
         }
 
     @property

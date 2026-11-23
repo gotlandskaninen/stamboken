@@ -206,6 +206,7 @@ export async function setNameOnCheckPage(
       // The QR page reads production: the choice is always saved there, also from the demo.
       { method: "PUT", body: JSON.stringify({ show }), forceProd: true },
     );
+    revalidatePath("/stamboken", "layout"); // the issue dialogs' hint reads the choice from the layout
     return { ok: true, show: res.show };
   } catch (e) {
     if (e instanceof ApiError) return { ok: false, error: e.detail };
