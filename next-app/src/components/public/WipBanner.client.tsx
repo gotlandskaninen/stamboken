@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { Alert, Collapse, Link as MuiLink } from "@mui/material";
+import { TyckTillLink } from "@/components/tyck-till/TyckTillDialog.client";
 
 const DISMISS_KEY = "herdbook-wip-banner-dismissed";
 
@@ -38,7 +39,8 @@ export function WipBanner() {
         onClose={dismiss}
         sx={{ borderRadius: 0, justifyContent: "center" }}
       >
-        Detta är nya Stamboken (beta). Den gamla versionen finns kvar på{" "}
+        Detta är nya Stamboken (beta). <TyckTillLink /> Den gamla versionen
+        finns kvar på{" "}
         <MuiLink href="https://stamboken.gotlandskaninen.se" color="inherit">
           stamboken.gotlandskaninen.se
         </MuiLink>

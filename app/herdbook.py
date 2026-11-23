@@ -79,6 +79,7 @@ from utils.inbox import queue_digests  # isort:skip
 from utils import inbox_gmail  # isort:skip
 from utils import inbox_purge  # isort:skip
 from utils import buyer_contact  # isort:skip
+from utils import tyck_till  # isort:skip
 from utils.inbox_interpreter import interpret_next  # isort:skip
 from utils.members import try_auto_link_member  # isort:skip
 from utils.matrikel import anonymize_ended_persons  # isort:skip
@@ -303,6 +304,16 @@ def _purge_buyer_contacts():
         buyer_contact.run(datetime.datetime.now(datetime.timezone.utc))
     except Exception:  # pylint: disable=broad-except
         APP.logger.exception("The buyer purge failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _purge_tyck_till():
+    """Nightly leader job (docs/tyck-till.md), built as _purge_buyer_contacts."""
+    try:
+        tyck_till.purge(datetime.datetime.now(datetime.timezone.utc))
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("The Tyck till purge failed")
     finally:
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
@@ -3135,6 +3146,17 @@ def initialize_app():
             hour=3,
             minute=50,
             id="buyer_contact_purge",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        scheduler.add_job(
+            _purge_tyck_till,
+            "cron",
+            hour=3,
+            minute=55,
+            id="tyck_till_purge",
             max_instances=1,
             coalesce=True,
             misfire_grace_time=3600,
