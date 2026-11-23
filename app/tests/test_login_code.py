@@ -155,18 +155,35 @@ class TestCheck(LoginCodeTest):
         self.assertIsNone(lc.check("ny_adress", "webblasare-2", lc.code(row)))
         self.assertEqual(self.row(row).failed, 0)
 
-    def test_another_request_and_its_wrong_tries_leave_the_first_code(self):
-        first = self.issue(browser="webblasare-1")
-        other = self.issue(browser="webblasare-2")
+    def test_another_request_and_its_wrong_tries_leave_the_first_login_code(self):
+        first = self.issue(browser="webblasare-1", purpose="login")
+        other = self.issue(browser="webblasare-2", purpose="login")
         for _ in range(3):
-            lc.check("ny_adress", "webblasare-2", wrong(lc.code(other)))
-        self.assertIsNotNone(lc.check("ny_adress", "webblasare-1", lc.code(first)))
+            lc.check("login", "webblasare-2", wrong(lc.code(other)))
+        self.assertIsNotNone(lc.check("login", "webblasare-1", lc.code(first)))
 
     def test_only_the_persons_and_the_purposes_code(self):
         row = self.issue()
         other = self.person_row("Bo", "bo@example.org")
         self.assertIsNone(lc.check("ny_adress", "webblasare-1", lc.code(row), other.id))
         self.assertIsNone(lc.check("login", "webblasare-1", lc.code(row)))
+
+    def test_a_new_address_code_voids_every_earlier_one_of_the_person(self):
+        """Two requests that both carry the old secret (they read the session before either saved it): only the last
+        code made stays, whatever browser asked."""
+        old = self.issue(browser="gammal")
+        first = self.issue(browser="ny-1", purpose="ny_adress")
+        with db.DB_PROXY.atomic():
+            last = lc.issue(self.person, "ny_adress", "ny-2", "ny@example.org", replaces="gammal")
+        self.assertEqual(
+            [self.row(r).used_at is None for r in (old, first, last)],
+            [False, False, True],
+        )
+
+    def test_a_login_code_survives_anothers_request(self):
+        first = self.issue(browser="w1", purpose="login")
+        self.issue(browser="w2", purpose="login")
+        self.assertIsNone(self.row(first).used_at)
 
     def test_a_voided_code_is_refused(self):
         row = self.issue()
@@ -294,7 +311,7 @@ class TestPurge(LoginCodeTest):
         self.assertIsNone(db.MailMessage.get_by_id(mail_id).address_hash)
 
     def test_an_expired_code_keeps_no_new_address(self):
-        old, new = self.issue(browser="w1"), self.issue(browser="w2")
+        old, new = self.issue(browser="w1"), self.issue(person=self.person_row("Bo", "bo@example.org"), browser="w2")
         db.LoginCode.update(created_at=self.now - timedelta(minutes=10)).where(db.LoginCode.id == old.id).execute()
         self.assertEqual(lc.expire(self.now), 1)
         self.assertEqual((self.row(old).new_address, self.row(new).new_address), (None, "ny@example.org"))

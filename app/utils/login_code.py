@@ -80,21 +80,22 @@ def shown(digits):
 def issue(person, purpose, browser, address, replaces=None):
     """
     A code for `person`, to `address`, bound to the browser holding the secret `browser`, in the caller's
-    transaction (which queues its mail). The browser's earlier unused codes for `purpose`, made with its previous
-    secret `replaces`, stop working first, also when no new code is made. None when a limit stops it:
-    A_PERSON_A_DAY for the person, AN_HOUR in all, or code login closed. The caller answers the same either way.
+    transaction (which queues its mail). Earlier unused codes stop working first, also when no new code is made: for
+    a new address every one of the person's, as she is logged in and only her latest request counts; for a login
+    only the browser's own, made with its previous secret `replaces`, as another's request must never void hers.
+    None when a limit stops it: A_PERSON_A_DAY for the person, AN_HOUR in all, or code login closed. The caller
+    answers the same either way.
     """
     refuse_unsafe()
     if not DB_PROXY.in_transaction():
         raise RuntimeError("issue() runs in the transaction that queues the code's mail")
     _lock()
     now = _utcnow()
-    if replaces:
-        LoginCode.update(used_at=now, new_address=None).where(
-            (LoginCode.browser_hash == browser_hash(replaces))
-            & (LoginCode.purpose == purpose)
-            & LoginCode.used_at.is_null(True)
-        ).execute()
+    earlier = (LoginCode.purpose == purpose) & LoginCode.used_at.is_null(True)
+    if purpose == "ny_adress":
+        _void(earlier & (LoginCode.member == person.id))
+    elif replaces:
+        _void(earlier & (LoginCode.browser_hash == browser_hash(replaces)))
     if closed(now):
         logger.warning("No code for member %s: code login is closed", person.id)
         return None
@@ -175,13 +176,13 @@ def consume(row):
     return used.execute() == 1
 
 
+def _void(where):
+    return LoginCode.update(used_at=_utcnow(), new_address=None).where(where).execute()
+
+
 def void(member_id):
     """The person's address changed: none of her unused codes works any more, wherever it was sent."""
-    return (
-        LoginCode.update(used_at=_utcnow(), new_address=None)
-        .where((LoginCode.member == member_id) & LoginCode.used_at.is_null(True))
-        .execute()
-    )
+    return _void((LoginCode.member == member_id) & LoginCode.used_at.is_null(True))
 
 
 def expire(now):
