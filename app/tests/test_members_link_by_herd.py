@@ -782,6 +782,17 @@ class TestMembersLinkByHerd(DatabaseTest):
         self.assertIsNone(self._linked_user_id(person))
         self.assertEqual(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_user_linked").count(), 0)
 
+    def test_owner_of_a_herd_whose_code_has_a_trailing_space_blocks_the_link(self):
+        _, person = self._membership(901)
+        self._account(owns=self._herd("G901"))
+        self._account(owns=self._herd("M901 ", genebank=1, membership=None))
+
+        for result in (self._run(), self._apply()):
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertIn("flera möjliga kopplingar", result.output)
+        self.assertIsNone(self._linked_user_id(person))
+        self.assertEqual(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_user_linked").count(), 0)
+
     def test_the_same_name_in_two_unicode_forms_is_one_name(self):
         membership, person = self._membership(901, first="\u00c5sa", last="Berg")
         family = db.Member.create(membership=membership, role="familjemedlem", first_name="A\u030asa", last_name="Berg")

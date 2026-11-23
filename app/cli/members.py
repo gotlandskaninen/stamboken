@@ -950,7 +950,8 @@ def _plan_herd_links() -> tuple[list, list, int]:
         herd_owners = owners.get(herd.id)
         if not herd_owners:
             continue
-        number = re.fullmatch(r"[^0-9]*([1-9][0-9]*)", herd.herd or "")  # a leading zero names no membership
+        # One number, whatever stands around it ("M901 " too); a leading zero names no membership.
+        number = re.fullmatch(r"[^0-9]*([1-9][0-9]*)[^0-9]*", herd.herd or "")
         named = memberships.get(int(number.group(1))) if number else None
         behind = {herd.membership_id, getattr(named, "id", None)} - {None}
         for person in Member.select().where(Member.membership.in_(behind), Member.end_date.is_null(True)):
