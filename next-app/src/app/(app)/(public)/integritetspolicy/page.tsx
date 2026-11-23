@@ -458,7 +458,8 @@ export default function IntegritetspolicyPage() {
           </Section>
 
           <p>
-            <mark>[BESLUT: datum då styrelsen antog texten.]</mark>
+            Styrelsen antog integritetspolicyn den 22 november 2026. Texten
+            ändrades senast den 23 november 2026.
           </p>
         </Box>
       </Box>
