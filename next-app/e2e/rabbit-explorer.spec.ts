@@ -1,23 +1,8 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect } from "@playwright/test";
+import { showAllStatuses } from "../e2e-shared/explorer";
 
 // Auth is handled by storageState (gk-owner) set in playwright.config.ts.
 // No mock setup needed — tests run against the real API + seed data.
-
-// The list opens on status Aktiv; inactive seed rabbits (Visby Viking) and
-// more than one page need status Alla.
-async function showAllStatuses(page: Page) {
-  await page
-    .locator(".MuiFormControl-root", { hasText: "Status" })
-    .locator(".MuiSelect-select")
-    .click();
-  await Promise.all([
-    page.waitForResponse(
-      (r) =>
-        r.url().includes("/api/individuals") && !r.url().includes("status="),
-    ),
-    page.getByRole("option", { name: "Alla", exact: true }).click(),
-  ]);
-}
 
 test.describe("Rabbit Explorer — /alla-kaniner", () => {
   test("page loads with seed data", async ({ page }) => {

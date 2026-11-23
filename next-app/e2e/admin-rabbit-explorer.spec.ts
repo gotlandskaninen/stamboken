@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { showAllStatuses } from "../e2e-shared/explorer";
 
 // Auth is handled by storageState (admin) set in playwright.config.ts.
 // Admin role is required to switch between genebanks; owners only see their own.
@@ -22,7 +23,8 @@ test.describe("Rabbit Explorer — Admin genebank toggle", () => {
     const numberCells = page.locator('.MuiDataGrid-cell[data-field="number"]');
     await expect(numberCells.first()).toContainText(/^G/, { timeout: 10000 });
 
-    // Now switch to Mellerudskanin
+    // Now switch to Mellerudskanin (no active Mellerud seed rabbits)
+    await showAllStatuses(page);
     const mkButton = page
       .locator("button")
       .filter({ hasText: "Mellerudskanin" });

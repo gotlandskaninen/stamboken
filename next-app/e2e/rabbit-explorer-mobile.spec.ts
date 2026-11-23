@@ -1,4 +1,5 @@
-import { test, expect, type Page } from "@playwright/test";
+import { test, expect } from "@playwright/test";
+import { showAllStatuses } from "../e2e-shared/explorer";
 
 // Story 3.3 — below 900px the explorer is a tappable list, not the DataGrid.
 // Auth via storageState (gk-owner); runs against the real API + seed data.
@@ -7,22 +8,6 @@ test.use({ viewport: { width: 375, height: 812 } });
 
 const list = '[data-testid="explorer-mobile-list"]';
 const rows = `${list} a[href^="/stamboken/individ/"]`;
-
-// The list opens on status Aktiv; inactive seed rabbits (Visby Viking) and
-// more than one page need status Alla.
-async function showAllStatuses(page: Page) {
-  await page
-    .locator(".MuiFormControl-root", { hasText: "Status" })
-    .locator(".MuiSelect-select")
-    .click();
-  await Promise.all([
-    page.waitForResponse(
-      (r) =>
-        r.url().includes("/api/individuals") && !r.url().includes("status="),
-    ),
-    page.getByRole("option", { name: "Alla", exact: true }).click(),
-  ]);
-}
 
 test.describe("Rabbit Explorer — mobile (375px)", () => {
   test("shows the list instead of the DataGrid, no horizontal scroll", async ({
