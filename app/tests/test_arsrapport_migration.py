@@ -153,6 +153,7 @@ class TestArsrapportMigration(IsolatedSchemaTest):
 
     def test_boot_refuses_old_yearly_report_number_but_migrates_intake_queue_history(self):
         with db.DB_PROXY.atomic() as tx:
+            to_v49_shape()
             db.SchemaHistory.delete().where(db.SchemaHistory.version >= 42).execute()
             db.SchemaHistory.create(version=42, comment="yearly report v2: rounds per genebank")
             db.SchemaHistory.create(version=49, comment="test seed")
@@ -165,6 +166,23 @@ class TestArsrapportMigration(IsolatedSchemaTest):
             ).execute()
             db.check_migrations()
             self.assertTrue(db.SchemaHistory.get_by_id(50).comment.startswith(db.ARSRAPPORT_50))
+            tx.rollback()
+
+    def test_bootstrapped_42_requires_rebuild_only_with_yearly_report_tables(self):
+        with db.DB_PROXY.atomic() as tx:
+            db.SchemaHistory.delete().execute()
+            db.SchemaHistory.create(version=42, comment="Bootstrapped")
+            with self.assertRaisesRegex(RuntimeError, r"old yearly report v2.*42, now 50.*Rebuild"):
+                db.check_migrations()
+            self.assertEqual([row.version for row in db.SchemaHistory.select()], [42])
+
+            to_v49_shape()
+            db.check_migrations()
+            self.assertEqual(
+                [row.version for row in db.SchemaHistory.select().order_by(db.SchemaHistory.version)],
+                list(range(42, 51)),
+            )
+            self.assertEqual(snapshot(), self.bootstrapped)
             tx.rollback()
 
     def stamp_50(self, comment):

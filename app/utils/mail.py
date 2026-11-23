@@ -428,9 +428,14 @@ def _renew(row, login_address, address):
     if renewed.execute() != 1:
         return False
     # Rendering attachments or opening SMTP may have outlasted a login address's validity. Rebuild for its successor.
-    if login_address is not None and _normalize(login_address(row.params)) != address:
-        _finish(row, _utcnow(), status="queued")
-        return False
+    if login_address is not None:
+        current = _normalize(login_address(row.params))
+        if current is None:
+            _finish(row, _utcnow(), status="cancelled", last_error="mejlet är inte längre aktuellt")
+            return False
+        if current != address:
+            _finish(row, _utcnow(), status="queued")
+            return False
     return True
 
 

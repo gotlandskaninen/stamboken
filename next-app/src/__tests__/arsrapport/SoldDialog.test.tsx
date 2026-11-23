@@ -212,6 +212,26 @@ describe("SoldDialog", () => {
     expect(onSave).toHaveBeenCalledWith({ ...sale, manad: 11 });
   });
 
+  it("asks for a new buyer when only an earlier sale's buyer was erased", () => {
+    const sale = {
+      till: "utanfor",
+      ar: 2025,
+      manad: 10,
+      dag: 10,
+      kopare: null,
+    };
+    const onSave = dialog(sale, vi.fn(), true, null, {
+      removed_buyer_dates: ["2025-10-10"],
+    });
+    expect(screen.queryByLabelText(/Köparens namn/)).toBeNull();
+    fireEvent.change(screen.getByLabelText("Månad"), {
+      target: { value: "11" },
+    });
+    save();
+    expect(onSave).not.toHaveBeenCalled();
+    expectBuyerAsked();
+  });
+
   it("requires a replacement buyer's address on a pending proposal", () => {
     const sale = { till: "utanfor", ar: 2025, manad: 10, dag: 10 };
     const onSave = dialog({ ...sale, kopare: null }, vi.fn(), true, sale);

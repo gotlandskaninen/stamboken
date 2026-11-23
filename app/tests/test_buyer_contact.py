@@ -38,7 +38,7 @@ from utils.herd_tracking import (  # noqa: E402
 )
 from utils.individual_commands import RecordAttestation, Undo, execute, record_sale  # noqa: E402
 
-from tests.database_test import _USE_POSTGRES, DatabaseTest  # noqa: E402
+from tests.database_test import _USE_POSTGRES, DatabaseTest, rewind_migrations  # noqa: E402
 from tests.test_bunny_v2_api import _old_litter, _promote_without_certificate
 from tests.test_herd_tracking_locks import capture_sql
 from tests.test_inbox_erasure import ErasureTest
@@ -134,7 +134,7 @@ class TestSchema(BuyerBase):
         sql('ALTER TABLE herd_tracking DROP CONSTRAINT "herd_tracking_holder_contact_id_fkey"')
         sql('DROP INDEX "herdtracking_holder_contact_id"')
         sql("DROP TABLE buyer_contact")
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 44).execute()
+        rewind_migrations(44)
         if db.SchemaHistory.get_or_none(db.SchemaHistory.version == 43) is None:
             db.SchemaHistory.insert(version=43, comment="test seed", applied=datetime.now()).execute()  # pylint: disable=E1120
 

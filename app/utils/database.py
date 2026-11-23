@@ -5224,15 +5224,15 @@ def _run_migrations():
     current_version = None
     if SchemaHistory.table_exists():
         comment = SchemaHistory.select(SchemaHistory.comment).where(SchemaHistory.version == 42).scalar()
-        if (comment or "").startswith(ARSRAPPORT_50):
+        current_version = SchemaHistory.select(fn.MAX(SchemaHistory.version)).scalar()  # pylint: disable=E1120
+        if (comment or "").startswith(ARSRAPPORT_50) or (
+            current_version is not None and current_version < 50 and ReportAccessCode.table_exists()
+        ):
             raise RuntimeError(
                 "This development database uses the old yearly report v2 migration number (42, now 50). "
                 "Rebuild this development database from scratch. For a disposable Compose volume, run "
                 "'docker compose -p <dev-project> down -v' and bootstrap the database again."
             )
-        current_version = SchemaHistory.select(  # pylint: disable=E1120
-            fn.MAX(SchemaHistory.version)
-        ).scalar()
 
     logger.debug(
         "Doing (if any) needed migrations from %s to %s",

@@ -26,6 +26,7 @@ export interface RabbitView {
   state: "att_valja" | "redan_rapporterad" | "via_flytt";
   later: { kind: string; date: string } | null;
   buyer_removed?: boolean;
+  removed_buyer_dates?: string[];
   registered_buyer_date?: string;
   kept_buyer_date?: string;
   // The latest transfer into the herd dated in the year: "Köpt 14 maj" (4a Task 5).
@@ -586,6 +587,16 @@ export const storedSale = (
   submitted.manad === s.manad &&
   (submitted.dag ?? null) === s.dag;
 
+export function buyerRemoved(
+  rabbit: Pick<RabbitView, "buyer_removed" | "removed_buyer_dates"> | undefined,
+  day: string | null,
+): boolean {
+  return !!(
+    rabbit?.buyer_removed ||
+    (day && rabbit?.removed_buyer_dates?.includes(day))
+  );
+}
+
 // A sale outside the genebank that Skicka would refuse for its buyer
 // (kopare_saknas): none typed, not the stored sale, and no kept buyer the role
 // may use (K1). The draft never holds a buyer, so a sale only in the draft
@@ -598,7 +609,7 @@ export const lacksBuyer = (
 ): boolean =>
   s.till === "utanfor" &&
   !s.kopare &&
-  !rabbit.buyer_removed &&
+  !buyerRemoved(rabbit, eventDate(s)) &&
   !(
     canSell &&
     s.kopare_id != null &&

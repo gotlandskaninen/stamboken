@@ -22,7 +22,6 @@ def invitation_members(now):
     return (
         Member.select(
             Member,
-            previous.id.alias("previous_address_id"),
             fn.COALESCE(previous.address, Member.email).alias("login_address"),
         )
         .join(Membership)

@@ -79,6 +79,7 @@ def propose(report, submission, individual, *, to_herd, buyer, sale_date: date, 
     """
     A pending sale of `individual` from the report's herd, to `to_herd` or, with None, to a buyer outside the
     genebank (then `buyer` is required unless already erased). Its `kontroll` item goes to the genebank's queue.
+    A proposal created with buyer_removed can only be rejected.
     The proposer is `submission`'s user or access code.
     """
     if buyer_removed and (to_herd is not None or buyer is not None):

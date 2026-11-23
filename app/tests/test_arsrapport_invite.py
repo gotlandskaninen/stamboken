@@ -311,18 +311,17 @@ class InviteTest(ArsrapportTest):
 
     def test_new_link_uses_previous_address_until_paper_change_wait_ends(self):
         new = self.set_email(self.member, "ny@example.invalid")
-        previous = db.MemberPreviousAddress.get(db.MemberPreviousAddress.member == self.member.id)
         self.login("man")
-        for when, recipient, address in (
-            (new.email_login_from - timedelta(seconds=1), ("member_previous_address", previous.id), self.member.email),
-            (new.email_login_from, ("member", self.member.id), new.email),
+        for when, address in (
+            (new.email_login_from - timedelta(seconds=1), self.member.email),
+            (new.email_login_from, new.email),
         ):
             with self.subTest(when=when):
                 self.at(when)
                 response = self.api("POST", "/besattning/G9001/2025/ny-lank")
                 self.assertEqual(response.status_code, 200, response.data)
                 row = self.mails("arsrapport.ny_lank")[-1]
-                self.assertEqual((row.recipient_kind, row.recipient_id), recipient)
+                self.assertEqual((row.recipient_kind, row.recipient_id), ("member", self.member.id))
                 self.assertEqual(self.delivered_to(row), [address])
 
     def test_already_queued_invitation_uses_login_address_at_delivery(self):
@@ -335,7 +334,7 @@ class InviteTest(ArsrapportTest):
         self.set_email(self.member, "ny@example.invalid")
         invite.new_link(self.h, self.round_, self.manager, now=NOW)
         (row,) = self.mails("arsrapport.ny_lank")
-        self.assertEqual(row.recipient_kind, "member_previous_address")
+        self.assertEqual((row.recipient_kind, row.recipient_id), ("member", self.member.id))
         verified = self.set_email(self.member, "bekraftad@example.invalid", by="matrikel")
         self.assertEqual(self.delivered_to(row), [verified.email])
 
@@ -343,8 +342,7 @@ class InviteTest(ArsrapportTest):
         new = self.set_email(self.member, "ny@example.invalid")
         self.run_job()
         row = self.mails()[0]
-        previous = db.MemberPreviousAddress.get(db.MemberPreviousAddress.member == self.member.id)
-        self.assertEqual((row.recipient_kind, row.recipient_id), ("member_previous_address", previous.id))
+        self.assertEqual((row.recipient_kind, row.recipient_id), ("member", self.member.id))
 
         def render_pdf(_herd, _round):
             self.at(new.email_login_from)
@@ -352,6 +350,69 @@ class InviteTest(ArsrapportTest):
 
         with mock.patch.object(invite, "register_extract_pdf", side_effect=render_pdf):
             self.assertEqual(self.delivered_to(row), [new.email])
+
+    def test_previous_address_purge_preserves_queued_links(self):
+        second = db.Member.get(db.Member.membership == self.h2.membership_id)
+        new = self.set_email(self.member, "ny@example.invalid")
+        other = self.set_email(second, "annan@example.invalid")
+        self.run_job()
+        old_invite = self.mails()[0]
+        invite.new_link(self.h2, self.round_, self.manager, now=NOW)
+        (link,) = self.mails("arsrapport.ny_lank")
+
+        later = db.MemberPreviousAddress.get(db.MemberPreviousAddress.member == self.member.id).purge_at + timedelta(
+            days=1
+        )
+        self.at(later)
+        self.assertEqual(matrikel.purge_previous_addresses(later), 2)
+        relay = FakeRelay()
+        self.send_all(relay)
+        delivered = {msg["Message-ID"]: address for msg, _, (address,) in relay.sent}
+        self.assertEqual(delivered.get(mail.message_id(old_invite.id)), new.email)
+        self.assertEqual(delivered.get(mail.message_id(link.id)), other.email)
+
+    def test_member_erasure_cancels_queued_links(self):
+        self.set_email(self.member, "ny@example.invalid")
+        self.run_job()
+        invitation = self.mails()[0]
+        invite.new_link(self.h, self.round_, self.manager, now=NOW)
+        (link,) = self.mails("arsrapport.ny_lank")
+        matrikel.anonymize_person(self.member, self.manager)
+        for row in (invitation, link):
+            self.assertEqual(db.MailMessage.get_by_id(row.id).status, "cancelled")
+            self.assertEqual((row.recipient_kind, row.recipient_id), ("member", self.member.id))
+
+    def test_new_link_while_building_invitation_only_delivers_new_code(self):
+        db.Herd.update(is_active=False).where(db.Herd.id == self.h2.id).execute()
+        self.assertEqual(self.run_job(), 1)
+        (invitation,) = self.mails()
+
+        def render_pdf(herd, round_):
+            invite.new_link(herd, round_, self.manager, now=NOW)
+            return b"%PDF"
+
+        relay = FakeRelay()
+        with mock.patch.object(invite, "register_extract_pdf", side_effect=render_pdf):
+            self.send_all(relay)
+        ((msg, _, (address,)),) = relay.sent
+        (link,) = self.mails("arsrapport.ny_lank")
+        (token,) = re.findall(r"/rapport#(\S+)", msg.get_body().get_content())
+        self.assertEqual((msg["Message-ID"], address), (mail.message_id(link.id), self.member.email))
+        self.assertEqual(report_code.resolve(token).id, link.params["code_id"])
+        self.assertEqual(db.MailMessage.get_by_id(invitation.id).status, "cancelled")
+
+    def test_main_member_replaced_while_building_invitation_cancels_mail(self):
+        self.run_job()
+        row = self.mails()[0]
+
+        def render_pdf(herd, _round):
+            if herd.id == self.h.id:
+                db.Herd.update(membership=self.h2.membership_id).where(db.Herd.id == herd.id).execute()
+            return b"%PDF"
+
+        with mock.patch.object(invite, "register_extract_pdf", side_effect=render_pdf):
+            self.assertEqual(self.delivered_to(row), [])
+        self.assertEqual(db.MailMessage.get_by_id(row.id).status, "cancelled")
 
     def test_first_address_during_paper_change_wait_skips_invitation_and_refuses_new_link(self):
         member = db.Member.get(db.Member.membership == self.h3.membership_id)
@@ -361,9 +422,32 @@ class InviteTest(ArsrapportTest):
         self.assertEqual(response.status_code, 409, response.data)
         self.assertIn("logga in", response.get_json()["detail"])
         self.assertEqual(invite.recipients(self.round_, self.gotland.id), {"med_epost": 2, "utan_epost": 1})
-        with self.assertLogs(invite.logger, level="INFO") as log:
+        with self.assertLogs(invite.logger, level="WARNING") as log:
             self.assertEqual(self.run_job(), 2)
         self.assertTrue(any(f"besättning {self.h3.id} saknar" in line for line in log.output))
+        self.assertEqual(self.codes(self.h3), [])
+
+    def test_skipped_herd_is_invited_once_when_its_first_address_counts(self):
+        member = db.Member.get(db.Member.membership == self.h3.membership_id)
+        ready = self.set_email(member, "forsta@example.invalid").email_login_from
+        for when, expected in ((NOW, 2), (ready - timedelta(seconds=1), 0)):
+            with self.assertLogs(invite.logger, level="WARNING") as log:
+                self.assertEqual(invite.send_due_invitations(when), expected)
+            self.assertTrue(any(f"besättning {self.h3.id} saknar" in line for line in log.output))
+        self.assertEqual(invite.send_due_invitations(ready), 1)
+        self.assertEqual(invite.send_due_invitations(ready), 0)
+        self.assertEqual([row.herd_id for row in self.mails()], [self.h.id, self.h2.id, self.h3.id])
+        self.assertEqual([len(self.codes(h)) for h in (self.h, self.h2, self.h3)], [1, 1, 1])
+
+    def test_skipped_herd_gets_no_invitation_after_end_date(self):
+        member = db.Member.get(db.Member.membership == self.h3.membership_id)
+        ready = self.set_email(member, "forsta@example.invalid").email_login_from
+        end = ready.date() - timedelta(days=1)
+        db.YearlyReportRound.update(deadline=end, end_date=end).where(
+            db.YearlyReportRound.id == self.round_.id
+        ).execute()
+        self.assertEqual(self.run_job(), 2)
+        self.assertEqual(invite.send_due_invitations(ready), 0)
         self.assertEqual(self.codes(self.h3), [])
 
     def test_queued_invitation_cancelled_when_previous_address_has_expired(self):

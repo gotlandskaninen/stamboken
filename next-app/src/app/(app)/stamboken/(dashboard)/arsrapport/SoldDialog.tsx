@@ -23,6 +23,7 @@ import {
 import type { getGenebankHerds } from "../individ/[number]/actions";
 import { isOutsideGenebankHerd, type GenebankHerd } from "@/utils/saleRules";
 import {
+  buyerRemoved,
   eventDate,
   MONTHS,
   storedSale,
@@ -44,7 +45,10 @@ interface Props {
   submitted: BodyEntry["sald"] | null; // the sale in the report's latest submission, whose buyer is stored
   rabbit?: Pick<
     RabbitView,
-    "buyer_removed" | "registered_buyer_date" | "kept_buyer_date"
+    | "buyer_removed"
+    | "removed_buyer_dates"
+    | "registered_buyer_date"
+    | "kept_buyer_date"
   >;
   addressRequired: boolean;
   canSell: boolean; // a proposal takes no kept buyer (F1, K1)
@@ -188,7 +192,7 @@ function Body({
   const chosen = { till: "utanfor", ar, manad, dag: dag ? Number(dag) : null };
   const date = eventDate(chosen);
   const kept = canSell && keptId && date === rabbit?.kept_buyer_date;
-  const removed = outside && rabbit?.buyer_removed;
+  const removed = outside && buyerRemoved(rabbit, date);
   // A sale the report holds, unchanged here: its buyer is stored. A sale only in
   // the draft, or a changed one, needs the buyer again, as Skicka does.
   const stored = outside && storedSale(chosen, submitted);

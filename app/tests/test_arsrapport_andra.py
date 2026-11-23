@@ -545,7 +545,7 @@ class AndraTest(ArsrapportTest):
         )
         self.assertEqual([(c.name, c.town) for c in db.BuyerContact.select()], [("Annan Köpare", "Slite")])
         self.assertEqual(new.holder_contact_id, db.BuyerContact.get().id)
-        self.assertEqual(new.holder_contact.postal_address, BUYER["postal_address"])
+        self.assertIsNone(new.holder_contact.postal_address)
         before = self.counts()
         self.ok(self.body(self.sald(a, "utanfor", 2025, 11, 20), revision=2))  # without kopare: nothing
         self.assertEqual(self.counts()[:5], before[:5])
@@ -561,6 +561,13 @@ class AndraTest(ArsrapportTest):
         response = self.withdraw(3, "Annan Köpare ångrade sig")
         self.assertEqual((response.status_code, response.get_json()["refusals"]), (422, named))
         self.assertEqual(self.counts()[:5], before[:5])
+
+    def test_same_buyer_keeps_postal_address_on_correction(self):
+        (rabbit,) = self.rabbits(self.h, 1)
+        self.ok(self.body(self.sald(rabbit, "utanfor", 2025, 11, 20, kopare=BUYER)))
+        buyer = {"name": "  TEST KÖPARE  ", "town": " visby ", "postal_address": " "}
+        self.ok(self.body(self.sald(rabbit, "utanfor", 2025, 11, 20, kopare=buyer), revision=1))
+        self.assertEqual(db.BuyerContact.get().postal_address, BUYER["postal_address"])
 
     def test_buyer_items_are_locked_before_the_rabbits(self):  # Codex 4, Opus 3: the queue's lock order
         a, c = self.rabbits(self.h, 2)

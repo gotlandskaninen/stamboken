@@ -88,6 +88,14 @@ _TABLES_TO_TRUNCATE = [
 ]
 
 
+def rewind_migrations(first_version):
+    """Remove the replayed history and the v50-only tables that would identify an old report-branch database."""
+    with db.DB_PROXY.atomic():
+        if first_version <= 50:
+            db.DATABASE.drop_tables(db.ARSRAPPORT_MODELS, cascade=_USE_POSTGRES)
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= first_version).execute()
+
+
 class DatabaseTest(unittest.TestCase):
     """
     Database test wrapper that sets up the database connection.

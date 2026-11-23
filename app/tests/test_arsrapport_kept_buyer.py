@@ -181,7 +181,7 @@ class KeptBuyerTest(ArsrapportTest):
         self.assertEqual([r["message"] for r in response.json["refusals"]], [herd_tracking.BUYER_REMOVED])
         view = self.api("GET", "/besattning/G9001/2025").json
         row = next(row for row in view["rabbits"] if row["id"] == self.a.id)
-        self.assertTrue(row["buyer_removed"])
+        self.assertIn(SOLD_ON.isoformat(), row["removed_buyer_dates"])
         self.ok(blank)
         (sale,) = sales(self.a, active=True)
         self.assertEqual((sale.herd_tracking_date, sale.holder_contact_id, sale.buyer_removed), (day, None, True))
@@ -209,6 +209,8 @@ class KeptBuyerTest(ArsrapportTest):
         self.ok(body(10, BUYER))
         buyer_contact.erase_buyer_contact(sales(self.a)[0].holder_contact_id, self.admin)
         self.assert_erased_buyer_stays_removed(body(11, OTHER, 1), body(11, revision=1), date(2025, 10, 11))
+        self.withdrawn(2)
+        self.assertEqual(self.refused(self.resent(kopare=OTHER)), [(self.a.id, "kopare")])
 
     def test_kept_buyer_without_address_only_covers_original_sale_date(self):
         kept, _ = self.sold_and_withdrawn()
@@ -236,6 +238,56 @@ class KeptBuyerTest(ArsrapportTest):
         self.ok(self.body(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=OTHER), self.kvar(self.b, vikt=2.8)))
         (new,) = sales(self.a, active=True)
         self.assertEqual(new.holder_contact.name, OTHER["name"])
+
+    def test_three_sale_revisions_then_withdraw_and_resubmit_keep_latest_buyer(self):
+        latest = {**OTHER, "name": "Tredje Köparen"}
+        for revision, buyer in ((None, BUYER), (1, OTHER), (2, latest)):
+            body = self.body(
+                self.sald(self.a, "utanfor", 2025, 10, 10, kopare=buyer),
+                self.kvar(self.b, vikt=2.8),
+                revision=revision,
+            )
+            self.ok(body)
+            (sale,) = sales(self.a, active=True)
+            self.assertFalse(sale.buyer_removed)
+            self.assertEqual(sale.holder_contact.name, buyer["name"])
+
+        contact_id = sale.holder_contact_id
+        blank = self.body(self.sald(self.a, "utanfor", 2025, 10, 11), self.kvar(self.b, vikt=2.8), revision=3)
+        self.assertEqual(self.refused(blank), [(self.a.id, "kopare_saknas")])
+        self.withdrawn(3)
+        self.assertEqual(self.draft()["rabbits"][str(self.a.id)]["sald"]["kopare_id"], contact_id)
+        self.ok(self.resent())
+        (sale,) = sales(self.a, active=True)
+        self.assertEqual((sale.holder_contact_id, sale.holder_contact.name), (contact_id, latest["name"]))
+
+    def test_sale_after_buyback_can_have_new_buyer_after_purge(self):
+        (rabbit,) = self.rabbits(self.h, 1, born=date(2018, 1, 1))
+        with mock.patch.object(herd_tracking, "_now_utc", return_value=datetime(2019, 1, 1, tzinfo=STOCKHOLM)):
+            record_sale(self.admin, rabbit.id, "GX1", "2019-01-01", buyer=BUYER)
+        self.assertEqual(buyer_contact.purge_expired(arsrapport.now()), 1)
+        record_sale(self.admin, rabbit.id, self.h.herd, "2025-02-01")
+
+        row = next(r for r in self.api("GET", "/besattning/G9001/2025").json["rabbits"] if r["id"] == rabbit.id)
+        self.assertFalse(row.get("buyer_removed"))
+        self.ok(
+            self.body(
+                self.kvar(self.a, vikt=2.8),
+                self.kvar(self.b, vikt=2.8),
+                self.sald(rabbit, "utanfor", 2025, 10, 10, kopare=OTHER),
+            )
+        )
+        old, _, latest = sales(rabbit)
+        self.assertTrue(old.buyer_removed)
+        self.assertEqual((latest.holder_contact.name, latest.buyer_removed), (OTHER["name"], False))
+
+    def test_withdrawn_erasure_only_blocks_that_sale_date(self):
+        kept, _ = self.sold_and_withdrawn()
+        buyer_contact.erase_buyer_contact(kept.id, self.admin)
+        self.assertEqual(self.refused(self.resent(kopare=OTHER)), [(self.a.id, "kopare")])
+        self.ok(self.resent(dag=11, kopare=OTHER))
+        (sale,) = sales(self.a, active=True)
+        self.assertEqual((sale.herd_tracking_date, sale.holder_contact.name), (date(2025, 10, 11), OTHER["name"]))
 
     def test_skicka_withdraw_skicka_keeps_same_contact_id(self):  # K1: the whole cycle, twice
         contact, _ = self.sold_and_withdrawn()
@@ -377,6 +429,9 @@ class KeptBuyerTest(ArsrapportTest):
         self.assertEqual(contacts(), {})
         self.assertNotIn("kopare_id", json.dumps(self.draft()))
         self.assertIsNone(sales(self.a)[0].holder_contact_id)
+        self.ok(self.body(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=OTHER), self.kvar(self.b, vikt=2.8)))
+        (new,) = sales(self.a, active=True)
+        self.assertEqual(new.holder_contact.name, OTHER["name"])
 
     def test_withdraw_with_an_open_draft_without_the_sale_deletes_it(self):  # FB6, the branch with a draft
         self.ok(self.body(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=BUYER), self.kvar(self.b, vikt=2.8)))

@@ -17,8 +17,10 @@ from utils.database import (
     DB_PROXY,
     OUTSIDE_GENEBANK_HERDS,
     Herd,
+    MailMessage,
     Member,
     ReportAccessCode,
+    YearlyReportRound,
     YearlyReportRoundGenebank,
 )
 from utils.mail import enqueue_mail, mail_kind
@@ -31,41 +33,47 @@ def _herds(genebank_id):
     return query.order_by(Herd.herd)
 
 
-def _link_recipient(member):
-    if member.previous_address_id is not None:
-        return "member_previous_address", member.previous_address_id
-    return "member", member.id
-
-
 def _invite_genebank(activation, now):
     count = 0
     with DB_PROXY.atomic():  # all or nothing, so sent_at never says more than was queued
         # The round row first, as Dra tillbaka takes it: a moved end_date updates it before the codes, so the two
         # never take the codes in different orders, and each code gets the end_date read here
         round_ = arsrapport._lock_round(activation.round)  # pylint: disable=protected-access
+        if not arsrapport.round_open(round_, activation.genebank_id, now.astimezone(arsrapport.STOCKHOLM).date()):
+            return 0
         year = round_.report_year
-        # A second job on the same activation waits here, then finds it sent: it must not reissue any code.
+        # A second job waits here before choosing the herds still missing a link.
         locked = (
             YearlyReportRoundGenebank.select().where(YearlyReportRoundGenebank.id == activation.id).for_update().get()
         )
-        if locked.sent_at is not None:
-            return 0
-        for herd in _herds(activation.genebank_id):
+        invited = (
+            ReportAccessCode.select(ReportAccessCode.herd)
+            .join(MailMessage, on=(MailMessage.ref_id == ReportAccessCode.id))
+            .where(
+                ReportAccessCode.round == round_.id,
+                MailMessage.kind == "arsrapport.inbjudan",
+                MailMessage.ref_type == "access_code",
+            )
+        )
+        for herd in _herds(activation.genebank_id).where(Herd.id.not_in(invited)):
             member = report_code.invitation_recipient(herd, now=now)
             if member is None:
-                logger.info(
+                logger.warning(
                     "Årsrapport %s: besättning %s saknar huvudmedlem med giltig inloggningsadress", year, herd.id
                 )
                 continue
             try:
                 code = report_code.issue_code(herd, round_, member, now=now)
             except report_code.StaleRecipient:  # the main member changed since the selection: not ours to mail
+                logger.warning("Årsrapport %s: huvudmedlemmen för besättning %s har ändrats", year, herd.id)
                 continue
             if code.member_id != member.id:  # lost the race to a new_link for the new main member, who got that mail
+                logger.warning("Årsrapport %s: koden för besättning %s tillhör en annan huvudmedlem", year, herd.id)
                 continue
             queued = enqueue_mail(
                 "arsrapport.inbjudan",
-                *_link_recipient(member),
+                "member",
+                member.id,
                 {"code_id": code.id, "year": year},
                 ref=("access_code", code.id),
                 herd=herd,
@@ -73,22 +81,23 @@ def _invite_genebank(activation, now):
                 dedupe_key=f"arsrapport.inbjudan:{herd.id}:{year}",
             )
             count += queued is not None
-        YearlyReportRoundGenebank.update(sent_at=now).where(YearlyReportRoundGenebank.id == activation.id).execute()
+        if locked.sent_at is None:
+            locked.sent_at = now
+            locked.save(only=[YearlyReportRoundGenebank.sent_at])
     return count
 
 
 def send_due_invitations(now: datetime) -> int:
-    """Queues the invitations of every activation that is due and still unsent; returns how many mails were queued."""
+    """Queues due invitations, retrying herds without a link while their round is open."""
     today = now.astimezone(arsrapport.STOCKHOLM).date()
     due = (
         YearlyReportRoundGenebank.select()
-        .where(YearlyReportRoundGenebank.sent_at.is_null(), YearlyReportRoundGenebank.send_at <= today)
+        .join(YearlyReportRound)
+        .where(YearlyReportRoundGenebank.send_at <= today, YearlyReportRound.end_date >= today)
         .order_by(YearlyReportRoundGenebank.id)
     )
     total = 0
     for activation in due:
-        if not arsrapport.round_open(activation.round, activation.genebank_id, today):
-            continue
         try:
             total += _invite_genebank(activation, now)
         except Exception:  # pylint: disable=broad-except  # the genebank rolled back; the next run retries it
@@ -135,7 +144,8 @@ def _replace_link(herd, round_, user, now):
             raise ArsrapportError(409, "Huvudmedlemmen har just ändrats. Försök igen.")
         enqueue_mail(
             "arsrapport.ny_lank",
-            *_link_recipient(member),
+            "member",
+            member.id,
             {"code_id": code.id, "year": round_.report_year},
             ref=("access_code", code.id),
             herd=herd,
@@ -186,7 +196,12 @@ def _link_address(params):
     member = (
         report_code.invitation_members(arsrapport.now())
         .join_from(Member, ReportAccessCode, on=(ReportAccessCode.member == Member.id))
-        .where(ReportAccessCode.id == params["code_id"])
+        .join_from(ReportAccessCode, Herd)
+        .where(
+            ReportAccessCode.id == params["code_id"],
+            ReportAccessCode.revoked_at.is_null(),
+            Herd.membership == Member.membership,
+        )
         .first()
     )
     return member.login_address if member is not None else None

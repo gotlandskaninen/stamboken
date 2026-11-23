@@ -81,6 +81,7 @@ from utils.herd_tracking import (
     latest_death_op,
     reject_contact_details,
     report_void_denial,
+    sold_on,
     void_herd_tracking,
 )
 from utils.individual_commands import (
@@ -956,10 +957,13 @@ def report_view(herd, round_, access, user):
     )
     item = access.item
     rabbits = {row["id"]: row for row in report_list(herd, year, report)}
-    for rabbit in _removed_buyers(herd, round_, list(rabbits)):
+    ops = report_ops(report) if report else set()
+    removed, removed_dates = _removed_buyers(herd, round_, list(rabbits), ops)
+    for rabbit, dates in removed_dates.items():
+        rabbits[rabbit]["removed_buyer_dates"] = sorted(day.isoformat() for day in dates)
+    for rabbit in removed:
         rabbits[rabbit]["buyer_removed"] = True
     claims = _kept_claims(draft.data) if draft and access.can_sell else {}
-    ops = report_ops(report) if report else set()
     if ops or claims:
         dates = HerdTracking.select(
             HerdTracking.individual, HerdTracking.herd_tracking_date, HerdTracking.voided_at
@@ -1922,41 +1926,93 @@ def _register_refusals(individual_id, remove, add, ops, admin=False, transfer=No
     return refusals
 
 
-def _removed_buyers(herd, round_, rabbits):
-    """Removed buyers of outside sales on these rabbits, including this herd's withdrawn sales in this round."""
+def _removed_buyers(herd, round_, rabbits, current_ops):
+    """Erased buyers of the report's current sale or proposal, and erased outside sales by rabbit and date."""
     if not rabbits:
-        return set()
+        return set(), {}
     reports = YearlyHerdReport.select(YearlyHerdReport.id).where(
         YearlyHerdReport.herd == herd.id, YearlyHerdReport.round == round_.id
     )
     ops = YearlyReportSubmission.select(fn.jsonb_array_elements_text(YearlyReportSubmission.operation_ids)).where(
         YearlyReportSubmission.report.in_(reports)
     )
+    own_sale = HerdTracking.operation_id.cast("text").in_(ops)
+    # The FK is now NULL. The tracking audit still names the contact id it lost, and the contact audit says why.
+    deleted = AuditLog.select(AuditLog.record_id).where(
+        AuditLog.table_name == BuyerContact._meta.table_name,
+        AuditLog.operation == "DELETE",
+        (AuditLog.new_data["action"] == "radering") | AuditLog.new_data["action"].startswith("gallring_"),
+    )
+    history = AuditLog.select(AuditLog.transaction_id).where(
+        AuditLog.table_name == HerdTracking._meta.table_name, AuditLog.record_id == HerdTracking.id.cast("text")
+    )
+    erased_contact = history.where(
+        AuditLog.operation == "UPDATE",
+        AuditLog.new_data["holder_contact_id"].is_null(),
+        AuditLog.old_data["holder_contact_id"].in_(deleted),
+    )
+    born_removed = history.where(AuditLog.operation == "INSERT", AuditLog.new_data["buyer_removed"] == "true")
+    voided = (
+        history.where(AuditLog.changed_fields.contains("voided_at"), AuditLog.new_data["voided_at"].is_null(False))
+        .order_by(AuditLog.id.desc())
+        .limit(1)
+    )
+    returned = HerdTracking.alias()
+    bought_back = returned.select(returned.id).where(
+        returned.individual == HerdTracking.individual, returned.herd == herd.id, sold_on(HerdTracking, returned)
+    )
     sales = (
-        HerdTracking.select(HerdTracking.individual)
+        HerdTracking.select(
+            HerdTracking.individual,
+            HerdTracking.herd_tracking_date,
+            HerdTracking.created_at,
+            HerdTracking.operation_id,
+            HerdTracking.voided_at,
+            fn.EXISTS(erased_contact).alias("erased"),
+            born_removed.alias("removed_transaction"),
+            voided.alias("void_transaction"),
+        )
         .join(Herd, on=(HerdTracking.herd == Herd.id))
         .where(
             HerdTracking.individual.in_(rabbits),
             HerdTracking.kind == "TRANSFER",
+            HerdTracking.from_herd == herd.id,
             HerdTracking.buyer_removed,
             Herd.genebank == herd.genebank_id,
             Herd.herd.in_(OUTSIDE_GENEBANK_HERDS),
-            ht_not_voided() | HerdTracking.operation_id.cast("text").in_(ops),
+            ht_not_voided() | own_sale,
+            ~fn.EXISTS(bought_back),
         )
+        .order_by(HerdTracking.id)
+        .objects()
     )
     # Retracting a proposal clears its buyer too. Only clear_buyer records an erasure or purge.
-    erased = AuditLog.select(AuditLog.record_id).where(
+    erased_proposals = AuditLog.select(AuditLog.record_id).where(
         AuditLog.table_name == SaleProposal._meta.table_name,
         AuditLog.new_data["action"].in_(("radering", "gallring_forslag")),
     )
     cleared = SaleProposal.select(SaleProposal.individual).where(
         SaleProposal.individual.in_(rabbits),
         SaleProposal.report.in_(reports),
-        (SaleProposal.state == "foreslagen") | SaleProposal.id.cast("text").in_(erased),
+        (SaleProposal.state == "foreslagen") | SaleProposal.id.cast("text").in_(erased_proposals),
         SaleProposal.to_herd.is_null(),
         SaleProposal.buyer.is_null(),
     )
-    return {rabbit for (rabbit,) in (sales | cleared).tuples()}
+    current = {rabbit for (rabbit,) in cleared.tuples()}
+    dates, replaced = {}, set()
+    for sale in sales:
+        rabbit, day = sale.individual_id, sale.herd_tracking_date
+        if not sale.erased:
+            # Ändra voids and replaces the same sale in one transaction. A resubmission keeps its sale date.
+            carried = (rabbit, sale.removed_transaction) in replaced or day in dates.get(rabbit, ())
+            if sale.removed_transaction is None or (not carried and BuyerContact.purge_at_for(day) > sale.created_at):
+                continue
+        dates.setdefault(rabbit, set()).add(day)
+        if sale.void_transaction is not None:
+            replaced.add((rabbit, sale.void_transaction))
+        if sale.voided_at is None and str(sale.operation_id) in current_ops:
+            current.add(rabbit)
+    return current, dates
 
 
 def _kept_contact(herd, round_, entry, claim, sale):
@@ -2004,13 +2060,21 @@ def _report_transfer(herd, round_, entry, current_effects, sale, claim, removed,
         # a paper form is entered as written: its buyer may lack the address (Jonas 2026-11-23)
         return TransferIndividual(target, day, buyer=buyer, address_optional=paper)
     contact = (
-        BuyerContact.select(BuyerContact.postal_address)
+        BuyerContact.select(BuyerContact.name, BuyerContact.town, BuyerContact.postal_address)
         .join(HerdTracking, on=(HerdTracking.holder_contact == BuyerContact.id))
         .where(HerdTracking.id == registered.ref)
         .first()
     )
     address = buyer.get("postal_address")
-    if contact and (address is None or isinstance(address, str) and not address.strip()):
+    if (
+        contact
+        and (address is None or isinstance(address, str) and not address.strip())
+        and all(
+            isinstance(buyer.get(key), str)
+            and buyer[key].strip().casefold() == getattr(contact, key).strip().casefold()
+            for key in ("name", "town")
+        )
+    ):
         buyer = {**buyer, "postal_address": contact.postal_address}
     return TransferIndividual(target, day, buyer=buyer, address_optional=contact is not None or paper)
 
@@ -2084,7 +2148,7 @@ def check(
     refusals += _reason_refusals(sub.reason, own, _typed_buyers(sub) + _waiting_buyers(proposals.values()))
     draft = _draft(herd, round_)  # K1: a proposal takes no kept buyer, so only a role that sells reads them (F1)
     claims = _kept_claims(draft.data) if draft is not None and access.can_sell else {}
-    removed = _removed_buyers(herd, round_, [rid for rid in own if sub.rabbits[rid].sald])
+    removed, removed_dates = _removed_buyers(herd, round_, [rid for rid in own if sub.rabbits[rid].sald], ops)
     for rabbit, row in rows.items():
         entry, before = sub.rabbits.get(rabbit), before_entries.get(rabbit)
         if entry is None:
@@ -2100,7 +2164,11 @@ def check(
         # P39a: it writes nothing and is not refused; a rejection rewrote its entry and moved the revision (S1)
         if entry == before:
             continue
-        if rabbit in removed and entry.sald and entry.sald["till"] == "utanfor" and entry.sald["kopare"] is not None:
+        erased = rabbit in removed
+        if entry.sald and entry.sald["till"] == "utanfor":
+            sale = entry.sald
+            erased |= partial_date(sale["ar"], sale["manad"], sale["dag"], on) in removed_dates.get(rabbit, ())
+        if erased and entry.sald and entry.sald["kopare"] is not None:
             refusals.append(_refusal(rabbit, "kopare", BUYER_REMOVED))
             continue
         if row["state"] != "att_valja":
@@ -2146,7 +2214,7 @@ def check(
         transfer = None
         if sale is not None:
             transfer = _report_transfer(
-                herd, round_, entry, cur, sale, claims.get(str(rabbit)), rabbit in removed, access.source == "paper"
+                herd, round_, entry, cur, sale, claims.get(str(rabbit)), erased, access.source == "paper"
             )
             if transfers is not None:
                 transfers[rabbit] = transfer
