@@ -1567,22 +1567,20 @@ class User(BaseModel, UserMixin):
     def can_issue_certificate(self, individual):
         """Check if user can issue/update certificates for this individual.
 
-        Uses origin_herd (breeder), not current_herd. The breeder retains
-        certificate authority even after the rabbit moves to a new herd.
+        The person who issues attests in her own name that the data match the rabbit, so only those with access to
+        the origin herd (breeder) may: owner, main member, family or caretaker. Not the genebank manager or admin,
+        who have not seen the rabbit (Jonas 2026-11-23, #141). Uses origin_herd, not current_herd: the breeder keeps
+        the right after the rabbit moves to a new herd.
         """
-        if self.is_admin:
-            return True
-        if self.is_owner and individual.origin_herd.herd in self.is_owner:
-            return True
-        if self.is_manager and individual.origin_herd.genebank_id in self.is_manager:
-            return True
-        return False
+        return bool(self.is_owner and individual.origin_herd.herd in self.is_owner)
 
     def can_view_certificate(self, individual):
         """Who may download or preview the certificate (ADR-0016): the
         current owner, the breeder (origin herd), the genebank's manager
         and admin. A viewer role on the genebank is not enough."""
-        if self.can_issue_certificate(individual):
+        if self.can_issue_certificate(individual) or self.is_admin:
+            return True
+        if self.is_manager and individual.origin_herd.genebank_id in self.is_manager:
             return True
         herd = individual.current_herd
         return bool(herd and self.is_owner and herd.herd in self.is_owner)
