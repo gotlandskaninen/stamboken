@@ -57,7 +57,7 @@ describe("RabbitExplorer päls-filter", () => {
   it("skickar rex=true bara när Päls: Rex är vald (av: ingen rex-parameter)", async () => {
     render(
       <Provider store={store}>
-        <RabbitExplorer initialData={null} />
+        <RabbitExplorer initialData={null} initialGenebank={1} />
       </Provider>,
     );
     await waitFor(() => expect(urls.length).toBeGreaterThan(0));
