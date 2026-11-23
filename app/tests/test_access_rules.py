@@ -338,6 +338,7 @@ class TestLegacyList(unittest.TestCase):
                 ("inbox.my_uploads", "GET"),
                 ("inbox.uploads_seen", "POST"),
                 ("inbox.notice_count", "GET"),
+                ("tyck_till.send", "POST"),
                 ("health_check", "GET"),
                 ("main", "GET"),
                 ("static", "GET"),

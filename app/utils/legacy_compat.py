@@ -122,6 +122,8 @@ EXEMPT_ENDPOINTS = frozenset(
         ("inbox.my_uploads", "GET"),
         ("inbox.uploads_seen", "POST"),
         ("inbox.notice_count", "GET"),
+        # Tyck till: anyone may send feedback, logged in or not, and from the demo too.
+        ("tyck_till.send", "POST"),
         ("health_check", "GET"),
         # No data: the SPA shell, which also answers every unknown GET with 404.
         ("main", "GET"),

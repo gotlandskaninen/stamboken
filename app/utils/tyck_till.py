@@ -7,9 +7,12 @@ import hashlib
 import hmac
 import os
 import re
+import shutil
+import uuid
 from pathlib import Path
 
 import utils.settings as settings
+from utils.database import MailMessage
 from utils.log_masking import mask_tokens
 
 REPOS = {"publik": "gotlandskaninen/stamboken", "privat": "gotlandskaninen/stamboken-drift"}
@@ -94,3 +97,29 @@ def issue_body(kind, visibility, text, path, version, device, images, ref):
 def labels(kind):
     found = ["tyck till", "bug" if kind == "fel" else "enhancement"]
     return found + ["testmiljö"] if settings.service.demo_instance else found
+
+
+KEEP_SECONDS = 30 * 24 * 3600  # a submission's files, after it went into the queue
+ABANDONED_SECONDS = 24 * 3600  # a folder that never got a queue row: the request died
+
+
+def purge(now):
+    """
+    Removes the submissions' folders (a uuid directly under tyck-till/, never a link): 30 days old, or a day old
+    when the mail was never queued. A folder's age is its modification time, as the last file is written at the
+    end of the submission. Returns the number of folders removed.
+    """
+    if not root().is_dir():
+        return 0
+    removed = 0
+    for entry in root().iterdir():
+        try:
+            if entry.is_symlink() or not entry.is_dir() or str(uuid.UUID(entry.name)) != entry.name:
+                continue
+        except ValueError:
+            continue
+        queued = MailMessage.select().where(MailMessage.dedupe_key == f"tyck-till:{entry.name}").exists()
+        if now.timestamp() - entry.stat().st_mtime > (KEEP_SECONDS if queued else ABANDONED_SECONDS):
+            shutil.rmtree(entry, ignore_errors=True)
+            removed += 1
+    return removed
