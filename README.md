@@ -216,7 +216,7 @@ domain (`google_email`); the domain is fixed in code:
 - Replacing or removing a Google identity needs a session that signed in with
   Google. Adding a first identity works from a password session.
 - An admin can remove the Google login of an account without a role
-  (`DELETE /api/v2/admin/users/<id>/google`, no button yet). An account whose
+  (the button Ta bort Google-inloggningen on the user's page, `DELETE /api/v2/admin/users/<id>/google`). An account whose
   only way in is Google gets a password first (Återställ lösenord); it then
   signs in with it and links its new identity.
 - `google_email` values written before this version are no proof of the
@@ -234,9 +234,8 @@ domain (`google_email`); the domain is fixed in code:
   are not enough, since a password session can link a first Google identity,
   and that login stays. An admin also removes the account's Google login
   (`DELETE /api/v2/admin/users/<id>/google`, after removing any role) unless it
-  is known to be the holder's. There is no button for it yet: a signed-in
-  admin sends it from the browser's console on the site,
-  `fetch("/api/v2/admin/users/<id>/google", {method: "DELETE"})`. The demo's
+  is known to be the holder's. The button for it, Ta bort Google-inloggningen, is
+  on the user's page. The demo's
   copy of the account is up to a day old, so the old password or Google link
   still signs in there, with the account's current mark: after the demo's
   next copy (the nightly one, or `scripts/sync-demo-db.sh` run at once), use
