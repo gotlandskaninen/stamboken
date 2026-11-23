@@ -652,6 +652,7 @@ describe("a litter's suggested number", () => {
     );
   const pickLitter = async (born: string) => {
     fireEvent.mouseDown(await screen.findByRole("combobox", { name: "Kull" }));
+    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- born is a test constant, not user input
     fireEvent.click(screen.getByRole("option", { name: new RegExp(born) }));
   };
   const NUMBERS: Record<number, string> = { 5: "G9001-2511", 6: "G9001-2521" };

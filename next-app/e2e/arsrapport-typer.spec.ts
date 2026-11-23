@@ -134,6 +134,7 @@ async function takeItem(page: Page, herd: string) {
     .click();
   await page.getByRole("link", { name: "Mata in årsrapporten" }).click();
   await page.waitForURL(
+    // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- herd is a seeded herd number, not user input
     new RegExp(`/stamboken/arsrapport/${herd}/2025\\?post=\\d+`),
   );
 }
@@ -175,6 +176,7 @@ async function markSold(
       .getByRole("combobox", { name: "Köparens besättning" })
       .fill(to.herd);
     await page
+      // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- to.herd is a seeded herd number, not user input
       .getByRole("option", { name: new RegExp(`^${to.herd} `) })
       .click();
   } else {

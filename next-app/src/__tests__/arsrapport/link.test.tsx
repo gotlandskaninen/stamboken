@@ -65,6 +65,7 @@ const linkForm = (a: ReportActions) => (
   />
 );
 const row = (n: number) =>
+  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- n is a test constant, not user input
   screen.getByRole("group", { name: new RegExp(`G9001-${n}\\b`) });
 const choose = (n: number, label: string) =>
   fireEvent.click(within(row(n)).getByLabelText(label));

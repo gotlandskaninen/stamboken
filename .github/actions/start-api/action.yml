@@ -86,7 +86,8 @@ runs:
         docker exec "$CONTAINER_NAME" flask seed arsrapport --verbose
         # the personal report links of arsrapport-lank.spec.ts
         mkdir -p next-app/e2e/.auth
-        docker exec "$CONTAINER_NAME" flask seed arsrapport-lankar > next-app/e2e/.auth/arsrapport-lankar.json
+        # the app logs to stdout too: keep only the JSON line
+        docker exec "$CONTAINER_NAME" flask seed arsrapport-lankar | grep -m1 '^{' > next-app/e2e/.auth/arsrapport-lankar.json
 
     - name: Create test users
       shell: bash

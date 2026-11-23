@@ -35,7 +35,7 @@ def _invalid():
 
 
 def _answer(response):
-    response = make_response(response)
+    response = make_response(response)  # nosemgrep: make-response-with-unknown-content -- `response` is this module's own jsonify or problem() reply
     response.headers["Cache-Control"] = "no-store"
     return response
 
