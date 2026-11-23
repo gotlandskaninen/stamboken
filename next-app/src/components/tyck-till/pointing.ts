@@ -30,7 +30,7 @@ export function describe(el: Element): string {
   clone.querySelectorAll(HIDE).forEach((n) => n.remove());
   let t = (
     el.getAttribute("aria-label") ||
-    (el as HTMLInputElement).value ||
+    (el.matches("input, textarea, select") && (el as HTMLInputElement).value) ||
     clone.textContent ||
     el.getAttribute("alt") ||
     ""
@@ -87,8 +87,10 @@ export async function captureAround(
       0,
       Math.min(er.top - pr.top + er.height / 2 - h / 2, pageH - h),
     );
-    const sy = Math.round(top * ratio);
-    const sh = Math.min(Math.round(h * ratio), full.height - sy);
+    // html-to-image shrinks a canvas over 16384 px, so the scale is read off the canvas.
+    const scale = pageH ? full.height / pageH : ratio;
+    const sy = Math.round(top * scale);
+    const sh = Math.min(Math.round(h * scale), full.height - sy);
     const [w, oh] = fit(full.width, sh);
     return await jpeg(w, oh, (ctx) =>
       ctx.drawImage(full, 0, sy, full.width, sh, 0, 0, w, oh),

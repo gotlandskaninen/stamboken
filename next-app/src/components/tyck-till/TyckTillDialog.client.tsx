@@ -17,13 +17,15 @@ const TOO_LARGE =
 const SEND_FAILED =
   "Det gick inte att skicka just nu. Texten finns kvar, så du kan försöka igen om en stund.";
 const SIGNED_OUT =
-  "Du har blivit utloggad. Logga in igen och skicka, texten finns kvar.";
+  "Du har blivit utloggad. Logga in i en ny flik och tryck sedan Skicka igen. Texten finns kvar här.";
 const HINT = {
   fel: "Vad gjorde du, och vad hände?",
   onskemal: "Vad vill du kunna göra, och varför?",
 };
 
 type Shot = {
+  id: number;
+  pending?: boolean;
   kind: "pek" | "fil";
   blob: Blob | null;
   url: string | null;
@@ -111,11 +113,12 @@ function Sheet({
     [],
   );
 
-  const setShotList = (next: Shot[]) => {
-    shots.forEach(
-      (s) => s.url && !next.includes(s) && URL.revokeObjectURL(s.url),
-    );
-    setShots(next);
+  const nextId = useRef(0);
+  const removedIds = useRef(new Set<number>());
+  const removeShot = (s: Shot) => {
+    removedIds.current.add(s.id);
+    if (s.url) URL.revokeObjectURL(s.url);
+    setShots((prev) => prev.filter((x) => x.id !== s.id));
   };
   const clearError = (k: keyof Errors) =>
     setErrors((e) => (e[k] ? { ...e, [k]: undefined } : e));
@@ -126,11 +129,11 @@ function Sheet({
 
   const addFiles = async (files: FileList | null) => {
     setErrors((e) => ({ ...e, file: undefined }));
-    let list = shots;
     let error: string | undefined;
-    // One at a time: decoded phone photos are large.
+    let count = shots.length;
+    const queue: { f: File; id: number }[] = [];
     for (const f of Array.from(files ?? [])) {
-      if (list.length >= MAX_IMAGES) break;
+      if (count >= MAX_IMAGES) break;
       if (!f.type.startsWith("image/")) {
         error = `”${f.name}” är ingen bild. Välj en bildfil.`;
         continue;
@@ -139,12 +142,36 @@ function Sheet({
         error = `”${f.name}”: Bilden är för stor.`;
         continue;
       }
+      count++;
+      queue.push({ f, id: nextId.current++ });
+    }
+    // Registered at once, so Skicka waits for the shrinking.
+    setShots((prev) => [
+      ...prev,
+      ...queue.map(
+        ({ id }): Shot => ({
+          id,
+          pending: true,
+          kind: "fil",
+          blob: null,
+          url: null,
+          cap: "Förbereder bilden …",
+        }),
+      ),
+    ]);
+    // One at a time: decoded phone photos are large.
+    for (const { f, id } of queue) {
       const blob = await shrink(f);
-      list = [
-        ...list,
-        { kind: "fil", blob, url: URL.createObjectURL(blob), cap: f.name },
-      ];
-      setShots(list);
+      // Removed while it was shrinking: nothing to bring back.
+      if (removedIds.current.has(id)) continue;
+      const done: Shot = {
+        id,
+        kind: "fil",
+        blob,
+        url: URL.createObjectURL(blob),
+        cap: f.name,
+      };
+      setShots((prev) => prev.map((x) => (x.id === id ? done : x)));
     }
     if (error) setErrors((e) => ({ ...e, file: error }));
     if (fileRef.current) fileRef.current.value = "";
@@ -224,6 +251,7 @@ function Sheet({
     const blob = await captureAround(el, document.body);
     const shot: Shot = blob
       ? {
+          id: nextId.current++,
           kind: "pek",
           blob,
           url: URL.createObjectURL(blob),
@@ -231,13 +259,17 @@ function Sheet({
           cap: `Bild av sidan. Du pekade på ${desc}.`,
         }
       : {
+          id: nextId.current++,
           kind: "pek",
           blob: null,
           url: null,
           desc,
           cap: `Det gick inte att ta en bild i den här webbläsaren. Vi skickar vad du pekade på: ${desc}. Ta gärna en skärmdump själv och välj Bifoga bild.`,
         };
-    setShotList([shot, ...shots.filter((s) => s.kind !== "pek")]);
+    shotsRef.current.forEach(
+      (s) => s.kind === "pek" && s.url && URL.revokeObjectURL(s.url),
+    );
+    setShots((prev) => [shot, ...prev.filter((s) => s.kind !== "pek")]);
     setCapturing(false);
     stopPointing();
   };
@@ -314,8 +346,8 @@ function Sheet({
       return setErrors({ [res.field]: detail });
     if (res.status === 400 && res.field === "bilder")
       return setErrors({ file: detail });
-    if (res.status === 413) return setErrors({ file: TOO_LARGE });
-    if ([400, 415, 429].includes(res.status) && detail)
+    if (res.status === 413) return setErrors({ file: detail || TOO_LARGE });
+    if (res.status >= 400 && res.status < 500 && detail)
       return setErrors({ send: detail });
     setErrors({ send: SEND_FAILED });
   };
@@ -548,9 +580,9 @@ function Sheet({
                   />
                 </div>
                 <div className={styles.shots}>
-                  {shots.map((s, i) => (
+                  {shots.map((s) => (
                     <div
-                      key={s.url ?? `${s.kind}-${i}`}
+                      key={s.id}
                       className={`${styles.shot} ${s.kind === "fil" || !s.url ? styles.shotSmall : ""}`}
                     >
                       {s.url && (
@@ -579,9 +611,7 @@ function Sheet({
                           type="button"
                           className={styles.iconBtn}
                           aria-label="Ta bort bilden"
-                          onClick={() =>
-                            setShotList(shots.filter((x) => x !== s))
-                          }
+                          onClick={() => removeShot(s)}
                         >
                           <Icon d="M6 6l12 12M18 6L6 18" />
                         </button>
@@ -682,6 +712,18 @@ function Sheet({
               {errors.send && (
                 <p className={`${styles.err} ${styles.errSend}`} role="alert">
                   {errors.send}
+                  {errors.send === SIGNED_OUT && (
+                    <>
+                      {" "}
+                      <a
+                        href="/stamboken-online"
+                        target="_blank"
+                        rel="noopener"
+                      >
+                        Logga in
+                      </a>
+                    </>
+                  )}
                 </p>
               )}
             </div>
@@ -696,7 +738,7 @@ function Sheet({
               <button
                 type="submit"
                 className={`sb-btn ${styles.send}`}
-                disabled={sending}
+                disabled={sending || shots.some((s) => s.pending)}
               >
                 {sending ? "Skickar …" : "Skicka"}
               </button>

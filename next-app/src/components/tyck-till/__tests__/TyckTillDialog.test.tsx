@@ -9,6 +9,7 @@ import {
   vi,
 } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -23,6 +24,12 @@ vi.mock("../actions", () => ({
 }));
 vi.mock("next/navigation", () => ({
   usePathname: () => "/stamboken/min-besattning",
+}));
+
+const shrinkMock = vi.hoisted(() => vi.fn());
+vi.mock("../pointing", async (orig) => ({
+  ...(await orig<typeof import("../pointing")>()),
+  shrink: (...a: unknown[]) => shrinkMock(...a),
 }));
 
 import { TyckTillDialog } from "../TyckTillDialog.client";
@@ -42,7 +49,12 @@ beforeAll(() => {
   if (!globalThis.crypto.randomUUID)
     globalThis.crypto.randomUUID = () => "00000000-0000-4000-8000-000000000000";
 });
-beforeEach(() => send.mockReset());
+beforeEach(() => {
+  send.mockReset();
+  shrinkMock.mockReset();
+  URL.createObjectURL = vi.fn(() => "blob:x");
+  URL.revokeObjectURL = vi.fn();
+});
 afterEach(cleanup);
 
 function ui(user: UserContext | null) {
@@ -93,7 +105,7 @@ describe("TyckTillDialog", () => {
     });
   }
 
-  it("says so when the session ended while the form was open", async () => {
+  it("says so when the session ended while the form was open, with a link to log in", async () => {
     send.mockResolvedValue({
       ok: false,
       status: 400,
@@ -104,13 +116,78 @@ describe("TyckTillDialog", () => {
     await fill();
     fireEvent.click(screen.getByRole("button", { name: "Skicka" }));
     expect(
-      await screen.findByText(
-        "Du har blivit utloggad. Logga in igen och skicka, texten finns kvar.",
-      ),
-    ).toBeInTheDocument();
+      await screen.findByText(/Du har blivit utloggad\. Logga in i en ny flik/),
+    ).toHaveTextContent(
+      "Du har blivit utloggad. Logga in i en ny flik och tryck sedan Skicka igen. Texten finns kvar här. Logga in",
+    );
+    const link = screen.getByRole("link", { name: "Logga in" });
+    expect(link).toHaveAttribute("href", "/stamboken-online");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener");
     expect(screen.getByLabelText("Beskriv med egna ord")).toHaveValue(
       "Knappen gör inget",
     );
+  });
+
+  it("shows the server's text for a 4xx and the general one for 5xx and network errors", async () => {
+    render(ui(member));
+    await fill();
+    const cases: [unknown, string][] = [
+      [
+        { ok: false, status: 422, error: "Bilden går inte att läsa." },
+        "Bilden går inte att läsa.",
+      ],
+      [
+        { ok: false, status: 415, error: "Otillåten filtyp." },
+        "Otillåten filtyp.",
+      ],
+      [{ ok: false, status: 429, error: "För många." }, "För många."],
+      [
+        { ok: false, status: 503, error: "Service Unavailable" },
+        "Det gick inte att skicka just nu",
+      ],
+      [{ ok: false, status: 0, error: "" }, "Det gick inte att skicka just nu"],
+    ];
+    for (const [answer, want] of cases) {
+      send.mockResolvedValueOnce(answer);
+      fireEvent.click(screen.getByRole("button", { name: "Skicka" }));
+      expect(await screen.findByText(new RegExp(want))).toBeInTheDocument();
+    }
+  });
+
+  it("keeps Skicka off while an image is being prepared, and a removed image does not come back", async () => {
+    let finish!: (b: Blob) => void;
+    shrinkMock.mockReturnValue(new Promise<Blob>((r) => (finish = r)));
+    render(ui(member));
+    await fill();
+    const input = document.querySelector("input[type=file]")!;
+    fireEvent.change(input, {
+      target: { files: [new File(["x"], "a.jpg", { type: "image/jpeg" })] },
+    });
+    expect(screen.getByText("Förbereder bilden …")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Skicka" })).toBeDisabled();
+    await act(async () => finish(new Blob(["y"])));
+    expect(await screen.findByText("a.jpg")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Skicka" })).toBeEnabled();
+
+    shrinkMock.mockReturnValue(new Promise<Blob>((r) => (finish = r)));
+    fireEvent.change(input, {
+      target: { files: [new File(["x"], "b.jpg", { type: "image/jpeg" })] },
+    });
+    const removes = screen.getAllByRole("button", { name: "Ta bort bilden" });
+    fireEvent.click(removes[removes.length - 1]);
+    await act(async () => finish(new Blob(["z"])));
+    expect(screen.queryByText("b.jpg")).not.toBeInTheDocument();
+    expect(screen.getByText("a.jpg")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Skicka" })).toBeEnabled();
+  });
+
+  it("keeps the spam field away from password managers and screen readers", () => {
+    render(ui(null));
+    const field = document.querySelector("input[name=webbplats]")!;
+    expect(field).toHaveAttribute("autocomplete", "off");
+    expect(field).toHaveAttribute("tabindex", "-1");
+    expect(field.closest("[aria-hidden=true]")).not.toBeNull();
   });
 
   it("sends the fields the API expects and shows the receipt", async () => {

@@ -65,6 +65,15 @@ suite("describe", () => {
     expect(describe(document.querySelector("b")!)).toBe("en dold uppgift");
   });
 
+  it("reads .value only from fields", () => {
+    document.body.innerHTML =
+      "<ul><li value='3'>Ada</li></ul><progress value='0.5'></progress><button value='x'>Spara</button>";
+    const q = (sel: string) => document.body.querySelector(sel)!;
+    expect(describe(q("li"))).toBe("raden ”Ada”");
+    expect(describe(q("progress"))).toBe("texten");
+    expect(describe(q("button"))).toBe("knappen ”Spara”");
+  });
+
   it("leaves a hidden part out of the text of its parent", () => {
     const el = html(
       "<footer>Be säljaren <span data-tyck-till='dolj'>token 1234</span></footer>",
@@ -99,6 +108,45 @@ suite("captureAround", () => {
     expect(filter(document.querySelector("#b")!)).toBe(false);
     expect(filter(document.querySelector("span")!)).toBe(false);
     expect(filter(document.createTextNode("text"))).toBe(true);
+  });
+
+  it("scales by the canvas it got when html-to-image shrank it", async () => {
+    const drawImage = vi.fn();
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue({
+      drawImage,
+    } as never);
+    vi.stubGlobal("devicePixelRatio", 2);
+    // 375 x 8000 css px would be 1500 px wide at ratio 2; the canvas came back 750 x 2000 (scale 0.25).
+    const root = html("<main><p id='a'>Mitt</p></main>");
+    vi.spyOn(root, "getBoundingClientRect").mockReturnValue({
+      top: 0,
+      left: 0,
+      width: 375,
+      height: 8000,
+    } as DOMRect);
+    vi.spyOn(
+      root.querySelector("#a")!,
+      "getBoundingClientRect",
+    ).mockReturnValue({
+      top: 4000,
+      left: 0,
+      width: 100,
+      height: 20,
+    } as DOMRect);
+    await captureAround(root.querySelector("#a")!, root);
+    vi.unstubAllGlobals();
+    // h = min(768, 469, 8000) = 469; top = 4010 - 234.5 = 3775.5 -> sy = 944, sh = 117 at scale 0.25
+    expect(drawImage).toHaveBeenCalledWith(
+      expect.anything(),
+      0,
+      944,
+      750,
+      117,
+      0,
+      0,
+      750,
+      117,
+    );
   });
 
   it("gives null when the browser cannot draw the page", async () => {

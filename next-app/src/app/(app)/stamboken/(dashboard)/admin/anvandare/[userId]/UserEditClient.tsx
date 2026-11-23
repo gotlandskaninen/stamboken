@@ -303,7 +303,10 @@ export function UserEditClient({
                 </button>
               </>
             ) : (
-              <div className={`${ds["ad-banner"]} ${ds["ad-banner-warning"]}`}>
+              <div
+                className={`${ds["ad-banner"]} ${ds["ad-banner-warning"]}`}
+                data-tyck-till="dolj"
+              >
                 <div>
                   <strong>Nytt lösenord för {displayName}:</strong>{" "}
                   <code>{plaintext}</code>
