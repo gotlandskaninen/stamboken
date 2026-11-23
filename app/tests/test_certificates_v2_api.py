@@ -1173,10 +1173,13 @@ class TestCertificateV2ViewAuthorization(CertV2Mixin, FlaskTest):
             individual=individual,
             herd_tracking_date=datetime.now(),
         )
-        # The buyer gets the signed certificate as issued, so nothing changed since appears under the issuer's name
-        with mock.patch.object(_generator, "generate_pedigree") as render:
-            self.assertEqual(self._status(buyer, f"/api/v2/certificates/preview/{individual.number}"), 200)
-        render.assert_not_called()
+        # The buyer, the manager and admin get the signed certificate as issued, so nothing changed since appears
+        # under the issuer's name; also when older code cleared the rabbit's number but the v2 row is current
+        db.Individual.update(digital_certificate=None).where(db.Individual.id == individual.id).execute()
+        for viewer in (buyer, self.manager, self.admin):
+            with mock.patch.object(_generator, "generate_pedigree") as render:
+                self.assertEqual(self._status(viewer, f"/api/v2/certificates/preview/{individual.number}"), 200)
+            render.assert_not_called()
 
 
 class TestCertificateLockOrder(CertV2Mixin, FlaskTest):

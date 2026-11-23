@@ -347,8 +347,16 @@ def preview_certificate(i_number):
     # A preview names its viewer as attester, which is only true for someone who may issue the next version. A buyer
     # or manager who only views gets the signed certificate as issued; data changed since would otherwise appear
     # under the issuer's name (Codex on #7). Without any certificate the preview has no attester.
-    may_issue = da.fetch_user_info(user_id).can_issue_certificate(individual)
-    if not may_issue and individual.digital_certificate is not None:
+    # Herd access, not can_issue_certificate: admin and the genebank manager still issue until #141, but have not
+    # seen the rabbit, so they too get the signed PDF.
+    viewer = da.fetch_user_info(user_id)
+    may_issue = bool(viewer.is_owner and individual.origin_herd.herd in viewer.is_owner)
+    has_current = (
+        db.DigitalCertificateV2.select()
+        .where((db.DigitalCertificateV2.individual == individual) & (db.DigitalCertificateV2.is_current == True))  # noqa: E712
+        .exists()
+    )
+    if not may_issue and (has_current or individual.digital_certificate is not None):
         return download_certificate(i_number)
     cert_data = build_cert_data(individual, ind_dict, user_id)
     if not may_issue:
