@@ -964,7 +964,8 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
 
         data = self.app.get(f"/api/v2/certificates/verify/{token}").get_json()
         self.assertEqual(data["breeder"], "Gotlandsherd1")
-        self.assertEqual(data["transferred"], ["2026-03"])  # no CORRECTION, no move between genebanks
+        # the corrected history's changes of holder; no voided row, no move between genebanks
+        self.assertEqual(data["transferred"], ["2026-03", "2026-06"])
         self.assertNotIn("owner1", str(data))  # the contact person's name, never on the public page
         self.assertNotIn("2026-03-15", str(data))
         with patch.object(settings.service, "demo_instance", True):  # a day-old copy: no choice, no sales
@@ -1011,8 +1012,8 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
         )
         self.assertEqual(sale_months(individual), ["2026-03", "2026-04"])
 
-    def test_sale_months_keeps_a_sale_whose_date_was_corrected(self):
-        """A manager's date fix voids the sale and writes a CORRECTION in the same operation: still one sale."""
+    def test_sale_months_follows_the_corrected_history(self):
+        """Date fixes, a fix of a fix and a joint fix: the months the corrected history changes holder, once each."""
         from utils.herd_tracking import correct_herd_tracking, record_herd_tracking, sale_months
 
         gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1")
@@ -1020,8 +1021,9 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
         sale = record_herd_tracking(individual, self.herds[1], date(2026, 2, 1), "TRANSFER", self.manager)
         second = record_herd_tracking(individual, gx1, date(2026, 3, 1), "TRANSFER", self.manager)
         self.assertEqual(sale_months(individual), ["2026-02", "2026-03"])
-        for row, day in ((second, date(2026, 5, 1)), (sale, date(2026, 1, 15))):
-            correct_herd_tracking(
+
+        def fix(row, day):
+            (written,) = correct_herd_tracking(
                 individual,
                 self.manager,
                 None,
@@ -1029,12 +1031,12 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
                 [{"kind": "CORRECTION", "date": day, "herd": row.herd.herd}],
                 "Fel datum",
             )
-        self.assertEqual(sale_months(individual), ["2026-01", "2026-05"])
-        # A CORRECTION that replaces no sale is a register fix, not a sale
-        correct_herd_tracking(
-            individual, self.manager, None, [], [{"kind": "CORRECTION", "date": date(2026, 6, 1), "herd": "G1"}]
-        )
-        self.assertEqual(sale_months(individual), ["2026-01", "2026-05"])
+            return written
+
+        fixed = fix(second, date(2026, 5, 1))
+        fix(fixed, date(2026, 4, 1))  # a fix of the fix
+        fix(sale, date(2026, 1, 15))
+        self.assertEqual(sale_months(individual), ["2026-01", "2026-04"])
 
     def test_verify_post_with_pdf(self):
         """POST verify with actual PDF bytes checks checksum + signature."""
