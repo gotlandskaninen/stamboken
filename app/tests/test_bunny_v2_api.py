@@ -42,7 +42,10 @@ def _promote_without_certificate(client, bunny_id):
     Since 2026-10-30 the only uncertified registration left is a failed digital issuance;
     unpromote and the post-commit issuance step start from this state.
     """
-    with mock.patch("blueprints.bunny_v2._apply_certificate", return_value=(None, None)):
+    with (
+        mock.patch("blueprints.bunny_v2._apply_certificate", return_value=(None, None)),
+        mock.patch("blueprints.bunny_v2.digital_certificate_refusal", return_value=None),  # any user, named or not
+    ):
         return client.post(f"/api/v2/bunny/{bunny_id}/promote", json={"certificate_type": "digital"})
 
 
@@ -677,7 +680,8 @@ class TestBunnyPromote(DatabaseTest):
         )
         db.Individual.create(origin_herd=self.herds[0], breeding=litter, number="G1-2511", certificate="P1")
         bunny = db.Bunny.create(breeding=litter, slot_order=1, observed_sex="female", observed_color="bleighe")
-        self._login()
+        db.User.update(fullname="Test Namn").where(db.User.id == self.owner.id).execute()  # the issuer needs a name
+        self._login("owner")
         for body in ({"certificate_type": "paper", "paper_certificate": "P2"}, {"certificate_type": "digital"}):
             with self.subTest(body["certificate_type"]):
                 resp = self._promote(bunny.id, **body)
@@ -706,7 +710,8 @@ class TestBunnyPromote(DatabaseTest):
     def test_promote_with_a_certificate_requires_litter_size6w(self):
         """A paper or digital certificate needs litter_size6w."""
         litter, bunnies = self._roster_litter(["undecided"] * 3)
-        self._login()
+        db.User.update(fullname="Test Namn").where(db.User.id == self.owner.id).execute()  # the issuer needs a name
+        self._login("owner")
         for body in ({"certificate_type": "paper", "paper_certificate": "P2"}, {"certificate_type": "digital"}):
             with self.subTest(body["certificate_type"]):
                 resp = self._promote(bunnies[0].id, **body)
@@ -724,7 +729,8 @@ class TestBunnyPromote(DatabaseTest):
     def test_promote_with_a_certificate_refuses_a_roster_out_of_sync(self):
         """More kits alive in the roster than litter_size6w: the breeder must mark the dead ones first."""
         litter, bunnies = self._roster_litter(["undecided", "undecided", "undecided", "died"], litter_size6w=2)
-        self._login()
+        db.User.update(fullname="Test Namn").where(db.User.id == self.owner.id).execute()  # the issuer needs a name
+        self._login("owner")
         for body in ({"certificate_type": "paper", "paper_certificate": "P2"}, {"certificate_type": "digital"}):
             with self.subTest(body["certificate_type"]):
                 resp = self._promote(bunnies[0].id, **body)
@@ -755,7 +761,8 @@ class TestBunnyPromote(DatabaseTest):
 
         litter = _old_litter(self.herds[0])
         b = db.Bunny.create(breeding=litter, slot_order=1, observed_sex="female", observed_color="bleighe")
-        self._login()
+        db.User.update(fullname="Test Namn").where(db.User.id == self.owner.id).execute()  # the issuer needs a name
+        self._login("owner")
         # Stub the parentless-litter-hostile data/render steps so signing is what fails.
         with (
             mock.patch("utils.cert_service_v2.get_certificate_data", return_value={}),
@@ -783,7 +790,8 @@ class TestBunnyPromote(DatabaseTest):
         # 201 and carries the failure as a transient certificate_error detail.
         litter = _old_litter(self.herds[0])
         b = db.Bunny.create(breeding=litter, slot_order=1, observed_sex="female", observed_color="bleighe")
-        self._login()
+        db.User.update(fullname="Test Namn").where(db.User.id == self.owner.id).execute()  # the issuer needs a name
+        self._login("owner")
         # Stub the parentless-litter-hostile data/render steps so the signer is what raises.
         with (
             mock.patch("utils.cert_service_v2.get_certificate_data", return_value={}),
@@ -833,7 +841,7 @@ class TestBunnyPromoteDigitalV2(CertV2Mixin, DatabaseTest):
         self.client = APP.test_client(use_cookies=True)
         super().setUp()
 
-    def _login(self, username="admin", password="pass"):  # nosemgrep: hardcoded-password-default-argument
+    def _login(self, username="owner", password="pass"):  # nosemgrep: hardcoded-password-default-argument
         return self.client.post("/api/login", json={"username": username, "password": password})
 
     def _promote(self, bunny_id, **body):
@@ -867,6 +875,55 @@ class TestBunnyPromoteDigitalV2(CertV2Mixin, DatabaseTest):
         self.assertIsNotNone(cert_row.verification_token)
         self.assertEqual(db.Bunny.get_by_id(b.id).fate, "registered")
 
+    def test_digital_promote_is_refused_before_anything_is_written(self):
+        """A manager, or an owner without a name, asking for a digital certificate gets 403/400 and no number."""
+        litter = db.Breeding.create(
+            breeding_herd_id=self.herds[0],
+            birth_date=date(2025, 1, 10),
+            litter_number=1,
+            litter_size=6,
+            litter_size6w=6,
+            mother=self.individuals[0],
+            father=self.individuals[1],
+        )
+        b = db.Bunny.create(breeding=litter, slot_order=1, observed_sex="female", observed_color="bleighe")
+        db.User.update(fullname="Genbanks Ansvarig").where(db.User.id == self.manager.id).execute()
+        db.User.update(fullname=None).where(db.User.id == self.owner.id).execute()
+        before = db.Individual.select().count()
+        for username, status in (("man", 403), ("owner", 400)):
+            with self.subTest(user=username):
+                self.client.get("/api/logout")
+                self.assertEqual(self._login(username).status_code, 200)
+                resp = self._promote(b.id, certificate_type="digital")
+                self.assertEqual(resp.status_code, status, resp.get_data(as_text=True))
+                self.assertEqual(db.Individual.select().count(), before)
+                self.assertNotEqual(db.Bunny.get_by_id(b.id).fate, "registered")
+
+    def test_digital_right_is_checked_again_on_the_locked_litter(self):
+        """A litter moved to another herd between the check and the lock: refused, nothing written."""
+        from blueprints.bunny_v2 import DIGITAL_FORBIDDEN
+
+        litter = db.Breeding.create(
+            breeding_herd_id=self.herds[0],
+            birth_date=date(2025, 1, 10),
+            litter_number=1,
+            litter_size=6,
+            litter_size6w=6,
+            mother=self.individuals[0],
+            father=self.individuals[1],
+        )
+        b = db.Bunny.create(breeding=litter, slot_order=1, observed_sex="female", observed_color="bleighe")
+        db.User.update(fullname="Besättnings Ägare").where(db.User.id == self.owner.id).execute()
+        before = db.Individual.select().count()
+        refused = (403, "digital_certificate_forbidden", DIGITAL_FORBIDDEN)
+        self.assertEqual(self._login().status_code, 200)
+        with mock.patch("blueprints.bunny_v2.digital_certificate_refusal", side_effect=[None, refused]) as check:
+            resp = self._promote(b.id, certificate_type="digital")
+        self.assertEqual(resp.status_code, 403, resp.get_data(as_text=True))
+        self.assertEqual(check.call_count, 2)
+        self.assertEqual(db.Individual.select().count(), before)
+        self.assertNotEqual(db.Bunny.get_by_id(b.id).fate, "registered")
+
     def test_digital_issuance_rechecks_the_quota_under_the_litter_lock(self):
         """The digital certificate is issued after the promote commit; a slot taken meanwhile refuses it."""
         from blueprints.bunny_v2 import _issue_digital_certificate
@@ -890,7 +947,7 @@ class TestBunnyPromoteDigitalV2(CertV2Mixin, DatabaseTest):
         db.Individual.create(origin_herd=self.herds[0], breeding=litter, number="G1-2519", certificate="P9")
 
         with self.assertRaisesRegex(ValueError, "certificate_quota_exceeded"):
-            _issue_digital_certificate(promoted, self.admin.uuid)
+            _issue_digital_certificate(promoted, self.owner.uuid)
         self.assertIsNone(db.Individual.get_by_id(promoted.id).digital_certificate)
 
     def test_digital_issuance_keeps_a_change_committed_after_the_promote(self):
@@ -917,7 +974,7 @@ class TestBunnyPromoteDigitalV2(CertV2Mixin, DatabaseTest):
             db.Individual.id == promoted.id
         ).execute()
 
-        number = _issue_digital_certificate(promoted, self.admin.uuid)
+        number = _issue_digital_certificate(promoted, self.owner.uuid)
         stored = db.Individual.get_by_id(promoted.id)
         self.assertEqual(
             (stored.digital_certificate, stored.death_date, stored.death_note), (number, date(2026, 10, 1), "död")
@@ -956,10 +1013,11 @@ class TestBunnyPromoteDigitalV2(CertV2Mixin, DatabaseTest):
         def certify():
             db.Individual.update(digital_certificate=100500).where(db.Individual.id == certified.id).execute()
 
+        db.User.update(fullname="Test Namn").where(db.User.id == self.viewer.id).execute()  # the name check comes first
         real_database = bunny_v2.DATABASE
         for individual, user, concurrent, error in (
-            (unpromoted, self.admin, unpromote, "individual_lookup_failed"),
-            (certified, self.admin, certify, "certificate_exists"),
+            (unpromoted, self.owner, unpromote, "individual_lookup_failed"),
+            (certified, self.owner, certify, "certificate_exists"),
             (other, self.viewer, lambda: None, "forbidden"),
         ):
             # Commits as issuance opens its transaction: after any read before it, before its locks.

@@ -295,6 +295,11 @@ kan inte utfärda digitala intyg.
 7. Klicka **Visa intyg** för att öppna PDF:en i en ny flik, **Visa kanin** för kaninens
    sida eller **Registrera en till i kullen** för nästa unge.
 
+Den som utfärdar ett digitalt intyg står som intygare med sitt eget namn, och intygar
+att uppgifterna stämmer med kaninen. Därför kan bara de som har tillgång till kaninens
+ursprungsbesättning utfärda och rätta digitala intyg. Genbanksansvarig kan inte göra
+det åt dig.
+
 Intyget går att verifiera av vem som helst genom QR-koden på PDF:en, se
 [Verifiera intyg](#verifiera-intyg).
 

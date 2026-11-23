@@ -23,5 +23,5 @@ stateDiagram-v2
 | `register_with_paper` | POST /api/v2/individual med pappersintyg | den som registrerar kaninen |
 | `assign_paper` | `AssignPaperCertificate` (PATCH /api/individual, PATCH /api/individual/{number}) | manager, admin; ägare bara utan intyg |
 | `clear_paper` | `AssignPaperCertificate` med tomt nummer (samma anrop) | manager, admin; ägare bara utan intyg |
-| `issue_number` | `IssueDigitalCertificate`, `assign_certificate_number` | den som får utfärda intyg (uppfödaren, manager, admin) |
-| `issue_pdf` | `generate_and_store` (POST /api/v2/certificates/issue, PATCH .../update) | den som får utfärda intyg (uppfödaren, manager, admin) |
+| `issue_number` | `IssueDigitalCertificate`, `assign_certificate_number` | den som har tillgång till uppfödarbesättningen (ägare, huvudmedlem, familj, skötare); inte manager eller admin |
+| `issue_pdf` | `generate_and_store` (POST /api/v2/certificates/issue, PATCH .../update) | den som har tillgång till uppfödarbesättningen (ägare, huvudmedlem, familj, skötare); inte manager eller admin |

@@ -1571,28 +1571,28 @@ class User(BaseModel, UserMixin):
 
         return False
 
+    def owns_herd_of(self, herd):
+        """Access to `herd` as one rabbit's own herd: by id (a herd code is unique only within its genebank), and
+        never GX1/MX1, which hold every rabbit sold or imported from outside the genebank."""
+        return herd is not None and herd.herd not in OUTSIDE_GENEBANK_HERDS and herd.id in self.effective_herd_ids()
+
     def can_issue_certificate(self, individual):
         """Check if user can issue/update certificates for this individual.
 
-        Uses origin_herd (breeder), not current_herd. The breeder retains
-        certificate authority even after the rabbit moves to a new herd.
+        The person who issues attests in her own name that the data match the rabbit, so only those with access to
+        the origin herd (breeder) may: owner, main member, family or caretaker. Not the genebank manager or admin,
+        who have not seen the rabbit (Jonas 2026-11-23, #141). Uses origin_herd, not current_herd: the breeder keeps
+        the right after the rabbit moves to a new herd.
         """
-        if self.is_admin:
-            return True
-        if self.is_owner and individual.origin_herd.herd in self.is_owner:
-            return True
-        if self.is_manager and individual.origin_herd.genebank_id in self.is_manager:
-            return True
-        return False
+        return self.owns_herd_of(individual.origin_herd)
 
     def can_view_certificate(self, individual):
         """Who may download or preview the certificate (ADR-0016): the
         current owner, the breeder (origin herd), the genebank's manager
         and admin. A viewer role on the genebank is not enough."""
-        if self.can_issue_certificate(individual):
+        if self.is_admin or (self.is_manager and individual.origin_herd.genebank_id in self.is_manager):
             return True
-        herd = individual.current_herd
-        return bool(herd and self.is_owner and herd.herd in self.is_owner)
+        return self.owns_herd_of(individual.origin_herd) or self.owns_herd_of(individual.current_herd)
 
     class Meta:  # pylint: disable=too-few-public-methods
         """

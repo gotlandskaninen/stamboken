@@ -116,6 +116,18 @@ def compute_doc_hash_stub(cert_data):
     return compute_checksum(canonical.encode("utf-8"))[:8].upper()
 
 
+# The person who issues attests in her own name, so an account without one cannot issue (#141).
+ATTESTER_NAME_MISSING = (
+    "Ditt konto saknar namn, och den som utfärdar står som intygare på intyget. "
+    "Mejla stamboken@gotlandskaninen.se så lägger vi in det, och försök sedan igen."
+)
+
+
+def attester_name(user):
+    """The issuing user's name as it goes on the certificate, or "" when the account has none."""
+    return ((user.fullname if user else None) or "").strip()
+
+
 def issuer_role(user, individual):
     """
     The role `user` issues the rabbit's certificate in, for "Intygas av" on the check page (stamboken #6, Jonas

@@ -232,6 +232,8 @@ export function BunnyPromoteDialog({
         return t("addRabbit.errorLitterSize6wRequired");
       case "roster_alive_exceeds_6w":
       case "litter_size6w_above_born":
+      case "digital_certificate_forbidden":
+      case "attester_name_missing":
         return raw; // the API's sentence (with the counts; the roster offers the fix)
       default:
         return t("litterRoster.promoteError");

@@ -1,11 +1,12 @@
 """
 State machine for the certificate of an individual (utils/certificate_lifecycle.py).
 
-Random sequences of the real endpoints: a manager assigns a paper certificate (PATCH /api/individual), an admin
+Random sequences of the real endpoints: a manager assigns a paper certificate (PATCH /api/individual), the breeder
 issues (POST /api/v2/certificates/issue) or re-issues (PATCH .../update) a digital one, a user without rights tries
-the same, and the public verify page is read for every token issued so far. The model is a CertState advanced only
-by next_state. After every step the database is in the modelled state, a step succeeds exactly when the table has a
-row for it, and a verify page says is_current only for the newest token of a digitally certified rabbit.
+the same (admin and manager are refused), and the public verify page is read for every token issued so far.
+The model is a CertState advanced only by next_state. After every step the database is in the modelled state, a
+step succeeds exactly when the table has a row for it, and a verify page says is_current only for the newest token
+of a digitally certified rabbit.
 PDF generation, signing and S3 are stubbed: the machine is about state.
 
 isort:skip_file
@@ -61,12 +62,12 @@ def make_machine(case, clients, stats, covered):
             self.tokens = []  # verification tokens issued so far, oldest first
             stats["sekvenser"] += 1
 
-        def _step(self, name, actor, events, call, successes):
+        def _step(self, name, actor, events, call, successes, allowed=("manager", "owner")):
             """Calls the endpoint as `actor`; it must succeed exactly when the actor may and the table has a row."""
             after = walk(self.model, events)
             response = call(clients[actor])
             ok = response.status_code in successes and response.get_json().get("status", "success") == "success"
-            want = actor != "viewer" and after is not None
+            want = actor in allowed and after is not None
             # A refusal is a typed answer: a crash is a 500, or the legacy PATCH's generic error.
             case.assertLess(response.status_code, 500, f"{name} by {actor} from {self.model}")
             case.assertNotEqual(response.get_json().get("message"), "Kunde inte uppdatera individ.")
@@ -99,17 +100,26 @@ def make_machine(case, clients, stats, covered):
 
         # The POST endpoint refuses a paper-certified rabbit (convert via update), which the table would allow.
         @precondition(lambda self: self.model != CertState.PAPER)
-        @rule(actor=st.sampled_from(["admin", "viewer"]))
+        @rule(actor=st.sampled_from(["owner", "viewer"]))
         def issue(self, actor):
             url = f"/api/v2/certificates/issue/{kit.number}"
-            self._step("ISSUE", actor, [ISSUE_NUMBER, ISSUE_PDF], lambda c: c.post(url, json={}), successes=(201,))
+            self._step("ISSUE", actor, [ISSUE_NUMBER, ISSUE_PDF], lambda c: c.post(url, json={}), (201,), ("owner",))
 
-        @rule(actor=st.sampled_from(["admin", "viewer"]))
+        @rule(actor=st.sampled_from(["owner", "viewer"]))
         def update(self, actor):
             """Re-issue; on a paper-certified rabbit it converts to a digital number first."""
             events = [ISSUE_NUMBER, ISSUE_PDF] if self.model == CertState.PAPER else [ISSUE_PDF]
             url = f"/api/v2/certificates/update/{kit.number}"
-            self._step("UPDATE", actor, events, lambda c: c.patch(url, json={}), successes=(200,))
+            self._step("UPDATE", actor, events, lambda c: c.patch(url, json={}), (200,), ("owner",))
+
+        @precondition(lambda self: self.model != CertState.PAPER)
+        @rule(actor=st.sampled_from(["admin", "manager"]), route=st.sampled_from(["issue", "update"]))
+        def refused(self, actor, route):
+            """Admin and the genebank manager do not attest: refused in every state, nothing changes."""
+            if route == "issue":
+                self.issue(actor=actor)
+            else:
+                self.update(actor=actor)
 
         @precondition(lambda self: self.model == CertState.NONE)
         @rule()
@@ -174,8 +184,8 @@ class TestCertificateStateMachine(CertV2Mixin, FlaskTest):
         db.Individual.update(certificate="PAP-0", digital_certificate=500000).where(
             db.Individual.id == kit.id
         ).execute()
-        admin = self.app.application.test_client(use_cookies=True)
-        admin.post("/api/login", json={"username": self.admin.email, "password": "pass"})
+        admin = self.app.application.test_client(use_cookies=True)  # the breeder: only she may update
+        admin.post("/api/login", json={"username": self.owner.email, "password": "pass"})
         url = f"/api/v2/certificates/update/{kit.number}"
         self.assertEqual(admin.patch(url, json={}).status_code, 200)  # as on main: not a crash
         self.assertEqual(self._manager_patch(certificate="").get("status", "success"), "success")
@@ -193,7 +203,12 @@ class TestCertificateStateMachine(CertV2Mixin, FlaskTest):
 
     def test_random_sequences(self):
         clients = {}
-        for name, user in (("admin", self.admin), ("manager", self.manager), ("viewer", self.viewer)):
+        for name, user in (
+            ("owner", self.owner),
+            ("admin", self.admin),
+            ("manager", self.manager),
+            ("viewer", self.viewer),
+        ):
             clients[name] = self.app.application.test_client(use_cookies=True)
             clients[name].post("/api/login", json={"username": user.email, "password": "pass"})
         stats, covered = Counter(), set()
