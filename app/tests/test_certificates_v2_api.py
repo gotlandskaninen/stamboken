@@ -1153,6 +1153,34 @@ class TestCertificateV2ViewAuthorization(CertV2Mixin, FlaskTest):
         self.assertEqual(self._status(buyer, f"/api/v2/certificates/{individual.number}"), 200)
         self.assertEqual(self._status(self.owner, f"/api/v2/certificates/{individual.number}"), 200)
 
+    def test_buyer_preview_names_the_issuer_not_the_buyer(self):
+        """Only someone who may issue the next version is the preview's attester; the buyer sees the issuer."""
+        from unittest import mock
+
+        import utils.data_access as da
+        from utils.cert_service_v2 import _generator
+
+        individual = self.individuals[3]
+        db.User.update(fullname="Utfärdande Person").where(db.User.id == self.admin.id).execute()
+        self._issue_as_admin(individual)
+        buyer = da.register_user("buyer", "pass")
+        db.User.update(fullname="Köpande Person").where(db.User.id == buyer.id).execute()
+        buyer.add_role("owner", self.herds[1].id)
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[1],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=datetime.now(),
+        )
+        seen = []
+        with mock.patch.object(
+            _generator, "generate_pedigree", side_effect=lambda data, **kw: seen.append(data) or b"%PDF"
+        ):
+            self.assertEqual(self._status(buyer, f"/api/v2/certificates/preview/{individual.number}"), 200)
+        self.assertEqual(seen[-1]["fullname"], "Utfärdande Person")
+
 
 class TestCertificateLockOrder(CertV2Mixin, FlaskTest):
     """issue/update lock Breeding, then ONE ascending call over the rabbit + its parents."""
