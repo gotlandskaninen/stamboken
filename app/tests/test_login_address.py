@@ -353,6 +353,55 @@ class TestHolderAgain(SevenDaysTest):
         self.assertEqual(lc.address_collisions(), 0)
 
 
+class TestWaitLocks(SevenDaysTest):
+    def test_the_restarted_clock_holds_the_lock_on_the_old_address(self):
+        """The old address is about to stop counting. The change that restarts its clock reads it in time; another
+        person reserves it as it stops. Without the lock on the old address both end up holding it."""
+        self.change("b@example.org", "self")
+        db.MemberPreviousAddress.update(login_until=datetime.now(timezone.utc) + timedelta(seconds=1)).execute()
+        taker = _mk_person(_mk_membership(number=12), "Bo", "Tar", None)
+        paused, release, outcome = threading.Event(), threading.Event(), {}
+        original = db.MemberPreviousAddress.save
+
+        def paused_save(row, *args, **kwargs):
+            if threading.current_thread().name == "change" and not paused.is_set():
+                paused.set()
+                assert release.wait(timeout=10), "the test never released the change"
+            return original(row, *args, **kwargs)
+
+        def change():
+            try:
+                self.change("c@example.org", "self")
+            finally:
+                db.DATABASE.close()
+
+        def take():
+            try:
+                with db.DB_PROXY.atomic():
+                    lc.reserve_login_address("a@example.org", taker.id)
+                    db.Member.update(email="a@example.org").where(db.Member.id == taker.id).execute()
+                outcome["taker"] = "ok"
+            except lc.AddressTaken:
+                outcome["taker"] = "taken"
+            finally:
+                db.DATABASE.close()
+
+        with mock.patch.object(db.MemberPreviousAddress, "save", paused_save):
+            changing = threading.Thread(target=change, name="change")
+            changing.start()
+            self.assertTrue(paused.wait(timeout=10), "the change never reached the restart of the clock")
+            while datetime.now(timezone.utc) <= db.MemberPreviousAddress.get().login_until:
+                threading.Event().wait(0.1)
+            taking = threading.Thread(target=take)
+            taking.start()
+            taking.join(timeout=2)
+            release.set()
+            changing.join(timeout=10)
+            taking.join(timeout=10)
+        self.assertEqual(outcome, {"taker": "taken"})
+        self.assertEqual(lc.address_collisions(), 0)
+
+
 class TestCollisions(LoginAddressTest):
     """A write that missed the reservation: counted at night and in the status view, never named."""
 

@@ -38,7 +38,7 @@ from utils.database import (
     User,
 )
 from utils.inbox_purge import erase_person_from_inbox, remove_originals
-from utils.login_code import AddressTaken, reserve_holder, reserve_login_address, void
+from utils.login_code import AddressTaken, lock_addresses, reserve_holder, reserve_login_address, void
 from utils.mail import cancel_member_added, enqueue_mail, forget_recipient, queue_member_added
 from utils.membership_lifecycle import Event, Status, next_state, state_of
 from utils.postal import (  # noqa: F401 — public helpers
@@ -580,6 +580,12 @@ def set_member_email(person, address, actor, *, by):
         holder = person.end_date is None and (person.role == "huvudmedlem" or person.user_id is not None)
         told, login_from = None, None
         if holder:
+            # Every address this change can touch, locked in one order before the previous ones are read: a clock
+            # restarted on an old address must not race another person reserving it as it stops counting.
+            rows = MemberPreviousAddress.select(MemberPreviousAddress.address)
+            lock_addresses(
+                [address, person.email, *(r.address for r in rows.where(MemberPreviousAddress.member == person.id))]
+            )
             reserve_login_address(address, person.id)
             now = datetime.now(timezone.utc)
             told, back = _keep_previous(person, address, actor, by, now)
