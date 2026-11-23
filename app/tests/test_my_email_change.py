@@ -76,7 +76,14 @@ class TestRequest(MyEmailTest):
         resp = self.patch_contact({"email": NEW})
         self.assertEqual(resp.status_code, 200, resp.data)
         self.assertTrue(resp.get_json()["email_code_sent"])
-        self.assertEqual((list(db.LoginCode.select()), self.code_mails()), ([], []))
+        self.assertEqual(self.code_mails(), [])
+        # It spends one of her five a day like a code that went: the limit tells her nothing either.
+        for n in range(4):
+            self.patch_contact({"email": f"egen{n}@example.org"})
+        self.assertEqual(len(self.code_mails()), 4)
+        self.patch_contact({"email": "egen5@example.org"})
+        self.assertEqual(len(self.code_mails()), 4)
+        self.assertEqual(self.verify(self.code()).status_code, 400)  # the sixth made no code either
 
     def test_no_code_without_link_secret_or_in_production_in_log_mode(self):
         with mock.patch.object(settings.mail, "link_secret", ""):

@@ -146,7 +146,7 @@ describe("KontaktClient", () => {
     fireEvent.click(screen.getByRole("button", { name: "Byt adress" }));
     await waitFor(() =>
       expect(screen.getByRole("status").textContent).toContain(
-        "E-postadressen är bytt",
+        "Nu är adressen bytt",
       ),
     );
     expect(verifyEmailCode).toHaveBeenCalledWith("0482 7195");

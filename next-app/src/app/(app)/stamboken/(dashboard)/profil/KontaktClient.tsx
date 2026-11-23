@@ -183,9 +183,8 @@ export function KontaktClient({
         {emailStep === "code" && (
           <div className={styles.form} style={{ marginTop: 16 }}>
             <p className={styles.note}>
-              Vi har skickat en kod till den nya e-postadressen. Skriv koden
-              här. Den gäller i tio minuter. Adressen byts när du har skrivit
-              koden.
+              Vi har skickat en kod till den nya adressen. Skriv in den här.
+              Koden gäller i tio minuter. Sedan byts din adress.
             </p>
             <div className={styles.field}>
               <label className="sb-label" htmlFor="kontakt-kod">
@@ -219,7 +218,7 @@ export function KontaktClient({
             role="status"
             style={{ marginTop: 16 }}
           >
-            E-postadressen är bytt. Du har loggats ut och behöver logga in igen.{" "}
+            Nu är adressen bytt. Du är utloggad och får logga in igen.{" "}
             <a href="/auth/sign-in?return_to=/stamboken/profil">Logga in</a>
           </div>
         )}
