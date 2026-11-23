@@ -115,6 +115,21 @@ class CodeLoginTest(MatrikelApiTest):
         self.user.add_role("matrikel_admin", None)
         self.assertEqual(self.client.get("/api/v2/members/me").status_code, 401)
 
+    def test_mass_logout_after_consumption_invalidates_direct_sign_in(self):
+        self.ask()
+        row = db.LoginCode.get()
+        establish = APP.extensions["establish_session"]
+
+        def logout_then_establish(*args, **kwargs):
+            self.assertIsNotNone(db.LoginCode.get_by_id(row.id).used_at)
+            da.mass_logout_sessions(da.session_redis, "test")
+            self.addCleanup(da.session_redis.decr, da.LOGOUT_EPOCH_KEY)
+            return establish(*args, **kwargs)
+
+        with mock.patch.dict(APP.extensions, establish_session=logout_then_establish):
+            self.assertEqual(self.redeem("/kod/verifiera", code=lc.code(row)).status_code, 200)
+        self.assertEqual(self.client.get("/api/user").status_code, 401)
+
     def test_ten_requests_per_source_including_misses(self):
         with mock.patch.object(limiter, "enabled", True):
             limiter.reset()

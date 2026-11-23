@@ -119,7 +119,7 @@ def _redeem(*, link, preview=False):
             person, user = _lock_for_detach(candidate.member_id)
         except LinkError:
             return _wrong()
-        pending_epoch = logout_epoch() if user is None and not preview else None
+        verified_epoch = logout_epoch() if not preview else None
         try:
             row = lc.check("login", browser, entered, person.id, link=link)
         except lc.CodeLoginClosed:
@@ -145,10 +145,10 @@ def _redeem(*, link, preview=False):
             return _wrong()
         generation = login_generation(user.uuid) if user else None
     if user is None:
-        start_pending(person, row, pending_epoch)
+        start_pending(person, row, verified_epoch)
         return jsonify(pending=True)
     session.clear()
-    current_app.extensions["establish_session"](user, "kod", generation)
+    current_app.extensions["establish_session"](user, "kod", generation, verified_epoch=verified_epoch)
     return jsonify(v2_prod_access=user.v2_promoted)
 
 
