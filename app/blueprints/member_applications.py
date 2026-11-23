@@ -16,14 +16,17 @@ from peewee import IntegrityError, fn
 # module-level DATABASE symbol directly will be None at call time.
 # Note: try_auto_link_member is NOT imported here. Auto-link only
 # happens in the OAuth callback (app/herdbook.py), never at approve time.
-from utils.database import BILLING_FIELDS, DB_PROXY, Genebank, Member, MemberApplication, Membership
+from utils.database import BILLING_FIELDS, DB_PROXY, Genebank, Member, MemberApplication
+from utils.mail import enqueue_mail, queue_application_mails
 from utils.matrikel import (
     AddressValidationError,
     allocate_member_number,
+    new_membership,
     normalize_postal_code,
     parse_billing_fields,
     write_matrikel_audit,
 )
+from utils.membership_lifecycle import Status
 
 from blueprints.common import (
     EMAIL_RE,
@@ -143,19 +146,21 @@ def create_application():
     # Membership is in the association, not a gene bank (Member Model v2).
     # A genebank_id key in the body is ignored; the column is dropped in
     # a later contract migration.
-    application = MemberApplication.create(
-        first_name=first_name,
-        last_name=last_name,
-        email=email,
-        phone=(body.get("phone") or "").strip() or None,
-        address=(body.get("address") or "").strip() or None,
-        postal_code=postal_code,
-        city=city,
-        **billing,
-        motivation=(body.get("motivation") or "").strip() or None,
-        gdpr_consented_at=datetime.now(),
-        status="pending",
-    )
+    with DB_PROXY.atomic():  # the application and its mails commit or roll back together
+        application = MemberApplication.create(
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
+            phone=(body.get("phone") or "").strip() or None,
+            address=(body.get("address") or "").strip() or None,
+            postal_code=postal_code,
+            city=city,
+            **billing,
+            motivation=(body.get("motivation") or "").strip() or None,
+            gdpr_consented_at=datetime.now(),
+            status="pending",
+        )
+        queue_application_mails(application.id, email)
 
     return (
         jsonify({"id": application.id, "status": application.status}),
@@ -274,9 +279,9 @@ def approve_application(app_id: int):
                     created_member_id=a.created_member_id,
                 )
 
-            membership = Membership.create(
+            membership = new_membership(
+                Status.ACTIVE,
                 member_number=allocate_member_number(),
-                membership_status="active",
                 address=a.address,
                 postal_code=a.postal_code,
                 city=a.city,
@@ -307,6 +312,13 @@ def approve_application(app_id: int):
                     "member_number": membership.member_number,
                     "person_id": member.id,
                 },
+            )
+            enqueue_mail(
+                "ansokan.godkand",
+                "member",
+                member.id,
+                {"member_id": member.id},
+                ref=("member_application", a.id),
             )
 
             # Member.user_id is intentionally left NULL. Per the auto-link

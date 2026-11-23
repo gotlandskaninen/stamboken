@@ -7,7 +7,7 @@
 ## Manual
 
 <!-- Stryk det som inte gäller. Varje användarvänd route måste ha ett avsnitt i
-docs/USER_MANUAL.md (scripts/check-manual-coverage.sh); ändrade knappar, fält
+next-app/public/stamboken/manual/USER_MANUAL.md (scripts/check-manual-coverage.sh); ändrade knappar, fält
 eller flöden kräver uppdaterad manualtext. -->
 
 Manual: ändrad / ingen användarvänd ändring

@@ -10,6 +10,7 @@ import base64
 import binascii
 import contextlib
 import datetime
+import fcntl
 import hashlib
 import logging
 import os
@@ -18,7 +19,6 @@ import sys
 import threading
 import time
 import uuid
-from logging.handlers import TimedRotatingFileHandler
 from urllib.parse import urlparse
 
 import apscheduler.schedulers.background
@@ -56,17 +56,9 @@ from utils.cert_acess import (
     download_certificate_s3,
     get_certificate,
     get_certificate_data,
-    sign_data,
-    upload_certificate,
     verify_certificate_checksum,
     verify_signature,
 )
-from utils.cert_service_v2 import (
-    certificate_form,
-    certificate_update,
-    update_breeding_if_changed,
-)
-from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
@@ -74,15 +66,26 @@ import utils.external_auth  # isort:skip
 import utils.data_access as da  # isort:skip
 import utils.database as db  # isort:skip
 import utils.settings as settings  # isort:skip
-import utils.genebank_logging as gblogging  # isort:skip
+from utils import app_logging  # isort:skip
 import utils.genetics_service as genetics  # isort:skip
 from utils import number_assets  # isort:skip
 from utils.individual_commands import purge_command_free_text  # isort:skip
+from utils.log_masking import TokenMaskFilter  # isort:skip
+from utils.mail import purge_old_mail, send_pending  # isort:skip
+from utils import inbox  # isort:skip
+from utils.inbox import queue_digests  # isort:skip
+from utils import inbox_gmail  # isort:skip
+from utils import inbox_purge  # isort:skip
+from utils.inbox_interpreter import interpret_next  # isort:skip
 from utils.members import try_auto_link_member  # isort:skip
-from utils.legacy_compat import is_legacy_host, legacy_classroom_url  # isort:skip
+from utils.legacy_compat import course_message, is_legacy_host, legacy_classroom_url, legacy_hosts, refusal  # isort:skip
 from utils.redis_retry import reconnect_on_drop  # isort:skip
 
 APP = Flask(__name__, static_folder="/static")
+app_logging.setup()  # before any APP.logger use, or Flask adds its own stderr handler
+# Link tokens are credentials: masked in every line, in Flask's "Exception on <path>" and in the path field.
+app_logging.HANDLER.addFilter(TokenMaskFilter())
+auth_log = logging.getLogger("herdbook.auth")
 
 
 def _resolve_secret_key() -> str:
@@ -124,6 +127,10 @@ UPLOAD_DIR = os.getenv("UPLOAD_FOLDER", "/app/uppladdningar")
 # string (e.g. a bare "GOOGLE_CLIENT_ID=" env line) must normalize to None:
 settings.refuse_committed_signing_key()
 settings.refuse_auto_validate_outside_demo()
+settings.refuse_unsafe_mail_settings()
+settings.refuse_unsafe_gmail_settings()
+settings.refuse_private_folder_under_uploads()
+settings.report_unwritable_private_folder()
 
 # verify_oauth2_token would otherwise enforce audience "" and fail every login.
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID") or None
@@ -208,6 +215,10 @@ from cli.breeding import breeding_cli  # noqa: E402
 
 APP.cli.add_command(breeding_cli)
 
+from cli.gmail import gmail_cli  # noqa: E402
+
+APP.cli.add_command(gmail_cli)
+
 
 @genetics_cli.command("recompute-history")
 @click.argument("genebank_id", type=int)
@@ -245,10 +256,100 @@ def _reconcile_all_history():
 
 
 def _purge_command_free_text():
-    """Nightly leader job (ADR-0017), built as _reconcile_all_history: it closes its thread's connection itself."""
+    """Nightly leader job (ADR-0017), built as _reconcile_all_history: it closes its thread's connection itself.
+
+    It purges the mail queue first, on its own, so neither purge failing skips the other."""
+    now = datetime.datetime.now(datetime.timezone.utc)
     try:
-        count = purge_command_free_text(datetime.datetime.now(datetime.timezone.utc))
+        try:
+            APP.logger.info("Purged %s mail queue rows", purge_old_mail(now))
+        except Exception:  # pylint: disable=broad-except
+            APP.logger.exception("Purging the mail queue failed")
+        count = purge_command_free_text(now)
         APP.logger.info("Purged free text from %s command log rows", count)
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _purge_inbox():
+    """Nightly leader job (docs/inkorg.md, "Gallring"), built as _send_mail: it closes its thread's connection.
+
+    Each rule runs on its own inside inbox_purge.run, so one failing does not skip the others."""
+    try:
+        inbox_purge.run(datetime.datetime.now(datetime.timezone.utc))
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("The inbox purge failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _send_mail():
+    """Leader job every 30 s (docs/mejl.md), built as _reconcile_all_history: it closes its thread's connection."""
+    try:
+        send_pending()
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Mail sender run failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _queue_notice_digests():
+    """Leader job at 07:00 (docs/inkorg.md), built as _send_mail: it closes its thread's connection."""
+    try:
+        APP.logger.info("Queued %s notice digests", queue_digests())
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Queueing the notice digests failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _read_gmail():
+    """Leader job every 5 minutes (docs/inkorg-gmail.md), built as _send_mail: it closes its thread's connection.
+
+    The app context is for the upload's image checks, which answer with Flask responses."""
+    try:
+        with APP.app_context():
+            inbox_gmail.run()
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Reading the Gmail mailbox failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _wake_waiting_items():
+    """Leader job every hour (docs/inkorg.md, "Väntar på förälder"), built as _send_mail: it closes its connection."""
+    try:
+        APP.logger.info("Woke %s inbox items waiting for a parent", inbox.wake_waiting())
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Waking the inbox items waiting for a parent failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _interpret_document():
+    """Leader job every minute (docs/inkorg.md, "Tolkning"), built as _send_mail: it closes its thread's connection."""
+    try:
+        interpret_next()
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Interpreting an inbox document failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _purge_audit_ip():
+    """Nightly leader job beside _purge_command_free_text: IP addresses leave audit_log after 12 months."""
+    try:
+        count = da.purge_audit_ip(datetime.datetime.now(datetime.timezone.utc))
+        APP.logger.info("Removed the IP address from %s audit log rows", count)
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _purge_member_applications():
+    """Nightly leader job beside _purge_audit_ip: applications that led to no membership go after 12 months."""
+    try:
+        count = da.purge_member_applications(datetime.datetime.now(datetime.timezone.utc))
+        APP.logger.info("Deleted %s member applications that led to no membership", count)
     finally:
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
@@ -289,17 +390,13 @@ limiter.init_app(APP)
 LOGIN_RATE_LIMIT = "5 per minute"
 LOGIN_RATE_SCOPE = "login"
 
-# pylint: disable=no-member
-APP.logger.setLevel(logging.INFO)
-file_handler = TimedRotatingFileHandler(f"{settings.service.logfolder}/APP.log", when="W6")
-file_handler.setLevel(logging.INFO)
-file_handler.setFormatter(
-    gblogging.RequestFormatter(
-        "[%(asctime)s] %(module)s.%(levelname)s: %(message)s, URL: %(url)s ",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-)
-APP.logger.addHandler(file_handler)
+APP.logger.info("ACCESS_RULES=%s, legacy hosts: %s", settings.service.access_rules, ", ".join(sorted(legacy_hosts())))
+if (
+    settings.service.access_rules == "off"
+    and os.getenv("FLASK_ENV") == "production"
+    and not settings.service.demo_instance
+):
+    APP.logger.warning("ACCESS_RULES is off in production: every logged-in account reaches every function")
 utils.external_auth.setup(APP)
 
 Session(APP)
@@ -402,6 +499,28 @@ def before_request():
             APP.logger.warning("Failed to set audit context", exc_info=True)
 
 
+@APP.before_request
+def enforce_access_rules():
+    """
+    The access rules (ACCESS_RULES, legacy_compat.refusal) for a logged-in
+    request. A 404, 405 or trailing-slash redirect has no endpoint and passes;
+    OPTIONS only lists the allowed methods.
+    """
+    if settings.service.access_rules != "enforce" or request.endpoint is None or request.method == "OPTIONS":
+        return None
+    if current_user.is_authenticated:
+        user = current_user
+    elif session.get("user_id"):
+        # The older routes read session["user_id"] without flask-login.
+        user = da.fetch_user_info(session["user_id"])
+    else:
+        user = None
+    message = refusal(request.endpoint, request.method, user) if user else None
+    if message:
+        return jsonify({"status": "error", "message": message}), 403
+    return None
+
+
 @APP.teardown_request
 def teardown_request(exc=None):
     """Clear audit session variables after each request."""
@@ -491,7 +610,7 @@ def load_user_from_request(request):
             return None
 
         if user:
-            APP.logger.info("User %s logged in from request header", user.username)
+            da.auth_log.info("Login ok: header, user id=%s", user.id)
 
             session["user_id"] = user.uuid
             session.modified = True
@@ -506,11 +625,18 @@ def load_user_from_request(request):
 
             return user
 
-        APP.logger.info("Failed login from header for %s", username)
         _login_rate_limit("hit")
 
     # we are not logged in.
     return None
+
+
+@APP.after_request
+def _log_denied(response):
+    if response.status_code in (403, 429):
+        # Only an already loaded user: current_user would run the loader again, and abort(429) in it raises here.
+        auth_log.info("Denied %s user id=%s", response.status_code, getattr(g.get("_login_user"), "id", None))
+    return response
 
 
 @APP.after_request
@@ -541,7 +667,7 @@ def _session_revoked():
     roles) is a stale or altered copy and must not grant production access.
     """
     if session.get("demo_login") and not settings.service.demo_instance:
-        APP.logger.warning("Refused a session minted by the demo API")
+        da.auth_log.warning("Refused a session minted by the demo API")
         return True
     return session.get("logout_epoch", 0) < _logout_epoch()
 
@@ -643,9 +769,9 @@ def user_profile():
                 try:
                     file.save(file_path)
                     profile_picture_url = unique_filename
-                    APP.logger.info(f"Profile picture uploaded: {unique_filename}")
+                    APP.logger.info("Profile picture uploaded")
                 except Exception as e:
-                    APP.logger.error(f"Error uploading file: {e}")
+                    APP.logger.error("Error uploading file: %s", type(e).__name__)  # e carries the path
                     return jsonify({"status": "error", "message": "Failed to upload image"})
 
         # Get settings from JSON or form data
@@ -674,7 +800,7 @@ def user_profile():
             return jsonify({"status": "updated", "message": "Profile updated successfully"})
 
         except Exception as e:
-            APP.logger.error(f"Error updating profile: {e}")
+            APP.logger.error("Error updating profile: %s", type(e).__name__)
             return jsonify({"status": "error", "message": "Failed to update profile"})
 
 
@@ -740,9 +866,9 @@ def manage_user(u_id):
             try:
                 file.save(file_path)
                 profile_picture_url = unique_filename  # Only filename, not full URL
-                APP.logger.info(f"Profile picture uploaded: {unique_filename}")
+                APP.logger.info("Profile picture uploaded")
             except Exception as e:
-                APP.logger.error(f"Error uploading file: {e}")
+                APP.logger.error("Error uploading file: %s", type(e).__name__)  # e carries the path
                 return jsonify({"status": "error", "message": "Failed to upload image"})
 
     # Get form data (could be JSON or form data depending on upload)
@@ -765,8 +891,12 @@ def manage_user(u_id):
         retval = da.get_user(u_id, session.get("user_id", None))
     if request.method in ("UPDATE", "PATCH"):
         retval = da.update_user(form, session.get("user_id", None))
+        if retval.get("status") == "updated":
+            auth_log.info("user updated actor=%s target=%s", current_user.id, form.get("id", u_id))
     if request.method == "POST":
         retval = da.add_user(form, session.get("user_id", None))
+        if retval.get("status") != "error":
+            auth_log.info("user created actor=%s", current_user.id)
     return jsonify(retval)
 
 
@@ -789,6 +919,8 @@ def change_userpassword(u_id):
     if not u_id:
         u_id = current_user.id
     retval = da.change_password(current_user, u_id, form)
+    if retval:
+        auth_log.info("password changed actor=%s target=%s", current_user.id, u_id)
     return jsonify(retval)
 
 
@@ -1254,9 +1386,8 @@ def login_handler():
         # EACH_REQUEST; the authenticated session is unaffected and the orphan
         # expires via TTL. Inherent to sid rotation (cf. Django cycle_key).
         APP.session_interface.regenerate(session)
-        APP.logger.info(f"Logging in user: {user.username} via the admin password interface")
+        da.auth_log.info("Login ok: password, user id=%s", user.id)
     else:
-        APP.logger.warning(f"User name {form.get('username')} is not able to login using admin interface ")
         if is_legacy_host():
             # Old contract: a failed login answered 200 with a null body.
             # Legacy's handleLogin treats any JSON body as a user, so the 401
@@ -1340,16 +1471,16 @@ def google_token_login():
         hosted_domain = idinfo.get("hd")
 
         if not email_verified:
-            APP.logger.warning(f"Google login attempt with unverified email: {email}")
+            da.auth_log.warning("Login refused: Google, e-mail not verified")
             return jsonify({"error": "Email not verified"}), 400
 
         # Check if user belongs to the required domain
         if hosted_domain != "gotlandskaninen.se":
-            APP.logger.warning(f"Google login attempt from unauthorized domain: {hosted_domain} ({email})")
+            da.auth_log.warning("Login refused: Google, domain")
             return jsonify({"error": "Access restricted to gotlandskaninen.se domain"}), 403
 
         if not email or not email.endswith("@gotlandskaninen.se"):
-            APP.logger.warning(f"Google login attempt from unauthorized email domain: {email}")
+            da.auth_log.warning("Login refused: Google, e-mail domain")
             return jsonify({"error": "Access restricted to gotlandskaninen.se domain"}), 403
 
         # Try to authenticate user with Google ID
@@ -1357,20 +1488,19 @@ def google_token_login():
 
         if user and not user.is_active:
             # Layer 2 — deactivated account may not log in via Google.
-            APP.logger.warning(f"Google login attempt for inactive account: {user.username or user.email}")
+            da.auth_log.warning("Login refused: Google, inactive account id=%s", user.id)
             return jsonify({"error": "Kontot är inaktiverat. Kontakta styrelsen."}), 403
 
         if user and not user.validated:
             if _should_auto_validate_users():
                 user.validated = True
                 user.save(only=[db.User.validated])  # see _GOOGLE_PROFILE_COLUMNS
-            else:
+            elif settings.service.access_rules != "enforce":
+                # The course belongs to the legacy frontend, and the access rules
+                # keep an unvalidated account out of it and off production; without
+                # them the course is the only gate a new account meets.
                 # 401, not 403: the Next.js caller maps 403 to the domain-restriction text.
-                msg = (
-                    f"Du behöver gå webbkursen och bli validerad först: {legacy_classroom_url()} "
-                    "Frågor: admin@gotlandskaninen.se"
-                )
-                return jsonify({"error": msg}), 401
+                return jsonify({"error": course_message()}), 401
 
         if user:
             # Update user with Google profile data in database
@@ -1386,7 +1516,7 @@ def google_token_login():
             session.modified = True
             login_user(user)
             APP.session_interface.regenerate(session)
-            APP.logger.info(f"Google login successful for user: {user.username} ({email})")
+            da.auth_log.info("Login ok: Google, user id=%s", user.id)
             # Phase 8: link a pre-provisioned Member to this OAuth-verified
             # user. get_user() re-fetches from the DB, so a newly granted
             # owner role is visible in this same response.
@@ -1394,15 +1524,15 @@ def google_token_login():
             return get_user()
         else:
             # User doesn't exist with this Google ID
-            APP.logger.warning(f"Google login failed - no user found for Google ID: {google_user_id} ({email})")
+            da.auth_log.warning("Login failed: Google, no such user")
             return jsonify({"error": "User not found or not authorized"}), 401
 
     except ValueError as e:
         # Invalid token
-        APP.logger.error(f"Invalid Google token: {str(e)}")
+        da.auth_log.error("Invalid Google token: %s", type(e).__name__)  # e carries the token text
         return jsonify({"error": "Invalid Google token"}), 401
     except Exception as e:
-        APP.logger.error(f"Google login error: {str(e)}")
+        da.auth_log.error("Google login error: %s", type(e).__name__)
         return jsonify({"error": "Authentication failed"}), 500
 
 
@@ -1448,15 +1578,7 @@ def external_login_handler(service):
             return _not_validated_response()
 
     if user and user.validated:
-        APP.logger.info(
-            "Logging in user %s (%s - #%d) by persistent id %s for service %s, refferrer is %s",
-            user.username,
-            user.email,
-            user.id,
-            persistent_id,
-            service,
-            request.referrer,
-        )
+        da.auth_log.info("Login ok: %s, user id=%s", service, user.id)
         _stamp_login()
         session["user_id"] = user.uuid
         session.modified = True
@@ -1509,63 +1631,52 @@ def external_login_handler(service):
         return None
 
     accountdetails = utils.external_auth.get_account_details(service)
-    APP.logger.debug(f"Got accountdetails {repr(accountdetails)}")
 
     # Auto-validate users in environments that opt in (e.g. api-test).
     auto_validate = _should_auto_validate_users()
 
-    user = da.register_user(
-        accountdetails["email"],
-        None,
-        username=accountdetails["username"],
-        validated=auto_validate,
-        fullname=accountdetails["fullname"] if "fullname" in accountdetails else None,
-        privileges=[
-            {"level": "viewer", "genebank": 1},
-            {"level": "viewer", "genebank": 2},
-        ],
-    )
+    # Only a brand-new account gets this Google identity, never one that already
+    # holds the address: anyone can set their own User.email to the address of
+    # a member who has not signed in yet and capture that login. The holder of
+    # an existing account signs in as usual and links Google there.
+    with db.DATABASE.atomic() as creation:
+        try:
+            user = da.register_user(
+                accountdetails["email"],
+                None,
+                username=accountdetails["username"],
+                validated=auto_validate,
+                fullname=accountdetails["fullname"] if "fullname" in accountdetails else None,
+                privileges=[
+                    {"level": "viewer", "genebank": 1},
+                    {"level": "viewer", "genebank": 2},
+                ],
+                adopt_existing=False,
+            )
+        except da.AddressInUseError as taken:
+            da.auth_log.warning("Refusing %s login: account #%d already holds the address", service, taken.user_id)
+            return (
+                "Det finns redan ett konto med den här e-postadressen. Logga in på det som vanligt och koppla "
+                "Google under ditt konto, eller kontakta admin@gotlandskaninen.se"
+            )
 
-    if not user:
-        APP.logger.error(
-            "Automatic registering of user with e-mail %s (persistent id %s) for service %s FAILED",
-            accountdetails["email"],
-            persistent_id,
-            service,
-        )
-        return None
+        if not user:
+            da.auth_log.error("Automatic registering of user for service %s FAILED", service)
+            return None
 
-    # register_user() adopts an existing account with this address. Never hand
-    # this Google identity to one that someone can already sign in to while no
-    # admin has validated it: anyone can set their own User.email to the address
-    # of a member who has not signed in yet (update_user then clears validated)
-    # and capture that login. Decided on the account register_user
-    # returned, so a concurrent email change cannot slip in between. A
-    # brand-new account has no authenticator yet and is linked as before.
-    if not user.validated and db.Authenticators.select().where(db.Authenticators.user == user.id).exists():
-        APP.logger.warning("Refusing to link %s to unvalidated existing user #%d", service, user.id)
-        return _not_validated_response()
+        linked = da.link_account(user, service, persistent_id)
 
-    linked = da.link_account(user, service, persistent_id)
-
-    if not linked:
-        APP.logger.error(
-            "Linked of of user with e-mail %s (persistent id %s) for service %s FAILED",
-            accountdetails["email"],
-            persistent_id,
-            service,
-        )
-        return None
+        if not linked:
+            # Without its identity the new account has no way in, and its address
+            # would refuse the next attempt.
+            creation.rollback()
+            da.auth_log.error("Linking user id=%s for service %s FAILED", user.id, service)
+            return "Inloggningen gick inte att slutföra. Försök igen, eller kontakta admin@gotlandskaninen.se", 500
 
     # google_email is the CMS identity; google_details() verified this address.
     db.User.update(google_email=accountdetails["email"]).where(db.User.id == user.id).execute()
 
-    APP.logger.info(
-        "Automatically registered user with e-mail %s (persistent id %s) for service %s",
-        persistent_id,
-        accountdetails["email"],
-        service,
-    )
+    da.auth_log.info("Automatically registered user id=%s for service %s", user.id, service)
 
     # If we got a herd from external, setup ownership
     if "herd" in accountdetails:
@@ -2096,7 +2207,7 @@ def testbreed():
     Requires authentication.
     """
     payload = request.json
-    APP.logger.info(f"Testbreed calculation input {payload}")
+    APP.logger.info("Testbreed calculation requested")
     try:
         genebank_id = int(payload.get("genebankId"))
         # Unregistered parents fall through to the snapshot of `genebank_id`, so gate it here.
@@ -2452,102 +2563,16 @@ def breeding_suggestions(g_id):
         return jsonify({"error": "Error calculating breeding suggestions"}), 500
 
 
-class _CertificateRefused(Exception):
-    """A refused legacy certificate request, raised inside its transaction so nothing commits."""
-
-    def __init__(self, message, result=None):
-        super().__init__(message)
-        # roster_alive_exceeds_6w: how many kits the breeder must mark dead (a new field, ADR-0006)
-        self.extra = {key: result[key] for key in ("must_mark_dead",) if key in (result or {})}
-
-
-def _sign_stored_certificate(ind_data, user_id, form, issue_digital=False):
-    """
-    Apply the certificate form, then sign and upload a PDF rendered from the re-read rabbit, all
-    in one transaction: a refused breeding or individual update, a failed signing or a
-    failed upload commits nothing, and the body never reaches the PDF or the S3 key.
-    Returns (signed pdf, re-read individual dict). Raises _CertificateRefused.
-    """
-    with db.DATABASE.atomic():
-        # Global lock order: Breeding, then the rabbit + the litter's parents (update_breeding locks them).
-        da.lock_individual_for_edit(ind_data["id"], None, with_parents=True)
-        # The route read the rabbit before the lock: a certificate issued by another route or a renumber
-        # committed since must not be overwritten by that read. Re-read it and decide on that row;
-        # update_individual re-checks the edit right and refuses a voided rabbit under this lock.
-        locked = db.Individual.get_by_id(ind_data["id"])
-        if issue_digital and (locked.certificate or locked.digital_certificate):
-            raise _CertificateRefused("Certificate already exists")
-        if not issue_digital and locked.digital_certificate is None:
-            raise _CertificateRefused("Certificate was not updated")
-        ind_data = locked.as_dict()
-        result = update_breeding_if_changed(ind_data, form, user_id)
-        if result and result.get("status") == "error":
-            raise _CertificateRefused(result["message"])
-        # update_individual also refuses a first certificate past the litter quota.
-        result = da.update_individual(certificate_update(ind_data, form), user_id, issue_digital=issue_digital)
-        if result.get("status") == "error":
-            raise _CertificateRefused(result["message"], result)
-        ind_data = da.get_individual(locked.number, user_id)
-        pdf_bytes = get_certificate(get_certificate_data(dict(ind_data), user_id))
-        signed_data = sign_data(pdf_bytes)
-        # The S3 key is the number: wait for a renumber still moving its assets (as a photo upload does).
-        number_assets.lock_number(ind_data["number"], xact=True)
-        if not upload_certificate(pdf_bytes=signed_data.getvalue(), ind_number=ind_data["number"]):
-            raise _CertificateRefused("Certificate could not be uploaded")
-    return signed_data, ind_data
+def _certificate_gone():
+    """Certificates are issued and changed in the new Stamboken only."""
+    return jsonify({"response": "Intyg utfärdas och ändras nu i nya Stamboken."}), 410
 
 
 @APP.route("/api/certificates/update/<i_number>", methods=["PATCH"])
 @login_required
 def update_certificate(i_number):
-    """
-    Returns an updated pdf of the individual given by `i_number`.
-    """
-    user_id = session.get("user_id", None)
-    ind_data = da.get_individual(i_number, user_id)
-    # get_individual currently returns a dict, not an individual
-    if ind_data is None:
-        return jsonify({"response": "Individual not found"}), 404
-    # Read access is not enough to sign; 404 is this route's refusal status.
-    if not da.fetch_user_info(user_id).can_edit(ind_data["id"]):
-        return jsonify({"response": "Forbidden"}), 404
-
-    certificate_exists = ind_data.get("digital_certificate", None)
-    uploaded = False
-
-    try:
-        present = check_certificate_s3(ind_number=ind_data["number"])
-        if certificate_exists and present:
-            signed_data, ind_data = _sign_stored_certificate(ind_data, user_id, certificate_form(request.json))
-            uploaded = True
-    except _CertificateRefused as exc:
-        return jsonify({"response": str(exc), **exc.extra}), 404
-    except da.HerdTrackingError as exc:  # e.g. the rabbit changed before the lock
-        return jsonify({"response": exc.detail}), 404
-    except HTTPException:
-        raise
-    except Exception as ex:  # pylint: disable=broad-except
-        APP.logger.error("Unexpected error while updating certificate: " + str(ex))
-        return jsonify({"response": "Error processing your request"}), 404
-
-    # Invalidate caches after certificate update
-    try:
-        from utils.cache_invalidation import get_genebank_id_for_herd, trigger_invalidation
-
-        origin_herd = ind_data.get("origin_herd", {})
-        herd_code = origin_herd.get("herd", "") if isinstance(origin_herd, dict) else str(origin_herd)
-        for gid in get_genebank_id_for_herd(herd_code):
-            trigger_invalidation(gid)
-    except Exception as e:
-        APP.logger.warning(f"Cache invalidation failed after update_certificate: {e}")
-
-    if uploaded:
-        return create_pdf_response(
-            pdf_bytes=signed_data.getvalue(),
-            obj_name=f"{ind_data['certificate']}.pdf",
-        )
-
-    return jsonify({"response": "Certificate was not updated"}), 404
+    """Gone: re-issuing a certificate is done in the new Stamboken."""
+    return _certificate_gone()
 
 
 @APP.route("/api/certificates/issue/<i_number>", methods=["GET", "POST"])
@@ -2556,6 +2581,9 @@ def issue_certificate(i_number):
     """
     Returns an issued pdf certificate of the individual given by `i_number`.
     """
+    if request.method == "POST":
+        return _certificate_gone()
+
     user_id = session.get("user_id", None)
     ind_data = da.get_individual(i_number, user_id)
     # get_individual currently returns a dict, not an individual
@@ -2563,7 +2591,6 @@ def issue_certificate(i_number):
         return jsonify({"response": "Individual not found"}), 404
 
     certificate_exists = ind_data.get("digital_certificate", None)
-    paper_certificate_exists = ind_data.get("certificate", None)
 
     if request.method == "GET":
         try:
@@ -2574,42 +2601,6 @@ def issue_certificate(i_number):
         except Exception as ex:  # pylint: disable=broad-except
             print(ex)
             return jsonify({"response": "Error processing your request"}), 400
-
-    elif request.method == "POST":
-        if certificate_exists or paper_certificate_exists:
-            return jsonify({"response": "Certificate already exists"}), 400
-        # Read access is not enough to sign; 400 is this route's refusal status.
-        if not da.fetch_user_info(user_id).can_edit(ind_data["id"]):
-            return jsonify({"response": "Forbidden"}), 400
-
-        try:
-            signed_data, ind_data = _sign_stored_certificate(
-                ind_data, user_id, certificate_form(request.json), issue_digital=True
-            )
-        except _CertificateRefused as exc:
-            return jsonify({"response": str(exc), **exc.extra}), 400
-        except da.HerdTrackingError as exc:  # e.g. the rabbit changed before the lock
-            return jsonify({"response": exc.detail}), 400
-        except HTTPException:
-            raise
-        except Exception as ex:  # pylint: disable=broad-except
-            print(ex)
-            return jsonify({"response": "Error processing your request"}), 400
-
-        # Invalidate caches after certificate issuance
-        try:
-            from utils.cache_invalidation import get_genebank_id_for_herd, trigger_invalidation
-
-            origin_herd = ind_data.get("origin_herd", {})
-            herd_code = origin_herd.get("herd", "") if isinstance(origin_herd, dict) else str(origin_herd)
-            for gid in get_genebank_id_for_herd(herd_code):
-                trigger_invalidation(gid)
-        except Exception as e:
-            APP.logger.warning(f"Cache invalidation failed after issue_certificate: {e}")
-
-        cert_number = ind_data["digital_certificate"]
-        APP.logger.info(f"Digital certificate for {ind_data['number']} was created with number {cert_number}")
-        return create_pdf_response(pdf_bytes=signed_data.getvalue(), obj_name=f"{cert_number}.pdf")
 
 
 @APP.route("/api/certificates/preview/<i_number>", methods=["POST", "GET"])
@@ -2857,8 +2848,9 @@ def _warm_genetics_in_background():
     threading.Thread(target=run, daemon=True, name="genetics-warmup").start()
 
 
-# Must match SCHEDULER_LOCK in gunicorn.conf.py (its on_starting hook removes a stale lock).
+# Must match SCHEDULER_LOCK in gunicorn.conf.py. The leader holds a flock on it for its lifetime.
 SCHEDULER_LOCK_PATH = "/tmp/herdbook_scheduler.lock"
+_SCHEDULER_LOCK_FD = None
 
 
 def initialize_app():
@@ -2900,10 +2892,16 @@ def initialize_app():
     _warm_genetics_in_background()
 
     # Only the scheduler leader runs debounce polling and the version poller.
-    # The lock file is cleaned by gunicorn's on_starting hook in gunicorn.conf.py.
+    # The leader keeps a flock on the lock file; the kernel releases it if the leader dies.
     try:
-        fd = os.open(SCHEDULER_LOCK_PATH, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-        os.close(fd)
+        global _SCHEDULER_LOCK_FD  # pylint: disable=global-statement
+        fd = os.open(SCHEDULER_LOCK_PATH, os.O_CREAT | os.O_WRONLY)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            raise FileExistsError(SCHEDULER_LOCK_PATH) from None
+        _SCHEDULER_LOCK_FD = fd
         scheduler = apscheduler.schedulers.background.BackgroundScheduler()
 
         # Poll debounce keys every 5s
@@ -2947,6 +2945,80 @@ def initialize_app():
             misfire_grace_time=3600,
         )
 
+        # The intake queue's retention (docs/inkorg.md, "Gallring"); idempotent, so a late leader still runs it.
+        scheduler.add_job(
+            _purge_inbox,
+            "cron",
+            hour=3,
+            minute=45,
+            id="inbox_purge",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        # Sends committed mail from the queue (docs/mejl.md); only the leader ever sends.
+        scheduler.add_job(
+            _send_mail,
+            trigger="interval",
+            seconds=30,
+            id="mail_send",
+            max_instances=1,
+            coalesce=True,
+        )
+
+        # The intake queue's daily digest of unread notices (docs/inkorg.md), category N in the mail queue.
+        scheduler.add_job(
+            _queue_notice_digests,
+            "cron",
+            hour=7,
+            id="notice_digest",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        scheduler.add_job(
+            _purge_audit_ip,
+            "cron",
+            hour=3,
+            minute=45,
+            id="audit_ip_purge",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        scheduler.add_job(
+            _purge_member_applications,
+            "cron",
+            hour=3,
+            minute=50,
+            id="member_application_purge",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        # Reads the association's mailbox into the intake queue (docs/inkorg-gmail.md); never on the demo.
+        if settings.gmail.mode == "on":
+            scheduler.add_job(
+                _read_gmail, trigger="interval", minutes=5, id="inbox_gmail", max_instances=1, coalesce=True
+            )
+        # Wakes the intake queue's items still waiting for a registered parent, which a save skipped as locked.
+        scheduler.add_job(
+            _wake_waiting_items, trigger="interval", hours=1, id="inbox_wake", max_instances=1, coalesce=True
+        )
+        # The image reading of photographed certificates, one document a run (docs/inkorg.md, "Tolkning").
+        scheduler.add_job(
+            _interpret_document,
+            trigger="interval",
+            minutes=1,
+            id="inbox_interpret",
+            max_instances=1,
+            coalesce=True,
+        )
+
         # Warm the shared genetics memo once at startup (workers only build their snapshots)
         scheduler.add_job(reload_genetics_caches, trigger="date", id="initial_warm", misfire_grace_time=None)
 
@@ -2954,11 +3026,6 @@ def initialize_app():
         APP.logger.info("Scheduler leader — started debounce polling + genetics version poller + memo warm")
     except FileExistsError:
         APP.logger.info("Another worker is scheduler leader, skipping scheduler start")
-
-    # Create loggers depending on Genbanks entry in database
-    with db.DATABASE.atomic():
-        for genebank in db.Genebank.select():
-            gblogging.create_genebank_logs(settings.service.logfolder, genebank.name)
 
 
 # Skip blocking startup code when running tests (pytest imports this module)
@@ -2993,7 +3060,12 @@ def get_yearly_reports(round_id, genebank_id):
 
         # Get the report round to include the year
         report_round = da.YearlyReportRound.get_by_id(round_id)
-        reports = da.get_yearly_reports(round_id, genebank_id)
+        reports = da.get_yearly_reports(
+            round_id,
+            genebank_id,
+            current_user.is_admin or current_user.is_matrikel_admin,
+            frozenset() if current_user.is_admin else current_user.effective_herd_ids(),
+        )
 
         return jsonify(
             {
@@ -3021,7 +3093,12 @@ def export_yearly_reports(round_id, genebank_id):
 
         # Get the report round to include the year in the filename
         report_round = da.YearlyReportRound.get_by_id(round_id)
-        csv_data = da.export_yearly_reports_csv(round_id, genebank_id)
+        csv_data = da.export_yearly_reports_csv(
+            round_id,
+            genebank_id,
+            current_user.is_admin or current_user.is_matrikel_admin,
+            frozenset() if current_user.is_admin else current_user.effective_herd_ids(),
+        )
 
         return Response(
             csv_data,

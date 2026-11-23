@@ -1,0 +1,57 @@
+.table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 14px;
+}
+.table th {
+  text-align: left;
+  font-family: var(--sb-mono);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--sb-ink-3);
+  padding: 9px 14px;
+  border-bottom: 1px solid var(--sb-line);
+}
+.table td {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--sb-line);
+  vertical-align: top;
+}
+.error {
+  max-width: 320px;
+  color: var(--sb-ink-3);
+}
+.date {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+/* Mobile first (ADR-0010): stacked cards below the table breakpoint. */
+@media (max-width: 719px) {
+  .table,
+  .table tbody,
+  .table tr,
+  .table td {
+    display: block;
+  }
+  .table thead {
+    display: none;
+  }
+  .table tr {
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--sb-line);
+  }
+  .table td {
+    border: 0;
+    padding: 2px 0;
+  }
+  .table td[data-label]::before {
+    content: attr(data-label) ": ";
+    color: var(--sb-ink-3);
+  }
+  .error {
+    max-width: none;
+  }
+}

@@ -177,20 +177,23 @@ jobs:
       - name: Checkout this repo (for build scripts)
         uses: actions/checkout@v6
 
-      - name: Checkout legacy frontend (production branch)
+      - name: Checkout legacy frontend (production + banner om nya Stamboken, legacy-PR #7 och #8)
         uses: actions/checkout@v6
         with:
           repository: gotlandskaninen/stamboken-legacy
           path: legacy-src
-          ref: 51fc2b03b426e2f715fb9140cad639b5f2ada45a
+          ref: a27b121c3ef30d02e3584fdcf53fc4788be706aa
           fetch-depth: 0
 
-      - name: Get latest legacy release tag
+      # Sidfoten visar Stambokens version och länkar till dess release
+      # (gotlandskaninen/stamboken/releases/tag/<version>), inte NBIS legacy-tagg.
+      - name: Stamboken release version
         id: legacy-version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          cd legacy-src
-          TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "unknown")
-          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          if [ "$REF_TYPE" = tag ]; then echo "version=$REF_NAME" >> "$GITHUB_OUTPUT"; else echo "version=main" >> "$GITHUB_OUTPUT"; fi
 
       - name: Update tags.json version
         uses: jossef/action-set-json-field@v2.1

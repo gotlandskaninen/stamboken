@@ -28,7 +28,6 @@ import herdbook  # noqa: E402
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
 from herdbook import APP  # noqa: E402
-from moto import mock_aws  # noqa: E402
 
 from tests.database_test import DatabaseTest  # noqa: E402
 from tests.ht_helpers import ht_row  # noqa: E402
@@ -579,133 +578,6 @@ class TestEndpoints(FlaskTest):
             for url in drop:
                 with self.subTest(drop=url):
                     self.assertEqual(herdbook._safe_redirect_url(url), "/")
-
-    @unittest.skip("Temporarily disabled: MuPDF PDF generation fails and corrupts test state")
-    def test_certificate_ops(self):
-        """
-        Checks that certificate endpoints issuing, updating and verifying work as intended.
-        """
-
-        individual = self.individuals[3].number
-        individual_2 = self.individuals[4].number
-
-        valid_issue_form = {
-            "color_id": 3,
-            "birth_date": datetime.now() - timedelta(days=30),
-            "litter_size": 5,
-            "litter_size6w": 4,
-        }
-        valid_update_form = {
-            "color_id": 2,
-            "birth_date": datetime.now() - timedelta(days=30),
-            "litter_size": 5,
-            "litter_size6w": 4,
-        }
-
-        mock = mock_aws()
-        mock.start()
-        self.addCleanup(mock.stop)  # Ensure mock is stopped even if test fails
-
-        # not logged in
-        self.assertEqual(self.app.post("/api/certificates/issue/{individual}").get_json(), None)
-        self.assertEqual(self.app.patch("/api/certificates/update/{individual}").get_json(), None)
-
-        with self.app as context:
-            # login
-            context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
-
-            # Issue a certificate
-            first_pdf_response = context.post(f"/api/certificates/issue/{individual}", json=valid_issue_form)
-            digital_certificate = db.Individual.get(self.individuals[3].id).digital_certificate
-            self.assertEqual(digital_certificate, 100000)
-            self.assertEqual(first_pdf_response.headers["Content-Type"], "application/pdf")
-            self.assertEqual(first_pdf_response.status_code, 200)
-
-            # Issue a second certificate
-            pdf_response = context.post(f"/api/certificates/issue/{individual_2}", json=valid_issue_form)
-            digital_certificate = db.Individual.get(self.individuals[4].id).digital_certificate
-            self.assertEqual(digital_certificate, 100001)
-            self.assertEqual(pdf_response.headers["Content-Type"], "application/pdf")
-            self.assertEqual(pdf_response.status_code, 200)
-
-            # Issue a certificate again
-            response = context.post(f"/api/certificates/issue/{individual_2}", json=valid_issue_form)
-            self.assertEqual(response.status_code, 400)
-
-            # Download a certificate
-            download_response = context.get(f"/api/certificates/issue/{individual}")
-            self.assertEqual(download_response.headers["Content-Type"], "application/pdf")
-            self.assertEqual(download_response.status_code, 200)
-            self.assertEqual(download_response.data, first_pdf_response.data)
-
-            # Download a certificate from a non-existing individual
-            download_response = context.get("/api/certificates/issue/doesnotexist")
-            self.assertEqual(download_response.status_code, 404)
-
-            # Update a certificate
-            pdf_response = context.patch(f"/api/certificates/update/{individual}", json=valid_update_form)
-            self.assertEqual(pdf_response.status_code, 200)
-            self.assertEqual(pdf_response.headers["Content-Type"], "application/pdf")
-            color = db.Individual.get(self.individuals[0].id).color.id
-            self.assertEqual(color, 1)
-
-            # Get the preview of a unsigned certificate
-            unsigned_response = context.get(f"/api/certificates/preview/{individual}")
-            self.assertEqual(unsigned_response.status_code, 200)
-            self.assertEqual(unsigned_response.headers["Content-Type"], "application/pdf")
-
-            unsigned_response = context.post(f"/api/certificates/preview/{individual}", json=valid_issue_form)
-            self.assertEqual(unsigned_response.status_code, 200)
-            self.assertEqual(unsigned_response.headers["Content-Type"], "application/pdf")
-            # Verify using an unsigned certificate
-            response = context.post(f"/api/certificates/verify/{individual}", data=unsigned_response.data)
-            self.assertEqual(response.status_code, 404)
-            self.assertEqual(
-                response.get_json(),
-                {"response": "The uploaded certificate is not valid"},
-            )
-
-            # Verify using some random data
-            response = context.post(f"/api/certificates/verify/{individual}", data=b"some random bytes")
-            self.assertEqual(response.status_code, 404)
-            self.assertEqual(
-                response.get_json(),
-                {"response": "The uploaded certificate is not valid"},
-            )
-
-            # Verify an old certificate
-            response = context.post(f"/api/certificates/verify/{individual}", data=first_pdf_response.data)
-            self.assertEqual(response.status_code, 202)
-
-            # Verify a valid certificate
-            response = context.post(f"/api/certificates/verify/{individual}", data=pdf_response.data)
-            self.assertEqual(response.status_code, 200)
-            self.assertEqual(response.get_json(), {"response": "Certificate is valid"})
-
-    def test_certificate_issue_without_signing_key_returns_503(self):
-        """When cert files are missing, issuing a certificate returns 503."""
-        from pathlib import Path
-        from unittest.mock import patch
-
-        import utils.settings as settings
-
-        individual = self.individuals[3].number
-        valid_issue_form = {
-            "color_id": 3,
-            "birth_date": datetime.now() - timedelta(days=30),
-            "litter_size": 5,
-            "litter_size6w": 4,
-        }
-
-        mock_s3 = mock_aws()
-        mock_s3.start()
-        self.addCleanup(mock_s3.stop)
-
-        with self.app as context:
-            context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
-            with patch.object(settings.certs, "private_key", Path("/nonexistent/key.pem")):
-                response = context.post(f"/api/certificates/issue/{individual}", json=valid_issue_form)
-            self.assertEqual(response.status_code, 503)
 
 
 class TestAPIEndpoints(FlaskTest):
@@ -1656,11 +1528,11 @@ class TestHerdPrivacyLevels(FlaskTest):
 
     def test_manager_and_admin_still_read_private_fields(self):
         g2 = self._g2_with_private_fields()
-        for user in (self.manager, self.admin):
+        for user, account in ((self.manager, "••45"), (self.admin, "1234-5")):  # manager: last two digits
             client = self.app.application.test_client(use_cookies=True)
             client.post("/api/login", json={"username": user.email, "password": "pass"})
             data = client.get(f"/api/herd/{g2.herd}").get_json()
-            self.assertEqual(data.get("bank_account_number"), "1234-5", user.email)
+            self.assertEqual(data.get("bank_account_number"), account, user.email)
             self.assertEqual(data.get("physical_address"), "Gatan 1", user.email)
 
     def test_owner_reads_own_private_fields_but_not_other_herds(self):

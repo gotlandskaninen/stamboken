@@ -120,6 +120,16 @@ echo "Source: $SOURCE_DB -> Target: $TARGET_DB"
 SOURCE_USERS=$(docker exec "$CONTAINER" psql -U "$DB_USER" -d "$SOURCE_DB" -tAc \
 	"SELECT count(*) FROM hbuser;")
 
+# The demo's own mail id sequence: the dump leaves the mail tables empty and carries no setval, so the new
+# database would count from 1 again and repeat Message-IDs (a pure function of the id) of mail already sent.
+# Read before the drop, set after the load. Empty when the database or the sequence does not exist yet.
+MAIL_SEQ_SQL="SELECT CASE WHEN to_regclass('mail_message_id_seq') IS NOT NULL THEN (SELECT last_value FROM mail_message_id_seq) END;"
+SET_MAIL_SEQ_SQL="SELECT CASE WHEN to_regclass('mail_message_id_seq') IS NOT NULL THEN setval('mail_message_id_seq', GREATEST(%s, (SELECT last_value FROM mail_message_id_seq))) END;"
+MAIL_SEQ=$(docker exec "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -tAc "$MAIL_SEQ_SQL" 2>/dev/null || true)
+if ! [[ "$MAIL_SEQ" =~ ^[0-9]+$ ]]; then
+	MAIL_SEQ=""
+fi
+
 # Recreate the target DB from scratch. Loading a --clean dump stream into a
 # non-empty database hits FK-ordering errors and silently drops rows (e.g.
 # hbuser) — demo is fully derived data, so dropping is safe. WITH (FORCE)
@@ -133,6 +143,11 @@ docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
 # Sync using pg_dump | psql (non-disruptive to source DB). The target is
 # empty, so no --clean is needed. Abort on the first SQL error — a silently
 # broken sync locks recently-registered users out of v2 (demo is the default).
+# The queue tables come over without their data: the demo API keeps running
+# through the load, and its sender must never see production's mail queue or
+# intake items, not even for a moment. A pattern that matches no table (an
+# older schema) is fine; notice_setting, a user preference, is copied.
+SKIP_QUEUE_DATA="--exclude-table-data='mail_*' --exclude-table-data='inbox_*' --exclude-table-data=notice --exclude-table-data='gmail_*'"
 echo "Syncing $SOURCE_DB -> $TARGET_DB via pg_dump..."
 # ON_ERROR_STOP=1 aborts psql on the first SQL error; the
 # outer set -Eeo pipefail then fires the ERR trap so the failure telemetry row
@@ -140,9 +155,14 @@ echo "Syncing $SOURCE_DB -> $TARGET_DB via pg_dump..."
 # record_sync_failure's detail.
 docker exec "$CONTAINER" bash -c "
 	set -o pipefail
-	pg_dump -U $DB_USER --no-owner --no-privileges $SOURCE_DB \
+	pg_dump -U $DB_USER --no-owner --no-privileges $SKIP_QUEUE_DATA $SOURCE_DB \
 	| psql -U $DB_USER -d $TARGET_DB -q -v ON_ERROR_STOP=1
 " 2>&1 | tee "${DUMP_LOG:-/dev/null}" | { grep -v '^$' || true; } | tail -5
+
+if [ -n "$MAIL_SEQ" ]; then
+	docker exec "$CONTAINER" psql -U "$DB_USER" -d "$TARGET_DB" -v ON_ERROR_STOP=1 -qtAc \
+		"${SET_MAIL_SEQ_SQL//%s/$MAIL_SEQ}" >/dev/null
+fi
 
 # The copy carries prod's genetics version counter, which can repeat a number
 # api-test already memoized in Redis for the previous demo data: a new epoch
