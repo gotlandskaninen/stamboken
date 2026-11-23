@@ -373,6 +373,8 @@
     "certificateDigital": "Digital",
     "certificateDigitalDisabled": "Verfügbar, sobald Zertifikat v2 aktiv ist",
     "certificateAttester": "Ihr Name steht auf der Bescheinigung als die Person, die sie bestätigt.",
+    "checkPageNameHint": "Sie haben noch nicht gewählt, ob Ihr Name auf der Prüfseite der Bescheinigung steht. Bis dahin steht dort Ihre Rolle, zum Beispiel „Uppfödaren“ (der Züchter).",
+    "checkPageNameHintLink": "Wählen Sie unter Mein Profil",
     "paperCertificateNumber": "Zertifikatsnummer",
     "save": "Registrieren",
     "saving": "Wird registriert...",

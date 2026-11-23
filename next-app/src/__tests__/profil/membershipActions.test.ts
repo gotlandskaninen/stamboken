@@ -25,12 +25,14 @@ import { revalidatePath } from "next/cache";
 import { fetchApi } from "@/lib/api";
 import {
   addMyPerson,
+  cancelEmailCode,
   createMyGrant,
   removeMyPerson,
   renewMyGrant,
   revokeMyGrant,
   updateConsent,
   updateContact,
+  verifyEmailCode,
 } from "@/app/(app)/stamboken/(dashboard)/profil/actions";
 
 const apiError = (detail: string) =>
@@ -148,13 +150,57 @@ describe("my-membership actions", () => {
       city: "Visby",
     };
     const result = await updateContact(patch);
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ ok: true, codeSent: false });
     expect(fetchApi).toHaveBeenCalledWith("/v2/members/me/contact", {
       method: "PATCH",
       body: JSON.stringify(patch),
       headers: { "Content-Type": "application/json" },
     });
     expect(revalidatePath).toHaveBeenCalledWith("/stamboken/profil");
+  });
+
+  it("updateContact says when a code went to a new address", async () => {
+    vi.mocked(fetchApi).mockResolvedValue({ email_code_sent: true });
+    expect(await updateContact({ email: "ny@example.org" })).toEqual({
+      ok: true,
+      codeSent: true,
+    });
+  });
+
+  it("updateContact passes on the test environment's refusal", async () => {
+    vi.mocked(fetchApi).mockResolvedValue({
+      email_code_sent: false,
+      email_refused: "E-postadressen kan inte bytas i testmiljön.",
+    });
+    expect(await updateContact({ email: "ny@example.org" })).toEqual({
+      ok: true,
+      codeSent: false,
+      emailRefused: "E-postadressen kan inte bytas i testmiljön.",
+    });
+  });
+
+  it("cancelEmailCode DELETEs the session's pending code", async () => {
+    vi.mocked(fetchApi).mockResolvedValue(undefined);
+    expect(await cancelEmailCode()).toEqual({ ok: true });
+    expect(fetchApi).toHaveBeenCalledWith("/v2/members/me/contact/kod", {
+      method: "DELETE",
+    });
+  });
+
+  it("verifyEmailCode POSTs the code and leaves the ended session alone", async () => {
+    vi.mocked(fetchApi).mockResolvedValue({});
+    expect(await verifyEmailCode("0482 7195")).toEqual({ ok: true });
+    expect(fetchApi).toHaveBeenCalledWith("/v2/members/me/contact/verifiera", {
+      method: "POST",
+      body: JSON.stringify({ code: "0482 7195" }),
+      headers: { "Content-Type": "application/json" },
+    });
+    expect(revalidatePath).not.toHaveBeenCalled();
+    vi.mocked(fetchApi).mockRejectedValue(apiError("Koden stämmer inte."));
+    expect(await verifyEmailCode("1")).toEqual({
+      ok: false,
+      error: "Koden stämmer inte.",
+    });
   });
 
   it("updateConsent PATCHes the partial consent body verbatim", async () => {

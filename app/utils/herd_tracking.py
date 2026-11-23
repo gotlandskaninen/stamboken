@@ -604,6 +604,36 @@ def _moves_across_genebanks(individual, before, after):
     )
 
 
+def sale_months(individual):
+    """
+    "YYYY-MM" of each change of holder for the public certificate check page (stamboken #6), read from the
+    corrected history (Jonas 2026-11-23): an active TRANSFER or CORRECTION to another herd in the same genebank as
+    the holder before it, or ADR-0016's resale to a new buyer within GX1/MX1. The holder is walked over the active
+    rows: a stored from_herd can name a row voided since. A move between genebanks (an admin's register fix), a row
+    without a receiving herd and a migrated row repeating the holder are no change of holder.
+    """
+    months, holder = [], individual.origin_herd
+    for r in _active_rows(individual.id):
+        if r.herd_id is None or r.kind not in HOLDER_CHANGING_KINDS:
+            continue
+        # ADR-0016's resale: a row within the GX1/MX1 holder that holds a buyer, or held one erased since.
+        resale = (
+            holder is not None
+            and r.herd_id == holder.id
+            and r.herd.herd in OUTSIDE_GENEBANK_HERDS
+            and (r.holder_contact_id is not None or r.buyer_removed)
+        )
+        if (
+            r.kind in ("TRANSFER", "CORRECTION")
+            and holder is not None
+            and (r.herd_id != holder.id or resale)
+            and r.herd.genebank_id == holder.genebank_id
+        ):
+            months.append(coerce_date(r.herd_tracking_date).strftime("%Y-%m"))
+        holder = r.herd
+    return months
+
+
 def void_denial(user, row, active_rows, individual, transfer_herd_ids=None):
     """The void permission table. None = allowed."""
     if row.kind == "BIRTH":

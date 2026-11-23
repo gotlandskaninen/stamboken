@@ -48,11 +48,36 @@ describe("flaskSessionStrategy", () => {
       email: "jonas.privat@example.se",
       google_email: "CMS-Admin@gotlandskaninen.se",
       validated: true,
+      auth_method: "google",
     });
     expect(find.mock.calls[0]?.[0].where).toEqual({
       email: { equals: CMS_ADMIN },
     });
     expect(user).toMatchObject({ id: 1, role: "admin", collection: "users" });
+  });
+});
+
+describe("flaskSessionStrategy and ALLOW_ROLE_PASSWORD_LOGIN", () => {
+  const passwordSession = {
+    id: 1,
+    google_email: CMS_ADMIN,
+    validated: true,
+    auth_method: "losenord",
+  };
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("admits a password session with the setting outside a production build", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("ALLOW_ROLE_PASSWORD_LOGIN", "true");
+    const { user } = await authenticateWith(passwordSession);
+    expect(user).toMatchObject({ id: 1, role: "admin" });
+  });
+
+  it("ignores the setting in a production build", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("ALLOW_ROLE_PASSWORD_LOGIN", "true");
+    const { user } = await authenticateWith(passwordSession);
+    expect(user).toBeNull();
   });
 });
 
@@ -89,6 +114,7 @@ describe("flaskSessionStrategy client address", () => {
               email: "editor@gotlandskaninen.se",
               google_email: "editor@gotlandskaninen.se",
               validated: true,
+              auth_method: "google",
             }),
             {
               status: 200,
@@ -139,6 +165,7 @@ async function authenticateCrossSite(headers: Record<string, string>) {
           email: R021_ADMIN_ROW.email,
           google_email: R021_ADMIN_ROW.email,
           validated: true,
+          auth_method: "google",
         }),
         { status: 200 },
       ),

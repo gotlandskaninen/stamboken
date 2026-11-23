@@ -18,6 +18,7 @@ export interface UserContext {
   google_email: string | null;
   use_google_picture: boolean;
   v2_prod_access: boolean;
+  name_on_check_page?: boolean | null; // set by the dashboard layout from production (stamboken #6); null = not chosen
 }
 
 const UserCtx = createContext<UserContext | null>(null);
@@ -36,4 +37,9 @@ export function useUser() {
   const ctx = useContext(UserCtx);
   if (!ctx) throw new Error("useUser must be used within UserProvider");
   return ctx;
+}
+
+/** The signed-in user, or null outside a UserProvider (shared components rendered without a session). */
+export function useOptionalUser() {
+  return useContext(UserCtx);
 }

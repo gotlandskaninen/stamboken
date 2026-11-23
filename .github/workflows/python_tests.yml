@@ -86,6 +86,7 @@ jobs:
             -e SECRET_KEY=dev-secret-do-not-use-in-prod \
             -e SESSION_REDIS_URL=redis://localhost:6379/2 \
             -e AUTHCONFIGFILE=/app/tests/auth.ini.test \
+            -e ALLOW_ROLE_PASSWORD_LOGIN=true \
             -e CI=true \
             -v "$PWD/nginx:/nginx:ro" \
             herdbook-api-test:latest \

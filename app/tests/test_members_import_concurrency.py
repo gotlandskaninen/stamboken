@@ -19,6 +19,7 @@ from cli.members import members_cli
 from click.testing import CliRunner
 from flask.cli import ScriptInfo
 from herdbook import APP
+from utils.login_code import AddressTaken
 
 from tests.database_test import _USE_POSTGRES, DatabaseTest
 from tests.test_members_import import HEADER, _row
@@ -164,8 +165,9 @@ class TestImportRaces(DatabaseTest):
             email="anna@example.com",
         )
         ms_id = ms.id
+        # Its own address: the group becomes a membership of its own, and one address has one holder.
         csv_path = self._csv_path(
-            HEADER + _row(nr="6", name="Anna Svensson", adress="Storgatan 1", epost="anna@example.com")
+            HEADER + _row(nr="6", name="Anna Svensson", adress="Storgatan 1", epost="anna.ny@example.com")
         )
 
         entered, release = threading.Event(), threading.Event()
@@ -210,8 +212,10 @@ class TestImportRaces(DatabaseTest):
         """The paused import has picked Eva Lund's number-less
         active membership for adoption. Before it is released the admin gives
         that membership number 77. The re-check on the locked row must refuse
-        the adoption — the CSV number must not overwrite an administrative one
-        — and the Nr 12 group is created as the new membership it now is."""
+        the adoption — the CSV number must not overwrite an administrative one.
+        The Nr 12 group would be a new membership, but its main member's
+        address is Eva Lund's login address: the group fails and nothing of it
+        is written."""
         ms = db.Membership.create(membership_status="active")
         db.Member.create(
             membership=ms,
@@ -248,17 +252,11 @@ class TestImportRaces(DatabaseTest):
         )
 
         self.assertEqual(failures, [])
-        self.assertEqual(results[0].exit_code, 0, results[0].output)
+        self.assertIn(f"Nr 12: {AddressTaken.title}", results[0].output)
         numbered = db.Membership.get_by_id(ms_id)
         self.assertEqual(numbered.member_number, 77)
         self.assertIsNone(numbered.payment_note)  # the Nr 12 group did not land here
-        created = db.Membership.get(db.Membership.member_number == 12)
-        self.assertNotEqual(created.id, ms_id)
-        self.assertEqual(created.payment_note, "2026")
-        self.assertEqual(
-            [p.role for p in db.Member.select().where(db.Member.membership == created)],
-            ["huvudmedlem"],
-        )
+        self.assertFalse(db.Membership.select().where(db.Membership.member_number == 12).exists())
 
     def _adoption_race(self, deactivate: bool):
         """Merge rule 2 (adoption): same race on the path that assigns the
