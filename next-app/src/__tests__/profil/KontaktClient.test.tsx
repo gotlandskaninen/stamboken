@@ -23,9 +23,11 @@ vi.mock("@/contexts/NotificationContext", () => ({
 vi.mock("@/app/(app)/stamboken/(dashboard)/profil/actions", () => ({
   updateContact: vi.fn(),
   verifyEmailCode: vi.fn(),
+  cancelEmailCode: vi.fn(),
 }));
 
 import {
+  cancelEmailCode,
   updateContact,
   verifyEmailCode,
 } from "@/app/(app)/stamboken/(dashboard)/profil/actions";
@@ -186,8 +188,10 @@ describe("KontaktClient", () => {
     await screen.findByLabelText("Kod");
     expect(screen.getByText(/ny@example\.org/)).toBeDefined();
     expect(email.disabled).toBe(true);
+    vi.mocked(cancelEmailCode).mockResolvedValue({ ok: true });
     fireEvent.click(screen.getByRole("button", { name: "Avbryt" }));
-    expect(screen.queryByLabelText("Kod")).toBeNull();
+    await waitFor(() => expect(cancelEmailCode).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByLabelText("Kod")).toBeNull());
     expect(email.disabled).toBe(false);
     expect(email.value).toBe(initial.email);
   });

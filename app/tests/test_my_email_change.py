@@ -219,6 +219,26 @@ class TestVerify(MyEmailTest):
         self.assertEqual(resp.status_code, 400, resp.data)
         self.assertEqual(self.email(), "a@example.org")
 
+    def cancel(self, client=None):
+        return (client or self.client).delete("/api/v2/members/me/contact/kod")
+
+    def test_cancelling_voids_the_code(self):
+        self.patch_contact({"email": NEW})
+        code = self.code()
+        self.assertEqual(self.cancel().status_code, 204)
+        self.assertEqual(self.verify(code).status_code, 400)
+        self.assertEqual(self.email(), "a@example.org")
+
+    def test_cancelling_leaves_a_newer_request_in_another_session(self):
+        self.patch_contact({"email": NEW})
+        other = APP.test_client(use_cookies=True)
+        other.post("/api/login", json={"username": "medlemmen", "password": "pass"})
+        self.patch_contact({"email": "annan@example.org"}, client=other)
+        newer = self.code()
+        self.assertEqual(self.cancel().status_code, 204)
+        self.assertEqual(self.verify(newer, client=other).status_code, 200)
+        self.assertEqual(self.email(), "annan@example.org")
+
     def test_a_session_revoked_meanwhile_cannot_finish_the_change(self):
         """Logga ut överallt while the request is past the code check: under the account's lock the session no
         longer holds, so nothing is written and the code is not used."""

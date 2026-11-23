@@ -103,6 +103,16 @@ export async function updateContact(patch: {
   }
 }
 
+// Avbryt: the session's pending code stops working on the server too.
+export async function cancelEmailCode(): Promise<Result> {
+  try {
+    await fetchApi("/v2/members/me/contact/kod", { method: "DELETE" });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: describe(err) };
+  }
+}
+
 // The change ends every session of the account, this one too: no revalidate,
 // the form asks the member to sign in again.
 export async function verifyEmailCode(code: string): Promise<Result> {

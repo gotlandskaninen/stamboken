@@ -25,6 +25,7 @@ import { revalidatePath } from "next/cache";
 import { fetchApi } from "@/lib/api";
 import {
   addMyPerson,
+  cancelEmailCode,
   createMyGrant,
   removeMyPerson,
   renewMyGrant,
@@ -175,6 +176,14 @@ describe("my-membership actions", () => {
       ok: true,
       codeSent: false,
       emailRefused: "E-postadressen kan inte bytas i testmiljön.",
+    });
+  });
+
+  it("cancelEmailCode DELETEs the session's pending code", async () => {
+    vi.mocked(fetchApi).mockResolvedValue(undefined);
+    expect(await cancelEmailCode()).toEqual({ ok: true });
+    expect(fetchApi).toHaveBeenCalledWith("/v2/members/me/contact/kod", {
+      method: "DELETE",
     });
   });
 

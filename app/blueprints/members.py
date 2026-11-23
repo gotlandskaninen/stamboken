@@ -23,6 +23,7 @@ from utils.login_code import (
     AddressTaken,
     CodeLoginClosed,
     CodeRefused,
+    cancel,
     check,
     consume,
     issue,
@@ -491,6 +492,14 @@ def _ask_for_code(m, address):
 
 def _wrong_code():
     return problem(400, "Koden stämmer inte", "Koden stämmer inte eller har gått ut. Be om en ny kod om det behövs.")
+
+
+@members_bp.route("/v2/members/me/contact/kod", methods=["DELETE"])
+@json_login_required
+def cancel_me_email():
+    """Avbryt: this session's pending code for a new address stops working. A request in another session stays."""
+    cancel(session.pop("login_request", None))
+    return "", 204
 
 
 @members_bp.route("/v2/members/me/contact/verifiera", methods=["POST"])

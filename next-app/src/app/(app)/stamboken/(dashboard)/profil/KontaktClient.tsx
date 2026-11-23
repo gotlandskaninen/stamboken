@@ -4,7 +4,7 @@ import { useState, useTransition } from "react";
 import { useSnackbar } from "@/components/SnackbarProvider";
 import { useNotifications } from "@/contexts/NotificationContext";
 import { formatPostalCode, isValidPostalCode } from "@/lib/postal";
-import { updateContact, verifyEmailCode } from "./actions";
+import { cancelEmailCode, updateContact, verifyEmailCode } from "./actions";
 import styles from "./profil.module.css";
 
 export type Contact = {
@@ -71,11 +71,17 @@ export function KontaktClient({
       }
     });
 
-  const cancel = () => {
-    setContact((c) => ({ ...c, email: initial.email }));
-    setCode("");
-    setEmailStep("none");
-  };
+  const cancel = () =>
+    start(async () => {
+      const result = await cancelEmailCode();
+      if (!result.ok) {
+        showSnackbar(result.error, "error");
+        return;
+      }
+      setContact((c) => ({ ...c, email: initial.email }));
+      setCode("");
+      setEmailStep("none");
+    });
 
   const verify = () =>
     start(async () => {
