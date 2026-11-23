@@ -943,15 +943,20 @@ def _plan_herd_links() -> tuple[list, list, int]:
     already: set[tuple[int, int]] = set()
     pairs: dict[tuple[int, int], list] = {}  # (main id, user id) -> [main, user, codes]
     possible: set[tuple[int, int]] = set()  # every name-matching owner: a counterpart, linked only through pairs
-    # Any herd stored on a membership, whatever its code: every person left in that membership with the
-    # owner's name is a counterpart too, the main member or not.
-    for herd in Herd.select().where(Herd.membership.is_null(False)):
-        for person in Member.select().where(Member.membership == herd.membership_id, Member.end_date.is_null(True)):
+    # Counterparts are counted in one place and before anything is filtered or sorted out: for every herd row
+    # that has an owner, whatever its code, genebank or state, every person left in the membership the row is
+    # stored on, and in the one its code's number names, who has an owner's name.
+    for herd in Herd.select():
+        herd_owners = owners.get(herd.id)
+        if not herd_owners:
+            continue
+        number = re.fullmatch(r"[^0-9]*([1-9][0-9]*)", herd.herd or "")  # a leading zero names no membership
+        named = memberships.get(int(number.group(1))) if number else None
+        behind = {herd.membership_id, getattr(named, "id", None)} - {None}
+        for person in Member.select().where(Member.membership.in_(behind), Member.end_date.is_null(True)):
             wanted = _norm_name(f"{person.first_name} {person.last_name}")
             possible |= {
-                (person.id, uid)
-                for uid, u in owners.get(herd.id, {}).items()
-                if wanted and _norm_name(u.fullname) == wanted
+                (person.id, uid) for uid, u in herd_owners.items() if wanted and _norm_name(u.fullname) == wanted
             }
     for code in sorted(herds_by_code, key=lambda c: (int(c[1:]), c[0])):
         herds = herds_by_code[code]
@@ -966,16 +971,6 @@ def _plan_herd_links() -> tuple[list, list, int]:
                 .where(Member.membership == membership, Member.role == "huvudmedlem", Member.end_date.is_null(True))
                 .first()
             )
-
-        if active:
-            # Decided before anything is sorted out: whatever else is wrong with the herd or the account, every
-            # person left in the membership the code names who has an owner's name is a possible counterpart,
-            # also when the herd is not tied to that membership.
-            for person in Member.select().where(Member.membership == membership, Member.end_date.is_null(True)):
-                wanted = _norm_name(f"{person.first_name} {person.last_name}")
-                possible |= {
-                    (person.id, uid) for uid, u in owner_users.items() if wanted and _norm_name(u.fullname) == wanted
-                }
 
         if len(herds) > 1:
             listed.append(([code], "flera besättningar har samma kod"))
