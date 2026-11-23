@@ -150,13 +150,25 @@ suite with the rules enforced.
 ### Sessions
 
 Every login goes through `establish_session` (`app/herdbook.py`). It stamps
-the session with how it signed in, `auth_method` (`google` or `losenord`,
+the session with how it signed in, `auth_method` (`google`, `losenord` or `kod`,
 also in `/api/user`), and with the account's mark: a random value per account
 in the sessions' Redis, `generation:<uuid>` beside `logout-epoch`. A session
 is valid only while its mark is the account's, and an account without a mark
 has no valid session. The one-request session of Basic auth is not checked,
 and it has no mark: a password change, a reset or the removal of a Google
 login through Basic auth is refused.
+
+Email code sign-in is off by default. Set `KODINLOGGNING=true` in the primary
+API environment once the member registry has been imported and linked. Publish
+the account rules at `/kontoregler` in the CMS before enabling first sign-in.
+The API uses `NEXT_INTERNAL_ORIGIN` to check the published revision again when
+the member accepts it.
+
+An existing account signs in immediately. A main member without an account has
+15 minutes to accept the rules. The API creates the account in production and
+records the time and CMS revision. New accounts start in demo after the next
+nightly copy. Set `SJALVSKAPAT_KONTO_PROD=true` to give newly created accounts
+production access immediately. Both settings default to false.
 
 The mark is replaced, which ends every session of the account on both APIs,
 when the account is deactivated (activating it again brings none back), when
