@@ -53,6 +53,8 @@ Regler för dagligt arbete:
 
 1. **Nya Stamboken först.** En funktion stängs i gamla appen först när samma
    användare kan göra samma sak i nya Stamboken. PR:en som stänger säger var.
+   Nya Stamboken får inte själv använda vägen som stängs. Den får först en
+   egen väg ([ADR-0006](0006-api-compatibility-during-migration.md), regel 3).
 2. **En stängd skrivväg svarar 410 Gone** med en svensk text som säger var
    funktionen finns nu, till exempel "Intyg utfärdas och ändras nu i nya
    Stamboken.". Svaret har samma form som gamla appen redan visar för fel på
@@ -62,7 +64,9 @@ Regler för dagligt arbete:
    så att det inte avslöjar något.
 4. **Stäng i routen**, inte i funktionen under den. Nya Stambokens vägar som
    anropar samma funktion ska fortsätta fungera. Till exempel anropar
-   `PATCH /api/v2/herd/<herd_id>` också `update_herd`.
+   `PATCH /api/v2/herd/<herd_id>` också `update_herd`. Stäng bara de metoder
+   som gamla appen använder: `PATCH /api/manage/herd/<h_ref>` delar adress med
+   gamla appens väg men används bara av nya Stambokens admin.
 5. **Läsvägarna behåller formatet** (ADR-0006, regel 1). De får hämta data ur
    nya källor, till exempel matrikeln, men lämnar dem i samma fält.
 6. **Gamla appen visar en banner** där funktionen fanns, med en länk till nya
