@@ -645,11 +645,15 @@ def _keep_previous(person, address, actor, by, now):
 
 
 def purge_previous_addresses(now):
-    """Nightly: previous addresses past their purge_at go, and the mail queue forgets where their mails went."""
-    gone = MemberPreviousAddress.delete().where(MemberPreviousAddress.purge_at < now)
-    ids = [row.id for row in gone.returning(MemberPreviousAddress.id).execute()]
-    for row_id in ids:
-        forget_recipient("member_previous_address", row_id)
+    """
+    Nightly: previous addresses past their purge_at go, and the mail queue forgets where their mails went, in one
+    transaction, so an interrupted run leaves nothing half done and the next one finishes it.
+    """
+    with DB_PROXY.atomic():
+        gone = MemberPreviousAddress.delete().where(MemberPreviousAddress.purge_at < now)
+        ids = [row.id for row in gone.returning(MemberPreviousAddress.id).execute()]
+        for row_id in ids:
+            forget_recipient("member_previous_address", row_id)
     return len(ids)
 
 

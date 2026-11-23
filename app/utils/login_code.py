@@ -193,11 +193,15 @@ def expire(now):
 
 
 def purge(now):
-    """Nightly: rows older than KEPT go, and the mail queue forgets where their mails went."""
-    gone = LoginCode.delete().where(LoginCode.created_at < now - KEPT).returning(LoginCode.id).execute()
-    ids = [row.id for row in gone]
-    for row_id in ids:
-        forget_recipient("login_code", row_id)
+    """
+    Nightly: rows older than KEPT go, and the mail queue forgets where their mails went, in one transaction, so an
+    interrupted run leaves nothing half done and the next one finishes it. At most AN_HOUR * 24 rows a day.
+    """
+    with DB_PROXY.atomic():
+        gone = LoginCode.delete().where(LoginCode.created_at < now - KEPT).returning(LoginCode.id).execute()
+        ids = [row.id for row in gone]
+        for row_id in ids:
+            forget_recipient("login_code", row_id)
     return len(ids)
 
 

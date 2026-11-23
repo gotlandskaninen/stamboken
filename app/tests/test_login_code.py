@@ -265,6 +265,20 @@ class TestPurge(LoginCodeTest):
         queued = db.MailMessage.get_by_id(mail_id)
         self.assertEqual((queued.address_hash, queued.dedupe_key), (None, None))
 
+    def test_an_interrupted_purge_leaves_nothing_half_done(self):
+        """Deleting a row and forgetting its mail's address are one step: a purge that fails between them is run
+        again and finishes, and no address hash is left in the queue for a row that is gone."""
+        old = self.issue()
+        db.LoginCode.update(created_at=self.now - timedelta(days=2)).where(db.LoginCode.id == old.id).execute()
+        mail_id = mail.enqueue_mail("konto.kod", "login_code", old.id, {"code_id": old.id})
+        db.MailMessage.update(status="sent", address_hash="hash").where(db.MailMessage.id == mail_id).execute()
+        with mock.patch.object(lc, "forget_recipient", side_effect=RuntimeError("database gone")):
+            with self.assertRaises(RuntimeError):
+                lc.purge(self.now)
+        self.assertTrue(db.LoginCode.select().where(db.LoginCode.id == old.id).exists())
+        self.assertEqual(lc.purge(self.now), 1)
+        self.assertIsNone(db.MailMessage.get_by_id(mail_id).address_hash)
+
     def test_an_expired_code_keeps_no_new_address(self):
         old, new = self.issue(browser="w1"), self.issue(browser="w2")
         db.LoginCode.update(created_at=self.now - timedelta(minutes=10)).where(db.LoginCode.id == old.id).execute()

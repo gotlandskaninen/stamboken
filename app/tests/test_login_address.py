@@ -342,6 +342,16 @@ class TestSevenDays(SevenDaysTest):
         self.assertFalse(db.MemberPreviousAddress.select().exists())
         self.assertIsNone(db.MailMessage.get_by_id(mail_id).address_hash)
 
+    def test_an_interrupted_purge_of_previous_addresses_leaves_nothing_half_done(self):
+        self.change("b@example.org", "matrikel")
+        (row,) = db.MemberPreviousAddress.select()
+        later = row.purge_at + timedelta(seconds=1)
+        with mock.patch.object(matrikel, "forget_recipient", side_effect=RuntimeError("database gone")):
+            with self.assertRaises(RuntimeError):
+                matrikel.purge_previous_addresses(later)
+        self.assertTrue(db.MemberPreviousAddress.select().exists())
+        self.assertEqual(matrikel.purge_previous_addresses(later), 1)
+
 
 class TestHolderAgain(SevenDaysTest):
     """A person who holds addresses again holds every one that still counts, the previous ones too."""
