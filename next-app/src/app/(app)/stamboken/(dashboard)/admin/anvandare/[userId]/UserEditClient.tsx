@@ -397,8 +397,9 @@ export function UserEditClient({
                   label="Webbkurs genomförd (validerad)"
                 />
                 <div className={styles["ad-switch-hint"]}>
-                  Endast information för administratörer — ger inte användaren
-                  några behörigheter.
+                  Behövs inte i nya Stamboken i produktion. Krävs för gamla
+                  Stamboken och för redaktörernas inloggning i hemsidans
+                  redigering.
                 </div>
               </div>
               <div>
