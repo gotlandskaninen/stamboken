@@ -941,11 +941,17 @@ def _plan_herd_links() -> tuple[list, list, int]:
     possible: set[tuple[int, int]] = set()  # every name-matching owner: a counterpart, linked only through pairs
     # Any herd stored on a membership, whatever its code: that membership's main member is a counterpart too.
     for herd in Herd.select().where(Herd.membership.is_null(False)):
-        stored = Member.select().where(
-            Member.membership == herd.membership_id, Member.role == "huvudmedlem", Member.end_date.is_null(True)
-        ).first()
+        stored = (
+            Member.select()
+            .where(Member.membership == herd.membership_id, Member.role == "huvudmedlem", Member.end_date.is_null(True))
+            .first()
+        )
         wanted = _norm_name(f"{stored.first_name} {stored.last_name}") if stored else ""
-        possible |= {(stored.id, uid) for uid, u in owners.get(herd.id, {}).items() if wanted and _norm_name(u.fullname) == wanted}
+        possible |= {
+            (stored.id, uid)
+            for uid, u in owners.get(herd.id, {}).items()
+            if wanted and _norm_name(u.fullname) == wanted
+        }
     for code in sorted(herds_by_code, key=lambda c: (int(c[1:]), c[0])):
         herds = herds_by_code[code]
         owner_users = {uid: u for h in herds for uid, u in owners.get(h.id, {}).items()}
@@ -974,10 +980,10 @@ def _plan_herd_links() -> tuple[list, list, int]:
             listed.append(([code], "besättningen tillhör ett annat medlemskap"))
         elif not active:
             if owner_users and not_inactive:
-                listed.append(([code], "inget aktivt medlemskap har det numret, kontot förblir okopplat"))
+                listed.append(([code], "inget aktivt medlemskap har det numret"))
         elif main is None:
             if owner_users and not_inactive:
-                listed.append(([code], "medlemskapet har ingen kvarvarande huvudmedlem, kontot förblir okopplat"))
+                listed.append(([code], "medlemskapet har ingen kvarvarande huvudmedlem"))
         elif not owner_users:
             listed.append(([code], "inget konto har rollen ägare på besättningen"))
         elif len(owner_users) > 1:

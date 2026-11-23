@@ -33,7 +33,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         )
 
     def _plan_value(self):
-        match = re.search(r"Kontrollvärde: ([0-9a-f]{16})", self._run().output)
+        match = re.search(r"^Kontrollvärde: ([0-9a-f]{16})$", self._run().output, re.M)
         return match.group(1)
 
     def _apply(self, plan=None):
@@ -753,3 +753,16 @@ class TestMembersLinkByHerd(DatabaseTest):
             self.assertIn("flera möjliga kopplingar", result.output)
         self.assertIsNone(self._linked_user_id(p1))
         self.assertIsNone(self._linked_user_id(p2))
+
+    def test_checksum_covers_the_labels(self):
+        _, person = self._membership(901)
+        user = self._account(owns=self._herd("G901"))
+        stale = self._plan_value()
+        user.email = "andrad@example.org"
+        user.save()
+
+        result = self._apply(stale)
+
+        self.assertNotEqual(result.exit_code, 0, result.output)
+        self.assertIsNone(self._linked_user_id(person))
+        self.assertEqual(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_user_linked").count(), 0)
