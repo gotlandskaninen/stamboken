@@ -11,6 +11,18 @@ const LOGGED_OUT = { cookies: [], origins: [] };
 
 const dialog = (page: Page) => page.getByRole("dialog", { name: TITLE });
 
+// The Next.js dev indicator sits over the footer at 375 px and takes the
+// clicks (as in e2e/manual/screenshots.spec.ts); it never ships.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => {
+    document.addEventListener("DOMContentLoaded", () => {
+      const style = document.createElement("style");
+      style.textContent = "nextjs-portal { display: none !important; }";
+      document.head.append(style);
+    });
+  });
+});
+
 async function noHorizontalScroll(page: Page) {
   const overflow = await page.evaluate(
     () => document.documentElement.scrollWidth > window.innerWidth,
@@ -22,7 +34,8 @@ async function fillIn(
   page: Page,
   typ: "Något fungerar inte" | "Jag önskar något",
 ) {
-  await dialog(page).getByText(typ).click();
+  // The radio covers its label (a large tap target), so it takes the click.
+  await dialog(page).getByRole("radio", { name: typ }).check();
   await dialog(page)
     .getByLabel("Beskriv med egna ord")
     .fill("Knappen gör inget när jag trycker på den.");
@@ -135,7 +148,7 @@ test.describe("Tyck till, inloggad", () => {
       .getByRole("button", { name: "Tyck till" })
       .click();
     await fillIn(page, "Jag önskar något");
-    await dialog(page).getByText("Alla", { exact: true }).click();
+    await dialog(page).getByRole("radio", { name: /^Alla/ }).check();
     await dialog(page).getByRole("button", { name: "Skicka" }).click();
     await expect(
       dialog(page).getByRole("link", { name: "Se ärendet" }),
