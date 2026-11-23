@@ -1129,6 +1129,22 @@ class TestPaginatedIndividuals(FlaskTest):
             dates = [i["birth_date"] or "" for i in data["items"]]
             self.assertEqual(dates, sorted(dates))
 
+    def test_sort_by_birth_date_desc_puts_missing_dates_last(self):
+        """Newest first (the list's default); rabbits without a birth date last."""
+        for idx, birth in enumerate([datetime(2022, 2, 1), datetime(2023, 2, 1), None]):
+            breeding = db.Breeding.create(birth_date=birth, breeding_herd_id=self.herds[0])
+            db.Individual.create(
+                origin_herd=self.herds[0],
+                breeding=breeding,
+                number=f"G1-ND{idx}",
+            )
+
+        with self.app as ctx:
+            self._login(ctx, self.admin)
+            resp = ctx.get("/api/individuals?sort=birth_date&order=desc&search=G1-ND")
+            numbers = [i["number"] for i in resp.get_json()["items"]]
+            self.assertEqual(numbers, ["G1-ND1", "G1-ND0", "G1-ND2"])
+
     def test_access_control_viewer_sees_own_genebank_only(self):
         with self.app as ctx:
             self._login(ctx, self.viewer)

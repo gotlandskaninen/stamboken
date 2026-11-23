@@ -9,9 +9,19 @@ export default async function AllaKaninerPage() {
   // Auth handled by dashboard layout's requireUser()
   // fetchApi<T> throws on error — caught by error.tsx boundary
   let initialData: PaginatedIndividualsResponse | null = null;
+  let initialGenebank = 0;
   try {
+    const { genebanks } = await fetchApi<{
+      genebanks: { id: number }[] | null;
+    }>("/genebanks");
+    const ids = (genebanks ?? []).map((g) => g.id);
+    // Gotlandskanin (1) first, else the member's only genebank
+    initialGenebank = ids.includes(1) ? 1 : (ids[0] ?? 0);
+    const genebankParam = initialGenebank
+      ? `&genebank_id=${initialGenebank}`
+      : "";
     initialData = await fetchApi<PaginatedIndividualsResponse>(
-      `/individuals?page=1&per_page=${DEFAULT_PAGE_SIZE}&sort=name&order=asc`,
+      `/individuals?page=1&per_page=${DEFAULT_PAGE_SIZE}&sort=birth_date&order=desc&status=active${genebankParam}`,
     );
   } catch (e) {
     // If server-side fetch fails (e.g. API down), render with no initial data.
@@ -19,5 +29,13 @@ export default async function AllaKaninerPage() {
     console.error("SSR fetch failed for /api/individuals:", e);
   }
 
-  return <RabbitExplorer initialData={initialData} />;
+  return (
+    // key: a mode switch (router.refresh) with other genebank access must
+    // reset the selected genebank together with the rows
+    <RabbitExplorer
+      key={initialGenebank}
+      initialData={initialData}
+      initialGenebank={initialGenebank}
+    />
+  );
 }

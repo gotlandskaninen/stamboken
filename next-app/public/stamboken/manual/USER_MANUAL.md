@@ -649,9 +649,13 @@ inte hittas".
 
 <!-- route: /stamboken/alla-kaniner -->
 
-Sök bland alla kaniner i genbankerna du har tillgång till. Välj ras med **Alla**,
-**Gotlandskanin** eller **Mellerudskanin**, sök i sökfältet och filtrera på **Status**
-(Aktiv, Inaktiv, Död, Slaktad, Avlivad, Försvunnen) och **Kön**. På datorn visas en
+Sök bland alla kaniner i genbankerna du har tillgång till. Listan öppnas med
+**Gotlandskanin** och status **Aktiv**, och den nyast födda kaninen står först. Föder du
+upp mellerudskaniner, klicka **Mellerudskanin**. Välj ras med **Gotlandskanin**,
+**Mellerudskanin** eller **Alla**, sök i sökfältet och filtrera på **Status** (Alla,
+Aktiv, Inaktiv, Död, Slaktad, Avlivad, Försvunnen) och **Kön**. Sökningen gäller bara
+den ras och status du har valt. Välj **Alla** under **Status** för att hitta en kanin
+som är såld, död eller inaktiv. På datorn visas en
 tabell med kolumnerna **Individnummer**, **Namn**, **Kön**, **Födelsedatum**, **Status**,
 **Besättning**, **Kullstorlek**, **Mor**, **Far** och **Färg**; **Kolumner** väljer
 vilka som syns. På mobilen är det en lista med **Visa fler** längst ned. Klicka en rad
@@ -744,7 +748,8 @@ rättelser, ändringshistorik, genetiksidan och delar av adminpanelen.
 
 ### Rätta en kanin i en annan besättning
 
-1. Sök upp kaninen i **Alla kaniner** och öppna dess sida.
+1. Sök upp kaninen i **Alla kaniner** och öppna dess sida. Är kaninen inte aktiv,
+   välj **Alla** under **Status** först.
 2. Klicka **Redigera**, ändra och klicka **Spara**.
 
 Samma knappar som uppfödaren har: **Fler åtgärder** ger dig **Rapportera död** och
