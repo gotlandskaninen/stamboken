@@ -21,6 +21,11 @@
     "matrikel": "Mitgliederverzeichnis",
     "medlemsstatistik": "Statistik"
   },
+  "coat": {
+    "label": "Fell",
+    "normal": "Normal",
+    "rex": "Rex"
+  },
   "explorer": {
     "title": "Alle Kaninchen",
     "subtitle": "Alle Kaninchen in der Genbank durchsuchen",
@@ -138,6 +143,14 @@
       "summaryTo": "Nach",
       "summaryDate": "Datum",
       "summaryOutside": "Das Kaninchen verlässt die Genbank.",
+      "buyerName": "Name des Käufers",
+      "buyerTown": "Ort",
+      "buyerContactConsent": "Der Käufer hat ja angekreuzt: Der Verein darf E-Mail und Telefon speichern, solange der Käufer das Kaninchen hat",
+      "buyerMembershipOptin": "Der Käufer hat ja angekreuzt: Der Verein darf den Käufer wegen einer Mitgliedschaft kontaktieren",
+      "buyerAddress": "Postanschrift",
+      "buyerEmail": "E-Mail",
+      "buyerPhone": "Telefon",
+      "buyerNote": "Gib dem Käufer den Übertragungsnachweis. Darauf stehen die Informationen des Vereins für den Käufer.",
       "acknowledge": "Ich habe die Informationen gelesen und möchte das Kaninchen aus meiner Herde entfernen.",
       "lockNote": "Nach dem Umzug kannst du das Kaninchen nicht mehr bearbeiten oder digitale Zertifikate dafür ausstellen und aktualisieren.",
       "confirmButton": "Umzug bestätigen",
@@ -365,6 +378,7 @@
     "certificatePaper": "Papier",
     "certificateDigital": "Digital",
     "certificateDigitalDisabled": "Verfügbar, sobald Zertifikat v2 aktiv ist",
+    "certificateAttester": "Ihr Name steht auf der Bescheinigung als die Person, die sie bestätigt.",
     "paperCertificateNumber": "Zertifikatsnummer",
     "save": "Registrieren",
     "saving": "Wird registriert...",

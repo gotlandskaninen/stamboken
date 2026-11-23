@@ -38,9 +38,11 @@ _ATLAS = {(id_, code, name) for id_, code, name, _ in ATLAS_FARGER}
 # individual belongs to. The reason text mentions the specific genebank for
 # traceability, but the contact info is the association's single address.
 _ASSOCIATION_CONTACT = "admin@gotlandskaninen.se"
-_GENEBANK_TO_BREED = {
+_GENEBANK_TO_BREED = {  # the short names, and the full ones that `flask seed create` gives the genebanks
     "Gotland": "Gotlandskanin",
     "Mellerud": "Mellerudskanin",
+    "Gotlandskanin": "Gotlandskanin",
+    "Mellerudskanin": "Mellerudskanin",
 }
 
 
@@ -76,10 +78,10 @@ def build_cert_data(individual, ind_data, user_id):
     raw_color_note = ind_data.get("color_note") or ""
 
     cert_data = get_certificate_data(ind_data, user_id)
-    # The breeder attests: the origin herd's holder and number, not the user who issues it or the herd the rabbit
-    # is in now, which after a sale is the buyer's or GX1/MX1 (board 2026-10-25 §10).
+    # The person who issues attests personally: "fullname" stays the issuing user's from get_certificate_data, not
+    # the herd holder's, so a family member or caretaker signs in her own name (Jonas 2026-11-23). The herd is the
+    # origin herd, not the one the rabbit is in now, which after a sale is the buyer's or GX1/MX1.
     breeder = individual.origin_herd
-    cert_data["fullname"] = (breeder.name or breeder.herd_name or "") if breeder else ""
     cert_data["herd"] = breeder.herd if breeder else ""
     cert_data["notes"] = raw_notes
     cert_data["color_note"] = raw_color_note

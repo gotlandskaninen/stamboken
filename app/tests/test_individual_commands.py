@@ -91,6 +91,12 @@ class IndividualTest(DatabaseTest):
     # self.individuals[0] = G1-2111 (paper certificate "12"), [3] = G1-2112 (no certificate), both in G1,
     # the owner's herd; [2] and [4] are in M3 (Mellerud).
 
+    def _id(self, number):
+        return db.Individual.get(db.Individual.number == number).id
+
+    def _herd_id(self, code):
+        return db.Herd.get(db.Herd.herd == code).id
+
     def setUp(self):
         super().setUp()
         self.ind = self.individuals[3]
@@ -384,6 +390,16 @@ class TestEditDescription(IndividualTest):
         self.assertEqual(self._refusal(owner, EditDescription({"notes": "x"})).envelope, FORBIDDEN)
         self._run(self.manager, EditDescription({"notes": "av manager"}))
         self.assertEqual(self._stored().notes, "av manager")
+
+    def test_edit_description_rex(self):
+        """rex is a description field: stored, and the command log has the change."""
+        self._run(self.owner, EditDescription({"rex": True}))
+        self.assertTrue(self._stored().rex)
+        entry = db.IndividualCommand.get(
+            db.IndividualCommand.individual == self.ind.id, db.IndividualCommand.command == "EditDescription"
+        )
+        self.assertEqual(entry.before, {"rex": False})
+        self.assertEqual(entry.after, {"rex": True})
 
     def test_unknown_color_message(self):
         refusal = self._refusal(self.owner, EditDescription({"color": "finns-inte"}))
@@ -683,9 +699,10 @@ class TestTransferIndividual(IndividualTest):
         self.assertEqual(self._transfers(), [("M3", "Felregistrerad")])
         self.assertEqual(
             logs.output,
-            [
-                f"WARNING:herdbook.da:Genebank change by admin {self.admin.id}: G1-2112 "
-                "from Gotland (G1) to Mellerud (M3)"
+            [  # ids only: the reason is free text
+                f"WARNING:herdbook.da:Genebank change by admin user {self.admin.id}: individual {self._id('G1-2112')} "
+                f"from herd {self._herd_id('G1')} (genebank {self.genebanks[0].id}) to herd {self._herd_id('M3')} "
+                f"(genebank {self.genebanks[1].id})"
             ],
         )
 
@@ -693,6 +710,14 @@ class TestTransferIndividual(IndividualTest):
         refusal = self._refusal(self.admin, TransferIndividual("M3", "2021-06-01"), error=HerdTrackingInvalid)
         self.assertEqual((refusal.status, refusal.detail), (400, "Ange en anledning."))
         self.assertEqual(self._transfers(), [])
+
+    def test_a_sale_outside_needs_its_buyer_but_the_legacy_form_cannot_send_one(self):
+        db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        refusal = self._refusal(self.owner, TransferIndividual("GX1", "2021-06-01"), error=HerdTrackingInvalid)
+        self.assertEqual(refusal.status, 400)
+        self.assertEqual(self._transfers(), [])
+        self._run(self.owner, TransferIndividual("GX1", "2021-06-01", legacy=True))
+        self.assertEqual(self._transfers(), [("GX1", None)])
 
     def test_owner_refused_from_outside_genebank(self):
         """The owner of GX1 has no Entry there: the shared guard refuses before apply; a manager moves it back."""
@@ -1056,9 +1081,10 @@ class TestChangeOriginHerd(IndividualTest):
             self._change(self._name(self.admin), "M3", reason=" Felregistrerad ")
         self.assertEqual(
             logs.output,
-            [
-                f"WARNING:herdbook.da:Genebank change by admin {self.admin.id}: G1-2113 "
-                "from Gotland (G1) to Mellerud (M3)"
+            [  # ids only: the reason is free text
+                f"WARNING:herdbook.da:Genebank change by admin user {self.admin.id}: individual {self._id('G1-2113')} "
+                f"from herd {self._herd_id('G1')} (genebank {self.genebanks[0].id}) to herd {self._herd_id('M3')} "
+                f"(genebank {self.genebanks[1].id})"
             ],
         )
         self.assertEqual(self._origin(), "M3")
@@ -1261,6 +1287,12 @@ class TestLegacyAdapter(IndividualTest, FlaskTest):
         response = self._client(self.owner).patch("/api/individual", json=self._body(number=other.number))
         self.assertEqual((response.status_code, response.get_json()), (200, error("Individual number already exists")))
         self.assertEqual((self._stored().number, self._stored(other).number), ("G1-2112", "G1-2111"))
+
+    def test_legacy_patch_never_changes_rex(self):
+        db.Individual.update(rex=True).where(db.Individual.id == self.ind.id).execute()
+        response = self._client(self.owner).patch("/api/individual", json=self._body(notes="ny", rex=False))
+        self.assertEqual((response.status_code, response.get_json()["status"]), (200, "success"))
+        self.assertEqual((self._stored().notes, self._stored().rex), ("ny", True))
 
     def test_numeric_certificate_echo_is_a_collision(self):
         """IR-49: 12 for the stored "12" is no AssignPaperCertificate, but LegacyFormChecks compares it raw."""

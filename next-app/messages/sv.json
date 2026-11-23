@@ -22,6 +22,11 @@
     "matrikel": "Matrikel",
     "medlemsstatistik": "Statistik"
   },
+  "coat": {
+    "label": "Päls",
+    "normal": "Normal",
+    "rex": "Rex"
+  },
   "explorer": {
     "title": "Alla kaniner",
     "subtitle": "Utforska alla kaniner i genbanken",
@@ -141,6 +146,14 @@
       "summaryTo": "Till",
       "summaryDate": "Datum",
       "summaryOutside": "Kaninen lämnar genbanken.",
+      "buyerName": "Köparens namn",
+      "buyerTown": "Ort",
+      "buyerContactConsent": "Köparen har kryssat ja: föreningen får spara e-post och telefon så länge köparen har kaninen",
+      "buyerMembershipOptin": "Köparen har kryssat ja: föreningen får kontakta köparen om medlemskap",
+      "buyerAddress": "Postadress",
+      "buyerEmail": "E-post",
+      "buyerPhone": "Telefon",
+      "buyerNote": "Ge köparen överlåtelsebeviset. Där står föreningens information till köparen.",
       "acknowledge": "Jag har tagit del av informationen och vill ta bort kaninen från min besättning.",
       "lockNote": "Efter försäljningen kan du inte längre ändra uppgifterna om kaninen eller utfärda och uppdatera digitala intyg för den.",
       "confirmButton": "Bekräfta försäljning",
@@ -368,6 +381,7 @@
     "certificatePaper": "Papper",
     "certificateDigital": "Digitalt",
     "certificateDigitalDisabled": "Kommer när digitala intyg är aktiverade",
+    "certificateAttester": "Ditt namn står som intygare på intyget.",
     "paperCertificateNumber": "Intygsnummer",
     "save": "Registrera",
     "saving": "Registrerar...",

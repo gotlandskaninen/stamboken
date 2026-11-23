@@ -446,6 +446,23 @@ class TestUpdateIndividualV2(DatabaseTest):
         self.assertIn("genebank_id", data)
         self.assertEqual(data["number"], number)
 
+    def test_patch_rex_typ(self):
+        """rex must be a real boolean, checked before unchanged fields are dropped; false is really stored."""
+        self.login("admin", "pass")
+        number = self.client.get("/api/individuals?per_page=1").get_json()["items"][0]["number"]
+        url = f"/api/individual/{number}"
+        for bad in (None, 0, 1, "false", "ja"):
+            with self.subTest(rex=bad):
+                response = self.client.patch(url, json={"rex": bad})
+                self.assertEqual(response.status_code, 400)
+                self.assertIn("rex", response.get_json()["detail"])
+        self.assertFalse(db.Individual.get(db.Individual.number == number).rex)
+        for value in (True, False):
+            response = self.client.patch(url, json={"rex": value})
+            self.assertEqual(response.status_code, 200, response.get_json())
+            self.assertIs(response.get_json()["rex"], value)
+            self.assertIs(db.Individual.get(db.Individual.number == number).rex, value)
+
     def test_patch_null_clears_death_fields(self):
         """PATCH with null death_date/death_note clears them (undo death)."""
         self.login("admin", "pass")

@@ -38,7 +38,7 @@ from utils.individual_number_v2 import (
 )
 
 from .bunny_v2 import MIN_PROMOTE_AGE_DAYS, _apply_certificate, certificate_choice_problem
-from .common import json_login_required, problem
+from .common import json_login_required, problem, rex_problem
 
 logger = logging.getLogger(__name__)
 
@@ -107,6 +107,9 @@ def register_individual(form, may_register=None, created=None):
         except (TypeError, ValueError):
             return problem(400, "Bad Request", "litter_size6w must be an integer")
 
+    if refusal := rex_problem(form):
+        return refusal
+
     name = form.get("name")
     if name is not None and (not isinstance(name, str) or len(name) > 50):
         return problem(400, "Bad Request", "name must be a string of at most 50 characters")
@@ -167,6 +170,7 @@ def register_individual(form, may_register=None, created=None):
                 claw_color=form.get("claw_color"),
                 belly_color=form.get("belly_color"),
                 hair_notes=form.get("hair_notes"),
+                rex=form.get("rex", False),
                 paper_certificate=paper_certificate,
                 signature=current_user,
             )
@@ -309,7 +313,7 @@ def import_individual():
 
     Required body fields: ``herd`` (string), ``birth_date`` (YYYY-MM-DD).
     Optional: ``number``, ``sex``, ``color``, ``name``, ``color_note``,
-    ``eye_color``, ``claw_color``, ``belly_color``, ``hair_notes``.
+    ``eye_color``, ``claw_color``, ``belly_color``, ``hair_notes``, ``rex`` (boolean).
     """
     form = request.get_json(silent=True)
     if not form or not isinstance(form, dict):
@@ -347,6 +351,9 @@ def import_individual():
         or parse_number(provided_number) is None
     ):
         return problem(422, "Unprocessable Entity", f"number must match {herd.herd}-<digits> (max 20 characters)")
+
+    if refusal := rex_problem(form):
+        return refusal
 
     sex = form.get("sex")
     color_name = form.get("color")
@@ -412,6 +419,7 @@ def import_individual():
                     claw_color=form.get("claw_color"),
                     belly_color=form.get("belly_color"),
                     hair_notes=form.get("hair_notes"),
+                    rex=form.get("rex", False),
                     is_active=True,
                 )
                 if color_name:
@@ -434,6 +442,7 @@ def import_individual():
                     claw_color=form.get("claw_color"),
                     belly_color=form.get("belly_color"),
                     hair_notes=form.get("hair_notes"),
+                    rex=form.get("rex", False),
                     signature=current_user,
                 )
     except RosterActionError as e:

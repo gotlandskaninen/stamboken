@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import type { SaleBuyer } from "@/components/individual/BuyerFields";
 import { fetchApi, ApiError } from "@/lib/api";
 import type { InboxDocument, InboxItem, Problem, Rect } from "./lib";
 
@@ -159,7 +160,12 @@ export async function saveCertificate(
 export async function registerSale(
   id: number,
   doc: number,
-  payload: { individual: string; herd: string; date: string },
+  payload: {
+    individual: string;
+    herd: string;
+    date: string;
+    buyer?: SaleBuyer;
+  },
 ) {
   if (!isId(id) || !isId(doc)) return refused("Ogiltigt dokument.");
   return call<DocResult>(id, `/${id}/dokument/${doc}/overlat`, "POST", payload);
@@ -196,6 +202,25 @@ export type RegistryRabbit = {
   mother: { number: string; name: string | null } | null;
   father: { number: string; name: string | null } | null;
 };
+
+/** An active move of a rabbit, and its buyer outside the association: there, none, or removed (never asked again). */
+export type RegistrySale = {
+  herd: string;
+  date: string | null;
+  kind: string;
+  buyer: "present" | "none" | "removed";
+};
+
+/** The rabbit's active sales, read through the queue item (helpers too); an error when it cannot be read. */
+export async function rabbitSales(id: number, number: string) {
+  if (!isId(id) || !/^[A-Za-z]+\d+-\d{4,}$/.test(number.trim()))
+    return refused("Ogiltigt individnummer.");
+  return call<{ sales: RegistrySale[] }>(
+    null,
+    `/${id}/kanin/${encodeURIComponent(number.trim().toUpperCase())}/forsaljningar`,
+    "GET",
+  );
+}
 
 /** The registry's record of a parent, to compare with the photo; null when not found. */
 export async function lookupRabbit(

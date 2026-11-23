@@ -931,6 +931,18 @@ class TestPaginatedIndividuals(FlaskTest):
             item = data["items"][0]
             self.assertEqual(item["herd"], self.herds[0].herd)
 
+    def test_lista_filter_rex(self):
+        db.Individual.update(rex=True).where(db.Individual.id == self.individuals[0].id).execute()
+        with self.app as ctx:
+            self._login(ctx, self.admin)
+            both = ctx.get("/api/individuals?per_page=200").get_json()
+            only = ctx.get("/api/individuals?per_page=200&rex=TRUE").get_json()
+            other = ctx.get("/api/individuals?per_page=200&rex=nej").get_json()
+        self.assertEqual([i["number"] for i in only["items"]], [self.individuals[0].number])
+        self.assertEqual(only["total_count"], 1)
+        self.assertGreater(both["total_count"], 1)
+        self.assertEqual(other["total_count"], both["total_count"])
+
     def test_pagination_page_and_total(self):
         with self.app as ctx:
             self._login(ctx, self.admin)

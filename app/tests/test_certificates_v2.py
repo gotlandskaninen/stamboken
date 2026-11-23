@@ -229,6 +229,9 @@ class TestPedigreeTemplateV2(unittest.TestCase):
         html = self._html(digital_certificate="345", doc_hash_stub="ABCD1234")
         self.assertIn("Genbanksintyg 345 · ABCD1234 · ", html)
 
+    def test_attester_row_names_the_issuer(self):
+        self.assertIn('Intygas av</td><td class="sv">Anna Exempel<', self._html(fullname="Anna Exempel"))
+
     def test_unknown_parent_has_no_stray_dash(self):
         html = self._html(F_genebank_number=None, F_genebank_aki=None)
         self.assertNotIn("\u2014-", html)
@@ -243,7 +246,10 @@ class TestBuildCertData(unittest.TestCase):
 
         ind = SimpleNamespace(
             origin_herd=SimpleNamespace(
-                genebank=SimpleNamespace(name="Mellerud"), name="Uppfödare", herd_name=None, herd="M12"
+                genebank=SimpleNamespace(name="Mellerud"),
+                name="Uppfödare",
+                herd_name=None,
+                herd="M12",
             ),
             microchip="752098100012345",
             color=None,
@@ -254,13 +260,17 @@ class TestBuildCertData(unittest.TestCase):
         with patch("utils.cert_service_v2.get_certificate_data", return_value=current):
             data = build_cert_data(ind, {}, 1)
         self.assertEqual(data["breed"], "Mellerudskanin")
-        # The breeder attests, with the origin herd, not the issuing user or the current (buyer's) herd
-        self.assertEqual(data["fullname"], "Uppfödare")
+        # The issuing person attests in her own name, with the origin herd, not the current (buyer's) herd
+        self.assertEqual(data["fullname"], "Den som utfärdar")
         self.assertEqual(data["herd"], "M12")
         self.assertEqual(data["microchip"], "752098100012345")
         ind.microchip = None
         with patch("utils.cert_service_v2.get_certificate_data", return_value={}):
             self.assertEqual(build_cert_data(ind, {}, 1)["microchip"], "")
+        for name, breed in (("Gotlandskanin", "Gotlandskanin"), ("Mellerudskanin", "Mellerudskanin")):
+            ind.origin_herd.genebank.name = name  # the names `flask seed create` gives the genebanks
+            with patch("utils.cert_service_v2.get_certificate_data", return_value={}):
+                self.assertEqual(build_cert_data(ind, {}, 1)["breed"], breed)
 
 
 class TestSignPdf(unittest.TestCase):

@@ -76,8 +76,10 @@ from utils import inbox  # isort:skip
 from utils.inbox import queue_digests  # isort:skip
 from utils import inbox_gmail  # isort:skip
 from utils import inbox_purge  # isort:skip
+from utils import buyer_contact  # isort:skip
 from utils.inbox_interpreter import interpret_next  # isort:skip
 from utils.members import try_auto_link_member  # isort:skip
+from utils.matrikel import anonymize_ended_persons  # isort:skip
 from utils.legacy_compat import course_message, is_legacy_host, legacy_classroom_url, legacy_hosts, refusal  # isort:skip
 from utils.redis_retry import reconnect_on_drop  # isort:skip
 
@@ -283,6 +285,16 @@ def _purge_inbox():
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
 
+def _purge_buyer_contacts():
+    """Nightly leader job (ADR-0016), built as _purge_inbox: it closes its thread's connection itself."""
+    try:
+        buyer_contact.run(datetime.datetime.now(datetime.timezone.utc))
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("The buyer purge failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
 def _send_mail():
     """Leader job every 30 s (docs/mejl.md), built as _reconcile_all_history: it closes its thread's connection."""
     try:
@@ -341,6 +353,31 @@ def _purge_audit_ip():
     try:
         count = da.purge_audit_ip(datetime.datetime.now(datetime.timezone.utc))
         APP.logger.info("Removed the IP address from %s audit log rows", count)
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _purge_member_applications():
+    """Nightly leader job beside _purge_audit_ip: applications that led to no membership go after 12 months."""
+    try:
+        count = da.purge_member_applications(datetime.datetime.now(datetime.timezone.utc))
+        APP.logger.info("Deleted %s member applications that led to no membership", count)
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _anonymize_ended_persons():
+    """Nightly leader job beside _purge_audit_ip (#70): persons ended 12 months ago are anonymized."""
+    try:
+        count, failed, held = anonymize_ended_persons(datetime.datetime.now(datetime.timezone.utc))
+        APP.logger.info(
+            "Anonymized %s persons ended 12 months ago, %s memberships failed, %s left for the administrator",
+            count,
+            failed,
+            len(held),
+        )
+        for membership_id, person_id, reason in held:  # ids only, never names: the system administrator decides
+            APP.logger.info("Not anonymized: membership=%s person=%s reason=%s", membership_id, person_id, reason)
     finally:
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
@@ -1863,8 +1900,9 @@ def edit_individual():
     retval = None
     try:
         if request.method == "PATCH":
-            retval = da.update_individual(
-                form, session.get("user_id", None), genebank_change_reason=da.LEGACY_GENEBANK_CHANGE_NOTE
+            form.pop("rex", None)  # the old app's stale full-object PATCH must never reset the coat
+            retval = da.update_individual(  # the legacy form has no buyer fields (ADR-0016)
+                form, session.get("user_id", None), genebank_change_reason=da.LEGACY_GENEBANK_CHANGE_NOTE, legacy=True
             )
         if request.method == "POST":
             retval = da.add_individual(form, session.get("user_id", None))
@@ -2948,6 +2986,18 @@ def initialize_app():
             misfire_grace_time=3600,
         )
 
+        # The buyer outside the association's retention (ADR-0016); idempotent, as the inbox purge.
+        scheduler.add_job(
+            _purge_buyer_contacts,
+            "cron",
+            hour=3,
+            minute=50,
+            id="buyer_contact_purge",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
         # Sends committed mail from the queue (docs/mejl.md); only the leader ever sends.
         scheduler.add_job(
             _send_mail,
@@ -2975,6 +3025,28 @@ def initialize_app():
             hour=3,
             minute=45,
             id="audit_ip_purge",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        scheduler.add_job(
+            _purge_member_applications,
+            "cron",
+            hour=3,
+            minute=50,
+            id="member_application_purge",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        scheduler.add_job(
+            _anonymize_ended_persons,
+            "cron",
+            hour=3,
+            minute=55,
+            id="ended_person_anonymization",
             max_instances=1,
             coalesce=True,
             misfire_grace_time=3600,

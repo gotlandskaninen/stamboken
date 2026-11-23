@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildSalePayload,
+  provenSale,
   buildSavePayload,
   canEditDocuments,
   canSave,
@@ -18,6 +19,7 @@ import {
   problemText,
   waited,
   type CertForm,
+  type InboxDocument,
   type InboxItem,
   type ItemAction,
   type ItemState,
@@ -307,7 +309,14 @@ describe("the …/spara payload", () => {
       color: "viltgrå",
       litter_size: 5,
       litter_size6w: 4,
+      rex: false,
     });
+  });
+  it("sends the coat as a boolean", () => {
+    expect(
+      buildSavePayload("ny_kanin", filled, undefined, true),
+    ).toHaveProperty("rex", true);
+    expect(buildSavePayload("pappersintyg", filled)).not.toHaveProperty("rex");
   });
   it("leaves out empty optional fields and counts that are not numbers", () => {
     const payload = buildSavePayload("ny_kanin", {
@@ -620,5 +629,46 @@ describe("lacksRole", () => {
     expect(lacksRole(admin, 2, [1])).toBe(false);
     expect(lacksRole(helper, null, [1])).toBe(false);
     expect(lacksRole(helper, 2, null)).toBe(false);
+  });
+});
+
+describe("provenSale, the panel's rule for a proof of a registered sale", () => {
+  const sale = { herd: "GX1", date: "2026-10-03" };
+  const proof = { id: 2, doc_type: "bevis" } as unknown as InboxDocument;
+  const rows = (changes: object = {}) => [
+    { herd: "G9001", date: "2025-06-01", kind: "BIRTH", buyer: "none" },
+    {
+      herd: "GX1",
+      date: "2026-10-03",
+      kind: "TRANSFER",
+      buyer: "present",
+      ...changes,
+    },
+  ];
+
+  it("is the active move of the rabbit to the same herd on the same date, wherever it was registered", () => {
+    expect(provenSale(proof, sale, rows())).toMatchObject({ buyer: "present" });
+    expect(
+      provenSale(proof, sale, rows({ kind: "CORRECTION" })),
+    ).not.toBeNull();
+    expect(provenSale(proof, sale, rows({ buyer: "none" }))).toMatchObject({
+      buyer: "none",
+    });
+  });
+  it("is not another herd's or date's row, nor a yearly report", () => {
+    for (const changes of [
+      { herd: "G9002" },
+      { date: "2026-10-04" },
+      { kind: "ATTESTATION" },
+    ]) {
+      expect(provenSale(proof, sale, rows(changes))).toBeNull();
+    }
+  });
+  it("is only for a proof", () => {
+    const certificate = {
+      id: 3,
+      doc_type: "intyg",
+    } as unknown as InboxDocument;
+    expect(provenSale(certificate, sale, rows())).toBeNull();
   });
 });

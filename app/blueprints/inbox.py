@@ -25,6 +25,7 @@ from peewee import fn
 from PIL import Image, ImageOps
 from utils.database import (
     DB_PROXY,
+    OUTSIDE_GENEBANK_HERDS,
     Herd,
     HerdTracking,
     InboxItem,
@@ -34,13 +35,13 @@ from utils.database import (
     current_holder_row,
     not_voided,
 )
-from utils.herd_tracking import HerdTrackingError, correct_herd_tracking, is_manager_of
+from utils.herd_tracking import HerdTrackingError, attach_buyer, correct_herd_tracking, is_manager_of
 from utils.individual_commands import (
     AssignPaperCertificate,
     IndividualRefused,
-    TransferIndividual,
     execute,
     lock_individual_for_edit,
+    record_sale,
 )
 from utils.individual_number_v2 import PAPER_NUMBER_REQUIRED, parse_number
 
@@ -354,6 +355,19 @@ def item_detail(item_id):
     return jsonify(inbox.item_detail(item))
 
 
+# [Next.js] The rabbit's active sales, for the sale panel: does the proof show a sale already registered, and
+# has that sale its buyer outside the association? A yes or no only, never a name (ADR-0016).
+@inbox_bp.route("/inkorg/<int:item_id>/kanin/<number>/forsaljningar", methods=["GET"])
+@json_login_required
+@_queue_worker
+def rabbit_sales(item_id, number):
+    item = InboxItem.get_or_none(InboxItem.id == item_id)
+    individual = da.get_individual(number, current_user.uuid) if item is not None else None
+    if individual is None:
+        return problem(404, "Hittades inte", "Posten eller kaninen finns inte.")
+    return jsonify({"sales": inbox.active_sales(individual["id"])})
+
+
 @inbox_bp.route("/inkorg/<int:item_id>/ta", methods=["POST"])
 @json_login_required
 @_queue_worker
@@ -519,6 +533,7 @@ REGISTRATION_FIELDS = (
     "claw_color",
     "belly_color",
     "hair_notes",
+    "rex",
 )
 _REFUSED_AS_FORBIDDEN = {"Forbidden", AssignPaperCertificate(None).denied().envelope["message"]}
 
@@ -667,6 +682,7 @@ def save_document(item_id, document_id):
 def transfer(item_id, document_id):
     body, user = _body(), User.get_by_id(current_user.id)
     herd, date = body.get("herd"), body.get("date")
+    buyer = body.get("buyer")  # the buyer outside the association, on a sale to GX1/MX1 (ADR-0016)
     try:
         when = datetime.date.fromisoformat(date) if isinstance(date, str) else None
     except ValueError:
@@ -675,6 +691,7 @@ def transfer(item_id, document_id):
     if bad or when is None:
         detail = "Ange köparens besättning (herd) och datum (date, ÅÅÅÅ-MM-DD)."
         return problem(400, "Ogiltig begäran", detail, field=bad or "date")
+    paths = []
     try:
         with DB_PROXY.atomic():
             item = inbox.lock_item(item_id)
@@ -688,11 +705,17 @@ def transfer(item_id, document_id):
             lock_individual_for_edit(individual.id)
             latest = current_holder_row(individual.id)
             proven = inbox.proven_sale(item, document, individual, herd, when)
-            if proven is not None:  # the proof of a sale registered from another document: nothing to write
+            if proven is not None:  # the proof of a sale registered before: nothing to write but its buyer
                 seller = proven.from_herd or individual.origin_herd
                 if not (is_manager_of(user, seller.genebank_id) or grant.allows(user, seller)):
                     raise inbox.InboxError(403, "Du får inte koppla ett bevis till kaninens försäljning.")
+                # A sale registered without its buyer gets the one the proof shows; past its five years, none.
+                if buyer is not None and attach_buyer(proven, buyer, user) is None:
+                    proven.buyer_removed = True  # so the proof is cleared below
                 row = proven
+            elif herd in OUTSIDE_GENEBANK_HERDS and buyer is None:
+                # A new sale outside the association needs its buyer (ADR-0016); a proof of one registered does not.
+                raise inbox.InboxError(400, "Ange köparens namn och ort för en försäljning utanför föreningen.")
             elif (
                 latest
                 and when < coerce_date(latest.herd_tracking_date)
@@ -700,19 +723,23 @@ def transfer(item_id, document_id):
             ):
                 # A correction: before the rabbit's latest row, a manager's or an admin's (ADR-0017 level 2).
                 operation = uuid.uuid4()
+                event = {"kind": "TRANSFER", "date": date, "herd": herd}
                 (row,) = correct_herd_tracking(
-                    individual, user, operation, [], [{"kind": "TRANSFER", "date": date, "herd": herd}]
+                    individual, user, operation, [], [event if buyer is None else {**event, "buyer": buyer}]
                 )
                 grant.trace(operation)
             else:
                 stored = da.get_individual(individual.number, user.uuid)
                 if stored is None:
                     raise inbox.InboxError(404, "Kaninen finns inte i Stamboken.")
-                if error := _validate_sale(stored, {"selling_date": date, "herd": herd}, user):
+                if error := _validate_sale(stored, {"selling_date": date, "herd": herd}, user, buyer):
                     raise _Refused(problem(400, "Ogiltig försäljning", error))
-                execute(user, individual.id, lambda ctx: [TransferIndividual(herd, date)], grant=grant)
+                record_sale(user, individual.id, herd, date, buyer=buyer, grant=grant)
                 row = current_holder_row(individual.id)
             inbox.transferred(item, document, user, individual, row, linked=proven is not None)
+            if proven is not None and proven.buyer_removed:  # the proof shows a buyer that was erased or purged
+                paths = inbox_purge.erase_buyer_from_document(document.id)  # its other documents went with the buyer
+                document = inbox.document_of(item, document_id)
             answer = {
                 "individual": Individual.get_by_id(individual.id).as_dict(),
                 "herd_tracking_id": row.id,
@@ -725,6 +752,7 @@ def transfer(item_id, document_id):
         return _placed(problem(exc.status, exc.title, exc.detail))
     except (IndividualRefused, HerdTrackingError) as exc:
         return _placed(_command_problem(exc))
+    inbox_purge.remove_originals(paths)
     _invalidate(individual)
     return jsonify(answer), 200
 
