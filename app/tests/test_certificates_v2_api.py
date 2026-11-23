@@ -960,7 +960,7 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
         login = owner.post("/api/login", json={"username": self.owner.email, "password": "pass"})
         self.assertEqual(login.status_code, 200)
         url = "/api/v2/certificates/check-page-name"
-        self.assertEqual(owner.get(url).get_json(), {"show": False})
+        self.assertEqual(owner.get(url).get_json(), {"show": None})  # a new account has not chosen yet
         self.assertEqual(owner.put(url, json={"show": "true"}).status_code, 400)
         self.assertEqual(owner.put(url, json={"show": True}).get_json(), {"show": True})
 
@@ -1013,6 +1013,9 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
 
     def test_check_page_name_reaches_production_without_production_access(self):
         """She can always read and withdraw her choice, also once her production access is gone."""
+        rules = patch.object(settings.service, "access_rules", "enforce")  # as in production
+        rules.start()
+        self.addCleanup(rules.stop)
         db.User.update(name_on_check_page=True, v2_prod_access=False).where(db.User.id == self.owner.id).execute()
         client = self.app.application.test_client(use_cookies=True)
         self.assertEqual(
@@ -1023,6 +1026,7 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
             client.put("/api/v2/certificates/check-page-name", json={"show": False}).get_json(), {"show": False}
         )
         self.assertFalse(db.User.get_by_id(self.owner.id).name_on_check_page)
+        self.assertEqual(client.get("/api/v2/individual/G1-2112").status_code, 403)  # the gate is really on
 
     def test_sale_months_on_migrated_history(self):
         """Migrated rows lack from_herd: a row without a herd, and a return to the same herd, are no sale."""

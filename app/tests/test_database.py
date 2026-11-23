@@ -702,6 +702,7 @@ class TestDatabase(DatabaseTest):
                 "use_google_picture": True,
                 # Admins are implicitly promoted regardless of the stored flag
                 "v2_prod_access": True,
+                "name_on_check_page": None,
             },
         )
         self.assertDictEqual(
@@ -722,6 +723,7 @@ class TestDatabase(DatabaseTest):
                 "google_email": None,
                 "use_google_picture": True,
                 "v2_prod_access": False,
+                "name_on_check_page": None,
             },
         )
         self.assertDictEqual(
@@ -742,6 +744,7 @@ class TestDatabase(DatabaseTest):
                 "google_email": None,
                 "use_google_picture": True,
                 "v2_prod_access": False,
+                "name_on_check_page": None,
             },
         )
         self.assertDictEqual(
@@ -762,6 +765,7 @@ class TestDatabase(DatabaseTest):
                 "google_email": None,
                 "use_google_picture": True,
                 "v2_prod_access": False,
+                "name_on_check_page": None,
             },
         )
 
@@ -1592,8 +1596,8 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertTrue(set(tables).isdisjoint(db.AUDITED_TABLES))
 
     def test_replay_adds_name_on_check_page_off(self):
-        """Stamboken #6: an older database gets the person's choice switched off and the issuing role, as a fresh
-        bootstrap."""
+        """Stamboken #6: an older database gets the person's choice, on for the accounts it has, and the issuing
+        role, shaped as a fresh bootstrap."""
         if not isinstance(db.DATABASE, db.PostgresqlDatabase):
             self.skipTest("column introspection requires PostgreSQL")
         self.addCleanup(db.check_migrations)
@@ -1611,12 +1615,25 @@ class TestDatabaseMigration(DatabaseTest):
         db.SchemaHistory.delete().where(db.SchemaHistory.version >= version).execute()
         db.DATABASE.execute_sql("ALTER TABLE hbuser DROP COLUMN name_on_check_page")
         db.DATABASE.execute_sql("ALTER TABLE digitalcertificatev2 DROP COLUMN issued_as")
+        # an account whose person was anonymised before the migration
+        membership = db.Membership.create(member_number=4711)
+        db.MatrikelAudit.create(
+            action="person_user_unlinked",
+            membership=membership,
+            payload={"person_id": 1, "user_id": self.viewer.id, "source": "anonymize"},
+        )
+        audit_before = db.AuditLog.select().where(db.AuditLog.table_name == "hbuser").count()
 
         db.check_migrations()
 
         self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
         self.assertEqual(column(), fresh)
-        self.assertFalse(db.User.get_by_id(self.owner.id).name_on_check_page)
+        # Accounts that existed keep showing their name until they change it (Jonas 2026-11-23), without audit rows
+        self.assertTrue(db.User.get_by_id(self.owner.id).name_on_check_page)
+        self.assertFalse(db.User.get_by_id(self.viewer.id).name_on_check_page)  # anonymised before: off
+        self.assertEqual(db.AuditLog.select().where(db.AuditLog.table_name == "hbuser").count(), audit_before)
+        # A new account has not chosen yet
+        self.assertIsNone(db.User.get_by_id(da.register_user("ny", "pass").id).name_on_check_page)
 
     @staticmethod
     def _migration_version(marker):

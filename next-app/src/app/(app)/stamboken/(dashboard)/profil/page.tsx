@@ -46,7 +46,7 @@ export default async function ProfilPage() {
       () => null,
     ),
     // Everyone who can issue a certificate has the choice; a failure just hides the card.
-    fetchApi<{ show: boolean }>("/v2/certificates/check-page-name", {
+    fetchApi<{ show: boolean | null }>("/v2/certificates/check-page-name", {
       forceProd: true,
     }).catch(() => null),
   ]);
