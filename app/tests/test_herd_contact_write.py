@@ -454,6 +454,39 @@ class TestContactPerson(HerdContactWriteTest):
         self.assertEqual(self._state()["email_privacy"], "authenticated")
         self.assertEqual(self._read(other)["email"], "ida@example.invalid")
 
+    def test_person_change_between_empty_mobiles_starts_hidden(self):
+        """An empty person row keeps no choice across a change of contact person (the rule of the lifecycle's
+        on_person_leaving): else the new contact's first number would show with the choice made for the earlier
+        one's."""
+        db.Member.update(phone=None).where(db.Member.id.in_([self.main.id, self.family.id])).execute()
+        main = self._main_user()
+        other = self._user("other")
+        shown, rows = self._form(main)
+        self.assertEqual((rows["mobile_phone"]["value"], rows["mobile_phone"]["privacy"]), (None, "authenticated"))
+        response = self._patch(main, self._to_person(shown, self.family.id))
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(self._state()["mobile_phone_privacy"], "private")
+        db.Member.update(phone="073-123 45 67").where(db.Member.id == self.family.id).execute()
+        self.assertIsNone(self._read(other).get("mobile_phone"))
+
+    def test_switch_to_fritext_hides_the_empty_rows(self):
+        """The rows of a fritext contact are own: an empty mobile keeps no choice from the person before, or the
+        number the breeder types later would show to others without anyone choosing that."""
+        db.Member.update(phone=None).where(db.Member.id == self.main.id).execute()
+        main = self._main_user()
+        other = self._user("other")
+        shown, rows = self._form(main)
+        self.assertEqual((rows["mobile_phone"]["value"], rows["mobile_phone"]["privacy"]), (None, "authenticated"))
+        response = self._patch(main, self._to_fritext(shown))
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(self._state()["mobile_phone_privacy"], "private")
+        shown, rows = self._form(main)
+        typed = {"source": "egen", "value": "070-555 55 55", "shown": rows["mobile_phone"]}
+        response = self._patch(main, {"contact": {"rows": {"mobile_phone": typed}}})
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(self._state()["mobile_phone"], "070-555 55 55")
+        self.assertIsNone(self._read(other).get("mobile_phone"))
+
 
 class TestGeneralCalls(HerdContactWriteTest):
     def test_flat_contact_fields_rejected(self):

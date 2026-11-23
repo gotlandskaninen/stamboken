@@ -57,11 +57,15 @@ class HerdContact:
     rows: dict[str, Row]  # keys = CONTACT_FIELDS
 
 
-def herd_contacts(herds: Sequence[Herd]) -> dict[int, HerdContact]:
-    """The contact of each herd, by herd id, with one query for all of them."""
+def herd_contacts(herds: Sequence[Herd], *, any_status: bool = False) -> dict[int, HerdContact]:
+    """The contact of each herd, by herd id, with one query for all of them. `any_status`: as if the membership
+    were active, for the lifecycle, so that a paused membership also compares the values it would show."""
     compared = [h for h in herds if h.membership_id is not None and h.contact_pending is not None]
-    persons = {}  # membership id -> {person id: person}: active persons of active memberships only
+    persons = {}  # membership id -> {person id: person}: active persons, of active memberships unless any_status
     if compared:
+        where = [Member.membership.in_({h.membership_id for h in compared}), Member.end_date.is_null(True)]
+        if not any_status:
+            where.append(Membership.membership_status == "active")
         query = (
             Member.select(
                 Member.id,
@@ -77,11 +81,7 @@ def herd_contacts(herds: Sequence[Herd]) -> dict[int, HerdContact]:
                 Membership.city,
             )
             .join(Membership)
-            .where(
-                Member.membership.in_({h.membership_id for h in compared}),
-                Member.end_date.is_null(True),
-                Membership.membership_status == "active",
-            )
+            .where(*where)
         )
         for person in query:
             persons.setdefault(person.membership_id, {})[person.id] = person
@@ -331,6 +331,89 @@ def link_herd(herd_id: int, membership_id: int, herd_code: str | None = None) ->
     return cases
 
 
+def _keeps_choice(field: str, before: str | None, after: str | None, contact_changed: bool) -> bool:
+    """Decision 14: a row keeps its privacy while it shows the same value. After a change of contact person, by
+    any path and to fritext too, an empty name, e-mail or mobile does not: its choice would pass on to the next
+    contact's first value."""
+    value = normalize(field, after)
+    empty = value is None and field != "physical_address"
+    return value == normalize(field, before) and not (contact_changed and empty)
+
+
+def _household_herds(membership_id: int) -> list[Herd]:
+    """The membership's herds, locked after the membership. FOR NO KEY UPDATE, as anonymize_ended_persons holds
+    them: no key column changes."""
+    return list(Herd.select().where(Herd.membership == membership_id).order_by(Herd.id).for_update("FOR NO KEY UPDATE"))
+
+
+def _clear(herd: Herd, fields) -> None:
+    """Empty the herd's own rows `fields`: they start hidden and wait for no answer."""
+    changes = {**dict.fromkeys(fields), **{f"{f}_privacy": "private" for f in fields}}
+    if herd.contact_pending is not None:
+        changes["contact_pending"] = [f for f in herd.contact_pending if f not in fields]
+    Herd.update(**changes).where(Herd.id == herd.id).execute()
+
+
+def snapshot_before_leaving(member: Member) -> dict[int, HerdContact]:
+    """Spec, Livscykel: the contact of the household's herds before `member` leaves, for on_person_leaving. Call it
+    under the membership's lock, before the end date or the erasure. It locks the herds."""
+    return herd_contacts(_household_herds(member.membership_id), any_status=True)
+
+
+def on_person_anonymizing(member: Member) -> None:
+    """Spec, Livscykel: before `member` is erased, the household's herds lose own rows equal to her e-mail or phone,
+    the fixed phone too, unless another person on the membership has the same value (an erased one has none)."""
+    sources = {"email": "email", "mobile_phone": "phone", "wire_phone": "phone"}
+    others = list(
+        Member.select(Member.email, Member.phone).where(
+            Member.membership == member.membership_id, Member.id != member.id
+        )
+    )
+    for herd in _household_herds(member.membership_id):
+        gone = []
+        for field, attr in sources.items():
+            value = normalize(field, getattr(herd, field))
+            if value is not None and value == normalize(field, getattr(member, attr)):
+                if all(normalize(field, getattr(o, attr)) != value for o in others):
+                    gone.append(field)
+        if gone:
+            _clear(herd, gone)
+
+
+def on_person_leaving(member: Member, before: dict[int, HerdContact]) -> None:
+    """Spec, Livscykel, after `member`'s end date or erasure, and decision 10: a herd whose contact person is not
+    active any more gets the active main member, or none. As after any change of contact, a fetched row that shows
+    another value than `before` starts hidden (decision 14). The herd's own rows stay: they may be the farm's."""
+    persons = list(
+        Member.select(Member.id, Member.role).where(
+            Member.membership == member.membership_id, Member.end_date.is_null(True)
+        )
+    )
+    main = next((p.id for p in persons if p.role == "huvudmedlem"), None)
+    herds = _household_herds(member.membership_id)
+    moved = {}
+    for herd in herds:
+        if herd.contact_member_id is not None and herd.contact_member_id not in {p.id for p in persons}:
+            herd.contact_member = moved[herd.id] = main
+    after = herd_contacts(herds, any_status=True)
+    for herd in herds:
+        changes = {"contact_member": moved[herd.id]} if herd.id in moved else {}
+        for field, row in after[herd.id].rows.items():
+            same = _keeps_choice(field, before[herd.id].rows[field].value, row.value, herd.id in moved)
+            privacy = f"{field}_privacy"
+            if row.source != "egen" and not same and (getattr(herd, privacy) or "private") != "private":
+                changes[privacy] = "private"
+        if changes:
+            Herd.update(**changes).where(Herd.id == herd.id).execute()
+
+
+def on_household_erased(membership_id: int) -> None:
+    """Spec, Livscykel: every person on the membership is erased. All the herds' own contact rows go, the fixed
+    phone and the website too, and start hidden."""
+    for herd in _household_herds(membership_id):
+        _clear(herd, HERD_CONTACT_COLUMNS)
+
+
 def check_flat_fields(herd: Herd, fields, contact) -> None:
     """On a compared herd the contact rows and their privacy change only through `contact`, and never both ways
     in one call: ValueError (400)."""
@@ -562,7 +645,7 @@ def apply_contact_patch(herd_id: int, patch: dict, user: User) -> None:
             written = field in typed or (field == "name" and member is None and name is not None)
             # decisions 4 and 14: another value than the one shown starts hidden when it is fetched, when the user
             # did not write it, and after a change of contact person
-            if normalize(field, current.rows[field].value) != normalize(field, final.rows[field].value) and (
+            if not _keeps_choice(field, current.rows[field].value, final.rows[field].value, change) and (
                 final.rows[field].source != "egen" or not written or (change and field != "physical_address")
             ):
                 chosen = "private"

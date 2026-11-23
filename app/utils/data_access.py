@@ -47,6 +47,7 @@ from utils.database import ACTIVE_WINDOW_DAYS  # isort: skip
 from utils.database import AUDIT_LOG_NO_UPDATE_RULE  # isort: skip
 from utils.database import OUTSIDE_GENEBANK_HERDS  # isort: skip
 from utils.database import ACCOUNT_MASK, BANK_PRIVACY_FIELDS, PRIVACY_LEVELS, account_end  # isort: skip
+from utils.database import HERD_CONTACT_COLUMNS  # isort: skip
 from utils.database import ht_not_voided  # isort: skip
 from utils.database import ht_order_desc  # isort: skip
 from utils.database import latest_ht_per_individual  # isort: skip
@@ -4200,7 +4201,16 @@ _AUDIT_UNDO_SKIP = {
 
 # A herd's identity and ownership are admin-only (the primary key herd_id is never written by
 # undo). Its *_privacy columns hold None or one of the levels update_herd accepts.
-_AUDIT_HERD_ADMIN_COLUMNS = {"herd", "genebank_id", "membership_id"}
+_AUDIT_HERD_ADMIN_COLUMNS = {"herd", "genebank_id"}
+# #117, spec Granskningsloggen: the contact changes only where its rules run (link_herd, the contact
+# patch, the lifecycle), not by undo, not even by admin. The history keeps no contact values, so an
+# old privacy written back would apply to a newer value.
+_AUDIT_HERD_CONTACT_COLUMNS = {
+    "membership_id",
+    "contact_member_id",
+    "contact_pending",
+    *(f"{column}_privacy" for column in HERD_CONTACT_COLUMNS),
+}
 _AUDIT_PRIVACY_LEVELS = ("public", "authenticated", "private")
 
 
@@ -4214,8 +4224,8 @@ def _audit_invalid_privacy_field(fields):
 def _audit_undo_locked(table_name, is_admin):
     """The columns of `table_name` that an audit revert/restore by this user must not write."""
     locked = _AUDIT_UNDO_SKIP.get(table_name, set())
-    if table_name == "herd" and not is_admin:
-        return locked | _AUDIT_HERD_ADMIN_COLUMNS
+    if table_name == "herd":
+        return locked | _AUDIT_HERD_CONTACT_COLUMNS | (set() if is_admin else _AUDIT_HERD_ADMIN_COLUMNS)
     return locked
 
 
@@ -4224,7 +4234,10 @@ def _audit_undo_refusal(table_name, values, is_admin):
     Why an audit revert/restore that writes `values` (column -> value) to `table_name` is refused,
     or None. A restore leaves the locked columns out of `values` first: it skips them.
     """
-    held = ", ".join(sorted(set(values) & _audit_undo_locked(table_name, is_admin)))
+    held = set(values) & _audit_undo_locked(table_name, is_admin)
+    if contact := ", ".join(sorted(held & _AUDIT_HERD_CONTACT_COLUMNS)):  # only a herd's locked set holds them
+        return f"{contact} kan inte ångras eller återställas här. Ändra besättningens kontakt i stället."
+    held = ", ".join(sorted(held))
     if held and table_name == "herd":
         return f"Bara admin kan ändra {held} på en besättning."
     if held:
@@ -4427,7 +4440,11 @@ def restore_record(table_name, record_id, audit_id, is_admin=False):
         return {"status": "error", "message": f"Återställning misslyckades: {e}"}, 409
 
     if skipped:
-        why = "bara admin kan ändra dem" if table_name == "herd" else "de ändras via kaninen, kullen eller kullplatsen"
+        why = (
+            "de ändras bara av admin eller i besättningens kontakt"
+            if table_name == "herd"
+            else "de ändras via kaninen, kullen eller kullplatsen"
+        )
         return {"status": "success", "message": f"Post återställd utom {', '.join(skipped)}: {why}."}, 200
     return {"status": "success", "message": "Post återställd"}, 200
 
