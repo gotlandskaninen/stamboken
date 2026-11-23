@@ -222,13 +222,29 @@ personer i hushållet kan bara läsa. **Koppla bort** tar bort kopplingen.
 Klicka **Avsluta medlemskap** under **Medlemskap** och sedan **Bekräfta**.
 Medlemskapet blir inaktivt, alla personer i det avslutas och deras åtkomster
 dras in. Ett avslutat medlemskap kan inte göras aktivt igen. Kommer medlemmen
-tillbaka lägger du in ett nytt medlemskap.
+tillbaka lägger du in ett nytt medlemskap, som får ett nytt nummer. Ett
+medlemsnummer används aldrig igen.
 
-> **Beslutat men inte infört än:** avslutade medlemskap ska anonymiseras
-> automatiskt 12 månader efter att de avslutades, och en borttagen
-> familjemedlem 12 månader efter att hen togs bort. Efter det går
-> medlemsnumret inte längre att koppla till någon person. Guiden uppdateras
-> när regeln gäller.
+### Anonymisering efter 12 månader
+
+Stamboken anonymiserar uppgifterna automatiskt, på samma sätt som
+**Anonymisera**:
+
+- **Ett avslutat medlemskap** anonymiseras när det har gått 12 månader sedan den
+  sista personen i det avslutades. Alla personer anonymiseras då samtidigt, och
+  hushållets adress, fakturaadress och anteckningar töms. Medlemsnumret står
+  kvar men går inte längre att koppla till någon person.
+- **En familjemedlem eller skötare** som har tagits bort ur ett medlemskap som
+  fortfarande är aktivt anonymiseras 12 månader efter att hen togs bort.
+  Hushållets adress står kvar.
+
+Stamboken hoppar över ett avslutat medlemskap där någon av personerna har
+rollen administratör, matrikeladministratör eller genbanksansvarig, eller där
+en av hushållets besättningar fortfarande är aktiv. En borttagen person hoppas
+över om hens eget konto har en sådan roll eller äger en aktiv besättning.
+Systemansvarig avgör de fallen för hand.
+
+Besättningens egna kontaktuppgifter tas inte bort av den här regeln.
 
 ![Avsluta medlemskap?](avsluta-medlemskap.png)
 
