@@ -621,6 +621,10 @@ Allt om en kanin. Adressen är /stamboken/individ/ följt av individnumret.
   **Årsrapportera** – kommer snart), märken för kön, ålder, status, intyg, kastrering
   och **Köpt**, genetikbandet A–E med **F** (inavelsgrad) och knappen **Om genetiken**,
   samt föräldrarnas nummer (M och F).
+- **Intyget** – under märkena i kortet, när kaninen har ett digitalt intyg. Kaninens
+  ägare, uppfödaren och genbanksansvarig klickar **Visa intyg** för att öppna PDF:en i
+  en ny flik. Andra ser vem som kan hämta intyget. **Kontrollera intyget** leder till
+  [Verifiera intyg](#verifiera-intyg) för intyg som utfärdats i nya Stamboken.
 - **Identitet** – färg, ögonfärg, klofärg, bukfärg, hårlag och färganteckning.
 - **Släktträd** – tre generationer med länkar till varje förfader; okända visas som
   "Okänd". Under trädet "Kullstorlek: N (vid 6v: M)".
