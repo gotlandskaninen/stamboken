@@ -269,19 +269,37 @@ class ProposalsTest(ArsrapportTest):
         self.send(self.sald(self.a, "utanfor", 2025, 10, 3, kopare=BUYER), *others)
         (proposal,) = proposals(self.a)
         self.assertEqual(sp.clear_buyer(proposal, "gallring_forslag"), 1)
-        for who in ("code", "owner"):
+        for who, day in (("code", 3), ("owner", None)):
             with self.subTest(who=who), self.assertRaises(ArsrapportError) as caught:
-                self.send(self.sald(self.a, "utanfor", 2025, 10, 4, kopare=OTHER_BUYER), *others, who=who, revision=1)
+                self.send(self.sald(self.a, "utanfor", 2025, 10, day, kopare=OTHER_BUYER), *others, who=who, revision=1)
             self.assertEqual(caught.exception.status, 422)
             self.assertEqual([r["message"] for r in caught.exception.extra["refusals"]], [arsrapport.BUYER_REMOVED])
-        self.send(self.sald(self.a, "utanfor", 2025, 10, 4), *others, who="code", revision=1)
+        self.send(self.sald(self.a, "utanfor", 2025, 10), *others, revision=1)
         self.withdraw(2)
         with self.assertRaises(ArsrapportError) as caught:
-            self.send(self.sald(self.a, "utanfor", 2025, 10, 5, kopare=OTHER_BUYER), *others, who="owner")
+            self.send(self.sald(self.a, "utanfor", 2025, 10, 3, kopare=OTHER_BUYER), *others, who="owner")
         self.assertEqual([r["message"] for r in caught.exception.extra["refusals"]], [arsrapport.BUYER_REMOVED])
-        self.send(self.sald(self.a, "utanfor", 2025, 10, 5), *others, who="owner")
+        self.send(self.sald(self.a, "utanfor", 2025, 10, 3), *others, who="owner")
         (sale,) = rows(self.a, "TRANSFER")
         self.assertEqual((sale.holder_contact_id, sale.buyer_removed), (None, True))
+
+    def test_cleared_proposal_allows_new_buyer_on_different_sale_date(self):
+        others = [self.kvar(self.b, vikt=2.8), self.kvar(self.c, vikt=2.8)]
+        self.send(self.sald(self.a, "utanfor", 2025, 10, 3, kopare=BUYER), *others)
+        (old,) = proposals(self.a)
+        self.assertEqual(sp.clear_buyer(old, "radering"), 1)
+        other_sale = self.sald(self.a, "utanfor", 2025, 10, 4, kopare=OTHER_BUYER)
+        self.send(other_sale, *others, revision=1)
+        old, new = proposals(self.a)
+        self.assertEqual(
+            (old.state, new.sale_date, new.buyer["name"]), ("atertagen", date(2025, 10, 4), OTHER_BUYER["name"])
+        )
+        sp.reject(new, self.decider, reason="Fel datum", then="valj_igen", now=NOW)
+        self.send(other_sale, *others, revision=3)
+        self.withdraw(4)
+        self.send(other_sale, *others, who="owner")
+        (sale,) = rows(self.a, "TRANSFER")
+        self.assertEqual(sale.holder_contact.name, OTHER_BUYER["name"])
 
     def test_kvar_then_sale_before_new_year_removes_attestation(self):  # K5
         self.send(self.kvar(self.a, vikt=2.8), self.kvar(self.b, vikt=2.8), self.kvar(self.c, vikt=2.8))

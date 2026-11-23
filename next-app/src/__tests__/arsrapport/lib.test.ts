@@ -134,6 +134,8 @@ describe("isDone", () => {
       true,
     );
     const erased = { ...adult, removed_buyer_dates: ["2026-06-01"] };
+    expect(isDone(erased, sold({}), false)).toBe(true);
+    expect(isDone(erased, sold({ manad: 7 }), false)).toBe(false);
     expect(isDone(erased, sold({ dag: 1 }), false)).toBe(true);
     expect(isDone(erased, sold({ dag: 2 }), false)).toBe(false);
     expect(

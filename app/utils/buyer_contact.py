@@ -117,7 +117,7 @@ def _delete_under_locks(candidates, eligible, action):
 
 
 def purge_expired(now):
-    """Name and town five years after the sale: the buyer goes."""
+    """Delete buyers when the five years after a sale or the keep window after withdrawal expires."""
     expired = BuyerContact.purge_at <= now
     with DB_PROXY.atomic():
         count, paths = _delete_under_locks(

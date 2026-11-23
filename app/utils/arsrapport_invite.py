@@ -17,7 +17,6 @@ from utils.database import (
     DB_PROXY,
     OUTSIDE_GENEBANK_HERDS,
     Herd,
-    MailMessage,
     Member,
     ReportAccessCode,
     YearlyReportRound,
@@ -46,28 +45,27 @@ def _invite_genebank(activation, now):
         locked = (
             YearlyReportRoundGenebank.select().where(YearlyReportRoundGenebank.id == activation.id).for_update().get()
         )
-        invited = (
-            ReportAccessCode.select(ReportAccessCode.herd)
-            .join(MailMessage, on=(MailMessage.ref_id == ReportAccessCode.id))
-            .where(
-                ReportAccessCode.round == round_.id,
-                MailMessage.kind == "arsrapport.inbjudan",
-                MailMessage.ref_type == "access_code",
-            )
-        )
-        for herd in _herds(activation.genebank_id).where(Herd.id.not_in(invited)):
+        for herd in _herds(activation.genebank_id):
+            report_code.lock_herd_codes(herd)  # serialize the existence check with Ny länk
             member = report_code.invitation_recipient(herd, now=now)
             if member is None:
                 logger.warning(
                     "Årsrapport %s: besättning %s saknar huvudmedlem med giltig inloggningsadress", year, herd.id
                 )
                 continue
+            issued = ReportAccessCode.select().where(
+                ReportAccessCode.herd == herd.id,
+                ReportAccessCode.round == round_.id,
+                ReportAccessCode.member == member.id,
+            )
+            if issued.exists():
+                continue
             try:
                 code = report_code.issue_code(herd, round_, member, now=now)
             except report_code.StaleRecipient:  # the main member changed since the selection: not ours to mail
                 logger.warning("Årsrapport %s: huvudmedlemmen för besättning %s har ändrats", year, herd.id)
                 continue
-            if code.member_id != member.id:  # lost the race to a new_link for the new main member, who got that mail
+            if code.member_id != member.id:
                 logger.warning("Årsrapport %s: koden för besättning %s tillhör en annan huvudmedlem", year, herd.id)
                 continue
             queued = enqueue_mail(
@@ -78,7 +76,7 @@ def _invite_genebank(activation, now):
                 ref=("access_code", code.id),
                 herd=herd,
                 genebank=activation.genebank_id,
-                dedupe_key=f"arsrapport.inbjudan:{herd.id}:{year}",
+                dedupe_key=f"arsrapport.inbjudan:{code.id}",
             )
             count += queued is not None
         if locked.sent_at is None:
@@ -89,6 +87,9 @@ def _invite_genebank(activation, now):
 
 def send_due_invitations(now: datetime) -> int:
     """Queues due invitations, retrying herds without a link while their round is open."""
+    if settings.service.demo_instance:
+        logger.info("Årsrapportens inbjudningar hoppas över i demomiljön")
+        return 0
     today = now.astimezone(arsrapport.STOCKHOLM).date()
     due = (
         YearlyReportRoundGenebank.select()

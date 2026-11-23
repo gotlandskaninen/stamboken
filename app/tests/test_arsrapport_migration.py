@@ -185,6 +185,21 @@ class TestArsrapportMigration(IsolatedSchemaTest):
             self.assertEqual(snapshot(), self.bootstrapped)
             tx.rollback()
 
+    def test_boot_refuses_lone_round_genebank_table_before_50(self):
+        with db.DB_PROXY.atomic() as tx:
+            to_v49_shape()
+            db.YearlyReportRoundGenebank.create_table()
+            db.SchemaHistory.delete().execute()
+            db.SchemaHistory.create(version=49, comment="Bootstrapped")
+            with self.assertRaises(RuntimeError) as caught:
+                db.check_migrations()
+            self.assertIn(
+                "Är detta inte en utvecklingsdatabas: stoppa och fråga, kör inte down -v.",
+                str(caught.exception).splitlines(),
+            )
+            self.assertEqual([row.version for row in db.SchemaHistory.select()], [49])
+            tx.rollback()
+
     def stamp_50(self, comment):
         """schema_history's 50 as `comment` until the test ends: the class's database was bootstrapped by init()."""
         row = db.SchemaHistory.get_by_id(50)

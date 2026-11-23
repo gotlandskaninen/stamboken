@@ -175,13 +175,13 @@ class KeptBuyerTest(ArsrapportTest):
         for text in (json.dumps(view), json.dumps(receipt), text_of(receipt_pdf(report, submission)), mailed):
             self.assertFalse([value for value in BUYER_TEXTS if value in text], text[:200])
 
-    def assert_erased_buyer_stays_removed(self, typed, blank, day):
+    def assert_erased_buyer_stays_removed(self, typed, blank, day, original=SOLD_ON):
         response = self.skicka(typed)
         self.assertEqual(response.status_code, 422, response.get_data(as_text=True))
         self.assertEqual([r["message"] for r in response.json["refusals"]], [herd_tracking.BUYER_REMOVED])
         view = self.api("GET", "/besattning/G9001/2025").json
         row = next(row for row in view["rabbits"] if row["id"] == self.a.id)
-        self.assertIn(SOLD_ON.isoformat(), row["removed_buyer_dates"])
+        self.assertIn(original.isoformat(), row["removed_buyer_dates"])
         self.ok(blank)
         (sale,) = sales(self.a, active=True)
         self.assertEqual((sale.herd_tracking_date, sale.holder_contact_id, sale.buyer_removed), (day, None, True))
@@ -192,6 +192,33 @@ class KeptBuyerTest(ArsrapportTest):
         buyer_contact.erase_buyer_contact(sales(self.a)[0].holder_contact_id, self.admin)
         self.withdrawn(1)
         self.assert_erased_buyer_stays_removed(self.resent(kopare=OTHER), self.resent(), SOLD_ON)
+
+    def test_erased_month_only_sale_resubmitted_next_day(self):
+        self.ok(self.body(self.sald(self.a, "utanfor", 2026, 1, kopare=BUYER), self.kvar(self.b, vikt=2.8)))
+        (sale,) = sales(self.a)
+        self.assertEqual(sale.herd_tracking_date, DAY0)
+        buyer_contact.erase_buyer_contact(sale.holder_contact_id, self.admin)
+        self.withdrawn(1)
+        tomorrow = DAY0 + timedelta(days=1)
+        self.at(tomorrow)
+        self.assert_erased_buyer_stays_removed(self.resent(kopare=OTHER), self.resent(), tomorrow, original=DAY0)
+        self.withdrawn(2)
+        self.assertEqual(self.refused(self.resent(dag=tomorrow.day, kopare=OTHER)), [(self.a.id, "kopare")])
+
+    def test_expired_kept_buyer_allows_new_buyer_on_same_sale(self):
+        kept, _ = self.sold_and_withdrawn()
+        self.at(PURGE_NIGHT)
+        self.assertEqual(buyer_contact.purge_expired(arsrapport.now()), 1)
+        deleted = db.AuditLog.get(
+            db.AuditLog.table_name == "buyer_contact",
+            db.AuditLog.operation == "DELETE",
+            db.AuditLog.record_id == str(kept.id),
+        )
+        self.assertEqual(deleted.new_data, {"action": "gallring_kvar"})
+        arsrapport.save_round(2025, self.admin, end_date=EXTENDED)
+        self.ok(self.resent(kopare=OTHER))
+        (sale,) = sales(self.a, active=True)
+        self.assertEqual((sale.herd_tracking_date, sale.holder_contact.name), (SOLD_ON, OTHER["name"]))
 
     def test_buyer_erased_while_kept_stays_removed(self):
         kept, _ = self.sold_and_withdrawn()

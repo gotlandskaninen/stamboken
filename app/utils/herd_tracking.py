@@ -1469,6 +1469,10 @@ def delete_buyer_contacts(contact_ids, action, user=None, whole_items=False):
         return 0, []
     paths = []
     sales = list(HerdTracking.select().where(HerdTracking.holder_contact.in_(ids)))
+    kept = set()
+    if action == "gallring_fem_ar":
+        # Only voided sales hold a buyer kept across Dra tillbaka. An active sale has the five-year deadline.
+        kept = {s.holder_contact_id for s in sales} - {s.holder_contact_id for s in sales if s.voided_at is None}
     # WHITELISTED in-place UPDATE #4: the sales remember that their buyer was removed, before the FK nulls the link.
     HerdTracking.update(buyer_removed=True).where(HerdTracking.holder_contact.in_(ids)).execute()
     # Every queue item the erasures below touch, locked at once in id order (the queue's order): one sale after
@@ -1480,7 +1484,7 @@ def delete_buyer_contacts(contact_ids, action, user=None, whole_items=False):
     deleted = [contact_id for (contact_id,) in deleted]
     for contact_id in deleted:
         forget_recipient("buyer_contact", contact_id)
-        log_buyer_contact(contact_id, "DELETE", action, user)
+        log_buyer_contact(contact_id, "DELETE", "gallring_kvar" if contact_id in kept else action, user)
     return len(deleted), paths
 
 

@@ -210,6 +210,15 @@ def address_hash(address):
     return _mac(f"addr:{_normalize(address) or ''}").hexdigest()
 
 
+def _delivery_hash(row, address):
+    """A member's bounce flag tracks their current mailbox. A link may have gone to a previous one."""
+    if row.recipient_kind == "member":
+        current = Member.select(Member.email).where(Member.id == row.recipient_id).scalar()
+        if address != _normalize(current):
+            return None
+    return address_hash(address)
+
+
 _ADDRESS = re.compile(r"[^@\s<>,;\"']+@[^@\s<>,;\"']+")
 _ADDRESS_LIKE = re.compile(r"<?[^\s<>@]*@[^\s<>]*>?")
 
@@ -465,7 +474,7 @@ def _failed(row, now, result, smtp_code, detail, address=None):
     else:
         fields = {"status": "failed"}
     if address and (smtp_code or "")[:4] in ("5.1.", "5.2.", "5.3."):
-        fields["address_hash"] = address_hash(address)  # the recipient's mailbox refused: the bounce flag
+        fields["address_hash"] = _delivery_hash(row, address)
     attempt = {"result": result, "smtp_code": smtp_code, "detail": detail}
     return _finish(row, now, attempt, attempts=attempts, last_error=detail, **fields)
 
@@ -589,7 +598,7 @@ def _send_one(row, relay, now):
         status="sent",
         sent_at=now,
         attempts=row.attempts + 1,
-        address_hash=address_hash(address),
+        address_hash=_delivery_hash(row, address),
         last_error=None,
     )
 

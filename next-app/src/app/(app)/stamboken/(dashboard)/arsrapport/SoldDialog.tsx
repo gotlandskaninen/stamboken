@@ -192,7 +192,7 @@ function Body({
   const chosen = { till: "utanfor", ar, manad, dag: dag ? Number(dag) : null };
   const date = eventDate(chosen);
   const kept = canSell && keptId && date === rabbit?.kept_buyer_date;
-  const removed = outside && buyerRemoved(rabbit, date);
+  const removed = outside && buyerRemoved(rabbit, chosen);
   // A sale the report holds, unchanged here: its buyer is stored. A sale only in
   // the draft, or a changed one, needs the buyer again, as Skicka does.
   const stored = outside && storedSale(chosen, submitted);

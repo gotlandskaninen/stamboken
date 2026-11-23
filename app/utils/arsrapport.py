@@ -1927,7 +1927,7 @@ def _register_refusals(individual_id, remove, add, ops, admin=False, transfer=No
 
 
 def _removed_buyers(herd, round_, rabbits, current_ops):
-    """Erased buyers of the report's current sale or proposal, and erased outside sales by rabbit and date."""
+    """Erased buyers of current transfers, and dates of erased outside sales and proposals by rabbit."""
     if not rabbits:
         return set(), {}
     reports = YearlyHerdReport.select(YearlyHerdReport.id).where(
@@ -1941,7 +1941,7 @@ def _removed_buyers(herd, round_, rabbits, current_ops):
     deleted = AuditLog.select(AuditLog.record_id).where(
         AuditLog.table_name == BuyerContact._meta.table_name,
         AuditLog.operation == "DELETE",
-        (AuditLog.new_data["action"] == "radering") | AuditLog.new_data["action"].startswith("gallring_"),
+        AuditLog.new_data["action"].in_(("radering", "gallring_fem_ar", "gallring_dod")),
     )
     history = AuditLog.select(AuditLog.transaction_id).where(
         AuditLog.table_name == HerdTracking._meta.table_name, AuditLog.record_id == HerdTracking.id.cast("text")
@@ -1968,6 +1968,7 @@ def _removed_buyers(herd, round_, rabbits, current_ops):
             HerdTracking.created_at,
             HerdTracking.operation_id,
             HerdTracking.voided_at,
+            own_sale.alias("from_report"),
             fn.EXISTS(erased_contact).alias("erased"),
             born_removed.alias("removed_transaction"),
             voided.alias("void_transaction"),
@@ -1991,20 +1992,20 @@ def _removed_buyers(herd, round_, rabbits, current_ops):
         AuditLog.table_name == SaleProposal._meta.table_name,
         AuditLog.new_data["action"].in_(("radering", "gallring_forslag")),
     )
-    cleared = SaleProposal.select(SaleProposal.individual).where(
+    cleared = SaleProposal.select(SaleProposal.individual, SaleProposal.sale_date).where(
         SaleProposal.individual.in_(rabbits),
         SaleProposal.report.in_(reports),
         (SaleProposal.state == "foreslagen") | SaleProposal.id.cast("text").in_(erased_proposals),
         SaleProposal.to_herd.is_null(),
         SaleProposal.buyer.is_null(),
     )
-    current = {rabbit for (rabbit,) in cleared.tuples()}
+    current = set()
     dates, replaced = {}, set()
     for sale in sales:
         rabbit, day = sale.individual_id, sale.herd_tracking_date
         if not sale.erased:
-            # Ändra voids and replaces the same sale in one transaction. A resubmission keeps its sale date.
-            carried = (rabbit, sale.removed_transaction) in replaced or day in dates.get(rabbit, ())
+            # A report can write a buyer_removed transfer on resubmission even if its inferred day has moved.
+            carried = sale.from_report or (rabbit, sale.removed_transaction) in replaced or day in dates.get(rabbit, ())
             if sale.removed_transaction is None or (not carried and BuyerContact.purge_at_for(day) > sale.created_at):
                 continue
         dates.setdefault(rabbit, set()).add(day)
@@ -2012,6 +2013,8 @@ def _removed_buyers(herd, round_, rabbits, current_ops):
             replaced.add((rabbit, sale.void_transaction))
         if sale.voided_at is None and str(sale.operation_id) in current_ops:
             current.add(rabbit)
+    for rabbit, day in cleared.tuples():
+        dates.setdefault(rabbit, set()).add(day)
     return current, dates
 
 
@@ -2167,7 +2170,12 @@ def check(
         erased = rabbit in removed
         if entry.sald and entry.sald["till"] == "utanfor":
             sale = entry.sald
-            erased |= partial_date(sale["ar"], sale["manad"], sale["dag"], on) in removed_dates.get(rabbit, ())
+            erased |= any(
+                day.year == sale["ar"]
+                and day.month == sale["manad"]
+                and (sale["dag"] is None or day.day == sale["dag"])
+                for day in removed_dates.get(rabbit, ())
+            )
         if erased and entry.sald and entry.sald["kopare"] is not None:
             refusals.append(_refusal(rabbit, "kopare", BUYER_REMOVED))
             continue

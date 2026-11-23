@@ -79,6 +79,37 @@ class InviteTest(ArsrapportTest):
         self.assertEqual(self.codes(self.h3), [])
         self.assertNotIn("G9003", [m.herd.herd for m in self.mails()])
 
+    def test_demo_skips_invitations(self):
+        with mock.patch.object(settings.service, "demo_instance", True), self.assertLogs(invite.logger, "INFO") as log:
+            self.assertEqual(self.run_job(), 0)
+        self.assertEqual([r.levelname for r in log.records], ["INFO"])
+        self.assertFalse(db.ReportAccessCode.select().exists())
+        self.assertFalse(db.MailMessage.select().exists())
+        self.assertIsNone(db.YearlyReportRoundGenebank.get().sent_at)
+
+    def test_revoked_codes_without_mail_still_count_as_invited(self):
+        self.assertEqual(self.run_job(), 2)
+        db.ReportAccessCode.update(revoked_at=NOW).execute()
+        db.MailMessage.delete().execute()
+        self.assertIsNotNone(db.YearlyReportRoundGenebank.get().sent_at)
+        self.assertEqual(self.run_job(), 0)
+        self.assertEqual(db.ReportAccessCode.select().count(), 2)
+        self.assertEqual(self.mails(), [])
+
+    def test_new_link_counts_as_invited(self):
+        link = invite.new_link(self.h, self.round_, self.manager, now=NOW)
+        self.assertEqual(self.run_job(), 1)
+        self.assertEqual([m.herd_id for m in self.mails()], [self.h2.id])
+        self.assertEqual([c.id for c in self.codes(self.h)], [link.id])
+
+    def test_new_main_member_is_invited_once(self):
+        self.assertEqual(self.run_job(), 2)
+        member = self.main_member(self.h, "ny@example.invalid")
+        self.assertEqual(self.run_job(), 1)
+        self.assertEqual(self.run_job(), 0)
+        self.assertEqual([m.recipient_id for m in self.mails() if m.herd_id == self.h.id], [self.member.id, member.id])
+        self.assertEqual([c.member_id for c in self.codes(self.h) if c.revoked_at is None], [member.id])
+
     def test_sent_at_only_after_whole_genebank(self):
         real, calls = report_code.issue_code, []
 
@@ -329,6 +360,18 @@ class InviteTest(ArsrapportTest):
         row = self.mails()[0]
         self.set_email(self.member, "ny@example.invalid")
         self.assertEqual(self.delivered_to(row), [self.member.email])
+
+    def test_link_hash_only_for_current_address(self):
+        new = self.set_email(self.member, "ny@example.invalid")
+        self.send_all(FakeRelay())  # deliver the address change notice first
+        for when, expected in ((NOW, None), (new.email_login_from, mail.address_hash(new.email))):
+            self.at(when)
+            for status, reply in (("sent", None), ("failed", _refused(550, "5.1.1 unknown mailbox"))):
+                with self.subTest(when=when.isoformat(), status=status):
+                    invite.new_link(self.h, self.round_, self.manager, now=when)
+                    self.send_all(FakeRelay(replies=[reply]))
+                    row = self.mails("arsrapport.ny_lank")[-1]
+                    self.assertEqual((row.status, row.address_hash), (status, expected))
 
     def test_queued_new_link_follows_a_further_verified_address_change(self):
         self.set_email(self.member, "ny@example.invalid")

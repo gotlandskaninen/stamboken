@@ -589,11 +589,18 @@ export const storedSale = (
 
 export function buyerRemoved(
   rabbit: Pick<RabbitView, "buyer_removed" | "removed_buyer_dates"> | undefined,
-  day: string | null,
+  sale: Pick<SaldState, "ar" | "manad" | "dag">,
 ): boolean {
   return !!(
     rabbit?.buyer_removed ||
-    (day && rabbit?.removed_buyer_dates?.includes(day))
+    rabbit?.removed_buyer_dates?.some((date) => {
+      const [year, month, day] = date.split("-").map(Number);
+      return (
+        year === sale.ar &&
+        month === sale.manad &&
+        (sale.dag === null || day === sale.dag)
+      );
+    })
   );
 }
 
@@ -609,7 +616,7 @@ export const lacksBuyer = (
 ): boolean =>
   s.till === "utanfor" &&
   !s.kopare &&
-  !buyerRemoved(rabbit, eventDate(s)) &&
+  !buyerRemoved(rabbit, s) &&
   !(
     canSell &&
     s.kopare_id != null &&
