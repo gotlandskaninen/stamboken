@@ -77,6 +77,9 @@ Klicka **Avslå**, skriv en **Motivering för avslag** (minst tre tecken) och
 klicka **Avslå**. Den som ansökte får inget besked från Stamboken, så meddela
 hen själv.
 
+En ansökan som inte har lett till ett medlemskap, alltså en avslagen eller en som
+fortfarande väntar, tas bort automatiskt 12 månader efter att den skickades in.
+
 ## Matrikeln
 
 <!-- route: /medlem/matrikel -->
