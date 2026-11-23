@@ -360,7 +360,7 @@ h1, .sec, .breed { color:var(--skog) !important; }
   <div class="sign-wrap">
     <div class="cols">
       <table class="sign">
-        <tr><td class="sl">Uppfödarens namn</td><td class="sv">{{ fullname }}</td></tr>
+        {% if fullname %}<tr><td class="sl">Uppfödarens namn</td><td class="sv">{{ fullname }}</td></tr>{% endif %}
         <tr><td class="sl">Uppfödarens besättningsnummer</td><td class="sv">{{ herd }}</td></tr>
         <tr><td class="sl">Utfärdat</td><td class="sv">{{ issue_date }}</td></tr>
         <tr><td class="sl">Intygsnummer</td><td class="sv">{{ digital_certificate }}</td></tr>
