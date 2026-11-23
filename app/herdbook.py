@@ -345,6 +345,15 @@ def _purge_audit_ip():
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
 
+def _purge_member_applications():
+    """Nightly leader job beside _purge_audit_ip: applications that led to no membership go after 12 months."""
+    try:
+        count = da.purge_member_applications(datetime.datetime.now(datetime.timezone.utc))
+        APP.logger.info("Deleted %s member applications that led to no membership", count)
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
 # Initialize security packages
 # Flask-Talisman: Add security headers
 Talisman(
@@ -2975,6 +2984,17 @@ def initialize_app():
             hour=3,
             minute=45,
             id="audit_ip_purge",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        scheduler.add_job(
+            _purge_member_applications,
+            "cron",
+            hour=3,
+            minute=50,
+            id="member_application_purge",
             max_instances=1,
             coalesce=True,
             misfire_grace_time=3600,
