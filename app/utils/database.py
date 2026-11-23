@@ -1578,12 +1578,11 @@ class User(BaseModel, UserMixin):
         """Who may download or preview the certificate (ADR-0016): the
         current owner, the breeder (origin herd), the genebank's manager
         and admin. A viewer role on the genebank is not enough."""
-        if self.can_issue_certificate(individual) or self.is_admin:
-            return True
-        if self.is_manager and individual.origin_herd.genebank_id in self.is_manager:
+        if self.is_admin or (self.is_manager and individual.origin_herd.genebank_id in self.is_manager):
             return True
         herd = individual.current_herd
-        return bool(herd and self.is_owner and herd.herd in self.is_owner)
+        # By id: a herd code is unique only within its genebank, so another genebank's herd G1 is not this one.
+        return bool({individual.origin_herd_id, herd.id if herd else None} & self.effective_herd_ids())
 
     class Meta:  # pylint: disable=too-few-public-methods
         """
