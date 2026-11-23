@@ -13,7 +13,9 @@ import utils.database as db
 from flask import Blueprint, jsonify, request, session
 from peewee import DoesNotExist
 from utils.cert_service_v2 import (
+    ATTESTER_NAME_MISSING,
     CERTIFICATE_V2_FIELDS,
+    attester_name,
     certificate_form,
     certificate_update,
     check_first_certificate_quota,
@@ -117,6 +119,8 @@ def issue_certificate(i_number):
 
     if not user.can_issue_certificate(individual):
         return problem(403, "Forbidden", "Du har inte behörighet att utfärda intyg för denna kanin")
+    if not attester_name(user):
+        return problem(400, "Bad Request", ATTESTER_NAME_MISSING)
 
     if individual.digital_certificate is not None:
         return problem(400, "Bad Request", "Certifikat finns redan — använd update-endpointen")
@@ -204,6 +208,8 @@ def update_certificate(i_number):
 
     if not user.can_issue_certificate(individual):
         return problem(403, "Forbidden", "Du har inte behörighet att uppdatera intyg för denna kanin")
+    if not attester_name(user):
+        return problem(400, "Bad Request", ATTESTER_NAME_MISSING)
 
     if individual.digital_certificate is None and not individual.certificate:
         return problem(400, "Bad Request", "Inget certifikat att uppdatera — utfärda ett nytt först")

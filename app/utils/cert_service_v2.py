@@ -101,6 +101,18 @@ def compute_doc_hash_stub(cert_data):
     return compute_checksum(canonical.encode("utf-8"))[:8].upper()
 
 
+# The person who issues attests in her own name, so an account without one cannot issue (#141).
+ATTESTER_NAME_MISSING = (
+    "Ditt konto saknar namn, och den som utfärdar står som intygare på intyget. "
+    "Be genbanksansvarig lägga in ditt namn och försök igen."
+)
+
+
+def attester_name(user):
+    """The issuing user's name as it goes on the certificate, or "" when the account has none."""
+    return ((user.fullname if user else None) or "").strip()
+
+
 def generate_and_store(individual, user, ind_data, user_id):
     """Generate, sign, and store a v2 certificate.
 
