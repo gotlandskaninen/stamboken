@@ -40,9 +40,17 @@ test.describe("Rabbit Explorer — mobile (375px)", () => {
     test.setTimeout(90000);
     await page.goto("/stamboken/alla-kaniner");
     await expect(page.locator(rows).first()).toBeVisible({ timeout: 15000 });
+    // Only status Alla and ras Alla together give the seed more than one page
+    // (48 Gotland rabbits at 50 per page); the old default was both.
     await showAllStatuses(page);
-    // Fewer than a page of seed rabbits are Aktiv; the button shows the
-    // list has been redrawn with all statuses.
+    await Promise.all([
+      page.waitForResponse(
+        (r) =>
+          r.url().includes("/api/individuals") &&
+          !r.url().includes("genebank_id="),
+      ),
+      page.getByRole("button", { name: "Alla", exact: true }).click(),
+    ]);
     await expect(page.getByRole("button", { name: "Visa fler" })).toBeVisible({
       timeout: 10000,
     });
