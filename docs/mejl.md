@@ -146,9 +146,15 @@ Koden finns i `app/utils/login_code.py` och `set_member_email` i
   försöket räknas då tillbaka.
 - **Webbläsaren:** raden sparar en hash av en hemlighet som bara webbläsaren som
   bad om koden har. Vid byte av adress ligger hemligheten i sessionen
-  (`login_request`). En ny begäran byter den och gör webbläsarens tidigare
-  koder ogiltiga i databasen. Bytet görs bara om sessionen fortfarande gäller
-  när kontots rad är låst. Demon vägrar bytet ("E-postadressen kan inte bytas i
+  (`login_request`). En ny begäran om en ny adress byter den och gör alla
+  medlemmens tidigare oanvända koder för en ny adress ogiltiga, oavsett
+  webbläsare; för inloggning gör en annans begäran aldrig medlemmens kod
+  ogiltig. Utloggning och **Avbryt**
+  (`DELETE /api/v2/members/me/contact/kod`) gör sessionens väntande kod
+  ogiltig. Bytet görs bara om sessionen fortfarande gäller när kontots rad är
+  låst. Den nya adressen prövas med samma kontroll som sändaren använder, så
+  en adress som inget mejl kan gå till får samma fel som en ogiltig adress och
+  kostar ingen kod. Demon vägrar bytet ("E-postadressen kan inte bytas i
   testmiljön.") och sparar resten, eftersom kontots märke aldrig byts där.
 - **Gränser:** fem koder per person och dygn, 120 koder i timmen sammanlagt,
   och efter 50 felaktiga koder på en timme tas inga koder emot eller skickas
