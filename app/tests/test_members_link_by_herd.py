@@ -536,7 +536,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         result = self._run()
 
         for user in users:
-            self.assertIn(f"delad@example.org (id {user.id})", result.output)
+            self.assertIn(f"- <delad@example.org> (id {user.id})", result.output)
 
     def test_other_owner_with_a_broken_role_still_blocks_the_link(self):
         _, person = self._membership(901)
@@ -645,3 +645,21 @@ class TestMembersLinkByHerd(DatabaseTest):
 
         self.assertIsNone(self._linked_user_id(person))
         self.assertIn("besättningen är inte knuten till medlemskapet", result.output)
+
+    def test_control_characters_in_labels_stay_on_one_visible_line(self):
+        self._membership(901, first="Åsa", last="Öberg", email="å\nx@example.org")
+        user = db.User.create(
+            email="a\nb@example.org\x1b[2K", username="u\rv", uuid=uuid4(), fullname="Åsa Öberg"
+        )
+        user.add_role("owner", self._herd("G901").id)
+
+        result = self._run()
+
+        self.assertNotIn("\x1b", result.output)
+        self.assertNotIn("\r", result.output)
+        lines = [line for line in result.output.splitlines() if line.startswith("  G901:")]
+        self.assertEqual(len(lines), 1, result.output)
+        self.assertIn("\\x1b[2K", lines[0])
+        self.assertIn("\\n", lines[0])
+        self.assertIn("Åsa Öberg", lines[0])
+        self.assertIn("å\\nx@example.org", lines[0])

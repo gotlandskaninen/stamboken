@@ -874,14 +874,19 @@ def _norm_name(name: str | None) -> str:
     return " ".join((name or "").split()).casefold()
 
 
+def _safe(text) -> str:
+    """Control characters as visible escapes, so a pair is always exactly one line (å, ä, ö stay readable)."""
+    return re.sub(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]", lambda m: m.group().encode("unicode_escape").decode(), str(text))
+
+
 def _user_label(user) -> str:
-    # The id always identifies the account: several can share an address.
-    return f"{user.username or user.email} (id {user.id})"
+    # Username, address and id: several accounts can share an address or lack a username.
+    return f"{_safe(user.username or '-')} <{_safe(user.email)}> (id {user.id})"
 
 
 def _member_label(member) -> str:
     name = f"{member.first_name} {member.last_name}".strip()
-    return f"member {member.id}: {name} <{member.email}>"
+    return f"member {member.id}: {_safe(name)} <{_safe(member.email)}>"
 
 
 def _owner_index() -> tuple[dict[int, dict[int, User]], set[int]]:
