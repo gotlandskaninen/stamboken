@@ -695,3 +695,14 @@ class TestMembersLinkByHerd(DatabaseTest):
         self.assertIn("Kontot är låst\\x1b[2K", result.output)
         self.assertNotIn("\x1b", result.output)
         self.assertIn("Kopplade: 1", result.output)
+
+    def test_family_member_with_the_main_members_name_blocks_the_link(self):
+        membership, person = self._membership(901)
+        family = db.Member.create(membership=membership, role="familjemedlem", first_name="Anna", last_name="Svensson")
+        self._account(owns=self._herd("G901"))
+
+        for result in (self._run(), self._apply()):
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertIn("flera personer i medlemskapet har kontots namn", result.output)
+        self.assertIsNone(self._linked_user_id(person))
+        self.assertIsNone(self._linked_user_id(family))

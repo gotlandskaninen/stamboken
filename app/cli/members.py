@@ -1010,6 +1010,14 @@ def _check_owner(code, main, user, incomplete, listed, already, pairs) -> None:
         f"{main.first_name} {main.last_name}"
     ):
         listed.append(([code], "namnet skiljer sig mellan kontot och huvudmedlemmen"))
+    elif (
+        sum(
+            _norm_name(f"{m.first_name} {m.last_name}") == _norm_name(user.fullname)
+            for m in Member.select().where(Member.membership == main.membership_id, Member.end_date.is_null(True))
+        )
+        > 1
+    ):
+        listed.append(([code], "flera personer i medlemskapet har kontots namn"))
     elif main.user_id is not None:
         listed.append(([code], "huvudmedlemmen är redan kopplad till ett annat konto"))
     elif Member.select().where(Member.user == user).exists():
