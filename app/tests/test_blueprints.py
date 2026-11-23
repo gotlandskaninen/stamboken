@@ -903,7 +903,10 @@ class TestAuditBlueprint(DatabaseTest):
 
     def _promote_uncertified(self, bunny):
         """A digital promote whose issuance never ran: registered without a certificate, so unpromote is allowed."""
-        with mock.patch("blueprints.bunny_v2._apply_certificate", return_value=(None, None)):
+        with (
+            mock.patch("blueprints.bunny_v2._apply_certificate", return_value=(None, None)),
+            mock.patch("blueprints.bunny_v2.digital_certificate_refusal", return_value=None),  # the manager sets up
+        ):
             return self._promote(bunny, certificate_type="digital")
 
     def test_revert_of_certified_promotion_is_refused(self):

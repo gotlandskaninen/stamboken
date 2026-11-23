@@ -48,6 +48,9 @@ TRANSITIONS: tuple[Transition, ...] = (
 )
 
 # Event -> (what writes it, who may trigger it), for the rendered document.
+_ISSUERS = (
+    "den som har tillgång till uppfödarbesättningen (ägare, huvudmedlem, familj, skötare); inte manager eller admin"
+)
 EVENTS = {
     Event.REGISTER_WITH_PAPER: ("POST /api/v2/individual med pappersintyg", "den som registrerar kaninen"),
     Event.ASSIGN_PAPER: (
@@ -60,11 +63,11 @@ EVENTS = {
     ),
     Event.ISSUE_NUMBER: (
         "`IssueDigitalCertificate`, `assign_certificate_number`",
-        "den som får utfärda intyg (uppfödaren, manager, admin)",
+        _ISSUERS,
     ),
     Event.ISSUE_PDF: (
         "`generate_and_store` (POST /api/v2/certificates/issue, PATCH .../update)",
-        "den som får utfärda intyg (uppfödaren, manager, admin)",
+        _ISSUERS,
     ),
 }
 

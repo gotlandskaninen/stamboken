@@ -22,6 +22,7 @@ import {
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import { useTranslation } from "react-i18next";
+import { CheckPageNameHint } from "@/components/herd/CheckPageNameHint";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useMode } from "@/lib/mode-context";
@@ -231,6 +232,8 @@ export function BunnyPromoteDialog({
         return t("addRabbit.errorLitterSize6wRequired");
       case "roster_alive_exceeds_6w":
       case "litter_size6w_above_born":
+      case "digital_certificate_forbidden":
+      case "attester_name_missing":
         return raw; // the API's sentence (with the counts; the roster offers the fix)
       default:
         return t("litterRoster.promoteError");
@@ -646,6 +649,7 @@ export function BunnyPromoteDialog({
                   {t("addRabbit.certificateAttester")}
                 </Typography>
               )}
+              {certificateType === "digital" && <CheckPageNameHint />}
 
               {/* Paper certificate number */}
               {certificateType === "paper" && (

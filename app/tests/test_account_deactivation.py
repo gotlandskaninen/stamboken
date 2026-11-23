@@ -3,12 +3,13 @@
 import inspect
 from unittest import mock
 
+import flask
 import utils.data_access as da
 import utils.database as db
 from herdbook import APP, limiter
 
 from tests.database_test import DatabaseTest
-from tests.google_login import ID_TOKEN, redirect_login, token_login
+from tests.google_login import redirect_login, token_login
 
 limiter.enabled = False
 
@@ -239,12 +240,21 @@ class TestStaleUserWriters(DatabaseTest):
         )
 
     def test_google_token_login_keeps_deactivation(self):
+        """A login that read the account before the deactivation gets no session, not even once it is active again."""
         authenticate = self._after_read(
             lambda method, ident: db.User.get_by_id(self.viewer.id), self.viewer, self._deactivate(self.viewer)
         )
         token_login(self.client, authenticate)
         self.assertStillDeactivated(self.viewer)
-        self.assertEqual(db.User.get_by_id(self.viewer.id).google_email, ID_TOKEN["email"])
+        da.set_account_active(self.viewer.id, True, actor_user_id=self.admin.id)
+        self.assertEqual(self.client.get("/api/user").status_code, 401)
+
+    def test_google_redirect_login_of_a_deactivated_account_never_wakes(self):
+        self._validate(self.viewer)
+        self._deactivate(self.viewer)()
+        redirect_login(self.client, lambda method, ident: db.User.get_by_id(self.viewer.id))
+        da.set_account_active(self.viewer.id, True, actor_user_id=self.admin.id)
+        self.assertEqual(self.client.get("/api/user").status_code, 401)
 
     def test_google_auto_validation_keeps_deactivation(self):
         authenticate = self._after_read(
@@ -269,9 +279,10 @@ class TestStaleUserWriters(DatabaseTest):
         self._validate(self.viewer)
 
         def idtoken():
-            # The handler reads the id_token twice (verified email for auto-link, then the
-            # profile fallback); the admin deactivates once, during the first read.
-            if not self.fired:
+            # The handler reads the id_token for the verified address before the login, and for the
+            # profile fallback after it; the admin deactivates once, during the read after the login
+            # (one before it refuses the login under the row lock).
+            if flask.session.get("user_id") and not self.fired:
                 self.fired.append(self._deactivate(self.viewer)())
             return {"picture": "https://example.com/ny.png"}
 

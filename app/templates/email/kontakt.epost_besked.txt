@@ -1,0 +1,11 @@
+{% block subject %}Din e-postadress i Stamboken är bytt{% endblock %}
+{# To the previous address. Never the new address: the old mailbox may no longer be the member's. #}
+{% block body %}
+Hej!
+
+Din e-postadress i Stamboken är bytt. {% if by == "self" %}Du bytte den själv.{% elif by == "matrikel" %}Det var matrikelansvarig som bytte den.{% else %}Det var någon annan än du som bytte den.{% endif %}
+
+Vi skickar det här till din gamla adress, så att du vet om det.
+
+Stämmer det inte? Svara på det här mejlet.
+{% endblock %}

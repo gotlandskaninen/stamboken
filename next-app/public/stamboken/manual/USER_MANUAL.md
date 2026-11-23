@@ -295,6 +295,11 @@ kan inte utfärda digitala intyg.
 7. Klicka **Visa intyg** för att öppna PDF:en i en ny flik, **Visa kanin** för kaninens
    sida eller **Registrera en till i kullen** för nästa unge.
 
+Den som utfärdar ett digitalt intyg står som intygare med sitt eget namn, och intygar
+att uppgifterna stämmer med kaninen. Därför kan bara de som har tillgång till kaninens
+ursprungsbesättning utfärda och rätta digitala intyg. Genbanksansvarig kan inte göra
+det åt dig.
+
 Intyget går att verifiera av vem som helst genom QR-koden på PDF:en, se
 [Verifiera intyg](#verifiera-intyg).
 
@@ -527,12 +532,19 @@ medlemskapets uppgifter.
   **Använd Google-profilbild**.
 - **Kontaktuppgifter**: fyll i **Telefon**, **E-post**, **Gatuadress**, **Postnummer**
   och **Postort**, klicka **Spara**. Uppgifterna används i medlemsmatrikeln och för
-  föreningens utskick.
+  föreningens utskick. Byter du e-postadress får den nya adressen en kod. Skriv koden
+  under **Kod** och klicka **Byt adress**. Sedan loggas du ut och loggar in igen.
 - **Publicering i Koharen**: slå på eller av **Namn**, **Telefon**, **E-post** och
   **Adress** för den tryckta medlemsmatrikeln, klicka **Spara**.
 - **Notiser**: slå på eller av **Skicka notiser per e-post en gång om dagen**. Notiserna
   syns i Stamboken oavsett. Inställningen stänger inte av mejlet om att ditt eget inskick
   är klart; det skickas ändå.
+- **Intygens kontrollsida**: välj om ditt namn ska stå som **Intygas av** på
+  [kontrollsidan](#verifiera-intyg) för intyg som du har utfärdat. Annars står din roll
+  där, till exempel "Uppfödaren". Har du inte valt än väljer du med **Visa mitt namn**
+  eller **Visa inte mitt namn**, sedan ändrar du med **Visa mitt namn på kontrollsidan**.
+  Konton som fanns före valet visar namnet tills du ändrar det. På själva intyget står
+  ditt namn alltid.
 - **Personer i medlemskapet**: huvudmedlemmen lägger till familjemedlemmar och skötare
   med **Lägg till person** (**Förnamn**, **Efternamn**, **Roll**), ger dem rätt att
   sköta en besättning med **Ge åtkomst**, förnyar en skötares tidsbegränsade åtkomst
@@ -678,15 +690,11 @@ avkomman F: bra upp till N %, utred närmare upp till M %, över det hög inavel
 
 <!-- route: /stamboken/profil -->
 
-Korten **Konto** (bild, namn, inloggning, roller, **Validerad** / **Inte validerad**),
+Korten **Konto** (bild, namn, inloggning, roller),
 **Medlemskap** (medlemsnummer, medlem sedan, huvudmedlem, din roll, besättningar),
 **Kontaktuppgifter**, **Publicering i Koharen** och **Personer i medlemskapet**.
 Saknar kontot medlemspost visas bara **Konto** och texten "Du har ingen medlemspost
 kopplad till ditt konto." Se [Uppdatera din profil](#uppdatera-din-profil).
-
-Är du inte validerad visas "För att bli validerad: Du måste genomgå kursen för att få
-full åtkomst till systemet." med länken **Gå kursen nu**. Med Google kommer du inte in
-alls förrän du är validerad; inloggningssidan visar då adressen till kursen.
 
 ![Min profil](profil-desktop.png)
 
@@ -728,8 +736,12 @@ Sidan som QR-koden på ett digitalt intyg leder till. Den kräver ingen inloggni
 visar ett av fyra besked:
 
 - **Äkta genbanksintyg** – intyget är utfärdat i Stamboken och signerat av föreningen.
-  Kortet visar **Individnummer**, namn, **Ras**, **Intygsnummer** och **Datum**, men
-  ingen person. **Visa kaninens sida i Stamboken →** kräver inloggning.
+  Kortet visar **Individnummer**, namn, **Ras**, **Intygsnummer**, **Datum** och
+  **Intygas av**: namnet på den som utfärdade intyget om hen har valt det, annars
+  "Uppfödaren" eller, när föreningen utfärdade det, "Föreningen Gotlandskaninen" med
+  rollen. Varje byte av besättning står som **Såld** med månad och år, aldrig dag eller
+  namn.
+  **Visa kaninens sida i Stamboken →** kräver inloggning.
 - **Äkta, men ersatt** – ett nyare intyg har utfärdats för kaninen. Be säljaren om
   den senaste versionen.
 - **Äkta, men gäller inte längre** – intyget har ersatts av ett pappersintyg. Be
@@ -1025,8 +1037,11 @@ I kortet **Status och åtkomst** på användarens sida:
 
 - **Tillgång till den riktiga stamboken i den nya versionen** – slå på när medlemmen
   ska lämna testmiljön. Användaren byter sedan själv via avatarmenyn.
-- **Webbkurs genomförd (validerad)** – krävs för att logga in med Google. Stängs den av
-  kommer kontot inte in med Google längre; lösenordsinloggning påverkas inte.
+- **Webbkurs genomförd (validerad)** – i produktion frågar nya Stamboken inte efter den.
+  Gamla Stamboken kräver den, både vid Google-inloggning och för att visa kaninerna
+  efter en lösenordsinloggning, och en redaktör behöver den för hemsidans redigering
+  (`/admin`). Stäng därför inte av den för någon som använder gamla Stamboken eller
+  redigerar hemsidan.
 
 Reglagen sparas direkt.
 

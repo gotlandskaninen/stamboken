@@ -66,8 +66,11 @@ Konkret:
 
 * Ett ägarbyte är registrerat eller ogiltigförklarat (void). Det finns inget
   tillstånd "bekräftad". Kontrollsidan är öppen för alla och visar att
-  intyget är äkta och "överlåten <månad och år>", aldrig dag och aldrig
-  namn. Uppfödarens namn visas bara om uppfödaren valt det.
+  intyget är äkta och "Såld <månad och år>" för varje byte av besättning,
+  aldrig dag och aldrig köparens namn. Under "Intygas av" står namnet på
+  personen som utfärdade intyget bara om hen själv valt det; annars
+  "Uppfödaren", eller föreningen när admin eller genbanksansvarig utfärdade
+  det åt någon annan.
 * Mottagande besättning aviseras och kan avvisa inom 30 dagar från
   registreringen. Avvisa är en void av raden, med behörigheten knuten till
   mottagande besättning, och med samma villkor som säljarens ångra inom 7
@@ -228,3 +231,4 @@ Relaterade beslut: [ADR-0014](0014-authorization-model.md)
 | 2026-10-29 | Jonas Hagberg | Två rättsliga grunder (namn och ort 6.1 f, kontakt 6.1 a med kryss före raderna), månad på kontrollsidan, utskriftsrätt för intyget, ångra och avvisa som registerregler |
 | 2026-11-06 | Jonas Hagberg | MADR-format inför publikt repo, interna beteckningar förklarade, månad och år på kontrollsidan, spärren för nedladdning av intyget genomförd |
 | 2026-11-18 | Jonas Hagberg | Postadressen sparas på berättigat intresse som namn och ort och krävs vid en ny försäljning utom från genbanksansvarig och admin (issue #111); krysset gäller bara e-post och telefon |
+| 2026-11-23 | Jonas Hagberg | Kontrollsidan: "Såld" för varje byte av besättning i den rättade historiken, och "Intygas av" är den fysiska person som utfärdade intyget, med namn bara efter eget val (issue #6) |

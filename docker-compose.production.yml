@@ -75,6 +75,14 @@ services:
   redis:
     image: redis:7-alpine
     restart: always
+    # AOF: a logout or a revoked session survives a crash, but for about its last second
+    # (appendfsync everysec); a snapshot alone can be minutes old.
+    # Whenever this replaces a Redis that runs without AOF (the first deploy, and again after a
+    # rollback): run `redis-cli config set appendonly yes` in the running container, wait until
+    # `info persistence` shows aof_enabled:1, no rewrite in progress or scheduled and
+    # aof_last_bgrewrite_status:ok, and deploy at once. Otherwise Redis 7 ignores the snapshot:
+    # with no AOF file it comes up empty, and with an old one it loads that, however old.
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
     healthcheck:

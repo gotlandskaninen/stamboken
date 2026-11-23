@@ -440,7 +440,9 @@ class TestCreateIndividualV2(DatabaseTest):
 
     def test_digital_certificate_is_issued_after_the_registration(self):
         """Digital is issued after the commit, as promote does; its outcome is in the response."""
-        self._login()
+        # Only a named user with access to the litter's herd may ask for a digital certificate.
+        db.User.update(fullname="Test Namn").where(db.User.id == self.owner.id).execute()
+        self._login("owner")
         failed = {"type": "about:blank", "title": "certificate_issuance_failed", "status": 503, "detail": "nere"}
         for outcome, certificate, error in ((("100500", None), "100500", None), ((None, failed), None, failed)):
             with self.subTest(certificate=certificate):
