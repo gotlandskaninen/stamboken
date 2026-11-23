@@ -158,7 +158,11 @@ Koden finns i `app/utils/login_code.py` och `set_member_email` i
 - **Inloggning.** När `KODINLOGGNING=true` ger `POST /api/v2/login/kod`
   alltid samma besked och en ny HttpOnly-kaka, `login_request`. Servern slår
   upp adressen och köar mejlet efter att svaret har skickats. Sändaren
-  kontrollerar på nytt att samma person och konto kan använda adressen.
+  kontrollerar på nytt att samma person och konto kan använda adressen när
+  SMTP-anslutningen är uppe. Om adressen dras in mellan den sista kontrollen
+  och överlämningen till reläet kan mejlet ändå gå till den indragna adressen.
+  Sändaren håller inga adresslås under SMTP-anropet. Vid inlösen kontrolleras
+  adressen på nytt, så både koden och länken nekas om adressen har dragits in.
   Länken läggs i URL-fragmentet och tas bort ur historiken när sidan öppnas.
   Uppslagningen visar namnet i webbläsaren som begärde mejlet. Först när
   medlemmen trycker på knappen förbrukas koden. Byte från ett annat inloggat
