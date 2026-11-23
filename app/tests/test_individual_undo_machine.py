@@ -43,6 +43,7 @@ EDITS = {
     "notes": TEXT,
     "sex": st.sampled_from(["female", "male"]),
     "is_active": st.booleans(),
+    "rex": st.booleans(),
     "has_photo": st.booleans(),
     "castration_date": DAYS.map(date.isoformat),
 }

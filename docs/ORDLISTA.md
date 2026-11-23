@@ -229,6 +229,12 @@ gemensamma förfäder föräldrarna har. Är en förälder inte registrerad väl
 stället. Nya Stamboken kan jämföra flera hanar mot samma hona.\
 Kod: `testbreed` · Legacy-manual: "Provparning", "provpara" · Legacy: "Provparning" · Nytt UI: samma, "Provpara"
 
+**Päls (normal, rex)**\
+Kaninens päls är antingen normal eller rex, ett val med två alternativ, inte en kryssruta. Normal är
+standardvärdet. "Hårlag" är det äldre fritextfältet (`hair_notes`) och används inte för valet
+Normal eller Rex; "rexpäls" används inte i gränssnittet.\
+Kod: `rex` (boolean) · Legacy-manual: – · Legacy: fritext i hårlag · Nytt UI: "Päls", "Normal", "Rex"
+
 **Registrera / registrerad kanin**\
 En registrerad kanin är inskriven i stamboken med intyg, pappersintyg eller digitalt intyg, och har
 därmed fått sitt individnummer. Att registrera är att skriva in kaninen med intyg; utan intyg går det

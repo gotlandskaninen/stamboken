@@ -9,6 +9,8 @@ import {
   TextField,
   Grid,
 } from "@mui/material";
+import { useTranslation } from "react-i18next";
+import { CoatChoice } from "@/components/herd/CoatChoice";
 import type { Individual } from "@/redux/api/apiSlice";
 import { ColorPicker, colorsFor } from "@/components/herd/ColorPicker";
 import {
@@ -20,7 +22,7 @@ interface IdentitySectionProps {
   individual: Individual;
   isEditing: boolean;
   formData: Partial<Individual>;
-  onFieldChange: (field: string, value: string | null) => void;
+  onFieldChange: (field: string, value: string | boolean | null) => void;
 }
 
 interface FieldRowProps {
@@ -85,6 +87,7 @@ export function IdentitySection({
   formData,
   onFieldChange,
 }: IdentitySectionProps) {
+  const { t } = useTranslation();
   const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
   const [colorsLoading, setColorsLoading] = useState(true);
   useEffect(() => {
@@ -105,6 +108,7 @@ export function IdentitySection({
       .finally(() => setColorsLoading(false));
   }, [isEditing, individual.genebank, individual.herd]);
 
+  const rex = "rex" in formData ? !!formData.rex : !!individual.rex;
   const colorName = "color" in formData ? formData.color : individual.color;
   const colorDisplay =
     colorName && individual.color_id && colorName === individual.color
@@ -170,6 +174,19 @@ export function IdentitySection({
               formData={formData}
               onFieldChange={onFieldChange}
             />
+          </Grid>
+          <Grid size={{ xs: isEditing ? 12 : 6, sm: 4 }}>
+            {isEditing ? (
+              <CoatChoice rex={rex} onChange={(v) => onFieldChange("rex", v)} />
+            ) : (
+              <FieldRow
+                label={t("coat.label")}
+                value={rex ? t("coat.rex") : t("coat.normal")}
+                isEditing={false}
+                formData={formData}
+                onFieldChange={onFieldChange}
+              />
+            )}
           </Grid>
           <Grid size={{ xs: 6, sm: 4 }}>
             <FieldRow

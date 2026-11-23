@@ -21,6 +21,11 @@
     "matrikel": "Mitgliederverzeichnis",
     "medlemsstatistik": "Statistik"
   },
+  "coat": {
+    "label": "Fell",
+    "normal": "Normal",
+    "rex": "Rex"
+  },
   "explorer": {
     "title": "Alle Kaninchen",
     "subtitle": "Alle Kaninchen in der Genbank durchsuchen",

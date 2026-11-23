@@ -22,6 +22,11 @@
     "matrikel": "Member registry",
     "medlemsstatistik": "Statistics"
   },
+  "coat": {
+    "label": "Coat",
+    "normal": "Normal",
+    "rex": "Rex"
+  },
   "explorer": {
     "title": "All Rabbits",
     "subtitle": "Explore all rabbits in the gene bank",
