@@ -182,9 +182,10 @@ describe("ContactEditor", () => {
     );
     save();
     await waitFor(() => expect(onSave).toHaveBeenCalled());
-    expect(onSave.mock.calls[0][0].contact.rows.physical_address.value).toBe(
-      "Byvägen 1",
-    );
+    // privacy only: the stored street stays as it is, nothing is sent for the value
+    expect(
+      onSave.mock.calls[0][0].contact.rows.physical_address,
+    ).not.toHaveProperty("value");
   });
 
   it("a non-reader sends only own rows without top-level state", async () => {
@@ -909,9 +910,10 @@ describe("review round 5", () => {
     );
     save();
     await waitFor(() => expect(onSave2).toHaveBeenCalled());
+    // a privacy-only change sends no value: null would clear the row on the server
     expect(
-      onSave2.mock.calls[0][0].contact.rows.physical_address.value,
-    ).toBeNull();
+      onSave2.mock.calls[0][0].contact.rows.physical_address,
+    ).not.toHaveProperty("value");
   });
 
   const pendingFritext = (): ReaderContact => {

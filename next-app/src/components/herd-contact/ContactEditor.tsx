@@ -291,9 +291,16 @@ export default function ContactEditor({
           error: `Skriv ${FIELD_LABEL[f].toLowerCase()} eller välj Från medlemskapet.`,
         };
       }
+      // a privacy-only change of an own row sends no value: null would clear it on the server
+      const valueSame =
+        own &&
+        i.source === "egen" &&
+        (f === "physical_address"
+          ? r.street === i.street && r.postal === i.postal && r.city === i.city
+          : r.text === i.text);
       rows[f] = {
         source: r.source,
-        value: sent,
+        ...(valueSame ? {} : { value: sent }),
         privacy: r.privacy,
         shown: reader
           ? shownRow(f, (contact as ReaderContact).rows[f], herd)
