@@ -46,6 +46,7 @@ import { PaperCertificate } from "@/components/individual/PaperCertificate";
 import { EditSaveBar } from "@/components/individual/EditSaveBar";
 import { ReportDeathDialog } from "@/components/individual/ReportDeathDialog";
 import { SellRabbitDialog } from "@/components/individual/SellRabbitDialog";
+import type { SaleBuyer } from "@/components/individual/BuyerFields";
 import { isOutsideGenebankHerd } from "@/utils/saleRules";
 import {
   saveFormData,
@@ -534,12 +535,13 @@ export function IndividualDetail({
     });
   };
 
-  const handleSell = (herd: string, sellingDate: string) => {
+  const handleSell = (herd: string, sellingDate: string, buyer?: SaleBuyer) => {
     setSellError(null);
     startTransition(async () => {
       const result = await updateIndividual(individual.number || "", {
         herd,
         selling_date: sellingDate,
+        ...(buyer ? { buyer } : {}),
       });
       if (result.success) {
         setSellDialogOpen(false);
@@ -826,6 +828,9 @@ export function IndividualDetail({
         birthDate={individual.birth_date}
         herdTracking={individual.herd_tracking}
         isRegistered={individual.is_registered}
+        canResellOutside={
+          !!user.is_admin || !!user.is_manager?.includes(individual.genebank_id)
+        }
         isSaving={isPending}
         error={sellError}
       />
