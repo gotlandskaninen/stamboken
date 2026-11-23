@@ -12,7 +12,8 @@ import {
   type BreedingRecord,
   type TabValue,
 } from "./min-besattning-ui";
-import BesattningsuppgifterCard from "./BesattningsuppgifterCard";
+import BesattningCard from "./BesattningCard";
+import KontaktCard from "./KontaktCard";
 import OnboardingChecklist from "./OnboardingChecklist";
 import styles from "./min-besattning.module.css";
 
@@ -239,7 +240,8 @@ export default function OversiktTab({
             </div>
           </MbCard>
 
-          <BesattningsuppgifterCard herd={herd} herdNumber={herdNumber} />
+          <BesattningCard herd={herd} herdNumber={herdNumber} />
+          <KontaktCard herd={herd} herdNumber={herdNumber} />
         </div>
       </div>
     </div>
