@@ -1591,6 +1591,29 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertIn(("member_previous_address", "member_id", "member"), fresh[2])
         self.assertTrue(set(tables).isdisjoint(db.AUDITED_TABLES))
 
+    def test_replay_49_to_50_adds_account_rules_acceptance(self):
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+
+        def columns():
+            return {
+                (c.name, c.data_type, c.null) for c in db.DATABASE.get_columns("hbuser") if c.name.startswith("rules_")
+            }
+
+        fresh = columns()
+        self.assertEqual(
+            fresh, {("rules_accepted_at", "timestamp with time zone", True), ("rules_version", "text", True)}
+        )
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 50).execute()
+        db.SchemaHistory.get_or_create(version=49, defaults={"comment": "test seed", "applied": datetime.now()})
+        db.DATABASE.execute_sql("ALTER TABLE hbuser DROP COLUMN rules_accepted_at, DROP COLUMN rules_version")
+        db.check_migrations()
+        self.assertEqual(db.SchemaHistory.get_by_id(50).version, 50)
+        self.assertEqual(columns(), fresh)
+        user = db.User.get_by_id(self.viewer.id)
+        self.assertEqual((user.rules_accepted_at, user.rules_version), (None, None))
+
     def test_replay_adds_name_on_check_page(self):
         """Stamboken #6: an older database gets the person's choice, on for the accounts it has, and the issuing
         role, shaped as a fresh bootstrap."""

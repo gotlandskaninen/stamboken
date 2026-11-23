@@ -118,10 +118,12 @@ class CodeLoginTest(MatrikelApiTest):
         with mock.patch.object(limiter, "enabled", True):
             limiter.reset()
             self.addCleanup(limiter.reset)
-            for _ in range(10):
+            for _ in range(9):
                 self.ask("unknown@example.org")
             self.assertEqual(self.ask()[0], 200)
-        self.assertFalse(db.LoginCode.select().exists())
+            self.assertEqual(db.LoginCode.select().count(), 1)
+            self.assertEqual(self.ask()[0], 200)
+            self.assertEqual(db.LoginCode.select().count(), 1)
 
     def test_link_preview_and_wrong_browser_leave_the_row_and_session_alone(self):
         self.ask()

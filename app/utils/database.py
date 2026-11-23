@@ -68,8 +68,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # the intake queue (42) and its retention (43) + buyer_contact (44) +
 # matrikel_audit rows without a user, written by the nightly anonymization (45) +
 # the coat column individual.rex (46) + hbuser.name_on_check_page and digitalcertificatev2.issued_as (47) +
-# one account per Google identity (48) + one-time codes and members' previous addresses (49).
-CURRENT_SCHEMA_VERSION = 49
+# one account per Google identity (48) + one-time codes and members' previous addresses (49) +
+# acceptance of the account rules (50).
+CURRENT_SCHEMA_VERSION = 50
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -1153,6 +1154,8 @@ class User(BaseModel, UserMixin):
     use_google_picture = BooleanField(default=True)  # User preference
     # Additive column for per-user v2-prod promotion; never read by legacy.
     v2_prod_access = BooleanField(default=False)
+    rules_accepted_at = TimestampTZField(null=True)
+    rules_version = TextField(null=True)
     # Phase 17 — account deactivation. Peewee's FieldAccessor shadows
     # flask_login UserMixin.is_active (same pattern as Herd.is_active), so
     # login_user() natively refuses inactive users. Normal audited column —
@@ -4311,6 +4314,16 @@ def migrate_48_to_49():
         ).execute()
 
 
+def migrate_49_to_50():
+    """Record the published rules accepted by self-registered accounts."""
+    with DATABASE.atomic():
+        DATABASE.execute_sql("ALTER TABLE hbuser ADD COLUMN IF NOT EXISTS rules_accepted_at TIMESTAMPTZ")
+        DATABASE.execute_sql("ALTER TABLE hbuser ADD COLUMN IF NOT EXISTS rules_version TEXT")
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=50, comment="hbuser account rules acceptance", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4797,6 +4810,7 @@ MIGRATIONS = {
     (46, 47): migrate_46_to_47,  # the attester's name on the certificate check page
     (47, 48): migrate_47_to_48,  # unique Google identity
     (48, 49): migrate_48_to_49,  # one-time codes, previous addresses
+    (49, 50): migrate_49_to_50,  # account rules acceptance
 }
 
 

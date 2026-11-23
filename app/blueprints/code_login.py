@@ -13,6 +13,7 @@ from utils import login_code as lc
 from utils import settings
 from utils.data_access import fetch_user_info, login_generation
 from utils.database import DB_PROXY
+from utils.login_account import start_pending
 from utils.mail import _normalize, address_hash, enqueue_mail
 from utils.matrikel import LinkError, _lock_for_detach
 
@@ -131,10 +132,13 @@ def _redeem(*, link, preview=False):
         if other is not None and (type(body.get("confirm_user_id")) is not int or body["confirm_user_id"] != other):
             transaction.rollback()  # A right code requesting confirmation does not spend a try.
             return problem(409, "Bekräfta byte av konto", "Ett annat konto är inloggat.", switch_from=other)
-        if user is None or not lc.consume(row, link=link):
+        if not lc.consume(row, link=link):
             transaction.rollback()
             return _wrong()
-        generation = login_generation(user.uuid)
+        generation = login_generation(user.uuid) if user else None
+    if user is None:
+        start_pending(person, row)
+        return jsonify(pending=True)
     session.clear()
     current_app.extensions["establish_session"](user, "kod", generation)
     return jsonify(v2_prod_access=user.v2_promoted)

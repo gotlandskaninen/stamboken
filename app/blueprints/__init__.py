@@ -17,6 +17,7 @@ from .inbox import inbox_bp
 from .inbox_gmail import inbox_gmail_bp
 from .individual_v2_create import individual_v2_create_bp
 from .individuals import individuals_bp
+from .login_account import login_account_bp
 from .mail import mail_bp
 from .member_applications import member_applications_bp
 from .members import members_bp
@@ -42,6 +43,7 @@ def register_blueprints(app):
     app.register_blueprint(inbox_gmail_bp)
     app.register_blueprint(individual_v2_create_bp)
     app.register_blueprint(individuals_bp)
+    app.register_blueprint(login_account_bp)
     app.register_blueprint(mail_bp)
     app.register_blueprint(member_applications_bp)
     app.register_blueprint(members_bp)
