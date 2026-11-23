@@ -156,9 +156,9 @@ export default function IntegritetspolicyPage() {
               </li>
               <li>
                 Tryckeriet får namn, adress och medlemsnummer för att kunna
-                skicka Koharen. Till årets två första nummer får det också veta
-                vilka som inte har betalat medlemsavgiften, så att en påminnelse
-                kan följa med.
+                skicka Koharen. Till årets två första nummer får tryckeriet
+                också veta vilka som inte har betalat medlemsavgiften, så att en
+                påminnelse kan följa med.
               </li>
               <li>
                 I listan över aktiva besättningar i Koharen står bara de
