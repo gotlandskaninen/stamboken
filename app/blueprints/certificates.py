@@ -344,16 +344,15 @@ def preview_certificate(i_number):
 
     from utils.cert_service_v2 import _generator, build_cert_data, compute_doc_hash_stub
 
+    # A preview names its viewer as attester, which is only true for someone who may issue the next version. A buyer
+    # or manager who only views gets the signed certificate as issued; data changed since would otherwise appear
+    # under the issuer's name (Codex on #7). Without any certificate the preview has no attester.
+    may_issue = da.fetch_user_info(user_id).can_issue_certificate(individual)
+    if not may_issue and individual.digital_certificate is not None:
+        return download_certificate(i_number)
     cert_data = build_cert_data(individual, ind_dict, user_id)
-    # The preview shows the viewer as attester only if she may issue the next version; a buyer or manager who
-    # only views sees the issuer of the current certificate, or no name before the first one.
-    if not da.fetch_user_info(user_id).can_issue_certificate(individual):
-        current = (
-            db.DigitalCertificateV2.select()
-            .where((db.DigitalCertificateV2.individual == individual) & (db.DigitalCertificateV2.is_current == True))  # noqa: E712
-            .first()
-        )
-        cert_data["fullname"] = (current.issued_by.fullname or "") if current else ""
+    if not may_issue:
+        cert_data["fullname"] = ""
     cert_data["digital_certificate"] = individual.digital_certificate or "PREVIEW"
     cert_data["replaces_date"] = ""
     cert_data["doc_hash_stub"] = compute_doc_hash_stub(cert_data)

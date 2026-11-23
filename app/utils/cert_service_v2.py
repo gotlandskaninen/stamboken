@@ -38,9 +38,11 @@ _ATLAS = {(id_, code, name) for id_, code, name, _ in ATLAS_FARGER}
 # individual belongs to. The reason text mentions the specific genebank for
 # traceability, but the contact info is the association's single address.
 _ASSOCIATION_CONTACT = "admin@gotlandskaninen.se"
-_GENEBANK_TO_BREED = {
+_GENEBANK_TO_BREED = {  # the short names, and the full ones that `flask seed create` gives the genebanks
     "Gotland": "Gotlandskanin",
     "Mellerud": "Mellerudskanin",
+    "Gotlandskanin": "Gotlandskanin",
+    "Mellerudskanin": "Mellerudskanin",
 }
 
 

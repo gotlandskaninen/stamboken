@@ -267,6 +267,10 @@ class TestBuildCertData(unittest.TestCase):
         ind.microchip = None
         with patch("utils.cert_service_v2.get_certificate_data", return_value={}):
             self.assertEqual(build_cert_data(ind, {}, 1)["microchip"], "")
+        for name, breed in (("Gotlandskanin", "Gotlandskanin"), ("Mellerudskanin", "Mellerudskanin")):
+            ind.origin_herd.genebank.name = name  # the names `flask seed create` gives the genebanks
+            with patch("utils.cert_service_v2.get_certificate_data", return_value={}):
+                self.assertEqual(build_cert_data(ind, {}, 1)["breed"], breed)
 
 
 class TestSignPdf(unittest.TestCase):
