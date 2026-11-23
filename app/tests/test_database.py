@@ -1344,6 +1344,36 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
         self.assertEqual(index(), fresh)
 
+    def test_replay_44_to_45_creates_login_codes_and_previous_addresses(self):
+        """A database stamped at 44 gets the two tables and the member column as a fresh bootstrap has them, with
+        their indexes and foreign keys, unaudited."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        tables = ("login_code", "member_previous_address")
+
+        def shape():
+            columns = {
+                (t, c.name, c.data_type, c.null) for t in ("member", *tables) for c in db.DATABASE.get_columns(t)
+            }
+            indexes = {(t, i.name, tuple(i.columns), i.unique) for t in tables for i in db.DATABASE.get_indexes(t)}
+            keys = {(t, k.column, k.dest_table) for t in tables for k in db.DATABASE.get_foreign_keys(t)}
+            return columns, indexes, keys
+
+        fresh = shape()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 45).execute()
+        db.DATABASE.execute_sql("DROP TABLE login_code, member_previous_address")
+        db.DATABASE.execute_sql("ALTER TABLE member DROP COLUMN email_login_from")
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(shape(), fresh)
+        self.assertIn(("member", "email_login_from", "timestamp with time zone", True), fresh[0])
+        self.assertIn(("login_code", "logincode_browser_hash", ("browser_hash",), False), fresh[1])
+        self.assertIn(("member_previous_address", "member_id", "member"), fresh[2])
+        self.assertTrue(set(tables).isdisjoint(db.AUDITED_TABLES))
+
     def _max_schema_version(self):
         return db.SchemaHistory.select(  # pylint: disable=E1120
             db.fn.MAX(db.SchemaHistory.version)
