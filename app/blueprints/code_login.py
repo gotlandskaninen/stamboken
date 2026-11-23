@@ -103,9 +103,16 @@ def _redeem(*, link, preview=False):
     if not browser or not isinstance(body, dict):
         return _wrong()
     entered = body.get("token" if link else "code")
-    candidate = lc.login_row(browser)
-    if candidate is None:
-        return _wrong()
+    # Unknown browsers and wrong credentials go through the same check without locking a person.
+    # Commit wrong tries. A valid credential is checked again under the normal membership-first locks.
+    with DB_PROXY.atomic() as probe:
+        try:
+            candidate = lc.check("login", browser, entered, link=link)
+        except lc.CodeLoginClosed:
+            return _wrong()
+        if candidate is None:
+            return _wrong()
+        probe.rollback()  # The probe must not spend a correct numeric try.
     with DB_PROXY.atomic() as transaction:
         # Same lock order as address changes, account linking and role updates.
         try:

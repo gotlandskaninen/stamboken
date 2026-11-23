@@ -125,6 +125,8 @@ def issue(person, purpose, browser, address, replaces=None):
 
 _SEPARATORS = re.compile(r"[\s-]")
 _DIGITS = re.compile(r"[0-9]{8}")
+# A missing row takes the same MAC comparison, but can never be returned.
+_MISSING_ROW = LoginCode(id=0, nonce="0" * 32)
 
 
 def check(purpose, browser, entered, member_id=None, *, link=False):
@@ -145,14 +147,14 @@ def check(purpose, browser, entered, member_id=None, *, link=False):
             if purpose != "login" or not isinstance(entered, str) or not entered.isascii():
                 return None
             row = login_row(browser)
-            if row and hmac.compare_digest(login_link_token(row), entered):
+            if hmac.compare_digest(login_link_token(row or _MISSING_ROW), entered):
                 return row
             return None
         params = [browser_hash(browser), purpose, now - VALID_FOR]
         mine = ""
         if member_id is not None:
             mine, params = "AND member_id = %s", [*params, member_id]
-        cursor = DB_PROXY.execute_sql(
+        updated = LoginCode.raw(
             f"""
             UPDATE login_code SET failed = failed + 1
             WHERE id = (
@@ -160,17 +162,15 @@ def check(purpose, browser, entered, member_id=None, *, link=False):
                 WHERE browser_hash = %s AND purpose = %s AND used_at IS NULL AND created_at > %s {mine}
                 ORDER BY id DESC LIMIT 1
             ) AND failed < %s
-            RETURNING id
+            RETURNING *
             """,
-            [*params, TRIES],
+            *params,
+            TRIES,
         )
-        found = cursor.fetchone()
-    if found is None:
-        return None
-    row = LoginCode.get_by_id(found[0])
+        row = next(iter(updated), None)
     digits = _SEPARATORS.sub("", entered) if isinstance(entered, str) else ""
     # fullmatch first: compare_digest takes ASCII only
-    if not _DIGITS.fullmatch(digits) or not hmac.compare_digest(code(row), digits):
+    if not _DIGITS.fullmatch(digits) or not hmac.compare_digest(code(row or _MISSING_ROW), digits):
         return None
     return row
 

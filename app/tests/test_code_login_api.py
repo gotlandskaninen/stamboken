@@ -9,6 +9,7 @@ import utils.data_access as da
 import utils.database as db
 import utils.login_code as lc
 import utils.settings as settings
+from blueprints import code_login
 from herdbook import APP, limiter
 
 from tests.test_member_api import MatrikelApiTest, _mk_membership, _mk_person
@@ -143,6 +144,33 @@ class CodeLoginTest(MatrikelApiTest):
         self.assertEqual((db.LoginCode.get_by_id(row.id).failed, db.LoginCode.get_by_id(row.id).used_at), (0, None))
         self.assertEqual(self.redeem("/kod/verifiera", code=lc.code(row)).status_code, 200)
         self.assertEqual(self.redeem("/lank/uppslag", token=token).status_code, 400)
+
+    def test_wrong_credentials_take_the_same_checks_without_person_locks(self):
+        self.ask()
+        row = db.LoginCode.get()
+        missing = APP.test_client()
+        self.ask("missing@example.org", client=missing)
+        wrong = f"{(int(lc.code(row)) + 1) % 10**8:08}"
+        for path, body, mac in (
+            ("/kod/verifiera", {"code": wrong}, "code"),
+            ("/lank/uppslag", {"token": "wrong"}, "login_link_token"),
+            ("/lank", {"token": "wrong"}, "login_link_token"),
+        ):
+            replies = []
+            for client in (self.client, missing):
+                with (
+                    mock.patch.object(lc, "_lock", wraps=lc._lock) as lock,
+                    mock.patch.object(lc, mac, wraps=getattr(lc, mac)) as compare,
+                    mock.patch.object(code_login, "_lock_for_detach") as person_lock,
+                ):
+                    response = self.redeem(path, client, **body)
+                    replies.append((response.status_code, response.data))
+                    lock.assert_called_once()
+                    compare.assert_called_once()
+                    person_lock.assert_not_called()
+            self.assertEqual(replies[0], replies[1])
+            self.assertEqual(replies[0][0], 400)
+        self.assertEqual(db.LoginCode.get_by_id(row.id).failed, 1)
 
     def test_unusable_links_disclose_no_name_and_cannot_sign_in(self):
         self.ask()
