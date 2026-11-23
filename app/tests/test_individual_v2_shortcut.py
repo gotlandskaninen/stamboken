@@ -131,10 +131,19 @@ class TestShortcutCreate(ShortcutMixin, DatabaseTest):
         before = self._written()
         db.User.update(fullname="Test Namn").where(db.User.id == self.owner.id).execute()
         self._login()
-        refused = (403, "digital_certificate_forbidden", DIGITAL_FORBIDDEN)
-        with mock.patch("blueprints.individual_v2_create.digital_certificate_refusal", side_effect=[None, refused]):
+        litters_seen = []
+
+        def refusal(user, herd):
+            litters_seen.append(db.Breeding.select().count())
+            if len(litters_seen) == 1:
+                return None
+            return 403, "digital_certificate_forbidden", DIGITAL_FORBIDDEN
+
+        with mock.patch("blueprints.individual_v2_create.digital_certificate_refusal", side_effect=refusal):
             response = self.client.post(URL, json=self._body(certificate_type="digital", paper_certificate=None))
         self.assertEqual(response.status_code, 403, response.get_data(as_text=True))
+        # The second check ran with the new litter already created in the transaction, and the refusal undid it.
+        self.assertEqual(litters_seen[1], litters_seen[0] + 1)
         self.assertEqual(self._written(), before)
 
     def test_a_doe_outside_the_users_herds_is_refused(self):
