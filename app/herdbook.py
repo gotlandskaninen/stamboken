@@ -79,6 +79,7 @@ from utils import inbox_purge  # isort:skip
 from utils import buyer_contact  # isort:skip
 from utils.inbox_interpreter import interpret_next  # isort:skip
 from utils.members import try_auto_link_member  # isort:skip
+from utils.matrikel import anonymize_ended_persons  # isort:skip
 from utils.legacy_compat import course_message, is_legacy_host, legacy_classroom_url, legacy_hosts, refusal  # isort:skip
 from utils.redis_retry import reconnect_on_drop  # isort:skip
 
@@ -361,6 +362,22 @@ def _purge_member_applications():
     try:
         count = da.purge_member_applications(datetime.datetime.now(datetime.timezone.utc))
         APP.logger.info("Deleted %s member applications that led to no membership", count)
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _anonymize_ended_persons():
+    """Nightly leader job beside _purge_audit_ip (#70): persons ended 12 months ago are anonymized."""
+    try:
+        count, failed, held = anonymize_ended_persons(datetime.datetime.now(datetime.timezone.utc))
+        APP.logger.info(
+            "Anonymized %s persons ended 12 months ago, %s memberships failed, %s left for the administrator",
+            count,
+            failed,
+            len(held),
+        )
+        for membership_id, person_id, reason in held:  # ids only, never names: the system administrator decides
+            APP.logger.info("Not anonymized: membership=%s person=%s reason=%s", membership_id, person_id, reason)
     finally:
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
@@ -3018,6 +3035,17 @@ def initialize_app():
             hour=3,
             minute=50,
             id="member_application_purge",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        scheduler.add_job(
+            _anonymize_ended_persons,
+            "cron",
+            hour=3,
+            minute=55,
+            id="ended_person_anonymization",
             max_instances=1,
             coalesce=True,
             misfire_grace_time=3600,
