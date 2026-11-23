@@ -1,5 +1,6 @@
 """Tests for flask members link-by-herd (links accounts to the register via herd ownership)."""
 
+import re
 from datetime import date
 from uuid import uuid4
 
@@ -27,8 +28,14 @@ class TestMembersLinkByHerd(DatabaseTest):
             obj=ScriptInfo(create_app=lambda: APP),
         )
 
-    def _apply(self):
-        return self._run("--apply", "--actor-user-id", str(self.admin.id))
+    def _plan_value(self):
+        match = re.search(r"Kontrollvärde: ([0-9a-f]{16})", self._run().output)
+        return match.group(1)
+
+    def _apply(self, plan=None):
+        """Apply with the value of the plan as it stands now, unless a (stale) value is given."""
+        plan = plan or self._plan_value()
+        return self._run("--apply", "--actor-user-id", str(self.admin.id), "--plan", plan)
 
     def _membership(self, number, first="Anna", last="Svensson", status="active", **member_kwargs):
         membership = db.Membership.create(member_number=number, membership_status=status)
@@ -554,3 +561,62 @@ class TestMembersLinkByHerd(DatabaseTest):
         for result in (self._run(), self._apply()):
             self.assertEqual(result.exit_code, 0, result.output)
         self.assertIsNone(self._linked_user_id(person))
+
+    def test_plan_ends_with_a_checksum_line(self):
+        self._membership(901)
+        self._account(owns=self._herd("G901"))
+
+        self.assertRegex(self._run().output, r"Kontrollvärde: [0-9a-f]{16}\n")
+
+    def test_apply_without_plan_value_is_a_usage_error(self):
+        _, person = self._membership(901)
+        self._account(owns=self._herd("G901"))
+
+        result = self._run("--apply", "--actor-user-id", str(self.admin.id))
+
+        self.assertEqual(result.exit_code, 2, result.output)
+        self.assertIn("--plan", result.output)
+        self.assertIsNone(self._linked_user_id(person))
+
+    def test_apply_with_unchanged_data_and_right_value_links(self):
+        _, person = self._membership(901)
+        user = self._account(owns=self._herd("G901"))
+        value = self._plan_value()
+
+        result = self._run("--apply", "--actor-user-id", str(self.admin.id), "--plan", value)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(self._linked_user_id(person), user.id)
+
+    def test_apply_refuses_when_the_sole_owner_was_swapped_after_the_plan(self):
+        _, person = self._membership(901)
+        herd = self._herd("G901")
+        first = self._account(owns=herd)
+        stale = self._plan_value()
+        first.privileges = []
+        first.save()
+        self._account(owns=herd)
+
+        result = self._apply(stale)
+
+        self.assertNotEqual(result.exit_code, 0, result.output)
+        self.assertIn("planen har ändrats", result.output.lower())
+        self.assertIn("Kontrollvärde:", result.output)
+        self.assertIsNone(self._linked_user_id(person))
+        self.assertEqual(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_user_linked").count(), 0)
+
+    def test_apply_refuses_when_an_account_was_renamed_into_a_new_pair(self):
+        _, p1 = self._membership(901)
+        _, p2 = self._membership(902, first="Eva", last="Lund")
+        self._account(owns=self._herd("G901"))
+        late = self._account(fullname="Fel Namn", owns=self._herd("G902"))
+        stale = self._plan_value()
+        late.fullname = "Eva Lund"
+        late.save()
+
+        result = self._apply(stale)
+
+        self.assertNotEqual(result.exit_code, 0, result.output)
+        self.assertIsNone(self._linked_user_id(p1))
+        self.assertIsNone(self._linked_user_id(p2))
+        self.assertEqual(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_user_linked").count(), 0)

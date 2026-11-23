@@ -3,7 +3,7 @@ Flask CLI for member registry operations.
 
 Usage:
     flask members import <csv_path> [--dry-run]
-    flask members link-by-herd [--apply --actor-user-id <id>]
+    flask members link-by-herd [--apply --actor-user-id <id> --plan <value>]
 
 `import` expects the MATR2026 paper-matrikel layout (headers matched
 case-insensitively after normalization):
@@ -57,6 +57,7 @@ cases are listed for the register manager. Plan only unless --apply.
 """
 
 import csv
+import hashlib
 import logging
 import re
 
@@ -805,21 +806,26 @@ def _print_report(report: dict, dry_run: bool) -> None:
     default=None,
     help="Admin/matrikel_admin user recorded as audit actor (required with --apply).",
 )
-def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None) -> None:
+@click.option("--plan", "plan_value", default=None, help="Kontrollvärde från planen du läst (required with --apply).")
+def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None, plan_value: str | None) -> None:
     """Link accounts to the main member of the membership whose herd they own.
 
     The only account with role `owner` on herd G<Nr>/M<Nr> whose name equals the
     name of membership Nr's main member is proposed as that member's account.
     THE NAME IS NO PROOF: the account holder can edit it, and so can a genebank
-    manager, who can also hand out `owner`. Read every printed pair before
-    running with --apply. Without --apply nothing is written and the plan is
-    exactly what --apply then does; everything else is listed for the register
-    manager. Each link commits on its own (mode "cli"), so a re-run is safe.
+    manager, who can also hand out `owner`. Read every printed pair first.
+    Without --apply nothing is written; the plan ends with a "Kontrollvärde"
+    (a hash of the printed pairs). --apply needs that value in --plan: the plan
+    is recomputed and, if it no longer gives the same value, the run stops
+    before the first write and prints the new plan. Everything else is listed
+    for the register manager. Each link commits on its own (mode "cli").
     """
     actor = None
     if apply_links:
         if actor_user_id is None:
             raise click.UsageError("--apply kräver --actor-user-id <id> (auditloggens aktör)")
+        if plan_value is None:
+            raise click.UsageError("--apply kräver --plan <kontrollvärde> från planen du har läst")
         actor = User.get_or_none(User.id == actor_user_id)
         if actor is None or not actor.is_active or not (actor.is_admin or actor.is_matrikel_admin):
             raise click.UsageError(
@@ -827,29 +833,41 @@ def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None) -> None:
             )
 
     to_link, listed, already = _plan_herd_links()
+    lines = {id(pair): _pair_line(*pair) for pair in to_link}
+    value = hashlib.sha256("\n".join(sorted(lines.values())).encode()).hexdigest()[:16]
+    if apply_links and plan_value != value:
+        _echo_plan("Att koppla", [lines[id(p)] for p in to_link], listed, already)
+        click.echo(f"Kontrollvärde: {value}")
+        raise click.ClickException("planen har ändrats sedan du läste den — läs den nya planen ovan och kör om med dess värde")
 
     linked = []
-    for main, user, codes in to_link:
+    for pair in to_link:
         try:
             if apply_links:
-                link_member_user(main.id, user.id, actor=actor, mode="cli")
+                link_member_user(pair[0].id, pair[1].id, actor=actor, mode="cli")
         except (ConfirmRequired, LinkError, IntegrityError) as exc:
-            listed.append((codes, f"länkningen avvisades ({type(exc).__name__})"))
+            listed.append((pair[2], f"länkningen avvisades ({type(exc).__name__})"))
         else:
-            linked.append((main, user, codes))
+            linked.append(lines[id(pair)])
 
-    click.echo(
-        f"{'Kopplade' if apply_links else 'Att koppla'}: {len(linked)}, "
-        f"Redan kopplade: {already}, Till granskning: {len(listed)}"
-    )
-    for main, user, codes in linked:
-        click.echo(f"  {'/'.join(codes)}: {_member_label(main)} -> user {_user_label(user)}")
+    _echo_plan("Kopplade" if apply_links else "Att koppla", linked, listed, already)
+    if not apply_links:
+        click.echo(f"Kontrollvärde: {value}")
+        click.echo("(endast plan — läs paren ovan, inget skrevs; kör om med --apply --plan <kontrollvärde>)")
+
+
+def _pair_line(main, user, codes) -> str:
+    return f"{'/'.join(codes)}: {_member_label(main)} -> user {_user_label(user)}"
+
+
+def _echo_plan(heading: str, pair_lines: list[str], listed: list, already: int) -> None:
+    click.echo(f"{heading}: {len(pair_lines)}, Redan kopplade: {already}, Till granskning: {len(listed)}")
+    for line in pair_lines:
+        click.echo(f"  {line}")
     if listed:
         click.echo("Till granskning:")
         for codes, reason in listed:
             click.echo(f"  {'/'.join(codes)}: {reason}")
-    if not apply_links:
-        click.echo("(endast plan — läs paren ovan, inget skrevs; kör om med --apply)")
 
 
 def _norm_name(name: str | None) -> str:
