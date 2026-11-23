@@ -2,10 +2,10 @@ name: Playwright Tests
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'release/**']
   push:
-    # main: PRs are tested one by one, so this is the only run of what they add up to
-    branches: [main, 'feature/**']
+    # main and release/**: PRs are tested one by one, so this is the only run of what they add up to
+    branches: [main, 'release/**', 'feature/**']
 
 jobs:
   # ═══════════════════════════════════════════════════════════

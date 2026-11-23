@@ -3,7 +3,7 @@ name: Lint Code Base
 on:
   push:
   pull_request:
-    branches: [main]
+    branches: [main, 'release/**']
 
 jobs:
   lint:
@@ -26,7 +26,7 @@ jobs:
         uses: super-linter/super-linter/slim@v8
         env:
           VALIDATE_ALL_CODEBASE: false
-          DEFAULT_BRANCH: main
+          DEFAULT_BRANCH: ${{ github.base_ref || 'main' }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
           # Only include linters we want (v8 doesn't allow mixing true/false)
