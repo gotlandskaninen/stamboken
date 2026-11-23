@@ -66,7 +66,9 @@ jobs:
       - name: Check nginx config with the real vhosts
         run: |
           scripts/check-nginx-prod-config.sh
-          scripts/check-nginx-prod-config.sh nginx/production/herdbook-production.conf nginx/production/gotlandskaninen.conf
+          # Everything production mounts, then the new hosts without the others.
+          scripts/check-nginx-prod-config.sh nginx/production/upstreams.conf nginx/production/herdbook-production.conf nginx/production/stamboken-legacy.conf nginx/production/gotlandskaninen.conf nginx/production/gotlandskaninen-www.conf
+          scripts/check-nginx-prod-config.sh nginx/production/upstreams.conf nginx/production/gotlandskaninen.conf nginx/production/gotlandskaninen-www.conf
           scripts/check-nginx-prod-config.sh nginx/herdbook-local-production.conf
 
       - name: Run tests in container

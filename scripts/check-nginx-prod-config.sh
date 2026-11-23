@@ -3,11 +3,13 @@
 # certifikat på de sökvägar vhosten pekar ut. herdbook-deploy kör inte själv
 # nginx -t före omstarten, så ett syntaxfel skulle annars synas först i drift.
 # Användning: scripts/check-nginx-prod-config.sh [vhost] [fler vhostar]   (standard: produktionsvhosten)
-# Fler filer laddas tillsammans med den första, för en vhost som använder den
-# förstas upstreams (gotlandskaninen.conf).
+# Filerna laddas tillsammans. Produktionens vhostar behöver upstreams.conf.
 set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
-vhosts=("${@:-$root/nginx/production/herdbook-production.conf}")
+if [ $# -eq 0 ]; then
+	set -- "$root/nginx/production/upstreams.conf" "$root/nginx/production/herdbook-production.conf"
+fi
+vhosts=("$@")
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=test \
