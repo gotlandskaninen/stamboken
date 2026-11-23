@@ -186,13 +186,17 @@ export default function ContactView({
   contact,
   onSave,
   onReload,
+  locked,
 }: {
   herd: HerdFields;
   contact: Contact;
   onSave?: OnSave;
   onReload?: () => void;
+  /** another save on the page is running: the answer buttons wait */
+  locked?: boolean;
 }) {
-  const [busy, setBusy] = React.useState(false);
+  const [ownBusy, setBusy] = React.useState(false);
+  const busy = ownBusy || !!locked;
   const [message, setMessage] = React.useState<string | null>(null);
   const reader = isReader(contact);
   const person = reader ? (contact as ReaderContact).contact_member : null;

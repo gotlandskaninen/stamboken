@@ -333,16 +333,21 @@ export default function ContactEditor({
     if (invalid) return setError(invalid);
     if (!patch) return setError("Inga ändringar att spara.");
     setBusy(true);
-    const res = await onSave(patch as { contact: Record<string, unknown> });
-    setBusy(false);
-    if (res.success) {
-      setAfter(latest.current);
-      onDone?.();
-    } else if (isConflict(res)) {
-      setAfter(latest.current);
-      setError(CONFLICT_TEXT);
-      onReload?.();
-    } else setError(res.error);
+    try {
+      const res = await onSave(patch as { contact: Record<string, unknown> });
+      if (res.success) {
+        setAfter(latest.current);
+        onDone?.();
+      } else if (isConflict(res)) {
+        setAfter(latest.current);
+        setError(CONFLICT_TEXT);
+        onReload?.();
+      } else setError(res.error);
+    } catch {
+      setError("Kunde inte spara. Försök igen.");
+    } finally {
+      setBusy(false);
+    }
   }
 
   const fields = FIELDS.filter(

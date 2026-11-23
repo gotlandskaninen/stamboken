@@ -3,6 +3,7 @@ import { fetchApi } from "@/lib/api";
 import { requireHerdAdmin } from "../../_lib/requireAdmin";
 import ds from "@/styles/ds-admin.module.css";
 import { AdminBackLink } from "../../_components/AdminBackLink";
+import type { Contact } from "@/components/herd-contact/contactTypes";
 import { HerdEditClient } from "./HerdEditClient";
 
 export const dynamic = "force-dynamic";
@@ -28,6 +29,8 @@ export interface HerdDetail {
   // ALL users holding {"level":"owner","herd":<id>} — a herd can have
   // several owners (museum herds, shared family herds).
   owners: { id: number; username: string; fullname: string | null }[];
+  // Full contact: admin and the genebank manager are always matrikel readers.
+  contact: Contact;
 }
 
 export default async function HerdDetailPage({

@@ -994,4 +994,38 @@ describe("review round 5", () => {
     });
     expect(sent2.rows.name).not.toHaveProperty("value");
   });
+
+  it("a rejected onSave keeps the draft, unlocks the buttons and allows a retry", async () => {
+    const onSave = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce({ success: true });
+    render(
+      <ContactEditor
+        herd={herd}
+        contact={contact()}
+        onSave={onSave}
+        onCancel={() => {}}
+      />,
+    );
+    fireEvent.change(screen.getByRole("textbox", { name: "Mobil" }), {
+      target: { value: "070-222 22 22" },
+    });
+    save();
+    await screen.findByRole("alert");
+    expect(
+      (screen.getByRole("textbox", { name: "Mobil" }) as HTMLInputElement)
+        .value,
+    ).toBe("070-222 22 22");
+    expect(
+      (screen.getByRole("button", { name: "Spara" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+    expect(
+      (screen.getByRole("button", { name: "Avbryt" }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(false);
+    save();
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
+  });
 });

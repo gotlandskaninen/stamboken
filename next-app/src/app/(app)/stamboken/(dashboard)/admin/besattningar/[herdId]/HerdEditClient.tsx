@@ -2,50 +2,56 @@
 
 import { useState, useTransition } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FormControlLabel, Switch } from "@mui/material";
 import ds from "@/styles/ds-admin.module.css";
+import ContactView from "@/components/herd-contact/ContactView";
+import ContactEditor from "@/components/herd-contact/ContactEditor";
+import { isReader, type OnSave } from "@/components/herd-contact/contactTypes";
 import styles from "../../admin.module.css";
-import { updateHerd } from "../actions";
+import { saveHerdContact, updateHerd, type UpdateHerdFields } from "../actions";
 import type { HerdDetail } from "./page";
 
 export function HerdEditClient({ herd }: { herd: HerdDetail }) {
+  const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
-  // DB lagrar adressen som en legacy-blob "gatuadress|postnummer|postort" —
-  // dela upp för redigering (som legacy-formuläret) och slå ihop vid spara.
-  const [street = "", zip = "", city = ""] = (
-    herd.physical_address ?? ""
-  ).split("|");
-  const [form, setForm] = useState({
-    name: herd.name ?? "",
-    street,
-    zip,
-    city,
-    email: herd.email ?? "",
-    mobile_phone: herd.mobile_phone ?? "",
+  const [editing, setEditing] = useState(false);
+  const [start] = useState({
     wire_phone: herd.wire_phone ?? "",
     www: herd.www ?? "",
     is_active: herd.is_active,
   });
+  const [form, setForm] = useState(start);
+  const contact = herd.contact;
+  // no contact person: mode ingen, or a compared herd whose membership has no active person left
+  const missing =
+    isReader(contact) &&
+    (contact.mode === "ingen" ||
+      (contact.mode !== "ej_jamford" && contact.persons?.length === 0));
+  // one save at a time: an answer in the view locks the page save, and the page save locks the contact
+  const [answering, setAnswering] = useState(false);
+  const onSave: OnSave = async (patch) => {
+    setAnswering(true);
+    try {
+      return await saveHerdContact(herd.herd, patch);
+    } finally {
+      setAnswering(false);
+    }
+  };
   const save = () =>
     startTransition(async () => {
       setError(null);
-      // Pipe-format enbart när postnummer/postort finns — en ensam gatuadress
-      // sparas utan pipes (legacy läser båda varianterna).
-      const physicalAddress =
-        form.zip || form.city
-          ? `${form.street}|${form.zip}|${form.city}`
-          : form.street || null;
-      // Fields per the PATCH allow-list.
-      const result = await updateHerd(herd.herd, {
-        name: form.name || null,
-        physical_address: physicalAddress,
-        email: form.email || null,
-        mobile_phone: form.mobile_phone || null,
-        wire_phone: form.wire_phone || null,
-        www: form.www || null,
-        is_active: form.is_active,
-      });
+      // Only what the admin changed: a stale start value must not overwrite a newer one.
+      // Contact fields go through the contact editor below, never this PATCH.
+      const patch: UpdateHerdFields = {};
+      if (form.wire_phone !== start.wire_phone)
+        patch.wire_phone = form.wire_phone || null;
+      if (form.www !== start.www) patch.www = form.www || null;
+      if (form.is_active !== start.is_active) patch.is_active = form.is_active;
+      if (Object.keys(patch).length === 0)
+        return setError("Inga ändringar att spara.");
+      const result = await updateHerd(herd.herd, patch);
       if (result?.error) setError(result.error); // success redirects
     });
 
@@ -60,13 +66,49 @@ export function HerdEditClient({ herd }: { herd: HerdDetail }) {
             {error}
           </div>
         )}
+        <div className={ds["ad-form-row"]}>
+          <h3 className={`sb-h6 ${ds["ad-section-title"]}`}>
+            Kontakt för besättningen
+          </h3>
+          {!editing && (
+            <button
+              type="button"
+              className="sb-btn sb-btn-ghost sb-btn-sm"
+              aria-label="Redigera kontakt"
+              disabled={pending || answering}
+              onClick={() => setEditing(true)}
+            >
+              Redigera
+            </button>
+          )}
+        </div>
+        {missing && <p className="sb-meta">Kontakt saknas</p>}
+        {editing ? (
+          <ContactEditor
+            herd={herd}
+            contact={contact}
+            onSave={onSave}
+            onReload={() => router.refresh()}
+            onDone={() => {
+              setEditing(false);
+              router.refresh();
+            }}
+            onCancel={() => setEditing(false)}
+          />
+        ) : (
+          <ContactView
+            herd={herd}
+            contact={contact}
+            onSave={onSave}
+            onReload={() => router.refresh()}
+            locked={pending}
+          />
+        )}
+        <hr className="sb-rule" />
         {(
           [
-            ["name", "Namn"],
-            ["email", "E-post"],
-            ["mobile_phone", "Mobiltelefon"],
             ["wire_phone", "Fast telefonnummer"],
-            ["street", "Gatuadress"],
+            ["www", "Hemsida"],
           ] as const
         ).map(([key, label]) => (
           <div key={key}>
@@ -81,41 +123,6 @@ export function HerdEditClient({ herd }: { herd: HerdDetail }) {
             />
           </div>
         ))}
-        <div className={ds["ad-form-row"]}>
-          <div>
-            <label className="sb-label" htmlFor="herd-zip">
-              Postnummer
-            </label>
-            <input
-              id="herd-zip"
-              className="sb-input"
-              value={form.zip}
-              onChange={(e) => setForm({ ...form, zip: e.target.value })}
-            />
-          </div>
-          <div>
-            <label className="sb-label" htmlFor="herd-city">
-              Postort
-            </label>
-            <input
-              id="herd-city"
-              className="sb-input"
-              value={form.city}
-              onChange={(e) => setForm({ ...form, city: e.target.value })}
-            />
-          </div>
-        </div>
-        <div>
-          <label className="sb-label" htmlFor="herd-www">
-            Hemsida
-          </label>
-          <input
-            id="herd-www"
-            className="sb-input"
-            value={form.www}
-            onChange={(e) => setForm({ ...form, www: e.target.value })}
-          />
-        </div>
         <FormControlLabel
           control={
             <Switch
@@ -136,7 +143,7 @@ export function HerdEditClient({ herd }: { herd: HerdDetail }) {
           <button
             type="button"
             className="sb-btn"
-            disabled={pending}
+            disabled={pending || editing || answering}
             onClick={save}
           >
             Spara

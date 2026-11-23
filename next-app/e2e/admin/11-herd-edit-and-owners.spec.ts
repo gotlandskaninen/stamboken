@@ -60,20 +60,18 @@ test.describe("herd list, edit, owner display", () => {
     page,
   }) => {
     const original = psql(
-      `SELECT COALESCE(herd_name, '') FROM herd WHERE herd_id = ${Number(herdId)};`,
+      `SELECT COALESCE(www, '') FROM herd WHERE herd_id = ${Number(herdId)};`,
     );
     await page.goto(`/stamboken/admin/besattningar/${herdId}`);
     await page
-      .getByRole("textbox", { name: /Besättningsnamn|Namn/ })
-      .fill("E2E-redigerad");
+      .getByRole("textbox", { name: "Hemsida" })
+      .fill("e2e-redigerad.example.invalid");
     await page.getByRole("button", { name: SAVE_BUTTON }).click();
     await page.waitForURL(/\/stamboken\/admin\/besattningar(\?.*)?$/);
 
     // Restore.
     await page.goto(`/stamboken/admin/besattningar/${herdId}`);
-    await page
-      .getByRole("textbox", { name: /Besättningsnamn|Namn/ })
-      .fill(original);
+    await page.getByRole("textbox", { name: "Hemsida" }).fill(original);
     await page.getByRole("button", { name: SAVE_BUTTON }).click();
     await page.waitForURL(/\/stamboken\/admin\/besattningar(\?.*)?$/);
   });
