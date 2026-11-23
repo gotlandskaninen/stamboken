@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { appVersion } from "@/lib/appVersion";
 import Image from "next/image";
 import { Box, Typography } from "@mui/material";
 import { EUFundingBadge } from "./EUFundingBadge";
@@ -270,6 +271,17 @@ export function PublicFooter() {
             }}
           >
             Källkod (AGPL-3.0)
+          </Box>
+          <Box
+            component="a"
+            href={appVersion().href}
+            sx={{
+              color: "inherit",
+              display: "inline-block",
+              py: { xs: 3, md: 0 },
+            }}
+          >
+            Version {appVersion().label}
           </Box>
         </Box>
       </Box>
