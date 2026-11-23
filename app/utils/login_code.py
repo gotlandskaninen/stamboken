@@ -57,6 +57,13 @@ def _lock():
     DB_PROXY.execute_sql("SELECT pg_advisory_xact_lock(hashtext('login_code'))")
 
 
+def require_open():
+    """Keep the global gate stable until the caller's transaction commits."""
+    _lock()
+    if closed():
+        raise CodeLoginClosed
+
+
 def closed(now=None):
     """
     Wrong tries on rows made in the last hour and VALID_FOR. A try comes at most VALID_FOR after its row, so every
@@ -139,10 +146,8 @@ def check(purpose, browser, entered, member_id=None, *, link=False):
     if DB_PROXY.in_transaction() and purpose != "login":
         raise RuntimeError("check() commits the try on its own: call it outside a transaction")
     with DB_PROXY.atomic():
-        _lock()
+        require_open()
         now = _utcnow()
-        if closed(now):
-            raise CodeLoginClosed
         if link:
             if purpose != "login" or not isinstance(entered, str) or not entered.isascii():
                 return None

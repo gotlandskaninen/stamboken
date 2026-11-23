@@ -23,11 +23,12 @@ class AccountConflict(Exception):
     """An account may already belong to this member."""
 
 
-def start_pending(person, row):
+def start_pending(person, row, epoch):
     """Replace any previous login with a short-lived proof in a fresh server-side session."""
     session.clear()
     session.update(
         pending_member_id=person.id,
+        logout_epoch=epoch,
         pending_demo=settings.service.demo_instance,
         pending_until=(datetime.now(timezone.utc) + PENDING_FOR).timestamp(),
         pending_address=row.address_hash,
@@ -42,6 +43,7 @@ def pending_valid():
         and session.get("pending_demo") is False
         and not session.get("user_id")
         and bool(session.get("pending_member_id"))
+        and session.get("logout_epoch") == data_access.logout_epoch()
         and session.get("pending_until", 0) > datetime.now(timezone.utc).timestamp()
     )
 
@@ -109,7 +111,10 @@ def create_pending_account(version):
         # Serialize the duplicate check and insert with all writes to hbuser, including new accounts.
         DB_PROXY.execute_sql("LOCK TABLE hbuser IN SHARE ROW EXCLUSIVE MODE")
         address = login_code.login_address(person, session["pending_address"])
-        if not address or not pending_valid():
+        if not address:
+            raise InvalidPending
+        login_code.require_open()
+        if not pending_valid():
             raise InvalidPending
         if _existing_account(person, address):
             raise AccountConflict

@@ -36,9 +36,12 @@ def create_account():
             "Det finns redan ett konto som kan vara ditt",
             "Det finns redan ett konto som kan vara ditt. Logga in med det, eller kontakta matrikelansvarig.",
         )
+    except login_code.CodeLoginClosed:
+        return problem(503, "Kodinloggning är stängd", "Försök igen senare.")
     except login_account.InvalidPending:
         return problem(401, "Inloggningen har gått ut", expired)
 
+    epoch = session["logout_epoch"]
     session.clear()
-    current_app.extensions["establish_session"](user, "kod", generation)
+    current_app.extensions["establish_session"](user, "kod", generation, verified_epoch=epoch)
     return jsonify(v2_prod_access=user.v2_prod_access)

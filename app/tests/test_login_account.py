@@ -154,6 +154,39 @@ class TestLoginAccount(MatrikelApiTest):
         self.cms.assert_not_called()
         self.assert_no_account()
 
+    def test_code_login_closing_after_verification_prevents_account_creation(self):
+        self.pending()
+        db.LoginCode.update(failed=login_code.WRONG_AN_HOUR).where(db.LoginCode.member == self.member.id).execute()
+        self.assertEqual(self.create().status_code, 503)
+        self.assert_no_account()
+
+    def test_mass_logout_while_fetching_rules_invalidates_pending_proof(self):
+        self.pending()
+        with self.client.session_transaction() as proof:
+            self.assertEqual(proof["logout_epoch"], data_access.logout_epoch())
+
+        def rotate(*args, **kwargs):
+            data_access.session_redis.incr(data_access.LOGOUT_EPOCH_KEY)
+            self.addCleanup(data_access.session_redis.decr, data_access.LOGOUT_EPOCH_KEY)
+            return self.cms.return_value
+
+        self.cms.side_effect = rotate
+        self.assertEqual(self.create().status_code, 401)
+        self.assert_no_account()
+
+    def test_mass_logout_after_creation_cannot_refresh_the_verified_epoch(self):
+        self.pending()
+        establish = APP.extensions["establish_session"]
+
+        def rotate(*args, **kwargs):
+            data_access.session_redis.incr(data_access.LOGOUT_EPOCH_KEY)
+            self.addCleanup(data_access.session_redis.decr, data_access.LOGOUT_EPOCH_KEY)
+            return establish(*args, **kwargs)
+
+        with mock.patch.dict(APP.extensions, establish_session=rotate):
+            self.assertEqual(self.create().status_code, 200)
+        self.assertEqual(self.client.get("/api/user").status_code, 401)
+
     def test_changed_contact_role_or_membership_refuses_the_pending_proof(self):
         self.pending()
         for model, column, value, original, target in (

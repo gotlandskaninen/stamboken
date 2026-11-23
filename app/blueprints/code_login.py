@@ -11,7 +11,7 @@ from flask_login import current_user
 from limits import parse
 from utils import login_code as lc
 from utils import settings
-from utils.data_access import fetch_user_info, login_generation
+from utils.data_access import fetch_user_info, login_generation, logout_epoch
 from utils.database import DB_PROXY
 from utils.login_account import start_pending
 from utils.mail import _normalize, address_hash, enqueue_mail
@@ -119,6 +119,7 @@ def _redeem(*, link, preview=False):
             person, user = _lock_for_detach(candidate.member_id)
         except LinkError:
             return _wrong()
+        pending_epoch = logout_epoch() if user is None and not preview else None
         try:
             row = lc.check("login", browser, entered, person.id, link=link)
         except lc.CodeLoginClosed:
@@ -144,7 +145,7 @@ def _redeem(*, link, preview=False):
             return _wrong()
         generation = login_generation(user.uuid) if user else None
     if user is None:
-        start_pending(person, row)
+        start_pending(person, row, pending_epoch)
         return jsonify(pending=True)
     session.clear()
     current_app.extensions["establish_session"](user, "kod", generation)

@@ -4552,6 +4552,10 @@ def purge_member_applications(now) -> int:
 LOGOUT_EPOCH_KEY = "logout-epoch"
 
 
+def logout_epoch():
+    return int(session_redis.get(LOGOUT_EPOCH_KEY) or 0)
+
+
 def _generation_key(user_uuid):
     # Beside LOGOUT_EPOCH_KEY, for the same reasons. Keyed on the uuid the session holds, read before any user is.
     return f"generation:{uuid.UUID(str(user_uuid)).hex}"
@@ -4572,7 +4576,7 @@ def session_holds(stamps):
     if not stamps.get("user_id"):
         return False
     generation = account_generation(stamps["user_id"])
-    epoch = int(session_redis.get(LOGOUT_EPOCH_KEY) or 0)
+    epoch = logout_epoch()
     return generation is not None and stamps.get("generation") == generation and stamps.get("logout_epoch", 0) >= epoch
 
 

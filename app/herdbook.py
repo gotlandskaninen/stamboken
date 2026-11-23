@@ -63,6 +63,7 @@ from werkzeug.utils import secure_filename
 
 import utils.external_auth  # isort:skip
 import utils.data_access as da  # isort:skip
+from utils.data_access import logout_epoch as _logout_epoch  # isort:skip
 import utils.database as db  # isort:skip
 import utils.settings as settings  # isort:skip
 from utils import app_logging  # isort:skip
@@ -723,10 +724,6 @@ def _drop_header_auth_session(response):
     return response
 
 
-def _logout_epoch():
-    return int(APP.config["SESSION_REDIS"].get(da.LOGOUT_EPOCH_KEY) or 0)
-
-
 def _session_revoked():
     """
     Every login stamps the logout epoch into the session, and a mass
@@ -767,7 +764,7 @@ def _session_revoked():
     return session.get("logout_epoch", 0) < _logout_epoch()
 
 
-def establish_session(user, method, generation, on_domain=False):
+def establish_session(user, method, generation, on_domain=False, *, verified_epoch=None):
     """
     The one way a login becomes a session: marks a demo login, stamps the
     logout epoch, the sign-in method ("google", "losenord" or "kod"), whether a
@@ -779,7 +776,7 @@ def establish_session(user, method, generation, on_domain=False):
     if not user.is_active:
         # login_user refuses it too: a refused login must not leave a user and a mark that wake on reactivation.
         return
-    _stamp_login()
+    _stamp_login(verified_epoch)
     session["auth_method"] = method
     # A session an inactive account left uncleared must not lend its stamp to this login.
     session.pop("google_domain", None)
@@ -800,12 +797,12 @@ def establish_session(user, method, generation, on_domain=False):
 APP.extensions["establish_session"] = establish_session
 
 
-def _stamp_login():
+def _stamp_login(verified_epoch=None):
     # Called before user_id is set, marker before the Redis read: a session
     # saved after a failure here must never carry a demo user unmarked.
     if settings.service.demo_instance:
         session["demo_login"] = True
-    session["logout_epoch"] = _logout_epoch()
+    session["logout_epoch"] = _logout_epoch() if verified_epoch is None else verified_epoch
 
 
 # pylint: disable=unused-argument
