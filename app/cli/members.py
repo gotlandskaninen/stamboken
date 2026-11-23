@@ -60,6 +60,7 @@ import csv
 import hashlib
 import logging
 import re
+import unicodedata
 
 import click
 from flask.cli import AppGroup
@@ -812,8 +813,9 @@ def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None, plan_value: s
 
     The only account with role `owner` on herd G<Nr>/M<Nr> (tied to membership Nr) whose name equals the
     name of membership Nr's main member is proposed as that member's account.
-    THE NAME IS NO PROOF: the account holder can edit it, and so can a genebank
-    manager, who can also hand out `owner`. Read every printed pair first.
+    NEITHER THE NAME NOR THE ACCOUNT'S E-MAIL IS PROOF: the account holder can
+    edit both, and so can a genebank manager, who can also hand out `owner`.
+    Only the Google address was verified at sign-in. Read every printed pair first.
     Without --apply nothing is written; the plan ends with a "Kontrollvärde"
     (a hash of the printed pairs). --apply needs that value in --plan: the plan
     is recomputed and, if it no longer gives the same value, the run stops
@@ -848,7 +850,7 @@ def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None, plan_value: s
             if apply_links:
                 link_member_user(pair[0].id, pair[1].id, actor=actor, mode="cli")
         except (ConfirmRequired, LinkError, IntegrityError) as exc:
-            listed.append((pair[2], f"länkningen avvisades ({type(exc).__name__}: {_safe(exc)})"))
+            listed.append((pair[2], f"länkningen avvisades ({type(exc).__name__}: {_q(exc)})"))
         else:
             linked.append(lines[id(pair)])
 
@@ -859,7 +861,7 @@ def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None, plan_value: s
 
 
 def _pair_line(main, user, codes) -> str:
-    return f"{'/'.join(codes)}: {_member_label(main)} -> user {_user_label(user)}"
+    return f"{'/'.join(codes)}: {_pair_detail(main, user)}"
 
 
 def _echo_plan(heading: str, pair_lines: list[str], listed: list, already: int) -> None:
@@ -876,20 +878,29 @@ def _norm_name(name: str | None) -> str:
     return " ".join((name or "").split()).casefold()
 
 
-def _safe(text) -> str:
-    """Control, bidi and zero-width characters as visible escapes: a pair is one line, read left to right."""
-    hidden = r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]"
-    return re.sub(hidden, lambda m: m.group().encode("unicode_escape").decode(), str(text))
+def _q(text) -> str:
+    """Free text in quotes; backslash, quote, non-printable and combining characters as visible escapes (NFC first)."""
+    if text is None:
+        return "-"
+    out = []
+    for char in unicodedata.normalize("NFC", str(text)):
+        if char in '\\"':
+            out.append("\\" + char)
+        elif not char.isprintable() or unicodedata.category(char) in ("Mn", "Me"):
+            out.append(char.encode("unicode_escape").decode())
+        else:
+            out.append(char)
+    return '"' + "".join(out) + '"'
 
 
-def _user_label(user) -> str:
-    # Username, address and id: several accounts can share an address or lack a username.
-    return f"{_safe(user.username or '-')} <{_safe(user.email)}> (id {user.id})"
-
-
-def _member_label(member) -> str:
-    name = f"{member.first_name} {member.last_name}".strip()
-    return f"member {member.id}: {_safe(name)} <{_safe(member.email)}>"
+def _pair_detail(main, user) -> str:
+    """Ids first, then the free text in quotes. The account's e-mail is unverified; the Google address is verified."""
+    return (
+        f"medlem {main.id} -> konto {user.id} | "
+        f"medlem: {_q(f'{main.first_name} {main.last_name}'.strip())} {_q(main.email)} | "
+        f"konto: namn {_q(user.fullname)}, användarnamn {_q(user.username)}, "
+        f"e-post (overifierad) {_q(user.email)}, Google {_q(user.google_email)}"
+    )
 
 
 def _owner_index() -> tuple[dict[int, dict[int, User]], set[int]]:
@@ -984,7 +995,7 @@ def _plan_herd_links() -> tuple[list, list, int]:
     to_link = []
     for key, (main, user, codes) in pairs.items():
         if len(by_main[key[0]]) > 1 or len(by_user[key[1]]) > 1:
-            listed.append((codes, f"flera möjliga kopplingar ({_member_label(main)} -> user {_user_label(user)})"))
+            listed.append((codes, f"flera möjliga kopplingar ({_pair_detail(main, user)})"))
         elif link_access_delta(main, user):
             listed.append((codes, "länken skulle ge kontot åtkomst till fler besättningar"))
         else:

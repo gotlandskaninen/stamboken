@@ -468,11 +468,18 @@ class TestMembersLinkByHerd(DatabaseTest):
 
     def test_plan_without_apply_lists_every_proposed_pair(self):
         _, person = self._membership(901, email="anna@example.org")
-        self._account(owns=self._herd("G901"))
+        user = self._account(owns=self._herd("G901"))
+        user.google_email = "anna.svensson@example.org"
+        user.save()
 
         result = self._run()
 
-        self.assertIn(f"G901: member {person.id}: Anna Svensson <anna@example.org> -> user konto1", result.output)
+        self.assertIn(
+            f'  G901: medlem {person.id} -> konto {user.id} | medlem: "Anna Svensson" "anna@example.org" | '
+            f'konto: namn "Anna Svensson", användarnamn "konto1", e-post (overifierad) "konto1@example.org", '
+            f'Google "anna.svensson@example.org"\n',
+            result.output,
+        )
 
     def test_sole_owner_in_one_membership_and_co_owner_in_another_is_not_linked(self):
         _, p1 = self._membership(901)
@@ -546,7 +553,8 @@ class TestMembersLinkByHerd(DatabaseTest):
         result = self._run()
 
         for user in users:
-            self.assertIn(f"- <delad@example.org> (id {user.id})", result.output)
+            self.assertIn(f"-> konto {user.id} | ", result.output)
+            self.assertIn('användarnamn -, e-post (overifierad) "delad@example.org", Google -', result.output)
 
     def test_other_owner_with_a_broken_role_still_blocks_the_link(self):
         _, person = self._membership(901)
@@ -657,24 +665,48 @@ class TestMembersLinkByHerd(DatabaseTest):
         self.assertIsNone(self._linked_user_id(person))
         self.assertIn("besättningen är inte knuten till medlemskapet", result.output)
 
-    def test_control_characters_in_labels_stay_on_one_visible_line(self):
-        self._membership(901, first="Åsa", last="Öberg", email="å\nx@example.org")
-        user = db.User.create(
-            email="a\nb@example.org\x1b[2K", username="u\rv\u202e", uuid=uuid4(), fullname="Åsa Öberg"
-        )
+    def _plan_pair_lines(self):
+        return [x for x in self._run().output.splitlines() if x.startswith("  G901:")]
+
+    def test_account_text_cannot_imitate_the_fixed_fields(self):
+        _, person = self._membership(901, email="å\nx@example.org")
+        user = db.User.create(email='anna@example.org> (id 12) <"', uuid=uuid4(), fullname="Åsa Öberg")
+        db.Member.update(first_name="Åsa", last_name="Öberg").where(db.Member.id == person.id).execute()
         user.add_role("owner", self._herd("G901").id)
 
-        result = self._run()
+        lines = self._plan_pair_lines()
 
-        self.assertNotIn("\x1b", result.output)
-        self.assertNotIn("\r", result.output)
-        self.assertNotIn("\u202e", result.output)  # a right-to-left override would reorder the line on screen
-        lines = [line for line in result.output.splitlines() if line.startswith("  G901:")]
-        self.assertEqual(len(lines), 1, result.output)
-        self.assertIn("\\x1b[2K", lines[0])
-        self.assertIn("\\n", lines[0])
-        self.assertIn("Åsa Öberg", lines[0])
-        self.assertIn("å\\nx@example.org", lines[0])
+        self.assertEqual(len(lines), 1, lines)
+        self.assertTrue(lines[0].startswith(f"  G901: medlem {person.id} -> konto {user.id} | medlem: "), lines[0])
+        self.assertIn('"Åsa Öberg"', lines[0])
+        self.assertIn('e-post (overifierad) "anna@example.org> (id 12) <\\""', lines[0])
+        self.assertIn('"å\\nx@example.org"', lines[0])
+
+    def test_literal_backslash_n_and_a_real_newline_give_different_lines_and_values(self):
+        self._membership(901)
+        user = self._account(owns=self._herd("G901"))
+        user.username = "a\\nb"  # backslash, n
+        user.save()
+        literal, literal_value = self._plan_pair_lines(), self._plan_value()
+        user.username = "a\nb"  # a real newline
+        user.save()
+        real, real_value = self._plan_pair_lines(), self._plan_value()
+
+        self.assertEqual((len(literal), len(real)), (1, 1))
+        self.assertNotEqual(literal, real)
+        self.assertNotEqual(literal_value, real_value)
+
+    def test_invisible_and_combining_characters_are_written_as_escapes(self):
+        self._membership(901)
+        user = self._account(owns=self._herd("G901"))
+        user.username = "x\u061c\u00ad\u0301y\x1b[2K\r"
+        user.save()
+
+        output = self._run().output
+
+        for raw in ("\u061c", "\u00ad", "\u0301", "\x1b", "\r"):
+            self.assertNotIn(raw, output)
+        self.assertIn('användarnamn "x\\u061c\\xad\\u0301y\\x1b[2K\\r"', output)
 
     def test_a_refused_link_is_listed_with_its_text_and_does_not_stop_the_next(self):
         _, p1 = self._membership(901)
