@@ -395,6 +395,13 @@ export default function IntegritetspolicyPage() {
                 Stamboken Online i datacenter i Stockholm.
               </li>
               <li>
+                GitHub, där föreningens kod och ärenden om driften ligger. Där
+                finns namn och roller för funktionärer, men inga
+                medlemsregister. Överföringen till USA stöds av EU-kommissionens
+                beslut om att skyddet där är tillräckligt och av EU:s
+                standardavtal.
+              </li>
+              <li>
                 Tryckeriet som trycker och skickar ut Koharen. Det får
                 adresserna och tidningens innehåll.
               </li>
