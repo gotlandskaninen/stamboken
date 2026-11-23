@@ -1547,6 +1547,11 @@ class TestDatabaseMigration(DatabaseTest):
         version = self._migration_version("name_on_check_page")
         db.SchemaHistory.delete().where(db.SchemaHistory.version >= version).execute()
         db.DATABASE.execute_sql("ALTER TABLE hbuser DROP COLUMN name_on_check_page")
+        # the hbuser trigger as at version 46, so the test sees the migration re-attach it
+        db.DATABASE.execute_sql(
+            "CREATE OR REPLACE TRIGGER audit_trigger AFTER INSERT OR UPDATE OR DELETE ON hbuser"
+            " FOR EACH ROW EXECUTE FUNCTION audit_trigger_func('password_hash', 'last_active', 'user_id')"
+        )
         db.DATABASE.execute_sql("ALTER TABLE digitalcertificatev2 DROP COLUMN issued_as")
         # an account whose person was anonymised before the migration
         membership = db.Membership.create(member_number=4711)
