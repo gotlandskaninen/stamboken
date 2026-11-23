@@ -2,6 +2,7 @@ import { Box, Link, Typography } from "@mui/material";
 import { LinkButton } from "@/components/public/LinkButton";
 import { PageHeader } from "@/components/public/PageHeader";
 import { WipBanner } from "@/components/public/WipBanner.client";
+import { TyckTillLink } from "@/components/tyck-till/TyckTillDialog.client";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Stamboken Online" };
@@ -49,6 +50,9 @@ export default function StambokenOnlinePage() {
               Manual
             </LinkButton>
           </Box>
+          <Typography sx={{ mt: 3, fontSize: "15px" }}>
+            Kommer du inte in? <TyckTillLink />
+          </Typography>
           <Typography
             sx={{
               mt: 4,

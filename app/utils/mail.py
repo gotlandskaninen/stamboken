@@ -11,6 +11,7 @@ import base64
 import contextlib
 import hashlib
 import hmac
+import json
 import logging
 import os
 import re
@@ -29,6 +30,7 @@ from urllib.parse import urlparse
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 import utils.settings as settings
+import utils.tyck_till as tyck_till
 from utils.database import (
     DB_PROXY,
     BuyerContact,
@@ -240,10 +242,10 @@ def render(kind, variables):
     return subject, f"{body}\n\n{footer}"
 
 
-def _message(row, address, subject, body, attachments):
+def _message(row, address, subject, body, attachments, reply_to=None):
     msg = EmailMessage()
     msg["From"] = formataddr(("Stamboken", settings.mail.sender))
-    msg["Reply-To"] = settings.mail.sender
+    msg["Reply-To"] = reply_to or settings.mail.sender
     msg["To"] = address
     msg["Subject"] = ("[Demo] " if settings.mail.mode == "allowlist" else "") + subject
     msg["Message-ID"] = message_id(row.id)
@@ -526,8 +528,9 @@ def _send_one(row, relay, now):
         if variables is None:
             return _finish(row, now, status="cancelled", last_error="mejlet är inte längre aktuellt")
         attachments = variables.pop("attachments", [])
+        reply_to = variables.pop("reply_to", None)
         subject, body = render(row.kind, variables)
-        msg = None if mode == "log" else _message(row, address, subject, body, attachments)
+        msg = None if mode == "log" else _message(row, address, subject, body, attachments, reply_to)
     except Exception as exc:  # pylint: disable=broad-except  # a bug or a lost database: retried like a 4xx
         detail = f"bygget misslyckades: {_describe(exc)}"
         logger.error("Building mail %s failed: %s", row.id, _scrub(detail))  # no traceback: it may hold the address
@@ -535,7 +538,7 @@ def _send_one(row, relay, now):
 
     if mode == "log":
         logger.info("Mail %s (%s) to %s %s logged, not sent", row.id, row.kind, row.recipient_kind, row.recipient_id)
-        if os.environ.get("FLASK_ENV") != "production":
+        if os.environ.get("FLASK_ENV") != "production" and row.kind != "tyck_till.inskick":  # free text and address
             logger.info("Mail %s:\n%s\n\n%s", row.id, mask_tokens(subject), mask_tokens(body))
         return _finish(row, now, status="logged")
     if mode == "allowlist" and not _allowed(address):
@@ -771,6 +774,11 @@ def _previous_address(row_id):
     return Recipient(r.address, f"{r.member.first_name} {r.member.last_name}") if r else None
 
 
+@recipient_kind("tyck_till")
+def _tyck_till_recipient(_id):
+    return Recipient(settings.tyck_till.recipient, "Tyck till")
+
+
 # --- Kinds ---
 
 
@@ -897,3 +905,38 @@ def queue_application_mails(application_id, address):
     for user in candidates:
         if user.is_matrikel_admin:
             enqueue_mail("ansokan.ny", "user", user.id, params, ref=ref)
+
+
+@mail_kind("tyck_till.inskick", priority=1, category="N")
+def _tyck_till(params):
+    """A "Tyck till" submission to the association: its text, images and contacts are read from the folder."""
+    inskick_id = uuid.UUID(int=params["inskick"])
+    folder = tyck_till.folder(inskick_id)
+    try:
+        data = json.loads((folder / "inskick.json").read_text())
+    except FileNotFoundError:
+        return None
+    repo = tyck_till.REPOS["privat" if params["repo"] else "publik"]
+    name, email = None, _normalize(data.get("email"))
+    if email is None and data.get("contact") and data.get("user_id"):  # the account's name and address, as of now
+        user = User.get_or_none(User.id == data["user_id"])
+        name, email = (user.fullname, _normalize(user.email)) if user else (None, None)
+    return {
+        "repo": repo.split("/")[1],
+        "number": params["issue"],
+        "url": f"https://github.com/{repo}/issues/{params['issue']}",
+        "ref": tyck_till.reference(inskick_id),
+        "tavla": bool(params["tavla"]),
+        "kind": data["kind"],
+        "text": data["text"],
+        "path": tyck_till.mail_path(data.get("path")),
+        "pekat": " ".join(tyck_till.mask_codes(data.get("pekat")).split()),
+        "version": tyck_till.clean_version(data.get("version")),
+        "device": data.get("device"),
+        "user_id": data.get("user_id"),
+        "name": " ".join(name.split()) if name else None,
+        "email": email,
+        "reply_to": email,
+        "images": len(data["images"]),
+        "attachments": [(Path(f).name, "image/jpeg", (folder / Path(f).name).read_bytes()) for f in data["images"]],
+    }

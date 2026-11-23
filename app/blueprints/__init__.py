@@ -23,6 +23,7 @@ from .memberships import memberships_bp
 from .pedigree import pedigree_bp
 from .testbreed_v2 import testbreed_v2_bp
 from .tokens import tokens_bp
+from .tyck_till import tyck_till_bp
 from .uploads import uploads_bp
 
 
@@ -47,4 +48,5 @@ def register_blueprints(app):
     app.register_blueprint(pedigree_bp)
     app.register_blueprint(testbreed_v2_bp)
     app.register_blueprint(tokens_bp)
+    app.register_blueprint(tyck_till_bp)
     app.register_blueprint(uploads_bp)
