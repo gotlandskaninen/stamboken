@@ -527,7 +527,7 @@ export function UserEditClient({
       <ConfirmDialog
         open={googleDialogOpen}
         title="Ta bort Google-inloggningen?"
-        body="Kontot loggas ut överallt och kan inte logga in med Google förrän en ny Google-inloggning har kopplats. Har kontot inget lösenord behöver det ett först (Återställ lösenord)."
+        body="Kontot loggas ut överallt och kan inte logga in med Google förrän en ny Google-inloggning har kopplats. Har kontot inget lösenord behöver det ett först (Återställ lösenord). I testmiljön fungerar den gamla Google-inloggningen tills testmiljön har fått sin nästa kopia, i regel natten efter."
         confirmLabel="Ta bort"
         confirmColor="error"
         onClose={() => setGoogleDialogOpen(false)}
