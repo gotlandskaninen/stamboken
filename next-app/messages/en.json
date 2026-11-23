@@ -192,6 +192,14 @@
     "breadcrumb": {
       "myHerd": "My herd",
       "allRabbits": "All rabbits"
+    },
+    "certificate": {
+      "view": "View certificate",
+      "newTab": "(opens in a new tab)",
+      "verify": "Verify the certificate",
+      "onlyFor": "Only the rabbit's owner, the breeder and the genebank manager can download the certificate.",
+      "notInDemo": "The certificate is not shown in the test environment.",
+      "issued": "Issued {{date}}"
     }
   },
   "pedigree": {

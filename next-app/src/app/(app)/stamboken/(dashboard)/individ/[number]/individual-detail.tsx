@@ -43,6 +43,7 @@ import { HealthSection } from "@/components/individual/HealthSection";
 import { HerdHistorySection } from "@/components/individual/HerdHistorySection";
 import { NotesSection } from "@/components/individual/NotesSection";
 import { PaperCertificate } from "@/components/individual/PaperCertificate";
+import { DigitalCertificate } from "@/components/individual/DigitalCertificate";
 import { EditSaveBar } from "@/components/individual/EditSaveBar";
 import { ReportDeathDialog } from "@/components/individual/ReportDeathDialog";
 import { SellRabbitDialog } from "@/components/individual/SellRabbitDialog";
@@ -661,6 +662,7 @@ export function IndividualDetail({
           <IndividualCard
             individual={individual}
             geneticsSlot={geneticsSlot}
+            certificateSlot={<DigitalCertificate individual={individual} />}
             actions={
               canEdit || testMateHref || undoableSale ? (
                 <CardActions

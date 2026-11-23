@@ -189,6 +189,14 @@
     "breadcrumb": {
       "myHerd": "Mein Bestand",
       "allRabbits": "Alle Kaninchen"
+    },
+    "certificate": {
+      "view": "Zertifikat anzeigen",
+      "newTab": "(öffnet in einem neuen Tab)",
+      "verify": "Zertifikat prüfen",
+      "onlyFor": "Nur der Besitzer des Kaninchens, der Züchter und der Genbankverantwortliche können das Zertifikat herunterladen.",
+      "notInDemo": "In der Testumgebung wird das Zertifikat nicht angezeigt.",
+      "issued": "Ausgestellt am {{date}}"
     }
   },
   "pedigree": {
