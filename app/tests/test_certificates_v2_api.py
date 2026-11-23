@@ -1002,14 +1002,40 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
             individual=individual,
             herd_tracking_date=date(2026, 3, 1),
         )
-        ht_row(  # the resale; its buyer contact is gone (erased), the explicit sender stays
+        ht_row(  # the resale; its buyer is erased (buyer_removed)
             "TRANSFER",
             from_herd=gx1,
             herd=gx1,
             signature=self.manager,
             individual=individual,
             herd_tracking_date=date(2026, 4, 1),
+            buyer_removed=True,
         )
+        ht_row(  # a later row repeating GX1 without any buyer (migrated): no sale
+            "TRANSFER",
+            herd=gx1,
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 5, 1),
+        )
+        self.assertEqual(sale_months(individual), ["2026-03", "2026-04"])
+
+    def test_sale_months_resale_after_an_earlier_sale_entered_later(self):
+        """An earlier sale into GX1 entered afterwards: the later row's stored sender is stale, its buyer is not."""
+        from utils.herd_tracking import sale_months
+
+        gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1")
+        individual = self.individuals[3]  # born in herds[0]
+        for day in (date(2026, 4, 1), date(2026, 3, 1)):  # April first, then March by a correction
+            ht_row(
+                "TRANSFER" if day.month == 4 else "CORRECTION",
+                from_herd=self.herds[0],
+                herd=gx1,
+                signature=self.manager,
+                individual=individual,
+                herd_tracking_date=day,
+                buyer_removed=True,
+            )
         self.assertEqual(sale_months(individual), ["2026-03", "2026-04"])
 
     def test_sale_months_walks_the_holder_past_a_voided_row(self):

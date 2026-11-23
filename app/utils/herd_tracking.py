@@ -616,9 +616,13 @@ def sale_months(individual):
     for r in _active_rows(individual.id):
         if r.herd_id is None or r.kind not in HOLDER_CHANGING_KINDS:
             continue
-        # Only the resale exception writes a row whose explicit sender is its own herd; that stays true when the
-        # buyer is erased later, so the month stays too.
-        resale = r.from_herd_id == r.herd_id and r.herd.herd in OUTSIDE_GENEBANK_HERDS
+        # ADR-0016's resale: a row within the GX1/MX1 holder that holds a buyer, or held one erased since.
+        resale = (
+            holder is not None
+            and r.herd_id == holder.id
+            and r.herd.herd in OUTSIDE_GENEBANK_HERDS
+            and (r.holder_contact_id is not None or r.buyer_removed)
+        )
         if (
             r.kind in ("TRANSFER", "CORRECTION")
             and holder is not None
