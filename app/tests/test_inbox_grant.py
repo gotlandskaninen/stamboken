@@ -61,6 +61,8 @@ class GrantTest(InboxTest):
         return self.post(f"/{item.id}/dokument/{document.id}/spara", **body)
 
     def transfer(self, item, document, **body):
+        if body.get("herd") in ("GX1", "MX1"):  # a new sale outside the association needs its buyer (ADR-0016)
+            body.setdefault("buyer", {"name": "Köpare Test", "town": "Visby", "postal_address": "Väg 1"})
         return self.post(f"/{item.id}/dokument/{document.id}/overlat", **body)
 
 

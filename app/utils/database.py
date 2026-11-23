@@ -11,6 +11,7 @@ import re
 import sys
 import uuid
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 from flask_login import UserMixin
 from peewee import (
@@ -64,9 +65,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # Individual.microchip (36) + billing address on membership and member_application (37) +
 # retiring the PDF rows of digital certificates that a paper certificate replaced (38) +
 # audit_log IP retention index (39) + herd bank privacy reset (40) + the mail queue (41) +
-# the intake queue (42) and its retention (43) +
-# matrikel_audit rows without a user, written by the nightly anonymization (44).
-CURRENT_SCHEMA_VERSION = 44
+# the intake queue (42) and its retention (43) + buyer_contact (44) +
+# matrikel_audit rows without a user, written by the nightly anonymization (45).
+CURRENT_SCHEMA_VERSION = 45
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -388,6 +389,7 @@ class Herd(BaseModel):
         """
 
         access_level = "public"
+        effective = None  # the user's herd ids, fetched at most once
         if user and user.is_admin:
             access_level = "private"
         elif user:
@@ -420,7 +422,18 @@ class Herd(BaseModel):
         # legacy herd response (ADR-0006: don't perturb legacy contracts).
         data.pop("membership", None)
 
-        return remove_fields_by_privacy(data, access_level)
+        raw = data
+        data = remove_fields_by_privacy(raw, access_level)
+        # Bank details: whole for admin, matrikel_admin (who has no genebank role, so only these
+        # fields are added, not the other private ones) and the herd's own users. The genebank
+        # manager (private level, but none of those) sees the last two digits of the account.
+        if user and effective is None and not (user.is_admin or user.is_matrikel_admin):
+            effective = user.effective_herd_ids()
+        if user and (user.is_admin or user.is_matrikel_admin or self.id in effective):
+            data.update({f: raw[f] for f in ("bank_account_number", "bank_name") if f in raw})
+        elif "bank_account_number" in data:
+            data["bank_account_number"] = account_end(data["bank_account_number"])
+        return data
 
     class Meta:  # pylint: disable=too-few-public-methods
         """
@@ -435,6 +448,23 @@ PRIVACY_LEVELS = ("public", "authenticated", "private")
 # The bank details are only for support payouts: never shown to other members,
 # whatever the stored level says (issue #33).
 BANK_PRIVACY_FIELDS = ("bank_account_number_privacy", "bank_name_privacy")
+
+
+ACCOUNT_MASK = "••"
+
+
+def account_end(value):
+    """
+    Only the last two digits of a bank account number, for readers who must not see all of it.
+
+    >>> account_end("8327-9, 123 456 789 12")
+    '••12'
+    >>> account_end(None) is None
+    True
+    """
+    if not value:
+        return value
+    return ACCOUNT_MASK + re.sub(r"\D", "", str(value))[-2:]
 
 
 def remove_fields_by_privacy(data, access_level):
@@ -1619,6 +1649,49 @@ class YearlyHerdReport(BaseModel):
     round = ForeignKeyField(YearlyReportRound, null=True)
 
 
+BUYER_CONTACT_YEARS = 5
+
+
+class BuyerContact(BaseModel):
+    """
+    A buyer outside the association, on a sale to GX1/MX1 (ADR-0016): name, town and postal address on legitimate
+    interest, e-mail and phone only with the buyer's yes. Not in AUDITED_TABLES, so erased values never stay in
+    audit_log.
+    """
+
+    id = AutoField()
+    name = TextField()
+    town = TextField()
+    postal_address = TextField(null=True)
+    email = TextField(null=True)
+    phone = TextField(null=True)
+    contact_consent_at = TimestampTZField(null=True)  # may keep e-mail and phone while the buyer has it
+    membership_optin_at = TimestampTZField(null=True)  # may be contacted about membership
+    created_at = TimestampTZField(constraints=[SQL("DEFAULT now()")])
+    created_by_user = ForeignKeyField(User, column_name="created_by_user_id", backref="+")
+    # Five years from the sale's date (purge_at_for), set by the writer and again when a correction moves the sale.
+    purge_at = TimestampTZField()
+
+    @staticmethod
+    def purge_at_for(sale_date):
+        """Midnight in Stockholm five years after `sale_date` (a 29 February sale goes on 28 February)."""
+        day = coerce_date(sale_date)
+        try:
+            day = day.replace(year=day.year + BUYER_CONTACT_YEARS)
+        except ValueError:
+            day = day.replace(year=day.year + BUYER_CONTACT_YEARS, day=28)
+        return datetime(day.year, day.month, day.day, tzinfo=ZoneInfo("Europe/Stockholm"))
+
+    class Meta:  # pylint: disable=too-few-public-methods
+        table_name = "buyer_contact"
+        constraints = [
+            SQL(
+                "CONSTRAINT buyer_contact_email_phone_need_consent CHECK ((email IS NULL AND phone IS NULL) "
+                "OR contact_consent_at IS NOT NULL OR membership_optin_at IS NOT NULL)"
+            ),
+        ]
+
+
 HT_KINDS = ("BIRTH", "TRANSFER", "ATTESTATION", "CORRECTION")
 
 
@@ -1649,7 +1722,12 @@ class HerdTracking(BaseModel):
     # Reserved links (NULL until the owning phase ships).
     yearly_herd_report = ForeignKeyField(YearlyHerdReport, null=True)  # Phase 6
     transfer_id = IntegerField(null=True)  # Phase 10 adds FK -> transfer
-    holder_contact_id = IntegerField(null=True)  # Phase 10 adds FK -> buyer_contact ON DELETE SET NULL
+    # The buyer outside the association; erasing the contact nulls the link, the sale stays.
+    holder_contact = ForeignKeyField(
+        BuyerContact, null=True, on_delete="SET NULL", column_name="holder_contact_id", backref="+"
+    )
+    # The sale's buyer was removed (erasure, purge, void): never asked for or registered again. No personal data.
+    buyer_removed = BooleanField(default=False, constraints=[SQL("DEFAULT false")])
 
     class Meta:  # pylint: disable=too-few-public-methods
         """
@@ -2202,7 +2280,7 @@ class InboxDocument(BaseModel):
     waiting_for = BinaryJSONField(null=True)  # the parents' numbers; GIN, searched with @> on every registration
     individual = ForeignKeyField(Individual, null=True, on_delete="SET NULL", backref="+")
     # The sale a proof (bevis) belongs to. No FK: herd_tracking rows are never deleted, and one would stop
-    # TRUNCATE herd_tracking, as for its own reserved links (transfer_id, holder_contact_id).
+    # TRUNCATE herd_tracking, as for its reserved link transfer_id (holder_contact_id is a real FK, to buyer_contact).
     herd_tracking_id = IntegerField(null=True)
     purge_after = TimestampTZField(null=True)
     done_at = TimestampTZField(null=True)
@@ -2319,6 +2397,7 @@ MODELS = [
     UserMessage,
     YearlyReportRound,
     YearlyHerdReport,
+    BuyerContact,
     HerdTracking,
     Authenticators,
     AuditLog,
@@ -2408,6 +2487,9 @@ def init():
 
     # 999.8: global genetics version + deferred bump triggers (migration won't run)
     _create_genetics_version_guards()
+
+    # ADR-0016: herd_tracking.holder_contact_id -> buyer_contact on a database whose herd_tracking predates it
+    _create_buyer_contact_guards()
 
 
 def verify(try_init=True):
@@ -3988,14 +4070,48 @@ def migrate_42_to_43():
         ).execute()
 
 
+def _create_buyer_contact_guards():
+    """
+    Idempotent: the buyer_contact table and herd_tracking.holder_contact_id as its FK, ON DELETE SET NULL, with the
+    names a fresh bootstrap gives them. Called from init() and migrate_43_to_44. Skipped on SQLite.
+    """
+    if isinstance(DATABASE, SqliteDatabase):
+        return
+    BuyerContact.create_table(safe=True)
+    # An earlier build of migration 44 tied the address to the consent (#111 dropped that); safe to repeat.
+    DATABASE.execute_sql('ALTER TABLE "buyer_contact" DROP CONSTRAINT IF EXISTS "buyer_contact_address_needs_consent"')
+    DATABASE.execute_sql(
+        """DO $$ BEGIN
+               ALTER TABLE "herd_tracking" ADD CONSTRAINT "herd_tracking_holder_contact_id_fkey"
+                   FOREIGN KEY ("holder_contact_id") REFERENCES "buyer_contact" ("id") ON DELETE SET NULL;
+           EXCEPTION WHEN duplicate_object THEN NULL;
+           END $$;"""
+    )
+    DATABASE.execute_sql(
+        'CREATE INDEX IF NOT EXISTS "herdtracking_holder_contact_id" ON "herd_tracking" ("holder_contact_id")'
+    )
+    DATABASE.execute_sql(
+        'ALTER TABLE "herd_tracking" ADD COLUMN IF NOT EXISTS "buyer_removed" BOOLEAN NOT NULL DEFAULT false'
+    )
+
+
 def migrate_43_to_44():
+    """ADR-0016: buyer_contact, the buyer outside the association, and holder_contact_id becomes its FK."""
+    with DATABASE.atomic():
+        _create_buyer_contact_guards()
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=44, comment="buyer_contact; herd_tracking.holder_contact_id FK", applied=datetime.now()
+        ).execute()
+
+
+def migrate_44_to_45():
     """Issue #70: matrikel_audit rows written by the nightly anonymization have no user as actor."""
     with DATABASE.atomic():
         # DROP NOT NULL is idempotent; SQLite builds the table from the model, which already allows NULL.
         if not isinstance(DATABASE, SqliteDatabase) and "matrikel_audit" in DATABASE.get_tables():
             DATABASE.execute_sql('ALTER TABLE "matrikel_audit" ALTER COLUMN "actor_id" DROP NOT NULL')
         SchemaHistory.insert(  # pylint: disable=E1120
-            version=44, comment="matrikel_audit.actor may be NULL", applied=datetime.now()
+            version=45, comment="matrikel_audit.actor may be NULL", applied=datetime.now()
         ).execute()
 
 
@@ -4479,7 +4595,8 @@ MIGRATIONS = {
     (40, 41): migrate_40_to_41,  # mail queue
     (41, 42): migrate_41_to_42,  # intake queue
     (42, 43): migrate_42_to_43,  # intake queue retention
-    (43, 44): migrate_43_to_44,  # matrikel_audit actor NULL for the nightly job
+    (43, 44): migrate_43_to_44,  # buyer contact
+    (44, 45): migrate_44_to_45,  # matrikel_audit actor NULL for the nightly job
 }
 
 

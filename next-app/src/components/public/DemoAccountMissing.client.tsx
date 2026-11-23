@@ -1,6 +1,6 @@
 "use client";
 
-import { Box, Button, Paper, Typography } from "@mui/material";
+import { Box, Button, Link, Paper, Typography } from "@mui/material";
 import { logout } from "@/app/(app)/(auth)/actions";
 
 /**
@@ -41,6 +41,13 @@ export function DemoAccountMissing() {
           Testmiljön uppdateras varje natt med en kopia av riktiga stamboken.
           Ditt konto är nyare än senaste uppdateringen – välkommen tillbaka
           imorgon!
+        </Typography>
+        <Typography sx={{ mb: 3 }}>
+          Har du ett pappersintyg som ska läsas in? Mejla ett foto av det till{" "}
+          <Link href="mailto:stamboken@gotlandskaninen.se">
+            stamboken@gotlandskaninen.se
+          </Link>
+          .
         </Typography>
         <Button variant="contained" onClick={handleSignOut}>
           Logga ut

@@ -46,7 +46,7 @@ from utils.database import next_individual_number  # isort: skip
 from utils.database import ACTIVE_WINDOW_DAYS  # isort: skip
 from utils.database import AUDIT_LOG_NO_UPDATE_RULE  # isort: skip
 from utils.database import OUTSIDE_GENEBANK_HERDS  # isort: skip
-from utils.database import BANK_PRIVACY_FIELDS, PRIVACY_LEVELS  # isort: skip
+from utils.database import ACCOUNT_MASK, BANK_PRIVACY_FIELDS, PRIVACY_LEVELS, account_end  # isort: skip
 from utils.database import ht_not_voided  # isort: skip
 from utils.database import ht_order_desc  # isort: skip
 from utils.database import latest_ht_per_individual  # isort: skip
@@ -1681,6 +1681,20 @@ def update_herd(form, user_uuid):
             # Bank privacy is fixed at 'private' (issue #33): dropped before validation, so a bad
             # stored value echoed by the legacy SPA cannot block the save. Response unchanged.
             form = {k: v for k, v in form.items() if k not in BANK_PRIVACY_FIELDS}
+            # A manager reads the account as '••45' and the legacy SPA echoes the herd back: a masked
+            # value is never an account number, so it must not overwrite the stored one.
+            account = form.get("bank_account_number")
+            if account is not None and ACCOUNT_MASK[0] in str(account):
+                if account != account_end(herd.bank_account_number):
+                    return {"status": "error", "message": "Invalid value for bank_account_number"}
+                del form["bank_account_number"]  # the unchanged echo
+            elif account is not None and not (
+                user.is_admin or user.is_matrikel_admin or herd.id in user.effective_herd_ids()
+            ):
+                # A writer who sees only the end of the account may enter a new one, not blank it or
+                # replace it with something that is no account (at least four digits).
+                if sum(c.isdigit() for c in str(account)) < 4:
+                    return {"status": "error", "message": "Invalid value for bank_account_number"}
             bad = invalid_privacy_field(form)
             if bad:
                 return {"status": "error", "message": f"Invalid value for {bad}"}
@@ -2006,7 +2020,9 @@ LEGACY_GENEBANK_CHANGE_NOTE = "Genbanksbyte av admin via legacy"
 
 
 @number_assets.finishing  # inside a caller's transaction, teardown_request finishes instead
-def update_individual(form, user_uuid, issue_digital=False, genebank_change_reason=None, clear_nulls=False):
+def update_individual(
+    form, user_uuid, issue_digital=False, genebank_change_reason=None, clear_nulls=False, buyer=None, legacy=False
+):
     """
     Updates the individual `form["id"]` by the values in `form`, if the user identified by `user_uuid`
     may: translate (utils.individual_legacy) turns the form into write commands, which execute runs under
@@ -2015,7 +2031,8 @@ def update_individual(form, user_uuid, issue_digital=False, genebank_change_reas
     required note for an admin's move into another genebank (legacy PATCH passes
     LEGACY_GENEBANK_CHANGE_NOTE, the v2 certificate routes the body's reason; the legacy certificate
     routes pass none, and their form drops herd). `clear_nulls` (v2) clears the death and castration
-    fields sent as null.
+    fields sent as null. `buyer` (v2) is the buyer outside the association on a sale to GX1/MX1, which every
+    caller requires except the legacy app's two routes (`legacy`), whose forms cannot send one.
     """
     user = fetch_user_info(user_uuid)
     if user is None:
@@ -2041,6 +2058,8 @@ def update_individual(form, user_uuid, issue_digital=False, genebank_change_reas
                 issue_digital=issue_digital,
                 clear_nulls=clear_nulls,
                 genebank_change_reason=genebank_change_reason,
+                buyer=buyer,
+                legacy=legacy,
             ),
             target_breeding=form.get("breeding"),
         )
@@ -3390,8 +3409,14 @@ def get_yearly_report_by_round(herd_id, round_id):
         return None
 
 
-def get_yearly_reports(round_id: int, genebank_id: int) -> list[dict]:
-    """Get all yearly reports for a specific round and genebank."""
+def get_yearly_reports(
+    round_id: int, genebank_id: int, full_account: bool = False, own_herds: frozenset | set = frozenset()
+) -> list[dict]:
+    """
+    Get all yearly reports for a specific round and genebank. The bank account number is
+    cut to its last two digits unless `full_account` (admin, matrikel_admin) or the herd is one of
+    `own_herds` (the reader's own herds, judged per row).
+    """
     try:
         with DATABASE.atomic():
             reports = (
@@ -3471,7 +3496,11 @@ def get_yearly_reports(round_id: int, genebank_id: int) -> list[dict]:
                     "email": (r.herd.email if "noEmail" not in allow_publication else None),
                     "phone": (r.herd.mobile_phone if "noPhone" not in allow_publication else None),
                     "address": (r.herd.physical_address if "noAddress" not in allow_publication else None),
-                    "bank_account": r.herd.bank_account_number,
+                    "bank_account": (
+                        r.herd.bank_account_number
+                        if full_account or r.herd.id in own_herds
+                        else account_end(r.herd.bank_account_number)
+                    ),
                     "bank_name": r.herd.bank_name,
                     # Additional fields
                     "eligible_for_support": form_data.get("eligibleForSupport", False),
@@ -3501,10 +3530,12 @@ def format_disease_cases(diseases: dict) -> str:
     return "; ".join(cases) if cases else "Inga rapporterade sjukdomsfall"
 
 
-def export_yearly_reports_csv(round_id: int, genebank_id: int) -> str:
+def export_yearly_reports_csv(
+    round_id: int, genebank_id: int, full_account: bool = False, own_herds: frozenset | set = frozenset()
+) -> str:
     """Export yearly reports as CSV data."""
     try:
-        reports = get_yearly_reports(round_id, genebank_id)
+        reports = get_yearly_reports(round_id, genebank_id, full_account, own_herds)
 
         # CSV Headers in Swedish - exactly matching the table view
         headers = [
@@ -4354,6 +4385,31 @@ def purge_audit_ip(now, batch=AUDIT_IP_BATCH) -> int:
             DATABASE.execute_sql(AUDIT_LOG_NO_UPDATE_RULE)
         total += changed
         last = rows[-1]
+
+
+APPLICATION_RETENTION = "12 months"  # a PostgreSQL interval: calendar months, as the privacy policy says
+
+
+def purge_member_applications(now) -> int:
+    """
+    Deletes member_application rows that never led to membership (rejected or pending) 12 calendar months after
+    submission, as the privacy policy promises; the decision date does not matter. Approved rows stay.
+    The table is not in AUDITED_TABLES, so audit_log holds no copy; matrikel_audit has no row for these.
+    Returns the rows deleted.
+    """
+    # The columns are naive local times (datetime.now()): compare in that clock, and add the interval to the
+    # row's date so the 29 February case lands on 28 February instead of rounding down from today.
+    # One day of margin: the job runs nightly, so a normal run keeps every row within its 12 months (the policy's
+    # upper bound); a missed run can still leave one a day too long.
+    cutoff = now.astimezone().replace(tzinfo=None) + timedelta(days=1)  # a calendar day in the local clock
+    cursor = DATABASE.execute_sql(
+        """
+        DELETE FROM member_application
+        WHERE status IN ('rejected', 'pending') AND created_at + %s::interval <= %s
+        """,
+        (APPLICATION_RETENTION, cutoff),
+    )
+    return cursor.rowcount or 0
 
 
 # Session-store counter of mass logouts. Outside 'session:*', so the sweep never

@@ -12,6 +12,7 @@ os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), 
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
 import utils.mail as mail  # noqa: E402
+import utils.matrikel as matrikel  # noqa: E402
 import utils.settings as settings  # noqa: E402
 from herdbook import APP, limiter  # noqa: E402
 
@@ -156,8 +157,19 @@ class TestApprovalMail(MailTest):
         msg, _, envelope_to = relay.sent[0]
         self.assertEqual(envelope_to, ["sokande@example.org"])
         self.assertIn("godkänd", msg["Subject"])
-        self.assertIn("hör av sig", msg.get_content())
-        self.assertIn("vi har fått din årsavgift", msg.get_content())  # an approved application is a paid one
+        body = " ".join(msg.get_content().split())  # the mail wraps its lines
+        self.assertIn("vi har fått din medlemsavgift", body)  # an approved application is a paid one
+        number = db.Member.get_by_id(member_id).membership.member_number
+        self.assertIn(f"Du har fått medlemsnummer {number}.", body)
+        self.assertIn("välkomstbrev som vi sänder via Postnord", body)
+
+    def test_no_welcome_with_the_old_number_once_the_membership_has_ended(self):
+        member = db.Member.get_by_id(self._approve(self.application()).get_json()["created_member_id"])
+        matrikel.retire_membership(member.membership, self.admin)
+        relay = self.relay()
+        mail.send_pending(self.now)
+        self.assertEqual(relay.sent, [])
+        self.assertEqual(db.MailMessage.get(db.MailMessage.kind == "ansokan.godkand").status, "cancelled")
 
     def test_failed_approval_queues_nothing(self):
         a = self.application()
@@ -171,3 +183,153 @@ class TestApprovalMail(MailTest):
         a = self.application(status="rejected")
         self.assertEqual(self._approve(a).status_code, 409)
         self.assertEqual(db.MailMessage.select().count(), 0)
+
+
+class TestMemberAdded(MailTest):
+    """medlemskap.tillagd: to a person someone else put into a membership, in that transaction."""
+
+    def setUp(self):
+        super().setUp()
+        self.actor = da.register_user("matrikel@example.org", "pass")
+        self.membership = db.Membership.create(membership_status="active")
+        db.Member.create(
+            membership=self.membership, first_name="Huvud", last_name="Medlem\nRad två", role="huvudmedlem"
+        )
+
+    def add(self, **data):
+        fields = {"first_name": "Ny", "last_name": "Person", "email": "ny@example.org", **data}
+        return matrikel.add_person(self.membership, fields, self.actor)
+
+    def mails(self):
+        return list(db.MailMessage.select().where(db.MailMessage.kind == "medlemskap.tillagd"))
+
+    def test_a_family_member_with_an_address_is_told(self):
+        person = self.add(phone="070-000 00 00")
+        (row,) = self.mails()
+        self.assertEqual(
+            (row.recipient_kind, row.recipient_id, row.category, row.ref_type, row.ref_id, row.params),
+            ("member", person.id, "T", "membership", self.membership.id, {"member_id": person.id}),
+        )
+        relay = self.relay()
+        self.assertEqual(mail.send_pending(self.now), 1)
+        msg, _, envelope_to = relay.sent[0]
+        body = msg.get_content()
+        self.assertEqual(envelope_to, ["ny@example.org"])
+        self.assertIn("lagts in som familjemedlem", body)
+        self.assertIn("Huvudmedlem är Huvud Medlem Rad två.", body)  # the name on one line
+        self.assertIn("och ditt telefonnummer", body)
+        self.assertIn(f"https://{HOST}/dataskydd", body)
+        self.assertIn("dataskydd@gotlandskaninen.se", body)
+
+    def test_a_keeper_is_told_as_a_keeper_and_no_phone_is_named_without_one(self):
+        self.add(role="skotare")
+        relay = self.relay()
+        mail.send_pending(self.now)
+        body = relay.sent[0][0].get_content()
+        self.assertIn("lagts in som skötare", body)
+        self.assertNotIn("telefonnummer", body)
+
+    def test_no_mail_without_an_address_or_to_a_main_member(self):
+        self.add(email=None)
+        other = db.Membership.create(membership_status="active")
+        matrikel.add_person(
+            other,
+            {"first_name": "Ny", "last_name": "Huvud", "email": "h@example.org", "role": "huvudmedlem"},
+            self.actor,
+        )
+        self.assertEqual(self.mails(), [])
+
+    def test_a_rolled_back_addition_queues_nothing(self):
+        with self.assertRaises(RuntimeError), db.DB_PROXY.atomic():
+            self.add()
+            self.assertEqual(len(self.mails()), 1)
+            raise RuntimeError("the request fails after the person was added")
+        self.assertEqual(self.mails(), [])
+
+    def test_not_sent_once_the_person_has_left_the_membership(self):
+        person = self.add()
+        db.Member.update(end_date=self.now.date()).where(db.Member.id == person.id).execute()
+        relay = self.relay()
+        mail.send_pending(self.now)
+        self.assertEqual((relay.sent, self.mails()[0].status), ([], "cancelled"))
+
+    def test_not_sent_once_the_person_is_main_member(self):
+        person = self.add()
+        matrikel.swap_main_member(self.membership, person, self.actor)
+        relay = self.relay()
+        mail.send_pending(self.now)
+        self.assertEqual((relay.sent, self.mails()[0].status), ([], "cancelled"))
+
+    def test_a_removal_while_the_sender_connects_stops_the_mail(self):
+        person = self.add()
+        relay = self.relay()
+        connect = mail._connect
+
+        def removed_meanwhile(conn):  # after the build, while the connection and its TLS come up
+            connect(conn)
+            matrikel.soft_delete_person(db.Member.get_by_id(person.id), self.actor)
+
+        with mock.patch.object(mail, "_connect", removed_meanwhile):
+            mail.send_pending(self.now)
+        (row,) = self.mails()
+        self.assertEqual((relay.sent, row.status, row.claim_token), ([], "cancelled", None))
+
+    def test_a_retired_membership_stops_its_peoples_mails(self):
+        self.add()
+        matrikel.retire_membership(self.membership, self.actor)
+        self.assertEqual(self.mails()[0].status, "cancelled")
+
+    def sent_to(self):
+        relay = self.relay()
+        mail.send_pending(self.now)
+        return [envelope_to[0] for _msg, _sender, envelope_to in relay.sent]
+
+    def test_an_address_gets_at_most_three_a_day_also_when_changed_to_before_the_mail_goes(self):
+        for n in range(4):
+            self.add(first_name=f"Nummer {n}", email=f"person{n}@example.org")
+        db.Member.update(email=" Samma@Example.ORG ").where(db.Member.role == "familjemedlem").execute()
+        self.assertEqual(self.sent_to(), ["samma@example.org"] * mail.ADDED_TO_AN_ADDRESS_A_DAY)
+        self.assertEqual(sorted(row.status for row in self.mails()), ["cancelled", "sent", "sent", "sent"])
+        self.assertNotIn("example.org", "".join(row.dedupe_key for row in self.mails()))
+
+    def test_log_mode_without_a_link_secret_logs_the_mail(self):
+        self.add()
+        with mock.patch.multiple(settings.mail, mode="log", link_secret=""):
+            mail.send_pending(self.now)
+        (row,) = self.mails()
+        self.assertEqual((row.status, row.attempts, row.last_error), ("logged", 0, None))
+
+    def test_a_person_removed_and_added_again_the_same_day_is_told(self):
+        first = self.add()
+        matrikel.soft_delete_person(first, self.actor)  # before the sender ran: nothing went
+        self.add()
+        self.assertEqual(self.sent_to(), ["ny@example.org"])
+
+    def test_a_promotion_while_the_sender_connects_stops_the_mail(self):
+        person = self.add()
+        relay = self.relay()
+        connect = mail._connect
+
+        def promoted_meanwhile(conn):
+            connect(conn)
+            matrikel.swap_main_member(self.membership, db.Member.get_by_id(person.id), self.actor)
+
+        with mock.patch.object(mail, "_connect", promoted_meanwhile):
+            mail.send_pending(self.now)
+        (row,) = self.mails()
+        self.assertEqual((relay.sent, row.status, row.claim_token), ([], "cancelled", None))
+
+    def test_a_membership_causes_at_most_ten_mails_a_day(self):
+        for n in range(mail.ADDED_A_DAY + 2):
+            self.add(first_name=f"Nummer {n}", email=f"person{n}@example.org")
+        self.assertEqual(len(self.mails()), mail.ADDED_A_DAY)
+        other = db.Membership.create(membership_status="active")  # another membership is not held back
+        matrikel.add_person(other, {"first_name": "Ny", "last_name": "Person", "email": "x@example.org"}, self.actor)
+        self.assertEqual(len(self.mails()), mail.ADDED_A_DAY + 1)
+
+    def test_the_register_import_does_not_go_through_add_person(self):
+        """The import writes its rows itself: the people in the register gave their details themselves."""
+        source = open(
+            os.path.join(os.path.dirname(os.path.dirname(__file__)), "cli", "members.py"), encoding="utf-8"
+        ).read()
+        self.assertNotIn("add_person(", source)
