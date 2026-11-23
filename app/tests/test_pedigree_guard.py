@@ -267,7 +267,9 @@ class TestPedigreeGuardV2Routes(PedigreeFixture, FlaskTest):
         # Signing unavailable: the route stops in generate_and_store and rolls back, so no S3 is needed.
         with patch("blueprints.certificates.generate_and_store", side_effect=SigningUnavailableError) as generate:
             with self.app as context:
-                self._login(context)
+                # The owner of the origin herd (G1) updates, and needs a name for it.
+                db.User.update(fullname="Test Namn").where(db.User.id == self.owner.id).execute()
+                context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
                 response = context.patch(f"/api/v2/certificates/update/{self.a.number}", json={"breeding": c_litter.id})
         self.assertEqual(response.status_code, 503, response.get_json())
         self.assertEqual(generate.call_args.args[2]["breeding"], self.a.breeding_id, "rendered from the stored litter")

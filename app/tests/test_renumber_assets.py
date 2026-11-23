@@ -304,6 +304,10 @@ class TestNumberChangeMovesAssets(DatabaseTest):
         update_individual staged the photo; teardown_request removes the staging copies."""
         db.Individual.update(digital_certificate=None).where(db.Individual.number == "G1-2621").execute()
         del self.objects["G1-2621/certificate.pdf"]
+        # Only the origin herd's owner may issue, and needs a name for it.
+        db.User.update(fullname="Test Namn").where(db.User.id == self.owner.id).execute()
+        self.client.get("/api/logout")
+        self.client.post("/api/login", json={"username": self.owner.email, "password": "pass"})
         older = self._litter(date(2025, 6, 1))
         with (
             mock.patch("utils.s3.get_s3_client", return_value=FakeS3(self.objects)),

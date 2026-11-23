@@ -746,7 +746,8 @@ class TestBunnyPromote(DatabaseTest):
 
         litter = _old_litter(self.herds[0])
         b = db.Bunny.create(breeding=litter, slot_order=1, observed_sex="female", observed_color="bleighe")
-        self._login()
+        db.User.update(fullname="Test Namn").where(db.User.id == self.owner.id).execute()  # the issuer needs a name
+        self._login("owner")
         # Stub the parentless-litter-hostile data/render steps so signing is what fails.
         with (
             mock.patch("utils.cert_service_v2.get_certificate_data", return_value={}),
@@ -774,7 +775,8 @@ class TestBunnyPromote(DatabaseTest):
         # 201 and carries the failure as a transient certificate_error detail.
         litter = _old_litter(self.herds[0])
         b = db.Bunny.create(breeding=litter, slot_order=1, observed_sex="female", observed_color="bleighe")
-        self._login()
+        db.User.update(fullname="Test Namn").where(db.User.id == self.owner.id).execute()  # the issuer needs a name
+        self._login("owner")
         # Stub the parentless-litter-hostile data/render steps so the signer is what raises.
         with (
             mock.patch("utils.cert_service_v2.get_certificate_data", return_value={}),
@@ -824,7 +826,7 @@ class TestBunnyPromoteDigitalV2(CertV2Mixin, DatabaseTest):
         self.client = APP.test_client(use_cookies=True)
         super().setUp()
 
-    def _login(self, username="admin", password="pass"):  # nosemgrep: hardcoded-password-default-argument
+    def _login(self, username="owner", password="pass"):  # nosemgrep: hardcoded-password-default-argument
         return self.client.post("/api/login", json={"username": username, "password": password})
 
     def _promote(self, bunny_id, **body):
@@ -881,7 +883,7 @@ class TestBunnyPromoteDigitalV2(CertV2Mixin, DatabaseTest):
         db.Individual.create(origin_herd=self.herds[0], breeding=litter, number="G1-2519", certificate="P9")
 
         with self.assertRaisesRegex(ValueError, "certificate_quota_exceeded"):
-            _issue_digital_certificate(promoted, self.admin.uuid)
+            _issue_digital_certificate(promoted, self.owner.uuid)
         self.assertIsNone(db.Individual.get_by_id(promoted.id).digital_certificate)
 
     def test_digital_issuance_keeps_a_change_committed_after_the_promote(self):
@@ -908,7 +910,7 @@ class TestBunnyPromoteDigitalV2(CertV2Mixin, DatabaseTest):
             db.Individual.id == promoted.id
         ).execute()
 
-        number = _issue_digital_certificate(promoted, self.admin.uuid)
+        number = _issue_digital_certificate(promoted, self.owner.uuid)
         stored = db.Individual.get_by_id(promoted.id)
         self.assertEqual(
             (stored.digital_certificate, stored.death_date, stored.death_note), (number, date(2026, 10, 1), "död")
@@ -947,10 +949,11 @@ class TestBunnyPromoteDigitalV2(CertV2Mixin, DatabaseTest):
         def certify():
             db.Individual.update(digital_certificate=100500).where(db.Individual.id == certified.id).execute()
 
+        db.User.update(fullname="Test Namn").where(db.User.id == self.viewer.id).execute()  # the name check comes first
         real_database = bunny_v2.DATABASE
         for individual, user, concurrent, error in (
-            (unpromoted, self.admin, unpromote, "individual_lookup_failed"),
-            (certified, self.admin, certify, "certificate_exists"),
+            (unpromoted, self.owner, unpromote, "individual_lookup_failed"),
+            (certified, self.owner, certify, "certificate_exists"),
             (other, self.viewer, lambda: None, "forbidden"),
         ):
             # Commits as issuance opens its transaction: after any read before it, before its locks.
