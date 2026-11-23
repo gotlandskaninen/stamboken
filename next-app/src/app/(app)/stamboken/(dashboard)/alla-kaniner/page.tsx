@@ -30,7 +30,10 @@ export default async function AllaKaninerPage() {
   }
 
   return (
+    // key: a mode switch (router.refresh) with other genebank access must
+    // reset the selected genebank together with the rows
     <RabbitExplorer
+      key={initialGenebank}
       initialData={initialData}
       initialGenebank={initialGenebank}
     />
