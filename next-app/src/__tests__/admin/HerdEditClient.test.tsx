@@ -20,7 +20,10 @@ vi.mock("@/app/(app)/stamboken/(dashboard)/admin/besattningar/actions", () => ({
 
 import { HerdEditClient } from "@/app/(app)/stamboken/(dashboard)/admin/besattningar/[herdId]/HerdEditClient";
 import type { HerdDetail } from "@/app/(app)/stamboken/(dashboard)/admin/besattningar/[herdId]/page";
-import type { ReaderContact } from "@/components/herd-contact/contactTypes";
+import {
+  CONFLICT_TEXT,
+  type ReaderContact,
+} from "@/components/herd-contact/contactTypes";
 
 afterEach(() => {
   cleanup();
@@ -125,6 +128,7 @@ describe("HerdEditClient contact", () => {
     await waitFor(() => expect(updateHerd).toHaveBeenCalled());
     expect(updateHerd).toHaveBeenCalledWith("G1274", {
       www: "https://example.invalid",
+      place_shown: { www: { value: null } },
     });
   });
 
@@ -141,6 +145,52 @@ describe("HerdEditClient contact", () => {
     await waitFor(() => expect(updateHerd).toHaveBeenCalled());
     expect(updateHerd.mock.calls[0][1]).toStrictEqual({
       www: "https://example.invalid",
+      place_shown: { www: { value: null } },
+    });
+  });
+
+  it("a changed phone is sent with the number the form showed", async () => {
+    updateHerd.mockResolvedValue(undefined);
+    render(<HerdEditClient herd={herd({ wire_phone: "0498-12 34 56" })} />);
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Fast telefonnummer" }),
+      { target: { value: "0498-99 99 99" } },
+    );
+    fireEvent.click(screen.getByLabelText("Besättningen är aktiv"));
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    await waitFor(() => expect(updateHerd).toHaveBeenCalled());
+    expect(updateHerd.mock.calls[0][1]).toStrictEqual({
+      wire_phone: "0498-99 99 99",
+      is_active: false,
+      place_shown: { wire_phone: { value: "0498-12 34 56" } },
+    });
+  });
+
+  it("a 409 shows the conflict and the form follows the reloaded herd", async () => {
+    updateHerd.mockResolvedValueOnce({
+      error: "Kontaktuppgifterna har ändrats sedan sidan öppnades.",
+      status: 409,
+      type: "contact-changed",
+    });
+    const { rerender } = render(
+      <HerdEditClient herd={herd({ wire_phone: "0498-12 34 56" })} />,
+    );
+    const phone = () =>
+      screen.getByRole("textbox", { name: "Fast telefonnummer" });
+    fireEvent.change(phone(), { target: { value: "0498-99 99 99" } });
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(CONFLICT_TEXT);
+    expect(refresh).toHaveBeenCalledTimes(1);
+    // the number was erased meanwhile: the reloaded form starts from the stored row
+    rerender(<HerdEditClient herd={herd({ wire_phone: null })} />);
+    expect(phone()).toHaveValue("");
+    updateHerd.mockResolvedValueOnce(undefined);
+    fireEvent.change(phone(), { target: { value: "0498-99 99 99" } });
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    await waitFor(() => expect(updateHerd).toHaveBeenCalledTimes(2));
+    expect(updateHerd.mock.calls[1][1]).toStrictEqual({
+      wire_phone: "0498-99 99 99",
+      place_shown: { wire_phone: { value: null } },
     });
   });
 

@@ -423,6 +423,34 @@ def check_flat_fields(herd: Herd, fields, contact) -> None:
         raise ValueError(f"Kontaktuppgifterna ändras med fältet contact, inte med {', '.join(flat)}.")
 
 
+PLACE_FIELDS = ("wire_phone", "www")
+
+
+def check_place_shown(herd: Herd, fields, shown, *, with_privacy=True) -> None:
+    """Spec, Skrivningar, "Varje ändring gäller det som formuläret visade", for the fixed phone and the website: a
+    call that sends one of them or its privacy also sends what the form showed of it, {"value", "privacy"} in
+    `shown` (place_shown), and `herd` is under lock_herd. `with_privacy=False` is the admin form, which shows no
+    privacy: there it is compared only when sent. Missing or malformed: ValueError (400); another row than the
+    stored one: ContactConflict."""
+    for field in PLACE_FIELDS:
+        if field not in fields and f"{field}_privacy" not in fields:
+            continue
+        seen = shown.get(field) if isinstance(shown, dict) else None
+        if (
+            not isinstance(seen, dict)
+            or "value" not in seen
+            or not isinstance(seen["value"], (str, type(None)))
+            or (with_privacy and "privacy" not in seen)
+            or seen.get("privacy") not in (None, *PRIVACY_LEVELS)
+        ):
+            raise ValueError(f"place_shown.{field} krävs: värdet och synligheten som formuläret visade.")
+        stored_privacy = getattr(herd, f"{field}_privacy") or "private"
+        if normalize(field, seen["value"]) != normalize(field, getattr(herd, field)) or (
+            "privacy" in seen and (seen["privacy"] or "private") != stored_privacy
+        ):
+            raise ContactConflict(STALE)
+
+
 def _rank(level):
     """public < authenticated < private; NULL, and an unknown stored value, counts as private."""
     return PRIVACY_LEVELS.index(level) if level in PRIVACY_LEVELS else len(PRIVACY_LEVELS) - 1

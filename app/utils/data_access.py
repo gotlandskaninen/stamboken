@@ -51,7 +51,7 @@ from utils.database import HERD_CONTACT_COLUMNS  # isort: skip
 from utils.database import ht_not_voided  # isort: skip
 from utils.database import ht_order_desc  # isort: skip
 from utils.database import latest_ht_per_individual  # isort: skip
-from utils.herd_contact import ContactConflict, apply_contact_patch, check_flat_fields  # isort: skip
+from utils.herd_contact import ContactConflict, apply_contact_patch, check_flat_fields, check_place_shown  # isort: skip
 from utils.herd_contact import contact_field, herd_contact, herd_contacts, legacy_contact_form, lock_herd  # isort: skip
 from utils.database import lock_individuals  # isort: skip
 from utils.database import not_voided  # isort: skip
@@ -1356,6 +1356,7 @@ HERD_EDITABLE_FIELDS = {
     "www",
     "is_active",
     "contact",  # the contact rows of a compared herd (#117): apply_contact_patch
+    "place_shown",  # what the form showed of wire_phone and www (#117): check_place_shown
 }
 
 
@@ -1480,8 +1481,8 @@ def edit_herd(herd, fields, actor):
     bad = invalid_privacy_field(fields)
     if bad:
         raise ValueError(f"Fältet {bad} måste vara public, authenticated, private eller null.")
-    contact = fields.get("contact")
-    fields = {k: v for k, v in fields.items() if k != "contact"}
+    contact, place_shown = fields.get("contact"), fields.get("place_shown")
+    fields = {k: v for k, v in fields.items() if k not in ("contact", "place_shown")}
     with DATABASE.atomic():
         # One transaction, decided on the row under the membership and herd locks (#117); ContactConflict,
         # ContactForbidden and ValueError roll back the whole call.
@@ -1490,6 +1491,7 @@ def edit_herd(herd, fields, actor):
         if not (actor.is_admin or herd.genebank_id in (actor.is_manager or [])):
             raise PermissionError(f"Kräver manager(gb={herd.genebank_id}) eller admin.")
         check_flat_fields(herd, fields, contact)
+        check_place_shown(herd, fields, place_shown, with_privacy=False)  # the admin form shows no privacy
         if contact is not None:
             apply_contact_patch(herd.id, contact, actor)
         # Only write fields whose value actually changed, and skip the UPDATE
@@ -1821,7 +1823,8 @@ def update_herd(form, user_uuid, *, legacy=False):
 
     One transaction, decided on the row under the membership and herd locks (#117); membership is never written.
     `legacy` is the old app's route: legacy_contact_form keeps a linked herd's contact fields. Otherwise (v2)
-    `contact` goes to apply_contact_patch and flat contact fields are refused on a compared herd;
+    `contact` goes to apply_contact_patch, flat contact fields are refused on a compared herd and a place field
+    needs `place_shown` (check_place_shown);
     ContactConflict and ContactForbidden are raised for the route to answer, after the rollback.
     """
     user = fetch_user_info(user_uuid)
@@ -1859,6 +1862,7 @@ def update_herd(form, user_uuid, *, legacy=False):
             else:
                 contact = form.get("contact")
                 check_flat_fields(herd, form, contact)
+                check_place_shown(herd, form, form.get("place_shown"))
                 if contact is not None:
                     apply_contact_patch(herd.id, contact, user)
 

@@ -28,7 +28,11 @@ STATE = (
     "physical_address_privacy",
     "wire_phone",
     "www",
+    "wire_phone_privacy",
+    "www_privacy",
 )
+# the fixture's website as G1's forms show it: a change of a place field is sent with what the form showed
+WWW1 = {"www": {"value": "www1", "privacy": "public"}}
 
 
 class HerdContactWriteTest(HerdContactReadTest):
@@ -87,7 +91,7 @@ class TestRows(HerdContactWriteTest):
     def test_missing_row_is_unchanged(self):
         main = self._main_user()
         before = self._state()
-        response = self._patch(main, {"www": "ny.example.invalid"})
+        response = self._patch(main, {"www": "ny.example.invalid", "place_shown": WWW1})
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(self._state(), {**before, "www": "ny.example.invalid"})
         # a contact patch with one row leaves the others as they were
@@ -250,12 +254,20 @@ class TestRows(HerdContactWriteTest):
         )
         for label, top, row_shown in cases:
             with self.subTest(label):
-                body = {"www": "ny-www", "contact": {"shown": top, "rows": {"email": {**answer, "shown": row_shown}}}}
+                body = {
+                    "www": "ny-www",
+                    "place_shown": WWW1,
+                    "contact": {"shown": top, "rows": {"email": {**answer, "shown": row_shown}}},
+                }
                 self._assert_problem(self._patch(main, body), 409, "contact-changed")
                 self.assertEqual(self._state(), before)
         # the row no longer waits for an answer
         self._set(contact_pending=[])
-        body = {"www": "ny-www", "contact": {"shown": shown, "rows": {"email": {**answer, "shown": rows["email"]}}}}
+        body = {
+            "www": "ny-www",
+            "place_shown": WWW1,
+            "contact": {"shown": shown, "rows": {"email": {**answer, "shown": rows["email"]}}},
+        }
         self._assert_problem(self._patch(main, body), 409, "contact-changed")
         self.assertEqual(self._state(), {**before, "contact_pending": []})
         # the same answer to a form that still holds: saved
@@ -525,7 +537,8 @@ class TestGeneralCalls(HerdContactWriteTest):
         plumbing = {"contact_member": self.family.id, "contact_pending": ["email"], "membership": other.id}
         for user in (main, self.admin):
             with self.subTest(user=user.username):
-                response = self._patch(user, {"www": f"www-{user.id}", **plumbing})
+                place = {"www": {"value": self._state()["www"], "privacy": self._state()["www_privacy"]}}
+                response = self._patch(user, {"www": f"www-{user.id}", "place_shown": place, **plumbing})
                 self.assertEqual(response.status_code, 200, response.data)
                 self.assertEqual(self._state(), {**before, "www": f"www-{user.id}"})
         self.assertEqual(self._patch(self.admin, plumbing, admin=True).status_code, 400)  # not in the allow-list
@@ -627,7 +640,7 @@ class TestReviewRound1(HerdContactWriteTest):
             return herd
 
         with patch.object(herdbook, "_resolve_admin_herd", resolve_then_move):
-            response = self._patch(self.manager, {"www": "ny-www"}, admin=True)
+            response = self._patch(self.manager, {"www": "ny-www", "place_shown": WWW1}, admin=True)
         self._assert_problem(response, 403, "manager-of-genebank-required")
         self.assertEqual(self._state(), before)
         self.assertNotIn("anna@example.invalid", response.get_data(as_text=True))
@@ -670,11 +683,17 @@ class TestReviewRound2(HerdContactWriteTest):
         shown, rows = self._form(main)
         before = self._state()
         echo = {"source": "medlemskap", "value": " ANNA@example.invalid", "privacy": "private", "shown": rows["email"]}
-        response = self._patch(main, {"www": "ny-www", "contact": {"shown": shown, "rows": {"email": echo}}})
+        body = {"www": "ny-www", "place_shown": WWW1, "contact": {"shown": shown, "rows": {"email": echo}}}
+        response = self._patch(main, body)
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(self._state(), {**before, "www": "ny-www"})
         other = {**echo, "value": "annan@example.invalid"}
-        response = self._patch(main, {"www": "annan-www", "contact": {"shown": shown, "rows": {"email": other}}})
+        body = {
+            "www": "annan-www",
+            "place_shown": {"www": {"value": "ny-www", "privacy": "public"}},
+            "contact": {"shown": shown, "rows": {"email": other}},
+        }
+        response = self._patch(main, body)
         self.assertEqual(response.status_code, 400, response.data)
         self.assertEqual(self._state(), {**before, "www": "ny-www"})
 
@@ -773,6 +792,105 @@ class TestConcurrentWrites(HerdContactWriteTest):
                 self.assertEqual(first.status_code, 200, first.data)
                 self._assert_problem(second, 409, "contact-changed")
                 self.assertNotEqual(self._read(other).get("physical_address"), HOME)
+
+
+class TestPlaceShown(HerdContactWriteTest):
+    """The fixed phone and the website (spec: Skrivningar, "Varje ändring gäller det som formuläret visade"): a
+    change of either, or of its privacy, is saved only against what the form showed of the row, compared under the
+    locks. Otherwise 409 contact-changed, and nothing in the call is saved."""
+
+    OLD, NEW = "0498-11 11 11", "0498-22 22 22"
+
+    def _herd_name(self):
+        return db.Herd.get_by_id(self.herd.id).herd_name
+
+    def test_privacy_for_a_number_changed_since_is_refused(self):
+        """The breeder's form shows OLD. An admin has changed it to a private NEW since, or an anonymisation erased
+        it: "Inloggade besättningar" was chosen for OLD, so NEW stays private."""
+        main = self._main_user()
+        shown = {"wire_phone": {"value": self.OLD, "privacy": "private"}}
+        for stored in (self.NEW, None):
+            with self.subTest(stored=stored):
+                self._set(wire_phone=stored, wire_phone_privacy="private")
+                before = self._state()
+                body = {"wire_phone_privacy": "authenticated", "herd_name": "Nytt namn", "place_shown": shown}
+                self._assert_problem(self._patch(main, body), 409, "contact-changed")
+                self.assertEqual(self._state(), before)
+                self.assertEqual(self._herd_name(), "Gotlandsherd1")
+
+    def test_number_under_a_privacy_widened_since_is_refused(self):
+        """The form shows the number as "Endast genbanksansvarig"; it has been widened since. A new number typed for
+        the genebank manager only is not shown to logged-in herds."""
+        main = self._main_user()
+        self._set(wire_phone=self.OLD, wire_phone_privacy="authenticated")
+        before = self._state()
+        body = {"wire_phone": self.NEW, "place_shown": {"wire_phone": {"value": self.OLD, "privacy": "private"}}}
+        self._assert_problem(self._patch(main, body), 409, "contact-changed")
+        self.assertEqual(self._state(), before)
+
+    def test_change_against_the_row_the_form_showed_is_saved(self):
+        main = self._main_user()
+        self._set(wire_phone=self.OLD, wire_phone_privacy=None)
+        before = self._state()
+        shown = {
+            # written differently, the same number after the normalisation; a NULL privacy shows as private
+            "wire_phone": {"value": "0498 111111", "privacy": "private"},
+            **WWW1,
+        }
+        body = {"wire_phone_privacy": "authenticated", "www": "ny.example.invalid", "place_shown": shown}
+        response = self._patch(main, body)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(self._state(), {**before, "wire_phone_privacy": "authenticated", "www": "ny.example.invalid"})
+
+    def test_number_typed_over_an_erased_one_is_refused(self):
+        """The admin form opened with OLD; an anonymisation has erased the number since. A changed number is not
+        written over the erased one, on either route; the same change against the stored row is saved."""
+        self._set(wire_phone=None)
+        before = self._state()
+        stale = {"wire_phone": self.NEW, "place_shown": {"wire_phone": {"value": self.OLD, "privacy": "private"}}}
+        for admin in (True, False):
+            with self.subTest(admin=admin):
+                self._assert_problem(self._patch(self.admin, stale, admin=admin), 409, "contact-changed")
+                self.assertEqual(self._state(), before)
+        fresh = {"wire_phone": self.NEW, "place_shown": {"wire_phone": {"value": None}}}
+        response = self._patch(self.admin, fresh, admin=True)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(self._state(), {**before, "wire_phone": self.NEW})
+
+    def test_place_field_without_what_the_form_showed_is_refused(self):
+        main = self._main_user()
+        before = self._state()
+        bodies = (
+            {"www": "ny.example.invalid"},
+            {"www_privacy": "authenticated"},
+            {"wire_phone": self.NEW, "place_shown": WWW1},  # another field's
+            {"www": "ny.example.invalid", "place_shown": ["www1"]},
+            {"www": "ny.example.invalid", "place_shown": {"www": "www1"}},
+            {"www": "ny.example.invalid", "place_shown": {"www": {"privacy": "public"}}},  # no value
+            {"www": "ny.example.invalid", "place_shown": {"www": {"value": 5}}},
+            {"www": "ny.example.invalid", "place_shown": {"www": {"value": "www1", "privacy": "hemlig"}}},
+        )
+        for body in bodies:
+            with self.subTest(body=body):
+                self.assertEqual(self._patch(main, body).status_code, 400)
+                self.assertEqual(self._state(), before)
+                if "www_privacy" not in body:  # the admin route takes no privacy of a place field
+                    self._assert_problem(self._patch(self.admin, body, admin=True), 400, "invalid-field-value")
+                    self.assertEqual(self._state(), before)
+        # Min besättning shows the privacy, so it is part of what the form showed; the admin form shows none
+        body = {"www": "ny.example.invalid", "place_shown": {"www": {"value": "www1"}}}
+        self.assertEqual(self._patch(main, body).status_code, 400)
+        self.assertEqual(self._state(), before)
+
+    def test_old_app_route_is_unchanged(self):
+        """The old app sends the whole herd it read and no place_shown: it saves as before (its echo rules for a
+        linked herd are in test_herd_contact_legacy)."""
+        other = self.herds[1]  # not linked to a membership
+        body = {"id": other.id, "www": "ny.example.invalid", "www_privacy": "public", "wire_phone": self.NEW}
+        response = self._client(self.admin).patch("/api/manage/herd", json=body)
+        self.assertEqual(response.get_json(), {"status": "updated"}, response.data)
+        stored = db.Herd.get_by_id(other.id)
+        self.assertEqual((stored.www, stored.www_privacy, stored.wire_phone), (body["www"], "public", self.NEW))
 
 
 if __name__ == "__main__":

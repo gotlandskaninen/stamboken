@@ -12,7 +12,7 @@ REFUSED = {
     "status": "error",
     "message": "Kontaktuppgifterna ändras i nya Stamboken. Har du inte tillgång där, kontakta genbanksansvarig.",
 }
-COLUMNS = (*STATE, "herd_name", "bank_account_number", "wire_phone_privacy", "www_privacy")
+COLUMNS = (*STATE, "herd_name", "bank_account_number")
 
 
 class HerdContactLegacyTest(HerdContactWriteTest):

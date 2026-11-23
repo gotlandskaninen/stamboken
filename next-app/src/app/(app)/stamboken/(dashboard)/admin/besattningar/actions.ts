@@ -78,6 +78,8 @@ export interface UpdateHerdFields {
   wire_phone?: string | null;
   www?: string | null;
   is_active?: boolean;
+  // what the form showed of each changed place field: the server saves only against it, 409 otherwise
+  place_shown?: Partial<Record<"wire_phone" | "www", { value: string | null }>>;
 }
 
 export async function updateHerd(

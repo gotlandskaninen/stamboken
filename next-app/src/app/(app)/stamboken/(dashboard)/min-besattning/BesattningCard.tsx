@@ -1,12 +1,17 @@
 "use client";
 
 import React, { useTransition } from "react";
+import { useRouter } from "next/navigation";
 
 import { updateHerd } from "./actions";
 import { useNotifications } from "@/contexts/NotificationContext";
 import { useSnackbar } from "@/components/SnackbarProvider";
 import PrivacyChips from "@/components/herd-contact/PrivacyChips";
-import type { Privacy } from "@/components/herd-contact/contactTypes";
+import {
+  CONFLICT_TEXT,
+  isConflict,
+  type Privacy,
+} from "@/components/herd-contact/contactTypes";
 import { MbCard, MbPrivacy } from "./min-besattning-ui";
 import styles from "@/components/herd-contact/herd-contact.module.css";
 
@@ -44,6 +49,7 @@ export default function BesattningCard({
   herd: any;
   herdNumber: string;
 }) {
+  const router = useRouter();
   const { addNotification } = useNotifications();
   const { showSnackbar } = useSnackbar();
   const [editing, setEditing] = React.useState(false);
@@ -59,12 +65,23 @@ export default function BesattningCard({
     startTransition(async () => {
       const before = fromHerd(herd);
       const changed = Object.keys(data).filter((k) => data[k] !== before[k]);
-      const body = Object.fromEntries(
+      const body: Record<string, unknown> = Object.fromEntries(
         changed.map((k) => [
           k,
           k.endsWith("_privacy") ? data[k] : data[k] || null,
         ]),
       );
+      // the fixed phone and the website are saved only against the row the form showed (409 otherwise)
+      const place = (["www", "wire_phone"] as const).filter((k) =>
+        changed.some((c) => c === k || c === `${k}_privacy`),
+      );
+      if (place.length)
+        body.place_shown = Object.fromEntries(
+          place.map((k) => [
+            k,
+            { value: before[k] || null, privacy: before[`${k}_privacy`] },
+          ]),
+        );
       const result = changed.length
         ? await updateHerd(herdNumber, body)
         : { success: true as const };
@@ -78,10 +95,15 @@ export default function BesattningCard({
           type: "success",
         });
       } else {
+        // the form was out of date: fetch the herd again, and the form follows it
+        const conflict = isConflict(result);
+        if (conflict) router.refresh();
         showSnackbar("Kunde inte spara ändringarna", "error");
         addNotification({
           title: "Kunde inte spara ändringarna",
-          message: result.error || "Ett okänt fel uppstod.",
+          message: conflict
+            ? CONFLICT_TEXT
+            : result.error || "Ett okänt fel uppstod.",
           type: "error",
         });
       }
