@@ -1566,6 +1566,11 @@ class User(BaseModel, UserMixin):
 
         return False
 
+    def owns_herd_of(self, herd):
+        """Access to `herd` as one rabbit's own herd: by id (a herd code is unique only within its genebank), and
+        never GX1/MX1, which hold every rabbit sold or imported from outside the genebank."""
+        return herd is not None and herd.herd not in OUTSIDE_GENEBANK_HERDS and herd.id in self.effective_herd_ids()
+
     def can_issue_certificate(self, individual):
         """Check if user can issue/update certificates for this individual.
 
@@ -1574,7 +1579,7 @@ class User(BaseModel, UserMixin):
         who have not seen the rabbit (Jonas 2026-11-23, #141). Uses origin_herd, not current_herd: the breeder keeps
         the right after the rabbit moves to a new herd.
         """
-        return individual.origin_herd_id in self.effective_herd_ids()  # by id: a herd code is unique per genebank only
+        return self.owns_herd_of(individual.origin_herd)
 
     def can_view_certificate(self, individual):
         """Who may download or preview the certificate (ADR-0016): the
@@ -1582,11 +1587,7 @@ class User(BaseModel, UserMixin):
         and admin. A viewer role on the genebank is not enough."""
         if self.is_admin or (self.is_manager and individual.origin_herd.genebank_id in self.is_manager):
             return True
-        herd = individual.current_herd
-        # GX1/MX1 hold every rabbit sold outside the genebank, so a role there is no ownership of this one.
-        current = herd.id if herd and herd.herd not in OUTSIDE_GENEBANK_HERDS else None
-        # By id: a herd code is unique only within its genebank, so another genebank's herd G1 is not this one.
-        return bool({individual.origin_herd_id, current} & self.effective_herd_ids())
+        return self.owns_herd_of(individual.origin_herd) or self.owns_herd_of(individual.current_herd)
 
     class Meta:  # pylint: disable=too-few-public-methods
         """

@@ -287,13 +287,13 @@ DIGITAL_FORBIDDEN = (
 )
 
 
-def digital_certificate_refusal(user, herd_id):
-    """(status, title, detail) when `user` may not issue the digital certificate a registration in `herd_id` asks
+def digital_certificate_refusal(user, herd):
+    """(status, title, detail) when `user` may not issue the digital certificate a registration in `herd` asks
     for, else None. Checked before anything is written: the rabbit never gets its number without the certificate
     (decision 2026-10-30), and only the herd attests, in its own name (#141)."""
     from utils.cert_service_v2 import ATTESTER_NAME_MISSING, attester_name
 
-    if herd_id not in user.effective_herd_ids():
+    if not user.owns_herd_of(herd):
         return 403, "digital_certificate_forbidden", DIGITAL_FORBIDDEN
     if not attester_name(user):
         return 400, "attester_name_missing", ATTESTER_NAME_MISSING
@@ -388,7 +388,7 @@ def promote_bunny(
     breeding_id = bunny.breeding_id
     if certificate_type == "digital":
         litter = Breeding.get_or_none(Breeding.id == breeding_id)
-        if litter is not None and (refusal := digital_certificate_refusal(user, litter.breeding_herd_id_id)):
+        if litter is not None and (refusal := digital_certificate_refusal(user, litter.breeding_herd_id)):
             raise RosterActionError(*refusal)
 
     with DATABASE.atomic():
@@ -409,9 +409,7 @@ def promote_bunny(
         if not user.can_edit(herd.herd):
             raise RosterActionError(403, "Forbidden", "Åtkomst nekad")
         # Again on the locked litter: it may have moved to another herd since the check before the lock.
-        if certificate_type == "digital" and (
-            refusal := digital_certificate_refusal(user, breeding.breeding_herd_id_id)
-        ):
+        if certificate_type == "digital" and (refusal := digital_certificate_refusal(user, breeding.breeding_herd_id)):
             raise RosterActionError(*refusal)
 
         # 2. Litter-size precondition (the mint helper defaults max to 9 when

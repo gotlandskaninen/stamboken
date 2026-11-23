@@ -1191,6 +1191,30 @@ class TestCertificateV2ViewAuthorization(CertV2Mixin, FlaskTest):
             self.assertEqual(self._status(gx_owner, url), 403, url)
         self.assertEqual(self._status(self.owner, f"/api/v2/certificates/{individual.number}"), 200)
 
+    def test_gx1_as_origin_gives_no_right(self):
+        """A rabbit imported into GX1/MX1 is no rabbit of a GX1 role holder: no issue, no view."""
+        from types import SimpleNamespace
+        from unittest import mock
+
+        gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        imported = SimpleNamespace(origin_herd=gx1, current_herd=gx1)
+        user = db.User.get_by_id(self.owner.id)
+        with mock.patch.object(db.User, "effective_herd_ids", return_value={gx1.id, self.herds[0].id}):
+            self.assertFalse(user.can_issue_certificate(imported))
+            self.assertFalse(user.can_view_certificate(imported))
+            self.assertTrue(user.owns_herd_of(self.herds[0]))
+
+    def test_nameless_breeder_gets_no_preview_without_a_name(self):
+        """With no signed PDF to fall back on, a nameless herd member is told to get a name, not shown a blank."""
+        individual = self.individuals[3]  # uncertified, born in self.owner's herd
+        db.User.update(fullname=None).where(db.User.id == self.owner.id).execute()
+        with self.app as context:
+            context.get("/api/logout")
+            context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
+            response = context.get(f"/api/v2/certificates/preview/{individual.number}")
+        self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()["detail"], ATTESTER_NAME_MISSING)
+
     def test_buyer_preview_is_the_signed_certificate(self):
         """Only someone who may issue the next version gets a rendered preview naming her; the buyer gets the PDF."""
         from unittest import mock

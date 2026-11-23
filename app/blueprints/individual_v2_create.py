@@ -100,8 +100,8 @@ def register_individual(form, may_register=None, created=None):
     if refusal := certificate_choice_problem(certificate_type, form.get("paper_certificate"), paper_number, resolution):
         return refusal
     if certificate_type == "digital":
-        herd_id = breeding.breeding_herd_id_id if breeding is not None else new_litter["herd"].id
-        if refusal := digital_certificate_refusal(current_user, herd_id):
+        herd = breeding.breeding_herd_id if breeding is not None else new_litter["herd"]
+        if refusal := digital_certificate_refusal(current_user, herd):
             return problem(*refusal)
 
     form_litter_size6w = form.get("litter_size6w")
@@ -134,6 +134,11 @@ def register_individual(form, may_register=None, created=None):
             check = None
             if new_litter is not None:
                 lock_herd_year(new_litter["herd"], new_litter["birth_date"].year)
+                # Again under the lock, before the litter is created: a grant may have been revoked meanwhile.
+                if certificate_type == "digital" and (
+                    refusal := digital_certificate_refusal(current_user, new_litter["herd"])
+                ):
+                    return problem(*refusal)
                 if certificate_type == "paper":
                     litter = {key: new_litter[key] for key in ("herd", "birth_date", "mother", "father")}
                     check = number_check(current_user, paper_number, paper_certificate=paper_certificate, **litter)
@@ -146,7 +151,7 @@ def register_individual(form, may_register=None, created=None):
                 if refusal := _registration_refusal(breeding, may_register):
                     return refusal
                 if certificate_type == "digital" and (
-                    refusal := digital_certificate_refusal(current_user, breeding.breeding_herd_id_id)
+                    refusal := digital_certificate_refusal(current_user, breeding.breeding_herd_id)
                 ):
                     return problem(*refusal)
             herd = breeding.breeding_herd_id

@@ -357,7 +357,8 @@ def preview_certificate(i_number):
     # seen the rabbit, so they too get the signed PDF.
     viewer = da.fetch_user_info(user_id)
     # By id: a herd code is unique only within its genebank.
-    may_issue = individual.origin_herd_id in viewer.effective_herd_ids() and bool(attester_name(viewer))
+    in_herd = viewer.owns_herd_of(individual.origin_herd)
+    may_issue = in_herd and bool(attester_name(viewer))
     has_current = (
         db.DigitalCertificateV2.select()
         .where((db.DigitalCertificateV2.individual == individual) & (db.DigitalCertificateV2.is_current == True))  # noqa: E712
@@ -365,6 +366,8 @@ def preview_certificate(i_number):
     )
     if not may_issue and (has_current or individual.digital_certificate is not None):
         return download_certificate(i_number)
+    if in_herd and not may_issue:  # she would be the attester of the next version, but has no name yet
+        return problem(400, "attester_name_missing", ATTESTER_NAME_MISSING)
     cert_data = build_cert_data(individual, ind_dict, user_id)
     if not may_issue:
         cert_data["fullname"] = ""
