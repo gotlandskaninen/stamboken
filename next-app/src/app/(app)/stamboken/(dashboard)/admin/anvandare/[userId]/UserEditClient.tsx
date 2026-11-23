@@ -15,6 +15,8 @@ import {
 } from "../../_components/RolePicker";
 import {
   grantRole,
+  logoutEverywhere,
+  removeGoogleLogin,
   resetPassword,
   revokeRole,
   setAccountActive,
@@ -85,6 +87,8 @@ export function UserEditClient({
   const [fullname, setFullname] = useState(detail.fullname ?? "");
   const [email, setEmail] = useState(detail.email ?? "");
   const [activeDialogOpen, setActiveDialogOpen] = useState(false);
+  const [logoutDialogOpen, setLogoutDialogOpen] = useState(false);
+  const [googleDialogOpen, setGoogleDialogOpen] = useState(false);
   const [selfRevoke, setSelfRevoke] = useState<PrivilegeEntry | null>(null);
   // Google-only accounts can lack a username (hbuser.username is nullable).
   const displayName = detail.username ?? detail.email;
@@ -336,6 +340,29 @@ export function UserEditClient({
               </div>
             )}
           </DetailCard>
+
+          <DetailCard title="Sessioner">
+            <p className={ds["ad-hint"]}>
+              Avslutar kontots alla sessioner, i riktiga stamboken och i
+              testmiljön. Användaren kan logga in igen direkt.
+            </p>
+            <button
+              type="button"
+              className="sb-btn sb-btn-secondary"
+              disabled={pending}
+              onClick={() => setLogoutDialogOpen(true)}
+            >
+              Logga ut överallt
+            </button>
+            <button
+              type="button"
+              className="sb-btn sb-btn-secondary"
+              disabled={pending}
+              onClick={() => setGoogleDialogOpen(true)}
+            >
+              Ta bort Google-inloggningen
+            </button>
+          </DetailCard>
         </div>
 
         <div className={ds["ad-col"]}>
@@ -473,6 +500,40 @@ export function UserEditClient({
         onConfirm={() => {
           setActiveDialogOpen(false);
           run(() => setAccountActive(detail.id, !detail.is_active));
+        }}
+      />
+
+      {/* Logga ut överallt, also on the admin's own account. */}
+      <ConfirmDialog
+        open={logoutDialogOpen}
+        title="Logga ut överallt?"
+        body={
+          `${displayName} loggas ut överallt, i riktiga stamboken och i ` +
+          "testmiljön." +
+          (detail.id === actorId
+            ? " Det är ditt eget konto, så du loggas också ut här."
+            : "")
+        }
+        confirmLabel="Logga ut"
+        confirmColor="error"
+        onClose={() => setLogoutDialogOpen(false)}
+        onConfirm={() => {
+          setLogoutDialogOpen(false);
+          run(() => logoutEverywhere(detail.id));
+        }}
+      />
+
+      {/* Ta bort Google-inloggningen: the API refuses with a 409 text shown as an error. */}
+      <ConfirmDialog
+        open={googleDialogOpen}
+        title="Ta bort Google-inloggningen?"
+        body="Kontot loggas ut överallt och kan inte logga in med Google förrän en ny Google-inloggning har kopplats. Har kontot inget lösenord behöver det ett först (Återställ lösenord). I testmiljön fungerar den gamla Google-inloggningen tills testmiljön har fått sin nästa kopia, i regel natten efter."
+        confirmLabel="Ta bort"
+        confirmColor="error"
+        onClose={() => setGoogleDialogOpen(false)}
+        onConfirm={() => {
+          setGoogleDialogOpen(false);
+          run(() => removeGoogleLogin(detail.id));
         }}
       />
 

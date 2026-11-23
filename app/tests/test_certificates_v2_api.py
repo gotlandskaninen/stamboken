@@ -6,6 +6,7 @@ and require app/certs/key.pem + app/certs/ca.pem in the test container.
 """
 
 import unittest
+import uuid
 from contextlib import contextmanager
 from datetime import date, datetime
 from unittest.mock import patch
@@ -659,6 +660,21 @@ class TestCertificateV2Update(CertV2Mixin, FlaskTest):
             )
             new_issued_at = update_resp.get_json()["issued_at"]
 
+            new_token = update_resp.get_json()["verification_token"]
+
+        # The issuing person shows her name and the rabbit is sold (stamboken #6)
+        db.User.update(fullname="Ada Uppfödare", name_on_check_page=True).where(db.User.id == self.owner.id).execute()
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[1],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 3, 15),
+        )
+        current = self.app.get(f"/api/v2/certificates/verify/{new_token}").get_json()
+        self.assertEqual((current["attested_by"], current["transferred"]), ("Ada Uppfödare", ["2026-03"]))
+
         # Public endpoint — no auth
         response = self.app.get(f"/api/v2/certificates/verify/{old_token}")
         self.assertEqual(response.status_code, 200)
@@ -666,6 +682,9 @@ class TestCertificateV2Update(CertV2Mixin, FlaskTest):
         self.assertTrue(data["verified"])
         self.assertFalse(data["is_current"])
         self.assertEqual(data["replaced_by_date"], new_issued_at)
+        # An old QR code tells neither the name nor later sales
+        self.assertEqual(data["attested_by"], "Uppfödaren")  # the role, not the name; the breeder issued it (#141)
+        self.assertEqual(data["transferred"], [])
 
 
 class TestCertificateV2Download(CertV2Mixin, FlaskTest):
@@ -894,6 +913,270 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
             # No person on the public page: neither the issuing user's name nor an email
             self.assertNotIn("issued_by", data)
             self.assertNotIn("@", str(data))
+
+    def test_verify_attester_and_transfers(self):
+        """Stamboken #6: the issuer's name only by her own choice, each change of holder as month and year only."""
+        self._start_mock_aws()
+        individual = self.individuals[3]  # born in herds[0]
+        with self.app as context:
+            context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
+            token = context.post(
+                f"/api/v2/certificates/issue/{individual.number}",
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
+            ).get_json()["verification_token"]
+
+        db.User.update(fullname="Olle Ägare").where(db.User.id == self.owner.id).execute()
+        data = self.app.get(f"/api/v2/certificates/verify/{token}").get_json()
+        self.assertEqual(data["attested_by"], "Uppfödaren")
+        self.assertEqual(data["transferred"], [])
+
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[1],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 3, 15),
+        )
+        ht_row(
+            "CORRECTION",
+            from_herd=self.herds[1],
+            herd=self.herds[0],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 6, 9),
+        )
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[1],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 8, 20),
+            voided_at=datetime.now(),
+            voided_by_user=self.manager,
+            voided_reason="fel kanin",
+            voided_operation_id=uuid.uuid4(),
+        )
+        ht_row(
+            "ATTESTATION",
+            herd=self.herds[0],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 9, 1),
+        )
+        ht_row(  # migrated history without a receiving herd, no sale
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=None,
+            signature=self.admin,
+            individual=individual,
+            herd_tracking_date=date(2026, 9, 15),
+        )
+        ht_row(  # an admin's register fix into the other genebank, no sale
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[2],
+            signature=self.admin,
+            individual=individual,
+            herd_tracking_date=date(2026, 10, 1),
+        )
+        owner = self.app.application.test_client(use_cookies=True)
+        login = owner.post("/api/login", json={"username": self.owner.email, "password": "pass"})
+        self.assertEqual(login.status_code, 200)
+        url = "/api/v2/certificates/check-page-name"
+        self.assertEqual(owner.get(url).get_json(), {"show": None})  # a new account has not chosen yet
+        self.assertEqual(owner.put(url, json={"show": "true"}).status_code, 400)
+        self.assertEqual(owner.put(url, json={"show": True}).get_json(), {"show": True})
+
+        data = self.app.get(f"/api/v2/certificates/verify/{token}").get_json()
+        self.assertEqual(data["attested_by"], "Olle Ägare")
+        # the corrected history's changes of holder; no voided row, no move between genebanks
+        self.assertEqual(data["transferred"], ["2026-03", "2026-06"])
+        self.assertNotIn("Gotlandsherd1", str(data))  # never the herd name
+        self.assertNotIn("2026-03-15", str(data))
+        with patch.object(settings.service, "demo_instance", True):  # a day-old copy: no name, no sales
+            demo = self.app.get(f"/api/v2/certificates/verify/{token}").get_json()
+        self.assertEqual((demo["attested_by"], demo["transferred"]), ("Uppfödaren", []))
+
+        self.assertEqual(owner.put(url, json={"show": False}).get_json(), {"show": False})
+        self.assertEqual(self.app.get(f"/api/v2/certificates/verify/{token}").get_json()["attested_by"], "Uppfödaren")
+
+    def test_attester_role_without_a_name(self):
+        """Without her choice: the role she issued in, stored on the certificate, not her roles at the scan."""
+        from utils.cert_service_v2 import issuer_role
+
+        individual = self.individuals[3]  # born in herds[0]
+        for user, role in ((self.owner, "breeder"), (self.admin, "admin"), (self.manager, "manager")):
+            with self.subTest(user=user.email):
+                self.assertEqual(issuer_role(user, individual), role)
+        cert = db.DigitalCertificateV2.create(
+            individual=individual, issued_by=self.manager, issued_as="manager", file_path="x", checksum="0" * 64
+        )
+        self.assertEqual(
+            certificates._attested_by(cert, may_name=True), "Föreningen Gotlandskaninen (genbanksansvarig)"
+        )
+        self.manager.remove_role("manager", self.genebanks[0].id)  # she steps down; the certificate keeps its role
+        cert = db.DigitalCertificateV2.get_by_id(cert.id)
+        self.assertEqual(
+            certificates._attested_by(cert, may_name=True), "Föreningen Gotlandskaninen (genbanksansvarig)"
+        )
+        db.DigitalCertificateV2.update(issued_as=None).where(db.DigitalCertificateV2.id == cert.id).execute()
+        cert = db.DigitalCertificateV2.get_by_id(cert.id)
+        self.assertEqual(certificates._attested_by(cert, may_name=True), "Uppfödaren")  # an older row, fixed text
+        db.User.get_by_id(self.manager.id).add_role("admin", None)  # the issuer becomes admin
+        cert = db.DigitalCertificateV2.get_by_id(cert.id)
+        self.assertEqual(certificates._attested_by(cert, may_name=True), "Uppfödaren")  # roles today do not matter
+        db.User.update(fullname="Maja Ansvarig", name_on_check_page=True, is_active=False).where(
+            db.User.id == self.manager.id
+        ).execute()
+        cert = db.DigitalCertificateV2.get_by_id(cert.id)
+        self.assertEqual(certificates._attested_by(cert, may_name=True), "Uppfödaren")  # a deactivated account
+        db.User.update(fullname="  ", is_active=True).where(db.User.id == self.manager.id).execute()
+        cert = db.DigitalCertificateV2.get_by_id(cert.id)
+        self.assertEqual(certificates._attested_by(cert, may_name=True), "Uppfödaren")  # no blank name
+
+    def test_check_page_name_reaches_production_without_production_access(self):
+        """She can always read and withdraw her choice, also once her production access is gone."""
+        rules = patch.object(settings.service, "access_rules", "enforce")  # as in production
+        rules.start()
+        self.addCleanup(rules.stop)
+        db.User.update(name_on_check_page=True, v2_prod_access=False).where(db.User.id == self.owner.id).execute()
+        client = self.app.application.test_client(use_cookies=True)
+        self.assertEqual(
+            client.post("/api/login", json={"username": self.owner.email, "password": "pass"}).status_code, 200
+        )
+        self.assertEqual(client.get("/api/v2/certificates/check-page-name").get_json(), {"show": True})
+        self.assertEqual(
+            client.put("/api/v2/certificates/check-page-name", json={"show": False}).get_json(), {"show": False}
+        )
+        self.assertFalse(db.User.get_by_id(self.owner.id).name_on_check_page)
+        self.assertEqual(client.get("/api/v2/individual/G1-2112").status_code, 403)  # the gate is really on
+
+    def test_sale_months_on_migrated_history(self):
+        """Migrated rows lack from_herd: a row without a herd, and a return to the same herd, are no sale."""
+        from utils.herd_tracking import sale_months
+
+        individual = self.individuals[3]  # born in herds[0]
+        for day, herd in (
+            (date(2026, 2, 1), None),
+            (date(2026, 3, 1), self.herds[0]),
+            (date(2026, 4, 1), self.herds[1]),
+        ):
+            ht_row("TRANSFER", herd=herd, signature=self.manager, individual=individual, herd_tracking_date=day)
+        self.assertEqual(sale_months(individual), ["2026-04"])
+
+    def test_sale_months_counts_a_resale_within_gx1(self):
+        """ADR-0016: a resale to a new buyer within GX1 is a sale, also once the buyer is erased (stamboken #6)."""
+        from utils.herd_tracking import sale_months
+
+        gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1")
+        individual = self.individuals[3]  # born in herds[0]
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=gx1,
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 3, 1),
+        )
+        ht_row(  # the resale; its buyer is erased (buyer_removed)
+            "TRANSFER",
+            from_herd=gx1,
+            herd=gx1,
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 4, 1),
+            buyer_removed=True,
+        )
+        ht_row(  # a later row repeating GX1 without any buyer (migrated): no sale
+            "TRANSFER",
+            herd=gx1,
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 5, 1),
+        )
+        self.assertEqual(sale_months(individual), ["2026-03", "2026-04"])
+
+    def test_sale_months_resale_after_an_earlier_sale_entered_later(self):
+        """An earlier sale into GX1 entered afterwards: the later row's stored sender is stale, its buyer is not."""
+        from utils.herd_tracking import sale_months
+
+        gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1")
+        individual = self.individuals[3]  # born in herds[0]
+        for day in (date(2026, 4, 1), date(2026, 3, 1)):  # April first, then March by a correction
+            ht_row(
+                "TRANSFER" if day.month == 4 else "CORRECTION",
+                from_herd=self.herds[0],
+                herd=gx1,
+                signature=self.manager,
+                individual=individual,
+                herd_tracking_date=day,
+                buyer_removed=True,
+            )
+        self.assertEqual(sale_months(individual), ["2026-03", "2026-04"])
+
+    def test_sale_months_walks_the_holder_past_a_voided_row(self):
+        """A later row's stored from_herd can name a voided row's herd: the active history decides."""
+        from utils.herd_tracking import sale_months
+
+        m4 = db.Herd.create(genebank=self.genebanks[1], herd="M4")
+        individual = self.individuals[3]  # born in herds[0] (G1)
+        ht_row(  # G1 -> M3, struck out later
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[2],
+            signature=self.admin,
+            individual=individual,
+            herd_tracking_date=date(2026, 2, 1),
+            voided_at=datetime.now(),
+            voided_by_user=self.admin,
+            voided_reason="fel genbank",
+            voided_operation_id=uuid.uuid4(),
+        )
+        ht_row(  # stored sender M3, but the active history goes G1 -> G2: a change within the genebank
+            "CORRECTION",
+            from_herd=self.herds[2],
+            herd=self.herds[1],
+            signature=self.admin,
+            individual=individual,
+            herd_tracking_date=date(2026, 3, 1),
+        )
+        ht_row(  # stored sender M3 again, but G2 -> M4 crosses genebanks: no sale
+            "TRANSFER",
+            from_herd=self.herds[2],
+            herd=m4,
+            signature=self.admin,
+            individual=individual,
+            herd_tracking_date=date(2026, 4, 1),
+        )
+        self.assertEqual(sale_months(individual), ["2026-03"])
+
+    def test_sale_months_follows_the_corrected_history(self):
+        """Date fixes, a fix of a fix and a joint fix: the months the corrected history changes holder, once each."""
+        from utils.herd_tracking import correct_herd_tracking, record_herd_tracking, sale_months
+
+        gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1")
+        individual = self.individuals[3]  # born in herds[0]
+        sale = record_herd_tracking(individual, self.herds[1], date(2026, 2, 1), "TRANSFER", self.manager)
+        second = record_herd_tracking(individual, gx1, date(2026, 3, 1), "TRANSFER", self.manager)
+        self.assertEqual(sale_months(individual), ["2026-02", "2026-03"])
+
+        def fix(row, day):
+            (written,) = correct_herd_tracking(
+                individual,
+                self.manager,
+                None,
+                [row.id],
+                [{"kind": "CORRECTION", "date": day, "herd": row.herd.herd}],
+                "Fel datum",
+            )
+            return written
+
+        fixed = fix(second, date(2026, 5, 1))
+        fix(fixed, date(2026, 4, 1))  # a fix of the fix
+        fix(sale, date(2026, 1, 15))
+        self.assertEqual(sale_months(individual), ["2026-01", "2026-04"])
 
     def test_verify_post_with_pdf(self):
         """POST verify with actual PDF bytes checks checksum + signature."""

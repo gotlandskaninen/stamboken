@@ -128,6 +128,22 @@ def attester_name(user):
     return ((user.fullname if user else None) or "").strip()
 
 
+def issuer_role(user, individual):
+    """
+    The role `user` issues the rabbit's certificate in, for "Intygas av" on the check page (stamboken #6, Jonas
+    2026-11-23): anyone with access to the origin herd (family, caretaker) is the breeder; else an admin or the
+    genebank's manager issues for the association.
+    """
+    herd = individual.origin_herd
+    if herd and herd.id in user.effective_herd_ids():  # by id: a herd code is unique only within a genebank
+        return "breeder"
+    if user.is_admin:
+        return "admin"
+    if herd and herd.genebank_id in (user.is_manager or []):
+        return "manager"
+    return "breeder"
+
+
 def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False):
     """Generate, sign, and store a v2 certificate.
 
@@ -203,6 +219,7 @@ def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False):
             verification_token=token,
             certificate_type="pedigree",
             issued_by=user,
+            issued_as=issuer_role(user, individual),
             file_path=file_path,
             checksum=sha,
         )

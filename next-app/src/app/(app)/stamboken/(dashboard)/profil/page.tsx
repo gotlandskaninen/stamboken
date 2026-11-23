@@ -7,6 +7,7 @@ import { KontaktClient } from "./KontaktClient";
 import { PubliceringClient } from "./PubliceringClient";
 import { PersonerClient } from "./PersonerClient";
 import { NotisClient } from "./NotisClient";
+import { IntygareClient } from "./IntygareClient";
 import type { Me, MyMembership } from "./types";
 import styles from "./profil.module.css";
 
@@ -37,13 +38,17 @@ function InfoCard({ children }: { children: React.ReactNode }) {
 
 export default async function ProfilPage() {
   const user = await requireUser();
-  const [me, myMembership, notice] = await Promise.all([
+  const [me, myMembership, notice, checkPage] = await Promise.all([
     fetchOr404Null<Me>("/v2/members/me"),
     fetchOr404Null<MyMembership>("/v2/my-membership"),
     // Everyone has notices, member record or not; a failure just hides the card.
     fetchApi<{ mail_enabled: boolean }>("/v2/inkorg/notiser/installning").catch(
       () => null,
     ),
+    // Everyone who can issue a certificate has the choice; a failure just hides the card.
+    fetchApi<{ show: boolean | null }>("/v2/certificates/check-page-name", {
+      forceProd: true,
+    }).catch(() => null),
   ]);
   // After migrate_28_to_29 both endpoints resolve the same row; a mismatch
   // is an integrity state, never a normal UI state.
@@ -96,6 +101,12 @@ export default async function ProfilPage() {
               </>
             )}
             {notice && <NotisClient initial={notice.mail_enabled} />}
+            {/* Shown while the name is public, also once her roles are gone, so she can always withdraw it. */}
+            {checkPage &&
+              (checkPage.show ||
+                user.is_admin ||
+                user.is_manager ||
+                user.is_owner) && <IntygareClient initial={checkPage.show} />}
           </div>
         </div>
       </div>

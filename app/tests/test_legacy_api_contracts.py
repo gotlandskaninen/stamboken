@@ -83,6 +83,7 @@ class TestAuthContracts(FlaskTest):
                 "google_email",
                 "use_google_picture",
                 "v2_prod_access",
+                "name_on_check_page",
             ):
                 self.assertIn(key, data, f"Missing key: {key}")
             self.assertEqual(data["email"], self.admin.email)

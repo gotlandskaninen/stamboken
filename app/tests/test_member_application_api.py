@@ -221,8 +221,9 @@ class TestApplicationApproveReject(DatabaseTest):
 
     def test_approve_warns_on_duplicate_contact_email(self):
         ms = db.Membership.create(membership_status="active")
+        # A family member without an account: her address is no login address (a main member's is: 409).
         db.Member.create(
-            membership=ms, first_name="Gammal", last_name="Medlem", email="a@a.example.com", role="huvudmedlem"
+            membership=ms, first_name="Gammal", last_name="Medlem", email="a@a.example.com", role="familjemedlem"
         )
         self.login()
         resp = self.client.post(f"/api/v2/member-applications/{self.pending.id}/approve")
@@ -380,6 +381,8 @@ class TestApplicationApproveReject(DatabaseTest):
         first = self._applicant()
         duplicate = self._applicant()
         first_person = self._approve(first)
+        # One address, one main member: the duplicate gets in once the first person's address is another.
+        db.Member.update(email="anna.ny@example.se").where(db.Member.id == first_person).execute()
         self._approve(duplicate)
 
         self._anonymize(first_person)

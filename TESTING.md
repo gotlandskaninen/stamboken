@@ -118,6 +118,11 @@ e2e-testerna behöver ett Flask-API på `:9090` (`API_INTERNAL_URL`) och
 testanvändare; uppsättningen per konfigurationsfil står i
 [next-app/README.md](next-app/README.md). RSC-sidor kan inte mockas med
 `page.route()` — de hämtar data server-side, så testerna går mot riktigt API.
+Admin- och demo-sviterna (`playwright.admin.config.ts`,
+`playwright.demo.config.ts`) loggar in `test-admin` och `test-gk-manager` med
+lösenord mot local-production-stacken, vilket rollregeln nekar: lägg
+`ALLOW_ROLE_PASSWORD_LOGIN=true` i `.docker/api-variables.env` innan API:t
+startar, inte i compose-filen.
 
 #### Manuell verifiering mot dev-stacken
 

@@ -101,6 +101,8 @@ class TestEndpoints(FlaskTest):
                 "use_google_picture": test_user.use_google_picture,
                 # frontend_data derives this: admins are implicitly promoted
                 "v2_prod_access": test_user.v2_prod_access or test_user.is_admin,
+                "auth_method": "losenord",
+                "name_on_check_page": None,  # a new account has not chosen yet (stamboken #6)
             }
             with self.app as context:
                 # Unauthenticated users get an error response
@@ -519,7 +521,7 @@ class TestEndpoints(FlaskTest):
 
     def _post_oauth_location(self, return_to):
         """Location of the redirect that ends /api/login/google when `return_to` was saved before OAuth."""
-        user = mock.Mock(validated=True, uuid="u-1", username="x", email="x@example.com", id=1)
+        user = mock.Mock(validated=True, uuid="0" * 31 + "1", username="x", email="x@example.com", id=1)
         client = APP.test_client()
         with client.session_transaction(base_url=self.OAUTH_SITE) as sess:
             sess["return_to_after_oauth"] = return_to

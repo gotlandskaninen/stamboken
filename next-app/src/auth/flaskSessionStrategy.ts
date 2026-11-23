@@ -40,6 +40,10 @@ export const flaskSessionStrategy: AuthStrategy = {
     const sessionValue = readSessionCookie(headers);
     const user = await resolveFlaskUser({
       sessionValue,
+      // As the API refuses the setting in production, a production build never lifts the rule.
+      allowPasswordSession:
+        process.env.NODE_ENV !== "production" &&
+        process.env.ALLOW_ROLE_PASSWORD_LOGIN?.toLowerCase() === "true",
       fetchUser: async () => {
         if (!sessionValue) return { ok: false };
         try {
@@ -54,11 +58,13 @@ export const flaskSessionStrategy: AuthStrategy = {
           const body = (await res.json()) as {
             google_email?: string | null;
             validated?: boolean;
+            auth_method?: string | null;
           };
           return {
             ok: true,
             google_email: body?.google_email,
             validated: body?.validated,
+            auth_method: body?.auth_method,
           };
         } catch {
           return { ok: false };

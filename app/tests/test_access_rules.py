@@ -338,6 +338,8 @@ class TestLegacyList(unittest.TestCase):
                 ("inbox.my_uploads", "GET"),
                 ("inbox.uploads_seen", "POST"),
                 ("inbox.notice_count", "GET"),
+                ("certificates_v2.check_page_name", "GET"),
+                ("certificates_v2.check_page_name", "PUT"),
                 ("health_check", "GET"),
                 ("main", "GET"),
                 ("static", "GET"),
@@ -417,6 +419,8 @@ class TestLegacyGoogleLoginNeverAdopts(DatabaseTest):
             with mock.patch("google.oauth2.id_token.verify_oauth2_token", return_value=own_token):
                 self.assertEqual(evil.post("/api/auth/google", json={"credential": "t"}).status_code, 200)
             self.assertEqual(evil.post("/api/unlink/google").get_data(as_text=True), "1")
+            # Removing the identity ended the session; the attacker signs in with the password.
+            evil.post("/api/login", json={"username": attacker.email, "password": "pass"})
             moved = evil.patch("/api/manage/user/", json={"email": self.ADDRESS, "validated": False})
             self.assertEqual(moved.get_json(), {"status": "updated"})
 
@@ -488,7 +492,8 @@ class TestLegacyGoogleLoginNeverAdopts(DatabaseTest):
     def test_two_links_to_one_account_at_once_leave_one_identity(self):
         account = da.register_user("ett@gotlandskaninen.se", "pass", validated=True)
         done = self.at_once(
-            lambda: da.link_account(account, "google", "sub-a"), lambda: da.link_account(account, "google", "sub-b")
+            lambda: da.link_account(account, "google", "sub-a", from_google_session=True),
+            lambda: da.link_account(account, "google", "sub-b", from_google_session=True),
         )
         self.assertEqual(done, [True, True])
         self.assertEqual(len(self.identities(user=account.id)), 1)
@@ -513,7 +518,8 @@ class TestLegacyGoogleLoginNeverAdopts(DatabaseTest):
 
         self.assertIsNone(da.link_account(mine, "google", "sub-annans"))
         self.assertEqual(held(), ["sub-min"])
-        self.assertTrue(da.link_account(mine, "google", "sub-ny"))  # a free identity replaces the old one
+        # a free identity replaces the old one
+        self.assertTrue(da.link_account(mine, "google", "sub-ny", from_google_session=True))
         self.assertEqual(held(), ["sub-ny"])
 
 
