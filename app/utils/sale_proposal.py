@@ -26,6 +26,7 @@ from utils.database import (
     lock_individuals,
 )
 from utils.herd_tracking import (
+    BUYER_REMOVED,
     BUYER_TEXT_FIELDS,
     HerdTrackingError,
     HerdTrackingInvalid,
@@ -43,12 +44,12 @@ BUYER_GONE = "Köparens uppgifter är raderade, så försäljningen kan inte god
 TICKED = ("contact_consent_at", "membership_optin_at")
 
 
-def _stored_buyer(buyer, at, *, address_required):
+def _stored_buyer(buyer, at):
     """
     The buyer as the sale takes it again at approval: the text fields and the two ticks, checked now, and when each
     was ticked (`at`, the submission's time), which approval gives the BuyerContact in place of its own time.
     """
-    fields = buyer_contact_fields(buyer, address_required=address_required)
+    fields = buyer_contact_fields(buyer, address_required=True)
     return {
         **{key: fields[key] for key in BUYER_TEXT_FIELDS},
         "contact_consent": buyer.get("contact_consent", False),
@@ -74,16 +75,18 @@ def _close_item(proposal, user, state):
         inbox.log_event(item, user, "lage", **{"from": previous, "to": state})
 
 
-def propose(report, submission, individual, *, to_herd, buyer, sale_date: date, buyer_correction=False) -> SaleProposal:
+def propose(report, submission, individual, *, to_herd, buyer, sale_date: date, buyer_removed=False) -> SaleProposal:
     """
     A pending sale of `individual` from the report's herd, to `to_herd` or, with None, to a buyer outside the
-    genebank (then `buyer` is required). Its `kontroll` item goes to the genebank's queue (F3). The proposer is
-    `submission`'s user or access code.
+    genebank (then `buyer` is required unless already erased). Its `kontroll` item goes to the genebank's queue.
+    The proposer is `submission`'s user or access code.
     """
-    if (to_herd is None) == (buyer is None):
+    if buyer_removed and (to_herd is not None or buyer is not None):
+        raise HerdTrackingInvalid(BUYER_REMOVED)
+    if not buyer_removed and (to_herd is None) == (buyer is None):
         raise HerdTrackingInvalid("Ange köparens besättning, eller köparens namn och ort utanför genbanken.")
     at = submission.created_at  # when the seller sent it, and ticked the buyer's boxes
-    stored = _stored_buyer(buyer, at, address_required=not buyer_correction) if buyer is not None else None
+    stored = _stored_buyer(buyer, at) if buyer is not None else None
     with DB_PROXY.atomic():
         try:
             proposal = SaleProposal.create(
@@ -257,7 +260,7 @@ def reject(proposal, user, *, reason: str, then: Literal["kvar", "valj_igen"], n
 def clear_buyer(proposal, action, user=None, still=None) -> int:
     """
     The pending proposal's buyer goes (spec section 6), under a decision's locks: the report lock and row, the
-    report's items (_locked), then the rabbit, with `still` (SQL), the rule that chose it, read again under them. One
+    report's items (_locked), then the rabbit. `still` rebuilds the rule's SQL condition for the locked rabbit. One
     audit_log row without the buyer, as for a BuyerContact. Returns 1 when it went, else 0. A sale outside the
     genebank without its buyer can only be rejected (BUYER_GONE).
     """
@@ -267,7 +270,7 @@ def clear_buyer(proposal, action, user=None, still=None) -> int:
         query = SaleProposal.update(buyer=None).where(
             SaleProposal.id == proposal.id, SaleProposal.state == "foreslagen", SaleProposal.buyer.is_null(False)
         )
-        changed = (query.where(still) if still is not None else query).execute()
+        changed = (query.where(still([proposal.individual_id])) if still is not None else query).execute()
         if changed:
             AuditLog.create(
                 table_name=SaleProposal._meta.table_name,

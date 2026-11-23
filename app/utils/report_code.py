@@ -4,28 +4,62 @@ The token is `mail.link_token("rapport", code.id)`: no code or hash of it is sto
 """
 
 from dataclasses import dataclass
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
-from peewee import IntegrityError
+from peewee import JOIN, IntegrityError, fn
 
 import utils.settings as settings
-from utils.database import DB_PROXY, Herd, Member, ReportAccessCode
+from utils.database import DB_PROXY, Herd, Member, MemberPreviousAddress, Membership, ReportAccessCode
 from utils.mail import link_token, verify_link
 
 
-def invitation_recipient(herd: Herd) -> Member | None:
-    """
-    FA11: who the herd's invitation goes to, and who a code must have been issued to. The herd's current main
-    member, when the membership is active and the member has an e-mail address. A pending or friexemplar membership
-    gets no link.
-    """
-    # Late import: inbox pulls in half the app, and arsrapport imports this module.
-    import utils.inbox as inbox  # pylint: disable=import-outside-toplevel
+def invitation_members(now):
+    """Main members with a login-valid address, preferring their current address."""
+    current = (fn.COALESCE(fn.TRIM(Member.email), "") != "") & (
+        Member.email_login_from.is_null() | (Member.email_login_from <= now)
+    )
+    previous = MemberPreviousAddress
+    return (
+        Member.select(
+            Member,
+            previous.id.alias("previous_address_id"),
+            fn.COALESCE(previous.address, Member.email).alias("login_address"),
+        )
+        .join(Membership)
+        .join_from(
+            Member,
+            previous,
+            JOIN.LEFT_OUTER,
+            on=(
+                ~current
+                & (previous.member == Member.id)
+                & (previous.login_until > now)
+                & (fn.TRIM(previous.address) != "")
+            ),
+        )
+        .where(
+            Member.role == "huvudmedlem",
+            Member.end_date.is_null(),
+            Membership.membership_status == "active",
+            current | previous.id.is_null(False),
+        )
+        .order_by(Member.id, previous.id)
+        .objects()
+    )
 
-    member = inbox.herd_holder(herd.id)
-    if member is None or member.membership.membership_status != "active" or not (member.email or "").strip():
-        return None
-    return member
+
+def invitation_recipient(herd: Herd, *, now=None) -> Member | None:
+    """
+    FA11: who the herd's invitation goes to, and who a code must have been issued to: the active main member of the
+    herd's membership (as inbox.herd_holder) with an address that counts for login now (its `login_address`). A
+    pending or friexemplar membership, or one whose only address is still in its 7-day wait, gets no link.
+    """
+    return (
+        invitation_members(now or datetime.now(timezone.utc))
+        .join_from(Membership, Herd, on=(Herd.membership == Membership.id))
+        .where(Herd.id == herd.id)
+        .first()
+    )
 
 
 class StaleRecipient(Exception):
@@ -48,7 +82,7 @@ def lock_herd_codes(herd: Herd) -> None:
 
 
 def require_current(herd: Herd, member: Member) -> None:
-    # Late import, as in invitation_recipient.
+    # Late import: inbox pulls in half the app, and arsrapport imports this module.
     import utils.inbox as inbox  # pylint: disable=import-outside-toplevel
 
     holder = inbox.herd_holder(herd.id)

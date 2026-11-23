@@ -73,7 +73,9 @@ export function BuyerFields({
   /** The yearly report's member: the report's larger fields, labels above (RegisterFromCertificate's too). */
   variant?: "member";
   /** A refusal beside its field: aria-invalid, and the text as the field's description. */
-  errors?: Partial<Record<"name" | "town" | "postal_address" | "phone" | "email", string>>;
+  errors?: Partial<
+    Record<"name" | "town" | "postal_address" | "phone" | "email", string>
+  >;
 }) {
   const { t } = useTranslation();
   const set = (changes: Partial<BuyerDraft>) =>

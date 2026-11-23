@@ -1314,7 +1314,9 @@ class TestDatabaseMigration(DatabaseTest):
 
         fresh = shape()
         db.SchemaHistory.delete().where(db.SchemaHistory.version >= 43).execute()
-        if db.SchemaHistory.get_or_none(db.SchemaHistory.version == 42) is None:  # init() stamps only the latest version
+        if (
+            db.SchemaHistory.get_or_none(db.SchemaHistory.version == 42) is None
+        ):  # init() stamps only the latest version
             db.SchemaHistory.insert(version=42, comment="test seed", applied=datetime.now()).execute()  # pylint: disable=E1120
         db.DATABASE.execute_sql(
             "ALTER TABLE inbox_document DROP COLUMN seller_member_id, DROP COLUMN buyer_member_id, "

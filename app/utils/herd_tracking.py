@@ -414,7 +414,8 @@ def record_herd_tracking(
     transfer_id=None,
     buyer=None,
     holder_contact=None,
-    buyer_correction=False,
+    address_optional=False,
+    buyer_removed=False,
 ):
     """
     The central writer. Locks the individual, re-reads its
@@ -434,14 +435,16 @@ def record_herd_tracking(
     except (TypeError, ValueError) as exc:
         raise HerdTrackingInvalid("Ogiltigt datum.") from exc
     reject_contact_details(notes)
-    if (buyer is not None or holder_contact is not None) and (
+    if buyer_removed and (buyer is not None or holder_contact is not None):
+        raise HerdTrackingConflict(BUYER_REMOVED)
+    if (buyer is not None or holder_contact is not None or buyer_removed) and (
         kind != "TRANSFER" or target.herd not in OUTSIDE_GENEBANK_HERDS
     ):
         raise HerdTrackingInvalid("Köparens namn och ort registreras bara vid försäljning utanför genbanken.")
     contact_fields = None
     if buyer is not None:
         # A new sale needs the address, except from a manager or admin (old paper certificates); corrections never.
-        address_required = not buyer_correction and not is_manager_of(user, target.genebank_id)
+        address_required = not address_optional and not is_manager_of(user, target.genebank_id)
         contact_fields = buyer_contact_fields(buyer, address_required=address_required)
     individual_id = individual.id if isinstance(individual, Individual) else int(individual)
     code_id = getattr(user, "access_code_id", None)  # the report link as the signer: no account, no signature
@@ -493,7 +496,7 @@ def record_herd_tracking(
                     yearly_herd_report=yearly_herd_report,
                     transfer_id=transfer_id,
                     holder_contact=contact,
-                    buyer_removed=bool(contact_fields) and contact is None,
+                    buyer_removed=buyer_removed or (bool(contact_fields) and contact is None),
                 )
         except IntegrityError as exc:
             if _violated_constraint(exc) != "idx_herdtracking_report_attestation":

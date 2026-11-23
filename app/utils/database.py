@@ -69,7 +69,8 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # the intake queue (42) and its retention (43) + buyer_contact (44) +
 # matrikel_audit rows without a user, written by the nightly anonymization (45) +
 # the coat column individual.rex (46) + hbuser.name_on_check_page and digitalcertificatev2.issued_as (47) +
-# one account per Google identity (48) + one-time codes and members' previous addresses (49) + the yearly report v2 (50).
+# one account per Google identity (48) + one-time codes and members' previous addresses (49) +
+# the yearly report v2 (50).
 CURRENT_SCHEMA_VERSION = 50
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
@@ -5222,6 +5223,13 @@ def _run_migrations():
     """
     current_version = None
     if SchemaHistory.table_exists():
+        comment = SchemaHistory.select(SchemaHistory.comment).where(SchemaHistory.version == 42).scalar()
+        if (comment or "").startswith(ARSRAPPORT_50):
+            raise RuntimeError(
+                "This development database uses the old yearly report v2 migration number (42, now 50). "
+                "Rebuild this development database from scratch. For a disposable Compose volume, run "
+                "'docker compose -p <dev-project> down -v' and bootstrap the database again."
+            )
         current_version = SchemaHistory.select(  # pylint: disable=E1120
             fn.MAX(SchemaHistory.version)
         ).scalar()

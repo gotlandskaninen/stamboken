@@ -151,6 +151,22 @@ class TestArsrapportMigration(IsolatedSchemaTest):
         db._create_arsrapport_schema()
         self.assertEqual(snapshot(), self.bootstrapped)
 
+    def test_boot_refuses_old_yearly_report_number_but_migrates_intake_queue_history(self):
+        with db.DB_PROXY.atomic() as tx:
+            db.SchemaHistory.delete().where(db.SchemaHistory.version >= 42).execute()
+            db.SchemaHistory.create(version=42, comment="yearly report v2: rounds per genebank")
+            db.SchemaHistory.create(version=49, comment="test seed")
+            with self.assertRaisesRegex(RuntimeError, r"old yearly report v2.*42, now 50.*Rebuild"):
+                db.check_migrations()
+            self.assertFalse(db.SchemaHistory.select().where(db.SchemaHistory.version == 50).exists())
+
+            db.SchemaHistory.update(comment="intake queue: inbox_*, notice, notice_setting, gmail_*").where(
+                db.SchemaHistory.version == 42
+            ).execute()
+            db.check_migrations()
+            self.assertTrue(db.SchemaHistory.get_by_id(50).comment.startswith(db.ARSRAPPORT_50))
+            tx.rollback()
+
     def stamp_50(self, comment):
         """schema_history's 50 as `comment` until the test ends: the class's database was bootstrapped by init()."""
         row = db.SchemaHistory.get_by_id(50)

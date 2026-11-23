@@ -18,10 +18,12 @@ const UTOM_LABEL: Record<Utom, string> = {
 export function PaperChanges({
   fields,
   onChange,
+  emailError,
   accountEnd,
 }: {
   fields: PaperFields;
   onChange: (f: PaperFields) => void;
+  emailError?: string;
   accountEnd: string | null;
 }) {
   const set = (patch: Partial<PaperFields>) =>
@@ -108,10 +110,18 @@ export function PaperChanges({
         </p>
 
         {text("E-post", fields.epost, (v) => set({ epost: v }), {
+          id: "paper-email",
           type: "email",
           inputMode: "email",
           maxLength: 255,
+          "aria-invalid": emailError ? true : undefined,
+          "aria-describedby": emailError ? "paper-email-error" : undefined,
         })}
+        {emailError && (
+          <p id="paper-email-error" className={styles.errorText}>
+            {emailError}
+          </p>
+        )}
         {text("Telefon", fields.telefon, (v) => set({ telefon: v }), {
           type: "tel",
           maxLength: 50,

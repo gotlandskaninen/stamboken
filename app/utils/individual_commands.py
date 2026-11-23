@@ -717,7 +717,8 @@ class TransferIndividual(PolicyCommand):
     buyer: dict | None = None
     legacy: bool = False
     buyer_contact_id: int | None = None
-    buyer_correction: bool = False  # the report is correcting the buyer on its own previously submitted sale
+    address_optional: bool = False  # the report corrects its own registered sale, or enters a paper form as written
+    buyer_removed: bool = False
     apply_rank = 70
     policy_stage = None  # asked in apply, after the measurements are written (IR-52)
 
@@ -734,6 +735,7 @@ class TransferIndividual(PolicyCommand):
             and self.buyer is None
             and self.buyer_contact_id is None
             and not self.legacy
+            and not self.buyer_removed
         ):
             raise HerdTrackingInvalid(BUYER_REQUIRED)
         note = None
@@ -750,7 +752,8 @@ class TransferIndividual(PolicyCommand):
             notes=note,
             buyer=self.buyer,
             holder_contact=self.buyer_contact_id,
-            buyer_correction=self.buyer_correction,
+            address_optional=self.address_optional,
+            buyer_removed=self.buyer_removed,
         )
 
 

@@ -136,18 +136,21 @@ def _dead_since(individual_ids, now):
     that recorded the death (death_date or death_note set) is at least that old, or, recorded before the audit
     trigger, the death date is.
     """
+    dead = list(
+        Individual.select(Individual.id, Individual.death_date).where(Individual.id.in_(individual_ids), _dead())
+    )
     recorded = {}
     entries = AuditLog.select(AuditLog.record_id, AuditLog.changed_at, AuditLog.new_data).where(
         (AuditLog.table_name == Individual._meta.table_name)
         & AuditLog.operation.in_(("INSERT", "UPDATE"))
-        & AuditLog.record_id.in_([str(i) for i in individual_ids])
+        & AuditLog.record_id.in_([str(individual.id) for individual in dead])
         & (AuditLog.changed_fields.contains("death_date") | AuditLog.changed_fields.contains("death_note"))
     )
     for record_id, changed_at, new in entries.order_by(AuditLog.id).tuples():
         if (new or {}).get("death_date") or (new or {}).get("death_note"):
             recorded[int(record_id)] = changed_at
     settled = set()
-    for individual in Individual.select().where(Individual.id.in_(list(individual_ids))):
+    for individual in dead:
         at = recorded.get(individual.id)
         if at is None and individual.death_date is not None:
             at = datetime.combine(individual.death_date, datetime.min.time(), timezone.utc)
@@ -193,14 +196,17 @@ def purge_dead(now):
 
 def purge_proposal_buyers(now):
     """
-    A pending sale proposal's buyer, not yet a BuyerContact: 13 months after the proposal, or once the association
-    learns the rabbit is dead. One proposal at a time, under its locks (sale_proposal.clear_buyer).
+    Purge a pending proposal's buyer after 13 months or when the death has stood recorded for 30 days.
+    Recheck each proposal under its locks so that correcting a death keeps the buyer.
     """
-    due = (SaleProposal.created_at < now - PROPOSAL_BUYER_FOR) | SaleProposal.individual.in_(
-        Individual.select(Individual.id).where(_dead())
-    )
-    found = SaleProposal.select().where(SaleProposal.state == "foreslagen", SaleProposal.buyer.is_null(False), due)
-    found = list(found.order_by(SaleProposal.id))
+
+    def due(individual_ids):
+        return (SaleProposal.created_at < now - PROPOSAL_BUYER_FOR) | SaleProposal.individual.in_(
+            _dead_since(individual_ids, now)
+        )
+
+    pending = SaleProposal.select().where(SaleProposal.state == "foreslagen", SaleProposal.buyer.is_null(False))
+    found = list(pending.where(due(pending.select(SaleProposal.individual))).order_by(SaleProposal.id))
     return sum(sale_proposal.clear_buyer(proposal, "gallring_forslag", still=due) for proposal in found)
 
 

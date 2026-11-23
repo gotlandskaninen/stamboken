@@ -20,7 +20,7 @@ import utils.inbox_purge as inbox_purge
 import utils.mail as mail
 from herdbook import APP
 from playhouse.shortcuts import model_to_dict
-from utils.matrikel import anonymize_person, swap_main_member
+from utils.matrikel import anonymize_person, set_member_email, swap_main_member
 
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.inbox_fixtures import QUALITY
@@ -35,6 +35,7 @@ NEW_KONTO = {"clearing": "9420", "konto": "4618 0377", "bank": "Nya banken"}  # 
 NEW_PHONE = "0709-777 888"
 NEW_ADRESS = {"address": " Nya gatan 2 ", "postal_code": "62355", "city": "Visby"}
 NO_MEMBER = "Besättningen saknar huvudmedlem i matrikeln, så ändringen kan inte sparas."
+EMAIL_REFUSAL = "E-postadressen kan inte användas. Kontrollera den med medlemmen."
 WRITTEN = (
     db.HerdTracking,
     db.Weight,
@@ -315,9 +316,11 @@ class KontaktTest(PaperTest):
         (row,) = self.a23()
         self.assertEqual((row.recipient_kind, row.recipient_id), ("email_change_old", request.id))
         self.assertEqual(mail.RECIPIENT_KINDS["email_change_old"](row.recipient_id).address, EMAIL)
-        self.assertEqual((row.params["epost"], row.params["telefon"], row.params["konto"]), (1, 1, 0))
+        (besked,) = db.MailMessage.select().where(db.MailMessage.kind == "kontakt.epost_besked")
+        self.assertEqual(mail.RECIPIENT_KINDS[besked.recipient_kind](besked.recipient_id).address, EMAIL)
+        self.assertEqual((row.params["epost"], row.params["telefon"], row.params["konto"]), (0, 1, 0))
         _, text = mail.render(A23, arsrapport._kontakt_andrad(row.params))
-        self.assertIn("Din e-postadress har ändrats.", text)
+        self.assertNotIn("Din e-postadress har ändrats.", text)
         self.assertIn("Ditt telefonnummer har ändrats.", text)
         self.assertNotIn("ny@example.invalid", text)
 
@@ -343,6 +346,15 @@ class KontaktTest(PaperTest):
         # the receipt reads the address when it goes, so it reaches the new one
         (kvitto,) = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.kvitto")
         self.assertEqual(mail.RECIPIENT_KINDS["member"](kvitto.recipient_id).address, "ny@example.invalid")
+
+    def test_email_only_uses_the_address_change_notice(self):
+        item = self.form(self.helper)
+        self.login("hjalp")
+        receipt = self.ok(item, self.paper(item, matrikel(epost="ny@example.invalid")))
+        self.assertEqual(receipt["matrikel"], ["epost"])
+        self.assertEqual(self.a23(), [])
+        (besked,) = db.MailMessage.select().where(db.MailMessage.kind == "kontakt.epost_besked")
+        self.assertEqual(mail.RECIPIENT_KINDS[besked.recipient_kind](besked.recipient_id).address, EMAIL)
 
     def test_no_email_no_mail(self):
         db.Member.update(email=None).where(db.Member.id == self.member.id).execute()
@@ -475,6 +487,46 @@ class KontaktTest(PaperTest):
                 response = self.skicka(item, self.paper(item, wrong), route="torrkorning")
                 self.assertEqual((response.status_code, response.json["field"]), (400, "matrikel"))
 
+    def test_unavailable_email_is_a_neutral_dry_run_refusal(self):
+        item = self.form(self.helper)
+        self.login("hjalp")
+        body = self.paper(item, matrikel(epost=self.other.email.upper()))
+        before = self.counts()
+        dry = self.skicka(item, body, route="torrkorning")
+        self.assertEqual(dry.status_code, 200, dry.get_data(as_text=True))
+        refusal = {"individual_id": None, "code": "epost_kan_inte_anvandas", "message": EMAIL_REFUSAL}
+        self.assertEqual(dry.json, {"ok": False, "refusals": [refusal], "warnings": []})
+        self.assertEqual(self.counts(), before)
+
+        # A later change means the paper address will be skipped, so it need not be available.
+        db.MatrikelAudit.create(
+            membership=self.member.membership_id,
+            action="person_updated",
+            payload={"fields": ["email"]},
+            created_at=datetime(2026, 1, 14, 12),
+        )
+        self.assertTrue(self.skicka(item, body, route="torrkorning").json["ok"])
+        receipt = self.ok(item, body)
+        self.assertEqual((receipt["matrikel"], receipt["warnings"]), ([], [later("e-post")]))
+
+    def test_address_claimed_after_dry_run_is_an_email_conflict(self):
+        item = self.form(self.helper)
+        self.login("hjalp")
+        new_email = "ny@example.invalid"
+        body = self.paper(item, matrikel(epost=new_email, telefon=NEW_PHONE))
+        self.assertTrue(self.skicka(item, body, route="torrkorning").json["ok"])
+        set_member_email(self.other, new_email, self.manager, by="matrikel")
+        before = self.counts()
+        response = self.skicka(item, body)
+        self.assertEqual(response.status_code, 409, response.get_data(as_text=True))
+        self.assertEqual(
+            (response.json["field"], response.json["code"], response.json["detail"]),
+            ("epost", "epost_kan_inte_anvandas", EMAIL_REFUSAL),
+        )
+        self.assertEqual(self.counts(), before)
+        member = db.Member.get_by_id(self.member.id)
+        self.assertEqual((member.email, member.phone), (EMAIL, PHONE))
+
     def test_herd_without_main_member(self):
         headless = db.Herd.create(genebank=self.gotland, herd="G9003", is_active=True)
         (rabbit,) = self.rabbits(headless, 1)
@@ -558,7 +610,7 @@ class KontaktTest(PaperTest):
     def test_erasure_deletes_change_requests(self):  # Fable 8
         item = self.form(self.manager)
         self.login("man")
-        self.ok(item, self.paper(item, matrikel(epost="ny@example.invalid")))
+        self.ok(item, self.paper(item, matrikel(epost="ny@example.invalid", telefon=NEW_PHONE)))
         (request,) = db.MemberChangeRequest.select()
         anonymize_person(db.Member.get_by_id(self.member.id), db.User.get_by_id(self.admin.id))
         self.assertEqual(db.MemberChangeRequest.select().count(), 0)

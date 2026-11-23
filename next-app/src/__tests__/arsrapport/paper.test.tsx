@@ -23,6 +23,7 @@ import type {
   ReportView,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
 import { rabbit, view } from "./fixtures";
+import "@/i18n";
 
 const receipt: Receipt = {
   submission_id: 1,
@@ -96,6 +97,7 @@ const typeNumber = (n: string) => {
   fireEvent.keyDown(input, { key: "Enter" });
 };
 const row = (n: number) =>
+  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- n is a test constant, not user input
   screen.getByRole("group", { name: new RegExp(`G9001-${n}\\b`) });
 const sendButton = () =>
   screen.getByRole("button", { name: "Skicka och nästa blankett" });
@@ -368,6 +370,104 @@ describe("ReportForm on paper", () => {
     ).toBeTruthy();
     expect(a.dryRun).not.toHaveBeenCalled();
   });
+
+  it.each(["dry run", "submit"])(
+    "keeps the typed buyer after an email refusal at %s",
+    async (stage) => {
+      const a = actions();
+      const message =
+        "E-postadressen kan inte användas. Kontrollera den med medlemmen.";
+      const code = "epost_kan_inte_anvandas";
+      if (stage === "dry run") {
+        a.dryRun.mockResolvedValueOnce({
+          ok: true,
+          data: {
+            ok: false,
+            refusals: [{ individual_id: null, code, message }],
+            warnings: [],
+          },
+        });
+      } else {
+        a.submitReport.mockResolvedValueOnce({
+          ok: false,
+          problem: {
+            status: 409,
+            title: "Konflikt",
+            detail: message,
+            extensions: { code, field: "epost" },
+          },
+        });
+      }
+      a.getGenebankHerds = vi.fn(async () => ({
+        success: true as const,
+        herds: [],
+      }));
+      renderPaper(paperView({ rabbits: [rabbit(1)] }), a);
+      typeNumber("1");
+      fireEvent.click(within(row(1)).getByLabelText("Såld"));
+      fireEvent.click(screen.getByLabelText("Utanför genbanken"));
+      const buyer = {
+        name: "Ola Köpare",
+        town: "Visby",
+        postal_address: "Testgatan 1",
+      };
+      fireEvent.change(
+        within(screen.getByRole("dialog")).getByLabelText(/Köparens namn/),
+        {
+          target: { value: buyer.name },
+        },
+      );
+      fireEvent.change(
+        within(screen.getByRole("dialog")).getByLabelText(/^Ort/),
+        {
+          target: { value: buyer.town },
+        },
+      );
+      fireEvent.change(
+        within(screen.getByRole("dialog")).getByLabelText(/^Postadress/),
+        {
+          target: { value: buyer.postal_address },
+        },
+      );
+      fireEvent.change(screen.getByLabelText("Månad"), {
+        target: { value: "1" },
+      });
+      fireEvent.click(
+        screen.getByRole("button", { name: "Spara försäljningen" }),
+      );
+      const email = screen.getByLabelText<HTMLInputElement>("E-post");
+      fireEvent.change(email, { target: { value: "gammal@example.invalid" } });
+      fireEvent.change(screen.getByLabelText("Telefon"), {
+        target: { value: "070-1234567" },
+      });
+      fireEvent.click(sendButton());
+
+      fireEvent.click(await screen.findByRole("link", { name: message }));
+      expect(document.activeElement).toBe(email);
+      expect(
+        screen.getByRole("textbox", { name: "E-post", description: message }),
+      ).toBe(email);
+      expect(email.getAttribute("aria-invalid")).toBe("true");
+      expect(email.value).toBe("gammal@example.invalid");
+      expect(refresh).not.toHaveBeenCalled();
+      expect(a.submitReport).toHaveBeenCalledTimes(stage === "submit" ? 1 : 0);
+
+      fireEvent.change(email, { target: { value: "ratt@example.invalid" } });
+      expect(email.hasAttribute("aria-invalid")).toBe(false);
+      fireEvent.click(sendButton());
+      await waitFor(() =>
+        expect(a.submitReport).toHaveBeenCalledTimes(
+          stage === "submit" ? 2 : 1,
+        ),
+      );
+      expect(a.submitReport.mock.calls.at(-1)![2]).toMatchObject({
+        rabbits: {
+          "1": { val: "sald", sald: { till: "utanfor", kopare: buyer } },
+        },
+        matrikel: { epost: "ratt@example.invalid", telefon: "070-1234567" },
+      });
+    },
+  );
 
   it("keeps the matrikel and the buyer out of the draft and localStorage", async () => {
     vi.useFakeTimers();

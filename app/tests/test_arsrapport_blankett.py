@@ -313,6 +313,16 @@ class BlankettTest(ArsrapportTest):
         self.assertEqual(traces, dict.fromkeys(operations, self.helper.id))
         self.assertEqual(db.YearlyHerdReport.get_by_id(receipt["report_id"]).entered_by_id, self.helper.id)
 
+    def test_helper_enters_a_buyer_without_address_as_written(self):  # Jonas 2026-11-23: the paper is entered as it is
+        (a,) = self.rabbits(self.h, 1)
+        item = self.form(self.helper)
+        self.login("hjalp")
+        without = {"name": "Test Köpare", "town": "Visby"}
+        self.ok(item, self.paper(item, self.sald(a, "utanfor", 2025, 12, 12, kopare=without)))
+        (sale,) = db.HerdTracking.select().where(db.HerdTracking.kind == "TRANSFER", db.HerdTracking.individual == a.id)
+        buyer = db.BuyerContact.get_by_id(sale.holder_contact_id)
+        self.assertEqual((buyer.name, buyer.town, buyer.postal_address), ("Test Köpare", "Visby", None))
+
     def test_helper_cannot_withdraw(self):
         (a,) = self.rabbits(self.h, 1)
         rid = self.logged_in(self.body(self.kvar(a, vikt=2.8)))["report_id"]

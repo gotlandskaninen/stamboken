@@ -6,6 +6,8 @@ The mail row holds only ids; the link is made when the mail is sent, so no token
 import logging
 from datetime import datetime
 
+from peewee import fn
+
 import utils.arsrapport as arsrapport
 import utils.report_code as report_code
 import utils.settings as settings
@@ -16,7 +18,6 @@ from utils.database import (
     OUTSIDE_GENEBANK_HERDS,
     Herd,
     Member,
-    Membership,
     ReportAccessCode,
     YearlyReportRoundGenebank,
 )
@@ -28,6 +29,12 @@ logger = logging.getLogger(__name__)
 def _herds(genebank_id):
     query = Herd.select().where(Herd.genebank == genebank_id, Herd.is_active, Herd.herd.not_in(OUTSIDE_GENEBANK_HERDS))
     return query.order_by(Herd.herd)
+
+
+def _link_recipient(member):
+    if member.previous_address_id is not None:
+        return "member_previous_address", member.previous_address_id
+    return "member", member.id
 
 
 def _invite_genebank(activation, now):
@@ -44,8 +51,11 @@ def _invite_genebank(activation, now):
         if locked.sent_at is not None:
             return 0
         for herd in _herds(activation.genebank_id):
-            member = report_code.invitation_recipient(herd)
+            member = report_code.invitation_recipient(herd, now=now)
             if member is None:
+                logger.info(
+                    "Årsrapport %s: besättning %s saknar huvudmedlem med giltig inloggningsadress", year, herd.id
+                )
                 continue
             try:
                 code = report_code.issue_code(herd, round_, member, now=now)
@@ -55,8 +65,7 @@ def _invite_genebank(activation, now):
                 continue
             queued = enqueue_mail(
                 "arsrapport.inbjudan",
-                "member",
-                member.id,
+                *_link_recipient(member),
                 {"code_id": code.id, "year": year},
                 ref=("access_code", code.id),
                 herd=herd,
@@ -90,22 +99,11 @@ def send_due_invitations(now: datetime) -> int:
 def recipients(round_, genebank_id) -> dict:
     """How many of the genebank's active herds the invitation reaches by e-mail, and how many need the paper form."""
     del round_  # the herds and their main members do not depend on the round
-    herd_ids = [herd.id for herd in _herds(genebank_id)]
-    first = {}  # the herd's first main member, as inbox.herd_holder; one query, not two per herd
-    rows = (
-        Member.select(Herd.id.alias("herd_id"), Member.email, Membership.membership_status)
-        .join(Membership)
-        .join(Herd, on=(Herd.membership == Membership.id))
-        .where(Herd.id.in_(herd_ids), Member.role == "huvudmedlem", Member.end_date.is_null(True))
-        .order_by(Member.id)
-        .dicts()
-    )
-    # idx_member_single_active_main allows at most one current main member, so first-wins only mirrors
-    # report_code.invitation_recipient.
-    for row in rows:  # the same test as report_code.invitation_recipient
-        first.setdefault(row["herd_id"], row["membership_status"] == "active" and bool((row["email"] or "").strip()))
-    with_mail = sum(first.get(herd_id, False) for herd_id in herd_ids)
-    return {"med_epost": with_mail, "utan_epost": len(herd_ids) - with_mail}
+    herds = _herds(genebank_id)
+    reachable = report_code.invitation_members(arsrapport.now()).select(Member.membership).order_by()
+    count = fn.COUNT(Herd.id)
+    total, with_mail = herds.select(count, count.filter(Herd.membership.in_(reachable))).order_by().tuples().get()
+    return {"med_epost": with_mail, "utan_epost": total - with_mail}
 
 
 def new_link(herd, round_, user, *, now: datetime) -> ReportAccessCode:
@@ -122,9 +120,11 @@ def _replace_link(herd, round_, user, now):
         # UPDATE and then updates the codes, which the replacement's insert (a key-share lock on the row) would cross
         round_ = arsrapport._lock_round(round_)  # pylint: disable=protected-access
         report_code.lock_herd_codes(herd)  # then: the recipient is read, and the old link revoked, under it
-        member = report_code.invitation_recipient(herd)
+        member = report_code.invitation_recipient(herd, now=now)
         if member is None:
-            raise ArsrapportError(409, "Besättningen har ingen huvudmedlem med e-postadress.")
+            raise ArsrapportError(
+                409, "Ingen e-postadress kan just nu användas för att logga in som besättningens huvudmedlem."
+            )
         old = ReportAccessCode.get_or_none(
             ReportAccessCode.herd == herd.id, ReportAccessCode.round == round_.id, ReportAccessCode.revoked_at.is_null()
         )
@@ -135,8 +135,7 @@ def _replace_link(herd, round_, user, now):
             raise ArsrapportError(409, "Huvudmedlemmen har just ändrats. Försök igen.")
         enqueue_mail(
             "arsrapport.ny_lank",
-            "member",
-            member.id,
+            *_link_recipient(member),
             {"code_id": code.id, "year": round_.report_year},
             ref=("access_code", code.id),
             herd=herd,
@@ -183,7 +182,17 @@ def _valid_code(params):
     return None if report_code.refusal(code, herd, today=arsrapport.today()) else (code, herd, code.round)
 
 
-@mail_kind("arsrapport.inbjudan", priority=2, category="T")
+def _link_address(params):
+    member = (
+        report_code.invitation_members(arsrapport.now())
+        .join_from(Member, ReportAccessCode, on=(ReportAccessCode.member == Member.id))
+        .where(ReportAccessCode.id == params["code_id"])
+        .first()
+    )
+    return member.login_address if member is not None else None
+
+
+@mail_kind("arsrapport.inbjudan", priority=2, category="T", login_address=_link_address)
 def _inbjudan(params):
     if params.get("prov"):
         herd, round_ = Herd.get_by_id(params["herd_id"]), arsrapport.get_round(params["year"])
@@ -204,7 +213,7 @@ def _inbjudan(params):
     }
 
 
-@mail_kind("arsrapport.ny_lank", priority=1, category="T")
+@mail_kind("arsrapport.ny_lank", priority=1, category="T", login_address=_link_address)
 def _ny_lank(params):
     valid = _valid_code(params)  # R8: a report already sent does not cancel it; changing or withdrawing needs the link
     if valid is None:

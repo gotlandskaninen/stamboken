@@ -257,6 +257,17 @@ def reserve_holder(person_id):
         reserve_login_address(address, person_id)
 
 
+def login_address_taken(address, person_id):
+    """Whether another person holds the address now. A write must still reserve it under the address lock."""
+    return (
+        DB_PROXY.execute_sql(
+            f"SELECT 1 FROM ({_ADDRESSES}) a WHERE address = %(address)s AND member_id <> %(person)s LIMIT 1",
+            {"now": _utcnow(), "address": address.strip().lower(), "person": person_id},
+        ).fetchone()
+        is not None
+    )
+
+
 def reserve_login_address(address, person_id):
     """
     Makes `address` a login address of `person_id` alone, in the caller's transaction that writes it: under a lock
@@ -269,11 +280,7 @@ def reserve_login_address(address, person_id):
     if not DB_PROXY.in_transaction():
         raise RuntimeError("reserve_login_address() runs in the transaction that writes the address")
     DB_PROXY.execute_sql("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"login_address:{address}",))
-    taken = DB_PROXY.execute_sql(
-        f"SELECT 1 FROM ({_ADDRESSES}) a WHERE address = %(address)s AND member_id <> %(person)s LIMIT 1",
-        {"now": _utcnow(), "address": address, "person": person_id},
-    ).fetchone()
-    if taken:
+    if login_address_taken(address, person_id):
         raise AddressTaken(AddressTaken.title)
 
 

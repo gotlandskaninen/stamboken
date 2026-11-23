@@ -22,7 +22,14 @@ import {
 } from "@/components/individual/BuyerFields";
 import type { getGenebankHerds } from "../individ/[number]/actions";
 import { isOutsideGenebankHerd, type GenebankHerd } from "@/utils/saleRules";
-import { MONTHS, storedSale, type BodyEntry, type SaldState } from "./lib";
+import {
+  eventDate,
+  MONTHS,
+  storedSale,
+  type BodyEntry,
+  type RabbitView,
+  type SaldState,
+} from "./lib";
 import styles from "./arsrapport.module.css";
 
 interface Props {
@@ -35,6 +42,10 @@ interface Props {
   loadHerds: typeof getGenebankHerds;
   existing: SaldState | null; // a saved sale: its buyer fields start empty (Task 6)
   submitted: BodyEntry["sald"] | null; // the sale in the report's latest submission, whose buyer is stored
+  rabbit?: Pick<
+    RabbitView,
+    "buyer_removed" | "registered_buyer_date" | "kept_buyer_date"
+  >;
   addressRequired: boolean;
   canSell: boolean; // a proposal takes no kept buyer (F1, K1)
   onSave: (s: SaldState) => void;
@@ -148,6 +159,7 @@ function Body({
   loadHerds,
   existing,
   submitted,
+  rabbit,
   canSell,
   addressRequired,
   onSave,
@@ -173,15 +185,13 @@ function Body({
   // K1: a buyer kept across Dra tillbaka, which the seller never reads back. A
   // proposal cannot take it (F1), so a role that may not sell types the buyer.
   const keptId = existing?.kopare_id != null && !existing.kopare;
-  const kept = canSell && keptId;
+  const chosen = { till: "utanfor", ar, manad, dag: dag ? Number(dag) : null };
+  const date = eventDate(chosen);
+  const kept = canSell && keptId && date === rabbit?.kept_buyer_date;
+  const removed = outside && rabbit?.buyer_removed;
   // A sale the report holds, unchanged here: its buyer is stored. A sale only in
   // the draft, or a changed one, needs the buyer again, as Skicka does.
-  const stored =
-    outside &&
-    storedSale(
-      { till: "utanfor", ar, manad, dag: dag ? Number(dag) : null },
-      submitted,
-    );
+  const stored = outside && storedSale(chosen, submitted);
   const [tried, setTried] = React.useState(false);
   const typed = [
     buyer.name,
@@ -190,11 +200,14 @@ function Body({
     buyer.email,
     buyer.phone,
   ].some((v) => v.trim());
-  const needsAddress = addressRequired && !stored;
+  const correction =
+    rabbit?.registered_buyer_date &&
+    (stored || date === rabbit.registered_buyer_date);
+  const needsAddress = addressRequired && !correction;
   const complete = buyerComplete(buyer, needsAddress);
   const buyerHalf = typed && !complete;
   const buyerMissing = outside && !kept && !stored && !complete;
-  const buyerWanted = outside && (buyerMissing || buyerHalf);
+  const buyerWanted = outside && !removed && (buyerMissing || buyerHalf);
   // Each refusal beside its field, all at once once Spara is pressed.
   const errors = {
     // code is only ever the picker's own choice or the saved buyer, so it needs
@@ -231,10 +244,8 @@ function Body({
       ar,
       manad,
       dag: dag ? Number(dag) : null,
-      kopare: outside && complete ? buyerPayload(buyer) : null,
-      ...(outside && existing?.kopare_id != null
-        ? { kopare_id: existing.kopare_id }
-        : {}),
+      kopare: outside && !removed && complete ? buyerPayload(buyer) : null,
+      ...(outside && !removed && kept ? { kopare_id: existing.kopare_id } : {}),
     });
   };
 
@@ -290,7 +301,7 @@ function Body({
             error={shown(errors.herd)}
           />
         )}
-        {outside && (
+        {outside && !removed && (
           <>
             {kept ? (
               <p className={styles.meta}>

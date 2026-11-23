@@ -64,7 +64,7 @@ RETRY_DELAYS = (
 )
 RETENTION = timedelta(days=396)
 
-MailKind = namedtuple("MailKind", "priority category build")
+MailKind = namedtuple("MailKind", "priority category build login_address", defaults=[None])
 Recipient = namedtuple("Recipient", "address label")
 
 # kind -> MailKind; build(params) returns the template variables (plus an optional "attachments" list of
@@ -74,11 +74,11 @@ MAIL_KINDS = {}
 RECIPIENT_KINDS = {}
 
 
-def mail_kind(name, *, priority, category):
-    """Registers the decorated `build(params)` as the builder of mail kind `name` (template `email/<name>.txt`)."""
+def mail_kind(name, *, priority, category, login_address=None):
+    """Registers a builder and, for personal links, how to find the member's login address from the mail's params."""
 
     def register(build):
-        MAIL_KINDS[name] = MailKind(priority, category, build)
+        MAIL_KINDS[name] = MailKind(priority, category, build, login_address)
         return build
 
     return register
@@ -416,7 +416,7 @@ def _claim(now):
     return MailMessage.get_by_id(found[0]) if found else None
 
 
-def _renew(row):
+def _renew(row, login_address, address):
     """
     Restarts the claim's clock just before the mail goes, so the row cannot be reclaimed until long after
     SEND_DEADLINE. False when another sender has taken the row since (this one was slow) or the recipient has
@@ -425,7 +425,13 @@ def _renew(row):
     renewed = MailMessage.update(claimed_at=_utcnow()).where(
         (MailMessage.id == row.id) & (MailMessage.claim_token == row.claim_token)
     )
-    return renewed.execute() == 1
+    if renewed.execute() != 1:
+        return False
+    # Rendering attachments or opening SMTP may have outlasted a login address's validity. Rebuild for its successor.
+    if login_address is not None and _normalize(login_address(row.params)) != address:
+        _finish(row, _utcnow(), status="queued")
+        return False
+    return True
 
 
 def _finish(row, now, attempt=None, **fields):
@@ -522,9 +528,15 @@ def _send_one(row, relay, now):
     if resolve is None:
         return _finish(row, now, status="cancelled", last_error=f"okänd mottagartyp: {row.recipient_kind}")
     mode = settings.mail.mode
+    login_address = kind.login_address if row.recipient_kind in ("member", "member_previous_address") else None
     try:
-        recipient = resolve(row.recipient_id)
-        address = _normalize(recipient.address) if recipient else None
+        if login_address is not None:
+            address = _normalize(login_address(row.params))
+            if address is None:
+                return _finish(row, now, status="cancelled", last_error="mottagaren saknar en giltig inloggningsadress")
+        else:
+            recipient = resolve(row.recipient_id)
+            address = _normalize(recipient.address) if recipient else None
         if address is None:
             return _finish(row, now, status="cancelled", last_error="mottagaren saknar e-post")
         variables = kind.build(row.params)
@@ -546,7 +558,7 @@ def _send_one(row, relay, now):
     if mode == "allowlist" and not _allowed(address):
         return _finish(row, now, status="blocked", last_error="spärrat: adressen finns inte i MAIL_ALLOWLIST")
     try:
-        relay.send(msg, address, lambda: _renew(row))
+        relay.send(msg, address, lambda: _renew(row, login_address, address))
     except _ClaimLost:
         logger.warning("Mail %s was reclaimed by another sender or lost its recipient; it is not sent", row.id)
         return True

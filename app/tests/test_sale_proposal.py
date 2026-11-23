@@ -196,7 +196,7 @@ class ProposalTest(ArsrapportTest):
         sp.approve(other, self.manager, now=NOW)
         self.assertEqual(db.SaleProposal.get_by_id(other.id).state, "godkand")
 
-    # M2: a pending proposal's buyer goes after 13 months, once the rabbit is dead, or on request
+    # M2: a pending proposal's buyer goes after 13 months, 30 days after a recorded death, or on request
 
     def logged(self):
         rows = db.AuditLog.select().where(db.AuditLog.table_name == "sale_proposal").order_by(db.AuditLog.id)
@@ -219,11 +219,22 @@ class ProposalTest(ArsrapportTest):
         sp.reject(old, self.manager, reason="Köparen är gallrad", then="valj_igen", now=NOW)  # the way out
         self.assertEqual(db.SaleProposal.get_by_id(old.id).state, "avvisad")
 
-    def test_a_pending_buyer_goes_once_the_rabbit_is_dead(self):
+    def test_a_pending_buyer_goes_30_days_after_the_death_is_recorded(self):
         dead, alive = self.propose(), self.propose(self.other)
         db.Individual.update(death_date=date(2025, 11, 1)).where(db.Individual.id == self.rabbit.id).execute()
+        recorded = db.AuditLog.get(
+            db.AuditLog.table_name == "individual",
+            db.AuditLog.record_id == str(self.rabbit.id),
+            db.AuditLog.operation == "UPDATE",
+            db.AuditLog.changed_fields.contains("death_date"),
+        ).changed_at
+        db.SaleProposal.update(created_at=recorded).execute()  # neither proposal expires during the grace period
+        self.assertEqual(buyer_contact.purge_proposal_buyers(recorded), 0)
+        self.assertEqual(db.SaleProposal.get_by_id(dead.id).buyer, dead.buyer)
+        settled = recorded + timedelta(days=30)
+        self.assertEqual(buyer_contact.purge_proposal_buyers(settled - timedelta(seconds=1)), 0)
         with mock.patch.object(sp, "_locked", wraps=sp._locked) as locked:  # pylint: disable=protected-access
-            self.assertEqual(buyer_contact.purge_proposal_buyers(NOW), 1)
+            self.assertEqual(buyer_contact.purge_proposal_buyers(settled), 1)
         locked.assert_called_once()  # under the decision's locks
         self.assertEqual([db.SaleProposal.get_by_id(p.id).buyer for p in (dead, alive)], [None, alive.buyer])
-        self.assertEqual(buyer_contact.purge_proposal_buyers(NOW), 0)
+        self.assertEqual(buyer_contact.purge_proposal_buyers(settled), 0)

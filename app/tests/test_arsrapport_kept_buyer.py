@@ -175,6 +175,68 @@ class KeptBuyerTest(ArsrapportTest):
         for text in (json.dumps(view), json.dumps(receipt), text_of(receipt_pdf(report, submission)), mailed):
             self.assertFalse([value for value in BUYER_TEXTS if value in text], text[:200])
 
+    def assert_erased_buyer_stays_removed(self, typed, blank, day):
+        response = self.skicka(typed)
+        self.assertEqual(response.status_code, 422, response.get_data(as_text=True))
+        self.assertEqual([r["message"] for r in response.json["refusals"]], [herd_tracking.BUYER_REMOVED])
+        view = self.api("GET", "/besattning/G9001/2025").json
+        row = next(row for row in view["rabbits"] if row["id"] == self.a.id)
+        self.assertTrue(row["buyer_removed"])
+        self.ok(blank)
+        (sale,) = sales(self.a, active=True)
+        self.assertEqual((sale.herd_tracking_date, sale.holder_contact_id, sale.buyer_removed), (day, None, True))
+        self.assertEqual(contacts(), {})
+
+    def test_erased_buyer_stays_removed_after_withdrawal(self):
+        self.ok(self.body(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=BUYER), self.kvar(self.b, vikt=2.8)))
+        buyer_contact.erase_buyer_contact(sales(self.a)[0].holder_contact_id, self.admin)
+        self.withdrawn(1)
+        self.assert_erased_buyer_stays_removed(self.resent(kopare=OTHER), self.resent(), SOLD_ON)
+
+    def test_buyer_erased_while_kept_stays_removed(self):
+        kept, _ = self.sold_and_withdrawn()
+        buyer_contact.erase_buyer_contact(kept.id, self.admin)
+        self.assert_erased_buyer_stays_removed(self.resent(kopare=OTHER), self.resent(), SOLD_ON)
+
+    def test_date_change_preserves_buyer_removed(self):
+        def body(day, buyer=None, revision=None):
+            return self.body(
+                self.sald(self.a, "utanfor", 2025, 10, day, kopare=buyer),
+                self.kvar(self.b, vikt=2.8),
+                revision=revision,
+            )
+
+        self.ok(body(10, BUYER))
+        buyer_contact.erase_buyer_contact(sales(self.a)[0].holder_contact_id, self.admin)
+        self.assert_erased_buyer_stays_removed(body(11, OTHER, 1), body(11, revision=1), date(2025, 10, 11))
+
+    def test_kept_buyer_without_address_only_covers_original_sale_date(self):
+        kept, _ = self.sold_and_withdrawn()
+        row = next(row for row in self.view["rabbits"] if row["id"] == self.a.id)
+        self.assertEqual(row["kept_buyer_date"], SOLD_ON.isoformat())
+        db.BuyerContact.update(postal_address=None).where(db.BuyerContact.id == kept.id).execute()
+        self.assertEqual(self.refused(self.resent(dag=11)), [(self.a.id, "kopare_saknas")])
+        self.assertEqual(
+            self.refused(self.resent(dag=11, kopare={**OTHER, "postal_address": ""})), [(self.a.id, "kopare")]
+        )
+        self.ok(self.resent())
+        self.assertEqual(sales(self.a, active=True)[0].holder_contact_id, kept.id)
+        self.withdrawn(2)
+        self.ok(self.resent(dag=11, kopare=OTHER))
+        (sale,) = sales(self.a, active=True)
+        self.assertEqual(
+            (sale.herd_tracking_date, sale.holder_contact.postal_address), (date(2025, 10, 11), OTHER["postal_address"])
+        )
+
+    def test_voided_sale_outside_the_report_does_not_block_a_new_buyer(self):
+        record_sale(self.admin, self.a.id, "GX1", "2025-08-01", buyer=BUYER)
+        (old,) = sales(self.a)
+        buyer_contact.erase_buyer_contact(old.holder_contact_id, self.admin)
+        void_herd_tracking(old.id, self.admin, "Fel försäljning")
+        self.ok(self.body(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=OTHER), self.kvar(self.b, vikt=2.8)))
+        (new,) = sales(self.a, active=True)
+        self.assertEqual(new.holder_contact.name, OTHER["name"])
+
     def test_skicka_withdraw_skicka_keeps_same_contact_id(self):  # K1: the whole cycle, twice
         contact, _ = self.sold_and_withdrawn()
         self.ok(self.resent())

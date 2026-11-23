@@ -8,7 +8,7 @@ isort:skip_file
 
 import re
 import threading
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 
 import utils.arsrapport as arsrapport
@@ -16,6 +16,7 @@ import utils.arsrapport_invite as invite
 import utils.data_access as da
 import utils.database as db
 import utils.mail as mail
+import utils.matrikel as matrikel
 import utils.report_code as report_code
 import utils.settings as settings
 from herdbook import APP
@@ -297,6 +298,83 @@ class InviteTest(ArsrapportTest):
             mock.patch.object(mail.smtplib, "SMTP", relay),
         ):
             mail.send_pending()
+
+    def set_email(self, member, address, by="other"):
+        with mock.patch.object(matrikel, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = NOW
+            return matrikel.set_member_email(member, address, self.manager, by=by)
+
+    def delivered_to(self, row):
+        relay = FakeRelay()
+        self.send_all(relay)
+        return [address for msg, _, (address,) in relay.sent if msg["Message-ID"] == mail.message_id(row.id)]
+
+    def test_new_link_uses_previous_address_until_paper_change_wait_ends(self):
+        new = self.set_email(self.member, "ny@example.invalid")
+        previous = db.MemberPreviousAddress.get(db.MemberPreviousAddress.member == self.member.id)
+        self.login("man")
+        for when, recipient, address in (
+            (new.email_login_from - timedelta(seconds=1), ("member_previous_address", previous.id), self.member.email),
+            (new.email_login_from, ("member", self.member.id), new.email),
+        ):
+            with self.subTest(when=when):
+                self.at(when)
+                response = self.api("POST", "/besattning/G9001/2025/ny-lank")
+                self.assertEqual(response.status_code, 200, response.data)
+                row = self.mails("arsrapport.ny_lank")[-1]
+                self.assertEqual((row.recipient_kind, row.recipient_id), recipient)
+                self.assertEqual(self.delivered_to(row), [address])
+
+    def test_already_queued_invitation_uses_login_address_at_delivery(self):
+        self.run_job()
+        row = self.mails()[0]
+        self.set_email(self.member, "ny@example.invalid")
+        self.assertEqual(self.delivered_to(row), [self.member.email])
+
+    def test_queued_new_link_follows_a_further_verified_address_change(self):
+        self.set_email(self.member, "ny@example.invalid")
+        invite.new_link(self.h, self.round_, self.manager, now=NOW)
+        (row,) = self.mails("arsrapport.ny_lank")
+        self.assertEqual(row.recipient_kind, "member_previous_address")
+        verified = self.set_email(self.member, "bekraftad@example.invalid", by="matrikel")
+        self.assertEqual(self.delivered_to(row), [verified.email])
+
+    def test_invitation_uses_new_address_if_wait_ends_while_rendering_pdf(self):
+        new = self.set_email(self.member, "ny@example.invalid")
+        self.run_job()
+        row = self.mails()[0]
+        previous = db.MemberPreviousAddress.get(db.MemberPreviousAddress.member == self.member.id)
+        self.assertEqual((row.recipient_kind, row.recipient_id), ("member_previous_address", previous.id))
+
+        def render_pdf(_herd, _round):
+            self.at(new.email_login_from)
+            return b"%PDF"
+
+        with mock.patch.object(invite, "register_extract_pdf", side_effect=render_pdf):
+            self.assertEqual(self.delivered_to(row), [new.email])
+
+    def test_first_address_during_paper_change_wait_skips_invitation_and_refuses_new_link(self):
+        member = db.Member.get(db.Member.membership == self.h3.membership_id)
+        self.set_email(member, "forsta@example.invalid")
+        self.login("man")
+        response = self.api("POST", "/besattning/G9003/2025/ny-lank")
+        self.assertEqual(response.status_code, 409, response.data)
+        self.assertIn("logga in", response.get_json()["detail"])
+        self.assertEqual(invite.recipients(self.round_, self.gotland.id), {"med_epost": 2, "utan_epost": 1})
+        with self.assertLogs(invite.logger, level="INFO") as log:
+            self.assertEqual(self.run_job(), 2)
+        self.assertTrue(any(f"besättning {self.h3.id} saknar" in line for line in log.output))
+        self.assertEqual(self.codes(self.h3), [])
+
+    def test_queued_invitation_cancelled_when_previous_address_has_expired(self):
+        self.run_job()
+        row = self.mails()[0]
+        self.set_email(self.member, "ny@example.invalid")
+        db.MemberPreviousAddress.update(login_until=arsrapport.now()).where(
+            db.MemberPreviousAddress.member == self.member.id
+        ).execute()
+        self.assertEqual(self.delivered_to(row), [])
+        self.assertEqual(db.MailMessage.get_by_id(row.id).status, "cancelled")
 
     def test_no_token_in_rows_after_sending_failing_and_bouncing(self):  # R5
         self.run_job()

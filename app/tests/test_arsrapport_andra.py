@@ -533,6 +533,8 @@ class AndraTest(ArsrapportTest):
         (a,) = self.rabbits(self.h, 1)
         self.ok(self.body(self.sald(a, "utanfor", 2025, 11, 20, kopare=BUYER)))
         (first,) = rows_of(a, "TRANSFER")
+        view = self.api("GET", "/besattning/G9001/2025").json
+        self.assertEqual(view["rabbits"][0]["registered_buyer_date"], "2025-11-20")
         corrected = {**OTHER_BUYER, "postal_address": ""}
         self.ok(self.body(self.sald(a, "utanfor", 2025, 11, 20, kopare=corrected), revision=1))
         old, new = rows_of(a, "TRANSFER")
@@ -543,6 +545,7 @@ class AndraTest(ArsrapportTest):
         )
         self.assertEqual([(c.name, c.town) for c in db.BuyerContact.select()], [("Annan Köpare", "Slite")])
         self.assertEqual(new.holder_contact_id, db.BuyerContact.get().id)
+        self.assertEqual(new.holder_contact.postal_address, BUYER["postal_address"])
         before = self.counts()
         self.ok(self.body(self.sald(a, "utanfor", 2025, 11, 20), revision=2))  # without kopare: nothing
         self.assertEqual(self.counts()[:5], before[:5])

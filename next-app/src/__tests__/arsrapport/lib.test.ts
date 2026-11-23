@@ -123,10 +123,19 @@ describe("isDone", () => {
     // typed in this session, or a kept buyer only a role that sells may use
     const buyer = { name: "Ola Köpare", town: "Visby" } as never;
     expect(isDone(adult, sold({ kopare: buyer }), false)).toBe(true);
-    expect(isDone(adult, sold({ kopare_id: 7 }), false, null, true)).toBe(true);
-    expect(isDone(adult, sold({ kopare_id: 7 }), false, null, false)).toBe(
-      false,
+    const kept = { ...adult, kept_buyer_date: "2026-06-01" };
+    expect(
+      isDone(kept, sold({ dag: 1, kopare_id: 7 }), false, null, true),
+    ).toBe(true);
+    expect(
+      isDone(kept, sold({ dag: 2, kopare_id: 7 }), false, null, true),
+    ).toBe(false);
+    expect(isDone({ ...adult, buyer_removed: true }, sold({}), false)).toBe(
+      true,
     );
+    expect(
+      isDone(kept, sold({ dag: 1, kopare_id: 7 }), false, null, false),
+    ).toBe(false);
     // a sale to a herd in the genebank has no such buyer
     expect(isDone(adult, sold({ till: "G9002" }), false)).toBe(true);
   });

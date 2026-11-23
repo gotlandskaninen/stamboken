@@ -106,6 +106,7 @@ const submittedReport = () => ({
   villkor: { hane: true, hona: true, kull: false, i_tid: true },
 });
 const row = (n: number) =>
+  // nosemgrep: javascript.lang.security.audit.detect-non-literal-regexp.detect-non-literal-regexp -- n is a test constant, not user input
   screen.getByRole("group", { name: new RegExp(`G9001-${n}\\b`) });
 const choose = (n: number, label: string) =>
   fireEvent.click(within(row(n)).getByLabelText(label));
@@ -461,7 +462,7 @@ describe("ReportForm", () => {
               till: "utanfor",
               ar: 2026,
               manad: 6,
-              dag: null,
+              dag: 1,
               kopare_id: 7,
             },
           },
@@ -474,7 +475,10 @@ describe("ReportForm", () => {
     render(
       <ReportForm
         env="demo"
-        view={view({ draft: kept })}
+        view={view({
+          draft: kept,
+          rabbits: [rabbit(1, { kept_buyer_date: "2026-06-01" })],
+        })}
         actions={actions()}
       />,
     );

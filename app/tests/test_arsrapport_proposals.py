@@ -240,7 +240,7 @@ class ProposalsTest(ArsrapportTest):
         )
         self.assertEqual([p.state for p in proposals(self.a)], ["foreslagen"])
         self.send(
-            self.sald(self.a, "utanfor", 2025, 10, 3, kopare={**OTHER_BUYER, "postal_address": ""}),
+            self.sald(self.a, "utanfor", 2025, 10, 3, kopare=OTHER_BUYER),
             self.kvar(self.b, vikt=3.0),
             self.kvar(self.c, vikt=2.8),
             revision=2,
@@ -250,6 +250,38 @@ class ProposalsTest(ArsrapportTest):
         self.assertEqual(
             (new.state, new.buyer["name"], new.sale_date), ("foreslagen", OTHER_BUYER["name"], date(2025, 10, 3))
         )
+
+    def test_pending_sale_requires_address_when_buyer_changes(self):
+        others = [self.kvar(self.b, vikt=2.8), self.kvar(self.c, vikt=2.8)]
+        self.send(self.sald(self.a, "utanfor", 2025, 10, 3, kopare=BUYER), *others, who="caretaker")
+        changed = self.sald(self.a, "utanfor", 2025, 10, 3, kopare={**OTHER_BUYER, "postal_address": ""})
+        for who in ("owner", "code"):
+            with self.subTest(who=who), self.assertRaises(ArsrapportError) as caught:
+                self.send(changed, *others, who=who, revision=1)
+            self.assertEqual(caught.exception.status, 422)
+            self.assertEqual([r["message"] for r in caught.exception.extra["refusals"]], ["Ange köparens postadress."])
+        self.assertEqual(rows(self.a, "TRANSFER"), [])
+        (proposal,) = proposals(self.a)
+        self.assertEqual((proposal.state, proposal.buyer["name"]), ("foreslagen", BUYER["name"]))
+
+    def test_change_cannot_restore_cleared_proposal_buyer(self):
+        others = [self.kvar(self.b, vikt=2.8), self.kvar(self.c, vikt=2.8)]
+        self.send(self.sald(self.a, "utanfor", 2025, 10, 3, kopare=BUYER), *others)
+        (proposal,) = proposals(self.a)
+        self.assertEqual(sp.clear_buyer(proposal, "gallring_forslag"), 1)
+        for who in ("code", "owner"):
+            with self.subTest(who=who), self.assertRaises(ArsrapportError) as caught:
+                self.send(self.sald(self.a, "utanfor", 2025, 10, 4, kopare=OTHER_BUYER), *others, who=who, revision=1)
+            self.assertEqual(caught.exception.status, 422)
+            self.assertEqual([r["message"] for r in caught.exception.extra["refusals"]], [arsrapport.BUYER_REMOVED])
+        self.send(self.sald(self.a, "utanfor", 2025, 10, 4), *others, who="code", revision=1)
+        self.withdraw(2)
+        with self.assertRaises(ArsrapportError) as caught:
+            self.send(self.sald(self.a, "utanfor", 2025, 10, 5, kopare=OTHER_BUYER), *others, who="owner")
+        self.assertEqual([r["message"] for r in caught.exception.extra["refusals"]], [arsrapport.BUYER_REMOVED])
+        self.send(self.sald(self.a, "utanfor", 2025, 10, 5), *others, who="owner")
+        (sale,) = rows(self.a, "TRANSFER")
+        self.assertEqual((sale.holder_contact_id, sale.buyer_removed), (None, True))
 
     def test_kvar_then_sale_before_new_year_removes_attestation(self):  # K5
         self.send(self.kvar(self.a, vikt=2.8), self.kvar(self.b, vikt=2.8), self.kvar(self.c, vikt=2.8))

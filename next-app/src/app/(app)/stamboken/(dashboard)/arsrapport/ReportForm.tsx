@@ -223,6 +223,12 @@ const focusId = (id: string) => {
   el.focus();
   el.scrollIntoView?.({ block: "center" });
 };
+const refusalField: Record<string, string> = {
+  halsa_saknas: "halsa",
+  orsak_kravs: "reason",
+  epost_ogiltig: "paper-email",
+  epost_kan_inte_anvandas: "paper-email",
+};
 
 // Logged in, the page asks nothing about the matrikel: the profile holds the
 // address, the phone and the answer about Koharen (D13).
@@ -857,9 +863,12 @@ export function ReportForm({
     else if (p.status === 401) setSaveState("loggedout");
     else if (p.status === 422 && Array.isArray(ext.refusals))
       showRefusals(ext.refusals as Refusal[]);
-    else if (p.status === 409 && ext.code === "rundan_stangd")
+    else if (
+      p.status === 409 &&
+      (ext.code === "rundan_stangd" || ext.code === "epost_kan_inte_anvandas")
+    )
       showRefusals([
-        { individual_id: null, code: "rundan_stangd", message: p.detail },
+        { individual_id: null, code: ext.code, message: p.detail },
       ]);
     else if (p.status === 409) {
       // Someone changed or sent the report: show the current one.
@@ -1294,6 +1303,9 @@ export function ReportForm({
   ];
   const byId = new Map(rabbits.map((r) => [r.id, r]));
   const lonely = (refusals ?? []).filter((r) => r.individual_id === null);
+  const emailRefusal = lonely.find(
+    (r) => refusalField[r.code] === "paper-email",
+  );
   const buttonText = isPaper
     ? "Skicka och nästa blankett"
     : view.report
@@ -1455,17 +1467,12 @@ export function ReportForm({
                     })}
                     {lonely.map((r, i) => (
                       <li key={i}>
-                        {r.code === "halsa_saknas" ||
-                        r.code === "orsak_kravs" ? (
+                        {refusalField[r.code] ? (
                           <a
-                            href={
-                              r.code === "halsa_saknas" ? "#halsa" : "#reason"
-                            }
+                            href={`#${refusalField[r.code]}`}
                             onClick={(e) => {
                               e.preventDefault();
-                              focusId(
-                                r.code === "halsa_saknas" ? "halsa" : "reason",
-                              );
+                              focusId(refusalField[r.code]);
                             }}
                           >
                             {refusalText(r)}
@@ -1609,7 +1616,14 @@ export function ReportForm({
             {isPaper && (
               <PaperChanges
                 fields={fields}
-                onChange={setFields}
+                onChange={(next) => {
+                  if (emailRefusal && next.epost !== fields.epost) {
+                    const left = refusals!.filter((r) => r !== emailRefusal);
+                    setRefusals(left.length ? left : null);
+                  }
+                  setFields(next);
+                }}
+                emailError={emailRefusal && refusalText(emailRefusal)}
                 accountEnd={item.account_end}
               />
             )}
@@ -2237,7 +2251,10 @@ export function ReportForm({
             : null
         }
         canSell={view.can_sell}
-        addressRequired={view.access !== "manager" && view.access !== "admin"}
+        rabbit={soldRabbit}
+        addressRequired={
+          !isPaper && view.access !== "manager" && view.access !== "admin"
+        }
         onSave={(s: SaldState) => {
           if (syncing) return;
           onRow(soldFor!, { val: "sald", sald: s });

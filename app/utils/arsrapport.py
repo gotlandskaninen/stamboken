@@ -98,7 +98,7 @@ from utils.individual_commands import (
     register_litter,
 )
 from utils.individual_policy import Role
-from utils.login_code import AddressTaken
+from utils.login_code import AddressTaken, login_address_taken
 from utils.mail import Recipient, enqueue_mail, mail_kind, recipient_kind
 from utils.matrikel import (
     AddressValidationError,
@@ -955,6 +955,27 @@ def report_view(herd, round_, access, user):
         .exists()
     )
     item = access.item
+    rabbits = {row["id"]: row for row in report_list(herd, year, report)}
+    for rabbit in _removed_buyers(herd, round_, list(rabbits)):
+        rabbits[rabbit]["buyer_removed"] = True
+    claims = _kept_claims(draft.data) if draft and access.can_sell else {}
+    ops = report_ops(report) if report else set()
+    if ops or claims:
+        dates = HerdTracking.select(
+            HerdTracking.individual, HerdTracking.herd_tracking_date, HerdTracking.voided_at
+        ).where(
+            HerdTracking.individual.in_(list(rabbits)),
+            HerdTracking.kind == "TRANSFER",
+            HerdTracking.holder_contact.is_null(False),
+            (ht_not_voided() & HerdTracking.operation_id.in_(sorted(ops)))
+            | (
+                HerdTracking.voided_at.is_null(False)
+                & HerdTracking.holder_contact.in_([claim["kopare_id"] for claim in claims.values()])
+            ),
+        )
+        for sale in dates:
+            key = "registered_buyer_date" if sale.voided_at is None else "kept_buyer_date"
+            rabbits[sale.individual_id][key] = _iso(sale.herd_tracking_date)
     return {
         "herd": {
             "id": herd.id,
@@ -969,7 +990,7 @@ def report_view(herd, round_, access, user):
         "source": access.source,
         "can_sell": access.can_sell,
         "other_active_herd": other_active,
-        "rabbits": report_list(herd, year, report),
+        "rabbits": list(rabbits.values()),
         "litters": report_litters(herd, year),
         "sales": _sales_json(report, sales.dicts()),
         "forslag": _forslag_json(report),
@@ -1713,7 +1734,7 @@ def current(report, individual_id) -> list[Effect]:
 
 
 def same_sale(a, b) -> bool:
-    """The same sale as given (buyer herd and date); a buyer given again is a correction of it, not another sale."""
+    """The same buyer herd and date as entered, including an omitted day."""
     return bool(a and b) and all(a[key] == b[key] for key in ("till", "ar", "manad", "dag"))
 
 
@@ -1748,7 +1769,7 @@ def diff(cur, want, last, prev_entry=None, entry=None) -> tuple[list[Effect], li
     """
     if prev_entry and prev_entry.dod == entry.dod:  # same raw input: do not re-resolve the death date
         want = [next((c for c in cur if c.kind == "death"), w) if w.kind == "death" else w for w in want]
-    fixed = bool(entry and entry.sald and entry.sald.get("kopare"))  # a buyer given again corrects it (Codex 8)
+    fixed = bool(entry and entry.sald and entry.sald.get("kopare") is not None)
     if prev_entry and same_sale(prev_entry.sald, entry.sald):  # a correction keeps the date
         want = [next((c for c in cur if c.kind == "transfer"), w) if w.kind == "transfer" else w for w in want]
 
@@ -1800,6 +1821,7 @@ REFUSALS = {  # the copy the client shows (P44)
     "adress_ogiltig": "Kontrollera adressen. Gatuadressen får vara högst 200 tecken och postnumret har fem siffror.",
     "telefon_ogiltig": "Telefonnumret får vara högst 50 tecken.",
     "epost_ogiltig": "Kontrollera e-postadressen.",
+    "epost_kan_inte_anvandas": "E-postadressen kan inte användas. Kontrollera den med medlemmen.",
     "konto_ogiltigt": "Clearingnumret har 4–5 siffror och kontonumret 5–12 siffror.",
 }
 # _validate_sale's user: the report never sells into another genebank, since TransferIndividual needs a reason there.
@@ -1858,11 +1880,11 @@ def _sale_view(individual_id, kept):
     }
 
 
-def _register_refusals(individual_id, entry, remove, add, ops, admin=False, kept_buyer=None, *, address_required=True):
+def _register_refusals(individual_id, remove, add, ops, admin=False, transfer=None, *, address_required=True):
     """
     What the writes would meet in the register: each void under report_void_denial, latest first as apply_diff
     runs them, then a row behind a later one (DATE_BEFORE_LATEST), then each new sale under _validate_sale and the
-    buyer rules: a sale outside the genebank needs a typed buyer or a kept one (`kept_buyer`, _kept_contact). A row
+    buyer rules: a sale outside the genebank needs a typed or kept buyer unless the buyer was erased. A row
     behind a later one is senare_handelse; any other denial keeps its text (U8). The reason's check against the
     buyers is _reason_refusals', once for the report.
     """
@@ -1885,31 +1907,66 @@ def _register_refusals(individual_id, entry, remove, add, ops, admin=False, kept
     from blueprints.individuals import _validate_sale  # pylint: disable=import-outside-toplevel  # it imports utils
 
     refusals = []
-    for sale in (e for e in add if e.kind == "transfer"):
-        kopare, form = entry.sald["kopare"], {"selling_date": sale.date.isoformat(), "herd": sale.value[0]}
+    if transfer is not None:
+        kopare, form = transfer.buyer, {"selling_date": transfer.date, "herd": transfer.herd}
         if error := _validate_sale(_sale_view(individual_id, kept), form, _NOT_ADMIN, kopare):
             refusals.append(_refusal(individual_id, "forsaljning", error.replace("Försäljningsdatumet", "Säljdatumet")))
-        if sale.value[0] in OUTSIDE_GENEBANK_HERDS and kopare is None and kept_buyer is None:
-            refusals.append(_refusal(individual_id, "kopare_saknas"))
-        elif sale.value[0] in OUTSIDE_GENEBANK_HERDS and kopare is not None:
-            if any(row.kind == "TRANSFER" and row.buyer_removed and row.herd.herd == sale.value[0] for row in voided):
-                refusals.append(_refusal(individual_id, "kopare", BUYER_REMOVED))
-                continue
-            try:
-                buyer_contact_fields(kopare, address_required=address_required)
-            except HerdTrackingInvalid as exc:
-                refusals.append(_refusal(individual_id, "kopare", str(exc)))
+        if transfer.herd in OUTSIDE_GENEBANK_HERDS:
+            if kopare is not None:
+                try:
+                    buyer_contact_fields(kopare, address_required=address_required and not transfer.address_optional)
+                except HerdTrackingInvalid as exc:
+                    refusals.append(_refusal(individual_id, "kopare", str(exc)))
+            elif transfer.buyer_contact_id is None and not transfer.buyer_removed:
+                refusals.append(_refusal(individual_id, "kopare_saknas"))
     return refusals
 
 
-def _kept_contact(herd, round_, entry, claim):
+def _removed_buyers(herd, round_, rabbits):
+    """Removed buyers of outside sales on these rabbits, including this herd's withdrawn sales in this round."""
+    if not rabbits:
+        return set()
+    reports = YearlyHerdReport.select(YearlyHerdReport.id).where(
+        YearlyHerdReport.herd == herd.id, YearlyHerdReport.round == round_.id
+    )
+    ops = YearlyReportSubmission.select(fn.jsonb_array_elements_text(YearlyReportSubmission.operation_ids)).where(
+        YearlyReportSubmission.report.in_(reports)
+    )
+    sales = (
+        HerdTracking.select(HerdTracking.individual)
+        .join(Herd, on=(HerdTracking.herd == Herd.id))
+        .where(
+            HerdTracking.individual.in_(rabbits),
+            HerdTracking.kind == "TRANSFER",
+            HerdTracking.buyer_removed,
+            Herd.genebank == herd.genebank_id,
+            Herd.herd.in_(OUTSIDE_GENEBANK_HERDS),
+            ht_not_voided() | HerdTracking.operation_id.cast("text").in_(ops),
+        )
+    )
+    # Retracting a proposal clears its buyer too. Only clear_buyer records an erasure or purge.
+    erased = AuditLog.select(AuditLog.record_id).where(
+        AuditLog.table_name == SaleProposal._meta.table_name,
+        AuditLog.new_data["action"].in_(("radering", "gallring_forslag")),
+    )
+    cleared = SaleProposal.select(SaleProposal.individual).where(
+        SaleProposal.individual.in_(rabbits),
+        SaleProposal.report.in_(reports),
+        (SaleProposal.state == "foreslagen") | SaleProposal.id.cast("text").in_(erased),
+        SaleProposal.to_herd.is_null(),
+        SaleProposal.buyer.is_null(),
+    )
+    return {rabbit for (rabbit,) in (sales | cleared).tuples()}
+
+
+def _kept_contact(herd, round_, entry, claim, sale):
     """
     K1: the buyer kept across Dra tillbaka that a sale outside the genebank links again in place of a typed buyer,
     or None. The body names it (kopare_id) and the server's draft says where it came from (`claim`). It is taken
     only when that report is a voided one of the same herd and round, one of its operations wrote a TRANSFER of this
     rabbit holding the buyer, and no active row holds it now.
     """
-    kopare_id = entry.sald["kopare_id"] if entry.sald and entry.sald["kopare"] is None else None
+    kopare_id = entry.sald["kopare_id"]
     if kopare_id is None or claim is None or claim["kopare_id"] != kopare_id or not _is_int(claim["fran_rapport"]):
         return None
     report = YearlyHerdReport.get_or_none(
@@ -1923,11 +1980,39 @@ def _kept_contact(herd, round_, entry, claim):
     sold = HerdTracking.select().where(
         HerdTracking.individual == entry.individual_id,
         HerdTracking.kind == "TRANSFER",
+        HerdTracking.voided_at.is_null(False),
+        HerdTracking.herd == Herd.select(Herd.id).where(Herd.herd == sale.value[0]),
+        HerdTracking.herd_tracking_date == sale.date,
         HerdTracking.holder_contact == kopare_id,
         HerdTracking.operation_id.in_(sorted(report_ops(report))),
     )
     held = HerdTracking.select().where(HerdTracking.holder_contact == kopare_id, ht_not_voided())
     return kopare_id if sold.exists() and not held.exists() else None
+
+
+def _report_transfer(herd, round_, entry, current_effects, sale, claim, removed, paper=False):
+    target, day = sale.value[0], sale.date.isoformat()
+    if target not in OUTSIDE_GENEBANK_HERDS:
+        return TransferIndividual(target, day)
+    buyer = entry.sald["kopare"]
+    if removed:
+        return TransferIndividual(target, day, buyer_removed=True)
+    if buyer is None:
+        return TransferIndividual(target, day, buyer_contact_id=_kept_contact(herd, round_, entry, claim, sale))
+    registered = next((e for e in current_effects if e == sale), None)
+    if registered is None:
+        # a paper form is entered as written: its buyer may lack the address (Jonas 2026-11-23)
+        return TransferIndividual(target, day, buyer=buyer, address_optional=paper)
+    contact = (
+        BuyerContact.select(BuyerContact.postal_address)
+        .join(HerdTracking, on=(HerdTracking.holder_contact == BuyerContact.id))
+        .where(HerdTracking.id == registered.ref)
+        .first()
+    )
+    address = buyer.get("postal_address")
+    if contact and (address is None or isinstance(address, str) and not address.strip()):
+        buyer = {**buyer, "postal_address": contact.postal_address}
+    return TransferIndividual(target, day, buyer=buyer, address_optional=contact is not None or paper)
 
 
 def _reason_refusals(reason, rabbit_ids, names=()):
@@ -1956,10 +2041,12 @@ def _waiting_buyers(proposals):
     return [buyer["name"] for buyer in pending if isinstance(buyer.get("name"), str)]
 
 
-def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal], list[Refusal]]:
+def check(
+    herd, round_, access, report, sub, *, on: date, check_email=True, transfers=None
+) -> tuple[list[Refusal], list[Refusal]]:
     """
     The dry run (5.4 point 1): (refusals, warnings) for the submission `sub` on the herd's current `report`, as of
-    `on`. It takes no lock and writes nothing; Skicka runs it again under the locks.
+    `on`. Skicka reruns it under the locks and collects the checked transfer commands before any sale is voided.
     """
     if not access.reads_buyers:
         sub = without_reason(sub)
@@ -1997,6 +2084,7 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
     refusals += _reason_refusals(sub.reason, own, _typed_buyers(sub) + _waiting_buyers(proposals.values()))
     draft = _draft(herd, round_)  # K1: a proposal takes no kept buyer, so only a role that sells reads them (F1)
     claims = _kept_claims(draft.data) if draft is not None and access.can_sell else {}
+    removed = _removed_buyers(herd, round_, [rid for rid in own if sub.rabbits[rid].sald])
     for rabbit, row in rows.items():
         entry, before = sub.rabbits.get(rabbit), before_entries.get(rabbit)
         if entry is None:
@@ -2012,12 +2100,15 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
         # P39a: it writes nothing and is not refused; a rejection rewrote its entry and moved the revision (S1)
         if entry == before:
             continue
+        if rabbit in removed and entry.sald and entry.sald["till"] == "utanfor" and entry.sald["kopare"] is not None:
+            refusals.append(_refusal(rabbit, "kopare", BUYER_REMOVED))
+            continue
         if row["state"] != "att_valja":
             refusals.append(_refusal(rabbit, "senare_handelse"))
             continue
         if entry.val == "ej_angiven":  # it writes nothing, but what it takes off still meets the register (M1)
             remove, add = diff(current(report, rabbit), [], last, before, entry)
-            refusals += _register_refusals(rabbit, entry, remove, add, ops, access.role == "admin")
+            refusals += _register_refusals(rabbit, remove, add, ops, access.role == "admin")
             continue
         if entry.dod and not _death_possible(entry.dod, row["birth_date"], on):
             refusals.append(_refusal(rabbit, "dodsdatum_ogiltigt"))
@@ -2040,7 +2131,8 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
         want = wanted(entry, row, report, herd, year, on)
         if _keeps(proposals.get(rabbit), before, entry):  # the pending proposal holds the sale
             want = _without_sale(want)
-        remove, add = diff(current(report, rabbit), want, last, before, entry)
+        cur = current(report, rabbit)
+        remove, add = diff(cur, want, last, before, entry)
         # FB5: a sale the owner registered is the register's; a new sale by this role is a proposal, checked as a sale
         if not access.can_sell and any(e.kind == "transfer" for e in remove):
             refusals.append(_no_sale(rabbit, access))
@@ -2051,20 +2143,24 @@ def check(herd, round_, access, report, sub, *, on: date) -> tuple[list[Refusal]
         if not access.can_sell and sale is not None and _holder_on(rabbit, sale.date, set()) != herd.id:
             refusals.append(_refusal(rabbit, "senare_handelse"))
             continue
-        kept = _kept_contact(herd, round_, entry, claims.get(str(rabbit)))
-        correction = before is not None and same_sale(before.sald, entry.sald)
+        transfer = None
+        if sale is not None:
+            transfer = _report_transfer(
+                herd, round_, entry, cur, sale, claims.get(str(rabbit)), rabbit in removed, access.source == "paper"
+            )
+            if transfers is not None:
+                transfers[rabbit] = transfer
         refusals += _register_refusals(
             rabbit,
-            entry,
             remove,
             add,
             ops,
             access.role == "admin",
-            kept,
-            address_required=not (access.editor or correction),
+            transfer,
+            address_required=not (access.editor or access.source == "paper"),
         )
     if access.source == "paper":
-        refusals += _matrikel_refusals(herd, sub.paper["matrikel"])
+        refusals += _matrikel_refusals(herd, sub.paper, submissions, check_email=check_email)
     return refusals, warnings
 
 
@@ -2131,11 +2227,25 @@ def _main_member(herd):
     return member if member is not None and not is_anonymized(member) else None
 
 
-def _matrikel_refusals(herd, matrikel):
+def _matrikel_refusals(herd, paper, submissions, *, check_email):
     """check's refusals of the form's contact changes; any of them, or a Koharen answer, needs the main member."""
+    matrikel = paper["matrikel"] or {}
     contact, refusals = _contact(matrikel)
-    if (contact or refusals or (matrikel or {}).get("publicering") is not None) and _main_member(herd) is None:
+    if not (contact or refusals or matrikel.get("publicering") is not None):
+        return refusals
+    member = _main_member(herd)
+    if member is None:
         refusals.insert(0, _refusal(None, "ingen_huvudmedlem"))
+    elif (
+        check_email
+        and (email := contact.get("epost", {}).get("email"))
+        and not _same("email", member.email, email)
+        and login_address_taken(email, member.id)
+    ):
+        # A more recent matrikel change takes precedence, so this address would never be written.
+        later = later_fields(herd, member.membership, member, paper["signed_on"], {s.id for s in submissions})
+        if "epost" not in later:
+            refusals.append(_refusal(None, "epost_kan_inte_anvandas"))
     return refusals
 
 
@@ -2261,7 +2371,8 @@ def apply_paper_matrikel(herd, membership, member, submission, item, user, matri
         try:
             member.email = set_member_email(member, written["epost"]["email"], user, by="other").email
         except AddressTaken as exc:
-            raise ArsrapportError(409, "E-postadressen kunde inte ändras. Kontrollera medlemsuppgifterna.") from exc
+            code = "epost_kan_inte_anvandas"
+            raise ArsrapportError(409, REFUSALS[code], code=code, field="epost") from exc
     for model, row, names, stamp in (
         (Membership, membership, ("adress",), [Membership.updated_at]),
         (Member, member, ("telefon",), [Member.updated_at]),
@@ -2292,14 +2403,16 @@ def log_and_mail_paper_contact(herd, item, submission, user, member, fields, ski
     """
     The paper path's log and Å23 (5.5, 5.10). The item's event names the fields, never a value (D7), and receipt()
     reads it back. Å23 goes to the matrikel's e-mail as it was before the change: when the e-mail changed, through an
-    already confirmed member_change_request, since "member" reads the new one when the mail goes. Without an old
-    e-mail no mail goes and the log is all (an SMS may come with an SMS service, spec 16).
+    already confirmed member_change_request, since "member" reads the new one when the mail goes. set_member_email
+    tells that same old address about the e-mail itself (kontakt.epost_besked), so Å23 covers the other fields.
+    Without an old e-mail no mail goes and the log is all (an SMS may come with an SMS service, spec 16).
     """
     if not (fields or skipped):
         return
     inbox.log_event(item, user, "matrikel_andrad", falt=fields, hoppade=skipped, submission_id=submission.id)
     if not (fields and old_email):
         return
+    mail_fields = set(fields) - {"epost"}
     recipient = ("member", member.id)
     if "epost" in fields:
         at = submission.created_at
@@ -2314,10 +2427,12 @@ def log_and_mail_paper_contact(herd, item, submission, user, member, fields, ski
             confirmed_at=at,
         )
         recipient = ("email_change_old", request.id)
+    if not mail_fields:
+        return
     enqueue_mail(
         A23,
         *recipient,
-        {"submission_id": submission.id} | {field: int(field in fields) for field in PAPER_FIELDS},
+        {"submission_id": submission.id} | {field: int(field in mail_fields) for field in PAPER_FIELDS},
         ref=("yearly_report_submission", submission.id),
         herd=herd,
         genebank=herd.genebank_id,
@@ -2562,22 +2677,15 @@ def _measured(effect, rabbit):
     return [row.id for row in rows]
 
 
-def _command(effect, rabbit, herd, report, entry, buyer_correction):
+def _command(effect, rabbit, herd, report, transfer):
     """The command that writes `effect`; SetMeasurements gets the stored list as stored, so nothing is replaced."""
     day = effect.date.isoformat()
     if effect.kind == "attest":
         return RecordAttestation(herd.herd, day, report=report.id)
     if effect.kind == "death":
         return RecordDeath({"death_date": day, "butchered": effect.value[1], "death_note": effect.value[2]})
-    if effect.kind == "transfer":  # check() let a kopare_id through only as this sale's kept buyer (K1)
-        kopare = entry.sald["kopare"]
-        return TransferIndividual(
-            effect.value[0],
-            day,
-            buyer=kopare,
-            buyer_contact_id=entry.sald["kopare_id"] if kopare is None else None,
-            buyer_correction=buyer_correction,
-        )
+    if effect.kind == "transfer":
+        return transfer
     if effect.kind == "weight":
         stored = [{"weight": w.weight, "date": w.weight_date.isoformat()} for w in Weight.filter(individual=rabbit)]
         return SetMeasurements(weights=[*stored, {"weight": effect.value[0], "date": day}])
@@ -2585,7 +2693,7 @@ def _command(effect, rabbit, herd, report, entry, buyer_correction):
     return SetMeasurements(bodyfat=[*stored, {"bodyfat": effect.value[0], "date": day}])
 
 
-def _write(user, rabbit, effects, herd, report, entry, grant, last, *, buyer_correction=False):
+def _write(user, rabbit, effects, herd, report, transfer, grant, last):
     """
     The rabbit's `effects` through execute in `order` (5.4 point 3): once for those up to 31 December, then once
     for those after it. A measurement already stored with its date and value is skipped. The caller holds the
@@ -2597,7 +2705,7 @@ def _write(user, rabbit, effects, herd, report, entry, grant, last, *, buyer_cor
     for batch in ([e for e in effects if e.date <= last], [e for e in effects if e.date > last]):
         if not batch:
             continue
-        commands = [_command(e, rabbit, herd, report, entry, buyer_correction) for e in batch]
+        commands = [_command(e, rabbit, herd, report, transfer) for e in batch]
         execute(user, rabbit, lambda ctx, commands=commands: commands, grant=grant)
         added += [
             {
@@ -2627,6 +2735,7 @@ def apply_diff(
     reason=None,
     keep_sales=False,
     keep_buyer_until=None,
+    transfer=None,
 ):
     """
     Ändra for one rabbit (D5): the report's current effects that `want` lacks come off, the latest first (a January
@@ -2681,8 +2790,7 @@ def apply_diff(
                 }
             )
         add = [e for e in add if e.kind not in MEASUREMENTS]
-    correction = prev_entry is not None and entry is not None and same_sale(prev_entry.sald, entry.sald)
-    return added + _write(user, rabbit_id, add, herd, report, entry, grant, last, buyer_correction=correction)
+    return added + _write(user, rabbit_id, add, herd, report, transfer, grant, last)
 
 
 def _cannot(refusals, detail="Rapporten kan inte skickas."):
@@ -2735,11 +2843,11 @@ def _lock_form(access, user, herd):
     return item, list(item.documents.where(InboxDocument.doc_type == "arsblankett").order_by(InboxDocument.id))
 
 
-def _split_sale(proposed, access, report, rabbit, want, prev, entry, proposal, last, at):
+def _split_sale(proposed, access, rabbit, want, prev, entry, proposal, transfer, at):
     """
     5.9 for one rabbit Skicka writes: `want` without the sale a proposal carries. A pending proposal that `entry`
     still gives stands (_keeps); any other pending one is taken back. A new sale by a role that may not sell (F1)
-    goes to `proposed` as (rabbit, entry, sale, correction), for _propose once the submission exists.
+    goes to `proposed` for _propose once the submission exists.
     """
     import utils.sale_proposal as sale_proposal  # pylint: disable=import-outside-toplevel  # it imports this module
 
@@ -2747,13 +2855,9 @@ def _split_sale(proposed, access, report, rabbit, want, prev, entry, proposal, l
         return _without_sale(want)
     if proposal is not None and proposal.state == "foreslagen":
         sale_proposal.retract(proposal, now=at)
-    if not access.can_sell:
-        add = diff(current(report, rabbit), want, last, prev, entry)[1]
-        sale = next((e for e in add if e.kind == "transfer"), None)
-        if sale is not None:
-            correction = prev is not None and same_sale(prev.sald, entry.sald)
-            proposed.append((rabbit, entry, sale, correction))
-            return _without_sale(want)
+    if not access.can_sell and transfer is not None:
+        proposed.append((rabbit, transfer))
+        return _without_sale(want)
     return want
 
 
@@ -2770,17 +2874,16 @@ def _propose(report, submission, proposed):
     for proposal in sale_proposal.pending(report):
         if (rabbits.get(str(proposal.individual_id)) or {}).get("val") != "sald":
             sale_proposal.retract(proposal, now=submission.created_at)
-    for rabbit, entry, sale, correction in proposed:
-        to_herd = None if entry.sald["till"] == "utanfor" else Herd.get(Herd.herd == sale.value[0])
-        buyer, individual = entry.sald["kopare"], Individual(id=rabbit)
+    for rabbit, transfer in proposed:
+        to_herd = None if transfer.herd in OUTSIDE_GENEBANK_HERDS else Herd.get(Herd.herd == transfer.herd)
         sale_proposal.propose(
             report,
             submission,
-            individual,
+            Individual(id=rabbit),
             to_herd=to_herd,
-            buyer=buyer,
-            sale_date=sale.date,
-            buyer_correction=correction,
+            buyer=transfer.buyer,
+            sale_date=date.fromisoformat(transfer.date),
+            buyer_removed=transfer.buyer_removed,
         )
     named = {rabbit: p.id for rabbit, p in _proposals(report).items() if p.state == "foreslagen"}
     sales = [(int(key), entry["sald"]) for key, entry in submission.data["rabbits"].items() if entry.get("sald")]
@@ -2832,7 +2935,9 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         _lock_rabbits(ids, items)
         if sub.revision != (report.revision if report else None):
             raise ArsrapportError(409, "Rapporten har ändrats.")
-        refusals, _ = check(herd, round_, access, report, sub, on=on)
+        # set_member_email reserves the address under lock when the paper change is actually written.
+        transfers = {}
+        refusals, _ = check(herd, round_, access, report, sub, on=on, check_email=False, transfers=transfers)
         if refusals:
             raise _cannot(refusals)
         grant = ReportGrant(
@@ -2857,10 +2962,11 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
                 if entry == prev:  # P39a: an unchanged choice writes nothing
                     continue
                 want = wanted(entry, rows[rabbit], report, herd, year, on)
-                want = _split_sale(proposed, access, report, rabbit, want, prev, entry, proposal, last, at)
+                transfer = transfers.get(rabbit)
+                want = _split_sale(proposed, access, rabbit, want, prev, entry, proposal, transfer, at)
                 try:
                     added += apply_diff(
-                        report, herd, user, grant, rabbit, want, before.get(rabbit), entry, last, reason=sub.reason
+                        report, herd, user, grant, rabbit, want, prev, entry, last, reason=sub.reason, transfer=transfer
                     )
                 except (IndividualRefused, HerdTrackingError) as exc:
                     raise _cannot([_written(rabbit, exc)]) from exc
@@ -2891,9 +2997,10 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
             rows = {row["id"]: row for row in report_list(herd, year)}
             for rabbit, entry in sorted(sub.rabbits.items()):
                 effects = wanted(entry, rows[rabbit], None, herd, year, on)
-                effects = _split_sale(proposed, access, None, rabbit, effects, None, entry, None, last, at)
+                transfer = transfers.get(rabbit)
+                effects = _split_sale(proposed, access, rabbit, effects, None, entry, None, transfer, at)
                 try:
-                    added += _write(user, rabbit, effects, herd, report, entry, grant, last)
+                    added += _write(user, rabbit, effects, herd, report, transfer, grant, last)
                 except (IndividualRefused, HerdTrackingError) as exc:
                     raise _cannot([_written(rabbit, exc)]) from exc
         try:
@@ -3002,7 +3109,7 @@ def withdraw(herd, round_, access, user, *, revision, reason=None, now=None) -> 
             if not access.can_sell:  # FB5: a sale the owner registered stays, as an approved proposal does
                 remove = _without_sale(remove)
             sold += [e.ref for e in remove if e.kind == "transfer"]
-            refusals += _register_refusals(rabbit, None, remove, [], ops, access.role == "admin")
+            refusals += _register_refusals(rabbit, remove, [], ops, access.role == "admin")
         if refusals:
             raise _cannot(refusals, "Rapporten kan inte dras tillbaka.")
         grant, keep = ReportGrant(code=access.code, report=report, herd=herd), not access.can_sell
@@ -3164,7 +3271,7 @@ def settle_rejection(report, user, rabbit, then, at):
         elif row["state"] == "att_valja" and _holder_on(rabbit, last, ops) != herd.id:
             refusals = [_refusal(rabbit, "inte_innehavare")]
         else:  # one already attested outside the report (redan_rapporterad) stays as it is
-            refusals = _register_refusals(rabbit, entry, remove, add, ops, user.is_admin)
+            refusals = _register_refusals(rabbit, remove, add, ops, user.is_admin)
         if refusals:
             raise ArsrapportError(409, refusals[0].message, code=refusals[0].code)
         try:

@@ -8,6 +8,7 @@ import {
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/SoldDialog";
 import type {
   BodyEntry,
+  RabbitView,
   SaldState,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
 
@@ -23,6 +24,7 @@ function dialog(
   onSave = vi.fn(),
   canSell = true,
   submitted: BodyEntry["sald"] | null = null,
+  rabbit?: Partial<RabbitView>,
 ) {
   render(
     <SoldDialog
@@ -34,6 +36,7 @@ function dialog(
       loadHerds={() => new Promise(() => {})} // never answers
       existing={existing}
       submitted={submitted}
+      rabbit={rabbit}
       canSell={canSell}
       addressRequired
       onSave={onSave}
@@ -175,12 +178,52 @@ describe("SoldDialog", () => {
       kopare: null,
       kopare_id: 7,
     };
-    const onSave = dialog(kept);
+    const onSave = dialog(kept, vi.fn(), true, null, {
+      kept_buyer_date: "2025-10-10",
+    });
     expect(screen.getByText(KEPT_TEXT)).toBeTruthy();
     expect(screen.queryByText(/sparas inte i rapporten/)).toBeNull();
     expect(screen.queryByText(ON_SEND_TEXT)).toBeNull(); // not beside "finns sparad"
     save();
     expect(onSave).toHaveBeenCalledWith({ ...kept });
+    onSave.mockClear();
+    fireEvent.change(screen.getByLabelText("Månad"), {
+      target: { value: "11" },
+    });
+    save();
+    expect(onSave).not.toHaveBeenCalled();
+    expectBuyerAsked();
+  });
+
+  it("changes the date of a sale with an erased buyer without asking for their details", () => {
+    const sale = {
+      till: "utanfor",
+      ar: 2025,
+      manad: 10,
+      dag: 10,
+      kopare: null,
+    };
+    const onSave = dialog(sale, vi.fn(), true, null, { buyer_removed: true });
+    fireEvent.change(screen.getByLabelText("Månad"), {
+      target: { value: "11" },
+    });
+    expect(screen.queryByLabelText(/Köparens namn/)).toBeNull();
+    save();
+    expect(onSave).toHaveBeenCalledWith({ ...sale, manad: 11 });
+  });
+
+  it("requires a replacement buyer's address on a pending proposal", () => {
+    const sale = { till: "utanfor", ar: 2025, manad: 10, dag: 10 };
+    const onSave = dialog({ ...sale, kopare: null }, vi.fn(), true, sale);
+    fireEvent.change(screen.getByLabelText(/Köparens namn/), {
+      target: { value: "Ola Köpare" },
+    });
+    fireEvent.change(screen.getByLabelText(/^Ort/), {
+      target: { value: "Visby" },
+    });
+    save();
+    expect(screen.getByText("Skriv köparens postadress.")).toBeTruthy();
+    expect(onSave).not.toHaveBeenCalled();
   });
 
   it("asks a role whose sale is a proposal to type the buyer, as a kept one is not theirs", () => {

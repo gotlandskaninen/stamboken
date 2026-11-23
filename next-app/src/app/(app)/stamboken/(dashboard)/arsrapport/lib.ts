@@ -25,6 +25,9 @@ export interface RabbitView {
   death_day_known: boolean; // false: the report gave it without its day, so its month is shown
   state: "att_valja" | "redan_rapporterad" | "via_flytt";
   later: { kind: string; date: string } | null;
+  buyer_removed?: boolean;
+  registered_buyer_date?: string;
+  kept_buyer_date?: string;
   // The latest transfer into the herd dated in the year: "Köpt 14 maj" (4a Task 5).
   kopt: { datum: string; fran: string | null } | null;
 }
@@ -516,13 +519,18 @@ export function deathDateOk(
   if (!d || d.manad == null) return true;
   const ym = `${d.ar}-${String(d.manad).padStart(2, "0")}`;
   if (ym > today.slice(0, 7)) return false;
-  const last = new Date(Date.UTC(d.ar, d.manad, 0)).getUTCDate();
-  let iso = `${ym}-${String(d.dag ?? last).padStart(2, "0")}`;
-  if (iso > today) {
-    if (d.dag) return false;
-    iso = today;
-  }
-  return !birth || iso >= birth.slice(0, 10);
+  const iso = eventDate(d, today)!;
+  return iso <= today && (!birth || iso >= birth.slice(0, 10));
+}
+
+export function eventDate(
+  d: Pick<SaldState, "ar" | "manad" | "dag">,
+  today = todayStockholm(),
+): string | null {
+  if (d.manad === null) return null;
+  const day = d.dag ?? new Date(Date.UTC(d.ar, d.manad, 0)).getUTCDate();
+  const iso = `${d.ar}-${String(d.manad).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+  return d.dag === null && iso > today ? today : iso;
 }
 
 export function editClears(
@@ -586,10 +594,16 @@ export const lacksBuyer = (
   s: SaldState,
   submitted: BodyEntry["sald"] | null | undefined,
   canSell: boolean,
+  rabbit: RabbitView,
 ): boolean =>
   s.till === "utanfor" &&
   !s.kopare &&
-  !(canSell && s.kopare_id != null) &&
+  !rabbit.buyer_removed &&
+  !(
+    canSell &&
+    s.kopare_id != null &&
+    eventDate(s) === rabbit.kept_buyer_date
+  ) &&
   !storedSale(s, submitted);
 
 export function isDone(
@@ -603,7 +617,8 @@ export function isDone(
   if (!e || e.val === null) return r.state !== "att_valja";
   if (e.val === "ej_angiven") return true; // P44: kept from a paper submission
   if (!complete(e)) return false;
-  if (e.val === "sald" && lacksBuyer(e.sald!, submitted, canSell)) return false;
+  if (e.val === "sald" && lacksBuyer(e.sald!, submitted, canSell, r))
+    return false;
   // a weight over 20 kg waits for the fix button, the server refuses it
   if (e.val === "kvar" && parseWeight(e.vikt).gramsHint !== null) return false;
   // a death before the birth or in the future waits too, the server refuses it
