@@ -987,6 +987,30 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
             ht_row("TRANSFER", herd=herd, signature=self.manager, individual=individual, herd_tracking_date=day)
         self.assertEqual(sale_months(individual), ["2026-04"])
 
+    def test_sale_months_counts_a_resale_within_gx1(self):
+        """ADR-0016: a resale to a new buyer within GX1 is a sale, also once the buyer is erased (stamboken #6)."""
+        from utils.herd_tracking import sale_months
+
+        gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1")
+        individual = self.individuals[3]  # born in herds[0]
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=gx1,
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 3, 1),
+        )
+        ht_row(  # the resale; its buyer contact is gone (erased), the explicit sender stays
+            "TRANSFER",
+            from_herd=gx1,
+            herd=gx1,
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 4, 1),
+        )
+        self.assertEqual(sale_months(individual), ["2026-03", "2026-04"])
+
     def test_verify_post_with_pdf(self):
         """POST verify with actual PDF bytes checks checksum + signature."""
         self._start_mock_aws()
