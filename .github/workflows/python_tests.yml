@@ -2,9 +2,9 @@ name: Python tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/**']
   pull_request:
-    branches: [main]
+    branches: [main, 'release/**']
 
 jobs:
   test:
@@ -66,6 +66,10 @@ jobs:
       - name: Check nginx config with the real vhosts
         run: |
           scripts/check-nginx-prod-config.sh
+          # Everything production mounts, then what the old container sees
+          # if a deploy stops after copying the files: no new mounts.
+          scripts/check-nginx-prod-config.sh nginx/production/herdbook-production.conf nginx/production/stamboken-legacy.conf nginx/production/gotlandskaninen.conf nginx/production/gotlandskaninen-www.conf
+          scripts/check-nginx-prod-config.sh nginx/production/herdbook-production.conf nginx/production/stamboken-legacy.conf
           scripts/check-nginx-prod-config.sh nginx/herdbook-local-production.conf
 
       - name: Run tests in container
@@ -82,6 +86,7 @@ jobs:
             -e SECRET_KEY=dev-secret-do-not-use-in-prod \
             -e SESSION_REDIS_URL=redis://localhost:6379/2 \
             -e AUTHCONFIGFILE=/app/tests/auth.ini.test \
+            -e ALLOW_ROLE_PASSWORD_LOGIN=true \
             -e CI=true \
             -v "$PWD/nginx:/nginx:ro" \
             herdbook-api-test:latest \

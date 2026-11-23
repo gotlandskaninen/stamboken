@@ -61,6 +61,8 @@ _TABLES_TO_TRUNCATE = [
     "matrikel_audit",  # before membership + hbuser (FKs actor, membership)
     "herd_access_grant",  # before member + herd (FKs member, herd, granted_by)
     "member_application",  # before member (FK created_member)
+    "login_code",  # before member + hbuser
+    "member_previous_address",  # before member + hbuser
     "member",  # before membership (FK membership)
     "member_number_counter",  # single-row counter — re-seeded to 0 below
     "herd_tracking",

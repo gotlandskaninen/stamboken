@@ -76,6 +76,10 @@ CREATE TABLE mail_message (id serial PRIMARY KEY);
 CREATE TABLE mail_attempt (id int PRIMARY KEY, message_id int REFERENCES mail_message ON DELETE CASCADE);
 CREATE TABLE notice_setting (id int PRIMARY KEY);
 CREATE TABLE hbuser (id int PRIMARY KEY);
+CREATE TABLE login_code (id int PRIMARY KEY);
+CREATE TABLE member_previous_address (id int PRIMARY KEY);
+INSERT INTO login_code VALUES (1);
+INSERT INTO member_previous_address VALUES (1);
 INSERT INTO mail_message DEFAULT VALUES;
 INSERT INTO mail_attempt VALUES (1, 1);
 INSERT INTO notice_setting VALUES (1);
@@ -103,6 +107,8 @@ check "the rename succeeds" 0 "$?"
 check "mail_message comes over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM mail_message')"
 check "mail_attempt comes over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM mail_attempt')"
 check "the demo's sequence value survives, so Message-IDs do not repeat" 42 "$(sql -d dst -c "SELECT nextval('mail_message_id_seq')")"
+check "login_code (codes and unconfirmed addresses) comes over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM login_code')"
+check "member_previous_address (addresses left) comes over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM member_previous_address')"
 check "notice_setting (a user preference) keeps its rows" 1 "$(sql -d dst -c 'SELECT count(*) FROM notice_setting')"
 check "an ordinary table keeps its rows" 1 "$(sql -d dst -c 'SELECT count(*) FROM hbuser')"
 

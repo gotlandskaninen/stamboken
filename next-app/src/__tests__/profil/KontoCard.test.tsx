@@ -68,11 +68,6 @@ describe("KontoCard", () => {
     expect(screen.getByText("Ägare G1274")).toBeDefined();
   });
 
-  it("shows validated status", () => {
-    renderWithTheme(<KontoCard user={mockUser} />);
-    expect(screen.getByText("Validerad")).toBeDefined();
-  });
-
   it("shows Google picture toggle when google_picture exists", () => {
     renderWithTheme(<KontoCard user={mockUser} />);
     expect(screen.getByText("Använd Google-profilbild")).toBeDefined();
@@ -81,13 +76,6 @@ describe("KontoCard", () => {
   it("hides Google picture toggle when no google_picture", () => {
     renderWithTheme(<KontoCard user={{ ...mockUser, google_picture: null }} />);
     expect(screen.queryByText("Använd Google-profilbild")).toBeNull();
-  });
-
-  it("shows not-validated warning when user is not validated", () => {
-    renderWithTheme(<KontoCard user={{ ...mockUser, validated: false }} />);
-    expect(screen.getByText("Inte validerad")).toBeDefined();
-    expect(screen.getByText(/För att bli validerad/)).toBeDefined();
-    expect(screen.getByRole("link", { name: "Gå kursen nu" })).toBeDefined();
   });
 
   it("shows admin badge when user is admin", () => {

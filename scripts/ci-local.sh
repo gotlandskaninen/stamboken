@@ -91,7 +91,7 @@ LEGACY_DC=(docker compose --project-directory "$TREE" -f "$TREE/docker-compose.l
 API_ENV=(-e POSTGRES_HOST=postgres -e POSTGRES_PORT=5432 -e POSTGRES_USER=herdbook -e POSTGRES_PASSWORD=testpass
 	-e POSTGRES_DB=herdbook_test -e FLASK_ENV=testing -e REDIS_URL=redis://redis:6379/1
 	-e SECRET_KEY=dev-secret-do-not-use-in-prod -e SESSION_REDIS_URL=redis://redis:6379/2
-	-e AUTHCONFIGFILE=/app/tests/auth.ini.test
+	-e AUTHCONFIGFILE=/app/tests/auth.ini.test -e ALLOW_ROLE_PASSWORD_LOGIN=true
 	-e S3_ENDPOINT=http://s3backend:9000 -e S3_USESSL=false -e S3_VERIFY=false) # digitala intyg (e2e/manual) kräver S3
 
 # --- Lås: en körning åt gången över alla worktrees/sessioner -----------------
@@ -273,6 +273,7 @@ step_e2e_legacy() {
 	cd "$TREE"
 	./scripts/build-legacy.sh --prod
 	echo "RATELIMIT_ENABLED=false" >>.docker/api-variables.env
+	echo "ALLOW_ROLE_PASSWORD_LOGIN=true" >>.docker/api-variables.env
 	echo "RATELIMIT_ENABLED=false" >>.docker/api-test-variables.env
 	cp app/tests/auth.ini.test config/auth.ini
 	# shellcheck source=/dev/null

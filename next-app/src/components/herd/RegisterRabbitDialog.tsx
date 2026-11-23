@@ -38,6 +38,7 @@ import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 import { AdapterDateFns } from "@mui/x-date-pickers/AdapterDateFns";
 import { sv } from "date-fns/locale";
 import { useTranslation } from "react-i18next";
+import { CheckPageNameHint } from "@/components/herd/CheckPageNameHint";
 import Link from "next/link";
 import { useMode } from "@/lib/mode-context";
 import type { PaginatedIndividualItem } from "@/redux/api/apiSlice";
@@ -966,6 +967,7 @@ export function RegisterRabbitDialog({
                   {t("addRabbit.certificateAttester")}
                 </Typography>
               )}
+              {certificateType === "digital" && <CheckPageNameHint />}
               {suggestion && !canIssueCertificate && (
                 <Typography
                   variant="caption"

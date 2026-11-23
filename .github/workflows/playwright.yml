@@ -2,10 +2,10 @@ name: Playwright Tests
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, 'release/**']
   push:
-    # main: PRs are tested one by one, so this is the only run of what they add up to
-    branches: [main, 'feature/**']
+    # main and release/**: PRs are tested one by one, so this is the only run of what they add up to
+    branches: [main, 'release/**', 'feature/**']
 
 jobs:
   # ═══════════════════════════════════════════════════════════
@@ -151,6 +151,8 @@ jobs:
           # API reads this file too and stays off (DEMO_INSTANCE).
           echo "ACCESS_RULES=enforce" >> .docker/api-variables.env
           echo "LEGACY_HOSTS=stamboken.localhost" >> .docker/api-variables.env
+          # The seeded admin and genebank managers sign in with a password.
+          echo "ALLOW_ROLE_PASSWORD_LOGIN=true" >> .docker/api-variables.env
           echo "RATELIMIT_ENABLED=false" >> .docker/api-test-variables.env
           mkdir -p config cache cache-test uppladdningar skyddat skyddat-test s3data letsencrypt local_ca
           cp app/tests/auth.ini.test config/auth.ini

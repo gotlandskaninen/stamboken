@@ -39,6 +39,7 @@ from utils.database import (
     MailSender,
     Member,
     MemberApplication,
+    MemberPreviousAddress,
     User,
 )
 from utils.log_masking import mask_tokens
@@ -153,7 +154,7 @@ def enqueue_mail(
 
 
 def _mac(message):
-    """One key for three uses, so every input starts with its own prefix: `link:`, `msgid:` or `addr:`."""
+    """One key for four uses, so every input starts with its own prefix: `link:`, `msgid:`, `addr:` or `code:`."""
     secret = settings.mail.link_secret
     if not secret:
         raise RuntimeError("LINK_SECRET is not set")
@@ -188,6 +189,12 @@ def verify_link(purpose, token):
 
 def _hostname():
     return urlparse(settings.service.host).hostname or "localhost"
+
+
+def one_time_code(row_id, nonce):
+    """A login_code row's eight digits: HMAC-SHA256(LINK_SECRET, "code:<host>:<row id>:<nonce>") mod 10^8, as text."""
+    digest = _mac(f"code:{_hostname()}:{row_id}:{nonce}").digest()
+    return f"{int.from_bytes(digest[:8], 'big') % 10**8:08d}"
 
 
 def message_id(row_id):
@@ -696,7 +703,7 @@ def message_view(row):
 
 
 def sender_alarms(now=None):
-    """The status view's alarms: the relay refusing, the queue stalled, and when a mail last went out."""
+    """The status view's alarms: the relay refusing, the queue stalled, code login closed, and the last mail out."""
     now = now or _utcnow()
     sender = MailSender.get_or_none(MailSender.id == 1)
     last_smtp = (
@@ -718,6 +725,9 @@ def sender_alarms(now=None):
         alarms.append({"code": "log_mode", "message": "Utskicksläget är log: inget mejl skickas på riktigt"})
     if last_run_at is None or last_run_at < now - STALLED_AFTER:
         alarms.append({"code": "queue_stalled", "message": "Kön står still"})
+    from utils.login_code import alarms as code_alarms  # pylint: disable=import-outside-toplevel  # imports this
+
+    alarms += code_alarms(now)
     last_sent = MailMessage.select(MailMessage.sent_at).where(MailMessage.sent_at.is_null(False))
     last_sent = last_sent.order_by(MailMessage.sent_at.desc()).first()
     return {
@@ -755,6 +765,13 @@ def _buyer_contact(contact_id):
     c = BuyerContact.get_or_none(BuyerContact.id == contact_id)
     # Never the name: only a genebank's managers and helpers see a buyer, and each read is logged (ADR-0016).
     return Recipient(c.email, f"Köpare {c.id}") if c else None
+
+
+@recipient_kind("member_previous_address")
+def _previous_address(row_id):
+    """An address a person had (utils.matrikel.set_member_email); gone once the row is purged or the person erased."""
+    r = MemberPreviousAddress.get_or_none(MemberPreviousAddress.id == row_id)
+    return Recipient(r.address, f"{r.member.first_name} {r.member.last_name}") if r else None
 
 
 @recipient_kind("tyck_till")
@@ -817,6 +834,12 @@ def _member_added(params):
         "main": " ".join(f"{main.first_name} {main.last_name}".split()) if main else None,
         "phone": bool(person.phone),
     }
+
+
+@mail_kind("kontakt.epost_besked", priority=0, category="T")
+def _address_changed(params):
+    """To the previous address: it was changed, and by whom. Never the new address."""
+    return {"by": "self" if params["by_self"] else "matrikel" if params["by_matrikel"] else "other"}
 
 
 ADDED_A_DAY = 10  # medlemskap.tillagd mails one membership can cause in a day

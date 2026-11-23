@@ -14,10 +14,35 @@ interface VerificationResponse {
   issued_at: string;
   is_current: boolean;
   replaced_by_date: string | null;
+  // The issuer's full name when she chose it, else her role (stamboken #6)
+  attested_by: string;
+  // "YYYY-MM" per change of holder: never the day, never a name (ADR-0016)
+  transferred: string[];
 }
 
 function svDate(iso: string): string {
   return new Date(iso).toLocaleDateString("sv-SE");
+}
+
+const MONTHS = [
+  "januari",
+  "februari",
+  "mars",
+  "april",
+  "maj",
+  "juni",
+  "juli",
+  "augusti",
+  "september",
+  "oktober",
+  "november",
+  "december",
+];
+
+/* "2026-03" -> "mars 2026", without Date: a timezone must not move the month. */
+function svMonth(yearMonth: string): string {
+  const [year, month] = yearMonth.split("-");
+  return `${MONTHS[Number(month) - 1]} ${year}`;
 }
 
 export default async function VerifieraPage({
@@ -178,6 +203,16 @@ export default async function VerifieraPage({
             <span className="l">Datum</span>
             <span className="v">{svDate(data.issued_at)}</span>
           </div>
+          <div className="frow">
+            <span className="l">Intygas av</span>
+            <span className="v">{data.attested_by}</span>
+          </div>
+          {(data.transferred ?? []).map((month, i) => (
+            <div className="frow" key={i}>
+              <span className="l">Såld</span>
+              <span className="v">{svMonth(month)}</span>
+            </div>
+          ))}
         </div>
         <div className="actions">
           <Link

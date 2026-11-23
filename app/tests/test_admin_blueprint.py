@@ -797,7 +797,8 @@ class TestMassLogout(DatabaseTest):
                 with victim.session_transaction() as sess:
                     for k in dropped:
                         sess.pop(k, None)
-                # Until a mass logout, unstamped sessions keep working (no logout on deploy).
+                # Until a mass logout, a session without logout_epoch keeps working; one without auth_method
+                # or the account's mark does not (test_session_generation.py).
                 self.assertEqual(victim.get("/api/user").status_code, 200)
                 key = "session:" + victim.get_cookie(APP.config["SESSION_COOKIE_NAME"]).value
                 before_sweep = self.session_redis.get(key)
