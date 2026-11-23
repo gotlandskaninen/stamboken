@@ -300,6 +300,21 @@ class TestSevenDays(SevenDaysTest):
         self.assertFalse(db.MemberPreviousAddress.select().exists())
         self.assertEqual(db.MailMessage.get_by_id(mail_id).status, "cancelled")
 
+    def test_erasure_takes_the_codes_and_the_queue_forgets_where_they_went(self):
+        with mock.patch.object(settings.mail, "link_secret", "test-link-secret"), db.DB_PROXY.atomic():
+            used = lc.issue(self.person, "ny_adress", "w1", "b@example.org")
+            live = lc.issue(self.person, "ny_adress", "w2", "c@example.org")
+        db.LoginCode.update(used_at=datetime.now(timezone.utc)).where(db.LoginCode.id == used.id).execute()
+        sent = mail.enqueue_mail("konto.kod", "login_code", used.id, {"code_id": used.id})
+        db.MailMessage.update(status="sent", address_hash="hash").where(db.MailMessage.id == sent).execute()
+        queued = mail.enqueue_mail("konto.kod", "login_code", live.id, {"code_id": live.id})
+
+        matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)
+
+        self.assertFalse(db.LoginCode.select().where(db.LoginCode.member == self.person.id).exists())
+        self.assertIsNone(db.MailMessage.get_by_id(sent).address_hash)
+        self.assertEqual(db.MailMessage.get_by_id(queued).status, "cancelled")
+
     def test_the_matrikel_admins_edit_goes_through_it(self):
         self.login("matrikel")
         resp = self.client.patch(

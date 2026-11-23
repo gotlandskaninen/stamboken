@@ -29,6 +29,7 @@ from utils.database import (
     DB_PROXY,
     Herd,
     HerdAccessGrant,
+    LoginCode,
     MatrikelAudit,
     Member,
     MemberApplication,
@@ -455,7 +456,8 @@ def anonymize_person(member, actor):
     (mode="anonymize") and invalidates the genebanks whose
     access the account loses. Erases the intake queue's originals and texts
     that show the person as seller or buyer, and what they sent
-    (erase_person_from_inbox).
+    (erase_person_from_inbox). Takes the person's previous addresses and codes,
+    with the queue's trace of where their mails went.
     Returns the scrubbed person: the caller's pre-lock instance is stale
     afterwards.
     """
@@ -523,7 +525,8 @@ def anonymize_person(member, actor):
             .returning(MemberPreviousAddress.id)
         ):
             forget_recipient("member_previous_address", previous.id)
-        void(person.id)
+        for code in LoginCode.delete().where(LoginCode.member == person.id).returning(LoginCode.id):
+            forget_recipient("login_code", code.id)
         for application_id in application_ids:
             forget_recipient("application", application_id)
         write_matrikel_audit(
