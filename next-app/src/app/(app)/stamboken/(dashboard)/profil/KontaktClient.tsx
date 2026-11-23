@@ -26,6 +26,8 @@ export function KontaktClient({
   // "code": a code went to the new address; "done": the address is changed and the session has ended.
   const [emailStep, setEmailStep] = useState<"none" | "code" | "done">("none");
   const [code, setCode] = useState("");
+  // The address the code went to, as the request sent it: the field may not have it any more.
+  const [sentTo, setSentTo] = useState("");
   const waiting = emailStep === "code";
   const [pending, start] = useTransition();
   const { showSnackbar } = useSnackbar();
@@ -58,6 +60,7 @@ export function KontaktClient({
         );
         if (result.emailRefused) showSnackbar(result.emailRefused, "warning");
         if (result.codeSent) {
+          setSentTo(patch.email ?? "");
           setCode("");
           setEmailStep("code");
         }
@@ -129,7 +132,7 @@ export function KontaktClient({
               id="kontakt-email"
               className="sb-input"
               type="email"
-              disabled={readOnly || waiting || emailStep === "done"}
+              disabled={readOnly || pending || waiting || emailStep === "done"}
               value={contact.email}
               onChange={set("email")}
             />
@@ -199,9 +202,8 @@ export function KontaktClient({
         {waiting && (
           <div className={styles.form} style={{ marginTop: 16 }}>
             <p className={styles.note}>
-              Vi har skickat en kod till <strong>{contact.email.trim()}</strong>
-              . Skriv in den här. Koden gäller i tio minuter. Sedan byts din
-              adress.
+              Vi har skickat en kod till <strong>{sentTo}</strong>. Skriv in den
+              här. Koden gäller i tio minuter. Sedan byts din adress.
             </p>
             <div className={styles.field}>
               <label className="sb-label" htmlFor="kontakt-kod">

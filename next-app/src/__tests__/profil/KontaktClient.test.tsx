@@ -196,6 +196,26 @@ describe("KontaktClient", () => {
     expect(email.value).toBe(initial.email);
   });
 
+  it("locks the e-mail as the request goes and shows the address it went to", async () => {
+    let answer: (value: { ok: true; codeSent: boolean }) => void = () => {};
+    vi.mocked(updateContact).mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    renderIt();
+    const email = screen.getByLabelText("E-post") as HTMLInputElement;
+    fireEvent.change(email, { target: { value: "ny@example.org" } });
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    await waitFor(() => expect(updateContact).toHaveBeenCalled());
+    expect(email.disabled).toBe(true);
+    fireEvent.change(email, { target: { value: "annan@example.org" } });
+    answer({ ok: true, codeSent: true });
+    await screen.findByLabelText("Kod");
+    expect(screen.getByText(/ny@example\.org/)).toBeDefined();
+    expect(screen.queryByText(/annan@example\.org/)).toBeNull();
+  });
+
   it("saves the other fields while a code waits without asking for another code", async () => {
     vi.mocked(updateContact).mockResolvedValue({ ok: true, codeSent: true });
     renderIt();
