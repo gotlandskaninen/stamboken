@@ -1,6 +1,12 @@
 "use client";
 
-import React, { useState, useEffect, useTransition, useCallback } from "react";
+import React, {
+  useState,
+  useEffect,
+  useRef,
+  useTransition,
+  useCallback,
+} from "react";
 import {
   Alert,
   Box,
@@ -32,6 +38,7 @@ import { LocalizationProvider } from "@mui/x-date-pickers/LocalizationProvider";
 import { AdapterDateFns } from "@mui/x-date-pickers/AdapterDateFns";
 import { sv } from "date-fns/locale";
 import { useTranslation } from "react-i18next";
+import { CheckPageNameHint } from "@/components/herd/CheckPageNameHint";
 import Link from "next/link";
 import { useMode } from "@/lib/mode-context";
 import type { PaginatedIndividualItem } from "@/redux/api/apiSlice";
@@ -40,8 +47,12 @@ import {
   NumberConflictDialog,
   PAPER_NUMBER,
 } from "@/components/herd/NumberConflictDialog";
+import { CoatChoice } from "@/components/herd/CoatChoice";
+import { ColorPicker, colorsFor } from "@/components/herd/ColorPicker";
 import {
   checkIndividualNumber,
+  getColors,
+  type ColorOption,
   registerIndividual,
   suggestIndividualNumber,
   type IndividualNumberSuggestion,
@@ -122,12 +133,15 @@ export function RegisterRabbitDialog({
   // Form state
   const [sex, setSex] = useState<string>("female");
   const [color, setColor] = useState("");
+  const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
+  const [colorsLoading, setColorsLoading] = useState(true);
   const [name, setName] = useState("");
   const [colorNote, setColorNote] = useState("");
   const [eyeColor, setEyeColor] = useState("");
   const [clawColor, setClawColor] = useState("");
   const [bellyColor, setBellyColor] = useState("");
   const [hairNotes, setHairNotes] = useState("");
+  const [rex, setRex] = useState(false);
   // A rabbit is only registered with a certificate. From a litter row digital is issued
   // in the roster; the shortcut issues it at once, so it is the default there.
   const defaultCertificateType = shortcut ? "digital" : "paper";
@@ -164,7 +178,11 @@ export function RegisterRabbitDialog({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<SuccessData | null>(null);
 
+  // Monotonic request id: an older response must not overwrite a newer one.
+  const suggestionReq = useRef(0);
+
   const fetchSuggestion = useCallback(async () => {
+    const req = ++suggestionReq.current;
     const litter =
       breedingId ??
       (motherNumber && fatherNumber && birthDateIso
@@ -177,10 +195,21 @@ export function RegisterRabbitDialog({
     if (litter === null) {
       setSuggestion(null);
       setLitterOrder(false);
+      setIsLoadingSuggestion(false);
       return;
     }
     setIsLoadingSuggestion(true);
-    const result = await suggestIndividualNumber(litter);
+    let result;
+    try {
+      result = await suggestIndividualNumber(litter);
+    } catch {
+      result = {
+        success: false as const,
+        error: t("litterRoster.suggestionError"),
+        errorTitle: undefined,
+      };
+    }
+    if (req !== suggestionReq.current) return;
     setIsLoadingSuggestion(false);
     if (result.success) {
       setSuggestion(result.data);
@@ -192,7 +221,7 @@ export function RegisterRabbitDialog({
       setLitterOrder(result.errorTitle === "litter_order_conflict");
       setError(result.error);
     }
-  }, [breedingId, motherNumber, fatherNumber, birthDateIso]);
+  }, [breedingId, motherNumber, fatherNumber, birthDateIso, t]);
 
   // Fetch suggestion when dialog opens
   useEffect(() => {
@@ -200,6 +229,24 @@ export function RegisterRabbitDialog({
       fetchSuggestion();
     }
   }, [open, success, fetchSuggestion]);
+
+  // Official colour list; empty (free text) if it cannot be loaded
+  useEffect(() => {
+    if (!open) return;
+    getColors()
+      .then((all) => {
+        const options = colorsFor(all, undefined, herdId);
+        setColorOptions(options);
+        // Text typed in the free-text fallback while loading must be on the list
+        setColor((prev) =>
+          options.length && prev && !options.some((o) => o.name === prev)
+            ? ""
+            : prev,
+        );
+      })
+      .catch(() => setColorOptions([]))
+      .finally(() => setColorsLoading(false));
+  }, [open, herdId]);
 
   // Paper: Stamboken's number for what the paper says (the dry run), shown once it is typed
   useEffect(() => {
@@ -256,6 +303,7 @@ export function RegisterRabbitDialog({
     setClawColor("");
     setBellyColor("");
     setHairNotes("");
+    setRex(false);
     setCertificateType(defaultCertificateType);
     setPaperCertificate("");
     setPaperNumber("");
@@ -316,6 +364,7 @@ export function RegisterRabbitDialog({
         claw_color: clawColor || undefined,
         belly_color: bellyColor || undefined,
         hair_notes: hairNotes || undefined,
+        rex,
         certificate_type: certificateType,
         paper_certificate: paper ? paperCertificate : undefined,
         paper_number: paper ? paperNumber.trim() : undefined,
@@ -750,12 +799,15 @@ export function RegisterRabbitDialog({
                 alignItems: "flex-start",
               }}
             >
-              <TextField
-                label={t("addRabbit.color")}
+              <ColorPicker
+                options={colorOptions}
+                loading={colorsLoading}
                 value={color}
-                onChange={(e) => setColor(e.target.value)}
-                size="small"
-                fullWidth
+                onChange={setColor}
+                genebank={
+                  herdId.startsWith("M") ? "Mellerudskanin" : "Gotlandskanin"
+                }
+                label={t("addRabbit.color")}
                 required
               />
               <FieldInfo
@@ -808,6 +860,9 @@ export function RegisterRabbitDialog({
               size="small"
               fullWidth
             />
+
+            {/* Coat: Normal or Rex */}
+            <CoatChoice rex={rex} onChange={setRex} />
 
             {/* Hair notes */}
             <TextField
@@ -904,6 +959,20 @@ export function RegisterRabbitDialog({
                   label={t("addRabbit.certificate")}
                 />
               </Box>
+              {certificateType === "digital" && (
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: "text.secondary",
+                    display: "block",
+                    mt: 0.5,
+                    ml: 1.5,
+                  }}
+                >
+                  {t("addRabbit.certificateAttester")}
+                </Typography>
+              )}
+              {certificateType === "digital" && <CheckPageNameHint />}
               {suggestion && !canIssueCertificate && (
                 <Typography
                   variant="caption"

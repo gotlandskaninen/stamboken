@@ -20,7 +20,7 @@ from tests.ht_helpers import ht_row
 
 SALE = date(2025, 10, 3)
 LAST = date(2025, 12, 31)
-BUYER = {"name": "Zelda Uniquebuyer", "town": "Visby"}
+BUYER = {"name": "Zelda Uniquebuyer", "town": "Visby", "postal_address": "Testgatan 1"}
 NOW = datetime(2026, 1, 5, 11, 0, tzinfo=timezone.utc)
 
 
@@ -69,7 +69,10 @@ class ProposalTest(ArsrapportTest):
         self.assertEqual(db.SaleProposal.select().count(), 0)
         proposal = self.propose(buyer={**BUYER, "email": "k@example.invalid", "contact_consent": True})
         self.assertEqual(proposal.buyer["email"], "k@example.invalid")
-        stored = self.propose(self.other, buyer=BUYER)  # name and town alone are stored
+        with self.assertRaisesRegex(HerdTrackingInvalid, "postadress"):
+            self.propose(self.other, buyer={**BUYER, "postal_address": ""})
+        stored = self.propose(self.other, buyer=BUYER)
+        self.assertEqual(stored.buyer["postal_address"], BUYER["postal_address"])
         self.assertEqual((stored.buyer["name"], stored.buyer["email"]), (BUYER["name"], None))
 
     def test_approve_writes_transfer_and_buyer_contact(self):

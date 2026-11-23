@@ -391,9 +391,52 @@ class TestEditDescription(IndividualTest):
         self._run(self.manager, EditDescription({"notes": "av manager"}))
         self.assertEqual(self._stored().notes, "av manager")
 
+    def test_edit_description_rex(self):
+        """rex is a description field: stored, and the command log has the change."""
+        self._run(self.owner, EditDescription({"rex": True}))
+        self.assertTrue(self._stored().rex)
+        entry = db.IndividualCommand.get(
+            db.IndividualCommand.individual == self.ind.id, db.IndividualCommand.command == "EditDescription"
+        )
+        self.assertEqual(entry.before, {"rex": False})
+        self.assertEqual(entry.after, {"rex": True})
+
     def test_unknown_color_message(self):
         refusal = self._refusal(self.owner, EditDescription({"color": "finns-inte"}))
         self.assertEqual(refusal.envelope, error("Unknown color: 'finns-inte''"))
+
+    def test_color_resolved_within_the_rabbits_genebank(self):
+        """Two genebanks may name a colour alike (Albino): the rabbit gets its own genebank's."""
+        gotland = db.Color.create(name="Albino", genebank=self.genebanks[0])
+        mellerud = db.Color.create(name="Albino", genebank=self.genebanks[1])
+        mellerud_rabbit = self.individuals[2]  # in M3
+        self._run(self.admin, EditDescription({"color": "Albino"}), ind=mellerud_rabbit)
+        self.assertEqual(self._stored(mellerud_rabbit).color_id, mellerud.id)
+        self._run(self.owner, EditDescription({"color": "Albino"}))
+        self.assertEqual(self._stored().color_id, gotland.id)
+
+    def test_stored_color_sent_back_unchanged_is_kept(self):
+        """Legacy sends the stored name on every save; a rabbit stored with another genebank's colour is not locked out."""
+        rabbit = self.individuals[2]  # in M3
+        rabbit.color = self.colors[0]  # Gotland's, not in Mellerud
+        rabbit.save()
+        self._run(self.admin, EditDescription({"color": "bleighe", "notes": "x"}), ind=rabbit)
+        self.assertEqual(self._stored(rabbit).color_id, self.colors[0].id)
+        self.assertEqual(self._stored(rabbit).notes, "x")
+        self.assertIn("Unknown color", self._refusal(self.admin, EditDescription({"color": "stgröhn"}), ind=rabbit).envelope["message"])
+
+    def test_wrong_genebank_albino_is_corrected_on_save(self):
+        gotland = db.Color.create(name="Albino", genebank=self.genebanks[0])
+        mellerud = db.Color.create(name="Albino", genebank=self.genebanks[1])
+        rabbit = self.individuals[2]
+        rabbit.color = gotland
+        rabbit.save()
+        self._run(self.admin, EditDescription({"color": "Albino"}), ind=rabbit)
+        self.assertEqual(self._stored(rabbit).color_id, mellerud.id)
+
+    def test_color_of_another_genebank_is_unknown(self):
+        refusal = self._refusal(self.admin, EditDescription({"color": "stgröhn"}), ind=self.individuals[2])
+        self.assertEqual(refusal.envelope, error("Unknown color: 'stgröhn''"))
 
     def test_color_by_name(self):
         self._run(self.owner, EditDescription({"color": "stgröhn"}))
@@ -406,21 +449,10 @@ class TestEditDescription(IndividualTest):
         self._run(self.owner, EditDescription({"castration_date": datetime(2024, 5, 1).date()}))
         self.assertEqual(self._stored().castration_date, datetime(2024, 5, 1).date())
 
-    def test_csv_line_format(self):
-        """Changed fields as {user},{number},{field},{old},{new}, and a date field always, with the parsed
-        date in the old column (IR-11, IR-50)."""
+    def test_changed_fields_are_stored(self):
         db.Individual.update(name="Bosse").where(db.Individual.id == self.ind.id).execute()
         changes = {"name": "Bosse", "notes": "ny", "color": "stgröhn", "castration_date": "2024-05-01"}
-        with self.assertLogs("Gotland_update", level="INFO") as logs:
-            self._run(self._name(self.owner), EditDescription(changes))
-        self.assertEqual(
-            logs.output,
-            [
-                "INFO:Gotland_update:owner,G1-2112,notes,None,ny,",
-                f"INFO:Gotland_update:owner,G1-2112,color,{self.colors[0].id},{self.colors[1].id},",
-                "INFO:Gotland_update:owner,G1-2112,castration_date,2024-05-01,2024-05-01,",
-            ],
-        )
+        self._run(self._name(self.owner), EditDescription(changes))
         stored = self._stored()
         self.assertEqual((stored.notes, stored.castration_date), ("ny", datetime(2024, 5, 1).date()))
 
@@ -482,9 +514,7 @@ class TestClearFields(IndividualTest):
         return stored.death_date, stored.death_note, stored.butchered
 
     def test_owner_clears_death_fields(self):
-        """No CSV line for the clearing (IR-51)."""
-        with self.assertNoLogs("Gotland_update"):
-            self._run(self._name(self.owner), ClearFields(self.DEATH_FIELDS))
+        self._run(self._name(self.owner), ClearFields(self.DEATH_FIELDS))
         self.assertEqual(self._death(), (None, None, None))
         self.assertEqual(self._stored().castration_date, datetime(2023, 1, 1).date())
 
@@ -746,18 +776,10 @@ class TestAssignPaperCertificate(IndividualTest):
         self._run(self.manager, AssignPaperCertificate(None), ind=ind)
         self.assertEqual(self._certs(ind), ("12", None))
 
-    def test_replaces_digital_certificate_with_csv_lines(self):
-        """IR-20: the digital number is cleared and logged, then the paper number."""
+    def test_replaces_digital_certificate(self):
+        """IR-20: the digital number is cleared, then the paper number is set."""
         db.Individual.update(digital_certificate=100000).where(db.Individual.id == self.ind.id).execute()
-        with self.assertLogs("Gotland_update", level="INFO") as logs:
-            self._run(self._name(self.manager), AssignPaperCertificate("P1"))
-        self.assertEqual(
-            logs.output,
-            [
-                "INFO:Gotland_update:man,G1-2112,digital_certificate,100000,'None',",
-                "INFO:Gotland_update:man,G1-2112,certificate,None,P1,",
-            ],
-        )
+        self._run(self._name(self.manager), AssignPaperCertificate("P1"))
         self.assertEqual(self._certs(), ("P1", None))
 
     def test_duplicate_certificate(self):
@@ -840,9 +862,7 @@ class TestRenameIndividual(IndividualTest):
         return self._stored(ind).number
 
     def test_owner_renames_uncertified(self):
-        with self.assertLogs("Gotland_update", level="INFO") as logs:
-            self._run(self._name(self.owner), RenameIndividual("G1-2119"))
-        self.assertEqual(logs.output, ["INFO:Gotland_update:owner,G1-2112,new_number,G1-2112,G1-2119,"])
+        self._run(self._name(self.owner), RenameIndividual("G1-2119"))
         self.assertEqual(self._number(), "G1-2119")
 
     def test_caretaker_renames_uncertified(self):
@@ -930,15 +950,6 @@ class TestMoveToLitter(IndividualTest):
         self._move(self.owner, litter)
         self.assertEqual((self._breeding(), self._stored().number), (litter.id, "G1-2112"))
         self.assertEqual(self._births(), [("G1", "2021-02-01")])
-
-    def test_csv_line(self):
-        """form_to_individual's field line, with the litters' ids."""
-        litter = self._litter()
-        with self.assertLogs("Gotland_update", level="INFO") as logs:
-            self._move(self._name(self.owner), litter)
-        self.assertEqual(
-            logs.output, [f"INFO:Gotland_update:owner,G1-2112,breeding,{self.breeding[0].id},{litter.id},"]
-        )
 
     def test_caretaker_moves_uncertified(self):
         litter = self._litter()
@@ -1028,15 +1039,7 @@ class TestChangeOriginHerd(IndividualTest):
         return [(r.herd.herd, r.voided_reason) for r in rows.order_by(db.HerdTracking.id)]
 
     def test_manager_changes_origin(self):
-        with self.assertLogs("Gotland_update", level="INFO") as logs:
-            self._change(self._name(self.manager), "G2")
-        self.assertEqual(
-            logs.output,
-            [
-                f"INFO:Gotland_update:man,G1-2113,origin_herd,{self.herds[0].id},{self.herds[1].id},",
-                "INFO:Gotland_update:man,G1-2113,new_origin_herd,G1,G2,",
-            ],
-        )
+        self._change(self._name(self.manager), "G2")
         self.assertEqual(self._origin(), "G2")
         self.assertEqual(self._birth_history(), [("G1", BIRTH_HERD_CHANGED_REASON), ("G2", None)])
 
@@ -1094,7 +1097,7 @@ class TestChangeOriginHerd(IndividualTest):
         self.assertEqual(self._origin(), "G1")
 
     def test_moved_rabbit_cross_genebank_409(self):
-        """IR-56: after the save and the CSV line, before the BIRTH row is replaced."""
+        """IR-56: after the save, before the BIRTH row is replaced."""
         ht_row(
             "TRANSFER",
             from_herd=self.herds[0],
@@ -1102,16 +1105,8 @@ class TestChangeOriginHerd(IndividualTest):
             individual=self.kit,
             herd_tracking_date=datetime(2021, 6, 1),
         )
-        with self.assertLogs("Gotland_update", level="INFO") as logs:
-            refusal = self._refused(self._name(self.admin), "M3", HerdTrackingConflict, reason="Felregistrerad")
+        refusal = self._refused(self._name(self.admin), "M3", HerdTrackingConflict, reason="Felregistrerad")
         self.assertEqual((refusal.status, refusal.detail), (409, self.MOVED))
-        self.assertEqual(
-            logs.output,
-            [
-                f"INFO:Gotland_update:admin,G1-2113,origin_herd,{self.herds[0].id},{self.herds[2].id},",
-                "INFO:Gotland_update:admin,G1-2113,new_origin_herd,G1,M3,",
-            ],
-        )
         self.assertEqual((self._origin(), self._birth_history()), ("G1", [("G1", None)]))
 
     def test_move_and_cross_genebank_origin_in_one_request_409(self):
@@ -1163,17 +1158,9 @@ class TestChangeOriginHerd(IndividualTest):
 
 class TestIssueDigitalCertificate(IndividualTest):
     def test_issue_assigns_next_number_and_clears_paper(self):
-        """IR-20, IR-21: MAX+1 (100000 when there is none), and the paper number is cleared and logged."""
+        """IR-20, IR-21: MAX+1 (100000 when there is none), and the paper number is cleared."""
         ind = self.individuals[0]  # G1-2111, paper "12"
-        with self.assertLogs("Gotland_update", level="INFO") as logs:
-            self._run(self._name(self.owner), IssueDigitalCertificate(), ind=ind)
-        self.assertEqual(
-            logs.output,
-            [
-                "INFO:Gotland_update:owner,G1-2111,certificate,12,'None',",
-                "INFO:Gotland_update:owner,G1-2111,digital_certificate,None,100000,",
-            ],
-        )
+        self._run(self._name(self.owner), IssueDigitalCertificate(), ind=ind)
         self.assertEqual(self._certs(ind), (None, 100000))
 
     def test_two_issues_in_sequence_get_consecutive_numbers(self):
@@ -1301,6 +1288,12 @@ class TestLegacyAdapter(IndividualTest, FlaskTest):
         self.assertEqual((response.status_code, response.get_json()), (200, error("Individual number already exists")))
         self.assertEqual((self._stored().number, self._stored(other).number), ("G1-2112", "G1-2111"))
 
+    def test_legacy_patch_never_changes_rex(self):
+        db.Individual.update(rex=True).where(db.Individual.id == self.ind.id).execute()
+        response = self._client(self.owner).patch("/api/individual", json=self._body(notes="ny", rex=False))
+        self.assertEqual((response.status_code, response.get_json()["status"]), (200, "success"))
+        self.assertEqual((self._stored().notes, self._stored().rex), ("ny", True))
+
     def test_numeric_certificate_echo_is_a_collision(self):
         """IR-49: 12 for the stored "12" is no AssignPaperCertificate, but LegacyFormChecks compares it raw."""
         ind = self.individuals[0]
@@ -1315,22 +1308,16 @@ class TestLegacyAdapter(IndividualTest, FlaskTest):
         body = self._body(origin_herd={"herd": "G2"}, breeding=None)
         self.assertEqual(da.update_individual(body, self.manager.uuid), error("Unknown breeding event: 'None''"))
 
-    def test_herd_event_csv_line(self):
-        """Today's line: the key the date came from (selling_date when set), the holder before the request, the
-        herd as sent or its object's code, and the parsed date."""
-        owner = self._name(self.owner)
+    def test_herd_event_date_key(self):
+        """The date comes from selling_date when set, else yearly_report_date; herd as sent or as its object."""
+        owner = self.owner
         cases = (
-            (
-                {"herd": {"herd": "G1"}, "selling_date": "2021-06-01", "yearly_report_date": "2021-07-01"},
-                "selling_date,G1,G1",
-            ),
-            ({"herd": "G2", "selling_date": None, "yearly_report_date": "2021-07-01"}, "yearly_report_date,G1,G2"),
+            {"herd": {"herd": "G1"}, "selling_date": "2021-06-01", "yearly_report_date": "2021-07-01"},
+            {"herd": "G2", "selling_date": None, "yearly_report_date": "2021-07-01"},
         )
-        for fields, line in cases:
-            with self.subTest(line=line), self.assertLogs("Gotland_update", level="INFO") as logs:
+        for fields in cases:
+            with self.subTest(fields=fields):
                 self.assertEqual(da.update_individual(self._body(**fields), owner.uuid), UPDATED)
-            date = fields["selling_date"] or fields["yearly_report_date"]
-            self.assertEqual(logs.output, [f"INFO:Gotland_update:owner,G1-2112,{line},{date} 00:00:00"])
 
     def test_legacy_rename_moves_the_assets_once(self):
         """IR-23: one record of the move, finished on return although both update_individual and execute finish."""
@@ -1370,8 +1357,7 @@ class TestLegacyAdapter(IndividualTest, FlaskTest):
         db.Individual.create(origin_herd=self.herds[0], breeding=litter, number="G1-2301")
         notes = self._stored().notes
         client = self._client(self._name(self.owner))
-        with self.assertNoLogs("Gotland_update", level="INFO"):
-            response = client.patch("/api/individual", json=self._body(notes="ny", breeding=litter.id))
+        response = client.patch("/api/individual", json=self._body(notes="ny", breeding=litter.id))
         self.assertEqual((response.get_json(), self._stored().notes), (dict(CYCLE_PROBLEM), notes))
 
 

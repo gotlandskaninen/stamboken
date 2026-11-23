@@ -136,11 +136,6 @@
   border-color: var(--sb-line);
   color: var(--sb-ink-2);
 }
-.bannerWarning {
-  background: var(--sb-warning-soft);
-  border-color: var(--sb-warning);
-  color: var(--sb-ink-2);
-}
 
 .switchRow.switchRow {
   display: flex;

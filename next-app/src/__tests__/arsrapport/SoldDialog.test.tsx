@@ -35,6 +35,7 @@ function dialog(
       existing={existing}
       submitted={submitted}
       canSell={canSell}
+      addressRequired
       onSave={onSave}
       onClose={vi.fn()}
     />,
@@ -52,6 +53,7 @@ function expectBuyerAsked() {
   for (const [field, text] of [
     [name, "Skriv köparens namn."],
     [town, "Skriv köparens ort."],
+    [screen.getByLabelText(/^Postadress/), "Skriv köparens postadress."],
   ] as const) {
     expect(field.getAttribute("aria-invalid")).toBe("true");
     const described = field.getAttribute("aria-describedby") ?? "";
@@ -133,6 +135,9 @@ describe("SoldDialog", () => {
     fireEvent.change(screen.getByLabelText(/^Ort/), {
       target: { value: "Visby" },
     });
+    fireEvent.change(screen.getByLabelText(/^Postadress/), {
+      target: { value: "Testgatan 1" },
+    });
     fireEvent.click(
       screen.getByLabelText(
         "Köparen har kryssat ja: föreningen får kontakta köparen om medlemskap",
@@ -153,6 +158,7 @@ describe("SoldDialog", () => {
       kopare: {
         name: "Ola Köpare",
         town: "Visby",
+        postal_address: "Testgatan 1",
         contact_consent: false,
         membership_optin: true,
         email: "ola@example.invalid",
@@ -198,6 +204,9 @@ describe("SoldDialog", () => {
     });
     fireEvent.change(screen.getByLabelText(/^Ort/), {
       target: { value: "Visby" },
+    });
+    fireEvent.change(screen.getByLabelText(/^Postadress/), {
+      target: { value: "Testgatan 1" },
     });
     save();
     expect(onSave).toHaveBeenCalledWith(

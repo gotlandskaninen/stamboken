@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { showAllStatuses } from "../e2e-shared/explorer";
 
 // Story 3.3 — below 900px the explorer is a tappable list, not the DataGrid.
 // Auth via storageState (gk-owner); runs against the real API + seed data.
@@ -28,6 +29,7 @@ test.describe("Rabbit Explorer — mobile (375px)", () => {
     await page.goto("/stamboken/alla-kaniner");
     await expect(page.locator(rows).first()).toBeVisible({ timeout: 15000 });
 
+    await showAllStatuses(page);
     await page.getByPlaceholder(/Sök/).fill("Visby Viking");
     await expect(page.locator(rows).first()).toContainText("Visby Viking", {
       timeout: 10000,
@@ -38,6 +40,20 @@ test.describe("Rabbit Explorer — mobile (375px)", () => {
     test.setTimeout(90000);
     await page.goto("/stamboken/alla-kaniner");
     await expect(page.locator(rows).first()).toBeVisible({ timeout: 15000 });
+    // Only status Alla and ras Alla together give the seed more than one page
+    // (48 Gotland rabbits at 50 per page); the old default was both.
+    await showAllStatuses(page);
+    await Promise.all([
+      page.waitForResponse(
+        (r) =>
+          r.url().includes("/api/individuals") &&
+          !r.url().includes("genebank_id="),
+      ),
+      page.getByRole("button", { name: "Alla", exact: true }).click(),
+    ]);
+    await expect(page.getByRole("button", { name: "Visa fler" })).toBeVisible({
+      timeout: 10000,
+    });
     const hrefs = () =>
       page
         .locator(rows)

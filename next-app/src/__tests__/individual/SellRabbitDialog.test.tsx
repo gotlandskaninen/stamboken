@@ -125,12 +125,15 @@ describe("SellRabbitDialog", () => {
 
   describe("buyer outside the association", () => {
     const CONSENT =
-      "Köparen har kryssat ja: föreningen får spara adress, e-post och telefon så länge köparen har kaninen";
+      "Köparen har kryssat ja: föreningen får spara e-post och telefon så länge köparen har kaninen";
     const OPTIN =
       "Köparen har kryssat ja: föreningen får kontakta köparen om medlemskap";
 
-    async function chooseOutside(onConfirm = vi.fn()) {
-      render(dialog({ onConfirm }));
+    async function chooseOutside(
+      onConfirm = vi.fn(),
+      canResellOutside = false,
+    ) {
+      render(dialog({ onConfirm, canResellOutside }));
       const options = await openHerdOptions();
       fireEvent.click(options[0]); // GX1
       return onConfirm;
@@ -162,25 +165,41 @@ describe("SellRabbitDialog", () => {
       ).toBeTruthy();
     });
 
-    it("requires name and town before the sale can be confirmed", async () => {
+    it("requires name, town and address before an owner can confirm the sale", async () => {
       await chooseOutside();
       acknowledge();
       expect(confirmButton().disabled).toBe(true);
       type(/Köparens namn/, "Anna Köpare");
       expect(confirmButton().disabled).toBe(true);
       type(/^Ort/, "Visby");
+      expect(confirmButton().disabled).toBe(true);
+      type(/^Postadress/, "Väg 1");
       await waitFor(() => expect(confirmButton().disabled).toBe(false));
     });
 
-    it("shows the contact fields only after the matching yes", async () => {
+    it("lets a manager confirm without the address (old papers)", async () => {
+      await chooseOutside(vi.fn(), true);
+      acknowledge();
+      type(/Köparens namn/, "Anna Köpare");
+      type(/^Ort/, "Visby");
+      await waitFor(() => expect(confirmButton().disabled).toBe(false));
+    });
+
+    it("shows the address always, e-mail and phone only after a yes", async () => {
       await chooseOutside();
+      const labels: [string, RegExp][] = [
+        ["Postadress", /^Postadress/],
+        ["E-post", /^E-post/],
+        ["Telefon", /^Telefon/],
+      ];
       const shown = () =>
-        ["Postadress", "E-post", "Telefon"].filter(
-          (label) => screen.queryByLabelText(label) !== null,
-        );
-      expect(shown()).toEqual([]);
+        labels
+          .filter(([, label]) => screen.queryByLabelText(label) !== null)
+          .map(([name]) => name);
+      expect(shown()).toEqual(["Postadress"]);
       fireEvent.click(screen.getByRole("checkbox", { name: OPTIN }));
-      expect(shown()).toEqual(["E-post", "Telefon"]);
+      expect(shown()).toEqual(["Postadress", "E-post", "Telefon"]);
+      fireEvent.click(screen.getByRole("checkbox", { name: OPTIN }));
       fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
       expect(shown()).toEqual(["Postadress", "E-post", "Telefon"]);
     });
@@ -189,9 +208,10 @@ describe("SellRabbitDialog", () => {
       const onConfirm = await chooseOutside();
       type(/Köparens namn/, " Anna Köpare ");
       type(/^Ort/, "Visby");
+      type(/^Postadress/, "Väg 1"); // no yes needed for the address
       fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
-      type(/Postadress/, "Väg 1");
       type(/E-post/, "anna@example.org");
+      type(/^Telefon/, "0700000000");
       fireEvent.click(screen.getByRole("checkbox", { name: CONSENT })); // takes it back
       fireEvent.click(screen.getByRole("checkbox", { name: OPTIN }));
       acknowledge();
@@ -202,8 +222,32 @@ describe("SellRabbitDialog", () => {
         town: "Visby",
         contact_consent: false,
         membership_optin: true,
+        postal_address: "Väg 1",
         email: "anna@example.org",
+        phone: "0700000000",
       });
+    });
+
+    it("drops e-mail and phone when both boxes are unticked, keeps the address", async () => {
+      const onConfirm = await chooseOutside();
+      type(/Köparens namn/, "Anna Köpare");
+      type(/^Ort/, "Visby");
+      type(/^Postadress/, "Väg 1");
+      fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
+      type(/E-post/, "anna@example.org");
+      type(/^Telefon/, "0700000000");
+      fireEvent.click(screen.getByRole("checkbox", { name: CONSENT })); // takes it back, no other yes
+      acknowledge();
+      await waitFor(() => expect(confirmButton().disabled).toBe(false));
+      fireEvent.click(confirmButton());
+      const sent = onConfirm.mock.calls[0][2];
+      expect(sent).toMatchObject({
+        postal_address: "Väg 1",
+        contact_consent: false,
+        membership_optin: false,
+      });
+      expect(sent.email ?? "").toBe("");
+      expect(sent.phone ?? "").toBe("");
     });
 
     it("offers GX1 again for a rabbit already in GX1, to a manager only", async () => {

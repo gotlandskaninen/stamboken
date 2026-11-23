@@ -30,8 +30,8 @@ from tests.test_arsrapport_pdf import text_of
 
 DAY0 = date(2026, 1, 10)
 LAST = date(2025, 12, 31)
-BUYER = {"name": "Zelda Uniquebuyer", "town": "Visby"}
-OTHER_BUYER = {"name": "Ylva Otherbuyer", "town": "Slite"}
+BUYER = {"name": "Zelda Uniquebuyer", "town": "Visby", "postal_address": "Testgatan 1"}
+OTHER_BUYER = {"name": "Ylva Otherbuyer", "town": "Slite", "postal_address": "Testgatan 1"}
 NOW = datetime(2026, 1, 12, 11, 0, tzinfo=timezone.utc)
 PENDING_SALE_TEXT = "Försäljningen väntar på genbanksansvarig. Kaninen står kvar hos dig tills den är godkänd."
 
@@ -240,7 +240,7 @@ class ProposalsTest(ArsrapportTest):
         )
         self.assertEqual([p.state for p in proposals(self.a)], ["foreslagen"])
         self.send(
-            self.sald(self.a, "utanfor", 2025, 10, 3, kopare=OTHER_BUYER),
+            self.sald(self.a, "utanfor", 2025, 10, 3, kopare={**OTHER_BUYER, "postal_address": ""}),
             self.kvar(self.b, vikt=3.0),
             self.kvar(self.c, vikt=2.8),
             revision=2,

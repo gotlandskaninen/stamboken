@@ -145,6 +145,44 @@ describe("MembershipFormCard — retire re-bases the status select", () => {
   });
 });
 
+describe("MembershipFormCard — retired state", () => {
+  const person = (role: string) =>
+    ({ role, end_date: null }) as MembershipDetail["persons"][number];
+  const inactive = (...roles: string[]) => ({
+    ...MEMBERSHIP,
+    membership_status: "inactive" as const,
+    persons: roles.map(person),
+  });
+  const avsluta = () =>
+    screen.queryByRole("button", { name: "Avsluta medlemskap" });
+  const locked = () =>
+    screen.getByRole("combobox").getAttribute("aria-disabled") === "true";
+
+  it("locks the select and hides Avsluta when inactive with no active person", () => {
+    render(<MembershipFormCard membership={inactive()} />);
+
+    expect(locked()).toBe(true);
+    expect(screen.getByText(/kan inte återaktiveras/)).toBeInTheDocument();
+    expect(avsluta()).not.toBeInTheDocument();
+  });
+
+  it("still offers Avsluta when inactive but the main member remains", () => {
+    render(<MembershipFormCard membership={inactive("huvudmedlem")} />);
+
+    expect(avsluta()).toBeInTheDocument();
+    expect(locked()).toBe(false);
+  });
+
+  // The backend answers 409 here: inactive without a huvudmedlem is its RETIRED.
+  it("locks the select but keeps Avsluta when only a family member is left", () => {
+    render(<MembershipFormCard membership={inactive("familjemedlem")} />);
+
+    expect(locked()).toBe(true);
+    expect(screen.getByText(/saknar huvudmedlem/)).toBeInTheDocument();
+    expect(avsluta()).toBeInTheDocument();
+  });
+});
+
 describe("MembershipFormCard — annan fakturaadress", () => {
   const billingBox = () =>
     screen.getByRole("checkbox", { name: "Annan fakturaadress" });

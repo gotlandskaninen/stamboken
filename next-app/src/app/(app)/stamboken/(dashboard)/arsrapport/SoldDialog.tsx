@@ -35,6 +35,7 @@ interface Props {
   loadHerds: typeof getGenebankHerds;
   existing: SaldState | null; // a saved sale: its buyer fields start empty (Task 6)
   submitted: BodyEntry["sald"] | null; // the sale in the report's latest submission, whose buyer is stored
+  addressRequired: boolean;
   canSell: boolean; // a proposal takes no kept buyer (F1, K1)
   onSave: (s: SaldState) => void;
   onClose: () => void;
@@ -148,6 +149,7 @@ function Body({
   existing,
   submitted,
   canSell,
+  addressRequired,
   onSave,
   onClose,
 }: Props) {
@@ -188,8 +190,10 @@ function Body({
     buyer.email,
     buyer.phone,
   ].some((v) => v.trim());
-  const buyerHalf = typed && !buyerComplete(buyer);
-  const buyerMissing = outside && !kept && !stored && !buyerComplete(buyer);
+  const needsAddress = addressRequired && !stored;
+  const complete = buyerComplete(buyer, needsAddress);
+  const buyerHalf = typed && !complete;
+  const buyerMissing = outside && !kept && !stored && !complete;
   const buyerWanted = outside && (buyerMissing || buyerHalf);
   // Each refusal beside its field, all at once once Spara is pressed.
   const errors = {
@@ -201,6 +205,10 @@ function Body({
         : null,
     name: buyerWanted && !buyer.name.trim() ? "Skriv köparens namn." : null,
     town: buyerWanted && !buyer.town.trim() ? "Skriv köparens ort." : null,
+    postal_address:
+      buyerWanted && needsAddress && !buyer.postal_address.trim()
+        ? "Skriv köparens postadress."
+        : null,
     month: manad === null ? "Välj månad." : null,
   };
   const problem = Object.values(errors).some(Boolean);
@@ -223,7 +231,7 @@ function Body({
       ar,
       manad,
       dag: dag ? Number(dag) : null,
-      kopare: outside && buyerComplete(buyer) ? buyerPayload(buyer) : null,
+      kopare: outside && complete ? buyerPayload(buyer) : null,
       ...(outside && existing?.kopare_id != null
         ? { kopare_id: existing.kopare_id }
         : {}),
@@ -300,10 +308,12 @@ function Body({
             <BuyerFields
               variant="member"
               value={buyer}
+              addressRequired={needsAddress}
               onChange={setBuyer}
               errors={{
                 name: shown(errors.name) ?? undefined,
                 town: shown(errors.town) ?? undefined,
+                postal_address: shown(errors.postal_address) ?? undefined,
               }}
             />
             {!kept && (

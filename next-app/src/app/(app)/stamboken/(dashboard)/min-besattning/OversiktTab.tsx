@@ -15,6 +15,7 @@ import {
 } from "./min-besattning-ui";
 import BesattningsuppgifterCard from "./BesattningsuppgifterCard";
 import { fmtDate, type MyReport } from "../arsrapport/lib";
+import OnboardingChecklist from "./OnboardingChecklist";
 import styles from "./min-besattning.module.css";
 
 interface OversiktTabProps {
@@ -117,6 +118,13 @@ export default function OversiktTab({
 
   return (
     <div>
+      <OnboardingChecklist
+        herd={herd}
+        breedings={breedings}
+        herdNumber={herdNumber}
+        onGoTab={onGoTab}
+        onNewMating={onNewMating}
+      />
       <div className={`sb-card ${styles["mb-stats"]}`}>
         <MbStat
           num={stats.active}

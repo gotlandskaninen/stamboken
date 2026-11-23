@@ -30,7 +30,7 @@ from tests.ht_helpers import count_queries, ht_row
 
 LAST = date(2025, 12, 31)
 NOW = datetime.combine(date(2026, 1, 15), clock(12), arsrapport.STOCKHOLM)
-BUYER = {"name": "Test Köpare", "town": "Visby"}
+BUYER = {"name": "Test Köpare", "town": "Visby", "postal_address": "Testgatan 1"}
 KEY_TAKEN = "Rapporten är redan skickad med den här nyckeln. Ladda om sidan."
 WRITTEN = (
     db.HerdTracking,

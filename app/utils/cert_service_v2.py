@@ -11,17 +11,17 @@ import os
 import uuid
 from datetime import date
 
-from peewee import fn
-
 import utils.data_access as da
 import utils.database as db
 from utils import number_assets
 from utils.cert_acess import get_certificate_data, upload_certificate, upload_certificate_v2
+from utils.certificate_lifecycle import Event, check
 from utils.certificates_v2 import (
     CertificateGeneratorV2,
     compute_checksum,
     sign_pdf,
 )
+from utils.fargatlas import ATLAS_FARGER
 from utils.individual_number_v2 import validate_first_certificate
 from utils.settings import certs as cert_settings
 from utils.settings import service as service_settings
@@ -30,16 +30,27 @@ logger = logging.getLogger("herdbook.cert_service_v2")
 
 _generator = CertificateGeneratorV2()
 
+_ATLAS = {(id_, code, name) for id_, code, name, _ in ATLAS_FARGER}
+
 # Association-level signature metadata. Föreningen Gotlandskaninen issues
 # certificates for both the Gotlandskanin and Mellerudskanin genebanks, so the
 # signer (the association) is the same regardless of which genebank the
 # individual belongs to. The reason text mentions the specific genebank for
 # traceability, but the contact info is the association's single address.
 _ASSOCIATION_CONTACT = "admin@gotlandskaninen.se"
-_GENEBANK_TO_BREED = {
+_GENEBANK_TO_BREED = {  # the short names, and the full ones that `flask seed create` gives the genebanks
     "Gotland": "Gotlandskanin",
     "Mellerud": "Mellerudskanin",
+    "Gotlandskanin": "Gotlandskanin",
+    "Mellerudskanin": "Mellerudskanin",
 }
+
+
+def _breed_for(individual):
+    genebank_name = ""
+    if individual.origin_herd and individual.origin_herd.genebank:
+        genebank_name = individual.origin_herd.genebank.name or ""
+    return _GENEBANK_TO_BREED.get(genebank_name, "genbankskanin")
 
 
 def _signature_metadata_for(individual):
@@ -49,10 +60,7 @@ def _signature_metadata_for(individual):
     so contact_info is constant. The reason is parameterised with the breed
     name of the individual's origin genebank for traceability.
     """
-    genebank_name = ""
-    if individual.origin_herd and individual.origin_herd.genebank:
-        genebank_name = individual.origin_herd.genebank.name or ""
-    breed = _GENEBANK_TO_BREED.get(genebank_name, "genbankskanin")
+    breed = _breed_for(individual)
     reason = f"Signerat av Föreningen Gotlandskaninen för {breed}"
     if cert_settings.demo_watermark:
         reason = f"DEMO – EJ GILTIGT INTYG. {reason}"
@@ -70,12 +78,25 @@ def build_cert_data(individual, ind_data, user_id):
     raw_color_note = ind_data.get("color_note") or ""
 
     cert_data = get_certificate_data(ind_data, user_id)
+    # The person who issues attests personally: "fullname" stays the issuing user's from get_certificate_data, not
+    # the herd holder's, so a family member or caretaker signs in her own name (Jonas 2026-11-23). The herd is the
+    # origin herd, not the one the rabbit is in now, which after a sale is the buyer's or GX1/MX1.
+    breeder = individual.origin_herd
+    cert_data["herd"] = breeder.herd if breeder else ""
     cert_data["notes"] = raw_notes
     cert_data["color_note"] = raw_color_note
     cert_data["foot_ring"] = ind_data.get("foot_ring") or ""
-    # Color-code system (herdbookcolors) is not in the DB yet — the template
-    # skips the chip when empty.
-    cert_data["color_code"] = ""
+    # None until the rex column exists (colour atlas PR 2); then the certificate prints Päls: Normal or Rex
+    cert_data["rex"] = getattr(individual, "rex", None)
+    cert_data["microchip"] = individual.microchip or ""
+    cert_data["breed"] = _breed_for(individual).capitalize()
+    # The colour's id is its atlas number; the template skips the chip when empty.
+    # Print the number only when id and name are the atlas's: another genebank's colour, or a database
+    # seeded before the ids were fixed, would print a wrong number. shortcut: a colour outside the atlas
+    # prints none, upgrade when the association adds colours of its own.
+    color = individual.color
+    atlas = color is not None and (color.id, color.genebank.name[0], color.name) in _ATLAS
+    cert_data["color_code"] = str(color.id) if atlas else ""
     cert_data["issue_date"] = date.today().isoformat()
     cert_data["public_url"] = f"gotlandskaninen.se/stamboken/individ/{individual.number}"
     cert_data["digital_certificate"] = individual.digital_certificate
@@ -95,7 +116,35 @@ def compute_doc_hash_stub(cert_data):
     return compute_checksum(canonical.encode("utf-8"))[:8].upper()
 
 
-def generate_and_store(individual, user, ind_data, user_id):
+# The person who issues attests in her own name, so an account without one cannot issue (#141).
+ATTESTER_NAME_MISSING = (
+    "Ditt konto saknar namn, och den som utfärdar står som intygare på intyget. "
+    "Mejla stamboken@gotlandskaninen.se så lägger vi in det, och försök sedan igen."
+)
+
+
+def attester_name(user):
+    """The issuing user's name as it goes on the certificate, or "" when the account has none."""
+    return ((user.fullname if user else None) or "").strip()
+
+
+def issuer_role(user, individual):
+    """
+    The role `user` issues the rabbit's certificate in, for "Intygas av" on the check page (stamboken #6, Jonas
+    2026-11-23): anyone with access to the origin herd (family, caretaker) is the breeder; else an admin or the
+    genebank's manager issues for the association.
+    """
+    herd = individual.origin_herd
+    if herd and herd.id in user.effective_herd_ids():  # by id: a herd code is unique only within a genebank
+        return "breeder"
+    if user.is_admin:
+        return "admin"
+    if herd and herd.genebank_id in (user.is_manager or []):
+        return "manager"
+    return "breeder"
+
+
+def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False):
     """Generate, sign, and store a v2 certificate.
 
     Order of operations (Fix 2 — failure-safe ordering):
@@ -106,7 +155,7 @@ def generate_and_store(individual, user, ind_data, user_id):
        then the legacy v1 key ({ind_number}/certificate.pdf, overwritten
        per re-issue)
     4. In a DATABASE.atomic() transaction: create DigitalCertificateV2 row
-       + flip old rows is_current=False
+       + retire the old current row
 
     The blueprint wraps this call in an outer DATABASE.atomic() together with
     update_individual, so a signing/S3 failure also rolls back the
@@ -132,6 +181,8 @@ def generate_and_store(individual, user, ind_data, user_id):
         .first()
     )
     cert_data["replaces_date"] = prev.issued_at.date().isoformat() if prev else ""
+    # Reissue of a v1 certificate (a PDF without a v2 row): v1 kept no issue date, so the line names the number.
+    cert_data["replaces_v1"] = bool(replaces_v1 and not prev)
     cert_data["doc_hash_stub"] = compute_doc_hash_stub(cert_data)
 
     # Step 1: Generate + sign PDF (no DB/S3 side effects yet)
@@ -162,47 +213,19 @@ def generate_and_store(individual, user, ind_data, user_id):
 
     # Step 4: DB transaction — create row + flip old rows
     with db.DATABASE.atomic():
-        (
-            db.DigitalCertificateV2.update(is_current=False)
-            .where(
-                (db.DigitalCertificateV2.individual == individual) & (db.DigitalCertificateV2.is_current == True)  # noqa: E712
-            )
-            .execute()
-        )
-        cert_row = db.DigitalCertificateV2.create(
-            individual=individual,
+        before = individual.cert_state()
+        cert_row = db.DigitalCertificateV2.issue_current(
+            individual,
             verification_token=token,
             certificate_type="pedigree",
             issued_by=user,
+            issued_as=issuer_role(user, individual),
             file_path=file_path,
             checksum=sha,
-            is_current=True,
         )
+        check(before, Event.ISSUE_PDF, individual.cert_state())
 
     return cert_row, signed_pdf
-
-
-def assign_certificate_number(individual):
-    """Assign the next digital certificate number directly to the individual.
-
-    Scoped write for issuance by the breeder (origin herd) when the rabbit
-    has moved to another herd: can_issue_certificate() authorizes on
-    origin_herd, but update_individual() requires can_edit() on the current
-    herd and would reject the request. Mirrors IssueDigitalCertificate
-    (utils/individual_commands.py), which update_individual() runs for
-    issue_digital: the next number, and any paper certificate cleared.
-
-    Writes only the certificate columns: `individual` may have been read
-    before the caller's lock, and a full save would restore a death, origin
-    correction or renumber committed since.
-    """
-    nextval = 100000
-    max_number = db.Individual.select(fn.MAX(db.Individual.digital_certificate)).scalar()
-    if max_number is not None:
-        nextval = max_number + 1
-    individual.digital_certificate = nextval
-    individual.certificate = None
-    individual.save(only=[db.Individual.digital_certificate, db.Individual.certificate, db.Individual.updated_at])
 
 
 def normalize_color(form, individual):

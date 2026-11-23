@@ -29,7 +29,7 @@ from tests.ht_helpers import ht_row
 
 DAY0 = date(2026, 1, 10)
 LAST = date(2025, 12, 31)
-BUYER = {"name": "Zelda Uniquebuyer", "town": "Visby"}
+BUYER = {"name": "Zelda Uniquebuyer", "town": "Visby", "postal_address": "Testgatan 1"}
 KEPT = arsrapport.REJECTED_KVAR  # S6: the Ej vägd reason a kvar rejection writes
 
 
@@ -137,7 +137,7 @@ class ProposalApiTest(ArsrapportTest):
                 "number": self.a.number,
                 "name": None,
                 "to_herd": None,
-                "buyer": BUYER,
+                "buyer": {"name": BUYER["name"], "town": BUYER["town"]},  # K7: name and town only
                 "sale_date": "2025-10-03",
                 "day_known": True,
                 "buyer_notified_at": "2026-01-11T00:00:00+00:00",

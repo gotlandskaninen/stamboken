@@ -8,9 +8,6 @@ import type { UserContext } from "@/lib/user-context";
 import { updateProfilePicture, updateSettings } from "./actions";
 import styles from "./profil.module.css";
 
-const COURSE_URL =
-  "https://classroom.google.com/c/NjE3MDI1MzY2OTAz?cjc=27x3zpg";
-
 export function KontoCard({ user }: { user: UserContext }) {
   const { showSnackbar } = useSnackbar();
   const { addNotification } = useNotifications();
@@ -128,31 +125,7 @@ export function KontoCard({ user }: { user: UserContext }) {
               Ägare {herd}
             </span>
           ))}
-          {user.validated ? (
-            <span className="sb-badge sb-badge-skog">Validerad</span>
-          ) : (
-            <span className={`sb-badge ${styles.badgeWarning}`}>
-              Inte validerad
-            </span>
-          )}
         </div>
-        {!user.validated && (
-          <div
-            className={`${styles.banner} ${styles.bannerWarning}`}
-            style={{ marginTop: 16 }}
-          >
-            <strong>För att bli validerad:</strong> Du måste genomgå kursen för
-            att få full åtkomst till systemet.{" "}
-            <a
-              className="sb-link"
-              href={COURSE_URL}
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              Gå kursen nu
-            </a>
-          </div>
-        )}
         <hr className={`sb-rule ${styles.rule}`} />
         {user.google_picture && (
           <>

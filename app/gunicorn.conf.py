@@ -3,6 +3,9 @@
 import logging
 import os
 import re
+from urllib.parse import quote
+
+from gunicorn.glogging import Logger
 
 # Server socket
 bind = "0.0.0.0:9090"
@@ -17,7 +20,21 @@ timeout = 120
 keepalive = int(os.getenv("GUNICORN_KEEPALIVE", "75"))
 
 # Logging
+
+
+class QuotingLogger(Logger):
+    """%(U)s is the decoded path; quote it so a %0A cannot forge a log line."""
+
+    def atoms(self, resp, req, environ, request_time):
+        atoms = super().atoms(resp, req, environ, request_time)
+        atoms["U"] = quote(atoms["U"] or "", encoding="latin-1")  # PATH_INFO is latin-1 text
+        return atoms
+
+
+logger_class = QuotingLogger
 accesslog = "-"
+# %(U)s is the path without the query string (%(r)s would include it).
+access_log_format = '%(h)s %(t)s "%(m)s %(U)s" %(s)s %(B)s %(M)s'
 errorlog = "-"
 
 # Scheduler lock file — initialize_app() flocks it so only one worker starts the
@@ -30,10 +47,14 @@ _LINK_TOKEN = re.compile(r"(?<![A-Za-z0-9_-])(\d{1,19})\.[A-Za-z0-9_-]{22}(?![A-
 
 
 class _TokenMaskFilter(logging.Filter):
-    """Keeps link tokens in the request line out of the access log."""
+    """Keeps link tokens in the request line out of the access log, and out of the error log's tracebacks."""
 
     def filter(self, record):
         record.msg, record.args = _LINK_TOKEN.sub(r"\1.***", record.getMessage()), None
+        if record.exc_info and not record.exc_text:
+            record.exc_text = logging.Formatter().formatException(record.exc_info)
+        if record.exc_text:
+            record.exc_text = _LINK_TOKEN.sub(r"\1.***", record.exc_text)
         return True
 
 

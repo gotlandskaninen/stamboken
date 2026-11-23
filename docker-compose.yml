@@ -47,13 +47,10 @@ services:
       - RATELIMIT_STORAGE_URL=redis://redis:6379/3
       # api-variables.env may be a copy of prod's (the local-production bootstrap); the dev stack never mails.
       - MAIL_MODE=log
+      # The seed's admin and genebank managers sign in with a password.
+      - ALLOW_ROLE_PASSWORD_LOGIN=true
     ports:
       - "127.0.0.1:9090:9090"
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "20m"
-        max-file: "10"
     volumes:
       - type: bind
         source: ./app
@@ -61,9 +58,6 @@ services:
       - type: bind
         source: ./config
         target: /config
-      - type: bind
-        source: ./logs
-        target: /logs
       - type: bind
         source: ./uppladdningar
         target: /app/uppladdningar
@@ -105,6 +99,8 @@ services:
       - ./.docker/next-app-variables.env
     environment:
       - NODE_ENV=development
+      # The CMS admits the seed's password sessions too, as the api lets them sign in.
+      - ALLOW_ROLE_PASSWORD_LOGIN=true
       - API_INTERNAL_URL=http://api:9090
       - CMS_DATABASE_URL=postgres://herdbook_cms:herdbook_cms_insecure@cms-database:5432/herdbook_cms
     volumes:

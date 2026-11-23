@@ -1,6 +1,6 @@
 ---
 status: "proposed"
-date: 2026-11-06
+date: 2026-11-18
 decision-makers: Jonas Hagberg; styrelsen per capsulam för köparens uppgifter
 consulted: styrelsen, genbanksansvariga
 informed: medlemmarna, genom styrelseförslaget om intyg och överlåtelsebevis
@@ -58,16 +58,19 @@ Köparens uppgifter:
 
 Valda alternativ: "Flytt dag 0 med avisering och avvisa", eftersom ägarbytet
 går igenom utan att någon loggar in och mottagaren ändå kan vända en
-felplacering; och "Berättigat intresse för namn och ort, kryss för
-kontaktuppgifter", eftersom registret då vet vem som håller varje
+felplacering; och "Berättigat intresse för namn, ort och postadress, kryss för
+e-post och telefon", eftersom registret då vet vem som håller varje
 genbanksdjur även när köparen aldrig kontaktar föreningen.
 
 Konkret:
 
 * Ett ägarbyte är registrerat eller ogiltigförklarat (void). Det finns inget
   tillstånd "bekräftad". Kontrollsidan är öppen för alla och visar att
-  intyget är äkta och "överlåten <månad och år>", aldrig dag och aldrig
-  namn. Uppfödarens namn visas bara om uppfödaren valt det.
+  intyget är äkta och "Såld <månad och år>" för varje byte av besättning,
+  aldrig dag och aldrig köparens namn. Under "Intygas av" står namnet på
+  personen som utfärdade intyget bara om hen själv valt det; annars
+  "Uppfödaren", eller föreningen när admin eller genbanksansvarig utfärdade
+  det åt någon annan.
 * Mottagande besättning aviseras och kan avvisa inom 30 dagar från
   registreringen. Avvisa är en void av raden, med behörigheten knuten till
   mottagande besättning, och med samma villkor som säljarens ångra inom 7
@@ -75,15 +78,19 @@ Konkret:
   kaninen. Efter det ändrar bara genbanksansvarig. Ångra och avvisa är
   regler i registret, inte styrelsebeslut.
 * Säljaren, eller den som lägger in en inskickad blankett från
-  granskningskön, skapar `BuyerContact` med namn och ort. Postadress, e-post
-  och telefon sparas bara om köparen kryssat "Ja, föreningen får spara min
-  adress, e-post och telefon så länge jag har kaninen". Rutan står före
-  raderna på beviset, och raderna fylls i bara efter kryss. Ifyllda rader
-  utan kryss registreras inte, eftersom pärmen hos genbanksansvarig också är
-  ett register.
-* Kontaktuppgifterna gallras när kaninen byter ägare igen, namn och ort fem
-  år efter att de lades in. En separat ruta ger samtycke till kontakt om
-  medlemskap.
+  granskningskön, skapar `BuyerContact` med namn, ort och postadress, för
+  spårbarheten. Postadressen krävs vid en ny försäljning, utom när
+  genbanksansvarig eller admin registrerar, till exempel från gamla
+  pappersintyg; en rättelse kräver den inte. E-post och telefon sparas bara
+  om köparen kryssat ja till att föreningen får spara dem så länge köparen
+  har kaninen. Rutan står före raderna för e-post och telefon på beviset,
+  och de raderna fylls i bara efter kryss. Ifyllda rader utan kryss
+  registreras inte, eftersom pärmen hos genbanksansvarig också är ett
+  register.
+* E-post och telefon gallras när kaninen byter ägare igen; namn, ort och
+  postadress fem år efter att de lades in, tidigare när kaninens död är
+  känd eller köparen begär radering. En separat ruta ger samtycke till
+  kontakt om medlemskap.
 * Det tidigare kravet på samtycke innan genbanksansvarig får se köparen
   utgår. Kvar står att köparen aldrig skrivs i fritext och aldrig på
   intyget. Köparen informeras enligt art. 14 på överlåtelsebeviset; en
@@ -190,11 +197,11 @@ Konkret:
 * Dåligt, eftersom hela kodkedjan måste byggas och underhållas innan ett
   enda namn kan sparas.
 
-### Berättigat intresse för namn och ort, kryss för kontaktuppgifter
+### Berättigat intresse för namn, ort och postadress, kryss för e-post och telefon
 
 * Bra, eftersom säljaren skriver in köparen som på pappret i dag, med samma
   fält på skärm och blankett och utan kodmaskineri.
-* Bra, eftersom intresseavvägningen håller: fyra fält, synliga för ett
+* Bra, eftersom intresseavvägningen håller: namn, ort och postadress, synliga för ett
   fåtal, fem år, rätt att invända, rätta och radera. Köparen informeras på
   det papper hon får i handen.
 * Dåligt, eftersom föreningen måste kunna visa avvägningen och hantera
@@ -251,3 +258,5 @@ Relaterade beslut: [ADR-0014](0014-authorization-model.md)
 | 2026-10-29 | Jonas Hagberg | Två rättsliga grunder (namn och ort 6.1 f, kontakt 6.1 a med kryss före raderna), månad på kontrollsidan, utskriftsrätt för intyget, ångra och avvisa som registerregler |
 | 2026-11-06 | Jonas Hagberg | MADR-format inför publikt repo, interna beteckningar förklarade, månad och år på kontrollsidan, spärren för nedladdning av intyget genomförd |
 | 2026-11-16 | Jonas Hagberg | Tillägg: köparen utanför föreningen sparas över årsrapportens Dra tillbaka (`kept_until`) |
+| 2026-11-18 | Jonas Hagberg | Postadressen sparas på berättigat intresse som namn och ort och krävs vid en ny försäljning utom från genbanksansvarig och admin (issue #111); krysset gäller bara e-post och telefon |
+| 2026-11-23 | Jonas Hagberg | Kontrollsidan: "Såld" för varje byte av besättning i den rättade historiken, och "Intygas av" är den fysiska person som utfärdade intyget, med namn bara efter eget val (issue #6) |

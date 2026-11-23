@@ -6,20 +6,30 @@ Registration, visibility and the deletion on a void live with the sale in utils.
 """
 
 import logging
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from peewee import Case, fn
 
 import utils.sale_proposal as sale_proposal
-from utils.database import DB_PROXY, BuyerContact, HerdTracking, Individual, SaleProposal, ht_sort_key
+from utils.database import (
+    DB_PROXY,
+    AuditLog,
+    BuyerContact,
+    HerdTracking,
+    Individual,
+    SaleProposal,
+    ht_sort_key,
+    lock_individuals,
+)
 from utils.herd_tracking import (
+    QUEUE_CHANGED,
+    HerdTrackingConflict,
     HerdTrackingForbidden,
     HerdTrackingNotFound,
-    QueueChanged,
+    buyer_items,
     can_see_buyer,
     delete_buyer_contacts,
     is_manager_of,
-    lock_buyer_rows,
     log_buyer_contact,
     log_buyer_read,
     sold_on,
@@ -72,78 +82,119 @@ def erase_buyer_contact(contact_id, user):
     TRANSFER row stay.
     """
     _managed_contact(contact_id, user, "radera")
-    _retried(lambda: _erase_once(contact_id, user))
-
-
-def _erase_once(contact_id, user):
     with DB_PROXY.atomic():
         # The locks a correction takes, in its order (the queue's items, then the rabbits), so the two queue up.
         holding = list(HerdTracking.select().where(HerdTracking.holder_contact == contact_id))
-        lock_buyer_rows(holding, [r.individual_id for r in holding])
+        items = buyer_items(holding, lock=True)
+        lock_individuals([r.individual_id for r in holding])
+        if not buyer_items(holding) <= items:  # an item that appeared since: never a lock out of order
+            raise HerdTrackingConflict(QUEUE_CHANGED)
         _count, paths = delete_buyer_contacts([contact_id], "radering", user, whole_items=True)
     remove_originals(paths)  # only after the commit: a row never names a removed file
 
 
-ATTEMPTS = 3  # a busy queue: the next night tries again, and an erasure answers 409
-
-
-def _retried(attempt):
-    """`attempt` again while the queue changes under it (QueueChanged, rolled back before anything went)."""
-    for _ in range(ATTEMPTS - 1):
-        try:
-            return attempt()
-        except QueueChanged:
-            pass
-    return attempt()
-
-
-def _delete_locked(rule, action):
+def _delete_under_locks(candidates, eligible, action):
     """
-    Deletes the buyers that match `rule`, under the writers' locks in their order (the queue's items, the rabbits,
-    then the buyers, as erase_buyer_contact takes them), with `rule` read again under them before any buyer or
-    document goes. A resubmission that links a kept buyer again, an undo of its sale's void and a longer round all
-    move purge_at under those locks, so the buyer stays; and the delete's ON DELETE SET NULL never waits on a sale
-    that an undo holds while the undo waits on the buyer. An item linked to a sale or rabbit after the items were
-    locked would be locked after the rabbit, against the queue's order, so the purge rolls back and starts again.
+    Deletes the buyers among `candidates` (a query of ids) that are still `eligible` (a function giving a condition
+    on BuyerContact, called under the locks) under a correction's locks, in its order: the queue's items, then the
+    rabbits, both in id order. What was read before the locks only picks the candidates; a correction that moved a
+    sale's date, and its purge_at, or cleared a death in the meantime keeps its buyer. Items that appeared under the
+    rabbit lock leave the run to the next night rather than lock out of order. Returns how many went and the paths
+    for remove_originals.
     """
-    return _retried(lambda: _delete_once(rule, action))
+    ids = [contact_id for (contact_id,) in candidates.tuples()]
+    if not ids:
+        return 0, []
+    holding = list(HerdTracking.select().where(HerdTracking.holder_contact.in_(ids)))
+    items = buyer_items(holding, lock=True)
+    lock_individuals({r.individual_id for r in holding})
+    holding = list(HerdTracking.select().where(HerdTracking.holder_contact.in_(ids)))
+    if not buyer_items(holding) <= items:
+        logger.warning("Buyer purge %s: the queue changed under the locks; the next run takes it", action)
+        return 0, []
+    still = BuyerContact.select(BuyerContact.id).where(BuyerContact.id.in_(ids) & eligible()).order_by(BuyerContact.id)
+    return delete_buyer_contacts([contact_id for (contact_id,) in still.for_update().tuples()], action)
 
 
-def _delete_once(rule, action):
+def purge_expired(now):
+    """Name and town five years after the sale: the buyer goes."""
+    expired = BuyerContact.purge_at <= now
     with DB_PROXY.atomic():
-        ids = [contact_id for (contact_id,) in BuyerContact.select(BuyerContact.id).where(rule).tuples()]
-        holding = list(HerdTracking.select().where(HerdTracking.holder_contact.in_(ids)))
-        lock_buyer_rows(holding, {row.individual_id for row in holding})
-        still = BuyerContact.select(BuyerContact.id).where(BuyerContact.id.in_(ids) & rule).order_by(BuyerContact.id)
-        count, paths = delete_buyer_contacts([contact_id for (contact_id,) in still.for_update().tuples()], action)
+        count, paths = _delete_under_locks(
+            BuyerContact.select(BuyerContact.id).where(expired), lambda: expired, "gallring_fem_ar"
+        )
     remove_originals(paths)
     return count
 
 
-def purge_expired(now):
-    """Name and town five years after they were entered, or a buyer kept across Dra tillbaka after its round."""
-    return _delete_locked(BuyerContact.purge_at <= now, "gallring_fem_ar")
+DEATH_SETTLES = timedelta(days=30)  # a death reported by mistake is usually cleared within this
+
+
+def _dead_since(individual_ids, now):
+    """
+    The rabbits among `individual_ids` whose death has stood recorded for DEATH_SETTLES: the latest audit_log row
+    that recorded the death (death_date or death_note set) is at least that old, or, recorded before the audit
+    trigger, the death date is.
+    """
+    recorded = {}
+    entries = AuditLog.select(AuditLog.record_id, AuditLog.changed_at, AuditLog.new_data).where(
+        (AuditLog.table_name == Individual._meta.table_name)
+        & AuditLog.operation.in_(("INSERT", "UPDATE"))
+        & AuditLog.record_id.in_([str(i) for i in individual_ids])
+        & (AuditLog.changed_fields.contains("death_date") | AuditLog.changed_fields.contains("death_note"))
+    )
+    for record_id, changed_at, new in entries.order_by(AuditLog.id).tuples():
+        if (new or {}).get("death_date") or (new or {}).get("death_note"):
+            recorded[int(record_id)] = changed_at
+    settled = set()
+    for individual in Individual.select().where(Individual.id.in_(list(individual_ids))):
+        at = recorded.get(individual.id)
+        if at is None and individual.death_date is not None:
+            at = datetime.combine(individual.death_date, datetime.min.time(), timezone.utc)
+        if at is None or at.replace(tzinfo=at.tzinfo or timezone.utc) <= now - DEATH_SETTLES:
+            settled.add(individual.id)
+    return settled
 
 
 def _dead():
-    return (Individual.death_date.is_null(False)) | (fn.COALESCE(Individual.death_note, "") != "")
+    return Individual.death_date.is_null(False) | (fn.COALESCE(Individual.death_note, "") != "")
 
 
-def purge_dead(now):  # pylint: disable=unused-argument  # every rule takes the clock
-    """Once the association learns the rabbit is dead, its buyers' names and towns go before the five years."""
-    held = (
+def _held_by_dead(individual_ids=None):
+    """The buyers held by a row of a rabbit recorded as dead (among `individual_ids`, when given)."""
+    dead = _dead()
+    if individual_ids is not None:
+        dead &= Individual.id.in_(list(individual_ids))
+    return (
         HerdTracking.select(HerdTracking.holder_contact)
         .join(Individual, on=(Individual.id == HerdTracking.individual))
-        .where(HerdTracking.holder_contact.is_null(False) & _dead())
-        .distinct()
+        .where(HerdTracking.holder_contact.is_null(False) & dead)
     )
-    return _delete_locked(BuyerContact.id.in_(held), "gallring_dod")
+
+
+def purge_dead(now):
+    """
+    A rabbit's buyers go before the five years once its death has stood recorded for 30 days: a death reported by
+    mistake and cleared within them keeps its buyers. Rechecked under the locks, so a death cleared meanwhile does too.
+    """
+    candidates = {
+        r.individual_id
+        for r in HerdTracking.select(HerdTracking.individual).where(HerdTracking.holder_contact.in_(_held_by_dead()))
+    }
+
+    def held():  # read again under the locks: a death cleared and recorded anew meanwhile starts its 30 days over
+        return BuyerContact.id.in_(_held_by_dead(_dead_since(candidates, now)))
+
+    with DB_PROXY.atomic():
+        count, paths = _delete_under_locks(BuyerContact.select(BuyerContact.id).where(held()), held, "gallring_dod")
+    remove_originals(paths)
+    return count
 
 
 def purge_proposal_buyers(now):
     """
     A pending sale proposal's buyer, not yet a BuyerContact: 13 months after the proposal, or once the association
-    learns the rabbit is dead, as purge_dead. One proposal at a time, under its locks (sale_proposal.clear_buyer).
+    learns the rabbit is dead. One proposal at a time, under its locks (sale_proposal.clear_buyer).
     """
     due = (SaleProposal.created_at < now - PROPOSAL_BUYER_FOR) | SaleProposal.individual.in_(
         Individual.select(Individual.id).where(_dead())
@@ -178,7 +229,8 @@ def _null_fields(where, changes, action):
 def purge_sold_on(now):  # pylint: disable=unused-argument  # every rule takes the clock
     """
     The contact consent once the rabbit has another holder: a later active TRANSFER or CORRECTION to another herd
-    or another buyer. Address, e-mail and phone go with it; e-mail and phone stay while the membership yes does.
+    or another buyer. E-mail and phone go with it unless the membership yes holds; the postal address stays, on
+    legitimate interest like name and town.
     """
     sale, later = HerdTracking, HerdTracking.alias()
     moved_on = (
@@ -187,13 +239,10 @@ def purge_sold_on(now):  # pylint: disable=unused-argument  # every rule takes t
         .where(sale.holder_contact.is_null(False) & sale.voided_at.is_null(True) & sold_on(sale, later))
     )
     no_membership = BuyerContact.membership_optin_at.is_null(True)
-    kept = (
-        BuyerContact.postal_address.is_null(False)
-        | BuyerContact.contact_consent_at.is_null(False)
-        | (no_membership & (BuyerContact.email.is_null(False) | BuyerContact.phone.is_null(False)))
+    kept = BuyerContact.contact_consent_at.is_null(False) | (
+        no_membership & (BuyerContact.email.is_null(False) | BuyerContact.phone.is_null(False))
     )
     changes = {
-        BuyerContact.postal_address: None,
         BuyerContact.contact_consent_at: None,
         BuyerContact.email: Case(None, [(no_membership, None)], BuyerContact.email),
         BuyerContact.phone: Case(None, [(no_membership, None)], BuyerContact.phone),

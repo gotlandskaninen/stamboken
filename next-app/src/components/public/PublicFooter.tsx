@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { appVersion } from "@/lib/appVersion";
 import Image from "next/image";
 import { Box, Typography } from "@mui/material";
 import { EUFundingBadge } from "./EUFundingBadge";
@@ -43,7 +44,7 @@ const FOOTER_ROWS: Array<{ heading: string; links: FooterLink[] }> = [
   },
   {
     heading: "Kontakt",
-    links: [{ label: "Styrelse / Kontakt", href: "/styrelsen" }],
+    links: [{ label: "Kontakt och styrelse", href: "/kontakt" }],
   },
 ];
 
@@ -243,6 +244,23 @@ export function PublicFooter() {
           }}
         >
           <span>&copy; 2026 Föreningen Gotlandskaninen</span>
+          <Link href="/integritetspolicy" style={{ color: "inherit" }}>
+            <Box
+              component="span"
+              sx={{
+                display: "inline-block",
+                py: { xs: 3, md: 0 },
+                "@media (pointer: coarse)": {
+                  display: "inline-flex",
+                  alignItems: "center",
+                  minHeight: 44,
+                  py: 0,
+                },
+              }}
+            >
+              Integritetspolicy
+            </Box>
+          </Link>
           <Box
             component="a"
             href="https://github.com/gotlandskaninen/stamboken"
@@ -253,6 +271,17 @@ export function PublicFooter() {
             }}
           >
             Källkod (AGPL-3.0)
+          </Box>
+          <Box
+            component="a"
+            href={appVersion().href}
+            sx={{
+              color: "inherit",
+              display: "inline-block",
+              py: { xs: 3, md: 0 },
+            }}
+          >
+            Version {appVersion().label}
           </Box>
         </Box>
       </Box>

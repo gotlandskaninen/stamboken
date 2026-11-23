@@ -251,6 +251,7 @@ export async function registerIndividual(
     claw_color?: string;
     belly_color?: string;
     hair_notes?: string;
+    rex?: boolean;
     certificate_type: "paper" | "digital";
     paper_certificate?: string;
     paper_number?: string;
@@ -563,6 +564,7 @@ export interface PromotePayload {
   claw_color?: string;
   belly_color?: string;
   hair_notes?: string;
+  rex?: boolean;
 }
 
 export interface PromoteResult {

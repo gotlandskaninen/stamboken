@@ -205,6 +205,7 @@ describe("CertificateForm saves as before the move", () => {
     mother: "G9001-2211",
     father: "G9002-2311",
     birth_date: "2025-05-10",
+    rex: false, // main's rex choice, sent with every new rabbit
   };
 
   it("posts the item's document with the form's payload, and hands on the saved document", async () => {

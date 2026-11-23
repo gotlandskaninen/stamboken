@@ -11,6 +11,7 @@ import {
   NumberConflictDialog,
   PAPER_NUMBER,
 } from "@/components/herd/NumberConflictDialog";
+import { CoatChoice } from "@/components/herd/CoatChoice";
 import type { NumberCheck } from "@/app/(app)/stamboken/(dashboard)/min-besattning/actions";
 import type { RegistryRabbit } from "@/app/(app)/stamboken/(dashboard)/inkorg/actions";
 import {
@@ -184,6 +185,8 @@ export function RegisterFromCertificate({
   variant,
   form,
   onChange,
+  rex = false,
+  onRexChange,
   colors,
   lookup,
   onSave,
@@ -206,6 +209,8 @@ export function RegisterFromCertificate({
   variant?: Variant;
   form: CertForm;
   onChange: (key: keyof CertForm, value: string) => void;
+  rex?: boolean;
+  onRexChange?: (rex: boolean) => void;
   colors: string[];
   lookup: Lookup;
   onSave: (payload: Record<string, unknown>) => Promise<SaveResult>;
@@ -258,7 +263,7 @@ export function RegisterFromCertificate({
     start(async () => {
       setErrors({});
       setFormError(null);
-      const res = await onSave(buildSavePayload(mode, form, resolution));
+      const res = await onSave(buildSavePayload(mode, form, resolution, rex));
       if (res.ok) {
         setConflict(null);
         return;
@@ -449,6 +454,7 @@ export function RegisterFromCertificate({
                 ],
               })
             )}
+            {onRexChange && <CoatChoice rex={rex} onChange={onRexChange} />}
             {text("birth_date", "Födelsedatum", {
               required: true,
               type: "date",

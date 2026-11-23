@@ -7,6 +7,14 @@
 
 set -Eeuo pipefail  # -E: the ERR trap reaches functions (telemetry below)
 
+# Two runs must never overlap: the second would drop the staging copy the first is still loading.
+SYNC_LOCK="${SYNC_DEMO_LOCK:-/tmp/herdbook-sync-demo.lock}"
+exec 8>"$SYNC_LOCK"
+if ! flock -n 8; then
+	echo "Another demo sync is running (lock $SYNC_LOCK)" >&2
+	exit 1
+fi
+
 scriptdir=$(dirname "$0")
 
 ENV_FILE="$scriptdir/../.docker/database-variables.env"
@@ -156,11 +164,11 @@ docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
 # The queue tables come over without their data: the demo API keeps running
 # through the load, and its sender must never see production's mail queue or
 # intake items, not even for a moment. A pattern that matches no table (an
-# older schema) is fine; notice_setting, a user preference, is copied. The
-# yearly report's drafts, change requests and sale proposals are left out too:
-# no FK points at them, and they hold contact values, buyers or unsent text.
-# Its submissions are copied, purged after 13 months like the report rows.
-SKIP_QUEUE_DATA="--exclude-table-data='mail_*' --exclude-table-data='inbox_*' --exclude-table-data=notice --exclude-table-data='gmail_*' --exclude-table-data=yearly_report_draft --exclude-table-data=member_change_request --exclude-table-data=sale_proposal"
+# older schema) is fine; notice_setting, a user preference, is copied. Login
+# codes and previous addresses are excluded too: unconfirmed and abandoned addresses
+# have no place in the test environment.
+# The yearly report's drafts, change requests and sale proposals hold unsent text or buyer data.
+SKIP_QUEUE_DATA="--exclude-table-data='mail_*' --exclude-table-data='inbox_*' --exclude-table-data=notice --exclude-table-data='gmail_*' --exclude-table-data=login_code --exclude-table-data=member_previous_address --exclude-table-data=yearly_report_draft --exclude-table-data=member_change_request --exclude-table-data=sale_proposal"
 echo "Syncing $SOURCE_DB -> $STAGING_DB via pg_dump..."
 # ON_ERROR_STOP=1 aborts psql on the first SQL error; the
 # outer set -Eeo pipefail then fires the ERR trap so the failure telemetry row
@@ -185,7 +193,7 @@ docker exec "$CONTAINER" bash -c "
 # activations are marked sent, so the demo never sends an invitation and its
 # round is not closed (FA10). A sale proposal can carry a buyer's name; the
 # dump already leaves its rows out, and this deletes any that came anyway.
-DROP_BUYERS_SQL="DO \$\$ BEGIN IF to_regclass('buyer_contact') IS NOT NULL THEN DELETE FROM buyer_contact; END IF; IF to_regclass('sale_proposal') IS NOT NULL THEN DELETE FROM sale_proposal; END IF; IF to_regclass('report_access_code') IS NOT NULL THEN UPDATE report_access_code SET revoked_at = now() WHERE revoked_at IS NULL; END IF; IF to_regclass('yearly_report_round_genebank') IS NOT NULL THEN UPDATE yearly_report_round_genebank SET sent_at = now() WHERE sent_at IS NULL; END IF; END \$\$;"
+DROP_BUYERS_SQL="DO \$\$ BEGIN IF to_regclass('buyer_contact') IS NOT NULL THEN UPDATE herd_tracking SET buyer_removed = true WHERE holder_contact_id IS NOT NULL; DELETE FROM buyer_contact; END IF; IF to_regclass('sale_proposal') IS NOT NULL THEN DELETE FROM sale_proposal; END IF; IF to_regclass('report_access_code') IS NOT NULL THEN UPDATE report_access_code SET revoked_at = now() WHERE revoked_at IS NULL; END IF; IF to_regclass('yearly_report_round_genebank') IS NOT NULL THEN UPDATE yearly_report_round_genebank SET sent_at = now() WHERE sent_at IS NULL; END IF; END \$\$;"
 echo "Deleting the buyers and closing the report links in $STAGING_DB..."
 docker exec "$CONTAINER" psql -U "$DB_USER" -d "$STAGING_DB" -v ON_ERROR_STOP=1 -q -c "$DROP_BUYERS_SQL"
 

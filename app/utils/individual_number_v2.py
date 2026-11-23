@@ -12,6 +12,7 @@ from datetime import date, datetime, timedelta
 from peewee import DoesNotExist, fn
 
 from utils import number_assets
+from utils.certificate_lifecycle import CertState, Event, check
 from utils.database import (
     DATABASE,
     Breeding,
@@ -409,6 +410,7 @@ def _create_individual_record(
     claw_color=None,
     belly_color=None,
     hair_notes=None,
+    rex=False,
     paper_certificate=None,
     signature,
 ) -> Individual:
@@ -424,6 +426,7 @@ def _create_individual_record(
         sex: "male", "female", or None
         color: Color name string or None; resolved against herd.genebank
         name, color_note, eye_color, claw_color, belly_color, hair_notes: Optional trait fields
+        rex: The coat, True for rex, False for normal
         paper_certificate: When given, stored as individual.certificate
         signature: HbUser instance written to HerdTracking.signature
 
@@ -446,6 +449,7 @@ def _create_individual_record(
         claw_color=claw_color,
         belly_color=belly_color,
         hair_notes=hair_notes,
+        rex=rex,
         is_active=True,
     )
 
@@ -460,6 +464,7 @@ def _create_individual_record(
     if paper_certificate:
         individual.certificate = paper_certificate
         individual.save()
+        check(CertState.NONE, Event.REGISTER_WITH_PAPER, individual.cert_state())
 
     record_herd_tracking(individual, herd, breeding.birth_date or datetime.now().date(), "BIRTH", signature)
 

@@ -60,6 +60,7 @@ export function CertificateForm({
     initialSaveMode(latest),
   );
   const [form, setForm] = useState<CertForm>(() => initialCertForm(latest));
+  const [rex, setRex] = useState(false);
   const setMode = (value: SaveMode) => {
     setTouched(true);
     setModeState(value);
@@ -81,6 +82,11 @@ export function CertificateForm({
       mode={mode}
       form={form}
       onChange={set}
+      rex={rex}
+      onRexChange={(value) => {
+        setTouched(true);
+        setRex(value);
+      }}
       colors={colors}
       lookup={lookupRabbit}
       proposed={proposed}

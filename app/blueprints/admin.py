@@ -13,6 +13,7 @@ ADR-0007: this module must never import herdbook.py — the shared rate
 limiter comes from app/extensions.py.
 """
 
+import logging
 import os
 from datetime import datetime
 
@@ -28,6 +29,7 @@ from peewee import OperationalError
 from blueprints.common import admin_required, problem
 
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/v2/admin")
+auth_log = logging.getLogger("herdbook.auth")
 
 
 @admin_bp.route("/role", methods=["POST"])
@@ -273,7 +275,9 @@ def update_user_admin(u_id):
             type="invalid-value",
         )
     try:
-        return jsonify(da.edit_admin_user(u_id, body)), 200
+        result = da.edit_admin_user(u_id, body)
+        auth_log.info("user profile changed actor=%s target=%s", current_user.id, u_id)
+        return jsonify(result), 200
     except ValueError as exc:
         if str(exc) == "user-not-found":
             return problem(
@@ -298,7 +302,9 @@ def set_v2_prod_access(u_id):
             type="invalid-enabled",
         )
     try:
-        return jsonify(da.set_v2_prod_access(u_id, body["enabled"])), 200
+        result = da.set_v2_prod_access(u_id, body["enabled"])
+        auth_log.info("v2 access=%s actor=%s target=%s", body["enabled"], current_user.id, u_id)
+        return jsonify(result), 200
     except ValueError as exc:
         if str(exc) == "user-not-found":
             return problem(
@@ -327,7 +333,9 @@ def set_validated(u_id):
             type="invalid-validated",
         )
     try:
-        return jsonify(da.set_validated(u_id, body["validated"])), 200
+        result = da.set_validated(u_id, body["validated"])
+        auth_log.info("account validated=%s actor=%s target=%s", body["validated"], current_user.id, u_id)
+        return jsonify(result), 200
     except ValueError as exc:
         if str(exc) == "user-not-found":
             return problem(
@@ -383,6 +391,7 @@ def set_active(u_id):
                 type="user-not-found",
             )
         raise
+    auth_log.info("account active=%s actor=%s target=%s", body["active"], current_user.id, u_id)
     return jsonify(result), 200
 
 
@@ -428,12 +437,15 @@ def admin_reset_password(u_id):
             f"Ingen användare med id {u_id}.",
             type="user-not-found",
         )
-    # Live signature: change_password(active_user, changed_user, form).
+    # Live signature: change_password(active_user, changed_user, form, session_stamps). The session goes along: one
+    # revoked while the request waited changes nothing, and Basic auth, which has no mark, is refused.
     # BOTH keys required: the INSERT branch (Google-only
     # target) reads form["password"], the UPDATE branch reads
     # form["newpassword"]. current_user.is_admin skips the old-password
     # check on the admin path.
-    ok = da.change_password(current_user, u_id, {"password": new_password, "newpassword": new_password})
+    ok = da.change_password(
+        current_user, u_id, {"password": new_password, "newpassword": new_password}, session_stamps=session
+    )
     if not ok:
         return problem(
             500,
@@ -441,6 +453,59 @@ def admin_reset_password(u_id):
             "change_password returnerade fel.",
             type="password-reset-failed",
         )
+    auth_log.info("password reset actor=%s target=%s", current_user.id, u_id)
+    return "", 204
+
+
+@admin_bp.route("/users/<int:u_id>/logga-ut", methods=["POST"])
+@admin_required
+def logout_everywhere(u_id):
+    """
+    "Logga ut överallt": a new mark for the account (da.revoke_sessions) ends every session it has, on the demo too.
+    204 No Content.
+    """
+    if settings.service.demo_instance:
+        # Only production changes a mark; the demo shares the session store.
+        return problem(
+            403,
+            "Inte på demon",
+            "Utloggning görs i produktion; demon delar sessioner med den.",
+            type="demo-instance",
+        )
+    if not da.revoke_sessions(u_id):
+        return problem(404, "Användare saknas", f"Ingen användare med id {u_id}.", type="user-not-found")
+    auth_log.info("logged out everywhere actor=%s target=%s", current_user.id, u_id)
+    return "", 204
+
+
+@admin_bp.route("/users/<int:u_id>/google", methods=["DELETE"])
+@admin_required
+def remove_google_login(u_id):
+    """
+    Removes the account's Google identity, the way back for a member whose Google account got a new one: set a
+    password first, then she signs in with it and links the new identity. Refused for an account with a role and for
+    the account's last way to sign in (da.unlink_account), which also ends its sessions, and when the admin's own
+    session ended while the request waited for the account's row. 204 No Content.
+    """
+    target = db.User.get_or_none(db.User.id == u_id)
+    if target is None:
+        return problem(404, "Användare saknas", f"Ingen användare med id {u_id}.", type="user-not-found")
+    if (
+        not db.Authenticators.select()
+        .where((db.Authenticators.user == u_id) & (db.Authenticators.auth == "google"))
+        .exists()
+    ):
+        return problem(
+            409, "Ingen Google-inloggning", "Kontot har ingen Google-inloggning att ta bort.", type="no-google-login"
+        )
+    if not da.unlink_account(target, "google", session_stamps=session):
+        return problem(
+            409,
+            "Google-inloggningen kan inte tas bort",
+            "Ett konto med roll behåller sin Google-inloggning, och ett konto utan lösenord behöver ett först.",
+            type="google-unlink-refused",
+        )
+    auth_log.info("google login removed actor=%s target=%s", current_user.id, u_id)
     return "", 204
 
 

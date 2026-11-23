@@ -12,7 +12,7 @@ import { getNavigation } from "@/lib/payload-queries";
 const FALLBACK_NAV_LINKS = [
   { label: "Bli medlem", href: "/bli-medlem" },
   { label: "Föreningen", href: "/foreningen" },
-  { label: "Kontakt", href: "/styrelsen" },
+  { label: "Kontakt", href: "/kontakt" },
   {
     label: "Lantraskaninen",
     href: "/lantraskaninen",

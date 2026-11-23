@@ -11,10 +11,16 @@ docker compose up -d cms-database next-app
 docker compose logs -f next-app
 ```
 
-## 2. Skapa admin-användare
+## 2. Logga in
 
-Öppna `http://localhost:3000/admin` — Payload visar "Create first user".
-Skapa en användare med valfri e-post och lösenord.
+CMS:et har ingen egen inloggning; det läser Stamboken-sessionen. Starta `api`
+och skapa testanvändarna (README, "Development setup"), logga in i Stamboken
+som `test-admin` / `test-admin-pass` och öppna `http://localhost:3000/admin`.
+`CMS_ADMIN_EMAIL` i `.docker/next-app-variables.env` ska vara
+`test-admin@test.local`, kontots `google_email`. Det är en lösenordssession, och
+den släpps in bara för att `docker-compose.yml` sätter
+`ALLOW_ROLE_PASSWORD_LOGIN=true` för next-app; annars krävs en session från
+Google.
 
 ## 3. Verifiera collections
 

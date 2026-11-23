@@ -1,0 +1,15 @@
+{% block subject %}Din kod för att byta e-postadress i Stamboken{% endblock %}
+{# Only the text for a new address (purpose ny_adress): no link, so a mistyped address gets no key to the account. #}
+{% block body %}
+Hej!
+
+Du har bett om att byta e-postadress i Stamboken. Här är din kod:
+
+{{ code }}
+
+Skriv koden i Stamboken, där du bytte adress. Koden gäller i tio minuter och bara en gång.
+
+Lämna aldrig ut koden till någon annan! Ingen kommer någonsin att fråga dig efter den. Inte föreningen heller.
+
+Var det inte du som bad om koden? Då behöver du inte göra något. Din adress ändras inte.
+{% endblock %}

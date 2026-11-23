@@ -19,6 +19,7 @@ from peewee import (
     JOIN,
     Case,
     DatabaseError,
+    DataError,
     DoesNotExist,
     IntegrityError,
     OperationalError,
@@ -43,8 +44,9 @@ from utils.database import User  # isort: skip
 from utils.database import Weight  # isort: skip
 from utils.database import next_individual_number  # isort: skip
 from utils.database import ACTIVE_WINDOW_DAYS  # isort: skip
+from utils.database import AUDIT_LOG_NO_UPDATE_RULE  # isort: skip
 from utils.database import OUTSIDE_GENEBANK_HERDS  # isort: skip
-from utils.database import PRIVACY_LEVELS  # isort: skip
+from utils.database import ACCOUNT_MASK, BANK_PRIVACY_FIELDS, PRIVACY_LEVELS, account_end  # isort: skip
 from utils.database import ht_not_voided  # isort: skip
 from utils.database import ht_order_desc  # isort: skip
 from utils.database import latest_ht_per_individual  # isort: skip
@@ -77,6 +79,8 @@ from utils.individual_commands import IndividualRefused, execute, purge_command_
 from utils.individual_commands import known_color, known_litter, known_origin_herd, known_parent  # isort:skip
 from utils.individual_commands import lock_mother_litters  # isort:skip
 from utils.individual_legacy import translate  # isort:skip
+from utils import settings  # isort:skip
+from extensions import session_redis  # isort:skip
 
 from werkzeug.security import (
     check_password_hash,
@@ -86,6 +90,8 @@ from werkzeug.security import (
 from werkzeug.exceptions import HTTPException  # isort:skip
 
 logger = logging.getLogger("herdbook.da")
+# Login and permission events; ids only, never e-mail or username (privacy).
+auth_log = logging.getLogger("herdbook.auth")
 
 
 class ValidationError(HTTPException):
@@ -382,6 +388,47 @@ def validate_breeding_dates(
 
 # User functions
 
+# The roles that keep an account on the association's Google login. Viewer and the older owner do not count.
+ROLE_LEVELS = ("admin", "matrikel_admin", "manager", "helper")
+# Fixed in code for accounts with a role, never a setting that can be missing.
+ROLE_HOSTED_DOMAIN = "gotlandskaninen.se"
+ROLE_DOMAIN = "@" + ROLE_HOSTED_DOMAIN
+
+
+def storable_google_email(email, hosted_domain):
+    """
+    A Google token's verified address as google_email may hold it: one on the association's domain only from a token
+    whose hd is that domain, whatever auth.ini says, so google_email on the domain is always the proof
+    has_role_google_login reads. "" when the token contradicts it (the domain's address, another hd or none): the
+    stored address is cleared. None when the token has no verified address: the same identity keeps the stored one.
+    """
+    if on_role_domain(email) and hosted_domain != ROLE_HOSTED_DOMAIN:
+        return ""
+    return email
+
+
+def holds_role(user):
+    """The account has a role in ROLE_LEVELS, and ALLOW_ROLE_PASSWORD_LOGIN (development, tests) is off."""
+    return not settings.service.allow_role_password_login and any(
+        p.get("level") in ROLE_LEVELS for p in user.privileges
+    )
+
+
+def on_role_domain(email):
+    """A verified Google address on the association's domain."""
+    return bool(email) and email.lower().endswith(ROLE_DOMAIN)
+
+
+def has_role_google_login(user):
+    """
+    A Google identity whose verified address is on the association's domain. The identity stores no address, so the
+    address is google_email, which link_account, unlink_account and google_login_generation keep in step with it.
+    """
+    return (
+        on_role_domain(user.google_email)
+        and Authenticators.select().where((Authenticators.user == user.id) & (Authenticators.auth == "google")).exists()
+    )
+
 
 def add_user(form, user_uuid=None):
     """
@@ -431,19 +478,28 @@ def register_user(
     validated=False,
     privileges=None,
     fullname=None,
+    adopt_existing=True,
 ):
     """
     Creates a new user from an e-mail and password, returning the new user
-    object.
+    object. An account that already has this exact e-mail is returned instead,
+    unless adopt_existing is False: then an account holding the address in any
+    casing raises AddressInUseError, and the user returned is always the row
+    this call inserted. (No unique index on e-mail: a concurrent request can
+    still insert a second account with the address, never hand back this one.)
     """
     if privileges is None:
         privileges = []
 
-    # Don't create a new user if the email exists already
-    try:
-        user = User.select().where(User.email == email).get()
-    except DoesNotExist:
-        # Create user
+    if adopt_existing:
+        # Don't create a new user if the email exists already
+        user = User.select().where(User.email == email).first()
+    else:
+        taken = User.select(User.id).where(fn.LOWER(User.email) == email.lower()).first()
+        if taken:
+            raise AddressInUseError(taken.id)
+        user = None
+    if user is None:
         user = User(
             email=email,
             uuid=uuid.uuid4().hex,
@@ -455,9 +511,9 @@ def register_user(
         with DATABASE.atomic():
             user.save()
 
-    # Update to make sure to get the correct id
-    user = User.select().where(User.email == email).get()
-    logger.info(f"Registered User {user.as_dict()}")
+    # By id, not e-mail: another account may hold the same address.
+    user = User.get_by_id(user.id)
+    auth_log.info("Registered user id=%s", user.id)
 
     # If no password is provided, don't create an authenticator
     if not password:
@@ -485,76 +541,105 @@ class InactiveAccountError(Exception):
     """Login attempt for a deactivated account (layer 1)."""
 
 
+class AddressInUseError(Exception):
+    """register_user(adopt_existing=False): account `user_id` already holds the address."""
+
+    def __init__(self, user_id):
+        super().__init__(user_id)
+        self.user_id = user_id
+
+
 def authenticate_user(name, password):
     """
     Authenticates an email or username and password against the database.
-    Returns the user info for the authenticated user on success, or None on
-    failure.
+    Returns (user, generation) for the authenticated user on success, or
+    (None, None) on failure. The account's row is locked from reading its
+    mark (login_generation) to checking the password, so a password change
+    cannot fall between them.
     """
     if not name or not password:
-        return None
+        return None, None
+    user_info = None
     try:
         with DATABASE.atomic():
-            user_info = User.select().where((User.email == name) | (User.username == name)).get()
+            user_info = User.select().where((User.email == name) | (User.username == name)).for_update().get()
             if user_info and not user_info.is_active:
-                logger.info("Login attempt for inactive account %s", name)
+                auth_log.info("Login refused: inactive account id=%s", user_info.id)
                 raise InactiveAccountError()
             if user_info:
+                generation = login_generation(user_info.uuid)
                 authenticator = (
                     Authenticators.select()
                     .where((Authenticators.auth == "password") & (Authenticators.user == user_info.id))
                     .get()
                 )
-        if check_password_hash(authenticator.auth_data, password):
-            return user_info
+                if check_password_hash(authenticator.auth_data, password):
+                    return user_info, generation
     except DoesNotExist:
         # Perform password check regardless of username to prevent timing
         # attacks
         check_password_hash("This-always-fails", password)
-    logger.info("Failed login attempt for %s", name)
-    return None
+    auth_log.info("Login failed: %s", f"user id={user_info.id}" if user_info else "unknown user")
+    return None, None
 
 
-def change_password(active_user, changed_user, form):
+def change_password(active_user, changed_user, form, session_stamps=None):
     """
     Changes password for user changed_user. Returns
     something that evaluates as True on success.
+
+    A request passes the session it came through (session_stamps): one
+    revoked while the request waited for the account's row changes nothing,
+    as in link_account. An admin is asked no old password, also for her own.
+    Anyone else changes only her own: another account's old password is
+    never checked here, so it cannot be guessed outside the login's limit.
     """
     if not active_user or not changed_user or not form:
         logger.info("Bad call to change_password, somethings is missing)")
         return None
+    if not active_user.is_admin and str(changed_user) != str(active_user.id):
+        return None
 
-    if not active_user.is_admin:
+    # The account's row, as a login takes it: the new password and the new mark (new_generation) are one change.
+    with DATABASE.atomic():
         try:
+            target = User.select(User.id, User.uuid).where(User.id == changed_user).for_update().get()
+        except DoesNotExist:
+            return None
+        if _revoked_meanwhile(target, session_stamps):
+            return None
+
+        if not active_user.is_admin:
+            try:
+                authenticator = (
+                    Authenticators.select()
+                    .where((Authenticators.user == changed_user) & (Authenticators.auth == "password"))
+                    .get()
+                )
+                if not check_password_hash(authenticator.auth_data, form["oldpassword"]):
+                    # Incorrect password supplied
+                    return None
+            except PeeweeException:
+                # Non-users need a password set to change it. Fall out on any other
+                # exception as well.
+                return None
+
+        try:
+            # If we have a password authenticator already, update it instead of creating a new.
             authenticator = (
                 Authenticators.select()
                 .where((Authenticators.user == changed_user) & (Authenticators.auth == "password"))
                 .get()
             )
-            if not check_password_hash(authenticator.auth_data, form["oldpassword"]):
-                # Incorrect password supplied
-                return None
-        except PeeweeException:
-            # Non-users need a password set to change it. Fall out on any other
-            # exception as well.
-            return None
-
-    try:
-        # If we have a password authenticator already, update it instead of creating a new.
-        authenticator = (
-            Authenticators.select()
-            .where((Authenticators.user == changed_user) & (Authenticators.auth == "password"))
-            .get()
-        )
-        authenticator.auth_data = generate_password_hash(form["newpassword"])
-    except DoesNotExist:
-        authenticator = Authenticators(
-            user=changed_user,
-            auth="password",
-            auth_data=generate_password_hash(form["password"]),
-        )
-    with DATABASE.atomic():
+            authenticator.auth_data = generate_password_hash(form["newpassword"])
+        except DoesNotExist:
+            authenticator = Authenticators(
+                user=changed_user,
+                auth="password",
+                auth_data=generate_password_hash(form["password"]),
+            )
         authenticator.save()
+        new_generation(target.uuid)
 
     return True
 
@@ -582,70 +667,116 @@ def authenticate_with_credentials(method, ident):
     except DoesNotExist:
         pass
 
-    logger.info("Failed login attempt for service %s persistent id %s", method, ident)
     return None
 
 
-def link_account(user, method, ident):
+def _revoked_meanwhile(account, session_stamps):
+    """A request made through a session (`session_stamps`, its stamps) that the session no longer holds for: it was
+    revoked while the request waited for the locked `account`."""
+    if session_stamps is None or session_holds(session_stamps):
+        return False
+    auth_log.warning("Refusing a change of user #%d from a session revoked meanwhile", account.id)
+    return True
+
+
+def link_account(user, method, ident, email=None, from_google_session=False, session_stamps=None):
     """
     Registers an account linked to an external authentication service. Returns
     something that evaluates as True on success.
+
+    For Google, under the account's row lock (update_role takes it too):
+    replacing an identity needs a session from Google, an account with a role
+    takes only an identity whose verified address `email` is on the
+    association's domain, and google_email follows the identity. Replacing
+    one revokes the account's sessions (new_generation). The holder's own
+    request passes its session (session_stamps), and a session revoked while
+    the request waited for the lock changes nothing (session_holds).
     """
     if not method or not ident or not user:
         return None
 
-    # Allows at most one identity for each method to be linked to this account.
-    unlink_account(user, method)
-
     try:
         with DATABASE.atomic():
-            authenticator = (
-                Authenticators.select()
-                .where((Authenticators.auth == method) & (Authenticators.auth_data == ident))
-                .get()
+            # The account's row first, as unlink_account does, then the identity.
+            account = User.select().where(User.id == user.id).for_update().get()
+            # Beside the unique index, which nothing checks at start: two accounts never take one identity at once.
+            DATABASE.execute_sql("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"authenticator:{method}:{ident}",))
+            if _revoked_meanwhile(account, session_stamps):
+                return None
+            old = Authenticators.get_or_none((Authenticators.user == user.id) & (Authenticators.auth == method))
+            switch = old is not None and old.auth_data != ident
+            if method == "google" and switch and not from_google_session:
+                auth_log.warning("Refusing to switch google from a password session for user #%d", user.id)
+                return None
+            if method == "google" and holds_role(account) and not on_role_domain(email):
+                auth_log.warning("Refusing a Google identity outside the domain for user #%d, who has a role", user.id)
+                return None
+            taken = Authenticators.select().where(
+                (Authenticators.auth == method) & (Authenticators.auth_data == ident) & (Authenticators.user != user.id)
             )
-        if authenticator:
-            # Someone else has this identity registered, do not allow the same external identity
-            # for multiple users
-            return None
-    except DoesNotExist:
-        pass
-
-    try:
-        authenticator = Authenticators(user=user.id, auth=method, auth_data=ident)
-        with DATABASE.atomic():
-            authenticator.save()
-        logger.info("Linked %s to %s persistent id %s", user.username, method, ident)
+            if taken.exists():
+                # Someone else has this identity registered, do not allow the same external identity
+                # for multiple users
+                return None
+            # At most one identity for each method. The old one goes in the new
+            # one's transaction: a link that fails, also on the unique index
+            # when another account takes the identity at the same time, leaves
+            # the account as it was.
+            Authenticators.delete().where((Authenticators.user == user.id) & (Authenticators.auth == method)).execute()
+            Authenticators.create(user=user.id, auth=method, auth_data=ident)
+            # The same identity linked again without a verified address keeps its address; another never keeps it,
+            # and a contradicted one ("", storable_google_email) goes.
+            if method == "google" and (email is not None or old is None or switch):
+                User.update(google_email=email or None).where(User.id == user.id).execute()
+            if switch:
+                new_generation(account.uuid)
+        auth_log.info("Linked user id=%s to service %s", user.id, method)
         return user
     except PeeweeException as auth_except:
-        logger.info(
-            "Error (%s) while linking %s to %s persistent id %s",
-            auth_except,
-            user.username,
-            method,
-            ident,
-        )
+        auth_log.info("Link failed: user id=%s service %s: %s", user.id, method, type(auth_except).__name__)
 
-    logger.info(
-        "Failed link attempt for user %s service %s persistent id %s",
-        user.username,
-        method,
-        ident,
-    )
+    auth_log.info("Link failed: user id=%s service %s", user.id, method)
     return None
 
 
-def unlink_account(user, method):
+def unlink_account(user, method, session_stamps=None):
     """
     Removes any linked identities for method method. Return somethings that
-    evaluates to false on failure.
+    evaluates to false on failure. Never the account's last way to sign in:
+    the legacy Google login does not adopt an existing account, so only an
+    admin could let the holder back in. Never the Google identity of an
+    account with a role (holds_role). A removal revokes the account's
+    sessions (new_generation), and google_email goes with the Google identity.
+    The holder's own request passes its session, as for link_account.
     """
     if not method or not user:
         return None
     try:
         with DATABASE.atomic():
-            Authenticators.delete().where((Authenticators.user == user.id) & (Authenticators.auth == method)).execute()
+            # The account's row is the lock: two unlinks of different methods wait for each other, and a role grant
+            # (update_role) and an unlink wait for each other.
+            account = User.select().where(User.id == user.id).for_update().get()
+            if _revoked_meanwhile(account, session_stamps):
+                return None
+            if method == "google" and holds_role(account):
+                auth_log.warning("Refusing to unlink google for user #%d, who has a role", user.id)
+                return None
+            others = Authenticators.select().where((Authenticators.user == user.id) & (Authenticators.auth != method))
+            if not others.exists():
+                auth_log.warning("Refusing to unlink %s, the last way to sign in, for user #%d", method, user.id)
+                return None
+            removed = (
+                Authenticators.delete()
+                .where((Authenticators.user == user.id) & (Authenticators.auth == method))
+                .execute()
+            )
+            if removed and method == "google":
+                User.update(google_email=None).where(User.id == user.id).execute()
+            if removed:
+                new_generation(account.uuid)
 
+        if removed:
+            auth_log.info("Unlinked user id=%s from service %s", user.id, method)
         return True
     except DoesNotExist:
         return None
@@ -819,16 +950,19 @@ def update_user(form, user_uuid=None):
     if not (user.is_admin or user.is_manager) and str(form["id"]) != str(user.id):
         return {"status": "error", "message": "forbidden"}
 
-    if not (user.is_admin or user.is_manager):
-        # Mark user supplied e-mail as false
-        form["validated"] = False
-
-    # check target user
+    # check target user. By primary key: User.get("t") is WHERE 't', the first row of the table.
     try:
         with DATABASE.atomic():
-            target_user = User.get(form["id"])
-    except DoesNotExist:
+            target_user = User.get_by_id(form["id"])
+    except (DoesNotExist, DataError):  # DataError: an id that is no number
         return {"status": "error", "message": "unknown user"}
+
+    if target_user.id == user.id:
+        # An admin's mark that the holder took the web course: the holder can
+        # neither set nor clear it (the legacy frontend's "Ändra e-postadress"
+        # sends validated: false, which locked the member out of it). Decided
+        # on the row read, not on form["id"]: "007" and 7.0 are account 7 too.
+        del form["validated"]
 
     # Managers never edit admin accounts (get_users hides them too); the
     # email is the password-login key, so that edit is a takeover.
@@ -1007,6 +1141,9 @@ def set_account_active(u_id, active, actor_user_id=None):
                     )
                 target.is_active = bool(active)
                 target.save()
+                if not active:
+                    # Activating again never brings the sessions back.
+                    new_generation(target.uuid)
                 return {"id": target.id, "is_active": bool(target.is_active)}
         except OperationalError as exc:
             # SQLSTATE 40P01 (deadlock_detected) — rare re-ordering under
@@ -1132,20 +1269,33 @@ def update_role(operation, user_uuid=None, skip_role_check=False):
                 has_role = target_user.has_role(operation["role"], operation.get(target))
                 updated = False
                 if has_role and operation["action"] == "remove":
-                    logger.info(
-                        f"User:{user.username} UPDATE: Role remove on user: "
-                        f"{target_user.username} removed: {operation['role']} "
+                    auth_log.info(
+                        f"User:{user.id} UPDATE: Role remove on user: "
+                        f"{target_user.id} removed: {operation['role']} "
                         f"target:{operation.get(target)}"
                     )
                     target_user.remove_role(operation["role"], operation.get(target))
                     updated = True
                 elif not has_role and operation["action"] == "add":
-                    logger.info(
-                        f"User:{user.username} UPDATE: Role added on user: "
-                        f"{target_user.username} added: {operation['role']} "
+                    if (
+                        operation["role"] in ROLE_LEVELS
+                        and not settings.service.allow_role_password_login
+                        and not has_role_google_login(target_user)
+                    ):
+                        raise ValidationError(
+                            "google-required",
+                            "En roll kan bara ges till ett konto som loggar in med föreningens Google-konto. "
+                            "Kontot kopplar sitt Google-konto först.",
+                        )
+                    auth_log.info(
+                        f"User:{user.id} UPDATE: Role added on user: "
+                        f"{target_user.id} added: {operation['role']} "
                         f"target:{operation.get(target)}"
                     )
                     target_user.add_role(operation["role"], operation.get(target))
+                    if operation["role"] in ROLE_LEVELS and not settings.service.allow_role_password_login:
+                        # Every earlier session ends, also on the demo, which leaves production's sessions to it.
+                        new_generation(target_user.uuid)
                     updated = True
 
             return {"status": "updated" if updated else "unchanged"}
@@ -1176,7 +1326,7 @@ def edit_genebank(gb, fields, actor):
             gb.name = value.strip()
     with DATABASE.atomic():
         gb.save()
-    logger.info(f"User:{actor.username or actor.email} edited genebank {gb.id}")
+    logger.info(f"User:{actor.id} edited genebank {gb.id}")
     return {"id": gb.id, "name": gb.name}
 
 
@@ -1334,7 +1484,7 @@ def edit_herd(herd, fields, actor):
         # over a membership/genebank change committed since the row was loaded.
         with DATABASE.atomic():
             herd.save(only=changed)
-    logger.info(f"User:{actor.username or actor.email} edited herd {herd.herd} via adminpanel")
+    logger.info(f"User:{actor.id} edited herd {herd.id} via adminpanel")
     return get_herd_for_admin(actor, herd)
 
 
@@ -1353,7 +1503,7 @@ def get_colors():
         return {
             genebank.name: [
                 {"id": color.id, "name": color.name, "comment": color.comment}
-                for color in Color.select().where(Color.genebank == genebank)
+                for color in Color.select().where(Color.genebank == genebank).order_by(Color.id)
             ]
             for genebank in Genebank.select()
         }
@@ -1522,6 +1672,7 @@ def add_herd(form, user_uuid):
             pass
         if "id" in form:
             del form["id"]
+        form = {k: v for k, v in form.items() if k not in BANK_PRIVACY_FIELDS}  # fixed 'private', issue #33
         bad = invalid_privacy_field(form)
         if bad:
             return {"status": "error", "message": f"Invalid value for {bad}"}
@@ -1533,7 +1684,7 @@ def add_herd(form, user_uuid):
             herd.save(force_insert=True)
         except IntegrityError:
             return {"status": "error", "message": "missing data"}
-        logger.info(f"User:{user.username} Added herd: {herd.short_info()}")
+        logger.info(f"User:{user.id} Added herd: {herd.id}")
         return {"status": "success"}
 
 
@@ -1672,6 +1823,23 @@ def update_herd(form, user_uuid):
             if not user.can_edit(herd.herd):
                 return {"status": "error", "message": "Forbidden"}
 
+            # Bank privacy is fixed at 'private' (issue #33): dropped before validation, so a bad
+            # stored value echoed by the legacy SPA cannot block the save. Response unchanged.
+            form = {k: v for k, v in form.items() if k not in BANK_PRIVACY_FIELDS}
+            # A manager reads the account as '••45' and the legacy SPA echoes the herd back: a masked
+            # value is never an account number, so it must not overwrite the stored one.
+            account = form.get("bank_account_number")
+            if account is not None and ACCOUNT_MASK[0] in str(account):
+                if account != account_end(herd.bank_account_number):
+                    return {"status": "error", "message": "Invalid value for bank_account_number"}
+                del form["bank_account_number"]  # the unchanged echo
+            elif account is not None and not (
+                user.is_admin or user.is_matrikel_admin or herd.id in user.effective_herd_ids()
+            ):
+                # A writer who sees only the end of the account may enter a new one, not blank it or
+                # replace it with something that is no account (at least four digits).
+                if sum(c.isdigit() for c in str(account)) < 4:
+                    return {"status": "error", "message": "Invalid value for bank_account_number"}
             bad = invalid_privacy_field(form)
             if bad:
                 return {"status": "error", "message": f"Invalid value for {bad}"}
@@ -1687,7 +1855,7 @@ def update_herd(form, user_uuid):
                 # only= : a full-row save would write the stale ownership columns back
                 # over a membership/genebank change committed since the row was loaded.
                 herd.save(only=written)
-        logger.info(f"User:{user.username} Updated herd: {herd.short_info()}")
+        logger.info(f"User:{user.id} Updated herd: {herd.id}")
         return {"status": "updated"}
     except DoesNotExist:
         return {"status": "error", "message": "Unknown herd"}
@@ -1700,11 +1868,6 @@ def update_origin_herd_ind(individual, new_herd, user):
     Updates origin_herd + number for the individual and replaces its BIRTH row
     (void + new BIRTH in the new herd) — in one transaction.
     """
-    update_logger = logging.getLogger(f"{individual.current_herd.genebank.name}_update")
-    update_logger.info(
-        f"{user.username},{individual.number},UPDATE origin_herd and number,"
-        f"{individual.origin_herd.herd},{new_herd.herd},"
-    )
     old_number = individual.number
     with DATABASE.atomic():
         individual.origin_herd = new_herd
@@ -1789,7 +1952,11 @@ def form_to_individual(form, user=None):
         if "breeding" in form:
             form["breeding"] = known_litter(form["breeding"])
         if "color" in form and form["color"] is not None:
-            form["color"] = known_color(form["color"])
+            # The rabbit's current herd, as the v2 create does: the form's herd for a new one.
+            herd = individual.current_herd if individual.id else Herd.get_or_none(Herd.herd == form.get("herd"))
+            if herd is None:
+                raise IndividualRefused("Unknown color: no herd to look it up in")
+            form["color"] = known_color(form["color"], herd.genebank_id)
         if "origin_herd" in form:
             form["origin_herd"] = known_origin_herd(form["origin_herd"]["herd"])
         for parent in ["mother", "father"]:
@@ -1927,9 +2094,9 @@ def add_individual(form, user_uuid):
             except ValueError as exception:
                 return {"status": "error", "message": f"{exception}"}
         if "weights" in form:
-            update_weights(individual, form["weights"], user.username)
+            update_weights(individual, form["weights"])
         if "bodyfat" in form:
-            update_bodyfat(individual, form["bodyfat"], user.username)
+            update_bodyfat(individual, form["bodyfat"])
 
         individual.save()
 
@@ -1963,9 +2130,6 @@ def add_individual(form, user_uuid):
             except ValueError as exception:
                 raise exception
 
-        logging.getLogger(f"{individual.current_herd.genebank.name}_create").info(
-            f"{user.username},{individual.number},{individual.name},{new_herd.herd},{selling_date}"
-        )
         return {
             "status": "success",
             "message": "Individual Created",
@@ -2002,7 +2166,7 @@ LEGACY_GENEBANK_CHANGE_NOTE = "Genbanksbyte av admin via legacy"
 
 @number_assets.finishing  # inside a caller's transaction, teardown_request finishes instead
 def update_individual(
-    form, user_uuid, issue_digital=False, genebank_change_reason=None, clear_nulls=False, buyer=None, legacy=True
+    form, user_uuid, issue_digital=False, genebank_change_reason=None, clear_nulls=False, buyer=None, legacy=False
 ):
     """
     Updates the individual `form["id"]` by the values in `form`, if the user identified by `user_uuid`
@@ -2012,8 +2176,8 @@ def update_individual(
     required note for an admin's move into another genebank (legacy PATCH passes
     LEGACY_GENEBANK_CHANGE_NOTE, the v2 certificate routes the body's reason; the legacy certificate
     routes pass none, and their form drops herd). `clear_nulls` (v2) clears the death and castration
-    fields sent as null. `buyer` (v2) is the buyer outside the association on a sale to GX1/MX1, which v2
-    (`legacy` False) requires; the legacy form cannot send one.
+    fields sent as null. `buyer` (v2) is the buyer outside the association on a sale to GX1/MX1, which every
+    caller requires except the legacy app's two routes (`legacy`), whose forms cannot send one.
     """
     user = fetch_user_info(user_uuid)
     if user is None:
@@ -2022,6 +2186,9 @@ def update_individual(
     if not user.can_edit(form["id"]):
         return {"status": "error", "message": "Forbidden"}
     form.pop("new_individual", None)  # an update is never a creation
+    # Before translate keeps only the changed fields: null, 0, 1 and "false" would pass for "unchanged" or truthy.
+    if "rex" in form and not isinstance(form["rex"], bool):
+        return {"status": "error", "message": "rex must be true or false"}
     if "breeding" in form:  # one canonical id for the lock set and the write
         try:
             form["breeding"] = canonical_breeding_id(form["breeding"])
@@ -2059,7 +2226,7 @@ def update_individual(
     except Exception as e:
         if hasattr(e, "individual_stage"):  # today's checks before the lock: legacy 500, v2 400/500
             raise
-        logger.error(f"Expetion in update individual {form.get('id')}, user: {user.username} exception: {e}")
+        logger.error(f"Expetion in update individual {form.get('id')}, user: {user.id} exception: {type(e).__name__}")
         return {"status": "error", "message": "Kunde inte uppdatera individ."}
     return {
         "status": "success",
@@ -2265,6 +2432,7 @@ def get_paginated_individuals(
     sex=None,
     herd_id=None,
     include_historical=False,
+    rex=False,
 ):
     """
     Returns paginated individuals with filtering, sorting, and search.
@@ -2342,6 +2510,10 @@ def get_paginated_individuals(
         # Sex filter
         if sex:
             core_query = core_query.where(Individual.sex == sex)
+
+        # Rex filter: only rex-coated rabbits; False means no filter
+        if rex:
+            core_query = core_query.where(Individual.rex == True)  # noqa: E712
 
         # Status filter
         max_report_time = (datetime.now() - timedelta(days=ACTIVE_WINDOW_DAYS)).date()
@@ -2456,7 +2628,8 @@ def get_paginated_individuals(
         }
         sort_col = sort_columns.get(sort, name_sort)
         if order == "desc":
-            sort_col = sort_col.desc()
+            # Postgres puts NULLs first on DESC; keep rows without a value last
+            sort_col = sort_col.desc(nulls="LAST")
 
         # When herd_id is specified, sort own-herd individuals first
         if herd_id:
@@ -2753,7 +2926,7 @@ def register_breeding(form, user_uuid):
             breed_notes=form.get("notes", None),
         )
         breeding.save()
-        logger.info(f"User:{user.username} added breeding: {breeding.as_dict()}")
+        logger.info(f"User:{user.id} added breeding: {breeding.id}")
         result = {"status": "success", "breeding_id": breeding.id}
         if date_warnings:
             result["warnings"] = date_warnings
@@ -2816,9 +2989,9 @@ def delete_breeding(id, user_uuid):
             # the individuals check above already returned for promoted kits.
             bunny_count = Bunny.delete().where(Bunny.breeding == breeding).execute()
             if bunny_count:
-                logger.info(f"User:{user.username} deleted {bunny_count} bunny roster rows with breeding {id}")
+                logger.info(f"User:{user.id} deleted {bunny_count} bunny roster rows with breeding {id}")
             Breeding.delete().where(Breeding.id == id).execute()
-            logger.info(f"User:{user.username} deleted empty breeding: {breeding.as_dict()}")
+            logger.info(f"User:{user.id} deleted empty breeding: {breeding.id}")
             return {"status": "success"}
     except DoesNotExist:
         return {
@@ -3031,7 +3204,7 @@ def register_birth(form, user_uuid):
             for slot in range(1, litter_size + 1):
                 Bunny.create(breeding=breeding, slot_order=slot)
 
-        logger.info(f"User:{user.username} added birth: {breeding.as_dict()}")
+        logger.info(f"User:{user.id} added birth: {breeding.id}")
         result = {"status": "success", "litter_number": assigned_litter_number}
         if litter_conflicts:
             result["litter_number_conflicts"] = litter_conflicts
@@ -3079,7 +3252,6 @@ def update_breeding(form, user_uuid):
     # parent change rewrites every kit's BIRTH row and number. Re-checked under the lock below.
     if not user.can_edit(breeding.breeding_herd_id.herd):
         return {"status": "error", "message": "Forbidden"}
-    update_logger = logging.getLogger(f"{breeding.mother.current_herd.genebank.name}_update")
     errors = []
     date_warnings = []
     # `breeding` is the row as this request found it, read before the lock. Legacy PATCHes the
@@ -3096,9 +3268,6 @@ def update_breeding(form, user_uuid):
             mother = Individual.get(Individual.number == form["mother"])
             if old_mother != mother.number:
                 changes["mother"] = mother
-                update_logger.info(
-                    f"{user.username},breeding_id:{breeding.id},changed_mother,{old_mother},{mother.number}"
-                )
         except DoesNotExist:
             errors += ["Unknown mother"]
     if "father" in form:
@@ -3107,9 +3276,6 @@ def update_breeding(form, user_uuid):
             father = Individual.get(Individual.number == form["father"])
             if old_father != father.number:
                 changes["father"] = father
-                update_logger.info(
-                    f"{user.username},breeding_id:{breeding.id},changed_father,{old_father},{father.number}"
-                )
         except DoesNotExist:
             errors += ["Unknown father"]
 
@@ -3118,9 +3284,6 @@ def update_breeding(form, user_uuid):
             try:
                 new_date = validate_date(form[bdate])
                 if getattr(breeding, bdate) != new_date.date():
-                    update_logger.info(
-                        f"{user.username},breeding_id:{breeding.id},changed_{bdate},{getattr(breeding, bdate)},{form[bdate]}"  # noqa: E501
-                    )
                     changes[bdate] = new_date
             except ValueError as error:
                 errors += [str(error)]
@@ -3289,9 +3452,6 @@ def update_breeding(form, user_uuid):
             # Update breeding_herd to new herd ID.
             # Update all Indivuduals in breeding
             if herd_changed:
-                update_logger.info(
-                    f"{user.username},breeding_id:{breeding.id},new_breeding_herd,{stored.breeding_herd_id.herd},{new_herd.herd}"  # noqa: E501
-                )
                 stored.breeding_herd_id = new_herd
                 # Breeding herd id changed
                 for ind in kits.clone():
@@ -3441,8 +3601,14 @@ def get_yearly_report_by_round(herd_id, round_id):
         return None
 
 
-def get_yearly_reports(round_id: int, genebank_id: int) -> list[dict]:
-    """Get all yearly reports for a specific round and genebank."""
+def get_yearly_reports(
+    round_id: int, genebank_id: int, full_account: bool = False, own_herds: frozenset | set = frozenset()
+) -> list[dict]:
+    """
+    Get all yearly reports for a specific round and genebank. The bank account number is
+    cut to its last two digits unless `full_account` (admin, matrikel_admin) or the herd is one of
+    `own_herds` (the reader's own herds, judged per row).
+    """
     try:
         with DATABASE.atomic():
             reports = (
@@ -3526,7 +3692,11 @@ def get_yearly_reports(round_id: int, genebank_id: int) -> list[dict]:
                     "email": (r.herd.email if "noEmail" not in allow_publication else None),
                     "phone": (r.herd.mobile_phone if "noPhone" not in allow_publication else None),
                     "address": (r.herd.physical_address if "noAddress" not in allow_publication else None),
-                    "bank_account": r.herd.bank_account_number,
+                    "bank_account": (
+                        r.herd.bank_account_number
+                        if full_account or r.herd.id in own_herds
+                        else account_end(r.herd.bank_account_number)
+                    ),
                     "bank_name": r.herd.bank_name,
                     # Additional fields
                     "eligible_for_support": form_data.get("eligibleForSupport", False),
@@ -3556,10 +3726,12 @@ def format_disease_cases(diseases: dict) -> str:
     return "; ".join(cases) if cases else "Inga rapporterade sjukdomsfall"
 
 
-def export_yearly_reports_csv(round_id: int, genebank_id: int) -> str:
+def export_yearly_reports_csv(
+    round_id: int, genebank_id: int, full_account: bool = False, own_herds: frozenset | set = frozenset()
+) -> str:
     """Export yearly reports as CSV data."""
     try:
-        reports = get_yearly_reports(round_id, genebank_id)
+        reports = get_yearly_reports(round_id, genebank_id, full_account, own_herds)
 
         # CSV Headers in Swedish - exactly matching the table view
         headers = [
@@ -3964,9 +4136,9 @@ def set_v2_prod_access(u_id, enabled):
 
 def set_validated(u_id, validated):
     """
-    Toggle hbuser.validated: the course is done. Google login (redirect and
-    token flows) requires it; session load and password login do not check
-    it. Audited via trigger.
+    Toggle hbuser.validated: the course is done. The legacy Google login
+    requires it, and so do the legacy frontend's functions and the token login
+    when the access rules are off (legacy_compat.refusal). Audited via trigger.
     """
     user = User.get_or_none(User.id == u_id)
     if user is None:
@@ -4164,7 +4336,11 @@ def revert_audit_entry(audit_id, fields=None, is_admin=False):
     set_clauses = []
     params = []
     values = {}
+    bank_ignored = False
     for field in fields:
+        if table_name == "herd" and field in BANK_PRIVACY_FIELDS:  # fixed 'private' (#33): ignored, not an error
+            bank_ignored = True
+            continue
         if field == pk_col:
             continue
         if field not in valid_cols:
@@ -4178,6 +4354,8 @@ def revert_audit_entry(audit_id, fields=None, is_admin=False):
         return {"status": "error", "message": refusal}, 409
 
     if not set_clauses:
+        if bank_ignored:  # only bank privacy was selected (e.g. a migration 40 entry): nothing to write
+            return {"status": "success", "message": "Ändring ångrad"}, 200
         return {"status": "error", "message": "Inga fält att ångra"}, 400
 
     params.append(entry.record_id)
@@ -4238,7 +4416,8 @@ def restore_record(table_name, record_id, audit_id, is_admin=False):
     locked = _audit_undo_locked(table_name, is_admin)
     if table_name == "bunny" and current.get("individual_id") != wanted.get("individual_id"):
         locked = locked | {"fate"}  # the bunny CHECK ties fate to the link, which restore skips
-    values = {field: value for field, value in wanted.items() if field not in locked}
+    bank = set(BANK_PRIVACY_FIELDS) if table_name == "herd" else set()  # fixed 'private' (#33): never restored
+    values = {field: value for field, value in wanted.items() if field not in locked | bank}
     if refusal := _audit_undo_refusal(table_name, values, is_admin):
         return {"status": "error", "message": refusal}, 409
     skipped = sorted(field for field in locked & wanted.keys() if current.get(field) != wanted[field])
@@ -4342,23 +4521,177 @@ def purge_user_audit_pii(user_id: int, username: str, email: str) -> int:
             )
         # Marker row — documents the erasure, not the erased content; only
         # the numeric user_id survives, which IS the pseudonym key.
-        DATABASE.execute_sql(
-            """
-            INSERT INTO audit_log
-                (table_name, record_id, operation, new_data, changed_by)
-            VALUES
-                ('audit_log', %s, 'REDACT',
-                 jsonb_build_object('rows_redacted', %s::int), 'system')
-            """,
-            (marker_id, rows_redacted),
-        )
-        DATABASE.execute_sql("CREATE RULE audit_log_no_update AS ON UPDATE TO audit_log DO INSTEAD NOTHING")
+        _write_redact_marker(marker_id, rows_redacted)
+        DATABASE.execute_sql(AUDIT_LOG_NO_UPDATE_RULE)
     return rows_redacted
+
+
+def _write_redact_marker(record_id, rows_redacted):
+    """A REDACT row in audit_log: when and how many rows were redacted, never which."""
+    DATABASE.execute_sql(
+        """
+        INSERT INTO audit_log
+            (table_name, record_id, operation, new_data, changed_by)
+        VALUES
+            ('audit_log', %s, 'REDACT',
+             jsonb_build_object('rows_redacted', %s::int), 'system')
+        """,
+        (record_id, rows_redacted),
+    )
+
+
+AUDIT_IP_RETENTION = "12 months"  # a PostgreSQL interval: calendar months, as the privacy policy says
+AUDIT_IP_BATCH = 5000
+AUDIT_IP_LOCK_TIMEOUT = "5s"
+
+
+def purge_audit_ip(now, batch=AUDIT_IP_BATCH) -> int:
+    """
+    Removes ip_address from audit_log rows older than AUDIT_IP_RETENTION; the rest of the row stays.
+    Each batch is found without a lock through idx_audit_log_ip_retention, then the no-update rule is lifted
+    only for one short UPDATE of those ids (the purge_user_audit_pii mechanism), which commits together with
+    its REDACT marker row. A lock timeout raises (the scheduler logs it); committed batches stay, and the
+    next run continues. Returns the rows changed.
+    """
+    cutoff = DATABASE.execute_sql("SELECT %s::timestamptz - %s::interval", (now, AUDIT_IP_RETENTION)).fetchone()[0]
+    marker_id = f"purge-ip-{now.astimezone(timezone.utc):%Y%m%dT%H%M%SZ}"
+    total, last = 0, (datetime.min.replace(tzinfo=timezone.utc), 0)
+    while True:
+        rows = DATABASE.execute_sql(
+            """
+            SELECT changed_at, id FROM audit_log
+            WHERE ip_address IS NOT NULL AND changed_at < %s AND (changed_at, id) > (%s, %s)
+            ORDER BY changed_at, id LIMIT %s
+            """,
+            (cutoff, *last, batch),
+        ).fetchall()
+        if not rows:
+            return total
+        with DATABASE.atomic():
+            # DROP RULE locks audit_log exclusively until commit: never queue every audited write behind it.
+            DATABASE.execute_sql("SELECT set_config('lock_timeout', %s, true)", (AUDIT_IP_LOCK_TIMEOUT,))
+            DATABASE.execute_sql("DROP RULE IF EXISTS audit_log_no_update ON audit_log")
+            cursor = DATABASE.execute_sql(
+                "UPDATE audit_log SET ip_address = NULL WHERE id = ANY(%s) AND ip_address IS NOT NULL",
+                ([row[1] for row in rows],),
+            )
+            changed = cursor.rowcount or 0
+            if changed:
+                _write_redact_marker(marker_id, changed)
+            DATABASE.execute_sql(AUDIT_LOG_NO_UPDATE_RULE)
+        total += changed
+        last = rows[-1]
+
+
+APPLICATION_RETENTION = "12 months"  # a PostgreSQL interval: calendar months, as the privacy policy says
+
+
+def purge_member_applications(now) -> int:
+    """
+    Deletes member_application rows that never led to membership (rejected or pending) 12 calendar months after
+    submission, as the privacy policy promises; the decision date does not matter. Approved rows stay.
+    The table is not in AUDITED_TABLES, so audit_log holds no copy; matrikel_audit has no row for these.
+    Returns the rows deleted.
+    """
+    # The columns are naive local times (datetime.now()): compare in that clock, and add the interval to the
+    # row's date so the 29 February case lands on 28 February instead of rounding down from today.
+    # One day of margin: the job runs nightly, so a normal run keeps every row within its 12 months (the policy's
+    # upper bound); a missed run can still leave one a day too long.
+    cutoff = now.astimezone().replace(tzinfo=None) + timedelta(days=1)  # a calendar day in the local clock
+    cursor = DATABASE.execute_sql(
+        """
+        DELETE FROM member_application
+        WHERE status IN ('rejected', 'pending') AND created_at + %s::interval <= %s
+        """,
+        (APPLICATION_RETENTION, cutoff),
+    )
+    return cursor.rowcount or 0
 
 
 # Session-store counter of mass logouts. Outside 'session:*', so the sweep never
 # deletes it, and without a TTL: it must outlive every session issued before it.
 LOGOUT_EPOCH_KEY = "logout-epoch"
+
+
+def _generation_key(user_uuid):
+    # Beside LOGOUT_EPOCH_KEY, for the same reasons. Keyed on the uuid the session holds, read before any user is.
+    return f"generation:{uuid.UUID(str(user_uuid)).hex}"
+
+
+def account_generation(user_uuid):
+    """The account's mark: a session is valid only while it carries this one. None when the account has none."""
+    mark = session_redis.get(_generation_key(user_uuid))
+    return mark.decode() if mark else None
+
+
+def session_holds(stamps):
+    """
+    Whether a session with a user still holds, by its stamps (the session itself): the account's current mark and the
+    latest logout epoch. herdbook._session_revoked asks it before every request; a change of credentials asks it again
+    under the account's row lock, for a request that waited there while its session was revoked.
+    """
+    if not stamps.get("user_id"):
+        return False
+    generation = account_generation(stamps["user_id"])
+    epoch = int(session_redis.get(LOGOUT_EPOCH_KEY) or 0)
+    return generation is not None and stamps.get("generation") == generation and stamps.get("logout_epoch", 0) >= epoch
+
+
+def login_generation(user_uuid):
+    """
+    The mark a login stamps, read under the account's row lock before the credential is checked. A missing mark is
+    created without overwriting one someone else has set (SET NX, then GET), so two first logins get the same one, and
+    one a password change replaces in between leaves the login with the old.
+    """
+    session_redis.set(_generation_key(user_uuid), uuid.uuid4().hex, nx=True)
+    return account_generation(user_uuid)
+
+
+def new_generation(user_uuid):
+    """
+    Revokes every session of the account. Called inside the transaction that changes its credentials, after the
+    write: a Redis error rolls the change back. Only production changes a mark: the demo's accounts are a copy, and
+    the store is shared.
+    """
+    if not settings.service.demo_instance:
+        session_redis.set(_generation_key(user_uuid), uuid.uuid4().hex)
+
+
+def revoke_sessions(user_id):
+    """
+    For Logga ut överallt: a new mark under the account's row lock, as a change of credentials takes it. False when
+    there is no such account.
+    """
+    with DATABASE.atomic():
+        account = User.select(User.id, User.uuid).where(User.id == user_id).for_update().first()
+        if account is None:
+            return False
+        new_generation(account.uuid)
+    return True
+
+
+def google_login_generation(user, method, ident, email=None):
+    """
+    login_generation for a login through `method` (Google): under the account's row lock the identity is looked up
+    once more, and a deactivation, switch or removal that got there first refuses the login (None). The identity's
+    verified address `email` becomes google_email under the same lock, so it can never land on a newer identity; ""
+    (a contradicted domain address, storable_google_email) clears it, and None keeps it. An account with a role
+    (holds_role, read under the lock) is then refused unless `email` is on the association's domain.
+    """
+    with DATABASE.atomic():
+        account = User.select(User.id, User.is_active, User._privileges).where(User.id == user.id).for_update().get()
+        if not account.is_active:
+            return None
+        generation = login_generation(user.uuid)
+        again = authenticate_with_credentials(method, ident)
+        if not again or again.id != user.id:
+            return None
+        if email is not None:
+            User.update(google_email=email or None).where(User.id == user.id).execute()
+        if holds_role(account) and not on_role_domain(email):
+            auth_log.warning("Login refused: Google identity outside the domain for user #%d, who has a role", user.id)
+            return None
+    return generation
 
 
 def mass_logout_sessions(redis_client, changed_by):

@@ -181,6 +181,7 @@ async function markSold(
     await dialog.getByRole("radio", { name: "Utanför genbanken" }).check();
     await dialog.getByLabel("Köparens namn").fill(to.outside);
     await dialog.getByLabel(/^Ort/).fill("Mellerud");
+    await dialog.getByLabel(/^Postadress/).fill("Testgatan 1");
   }
   await dialog.getByLabel(/^År/).selectOption(when.ar);
   await dialog.getByLabel(/^Månad/).selectOption(when.manad);

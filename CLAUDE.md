@@ -18,6 +18,7 @@ gotlandskaninen.se/stamboken/    → Stamboken (inloggning krävs)
 gotlandskaninen.se/stamboken/verifiera/<uuid> → Publik verifiering av digitalt intyg (QR)
 gotlandskaninen.se/medlem/       → Medlemsregister (inloggning krävs)
 gotlandskaninen.se/ansok         → Publik medlemsansökan
+gotlandskaninen.se/integritetspolicy → Hur föreningen behandlar personuppgifter (kort adress: /dataskydd)
 gotlandskaninen.se/admin         → Payload CMS admin
 gotlandskaninen.se/api/          → Flask-API (via nginx)
 gotlandskaninen.se/api-test/     → Flask-API mot demodatabasen (via nginx)
@@ -68,6 +69,10 @@ läggs till med `gh project item-add`
   `update_individual` ([ADR-0015](docs/adr/0015-individual-write-commands.md));
   ångra och rättelse via kommandologgen
   ([ADR-0017](docs/adr/0017-individual-command-log-and-undo.md)).
+- Medlemskapets status och intygskolumnerna har var sin övergångstabell
+  (`membership_lifecycle.py`, `certificate_lifecycle.py`); fältet skrivs bara i
+  den ägande modulen, och en ny maskin görs explicit först när den har ett hål
+  ([ADR-0019](docs/adr/0019-explicit-state-machines.md)).
 - Felformat i v2: RFC 9457 Problem Details.
 
 **Frontend (Next.js)**

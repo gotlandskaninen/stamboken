@@ -72,7 +72,7 @@ const STEPS: Array<{
   {
     title: "Kontakta genbanksansvarig",
     body: [
-      "Mejla genbanksansvarig för den ras du vill föda upp och be om ansökningshandlingarna: en instruktion om ansökan och avel, själva genbankskontraktet i två exemplar och en bilaga.",
+      "Mejla eller skriv till genbanksansvarig för den ras du vill föda upp och be om ansökningshandlingarna: en instruktion om ansökan och avel, själva genbankskontraktet i två exemplar och en bilaga.",
       "Ofta följer handlingarna redan med välkomstbrevet till nya medlemmar.",
     ],
     links: [
@@ -114,11 +114,11 @@ const YEARLY = [
   },
   {
     title: "Årsrapport senast 31 januari",
-    desc: "Sedan 2024 lämnar du den direkt i Stamboken Online. Årsrapporten är också grunden för Jordbruksverkets stöd, som kräver minst en kull under året, hane och hona vid årsskiftet och betald medlemsavgift. Ett år utan kull ger inget stöd.",
+    desc: "Du lämnar den i Stamboken Online eller på pappersblanketten, som du skickar till genbanksansvarig. I Stamboken Online är dina kaniner redan ifyllda. Årsrapporten är också grunden för Jordbruksverkets stöd, som kräver minst en kull under året, hane och hona vid årsskiftet och betald medlemsavgift. Ett år utan kull ger inget stöd.",
   },
 ];
 
-// Who holds the role is CMS content (the Styrelse och kontakt page), not
+// Who holds the role is CMS content (the Kontakt page), not
 // source: names change with the board and must not live in a public repo.
 const CONTACTS = [
   { breed: "Gotlandskanin", mail: GOTLAND_MAIL },
@@ -572,9 +572,9 @@ function ContactSection() {
     >
       <SectionHeading eyebrow="Kontakt" title="Hör av dig" />
       <Typography sx={{ mb: 6, maxWidth: "40rem", color: "ink.2" }}>
-        Varje ras har en genbanksansvarig. Vem det är just nu står under{" "}
-        <Link href="/styrelsen" style={inlineLinkStyle}>
-          Styrelse och kontakt
+        Varje ras har en genbanksansvarig. Vem det är just nu står på sidan{" "}
+        <Link href="/kontakt" style={inlineLinkStyle}>
+          Kontakt
         </Link>
         .
       </Typography>

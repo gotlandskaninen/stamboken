@@ -105,6 +105,44 @@ class TestCreateIndividualV2(DatabaseTest):
         data = response.get_json()
         self.assertIsNone(data["individual"]["sex"])
 
+    def test_create_rex(self):
+        """rex true is stored and returned; false is stored; a non-boolean is a 400 that creates nothing."""
+        self._login()
+        body = {
+            "breeding_id": self.test_breeding.id,
+            "certificate_type": "paper",
+            "paper_number": "G1-2511",
+            "paper_certificate": "GK-REX-001",
+            "litter_size6w": 5,
+        }
+        response = self.client.post("/api/v2/individual", json={**body, "rex": True})
+        self.assertEqual(response.status_code, 201, response.get_json())
+        individual = response.get_json()["individual"]
+        self.assertIs(individual["rex"], True)
+        self.assertTrue(db.Individual.get(db.Individual.number == individual["number"]).rex)
+        before = db.Individual.select().count()
+        for bad in ("ja", None, 0, 1, "false"):
+            response = self.client.post("/api/v2/individual", json={**body, "rex": bad})
+            self.assertEqual(response.status_code, 400, bad)
+            self.assertIn("rex", response.get_json()["detail"])
+        self.assertEqual(db.Individual.select().count(), before)
+
+    def test_create_rex_false_is_stored(self):
+        self._login()
+        response = self.client.post(
+            "/api/v2/individual",
+            json={
+                "breeding_id": self.test_breeding.id,
+                "certificate_type": "paper",
+                "paper_number": "G1-2511",
+                "paper_certificate": "GK-REX-002",
+                "litter_size6w": 5,
+                "rex": False,
+            },
+        )
+        self.assertEqual(response.status_code, 201, response.get_json())
+        self.assertIs(response.get_json()["individual"]["rex"], False)
+
     def test_requires_breeding_id(self):
         """Missing breeding_id returns 400."""
         self._login()
@@ -407,7 +445,9 @@ class TestCreateIndividualV2(DatabaseTest):
 
     def test_digital_certificate_is_issued_after_the_registration(self):
         """Digital is issued after the commit, as promote does; its outcome is in the response."""
-        self._login()
+        # Only a named user with access to the litter's herd may ask for a digital certificate.
+        db.User.update(fullname="Test Namn").where(db.User.id == self.owner.id).execute()
+        self._login("owner")
         failed = {"type": "about:blank", "title": "certificate_issuance_failed", "status": 503, "detail": "nere"}
         for outcome, certificate, error in ((("100500", None), "100500", None), ((None, failed), None, failed)):
             with self.subTest(certificate=certificate):
@@ -480,6 +520,18 @@ class TestImportIndividualV2(DatabaseTest):
         # Call as_dict() directly — must not raise
         as_d = db_ind.as_dict()
         self.assertEqual(as_d["birth_date"], "2030-01-15")
+
+    def test_import_rex(self):
+        """The import takes rex as a boolean, with and without a given number."""
+        self._login()
+        body = {"herd": "G1", "birth_date": "2030-01-15"}
+        for extra in ({}, {"number": "G1-3012"}):
+            with self.subTest(extra=extra):
+                created = self.client.post(IMPORT_URL, json={**body, **extra, "rex": True})
+                self.assertEqual(created.status_code, 201, created.get_json())
+                self.assertIs(created.get_json()["individual"]["rex"], True)
+                refused = self.client.post(IMPORT_URL, json={**body, **extra, "rex": "ja"})
+                self.assertEqual(refused.status_code, 400)
 
     def test_import_requires_herd(self):
         """Missing herd returns 400."""

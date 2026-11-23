@@ -150,6 +150,14 @@ export function AvatarMenu({ unread = 0 }: { unread?: number }) {
         >
           {unread > 0 ? `Notiser (${unread})` : "Notiser"}
         </MenuItem>
+        <MenuItem
+          onClick={() => {
+            closeMenu();
+            router.push("/stamboken-online/manual");
+          }}
+        >
+          Manual
+        </MenuItem>
         {user && hasAnyVisible(user) && (
           <MenuItem
             onClick={() => {

@@ -24,7 +24,7 @@ from tests.ht_helpers import ht_row
 from tests.inbox_fixtures import QUALITY
 
 NOW = datetime.combine(date(2026, 1, 15), clock(12), arsrapport.STOCKHOLM)
-BUYER = {"name": "Test Köpare", "town": "Visby"}
+BUYER = {"name": "Test Köpare", "town": "Visby", "postal_address": "Testgatan 1"}
 WAITS = "Registrera intygen i posten först."
 REPORT = "/api/v2/arsrapport/besattning/{herd}/2025"
 WRITTEN = (

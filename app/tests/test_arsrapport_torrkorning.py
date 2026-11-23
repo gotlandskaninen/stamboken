@@ -13,7 +13,6 @@ from datetime import date, datetime
 import utils.arsrapport as arsrapport
 import utils.database as db
 from utils.arsrapport import ArsrapportError, Effect, order, partial_date
-from utils.herd_tracking import CONTACT_CONSENT_NEEDED
 from utils.individual_commands import ClearFields, RecordDeath, Undo, execute
 
 from tests.arsrapport_fixtures import ArsrapportTest
@@ -21,7 +20,7 @@ from tests.ht_helpers import _void, ht_row
 
 LAST = date(2025, 12, 31)
 FUTURE = datetime.now().year + 1  # _validate_sale reads the real clock, not the fixture's
-BUYER = {"name": "Test Köpare", "town": "Visby"}
+BUYER = {"name": "Test Köpare", "town": "Visby", "postal_address": "Testgatan 1"}
 
 
 def codes(result):
@@ -344,10 +343,10 @@ class TorrkorningTest(ArsrapportTest):
         (a,) = self.rabbits(self.h, 1)
         self.assertEqual(codes(self.dry(self.body(self.sald(a, "utanfor", 2025, 12, 10)))), {"kopare_saknas"})
         self.assertTrue(self.dry(self.body(self.sald(a, "utanfor", 2025, 12, 10, kopare=BUYER)))["ok"])
-        address = {**BUYER, "postal_address": "Testgatan 1"}
-        result = self.dry(self.body(self.sald(a, "utanfor", 2025, 12, 10, kopare=address)))
+        missing_address = {**BUYER, "postal_address": "  "}
+        result = self.dry(self.body(self.sald(a, "utanfor", 2025, 12, 10, kopare=missing_address)))
         self.assertEqual(
-            result["refusals"], [{"individual_id": a.id, "code": "kopare", "message": CONTACT_CONSENT_NEEDED}]
+            result["refusals"], [{"individual_id": a.id, "code": "kopare", "message": "Ange köparens postadress."}]
         )
 
     def test_changed_sale_is_validated_again(self):  # Codex 2

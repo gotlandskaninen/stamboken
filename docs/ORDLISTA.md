@@ -202,6 +202,11 @@ har ett medlemsnummer och kan omfatta en huvudmedlem, familjemedlemmar och sköt
 Besättningsnumret är medlemsnumret med rasens bokstav framför.\
 Kod: `Membership`, `member_number`, `Member` · Legacy-manual: "medlemsregistret" · Legacy: "medlemsmatrikeln" · Nytt UI: "Matrikel", "Medlemsmatrikel", "Medlemsnummer"
 
+**Medlemsavgift**\
+Avgiften för ett års medlemskap i Föreningen Gotlandskaninen. Samma avgift har också kallats
+årsavgift; skriv medlemsavgift, som inte går att blanda ihop med årsrapporten.\
+Kod: – · Nytt UI: "Medlemsavgiften", "Betala medlemsavgiften"
+
 **Oregistrerad unge**\
 Gamla manualen: en unge som ännu inte fått ett intyg. I nya Stamboken är det en rad i kullistan
 som inte registrerats än; den har bara ett preliminärt individnummer.\
@@ -223,6 +228,12 @@ Att räkna ut, innan du parar, vilken inavelskoefficient en tänkt avkomma skull
 gemensamma förfäder föräldrarna har. Är en förälder inte registrerad väljer du dess mor och far i
 stället. Nya Stamboken kan jämföra flera hanar mot samma hona.\
 Kod: `testbreed` · Legacy-manual: "Provparning", "provpara" · Legacy: "Provparning" · Nytt UI: samma, "Provpara"
+
+**Päls (normal, rex)**\
+Kaninens päls är antingen normal eller rex, ett val med två alternativ, inte en kryssruta. Normal är
+standardvärdet. "Hårlag" är det äldre fritextfältet (`hair_notes`) och används inte för valet
+Normal eller Rex; "rexpäls" används inte i gränssnittet.\
+Kod: `rex` (boolean) · Legacy-manual: – · Legacy: fritext i hårlag · Nytt UI: "Päls", "Normal", "Rex"
 
 **Registrera / registrerad kanin**\
 En registrerad kanin är inskriven i stamboken med intyg, pappersintyg eller digitalt intyg, och har
@@ -286,12 +297,13 @@ Kod: `owner` · Legacy-manual: "vanlig användare" · Legacy: "Owner" · Nytt UI
 
 **Verifiera intyg**\
 Kontrollera att ett digitalt intyg är äkta och det senaste. I nya Stamboken skannar du QR-koden eller
-öppnar länken på intyget; sidan visar Äkta genbanksintyg, Äkta men ersatt (det finns ett nyare intyg)
+öppnar länken på intyget; sidan visar Äkta genbanksintyg, Äkta men ersatt (det finns ett nyare intyg),
+Äkta men gäller inte längre (ersatt av ett pappersintyg)
 eller att intyget inte hittades. I gamla Stamboken laddade du upp PDF-filen på kaninens sida.\
 Kod: `DigitalCertificateV2` (uuid) · Legacy-manual: "verifiera" · Legacy: "Verifiera intyg", "Verifiera" · Nytt UI: "Verifiera Genbanksintyg", "Äkta genbanksintyg"
 
 **Vikt / hull**\
-Kaninens vikt i kilo och dess hull, alltså hur fet eller mager den är (låg, normal eller hög), med
+Kaninens vikt i kilo och dess hull, alltså hur fet eller mager den är (mager, normal eller fet, som på pappersblanketten), med
 mätdatum. I gamla Stamboken rapporterades vikt och hull före årsrapporten. Nya Stamboken visar de
 senaste värdena på kaninens sida men har ännu ingen knapp för att lägga till nya.\
 Kod: `Weight`, `Bodyfat` · Legacy-manual: "vikt och hull" · Legacy: "Vikt", "Hull" · Nytt UI: "Senaste vikt", "Senaste hull"
@@ -414,7 +426,8 @@ Projektägaren beslutade 2026-10-30:
 12. **Brokig**, inte scheck, om vita kaniner med färgade fläckar, som i färgatlasen och färgnamnen
     (beslutat 2026-11-12).
 13. Beslutat 2026-11-12: **Besättning** om en enskild uppfödares kaniner, aldrig genbank. **Genbank** är hela rasens bevarade population, och föreningen har två. **Genbanksbesättning** får användas som förtydligande. Orden följer handlingsplanen och FAO, se posterna Besättning och Genbank.
-14. Beslutat 2026-11-21: **Stamboken Online** om webbsystemet när texten utanför systemet ber läsaren göra något där, **Stamboken** om registret. Se posten Stamboken / Stamboken Online.
+14. **Medlemsavgift**, inte årsavgift, om avgiften för ett års medlemskap (beslutat 2026-11-18).
+15. Beslutat 2026-11-21: **Stamboken Online** om webbsystemet när texten utanför systemet ber läsaren göra något där, **Stamboken** om registret. Se posten Stamboken / Stamboken Online.
 
 ## Öppna frågor
 
@@ -440,6 +453,6 @@ Inget av detta är beslutat. En rad per fråga med alternativen.
 - **Administration** eller **Administrera**.
 - **Matrikel**, **medlemsmatrikel** eller **medlemsregistret** (manual:91).
 - **GX1/MX1**: gamla manualen säger kaniner "som sålts med intyg" (manual:25); båda UI säger att en kanin utan intyg bara kan säljas dit (individual_sell.tsx:178, `individual.sell.unregisteredInfo`).
-- **Hullskala**: "Låg/Normal/Hög" (individual_weighthull.tsx:178–180, HealthSection.tsx:20–22) eller "Under/Normal/Över" (BatchRabbitUpdateForm.tsx:468–478).
+- **Hullskala**: "Låg/Normal/Hög" (individual_weighthull.tsx:178–180), "Mager/Normal/Fet" (HealthSection.tsx:20–22, som pappersblanketten) eller "Under/Normal/Över" (BatchRabbitUpdateForm.tsx:468–478).
 - **Rasnamn och stavning i gamla manualen**: versal i löptext (manual:62, 150, 219) och stavfel "genbaksansvarig" (manual:84, 119), "genbaknsansvarig" (manual:116), "innavelskoefficient" (manual:65), "Gotlandkanin" (manual:219).
 - **DEVELOPMENT_GUIDE.md** kallar kaninens nummer "Genbanksnummer" (rad 95 och 115), mot kanoniska Individnummer.

@@ -55,7 +55,6 @@ class TestMailJobs(MailTest):
             mock.patch.object(ci, "start_pubsub_listener"),
             mock.patch.object(ci, "set_cache_and_functions"),
             mock.patch.object(herdbook, "_warm_genetics_in_background"),
-            mock.patch.object(herdbook.gblogging, "create_genebank_logs"),
             mock.patch.object(herdbook.apscheduler.schedulers.background, "BackgroundScheduler") as scheduler_cls,
         ):
             herdbook.initialize_app()
@@ -73,7 +72,6 @@ class TestMailJobs(MailTest):
             mock.patch.object(ci, "start_pubsub_listener"),
             mock.patch.object(ci, "set_cache_and_functions"),
             mock.patch.object(herdbook, "_warm_genetics_in_background"),
-            mock.patch.object(herdbook.gblogging, "create_genebank_logs"),
             mock.patch.object(herdbook.apscheduler.schedulers.background, "BackgroundScheduler") as scheduler_cls,
         ):
             herdbook.initialize_app()

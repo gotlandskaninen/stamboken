@@ -32,7 +32,7 @@ from utils.individual_number_v2 import (
     validate_first_certificate,
 )
 
-from .common import check_genebank_access, json_login_required, problem
+from .common import check_genebank_access, json_login_required, problem, rex_problem
 
 logger = logging.getLogger(__name__)
 
@@ -231,11 +231,15 @@ def _issue_digital_certificate(individual, user_id) -> int:
     """
     # Lazy import: the cert pipeline pulls in heavy PDF/signing deps.
     import utils.data_access as da
-    from utils.cert_service_v2 import assign_certificate_number, generate_and_store, invalidate_caches
+    from utils.cert_service_v2 import ATTESTER_NAME_MISSING, attester_name, generate_and_store, invalidate_caches
+    from utils.individual_commands import assign_certificate_number
+    from werkzeug.exceptions import BadRequest
 
     user = da.fetch_user_info(user_id)
     if user is None:
         raise ValueError("individual_lookup_failed")
+    if not attester_name(user):
+        raise BadRequest(ATTESTER_NAME_MISSING)
 
     # The global MAX+1 number can collide with a concurrent issuance in
     # another litter (only our own Breeding row is locked) — the collision
@@ -276,6 +280,25 @@ def _issue_digital_certificate(individual, user_id) -> int:
             individual.digital_certificate = None
             raise
     raise last_exc
+
+
+DIGITAL_FORBIDDEN = (
+    "Bara den som har tillgång till besättningen kan utfärda digitalt intyg, eftersom den som utfärdar intygar "
+    "med sitt namn. Välj pappersintyg, eller låt någon i besättningen registrera kaninen."
+)
+
+
+def digital_certificate_refusal(user, herd):
+    """(status, title, detail) when `user` may not issue the digital certificate a registration in `herd` asks
+    for, else None. Checked before anything is written: the rabbit never gets its number without the certificate
+    (decision 2026-10-30), and only the herd attests, in its own name (#141)."""
+    from utils.cert_service_v2 import ATTESTER_NAME_MISSING, attester_name
+
+    if not user.owns_herd_of(herd):
+        return 403, "digital_certificate_forbidden", DIGITAL_FORBIDDEN
+    if not attester_name(user):
+        return 400, "attester_name_missing", ATTESTER_NAME_MISSING
+    return None
 
 
 def certificate_choice_problem(certificate_type, paper_certificate, paper_number=None, resolution=None):
@@ -341,6 +364,7 @@ def promote_bunny(
     claw_color=None,
     belly_color=None,
     hair_notes=None,
+    rex=False,
 ):
     """Promote a bunny to a registered Individual.
 
@@ -363,6 +387,10 @@ def promote_bunny(
     except DoesNotExist as exc:
         raise RosterActionError(404, "Not Found", f"Bunny {bunny_id} not found") from exc
     breeding_id = bunny.breeding_id
+    if certificate_type == "digital":
+        litter = Breeding.get_or_none(Breeding.id == breeding_id)
+        if litter is not None and (refusal := digital_certificate_refusal(user, litter.breeding_herd_id)):
+            raise RosterActionError(*refusal)
 
     with DATABASE.atomic():
         # Lock the litter; a concurrent breeding delete surfaces as 404.
@@ -381,6 +409,9 @@ def promote_bunny(
         # 1. Authorize — owner of the breeding herd, or genebank manager/admin.
         if not user.can_edit(herd.herd):
             raise RosterActionError(403, "Forbidden", "Åtkomst nekad")
+        # Again on the locked litter: it may have moved to another herd since the check before the lock.
+        if certificate_type == "digital" and (refusal := digital_certificate_refusal(user, breeding.breeding_herd_id)):
+            raise RosterActionError(*refusal)
 
         # 2. Litter-size precondition (the mint helper defaults max to 9 when
         #    null and would mint a colliding "…1" — guard explicitly).
@@ -482,6 +513,7 @@ def promote_bunny(
                 claw_color=claw_color,
                 belly_color=belly_color,
                 hair_notes=hair_notes,
+                rex=rex,
                 paper_certificate=paper_certificate if certificate_type == "paper" else None,
                 signature=user,
             )
@@ -767,6 +799,8 @@ def promote_bunny_route(id):
     detail = _validate_string_fields(body, _PROMOTE_STRING_FIELDS)
     if detail:
         return problem(400, "Bad Request", detail)
+    if refusal := rex_problem(body):
+        return refusal
     litter_size6w = body.get("litter_size6w")
     if litter_size6w is not None:
         try:
@@ -792,6 +826,7 @@ def promote_bunny_route(id):
             claw_color=body.get("claw_color"),
             belly_color=body.get("belly_color"),
             hair_notes=body.get("hair_notes"),
+            rex=body.get("rex", False),
         )
     except RosterActionError as exc:
         return problem(exc.status, exc.title, exc.detail, **exc.extra)

@@ -1,4 +1,4 @@
-"""migrate_41_to_42: the yearly report v2 schema, fresh-bootstrap parity, its guards and the legacy flow beside it."""
+"""migrate_49_to_50: the yearly report v2 schema, fresh-bootstrap parity, its guards and the legacy flow beside it."""
 
 import unittest
 import uuid
@@ -63,7 +63,7 @@ def _sql(query, params=None):
 
 
 def snapshot():
-    """Columns, indexes, constraints and triggers of the tables migration 42 creates or changes."""
+    """Columns, indexes, constraints and triggers of the tables migration 50 creates or changes."""
     return (
         set(
             _sql(
@@ -90,8 +90,8 @@ def snapshot():
     )
 
 
-def to_v41_shape():
-    """The schema before migration 42: no new tables or columns, the old NOT NULLs and the old void CHECK."""
+def to_v49_shape():
+    """The schema before migration 50: no new tables or columns, the old NOT NULLs and the old void CHECK."""
     _sql("DROP TABLE " + ", ".join(f'"{t}"' for t in NEW_TABLES) + " CASCADE")
     for table, columns in NEW_COLUMNS.items():
         _sql(f'ALTER TABLE "{table}" ' + ", ".join(f'DROP COLUMN "{c}"' for c in columns))
@@ -114,7 +114,7 @@ class TestArsrapportMigration(IsolatedSchemaTest):
         self.round = db.YearlyReportRound.create(report_year=2025, created_by=self.admin, is_active=True)
 
     def _old_report(self, herd, data='{"numberOfLitters": 2}'):
-        """A report row in the v41 shape, written with raw SQL as the legacy app left it."""
+        """A report row in the v49 shape, written with raw SQL as the legacy app left it."""
         return _sql(
             'INSERT INTO "yearlyherdreport" (herd_id, report_date, generated_by_id, name, data, publish, '
             "publish_tel, publish_email, publish_address, version, round_id) "
@@ -138,24 +138,28 @@ class TestArsrapportMigration(IsolatedSchemaTest):
         return {"report_round_id": self.round.id, "report_year": 2025, "data": {"numberOfLitters": 1}, **fields}
 
     def test_fresh_bootstrap_equals_chain(self):
-        to_v41_shape()
-        db._create_arsrapport_schema()
-        self.assertEqual(snapshot(), self.bootstrapped)
+        with db.DB_PROXY.atomic() as tx:
+            to_v49_shape()
+            db.SchemaHistory.delete().where(db.SchemaHistory.version == 50).execute()
+            db.migrate_49_to_50()
+            self.assertTrue(db.SchemaHistory.get_by_id(50).comment.startswith(db.ARSRAPPORT_50))
+            self.assertEqual(snapshot(), self.bootstrapped)
+            tx.rollback()  # keep the class's original bootstrap stamp
 
     def test_helper_is_idempotent(self):
         db._create_arsrapport_schema()
         db._create_arsrapport_schema()
         self.assertEqual(snapshot(), self.bootstrapped)
 
-    def stamp_42(self, comment):
-        """schema_history's 42 as `comment` until the test ends: the class's database was bootstrapped by init()."""
-        row = db.SchemaHistory.get_by_id(42)
-        db.SchemaHistory.update(comment=comment).where(db.SchemaHistory.version == 42).execute()
-        self.addCleanup(db.SchemaHistory.update(comment=row.comment).where(db.SchemaHistory.version == 42).execute)
+    def stamp_50(self, comment):
+        """schema_history's 50 as `comment` until the test ends: the class's database was bootstrapped by init()."""
+        row = db.SchemaHistory.get_by_id(50)
+        db.SchemaHistory.update(comment=comment).where(db.SchemaHistory.version == 50).execute()
+        self.addCleanup(db.SchemaHistory.update(comment=row.comment).where(db.SchemaHistory.version == 50).execute)
 
-    def test_boot_adds_the_columns_a_database_at_42_lacks(self):
-        """S5: a database that ran an earlier 42 gets the columns added to it since, under the same number."""
-        self.stamp_42(f"{db.ARSRAPPORT_42} rounds per genebank")
+    def test_boot_adds_the_columns_a_database_at_50_lacks(self):
+        """S5: a database that ran an earlier 50 gets the columns added to it since, under the same number."""
+        self.stamp_50(f"{db.ARSRAPPORT_50} rounds per genebank")
         with mock.patch.object(db, "_create_arsrapport_schema") as helper, self.assertNoLogs(db.logger, "WARNING"):
             db.check_migrations()
         helper.assert_not_called()  # a healthy database takes no table lock at boot
@@ -169,21 +173,21 @@ class TestArsrapportMigration(IsolatedSchemaTest):
         helper.assert_not_called()  # L4: the two columns alone
         self.assertIn("breeding.litter_size6w_preliminary, inbox_item.ref_data", logs.output[0])
         self.assertEqual(snapshot(), self.bootstrapped)
-        self.assertEqual(db.SchemaHistory.select(db.fn.MAX(db.SchemaHistory.version)).scalar(), 42)  # pylint: disable=E1120
+        self.assertEqual(db.SchemaHistory.select(db.fn.MAX(db.SchemaHistory.version)).scalar(), 50)  # pylint: disable=E1120
 
-    def test_boot_creates_a_yearly_report_table_a_database_at_42_lacks(self):  # Codex round 2, P2
+    def test_boot_creates_a_yearly_report_table_a_database_at_50_lacks(self):  # Codex round 2, P2
         """Under the migration lock, not by a worker's verify() and init() racing for it."""
-        self.stamp_42(f"{db.ARSRAPPORT_42} rounds per genebank")
+        self.stamp_50(f"{db.ARSRAPPORT_50} rounds per genebank")
         _sql('DROP TABLE "sale_proposal"')
         with self.assertLogs(db.logger, "WARNING") as logs:
             self.assertTrue(db.verify(try_init=False))  # no init(): the boot's repair made it
         self.assertIn("sale_proposal", logs.output[0])
         self.assertEqual(snapshot(), self.bootstrapped)
 
-    def test_boot_leaves_alone_a_42_of_another_migration(self):  # L4: a collision of migration numbers
-        for comment in ("Bootstrapped", "another branch's migration 42"):
+    def test_boot_leaves_alone_a_50_of_another_migration(self):  # L4: a collision of migration numbers
+        for comment in ("Bootstrapped", "another branch's migration 50"):
             with self.subTest(comment):
-                self.stamp_42(comment)
+                self.stamp_50(comment)
                 with self.assertNoLogs(db.logger, "WARNING"):  # nothing missing: nothing said
                     db.check_migrations()
                 _sql('ALTER TABLE "inbox_item" DROP COLUMN "ref_data"')
@@ -229,8 +233,8 @@ class TestArsrapportMigration(IsolatedSchemaTest):
         db.HerdTracking.update(voided_by_access_code_id=code.id, **void).where(db.HerdTracking.id == row.id).execute()
         self.assertEqual(db.HerdTracking.get_by_id(row.id).voided_by_access_code_id, code.id)
 
-    def test_helper_replaces_the_first_42_void_check(self):
-        """A database that ran this branch's first 42 has the "user or code" CHECK: the helper swaps it."""
+    def test_helper_replaces_the_first_50_void_check(self):
+        """A database that ran this branch's first 50 has the "user or code" CHECK: the helper swaps it."""
         _sql('ALTER TABLE "herd_tracking" DROP CONSTRAINT "herd_tracking_void_fields_check"')
         _sql(
             'ALTER TABLE "herd_tracking" ADD CONSTRAINT "herd_tracking_void_fields_check" CHECK ('
@@ -279,7 +283,7 @@ class TestArsrapportMigration(IsolatedSchemaTest):
             submission(user=self.owner, source="mejl")
 
     def test_existing_reports_become_legacy(self):
-        to_v41_shape()
+        to_v49_shape()
         old = self._old_report(self.herds[0])
         db._create_arsrapport_schema()
         report = db.YearlyHerdReport.get_by_id(old)
@@ -336,15 +340,15 @@ class TestArsrapportMigration(IsolatedSchemaTest):
         self.assertIn("G1", da.export_yearly_reports_csv(self.round.id, self.genebanks[0].id))
         self.assertEqual(db.YearlyHerdReport.get_by_id(older).data, '{"numberOfLitters": 2}')
 
-    def test_chain_from_40_with_legacy_data(self):
-        self.addCleanup(db.check_migrations)  # puts 41 and 42 back if the test stops halfway
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 41).execute()
-        if db.SchemaHistory.get_or_none(db.SchemaHistory.version == 40) is None:
-            db.SchemaHistory.insert(version=40, comment="test seed", applied=datetime.now()).execute()  # pylint: disable=E1120
+    def test_chain_from_43_with_legacy_data(self):
+        self.addCleanup(db.check_migrations)  # replays migrations 44 through 50 if the test stops halfway
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 44).execute()
+        if db.SchemaHistory.get_or_none(db.SchemaHistory.version == 43) is None:
+            db.SchemaHistory.insert(version=43, comment="test seed", applied=datetime.now()).execute()  # pylint: disable=E1120
         _sql('ALTER TABLE "herd_tracking" DROP CONSTRAINT "herd_tracking_holder_contact_id_fkey"')
         _sql('DROP INDEX "herdtracking_holder_contact_id"')
         _sql('DROP TABLE "buyer_contact"')
-        to_v41_shape()
+        to_v49_shape()
         report = self._old_report(self.herds[0])
         voided = _sql(
             'INSERT INTO "herd_tracking" (individual_id, herd_id, herd_tracking_date, kind, operation_id, voided_at, '
@@ -362,7 +366,7 @@ class TestArsrapportMigration(IsolatedSchemaTest):
         db.check_migrations()
 
         versions = {v for (v,) in db.SchemaHistory.select(db.SchemaHistory.version).tuples()}
-        self.assertLessEqual({40, 41, 42}, versions)
+        self.assertLessEqual(set(range(43, 51)), versions)
         self.assertEqual(snapshot(), self.bootstrapped)
         legacy = db.YearlyHerdReport.get_by_id(report)
         self.assertEqual((legacy.status, legacy.data, legacy.publish), ("legacy", '{"numberOfLitters": 2}', True))

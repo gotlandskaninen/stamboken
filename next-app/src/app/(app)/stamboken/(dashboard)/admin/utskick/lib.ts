@@ -51,9 +51,14 @@ export const statusLabel = (status: string): string =>
 export const alarmText = (a: MailAlarm): string =>
   ALARM_TEXT[a.code] ?? a.message;
 
-/** Which row action applies: retry on failed/bounced, stop on queued. */
+/**
+ * Which row action applies: retry on failed/bounced/logged, stop on queued.
+ * A logged mail was never sent (MAIL_MODE=log) and does not go by itself when
+ * the mode is corrected.
+ */
 export function rowAction(status: string): "retry" | "cancel" | null {
-  if (status === "failed" || status === "bounced") return "retry";
+  if (status === "failed" || status === "bounced" || status === "logged")
+    return "retry";
   return status === "queued" ? "cancel" : null;
 }
 

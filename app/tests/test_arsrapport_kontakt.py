@@ -9,7 +9,6 @@ isort:skip_file
 """
 
 import json
-import unittest
 from datetime import date, datetime, timedelta, timezone
 from datetime import time as clock
 from unittest import mock
@@ -278,7 +277,6 @@ class KontaktTest(PaperTest):
         for secret in (*OLD_DIGITS, "6161", "9393"):
             self.assertNotIn(secret, found.get_data(as_text=True))
 
-    @unittest.expectedFailure  # until stamboken #33 is merged (D20): the manager reads the whole account today
     def test_manager_sees_only_the_account_end(self):
         manager = db.User.get_by_id(self.manager.id)
         self.assertEqual(db.Herd.get_by_id(self.h.id).filtered_dict(manager)["bank_account_number"], "••12")
@@ -323,7 +321,11 @@ class KontaktTest(PaperTest):
         self.assertIn("Ditt telefonnummer har ändrats.", text)
         self.assertNotIn("ny@example.invalid", text)
 
-        # The matrikel's own log, for the login's 7-day rule: the e-mail's before and after, the rest by name.
+        self.assertIsNotNone(db.Member.get_by_id(self.member.id).email_login_from)
+        previous = db.MemberPreviousAddress.get(db.MemberPreviousAddress.member == self.member.id)
+        self.assertEqual(previous.address, EMAIL)
+        self.assertIsNotNone(previous.login_until)
+        # The matrikel audit keeps the e-mail change and the other fields by name.
         (audit,) = self.contact_audits()
         self.assertEqual((audit.actor_id, audit.membership_id), (self.manager.id, self.member.membership_id))
         self.assertEqual(

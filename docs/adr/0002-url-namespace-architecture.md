@@ -47,7 +47,10 @@ namespaces.
 | `/medlemsforum` | Publik sida | Ingen | `(app)/(public)/medlemsforum` | Next.js |
 | `/stamboken-online` | Publik sida | Ingen | `(app)/(public)/stamboken-online` | Next.js |
 | `/bli-genbanksbesattning` | Publik informationssida (steg-för-steg) | Ingen | `(app)/(public)/bli-genbanksbesattning` | Next.js |
+| `/integritetspolicy` | Publik sida: hur föreningen behandlar personuppgifter | Ingen | `(app)/(public)/integritetspolicy` | Next.js |
+| `/dataskydd` | Kort adress för trycksaker; permanent omdirigering till `/integritetspolicy` | Ingen | `(app)/(public)/dataskydd` | Next.js |
 | `/bli-genbank` | Sidans tidigare adress; permanent omdirigering till `/bli-genbanksbesattning` | Ingen | `(app)/(public)/bli-genbank` | Next.js |
+| `/styrelsen` | Kontaktsidans tidigare adress; permanent omdirigering till CMS-sidan med sluggen kontakt | Ingen | `(app)/(public)/styrelsen` | Next.js |
 | `/auth/*` | Inloggning | Ingen | `(app)/(auth)/auth` | Next.js |
 | `/error/*` | Felsidor (404, 500) | Ingen | `(app)/(error)/error` | Next.js |
 | `/preview/*` | Payload draft-preview | Inloggad editor/admin | `(app)/(public)/preview` | Next.js |
@@ -86,9 +89,9 @@ med tabellen ovan:
 
 ```text
 admin, ansok, api, api-test, cms-api, cms-graphql, auth, stamboken,
-stamboken-online, medlem, medlemsforum, rapport, bli-genbank, bli-genbanksbesattning, v2,
-uppladdningar, _next, static, favicon.ico, robots.txt, sitemap.xml, error,
-not-found, preview
+stamboken-online, medlem, medlemsforum, rapport, bli-genbank, bli-genbanksbesattning,
+integritetspolicy, dataskydd, styrelsen, v2, uppladdningar, _next, static, favicon.ico,
+robots.txt, sitemap.xml, error, not-found, preview
 ```
 
 `cms-graphql` är reserverad eftersom Payload är konfigurerad med den sökvägen

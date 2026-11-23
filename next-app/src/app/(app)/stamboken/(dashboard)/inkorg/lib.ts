@@ -439,6 +439,7 @@ export function buildSavePayload(
   mode: SaveMode,
   form: CertForm,
   resolution?: NumberResolution,
+  rex = false,
 ): Record<string, unknown> {
   if (mode === "pappersintyg") {
     return {
@@ -455,6 +456,7 @@ export function buildSavePayload(
     mother: number(form.mother),
     father: number(form.father),
     birth_date: form.birth_date,
+    rex,
   };
   if (form.name.trim()) payload.name = form.name.trim();
   if (form.sex) payload.sex = form.sex;
@@ -495,24 +497,26 @@ export function buildSalePayload(form: SaleForm) {
 }
 
 /**
- * The rule of the API's proven_sale: a proof shows a sale already registered,
- * from the item or anywhere else, an active move of the rabbit (its active
- * rows, `sales`) to the same herd on the same date. Its buyer came with that
- * sale, so the panel does not ask for it again.
+ * The rule of the API's proven_sale: the sale a proof shows when it is already
+ * registered, from the item or anywhere else, an active move of the rabbit (its
+ * active rows, `sales`) to the same herd on the same date; null when there is
+ * none. Its buyer came with that sale, unless it has none (`buyer`).
  */
-export function provenSale(
+export function provenSale<
+  S extends { herd: string; date: string | null; kind: string },
+>(
   doc: InboxDocument,
   payload: { herd: string; date: string },
-  sales: { herd: string; date: string | null; kind: string }[],
-): boolean {
+  sales: S[],
+): S | null {
+  if (doc.doc_type !== "bevis") return null;
   return (
-    doc.doc_type === "bevis" &&
-    sales.some(
+    sales.find(
       (s) =>
         (s.kind === "TRANSFER" || s.kind === "CORRECTION") &&
         s.herd === payload.herd &&
         s.date === payload.date,
-    )
+    ) ?? null
   );
 }
 

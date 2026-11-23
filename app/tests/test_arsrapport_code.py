@@ -337,7 +337,7 @@ class CodeReportTest(ArsrapportTest):
 
     def test_a_link_cannot_probe_buyer_names_through_the_reason(self):
         """Codex 4: a link's reason is dropped, so the dry run answers the same whatever it says."""
-        buyer = {"name": "Test Köpare", "town": "Visby"}
+        buyer = {"name": "Test Köpare", "town": "Visby", "postal_address": "Testgatan 1"}
         sold = self.sald(self.rabbits_[0], "utanfor", 2025, 11, 20, kopare=buyer)
         body = self.body(sold, *self.entries[1:])
         arsrapport.submit(

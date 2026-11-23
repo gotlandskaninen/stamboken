@@ -54,13 +54,16 @@
     "react-dom": "19.2.8",
     "react-easy-crop": "^5.1.2",
     "react-i18next": "15.7.3",
+    "react-markdown": "10.1.0",
     "react-redux": "9.2.0",
     "redux": "5.0.1",
+    "remark-gfm": "4.0.1",
     "sass": "^1.98.0",
     "sharp": "^0.35.5",
     "yup": "1.7.0"
   },
   "devDependencies": {
+    "@axe-core/playwright": "4.14.0",
     "@playwright/test": "^1.58.2",
     "@testing-library/jest-dom": "6.6.3",
     "@testing-library/react": "16.3.0",

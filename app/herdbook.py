@@ -19,13 +19,11 @@ import sys
 import threading
 import time
 import uuid
-from logging.handlers import TimedRotatingFileHandler
 from urllib.parse import urlparse
 from zoneinfo import ZoneInfo
 
 import apscheduler.schedulers.background
 import click
-import redis
 import requests
 from flask import (
     Flask,
@@ -58,17 +56,9 @@ from utils.cert_acess import (
     download_certificate_s3,
     get_certificate,
     get_certificate_data,
-    sign_data,
-    upload_certificate,
     verify_certificate_checksum,
     verify_signature,
 )
-from utils.cert_service_v2 import (
-    certificate_form,
-    certificate_update,
-    update_breeding_if_changed,
-)
-from werkzeug.exceptions import HTTPException
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.utils import secure_filename
 
@@ -76,12 +66,14 @@ import utils.external_auth  # isort:skip
 import utils.data_access as da  # isort:skip
 import utils.database as db  # isort:skip
 import utils.settings as settings  # isort:skip
-import utils.genebank_logging as gblogging  # isort:skip
+from utils import app_logging  # isort:skip
 import utils.genetics_service as genetics  # isort:skip
 from utils import number_assets  # isort:skip
 from utils.individual_commands import purge_command_free_text  # isort:skip
 from utils.log_masking import TokenMaskFilter  # isort:skip
 from utils.mail import purge_old_mail, send_pending  # isort:skip
+from utils import login_code  # isort:skip
+from utils.matrikel import purge_previous_addresses  # isort:skip
 from utils import inbox  # isort:skip
 from utils.inbox import queue_digests  # isort:skip
 from utils.arsrapport_invite import send_due_invitations  # isort:skip
@@ -90,10 +82,15 @@ from utils import inbox_purge  # isort:skip
 from utils import buyer_contact  # isort:skip
 from utils.inbox_interpreter import interpret_next  # isort:skip
 from utils.members import try_auto_link_member  # isort:skip
-from utils.legacy_compat import is_legacy_host, legacy_classroom_url  # isort:skip
-from utils.redis_retry import reconnect_on_drop  # isort:skip
+from utils.matrikel import anonymize_ended_persons  # isort:skip
+from utils.legacy_compat import course_message, is_legacy_host, legacy_classroom_url, legacy_hosts, refusal  # isort:skip
+from extensions import session_redis  # isort:skip
 
 APP = Flask(__name__, static_folder="/static")
+app_logging.setup()  # before any APP.logger use, or Flask adds its own stderr handler
+# Link tokens are credentials: masked in every line, in Flask's "Exception on <path>" and in the path field.
+app_logging.HANDLER.addFilter(TokenMaskFilter())
+auth_log = logging.getLogger("herdbook.auth")
 
 
 def _resolve_secret_key() -> str:
@@ -125,16 +122,17 @@ APP.wsgi_app = ProxyFix(APP.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 # cookie options at https://flask.palletsprojects.com/en/1.1.x/security/
 # Configurable directories (for CI/testing compatibility)
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379/0")
-SESSION_REDIS_URL = os.getenv("SESSION_REDIS_URL", "redis://redis:6379/2")
 UPLOAD_DIR = os.getenv("UPLOAD_FOLDER", "/app/uppladdningar")
 
 # Expected audience for Google ID tokens from the Next.js sign-in (the GIS
 # client — same value as next-app's NEXT_PUBLIC_GOOGLE_CLIENT_ID, NOT the
 # Flask OAuth client in auth.ini). Unset skips the audience check, so any
-# Google app's tokens would verify — warn loudly in production. An empty
+# Google app's tokens would verify — production refuses to start without it. An empty
 # string (e.g. a bare "GOOGLE_CLIENT_ID=" env line) must normalize to None:
 settings.refuse_committed_signing_key()
 settings.refuse_auto_validate_outside_demo()
+settings.refuse_role_password_login_in_production()
+settings.refuse_missing_google_client_id_in_production()
 settings.refuse_unsafe_mail_settings()
 settings.refuse_unsafe_gmail_settings()
 settings.refuse_private_folder_under_uploads()
@@ -142,8 +140,6 @@ settings.report_unwritable_private_folder()
 
 # verify_oauth2_token would otherwise enforce audience "" and fail every login.
 GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID") or None
-if not GOOGLE_CLIENT_ID and os.getenv("FLASK_ENV") == "production":
-    APP.logger.warning("GOOGLE_CLIENT_ID is not set — Google ID token audience is not pinned")
 
 # Create directories if they don't exist (will fail silently if no permissions)
 for d in [UPLOAD_DIR]:
@@ -158,15 +154,7 @@ APP.config.update(
     # Lax: every frontend is same-site, and it keeps cross-site form posts from carrying the session.
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_TYPE="redis",
-    # Timeouts so a hung (not down) Redis fails requests instead of
-    # deadlocking every gunicorn worker — session I/O is on every request.
-    SESSION_REDIS=redis.Redis.from_url(
-        SESSION_REDIS_URL,
-        socket_connect_timeout=2,
-        socket_timeout=2,
-        health_check_interval=30,
-        **reconnect_on_drop(),
-    ),
+    SESSION_REDIS=session_redis,
     SESSION_PERMANENT=True,
     PERMANENT_SESSION_LIFETIME=datetime.timedelta(days=31),
     SESSION_REFRESH_EACH_REQUEST=True,
@@ -227,6 +215,10 @@ from cli.gmail import gmail_cli  # noqa: E402
 
 APP.cli.add_command(gmail_cli)
 
+from cli.users import users_cli  # noqa: E402
+
+APP.cli.add_command(users_cli)
+
 
 @genetics_cli.command("recompute-history")
 @click.argument("genebank_id", type=int)
@@ -266,13 +258,28 @@ def _reconcile_all_history():
 def _purge_command_free_text():
     """Nightly leader job (ADR-0017), built as _reconcile_all_history: it closes its thread's connection itself.
 
-    It purges the mail queue first, on its own, so neither purge failing skips the other."""
+    It purges the mail queue, the login codes and the previous addresses first and counts the login address
+    collisions, each on its own, so no step failing skips another."""
     now = datetime.datetime.now(datetime.timezone.utc)
     try:
         try:
             APP.logger.info("Purged %s mail queue rows", purge_old_mail(now))
         except Exception:  # pylint: disable=broad-except
             APP.logger.exception("Purging the mail queue failed")
+        try:
+            APP.logger.info("Purged %s login codes", login_code.purge(now))
+        except Exception:  # pylint: disable=broad-except
+            APP.logger.exception("Purging the login codes failed")
+        try:
+            collisions = login_code.address_collisions(now)
+            if collisions:  # also an alarm in the status view (Utskick); counted, never named
+                APP.logger.warning("%s login addresses are held by more than one person", collisions)
+        except Exception:  # pylint: disable=broad-except
+            APP.logger.exception("Counting the login address collisions failed")
+        try:
+            APP.logger.info("Purged %s previous addresses", purge_previous_addresses(now))
+        except Exception:  # pylint: disable=broad-except
+            APP.logger.exception("Purging the previous addresses failed")
         count = purge_command_free_text(now)
         APP.logger.info("Purged free text from %s command log rows", count)
     finally:
@@ -307,6 +314,16 @@ def _send_mail():
         send_pending()
     except Exception:  # pylint: disable=broad-except
         APP.logger.exception("Mail sender run failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _expire_login_codes():
+    """Leader job every minute, built as _send_mail: an expired code keeps no new address (utils.login_code)."""
+    try:
+        login_code.expire(datetime.datetime.now(datetime.timezone.utc))
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Expiring login codes failed")
     finally:
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
@@ -376,6 +393,40 @@ def _interpret_document():
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
 
+def _purge_audit_ip():
+    """Nightly leader job beside _purge_command_free_text: IP addresses leave audit_log after 12 months."""
+    try:
+        count = da.purge_audit_ip(datetime.datetime.now(datetime.timezone.utc))
+        APP.logger.info("Removed the IP address from %s audit log rows", count)
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _purge_member_applications():
+    """Nightly leader job beside _purge_audit_ip: applications that led to no membership go after 12 months."""
+    try:
+        count = da.purge_member_applications(datetime.datetime.now(datetime.timezone.utc))
+        APP.logger.info("Deleted %s member applications that led to no membership", count)
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _anonymize_ended_persons():
+    """Nightly leader job beside _purge_audit_ip (#70): persons ended 12 months ago are anonymized."""
+    try:
+        count, failed, held = anonymize_ended_persons(datetime.datetime.now(datetime.timezone.utc))
+        APP.logger.info(
+            "Anonymized %s persons ended 12 months ago, %s memberships failed, %s left for the administrator",
+            count,
+            failed,
+            len(held),
+        )
+        for membership_id, person_id, reason in held:  # ids only, never names: the system administrator decides
+            APP.logger.info("Not anonymized: membership=%s person=%s reason=%s", membership_id, person_id, reason)
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
 # Initialize security packages
 # Flask-Talisman: Add security headers
 Talisman(
@@ -412,21 +463,13 @@ limiter.init_app(APP)
 LOGIN_RATE_LIMIT = "5 per minute"
 LOGIN_RATE_SCOPE = "login"
 
-# pylint: disable=no-member
-APP.logger.setLevel(logging.INFO)
-file_handler = TimedRotatingFileHandler(f"{settings.service.logfolder}/APP.log", when="W6")
-file_handler.setLevel(logging.INFO)
-file_handler.setFormatter(
-    gblogging.RequestFormatter(
-        "[%(asctime)s] %(module)s.%(levelname)s: %(message)s, URL: %(url)s ",
-        datefmt="%Y-%m-%d %H:%M:%S",
-    )
-)
-APP.logger.addHandler(file_handler)
-# Link tokens are credentials. Mask them in every line the app's handlers and the root's stderr handler write:
-# Flask's "Exception on <path>", and herdbook.mail's lines, which propagate to both.
-for _handler in APP.logger.handlers + logging.getLogger().handlers:
-    _handler.addFilter(TokenMaskFilter())
+APP.logger.info("ACCESS_RULES=%s, legacy hosts: %s", settings.service.access_rules, ", ".join(sorted(legacy_hosts())))
+if (
+    settings.service.access_rules == "off"
+    and os.getenv("FLASK_ENV") == "production"
+    and not settings.service.demo_instance
+):
+    APP.logger.warning("ACCESS_RULES is off in production: every logged-in account reaches every function")
 utils.external_auth.setup(APP)
 
 Session(APP)
@@ -529,6 +572,46 @@ def before_request():
             APP.logger.warning("Failed to set audit context", exc_info=True)
 
 
+@APP.before_request
+def enforce_access_rules():
+    """
+    The access rules (ACCESS_RULES, legacy_compat.refusal) for a logged-in
+    request. A 404, 405 or trailing-slash redirect has no endpoint and passes;
+    OPTIONS only lists the allowed methods.
+    """
+    if settings.service.access_rules != "enforce" or request.endpoint is None or request.method == "OPTIONS":
+        return None
+    if current_user.is_authenticated:
+        user = current_user
+    elif session.get("user_id"):
+        # The older routes read session["user_id"] without flask-login.
+        user = da.fetch_user_info(session["user_id"])
+    else:
+        user = None
+    message = refusal(request.endpoint, request.method, user) if user else None
+    if message:
+        return jsonify({"status": "error", "message": message}), 403
+    return None
+
+
+@APP.before_request
+def refuse_demo_role_without_google():
+    """
+    The role rule on the demo for a session production made, which _session_revoked leaves to production: without
+    Google on the association's domain, a role in the demo's copy of the account is refused here, request by request,
+    and the session stays in the shared store for production to judge. Logging out still works.
+    """
+    if not settings.service.demo_instance or session.get("demo_login") or "user_id" not in session:
+        return None
+    if (session.get("auth_method") == "google" and session.get("google_domain")) or request.endpoint == "logout":
+        return None
+    account = db.User.get_or_none(db.User.uuid == session["user_id"])
+    if account is None or not da.holds_role(account):
+        return None
+    message = "Kontot har en roll. Logga in med föreningens Google-konto för att använda den i testmiljön."
+    return jsonify({"status": "error", "message": message}), 403
+
+
 @APP.teardown_request
 def teardown_request(exc=None):
     """Clear audit session variables after each request."""
@@ -610,15 +693,21 @@ def load_user_from_request(request):
         if not _login_rate_limit("test"):
             abort(429)
         try:
-            user = da.authenticate_user(username, password)
+            user, _ = da.authenticate_user(username, password)
         except da.InactiveAccountError:
             # Lager 1 — deaktiverat konto får inte logga in via
             # Basic Auth heller; None ⇒ 401 nedströms.
             _login_rate_limit("hit")
             return None
 
+        if user and da.holds_role(user):
+            # The role rule: an account with a role signs in with Google only. It spends the budget as a wrong
+            # password does below, so the limit tells neither apart.
+            da.auth_log.warning("Login refused: header, user id=%s has a role", user.id)
+            user = None
+
         if user:
-            APP.logger.info("User %s logged in from request header", user.username)
+            da.auth_log.info("Login ok: header, user id=%s", user.id)
 
             session["user_id"] = user.uuid
             session.modified = True
@@ -633,11 +722,18 @@ def load_user_from_request(request):
 
             return user
 
-        APP.logger.info("Failed login from header for %s", username)
         _login_rate_limit("hit")
 
     # we are not logged in.
     return None
+
+
+@APP.after_request
+def _log_denied(response):
+    if response.status_code in (403, 429):
+        # Only an already loaded user: current_user would run the loader again, and abort(429) in it raises here.
+        auth_log.info("Denied %s user id=%s", response.status_code, getattr(g.get("_login_user"), "id", None))
+    return response
 
 
 @APP.after_request
@@ -659,18 +755,69 @@ def _session_revoked():
     """
     Every login stamps the logout epoch into the session, and a mass
     logout increments it, so a session from before the last mass logout is
-    dead even if an in-flight request wrote its key back after the sweep. A
-    session without the stamp predates this check and dies at the first mass
-    logout; until then it lives on, so deploying logs nobody out.
+    dead even if an in-flight request wrote its key back after the sweep.
+
+    A session with a user is valid only with the sign-in method, the
+    account's current mark (establish_session, da.login_generation) and the
+    latest epoch, as da.session_holds answers. Changing the account's
+    credentials replaces the mark, and an account without one has no valid
+    session, so emptying Redis never brings one back. Sessions from before
+    these stamps are refused: deploying them signs everybody out. The role
+    rule: a session of an account with a role (da.holds_role) is valid only
+    when it signed in with Google on the association's domain (google_domain),
+    also when the role came without a new mark, as a data fix or the demo's
+    nightly copy writes it.
 
     A session minted by the demo API counts as revoked in production: the
     stores are shared, but demo account state (passwords, Google links,
     roles) is a stale or altered copy and must not grant production access.
     """
     if session.get("demo_login") and not settings.service.demo_instance:
-        APP.logger.warning("Refused a session minted by the demo API")
+        da.auth_log.warning("Refused a session minted by the demo API")
         return True
+    if "user_id" in session:
+        if "auth_method" not in session or not da.session_holds(session):
+            return True
+        on_domain = session["auth_method"] == "google" and session.get("google_domain")
+        if on_domain or settings.service.allow_role_password_login:
+            return False
+        if settings.service.demo_instance and not session.get("demo_login"):
+            # The demo's roles are a copy up to a day old: production judges the sessions it made, in the shared store,
+            # and refuse_demo_role_without_google refuses their requests here.
+            return False
+        account = db.User.get_or_none(db.User.uuid == session["user_id"])
+        return account is not None and da.holds_role(account)
     return session.get("logout_epoch", 0) < _logout_epoch()
+
+
+def establish_session(user, method, generation, on_domain=False):
+    """
+    The one way a login becomes a session: marks a demo login, stamps the
+    logout epoch, the sign-in method ("google" or "losenord"), whether a
+    Google login verified the association's domain (`on_domain`, stored
+    only when true) and the account's mark read under its row lock, then
+    rotates the sid. A session's stamps are never rewritten; a change of
+    credentials revokes it instead.
+    """
+    if not user.is_active:
+        # login_user refuses it too: a refused login must not leave a user and a mark that wake on reactivation.
+        return
+    _stamp_login()
+    session["auth_method"] = method
+    # A session an inactive account left uncleared must not lend its stamp to this login.
+    session.pop("google_domain", None)
+    if on_domain:
+        session["google_domain"] = True
+    session["generation"] = generation
+    session["user_id"] = user.uuid
+    session.modified = True
+    login_user(user)
+    # regenerate() rotates the sid to prevent session fixation.
+    # Known benign race, accepted: a concurrent request still carrying the
+    # pre-login sid can re-upsert that (anonymous) key under SESSION_REFRESH_
+    # EACH_REQUEST; the authenticated session is unaffected and the orphan
+    # expires via TTL. Inherent to sid rotation (cf. Django cycle_key).
+    APP.session_interface.regenerate(session)
 
 
 def _stamp_login():
@@ -770,9 +917,9 @@ def user_profile():
                 try:
                     file.save(file_path)
                     profile_picture_url = unique_filename
-                    APP.logger.info(f"Profile picture uploaded: {unique_filename}")
+                    APP.logger.info("Profile picture uploaded")
                 except Exception as e:
-                    APP.logger.error(f"Error uploading file: {e}")
+                    APP.logger.error("Error uploading file: %s", type(e).__name__)  # e carries the path
                     return jsonify({"status": "error", "message": "Failed to upload image"})
 
         # Get settings from JSON or form data
@@ -801,7 +948,7 @@ def user_profile():
             return jsonify({"status": "updated", "message": "Profile updated successfully"})
 
         except Exception as e:
-            APP.logger.error(f"Error updating profile: {e}")
+            APP.logger.error("Error updating profile: %s", type(e).__name__)
             return jsonify({"status": "error", "message": "Failed to update profile"})
 
 
@@ -813,7 +960,8 @@ def get_user():
     user = da.fetch_user_info(session.get("user_id", None))
     if user is None:
         return jsonify({"status": "error", "message": "Authentication required"}), 401
-    return jsonify(user.frontend_data())
+    # How this session signed in: "google" or "losenord" (None for Basic auth).
+    return jsonify({**user.frontend_data(), "auth_method": session.get("auth_method")})
 
 
 @APP.route("/api/active_users", methods=["GET"])
@@ -867,9 +1015,9 @@ def manage_user(u_id):
             try:
                 file.save(file_path)
                 profile_picture_url = unique_filename  # Only filename, not full URL
-                APP.logger.info(f"Profile picture uploaded: {unique_filename}")
+                APP.logger.info("Profile picture uploaded")
             except Exception as e:
-                APP.logger.error(f"Error uploading file: {e}")
+                APP.logger.error("Error uploading file: %s", type(e).__name__)  # e carries the path
                 return jsonify({"status": "error", "message": "Failed to upload image"})
 
     # Get form data (could be JSON or form data depending on upload)
@@ -892,8 +1040,12 @@ def manage_user(u_id):
         retval = da.get_user(u_id, session.get("user_id", None))
     if request.method in ("UPDATE", "PATCH"):
         retval = da.update_user(form, session.get("user_id", None))
+        if retval.get("status") == "updated":
+            auth_log.info("user updated actor=%s target=%s", current_user.id, form.get("id", u_id))
     if request.method == "POST":
         retval = da.add_user(form, session.get("user_id", None))
+        if retval.get("status") != "error":
+            auth_log.info("user created actor=%s", current_user.id)
     return jsonify(retval)
 
 
@@ -915,7 +1067,10 @@ def change_userpassword(u_id):
 
     if not u_id:
         u_id = current_user.id
-    retval = da.change_password(current_user, u_id, form)
+    # Basic auth's one-request session has no mark, so it never holds here: no password change through Basic auth.
+    retval = da.change_password(current_user, u_id, form, session_stamps=session)
+    if retval:
+        auth_log.info("password changed actor=%s target=%s", current_user.id, u_id)
     return jsonify(retval)
 
 
@@ -1357,7 +1512,7 @@ def login_handler():
     form = request.json
     # Authenticate the user and return a user object
     try:
-        user = da.authenticate_user(form.get("username"), form.get("password"))
+        user, generation = da.authenticate_user(form.get("username"), form.get("password"))
     except da.InactiveAccountError:
         # Layer 1 — deactivated account; same shape as the existing
         # 401 failure path, Swedish message per spec.
@@ -1370,20 +1525,14 @@ def login_handler():
             jsonify({"status": "error", "message": "Kontot är inaktiverat. Kontakta styrelsen."}),
             401,
         )
+    if user and da.holds_role(user):
+        # The role rule: an account with a role signs in with Google only. The answer is a wrong password's.
+        da.auth_log.warning("Login refused: password, user id=%s has a role", user.id)
+        user = None
     if user:
-        _stamp_login()
-        session["user_id"] = user.uuid
-        session.modified = True
-        login_user(user)
-        # regenerate() rotates the sid to prevent session fixation.
-        # Known benign race, accepted: a concurrent request still carrying the
-        # pre-login sid can re-upsert that (anonymous) key under SESSION_REFRESH_
-        # EACH_REQUEST; the authenticated session is unaffected and the orphan
-        # expires via TTL. Inherent to sid rotation (cf. Django cycle_key).
-        APP.session_interface.regenerate(session)
-        APP.logger.info(f"Logging in user: {user.username} via the admin password interface")
+        establish_session(user, "losenord", generation)
+        da.auth_log.info("Login ok: password, user id=%s", user.id)
     else:
-        APP.logger.warning(f"User name {form.get('username')} is not able to login using admin interface ")
         if is_legacy_host():
             # Old contract: a failed login answered 200 with a null body.
             # Legacy's handleLogin treats any JSON body as a user, so the 401
@@ -1395,7 +1544,13 @@ def login_handler():
 # The Google profile columns the login routes refresh. They save only these: the
 # user row was read without a lock, so a full-row save would write back a stale
 # is_active/_privileges and undo a concurrent deactivation or role change.
-_GOOGLE_PROFILE_COLUMNS = [db.User.google_picture, db.User.google_name, db.User.google_email]
+# google_email is no profile column: da.google_login_generation writes it under the row lock.
+_GOOGLE_PROFILE_COLUMNS = [db.User.google_picture, db.User.google_name]
+
+
+def _storable_google_email(verified_email):
+    """The legacy route's verified address as google_email may hold it, judged by its token's hd."""
+    return da.storable_google_email(verified_email, (utils.external_auth.google_idtoken() or {}).get("hd"))
 
 
 def _link_member_if_any(user, verified_email) -> None:
@@ -1467,16 +1622,16 @@ def google_token_login():
         hosted_domain = idinfo.get("hd")
 
         if not email_verified:
-            APP.logger.warning(f"Google login attempt with unverified email: {email}")
+            da.auth_log.warning("Login refused: Google, e-mail not verified")
             return jsonify({"error": "Email not verified"}), 400
 
         # Check if user belongs to the required domain
         if hosted_domain != "gotlandskaninen.se":
-            APP.logger.warning(f"Google login attempt from unauthorized domain: {hosted_domain} ({email})")
+            da.auth_log.warning("Login refused: Google, domain")
             return jsonify({"error": "Access restricted to gotlandskaninen.se domain"}), 403
 
         if not email or not email.endswith("@gotlandskaninen.se"):
-            APP.logger.warning(f"Google login attempt from unauthorized email domain: {email}")
+            da.auth_log.warning("Login refused: Google, e-mail domain")
             return jsonify({"error": "Access restricted to gotlandskaninen.se domain"}), 403
 
         # Try to authenticate user with Google ID
@@ -1484,36 +1639,34 @@ def google_token_login():
 
         if user and not user.is_active:
             # Layer 2 — deactivated account may not log in via Google.
-            APP.logger.warning(f"Google login attempt for inactive account: {user.username or user.email}")
+            da.auth_log.warning("Login refused: Google, inactive account id=%s", user.id)
             return jsonify({"error": "Kontot är inaktiverat. Kontakta styrelsen."}), 403
 
         if user and not user.validated:
             if _should_auto_validate_users():
                 user.validated = True
                 user.save(only=[db.User.validated])  # see _GOOGLE_PROFILE_COLUMNS
-            else:
+            elif settings.service.access_rules != "enforce":
+                # The course belongs to the legacy frontend, and the access rules
+                # keep an unvalidated account out of it and off production; without
+                # them the course is the only gate a new account meets.
                 # 401, not 403: the Next.js caller maps 403 to the domain-restriction text.
-                msg = (
-                    f"Du behöver gå webbkursen och bli validerad först: {legacy_classroom_url()} "
-                    "Frågor: admin@gotlandskaninen.se"
-                )
-                return jsonify({"error": msg}), 401
+                return jsonify({"error": course_message()}), 401
 
-        if user:
+        # None also when the identity was switched or removed after the lookup above.
+        stored = da.storable_google_email(email, hosted_domain)
+        generation = da.google_login_generation(user, "google", google_user_id, stored) if user else None
+
+        if generation:
             # Update user with Google profile data in database
             user.google_picture = picture
             user.google_name = name
-            user.google_email = email
             user.save(only=_GOOGLE_PROFILE_COLUMNS)
 
             # After the save: a save that raises must not leave a session that
             # carries user_id without flask-login's _user_id.
-            _stamp_login()
-            session["user_id"] = user.uuid
-            session.modified = True
-            login_user(user)
-            APP.session_interface.regenerate(session)
-            APP.logger.info(f"Google login successful for user: {user.username} ({email})")
+            establish_session(user, "google", generation, on_domain=True)  # the domain's hd and address, above
+            da.auth_log.info("Login ok: Google, user id=%s", user.id)
             # Phase 8: link a pre-provisioned Member to this OAuth-verified
             # user. get_user() re-fetches from the DB, so a newly granted
             # owner role is visible in this same response.
@@ -1521,15 +1674,15 @@ def google_token_login():
             return get_user()
         else:
             # User doesn't exist with this Google ID
-            APP.logger.warning(f"Google login failed - no user found for Google ID: {google_user_id} ({email})")
+            da.auth_log.warning("Login failed: Google, no such user")
             return jsonify({"error": "User not found or not authorized"}), 401
 
     except ValueError as e:
         # Invalid token
-        APP.logger.error(f"Invalid Google token: {str(e)}")
+        da.auth_log.error("Invalid Google token: %s", type(e).__name__)  # e carries the token text
         return jsonify({"error": "Invalid Google token"}), 401
     except Exception as e:
-        APP.logger.error(f"Google login error: {str(e)}")
+        da.auth_log.error("Google login error: %s", type(e).__name__)
         return jsonify({"error": "Authentication failed"}), 500
 
 
@@ -1575,39 +1728,40 @@ def external_login_handler(service):
             return _not_validated_response()
 
     if user and user.validated:
-        APP.logger.info(
-            "Logging in user %s (%s - #%d) by persistent id %s for service %s, refferrer is %s",
-            user.username,
-            user.email,
-            user.id,
-            persistent_id,
-            service,
-            request.referrer,
+        # google_email is the CMS identity: only ever a verified address, written under the row lock. The member link
+        # takes the same address: auth.ini may name no domain, so nothing upstream checked the token's hd.
+        verified_email = (
+            _storable_google_email(utils.external_auth.google_verified_email()) if service == "google" else None
         )
-        _stamp_login()
-        session["user_id"] = user.uuid
-        session.modified = True
-        login_user(user)
-        APP.session_interface.regenerate(session)
+        generation = da.google_login_generation(user, service, persistent_id, verified_email)
+        if generation is None:
+            da.auth_log.warning(
+                "Login refused: %s, inactive, identity changed or a role outside the domain, user id=%s",
+                service,
+                user.id,
+            )
+            if service == "google":
+                # Else the next attempt reuses this token and skips Google's account chooser.
+                utils.external_auth.forget_google_token()
+            return "null"
+        da.auth_log.info("Login ok: %s, user id=%s", service, user.id)
+        establish_session(user, service, generation, on_domain=da.on_role_domain(verified_email))
         # Phase 8: auto-link Member on OAuth completion, then reload so the
         # profile save below writes fresh privileges — saving this stale
         # in-memory instance would clobber the just-granted owner role.
-        verified_email = utils.external_auth.google_verified_email() if service == "google" else None
         _link_member_if_any(user, verified_email)
         # Reload unfiltered: fetch_user_info hides an account deactivated mid-login (the
         # provider calls above can take long), and the profile save below writes only
         # _GOOGLE_PROFILE_COLUMNS, so it cannot undo that deactivation.
         user = db.User.get_by_id(user.id)
 
-        # Save Google profile data (picture, name, email)
+        # Save Google profile data (picture, name)
         # The id_token may not contain picture/name — fetch from userinfo endpoint instead
-        # google_email is the CMS identity: only ever a verified address.
         if service == "google":
             userinfo = utils.external_auth.google_userinfo()
             if userinfo:
                 user.google_picture = userinfo.get("picture") or user.google_picture
                 user.google_name = userinfo.get("name") or user.google_name
-                user.google_email = verified_email or user.google_email
                 user.save(only=_GOOGLE_PROFILE_COLUMNS)
             else:
                 # Fallback to id_token if userinfo fails
@@ -1617,8 +1771,6 @@ def external_login_handler(service):
                         user.google_picture = idtoken["picture"]
                     if idtoken.get("name"):
                         user.google_name = idtoken["name"]
-                    if verified_email:
-                        user.google_email = verified_email
                     user.save(only=_GOOGLE_PROFILE_COLUMNS)
 
         # Check for saved return_to URL from before OAuth
@@ -1636,63 +1788,53 @@ def external_login_handler(service):
         return None
 
     accountdetails = utils.external_auth.get_account_details(service)
-    APP.logger.debug(f"Got accountdetails {repr(accountdetails)}")
 
     # Auto-validate users in environments that opt in (e.g. api-test).
     auto_validate = _should_auto_validate_users()
 
-    user = da.register_user(
-        accountdetails["email"],
-        None,
-        username=accountdetails["username"],
-        validated=auto_validate,
-        fullname=accountdetails["fullname"] if "fullname" in accountdetails else None,
-        privileges=[
-            {"level": "viewer", "genebank": 1},
-            {"level": "viewer", "genebank": 2},
-        ],
-    )
+    # Only a brand-new account gets this Google identity, never one that already
+    # holds the address: anyone can set their own User.email to the address of
+    # a member who has not signed in yet and capture that login. The holder of
+    # an existing account signs in as usual and links Google there.
+    with db.DATABASE.atomic() as creation:
+        try:
+            user = da.register_user(
+                accountdetails["email"],
+                None,
+                username=accountdetails["username"],
+                validated=auto_validate,
+                fullname=accountdetails["fullname"] if "fullname" in accountdetails else None,
+                privileges=[
+                    {"level": "viewer", "genebank": 1},
+                    {"level": "viewer", "genebank": 2},
+                ],
+                adopt_existing=False,
+            )
+        except da.AddressInUseError as taken:
+            da.auth_log.warning("Refusing %s login: account #%d already holds the address", service, taken.user_id)
+            return (
+                "Det finns redan ett konto med den här e-postadressen. Logga in på det som vanligt och koppla "
+                "Google under ditt konto, eller kontakta admin@gotlandskaninen.se"
+            )
 
-    if not user:
-        APP.logger.error(
-            "Automatic registering of user with e-mail %s (persistent id %s) for service %s FAILED",
-            accountdetails["email"],
-            persistent_id,
-            service,
-        )
-        return None
+        if not user:
+            da.auth_log.error("Automatic registering of user for service %s FAILED", service)
+            return None
 
-    # register_user() adopts an existing account with this address. Never hand
-    # this Google identity to one that someone can already sign in to while no
-    # admin has validated it: anyone can set their own User.email to the address
-    # of a member who has not signed in yet (update_user then clears validated)
-    # and capture that login. Decided on the account register_user
-    # returned, so a concurrent email change cannot slip in between. A
-    # brand-new account has no authenticator yet and is linked as before.
-    if not user.validated and db.Authenticators.select().where(db.Authenticators.user == user.id).exists():
-        APP.logger.warning("Refusing to link %s to unvalidated existing user #%d", service, user.id)
-        return _not_validated_response()
+        # google_email is the CMS identity; google_details() verified this address. The member link below takes it too.
+        verified_email = _storable_google_email(accountdetails["email"])
+        linked = da.link_account(user, service, persistent_id, email=verified_email)
 
-    linked = da.link_account(user, service, persistent_id)
+        if not linked:
+            # Without its identity the new account has no way in, and its address
+            # would refuse the next attempt.
+            creation.rollback()
+            da.auth_log.error("Linking user id=%s for service %s FAILED", user.id, service)
+            return "Inloggningen gick inte att slutföra. Försök igen, eller kontakta admin@gotlandskaninen.se", 500
+        # The account and its identity are still this transaction's own: nothing can come between them and the mark.
+        generation = da.login_generation(user.uuid)
 
-    if not linked:
-        APP.logger.error(
-            "Linked of of user with e-mail %s (persistent id %s) for service %s FAILED",
-            accountdetails["email"],
-            persistent_id,
-            service,
-        )
-        return None
-
-    # google_email is the CMS identity; google_details() verified this address.
-    db.User.update(google_email=accountdetails["email"]).where(db.User.id == user.id).execute()
-
-    APP.logger.info(
-        "Automatically registered user with e-mail %s (persistent id %s) for service %s",
-        persistent_id,
-        accountdetails["email"],
-        service,
-    )
+    da.auth_log.info("Automatically registered user id=%s for service %s", user.id, service)
 
     # If we got a herd from external, setup ownership
     if "herd" in accountdetails:
@@ -1712,14 +1854,11 @@ def external_login_handler(service):
 
     # FIXME: this is how we "really" log in the user
     if user.validated:
-        _stamp_login()
-        session["user_id"] = user.uuid
-        login_user(user)
-        APP.session_interface.regenerate(session)
+        establish_session(user, service, generation, on_domain=da.on_role_domain(verified_email))
         # Phase 8: auto-link Member on first OAuth login of an auto-
         # registered user (domain guard lives in try_auto_link_member).
         # google_details() returns only an email_verified address.
-        _link_member_if_any(user, accountdetails.get("email"))
+        _link_member_if_any(user, verified_email)
         return_to = session.pop("return_to_after_oauth", None)  # Get the return_to url and remove it from the session
         if return_to:
             return redirect(_safe_redirect_url(return_to))
@@ -1752,7 +1891,16 @@ def external_link_handler(service):
         return redirect(f"/api/login/{service}")
 
     persistent = utils.external_auth.get_persistent(service)
-    linked = da.link_account(current_user, service, persistent)
+    # Adding a first identity works from any session; replacing one needs a session from Google (link_account).
+    linked = da.link_account(
+        current_user,
+        service,
+        persistent,
+        email=_storable_google_email(utils.external_auth.google_verified_email()) if service == "google" else None,
+        from_google_session=session.get("auth_method") == "google",
+        # Basic auth's one-request session has no mark, so it never holds here.
+        session_stamps=session,
+    )
 
     if not linked:
         # Not linked
@@ -1789,7 +1937,11 @@ def external_unlink_handler(service):
     if not current_user.is_authenticated:
         return "null"  # FIXME: 403 instead?
 
-    unlinked = da.unlink_account(current_user, service)
+    if service == "google" and session.get("auth_method") != "google":
+        da.auth_log.warning("Refusing to unlink google from a password session for user #%d", current_user.id)
+        return "null"
+
+    unlinked = da.unlink_account(current_user, service, session_stamps=session)
     if not unlinked:
         return "null"  # FIXME: Error code instead?
     return "1"
@@ -1801,6 +1953,8 @@ def logout():
     Logs out the current user from the system.
     """
     logout_user()
+    # A verification of a new address that already read this session must not finish after the logout.
+    login_code.cancel(session.get("login_request"))
     # Full clear (not just a user_id pop) so save_session deletes the Redis
     # record outright instead of leaving an anonymous shell with up to 31
     # days of TTL.
@@ -1888,8 +2042,9 @@ def edit_individual():
     retval = None
     try:
         if request.method == "PATCH":
-            retval = da.update_individual(
-                form, session.get("user_id", None), genebank_change_reason=da.LEGACY_GENEBANK_CHANGE_NOTE
+            form.pop("rex", None)  # the old app's stale full-object PATCH must never reset the coat
+            retval = da.update_individual(  # the legacy form has no buyer fields (ADR-0016)
+                form, session.get("user_id", None), genebank_change_reason=da.LEGACY_GENEBANK_CHANGE_NOTE, legacy=True
             )
         if request.method == "POST":
             retval = da.add_individual(form, session.get("user_id", None))
@@ -2223,7 +2378,7 @@ def testbreed():
     Requires authentication.
     """
     payload = request.json
-    APP.logger.info(f"Testbreed calculation input {payload}")
+    APP.logger.info("Testbreed calculation requested")
     try:
         genebank_id = int(payload.get("genebankId"))
         # Unregistered parents fall through to the snapshot of `genebank_id`, so gate it here.
@@ -2579,102 +2734,29 @@ def breeding_suggestions(g_id):
         return jsonify({"error": "Error calculating breeding suggestions"}), 500
 
 
-class _CertificateRefused(Exception):
-    """A refused legacy certificate request, raised inside its transaction so nothing commits."""
-
-    def __init__(self, message, result=None):
-        super().__init__(message)
-        # roster_alive_exceeds_6w: how many kits the breeder must mark dead (a new field, ADR-0006)
-        self.extra = {key: result[key] for key in ("must_mark_dead",) if key in (result or {})}
-
-
-def _sign_stored_certificate(ind_data, user_id, form, issue_digital=False):
-    """
-    Apply the certificate form, then sign and upload a PDF rendered from the re-read rabbit, all
-    in one transaction: a refused breeding or individual update, a failed signing or a
-    failed upload commits nothing, and the body never reaches the PDF or the S3 key.
-    Returns (signed pdf, re-read individual dict). Raises _CertificateRefused.
-    """
-    with db.DATABASE.atomic():
-        # Global lock order: Breeding, then the rabbit + the litter's parents (update_breeding locks them).
-        da.lock_individual_for_edit(ind_data["id"], None, with_parents=True)
-        # The route read the rabbit before the lock: a certificate issued by another route or a renumber
-        # committed since must not be overwritten by that read. Re-read it and decide on that row;
-        # update_individual re-checks the edit right and refuses a voided rabbit under this lock.
-        locked = db.Individual.get_by_id(ind_data["id"])
-        if issue_digital and (locked.certificate or locked.digital_certificate):
-            raise _CertificateRefused("Certificate already exists")
-        if not issue_digital and locked.digital_certificate is None:
-            raise _CertificateRefused("Certificate was not updated")
-        ind_data = locked.as_dict()
-        result = update_breeding_if_changed(ind_data, form, user_id)
-        if result and result.get("status") == "error":
-            raise _CertificateRefused(result["message"])
-        # update_individual also refuses a first certificate past the litter quota.
-        result = da.update_individual(certificate_update(ind_data, form), user_id, issue_digital=issue_digital)
-        if result.get("status") == "error":
-            raise _CertificateRefused(result["message"], result)
-        ind_data = da.get_individual(locked.number, user_id)
-        pdf_bytes = get_certificate(get_certificate_data(dict(ind_data), user_id))
-        signed_data = sign_data(pdf_bytes)
-        # The S3 key is the number: wait for a renumber still moving its assets (as a photo upload does).
-        number_assets.lock_number(ind_data["number"], xact=True)
-        if not upload_certificate(pdf_bytes=signed_data.getvalue(), ind_number=ind_data["number"]):
-            raise _CertificateRefused("Certificate could not be uploaded")
-    return signed_data, ind_data
+def _certificate_gone():
+    """Certificates are issued and changed in the new Stamboken only."""
+    return jsonify({"response": "Intyg utfärdas och ändras nu i nya Stamboken."}), 410
 
 
 @APP.route("/api/certificates/update/<i_number>", methods=["PATCH"])
 @login_required
 def update_certificate(i_number):
+    """Gone: re-issuing a certificate is done in the new Stamboken."""
+    return _certificate_gone()
+
+
+def _certificate_refused(i_number, user_id):
+    """403 unless the user may download or preview the certificate (ADR-0016, User.can_view_certificate).
+
+    The same check as GET /api/v2/certificates/<number>: seeing the rabbit is not enough. Call it after
+    da.get_individual has found the rabbit, so an unknown number still answers 404.
     """
-    Returns an updated pdf of the individual given by `i_number`.
-    """
-    user_id = session.get("user_id", None)
-    ind_data = da.get_individual(i_number, user_id)
-    # get_individual currently returns a dict, not an individual
-    if ind_data is None:
-        return jsonify({"response": "Individual not found"}), 404
-    # Read access is not enough to sign; 404 is this route's refusal status.
-    if not da.fetch_user_info(user_id).can_edit(ind_data["id"]):
-        return jsonify({"response": "Forbidden"}), 404
-
-    certificate_exists = ind_data.get("digital_certificate", None)
-    uploaded = False
-
-    try:
-        present = check_certificate_s3(ind_number=ind_data["number"])
-        if certificate_exists and present:
-            signed_data, ind_data = _sign_stored_certificate(ind_data, user_id, certificate_form(request.json))
-            uploaded = True
-    except _CertificateRefused as exc:
-        return jsonify({"response": str(exc), **exc.extra}), 404
-    except da.HerdTrackingError as exc:  # e.g. the rabbit changed before the lock
-        return jsonify({"response": exc.detail}), 404
-    except HTTPException:
-        raise
-    except Exception as ex:  # pylint: disable=broad-except
-        APP.logger.error("Unexpected error while updating certificate: " + str(ex))
-        return jsonify({"response": "Error processing your request"}), 404
-
-    # Invalidate caches after certificate update
-    try:
-        from utils.cache_invalidation import get_genebank_id_for_herd, trigger_invalidation
-
-        origin_herd = ind_data.get("origin_herd", {})
-        herd_code = origin_herd.get("herd", "") if isinstance(origin_herd, dict) else str(origin_herd)
-        for gid in get_genebank_id_for_herd(herd_code):
-            trigger_invalidation(gid)
-    except Exception as e:
-        APP.logger.warning(f"Cache invalidation failed after update_certificate: {e}")
-
-    if uploaded:
-        return create_pdf_response(
-            pdf_bytes=signed_data.getvalue(),
-            obj_name=f"{ind_data['certificate']}.pdf",
-        )
-
-    return jsonify({"response": "Certificate was not updated"}), 404
+    user = da.fetch_user_info(user_id)
+    individual = db.Individual.get_or_none(db.Individual.number == i_number)
+    if user and individual and user.can_view_certificate(individual):
+        return None
+    return jsonify({"response": "Bara ägaren, uppfödaren och genbanksansvarig kan hämta intyget"}), 403
 
 
 @APP.route("/api/certificates/issue/<i_number>", methods=["GET", "POST"])
@@ -2683,14 +2765,19 @@ def issue_certificate(i_number):
     """
     Returns an issued pdf certificate of the individual given by `i_number`.
     """
+    if request.method == "POST":
+        return _certificate_gone()
+
     user_id = session.get("user_id", None)
     ind_data = da.get_individual(i_number, user_id)
     # get_individual currently returns a dict, not an individual
     if ind_data is None:
         return jsonify({"response": "Individual not found"}), 404
+    refused = _certificate_refused(i_number, user_id)
+    if refused:
+        return refused
 
     certificate_exists = ind_data.get("digital_certificate", None)
-    paper_certificate_exists = ind_data.get("certificate", None)
 
     if request.method == "GET":
         try:
@@ -2701,42 +2788,6 @@ def issue_certificate(i_number):
         except Exception as ex:  # pylint: disable=broad-except
             print(ex)
             return jsonify({"response": "Error processing your request"}), 400
-
-    elif request.method == "POST":
-        if certificate_exists or paper_certificate_exists:
-            return jsonify({"response": "Certificate already exists"}), 400
-        # Read access is not enough to sign; 400 is this route's refusal status.
-        if not da.fetch_user_info(user_id).can_edit(ind_data["id"]):
-            return jsonify({"response": "Forbidden"}), 400
-
-        try:
-            signed_data, ind_data = _sign_stored_certificate(
-                ind_data, user_id, certificate_form(request.json), issue_digital=True
-            )
-        except _CertificateRefused as exc:
-            return jsonify({"response": str(exc), **exc.extra}), 400
-        except da.HerdTrackingError as exc:  # e.g. the rabbit changed before the lock
-            return jsonify({"response": exc.detail}), 400
-        except HTTPException:
-            raise
-        except Exception as ex:  # pylint: disable=broad-except
-            print(ex)
-            return jsonify({"response": "Error processing your request"}), 400
-
-        # Invalidate caches after certificate issuance
-        try:
-            from utils.cache_invalidation import get_genebank_id_for_herd, trigger_invalidation
-
-            origin_herd = ind_data.get("origin_herd", {})
-            herd_code = origin_herd.get("herd", "") if isinstance(origin_herd, dict) else str(origin_herd)
-            for gid in get_genebank_id_for_herd(herd_code):
-                trigger_invalidation(gid)
-        except Exception as e:
-            APP.logger.warning(f"Cache invalidation failed after issue_certificate: {e}")
-
-        cert_number = ind_data["digital_certificate"]
-        APP.logger.info(f"Digital certificate for {ind_data['number']} was created with number {cert_number}")
-        return create_pdf_response(pdf_bytes=signed_data.getvalue(), obj_name=f"{cert_number}.pdf")
 
 
 @APP.route("/api/certificates/preview/<i_number>", methods=["POST", "GET"])
@@ -2749,6 +2800,9 @@ def preview_certificate(i_number):
     ind = da.get_individual(i_number, user_id)
     if ind is None:
         return jsonify({"response": "Individual not found"}), 404
+    refused = _certificate_refused(i_number, user_id)
+    if refused:
+        return refused
 
     if request.method == "POST":
         form = request.json
@@ -3133,12 +3187,54 @@ def initialize_app():
             misfire_grace_time=None,
         )
 
+        scheduler.add_job(
+            _expire_login_codes,
+            trigger="interval",
+            minutes=1,
+            id="login_code_expire",
+            max_instances=1,
+            coalesce=True,
+        )
+
         # The intake queue's daily digest of unread notices (docs/inkorg.md), category N in the mail queue.
         scheduler.add_job(
             _queue_notice_digests,
             "cron",
             hour=7,
             id="notice_digest",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        scheduler.add_job(
+            _purge_audit_ip,
+            "cron",
+            hour=3,
+            minute=45,
+            id="audit_ip_purge",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        scheduler.add_job(
+            _purge_member_applications,
+            "cron",
+            hour=3,
+            minute=50,
+            id="member_application_purge",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        scheduler.add_job(
+            _anonymize_ended_persons,
+            "cron",
+            hour=3,
+            minute=55,
+            id="ended_person_anonymization",
             max_instances=1,
             coalesce=True,
             misfire_grace_time=3600,
@@ -3170,11 +3266,6 @@ def initialize_app():
         APP.logger.info("Scheduler leader — started debounce polling + genetics version poller + memo warm")
     except FileExistsError:
         APP.logger.info("Another worker is scheduler leader, skipping scheduler start")
-
-    # Create loggers depending on Genbanks entry in database
-    with db.DATABASE.atomic():
-        for genebank in db.Genebank.select():
-            gblogging.create_genebank_logs(settings.service.logfolder, genebank.name)
 
 
 # Skip blocking startup code when running tests (pytest imports this module)
@@ -3209,7 +3300,12 @@ def get_yearly_reports(round_id, genebank_id):
 
         # Get the report round to include the year
         report_round = da.YearlyReportRound.get_by_id(round_id)
-        reports = da.get_yearly_reports(round_id, genebank_id)
+        reports = da.get_yearly_reports(
+            round_id,
+            genebank_id,
+            current_user.is_admin or current_user.is_matrikel_admin,
+            frozenset() if current_user.is_admin else current_user.effective_herd_ids(),
+        )
 
         return jsonify(
             {
@@ -3237,7 +3333,12 @@ def export_yearly_reports(round_id, genebank_id):
 
         # Get the report round to include the year in the filename
         report_round = da.YearlyReportRound.get_by_id(round_id)
-        csv_data = da.export_yearly_reports_csv(round_id, genebank_id)
+        csv_data = da.export_yearly_reports_csv(
+            round_id,
+            genebank_id,
+            current_user.is_admin or current_user.is_matrikel_admin,
+            frozenset() if current_user.is_admin else current_user.effective_herd_ids(),
+        )
 
         return Response(
             csv_data,

@@ -50,6 +50,13 @@ check "the cleaned copy is renamed to the demo database afterwards" 1 "$((rename
 check "nothing but the sequence read touches the demo database before the rename" 0 \
   "$(awk -v to="$rename_line" 'NR < to && /-d "\$TARGET_DB"/ && !/MAIL_SEQ_SQL/' "$SCRIPT" | wc -l)"
 
+# Two runs never overlap: with the lock held, the script stops before it touches anything.
+lock=$(mktemp)
+held=$(flock -n "$lock" bash -c "SYNC_DEMO_LOCK='$lock' bash '$SCRIPT' 2>&1; echo \"exit \$?\"")
+rm -f "$lock"
+check "a second run stops at once while the first holds the lock" 1 "$(grep -c 'Another demo sync is running' <<<"$held")"
+check "and exits 1" 1 "$(grep -c '^exit 1$' <<<"$held")"
+
 name="herdbook-sync-demo-test-$$"
 trap 'docker rm -f "$name" >/dev/null 2>&1' EXIT
 docker run -d --name "$name" -e POSTGRES_HOST_AUTH_METHOD=trust postgres:18 >/dev/null || exit 2
@@ -70,12 +77,16 @@ CREATE TABLE mail_message (id serial PRIMARY KEY);
 CREATE TABLE mail_attempt (id int PRIMARY KEY, message_id int REFERENCES mail_message ON DELETE CASCADE);
 CREATE TABLE notice_setting (id int PRIMARY KEY);
 CREATE TABLE hbuser (id int PRIMARY KEY);
+CREATE TABLE login_code (id int PRIMARY KEY);
+CREATE TABLE member_previous_address (id int PRIMARY KEY);
+INSERT INTO login_code VALUES (1);
+INSERT INTO member_previous_address VALUES (1);
 INSERT INTO mail_message DEFAULT VALUES;
 INSERT INTO mail_attempt VALUES (1, 1);
 INSERT INTO notice_setting VALUES (1);
 INSERT INTO hbuser VALUES (1);
 CREATE TABLE buyer_contact (id int PRIMARY KEY);
-CREATE TABLE herd_tracking (id int PRIMARY KEY, holder_contact_id int REFERENCES buyer_contact ON DELETE SET NULL);
+CREATE TABLE herd_tracking (id int PRIMARY KEY, holder_contact_id int REFERENCES buyer_contact ON DELETE SET NULL, buyer_removed boolean NOT NULL DEFAULT false);
 INSERT INTO buyer_contact VALUES (1);
 INSERT INTO herd_tracking VALUES (1, 1);
 CREATE TABLE inbox_item (id int PRIMARY KEY);
@@ -115,6 +126,8 @@ check "the rename succeeds" 0 "$?"
 check "mail_message comes over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM mail_message')"
 check "mail_attempt comes over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM mail_attempt')"
 check "the demo's sequence value survives, so Message-IDs do not repeat" 42 "$(sql -d dst -c "SELECT nextval('mail_message_id_seq')")"
+check "login_code (codes and unconfirmed addresses) comes over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM login_code')"
+check "member_previous_address (addresses left) comes over without rows" 0 "$(sql -d dst -c 'SELECT count(*) FROM member_previous_address')"
 check "notice_setting (a user preference) keeps its rows" 1 "$(sql -d dst -c 'SELECT count(*) FROM notice_setting')"
 check "an ordinary table keeps its rows" 1 "$(sql -d dst -c 'SELECT count(*) FROM hbuser')"
 check "the yearly report keeps its rows, without its queue item" "1|0" \
@@ -130,7 +143,7 @@ check "the activations are marked sent, none deleted" "2|0" \
   "$(sql -d dst -c 'SELECT count(*), count(*) FILTER (WHERE sent_at IS NULL) FROM yearly_report_round_genebank')"
 
 check "the demo has no buyers" 0 "$(sql -d dst -c 'SELECT count(*) FROM buyer_contact')"
-check "the sale stays, without its buyer" "1|" "$(sql -d dst -c 'SELECT id, holder_contact_id FROM herd_tracking')"
+check "the sale stays, without its buyer, marked as removed" "1||t" "$(sql -d dst -c 'SELECT id, holder_contact_id, buyer_removed FROM herd_tracking')"
 # The dump leaves sale proposals out; the step deletes any that came anyway.
 sql -d dst -c "INSERT INTO sale_proposal VALUES (1, 1)" -c "$DROP_BUYERS_SQL" >/dev/null
 check "a sale proposal that came anyway is deleted" 0 "$(sql -d dst -c 'SELECT count(*) FROM sale_proposal')"

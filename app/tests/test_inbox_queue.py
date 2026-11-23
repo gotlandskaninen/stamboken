@@ -452,6 +452,28 @@ class TestUploaderAndNotices(InboxTest):
         ids = [i["id"] for i in self.client.get("/api/v2/inkorg/mina-inskick").get_json()["items"]]
         self.assertEqual(ids, [sent.id])
 
+    def test_the_list_reads_no_notice_and_the_page_marks_them_seen(self):
+        mine = self.item(0)
+        inbox.notify(self.owner, "klar", mine)
+        inbox.notify(self.owner, "svar", mine)
+        inbox.notify(self.manager, "klar", mine)
+        self.assertEqual(self.client.post("/api/v2/inkorg/mina-inskick/sedda").status_code, 401)
+        self.login("owner")
+
+        def unread():
+            rows = db.Notice.select().where((db.Notice.user == self.owner.id) & db.Notice.read_at.is_null(True))
+            return sorted(row.kind for row in rows)
+
+        for method in (self.client.get, self.client.head):  # a link to the list changes nothing
+            self.assertEqual(method("/api/v2/inkorg/mina-inskick").status_code, 200)
+        self.assertEqual(unread(), ["klar", "svar"])
+        resp = self.client.post("/api/v2/inkorg/mina-inskick/sedda")
+        self.assertEqual((resp.status_code, resp.get_json()), (200, {"read": 1}))
+        self.assertEqual(unread(), ["svar"])
+        self.assertEqual(self.client.post("/api/v2/inkorg/mina-inskick/sedda").get_json(), {"read": 0})
+        theirs = db.Notice.get((db.Notice.user == self.manager.id) & (db.Notice.kind == "klar"))
+        self.assertIsNone(theirs.read_at)
+
     def test_notices_list_read_and_mail_setting(self):
         first, second = self.item(0), self.item(0)
         self.login("hjalp")

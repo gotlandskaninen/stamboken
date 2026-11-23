@@ -1,6 +1,6 @@
 "use client";
 
-import React from "react";
+import React, { useEffect, useState } from "react";
 import {
   Card,
   CardContent,
@@ -9,13 +9,20 @@ import {
   TextField,
   Grid,
 } from "@mui/material";
+import { useTranslation } from "react-i18next";
+import { CoatChoice } from "@/components/herd/CoatChoice";
 import type { Individual } from "@/redux/api/apiSlice";
+import { ColorPicker, colorsFor } from "@/components/herd/ColorPicker";
+import {
+  getColors,
+  type ColorOption,
+} from "@/app/(app)/stamboken/(dashboard)/min-besattning/actions";
 
 interface IdentitySectionProps {
   individual: Individual;
   isEditing: boolean;
   formData: Partial<Individual>;
-  onFieldChange: (field: string, value: string | null) => void;
+  onFieldChange: (field: string, value: string | boolean | null) => void;
 }
 
 interface FieldRowProps {
@@ -80,6 +87,34 @@ export function IdentitySection({
   formData,
   onFieldChange,
 }: IdentitySectionProps) {
+  const { t } = useTranslation();
+  const [colorOptions, setColorOptions] = useState<ColorOption[]>([]);
+  const [colorsLoading, setColorsLoading] = useState(true);
+  useEffect(() => {
+    if (!isEditing) return;
+    getColors()
+      .then((all) =>
+        setColorOptions(
+          colorsFor(
+            all,
+            individual.genebank,
+            typeof individual.herd === "string"
+              ? individual.herd
+              : individual.herd.herd,
+          ),
+        ),
+      )
+      .catch(() => setColorOptions([]))
+      .finally(() => setColorsLoading(false));
+  }, [isEditing, individual.genebank, individual.herd]);
+
+  const rex = "rex" in formData ? !!formData.rex : !!individual.rex;
+  const colorName = "color" in formData ? formData.color : individual.color;
+  const colorDisplay =
+    colorName && individual.color_id && colorName === individual.color
+      ? `${individual.color_id} ${colorName}`
+      : colorName;
+
   return (
     <Card>
       <CardContent sx={{ "&:last-child": { pb: 2 } }}>
@@ -88,15 +123,27 @@ export function IdentitySection({
         </Typography>
 
         <Grid container spacing={isEditing ? 2 : 1}>
-          <Grid size={{ xs: 6, sm: 4 }}>
-            <FieldRow
-              label="Färg"
-              value={individual.color}
-              field="color"
-              isEditing={isEditing}
-              formData={formData}
-              onFieldChange={onFieldChange}
-            />
+          <Grid size={{ xs: isEditing ? 12 : 6, sm: 4 }}>
+            {isEditing ? (
+              <ColorPicker
+                options={colorOptions}
+                loading={colorsLoading}
+                value={colorName ?? ""}
+                valueId={
+                  colorName === individual.color ? individual.color_id : null
+                }
+                onChange={(name) => onFieldChange("color", name)}
+                genebank={individual.genebank ?? ""}
+              />
+            ) : (
+              <FieldRow
+                label="Färg"
+                value={colorDisplay}
+                isEditing={false}
+                formData={formData}
+                onFieldChange={onFieldChange}
+              />
+            )}
           </Grid>
           <Grid size={{ xs: 6, sm: 4 }}>
             <FieldRow
@@ -127,6 +174,19 @@ export function IdentitySection({
               formData={formData}
               onFieldChange={onFieldChange}
             />
+          </Grid>
+          <Grid size={{ xs: isEditing ? 12 : 6, sm: 4 }}>
+            {isEditing ? (
+              <CoatChoice rex={rex} onChange={(v) => onFieldChange("rex", v)} />
+            ) : (
+              <FieldRow
+                label={t("coat.label")}
+                value={rex ? t("coat.rex") : t("coat.normal")}
+                isEditing={false}
+                formData={formData}
+                onFieldChange={onFieldChange}
+              />
+            )}
           </Grid>
           <Grid size={{ xs: 6, sm: 4 }}>
             <FieldRow

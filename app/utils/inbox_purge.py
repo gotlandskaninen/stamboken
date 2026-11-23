@@ -178,36 +178,57 @@ def purge_due(now):
     return remove_originals(paths)
 
 
+def _current_sale(row):
+    """
+    The active row a proof's sale became: the row itself, or, for one a correction voided, the move into the same
+    herd that the correction wrote for the rabbit (the first; one only into GX1/MX1, _outside_pairs), followed through
+    later corrections. None when the chain ends without an active row, or loops (a nightly job never spins).
+    """
+    seen = set()
+    while row is not None and row.voided_at is not None:
+        if row.id in seen:
+            return None
+        seen.add(row.id)
+        row = (
+            HerdTracking.select()
+            .where(
+                (HerdTracking.operation_id == row.voided_operation_id)
+                & (HerdTracking.individual == row.individual_id)
+                & (HerdTracking.herd == row.herd_id)
+                & HerdTracking.kind.in_(("TRANSFER", "CORRECTION"))
+            )
+            .order_by(HerdTracking.id)
+            .first()
+        )
+    return row
+
+
 def purge_sold_proofs(now):  # pylint: disable=unused-argument  # every rule takes the clock
     """
     A proof's original once its rabbit is sold on (herd_tracking.sold_on, as for the buyer's contact details). A
-    proof of a sale later corrected still names the voided row: the sale is then the active row that carries the
-    same buyer (a correction carries it over). The document's link stays as it is.
+    proof of a sale later corrected still names the voided row: the sale is then the row the corrections made of it
+    (_current_sale). The document's link stays as it is.
     """
-    sale, later, linked = HerdTracking, HerdTracking.alias(), HerdTracking.alias()
     proofs = InboxDocument.select(InboxDocument.herd_tracking_id).where(
-        (InboxDocument.doc_type == "bevis") & InboxDocument.original_path.is_null(False)
+        (InboxDocument.doc_type == "bevis")
+        & InboxDocument.original_path.is_null(False)
+        & InboxDocument.herd_tracking_id.is_null(False)
     )
-    rows = (
-        linked.select(linked.id, sale.id)
-        .join(
-            sale,
-            on=((sale.id == linked.id) | ((sale.holder_contact == linked.holder_contact) & (sale.id != linked.id))),
+    sale, later = HerdTracking.alias(), HerdTracking.alias()
+    named = []
+    for linked in HerdTracking.select().where(HerdTracking.id.in_(proofs)):
+        current = _current_sale(linked)
+        if current is None:
+            continue
+        moved_on = (
+            sale.select()
+            .join(later, on=(later.individual == sale.individual))
+            .where((sale.id == current.id) & sold_on(sale, later))
         )
-        .where(linked.id.in_(proofs) & sale.voided_at.is_null(True))
-    )
-    carried = {}  # active sale -> the rows the proofs name
-    for linked_id, sale_id in rows.tuples():
-        carried.setdefault(sale_id, []).append(linked_id)
-    if not carried:
+        if moved_on.exists():
+            named.append(linked.id)
+    if not named:
         return 0
-    moved_on = (
-        sale.select(sale.id)
-        .join(later, on=(later.individual == sale.individual))
-        .where(sale.id.in_(list(carried)) & sold_on(sale, later))
-        .distinct()
-    )
-    named = [linked_id for (sale_id,) in moved_on.tuples() for linked_id in carried[sale_id]]
     with DB_PROXY.atomic():
         paths = _null_originals((InboxDocument.doc_type == "bevis") & InboxDocument.herd_tracking_id.in_(named))
     return remove_originals(paths)
@@ -414,6 +435,18 @@ def erase_document(item, document, user):
     paths = _null_originals(InboxDocument.id == document.id)
     _clear_text([item.id])
     inbox.log_event(item, user, "original_raderat", document=document.id)
+    return paths
+
+
+def erase_buyer_from_document(document_id):
+    """
+    One proof linked to a sale whose buyer was removed: it loses its original, the model's reading and proposal, and
+    its item its text. Only that document's item is locked, which the caller already holds, so no lock is taken
+    after the rabbit's. In the caller's transaction; returns the paths for remove_originals after the commit.
+    """
+    shown = InboxDocument.id == document_id
+    paths = _null_originals(shown)
+    _clear_text(InboxDocument.select(InboxDocument.item).where(shown))
     return paths
 
 

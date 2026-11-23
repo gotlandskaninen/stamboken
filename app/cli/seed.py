@@ -14,7 +14,8 @@ Creates data mirroring production patterns:
 - litter_number on every seeded litter that has been born (seeded rows bypass
   both real assignment paths — see _assign_litter_numbers)
 
-Idempotent — safe to run multiple times (skips existing data).
+Idempotent — safe to run multiple times (skips existing data), except that a database whose colours
+have other ids than the atlas numbers (seeded before they were fixed) makes the seed stop: recreate it.
 """
 
 import json
@@ -35,7 +36,6 @@ from utils.database import (
     DATABASE,
     Bodyfat,
     Breeding,
-    Color,
     Genebank,
     Herd,
     HerdTracking,
@@ -48,6 +48,7 @@ from utils.database import (
     YearlyReportRound,
     ht_not_voided,
 )
+from utils.fargatlas import seed_colors
 from utils.mail import link_token
 
 logger = logging.getLogger("herdbook.seed")
@@ -92,57 +93,10 @@ def create_seed_data(verbose):
         log("Genebank: Mellerudskanin", c)
 
         # ══════════════════════════════════════════════
-        # COLORS (all 35 GK + 2 MK from production)
+        # COLORS (the atlas: 35 GK + 2 MK, each id is the atlas number)
         # ══════════════════════════════════════════════
-        gk_color_names = [
-            "Albino",
-            "Allt annat",
-            "Annan japanteckning",
-            "Blå",
-            "Blåbrokig",
-            "Brokad på annat sätt",
-            "Brun",
-            "Brunbrokig",
-            "Chinchilla",
-            "Chinchillabrokig",
-            "Gul-blå japantecknad",
-            "Gulbrokig",
-            "Gul-svart japantecknad",
-            "Isabella",
-            "Järnblå",
-            "Järngrå",
-            "Madagaskar",
-            "Madagaskarbrokig",
-            "Rödgul",
-            "Sallander",
-            "Snöhare",
-            "Svart",
-            "Svartbrokig",
-            "Svart med vita stickelhår",
-            "Trefärgad",
-            "Viltblå",
-            "Viltgrå",
-            "Viltgråbrokig",
-            "Viltgul",
-            "Vit-blå japantecknad",
-            "Vit ej albino",
-            "Vit-svart japantecknad",
-            "White blå och Otter blå",
-            "White svart och Otter svart",
-            "Wienertecknad",
-        ]
-        gk_colors = {}
-        for name in gk_color_names:
-            color, c = _get_or_create(Color, name=name, genebank=gk)
-            gk_colors[name] = color
-        log(f"Colors: {len(gk_color_names)} Gotlandskanin", True)
-
-        mk_color_names = ["Albino", "Holländarteckning"]
-        mk_colors = {}
-        for name in mk_color_names:
-            color, c = _get_or_create(Color, name=name, genebank=mk)
-            mk_colors[name] = color
-        log(f"Colors: {len(mk_color_names)} Mellerudskanin", True)
+        colors = seed_colors(gk, mk)
+        log(f"Colors: {len(colors)} (atlas numbers as ids)", True)
 
         # ══════════════════════════════════════════════
         # HERDS (mixed active/inactive + GX1/MX1 external)
@@ -227,7 +181,7 @@ def create_seed_data(verbose):
             date(1998, 4, 1),
             None,
             None,
-            gk_colors["Viltgrå"],
+            colors[("G", "Viltgrå")],
             "12345",
             gk_mgr,
             log,
@@ -240,7 +194,7 @@ def create_seed_data(verbose):
             date(1998, 5, 10),
             None,
             None,
-            gk_colors["Svart"],
+            colors[("G", "Svart")],
             "12346",
             gk_mgr,
             log,
@@ -257,7 +211,7 @@ def create_seed_data(verbose):
             date(2019, 3, 15),
             None,
             None,
-            gk_colors["Viltgrå"],
+            colors[("G", "Viltgrå")],
             "100042",
             gk_mgr,
             log,
@@ -270,7 +224,7 @@ def create_seed_data(verbose):
             date(2019, 4, 10),
             None,
             None,
-            gk_colors["Chinchilla"],
+            colors[("G", "Chinchilla")],
             "100043",
             gk_mgr,
             log,
@@ -300,7 +254,7 @@ def create_seed_data(verbose):
             date(2020, 3, 20),
             None,
             None,
-            gk_colors["Blå"],
+            colors[("G", "Blå")],
             "100050",
             gk_mgr,
             log,
@@ -316,7 +270,7 @@ def create_seed_data(verbose):
             date(2021, 4, 1),
             gk_f0,
             gk_m0,
-            gk_colors["Viltgrå"],
+            colors[("G", "Viltgrå")],
             "100060",
             gk_mgr,
             log,
@@ -330,7 +284,7 @@ def create_seed_data(verbose):
             date(2021, 4, 1),
             gk_f0,
             gk_m0,
-            gk_colors["Svart"],
+            colors[("G", "Svart")],
             "100061",
             gk_mgr,
             log,
@@ -344,7 +298,7 @@ def create_seed_data(verbose):
             date(2021, 4, 1),
             gk_f0,
             gk_m0,
-            gk_colors["Viltgrå"],
+            colors[("G", "Viltgrå")],
             None,
             gk_mgr,
             log,
@@ -377,7 +331,7 @@ def create_seed_data(verbose):
             date(2023, 5, 15),
             gk_f0b,
             gk_g1_m,
-            gk_colors["Blå"],
+            colors[("G", "Blå")],
             "100070",
             gk_mgr,
             log,
@@ -391,7 +345,7 @@ def create_seed_data(verbose):
             date(2023, 5, 15),
             gk_f0b,
             gk_g1_m,
-            gk_colors["Viltgrå"],
+            colors[("G", "Viltgrå")],
             "100071",
             gk_mgr,
             log,
@@ -408,7 +362,7 @@ def create_seed_data(verbose):
             date(2022, 6, 1),
             gk_f0b,
             gk_g1_m2,
-            gk_colors["Viltgrå"],
+            colors[("G", "Viltgrå")],
             "100080",
             gk_mgr,
             log,
@@ -427,7 +381,7 @@ def create_seed_data(verbose):
             date(2020, 6, 1),
             None,
             None,
-            gk_colors["Brun"],
+            colors[("G", "Brun")],
             "100044",
             gk_mgr,
             log,
@@ -447,7 +401,7 @@ def create_seed_data(verbose):
             date(2020, 5, 10),
             None,
             None,
-            gk_colors["Svart"],
+            colors[("G", "Svart")],
             None,
             gk_mgr,
             log,
@@ -460,7 +414,7 @@ def create_seed_data(verbose):
             date(2020, 6, 15),
             None,
             None,
-            gk_colors["Viltgrå"],
+            colors[("G", "Viltgrå")],
             None,
             gk_mgr,
             log,
@@ -484,7 +438,7 @@ def create_seed_data(verbose):
             date(2021, 4, 20),
             ind_faro_m1,
             ind_faro_f1,
-            gk_colors["Svart"],
+            colors[("G", "Svart")],
             "CERT-2115",
             gk_mgr,
             log,
@@ -499,7 +453,7 @@ def create_seed_data(verbose):
             date(2019, 8, 5),
             None,
             None,
-            gk_colors["Viltgrå"],
+            colors[("G", "Viltgrå")],
             "CERT-2116",
             gk_mgr,
             log,
@@ -514,7 +468,7 @@ def create_seed_data(verbose):
             date(2019, 3, 12),
             None,
             None,
-            gk_colors["Blå"],
+            colors[("G", "Blå")],
             None,
             gk_mgr,
             log,
@@ -527,7 +481,7 @@ def create_seed_data(verbose):
             date(2019, 7, 22),
             None,
             None,
-            gk_colors["Chinchilla"],
+            colors[("G", "Chinchilla")],
             None,
             gk_mgr,
             log,
@@ -551,7 +505,7 @@ def create_seed_data(verbose):
             date(2020, 5, 15),
             ind_gammel_m1,
             ind_gammel_f1,
-            gk_colors["Blå"],
+            colors[("G", "Blå")],
             "CERT-2117",
             gk_mgr,
             log,
@@ -565,7 +519,7 @@ def create_seed_data(verbose):
             date(2018, 11, 3),
             None,
             None,
-            gk_colors["Svart"],
+            colors[("G", "Svart")],
             "CERT-2118",
             gk_mgr,
             log,
@@ -581,11 +535,11 @@ def create_seed_data(verbose):
         # "Active" in this app requires: cert + recent HerdTracking + no death.
         # Create a mix: ~15 active (with cert + tracking), ~5 inactive (no cert), ~5 dead.
         bulk_colors = [
-            gk_colors["Svart"],
-            gk_colors["Viltgrå"],
-            gk_colors["Blå"],
-            gk_colors["Chinchilla"],
-            gk_colors["Rödgul"],
+            colors[("G", "Svart")],
+            colors[("G", "Viltgrå")],
+            colors[("G", "Blå")],
+            colors[("G", "Chinchilla")],
+            colors[("G", "Rödgul")],
         ]
         for i in range(25):
             year = 2020 + (i % 5)
@@ -640,7 +594,7 @@ def create_seed_data(verbose):
             date(2020, 3, 20),
             None,
             None,
-            mk_colors["Albino"],
+            colors[("M", "Albino")],
             "200010",
             mk_mgr,
             log,
@@ -653,7 +607,7 @@ def create_seed_data(verbose):
             date(2020, 4, 5),
             None,
             None,
-            mk_colors["Holländarteckning"],
+            colors[("M", "Holländarteckning")],
             "200011",
             mk_mgr,
             log,
@@ -668,7 +622,7 @@ def create_seed_data(verbose):
             date(2016, 5, 1),
             None,
             None,
-            mk_colors["Albino"],
+            colors[("M", "Albino")],
             "200001",
             mk_mgr,
             log,
@@ -699,7 +653,7 @@ def create_seed_data(verbose):
             date(2022, 5, 10),
             mk_f0,
             mk_m0,
-            mk_colors["Holländarteckning"],
+            colors[("M", "Holländarteckning")],
             "200020",
             mk_mgr,
             log,
@@ -713,7 +667,7 @@ def create_seed_data(verbose):
             date(2022, 5, 10),
             mk_f0,
             mk_m0,
-            mk_colors["Albino"],
+            colors[("M", "Albino")],
             "200021",
             mk_mgr,
             log,

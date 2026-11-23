@@ -442,6 +442,9 @@ describe("ReportForm", () => {
     fireEvent.change(screen.getByLabelText(/^Ort/), {
       target: { value: "Visby" },
     });
+    fireEvent.change(screen.getByLabelText(/^Postadress/), {
+      target: { value: "Testgatan 1" },
+    });
     fireEvent.click(
       screen.getByRole("button", { name: "Spara försäljningen" }),
     );
@@ -494,6 +497,9 @@ describe("ReportForm", () => {
     });
     fireEvent.change(screen.getByLabelText(/^Ort/), {
       target: { value: "Visby" },
+    });
+    fireEvent.change(screen.getByLabelText(/^Postadress/), {
+      target: { value: "Testgatan 1" },
     });
     fireEvent.change(screen.getByLabelText("Månad"), {
       target: { value: "6" },

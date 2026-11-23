@@ -37,6 +37,7 @@ from utils.database import (
     MailSender,
     Member,
     MemberApplication,
+    MemberPreviousAddress,
     User,
 )
 from utils.log_masking import mask_cut, mask_tokens
@@ -152,7 +153,7 @@ def enqueue_mail(
 
 
 def _mac(message):
-    """One key for three uses, so every input starts with its own prefix: `link:`, `msgid:` or `addr:`."""
+    """One key for four uses, so every input starts with its own prefix: `link:`, `msgid:`, `addr:` or `code:`."""
     secret = settings.mail.link_secret
     if not secret:
         raise RuntimeError("LINK_SECRET is not set")
@@ -191,6 +192,12 @@ def verify_link(purpose, token):
 
 def _hostname():
     return urlparse(settings.service.host).hostname or "localhost"
+
+
+def one_time_code(row_id, nonce):
+    """A login_code row's eight digits: HMAC-SHA256(LINK_SECRET, "code:<host>:<row id>:<nonce>") mod 10^8, as text."""
+    digest = _mac(f"code:{_hostname()}:{row_id}:{nonce}").digest()
+    return f"{int.from_bytes(digest[:8], 'big') % 10**8:08d}"
 
 
 def message_id(row_id):
@@ -275,6 +282,10 @@ def _connect(conn):
     conn.ehlo()
 
 
+class _ClaimLost(Exception):
+    """The row is no longer this sender's: reclaimed by another, or its recipient erased. Nothing was sent."""
+
+
 class _Relay:
     """The run's one SMTP connection, opened when the first mail actually goes out."""
 
@@ -284,23 +295,25 @@ class _Relay:
         self.timed_out = False
         self.refused = 0  # permanent failures in a row
 
-    def send(self, msg, address):
+    def send(self, msg, address, still_ours):
         """
         One mail's whole SMTP conversation, connecting included, cut off at SEND_DEADLINE. Per-step socket
-        timeouts alone do not bound it: a relay can drip its replies a byte at a time.
+        timeouts alone do not bound it: a relay can drip its replies a byte at a time. `still_ours` is asked
+        once the connection is up, as late as it gets: connecting can take seconds, and a recipient erased
+        meanwhile gets no mail.
         """
         self.timed_out = False
         timer = threading.Timer(SEND_DEADLINE, self._cut)
         timer.start()
         try:
-            self._send(msg, address)
+            self._send(msg, address, still_ours)
         finally:
             timer.cancel()
             timer.join()
             if self.timed_out:
                 self.close()  # its socket is shut down, also if the reply came just in time
 
-    def _send(self, msg, address):
+    def _send(self, msg, address, still_ours):
         if self.conn is None:
             self.conn = smtplib.SMTP(local_hostname=_hostname(), timeout=SMTP_TIMEOUT)  # set first: _cut reaches it
             try:
@@ -310,6 +323,8 @@ class _Relay:
                 conn.close()
                 code = getattr(exc, "smtp_code", None)
                 raise _Systemic(str(code) if code else None, _describe(self._why(exc))) from exc
+        if not still_ours():
+            raise _ClaimLost
         try:
             self.conn.send_message(msg, from_addr=settings.mail.sender, to_addrs=[address])
         except Exception as exc:
@@ -403,8 +418,9 @@ def _claim(now):
 
 def _renew(row):
     """
-    Restarts the claim's clock just before SMTP, so the row cannot be reclaimed until long after SEND_DEADLINE.
-    False when another sender has taken the row since (this one was slow): it must not send.
+    Restarts the claim's clock just before the mail goes, so the row cannot be reclaimed until long after
+    SEND_DEADLINE. False when another sender has taken the row since (this one was slow) or the recipient has
+    been erased (forget_recipient): it must not send.
     """
     renewed = MailMessage.update(claimed_at=_utcnow()).where(
         (MailMessage.id == row.id) & (MailMessage.claim_token == row.claim_token)
@@ -529,12 +545,11 @@ def _send_one(row, relay, now):
         return _finish(row, now, status="logged")
     if mode == "allowlist" and not _allowed(address):
         return _finish(row, now, status="blocked", last_error="spärrat: adressen finns inte i MAIL_ALLOWLIST")
-    if not _renew(row):
-        logger.warning("Mail %s was reclaimed by another sender; it is not sent", row.id)
-        return True
-
     try:
-        relay.send(msg, address)
+        relay.send(msg, address, lambda: _renew(row))
+    except _ClaimLost:
+        logger.warning("Mail %s was reclaimed by another sender or lost its recipient; it is not sent", row.id)
+        return True
     except _Systemic as exc:
         return _systemic(row, now, exc.smtp_code, exc.detail)
     except smtplib.SMTPSenderRefused as exc:  # MAIL FROM: our sender or IP refused, every mail would fail alike...
@@ -690,7 +705,7 @@ def message_view(row):
 
 
 def sender_alarms(now=None):
-    """The status view's alarms: the relay refusing, the queue stalled, and when a mail last went out."""
+    """The status view's alarms: the relay refusing, the queue stalled, code login closed, and the last mail out."""
     now = now or _utcnow()
     sender = MailSender.get_or_none(MailSender.id == 1)
     last_smtp = (
@@ -712,6 +727,9 @@ def sender_alarms(now=None):
         alarms.append({"code": "log_mode", "message": "Utskicksläget är log: inget mejl skickas på riktigt"})
     if last_run_at is None or last_run_at < now - STALLED_AFTER:
         alarms.append({"code": "queue_stalled", "message": "Kön står still"})
+    from utils.login_code import alarms as code_alarms  # pylint: disable=import-outside-toplevel  # imports this
+
+    alarms += code_alarms(now)
     last_sent = MailMessage.select(MailMessage.sent_at).where(MailMessage.sent_at.is_null(False))
     last_sent = last_sent.order_by(MailMessage.sent_at.desc()).first()
     return {
@@ -751,6 +769,13 @@ def _buyer_contact(contact_id):
     return Recipient(c.email, f"Köpare {c.id}") if c else None
 
 
+@recipient_kind("member_previous_address")
+def _previous_address(row_id):
+    """An address a person had (utils.matrikel.set_member_email); gone once the row is purged or the person erased."""
+    r = MemberPreviousAddress.get_or_none(MemberPreviousAddress.id == row_id)
+    return Recipient(r.address, f"{r.member.first_name} {r.member.last_name}") if r else None
+
+
 # --- Kinds ---
 
 
@@ -772,7 +797,95 @@ def _application_new(params):
 
 @mail_kind("ansokan.godkand", priority=1, category="T")
 def _application_approved(params):
-    return {} if Member.select().where(Member.id == params["member_id"]).exists() else None
+    # None once the person has left: the number is that of the membership the application was approved into.
+    person = Member.get_or_none((Member.id == params["member_id"]) & Member.end_date.is_null(True))
+    return {"member_number": person.membership.member_number} if person else None
+
+
+_ADDED_AS = {"familjemedlem": "familjemedlem", "skotare": "skötare"}
+
+
+@mail_kind("medlemskap.tillagd", priority=1, category="T")
+def _member_added(params):
+    """To a person someone else put into a membership (GDPR art. 14); none once the person has left it."""
+    person = Member.get_or_none((Member.id == params["member_id"]) & Member.end_date.is_null(True))
+    if person is None or person.role not in _ADDED_AS:  # left, or made main member since the mail was queued
+        return None
+    # The limit per address is kept here, on the address the mail goes to now and on mails that have gone: it
+    # holds across memberships and after an address was changed, and a mail that was stopped uses none of it.
+    if settings.mail.link_secret:  # without it (log mode only) there is no HMAC, and nothing is sent to count
+        gone = (
+            (MailMessage.kind == "medlemskap.tillagd")
+            & (MailMessage.status == "sent")
+            & (MailMessage.address_hash == address_hash(person.email))
+            & (MailMessage.sent_at > _utcnow() - timedelta(days=1))
+        )
+        if MailMessage.select().where(gone).count() >= ADDED_TO_AN_ADDRESS_A_DAY:
+            return None
+    main = Member.get_or_none(
+        (Member.membership == person.membership_id) & (Member.role == "huvudmedlem") & Member.end_date.is_null(True)
+    )
+    return {
+        "role": _ADDED_AS[person.role],
+        # one line: a name typed with a line break must not add lines of its own to the mail
+        "main": " ".join(f"{main.first_name} {main.last_name}".split()) if main else None,
+        "phone": bool(person.phone),
+    }
+
+
+@mail_kind("kontakt.epost_besked", priority=0, category="T")
+def _address_changed(params):
+    """To the previous address: it was changed, and by whom. Never the new address."""
+    return {"by": "self" if params["by_self"] else "matrikel" if params["by_matrikel"] else "other"}
+
+
+ADDED_A_DAY = 10  # medlemskap.tillagd mails one membership can cause in a day
+ADDED_TO_AN_ADDRESS_A_DAY = 3  # and one address can get: a family may share one, nobody needs more
+
+
+def queue_member_added(person):
+    """
+    medlemskap.tillagd in the transaction that adds `person` (the caller holds the membership's row lock): only
+    someone put in by another (never a main member, who applied or was written in from the register) and only
+    with an e-mail. A main member chooses the address, so the association's mail must not become a way to flood
+    one: a membership causes at most ADDED_A_DAY a day, and an address gets at most ADDED_TO_AN_ADDRESS_A_DAY
+    (_member_added, when the mail goes).
+    """
+    if person.role not in _ADDED_AS or not person.email:
+        return None
+    ref = ("membership", person.membership_id)
+    today = (
+        (MailMessage.kind == "medlemskap.tillagd")
+        & (MailMessage.ref_type == ref[0])
+        & (MailMessage.ref_id == ref[1])
+        & (MailMessage.created_at > _utcnow() - timedelta(days=1))
+    )
+    if MailMessage.select().where(today).count() >= ADDED_A_DAY:
+        logger.warning("Membership %s has added %s people with mail today: no more mails", ref[1], ADDED_A_DAY)
+        return None
+    params = {"member_id": person.id}
+    return enqueue_mail(
+        "medlemskap.tillagd", "member", person.id, params, ref=ref, dedupe_key=f"medlemskap.tillagd:{person.id}"
+    )
+
+
+def cancel_member_added(member_ids):
+    """
+    The people left their membership or became its main member: their unsent medlemskap.tillagd is stopped, also
+    one being sent right now, which loses its claim (_renew), in the caller's transaction.
+    """
+    return (
+        MailMessage.update(
+            status="cancelled", claim_token=None, claimed_at=None, last_error="personen har lämnat medlemskapet"
+        )
+        .where(
+            (MailMessage.kind == "medlemskap.tillagd")
+            & (MailMessage.recipient_kind == "member")
+            & MailMessage.recipient_id.in_(list(member_ids))
+            & MailMessage.status.in_(("queued", "sending"))
+        )
+        .execute()
+    )
 
 
 def queue_application_mails(application_id, address):

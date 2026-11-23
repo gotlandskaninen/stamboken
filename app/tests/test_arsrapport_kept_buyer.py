@@ -33,9 +33,15 @@ from tests.test_arsrapport_pdf import text_of
 
 DAY0 = date(2026, 1, 10)
 STOCKHOLM = arsrapport.STOCKHOLM
-BUYER = {"name": "Zelda Keptbuyer", "town": "Klintehamn", "contact_consent": True, "email": "zelda@example.invalid"}
+BUYER = {
+    "name": "Zelda Keptbuyer",
+    "town": "Klintehamn",
+    "postal_address": "Testgatan 1",
+    "contact_consent": True,
+    "email": "zelda@example.invalid",
+}
 BUYER_TEXTS = ("Zelda", "Keptbuyer", "Klintehamn", "zelda@example")
-OTHER = {"name": "Ylva Newbuyer", "town": "Slite"}
+OTHER = {"name": "Ylva Newbuyer", "town": "Slite", "postal_address": "Testgatan 1"}
 KEPT_UNTIL = datetime(2026, 4, 1, tzinfo=STOCKHOLM)  # end_date 30 March, plus the night after it and a day
 SOLD_ON = date(2025, 10, 10)
 PURGE_NIGHT = datetime(2026, 4, 1, 3, 50, tzinfo=STOCKHOLM)  # the first night the kept buyer is due
@@ -272,7 +278,7 @@ class KeptBuyerTest(ArsrapportTest):
         self.assertEqual(contacts(), {contact.id: db.BuyerContact.purge_at_for(SOLD_ON)})
 
     def test_contact_fields_need_tick(self):  # through the report: BuyerFields' rule on the server
-        email_only = {"name": "Xena Tickbuyer", "town": "Visby", "email": "xena@example.invalid"}
+        email_only = {**OTHER, "email": "xena@example.invalid"}
         body = self.body(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=email_only), self.kvar(self.b, vikt=2.8))
         response = self.skicka(body)
         self.assertEqual(response.status_code, 422, response.get_data(as_text=True))

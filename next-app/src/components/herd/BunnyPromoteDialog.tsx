@@ -3,7 +3,6 @@
 import React, { useState, useEffect, useTransition } from "react";
 import {
   Alert,
-  Autocomplete,
   Box,
   Button,
   Dialog,
@@ -23,9 +22,12 @@ import {
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import { useTranslation } from "react-i18next";
+import { CheckPageNameHint } from "@/components/herd/CheckPageNameHint";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useMode } from "@/lib/mode-context";
+import { CoatChoice } from "@/components/herd/CoatChoice";
+import { ColorPicker, colorsFor } from "@/components/herd/ColorPicker";
 import {
   promoteBunny,
   checkIndividualNumber,
@@ -42,6 +44,7 @@ import {
   NumberConflictDialog,
   PAPER_NUMBER,
 } from "@/components/herd/NumberConflictDialog";
+import { renumberView, type RenumberFlow } from "./renumberFlow";
 
 const LitterNumberConflictDialog = dynamic(
   () =>
@@ -126,6 +129,7 @@ export function BunnyPromoteDialog({
   const [clawColor, setClawColor] = useState("");
   const [bellyColor, setBellyColor] = useState("");
   const [hairNotes, setHairNotes] = useState("");
+  const [rex, setRex] = useState(false);
   // A rabbit is only registered with a certificate; the roster issues the PDF
   const [certificateType, setCertificateType] = useState<"paper" | "digital">(
     "digital",
@@ -148,9 +152,9 @@ export function BunnyPromoteDialog({
   // Outcome state
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<SuccessState | null>(null);
-  const [conflictData, setConflictData] = useState<ConflictState | null>(null);
-  const [isRenumbering, setIsRenumbering] = useState(false);
-  const [renumberError, setRenumberError] = useState<string | null>(null);
+  const [renumber, setRenumber] = useState<RenumberFlow<ConflictState>>({
+    phase: "closed",
+  });
 
   // Re-init prefills if bunny changes (e.g. dialog reused for another bunny)
   useEffect(() => {
@@ -167,22 +171,19 @@ export function BunnyPromoteDialog({
   // observed_color prefill is free text — keep it only if it is official.
   useEffect(() => {
     if (!open || colorOptions !== null) return;
-    getColors().then((all) => {
-      if (!all) {
-        setColorOptions([]);
-        return;
-      }
-      const wantMellerud = herdId.startsWith("M");
-      const key =
-        Object.keys(all).find((k) =>
-          wantMellerud ? k.includes("Mellerud") : k.includes("Gotland"),
-        ) ?? Object.keys(all)[0];
-      const options = all[key] ?? [];
-      setColorOptions(options);
-      setColor((prev) =>
-        prev && !options.some((o) => o.name === prev) ? "" : prev,
-      );
-    });
+    getColors()
+      .then((all) => {
+        if (!all) {
+          setColorOptions([]);
+          return;
+        }
+        const options = colorsFor(all, undefined, herdId);
+        setColorOptions(options);
+        setColor((prev) =>
+          prev && !options.some((o) => o.name === prev) ? "" : prev,
+        );
+      })
+      .catch(() => setColorOptions([]));
   }, [open, colorOptions, herdId]);
 
   // Paper: Stamboken's number for what the paper says (the dry run), once it is typed
@@ -234,6 +235,8 @@ export function BunnyPromoteDialog({
         return t("addRabbit.errorLitterSize6wRequired");
       case "roster_alive_exceeds_6w":
       case "litter_size6w_above_born":
+      case "digital_certificate_forbidden":
+      case "attester_name_missing":
         return raw; // the API's sentence (with the counts; the roster offers the fix)
       default:
         return t("litterRoster.promoteError");
@@ -257,6 +260,7 @@ export function BunnyPromoteDialog({
       claw_color: clawColor || undefined,
       belly_color: bellyColor || undefined,
       hair_notes: hairNotes || undefined,
+      rex,
     });
 
     setNumberConflict(result.success ? null : (result.numberCheck ?? null));
@@ -283,9 +287,12 @@ export function BunnyPromoteDialog({
       const year = new Date(breeding.birth_date).getFullYear();
       const orderResult = await checkLitterOrder(herdId, year);
       if (orderResult.success && !orderResult.data.consistent) {
-        setConflictData({
-          conflicts: orderResult.data.conflicts as ConflictState["conflicts"],
-          year,
+        setRenumber({
+          phase: "conflict",
+          data: {
+            conflicts: orderResult.data.conflicts as ConflictState["conflicts"],
+            year,
+          },
         });
         return false;
       }
@@ -302,22 +309,29 @@ export function BunnyPromoteDialog({
   };
 
   const handleRenumberConfirm = async () => {
-    if (!conflictData) return;
-    setIsRenumbering(true);
-    setRenumberError(null);
-    const result = await renumberLitters(herdId, conflictData.year, true);
-    setIsRenumbering(false);
-    if (result.success) {
-      setConflictData(null);
+    if (renumber.phase !== "conflict") return;
+    const { data } = renumber;
+    setRenumber({ phase: "renumbering", data });
+    let result;
+    try {
+      result = await renumberLitters(herdId, data.year, true);
+    } catch {
+      result = null; // dropped connection: back to the dialog with an error
+    }
+    if (result?.success) {
+      setRenumber({ phase: "closed" });
       startTransition(async () => {
         await doPromote();
       });
     } else {
-      setRenumberError(
-        result.errorStatus === 403
-          ? t("addRabbit.conflict.renumberManagerRequired")
-          : t("addRabbit.conflict.renumberFailed"),
-      );
+      setRenumber({
+        phase: "conflict",
+        data,
+        error:
+          result?.errorStatus === 403
+            ? t("addRabbit.conflict.renumberManagerRequired")
+            : t("addRabbit.conflict.renumberFailed"),
+      });
     }
   };
 
@@ -334,6 +348,7 @@ export function BunnyPromoteDialog({
     setClawColor("");
     setBellyColor("");
     setHairNotes("");
+    setRex(false);
     setCertificateType("digital");
     setPaperCertificate("");
     setPaperNumber("");
@@ -342,8 +357,7 @@ export function BunnyPromoteDialog({
     setLitterSize6w("");
     setError(null);
     setSuccess(null);
-    setConflictData(null);
-    setRenumberError(null);
+    setRenumber({ phase: "closed" });
   };
 
   const handleClose = () => {
@@ -540,25 +554,16 @@ export function BunnyPromoteDialog({
               </FormControl>
 
               {/* Color — official genebank color list */}
-              <Autocomplete
-                options={(colorOptions ?? []).map((c) => c.name)}
-                value={color || null}
-                onChange={(_, v) => setColor(v ?? "")}
-                freeSolo={!colorOptions || colorOptions.length === 0}
-                onInputChange={
-                  !colorOptions || colorOptions.length === 0
-                    ? (_, v) => setColor(v)
-                    : undefined
+              <ColorPicker
+                options={colorOptions ?? []}
+                loading={colorOptions === null}
+                value={color}
+                onChange={setColor}
+                genebank={
+                  herdId.startsWith("M") ? "Mellerudskanin" : "Gotlandskanin"
                 }
-                size="small"
-                fullWidth
-                renderInput={(params) => (
-                  <TextField
-                    {...params}
-                    label={t("addRabbit.color")}
-                    required
-                  />
-                )}
+                label={t("addRabbit.color")}
+                required
               />
 
               {/* Name */}
@@ -606,6 +611,9 @@ export function BunnyPromoteDialog({
                 fullWidth
               />
 
+              {/* Coat: Normal or Rex */}
+              <CoatChoice rex={rex} onChange={setRex} />
+
               {/* Hair notes */}
               <TextField
                 label={t("addRabbit.hairNotes")}
@@ -636,6 +644,15 @@ export function BunnyPromoteDialog({
                   </MenuItem>
                 </Select>
               </FormControl>
+              {certificateType === "digital" && (
+                <Typography
+                  variant="caption"
+                  sx={{ color: "text.secondary", mt: -1, ml: 1.5 }}
+                >
+                  {t("addRabbit.certificateAttester")}
+                </Typography>
+              )}
+              {certificateType === "digital" && <CheckPageNameHint />}
 
               {/* Paper certificate number */}
               {certificateType === "paper" && (
@@ -761,17 +778,13 @@ export function BunnyPromoteDialog({
         />
       )}
       {/* Conflict resolution dialog */}
-      {conflictData && (
+      {renumber.phase !== "closed" && (
         <LitterNumberConflictDialog
           open
-          conflicts={conflictData.conflicts}
+          conflicts={renumber.data.conflicts}
           onConfirm={handleRenumberConfirm}
-          onClose={() => {
-            setConflictData(null);
-            setRenumberError(null);
-          }}
-          isRenumbering={isRenumbering}
-          error={renumberError}
+          onClose={() => setRenumber({ phase: "closed" })}
+          {...renumberView(renumber)}
         />
       )}
     </>

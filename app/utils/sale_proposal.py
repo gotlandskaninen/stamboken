@@ -43,14 +43,14 @@ BUYER_GONE = "Köparens uppgifter är raderade, så försäljningen kan inte god
 TICKED = ("contact_consent_at", "membership_optin_at")
 
 
-def _stored_buyer(buyer, at):
+def _stored_buyer(buyer, at, *, address_required):
     """
     The buyer as the sale takes it again at approval: the text fields and the two ticks, checked now, and when each
     was ticked (`at`, the submission's time), which approval gives the BuyerContact in place of its own time.
     """
-    fields = buyer_contact_fields(buyer)  # contact only with the tick (ADR-0016)
+    fields = buyer_contact_fields(buyer, address_required=address_required)
     return {
-        **{key: buyer.get(key) for key in BUYER_TEXT_FIELDS},
+        **{key: fields[key] for key in BUYER_TEXT_FIELDS},
         "contact_consent": buyer.get("contact_consent", False),
         "membership_optin": buyer.get("membership_optin", False),
         **{key: at.isoformat() for key in TICKED if fields[key]},
@@ -74,7 +74,7 @@ def _close_item(proposal, user, state):
         inbox.log_event(item, user, "lage", **{"from": previous, "to": state})
 
 
-def propose(report, submission, individual, *, to_herd, buyer, sale_date: date) -> SaleProposal:
+def propose(report, submission, individual, *, to_herd, buyer, sale_date: date, buyer_correction=False) -> SaleProposal:
     """
     A pending sale of `individual` from the report's herd, to `to_herd` or, with None, to a buyer outside the
     genebank (then `buyer` is required). Its `kontroll` item goes to the genebank's queue (F3). The proposer is
@@ -83,7 +83,7 @@ def propose(report, submission, individual, *, to_herd, buyer, sale_date: date) 
     if (to_herd is None) == (buyer is None):
         raise HerdTrackingInvalid("Ange köparens besättning, eller köparens namn och ort utanför genbanken.")
     at = submission.created_at  # when the seller sent it, and ticked the buyer's boxes
-    stored = _stored_buyer(buyer, at) if buyer is not None else None
+    stored = _stored_buyer(buyer, at, address_required=not buyer_correction) if buyer is not None else None
     with DB_PROXY.atomic():
         try:
             proposal = SaleProposal.create(

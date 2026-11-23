@@ -58,6 +58,7 @@ runs:
           -e RATELIMIT_ENABLED=false \
           -e LINK_SECRET=ci-throwaway-link-secret \
           -e AUTHCONFIGFILE=/app/tests/auth.ini.test \
+          -e ALLOW_ROLE_PASSWORD_LOGIN=true \
           -e S3_ENDPOINT=http://localhost:9000 \
           -e S3_USESSL=false \
           -e S3_VERIFY=false \

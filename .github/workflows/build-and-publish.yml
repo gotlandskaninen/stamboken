@@ -2,10 +2,10 @@ name: Build and Publish Containers
 
 on:
   push:
-    branches: [main]
+    branches: [main, 'release/**']
     tags: ['v*']
   pull_request:
-    branches: [main]
+    branches: [main, 'release/**']
 
 env:
   REGISTRY: ghcr.io
@@ -29,7 +29,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Login to GitHub Container Registry
-        if: github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
@@ -53,7 +53,7 @@ jobs:
           context: .
           file: .docker/api
           target: prod
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
@@ -78,7 +78,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Login to GitHub Container Registry
-        if: github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
@@ -102,7 +102,7 @@ jobs:
           context: .
           file: .docker/next-app
           target: runner
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
@@ -130,7 +130,7 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Login to GitHub Container Registry
-        if: github.event_name != 'pull_request'
+        if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
         uses: docker/login-action@v4
         with:
           registry: ${{ env.REGISTRY }}
@@ -154,7 +154,7 @@ jobs:
           context: .
           file: .docker/next-app
           target: migrate
-          push: ${{ github.event_name != 'pull_request' }}
+          push: ${{ github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v') }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
@@ -177,20 +177,23 @@ jobs:
       - name: Checkout this repo (for build scripts)
         uses: actions/checkout@v6
 
-      - name: Checkout legacy frontend (production branch)
+      - name: Checkout legacy frontend (production + banner om nya Stamboken, legacy-PR #7, #8 och #9)
         uses: actions/checkout@v6
         with:
           repository: gotlandskaninen/stamboken-legacy
           path: legacy-src
-          ref: 51fc2b03b426e2f715fb9140cad639b5f2ada45a
+          ref: bfd23ff10c7e35209ca4d03c68661f6c2d73aaa5
           fetch-depth: 0
 
-      - name: Get latest legacy release tag
+      # Sidfoten visar Stambokens version och länkar till dess release
+      # (gotlandskaninen/stamboken/releases/tag/<version>), inte NBIS legacy-tagg.
+      - name: Stamboken release version
         id: legacy-version
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          REF_NAME: ${{ github.ref_name }}
         run: |
-          cd legacy-src
-          TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "unknown")
-          echo "version=$TAG" >> "$GITHUB_OUTPUT"
+          if [ "$REF_TYPE" = tag ]; then echo "version=$REF_NAME" >> "$GITHUB_OUTPUT"; else echo "version=main" >> "$GITHUB_OUTPUT"; fi
 
       - name: Update tags.json version
         uses: jossef/action-set-json-field@v2.1

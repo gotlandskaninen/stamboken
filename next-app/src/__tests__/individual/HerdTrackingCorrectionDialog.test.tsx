@@ -1,5 +1,5 @@
 import React from "react";
-import { describe, it, expect, afterEach, vi } from "vitest";
+import { describe, it, expect, afterEach, vi, beforeAll } from "vitest";
 import {
   render,
   screen,
@@ -18,7 +18,19 @@ import {
 } from "@/components/individual/VoidHerdTrackingDialog";
 import type { HerdTrackingHistory } from "@/lib/herdTracking";
 
+beforeAll(async () => {
+  await import("@/i18n");
+});
 afterEach(cleanup);
+
+const typeBuyer = () => {
+  fireEvent.change(screen.getByLabelText(/Köparens namn/), {
+    target: { value: "Anna Köpare" },
+  });
+  fireEvent.change(screen.getByLabelText(/^Ort/), {
+    target: { value: "Visby" },
+  });
+};
 
 const history: HerdTrackingHistory = {
   individual: { id: 7, number: "G100-2511" },
@@ -114,19 +126,69 @@ describe("HerdTrackingCorrectionDialog", () => {
     fireEvent.change(screen.getByLabelText("Anledning"), {
       target: { value: "Såld utanför genbanken" },
     });
+    expect((submit as HTMLButtonElement).disabled).toBe(true); // a new sale out needs its buyer
+    typeBuyer();
     fireEvent.click(submit);
 
     expect(onConfirm).toHaveBeenCalledWith({
       operation_id: expect.any(String),
       void_ids: [21],
       events: [
-        { date: "2025-09-30", herd: "GX1", kind: "TRANSFER", notes: null },
+        {
+          date: "2025-09-30",
+          herd: "GX1",
+          kind: "TRANSFER",
+          notes: null,
+          buyer: {
+            name: "Anna Köpare",
+            town: "Visby",
+            contact_consent: false,
+            membership_optin: false,
+          },
+        },
       ],
       reason: "Såld utanför genbanken",
     });
     expect(
       screen.getByText("Skriv inte köparens namn eller kontaktuppgifter."),
     ).toBeDefined();
+  });
+
+  it("asks no buyer for a correction kind, nor for a sale that replaces a voided one out", async () => {
+    const sale = {
+      ...history.rows[0],
+      id: 22,
+      date: "2025-09-30",
+      kind: "TRANSFER" as const,
+      herd: { ...history.rows[0].herd, herd: "GX1", label: "GX1" },
+    };
+    const onConfirm = renderDialog({
+      history: { ...history, rows: [history.rows[0], sale] },
+    });
+    await waitFor(() => expect(loadHerds).toHaveBeenCalled());
+    fireEvent.click(screen.getByRole("button", { name: "Lägg till händelse" }));
+    await screen.findByRole("option", { name: "GX1 – Utanför genbanken" });
+    fireEvent.change(screen.getByLabelText("Datum"), {
+      target: { value: "2025-10-01" },
+    });
+    fireEvent.change(screen.getByLabelText("Besättning"), {
+      target: { value: "GX1" },
+    });
+    expect(screen.getByLabelText(/Köparens namn/)).toBeDefined();
+    fireEvent.change(screen.getByLabelText("Typ"), {
+      target: { value: "CORRECTION" },
+    });
+    expect(screen.queryByLabelText(/Köparens namn/)).toBeNull(); // the server points to Flytt
+    fireEvent.change(screen.getByLabelText("Typ"), {
+      target: { value: "TRANSFER" },
+    });
+    fireEvent.click(screen.getByLabelText(/2025-09-30 · /)); // the sale it replaces carries its buyer
+    expect(screen.queryByLabelText(/Köparens namn/)).toBeNull();
+    fireEvent.change(screen.getByLabelText("Anledning"), {
+      target: { value: "Fel datum" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Spara korrigering" }));
+    expect(onConfirm.mock.calls[0][0].events[0]).not.toHaveProperty("buyer");
   });
 
   it("shows the herd-load error inline", async () => {
@@ -163,6 +225,7 @@ describe("HerdTrackingCorrectionDialog", () => {
     fireEvent.change(screen.getByLabelText("Besättning"), {
       target: { value: "GX1" },
     });
+    typeBuyer();
     fireEvent.click(screen.getByRole("button", { name: "Spara korrigering" }));
     expect(onConfirm).toHaveBeenCalledWith(
       expect.objectContaining({ void_ids: [], reason: "" }),

@@ -630,7 +630,7 @@ class TestCommandLogMigration(IsolatedSchemaTest):
         self.assertTrue(bootstrapped[0])
         self._to_v34()
         db.migrate_34_to_35()
-        db._create_arsrapport_schema()  # migration 42: the access-code FK and the actor CHECK
+        db._create_arsrapport_schema()  # migration 50: the access-code FK and the actor CHECK
         self.assertEqual(self._snapshot(), bootstrapped)
 
 

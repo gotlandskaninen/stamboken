@@ -23,6 +23,11 @@
     "matrikel": "Member registry",
     "medlemsstatistik": "Statistics"
   },
+  "coat": {
+    "label": "Coat",
+    "normal": "Normal",
+    "rex": "Rex"
+  },
   "explorer": {
     "title": "All Rabbits",
     "subtitle": "Explore all rabbits in the gene bank",
@@ -146,7 +151,7 @@
       "summaryOutside": "The rabbit leaves the genebank.",
       "buyerName": "Buyer's name",
       "buyerTown": "Town",
-      "buyerContactConsent": "The buyer ticked yes: the association may keep address, e-mail and phone for as long as the buyer has the rabbit",
+      "buyerContactConsent": "The buyer ticked yes: the association may keep e-mail and phone for as long as the buyer has the rabbit",
       "buyerMembershipOptin": "The buyer ticked yes: the association may contact the buyer about membership",
       "buyerAddress": "Postal address",
       "buyerEmail": "E-mail",
@@ -190,6 +195,14 @@
     "breadcrumb": {
       "myHerd": "My herd",
       "allRabbits": "All rabbits"
+    },
+    "certificate": {
+      "view": "View certificate",
+      "newTab": "(opens in a new tab)",
+      "verify": "Verify the certificate",
+      "onlyFor": "Only the rabbit's owner, the breeder and the genebank manager can download the certificate.",
+      "notInDemo": "The certificate is not shown in the test environment.",
+      "issued": "Issued {{date}}"
     }
   },
   "pedigree": {
@@ -235,6 +248,7 @@
     "promoteTitleWithNumber": "Register rabbit — {{number}}",
     "promoteSuccess": "{{number}} registered",
     "promoteError": "Could not register rabbit",
+    "suggestionError": "Could not fetch a suggested number",
     "certificateError": "Certificate could not be created: {{error}}",
     "registerAnother": "Register another in the litter",
     "allAdded": "All {{count}} kits have been added to the litter list.",
@@ -318,6 +332,9 @@
     "certificatePaper": "Paper",
     "certificateDigital": "Digital",
     "certificateDigitalDisabled": "Coming when certificate v2 is active",
+    "certificateAttester": "Your name will appear on the certificate as the person who certifies it.",
+    "checkPageNameHint": "You have not chosen whether your name appears on the certificate's check page. Until you do, it shows your role, for example \"Uppfödaren\" (the breeder).",
+    "checkPageNameHintLink": "Choose under My profile",
     "paperCertificateNumber": "Certificate number",
     "save": "Register",
     "saving": "Registering...",
@@ -380,20 +397,6 @@
     "certificatesProfessionalLayout": "Professional layout",
     "certificatesProfessionalLayoutDesc": "Certificates are generated in PDF format with pedigrees, photos, and official numbering.",
     "certificatesImageAlt": "Example of a digital gene bank certificate for Gotland and Mellerud rabbits",
-    "faqOverline": "FAQ",
-    "faqTitle": "Questions and answers about Stamboken",
-    "faqSubtitle": "Here are the most common questions from our users about Stamboken Online.",
-    "faq1Question": "Who can use Stamboken Online?",
-    "faq1Answer": "Stamboken Online is for members of Föreningen Gotlandskaninen who have gene bank herds for Gotland or Mellerud rabbits. You sign in with your Gottiskonto.",
-    "faq2Question": "How do I get access to the system?",
-    "faq2Answer": "Apply for a Gottiskonto at konto.gotlandskaninen.se. Everyone with a Gottiskonto can sign in to the test system. After you have tried the system and demonstrate the right knowledge, you can sign in to the production system.",
-    "faq2ValidatorLink": "validator course",
-    "faq3Question": "Can I issue gene bank certificates digitally?",
-    "faq3Answer": "Yes! The system automatically generates digital gene bank certificates with correct numbering and signing. All certificates comply with the association's and EU's requirements for gene bank operations.",
-    "faq4Question": "What is the difference between the test and main system?",
-    "faq4Answer": "All new users start in the test system where they can learn without affecting the real database. After demonstrating proficiency through the validator course, you gain access to the main system where you can register real animals and issue official gene bank certificates.",
-    "faq5Question": "What is the difference between Gotland and Mellerud rabbits?",
-    "faq5Answer": "The Gotland rabbit is a remnant of the old Swedish heritage rabbit from Gotland with varying colors and markings. The Mellerud rabbit is similar but only comes in black-and-white spotted or all-white. Both breeds weigh 3-4 kg and are preserved through EU-supported gene bank operations.",
     "footerEuText": "Föreningen Gotlandskaninen receives EU support for preserving Gotland and Mellerud rabbits. The support funds gene bank herds, the member magazine, printed materials, gene bank certificates, marketing, courses and education, transport of valuable animals, and autopsies.",
     "footerGetStarted": "Get started:",
     "footerGetStartedText": "Apply for a Gottiskonto at",

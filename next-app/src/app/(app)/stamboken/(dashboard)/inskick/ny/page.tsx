@@ -1,9 +1,8 @@
-import { ApiError, fetchApi } from "@/lib/api";
+import { fetchApi } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
-import { getInboxCount } from "@/lib/inkorg-server";
+import type { InboxCount } from "@/lib/inkorg";
 import type { GenebankHerd } from "@/utils/saleRules";
 import { Masthead } from "@/components/shell/Masthead";
-import type { MyMembership } from "../../profil/types";
 import { UploadForm } from "./UploadForm";
 import styles from "../inskick.module.css";
 
@@ -11,14 +10,20 @@ export const dynamic = "force-dynamic";
 
 export const metadata = { title: "Ladda upp intyg" };
 
+// Every call here reads production in every mode: the upload goes there
+// (actions.ts).
+
 /** Every herd the user can see, for someone who works in the queue (the API lets them upload for any herd). */
 async function searchableHerds(): Promise<GenebankHerd[]> {
   const { genebanks } = await fetchApi<{ genebanks: { id: number }[] }>(
     "/genebanks",
+    { forceProd: true },
   ).catch(() => ({ genebanks: [] }));
   const lists = await Promise.all(
     genebanks.map((g) =>
-      fetchApi<{ herds: GenebankHerd[] }>(`/v2/genebank/${g.id}/herds`)
+      fetchApi<{ herds: GenebankHerd[] }>(`/v2/genebank/${g.id}/herds`, {
+        forceProd: true,
+      })
         .then((r) => r.herds)
         .catch(() => []),
     ),
@@ -27,22 +32,14 @@ async function searchableHerds(): Promise<GenebankHerd[]> {
 }
 
 export default async function NyttInskickPage() {
-  const user = await requireUser();
-  // Owners come from the session; skötare only appear in the membership.
-  const membership = await fetchApi<MyMembership>("/v2/my-membership").catch(
-    (e) => {
-      if (e instanceof ApiError && e.status === 404) return null;
-      throw e;
-    },
-  );
-  const herds = [
-    ...new Set([
-      ...(user.is_owner ?? []),
-      ...(membership?.membership.herds.map((h) => h.herd) ?? []),
-    ]),
-  ].sort();
+  // is_owner is every herd the upload takes from a member (effective_herd_ids):
+  // her own, her membership's as huvudmedlem, and those of her active grants.
+  const user = await requireUser(true);
+  const herds = [...(user.is_owner ?? [])].sort();
 
-  const worksInQueue = await getInboxCount()
+  const worksInQueue = await fetchApi<InboxCount>("/v2/inkorg/notiser/antal", {
+    forceProd: true,
+  })
     .then((c) => c.works_in_queue)
     .catch(() => false);
   const herdOptions = worksInQueue ? await searchableHerds() : undefined;

@@ -106,11 +106,6 @@ services:
       - MAIL_MODE=log
     ports:
       - "127.0.0.1:9090:9090"
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "20m"
-        max-file: "10"
     volumes:
       - type: bind
         source: ./app
@@ -118,9 +113,6 @@ services:
       - type: bind
         source: ./config
         target: /config
-      - type: bind
-        source: ./logs
-        target: /logs
       - type: bind
         source: ./uppladdningar
         target: /app/uppladdningar
@@ -179,11 +171,6 @@ services:
       - INLASNING_GMAIL=off
       # Same mail pin as `api`: a local stack never mails.
       - MAIL_MODE=log
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "20m"
-        max-file: "10"
     volumes:
       - type: bind
         source: ./app
@@ -191,11 +178,6 @@ services:
       - type: bind
         source: ./config
         target: /config
-      - type: bind
-        # Own dir: the genebank CSV logs don't record the instance, so demo
-        # edits must not land in production's logs. Create it like ./logs.
-        source: ./logs-test
-        target: /logs
       - type: bind
         source: ./uppladdningar
         target: /app/uppladdningar
@@ -284,6 +266,7 @@ services:
       - LOCAL_CA_ROOT_CERT_VALIDITY=730
       - LOCAL_CA_CERT_VALIDITY=730
     volumes:
+      - ./nginx/nginx.main:/etc/nginx/nginx.conf:ro
       - ./nginx/herdbook-local-production.conf:/etc/nginx/user_conf.d/herdbook.conf:ro
       # Legacy frontends (build with: ./scripts/build-legacy.sh --all)
       - ./nginx/legacy-frontend-prod:/etc/nginx/legacy-frontend-prod:ro
@@ -328,7 +311,9 @@ services:
   # Som i produktion: bara med profilen tolkning, ingen publicerad port.
   # ============================================
   ollama:
-    image: ollama/ollama:latest
+    # Låst till version och digest. Höjs för hand, i båda compose-filerna, efter ett
+    # prov av tolkningen: en ny Ollama kan läsa intygen annorlunda.
+    image: ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592
     profiles:
       - tolkning
     cpus: 6

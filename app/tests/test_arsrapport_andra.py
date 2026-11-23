@@ -33,8 +33,8 @@ from tests.ht_helpers import count_queries, ht_row
 LAST = date(2025, 12, 31)
 DAY0 = date(2026, 1, 10)
 FUTURE = datetime.now().year + 1  # _validate_sale reads the real clock, not the fixture's
-BUYER = {"name": "Test Köpare", "town": "Visby"}
-OTHER_BUYER = {"name": "Annan Köpare", "town": "Slite"}
+BUYER = {"name": "Test Köpare", "town": "Visby", "postal_address": "Testgatan 1"}
+OTHER_BUYER = {"name": "Annan Köpare", "town": "Slite", "postal_address": "Testgatan 1"}
 KEY_TAKEN = "Rapporten är redan skickad med den här nyckeln. Ladda om sidan."
 LATER = "Kaninen har en senare händelse i Stamboken. Genbanksansvarig kan rätta."
 NAMED = [{"individual_id": None, "code": "orsak_kopare", "message": "Skriv inte köparens namn i orsaken."}]
@@ -533,7 +533,8 @@ class AndraTest(ArsrapportTest):
         (a,) = self.rabbits(self.h, 1)
         self.ok(self.body(self.sald(a, "utanfor", 2025, 11, 20, kopare=BUYER)))
         (first,) = rows_of(a, "TRANSFER")
-        self.ok(self.body(self.sald(a, "utanfor", 2025, 11, 20, kopare=OTHER_BUYER), revision=1))
+        corrected = {**OTHER_BUYER, "postal_address": ""}
+        self.ok(self.body(self.sald(a, "utanfor", 2025, 11, 20, kopare=corrected), revision=1))
         old, new = rows_of(a, "TRANSFER")
         self.assertEqual(old.id, first.id)
         self.assertIsNotNone(old.voided_at)

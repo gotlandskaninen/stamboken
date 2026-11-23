@@ -54,6 +54,7 @@ type Photo = {
 type Draft = {
   id: number;
   form: CertForm;
+  rex?: boolean;
   where: Where | null;
   photo: Photo;
   parent?: Parent;
@@ -63,7 +64,7 @@ type Draft = {
 // "Spara som utkast": what is kept in the browser. Never a photo or anything that names one.
 type Stored = {
   saved_at: number;
-  drafts: Pick<Draft, "id" | "form" | "where" | "parent" | "of">[];
+  drafts: Pick<Draft, "id" | "form" | "rex" | "where" | "parent" | "of">[];
 };
 
 const blank = (
@@ -114,9 +115,10 @@ function writeDrafts(key: string, drafts: Draft[] | null) {
     if (drafts === null) return localStorage.removeItem(key);
     const stored: Stored = {
       saved_at: Date.now(),
-      drafts: drafts.map(({ id, form, where, parent, of }) => ({
+      drafts: drafts.map(({ id, form, rex, where, parent, of }) => ({
         id,
         form,
+        rex,
         where,
         ...(parent ? { parent, of } : {}),
       })),
@@ -528,6 +530,11 @@ export function AddRabbitDialog({
               mode="ny_kanin"
               variant="member"
               form={top.form}
+              rex={top.rex}
+              onRexChange={(rex) => {
+                touch();
+                updateDraft(top.id, (d) => ({ ...d, rex }));
+              }}
               onChange={(field, value) => {
                 touch();
                 updateDraft(top.id, (d) => ({

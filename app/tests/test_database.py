@@ -9,6 +9,7 @@ isort:skip_file
 # pylint: disable=too-many-public-methods
 # pylint: disable=too-many-statements
 
+import inspect
 import threading
 import time
 from datetime import datetime
@@ -395,6 +396,7 @@ class TestDatabase(DatabaseTest):
         data["mother"] = mother
         data["father"] = father
         data["color"] = self.colors[0].name
+        data["color_id"] = self.colors[0].id
         data["alive"] = not self.individuals[0].death_date and not self.individuals[0].death_note
         data["is_active"] = False
         data["is_registered"] = bool(self.individuals[0].certificate or self.individuals[0].digital_certificate)
@@ -1078,9 +1080,90 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertEqual(db.Membership.get_by_id(ms.id).billing_name, "Djurparken i Exempelby")
 
         # Running it again on the migrated schema changes nothing.
-        db.SchemaHistory.delete().where(db.SchemaHistory.version == 37).execute()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 37).execute()
         db.check_migrations()
         self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+
+    def test_replay_37_to_38_retires_the_pdf_of_a_replaced_digital_certificate(self):
+        """
+        Before ADR-0019 a paper certificate removed the digital number and left the PDF row current: retired.
+        A blank number removed it too, but nothing replaced that certificate: its row stays current and is
+        counted. A digital certificate keeps its row.
+        """
+        self.addCleanup(db.check_migrations)
+        replaced, digital, blanked = self.individuals[0], self.individuals[1], self.individuals[2]
+        db.Individual.update(certificate="", digital_certificate=None).where(db.Individual.id == blanked.id).execute()
+        db.Individual.update(certificate="98765", digital_certificate=None).where(
+            db.Individual.id == replaced.id
+        ).execute()
+        db.Individual.update(certificate=None, digital_certificate=100000).where(
+            db.Individual.id == digital.id
+        ).execute()
+        for ind in (replaced, digital, blanked):
+            db.DigitalCertificateV2.create(individual=ind, issued_by=self.admin, file_path="x.pdf", checksum="0" * 64)
+
+        def current(ind):
+            return db.DigitalCertificateV2.get(db.DigitalCertificateV2.individual == ind.id).is_current
+
+        for _ in range(2):  # a second run on the repaired rows changes nothing
+            db.SchemaHistory.delete().where(db.SchemaHistory.version >= 38).execute()
+            db.check_migrations()
+            self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+            self.assertEqual((current(replaced), current(digital), current(blanked)), (False, True, True))
+            self.assertIn("1 current rows without a number", db.SchemaHistory.get_by_id(38).comment)
+
+    def test_replay_39_to_40_resets_bank_privacy(self):
+        """A database stamped at 39 gets every stored bank privacy level reset to private."""
+        self.addCleanup(db.check_migrations)
+        gb = db.Genebank.create(name="Replay40")
+        herd = db.Herd.create(
+            genebank=gb, herd="R40", bank_account_number_privacy="public", bank_name_privacy="Public "
+        )
+        null_herd = db.Herd.create(
+            genebank=gb, herd="R40N", bank_account_number_privacy=None, bank_name_privacy="public"
+        )  # one NULL next to one non-private column: only the non-NULL one is reset
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 40).execute()
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        herd = db.Herd.get_by_id(herd.id)
+        self.assertEqual(herd.bank_account_number_privacy, "private")
+        self.assertEqual(herd.bank_name_privacy, "private")
+        null_herd = db.Herd.get_by_id(null_herd.id)
+        self.assertIsNone(null_herd.bank_account_number_privacy)  # NULL is left alone
+        self.assertEqual(null_herd.bank_name_privacy, "private")
+        # The reset writes no audit row (the trigger copies the account number) and the trigger is back on.
+
+        def updates():
+            return (
+                db.AuditLog.select()
+                .where(db.AuditLog.table_name == "herd", db.AuditLog.record_id == str(herd.id))
+                .where(db.AuditLog.operation == "UPDATE")
+                .count()
+            )
+
+        self.assertEqual(updates(), 0)
+        db.Herd.update(www="x").where(db.Herd.id == herd.id).execute()
+        self.assertEqual(updates(), 1)
+
+    def test_replay_44_to_45_lets_matrikel_audit_go_without_actor(self):
+        """A database stamped at 44 accepts matrikel audit rows without a user (the nightly anonymization, #70)."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        db.DATABASE.execute_sql('ALTER TABLE "matrikel_audit" ALTER COLUMN "actor_id" SET NOT NULL')
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 45).execute()
+
+        for _ in range(2):  # a second run on the migrated schema changes nothing
+            db.check_migrations()
+            self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+            columns = {c.name: c for c in db.DATABASE.get_columns("matrikel_audit")}
+            self.assertTrue(columns["actor_id"].null)
+            db.SchemaHistory.delete().where(db.SchemaHistory.version >= 45).execute()
+        db.check_migrations()
+        membership = db.Membership.create(member_number=4141)
+        self.assertIsNone(db.MatrikelAudit.create(actor=None, action="x", membership=membership).actor_id)
 
     def test_replay_32_to_33_adds_the_history_algorithm_version(self):
         """
@@ -1162,8 +1245,8 @@ class TestDatabaseMigration(DatabaseTest):
         db.check_migrations()
         self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
 
-    def test_replay_37_to_38_creates_the_mail_queue(self):
-        """A database stamped at 37 gets the three mail tables, with a fresh bootstrap's indexes, unaudited."""
+    def test_replay_40_to_41_creates_the_mail_queue(self):
+        """A database stamped at 40 gets the three mail tables, with a fresh bootstrap's indexes, unaudited."""
         if not isinstance(db.DATABASE, db.PostgresqlDatabase):
             self.skipTest("index introspection requires PostgreSQL")
         self.addCleanup(db.check_migrations)
@@ -1173,7 +1256,7 @@ class TestDatabaseMigration(DatabaseTest):
             return {(i.table, i.name, tuple(i.columns), i.unique) for t in tables for i in db.DATABASE.get_indexes(t)}
 
         fresh = indexes()
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 38).execute()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 41).execute()
         db.DATABASE.execute_sql("DROP TABLE mail_attempt, mail_message, mail_sender")
 
         db.check_migrations()
@@ -1192,8 +1275,8 @@ class TestDatabaseMigration(DatabaseTest):
         )
         self.assertTrue(set(tables).isdisjoint(db.AUDITED_TABLES))
 
-    def test_replay_38_to_39_creates_the_intake_queue(self):
-        """A database stamped at 38 gets the queue's tables with a fresh bootstrap's indexes, unaudited."""
+    def test_replay_41_to_42_creates_the_intake_queue(self):
+        """A database stamped at 41 gets the queue's tables with a fresh bootstrap's indexes, unaudited."""
         if not isinstance(db.DATABASE, db.PostgresqlDatabase):
             self.skipTest("index introspection requires PostgreSQL")
         self.addCleanup(db.check_migrations)
@@ -1203,7 +1286,7 @@ class TestDatabaseMigration(DatabaseTest):
             return {(i.table, i.name, tuple(i.columns), i.unique) for t in tables for i in db.DATABASE.get_indexes(t)}
 
         fresh = indexes()
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 39).execute()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 42).execute()
         db.DATABASE.execute_sql(f"DROP TABLE {', '.join(tables)} CASCADE")
 
         db.check_migrations()
@@ -1213,8 +1296,8 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertIn(("inbox_item", "inboxitem_gmail_message_id", ("gmail_message_id",), True), fresh)
         self.assertTrue(set(tables).isdisjoint(db.AUDITED_TABLES))
 
-    def test_replay_39_to_40_lets_an_original_go_and_records_seller_and_buyer(self):
-        """A database stamped at 39 gets a nullable original and the two member columns, as a fresh bootstrap."""
+    def test_replay_42_to_43_lets_an_original_go_and_records_seller_and_buyer(self):
+        """A database stamped at 42 gets a nullable original and the two member columns, as a fresh bootstrap."""
         if not isinstance(db.DATABASE, db.PostgresqlDatabase):
             self.skipTest("column introspection requires PostgreSQL")
         self.addCleanup(db.check_migrations)
@@ -1230,9 +1313,9 @@ class TestDatabaseMigration(DatabaseTest):
             return columns, indexes, keys
 
         fresh = shape()
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 40).execute()
-        if db.SchemaHistory.get_or_none(db.SchemaHistory.version == 39) is None:  # a fresh init() stamps only 42
-            db.SchemaHistory.insert(version=39, comment="test seed", applied=datetime.now()).execute()  # pylint: disable=E1120
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 43).execute()
+        if db.SchemaHistory.get_or_none(db.SchemaHistory.version == 42) is None:  # init() stamps only the latest version
+            db.SchemaHistory.insert(version=42, comment="test seed", applied=datetime.now()).execute()  # pylint: disable=E1120
         db.DATABASE.execute_sql(
             "ALTER TABLE inbox_document DROP COLUMN seller_member_id, DROP COLUMN buyer_member_id, "
             "ALTER COLUMN original_path SET NOT NULL"
@@ -1248,6 +1331,317 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertIn(("inbox_item", "sender_authenticated", True), fresh[0])
         self.assertIn(("gmail_processed", "failures", False), fresh[0])
         self.assertIn(("seller_member_id", "member", "member_id"), fresh[2])
+
+    def _drop_rex_column(self):
+        """The schema before 45 -> 46: no rex column, the audit trigger on, and the version row gone."""
+        self.addCleanup(db.check_migrations)
+        self.assertTrue(
+            db.DATABASE.execute_sql(
+                "SELECT 1 FROM pg_trigger WHERE tgrelid = 'individual'::regclass AND tgname = 'audit_trigger'"
+            ).fetchone()
+        )
+        db.DATABASE.execute_sql("ALTER TABLE individual DROP COLUMN rex")
+        db.SchemaHistory.delete().where(
+            db.SchemaHistory.version >= self._migration_version('comment=f"individual.rex;')
+        ).execute()
+
+    def _individual_audit_rows(self):
+        return db.AuditLog.select().where(db.AuditLog.table_name == "individual").count()
+
+    def test_rex_kolumn(self):
+        """A database stamped at 43 gets individual.rex, false for old rows, without audit rows, twice over."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self._drop_rex_column()
+        names = lambda: {c.name for c in db.DATABASE.get_columns("individual")}  # noqa: E731
+        self.assertNotIn("rex", names())
+        rows = db.DATABASE.execute_sql("SELECT count(*) FROM individual").fetchone()[0]
+        self.assertGreater(rows, 0)
+        audit_before = self._individual_audit_rows()
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertIn("rex", names())
+        self.assertEqual(
+            db.DATABASE.execute_sql("SELECT count(*) FROM individual WHERE rex IS DISTINCT FROM false").fetchone()[0], 0
+        )
+        self.assertEqual(self._individual_audit_rows(), audit_before)  # the ALTER fires no row trigger
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 46).execute()
+        db.check_migrations()  # a second run changes nothing and does not fail
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        (default,) = db.DATABASE.execute_sql(
+            "SELECT column_default FROM information_schema.columns "
+            "WHERE table_name = 'individual' AND column_name = 'rex'"
+        ).fetchone()
+        self.assertEqual(default, "false")
+        self.assertEqual(db.Individual.get_by_id(self.individuals[0].id).rex, False)
+
+    def test_rex_ur_fritext(self):
+        """Rex in a free-text note becomes rex = true; carriers, ej rex and the like do not. Text is untouched."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("regular expressions require PostgreSQL")
+        yes = [
+            ("rex", None),
+            ("Rexpäls", None),
+            ("rex-pälsad", None),
+            ("ja, rexpälsad.", None),
+            (None, "svart rex"),
+            (None, "madagaskar-rex"),
+            (None, "gul / svart japan, rexpälsad"),
+            ("rexpälsad", "svart med vita inslag"),
+            ("Rex", "bär blått"),
+            ("Rex", "anlag för japan"),
+        ]
+        no = [
+            ("nej", None),
+            ("normal", None),
+            ("-", None),
+            (None, "bär rex"),
+            (None, "rexbärare"),
+            (None, "anlag för rex"),
+            (None, "ej rex"),
+            (None, "havanna med rexinslag"),
+            ("icke-rex", None),
+            ("inte en rex", None),
+            ("utan rex", None),
+            ("inget rex", None),
+            ("Rex: nej", None),
+            ("far rex", None),
+            ("Rex", "bär rex"),
+            ("Rexpäls: nej", None),
+            ("Normalpäls, förälder är rex", None),
+            ("Rex, bär blått", None),
+            ("Rex, med vita inslag", None),
+            ("Rex", "mor rex"),
+            ("bär (rex)", None),
+            ("Rex (nej)", None),
+            ("Rex? nej", None),
+            ("Rex \u2013 nej", None),
+            ('ej "rex"', None),
+            ("rex/japan-bärare", None),
+            ("kanske rex", None),
+            ("ev. rex", None),
+            ("testad för rex, negativ", None),
+            ("kullsyskon är rex", None),
+            ("efter rexhane", None),
+            ("rexmor", None),
+            ("rexfri", None),
+            ("REXBÄRARE", None),
+            ("mamman är rex", None),
+            ("Inga tecken på rex", None),
+            ("rexliknande", None),
+            ("rex", "Inga tecken på rex"),
+            ("rex negativt", None),
+            ("okänt om rex", None),
+            ("mormor rex", None),
+            ("rex eller normal", None),
+            ("Rex: -", None),
+            ("Rex: 0", None),
+            ("rex-fri", None),
+            ("fri från rex", None),
+            ("rex oklart", None),
+            ("har rexgen", None),
+            ("rexkorsning", None),
+            ("50% rex", None),
+            ("kan vara rex", None),
+            ("Normalt", "svart rex"),
+            ("Normalpäls", "rex"),
+            ("Rex", "mamma rex"),
+            ("Saknar rex", None),
+            ("Saknar rexpäls", None),
+            ("farmor har rex", None),
+            ("Eventuell rex", None),
+            ("Möjlig rex", None),
+            ("Trolig rex", None),
+            ("Förmodligen rex", None),
+            ("Verkar vara rex", None),
+            ("Ser ut som rex", None),
+            ("Ska testas för rex", None),
+            ("Uppges vara rex", None),
+            ("Vanlig eller rex", None),
+            ("Paras med rex", None),
+            ("Korsad med rex", None),
+            ("Gotland x rex", None),
+            ("1/2 rex", None),
+            ("F1 rex", None),
+            ("No rex", None),
+            ("rex", "ickerex"),
+            ("ba\u0308r rex", None),
+            ("blandras rex", None),
+            ("blandning rex", None),
+            ("gravid rex", None),
+            ("rexpälsliknande", None),
+            ("rexpälsmor", None),
+            ("ja, rexpälsgen", None),
+            ("-rex", None),
+            ("svart -rex", None),
+            ("- rex", None),
+            ("vit/-rex", None),
+            ("nej", "svart rex"),
+            ("inga avvikelser", "svart rex"),
+            ("ickerex", None),
+        ]
+        ids = {}
+        for i, (hair, color_note) in enumerate(yes + no):
+            ids[(hair, color_note)] = db.Individual.create(
+                origin_herd=self.herds[0], number=f"G1-77{i:02d}", hair_notes=hair, color_note=color_note
+            ).id
+        noted = db.Individual.create(
+            origin_herd=self.herds[0], number="G1-7600", hair_notes="rex", notes="normalpäls, rex var felskrivet"
+        ).id
+        self._drop_rex_column()
+
+        with self.assertLogs("herdbook.db", level="INFO") as logged:
+            db.check_migrations()
+
+        self.assertFalse(self._rex(noted))
+        for key in yes:
+            self.assertTrue(self._rex(ids[key]), key)
+        for key in no:
+            self.assertFalse(self._rex(ids[key]), key)
+        for (hair, color_note), individual_id in ids.items():
+            row = db.DATABASE.execute_sql(
+                "SELECT hair_notes, color_note FROM individual WHERE individual_id = %s", (individual_id,)
+            ).fetchone()
+            self.assertEqual(row, (hair, color_note))
+        excluded = 1 + sum(1 for h, c in no if "rex" in f"{h}{c}".lower())  # +1: the notes rabbit
+        self.assertIn(f"rex: set from free text on {len(yes)}, {excluded} excluded", "\n".join(logged.output))
+
+    def test_rex_replay_keeps_corrections(self):
+        """A replay of 43 -> 44 on a database that already has the column does not set rex again or log rows."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("regular expressions require PostgreSQL")
+        rabbit = db.Individual.create(origin_herd=self.herds[0], number="G1-7790", hair_notes="rex")
+        self._drop_rex_column()
+        db.check_migrations()
+        self.assertTrue(self._rex(rabbit.id))
+        db.DATABASE.execute_sql("UPDATE individual SET rex = false WHERE individual_id = %s", (rabbit.id,))
+        audit_before = self._individual_audit_rows()
+        db.SchemaHistory.delete().where(
+            db.SchemaHistory.version >= self._migration_version('comment=f"individual.rex;')
+        ).execute()
+        db.check_migrations()
+        self.assertFalse(self._rex(rabbit.id))
+        self.assertEqual(self._individual_audit_rows(), audit_before)
+
+    def _rex(self, individual_id):
+        return db.DATABASE.execute_sql(
+            "SELECT rex FROM individual WHERE individual_id = %s", (individual_id,)
+        ).fetchone()[0]
+
+    def test_replay_47_to_48_makes_a_google_identity_unique(self):
+        """A database stamped at 47 gets the fresh bootstrap's index; one where two accounts hold an identity stays at
+        47 without it, and the next start after the extra one is unlinked migrates."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("index introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+
+        def index():
+            return [(i.columns, i.unique) for i in db.DATABASE.get_indexes("authenticators") if "google" in i.name]
+
+        fresh = index()
+        self.assertEqual(fresh, [(["auth_data"], True)])
+        first, second = da.register_user("ett@example.org", None), da.register_user("tva@example.org", None)
+        db.Authenticators.create(user=first.id, auth="google", auth_data="sub-delad")
+        with self.assertRaises(peewee.IntegrityError), db.DATABASE.atomic():
+            db.Authenticators.create(user=second.id, auth="google", auth_data="sub-delad")
+        db.Authenticators.create(user=second.id, auth="password", auth_data="sub-delad")  # other methods may repeat
+
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 48).execute()
+        db.DATABASE.execute_sql('DROP INDEX "idx_authenticators_google"')
+        duplicate = db.Authenticators.create(user=second.id, auth="google", auth_data="sub-delad")
+        self.addCleanup(duplicate.delete_instance)  # runs before check_migrations if an assert below fails
+
+        with self.assertRaises(peewee.IntegrityError):
+            db.check_migrations()
+        self.assertEqual(self._max_schema_version(), 47)
+        self.assertEqual(index(), [])
+
+        duplicate.delete_instance()
+        db.check_migrations()
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(index(), fresh)
+
+    def test_replay_48_to_49_creates_login_codes_and_previous_addresses(self):
+        """A database stamped at 48 gets the two tables and the member column as a fresh bootstrap has them, with
+        their indexes and foreign keys, unaudited."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        tables = ("login_code", "member_previous_address")
+
+        def shape():
+            columns = {
+                (t, c.name, c.data_type, c.null) for t in ("member", *tables) for c in db.DATABASE.get_columns(t)
+            }
+            indexes = {(t, i.name, tuple(i.columns), i.unique) for t in tables for i in db.DATABASE.get_indexes(t)}
+            keys = {(t, k.column, k.dest_table) for t in tables for k in db.DATABASE.get_foreign_keys(t)}
+            return columns, indexes, keys
+
+        fresh = shape()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 49).execute()
+        db.DATABASE.execute_sql("DROP TABLE login_code, member_previous_address")
+        db.DATABASE.execute_sql("ALTER TABLE member DROP COLUMN email_login_from")
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(shape(), fresh)
+        self.assertIn(("member", "email_login_from", "timestamp with time zone", True), fresh[0])
+        self.assertIn(("login_code", "logincode_browser_hash", ("browser_hash",), False), fresh[1])
+        self.assertIn(("member_previous_address", "member_id", "member"), fresh[2])
+        self.assertTrue(set(tables).isdisjoint(db.AUDITED_TABLES))
+
+    def test_replay_adds_name_on_check_page(self):
+        """Stamboken #6: an older database gets the person's choice, on for the accounts it has, and the issuing
+        role, shaped as a fresh bootstrap."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+
+        def column():
+            return {
+                (t, c.name, c.null, c.default)
+                for t in ("hbuser", "digitalcertificatev2")
+                for c in db.DATABASE.get_columns(t)
+                if c.name in ("name_on_check_page", "issued_as")
+            }
+
+        fresh = column()
+        version = self._migration_version("name_on_check_page")
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= version).execute()
+        db.DATABASE.execute_sql("ALTER TABLE hbuser DROP COLUMN name_on_check_page")
+        # the hbuser trigger as at version 46, so the test sees the migration re-attach it
+        db.DATABASE.execute_sql(
+            "CREATE OR REPLACE TRIGGER audit_trigger AFTER INSERT OR UPDATE OR DELETE ON hbuser"
+            " FOR EACH ROW EXECUTE FUNCTION audit_trigger_func('password_hash', 'last_active', 'user_id')"
+        )
+        db.DATABASE.execute_sql("ALTER TABLE digitalcertificatev2 DROP COLUMN issued_as")
+        # an account whose person was anonymised before the migration
+        membership = db.Membership.create(member_number=4711)
+        db.MatrikelAudit.create(
+            action="person_user_unlinked",
+            membership=membership,
+            payload={"person_id": 1, "user_id": self.viewer.id, "source": "anonymize"},
+        )
+        audit_before = db.AuditLog.select().where(db.AuditLog.table_name == "hbuser").count()
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(column(), fresh)
+        # Accounts that existed keep showing their name until they change it (Jonas 2026-11-23), without audit rows
+        self.assertTrue(db.User.get_by_id(self.owner.id).name_on_check_page)
+        self.assertFalse(db.User.get_by_id(self.viewer.id).name_on_check_page)  # anonymised before: off
+        self.assertEqual(db.AuditLog.select().where(db.AuditLog.table_name == "hbuser").count(), audit_before)
+        # A new account has not chosen yet
+        self.assertIsNone(db.User.get_by_id(da.register_user("ny", "pass").id).name_on_check_page)
+
+    @staticmethod
+    def _migration_version(marker):
+        """The version the migration whose source names `marker` stamps: survives renumbering and later migrations."""
+        return next(to for (_, to), fn in db.MIGRATIONS.items() if marker in inspect.getsource(fn))
 
     def _max_schema_version(self):
         return db.SchemaHistory.select(  # pylint: disable=E1120

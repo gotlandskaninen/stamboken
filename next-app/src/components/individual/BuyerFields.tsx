@@ -36,10 +36,12 @@ export const EMPTY_BUYER: BuyerDraft = {
   membership_optin: false,
 };
 
-export const buyerComplete = (d: BuyerDraft) =>
-  !!d.name.trim() && !!d.town.trim();
+export const buyerComplete = (d: BuyerDraft, addressRequired = false) =>
+  !!d.name.trim() &&
+  !!d.town.trim() &&
+  (!addressRequired || !!d.postal_address.trim());
 
-/** Only what the buyer said yes to: a field hidden by an unticked box is never sent. */
+/** E-mail and phone only with a yes: a field hidden by an unticked box is never sent. */
 export function buyerPayload(d: BuyerDraft): SaleBuyer {
   const kept = (field: "postal_address" | "email" | "phone", ok: boolean) =>
     ok && d[field].trim() ? { [field]: d[field].trim() } : {};
@@ -49,27 +51,29 @@ export function buyerPayload(d: BuyerDraft): SaleBuyer {
     town: d.town.trim(),
     contact_consent: d.contact_consent,
     membership_optin: d.membership_optin,
-    ...kept("postal_address", d.contact_consent),
+    ...kept("postal_address", true),
     ...kept("email", contactAllowed),
     ...kept("phone", contactAllowed),
   };
 }
 
-/** Name and town, the buyer's two yeses and the contact details they allow, and the proof note. */
+/** Name, town and postal address, the buyer's two yeses and the e-mail and phone they allow, and the proof note. */
 export function BuyerFields({
   value,
   onChange,
   size,
+  addressRequired = false,
   errors,
   variant,
 }: {
   value: BuyerDraft;
   onChange: (value: BuyerDraft) => void;
   size?: "small" | "medium";
+  addressRequired?: boolean;
   /** The yearly report's member: the report's larger fields, labels above (RegisterFromCertificate's too). */
   variant?: "member";
   /** A refusal beside its field: aria-invalid, and the text as the field's description. */
-  errors?: Partial<Record<"name" | "town", string>>;
+  errors?: Partial<Record<"name" | "town" | "postal_address" | "phone" | "email", string>>;
 }) {
   const { t } = useTranslation();
   const set = (changes: Partial<BuyerDraft>) =>
@@ -84,8 +88,8 @@ export function BuyerFields({
       value={value[key]}
       onChange={(e) => set({ [key]: e.target.value })}
       required={required}
-      error={!!errors?.[key as "name" | "town"]}
-      helperText={errors?.[key as "name" | "town"]}
+      error={!!errors?.[key]}
+      helperText={errors?.[key]}
       fullWidth
       size={size}
       slotProps={{ htmlInput: { maxLength: 200 } }}
@@ -112,10 +116,13 @@ export function BuyerFields({
     >
       {field("name", t("individual.sell.buyerName"), true)}
       {field("town", t("individual.sell.buyerTown"), true)}
+      {field(
+        "postal_address",
+        t("individual.sell.buyerAddress"),
+        addressRequired,
+      )}
       {box("contact_consent", t("individual.sell.buyerContactConsent"))}
       {box("membership_optin", t("individual.sell.buyerMembershipOptin"))}
-      {value.contact_consent &&
-        field("postal_address", t("individual.sell.buyerAddress"))}
       {(value.contact_consent || value.membership_optin) && (
         <>
           {field("email", t("individual.sell.buyerEmail"))}

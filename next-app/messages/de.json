@@ -22,6 +22,11 @@
     "matrikel": "Mitgliederverzeichnis",
     "medlemsstatistik": "Statistik"
   },
+  "coat": {
+    "label": "Fell",
+    "normal": "Normal",
+    "rex": "Rex"
+  },
   "explorer": {
     "title": "Alle Kaninchen",
     "subtitle": "Alle Kaninchen in der Genbank durchsuchen",
@@ -143,7 +148,7 @@
       "summaryOutside": "Das Kaninchen verlässt die Genbank.",
       "buyerName": "Name des Käufers",
       "buyerTown": "Ort",
-      "buyerContactConsent": "Der Käufer hat ja angekreuzt: Der Verein darf Adresse, E-Mail und Telefon speichern, solange der Käufer das Kaninchen hat",
+      "buyerContactConsent": "Der Käufer hat ja angekreuzt: Der Verein darf E-Mail und Telefon speichern, solange der Käufer das Kaninchen hat",
       "buyerMembershipOptin": "Der Käufer hat ja angekreuzt: Der Verein darf den Käufer wegen einer Mitgliedschaft kontaktieren",
       "buyerAddress": "Postanschrift",
       "buyerEmail": "E-Mail",
@@ -187,6 +192,14 @@
     "breadcrumb": {
       "myHerd": "Mein Bestand",
       "allRabbits": "Alle Kaninchen"
+    },
+    "certificate": {
+      "view": "Zertifikat anzeigen",
+      "newTab": "(öffnet in einem neuen Tab)",
+      "verify": "Zertifikat prüfen",
+      "onlyFor": "Nur der Besitzer des Kaninchens, der Züchter und der Genbankverantwortliche können das Zertifikat herunterladen.",
+      "notInDemo": "In der Testumgebung wird das Zertifikat nicht angezeigt.",
+      "issued": "Ausgestellt am {{date}}"
     }
   },
   "pedigree": {
@@ -246,20 +259,6 @@
     "certificatesProfessionalLayout": "Professionelles Layout",
     "certificatesProfessionalLayoutDesc": "Zertifikate werden im PDF-Format mit Stammbäumen, Fotos und offizieller Nummerierung erstellt.",
     "certificatesImageAlt": "Beispiel eines digitalen Genbankzertifikats für Gotland- und Mellerudkaninchen",
-    "faqOverline": "Häufige Fragen",
-    "faqTitle": "Fragen und Antworten zu Stamboken",
-    "faqSubtitle": "Hier sind die häufigsten Fragen unserer Benutzer zu Stamboken Online.",
-    "faq1Question": "Wer kann Stamboken Online nutzen?",
-    "faq1Answer": "Stamboken Online ist für Mitglieder von Föreningen Gotlandskaninen, die Genbankbestände für Gotland- oder Mellerudkaninchen haben. Sie melden sich mit Ihrem Gottiskonto an.",
-    "faq2Question": "Wie bekomme ich Zugang zum System?",
-    "faq2Answer": "Beantragen Sie ein Gottiskonto auf konto.gotlandskaninen.se. Alle mit einem Gottiskonto können sich im Testsystem anmelden. Nachdem Sie das System ausprobiert und die richtigen Kenntnisse nachgewiesen haben, können Sie sich im Produktionssystem anmelden.",
-    "faq2ValidatorLink": "Validierungskurs",
-    "faq3Question": "Kann ich Genbankzertifikate digital ausstellen?",
-    "faq3Answer": "Ja! Das System generiert automatisch digitale Genbankzertifikate mit korrekter Nummerierung und Signierung. Alle Zertifikate entsprechen den Anforderungen des Vereins und der EU für den Genbankbetrieb.",
-    "faq4Question": "Was ist der Unterschied zwischen Test- und Hauptsystem?",
-    "faq4Answer": "Alle neuen Benutzer beginnen im Testsystem, wo sie das System lernen können, ohne die echte Datenbank zu beeinflussen. Nachdem Sie Ihre Fähigkeiten durch den Validierungskurs nachgewiesen haben, erhalten Sie Zugang zum Hauptsystem, wo Sie echte Tiere registrieren und offizielle Genbankzertifikate ausstellen können.",
-    "faq5Question": "Was ist der Unterschied zwischen Gotland- und Mellerudkaninchen?",
-    "faq5Answer": "Das Gotlandkaninchen ist ein Rest des alten schwedischen Landrassenkaninchens aus Gotland mit unterschiedlichen Farben und Zeichnungen. Das Mellerudkaninchen ähnelt dem Gotlandkaninchen, kommt aber nur schwarz-weiß gescheckt oder ganz weiß vor. Beide Rassen wiegen 3-4 kg und werden durch EU-unterstützten Genbankbetrieb erhalten.",
     "footerEuText": "Föreningen Gotlandskaninen erhält EU-Unterstützung für die Erhaltung von Gotland- und Mellerudkaninchen. Die Unterstützung finanziert Genbankbestände, die Mitgliederzeitschrift, Drucksachen, Genbankzertifikate, Marketing, Kurse und Ausbildungen, Transport wertvoller Tiere sowie Obduktionen.",
     "footerGetStarted": "Loslegen:",
     "footerGetStartedText": "Beantragen Sie ein Gottiskonto auf",
@@ -292,6 +291,7 @@
     "promoteTitleWithNumber": "Kaninchen registrieren — {{number}}",
     "promoteSuccess": "{{number}} registriert",
     "promoteError": "Das Kaninchen konnte nicht registriert werden",
+    "suggestionError": "Der Nummernvorschlag konnte nicht abgerufen werden",
     "certificateError": "Das Zertifikat konnte nicht erstellt werden: {{error}}",
     "registerAnother": "Ein weiteres Jungtier im Wurf registrieren",
     "allAdded": "Alle {{count}} Jungtiere wurden zur Wurfliste hinzugefügt.",
@@ -375,6 +375,9 @@
     "certificatePaper": "Papier",
     "certificateDigital": "Digital",
     "certificateDigitalDisabled": "Verfügbar, sobald Zertifikat v2 aktiv ist",
+    "certificateAttester": "Ihr Name steht auf der Bescheinigung als die Person, die sie bestätigt.",
+    "checkPageNameHint": "Sie haben noch nicht gewählt, ob Ihr Name auf der Prüfseite der Bescheinigung steht. Bis dahin steht dort Ihre Rolle, zum Beispiel „Uppfödaren“ (der Züchter).",
+    "checkPageNameHintLink": "Wählen Sie unter Mein Profil",
     "paperCertificateNumber": "Zertifikatsnummer",
     "save": "Registrieren",
     "saving": "Wird registriert...",

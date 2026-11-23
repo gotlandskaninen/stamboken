@@ -75,6 +75,14 @@ services:
   redis:
     image: redis:7-alpine
     restart: always
+    # AOF: a logout or a revoked session survives a crash, but for about its last second
+    # (appendfsync everysec); a snapshot alone can be minutes old.
+    # Whenever this replaces a Redis that runs without AOF (the first deploy, and again after a
+    # rollback): run `redis-cli config set appendonly yes` in the running container, wait until
+    # `info persistence` shows aof_enabled:1, no rewrite in progress or scheduled and
+    # aof_last_bgrewrite_status:ok, and deploy at once. Otherwise Redis 7 ignores the snapshot:
+    # with no AOF file it comes up empty, and with an old one it loads that, however old.
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
     healthcheck:
@@ -100,19 +108,11 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - SESSION_REDIS_URL=redis://redis:6379/2
       - RATELIMIT_STORAGE_URL=redis://redis:6379/3
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "20m"
-        max-file: "10"
     volumes:
       - type: bind
         source: ./config
         target: /config
         read_only: true
-      - type: bind
-        source: ./logs
-        target: /logs
       - type: bind
         source: ./uppladdningar
         target: /app/uppladdningar
@@ -175,21 +175,11 @@ services:
       # registration on the demo returns a transient certificate_error instead
       # of a stored PDF. Same S3 dependency the /v2/certificates/issue endpoint
       # already had — enabling the promote-flow digital option only surfaces it.
-    logging:
-      driver: "json-file"
-      options:
-        max-size: "20m"
-        max-file: "10"
     volumes:
       - type: bind
         source: ./config
         target: /config
         read_only: true
-      - type: bind
-        # Own dir: the genebank CSV logs don't record the instance, so demo
-        # edits must not land in production's logs. Create it like ./logs.
-        source: ./logs-test
-        target: /logs
       # Read-only: the demo shares this host dir with the production api, and a
       # photo upload writes the fixed path kaniner/<number>.jpg that nginx serves.
       # So demo uploads (photos, profile pictures) and v2 certificate issuance
@@ -263,7 +253,11 @@ services:
       # Certbot hanterar flera domäner
       - STAGING=${CERTBOT_STAGING:-0}
     volumes:
+      - ./nginx/nginx.main:/etc/nginx/nginx.conf:ro
       - ./nginx/production/herdbook-production.conf:/etc/nginx/user_conf.d/herdbook.conf:ro
+      - ./nginx/production/stamboken-legacy.conf:/etc/nginx/user_conf.d/stamboken-legacy.conf:ro
+      - ./nginx/production/gotlandskaninen.conf:/etc/nginx/user_conf.d/gotlandskaninen.conf:ro
+      - ./nginx/production/gotlandskaninen-www.conf:/etc/nginx/user_conf.d/gotlandskaninen-www.conf:ro
       - ./nginx/legacy-frontend-prod:/etc/nginx/legacy-frontend-prod:ro
       - ./nginx/legacy-frontend-test:/etc/nginx/legacy-frontend-test:ro
       - ./letsencrypt:/etc/letsencrypt
@@ -286,7 +280,9 @@ services:
   # på http://ollama:11434. Modellen hämtas en gång till volymen.
   # ============================================
   ollama:
-    image: ollama/ollama:latest
+    # Låst till version och digest. Höjs för hand, i båda compose-filerna, efter ett
+    # prov av tolkningen: en ny Ollama kan läsa intygen annorlunda.
+    image: ollama/ollama:0.40.16@sha256:910d0d8107b538fb0894e63163eb195de0cc7aefcbc666dc62d3b18f71124592
     restart: always
     profiles:
       - tolkning

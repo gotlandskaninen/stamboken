@@ -9,14 +9,36 @@ Member row and address/consent on the Membership. See ADR-0007 and ADR-0008.
 
 import csv
 import io
+import secrets
 from datetime import date
 
-from flask import Blueprint, Response, jsonify, request
+import utils.settings as settings
+from flask import Blueprint, Response, jsonify, request, session
 from flask_login import current_user
 from peewee import IntegrityError
 from utils.csv_safe import csv_safe
-from utils.database import BILLING_FIELDS, DB_PROXY, Herd, HerdAccessGrant, Member, Membership
-from utils.matrikel import AddressValidationError, is_anonymized, parse_postal_fields, write_matrikel_audit
+from utils.data_access import session_holds
+from utils.database import BILLING_FIELDS, DB_PROXY, Herd, HerdAccessGrant, Member, Membership, User
+from utils.login_code import (
+    AddressTaken,
+    CodeLoginClosed,
+    CodeRefused,
+    cancel,
+    check,
+    consume,
+    issue,
+    refuse_unsafe,
+    reserve_login_address,
+)
+from utils.mail import _normalize, enqueue_mail
+from utils.matrikel import (
+    AddressValidationError,
+    is_anonymized,
+    parse_postal_fields,
+    set_member_email,
+    set_membership_status,
+    write_matrikel_audit,
+)
 from utils.members import (
     CONSENT_KEYS,
     PROFILE_CONSENT_TEXT_VERSION,
@@ -25,6 +47,7 @@ from utils.members import (
     set_consent,
     stored_consent,
 )
+from utils.membership_lifecycle import Status, TransitionRefused
 
 from blueprints.common import (
     EMAIL_RE,
@@ -36,7 +59,7 @@ from blueprints.common import (
 
 members_bp = Blueprint("members", __name__, url_prefix="/api")
 
-VALID_MEMBERSHIP_STATUSES = ("active", "inactive", "pending", "friexemplar")
+VALID_MEMBERSHIP_STATUSES = tuple(Status)
 
 
 def _person_to_dict(p: Member) -> dict:
@@ -219,35 +242,32 @@ def patch_membership(membership_id: int):
         # A JSON list/number/object would 500 on .strip() below instead of 400.
         return problem(400, "Ogiltigt fält", "notes måste vara en sträng eller null")
 
-    with DB_PROXY.atomic():
-        # Decide from the row AS LOCKED, never from the request-start read
-        # Two admins both see `active`, one deactivates, and the
-        # other's stale `active` would otherwise look like "no change" — no
-        # audit row — while its UPDATE put the status back, and with it every
-        # linked huvudmedlem's herd access (same rule as memberships.py).
-        ms = Membership.select().where(Membership.id == ms.id).for_update().get()
-        changed = []
-        if new_status is not None and new_status != ms.membership_status:
-            write_matrikel_audit(
-                actor=current_user,
-                action="membership_status_changed",
-                membership=ms,
-                # Nested {"before": {field: ...}, "after": {...}} shape —
-                # same convention as the membership mutations, so the
-                # append-only matrikel_audit table carries one shape per action.
-                payload={
-                    "before": {"membership_status": ms.membership_status},
-                    "after": {"membership_status": new_status},
-                },
-            )
-            ms.membership_status = new_status
-            changed.append(Membership.membership_status)
-        if "notes" in body:
-            ms.notes = (body["notes"] or "").strip() or None
-            changed.append(Membership.notes)
-        # UPDATE only the changed columns — a full-row save would push every
-        # attribute the instance carries, changed or not.
-        ms.save(only=changed + [Membership.updated_at])
+    try:
+        with DB_PROXY.atomic():
+            # Decide from the row AS LOCKED, never from the request-start read
+            # Two admins both see `active`, one deactivates, and the
+            # other's stale `active` would otherwise look like "no change" — no
+            # audit row — while its UPDATE put the status back, and with it every
+            # linked huvudmedlem's herd access (same rule as memberships.py).
+            ms = Membership.select().where(Membership.id == ms.id).for_update().get()
+            changed = []
+            if new_status is not None and new_status != ms.membership_status:
+                set_membership_status(ms, new_status, current_user)
+                changed.append(Membership.membership_status)
+            if "notes" in body:
+                ms.notes = (body["notes"] or "").strip() or None
+                changed.append(Membership.notes)
+            # UPDATE only the changed columns — a full-row save would push every
+            # attribute the instance carries, changed or not.
+            ms.save(only=changed + [Membership.updated_at])
+    except TransitionRefused:
+        # Raised, not returned: a `return` inside atomic() would commit the rest of the request.
+        return problem(
+            409,
+            "Medlemskapet är avslutat",
+            "Ett inaktivt medlemskap utan huvudmedlem kan inte byta status. Utse en ny huvudmedlem, "
+            "eller skapa ett nytt medlemskap om inga personer finns kvar.",
+        )
     return jsonify(_membership_to_dict(ms))
 
 
@@ -372,6 +392,8 @@ def patch_me_contact():
     if "phone" in body:
         person_updates["phone"] = (body["phone"] or "").strip() or None
 
+    # The e-mail is never written here: a new address gets a code (_ask_for_code), and the change waits for it.
+    new_email = None
     if "email" in body:
         raw_email = body["email"]
         if not isinstance(raw_email, str):
@@ -379,7 +401,19 @@ def patch_me_contact():
         new_email = raw_email.strip().lower()
         if not EMAIL_RE.match(new_email):
             return problem(400, "Ogiltig e-postadress", f"'{new_email}' är inte en giltig e-postadress")
-        person_updates["email"] = new_email
+        if new_email == (m.email or "").strip().lower():
+            new_email = None  # the form sends the address on every save
+        elif _normalize(new_email) is None:  # the sender would refuse it, and the code would never arrive
+            return problem(400, "Ogiltig e-postadress", f"'{new_email}' är inte en giltig e-postadress")
+    refused = None
+    if new_email is not None and settings.service.demo_instance:
+        # The demo never replaces an account's mark (new_generation): the change could not end the sessions.
+        refused, new_email = DEMO_REFUSAL, None
+    if new_email is not None:
+        try:
+            refuse_unsafe()
+        except CodeRefused:
+            return _codes_unavailable()
 
     try:
         # Split keys only — the postal_address alias is an admin/legacy input,
@@ -420,6 +454,8 @@ def patch_me_contact():
             if membership_updates:
                 ms.save(only=[getattr(Membership, f) for f in membership_updates] + [Membership.updated_at])
             m.save(only=[getattr(Member, f) for f in person_updates] + [Member.updated_at])
+            if new_email is not None:
+                _ask_for_code(m, new_email)
     except IntegrityError:
         # DEAD BACKSTOP: the legacy
         # per-genebank contact-email index `idx_member_genebank_email_unique`
@@ -434,6 +470,101 @@ def patch_me_contact():
             "E-postadressen används redan",
             "En annan medlem använder redan e-postadressen.",
         )
+    # The same answer whether a code went or not: the member cannot test which addresses are in the matrikel.
+    answer = {**_me_response(m), "email_code_sent": new_email is not None}
+    if refused:
+        answer["email_refused"] = refused
+    return jsonify(answer)
+
+
+DEMO_REFUSAL = "E-postadressen kan inte bytas i testmiljön."
+
+
+def _codes_unavailable():
+    return problem(503, "E-postadressen kan inte bytas just nu", "Försök igen senare.")
+
+
+def _ask_for_code(m, address):
+    """
+    A code to `address` for the member's own change of address (purpose ny_adress), in the caller's transaction,
+    bound to this session: a new request replaces the session's secret and voids every earlier code of the member
+    for a new address (issue). No mail when
+    another person holds the address or a limit stops it; the caller answers the same. A held address still spends
+    one of the member's codes a day, or the limit would tell her which addresses are in the matrikel.
+    """
+    token = secrets.token_urlsafe(32)
+    session["login_request"] = token
+    try:
+        with DB_PROXY.atomic():
+            reserve_login_address(address, m.id)  # only a check here: nothing is written under the lock
+        held = False
+    except AddressTaken:
+        held = True
+    row = issue(m, "ny_adress", token, address)
+    if row is not None and not held:
+        enqueue_mail("konto.kod", "login_code", row.id, {"code_id": row.id}, ref=("membership", m.membership_id))
+
+
+def _wrong_code():
+    return problem(400, "Koden stämmer inte", "Koden stämmer inte eller har gått ut. Be om en ny kod om det behövs.")
+
+
+@members_bp.route("/v2/members/me/contact/kod", methods=["DELETE"])
+@json_login_required
+def cancel_me_email():
+    """Avbryt: this session's pending code for a new address stops working. A request in another session stays."""
+    cancel(session.pop("login_request", None))
+    return "", 204
+
+
+@members_bp.route("/v2/members/me/contact/verifiera", methods=["POST"])
+@json_login_required
+def verify_me_email():
+    """
+    The member's code for her new address: the change is made (set_member_email, by="self"), and with it every
+    session of her account ends, this one too. A wrong code, one from another browser, and an address another person
+    has taken since all answer the same.
+    """
+    m = _member_for_current_user()
+    if m is None or m.membership_id is None:
+        return problem(404, "Medlem saknas", "Ingen medlemspost är kopplad till ditt konto.")
+    if m.role != "huvudmedlem":
+        return problem(403, "Endast huvudmedlem", "Endast huvudmedlemmen kan ändra medlemskapets uppgifter.")
+    body = request.get_json(silent=True)
+    entered = body.get("code") if isinstance(body, dict) else None
+    if not isinstance(entered, str):
+        return problem(400, "Ogiltigt fält", "code måste vara en sträng")
+    token = session.get("login_request")
+    try:
+        row = check("ny_adress", token, entered, m.id) if token else None
+    except CodeRefused:
+        return _codes_unavailable()
+    except CodeLoginClosed:
+        return problem(503, "Koder tas inte emot just nu", "Försök igen om en timme.")
+    if row is None:
+        return _wrong_code()
+    person_id, membership_id = m.id, m.membership_id
+    with DB_PROXY.atomic():
+        # membership → user → person, as set_member_email takes them
+        Membership.select().where(Membership.id == membership_id).for_update().get()
+        User.select().where(User.id == current_user.id).for_update().get()
+        if not session_holds(session):  # revoked while the request waited for the account's row
+            return problem(401, "Sessionen gäller inte längre", "Logga in igen.")
+        m, ms, err = _relock_me(membership_id, person_id)
+        if err is not None:
+            return err
+        if not row.new_address or row.user_id != m.user_id or not consume(row):
+            return _wrong_code()
+        try:
+            with DB_PROXY.atomic():
+                previous = m.email
+                m = set_member_email(m, row.new_address, current_user, by="self")
+                if m.email != previous:
+                    payload = {"person_id": m.id, "fields": ["email"], "source": "profil"}
+                    write_matrikel_audit(current_user, "kontakt_andrad", ms, payload)
+        except AddressTaken:
+            return _wrong_code()  # taken since the code went; the code stays used (the return commits)
+    session.pop("login_request", None)
     return jsonify(_me_response(m))
 
 

@@ -62,6 +62,16 @@ class TestLogMasking(unittest.TestCase):
             conf.on_starting(None)
             for logger in loggers:
                 self.assertTrue(any(type(f).__name__ == "_TokenMaskFilter" for f in logger.filters), logger.name)
+            try:
+                raise ValueError(f"bad link /x/{TOKEN}")
+            except ValueError:
+                record = logging.LogRecord(
+                    "gunicorn.error", logging.ERROR, "", 0, "GET /x/%s", (TOKEN,), sys.exc_info()
+                )
+            loggers[1].filter(record)
+            text = logging.Formatter().format(record)
+            self.assertIn("bad link /x/4711.***", text)  # the traceback, not only the message
+            self.assertNotIn(TOKEN, text)
         finally:
             for logger in loggers:
                 logger.filters.clear()
@@ -75,8 +85,8 @@ class TestLogMasking(unittest.TestCase):
 
     def test_app_log_handlers_mask_exception_paths_and_mail_lines(self):
         """
-        A fresh process, so the handlers are the ones the app runs with (under pytest the root logger holds
-        pytest's): the app's file handler, pointed at stderr here, and the root's stderr handler.
+        A fresh process, so the handler is the one the app runs with (under pytest the root logger holds
+        pytest's): utils.app_logging's, on standard out, with the request path as a field of its own.
         """
         probe = textwrap.dedent(
             """
@@ -85,8 +95,6 @@ class TestLogMasking(unittest.TestCase):
             from herdbook import APP
 
             token = "4711." + "a" * 22
-            for handler in APP.logger.handlers:
-                handler.setStream(sys.stderr)
             APP.config["PROPAGATE_EXCEPTIONS"] = False  # log the exception as in production, not re-raise it
             rule = next(r for r in APP.url_map.iter_rules() if r.rule == "/api/v2/certificates/<i_number>")
 
@@ -103,6 +111,7 @@ class TestLogMasking(unittest.TestCase):
             [sys.executable, "-c", probe], cwd=app_dir, env=os.environ, capture_output=True, text=True, timeout=120
         )
         self.assertIn("status 500", p.stderr)
-        self.assertIn("Exception on /api/v2/certificates/4711.***", p.stderr)
-        self.assertIn("Mail 1: https://example.org/rapport/4711.***", p.stderr)
-        self.assertNotIn(TOKEN, p.stderr)
+        self.assertIn("Exception on /api/v2/certificates/4711.***", p.stdout)
+        self.assertIn("path=/api/v2/certificates/4711.***", p.stdout)
+        self.assertIn("Mail 1: https://example.org/rapport/4711.***", p.stdout)
+        self.assertNotIn(TOKEN, p.stdout + p.stderr)

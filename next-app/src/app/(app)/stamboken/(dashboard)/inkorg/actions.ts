@@ -222,10 +222,26 @@ export type RegistryRabbit = {
   color: string | null;
   mother: { number: string; name: string | null } | null;
   father: { number: string; name: string | null } | null;
-  /** The rabbit's active herd-tracking rows: a proof of one of its sales needs no buyer (provenSale). */
-  herd_tracking?: RegistrySale[];
 };
-export type RegistrySale = { herd: string; date: string | null; kind: string };
+
+/** An active move of a rabbit, and its buyer outside the association: there, none, or removed (never asked again). */
+export type RegistrySale = {
+  herd: string;
+  date: string | null;
+  kind: string;
+  buyer: "present" | "none" | "removed";
+};
+
+/** The rabbit's active sales, read through the queue item (helpers too); an error when it cannot be read. */
+export async function rabbitSales(id: number, number: string) {
+  if (!isId(id) || !/^[A-Za-z]+\d+-\d{4,}$/.test(number.trim()))
+    return refused("Ogiltigt individnummer.");
+  return call<{ sales: RegistrySale[] }>(
+    null,
+    `/${id}/kanin/${encodeURIComponent(number.trim().toUpperCase())}/forsaljningar`,
+    "GET",
+  );
+}
 
 /** The registry's record of a parent, to compare with the photo; null when not found. */
 export async function lookupRabbit(
@@ -240,17 +256,7 @@ export async function lookupRabbit(
     const r = await fetchApi<RegistryRabbit>(
       `/v2/individual/${encodeURIComponent(number.trim().toUpperCase())}`,
     );
-    return {
-      name: r.name,
-      color: r.color,
-      mother: r.mother,
-      father: r.father,
-      herd_tracking: (r.herd_tracking ?? []).map(({ herd, date, kind }) => ({
-        herd,
-        date,
-        kind,
-      })),
-    };
+    return { name: r.name, color: r.color, mother: r.mother, father: r.father };
   } catch (e) {
     if (e instanceof ApiError) return null;
     throw e;

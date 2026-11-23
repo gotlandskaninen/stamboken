@@ -2237,6 +2237,7 @@ export function ReportForm({
             : null
         }
         canSell={view.can_sell}
+        addressRequired={view.access !== "manager" && view.access !== "admin"}
         onSave={(s: SaldState) => {
           if (syncing) return;
           onRow(soldFor!, { val: "sald", sald: s });

@@ -15,11 +15,12 @@ anonymization — mutation endpoints must follow the convention.
 """
 
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 
 from peewee import Case, IntegrityError, fn
 
 from utils.cache_invalidation import trigger_invalidation
+from utils.data_access import new_generation
 
 # DB_PROXY is the runtime proxy that data_access.py uses; importing the
 # module-level DATABASE symbol directly would be None at call time.
@@ -28,16 +29,20 @@ from utils.database import (
     DB_PROXY,
     Herd,
     HerdAccessGrant,
+    LoginCode,
     MatrikelAudit,
     Member,
     MemberApplication,
     MemberChangeRequest,
     MemberNumberCounter,
+    MemberPreviousAddress,
     Membership,
     User,
 )
 from utils.inbox_purge import erase_person_from_inbox, remove_originals
-from utils.mail import forget_recipient
+from utils.login_code import AddressTaken, lock_addresses, reserve_holder, reserve_login_address, void
+from utils.mail import cancel_member_added, enqueue_mail, forget_recipient, queue_member_added
+from utils.membership_lifecycle import Event, Status, next_state, state_of
 from utils.postal import (  # noqa: F401 — public helpers
     format_postal_address,
     normalize_postal_code,
@@ -192,8 +197,8 @@ def raise_counter_to(value: int) -> None:
         row.save()
 
 
-def write_matrikel_audit(actor: User, action: str, membership: Membership, payload: dict) -> MatrikelAudit:
-    """Append one matrikel audit row. Payloads carry before/after values."""
+def write_matrikel_audit(actor: User | None, action: str, membership: Membership, payload: dict) -> MatrikelAudit:
+    """Append one matrikel audit row. Payloads carry before/after values. No actor: the nightly job wrote it."""
     return MatrikelAudit.create(actor=actor, action=action, membership=membership, payload=payload)
 
 
@@ -278,7 +283,7 @@ def add_person(membership, data, actor):
     `data` keys: first_name, last_name (required), email, phone, role
     (defaults to familjemedlem). Raises ValueError on unknown role. A second
     active huvudmedlem raises IntegrityError from the partial unique index —
-    callers translate that to a 409.
+    callers translate that to a 409. A main member's address is reserved for her (reserve_login_address): AddressTaken.
 
     Locks the membership row and rejects an inactive one INSIDE the tx: like
     the other person mutations this closes a TOCTOU race — without it a person
@@ -300,6 +305,8 @@ def add_person(membership, data, actor):
             phone=data.get("phone") or None,
             role=role,
         )
+        if role == "huvudmedlem":
+            reserve_login_address(person.email, person.id)
         write_matrikel_audit(
             actor,
             "person_added",
@@ -313,6 +320,7 @@ def add_person(membership, data, actor):
                 "role": person.role,
             },
         )
+        queue_member_added(person)
     return person
 
 
@@ -337,6 +345,7 @@ def soft_delete_person(member, actor):
         if member.end_date is None:
             member.end_date = date.today()
             member.save()
+        cancel_member_added([member.id])
         now = datetime.now()
         revoked = (
             HerdAccessGrant.update(revoked_at=now, updated_at=now)
@@ -360,6 +369,9 @@ def swap_main_member(membership, new_main, actor):
     Same serialization as soft_delete_person: lock the membership row, then
     re-read and re-validate the candidate inside the transaction, so a
     concurrent delete cannot end the person this swap is about to promote.
+    The new main member's addresses become login addresses, her previous ones
+    that still count too: AddressTaken when another person holds one, also
+    the old main member who keeps an account.
     """
     with DB_PROXY.atomic():
         Membership.select().where(Membership.id == membership.id).for_update().get()
@@ -384,6 +396,8 @@ def swap_main_member(membership, new_main, actor):
             current.save()
         new_main.role = "huvudmedlem"
         new_main.save()
+        reserve_holder(new_main.id)
+        cancel_member_added([new_main.id])
         write_matrikel_audit(
             actor,
             "main_member_changed",
@@ -423,7 +437,7 @@ def _applications_of(person):
     return where
 
 
-def anonymize_person(member, actor):
+def anonymize_person(member, actor, deferred_originals=None):
     """GDPR erasure: anonymize the person row, keep membership history.
 
     Placeholder names (columns are NOT NULL), nulls contact fields +
@@ -439,11 +453,17 @@ def anonymize_person(member, actor):
     allowed on an active main member — the right to erasure trumps the
     headless-membership invariant.
 
+    `actor` is None when the nightly job (anonymize_ended_persons) erases for
+    retention: then only the application that created this person is scrubbed.
+    The applicant's other submissions may belong to a member who came back, and
+    the ones that never led to membership are #69's job.
     Detaches the account through the same locked unlink path as the endpoint
     (mode="anonymize") and invalidates the genebanks whose
     access the account loses. Erases the intake queue's originals and texts
     that show the person as seller or buyer, and what they sent
-    (erase_person_from_inbox).
+    (erase_person_from_inbox). Takes the person's previous addresses and codes,
+    with the queue's trace of where their mails went. A caller inside its own
+    transaction passes `deferred_originals` and removes those files after its commit.
     Returns the scrubbed person: the caller's pre-lock instance is stale
     afterwards.
     """
@@ -452,6 +472,8 @@ def anonymize_person(member, actor):
         person, user = _lock_for_detach(member.id)
         membership = person.membership
         before = user.effective_herd_ids() if user is not None else set()
+        if user is not None:  # her name leaves the public certificate check page too (stamboken #6)
+            User.update(name_on_check_page=False).where(User.id == user.id).execute()
         redact_person_from_audits(person)
         # the old and new e-mail of each change (Fable 8); a queued mail to one finds no address and is cancelled
         MemberChangeRequest.delete().where(MemberChangeRequest.member == person.id).execute()
@@ -462,7 +484,9 @@ def anonymize_person(member, actor):
         ).execute()
         if person.user_id is not None:
             _detach_user_locked(person, actor=actor, mode="anonymize")
-        applications_to_redact = _applications_of(person)
+        applications_to_redact = (
+            _applications_of(person) if actor is not None else MemberApplication.created_member == person
+        )
         person.first_name = ANONYMIZED_FIRST_NAME
         person.last_name = ANONYMIZED_LAST_NAME
         person.email = None
@@ -481,9 +505,9 @@ def anonymize_person(member, actor):
                 address=None, postal_code=None, city=None, notes=None, **dict.fromkeys(BILLING_FIELDS), updated_at=now
             ).where(Membership.id == membership.id).execute()
             redact_household_from_audits(membership)
-        application_ids = [a.id for a in MemberApplication.select(MemberApplication.id).where(applications_to_redact)]
-        applications_redacted = (
-            MemberApplication.update(
+        application_ids = [
+            row.id
+            for row in MemberApplication.update(
                 first_name=ANONYMIZED_FIRST_NAME,
                 last_name=ANONYMIZED_LAST_NAME,
                 email="[borttagen]",
@@ -500,9 +524,21 @@ def anonymize_person(member, actor):
                 status=Case(None, [(MemberApplication.status == "pending", "rejected")], MemberApplication.status),
             )
             .where(applications_to_redact)
+            # the rows this statement redacted, not a list read before it: an application committed in between
+            # is redacted here too, and its mail must be forgotten with it
+            .returning(MemberApplication.id)
             .execute()
-        )
+        ]
+        applications_redacted = len(application_ids)
         forget_recipient("member", person.id)  # the queue keeps no address hash or dedupe key of the erased
+        for previous in (
+            MemberPreviousAddress.delete()
+            .where(MemberPreviousAddress.member == person.id)
+            .returning(MemberPreviousAddress.id)
+        ):
+            forget_recipient("member_previous_address", previous.id)
+        for code in LoginCode.delete().where(LoginCode.member == person.id).returning(LoginCode.id):
+            forget_recipient("login_code", code.id)
         for application_id in application_ids:
             forget_recipient("application", application_id)
         write_matrikel_audit(
@@ -517,9 +553,252 @@ def anonymize_person(member, actor):
         )
         # the intake queue's photos that show the person, and what they sent (their account read before the detach)
         originals = erase_person_from_inbox(person, user.id if user is not None else None)
-    remove_originals(originals)  # only after the commit: a row never names a removed file
+    if deferred_originals is None:
+        remove_originals(originals)  # only after the commit: a row never names a removed file
+    else:
+        deferred_originals.extend(originals)
     _invalidate_genebanks(lost_genebanks)
     return person
+
+
+ENDED_MEMBER_RETENTION = "12 months"  # a PostgreSQL interval: calendar months, as the privacy policy says (#34)
+# Account roles that keep an ended person from automatic erasure. Every account is a viewer, so viewer is not one;
+# a legacy owner entry counts only on an active herd (_retention_hold).
+RETENTION_HOLD_LEVELS = frozenset({"admin", "matrikel_admin", "manager"})
+
+
+def _retention_hold(user) -> str | None:
+    """Why this account keeps its person from automatic erasure: "role", "active_herd" or None."""
+    if user is None:
+        return None
+    privileges = user.privileges or []
+    if any(p["level"] in RETENTION_HOLD_LEVELS for p in privileges):
+        return "role"
+    owned = [p["herd"] for p in privileges if p["level"] == "owner"]
+    if owned and Herd.select().where(Herd.id.in_(owned), Herd.is_active == True).exists():  # noqa: E712
+        return "active_herd"
+    return None
+
+
+def _due_in(membership, cutoff):
+    """
+    The persons of `membership` the nightly job anonymizes (#70), and the holds it leaves to the administrator.
+
+    A membership without an active person has ended: its persons are due once the LATEST end_date (anonymized
+    persons included) is before `cutoff`, all together, so the household address is never cleared early. Any
+    person's account role, or an active herd of the membership or of a person's legacy owner entry, holds the
+    whole membership. In a membership that still has an active person, each ended person is due once their own
+    end_date is before `cutoff`, held only by their own account. Returns (due persons, held) where held is a list
+    of (membership_id, person_id or None for the whole membership, reason).
+    """
+    persons = list(Member.select().where(Member.membership == membership).order_by(Member.id))
+    erasable = [p for p in persons if p.end_date is not None and not is_anonymized(p)]
+    if any(p.end_date is None for p in persons):
+        due, held = [], []
+        for person in erasable:
+            if person.end_date < cutoff:
+                reason = _retention_hold(person.user)
+                if reason:
+                    held.append((membership.id, person.id, reason))
+                else:
+                    due.append(person)
+        return due, held
+    if max(p.end_date for p in persons) >= cutoff:
+        return [], []
+    reason = next((r for r in map(_retention_hold, (p.user for p in erasable)) if r), None)
+    if reason is None and Herd.select().where(Herd.membership == membership, Herd.is_active == True).exists():  # noqa: E712
+        reason = "active_herd"
+    return ([], [(membership.id, None, reason)]) if reason else (erasable, [])
+
+
+def _memberships_with_ended_persons(cutoff):
+    """Memberships with a person ended before `cutoff` and not yet anonymized: the nightly job's candidates."""
+    not_erased = ~((Member.first_name == ANONYMIZED_FIRST_NAME) & (Member.last_name == ANONYMIZED_LAST_NAME))
+    ended = Member.select(Member.membership).where(Member.end_date < cutoff, not_erased)
+    return list(Membership.select(Membership.id).where(Membership.id.in_(ended)).order_by(Membership.id))
+
+
+def anonymize_ended_persons(now):
+    """
+    Nightly job (#70): anonymize_person, with no user as actor, on the persons _due_in finds. Each membership is
+    decided again and erased in one transaction that first locks every row _due_in reads: the membership (retire,
+    delete and add lock it), its accounts (update_role locks them) and the herds that can hold it (update_herd
+    writes them). A change to any of them commits before the decision or waits until after the erasure; a herd
+    moved INTO the membership after the herd lock lands as if moved just after the erasure. Lock order
+    membership, accounts, herds, as in _lock_for_detach. All three are NO KEY locks: they still wait for those
+    writers, but not for an insert's foreign-key check on the row, which may hold another of these rows while it
+    waits. A failure rolls back that membership only and is logged. Returns (anonymized persons, failed
+    memberships, held).
+    """
+    cutoff = DB_PROXY.execute_sql(
+        "SELECT (%s::timestamptz - %s::interval)::date", (now, ENDED_MEMBER_RETENTION)
+    ).fetchone()[0]
+    done, failed, held = 0, 0, []
+    for membership in _memberships_with_ended_persons(cutoff):
+        originals = []
+        try:
+            with DB_PROXY.atomic():
+                Membership.select().where(Membership.id == membership.id).for_update("FOR NO KEY UPDATE").get()
+                person_users = Member.select(Member.user).where(Member.membership == membership)
+                accounts = list(
+                    User.select().where(User.id.in_(person_users)).order_by(User.id).for_update("FOR NO KEY UPDATE")
+                )
+                owned = [p["herd"] for user in accounts for p in user.privileges or [] if p["level"] == "owner"]
+                herds = Herd.select(Herd.id).where((Herd.membership == membership) | Herd.id.in_(owned))
+                list(herds.order_by(Herd.id).for_update("FOR NO KEY UPDATE"))
+                due, membership_held = _due_in(membership, cutoff)
+                for person in due:  # an ended person conveys no herd: its cache invalidation inside this tx is empty
+                    anonymize_person(person, None, deferred_originals=originals)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("Automatic anonymization failed for membership=%s", membership.id)
+            failed += 1
+            continue
+        remove_originals(originals)  # after this membership's commit, as anonymize_person does after its own
+        done += len(due)
+        held += membership_held
+    return done, failed, held
+
+
+WAIT = timedelta(days=7)
+# A previous address is purged this long after it stops counting: its besked has gone by then (retries end in 21 h).
+PREVIOUS_KEPT = timedelta(days=2)
+SET_BY = ("self", "other", "matrikel")
+
+
+def _same(a, b):
+    return (a or "").strip().lower() == (b or "").strip().lower()
+
+
+def set_member_email(person, address, actor, *, by):
+    """
+    THE writer of an existing person's Member.email. For a person who holds a login address (a main member, or a
+    person with an account; utils.login_code) the address is reserved (AddressTaken) and:
+
+    - by="self", the member after a code to the new address: the old address counts for login seven more days, the
+      new one at once;
+    - by="other": the old one seven more days, the new one only after them (email_login_from);
+    - by="matrikel": the old one stops, the new one counts at once.
+
+    During a wait the first previous address stays fixed: a new change restarts its clock, but never makes the
+    address in between count, nor one that has stopped. Changing back to it ends the wait. The address replaced,
+    and during a wait the first previous one, hear of the change (kontakt.epost_besked); an address that does not
+    count gets a row with login_until NULL for it. The account's sessions end (new_generation). Every change voids
+    the person's unused codes. Opens its own transaction; returns the person as written.
+    """
+    if by not in SET_BY:
+        raise ValueError(f"unknown change {by!r}")
+    address = (address or "").strip() or None
+    with DB_PROXY.atomic():
+        person, user = _lock_for_detach(person.id)  # membership → user → person
+        if _same(person.email, address):
+            if person.email != address:  # the same address, spelled otherwise
+                Member.update(email=address).where(Member.id == person.id).execute()
+            return Member.get_by_id(person.id)
+        holder = person.end_date is None and (person.role == "huvudmedlem" or person.user_id is not None)
+        told, login_from = [], None
+        if holder:
+            # Every address this change can touch, locked in one order before the previous ones are read: a clock
+            # restarted on an old address must not race another person reserving it as it stops counting.
+            rows = MemberPreviousAddress.select(MemberPreviousAddress.address)
+            lock_addresses(
+                [address, person.email, *(r.address for r in rows.where(MemberPreviousAddress.member == person.id))]
+            )
+            reserve_login_address(address, person.id)
+            now = datetime.now(timezone.utc)
+            told, back = _keep_previous(person, address, actor, by, now)
+            if by == "other" and not back:
+                login_from = now + WAIT
+        Member.update(email=address, email_login_from=login_from, updated_at=datetime.now()).where(
+            Member.id == person.id
+        ).execute()
+        void(person.id)
+        for row in told:
+            params = {"previous_id": row.id, "by_self": by == "self", "by_matrikel": by == "matrikel"}
+            ref = ("membership", person.membership_id)
+            enqueue_mail("kontakt.epost_besked", "member_previous_address", row.id, params, ref=ref)
+        if holder and user is not None:
+            new_generation(user.uuid)
+    return Member.get_by_id(person.id)
+
+
+def _keep_previous(person, address, actor, by, now):
+    """
+    The previous-address rows of a change (set_member_email): (the rows to tell, whether the change went back). The
+    address replaced is always told; during a wait the first previous address is told too, as the change may come
+    from whoever took over the account.
+    """
+    waiting = (
+        MemberPreviousAddress.select()
+        .where((MemberPreviousAddress.member == person.id) & (MemberPreviousAddress.login_until > now))
+        .order_by(MemberPreviousAddress.id)
+        .first()
+    )
+    back = waiting is not None and _same(waiting.address, address)
+    until = None if by == "matrikel" or back else now + WAIT
+    told = []
+    if waiting is not None:
+        waiting.login_until, waiting.purge_at, waiting.changed_by = until, (until or now) + PREVIOUS_KEPT, actor
+        waiting.save()
+        if not back:
+            told.append(waiting)
+            until = None  # the address in between never counts
+    if person.email is not None:
+        if person.email_login_from is not None and person.email_login_from > now:
+            until = None  # it never counted, and never will
+        told.append(
+            MemberPreviousAddress.create(
+                member=person.id,
+                address=person.email,
+                login_until=until,
+                purge_at=(until or now) + PREVIOUS_KEPT,
+                changed_by=actor,
+            )
+        )
+    return told, back
+
+
+def purge_previous_addresses(now):
+    """
+    Nightly: previous addresses past their purge_at go, and the mail queue forgets where their mails went, in one
+    transaction, so an interrupted run leaves nothing half done and the next one finishes it.
+    """
+    with DB_PROXY.atomic():
+        gone = MemberPreviousAddress.delete().where(MemberPreviousAddress.purge_at < now)
+        ids = [row.id for row in gone.returning(MemberPreviousAddress.id).execute()]
+        for row_id in ids:
+            forget_recipient("member_previous_address", row_id)
+    return len(ids)
+
+
+def new_membership(status, **fields):
+    """The only place a Membership row is created: `status` must be a Status the CREATE rows allow."""
+    status = Status(status).value
+    next_state(None, Event.CREATE, status)
+    return Membership.create(membership_status=status, **fields)
+
+
+def set_membership_status(membership, new_status, actor):
+    """Move `membership` to `new_status` if membership_lifecycle has a row for it, and audit the change.
+
+    Call inside the caller's transaction with the membership row locked FOR UPDATE. Raises
+    TransitionRefused (nothing written) when the table has none, e.g. for a retired membership.
+    Sets the attribute only: the caller saves it with the rest of its columns.
+    """
+    new_status = Status(new_status).value
+    has_main = (
+        Member.select()
+        .where(Member.membership == membership, Member.role == "huvudmedlem", Member.end_date.is_null(True))
+        .exists()
+    )
+    next_state(state_of(membership.membership_status, has_main), Event.SET_STATUS, new_status)
+    write_matrikel_audit(
+        actor,
+        "membership_status_changed",
+        membership,
+        # Nested {"before": {field: ...}, "after": {...}} shape, like the other membership mutations.
+        {"before": {"membership_status": membership.membership_status}, "after": {"membership_status": new_status}},
+    )
+    membership.membership_status = new_status
 
 
 def create_membership(data, actor):
@@ -532,14 +811,15 @@ def create_membership(data, actor):
     address is always structured here: the endpoint resolves the legacy
     `postal_address` alias with parse_postal_fields() before calling, and the
     CSV importer creates Membership rows directly. Locks the counter FIRST
-    when allocating, matching the approval lock order.
+    when allocating, matching the approval lock order. AddressTaken when
+    another person holds the main member's address for login.
     """
     status = data.get("membership_status") or "active"
     with DB_PROXY.atomic():
         number = allocate_member_number() if data.get("allocate") else None
-        membership = Membership.create(
+        membership = new_membership(
+            status,
             member_number=number,
-            membership_status=status,
             address=data.get("address") or None,
             postal_code=data.get("postal_code") or None,
             city=data.get("city") or None,
@@ -554,6 +834,7 @@ def create_membership(data, actor):
             email=data.get("email") or None,
             phone=data.get("phone") or None,
         )
+        reserve_login_address(main.email, main.id)
         write_matrikel_audit(
             actor,
             "membership_created",
@@ -581,6 +862,7 @@ def retire_membership(membership, actor):
             ).execute()
             person.end_date = date.today()
             person.save()
+        cancel_member_added([p.id for p in persons])
         membership.membership_status = "inactive"
         # `membership` is the CALLER's pre-lock instance — a full-row save would
         # overwrite a notes/address PATCH that committed while we waited for the
@@ -875,6 +1157,11 @@ def link_member_user(person_id, user_id, *, actor, mode, confirmed_herd_ids=None
                 f"Kontot är redan kopplat till {name} i medlemskap nr {number}{ended}",
                 holder_person_id=holder.id,
             )
+        try:
+            reserve_holder(person.id)  # with an account, her addresses are login addresses
+        except AddressTaken as exc:
+            detail = "En annan medlem kan redan logga in med personens e-postadress"
+            raise LinkError(AddressTaken.title, detail) from exc
         conveyed = link_access_delta(person, user)  # under the locks, right before the save
         conveyed_ids = {h["id"] for h in conveyed}
         if conveyed_ids and (mode != "admin" or confirmed_herd_ids is None or set(confirmed_herd_ids) != conveyed_ids):
@@ -894,7 +1181,7 @@ def link_member_user(person_id, user_id, *, actor, mode, confirmed_herd_ids=None
     return person, conveyed
 
 
-def _detach_user_locked(person: Member, *, actor: User, mode: str) -> int:
+def _detach_user_locked(person: Member, *, actor: User | None, mode: str) -> int:
     """Inside an open transaction with membership → user → person locked."""
     user_id = person.user_id
     person.user = None

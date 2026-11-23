@@ -36,7 +36,7 @@ from utils.database import (
     current_holder_row,
     not_voided,
 )
-from utils.herd_tracking import HerdTrackingError, correct_herd_tracking, is_manager_of
+from utils.herd_tracking import HerdTrackingError, attach_buyer, correct_herd_tracking, is_manager_of
 from utils.individual_commands import (
     AssignPaperCertificate,
     IndividualRefused,
@@ -373,6 +373,19 @@ def item_detail(item_id):
     return jsonify(inbox.item_detail(InboxItem.get_by_id(item.id)))
 
 
+# [Next.js] The rabbit's active sales, for the sale panel: does the proof show a sale already registered, and
+# has that sale its buyer outside the association? A yes or no only, never a name (ADR-0016).
+@inbox_bp.route("/inkorg/<int:item_id>/kanin/<number>/forsaljningar", methods=["GET"])
+@json_login_required
+@_queue_worker
+def rabbit_sales(item_id, number):
+    item = InboxItem.get_or_none(InboxItem.id == item_id)
+    individual = da.get_individual(number, current_user.uuid) if item is not None else None
+    if individual is None:
+        return problem(404, "Hittades inte", "Posten eller kaninen finns inte.")
+    return jsonify({"sales": inbox.active_sales(individual["id"])})
+
+
 @inbox_bp.route("/inkorg/<int:item_id>/ta", methods=["POST"])
 @json_login_required
 @_queue_worker
@@ -478,8 +491,16 @@ def check_report_photo(item_id, document_id):
 @inbox_bp.route("/inkorg/mina-inskick", methods=["GET"])
 @json_login_required
 def my_uploads():
+    return jsonify({"items": inbox.my_uploads(current_user)})
+
+
+# [Next.js] The page "Mina inskick" was opened: the user's "klar" notices are read. A POST of its own, so a link
+# to the list (a GET, which a browser follows with the session cookie) changes nothing.
+@inbox_bp.route("/inkorg/mina-inskick/sedda", methods=["POST"])
+@json_login_required
+def uploads_seen():
     with DB_PROXY.atomic():
-        return jsonify({"items": inbox.my_uploads(current_user)})
+        return jsonify({"read": inbox.uploads_seen(current_user)})
 
 
 @inbox_bp.route("/inkorg/notiser", methods=["GET"])
@@ -543,6 +564,7 @@ REGISTRATION_FIELDS = (
     "claw_color",
     "belly_color",
     "hair_notes",
+    "rex",
 )
 _REFUSED_AS_FORBIDDEN = {"Forbidden", AssignPaperCertificate(None).denied().envelope["message"]}
 
@@ -700,6 +722,7 @@ def transfer(item_id, document_id):
     if bad or when is None:
         detail = "Ange köparens besättning (herd) och datum (date, ÅÅÅÅ-MM-DD)."
         return problem(400, "Ogiltig begäran", detail, field=bad or "date")
+    paths = []
     try:
         with DB_PROXY.atomic():
             item = inbox.lock_item(item_id)
@@ -713,11 +736,13 @@ def transfer(item_id, document_id):
             lock_individual_for_edit(individual.id)
             latest = current_holder_row(individual.id)
             proven = inbox.proven_sale(item, document, individual, herd, when)
-            if proven is not None:  # the proof of a sale registered from another document: nothing to write
-                # Its buyer, if any, came with the sale; a `buyer` sent here is not read.
+            if proven is not None:  # the proof of a sale registered before: nothing to write but its buyer
                 seller = proven.from_herd or individual.origin_herd
                 if not (is_manager_of(user, seller.genebank_id) or grant.allows(user, seller)):
                     raise inbox.InboxError(403, "Du får inte koppla ett bevis till kaninens försäljning.")
+                # A sale registered without its buyer gets the one the proof shows; past its five years, none.
+                if buyer is not None and attach_buyer(proven, buyer, user) is None:
+                    proven.buyer_removed = True  # so the proof is cleared below
                 row = proven
             elif herd in OUTSIDE_GENEBANK_HERDS and buyer is None:
                 # A new sale outside the association needs its buyer (ADR-0016); a proof of one registered does not.
@@ -743,6 +768,9 @@ def transfer(item_id, document_id):
                 record_sale(user, individual.id, herd, date, buyer=buyer, grant=grant)
                 row = current_holder_row(individual.id)
             inbox.transferred(item, document, user, individual, row, linked=proven is not None)
+            if proven is not None and proven.buyer_removed:  # the proof shows a buyer that was erased or purged
+                paths = inbox_purge.erase_buyer_from_document(document.id)  # its other documents went with the buyer
+                document = inbox.document_of(item, document_id)
             answer = {
                 "individual": Individual.get_by_id(individual.id).as_dict(),
                 "herd_tracking_id": row.id,
@@ -755,6 +783,7 @@ def transfer(item_id, document_id):
         return _placed(problem(exc.status, exc.title, exc.detail))
     except (IndividualRefused, HerdTrackingError) as exc:
         return _placed(_command_problem(exc))
+    inbox_purge.remove_originals(paths)
     _invalidate(individual)
     return jsonify(answer), 200
 
