@@ -122,6 +122,21 @@ class TestShortcutCreate(ShortcutMixin, DatabaseTest):
         self.assertEqual((response.status_code, response.get_json()["title"]), (409, "litter_order_conflict"))
         self.assertEqual(self._written(), before)
 
+    def test_a_right_lost_while_waiting_for_the_locks_writes_no_litter(self):
+        """The digital right is checked again once every lock is held; a refusal rolls back the new litter."""
+        from unittest import mock
+
+        from blueprints.bunny_v2 import DIGITAL_FORBIDDEN
+
+        before = self._written()
+        db.User.update(fullname="Test Namn").where(db.User.id == self.owner.id).execute()
+        self._login()
+        refused = (403, "digital_certificate_forbidden", DIGITAL_FORBIDDEN)
+        with mock.patch("blueprints.individual_v2_create.digital_certificate_refusal", side_effect=[None, refused]):
+            response = self.client.post(URL, json=self._body(certificate_type="digital", paper_certificate=None))
+        self.assertEqual(response.status_code, 403, response.get_data(as_text=True))
+        self.assertEqual(self._written(), before)
+
     def test_a_doe_outside_the_users_herds_is_refused(self):
         before = self._written()
         self._login()

@@ -134,16 +134,17 @@ def register_individual(form, may_register=None, created=None):
             check = None
             if new_litter is not None:
                 lock_herd_year(new_litter["herd"], new_litter["birth_date"].year)
-                # Again under the lock, before the litter is created: a grant may have been revoked meanwhile.
-                if certificate_type == "digital" and (
-                    refusal := digital_certificate_refusal(current_user, new_litter["herd"])
-                ):
-                    return problem(*refusal)
                 if certificate_type == "paper":
                     litter = {key: new_litter[key] for key in ("herd", "birth_date", "mother", "father")}
                     check = number_check(current_user, paper_number, paper_certificate=paper_certificate, **litter)
                     position = parse_number(number_to_register(check, resolution))[3]
                 breeding = _create_litter(**new_litter)
+                # Again once every lock is held (herd-year, then the parents in _create_litter): a grant may have
+                # been revoked meanwhile. Raising rolls back the new litter too.
+                if certificate_type == "digital" and (
+                    refusal := digital_certificate_refusal(current_user, new_litter["herd"])
+                ):
+                    raise RosterActionError(*refusal)
             else:
                 breeding = lock_litter(breeding.id)
                 # Decided again on the locked litter: it may have moved to another herd (or been renumbered or
