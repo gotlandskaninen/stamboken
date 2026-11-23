@@ -36,6 +36,7 @@ from utils.database import (
     User,
 )
 from utils.inbox_purge import erase_person_from_inbox, remove_originals
+from utils.login_code import AddressTaken, reserve_login_address
 from utils.mail import cancel_member_added, forget_recipient, queue_member_added
 from utils.membership_lifecycle import Event, Status, next_state, state_of
 from utils.postal import (  # noqa: F401 — public helpers
@@ -278,7 +279,7 @@ def add_person(membership, data, actor):
     `data` keys: first_name, last_name (required), email, phone, role
     (defaults to familjemedlem). Raises ValueError on unknown role. A second
     active huvudmedlem raises IntegrityError from the partial unique index —
-    callers translate that to a 409.
+    callers translate that to a 409. A main member's address is reserved for her (reserve_login_address): AddressTaken.
 
     Locks the membership row and rejects an inactive one INSIDE the tx: like
     the other person mutations this closes a TOCTOU race — without it a person
@@ -300,6 +301,8 @@ def add_person(membership, data, actor):
             phone=data.get("phone") or None,
             role=role,
         )
+        if role == "huvudmedlem":
+            reserve_login_address(person.email, person.id)
         write_matrikel_audit(
             actor,
             "person_added",
@@ -362,6 +365,8 @@ def swap_main_member(membership, new_main, actor):
     Same serialization as soft_delete_person: lock the membership row, then
     re-read and re-validate the candidate inside the transaction, so a
     concurrent delete cannot end the person this swap is about to promote.
+    The new main member's address becomes a login address: AddressTaken when
+    another person holds it, also the old main member who keeps an account.
     """
     with DB_PROXY.atomic():
         Membership.select().where(Membership.id == membership.id).for_update().get()
@@ -386,6 +391,7 @@ def swap_main_member(membership, new_main, actor):
             current.save()
         new_main.role = "huvudmedlem"
         new_main.save()
+        reserve_login_address(new_main.email, new_main.id)
         cancel_member_added([new_main.id])
         write_matrikel_audit(
             actor,
@@ -568,7 +574,8 @@ def create_membership(data, actor):
     address is always structured here: the endpoint resolves the legacy
     `postal_address` alias with parse_postal_fields() before calling, and the
     CSV importer creates Membership rows directly. Locks the counter FIRST
-    when allocating, matching the approval lock order.
+    when allocating, matching the approval lock order. AddressTaken when
+    another person holds the main member's address for login.
     """
     status = data.get("membership_status") or "active"
     with DB_PROXY.atomic():
@@ -590,6 +597,7 @@ def create_membership(data, actor):
             email=data.get("email") or None,
             phone=data.get("phone") or None,
         )
+        reserve_login_address(main.email, main.id)
         write_matrikel_audit(
             actor,
             "membership_created",
@@ -912,6 +920,11 @@ def link_member_user(person_id, user_id, *, actor, mode, confirmed_herd_ids=None
                 f"Kontot är redan kopplat till {name} i medlemskap nr {number}{ended}",
                 holder_person_id=holder.id,
             )
+        try:
+            reserve_login_address(person.email, person.id)  # with an account, her address is a login address
+        except AddressTaken as exc:
+            detail = "En annan medlem kan redan logga in med personens e-postadress"
+            raise LinkError(AddressTaken.title, detail) from exc
         conveyed = link_access_delta(person, user)  # under the locks, right before the save
         conveyed_ids = {h["id"] for h in conveyed}
         if conveyed_ids and (mode != "admin" or confirmed_herd_ids is None or set(confirmed_herd_ids) != conveyed_ids):

@@ -194,6 +194,45 @@ def purge(now):
     return len(ids)
 
 
+# Every address a person holds for login, or will hold once a wait is over (utils.matrikel.set_member_email): her
+# address, and a previous one while it still counts. A holder is a person not ended who is the main member of her
+# membership or has an account. That is wider than who gets a code (the membership must not be inactive too), so
+# reactivating a membership cannot give a main member an address another person holds.
+_ADDRESSES = """
+    SELECT m.member_id, lower(btrim(m.email)) AS address FROM member m
+    WHERE m.end_date IS NULL AND (m.role = 'huvudmedlem' OR m.user_id IS NOT NULL) AND m.email IS NOT NULL
+    UNION
+    SELECT m.member_id, lower(btrim(r.address)) FROM member_previous_address r JOIN member m USING (member_id)
+    WHERE m.end_date IS NULL AND (m.role = 'huvudmedlem' OR m.user_id IS NOT NULL) AND r.login_until > %(now)s
+"""
+
+
+class AddressTaken(Exception):
+    """Another person holds the address for login. Only the matrikel admin and the approver of an application see it."""
+
+    title = "Adressen används redan av en annan medlem"
+
+
+def reserve_login_address(address, person_id):
+    """
+    Makes `address` a login address of `person_id` alone, in the caller's transaction that writes it: under a lock
+    on the address, held to the commit, no other holder may have it. Raises AddressTaken. Every write that can make an
+    address a login address calls it; a missed one makes two holders, and neither gets a code.
+    """
+    address = (address or "").strip().lower()
+    if not address:
+        return
+    if not DB_PROXY.in_transaction():
+        raise RuntimeError("reserve_login_address() runs in the transaction that writes the address")
+    DB_PROXY.execute_sql("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"login_address:{address}",))
+    taken = DB_PROXY.execute_sql(
+        f"SELECT 1 FROM ({_ADDRESSES}) a WHERE address = %(address)s AND member_id <> %(person)s LIMIT 1",
+        {"now": _utcnow(), "address": address, "person": person_id},
+    ).fetchone()
+    if taken:
+        raise AddressTaken(AddressTaken.title)
+
+
 def alarms(now=None):
     """The status view's alarms of code login (utils.mail.sender_alarms)."""
     if closed(now):

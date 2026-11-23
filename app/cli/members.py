@@ -49,6 +49,8 @@ Rules (Member Model v2 design spec):
 - gdpr_consented_at is NEVER fabricated: MATR2026 has no consent column,
   so imported persons always have NULL.
 - Import never sets Member.user and never calls the auto-link helper.
+- A main member's address becomes a login address (reserve_login_address): when
+  another person holds it, the whole group fails and is listed as an error.
 
 `link-users` is the manual follow-up to that last rule: it links existing
 herdbook accounts to imported person rows on the CONTACT email, so
@@ -71,6 +73,7 @@ import click
 from flask.cli import AppGroup
 from peewee import IntegrityError, fn
 from utils.database import DB_PROXY, Herd, Member, Membership, User
+from utils.login_code import reserve_login_address
 from utils.matrikel import (
     ANONYMIZED_FIRST_NAME,
     ANONYMIZED_LAST_NAME,
@@ -495,14 +498,7 @@ def _import_membership_group(nr: int, group: list[dict], dry_run: bool, report: 
             membership = None
             if not dry_run:
                 membership = new_membership(Status.ACTIVE, member_number=nr, **fields)
-                Member.create(
-                    membership=membership,
-                    role="huvudmedlem",
-                    first_name=main["first_name"],
-                    last_name=main["last_name"],
-                    email=main["email"],
-                    phone=main["phone"],
-                )
+                _create_main(membership, main)
         _add_family_members(membership, group[1:], dry_run, report)
         _link_flag_herds(nr, group, membership, dry_run, report)
 
@@ -560,14 +556,21 @@ def _ensure_main_person(membership, main: dict) -> None:
         .exists()
     )
     if not has_main:
-        Member.create(
-            membership=membership,
-            role="huvudmedlem",
-            first_name=main["first_name"],
-            last_name=main["last_name"],
-            email=main["email"],
-            phone=main["phone"],
-        )
+        _create_main(membership, main)
+
+
+def _create_main(membership, row: dict) -> None:
+    """The main member from a CSV row. Her address becomes a login address: AddressTaken (the group's error, nothing
+    of the group written) when another person holds it."""
+    person = Member.create(
+        membership=membership,
+        role="huvudmedlem",
+        first_name=row["first_name"],
+        last_name=row["last_name"],
+        email=row["email"],
+        phone=row["phone"],
+    )
+    reserve_login_address(person.email, person.id)
 
 
 def _add_family_members(membership, rows: list[dict], dry_run: bool, report: dict) -> None:
@@ -710,14 +713,7 @@ def _import_friexemplar_group(name_key: str, group: list[dict], dry_run: bool, r
             payment_note=row["payment_note"],
             notes=notes,
         )
-        Member.create(
-            membership=membership,
-            role="huvudmedlem",
-            first_name=row["first_name"],
-            last_name=row["last_name"],
-            email=row["email"],
-            phone=row["phone"],
-        )
+        _create_main(membership, row)
 
 
 def _leftover_numberless(adopted_ids: set[int]) -> list[tuple[int, str]]:
