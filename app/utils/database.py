@@ -1463,8 +1463,6 @@ class User(BaseModel, UserMixin):
             "google_email": self.google_email,
             "use_google_picture": self.use_google_picture,
             "v2_prod_access": self.v2_promoted,
-            # The check page choice (stamboken #6): None until she has chosen.
-            "name_on_check_page": self.name_on_check_page,
         }
 
     @property
@@ -3097,7 +3095,9 @@ AUDITED_TABLES = {
     "color": ("color_id", [], []),
     # password_hash was dropped in schema v6 but stays snapshot-excluded as
     # belt-and-suspenders for any pre-v6 audit rows.
-    "hbuser": ("user_id", ["password_hash"], ["last_active"]),
+    # name_on_check_page (stamboken #6): a change of only her check page choice writes no audit row, which would copy
+    # the account's name and e-mail, also when anonymisation switches it off. The app log records her own choices.
+    "hbuser": ("user_id", ["password_hash"], ["last_active", "name_on_check_page"]),
     # New in Phase 17:
     "genebank": ("genebank_id", [], []),  # name edits need a trail
     "authenticators": ("auth_id", ["auth_data"], []),
@@ -4269,21 +4269,17 @@ def migrate_46_to_47():
             # dropping it leaves NULL for every account created afterwards.
             DATABASE.execute_sql("ALTER TABLE hbuser ADD COLUMN name_on_check_page BOOLEAN DEFAULT true")
             DATABASE.execute_sql("ALTER TABLE hbuser ALTER COLUMN name_on_check_page DROP DEFAULT")
-            # Accounts whose person was anonymised already: off, as anonymize_person sets it from now on. The audit
-            # trigger is off for it, as in migrate_39_to_40: a row per account would copy her data into audit_log.
+            # Re-attach the audit triggers with name_on_check_page excluded from change detection (AUDITED_TABLES),
+            # so the update below and every later change of only the choice write no audit row. Idempotent.
+            _create_audit_table_and_triggers()
+            # Accounts whose person was anonymised already: off, as anonymize_person sets it from now on. Only when
+            # the column is new: a replay must not undo a choice made since.
             if "matrikel_audit" in DATABASE.get_tables():
-                audited = DATABASE.execute_sql(
-                    "SELECT 1 FROM pg_trigger WHERE tgrelid = 'hbuser'::regclass AND tgname = 'audit_trigger'"
-                ).fetchone()
-                if audited:
-                    DATABASE.execute_sql('ALTER TABLE "hbuser" DISABLE TRIGGER "audit_trigger"')
                 DATABASE.execute_sql(
-                    "UPDATE hbuser SET name_on_check_page = false WHERE user_id IN ("
+                    "UPDATE hbuser SET name_on_check_page = false WHERE name_on_check_page AND user_id IN ("
                     " SELECT (payload->>'user_id')::int FROM matrikel_audit"
                     " WHERE action = 'person_user_unlinked' AND payload->>'source' = 'anonymize')"
                 )
-                if audited:
-                    DATABASE.execute_sql('ALTER TABLE "hbuser" ENABLE TRIGGER "audit_trigger"')
         if "digitalcertificatev2" in DATABASE.get_tables():
             DATABASE.execute_sql("ALTER TABLE digitalcertificatev2 ADD COLUMN IF NOT EXISTS issued_as VARCHAR(20)")
         SchemaHistory.insert(  # pylint: disable=E1120

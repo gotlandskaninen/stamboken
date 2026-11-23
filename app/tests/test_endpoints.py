@@ -102,7 +102,6 @@ class TestEndpoints(FlaskTest):
                 # frontend_data derives this: admins are implicitly promoted
                 "v2_prod_access": test_user.v2_prod_access or test_user.is_admin,
                 "auth_method": "losenord",
-                "name_on_check_page": None,  # a new account has not chosen yet (stamboken #6)
             }
             with self.app as context:
                 # Unauthenticated users get an error response

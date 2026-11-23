@@ -702,7 +702,6 @@ class TestDatabase(DatabaseTest):
                 "use_google_picture": True,
                 # Admins are implicitly promoted regardless of the stored flag
                 "v2_prod_access": True,
-                "name_on_check_page": None,
             },
         )
         self.assertDictEqual(
@@ -723,7 +722,6 @@ class TestDatabase(DatabaseTest):
                 "google_email": None,
                 "use_google_picture": True,
                 "v2_prod_access": False,
-                "name_on_check_page": None,
             },
         )
         self.assertDictEqual(
@@ -744,7 +742,6 @@ class TestDatabase(DatabaseTest):
                 "google_email": None,
                 "use_google_picture": True,
                 "v2_prod_access": False,
-                "name_on_check_page": None,
             },
         )
         self.assertDictEqual(
@@ -765,7 +762,6 @@ class TestDatabase(DatabaseTest):
                 "google_email": None,
                 "use_google_picture": True,
                 "v2_prod_access": False,
-                "name_on_check_page": None,
             },
         )
 
@@ -1595,7 +1591,7 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertIn(("member_previous_address", "member_id", "member"), fresh[2])
         self.assertTrue(set(tables).isdisjoint(db.AUDITED_TABLES))
 
-    def test_replay_adds_name_on_check_page_off(self):
+    def test_replay_adds_name_on_check_page(self):
         """Stamboken #6: an older database gets the person's choice, on for the accounts it has, and the issuing
         role, shaped as a fresh bootstrap."""
         if not isinstance(db.DATABASE, db.PostgresqlDatabase):
@@ -1614,6 +1610,11 @@ class TestDatabaseMigration(DatabaseTest):
         version = self._migration_version("name_on_check_page")
         db.SchemaHistory.delete().where(db.SchemaHistory.version >= version).execute()
         db.DATABASE.execute_sql("ALTER TABLE hbuser DROP COLUMN name_on_check_page")
+        # the hbuser trigger as at version 46, so the test sees the migration re-attach it
+        db.DATABASE.execute_sql(
+            "CREATE OR REPLACE TRIGGER audit_trigger AFTER INSERT OR UPDATE OR DELETE ON hbuser"
+            " FOR EACH ROW EXECUTE FUNCTION audit_trigger_func('password_hash', 'last_active', 'user_id')"
+        )
         db.DATABASE.execute_sql("ALTER TABLE digitalcertificatev2 DROP COLUMN issued_as")
         # an account whose person was anonymised before the migration
         membership = db.Membership.create(member_number=4711)

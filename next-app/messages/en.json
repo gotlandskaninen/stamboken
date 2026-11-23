@@ -330,7 +330,7 @@
     "certificateDigital": "Digital",
     "certificateDigitalDisabled": "Coming when certificate v2 is active",
     "certificateAttester": "Your name will appear on the certificate as the person who certifies it.",
-    "checkPageNameHint": "You have not chosen whether your name appears on the certificate's check page. Until you do, it says \"Uppfödaren\" (the breeder).",
+    "checkPageNameHint": "You have not chosen whether your name appears on the certificate's check page. Until you do, it shows your role, for example \"Uppfödaren\" (the breeder).",
     "checkPageNameHintLink": "Choose under My profile",
     "paperCertificateNumber": "Certificate number",
     "save": "Register",

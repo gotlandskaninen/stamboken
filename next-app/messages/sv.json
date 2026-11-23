@@ -390,7 +390,7 @@
     "certificateDigital": "Digitalt",
     "certificateDigitalDisabled": "Kommer när digitala intyg är aktiverade",
     "certificateAttester": "Ditt namn står som intygare på intyget.",
-    "checkPageNameHint": "Du har inte valt om ditt namn ska stå på intygets kontrollsida. Tills du väljer står där \"Uppfödaren\".",
+    "checkPageNameHint": "Du har inte valt om ditt namn ska stå på intygets kontrollsida. Tills du väljer står din roll där, till exempel \"Uppfödaren\".",
     "checkPageNameHintLink": "Välj under Min profil",
     "paperCertificateNumber": "Intygsnummer",
     "save": "Registrera",
