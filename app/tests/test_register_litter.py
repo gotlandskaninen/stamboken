@@ -39,6 +39,9 @@ class LitterTest(ArsrapportTest):
         self.doe = self.adult(self.g1, "G1-2411", "female")
         self.buck = self.adult(self.g2, "G2-2412", "male")  # the same genebank, another herd
         self.other_owner = self.user("owner2", ("owner", self.g2.id))
+        # main: a digital certificate names its issuer, so the issuing account needs a name
+        self.owner.fullname = "Ägare Exempel"
+        self.owner.save(only=[db.User.fullname])
 
     @staticmethod
     def adult(herd, number, sex):

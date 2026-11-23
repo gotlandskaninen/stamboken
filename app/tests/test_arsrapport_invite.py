@@ -316,7 +316,7 @@ class InviteTest(ArsrapportTest):
             (new.email_login_from - timedelta(seconds=1), self.member.email),
             (new.email_login_from, new.email),
         ):
-            with self.subTest(when=when):
+            with self.subTest(when=when.isoformat()):  # xdist serialises subTest params
                 self.at(when)
                 response = self.api("POST", "/besattning/G9001/2025/ny-lank")
                 self.assertEqual(response.status_code, 200, response.data)
