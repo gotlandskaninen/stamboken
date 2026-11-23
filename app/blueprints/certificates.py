@@ -344,7 +344,24 @@ def preview_certificate(i_number):
 
     from utils.cert_service_v2 import _generator, build_cert_data, compute_doc_hash_stub
 
+    # A preview names its viewer as attester, which is only true for someone who may issue the next version. A buyer
+    # or manager who only views gets the signed certificate as issued; data changed since would otherwise appear
+    # under the issuer's name (Codex on #7). Without any certificate the preview has no attester.
+    # Herd access, not can_issue_certificate: admin and the genebank manager still issue until #141, but have not
+    # seen the rabbit, so they too get the signed PDF.
+    viewer = da.fetch_user_info(user_id)
+    # By id: a herd code is unique only within its genebank.
+    may_issue = individual.origin_herd_id in viewer.effective_herd_ids()
+    has_current = (
+        db.DigitalCertificateV2.select()
+        .where((db.DigitalCertificateV2.individual == individual) & (db.DigitalCertificateV2.is_current == True))  # noqa: E712
+        .exists()
+    )
+    if not may_issue and (has_current or individual.digital_certificate is not None):
+        return download_certificate(i_number)
     cert_data = build_cert_data(individual, ind_dict, user_id)
+    if not may_issue:
+        cert_data["fullname"] = ""
     cert_data["digital_certificate"] = individual.digital_certificate or "PREVIEW"
     cert_data["replaces_date"] = ""
     cert_data["doc_hash_stub"] = compute_doc_hash_stub(cert_data)
@@ -387,7 +404,7 @@ def verify_certificate_get(token):
             "individual_number": individual.number,
             "genebank": individual.origin_herd.genebank.name if individual.origin_herd else "",
             "digital_certificate": individual.digital_certificate,
-            "issued_by": cert.issued_by.fullname or "Uppfödare",
+            # No person's name on the public page: the breeder's name only by the breeder's own choice (stamboken #6).
             "issued_at": cert.issued_at.isoformat(),
             "is_current": cert.is_current,
             "replaced_by_date": replaced_by_date,

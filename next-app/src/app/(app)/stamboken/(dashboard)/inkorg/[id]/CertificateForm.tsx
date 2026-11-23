@@ -12,6 +12,7 @@ import {
   PAPER_NUMBER,
 } from "@/components/herd/NumberConflictDialog";
 import type { NumberCheck } from "@/app/(app)/stamboken/(dashboard)/min-besattning/actions";
+import { CoatChoice } from "@/components/herd/CoatChoice";
 import { lookupRabbit, saveCertificate, type RegistryRabbit } from "../actions";
 import {
   buildSavePayload,
@@ -146,6 +147,7 @@ export function CertificateForm({
     initialSaveMode(latest),
   );
   const [form, setForm] = useState<CertForm>(() => initialCertForm(latest));
+  const [rex, setRex] = useState(false);
   const [errors, setErrors] = useState<Partial<Record<keyof CertForm, string>>>(
     {},
   );
@@ -175,7 +177,7 @@ export function CertificateForm({
       const res = await saveCertificate(
         itemId,
         doc.id,
-        buildSavePayload(mode, form, resolution),
+        buildSavePayload(mode, form, resolution, rex),
       );
       if (res.ok) {
         setConflict(null);
@@ -328,6 +330,13 @@ export function CertificateForm({
                 </MenuItem>,
               ],
             })}
+            <CoatChoice
+              rex={rex}
+              onChange={(v) => {
+                setTouched(true);
+                setRex(v);
+              }}
+            />
             {text("birth_date", "Födelsedatum", {
               required: true,
               type: "date",

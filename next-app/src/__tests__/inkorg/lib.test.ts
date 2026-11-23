@@ -309,7 +309,14 @@ describe("the …/spara payload", () => {
       color: "viltgrå",
       litter_size: 5,
       litter_size6w: 4,
+      rex: false,
     });
+  });
+  it("sends the coat as a boolean", () => {
+    expect(
+      buildSavePayload("ny_kanin", filled, undefined, true),
+    ).toHaveProperty("rex", true);
+    expect(buildSavePayload("pappersintyg", filled)).not.toHaveProperty("rex");
   });
   it("leaves out empty optional fields and counts that are not numbers", () => {
     const payload = buildSavePayload("ny_kanin", {

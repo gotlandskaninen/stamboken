@@ -10,7 +10,6 @@ interface VerificationResponse {
   genebank: string;
   // null once a paper certificate has replaced the digital one, or the number was lost (ADR-0019)
   digital_certificate: number | null;
-  issued_by: string;
   issued_at: string;
   is_current: boolean;
   replaced_by_date: string | null;
@@ -170,10 +169,6 @@ export default async function VerifieraPage({
           <div className="frow">
             <span className="l">Intygsnummer</span>
             <span className="v">{data.digital_certificate}</span>
-          </div>
-          <div className="frow">
-            <span className="l">Utfärdat av</span>
-            <span className="v">{data.issued_by}</span>
           </div>
           <div className="frow">
             <span className="l">Datum</span>

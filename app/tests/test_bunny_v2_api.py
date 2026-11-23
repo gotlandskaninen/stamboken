@@ -530,6 +530,15 @@ class TestBunnyPromote(DatabaseTest):
         self.assertEqual(db.Bunny.get_by_id(b1.id).fate, "registered")
         self.assertEqual(db.Bunny.get_by_id(b2.id).fate, "registered")
 
+    def test_promote_stores_rex_and_refuses_a_non_boolean(self):
+        litter = _old_litter(self.herds[0])
+        b = db.Bunny.create(breeding=litter, slot_order=1, observed_sex="female", observed_color="bleighe")
+        self._login()
+        self.assertEqual(self._promote(b.id, rex="ja").status_code, 400)
+        self.assertIsNone(db.Bunny.get_by_id(b.id).individual_id)
+        self.assertEqual(self._promote(b.id, rex=True).status_code, 201)
+        self.assertTrue(db.Individual.get(db.Individual.number == "G1-2511").rex)
+
     def test_promote_explicit_sex_color_override_observed(self):
         litter = _old_litter(self.herds[0])
         b = db.Bunny.create(breeding=litter, slot_order=1, observed_sex="female", observed_color="bleighe")

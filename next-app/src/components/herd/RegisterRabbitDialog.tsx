@@ -46,6 +46,7 @@ import {
   NumberConflictDialog,
   PAPER_NUMBER,
 } from "@/components/herd/NumberConflictDialog";
+import { CoatChoice } from "@/components/herd/CoatChoice";
 import { ColorPicker, colorsFor } from "@/components/herd/ColorPicker";
 import {
   checkIndividualNumber,
@@ -138,6 +139,7 @@ export function RegisterRabbitDialog({
   const [clawColor, setClawColor] = useState("");
   const [bellyColor, setBellyColor] = useState("");
   const [hairNotes, setHairNotes] = useState("");
+  const [rex, setRex] = useState(false);
   // A rabbit is only registered with a certificate. From a litter row digital is issued
   // in the roster; the shortcut issues it at once, so it is the default there.
   const defaultCertificateType = shortcut ? "digital" : "paper";
@@ -295,6 +297,7 @@ export function RegisterRabbitDialog({
     setClawColor("");
     setBellyColor("");
     setHairNotes("");
+    setRex(false);
     setCertificateType(defaultCertificateType);
     setPaperCertificate("");
     setPaperNumber("");
@@ -355,6 +358,7 @@ export function RegisterRabbitDialog({
         claw_color: clawColor || undefined,
         belly_color: bellyColor || undefined,
         hair_notes: hairNotes || undefined,
+        rex,
         certificate_type: certificateType,
         paper_certificate: paper ? paperCertificate : undefined,
         paper_number: paper ? paperNumber.trim() : undefined,
@@ -851,6 +855,9 @@ export function RegisterRabbitDialog({
               fullWidth
             />
 
+            {/* Coat: Normal or Rex */}
+            <CoatChoice rex={rex} onChange={setRex} />
+
             {/* Hair notes */}
             <TextField
               label={t("addRabbit.hairNotes")}
@@ -946,6 +953,19 @@ export function RegisterRabbitDialog({
                   label={t("addRabbit.certificate")}
                 />
               </Box>
+              {certificateType === "digital" && (
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: "text.secondary",
+                    display: "block",
+                    mt: 0.5,
+                    ml: 1.5,
+                  }}
+                >
+                  {t("addRabbit.certificateAttester")}
+                </Typography>
+              )}
               {suggestion && !canIssueCertificate && (
                 <Typography
                   variant="caption"

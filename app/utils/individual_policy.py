@@ -92,6 +92,7 @@ COMMAND_FIELDS: Mapping[str, tuple[str, ...]] = {
         "claw_color",
         "belly_color",
         "hair_notes",
+        "rex",
         "notes",
         "foot_ring",
         "castration_date",

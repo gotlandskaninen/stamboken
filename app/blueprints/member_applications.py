@@ -139,8 +139,8 @@ def create_application():
     if body.get("gdpr_consent") is not True:
         return problem(
             400,
-            "GDPR-samtycke krävs",
-            "Du måste samtycka till behandling av personuppgifter för att ansöka.",
+            "Bekräftelse saknas",
+            "Du måste bekräfta att du har läst integritetspolicyn för att ansöka.",
         )
 
     # Membership is in the association, not a gene bank (Member Model v2).
