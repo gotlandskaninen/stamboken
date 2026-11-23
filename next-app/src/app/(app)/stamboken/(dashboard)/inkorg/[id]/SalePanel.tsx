@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import {
   Autocomplete,
   Checkbox,
@@ -8,15 +8,25 @@ import {
   TextField,
 } from "@mui/material";
 import type { GenebankHerd } from "@/utils/saleRules";
-import { registerSale } from "../actions";
+import {
+  BuyerFields,
+  EMPTY_BUYER,
+  buyerComplete,
+  buyerPayload,
+} from "@/components/individual/BuyerFields";
+import { rabbitSales, registerSale, type RegistrySale } from "../actions";
 import {
   buildSalePayload,
   outsideHerd,
   problemField,
+  provenSale,
   type InboxDocument,
   type SaleForm,
 } from "../lib";
 import styles from "../inkorg.module.css";
+
+/** The rabbit is looked up once typing pauses, not on every key. */
+export const LOOKUP_DELAY_MS = 300;
 
 /** A sale the document shows, saved with …/overlat. */
 export function SalePanel({
@@ -25,12 +35,15 @@ export function SalePanel({
   herds,
   canSave,
   onDone,
+  addressRequired = false,
 }: {
   itemId: number;
   doc: InboxDocument;
   herds: GenebankHerd[];
   canSave: boolean;
   onDone: (document: InboxDocument) => void;
+  /** As the API: a new sale needs the buyer's postal address unless a manager or admin registers it (#111). */
+  addressRequired?: boolean;
 }) {
   const [form, setForm] = useState<SaleForm>({
     individual: doc.individual ?? "",
@@ -41,6 +54,7 @@ export function SalePanel({
   const [errors, setErrors] = useState<Partial<Record<keyof SaleForm, string>>>(
     {},
   );
+  const [buyer, setBuyer] = useState(EMPTY_BUYER);
   const [formError, setFormError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [pending, start] = useTransition();
@@ -48,13 +62,48 @@ export function SalePanel({
     setForm((f) => ({ ...f, ...changes }));
   const names = new Map(herds.map((h) => [h.herd, h.herd_name]));
   const proof = doc.doc_type === "bevis";
+  // The rabbit's active sales, read through the item: a proof of a sale already registered asks for no buyer
+  // unless that sale has none (provenSale). Kept with the number they belong to, so another number's rows never
+  // hide the buyer fields; `rows` null means the lookup failed, and the panel says so rather than guess.
+  const [sales, setSales] = useState<{
+    number: string;
+    rows: RegistrySale[] | null;
+  }>({ number: "", rows: [] });
+  const number = buildSalePayload(form).individual;
+  useEffect(() => {
+    if (!proof || !number) return;
+    let current = true;
+    const timer = setTimeout(() => {
+      rabbitSales(itemId, number).then((res) => {
+        if (current) setSales({ number, rows: res.ok ? res.data.sales : null });
+      });
+    }, LOOKUP_DELAY_MS);
+    return () => {
+      current = false;
+      clearTimeout(timer);
+    };
+  }, [proof, itemId, number]);
+  const lookedUp = proof && !!number && sales.number === number;
+  const lookupFailed = lookedUp && sales.rows === null;
+  const registered = lookedUp
+    ? provenSale(doc, buildSalePayload(form), sales.rows ?? [])
+    : null;
+  // The buyer is asked for unless the registered sale has one, or had one that was removed.
+  const saleRegistered = !!registered && registered.buyer !== "none";
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     start(async () => {
       setErrors({});
       setFormError(null);
-      const res = await registerSale(itemId, doc.id, buildSalePayload(form));
+      const payload = buildSalePayload(form);
+      const res = await registerSale(
+        itemId,
+        doc.id,
+        form.outside && !saleRegistered
+          ? { ...payload, buyer: buyerPayload(buyer) }
+          : payload,
+      );
       if (res.ok) {
         setSaved(true);
         onDone(res.data.document);
@@ -113,11 +162,19 @@ export function SalePanel({
         </div>
         <div className={styles.wide}>
           {form.outside ? (
-            <p className={styles.muted}>
-              Sparas på {outsideHerd(form.individual) ?? "GX1 eller MX1"}.
-              Köparens namn och adress sparas inte; de finns bara på
-              originalfotot.
-            </p>
+            <>
+              <p className={styles.muted}>
+                Sparas på {outsideHerd(form.individual) ?? "GX1 eller MX1"}.
+              </p>
+              {!saleRegistered && (
+                <BuyerFields
+                  value={buyer}
+                  onChange={setBuyer}
+                  size="small"
+                  addressRequired={addressRequired}
+                />
+              )}
+            </>
           ) : (
             <Autocomplete
               freeSolo
@@ -141,6 +198,12 @@ export function SalePanel({
           )}
         </div>
       </div>
+      {form.outside && lookupFailed && (
+        <p role="alert" className={styles.error}>
+          Kunde inte läsa kaninens försäljningar, så det går inte att veta om
+          köparen redan är registrerad. Kontrollera individnumret.
+        </p>
+      )}
       {formError && (
         <p role="alert" className={styles.error}>
           {formError}
@@ -152,7 +215,18 @@ export function SalePanel({
         </p>
       )}
       <div className={styles.submitRow}>
-        <button type="submit" className="sb-btn" disabled={!canSave || pending}>
+        <button
+          type="submit"
+          className="sb-btn"
+          disabled={
+            !canSave ||
+            pending ||
+            (form.outside &&
+              !saleRegistered &&
+              !buyerComplete(buyer, addressRequired)) ||
+            (form.outside && (lookupFailed || (proof && !lookedUp)))
+          }
+        >
           {pending
             ? "Sparar…"
             : proof
