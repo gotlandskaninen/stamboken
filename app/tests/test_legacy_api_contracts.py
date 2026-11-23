@@ -1403,18 +1403,20 @@ class TestCertificateContracts(FlaskTest):
 
     def test_issue_get_and_preview_follow_the_certificate_rule(self):
         """ADR-0016 on the legacy routes too, as on GET /api/v2/certificates/<number>: seeing the rabbit is not enough.
-        individuals[3] lives in herds[0]; a viewer on the genebank and the owner of another herd in it get 403."""
+        individuals[3] is bred in herds[0] (self.owner). The owner of herds[1] gets 403 until the rabbit is sold to
+        herds[1], then 200 like the breeder; a viewer on the genebank stays at 403."""
         import utils.settings as settings
 
+        from tests.ht_helpers import ht_row
+
         ind = self.individuals[3]
-        other = da.register_user("other", "pass")
-        other.add_role("owner", self.herds[1].id)
-        users = ((self.owner, True), (self.manager, True), (self.admin, True), (self.viewer, False), (other, False))
-        with mock.patch.object(settings.s3, "endpoint", None), mock_aws():
-            pdf = self._store_certificate(ind)
-            for user, allowed in users:
+        buyer = da.register_user("buyer", "pass")
+        buyer.add_role("owner", self.herds[1].id)
+
+        def check(expected):
+            for user, allowed in expected:
                 client = self._client(user)
-                with self.subTest(user=user.email):
+                with self.subTest(user=user.email, allowed=allowed):
                     self.assertIsNotNone(da.get_individual(ind.number, user.uuid))  # sees the rabbit
                     download = client.get(f"/api/certificates/issue/{ind.number}")
                     previews = [
@@ -1425,11 +1427,25 @@ class TestCertificateContracts(FlaskTest):
                         self.assertEqual(download.status_code, 200)
                         self.assertEqual(download.get_data(), pdf)
                         for preview in previews:
-                            self.assertIn(preview.status_code, (200, 503))
+                            self.assertEqual(preview.status_code, 200)
+                            self.assertEqual(preview.headers["Content-Type"], "application/pdf")
                     else:
                         for response in (download, *previews):
                             self.assertEqual(response.status_code, 403)
                             self.assertNotIn(b"%PDF", response.get_data())
+
+        with mock.patch.object(settings.s3, "endpoint", None), mock_aws():
+            pdf = self._store_certificate(ind)
+            check(((self.owner, True), (self.manager, True), (self.admin, True), (self.viewer, False), (buyer, False)))
+            ht_row(
+                "TRANSFER",
+                from_herd=self.herds[0],
+                herd=self.herds[1],
+                signature=self.manager,
+                individual=ind,
+                herd_tracking_date=datetime.now(),
+            )
+            check(((buyer, True), (self.owner, True), (self.viewer, False)))
 
     def test_preview_returns_pdf_or_503(self):
         with self.app as ctx:
