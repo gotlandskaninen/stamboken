@@ -37,3 +37,8 @@ export function useUser() {
   if (!ctx) throw new Error("useUser must be used within UserProvider");
   return ctx;
 }
+
+// Public pages (sign-in, certificate verification) have no UserProvider.
+export function useOptionalUser(): UserContext | null {
+  return useContext(UserCtx);
+}

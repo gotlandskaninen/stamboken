@@ -4,3 +4,5 @@
 next-app/messages/sv.json:"buyerNote": "Ge köparen överlåtelsebeviset\.
 # Överlåtelsebevis är namnet som står tryckt på pappersblanketten köparen får, och blanketten hänvisar hit.
 next-app/src/app/(app)/(public)/integritetspolicy/page.tsx:överlåtelsebevis
+# Tyck till: varningen till den som väljer "Alla" är specens ordalydelse (mocken, 2026-11-23); "kaninnummer" är ordet medlemmen själv använder.
+next-app/src/components/tyck-till/TyckTillDialog.client.tsx:kaninnummer

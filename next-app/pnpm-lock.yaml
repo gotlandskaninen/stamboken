@@ -104,6 +104,9 @@ importers:
       formik:
         specifier: 2.4.6
         version: 2.4.6(@types/react@19.2.18)(react@19.2.8)
+      html-to-image:
+        specifier: 1.11.11
+        version: 1.11.11
       i18next:
         specifier: 25.4.2
         version: 25.4.2(typescript@5.9.2)
@@ -3898,6 +3901,9 @@ packages:
 
   html-parse-stringify@3.0.1:
     resolution: {integrity: sha512-KknJ50kTInJ7qIScF3jeaFRpMpE8/lfiTdzf/twXyPBLAGrLRTmkz3AdTnKeh40X8k9L2fdYwEp/42WGXIRGcg==}
+
+  html-to-image@1.11.11:
+    resolution: {integrity: sha512-9gux8QhvjRO/erSnDPv28noDZcPZmYE7e1vFsBLKLlRlKDSqNJYebj6Qz1TGd5lsRV+X+xYyjCKjuZdABinWjA==}
 
   html-tokenize@2.0.1:
     resolution: {integrity: sha512-QY6S+hZ0f5m1WT8WffYN+Hg+xm/w5I8XeUcAq/ZYP5wVC8xbKi4Whhru3FtrAebD5EhBW8rmFzkDI6eCAuFe2w==}
@@ -9673,6 +9679,8 @@ snapshots:
   html-parse-stringify@3.0.1:
     dependencies:
       void-elements: 3.1.0
+
+  html-to-image@1.11.11: {}
 
   html-tokenize@2.0.1:
     dependencies:
