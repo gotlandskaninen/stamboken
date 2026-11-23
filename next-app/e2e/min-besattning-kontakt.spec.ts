@@ -60,6 +60,20 @@ test.describe("Min besättning: kontakt från matrikeln", () => {
     ).toBeVisible();
   });
 
+  test("has no horizontal scroll at 375px with the question showing", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 375, height: 800 });
+    await page.goto(PAGE);
+    await expect(card(page).getByRole("group", { name: ASK })).toBeVisible();
+    const overflow = await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
+  });
+
   test("answering 'Använd medlemskapets' fetches the register's mobile", async ({
     page,
   }) => {
@@ -80,7 +94,7 @@ test.describe("Min besättning: kontakt från matrikeln", () => {
     await expect(mobile.getByText("Endast genbanksansvarig")).toBeVisible();
   });
 
-  test("switching contact person to the family member shows her e-post, and back", async ({
+  test("switching contact person to the family member shows her e-post and makes the name private", async ({
     page,
   }) => {
     await page.goto(PAGE);
@@ -94,62 +108,23 @@ test.describe("Min besättning: kontakt från matrikeln", () => {
     await expect(
       page.getByText("Kontaktuppgifter sparade").first(),
     ).toBeVisible();
+
+    // what was stored; the server resets the name's visibility on a change of person (decision 14)
+    await page.reload();
     await expect(
       card(page).getByText(FAMILY, { exact: true }).first(),
     ).toBeVisible();
     await expect(
-      card(page).getByRole("link", { name: "test-family@test.local" }),
+      group(page, FETCHED).getByRole("link", {
+        name: "test-family@test.local",
+      }),
     ).toBeVisible();
-
-    // put the person back (the herd is also reset after the group)
     await card(page).getByRole("button", { name: "Redigera" }).click();
-    await page
-      .locator("#contact-person")
-      .selectOption({ label: `${MAIN}, huvudmedlem` });
-    await card(page)
-      .getByRole("button", { name: "Spara", exact: true })
-      .click();
     await expect(
-      card(page).getByRole("link", { name: "test-member@test.local" }),
-    ).toBeVisible();
-  });
-
-  test("the name is made private in the flow", async ({ page }) => {
-    // a fresh seed shows the name to logged-in herds; the owner test below needs it private
-    await page.goto(PAGE);
-    await card(page).getByRole("button", { name: "Redigera" }).click();
-    const chip = card(page)
-      .getByRole("group", { name: "Vem ser namnet" })
-      .getByRole("button", { name: "Endast genbanksansvarig" });
-    if ((await chip.getAttribute("aria-pressed")) !== "true") {
-      await chip.click();
-      await card(page)
-        .getByRole("button", { name: "Spara", exact: true })
-        .click();
-      await expect(
-        page.getByText("Kontaktuppgifter sparade").first(),
-      ).toBeVisible();
-    } else {
-      await card(page).getByRole("button", { name: "Avbryt" }).click();
-    }
-    await page.reload();
-    await expect(
-      card(page).getByText("Endast genbanksansvarig").first(),
-    ).toBeVisible();
-  });
-
-  test("has no horizontal scroll at 375px", async ({ page }) => {
-    await page.setViewportSize({ width: 375, height: 800 });
-    await page.goto(PAGE);
-    await expect(
-      card(page).getByRole("heading", { name: FETCHED }),
-    ).toBeVisible();
-    const overflow = await page.evaluate(
-      () =>
-        document.documentElement.scrollWidth -
-        document.documentElement.clientWidth,
-    );
-    expect(overflow).toBeLessThanOrEqual(0);
+      card(page)
+        .getByRole("group", { name: "Vem ser namnet" })
+        .getByRole("button", { name: "Endast genbanksansvarig" }),
+    ).toHaveAttribute("aria-pressed", "true");
   });
 });
 
