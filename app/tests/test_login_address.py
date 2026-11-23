@@ -186,8 +186,8 @@ class TestWriters(LoginAddressTest):
 WEEK = timedelta(days=7)
 
 
-class TestSevenDays(LoginAddressTest):
-    """The three rows of the table, the chain A to B to C, back to A, and what goes with every change."""
+class SevenDaysTest(LoginAddressTest):
+    """A member with an account and an address, and the helpers to change it."""
 
     def setUp(self):
         super().setUp()
@@ -216,6 +216,10 @@ class TestSevenDays(LoginAddressTest):
             previous = db.MemberPreviousAddress.get_by_id(row.recipient_id)
             out.append((previous.address, row.params["by_self"], row.params["by_matrikel"]))
         return out
+
+
+class TestSevenDays(SevenDaysTest):
+    """The three rows of the table, the chain A to B to C, back to A, and what goes with every change."""
 
     def test_the_member_herself(self):
         person = self.change("b@example.org", "self")
@@ -319,6 +323,34 @@ class TestSevenDays(LoginAddressTest):
         self.assertEqual(matrikel.purge_previous_addresses(row.purge_at + timedelta(seconds=1)), 1)
         self.assertFalse(db.MemberPreviousAddress.select().exists())
         self.assertIsNone(db.MailMessage.get_by_id(mail_id).address_hash)
+
+
+class TestHolderAgain(SevenDaysTest):
+    """A person who holds addresses again holds every one that still counts, the previous ones too."""
+
+    def setUp(self):
+        super().setUp()
+        self.change("b@example.org", "self")  # a@example.org counts for seven more days
+        ms = self.person.membership
+        self.other_main = _mk_person(ms, "Ny", "Huvudmedlem", "ny-huvud@example.org", role="familjemedlem")
+        matrikel.swap_main_member(ms, self.other_main, self.matrikel_user)
+        matrikel.unlink_member_user(self.person.id, actor=self.matrikel_user)
+        self.taker = _mk_person(_mk_membership(number=12), "Bo", "Tar", None)
+        self.reserve("a@example.org", self.taker.id)  # free while she holds nothing
+        db.Member.update(email="a@example.org").where(db.Member.id == self.taker.id).execute()
+
+    def test_linking_her_account_again(self):
+        with self.assertRaises(matrikel.LinkError) as refused:
+            matrikel.link_member_user(self.person.id, self.user.id, actor=self.matrikel_user, mode="admin")
+        self.assertEqual(refused.exception.title, lc.AddressTaken.title)
+        self.assertIsNone(db.Member.get_by_id(self.person.id).user_id)
+        self.assertEqual(lc.address_collisions(), 0)
+
+    def test_making_her_main_member_again(self):
+        with self.assertRaises(lc.AddressTaken):
+            matrikel.swap_main_member(self.person.membership, self.person, self.matrikel_user)
+        self.assertEqual(db.Member.get_by_id(self.person.id).role, "familjemedlem")
+        self.assertEqual(lc.address_collisions(), 0)
 
 
 class TestCollisions(LoginAddressTest):

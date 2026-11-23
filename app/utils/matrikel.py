@@ -38,7 +38,7 @@ from utils.database import (
     User,
 )
 from utils.inbox_purge import erase_person_from_inbox, remove_originals
-from utils.login_code import AddressTaken, reserve_login_address, void
+from utils.login_code import AddressTaken, reserve_holder, reserve_login_address, void
 from utils.mail import cancel_member_added, enqueue_mail, forget_recipient, queue_member_added
 from utils.membership_lifecycle import Event, Status, next_state, state_of
 from utils.postal import (  # noqa: F401 — public helpers
@@ -367,8 +367,9 @@ def swap_main_member(membership, new_main, actor):
     Same serialization as soft_delete_person: lock the membership row, then
     re-read and re-validate the candidate inside the transaction, so a
     concurrent delete cannot end the person this swap is about to promote.
-    The new main member's address becomes a login address: AddressTaken when
-    another person holds it, also the old main member who keeps an account.
+    The new main member's addresses become login addresses, her previous ones
+    that still count too: AddressTaken when another person holds one, also
+    the old main member who keeps an account.
     """
     with DB_PROXY.atomic():
         Membership.select().where(Membership.id == membership.id).for_update().get()
@@ -393,7 +394,7 @@ def swap_main_member(membership, new_main, actor):
             current.save()
         new_main.role = "huvudmedlem"
         new_main.save()
-        reserve_login_address(new_main.email, new_main.id)
+        reserve_holder(new_main.id)
         cancel_member_added([new_main.id])
         write_matrikel_audit(
             actor,
@@ -1024,7 +1025,7 @@ def link_member_user(person_id, user_id, *, actor, mode, confirmed_herd_ids=None
                 holder_person_id=holder.id,
             )
         try:
-            reserve_login_address(person.email, person.id)  # with an account, her address is a login address
+            reserve_holder(person.id)  # with an account, her addresses are login addresses
         except AddressTaken as exc:
             detail = "En annan medlem kan redan logga in med personens e-postadress"
             raise LinkError(AddressTaken.title, detail) from exc

@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from peewee import fn
 
 import utils.settings as settings
-from utils.database import DB_PROXY, LoginCode
+from utils.database import DB_PROXY, LoginCode, Member, MemberPreviousAddress
 from utils.mail import Recipient, address_hash, forget_recipient, mail_kind, one_time_code, recipient_kind
 
 logger = logging.getLogger("herdbook.login_code")
@@ -218,6 +218,25 @@ class AddressTaken(Exception):
     """Another person holds the address for login. Only the matrikel admin and the approver of an application see it."""
 
     title = "Adressen används redan av en annan medlem"
+
+
+def lock_addresses(addresses):
+    """The locks on `addresses`, always in one order, so two writers that lock several cannot deadlock."""
+    for address in sorted({(a or "").strip().lower() for a in addresses} - {""}):
+        DB_PROXY.execute_sql("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"login_address:{address}",))
+
+
+def reserve_holder(person_id):
+    """
+    A person becomes a holder again (main member, or an account linked): her address and every previous one that
+    still counts are all reserved for her, or AddressTaken and the caller's change is rolled back.
+    """
+    person = Member.get_by_id(person_id)
+    rows = MemberPreviousAddress.select().where(MemberPreviousAddress.member == person_id)
+    lock_addresses([person.email, *(r.address for r in rows)])
+    now = _utcnow()
+    for address in [person.email, *(r.address for r in rows.where(MemberPreviousAddress.login_until > now))]:
+        reserve_login_address(address, person_id)
 
 
 def reserve_login_address(address, person_id):
