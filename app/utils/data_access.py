@@ -2483,7 +2483,8 @@ def get_paginated_individuals(
         }
         sort_col = sort_columns.get(sort, name_sort)
         if order == "desc":
-            sort_col = sort_col.desc()
+            # Postgres puts NULLs first on DESC; keep rows without a value last
+            sort_col = sort_col.desc(nulls="LAST")
 
         # When herd_id is specified, sort own-herd individuals first
         if herd_id:

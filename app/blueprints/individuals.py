@@ -12,7 +12,14 @@ from zoneinfo import ZoneInfo
 import utils.data_access as da
 import utils.genetics_service as genetics_service
 from flask import Blueprint, jsonify, request, session
-from utils.database import DB_PROXY, OUTSIDE_GENEBANK_HERDS, Herd, IndividualCommand
+from utils.database import (
+    DB_PROXY,
+    OUTSIDE_GENEBANK_HERDS,
+    DigitalCertificateV2,
+    Herd,
+    Individual,
+    IndividualCommand,
+)
 from utils.herd_tracking import HerdTrackingError
 from utils.individual_commands import IndividualRefused, Undo, execute, own_recent_commands
 from utils.individual_number_v2 import PAPER_NUMBER_REQUIRED, parse_number
@@ -83,7 +90,7 @@ def get_individual_v2(number):
             individual["updated_at"] = ind.updated_at.isoformat()
     except IndividualModel.DoesNotExist:
         pass
-    return jsonify(_with_can_transfer(individual, user_uuid)), 200
+    return jsonify(_with_viewer_rights(individual, user_uuid)), 200
 
 
 _warned_missing = set()  # (genebank, number) already warned about in this process
@@ -147,10 +154,28 @@ def get_individual_genetics_v2(number):
     return jsonify(data), 200
 
 
-def _with_can_transfer(individual, user_uuid):
-    """Add `can_transfer` (sell/move permission, see User.can_transfer) to an individual dict."""
+def _with_viewer_rights(individual, user_uuid):
+    """Add the caller's rights on the rabbit to an individual dict.
+
+    `can_transfer`: sell/move (User.can_transfer). `can_view_certificate`: may open the certificate PDF
+    (User.can_view_certificate, ADR-0016), the same check as GET /api/v2/certificates/<number>.
+    `current_certificate`: the current v2 certificate's public verification link, for everyone who may see
+    the rabbit; null for a v1 or paper certificate, which has no verification page.
+    """
     user = da.fetch_user_info(user_uuid)
+    model = Individual.get_by_id(individual["id"])
     individual["can_transfer"] = bool(user and user.can_transfer(individual["id"]))
+    individual["can_view_certificate"] = bool(user and user.can_view_certificate(model))
+    current = (
+        DigitalCertificateV2.select(DigitalCertificateV2.verification_token, DigitalCertificateV2.issued_at)
+        .where((DigitalCertificateV2.individual == model) & (DigitalCertificateV2.is_current == True))  # noqa: E712
+        .first()
+    )
+    individual["current_certificate"] = (
+        {"verification_token": str(current.verification_token), "issued_at": current.issued_at.isoformat()}
+        if current
+        else None
+    )
     return individual
 
 
@@ -400,7 +425,7 @@ def update_individual_v2(number):
         logging.warning("Cache invalidation failed for herd %s", form.get("herd", ""))
 
     updated = da.get_individual(number, user_uuid)
-    return jsonify(_with_can_transfer(updated or individual, user_uuid)), 200
+    return jsonify(_with_viewer_rights(updated or individual, user_uuid)), 200
 
 
 # [Next.js] The caller's own changes on an individual within the undo window (ADR-0017).

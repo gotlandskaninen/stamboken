@@ -1169,6 +1169,84 @@ class TestCertificateV2ViewAuthorization(CertV2Mixin, FlaskTest):
         self.assertEqual(self._status(buyer, f"/api/v2/certificates/{individual.number}"), 200)
         self.assertEqual(self._status(self.owner, f"/api/v2/certificates/{individual.number}"), 200)
 
+    def _rabbit_page(self, user, number):
+        """GET /api/v2/individual/<number> as `user`: what the rabbit page is told."""
+        with self.app as context:
+            context.get("/api/logout")
+            context.post("/api/login", json={"username": user.email, "password": "pass"})
+            response = context.get(f"/api/v2/individual/{number}")
+            self.assertEqual(response.status_code, 200, user.email)
+            return response.get_json()
+
+    def _as_breeder(self, method, url, **kwargs):
+        """Issue or re-issue as the origin herd's owner: the breeder may, whoever else may too (#141)."""
+        self._start_mock_aws()
+        with self.app as context:
+            context.get("/api/logout")
+            context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
+            response = getattr(context, method)(url, **kwargs)
+            self.assertIn(response.status_code, (200, 201), response.get_json())
+
+    def test_rabbit_page_flag_matches_the_download(self):
+        """The page shows the button exactly when the download answers: before and after a sale, for every role."""
+        import utils.data_access as da
+
+        individual = self.individuals[3]  # bred in herds[0] (self.owner), genebank[0]
+        self._as_breeder(
+            "post",
+            f"/api/v2/certificates/issue/{individual.number}",
+            json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
+        )
+        buyer = da.register_user("buyer", "pass")
+        buyer.add_role("owner", self.herds[1].id)
+        users = (self.owner, buyer, self.manager, self.admin, self.viewer)
+
+        def check(expected):
+            for user in users:
+                with self.subTest(user=user.email, expected=expected[user.email]):
+                    flag = self._rabbit_page(user, individual.number)["can_view_certificate"]
+                    status = self._status(user, f"/api/v2/certificates/{individual.number}")
+                    self.assertIs(flag, expected[user.email])
+                    self.assertEqual(status, 200 if flag else 403)
+
+        check({"owner": True, "buyer": False, "man": True, "admin": True, "spec": False})
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[1],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=datetime.now(),
+        )
+        check({"owner": True, "buyer": True, "man": True, "admin": True, "spec": False})
+
+    def test_rabbit_page_links_the_current_certificate_for_everyone(self):
+        """The verification link goes to all who may see the rabbit, and follows a re-issue."""
+        individual = self.individuals[3]
+        self._as_breeder(
+            "post",
+            f"/api/v2/certificates/issue/{individual.number}",
+            json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
+        )
+        self._as_breeder("patch", f"/api/v2/certificates/update/{individual.number}", json={"name": "Ny"})
+        current = db.DigitalCertificateV2.get(
+            (db.DigitalCertificateV2.individual == individual) & (db.DigitalCertificateV2.is_current == True)  # noqa: E712
+        )
+        for user in (self.viewer, self.owner):
+            with self.subTest(user=user.email):
+                self.assertEqual(
+                    self._rabbit_page(user, individual.number)["current_certificate"],
+                    {"verification_token": str(current.verification_token), "issued_at": current.issued_at.isoformat()},
+                )
+
+    def test_rabbit_page_has_no_verification_link_without_a_v2_certificate(self):
+        """A v1 certificate has no verification page; the owner still gets the button (the v1 PDF)."""
+        individual = self.individuals[3]
+        db.Individual.update(digital_certificate=4711).where(db.Individual.id == individual.id).execute()
+        data = self._rabbit_page(self.owner, individual.number)
+        self.assertIsNone(data["current_certificate"])
+        self.assertTrue(data["can_view_certificate"])
+
     def test_a_role_on_gx1_does_not_open_certificates_sold_outside(self):
         """GX1 holds every rabbit sold outside the genebank: an owner role there reads none of their certificates."""
         import utils.data_access as da

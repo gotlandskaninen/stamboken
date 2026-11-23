@@ -626,6 +626,10 @@ Allt om en kanin. Adressen är /stamboken/individ/ följt av individnumret.
   **Årsrapportera** – kommer snart), märken för kön, ålder, status, intyg, kastrering
   och **Köpt**, genetikbandet A–E med **F** (inavelsgrad) och knappen **Om genetiken**,
   samt föräldrarnas nummer (M och F).
+- **Intyget** – under märkena i kortet, när kaninen har ett digitalt intyg. Kaninens
+  ägare, uppfödaren och genbanksansvarig klickar **Visa intyg** för att öppna PDF:en i
+  en ny flik. Andra ser vem som kan hämta intyget. **Kontrollera intyget** leder till
+  [Verifiera intyg](#verifiera-intyg) för intyg som utfärdats i nya Stamboken.
 - **Identitet** – färg, ögonfärg, klofärg, bukfärg, hårlag och färganteckning.
 - **Släktträd** – tre generationer med länkar till varje förfader; okända visas som
   "Okänd". Under trädet "Kullstorlek: N (vid 6v: M)".
@@ -650,9 +654,13 @@ inte hittas".
 
 <!-- route: /stamboken/alla-kaniner -->
 
-Sök bland alla kaniner i genbankerna du har tillgång till. Välj ras med **Alla**,
-**Gotlandskanin** eller **Mellerudskanin**, sök i sökfältet och filtrera på **Status**
-(Aktiv, Inaktiv, Död, Slaktad, Avlivad, Försvunnen) och **Kön**. På datorn visas en
+Sök bland alla kaniner i genbankerna du har tillgång till. Listan öppnas med
+**Gotlandskanin** och status **Aktiv**, och den nyast födda kaninen står först. Föder du
+upp mellerudskaniner, klicka **Mellerudskanin**. Välj ras med **Gotlandskanin**,
+**Mellerudskanin** eller **Alla**, sök i sökfältet och filtrera på **Status** (Alla,
+Aktiv, Inaktiv, Död, Slaktad, Avlivad, Försvunnen) och **Kön**. Sökningen gäller bara
+den ras och status du har valt. Välj **Alla** under **Status** för att hitta en kanin
+som är såld, död eller inaktiv. På datorn visas en
 tabell med kolumnerna **Individnummer**, **Namn**, **Kön**, **Födelsedatum**, **Status**,
 **Besättning**, **Kullstorlek**, **Mor**, **Far** och **Färg**; **Kolumner** väljer
 vilka som syns. På mobilen är det en lista med **Visa fler** längst ned. Klicka en rad
@@ -745,7 +753,8 @@ rättelser, ändringshistorik, genetiksidan och delar av adminpanelen.
 
 ### Rätta en kanin i en annan besättning
 
-1. Sök upp kaninen i **Alla kaniner** och öppna dess sida.
+1. Sök upp kaninen i **Alla kaniner** och öppna dess sida. Är kaninen inte aktiv,
+   välj **Alla** under **Status** först.
 2. Klicka **Redigera**, ändra och klicka **Spara**.
 
 Samma knappar som uppfödaren har: **Fler åtgärder** ger dig **Rapportera död** och

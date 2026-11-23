@@ -192,6 +192,14 @@
     "breadcrumb": {
       "myHerd": "Min besättning",
       "allRabbits": "Alla kaniner"
+    },
+    "certificate": {
+      "view": "Visa intyg",
+      "newTab": "(öppnas i en ny flik)",
+      "verify": "Kontrollera intyget",
+      "onlyFor": "Bara kaninens ägare, uppfödaren och genbanksansvarig kan hämta intyget.",
+      "notInDemo": "Intyget visas inte i testmiljön.",
+      "issued": "Utfärdat {{date}}"
     }
   },
   "pedigree": {
