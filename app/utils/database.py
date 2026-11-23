@@ -1583,8 +1583,10 @@ class User(BaseModel, UserMixin):
         if self.is_admin or (self.is_manager and individual.origin_herd.genebank_id in self.is_manager):
             return True
         herd = individual.current_herd
+        # GX1/MX1 hold every rabbit sold outside the genebank, so a role there is no ownership of this one.
+        current = herd.id if herd and herd.herd not in OUTSIDE_GENEBANK_HERDS else None
         # By id: a herd code is unique only within its genebank, so another genebank's herd G1 is not this one.
-        return bool({individual.origin_herd_id, herd.id if herd else None} & self.effective_herd_ids())
+        return bool({individual.origin_herd_id, current} & self.effective_herd_ids())
 
     class Meta:  # pylint: disable=too-few-public-methods
         """

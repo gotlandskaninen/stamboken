@@ -1169,6 +1169,28 @@ class TestCertificateV2ViewAuthorization(CertV2Mixin, FlaskTest):
         self.assertEqual(self._status(buyer, f"/api/v2/certificates/{individual.number}"), 200)
         self.assertEqual(self._status(self.owner, f"/api/v2/certificates/{individual.number}"), 200)
 
+    def test_a_role_on_gx1_does_not_open_certificates_sold_outside(self):
+        """GX1 holds every rabbit sold outside the genebank: an owner role there reads none of their certificates."""
+        import utils.data_access as da
+
+        individual = self.individuals[3]
+        self._issue_as_breeder(individual)
+        gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        gx_owner = da.register_user("gxowner", "pass")
+        gx_owner.add_role("owner", gx1.id)
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=gx1,
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=datetime.now(),
+        )
+        self.assertEqual(db.Individual.get(db.Individual.id == individual.id).current_herd.id, gx1.id)
+        for url in (f"/api/v2/certificates/{individual.number}", f"/api/v2/certificates/preview/{individual.number}"):
+            self.assertEqual(self._status(gx_owner, url), 403, url)
+        self.assertEqual(self._status(self.owner, f"/api/v2/certificates/{individual.number}"), 200)
+
     def test_buyer_preview_is_the_signed_certificate(self):
         """Only someone who may issue the next version gets a rendered preview naming her; the buyer gets the PDF."""
         from unittest import mock
