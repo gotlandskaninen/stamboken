@@ -477,7 +477,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         self.assertIn(
             f'  G901: medlem {person.id} -> konto {user.id} | medlem: "Anna Svensson" "anna@example.org" | '
             f'konto: namn "Anna Svensson", användarnamn "konto1", e-post (overifierad) "konto1@example.org", '
-            f'Google vid senaste inloggning "anna.svensson@example.org"\n',
+            f'senast sparade Google-adress "anna.svensson@example.org"\n',
             result.output,
         )
 
@@ -555,7 +555,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         for user in users:
             self.assertIn(f"-> konto {user.id} | ", result.output)
             self.assertIn(
-                'användarnamn -, e-post (overifierad) "delad@example.org", Google vid senaste inloggning -',
+                'användarnamn -, e-post (overifierad) "delad@example.org", senast sparade Google-adress -',
                 result.output,
             )
 
@@ -751,6 +751,19 @@ class TestMembersLinkByHerd(DatabaseTest):
         family = db.Member.create(membership=m902, role="familjemedlem", first_name="Anna", last_name="Svensson")
         user = self._account(owns=self._herd("G901"))
         user.add_role("owner", self._herd("G902").id)
+
+        for result in (self._run(), self._apply()):
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertIn("flera möjliga kopplingar", result.output)
+        self.assertIsNone(self._linked_user_id(p1))
+        self.assertIsNone(self._linked_user_id(family))
+
+    def test_family_member_with_the_name_behind_an_untied_herd_blocks_the_link(self):
+        _, p1 = self._membership(901)
+        m902, _ = self._membership(902, first="Eva", last="Lund")
+        family = db.Member.create(membership=m902, role="familjemedlem", first_name="Anna", last_name="Svensson")
+        user = self._account(owns=self._herd("G901"))
+        user.add_role("owner", self._herd("G902", membership=None).id)
 
         for result in (self._run(), self._apply()):
             self.assertEqual(result.exit_code, 0, result.output)
