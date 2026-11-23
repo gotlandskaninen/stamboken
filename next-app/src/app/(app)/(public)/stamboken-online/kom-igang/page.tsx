@@ -3,12 +3,12 @@ import { Box, Typography } from "@mui/material";
 import type { Metadata } from "next";
 import { LinkButton } from "@/components/public/LinkButton";
 import { PageHeader } from "@/components/public/PageHeader";
-import { COURSE_URL, MANUAL_PATH } from "@/lib/constants";
+import { MANUAL_PATH } from "@/lib/constants";
 
 export const metadata: Metadata = {
   title: "Kom igång med Stamboken",
   description:
-    "Från medlemskap till första kullen i Stamboken Online: konto, webbkurs, inloggning, testmiljön och de första stegen.",
+    "Från medlemskap till första kullen i Stamboken Online: konto, inloggning, testmiljön och de första stegen.",
 };
 
 // Plain style object, not MUI sx with component={Link}: see the note in
@@ -42,11 +42,6 @@ const STEPS: Array<{
     },
   },
   {
-    title: "Gå webbkursen",
-    text: "Föreningens webbkurs går igenom stamboken och genbanksarbetet. När du har gått den markerar administratören ditt konto som validerat. Först då släpper inloggningen med föreningskontot in dig.",
-    link: { href: COURSE_URL, label: "Till webbkursen" },
-  },
-  {
     title: "Logga in",
     text: "Klicka på Stamboken uppe till höger och sedan på Logga in i Stamboken. Där klickar du på Logga in med ditt föreningskonto (Google) och väljer föreningskontot i Googles kontoväljare, inte ett privat Gmail-konto. Har du inget föreningskonto loggar du in med användarnamn och lösenord.",
     link: { href: `${MANUAL_PATH}#logga-in`, label: "Logga in steg för steg" },
@@ -76,7 +71,7 @@ export default function KomIgangPage() {
         section="Kom igång"
         parent={{ label: "Stamboken Online", href: "/stamboken-online" }}
         title="Kom igång med Stamboken"
-        lede="Från medlemskap till första kullen i Stamboken Online: konto, webbkurs, inloggning och de första stegen."
+        lede="Från medlemskap till första kullen i Stamboken Online: konto, inloggning och de första stegen."
       />
       <Box
         component="section"

@@ -678,15 +678,11 @@ avkomman F: bra upp till N %, utred närmare upp till M %, över det hög inavel
 
 <!-- route: /stamboken/profil -->
 
-Korten **Konto** (bild, namn, inloggning, roller, **Validerad** / **Inte validerad**),
+Korten **Konto** (bild, namn, inloggning, roller),
 **Medlemskap** (medlemsnummer, medlem sedan, huvudmedlem, din roll, besättningar),
 **Kontaktuppgifter**, **Publicering i Koharen** och **Personer i medlemskapet**.
 Saknar kontot medlemspost visas bara **Konto** och texten "Du har ingen medlemspost
 kopplad till ditt konto." Se [Uppdatera din profil](#uppdatera-din-profil).
-
-Är du inte validerad visas "För att bli validerad: Du måste genomgå kursen för att få
-full åtkomst till systemet." med länken **Gå kursen nu**. Med Google kommer du inte in
-alls förrän du är validerad; inloggningssidan visar då adressen till kursen.
 
 ![Min profil](profil-desktop.png)
 
@@ -1025,8 +1021,11 @@ I kortet **Status och åtkomst** på användarens sida:
 
 - **Tillgång till den riktiga stamboken i den nya versionen** – slå på när medlemmen
   ska lämna testmiljön. Användaren byter sedan själv via avatarmenyn.
-- **Webbkurs genomförd (validerad)** – krävs för att logga in med Google. Stängs den av
-  kommer kontot inte in med Google längre; lösenordsinloggning påverkas inte.
+- **Webbkurs genomförd (validerad)** – i produktion frågar nya Stamboken inte efter den.
+  Gamla Stamboken kräver den, både vid Google-inloggning och för att visa kaninerna
+  efter en lösenordsinloggning, och en redaktör behöver den för hemsidans redigering
+  (`/admin`). Stäng därför inte av den för någon som använder gamla Stamboken eller
+  redigerar hemsidan.
 
 Reglagen sparas direkt.
 

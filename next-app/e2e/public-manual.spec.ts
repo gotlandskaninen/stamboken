@@ -65,7 +65,7 @@ test("getting started lists the steps and links to the manual", async ({
   await expect(
     page.getByRole("heading", { level: 1, name: "Kom igång med Stamboken" }),
   ).toBeVisible();
-  await expect(page.locator("main ol > li")).toHaveCount(6);
+  await expect(page.locator("main ol > li")).toHaveCount(5);
 
   await expect(
     page.getByRole("link", { name: "projekttavlan för Stamboken" }),
