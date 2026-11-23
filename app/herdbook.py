@@ -2604,6 +2604,19 @@ def update_certificate(i_number):
     return _certificate_gone()
 
 
+def _certificate_refused(i_number, user_id):
+    """403 unless the user may download or preview the certificate (ADR-0016, User.can_view_certificate).
+
+    The same check as GET /api/v2/certificates/<number>: seeing the rabbit is not enough. Call it after
+    da.get_individual has found the rabbit, so an unknown number still answers 404.
+    """
+    user = da.fetch_user_info(user_id)
+    individual = db.Individual.get_or_none(db.Individual.number == i_number)
+    if user and individual and user.can_view_certificate(individual):
+        return None
+    return jsonify({"response": "Bara ägaren, uppfödaren och genbanksansvarig kan hämta intyget"}), 403
+
+
 @APP.route("/api/certificates/issue/<i_number>", methods=["GET", "POST"])
 @login_required
 def issue_certificate(i_number):
@@ -2618,6 +2631,9 @@ def issue_certificate(i_number):
     # get_individual currently returns a dict, not an individual
     if ind_data is None:
         return jsonify({"response": "Individual not found"}), 404
+    refused = _certificate_refused(i_number, user_id)
+    if refused:
+        return refused
 
     certificate_exists = ind_data.get("digital_certificate", None)
 
@@ -2642,6 +2658,9 @@ def preview_certificate(i_number):
     ind = da.get_individual(i_number, user_id)
     if ind is None:
         return jsonify({"response": "Individual not found"}), 404
+    refused = _certificate_refused(i_number, user_id)
+    if refused:
+        return refused
 
     if request.method == "POST":
         form = request.json
