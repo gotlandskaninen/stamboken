@@ -22,3 +22,15 @@ test("anonymous user submits a membership application", async ({ page }) => {
     timeout: 10_000,
   });
 });
+
+// The applicant confirms having read the policy, so it must open without a login.
+test("the privacy policy opens for an anonymous visitor", async ({ page }) => {
+  await page.goto("/ansok");
+  const popup = page.waitForEvent("popup");
+  await page.getByRole("link", { name: /integritetspolicyn/i }).click();
+  const policy = await popup;
+  await expect(policy).toHaveURL(/\/integritetspolicy$/);
+  await expect(
+    policy.getByRole("heading", { level: 1, name: "Integritetspolicy" }),
+  ).toBeVisible();
+});

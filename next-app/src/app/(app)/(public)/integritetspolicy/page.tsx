@@ -175,8 +175,9 @@ export default function IntegritetspolicyPage() {
             <p>
               Vi sparar uppgifterna så länge du är medlem. När medlemskapet
               upphör tar vi bort eller anonymiserar uppgifterna inom 12 månader.
-              Äldre medlemsförteckningar som finns kvar som filer eller på
-              papper tar vi bort efter två år.
+              Har du kvar en genbanksbesättning eller ett uppdrag i föreningen
+              behåller vi dem så länge det varar. Äldre medlemsförteckningar som
+              finns kvar som filer eller på papper tar vi bort efter två år.
             </p>
           </Section>
 
@@ -187,9 +188,11 @@ export default function IntegritetspolicyPage() {
               mottagare för fakturan. Då har vi fått ditt namn och dina
               kontaktuppgifter från huvudmedlemmen och inte från dig. Vi
               använder dem på samma sätt och lika länge som medlemmens egna
-              uppgifter, och du har samma rättigheter. Har vi fått din
-              e-postadress mejlar vi dig inom en månad och berättar att du har
-              lagts in.
+              uppgifter (berättigat intresse), och du har samma rättigheter. Har
+              du lagts in i ett medlemskap och vi har fått din e-postadress
+              mejlar vi dig inom en månad och berättar det. Står du bara som
+              mottagare av fakturan använder vi dina uppgifter enbart för
+              fakturan.
             </p>
           </Section>
 
@@ -237,8 +240,10 @@ export default function IntegritetspolicyPage() {
                 besättningen, av dem som sköter medlemsregistret och betalar ut
                 stödet, och av föreningens systemansvarig. Genbanksansvariga och
                 deras hjälpare ser bankens namn och de två sista siffrorna i
-                kontonumret. Underlaget för utbetalningen sparas så att det kan
-                visas för Jordbruksverket vid en kontroll.
+                kontonumret. Skickar du in en blankett med kontonumret, på
+                papper eller som foto, ser den som tar emot den hela numret.
+                Underlaget för utbetalningen sparas så att det kan visas för
+                Jordbruksverket vid en kontroll.
               </li>
               <li>
                 Ändringar av kaniner, parningar, kullar, besättningar och konton
@@ -251,10 +256,11 @@ export default function IntegritetspolicyPage() {
               <li>
                 Testmiljön är en kopia av den riktiga stamboken, så att du kan
                 öva utan att ändra något på riktigt. Kopian innehåller samma
-                uppgifter. Alla som har ett föreningskonto kan logga in i
-                testmiljön, också den vars konto ännu inte är godkänt för den
-                riktiga stamboken, och ser där det som andra inloggade medlemmar
-                ser.
+                uppgifter, utom köpare utanför föreningen, inskickade ärenden
+                och mejl, som inte kopieras dit. Alla som har ett föreningskonto
+                kan logga in i testmiljön, också den vars konto ännu inte är
+                godkänt för den riktiga stamboken, och ser där det som andra
+                inloggade medlemmar ser.
               </li>
             </ul>
             <p>
@@ -270,7 +276,9 @@ export default function IntegritetspolicyPage() {
             <p>
               Köper du en genbankskanin av en medlem fyller ni i ett
               överlåtelsebevis, och ägarbytet registreras i Stamboken Online.
-              Det gäller också dig som inte är medlem.
+              Har du själv en genbanksbesättning registreras kaninen på den. Det
+              som följer gäller dig som köper utan att ha en genbanksbesättning,
+              också om du inte är medlem.
             </p>
             <ul>
               <li>
@@ -299,16 +307,18 @@ export default function IntegritetspolicyPage() {
             </ul>
             <p>
               Uppgifterna ses av genbanksansvariga och deras hjälpare för rasen
-              och av föreningens systemansvarig. Andra medlemmar ser bara att
+              och av föreningens systemansvarig. Ett inskickat foto av beviset
+              kan ses av genbanksansvariga och hjälpare för båda raserna,
+              eftersom de delar på inkorgen. Andra medlemmar ser bara att
               kaninen är såld utanför genbanken. Vi kan lämna uppgifterna till
               en myndighet som begär dem med stöd av lag, till exempel vid ett
               utbrott av en smittsam djursjukdom.
             </p>
             <p>
-              Skickas beviset in som foto sparas bilden i högst 12 månader, och
-              den tas bort tidigare om kaninen säljs vidare. Har vi din
-              e-postadress mejlar vi dig när ägarbytet är registrerat och
-              berättar vad vi har sparat.
+              Skickas beviset in som foto sparas bilden i högst 12 månader efter
+              det senaste beskedet i ärendet, och den tas bort tidigare om
+              kaninen säljs vidare. Har vi din e-postadress mejlar vi dig när
+              ägarbytet är registrerat och berättar vad vi har sparat.
             </p>
             <p>
               Registrerar vi en försäljning från ett äldre intyg där köparen
@@ -342,11 +352,14 @@ export default function IntegritetspolicyPage() {
 
           <Section title="Digitala genbanksintyg">
             <p>
-              Den som utfärdar ett digitalt genbanksintyg står med sitt namn på
-              intyget. Alla som har intygets QR-kod eller länk kan öppna en sida
-              som visar kaninens namn och nummer, ras, intygsnummer, datum och
-              namnet på den som utfärdade intyget. Det gör vi för att en köpare
-              ska kunna kontrollera att intyget är äkta (berättigat intresse).
+              På ett digitalt genbanksintyg står uppfödarens namn. Alla som har
+              intygets QR-kod eller länk kan öppna en kontrollsida som visar att
+              intyget är äkta, kaninens namn och nummer, ras, intygsnummer och
+              datum. Uppfödarens namn visas där bara om uppfödaren själv har
+              valt det, annars står det bara Uppfödare. Har kaninen sålts visas
+              det med månad och år, aldrig med namn på säljare eller köpare. Det
+              gör vi för att en köpare ska kunna kontrollera att intyget är äkta
+              (berättigat intresse).
             </p>
           </Section>
 
@@ -408,6 +421,10 @@ export default function IntegritetspolicyPage() {
                 stödet vid en kontroll.
               </li>
             </ul>
+            <p>
+              Vill du ha en kopia av de skyddsåtgärder som gäller för en
+              överföring till USA kan du mejla {contactLink}.
+            </p>
             <p>
               Säkerhetskopiorna är krypterade och lagras hos Safespring i
               Stockholm och i föreningens Google Drive. De sparas i upp till 12
