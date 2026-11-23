@@ -357,14 +357,14 @@ def login_link_token(row):
 def _code_recipient(row_id):
     """Recheck the row, account and original destination on each delivery attempt."""
     row = LoginCode.get_or_none(LoginCode.id == row_id)
-    if row is None or row.used_at or row.created_at <= _utcnow() - VALID_FOR:
+    if row is None or row.used_at or row.failed >= TRIES or row.created_at <= _utcnow() - VALID_FOR or closed():
         return None
     person = row.member
     if person.user_id != row.user_id:
         return None
     if row.purpose == "ny_adress":
         address = row.new_address
-    elif row.purpose == "login" and enabled() and row.failed < TRIES and not closed():
+    elif row.purpose == "login" and enabled():
         try:
             refuse_unsafe()
         except CodeRefused:
@@ -372,7 +372,7 @@ def _code_recipient(row_id):
         address = login_address(person, row.address_hash)
     else:
         return None
-    return Recipient(address, f"{person.first_name} {person.last_name}") if address else None
+    return Recipient(address, f"{person.first_name} {person.last_name}", recheck_before_send=True) if address else None
 
 
 @mail_kind("konto.kod", priority=0, category="T")

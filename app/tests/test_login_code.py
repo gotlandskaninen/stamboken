@@ -418,6 +418,28 @@ class TestMails(LoginCodeTest):
         mail.send_pending()
         self.assertEqual((self.fake.sent, self.status(mail_id)), ([], "cancelled"))
 
+    def test_built_code_mail_is_cancelled_if_revoked_or_redirected_during_connect(self):
+        connect = mail._connect
+        for change in ("revoke", "redirect"):
+            with self.subTest(change=change):
+                row, mail_id = self.queue_code(purpose="login", address=self.person.email)
+
+                def change_after_connect(connection, change=change, row=row):
+                    connect(connection)
+                    if change == "revoke":
+                        lc.void(self.person.id)
+                    else:
+                        address = "changed@example.org"
+                        db.Member.update(email=address).where(db.Member.id == self.person.id).execute()
+                        db.LoginCode.update(address_hash=mail.address_hash(address)).where(
+                            db.LoginCode.id == row.id
+                        ).execute()
+
+                with mock.patch.object(mail, "_connect", side_effect=change_after_connect) as handshake:
+                    mail.send_pending()
+                handshake.assert_called_once()
+                self.assertEqual((self.fake.sent, self.status(mail_id)), ([], "cancelled"))
+
     def test_retry_at_expiry_cancels_login_mail(self):
         _, mail_id = self.queue_code(purpose="login", address=self.person.email)
         self.fake.replies.append(smtplib.SMTPDataError(451, b"4.3.0 try again later"))

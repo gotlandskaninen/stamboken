@@ -65,7 +65,7 @@ RETRY_DELAYS = (
 RETENTION = timedelta(days=396)
 
 MailKind = namedtuple("MailKind", "priority category build")
-Recipient = namedtuple("Recipient", "address label")
+Recipient = namedtuple("Recipient", "address label recheck_before_send", defaults=[False])
 
 # kind -> MailKind; build(params) returns the template variables (plus an optional "attachments" list of
 # (filename, mime type, bytes)), or None when the mail is no longer relevant, which cancels it.
@@ -540,8 +540,17 @@ def _send_one(row, relay, now):
         return _finish(row, now, status="logged")
     if mode == "allowlist" and not _allowed(address):
         return _finish(row, now, status="blocked", last_error="spärrat: adressen finns inte i MAIL_ALLOWLIST")
+
+    def still_ours():
+        if recipient.recheck_before_send:
+            current = resolve(row.recipient_id)
+            if current is None or _normalize(current.address) != address:
+                _finish(row, now, status="cancelled", last_error="mottagaren gäller inte längre")
+                return False
+        return _renew(row)
+
     try:
-        relay.send(msg, address, lambda: _renew(row))
+        relay.send(msg, address, still_ours)
     except _ClaimLost:
         logger.warning("Mail %s was reclaimed by another sender or lost its recipient; it is not sent", row.id)
         return True
