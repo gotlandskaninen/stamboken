@@ -399,6 +399,18 @@ export default function IntegritetspolicyPage() {
                 adresserna och tidningens innehåll.
               </li>
               <li>
+                Det bolag som sköter drift och utveckling av Stamboken Online åt
+                föreningen. Det får de uppgifter som behövs för uppdraget, och
+                ett avtal med föreningen bestämmer hur de får användas och
+                skyddas. Bolaget använder i sin tur leverantörer av
+                utvecklingsverktyg, som kan behandla uppgifter i USA med stöd av
+                EU:s standardavtal för överföring av personuppgifter.{" "}
+                <mark>
+                  [INTE KLART: gäller när biträdesavtalet med bolaget är
+                  underskrivet.]
+                </mark>
+              </li>
+              <li>
                 Jordbruksverket, om myndigheten begär att få se underlaget för
                 stödet vid en kontroll.
               </li>
