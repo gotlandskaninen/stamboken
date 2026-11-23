@@ -962,7 +962,10 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
         url = "/api/v2/certificates/check-page-name"
         self.assertEqual(owner.get(url).get_json(), {"show": None})  # a new account has not chosen yet
         self.assertEqual(owner.put(url, json={"show": "true"}).status_code, 400)
+        account_audits = db.AuditLog.select().where(db.AuditLog.table_name == "hbuser").count()
         self.assertEqual(owner.put(url, json={"show": True}).get_json(), {"show": True})
+        # her choice writes no audit row (it would copy her name and e-mail)
+        self.assertEqual(db.AuditLog.select().where(db.AuditLog.table_name == "hbuser").count(), account_audits)
 
         data = self.app.get(f"/api/v2/certificates/verify/{token}").get_json()
         self.assertEqual(data["attested_by"], "Olle Ägare")
