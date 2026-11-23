@@ -229,9 +229,8 @@ class TestPedigreeTemplateV2(unittest.TestCase):
         html = self._html(digital_certificate="345", doc_hash_stub="ABCD1234")
         self.assertIn("Genbanksintyg 345 · ABCD1234 · ", html)
 
-    def test_hidden_breeder_name_drops_its_row(self):
-        self.assertNotIn("Uppfödarens namn", self._html(fullname=""))
-        self.assertIn("Uppfödarens namn", self._html(fullname="Anna Exempel"))
+    def test_attester_row_names_the_issuer(self):
+        self.assertIn('Intygas av</td><td class="sv">Anna Exempel<', self._html(fullname="Anna Exempel"))
 
     def test_unknown_parent_has_no_stray_dash(self):
         html = self._html(F_genebank_number=None, F_genebank_aki=None)
@@ -249,7 +248,6 @@ class TestBuildCertData(unittest.TestCase):
             origin_herd=SimpleNamespace(
                 genebank=SimpleNamespace(name="Mellerud"),
                 name="Uppfödare",
-                name_privacy="public",
                 herd_name=None,
                 herd="M12",
             ),
@@ -262,39 +260,13 @@ class TestBuildCertData(unittest.TestCase):
         with patch("utils.cert_service_v2.get_certificate_data", return_value=current):
             data = build_cert_data(ind, {}, 1)
         self.assertEqual(data["breed"], "Mellerudskanin")
-        # The breeder attests, with the origin herd, not the issuing user or the current (buyer's) herd
-        self.assertEqual(data["fullname"], "Uppfödare")
+        # The issuing person attests in her own name, with the origin herd, not the current (buyer's) herd
+        self.assertEqual(data["fullname"], "Den som utfärdar")
         self.assertEqual(data["herd"], "M12")
         self.assertEqual(data["microchip"], "752098100012345")
         ind.microchip = None
         with patch("utils.cert_service_v2.get_certificate_data", return_value={}):
             self.assertEqual(build_cert_data(ind, {}, 1)["microchip"], "")
-
-    def test_breeder_name_only_when_public(self):
-        """The PDF goes to buyers: a private, members-only or unset name stays off, the herd number stays on."""
-        from types import SimpleNamespace
-        from unittest.mock import patch
-
-        from utils.cert_service_v2 import build_cert_data
-
-        for privacy in ("private", "authenticated", None):
-            ind = SimpleNamespace(
-                origin_herd=SimpleNamespace(
-                    genebank=SimpleNamespace(name="Gotlandskanin"),
-                    name="Privat Person",
-                    name_privacy=privacy,
-                    herd_name="Privat Persons kaniner",
-                    herd="G12",
-                ),
-                microchip=None,
-                color=None,
-                number="G12-2601",
-                digital_certificate="1",
-            )
-            with patch("utils.cert_service_v2.get_certificate_data", return_value={}):
-                data = build_cert_data(ind, {}, 1)
-            self.assertEqual(data["fullname"], "", privacy)
-            self.assertEqual(data["herd"], "G12", privacy)
 
 
 class TestSignPdf(unittest.TestCase):

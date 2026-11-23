@@ -946,6 +946,19 @@ export function RegisterRabbitDialog({
                   label={t("addRabbit.certificate")}
                 />
               </Box>
+              {certificateType === "digital" && (
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: "text.secondary",
+                    display: "block",
+                    mt: 0.5,
+                    ml: 1.5,
+                  }}
+                >
+                  {t("addRabbit.certificateAttester")}
+                </Typography>
+              )}
               {suggestion && !canIssueCertificate && (
                 <Typography
                   variant="caption"

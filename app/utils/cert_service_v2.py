@@ -76,13 +76,10 @@ def build_cert_data(individual, ind_data, user_id):
     raw_color_note = ind_data.get("color_note") or ""
 
     cert_data = get_certificate_data(ind_data, user_id)
-    # The breeder attests: the origin herd's holder and number, not the user who issues it or the herd the rabbit
-    # is in now, which after a sale is the buyer's or GX1/MX1 (board 2026-10-25 §10).
+    # The person who issues attests personally: "fullname" stays the issuing user's from get_certificate_data, not
+    # the herd holder's, so a family member or caretaker signs in her own name (Jonas 2026-11-23). The herd is the
+    # origin herd, not the one the rabbit is in now, which after a sale is the buyer's or GX1/MX1.
     breeder = individual.origin_herd
-    # The PDF reaches buyers, so the holder's name prints only when the herd made it public; NULL counts as private,
-    # as in remove_fields_by_privacy (Jonas 2026-11-23). The herd number always prints.
-    public = breeder is not None and breeder.name_privacy == "public"
-    cert_data["fullname"] = (breeder.name or "") if public else ""
     cert_data["herd"] = breeder.herd if breeder else ""
     cert_data["notes"] = raw_notes
     cert_data["color_note"] = raw_color_note

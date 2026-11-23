@@ -316,6 +316,7 @@
     "certificatePaper": "Paper",
     "certificateDigital": "Digital",
     "certificateDigitalDisabled": "Coming when certificate v2 is active",
+    "certificateAttester": "Your name will appear on the certificate as the person who certifies it.",
     "paperCertificateNumber": "Certificate number",
     "save": "Register",
     "saving": "Registering...",

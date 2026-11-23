@@ -373,6 +373,7 @@
     "certificatePaper": "Papier",
     "certificateDigital": "Digital",
     "certificateDigitalDisabled": "Verfügbar, sobald Zertifikat v2 aktiv ist",
+    "certificateAttester": "Ihr Name steht auf der Bescheinigung als die Person, die sie bestätigt.",
     "paperCertificateNumber": "Zertifikatsnummer",
     "save": "Registrieren",
     "saving": "Wird registriert...",
