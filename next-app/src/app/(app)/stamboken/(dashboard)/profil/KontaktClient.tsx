@@ -53,6 +53,7 @@ export function KontaktClient({
             : "Kontaktuppgifter sparade",
           "success",
         );
+        if (result.emailRefused) showSnackbar(result.emailRefused, "warning");
         if (result.codeSent) {
           setCode("");
           setEmailStep("code");

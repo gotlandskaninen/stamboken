@@ -12,6 +12,7 @@ import io
 import secrets
 from datetime import date
 
+import utils.settings as settings
 from flask import Blueprint, Response, jsonify, request, session
 from flask_login import current_user
 from peewee import IntegrityError
@@ -393,6 +394,10 @@ def patch_me_contact():
             return problem(400, "Ogiltig e-postadress", f"'{new_email}' är inte en giltig e-postadress")
         if new_email == (m.email or "").strip().lower():
             new_email = None  # the form sends the address on every save
+    refused = None
+    if new_email is not None and settings.service.demo_instance:
+        # The demo never replaces an account's mark (new_generation): the change could not end the sessions.
+        refused, new_email = DEMO_REFUSAL, None
     if new_email is not None:
         try:
             refuse_unsafe()
@@ -450,7 +455,13 @@ def patch_me_contact():
             "En annan medlem använder redan e-postadressen.",
         )
     # The same answer whether a code went or not: the member cannot test which addresses are in the matrikel.
-    return jsonify({**_me_response(m), "email_code_sent": new_email is not None})
+    answer = {**_me_response(m), "email_code_sent": new_email is not None}
+    if refused:
+        answer["email_refused"] = refused
+    return jsonify(answer)
+
+
+DEMO_REFUSAL = "E-postadressen kan inte bytas i testmiljön."
 
 
 def _codes_unavailable():

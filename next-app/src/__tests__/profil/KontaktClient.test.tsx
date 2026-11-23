@@ -177,6 +177,26 @@ describe("KontaktClient", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
+  it("says when the test environment refuses a new address", async () => {
+    vi.mocked(updateContact).mockResolvedValue({
+      ok: true,
+      codeSent: false,
+      emailRefused: "E-postadressen kan inte bytas i testmiljön.",
+    });
+    renderIt();
+    fireEvent.change(screen.getByLabelText("E-post"), {
+      target: { value: "ny@example.org" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    await waitFor(() =>
+      expect(showSnackbar).toHaveBeenCalledWith(
+        "E-postadressen kan inte bytas i testmiljön.",
+        "warning",
+      ),
+    );
+    expect(screen.queryByLabelText("Kod")).toBeNull();
+  });
+
   it("locks every field and explains why when readOnly", () => {
     renderIt(true);
     expect(

@@ -72,9 +72,10 @@ type AddPersonResult =
   | { ok: false; error: string };
 
 // A new e-mail address is not saved by the PATCH: the API sends a code to it
-// (codeSent), and verifyEmailCode makes the change.
+// (codeSent), and verifyEmailCode makes the change. The test environment
+// refuses the change and saves the rest (emailRefused).
 type ContactResult =
-  | { ok: true; codeSent: boolean }
+  | { ok: true; codeSent: boolean; emailRefused?: string }
   | { ok: false; error: string };
 
 export async function updateContact(patch: {
@@ -85,16 +86,18 @@ export async function updateContact(patch: {
   city?: string;
 }): Promise<ContactResult> {
   try {
-    const me = await fetchApi<{ email_code_sent?: boolean }>(
-      "/v2/members/me/contact",
-      {
-        method: "PATCH",
-        body: JSON.stringify(patch),
-        headers: { "Content-Type": "application/json" },
-      },
-    );
+    const me = await fetchApi<{
+      email_code_sent?: boolean;
+      email_refused?: string;
+    }>("/v2/members/me/contact", {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+      headers: { "Content-Type": "application/json" },
+    });
     revalidatePath("/stamboken/profil");
-    return { ok: true, codeSent: !!me?.email_code_sent };
+    return me?.email_refused
+      ? { ok: true, codeSent: false, emailRefused: me.email_refused }
+      : { ok: true, codeSent: !!me?.email_code_sent };
   } catch (err) {
     return { ok: false, error: describe(err) };
   }

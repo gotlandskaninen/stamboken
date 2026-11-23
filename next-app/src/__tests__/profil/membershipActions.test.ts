@@ -166,6 +166,18 @@ describe("my-membership actions", () => {
     });
   });
 
+  it("updateContact passes on the test environment's refusal", async () => {
+    vi.mocked(fetchApi).mockResolvedValue({
+      email_code_sent: false,
+      email_refused: "E-postadressen kan inte bytas i testmiljön.",
+    });
+    expect(await updateContact({ email: "ny@example.org" })).toEqual({
+      ok: true,
+      codeSent: false,
+      emailRefused: "E-postadressen kan inte bytas i testmiljön.",
+    });
+  });
+
   it("verifyEmailCode POSTs the code and leaves the ended session alone", async () => {
     vi.mocked(fetchApi).mockResolvedValue({});
     expect(await verifyEmailCode("0482 7195")).toEqual({ ok: true });

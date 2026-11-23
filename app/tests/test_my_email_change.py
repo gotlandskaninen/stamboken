@@ -95,6 +95,17 @@ class TestRequest(MyEmailTest):
             self.assertEqual(self.patch_contact({"email": NEW}).status_code, 503)
         self.assertFalse(db.LoginCode.select().exists())
 
+    def test_the_demo_refuses_the_change_and_saves_the_rest(self):
+        """The demo never replaces an account's mark, so the change could not end the sessions as it says."""
+        with mock.patch.object(settings.service, "demo_instance", True):
+            resp = self.patch_contact({"email": NEW, "phone": "0701"})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        data = resp.get_json()
+        self.assertEqual(data["email_refused"], "E-postadressen kan inte bytas i testmiljön.")
+        self.assertFalse(data["email_code_sent"])
+        self.assertEqual((self.email(), db.Member.get_by_id(self.person.id).phone), ("a@example.org", "0701"))
+        self.assertFalse(db.LoginCode.select().exists())
+
 
 class TestVerify(MyEmailTest):
     def test_the_right_code_changes_the_address_and_ends_the_session(self):
