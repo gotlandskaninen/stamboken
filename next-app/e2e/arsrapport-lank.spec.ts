@@ -4,12 +4,8 @@ import {
   expect,
   test,
   type BrowserContext,
-  type ConsoleMessage,
-  type Frame,
   type Locator,
   type Page,
-  type Request,
-  type Response,
 } from "@playwright/test";
 import { loginInline } from "../e2e-shared/auth";
 
@@ -186,43 +182,9 @@ test("5. Two links open: /rapport lists both", async () => {
 test("5b. A link opened inside the open page is exchanged too", async () => {
   const page = shared; // on M9202's report: only the hash changes
   await hydrated(page); // a slow dev server has not hydrated yet when the previous step ends
-  // shortcut: this step fails now and then with M9202's report left idle, cause unknown; what the page did is attached
-  // on failure (no POST to …/oppna, a 403, no navigation after …/mina, or a reload), so remove this once it is known.
-  const seen: string[] = [];
-  const log = (line: string) =>
-    seen.push(`${new Date().toISOString()} ${line.replace(/#\S*/g, "#…")}`);
-  const ours = (url: string) =>
-    /^\/(api\/v2\/)?rapport/.test(new URL(url).pathname);
-  const onResponse = (r: Response) =>
-    ours(r.url()) && log(`${r.request().method()} ${r.url()} ${r.status()}`);
-  const onFailed = (r: Request) =>
-    ours(r.url()) &&
-    log(`failed ${r.method()} ${r.url()} ${r.failure()?.errorText}`);
-  const onFrame = (f: Frame) =>
-    f === page.mainFrame() && log(`navigated ${f.url()}`);
-  const onConsole = (m: ConsoleMessage) =>
-    log(`console.${m.type()} ${m.text()}`);
-  page.on("response", onResponse);
-  page.on("requestfailed", onFailed);
-  page.on("framenavigated", onFrame);
-  page.on("console", onConsole);
-  try {
-    await page.evaluate((hash) => (location.hash = hash), tokenOf("M9201"));
-    await expect(page.getByText("Besättning M9201")).toBeVisible();
-    expect(page.url()).not.toContain("#");
-  } catch (error) {
-    log(`url ${page.url()}`);
-    await test.info().attach("5b-page.txt", {
-      body: seen.join("\n"),
-      contentType: "text/plain",
-    });
-    throw error;
-  } finally {
-    page.off("response", onResponse);
-    page.off("requestfailed", onFailed);
-    page.off("framenavigated", onFrame);
-    page.off("console", onConsole);
-  }
+  await page.evaluate((hash) => (location.hash = hash), tokenOf("M9201"));
+  await expect(page.getByText("Besättning M9201")).toBeVisible();
+  expect(page.url()).not.toContain("#");
 });
 
 test("5c. The clearing script is the first inline script, in the head (it is not claimed to precede framework chunks)", async ({
