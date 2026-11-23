@@ -292,9 +292,11 @@ class TestMembersLinkByHerd(DatabaseTest):
         inactive.is_active = False
         inactive.save()
 
+        value = self._plan_value()
         for actor in (plain, inactive):
-            result = self._run("--apply", "--actor-user-id", str(actor.id))
+            result = self._run("--apply", "--actor-user-id", str(actor.id), "--plan", value)
             self.assertEqual(result.exit_code, 2, result.output)
+            self.assertIn("måste vara ett aktivt konto med rollen admin eller matrikel_admin", result.output)
         self.assertIsNone(self._linked_user_id(person))
 
     def test_owner_entry_without_herd_is_skipped(self):
