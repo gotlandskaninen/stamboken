@@ -30,7 +30,7 @@ from utils.login_code import (
     refuse_unsafe,
     reserve_login_address,
 )
-from utils.mail import enqueue_mail
+from utils.mail import _normalize, enqueue_mail
 from utils.matrikel import (
     AddressValidationError,
     is_anonymized,
@@ -395,6 +395,8 @@ def patch_me_contact():
             return problem(400, "Ogiltig e-postadress", f"'{new_email}' är inte en giltig e-postadress")
         if new_email == (m.email or "").strip().lower():
             new_email = None  # the form sends the address on every save
+        elif _normalize(new_email) is None:  # the sender would refuse it, and the code would never arrive
+            return problem(400, "Ogiltig e-postadress", f"'{new_email}' är inte en giltig e-postadress")
     refused = None
     if new_email is not None and settings.service.demo_instance:
         # The demo never replaces an account's mark (new_generation): the change could not end the sessions.

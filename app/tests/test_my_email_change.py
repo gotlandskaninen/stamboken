@@ -87,6 +87,12 @@ class TestRequest(MyEmailTest):
         self.assertEqual(len(self.code_mails()), 4)
         self.assertEqual(self.verify(self.code()).status_code, 400)  # the sixth made no code either
 
+    def test_an_address_the_sender_cannot_mail_is_refused_like_a_malformed_one(self):
+        resp = self.patch_contact({"email": "o'berg@example.org"})
+        self.assertEqual(resp.status_code, 400, resp.data)
+        self.assertEqual(resp.get_json()["title"], "Ogiltig e-postadress")
+        self.assertFalse(db.LoginCode.select().exists())  # none of the day's five spent
+
     def test_no_code_without_link_secret_or_in_production_in_log_mode(self):
         with mock.patch.object(settings.mail, "link_secret", ""):
             self.assertEqual(self.patch_contact({"email": NEW}).status_code, 503)
