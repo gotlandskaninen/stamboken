@@ -109,7 +109,7 @@ export function MembershipSteps() {
         sx={{ mt: 6, color: "ink.2", fontSize: "15px", lineHeight: 1.55 }}
       >
         (Det går också att bli medlem på papper. Kontakta{" "}
-        <Link href="/styrelsen" style={{ color: "inherit" }}>
+        <Link href="/kontakt" style={{ color: "inherit" }}>
           genbanksansvarig
         </Link>
         .)

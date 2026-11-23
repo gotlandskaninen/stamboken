@@ -118,7 +118,7 @@ const YEARLY = [
   },
 ];
 
-// Who holds the role is CMS content (the Styrelse och kontakt page), not
+// Who holds the role is CMS content (the Kontakt page), not
 // source: names change with the board and must not live in a public repo.
 const CONTACTS = [
   { breed: "Gotlandskanin", mail: GOTLAND_MAIL },
@@ -572,9 +572,9 @@ function ContactSection() {
     >
       <SectionHeading eyebrow="Kontakt" title="Hör av dig" />
       <Typography sx={{ mb: 6, maxWidth: "40rem", color: "ink.2" }}>
-        Varje ras har en genbanksansvarig. Vem det är just nu står under{" "}
-        <Link href="/styrelsen" style={inlineLinkStyle}>
-          Styrelse och kontakt
+        Varje ras har en genbanksansvarig. Vem det är just nu står på sidan{" "}
+        <Link href="/kontakt" style={inlineLinkStyle}>
+          Kontakt
         </Link>
         .
       </Typography>
