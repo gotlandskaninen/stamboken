@@ -104,6 +104,7 @@ def create_pending_account(version):
             raise AccountConflict
         if person.role != "huvudmedlem" or address_hash(person.email) != session["pending_contact"]:
             raise InvalidPending
+        login_code.lock_holder_addresses(person)
         # Existing accounts can acquire an address or an owner role outside the registry.
         # Serialize the duplicate check and insert with all writes to hbuser, including new accounts.
         DB_PROXY.execute_sql("LOCK TABLE hbuser IN SHARE ROW EXCLUSIVE MODE")

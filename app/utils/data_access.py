@@ -462,10 +462,10 @@ def add_user(form, user_uuid=None):
         return {"status": "error", "message": "missing data"}
 
     with DATABASE.atomic():
-        if User.select().where(User.email == email).first():
+        try:
+            user = register_user(email, password, username, validated, privileges, adopt_existing=False)
+        except AddressInUseError:
             return {"status": "error", "message": "already exists"}
-
-    user = register_user(email, password, username, validated, privileges)
     return {"status": "created", "data": user.id}
 
 
@@ -483,33 +483,32 @@ def register_user(
     object. An account that already has this exact e-mail is returned instead,
     unless adopt_existing is False: then an account holding the address in any
     casing raises AddressInUseError, and the user returned is always the row
-    this call inserted. (No unique index on e-mail: a concurrent request can
-    still insert a second account with the address, never hand back this one.)
+    this call inserted. New registrations serialize on the normalized address.
     """
     if privileges is None:
         privileges = []
 
-    if adopt_existing:
-        # Don't create a new user if the email exists already
-        user = User.select().where(User.email == email).first()
-    else:
-        taken = User.select(User.id).where(fn.LOWER(User.email) == email.lower()).first()
-        if taken:
-            raise AddressInUseError(taken.id)
-        user = None
-    if user is None:
-        user = User(
-            email=email,
-            uuid=uuid.uuid4().hex,
-            username=username,
-            fullname=fullname,
-            validated=validated,
-            privileges=privileges,
-        )
-        with DATABASE.atomic():
-            user.save()
+    with DATABASE.atomic():
+        if adopt_existing:
+            user = User.select().where(User.email == email).first()
+        else:
+            from utils.login_code import lock_addresses
 
-    # By id, not e-mail: another account may hold the same address.
+            lock_addresses([email])
+            taken = User.select(User.id).where(fn.LOWER(fn.BTRIM(User.email)) == email.strip().lower()).first()
+            if taken:
+                raise AddressInUseError(taken.id)
+            user = None
+        if user is None:
+            user = User.create(
+                email=email,
+                uuid=uuid.uuid4().hex,
+                username=username,
+                fullname=fullname,
+                validated=validated,
+                privileges=privileges,
+            )
+
     user = User.get_by_id(user.id)
     auth_log.info("Registered user id=%s", user.id)
 

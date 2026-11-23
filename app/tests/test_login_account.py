@@ -4,11 +4,13 @@ import os
 import secrets
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from itertools import permutations
 from threading import Barrier
 from time import monotonic, sleep
 from unittest import mock
 
 import requests
+from flask import session
 from herdbook import APP
 from utils import data_access, login_account, login_code, matrikel, settings
 from utils import database as db
@@ -192,6 +194,57 @@ class TestLoginAccount(MatrikelApiTest):
         with ThreadPoolExecutor(max_workers=2) as pool:
             self.assertEqual(sorted(pool.map(submit, clients)), [200, 409])
         self.assertEqual(db.User.select().count(), self.initial_count + 1)
+
+    def test_registration_paths_wait_for_the_same_address_in_either_order(self):
+        def register(path):
+            address = f" {self.member.email.upper()} "
+            if path == "manual":
+                result = data_access.add_user({"email": address, "password": "test"}, self.admin.uuid)
+                return result["status"] == "created"
+            try:
+                if path == "google":
+                    data_access.register_user(address.strip(), None, adopt_existing=False)
+                else:
+                    login_account.create_pending_account("23")
+                return True
+            except (data_access.AddressInUseError, login_account.AccountConflict):
+                return False
+
+        def second_registration(path, proof):
+            try:
+                with APP.test_request_context():
+                    session.update(proof)
+                    return register(path)
+            finally:
+                db.DB_PROXY.close()
+
+        for first, second in permutations(("code", "manual", "google"), 2):
+            with self.subTest(first=first, second=second):
+                address = f"{first}-{second}@example.org"
+                self.member = _mk_person(_mk_membership(), "Test", "Member", address)
+                self.pending()
+                with self.client.session_transaction() as pending:
+                    proof = dict(pending)
+                with APP.test_request_context(), ThreadPoolExecutor(max_workers=1) as pool:
+                    session.update(proof)
+                    with db.DB_PROXY.atomic():
+                        self.assertTrue(register(first))
+                        result = pool.submit(second_registration, second, proof)
+                        deadline = monotonic() + 10
+                        while monotonic() < deadline:
+                            waiting = db.DB_PROXY.execute_sql(
+                                "SELECT locktype FROM pg_locks WHERE NOT granted "
+                                "AND pg_backend_pid() = ANY(pg_blocking_pids(pid))"
+                            ).fetchone()
+                            if waiting:
+                                self.assertEqual(waiting[0], "advisory")
+                                break
+                            self.assertFalse(result.done())
+                            sleep(0.02)
+                        else:
+                            self.fail("The competing registration never waited for the address")
+                    self.assertFalse(result.result(timeout=10))
+                self.assertEqual(db.User.select().where(db.fn.LOWER(db.fn.BTRIM(db.User.email)) == address).count(), 1)
 
     def test_duplicate_check_waits_for_an_account_address_being_written(self):
         self.pending()

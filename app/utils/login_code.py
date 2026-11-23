@@ -305,14 +305,19 @@ def lock_addresses(addresses):
         DB_PROXY.execute_sql("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"login_address:{address}",))
 
 
+def lock_holder_addresses(person):
+    rows = MemberPreviousAddress.select().where(MemberPreviousAddress.member == person.id)
+    lock_addresses([person.email, *(r.address for r in rows)])
+    return rows
+
+
 def reserve_holder(person_id):
     """
     A person becomes a holder again (main member, or an account linked): her address and every previous one that
     still counts are all reserved for her, or AddressTaken and the caller's change is rolled back.
     """
     person = Member.get_by_id(person_id)
-    rows = MemberPreviousAddress.select().where(MemberPreviousAddress.member == person_id)
-    lock_addresses([person.email, *(r.address for r in rows)])
+    rows = lock_holder_addresses(person)
     now = _utcnow()
     for address in [person.email, *(r.address for r in rows.where(MemberPreviousAddress.login_until > now))]:
         reserve_login_address(address, person_id)
