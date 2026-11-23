@@ -891,8 +891,9 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
             data = verify_resp.get_json()
             self.assertTrue(data["verified"])
             self.assertEqual(data["individual_number"], individual.number)
-            # Verify no email is exposed in public endpoint
-            self.assertNotIn("@", data.get("issued_by", ""))
+            # No person on the public page: neither the issuing user's name nor an email
+            self.assertNotIn("issued_by", data)
+            self.assertNotIn("@", str(data))
 
     def test_verify_post_with_pdf(self):
         """POST verify with actual PDF bytes checks checksum + signature."""
@@ -1167,6 +1168,34 @@ class TestCertificateV2ViewAuthorization(CertV2Mixin, FlaskTest):
         self.assertEqual(db.Individual.get(db.Individual.id == individual.id).current_herd.id, self.herds[1].id)
         self.assertEqual(self._status(buyer, f"/api/v2/certificates/{individual.number}"), 200)
         self.assertEqual(self._status(self.owner, f"/api/v2/certificates/{individual.number}"), 200)
+
+    def test_buyer_preview_is_the_signed_certificate(self):
+        """Only someone who may issue the next version gets a rendered preview naming her; the buyer gets the PDF."""
+        from unittest import mock
+
+        import utils.data_access as da
+        from utils.cert_service_v2 import _generator
+
+        individual = self.individuals[3]
+        db.User.update(fullname="Utfärdande Person").where(db.User.id == self.admin.id).execute()
+        self._issue_as_breeder(individual)
+        buyer = da.register_user("buyer", "pass")
+        buyer.add_role("owner", self.herds[1].id)
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[1],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=datetime.now(),
+        )
+        # The buyer, the manager and admin get the signed certificate as issued, so nothing changed since appears
+        # under the issuer's name; also when older code cleared the rabbit's number but the v2 row is current
+        db.Individual.update(digital_certificate=None).where(db.Individual.id == individual.id).execute()
+        for viewer in (buyer, self.manager, self.admin):
+            with mock.patch.object(_generator, "generate_pedigree") as render:
+                self.assertEqual(self._status(viewer, f"/api/v2/certificates/preview/{individual.number}"), 200)
+            render.assert_not_called()
 
 
 class TestCertificateLockOrder(CertV2Mixin, FlaskTest):

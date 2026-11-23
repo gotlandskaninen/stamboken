@@ -297,8 +297,8 @@ kan inte utfärda digitala intyg.
 
 Den som utfärdar ett digitalt intyg står som intygare med sitt eget namn, och intygar
 att uppgifterna stämmer med kaninen. Därför kan bara de som har tillgång till kaninens
-ursprungsbesättning utfärda och rätta digitala intyg, också efter att kaninen har sålts.
-Genbanksansvarig kan inte göra det åt dig.
+ursprungsbesättning utfärda och rätta digitala intyg. Genbanksansvarig kan inte göra
+det åt dig.
 
 Intyget går att verifiera av vem som helst genom QR-koden på PDF:en, se
 [Verifiera intyg](#verifiera-intyg).
@@ -725,8 +725,8 @@ Sidan som QR-koden på ett digitalt intyg leder till. Den kräver ingen inloggni
 visar ett av fyra besked:
 
 - **Äkta genbanksintyg** – intyget är utfärdat i Stamboken och signerat av föreningen.
-  Kortet visar **Individnummer**, namn, **Ras**, **Intygsnummer**, **Utfärdat av** och
-  **Datum**. **Visa kaninens sida i Stamboken →** kräver inloggning.
+  Kortet visar **Individnummer**, namn, **Ras**, **Intygsnummer** och **Datum**, men
+  ingen person. **Visa kaninens sida i Stamboken →** kräver inloggning.
 - **Äkta, men ersatt** – ett nyare intyg har utfärdats för kaninen. Be säljaren om
   den senaste versionen.
 - **Äkta, men gäller inte längre** – intyget har ersatts av ett pappersintyg. Be

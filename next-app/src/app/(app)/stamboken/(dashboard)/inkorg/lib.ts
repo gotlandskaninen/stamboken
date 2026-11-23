@@ -416,6 +416,7 @@ export function buildSavePayload(
   mode: SaveMode,
   form: CertForm,
   resolution?: NumberResolution,
+  rex = false,
 ): Record<string, unknown> {
   if (mode === "pappersintyg") {
     return {
@@ -432,6 +433,7 @@ export function buildSavePayload(
     mother: number(form.mother),
     father: number(form.father),
     birth_date: form.birth_date,
+    rex,
   };
   if (form.name.trim()) payload.name = form.name.trim();
   if (form.sex) payload.sex = form.sex;

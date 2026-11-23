@@ -183,6 +183,16 @@ class TestSaveEndpoint(GrantTest):
         )
         self.assertEqual(self.save(item, document, **NEW_RABBIT).status_code, 409)  # saved once
 
+    def test_the_coat_from_the_certificate(self):
+        item, document = self.taken(self.helper)
+        self.login("hjalp")
+        resp = self.save(item, document, **{**NEW_RABBIT, "rex": "ja"})
+        self.assertEqual(resp.status_code, 400, resp.get_json())
+        self.assertFalse(db.Individual.select().where(db.Individual.number == "G1-2511").exists())
+        resp = self.save(item, document, **{**NEW_RABBIT, "rex": True})
+        self.assertEqual(resp.status_code, 201, resp.get_json())
+        self.assertTrue(self.rabbit("G1-2511").rex)
+
     def test_the_registration_rules_still_apply(self):
         item, document = self.taken(self.helper)
         self.login("hjalp")

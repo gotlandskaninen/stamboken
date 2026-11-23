@@ -1900,6 +1900,7 @@ def edit_individual():
     retval = None
     try:
         if request.method == "PATCH":
+            form.pop("rex", None)  # the old app's stale full-object PATCH must never reset the coat
             retval = da.update_individual(  # the legacy form has no buyer fields (ADR-0016)
                 form, session.get("user_id", None), genebank_change_reason=da.LEGACY_GENEBANK_CHANGE_NOTE, legacy=True
             )

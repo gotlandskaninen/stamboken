@@ -1,0 +1,476 @@
+import { Box, Typography } from "@mui/material";
+import { PageHeader } from "@/components/public/PageHeader";
+import { TEXT_MAX_WIDTH, TEXT_ROW } from "@/components/blocks/textColumn";
+import type { Metadata } from "next";
+import type { ReactNode } from "react";
+
+export const metadata: Metadata = { title: "Integritetspolicy" };
+
+const CONTACT = "dataskydd@gotlandskaninen.se";
+
+// Same grid as the CMS text pages: the heading in the margin column.
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <Box
+      component="section"
+      sx={{
+        ...TEXT_ROW,
+        rowGap: 3,
+        py: { xs: 7, md: 9 },
+        borderTop: "1px solid var(--sb-line)",
+        "&:first-of-type": { pt: 0, borderTop: 0 },
+      }}
+    >
+      <Typography
+        variant="h4"
+        component="h2"
+        sx={{ m: 0, fontWeight: 400, fontSize: { xs: "24px", md: "26px" } }}
+      >
+        {title}
+      </Typography>
+      <Box sx={{ minWidth: 0, "& > :first-child": { mt: 0 } }}>{children}</Box>
+    </Box>
+  );
+}
+
+const contactLink = <a href={`mailto:${CONTACT}`}>{CONTACT}</a>;
+
+export default function IntegritetspolicyPage() {
+  return (
+    <>
+      <PageHeader
+        section="Integritetspolicy"
+        title="Integritetspolicy"
+        lede="Så behandlar Föreningen Gotlandskaninen dina personuppgifter: vilka uppgifter vi har, varför vi har dem, vilka som ser dem och vad du kan begära av oss."
+      />
+      <Box component="section" sx={{ p: { xs: "40px 24px", md: "80px 56px" } }}>
+        <Box
+          sx={{
+            maxWidth: TEXT_MAX_WIDTH,
+            fontSize: "17px",
+            lineHeight: 1.65,
+            color: "ink.2",
+            "& p": { m: 0, mt: 4 },
+            "& ul": { m: 0, mt: 3, pl: 6 },
+            "& li": { mt: 1.5 },
+            "& a": {
+              color: "inherit",
+              "@media (pointer: coarse)": {
+                display: "inline-block",
+                minHeight: 44,
+                lineHeight: "44px",
+              },
+            },
+          }}
+        >
+          <Section title="Vem ansvarar för uppgifterna">
+            <p>
+              Föreningen Gotlandskaninen, organisationsnummer 834001-9549, är
+              personuppgiftsansvarig för uppgifterna i medlemsregistret, i
+              Stamboken Online och på den här webbplatsen. Medlemsregistret och
+              Stamboken Online är två delar av samma system. Har du frågor om
+              hur vi behandlar dina uppgifter, eller vill du använda någon av
+              dina rättigheter, mejla {contactLink}. Du kan lika gärna skriva
+              till genbanksansvarig för rasen, som också kan ge dig den här
+              texten på papper.
+            </p>
+          </Section>
+
+          <Section title="När du besöker webbplatsen">
+            <p>
+              Webbplatsen mäter inte besök och har inga kakor för statistik
+              eller reklam. Våra egna sidor sätter inga kakor förrän du öppnar
+              inloggningssidan.
+            </p>
+            <ul>
+              <li>
+                Servern loggar varje besök: din IP-adress, tidpunkten, adressen
+                du hämtade och vilken webbläsare du använder. Loggarna behövs
+                för felsökning och säkerhet (berättigat intresse) och sparas i
+                högst 90 dagar på servern. Säkerhetsloggar, till exempel besök,
+                inloggningar och nekad åtkomst, sparas dessutom i upp till 12
+                månader i ett skyddat arkiv hos Safespring i Stockholm, så att
+                vi kan utreda ett intrång som upptäcks sent. Under de första 90
+                dagarna går de inte att radera.
+              </li>
+              <li>
+                På inloggningssidan laddas Googles inloggningstjänst. Google får
+                då din IP-adress och uppgifter om din webbläsare, och tjänsten
+                kan sätta en kaka (g_state), även om du inte loggar in.
+              </li>
+              <li>
+                När du loggar in sätts två kakor som tjänsten behöver: en som
+                håller dig inloggad tills du loggar ut eller har varit inaktiv i
+                31 dagar, och en som minns om du arbetar i riktiga stamboken
+                eller i testmiljön.
+              </li>
+              <li>
+                Vissa val och utkast sparas i din egen webbläsare, till exempel
+                att du har stängt en informationsruta eller påbörjat en
+                registrering av en parning eller kull. De skickas inte till oss
+                förrän du sparar.
+              </li>
+              <li>
+                En film från YouTube eller Vimeo som visas på en sida hämtas
+                först när du klickar på den. Då kan tjänsten sätta egna kakor.
+              </li>
+            </ul>
+          </Section>
+
+          <Section title="När du ansöker om medlemskap">
+            <p>
+              I ansökan lämnar du namn och e-postadress. Telefon, postadress,
+              fakturaadress och det du berättar om dig själv är frivilligt, men
+              utan postadress kan vi inte skicka medlemstidningen Koharen.
+            </p>
+            <p>
+              Vi använder uppgifterna för att behandla ansökan och för att lägga
+              in dig i medlemsregistret när du blir medlem. Det behövs för att
+              du ska kunna bli medlem (avtal). Ansökan läses av dem som sköter
+              medlemsregistret, av genbanksansvariga och av föreningens
+              systemansvarig. De antecknar beslutet och, vid avslag, skälet.
+            </p>
+            <p>Blir du inte medlem tar vi bort ansökan inom 12 månader.</p>
+          </Section>
+
+          <Section title="När du är medlem">
+            <p>
+              I medlemsregistret finns ditt medlemsnummer, namn, adress, telefon
+              och e-postadress, när du gick med, om avgiften är betald och en
+              eventuell fakturaadress. Den som sköter registret kan också skriva
+              en anteckning om medlemskapet, till exempel om en betalning.
+            </p>
+            <p>
+              Vi använder uppgifterna för att ta emot medlemsavgiften, skicka
+              Koharen, kalla till årsmöte och kunna nå dig i föreningens arbete.
+              Det behövs för medlemskapet (avtal). Uppgifter om betalningar som
+              ingår i bokföringen sparar vi i sju år efter det år de gäller,
+              eftersom bokföringslagen kräver det (rättslig förpliktelse).
+            </p>
+            <ul>
+              <li>
+                Hela medlemsregistret kan läsas av dem som sköter det, av
+                genbanksansvariga och av föreningens systemansvarig. Du ser
+                själv uppgifterna om ditt eget medlemskap. Ändringar i registret
+                loggas med vem som gjorde dem och när.
+              </li>
+              <li>
+                Tryckeriet får namn, adress och medlemsnummer för att kunna
+                skicka Koharen. Till årets två första nummer får det också veta
+                vilka som inte har betalat medlemsavgiften, så att en påminnelse
+                kan följa med.
+              </li>
+              <li>
+                I listan över aktiva besättningar i Koharen står bara de
+                innehavare som har sagt ja, i årsrapporten eller i sin profil
+                (samtycke). Då står namn och besättningsnummer, och dessutom de
+                kontaktuppgifter innehavaren har godkänt: postnummer och ort,
+                telefonnummer och e-postadress. Svaret gäller tills det ändras,
+                och den som aldrig har svarat publiceras inte. Du kan ändra ditt
+                svar när som helst i Stamboken Online eller hos
+                genbanksansvarig. Det som redan är tryckt går inte att ta
+                tillbaka.
+              </li>
+            </ul>
+            <p>
+              Vi sparar uppgifterna så länge du är medlem. När medlemskapet
+              upphör tar vi bort eller anonymiserar uppgifterna inom 12 månader.
+              Har du kvar en genbanksbesättning eller ett uppdrag i föreningen
+              behåller vi dem så länge det varar. Äldre medlemsförteckningar som
+              finns kvar som filer eller på papper tar vi bort efter två år.
+            </p>
+          </Section>
+
+          <Section title="När någon annan har lämnat dina uppgifter">
+            <p>
+              En huvudmedlem kan lägga in familjemedlemmar och personer som
+              sköter kaninerna i sitt medlemskap, och kan ange en annan
+              mottagare för fakturan. Då har vi fått ditt namn och dina
+              kontaktuppgifter från huvudmedlemmen och inte från dig. Vi
+              använder dem på samma sätt och lika länge som medlemmens egna
+              uppgifter (berättigat intresse), och du har samma rättigheter. Har
+              du lagts in i ett medlemskap och vi har fått din e-postadress
+              mejlar vi dig inom en månad och berättar det. Står du bara som
+              mottagare av fakturan använder vi dina uppgifter enbart för
+              fakturan.
+            </p>
+          </Section>
+
+          <Section title="När du har en genbanksbesättning">
+            <p>
+              I Stamboken Online finns besättningens nummer och namn,
+              kontaktperson, adress, telefon, e-postadress, eventuell webbplats
+              och koordinater. Där finns också dina kaniner, parningar och
+              kullar, foton du laddar upp, och dina årsrapporter med dina val om
+              vad som får publiceras. Vid varje rapporterad händelse står vem
+              som rapporterade den. Rapporterar du på papper skickar du
+              blanketten till genbanksansvarig för rasen, som för in ändringarna
+              för dina kaniner i Stamboken Online och sammanställer övriga
+              uppgifter i årsrapporten. Pappersblanketter och kopior av
+              genbanksintyg förvaras hos genbanksansvarig och förstörs efter tio
+              år. Äldre kopior av intyg kan innehålla köparens namn och adress.
+              Sammanställningen av årsrapporterna, med bankkonton för
+              utbetalningen, förvaras hos genbanksansvarig och i en låst mapp i
+              föreningens Google Drive, som bara genbanksansvariga och
+              systemansvarig kommer åt. Den sparas i sju år, som underlag för
+              utbetalningarna. Genbankskontraktet sparar vi så länge
+              genbanksbesättningen finns och i tio år därefter.
+            </p>
+            <p>
+              Uppgifterna behövs för genbanksavtalet mellan dig och föreningen
+              (avtal) och för att raserna ska kunna bevaras, vilket kräver att
+              varje kanins härstamning går att följa (berättigat intresse).
+            </p>
+            <ul>
+              <li>
+                Du själv, de som har fått åtkomst till besättningen (till
+                exempel en skötare), genbanksansvarig för rasen och föreningens
+                systemansvarig ser alla uppgifter om besättningen.
+              </li>
+              <li>
+                Andra inloggade medlemmar ser besättningens nummer och namn och
+                dina kaniner. Kontaktuppgifterna är dolda för dem från början.
+                De visas bara om fältet har ställts in som synligt, av dig eller
+                av genbanksansvarig.
+              </li>
+              <li>
+                Har du rätt till stöd lägger du in ett bankkonto för
+                utbetalningen. Det visas aldrig för andra medlemmar. Hela
+                kontonumret ses av dig och dem du har gett åtkomst till
+                besättningen, av dem som sköter medlemsregistret och betalar ut
+                stödet, och av föreningens systemansvarig. Genbanksansvariga och
+                deras hjälpare ser bankens namn och de två sista siffrorna i
+                kontonumret. Skickar du in en blankett med kontonumret, på
+                papper eller som foto, ser den som tar emot den hela numret.
+                Underlaget för utbetalningen sparas så att det kan visas för
+                Jordbruksverket vid en kontroll.
+              </li>
+              <li>
+                Ändringar av kaniner, parningar, kullar, besättningar och konton
+                loggas med användare, tidpunkt, IP-adress och det gamla och det
+                nya värdet, så att fel kan spåras och rättas (berättigat
+                intresse). IP-adressen tar vi bort efter 12 månader. Resten av
+                loggen sparas tills vidare och behåller de gamla värdena, också
+                sedan en uppgift har ändrats eller tagits bort.
+              </li>
+              <li>
+                Testmiljön är en kopia av den riktiga stamboken, så att du kan
+                öva utan att ändra något på riktigt. Kopian innehåller samma
+                uppgifter, utom köpare utanför föreningen, inskickade ärenden
+                och mejl, som inte kopieras dit. Alla som har ett föreningskonto
+                kan logga in i testmiljön, också den vars konto ännu inte är
+                godkänt för den riktiga stamboken, och ser där det som andra
+                inloggade medlemmar ser.
+              </li>
+            </ul>
+            <p>
+              Uppgifterna om kaninerna och deras härstamning sparas så länge
+              stamboken finns, tillsammans med besättningens nummer.
+              Kontaktuppgifterna tar vi bort inom 12 månader efter att
+              genbanksbesättningen har avslutats, och bankkontot när det sista
+              stödet är utbetalt.
+            </p>
+          </Section>
+
+          <Section title="När du köper en kanin av en medlem">
+            <p>
+              Köper du en genbankskanin av en medlem fyller ni i ett
+              överlåtelsebevis, och ägarbytet registreras i Stamboken Online.
+              Har du själv en genbanksbesättning registreras kaninen på den. Det
+              som följer gäller dig som köper utan att ha en genbanksbesättning,
+              också om du inte är medlem.
+            </p>
+            <ul>
+              <li>
+                Ditt namn och din postadress sparar vi i fem år från köpet, så
+                att genbankskaninerna går att spåra, till exempel vid ett
+                utbrott av en smittsam djursjukdom, och så att kaninerna följer
+                med om du startar en egen besättning (berättigat intresse). Vet
+                vi att kaninen har dött tar vi bort dem tidigare. Uppgifterna
+                kan komma från dig eller från säljaren. Utan namn och postadress
+                skrivs inget bevis.
+              </li>
+              <li>
+                Din e-postadress och ditt telefonnummer sparar vi bara om du har
+                kryssat ja på beviset (samtycke), och bara tills kaninen byter
+                ägare igen.
+              </li>
+              <li>
+                Har du kryssat ja till att föreningen får kontakta dig om
+                medlemskap sparar vi det vi behöver för att nå dig i högst 12
+                månader, även om kaninen säljs vidare (samtycke).
+              </li>
+              <li>
+                Är köparen under 18 år skrivs vårdnadshavaren in som köpare. Vi
+                sparar inget om barnet.
+              </li>
+            </ul>
+            <p>
+              Uppgifterna ses av genbanksansvariga och deras hjälpare för rasen
+              och av föreningens systemansvarig. Ett inskickat foto av beviset
+              kan ses av genbanksansvariga och hjälpare för båda raserna,
+              eftersom de delar på inkorgen. Andra medlemmar ser bara att
+              kaninen är såld utanför genbanken. Vi kan lämna uppgifterna till
+              en myndighet som begär dem med stöd av lag, till exempel vid ett
+              utbrott av en smittsam djursjukdom.
+            </p>
+            <p>
+              Skickas beviset in som foto sparas bilden i högst 12 månader efter
+              det senaste beskedet i ärendet, och den tas bort tidigare om
+              kaninen säljs vidare. Har vi din e-postadress mejlar vi dig när
+              ägarbytet är registrerat och berättar vad vi har sparat.
+            </p>
+            <p>
+              Registrerar vi en försäljning från ett äldre intyg där köparen
+              står ifylld för vi in namn och postadress, om försäljningen är
+              högst fem år gammal. E-postadress och telefonnummer för vi inte
+              in. Vi skriver till köparen inom en månad och berättar det, med
+              mejl om intyget har en e-postadress och annars med brev.
+            </p>
+            <p>
+              Du kan när som helst ta tillbaka ditt ja, och du kan invända mot
+              att vi sparar ditt namn och din postadress. Mejla {contactLink}.
+              Tar vi bort dina uppgifter står försäljningen kvar i stamboken,
+              utan ditt namn.
+            </p>
+          </Section>
+
+          <Section title="Ditt konto i Stamboken Online">
+            <p>
+              Kontot innehåller användarnamn, namn, e-postadress, vad du får
+              läsa och ändra, och när du senast använde tjänsten. Loggar du in
+              med Google sparas också namnet, e-postadressen och länken till
+              profilbilden från ditt föreningskonto. Du kan ladda upp en egen
+              profilbild. Lösenord sparas aldrig i klartext.
+            </p>
+            <p>
+              Kontot behövs för att du ska kunna använda Stamboken Online och
+              för att bara rätt person ska se och ändra uppgifter (avtal). Det
+              finns kvar så länge du är medlem eller har en genbanksbesättning.
+            </p>
+          </Section>
+
+          <Section title="Digitala genbanksintyg">
+            <p>
+              På ett digitalt genbanksintyg står uppfödarens namn. Alla som har
+              intygets QR-kod eller länk kan öppna en kontrollsida som visar att
+              intyget är äkta, kaninens namn och nummer, ras, intygsnummer och
+              datum. Uppfödarens namn visas där bara om uppfödaren själv har
+              valt det, annars står det bara Uppfödare. Har kaninen sålts visas
+              det med månad och år, aldrig med namn på säljare eller köpare. Det
+              gör vi för att en köpare ska kunna kontrollera att intyget är äkta
+              (berättigat intresse).
+            </p>
+          </Section>
+
+          <Section title="Föreningskonto, e-post och forum">
+            <p>
+              Som medlem kan du få ett föreningskonto: en e-postadress på
+              gotlandskaninen.se hos Google Workspace. Med det loggar du in i
+              Stamboken Online och i medlemsforumet. Kontot ingår i medlemskapet
+              (avtal). När du mejlar föreningen lagras mejlet hos Google och
+              läses av den funktionär som har adressen, för att vi ska kunna
+              svara dig (berättigat intresse). I forumet sparas ditt
+              användarnamn, din e-postadress och det du skriver. Det fristående
+              forumet ska ersättas av en motsvarande funktion i Stamboken
+              Online. Vi berättar i förväg om konton och inlägg flyttas dit
+              eller tas bort.
+            </p>
+          </Section>
+
+          <Section title="Vilka som får dina uppgifter">
+            <p>
+              Vi säljer aldrig personuppgifter och lämnar inte ut dem för
+              reklam. De här får uppgifter för att föreningen ska kunna sköta
+              sitt arbete:
+            </p>
+            <ul>
+              <li>
+                Google, som levererar föreningens e-post, föreningskonton,
+                inloggning och delade dokument. Google kan behandla uppgifter
+                utanför EU och EES. Överföringen till USA stöds av
+                EU-kommissionens beslut om att skyddet där är tillräckligt
+                (EU–US Data Privacy Framework) och av EU:s standardavtal för
+                överföring av personuppgifter, som ingår i vårt avtal med
+                Google.
+              </li>
+              <li>
+                Safespring, som tillhandahåller servrar och lagring för
+                Stamboken Online i datacenter i Stockholm.
+              </li>
+              <li>
+                GitHub, där föreningens kod och ärenden om driften ligger. Där
+                finns namn och roller för funktionärer, men inga
+                medlemsregister. Överföringen till USA stöds av EU-kommissionens
+                beslut om att skyddet där är tillräckligt och av EU:s
+                standardavtal.
+              </li>
+              <li>
+                Tryckeriet som trycker och skickar ut Koharen. Det får
+                adresserna och tidningens innehåll.
+              </li>
+              <li>
+                Det bolag som sköter drift och utveckling av Stamboken Online åt
+                föreningen. Det får de uppgifter som behövs för uppdraget.
+                Bolaget använder i sin tur leverantörer av utvecklingsverktyg,
+                som kan behandla uppgifter i USA med stöd av EU:s standardavtal
+                för överföring av personuppgifter.
+              </li>
+              <li>
+                Jordbruksverket, om myndigheten begär att få se underlaget för
+                stödet vid en kontroll.
+              </li>
+            </ul>
+            <p>
+              Vill du ha en kopia av de skyddsåtgärder som gäller för en
+              överföring till USA kan du mejla {contactLink}.
+            </p>
+            <p>
+              Säkerhetskopiorna är krypterade och lagras hos Safespring i
+              Stockholm och i föreningens Google Drive. De sparas i upp till 12
+              månader. En uppgift som vi har tagit bort kan därför finnas kvar i
+              en säkerhetskopia under den tiden.
+            </p>
+          </Section>
+
+          <Section title="Dina rättigheter">
+            <p>Du har rätt att:</p>
+            <ul>
+              <li>få veta vilka uppgifter vi har om dig och få en kopia</li>
+              <li>få felaktiga uppgifter rättade</li>
+              <li>
+                begära att få uppgifter raderade; i vissa fall behöver vi
+                behålla dem, till exempel när en lag kräver det
+              </li>
+              <li>begära att vi begränsar behandlingen</li>
+              <li>
+                få ut de uppgifter du själv har lämnat, när vi behandlar dem med
+                stöd av avtal eller samtycke, i ett format som går att flytta
+              </li>
+              <li>
+                ta tillbaka ett samtycke när du vill; det påverkar inte det vi
+                redan har gjort med stöd av samtycket.
+              </li>
+            </ul>
+            <p>
+              Du har också rätt att invända mot behandling som vi stöder på
+              berättigat intresse. Då prövar vi om våra skäl väger tyngre än
+              dina.
+            </p>
+            <p>
+              Vi fattar inga beslut om dig med enbart automatik. Mejla{" "}
+              {contactLink} om du vill använda en rättighet. Vi svarar inom en
+              månad. Du kan också när som helst klaga direkt hos{" "}
+              <a href="https://www.imy.se">Integritetsskyddsmyndigheten</a>.
+            </p>
+          </Section>
+
+          <p>
+            Styrelsen antog integritetspolicyn den 22 november 2026. Texten
+            ändrades senast den 23 november 2026.
+          </p>
+        </Box>
+      </Box>
+    </>
+  );
+}

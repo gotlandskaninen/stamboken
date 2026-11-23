@@ -112,6 +112,29 @@ test.describe("Landing page sections", () => {
       footer.getByText("Föreningen Gotlandskaninen").first(),
     ).toBeVisible();
   });
+
+  test("footer links to the privacy policy", async ({ page }) => {
+    await page
+      .locator("footer")
+      .getByRole("link", { name: "Integritetspolicy" })
+      .click();
+    await expect(page).toHaveURL(/\/integritetspolicy$/);
+    await expect(
+      page.getByRole("heading", { level: 1, name: "Integritetspolicy" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("heading", { level: 2, name: "Dina rättigheter" }),
+    ).toBeVisible();
+    // Open decisions are marked with <mark>; the policy must not ship with any.
+    await expect(page.locator("mark")).toHaveCount(0);
+  });
+});
+
+test("the short address /dataskydd leads to the privacy policy", async ({
+  page,
+}) => {
+  await page.goto("/dataskydd");
+  await expect(page).toHaveURL(/\/integritetspolicy$/);
 });
 
 test.describe("Landing page CTA above fold", () => {

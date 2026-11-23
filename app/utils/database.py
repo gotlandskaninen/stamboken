@@ -66,8 +66,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # retiring the PDF rows of digital certificates that a paper certificate replaced (38) +
 # audit_log IP retention index (39) + herd bank privacy reset (40) + the mail queue (41) +
 # the intake queue (42) and its retention (43) + buyer_contact (44) +
-# matrikel_audit rows without a user, written by the nightly anonymization (45).
-CURRENT_SCHEMA_VERSION = 45
+# matrikel_audit rows without a user, written by the nightly anonymization (45) +
+# the coat column individual.rex (46).
+CURRENT_SCHEMA_VERSION = 46
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -774,6 +775,7 @@ class Individual(BaseModel):
     claw_color = TextField(null=True)
     belly_color = TextField(null=True)
     hair_notes = TextField(null=True)
+    rex = BooleanField(default=False, constraints=[SQL("DEFAULT false")])  # the coat: rex, else normal
     is_active = BooleanField(null=True, default=True)
     has_photo = BooleanField(null=True, default=False)
     butchered = BooleanField(null=True, default=False)
@@ -4112,6 +4114,90 @@ def migrate_44_to_45():
         ).execute()
 
 
+_REX_MENTION = "rex"  # unanchored: "ickerex" and "dvärgrex" are candidates too, and fail the shape below
+# Reads individual.hair_notes, color_note and (for the "normal" check only) notes; nothing else.
+# A field that contains rex anywhere is clean only if it is colour words from a closed vocabulary followed by rex or
+# rexpäls(ad|ade|en) as the last token, and it has none of the doubts below: carriers, negations, relatives,
+# questions. A "normal" in hair_notes, color_note or notes blocks the row, and so does a hair_notes that is
+# exactly an explicit no ("nej", "ej", "inga avvikelser", "inga", "-", "normal"), even when rex is only in
+# color_note. Everything else is deliberately left rex = false for manual review. Those rows stay findable
+# afterwards by a read-only query (rex false and the text mentions rex), so the migration logs counts only, never ids.
+_REX_WORDS = (
+    r"sv[aä]rt|sv[aä]rta|bl[åa]|bl[åa]tt|bl[åa]a|brun|bruna|brunt|gul|gula|gult|vit|vita|vitt|gr[åa]|gr[åa]tt|gr[åa]a"
+    r"|r[öo]d|r[öo]da|r[öo]tt|tegel(r[öo]d)?|choklad(brun)?|japan|siames|agouti|havanna|madagaskar|orange|lila"
+    r"|chinchilla|harlekin|tricolor|albino|hermelin|dalmatiner|vildf[äa]rgad|ja"
+)
+# Words are joined by whitespace, "/", "," or "."; a "-" only joins one colour word directly to rex.
+_REX_SHAPE = r"^\s*((" + _REX_WORDS + r")[\s/,.]+)*((" + _REX_WORDS + r")-)?rex(-?päls(ad|ade|en)?)?[.\s]*$"
+_REX_NO = r"^\s*(nej|ej|inga avvikelser|inga|-|normal)\s*$"
+_REX_DOUBT = (
+    r"b[äÄ]r",
+    r"anlag",
+    r"inslag",
+    r"\msplit",
+    r"\m(ej|inte|inget|ingen|icke|utan|nej|ev|kanske|negativ|testad|känt|efter|syskon|kullsyskon|far|mor|dotter|son)\M",
+    r"f[öÖ]r[äÄ]ld",
+    r"fader|moder",
+    r"hane|hona",
+    r"rex(fri|mor|far)",
+    r"\?",
+    r"mamma|pappa|bror|syster|mormor|farfar|morfar|moster|faster|avkomma|kull|syskon|dotter",
+    r"eventuellt|troligen|m[öÖ]jligen|os[äÄ]ker|oklart|ok[äÄ]nt|\mkan\M|inga|aldrig|\mnot\M|\mnon\M",
+    r"fri\M|fr[åÅ]n|tecken|halv|\x25|\mgen|linje|korsning|hetero|negativ|\mliknande",
+    r"\m(far|mor)|sakna|\mno\M",
+)
+
+
+def _rex_sql(template, fields=("hair_notes", "color_note")):
+    """One condition over the fields, each judged on its own: template with FIELD."""
+    return " OR ".join(template.replace("FIELD", f"normalize(coalesce({f}, ''), NFC)") for f in fields)
+
+
+_REX_MENTIONED = _rex_sql("FIELD ~* '" + _REX_MENTION + "'")
+_REX_DOUBTFUL = (  # a field with rex in it that is not clean, a "normal" in any field, or an explicit no in hair_notes
+    "("
+    + _rex_sql(
+        "(FIELD ~* '"
+        + _REX_MENTION
+        + "' AND (FIELD !~* '"
+        + _REX_SHAPE
+        + "' OR FIELD ~* '"
+        + "|".join(_REX_DOUBT)
+        + "'))"
+    )
+    + ") OR ("
+    + _rex_sql("FIELD ~* 'normal'", ("hair_notes", "color_note", "notes"))
+    + ") OR ("
+    + _rex_sql("FIELD ~* '" + _REX_NO + "'", ("hair_notes",))
+    + ")"
+)
+
+
+def migrate_45_to_46():
+    """individual.rex: the coat, rex or normal. Rabbits whose notes say rex get true; the notes are not touched.
+    The column is added in raw SQL (no audit rows); the UPDATE is audited, so the rows it set can be found.
+    Only the run that creates the column sets rex from text; a replay must not undo later corrections."""
+    with DATABASE.atomic():
+        created = "rex" not in {c.name for c in DATABASE.get_columns("individual")}
+        DATABASE.execute_sql("ALTER TABLE individual ADD COLUMN IF NOT EXISTS rex BOOLEAN NOT NULL DEFAULT false")
+        if created:
+            excluded = DATABASE.execute_sql(
+                f"SELECT count(*) FROM individual WHERE ({_REX_MENTIONED}) AND ({_REX_DOUBTFUL})"
+            ).fetchone()[0]
+            done = DATABASE.execute_sql(
+                f"UPDATE individual SET rex = true WHERE ({_REX_MENTIONED}) AND NOT ({_REX_DOUBTFUL})"
+            ).rowcount
+            note = f"set from free text on {done}, {excluded} excluded"
+        else:
+            note = "column existed, free text not read"
+        logger.info(f"rex: {note}")
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=46,
+            comment=f"individual.rex; {note}",
+            applied=datetime.now(),
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4594,6 +4680,7 @@ MIGRATIONS = {
     (42, 43): migrate_42_to_43,  # intake queue retention
     (43, 44): migrate_43_to_44,  # buyer contact
     (44, 45): migrate_44_to_45,  # matrikel_audit actor NULL for the nightly job
+    (45, 46): migrate_45_to_46,  # individual.rex
 }
 
 

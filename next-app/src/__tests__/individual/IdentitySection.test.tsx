@@ -1,7 +1,8 @@
 import React from "react";
 import { describe, it, expect, afterEach, vi } from "vitest";
-import { render, screen, cleanup } from "@testing-library/react";
+import { render, screen, cleanup, fireEvent } from "@testing-library/react";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
+import "@/i18n";
 import { IdentitySection } from "@/components/individual/IdentitySection";
 import type { Individual } from "@/redux/api/apiSlice";
 
@@ -92,5 +93,44 @@ describe("IdentitySection", () => {
     // Empty fields should show dash instead of being hidden
     const dashes = screen.getAllByText("—");
     expect(dashes.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("Päls: valet Rex anropar onFieldChange med true, Normal med false", () => {
+    const onFieldChange = vi.fn();
+    const { rerender } = renderWithTheme(
+      <IdentitySection
+        individual={{ ...mockIndividual, rex: false }}
+        isEditing={true}
+        formData={{}}
+        onFieldChange={onFieldChange}
+      />,
+    );
+    expect(screen.getByText("Päls")).toBeDefined();
+    fireEvent.click(screen.getByRole("radio", { name: "Rex" }));
+    expect(onFieldChange).toHaveBeenLastCalledWith("rex", true);
+    rerender(
+      <ThemeProvider theme={theme}>
+        <IdentitySection
+          individual={{ ...mockIndividual, rex: false }}
+          isEditing={true}
+          formData={{ rex: true }}
+          onFieldChange={onFieldChange}
+        />
+      </ThemeProvider>,
+    );
+    fireEvent.click(screen.getByRole("radio", { name: "Normal" }));
+    expect(onFieldChange).toHaveBeenLastCalledWith("rex", false);
+  });
+
+  it("Päls visas som text utanför redigering", () => {
+    renderWithTheme(
+      <IdentitySection
+        individual={{ ...mockIndividual, rex: true }}
+        isEditing={false}
+        formData={{}}
+        onFieldChange={() => {}}
+      />,
+    );
+    expect(screen.getByText("Rex")).toBeDefined();
   });
 });

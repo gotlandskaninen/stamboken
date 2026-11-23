@@ -159,6 +159,120 @@ class TestGeneratePedigree(unittest.TestCase):
         self.assertIn("\u2014", html)  # — (em dash)
 
 
+class TestPedigreeTemplateV2(unittest.TestCase):
+    """Rendered HTML of the template: identity rows, breed line, footer."""
+
+    def _html(self, **over):
+        data = _sample_data()
+        data.update(breed="Gotlandskanin", microchip="")
+        data.update(over)
+        gen = CertificateGeneratorV2()
+        template = gen.env.get_template("pedigree.html")
+        return template.render(qr_svg="", **data)  # nosemgrep: direct-use-of-jinja2
+
+    def test_foot_ring_and_chip_both(self):
+        html = self._html(foot_ring="FGK 218", microchip="752098100012345")
+        self.assertIn("Benring", html)
+        self.assertIn("FGK 218", html)
+        self.assertIn("Chipnummer", html)
+        self.assertIn("752098100012345", html)
+        self.assertNotIn("Fotringsnr", html)
+
+    def test_reissue_of_v1(self):
+        html = self._html(replaces_v1=True, digital_certificate="345", issue_date="2026-12-01")
+        self.assertIn("Återutfärdat av föreningen 2026-12-01 i ny utformning. Intygsnumret är detsamma", html)
+        self.assertNotIn("Ersätter det tidigare", self._html())
+        both = self._html(replaces_v1=True, replaces_date="2026-11-01")
+        self.assertIn("Ersätter intyg utfärdat 2026-11-01", both)
+        self.assertNotIn("Ersätter det tidigare", both)
+
+    def test_only_foot_ring(self):
+        html = self._html(foot_ring="FGK 218")
+        self.assertIn("FGK 218", html)
+        self.assertIn('<td class="l">Chipnummer</td><td class="v">—</td>', html)
+
+    def test_only_chip(self):
+        html = self._html(microchip="752098100012345")
+        self.assertIn("752098100012345", html)
+        self.assertIn('<td class="l">Benring</td><td class="v">—</td>', html)
+
+    def test_coat_is_pals_once_rex_is_known(self):
+        self.assertIn('<td class="l">Päls</td><td class="v">Rex</td>', self._html(rex=True))
+        self.assertIn('<td class="l">Päls</td><td class="v">Normal</td>', self._html(rex=False))
+
+    def test_coat_note_until_rex_exists(self):
+        html = self._html(hair_notes="Normalhårig")
+        self.assertIn('<td class="l">Hårlag</td><td class="v">Normalhårig</td>', html)
+        self.assertNotIn("Päls", html)
+
+    def test_neither_foot_ring_nor_chip(self):
+        # the row stays, so "no ring" is not read as "not printed"
+        html = self._html()
+        self.assertIn('<td class="l">Benring</td><td class="v">—</td>', html)
+        self.assertIn('<td class="l">Chipnummer</td><td class="v">—</td>', html)
+
+    def test_missing_sex_is_not_none(self):
+        self.assertNotIn("None", self._html(sex=""))
+
+    def test_no_jordbruksverket(self):
+        self.assertNotIn("Jordbruksverket", self._html())
+
+    def test_breed_under_title(self):
+        html = self._html(breed="Mellerudskanin", genebank="Mellerud")
+        self.assertIn('<p class="breed">Ras: Mellerudskanin</p>', html)
+
+    def test_individual_number_in_one_field(self):
+        # the whole number in one weight, the letter marked as on the paper's first box
+        self.assertIn('<div class="num"><span class="gm">G</span>1274-2301</div>', self._html())
+
+    def test_microline_carries_number_and_checksum(self):
+        html = self._html(digital_certificate="345", doc_hash_stub="ABCD1234")
+        self.assertIn("Genbanksintyg 345 · ABCD1234 · ", html)
+
+    def test_attester_row_names_the_issuer(self):
+        self.assertIn('Intygas av</td><td class="sv">Anna Exempel<', self._html(fullname="Anna Exempel"))
+
+    def test_unknown_parent_has_no_stray_dash(self):
+        html = self._html(F_genebank_number=None, F_genebank_aki=None)
+        self.assertNotIn("\u2014-", html)
+
+
+class TestBuildCertData(unittest.TestCase):
+    def test_breed_and_microchip(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        from utils.cert_service_v2 import build_cert_data
+
+        ind = SimpleNamespace(
+            origin_herd=SimpleNamespace(
+                genebank=SimpleNamespace(name="Mellerud"),
+                name="Uppfödare",
+                herd_name=None,
+                herd="M12",
+            ),
+            microchip="752098100012345",
+            color=None,
+            number="G1-1",
+            digital_certificate="1",
+        )
+        current = {"fullname": "Den som utfärdar", "herd": "MX1"}
+        with patch("utils.cert_service_v2.get_certificate_data", return_value=current):
+            data = build_cert_data(ind, {}, 1)
+        self.assertEqual(data["breed"], "Mellerudskanin")
+        # The issuing person attests in her own name, with the origin herd, not the current (buyer's) herd
+        self.assertEqual(data["fullname"], "Den som utfärdar")
+        self.assertEqual(data["herd"], "M12")
+        self.assertEqual(data["microchip"], "752098100012345")
+        ind.microchip = None
+        with patch("utils.cert_service_v2.get_certificate_data", return_value={}):
+            self.assertEqual(build_cert_data(ind, {}, 1)["microchip"], "")
+        for name, breed in (("Gotlandskanin", "Gotlandskanin"), ("Mellerudskanin", "Mellerudskanin")):
+            ind.origin_herd.genebank.name = name  # the names `flask seed create` gives the genebanks
+            with patch("utils.cert_service_v2.get_certificate_data", return_value={}):
+                self.assertEqual(build_cert_data(ind, {}, 1)["breed"], breed)
+
+
 class TestSignPdf(unittest.TestCase):
     """Tests for PDF signing."""
 

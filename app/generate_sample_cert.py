@@ -9,6 +9,8 @@ from utils.certificates_v2 import CertificateGeneratorV2, sign_pdf
 
 data = {
     "genebank": "Gotlandskanin",
+    "breed": "Gotlandskanin",
+    "microchip": "",
     "genebank_number": "G1274",
     "genebank_aki": "2301",
     "name": "Bruno",

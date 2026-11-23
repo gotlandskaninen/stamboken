@@ -116,6 +116,7 @@ class TestShortcutCreate(ShortcutMixin, DatabaseTest):
         # Digital: a paper certificate gets the number conflict litter_order instead (test_number_check).
         self._litter(date(2025, 8, 1), 1)
         before = self._written()
+        db.User.update(fullname="Test Namn").where(db.User.id == self.owner.id).execute()  # the issuer needs a name
         self._login()
         response = self.client.post(URL, json=self._body(certificate_type="digital", paper_certificate=None))
         self.assertEqual((response.status_code, response.get_json()["title"]), (409, "litter_order_conflict"))
