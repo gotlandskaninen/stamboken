@@ -2,14 +2,17 @@
 
 import re
 from datetime import date
+from unittest.mock import patch
 from uuid import uuid4
 
+import cli.members as members_cli_module
 import utils.data_access as da
 import utils.database as db
 from cli.members import members_cli
 from click.testing import CliRunner
 from flask.cli import ScriptInfo
 from herdbook import APP  # noqa: E402
+from utils.matrikel import LinkError
 
 from tests.database_test import DatabaseTest  # noqa: E402
 
@@ -48,7 +51,9 @@ class TestMembersLinkByHerd(DatabaseTest):
 
     def _herd(self, code, genebank=0, **kwargs):
         """The herd is tied to the membership with its number, as the import does; membership=None unties it."""
-        kwargs.setdefault("membership", self._memberships.get(int(code[1:]) if re.fullmatch(r"[GM][1-9][0-9]*", code) else None))
+        kwargs.setdefault(
+            "membership", self._memberships.get(int(code[1:]) if re.fullmatch(r"[GM][1-9][0-9]*", code) else None)
+        )
         return db.Herd.create(genebank=self.genebanks[genebank], herd=code, **{"is_active": True, **kwargs})
 
     def _account(self, fullname="Anna Svensson", owns=None):
@@ -144,7 +149,9 @@ class TestMembersLinkByHerd(DatabaseTest):
 
         result = self._apply()
 
-        self.assertEqual(db.Member.select().where(db.Member.user.is_null(False), db.Member.membership == membership).count(), 0)
+        self.assertEqual(
+            db.Member.select().where(db.Member.user.is_null(False), db.Member.membership == membership).count(), 0
+        )
         self.assertIn("ingen kvarvarande huvudmedlem", result.output)
 
     def test_g_and_m_herds_go_to_the_membership_with_their_number(self):
@@ -528,9 +535,10 @@ class TestMembersLinkByHerd(DatabaseTest):
         self._membership(901)
         self._membership(902, first="Eva", last="Lund")
         users = [
-            db.User.create(email="delad@example.org", uuid=uuid4(), fullname=name) for name in ("Anna Svensson", "Eva Lund")
+            db.User.create(email="delad@example.org", uuid=uuid4(), fullname=name)
+            for name in ("Anna Svensson", "Eva Lund")
         ]
-        for user, code in zip(users, ("G901", "G902")):
+        for user, code in zip(users, ("G901", "G902"), strict=True):
             user.add_role("owner", self._herd(code).id)
 
         result = self._run()
@@ -648,9 +656,7 @@ class TestMembersLinkByHerd(DatabaseTest):
 
     def test_control_characters_in_labels_stay_on_one_visible_line(self):
         self._membership(901, first="Åsa", last="Öberg", email="å\nx@example.org")
-        user = db.User.create(
-            email="a\nb@example.org\x1b[2K", username="u\rv", uuid=uuid4(), fullname="Åsa Öberg"
-        )
+        user = db.User.create(email="a\nb@example.org\x1b[2K", username="u\rv", uuid=uuid4(), fullname="Åsa Öberg")
         user.add_role("owner", self._herd("G901").id)
 
         result = self._run()
@@ -663,3 +669,26 @@ class TestMembersLinkByHerd(DatabaseTest):
         self.assertIn("\\n", lines[0])
         self.assertIn("Åsa Öberg", lines[0])
         self.assertIn("å\\nx@example.org", lines[0])
+
+    def test_a_refused_link_is_listed_with_its_text_and_does_not_stop_the_next(self):
+        _, p1 = self._membership(901)
+        _, p2 = self._membership(902, first="Eva", last="Lund")
+        self._account(owns=self._herd("G901"))
+        good = self._account(fullname="Eva Lund", owns=self._herd("G902"))
+        real = members_cli_module.link_member_user
+
+        def refuse_first(person_id, user_id, **kwargs):
+            if person_id == p1.id:
+                raise LinkError("Avvisad", "Kontot är låst\x1b[2K")
+            return real(person_id, user_id, **kwargs)
+
+        value = self._plan_value()
+        with patch.object(members_cli_module, "link_member_user", refuse_first):
+            result = self._run("--apply", "--actor-user-id", str(self.admin.id), "--plan", value)
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIsNone(self._linked_user_id(p1))
+        self.assertEqual(self._linked_user_id(p2), good.id)
+        self.assertIn("Kontot är låst\\x1b[2K", result.output)
+        self.assertNotIn("\x1b", result.output)
+        self.assertIn("Kopplade: 1", result.output)

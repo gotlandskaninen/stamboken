@@ -838,7 +838,9 @@ def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None, plan_value: s
     if apply_links and plan_value != value:
         _echo_plan("Att koppla", [lines[id(p)] for p in to_link], listed, already)
         click.echo(f"Kontrollvärde: {value}")
-        raise click.ClickException("planen har ändrats sedan du läste den — läs den nya planen ovan och kör om med dess värde")
+        raise click.ClickException(
+            "planen har ändrats sedan du läste den — läs den nya planen ovan och kör om med dess värde"
+        )
 
     linked = []
     for pair in to_link:
@@ -846,7 +848,7 @@ def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None, plan_value: s
             if apply_links:
                 link_member_user(pair[0].id, pair[1].id, actor=actor, mode="cli")
         except (ConfirmRequired, LinkError, IntegrityError) as exc:
-            listed.append((pair[2], f"länkningen avvisades ({type(exc).__name__})"))
+            listed.append((pair[2], f"länkningen avvisades ({type(exc).__name__}: {_safe(exc)})"))
         else:
             linked.append(lines[id(pair)])
 
@@ -933,24 +935,32 @@ def _plan_herd_links() -> tuple[list, list, int]:
         active = membership is not None and membership.membership_status == Status.ACTIVE
         main = None
         if active:
-            main = Member.select().where(
-                Member.membership == membership, Member.role == "huvudmedlem", Member.end_date.is_null(True)
-            ).first()
+            main = (
+                Member.select()
+                .where(Member.membership == membership, Member.role == "huvudmedlem", Member.end_date.is_null(True))
+                .first()
+            )
 
         if main is not None:
             # Decided before anything is sorted out: whatever else is wrong with the
             # herd or the account, a name-matching owner is a possible counterpart.
             wanted = _norm_name(f"{main.first_name} {main.last_name}")
-            possible |= {(main.id, uid) for uid, u in owner_users.items() if wanted and _norm_name(u.fullname) == wanted}
+            possible |= {
+                (main.id, uid) for uid, u in owner_users.items() if wanted and _norm_name(u.fullname) == wanted
+            }
 
         # A herd stored on another membership: that membership's main member is a counterpart too.
         for stored_id in {h.membership_id for h in herds} - {None, getattr(membership, "id", None)}:
-            stored = Member.select().where(
-                Member.membership == stored_id, Member.role == "huvudmedlem", Member.end_date.is_null(True)
-            ).first()
+            stored = (
+                Member.select()
+                .where(Member.membership == stored_id, Member.role == "huvudmedlem", Member.end_date.is_null(True))
+                .first()
+            )
             if stored is not None:
                 wanted = _norm_name(f"{stored.first_name} {stored.last_name}")
-                possible |= {(stored.id, uid) for uid, u in owner_users.items() if wanted and _norm_name(u.fullname) == wanted}
+                possible |= {
+                    (stored.id, uid) for uid, u in owner_users.items() if wanted and _norm_name(u.fullname) == wanted
+                }
 
         if len(herds) > 1:
             listed.append(([code], "flera besättningar har samma kod"))
