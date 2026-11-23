@@ -120,11 +120,17 @@ class TestLoginAccount(MatrikelApiTest):
             self.assertEqual(self.create().get_json(), {"v2_prod_access": True})
         self.assertTrue(db.Member.get_by_id(self.member.id).user.v2_prod_access)
 
-    def test_previous_address_still_in_its_wait_when_contact_is_empty(self):
+    def test_previous_address_can_verify_but_cannot_create_an_account_without_a_current_address(self):
         matrikel.set_member_email(self.member, None, self.viewer, by="other")
         self.pending()
+        self.assertEqual(self.create().status_code, 401)
+        self.assert_no_account()
+
+    def test_previous_address_can_verify_but_the_account_gets_the_current_address(self):
+        matrikel.set_member_email(self.member, "current@example.org", self.viewer, by="other")
+        self.pending()
         self.assertEqual(self.create().status_code, 200)
-        self.assertEqual(db.Member.get_by_id(self.member.id).user.email, self.member.email)
+        self.assertEqual(db.Member.get_by_id(self.member.id).user.email, "current@example.org")
 
     def test_possible_owner_or_unlinked_email_account_refuses_creation(self):
         self.pending()

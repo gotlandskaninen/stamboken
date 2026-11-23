@@ -104,7 +104,8 @@ def create_pending_account(version):
         person = Member.select().where(Member.id == person_id).for_update().get()
         if person.user_id is not None:
             raise AccountConflict
-        if person.role != "huvudmedlem" or address_hash(person.email) != session["pending_contact"]:
+        contact = (person.email or "").strip()
+        if not contact or person.role != "huvudmedlem" or address_hash(contact) != session["pending_contact"]:
             raise InvalidPending
         login_code.lock_holder_addresses(person)
         # Existing accounts can acquire an address or an owner role outside the registry.
@@ -120,7 +121,7 @@ def create_pending_account(version):
             raise AccountConflict
         user = User.create(
             uuid=uuid4(),
-            email=(person.email or address).strip(),
+            email=contact,
             fullname=f"{person.first_name} {person.last_name}".strip(),
             privileges=[{"level": "viewer", "genebank": n} for n in (1, 2)],
             rules_version=version,
