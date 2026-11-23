@@ -938,6 +938,15 @@ def _plan_herd_links() -> tuple[list, list, int]:
             wanted = _norm_name(f"{main.first_name} {main.last_name}")
             possible |= {(main.id, uid) for uid, u in owner_users.items() if wanted and _norm_name(u.fullname) == wanted}
 
+        # A herd stored on another membership: that membership's main member is a counterpart too.
+        for stored_id in {h.membership_id for h in herds} - {None, getattr(membership, "id", None)}:
+            stored = Member.select().where(
+                Member.membership == stored_id, Member.role == "huvudmedlem", Member.end_date.is_null(True)
+            ).first()
+            if stored is not None:
+                wanted = _norm_name(f"{stored.first_name} {stored.last_name}")
+                possible |= {(stored.id, uid) for uid, u in owner_users.items() if wanted and _norm_name(u.fullname) == wanted}
+
         if len(herds) > 1:
             listed.append(([code], "flera besättningar har samma kod"))
         elif herds[0].membership_id not in (None, getattr(membership, "id", None)):

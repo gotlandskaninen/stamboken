@@ -620,3 +620,18 @@ class TestMembersLinkByHerd(DatabaseTest):
         self.assertIsNone(self._linked_user_id(p1))
         self.assertIsNone(self._linked_user_id(p2))
         self.assertEqual(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_user_linked").count(), 0)
+
+    def test_herd_stored_on_another_membership_counts_that_main_member_as_counterpart(self):
+        m901, p1 = self._membership(901)
+        m902, p2 = self._membership(902)
+        g = self._herd("G901", membership=m901)
+        user = self._account(owns=g)
+        user.add_role("owner", self._herd("M901", genebank=1, membership=m902).id)
+
+        result = self._apply()
+
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIsNone(self._linked_user_id(p1))
+        self.assertIsNone(self._linked_user_id(p2))
+        self.assertIn("Kopplade: 0", result.output)
+        self.assertEqual(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_user_linked").count(), 0)
