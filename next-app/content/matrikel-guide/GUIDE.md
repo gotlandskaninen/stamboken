@@ -227,22 +227,22 @@ medlemsnummer används aldrig igen.
 
 ### Anonymisering efter 12 månader
 
-Stamboken anonymiserar uppgifterna automatiskt, på samma sätt som
-**Anonymisera**:
+Stamboken anonymiserar personer automatiskt: namnen ersätts med en platshållare
+och kontaktuppgifterna tas bort.
 
 - **Ett avslutat medlemskap** anonymiseras när det har gått 12 månader sedan den
   sista personen i det avslutades. Alla personer anonymiseras då samtidigt, och
   hushållets adress, fakturaadress och anteckningar töms. Medlemsnumret står
-  kvar men går inte längre att koppla till någon person.
-- **En familjemedlem eller skötare** som har tagits bort ur ett medlemskap som
-  fortfarande är aktivt anonymiseras 12 månader efter att hen togs bort.
-  Hushållets adress står kvar.
+  kvar på medlemskapet.
+- **En familjemedlem eller skötare** som har tagits bort ur ett medlemskap där
+  någon annan fortfarande är kvar anonymiseras 12 månader efter att hen togs
+  bort. Hushållets adress står kvar.
 
 Stamboken hoppar över ett avslutat medlemskap där någon av personerna har
-rollen administratör, matrikeladministratör eller genbanksansvarig, eller där
-en av hushållets besättningar fortfarande är aktiv. En borttagen person hoppas
-över om hens eget konto har en sådan roll eller äger en aktiv besättning.
-Systemansvarig avgör de fallen för hand.
+rollen administratör, matrikeladministratör eller genbanksansvarig eller äger
+en aktiv besättning, eller där en av hushållets besättningar fortfarande är
+aktiv. En borttagen person hoppas över om hens eget konto har en sådan roll
+eller äger en aktiv besättning. Systemansvarig avgör de fallen för hand.
 
 Besättningens egna kontaktuppgifter tas inte bort av den här regeln.
 
