@@ -76,6 +76,7 @@ from utils import inbox  # isort:skip
 from utils.inbox import queue_digests  # isort:skip
 from utils import inbox_gmail  # isort:skip
 from utils import inbox_purge  # isort:skip
+from utils import buyer_contact  # isort:skip
 from utils.inbox_interpreter import interpret_next  # isort:skip
 from utils.members import try_auto_link_member  # isort:skip
 from utils.legacy_compat import course_message, is_legacy_host, legacy_classroom_url, legacy_hosts, refusal  # isort:skip
@@ -279,6 +280,16 @@ def _purge_inbox():
         inbox_purge.run(datetime.datetime.now(datetime.timezone.utc))
     except Exception:  # pylint: disable=broad-except
         APP.logger.exception("The inbox purge failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _purge_buyer_contacts():
+    """Nightly leader job (ADR-0016), built as _purge_inbox: it closes its thread's connection itself."""
+    try:
+        buyer_contact.run(datetime.datetime.now(datetime.timezone.utc))
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("The buyer purge failed")
     finally:
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
@@ -1872,8 +1883,8 @@ def edit_individual():
     retval = None
     try:
         if request.method == "PATCH":
-            retval = da.update_individual(
-                form, session.get("user_id", None), genebank_change_reason=da.LEGACY_GENEBANK_CHANGE_NOTE
+            retval = da.update_individual(  # the legacy form has no buyer fields (ADR-0016)
+                form, session.get("user_id", None), genebank_change_reason=da.LEGACY_GENEBANK_CHANGE_NOTE, legacy=True
             )
         if request.method == "POST":
             retval = da.add_individual(form, session.get("user_id", None))
@@ -2952,6 +2963,18 @@ def initialize_app():
             hour=3,
             minute=45,
             id="inbox_purge",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        # The buyer outside the association's retention (ADR-0016); idempotent, as the inbox purge.
+        scheduler.add_job(
+            _purge_buyer_contacts,
+            "cron",
+            hour=3,
+            minute=50,
+            id="buyer_contact_purge",
             max_instances=1,
             coalesce=True,
             misfire_grace_time=3600,

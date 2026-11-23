@@ -9,6 +9,7 @@ import {
   FormControlLabel,
   Link,
   TextField,
+  Typography,
 } from "@mui/material";
 import { formatPostalCode, isValidPostalCode } from "@/lib/postal";
 import { MEMBERSHIP_PAYMENT } from "@/components/public/MembershipSteps";
@@ -71,6 +72,9 @@ export function ApplicationForm() {
       }}
       sx={{ display: "flex", flexDirection: "column", gap: 2 }}
     >
+      <Typography variant="body2" color="text.secondary">
+        Fält märkta med * måste fyllas i.
+      </Typography>
       <TextField
         required
         label="Förnamn"
