@@ -11,7 +11,7 @@ test.describe("Rabbit Explorer — Admin genebank toggle", () => {
     const rows = page.locator(".MuiDataGrid-row");
     await expect(rows.first()).toBeVisible({ timeout: 30000 });
 
-    // First ensure we're viewing Gotlandskanin (default "Alla" may show M-numbers first)
+    // Gotlandskanin is the default; the click keeps it selected
     const gkButton = page
       .locator("button")
       .filter({ hasText: "Gotlandskanin" });

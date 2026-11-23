@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 // Story 3.3 — below 900px the explorer is a tappable list, not the DataGrid.
 // Auth via storageState (gk-owner); runs against the real API + seed data.
@@ -7,6 +7,22 @@ test.use({ viewport: { width: 375, height: 812 } });
 
 const list = '[data-testid="explorer-mobile-list"]';
 const rows = `${list} a[href^="/stamboken/individ/"]`;
+
+// The list opens on status Aktiv; inactive seed rabbits (Visby Viking) and
+// more than one page need status Alla.
+async function showAllStatuses(page: Page) {
+  await page
+    .locator(".MuiFormControl-root", { hasText: "Status" })
+    .locator(".MuiSelect-select")
+    .click();
+  await Promise.all([
+    page.waitForResponse(
+      (r) =>
+        r.url().includes("/api/individuals") && !r.url().includes("status="),
+    ),
+    page.getByRole("option", { name: "Alla", exact: true }).click(),
+  ]);
+}
 
 test.describe("Rabbit Explorer — mobile (375px)", () => {
   test("shows the list instead of the DataGrid, no horizontal scroll", async ({
@@ -28,6 +44,7 @@ test.describe("Rabbit Explorer — mobile (375px)", () => {
     await page.goto("/stamboken/alla-kaniner");
     await expect(page.locator(rows).first()).toBeVisible({ timeout: 15000 });
 
+    await showAllStatuses(page);
     await page.getByPlaceholder(/Sök/).fill("Visby Viking");
     await expect(page.locator(rows).first()).toContainText("Visby Viking", {
       timeout: 10000,
@@ -38,6 +55,12 @@ test.describe("Rabbit Explorer — mobile (375px)", () => {
     test.setTimeout(90000);
     await page.goto("/stamboken/alla-kaniner");
     await expect(page.locator(rows).first()).toBeVisible({ timeout: 15000 });
+    await showAllStatuses(page);
+    // Fewer than a page of seed rabbits are Aktiv; the button shows the
+    // list has been redrawn with all statuses.
+    await expect(page.getByRole("button", { name: "Visa fler" })).toBeVisible({
+      timeout: 10000,
+    });
     const hrefs = () =>
       page
         .locator(rows)

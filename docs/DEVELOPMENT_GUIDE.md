@@ -35,8 +35,9 @@ Individkortet (`components/herd/IndividualCard.tsx`) är referens.
 
 **REGEL:** Default-värden ska vara de mest praktiska för daglig användning.
 Min besättning visar aktiva kaniner som förval; filtret är ett enda val
-(`"active" | "all" | "cert"`). Alla kaniner sorterar på servern, förval
-`name`.
+(`"active" | "all" | "cert"`). Alla kaniner sorterar på servern och öppnas som
+legacy-genbankslistan: Gotlandskanin (annars medlemmens enda genbank), status
+Aktiv och `birth_date` fallande, tomma datum sist.
 
 ### 4. **Responsiv Design - Mobile First**
 

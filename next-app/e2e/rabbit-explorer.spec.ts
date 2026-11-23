@@ -1,7 +1,23 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 
 // Auth is handled by storageState (gk-owner) set in playwright.config.ts.
 // No mock setup needed — tests run against the real API + seed data.
+
+// The list opens on status Aktiv; inactive seed rabbits (Visby Viking) and
+// more than one page need status Alla.
+async function showAllStatuses(page: Page) {
+  await page
+    .locator(".MuiFormControl-root", { hasText: "Status" })
+    .locator(".MuiSelect-select")
+    .click();
+  await Promise.all([
+    page.waitForResponse(
+      (r) =>
+        r.url().includes("/api/individuals") && !r.url().includes("status="),
+    ),
+    page.getByRole("option", { name: "Alla", exact: true }).click(),
+  ]);
+}
 
 test.describe("Rabbit Explorer — /alla-kaniner", () => {
   test("page loads with seed data", async ({ page }) => {
@@ -49,6 +65,8 @@ test.describe("Rabbit Explorer — /alla-kaniner", () => {
       timeout: 15000,
     });
 
+    await showAllStatuses(page);
+
     // Switch to 25 rows per page — use combobox role to avoid strict mode violation
     const pageSizeSelect = page.getByRole("combobox", {
       name: /rader per sida/i,
@@ -75,7 +93,8 @@ test.describe("Rabbit Explorer — /alla-kaniner", () => {
       timeout: 15000,
     });
 
-    // Search for a known seed individual
+    // Search for a known seed individual (inactive, so status Alla first)
+    await showAllStatuses(page);
     const searchField = page.getByPlaceholder(/Sök/);
     await searchField.fill("Visby Viking");
 
@@ -97,7 +116,7 @@ test.describe("Rabbit Explorer — /alla-kaniner", () => {
       .first();
     const nameBefore = await firstNameCell.textContent();
 
-    // Default sort is name asc. One click toggles to desc.
+    // Default sort is birth date desc. One click sorts by name asc.
     await page.locator('.MuiDataGrid-columnHeader:has-text("Namn")').click();
 
     // Wait for re-sorted data to load
@@ -106,7 +125,36 @@ test.describe("Rabbit Explorer — /alla-kaniner", () => {
     expect(nameAfterSort).not.toBe(nameBefore);
   });
 
-  test("status filter shows only active individuals", async ({ page }) => {
+  test("opens on Gotlandskanin, Aktiv and newest first", async ({ page }) => {
+    await page.goto("/stamboken/alla-kaniner");
+    await expect(page.locator(".MuiDataGrid-row").first()).toBeVisible({
+      timeout: 15000,
+    });
+
+    const buttons = page.locator('button[title="Genbank"]');
+    await expect(buttons).toHaveText([
+      "Gotlandskanin",
+      "Mellerudskanin",
+      "Alla",
+    ]);
+    await expect(buttons.first()).toHaveAttribute("aria-pressed", "true");
+    await expect(
+      page.locator(".MuiFormControl-root", { hasText: "Status" }),
+    ).toContainText("Aktiv");
+
+    const statusCells = page.locator('.MuiDataGrid-cell[data-field="status"]');
+    const count = await statusCells.count();
+    for (let i = 0; i < Math.min(count, 5); i++) {
+      await expect(statusCells.nth(i)).toContainText("Aktiv");
+    }
+    const dates = await page
+      .locator('.MuiDataGrid-cell[data-field="birth_date"]')
+      .allTextContents();
+    expect(dates.length).toBeGreaterThan(1);
+    expect(dates).toEqual([...dates].sort().reverse());
+  });
+
+  test("status filter shows only inactive individuals", async ({ page }) => {
     await page.goto("/stamboken/alla-kaniner");
     await expect(page.locator(".MuiDataGrid-row").first()).toBeVisible({
       timeout: 15000,
@@ -117,24 +165,22 @@ test.describe("Rabbit Explorer — /alla-kaniner", () => {
       .locator(".MuiFormControl-root", { hasText: "Status" })
       .locator(".MuiSelect-select")
       .click();
-    // Wait for the filtered response: the old unfiltered rows stay visible
+    // Wait for the filtered response: the old rows stay visible
     // (RTK Query keeps previous data) until it arrives.
     await Promise.all([
       page.waitForResponse(
         (r) =>
           r.url().includes("/api/individuals") &&
-          r.url().includes("status=active"),
+          r.url().includes("status=inactive"),
       ),
-      page.getByRole("option", { name: "Aktiv", exact: true }).click(),
+      page.getByRole("option", { name: "Inaktiv", exact: true }).click(),
     ]);
 
-    // After filtering, wait for rows to reload then verify status text
     await page.locator(".MuiDataGrid-row").first().waitFor({ timeout: 10000 });
-    // Check first few rows have "Aktiv" status text
     const statusCells = page.locator('.MuiDataGrid-cell[data-field="status"]');
     const count = await statusCells.count();
     for (let i = 0; i < Math.min(count, 3); i++) {
-      await expect(statusCells.nth(i)).toContainText(/aktiv/i);
+      await expect(statusCells.nth(i)).toContainText("Inaktiv");
     }
   });
 
