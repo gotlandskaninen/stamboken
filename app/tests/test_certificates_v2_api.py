@@ -640,8 +640,8 @@ class TestCertificateV2Update(CertV2Mixin, FlaskTest):
 
             new_token = update_resp.get_json()["verification_token"]
 
-        # The breeder shows the herd name and the rabbit is sold (stamboken #6)
-        db.Herd.update(herd_name_on_certificate=True).where(db.Herd.id == self.herds[0].id).execute()
+        # The issuing person shows her name and the rabbit is sold (stamboken #6)
+        db.User.update(fullname="Ada Admin", name_on_check_page=True).where(db.User.id == self.admin.id).execute()
         ht_row(
             "TRANSFER",
             from_herd=self.herds[0],
@@ -651,7 +651,7 @@ class TestCertificateV2Update(CertV2Mixin, FlaskTest):
             herd_tracking_date=date(2026, 3, 15),
         )
         current = self.app.get(f"/api/v2/certificates/verify/{new_token}").get_json()
-        self.assertEqual((current["breeder"], current["transferred"]), ("Gotlandsherd1", ["2026-03"]))
+        self.assertEqual((current["attested_by"], current["transferred"]), ("Ada Admin", ["2026-03"]))
 
         # Public endpoint — no auth
         response = self.app.get(f"/api/v2/certificates/verify/{old_token}")
@@ -660,8 +660,8 @@ class TestCertificateV2Update(CertV2Mixin, FlaskTest):
         self.assertTrue(data["verified"])
         self.assertFalse(data["is_current"])
         self.assertEqual(data["replaced_by_date"], new_issued_at)
-        # An old QR code tells nothing about the breeder's choice or later sales
-        self.assertIsNone(data["breeder"])
+        # An old QR code tells neither the name nor later sales
+        self.assertEqual(data["attested_by"], "Föreningen Gotlandskaninen (administratör)")
         self.assertEqual(data["transferred"], [])
 
 
@@ -889,19 +889,20 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
             self.assertNotIn("issued_by", data)
             self.assertNotIn("@", str(data))
 
-    def test_verify_breeder_and_transfers(self):
-        """Stamboken #6: the herd name only by the breeder's choice, each transfer as month and year only."""
+    def test_verify_attester_and_transfers(self):
+        """Stamboken #6: the issuer's name only by her own choice, each change of holder as month and year only."""
         self._start_mock_aws()
         individual = self.individuals[3]  # born in herds[0]
         with self.app as context:
-            context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
+            context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
             token = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
                 json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
             ).get_json()["verification_token"]
 
+        db.User.update(fullname="Olle Ägare").where(db.User.id == self.owner.id).execute()
         data = self.app.get(f"/api/v2/certificates/verify/{token}").get_json()
-        self.assertIsNone(data["breeder"])
+        self.assertEqual(data["attested_by"], "Uppfödaren")
         self.assertEqual(data["transferred"], [])
 
         ht_row(
@@ -955,25 +956,40 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
             individual=individual,
             herd_tracking_date=date(2026, 10, 1),
         )
-        url = f"/api/v2/herd/{self.herds[0].herd}/herd-name-on-certificate"
         owner = self.app.application.test_client(use_cookies=True)
         login = owner.post("/api/login", json={"username": self.owner.email, "password": "pass"})
         self.assertEqual(login.status_code, 200)
+        url = "/api/v2/certificates/check-page-name"
+        self.assertEqual(owner.get(url).get_json(), {"show": False})
         self.assertEqual(owner.put(url, json={"show": "true"}).status_code, 400)
-        self.assertEqual(owner.put(url, json={"show": True}).status_code, 204)
+        self.assertEqual(owner.put(url, json={"show": True}).get_json(), {"show": True})
 
         data = self.app.get(f"/api/v2/certificates/verify/{token}").get_json()
-        self.assertEqual(data["breeder"], "Gotlandsherd1")
+        self.assertEqual(data["attested_by"], "Olle Ägare")
         # the corrected history's changes of holder; no voided row, no move between genebanks
         self.assertEqual(data["transferred"], ["2026-03", "2026-06"])
-        self.assertNotIn("owner1", str(data))  # the contact person's name, never on the public page
+        self.assertNotIn("Gotlandsherd1", str(data))  # never the herd name
         self.assertNotIn("2026-03-15", str(data))
-        with patch.object(settings.service, "demo_instance", True):  # a day-old copy: no choice, no sales
+        with patch.object(settings.service, "demo_instance", True):  # a day-old copy: no name, no sales
             demo = self.app.get(f"/api/v2/certificates/verify/{token}").get_json()
-        self.assertEqual((demo["breeder"], demo["transferred"]), (None, []))
+        self.assertEqual((demo["attested_by"], demo["transferred"]), ("Uppfödaren", []))
 
-        db.Herd.update(herd_name="  ").where(db.Herd.id == self.herds[0].id).execute()
-        self.assertIsNone(self.app.get(f"/api/v2/certificates/verify/{token}").get_json()["breeder"])
+        self.assertEqual(owner.put(url, json={"show": False}).get_json(), {"show": False})
+        self.assertEqual(self.app.get(f"/api/v2/certificates/verify/{token}").get_json()["attested_by"], "Uppfödaren")
+
+    def test_attester_role_without_a_name(self):
+        """Without her choice: the breeder for anyone with the origin herd, else the association's role."""
+        individual = self.individuals[3]  # born in herds[0]
+        for user, expected in (
+            (self.owner, "Uppfödaren"),
+            (self.admin, "Föreningen Gotlandskaninen (administratör)"),
+            (self.manager, "Föreningen Gotlandskaninen (genbanksansvarig)"),
+        ):
+            with self.subTest(user=user.email):
+                self.assertEqual(certificates._attested_by(user, individual, may_name=True), expected)
+        db.User.update(fullname="  ", name_on_check_page=True).where(db.User.id == self.owner.id).execute()
+        owner = db.User.get_by_id(self.owner.id)
+        self.assertEqual(certificates._attested_by(owner, individual, may_name=True), "Uppfödaren")  # no blank name
 
     def test_sale_months_on_migrated_history(self):
         """Migrated rows lack from_herd: a row without a herd, and a return to the same herd, are no sale."""

@@ -615,7 +615,7 @@ def _link_flag_herds(nr: int, group: list[dict], membership, dry_run: bool, repo
         report["herd_links"] += 1
         if not dry_run and membership is not None:
             herd.membership = membership
-            herd.save(only=[Herd.membership])  # a full-row save would write back columns changed since the read
+            herd.save()
 
 
 _FRIEXEMPLAR_COMPARE_KEYS = (

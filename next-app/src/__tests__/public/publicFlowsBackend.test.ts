@@ -32,7 +32,7 @@ const VERIFIED = {
   issued_at: "2026-01-01T00:00:00",
   is_current: true,
   replaced_by_date: null,
-  breeder: null,
+  attested_by: "Uppfödaren",
   transferred: ["2026-03"],
 };
 
@@ -115,7 +115,7 @@ describe.each(Object.entries(CALLERS))(
       expect(html).toContain(VERIFIED.individual_number);
       expect(html).not.toContain("hittades inte");
       // Stamboken #6: no name unless the breeder chose it, a sale as month and year
-      expect(html).toContain("Uppfödare");
+      expect(html).toContain("Uppfödaren");
       expect(html).toContain("mars 2026");
       expect(html).toContain("Såld");
     });

@@ -400,12 +400,11 @@ def verify_certificate_get(token):
 
     # Public page (ADR-0016): month and year of each sale, never the day or the herd.
     sales = sale_months(individual)
-    breeder = individual.origin_herd
-    breeder_name = (breeder.herd_name or "").strip() if breeder and breeder.herd_name_on_certificate else ""
     # An old QR code tells nothing about later sales. The demo API answers the same QR codes from a copy up to a
-    # day old, which can hold a choice the breeder has withdrawn since.
-    if not cert.is_current or settings.service.demo_instance:
-        sales, breeder_name = [], ""
+    # day old, which can hold a choice withdrawn since: no name there either.
+    current = cert.is_current and not settings.service.demo_instance
+    if not current:
+        sales = []
 
     return jsonify(
         {
@@ -415,14 +414,46 @@ def verify_certificate_get(token):
             "individual_number": individual.number,
             "genebank": individual.origin_herd.genebank.name if individual.origin_herd else "",
             "digital_certificate": individual.digital_certificate,
-            # The herd name only by the breeder's own choice (stamboken #6); never a person's name.
-            "breeder": breeder_name or None,
+            "attested_by": _attested_by(cert.issued_by, individual, may_name=current),
             "transferred": sales,
             "issued_at": cert.issued_at.isoformat(),
             "is_current": cert.is_current,
             "replaced_by_date": replaced_by_date,
         }
     )
+
+
+def _attested_by(user, individual, may_name):
+    """
+    "Intygas av" on the public check page (stamboken #6, Jonas 2026-11-23): the person who issued the certificate,
+    by her full name only when she chose it. Otherwise her role: anyone with access to the origin herd (family,
+    caretaker) is the breeder; an admin or genebank manager issuing for another breeder is the association.
+    """
+    if may_name and user.name_on_check_page and (user.fullname or "").strip():
+        return user.fullname.strip()
+    herd = individual.origin_herd
+    if herd and herd.herd in (user.is_owner or []):
+        return "Uppfödaren"
+    if user.is_admin:
+        return "Föreningen Gotlandskaninen (administratör)"
+    if herd and herd.genebank_id in (user.is_manager or []):
+        return "Föreningen Gotlandskaninen (genbanksansvarig)"
+    return "Uppfödaren"
+
+
+@certificates_bp.route("/v2/certificates/check-page-name", methods=["GET", "PUT"])  # [Next.js]
+@json_login_required
+def check_page_name():
+    """The signed-in person's own choice to show her name as "Intygas av" on the check page (stamboken #6)."""
+    user = da.fetch_user_info(session.get("user_id"))
+    if request.method == "PUT":
+        show = (request.get_json(silent=True) or {}).get("show")
+        if not isinstance(show, bool):
+            return problem(400, "Bad Request", "show måste vara true eller false")
+        db.User.update(name_on_check_page=show).where(db.User.id == user.id).execute()
+        logger.info(f"User:{user.id} set name_on_check_page={show}")
+        user = db.User.get_by_id(user.id)
+    return jsonify({"show": user.name_on_check_page})
 
 
 @certificates_bp.route("/v2/certificates/verify/<token>", methods=["POST"])  # [Next.js]

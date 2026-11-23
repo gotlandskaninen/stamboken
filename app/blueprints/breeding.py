@@ -226,25 +226,6 @@ def update_herd_v2(herd_id):
     return problem(500, "Internal error", "Could not reload herd after update")
 
 
-@breeding_bp.route("/v2/herd/<herd_id>/herd-name-on-certificate", methods=["PUT"])  # [Next.js]
-@json_login_required
-def set_herd_name_on_certificate_v2(herd_id):
-    """The breeder's choice to show the herd name on the certificate check page (stamboken #6). 204."""
-    form = request.get_json(silent=True)
-    show = form.get("show") if isinstance(form, dict) else None
-    if not isinstance(show, bool):
-        return problem(400, "Bad Request", "show måste vara true eller false")
-    numeric_id = da.herd_to_herdid(herd_id)
-    if numeric_id is None:
-        return problem(404, "Not Found", f"Herd {herd_id} not found")
-    refusal = da.set_herd_name_on_certificate(numeric_id, show, session.get("user_id"))
-    if refusal == "forbidden":
-        return problem(403, "Forbidden", "Bara besättningens ägare kan ändra det här valet")
-    if refusal == "not_found":
-        return problem(404, "Not Found", f"Herd {herd_id} not found")
-    return "", 204
-
-
 def _invalidate_breeding(breeding_id):
     """Best-effort cache invalidation for a breeding event."""
     if not breeding_id:

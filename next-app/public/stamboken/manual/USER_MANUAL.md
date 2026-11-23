@@ -510,10 +510,7 @@ Kontaktuppgifterna på Min besättning ser andra uppfödare. Du väljer själv v
    och **Adress**.
 3. Välj för varje uppgift vem som ser den: **Endast genbanksansvarig** eller
    **Inloggade besättningar**.
-4. Kryssa i **Visa besättningsnamnet (…) på intygens kontrollsida** om besättningens
-   namn ska stå på [kontrollsidan](#verifiera-intyg). Utan krysset står där "Uppfödare".
-   Bara besättningens ägare kan ändra valet.
-5. Klicka **Klar**. Bekräftelsen "Kontaktinformation sparad" visas.
+4. Klicka **Klar**. Bekräftelsen "Kontaktinformation sparad" visas.
 
 Ändringar här når inte föreningens medlemsmatrikel. Har du flyttat eller bytt e-post
 ändrar du det också under [Min profil](#min-profil) eller meddelar kassören.
@@ -536,6 +533,9 @@ medlemskapets uppgifter.
 - **Notiser**: slå på eller av **Skicka notiser per e-post en gång om dagen**. Notiserna
   syns i Stamboken oavsett. Inställningen stänger inte av mejlet om att ditt eget inskick
   är klart; det skickas ändå.
+- **Intygens kontrollsida**: slå på **Visa mitt namn på kontrollsidan** om ditt namn ska
+  stå som **Intygas av** på [kontrollsidan](#verifiera-intyg) för intyg som du har
+  utfärdat. Annars står där "Uppfödaren". På själva intyget står ditt namn alltid.
 - **Personer i medlemskapet**: huvudmedlemmen lägger till familjemedlemmar och skötare
   med **Lägg till person** (**Förnamn**, **Efternamn**, **Roll**), ger dem rätt att
   sköta en besättning med **Ge åtkomst**, förnyar en skötares tidsbegränsade åtkomst
@@ -724,8 +724,10 @@ visar ett av fyra besked:
 
 - **Äkta genbanksintyg** – intyget är utfärdat i Stamboken och signerat av föreningen.
   Kortet visar **Individnummer**, namn, **Ras**, **Intygsnummer**, **Datum** och
-  **Intygas av**: besättningens namn om uppfödaren har valt det, annars "Uppfödare".
-  Varje försäljning står som **Såld** med månad och år, aldrig dag eller namn.
+  **Intygas av**: namnet på den som utfärdade intyget om hen har valt det, annars
+  "Uppfödaren" eller, när föreningen utfärdade det, "Föreningen Gotlandskaninen" med
+  rollen. Varje byte av besättning står som **Såld** med månad och år, aldrig dag eller
+  namn.
   **Visa kaninens sida i Stamboken →** kräver inloggning.
 - **Äkta, men ersatt** – ett nyare intyg har utfärdats för kaninen. Be säljaren om
   den senaste versionen.

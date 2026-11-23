@@ -67,7 +67,7 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # audit_log IP retention index (39) + herd bank privacy reset (40) + the mail queue (41) +
 # the intake queue (42) and its retention (43) + buyer_contact (44) +
 # matrikel_audit rows without a user, written by the nightly anonymization (45) +
-# the coat column individual.rex (46) + herd.herd_name_on_certificate (47).
+# the coat column individual.rex (46) + hbuser.name_on_check_page (47).
 CURRENT_SCHEMA_VERSION = 47
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
@@ -346,9 +346,6 @@ class Herd(BaseModel):
     membership = ForeignKeyField(Membership, null=True, backref="herds")
     herd = CharField(10)
     herd_name = TextField(null=True)
-    # The breeder's own choice to show herd_name on the public certificate check page (stamboken #6).
-    # Not a *_privacy column: remove_fields_by_privacy would then hide herd_name from other members.
-    herd_name_on_certificate = BooleanField(default=False, constraints=[SQL("DEFAULT false")])
     is_active = BooleanField(null=True, default=False)
     start_date = DateField(null=True)
     name = TextField(null=True)
@@ -1160,6 +1157,9 @@ class User(BaseModel, UserMixin):
     # login_user() natively refuses inactive users. Normal audited column —
     # flag flips MUST produce audit rows, so NOT change_detection_excluded.
     is_active = BooleanField(default=True)
+    # The person's own choice to show her full name as "Intygas av" on the public certificate check page
+    # (stamboken #6). Only she sets it, through its own endpoint; nothing else writes it.
+    name_on_check_page = BooleanField(default=False, constraints=[SQL("DEFAULT false")])
 
     def update_last_active(self):
         self.last_active = datetime.now()
@@ -1224,7 +1224,7 @@ class User(BaseModel, UserMixin):
             role["herd"] = target_id
         privs += [role]
         self.privileges = privs
-        self.save()
+        self.save(only=[User._privileges])
 
     def has_role(self, level, target_id=None):
         """
@@ -1273,7 +1273,7 @@ class User(BaseModel, UserMixin):
                     continue
             new_privs += [role]
         self.privileges = new_privs
-        self.save()
+        self.save(only=[User._privileges])
 
     @property
     def is_admin(self):
@@ -4205,15 +4205,15 @@ def migrate_45_to_46():
 
 
 def migrate_46_to_47():
-    """The breeder's choice to show the herd name on the public certificate check page (stamboken #6). Off for
-    every herd: the page shows no name until the breeder chooses it."""
+    """A person's choice to show her name as "Intygas av" on the public certificate check page (stamboken #6).
+    Off for everyone: the page shows no name until the person chooses it."""
     with DATABASE.atomic():
         DATABASE.execute_sql(
-            "ALTER TABLE herd ADD COLUMN IF NOT EXISTS herd_name_on_certificate BOOLEAN NOT NULL DEFAULT false"
+            "ALTER TABLE hbuser ADD COLUMN IF NOT EXISTS name_on_check_page BOOLEAN NOT NULL DEFAULT false"
         )
         SchemaHistory.insert(  # pylint: disable=E1120
             version=47,
-            comment="herd.herd_name_on_certificate",
+            comment="hbuser.name_on_check_page",
             applied=datetime.now(),
         ).execute()
 
@@ -4701,7 +4701,7 @@ MIGRATIONS = {
     (43, 44): migrate_43_to_44,  # buyer contact
     (44, 45): migrate_44_to_45,  # matrikel_audit actor NULL for the nightly job
     (45, 46): migrate_45_to_46,  # individual.rex
-    (46, 47): migrate_46_to_47,  # herd name on the certificate check page
+    (46, 47): migrate_46_to_47,  # the attester's name on the certificate check page
 }
 
 

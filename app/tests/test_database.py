@@ -108,7 +108,6 @@ class TestDatabase(DatabaseTest):
                 "genebank": self.herds[index].__dict__["__data__"]["genebank"],
                 "herd": self.herds[index].herd,
                 "herd_name": self.herds[index].herd_name,
-                "herd_name_on_certificate": self.herds[index].herd_name_on_certificate,
                 "is_active": self.herds[index].is_active,
                 "start_date": self.herds[index].start_date,
                 "name": self.herds[index].name,
@@ -1529,30 +1528,27 @@ class TestDatabaseMigration(DatabaseTest):
             "SELECT rex FROM individual WHERE individual_id = %s", (individual_id,)
         ).fetchone()[0]
 
-    def test_replay_adds_herd_name_on_certificate_off(self):
-        """Stamboken #6: an older database gets the breeder's choice switched off, as a fresh bootstrap."""
+    def test_replay_adds_name_on_check_page_off(self):
+        """Stamboken #6: an older database gets the person's choice switched off, as a fresh bootstrap."""
         if not isinstance(db.DATABASE, db.PostgresqlDatabase):
             self.skipTest("column introspection requires PostgreSQL")
         self.addCleanup(db.check_migrations)
-        herd = self.herds[0]
 
         def column():
             return {
-                (c.name, c.null, c.default)
-                for c in db.DATABASE.get_columns("herd")
-                if c.name == "herd_name_on_certificate"
+                (c.name, c.null, c.default) for c in db.DATABASE.get_columns("hbuser") if c.name == "name_on_check_page"
             }
 
         fresh = column()
-        version = self._migration_version("herd_name_on_certificate")
+        version = self._migration_version("name_on_check_page")
         db.SchemaHistory.delete().where(db.SchemaHistory.version >= version).execute()
-        db.DATABASE.execute_sql("ALTER TABLE herd DROP COLUMN herd_name_on_certificate")
+        db.DATABASE.execute_sql("ALTER TABLE hbuser DROP COLUMN name_on_check_page")
 
         db.check_migrations()
 
         self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
         self.assertEqual(column(), fresh)
-        self.assertFalse(db.Herd.get(herd.id).herd_name_on_certificate)
+        self.assertFalse(db.User.get_by_id(self.owner.id).name_on_check_page)
 
     @staticmethod
     def _migration_version(marker):

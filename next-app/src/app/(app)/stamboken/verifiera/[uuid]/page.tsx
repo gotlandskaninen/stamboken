@@ -13,8 +13,8 @@ interface VerificationResponse {
   issued_at: string;
   is_current: boolean;
   replaced_by_date: string | null;
-  // The herd name, only when the breeder chose to show it (stamboken #6)
-  breeder: string | null;
+  // The issuer's full name when she chose it, else her role (stamboken #6)
+  attested_by: string;
   // "YYYY-MM" per change of holder: never the day, never a name (ADR-0016)
   transferred: string[];
 }
@@ -201,7 +201,7 @@ export default async function VerifieraPage({
           </div>
           <div className="frow">
             <span className="l">Intygas av</span>
-            <span className="v">{data.breeder ?? "Uppfödare"}</span>
+            <span className="v">{data.attested_by}</span>
           </div>
           {(data.transferred ?? []).map((month, i) => (
             <div className="frow" key={i}>
