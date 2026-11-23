@@ -192,8 +192,8 @@ def raise_counter_to(value: int) -> None:
         row.save()
 
 
-def write_matrikel_audit(actor: User, action: str, membership: Membership, payload: dict) -> MatrikelAudit:
-    """Append one matrikel audit row. Payloads carry before/after values."""
+def write_matrikel_audit(actor: User | None, action: str, membership: Membership, payload: dict) -> MatrikelAudit:
+    """Append one matrikel audit row. Payloads carry before/after values. No actor: the nightly job wrote it."""
     return MatrikelAudit.create(actor=actor, action=action, membership=membership, payload=payload)
 
 
@@ -426,7 +426,7 @@ def _applications_of(person):
     return where
 
 
-def anonymize_person(member, actor):
+def anonymize_person(member, actor, deferred_originals=None):
     """GDPR erasure: anonymize the person row, keep membership history.
 
     Placeholder names (columns are NOT NULL), nulls contact fields +
@@ -442,11 +442,16 @@ def anonymize_person(member, actor):
     allowed on an active main member — the right to erasure trumps the
     headless-membership invariant.
 
+    `actor` is None when the nightly job (anonymize_ended_persons) erases for
+    retention: then only the application that created this person is scrubbed.
+    The applicant's other submissions may belong to a member who came back, and
+    the ones that never led to membership are #69's job.
     Detaches the account through the same locked unlink path as the endpoint
     (mode="anonymize") and invalidates the genebanks whose
     access the account loses. Erases the intake queue's originals and texts
     that show the person as seller or buyer, and what they sent
-    (erase_person_from_inbox).
+    (erase_person_from_inbox). A caller inside its own transaction passes
+    `deferred_originals` and removes those files after its commit.
     Returns the scrubbed person: the caller's pre-lock instance is stale
     afterwards.
     """
@@ -463,7 +468,9 @@ def anonymize_person(member, actor):
         ).execute()
         if person.user_id is not None:
             _detach_user_locked(person, actor=actor, mode="anonymize")
-        applications_to_redact = _applications_of(person)
+        applications_to_redact = (
+            _applications_of(person) if actor is not None else MemberApplication.created_member == person
+        )
         person.first_name = ANONYMIZED_FIRST_NAME
         person.last_name = ANONYMIZED_LAST_NAME
         person.email = None
@@ -522,9 +529,110 @@ def anonymize_person(member, actor):
         )
         # the intake queue's photos that show the person, and what they sent (their account read before the detach)
         originals = erase_person_from_inbox(person, user.id if user is not None else None)
-    remove_originals(originals)  # only after the commit: a row never names a removed file
+    if deferred_originals is None:
+        remove_originals(originals)  # only after the commit: a row never names a removed file
+    else:
+        deferred_originals.extend(originals)
     _invalidate_genebanks(lost_genebanks)
     return person
+
+
+ENDED_MEMBER_RETENTION = "12 months"  # a PostgreSQL interval: calendar months, as the privacy policy says (#34)
+# Account roles that keep an ended person from automatic erasure. Every account is a viewer, so viewer is not one;
+# a legacy owner entry counts only on an active herd (_retention_hold).
+RETENTION_HOLD_LEVELS = frozenset({"admin", "matrikel_admin", "manager"})
+
+
+def _retention_hold(user) -> str | None:
+    """Why this account keeps its person from automatic erasure: "role", "active_herd" or None."""
+    if user is None:
+        return None
+    privileges = user.privileges or []
+    if any(p["level"] in RETENTION_HOLD_LEVELS for p in privileges):
+        return "role"
+    owned = [p["herd"] for p in privileges if p["level"] == "owner"]
+    if owned and Herd.select().where(Herd.id.in_(owned), Herd.is_active == True).exists():  # noqa: E712
+        return "active_herd"
+    return None
+
+
+def _due_in(membership, cutoff):
+    """
+    The persons of `membership` the nightly job anonymizes (#70), and the holds it leaves to the administrator.
+
+    A membership without an active person has ended: its persons are due once the LATEST end_date (anonymized
+    persons included) is before `cutoff`, all together, so the household address is never cleared early. Any
+    person's account role, or an active herd of the membership or of a person's legacy owner entry, holds the
+    whole membership. In a membership that still has an active person, each ended person is due once their own
+    end_date is before `cutoff`, held only by their own account. Returns (due persons, held) where held is a list
+    of (membership_id, person_id or None for the whole membership, reason).
+    """
+    persons = list(Member.select().where(Member.membership == membership).order_by(Member.id))
+    erasable = [p for p in persons if p.end_date is not None and not is_anonymized(p)]
+    if any(p.end_date is None for p in persons):
+        due, held = [], []
+        for person in erasable:
+            if person.end_date < cutoff:
+                reason = _retention_hold(person.user)
+                if reason:
+                    held.append((membership.id, person.id, reason))
+                else:
+                    due.append(person)
+        return due, held
+    if max(p.end_date for p in persons) >= cutoff:
+        return [], []
+    reason = next((r for r in map(_retention_hold, (p.user for p in erasable)) if r), None)
+    if reason is None and Herd.select().where(Herd.membership == membership, Herd.is_active == True).exists():  # noqa: E712
+        reason = "active_herd"
+    return ([], [(membership.id, None, reason)]) if reason else (erasable, [])
+
+
+def _memberships_with_ended_persons(cutoff):
+    """Memberships with a person ended before `cutoff` and not yet anonymized: the nightly job's candidates."""
+    not_erased = ~((Member.first_name == ANONYMIZED_FIRST_NAME) & (Member.last_name == ANONYMIZED_LAST_NAME))
+    ended = Member.select(Member.membership).where(Member.end_date < cutoff, not_erased)
+    return list(Membership.select(Membership.id).where(Membership.id.in_(ended)).order_by(Membership.id))
+
+
+def anonymize_ended_persons(now):
+    """
+    Nightly job (#70): anonymize_person, with no user as actor, on the persons _due_in finds. Each membership is
+    decided again and erased in one transaction that first locks every row _due_in reads: the membership (retire,
+    delete and add lock it), its accounts (update_role locks them) and the herds that can hold it (update_herd
+    writes them). A change to any of them commits before the decision or waits until after the erasure; a herd
+    moved INTO the membership after the herd lock lands as if moved just after the erasure. Lock order
+    membership, accounts, herds, as in _lock_for_detach. All three are NO KEY locks: they still wait for those
+    writers, but not for an insert's foreign-key check on the row, which may hold another of these rows while it
+    waits. A failure rolls back that membership only and is logged. Returns (anonymized persons, failed
+    memberships, held).
+    """
+    cutoff = DB_PROXY.execute_sql(
+        "SELECT (%s::timestamptz - %s::interval)::date", (now, ENDED_MEMBER_RETENTION)
+    ).fetchone()[0]
+    done, failed, held = 0, 0, []
+    for membership in _memberships_with_ended_persons(cutoff):
+        originals = []
+        try:
+            with DB_PROXY.atomic():
+                Membership.select().where(Membership.id == membership.id).for_update("FOR NO KEY UPDATE").get()
+                person_users = Member.select(Member.user).where(Member.membership == membership)
+                accounts = list(
+                    User.select().where(User.id.in_(person_users)).order_by(User.id).for_update("FOR NO KEY UPDATE")
+                )
+                owned = [p["herd"] for user in accounts for p in user.privileges or [] if p["level"] == "owner"]
+                herds = Herd.select(Herd.id).where((Herd.membership == membership) | Herd.id.in_(owned))
+                list(herds.order_by(Herd.id).for_update("FOR NO KEY UPDATE"))
+                due, membership_held = _due_in(membership, cutoff)
+                for person in due:  # an ended person conveys no herd: its cache invalidation inside this tx is empty
+                    anonymize_person(person, None, deferred_originals=originals)
+        except Exception:  # pylint: disable=broad-exception-caught
+            logger.exception("Automatic anonymization failed for membership=%s", membership.id)
+            failed += 1
+            continue
+        remove_originals(originals)  # after this membership's commit, as anonymize_person does after its own
+        done += len(due)
+        held += membership_held
+    return done, failed, held
 
 
 def new_membership(status, **fields):
@@ -931,7 +1039,7 @@ def link_member_user(person_id, user_id, *, actor, mode, confirmed_herd_ids=None
     return person, conveyed
 
 
-def _detach_user_locked(person: Member, *, actor: User, mode: str) -> int:
+def _detach_user_locked(person: Member, *, actor: User | None, mode: str) -> int:
     """Inside an open transaction with membership → user → person locked."""
     user_id = person.user_id
     person.user = None
