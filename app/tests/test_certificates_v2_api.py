@@ -1012,6 +1012,42 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
         )
         self.assertEqual(sale_months(individual), ["2026-03", "2026-04"])
 
+    def test_sale_months_walks_the_holder_past_a_voided_row(self):
+        """A later row's stored from_herd can name a voided row's herd: the active history decides."""
+        from utils.herd_tracking import sale_months
+
+        m4 = db.Herd.create(genebank=self.genebanks[1], herd="M4")
+        individual = self.individuals[3]  # born in herds[0] (G1)
+        ht_row(  # G1 -> M3, struck out later
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[2],
+            signature=self.admin,
+            individual=individual,
+            herd_tracking_date=date(2026, 2, 1),
+            voided_at=datetime.now(),
+            voided_by_user=self.admin,
+            voided_reason="fel genbank",
+            voided_operation_id=uuid.uuid4(),
+        )
+        ht_row(  # stored sender M3, but the active history goes G1 -> G2: a change within the genebank
+            "CORRECTION",
+            from_herd=self.herds[2],
+            herd=self.herds[1],
+            signature=self.admin,
+            individual=individual,
+            herd_tracking_date=date(2026, 3, 1),
+        )
+        ht_row(  # stored sender M3 again, but G2 -> M4 crosses genebanks: no sale
+            "TRANSFER",
+            from_herd=self.herds[2],
+            herd=m4,
+            signature=self.admin,
+            individual=individual,
+            herd_tracking_date=date(2026, 4, 1),
+        )
+        self.assertEqual(sale_months(individual), ["2026-03"])
+
     def test_sale_months_follows_the_corrected_history(self):
         """Date fixes, a fix of a fix and a joint fix: the months the corrected history changes holder, once each."""
         from utils.herd_tracking import correct_herd_tracking, record_herd_tracking, sale_months

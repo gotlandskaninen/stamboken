@@ -607,24 +607,23 @@ def _moves_across_genebanks(individual, before, after):
 def sale_months(individual):
     """
     "YYYY-MM" of each change of holder for the public certificate check page (stamboken #6), read from the
-    corrected history (Jonas 2026-11-23): an active TRANSFER or CORRECTION to another herd in the same genebank,
-    or ADR-0016's resale to a new buyer within GX1/MX1. The sender is the row's from_herd, else the last known
-    holder (migrated rows lack it). A move between genebanks (an admin's register fix), a row without a receiving
-    herd and a migrated row repeating the holder are no change of holder.
+    corrected history (Jonas 2026-11-23): an active TRANSFER or CORRECTION to another herd in the same genebank as
+    the holder before it, or ADR-0016's resale to a new buyer within GX1/MX1. The holder is walked over the active
+    rows: a stored from_herd can name a row voided since. A move between genebanks (an admin's register fix), a row
+    without a receiving herd and a migrated row repeating the holder are no change of holder.
     """
     months, holder = [], individual.origin_herd
     for r in _active_rows(individual.id):
         if r.herd_id is None or r.kind not in HOLDER_CHANGING_KINDS:
             continue
-        source = r.from_herd if r.from_herd_id is not None else holder
         # Only the resale exception writes a row whose explicit sender is its own herd; that stays true when the
         # buyer is erased later, so the month stays too.
         resale = r.from_herd_id == r.herd_id and r.herd.herd in OUTSIDE_GENEBANK_HERDS
         if (
             r.kind in ("TRANSFER", "CORRECTION")
-            and source is not None
-            and (r.herd_id != source.id or resale)
-            and r.herd.genebank_id == source.genebank_id
+            and holder is not None
+            and (r.herd_id != holder.id or resale)
+            and r.herd.genebank_id == holder.genebank_id
         ):
             months.append(coerce_date(r.herd_tracking_date).strftime("%Y-%m"))
         holder = r.herd
