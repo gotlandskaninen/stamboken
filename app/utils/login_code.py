@@ -54,10 +54,11 @@ def _lock():
 
 def closed(now=None):
     """
-    Wrong tries on rows made in the last hour. A try comes at most VALID_FOR after its row, so this counts the wrong
-    codes of about the last hour; a correct one is taken back when it is used (consume).
+    Wrong tries on rows made in the last hour and VALID_FOR. A try comes at most VALID_FOR after its row, so every
+    wrong code of the last hour counts, and one may count up to VALID_FOR longer; a correct one is taken back when
+    it is used (consume).
     """
-    since = (now or _utcnow()) - timedelta(hours=1)
+    since = (now or _utcnow()) - timedelta(hours=1) - VALID_FOR
     wrong = LoginCode.select(fn.COALESCE(fn.SUM(LoginCode.failed), 0)).where(LoginCode.created_at > since).scalar()
     return wrong >= WRONG_AN_HOUR
 

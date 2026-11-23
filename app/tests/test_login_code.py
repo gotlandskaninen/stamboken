@@ -213,7 +213,21 @@ class TestLimits(LoginCodeTest):
             lc.check("ny_adress", f"w{last.member_id}", lc.code(last))
         self.assertEqual(self.row(last).failed, 2)  # a closed check touches no row
         self.assertIsNone(self.issue(browser="new"))
-        self.now += timedelta(hours=1, seconds=1)
+        self.now += timedelta(hours=1, minutes=10, seconds=1)
+        self.assertFalse(lc.closed(self.now))
+
+    def test_a_wrong_code_late_in_its_ten_minutes_counts_for_a_whole_hour(self):
+        people = [self.person_row(f"P{n}", f"p{n}@example.org") for n in range(17)]
+        made = self.now
+        rows = [self.issue(person=p, browser=f"w{p.id}") for p in people]
+        self.now = made + timedelta(minutes=9, seconds=59)  # the tries come at the end of the codes' ten minutes
+        for n in range(lc.WRONG_AN_HOUR):
+            row = rows[n // 3]
+            lc.check("ny_adress", f"w{row.member_id}", wrong(lc.code(row)))
+        self.assertTrue(lc.closed(self.now))
+        self.now = made + timedelta(hours=1, minutes=9)  # 59 minutes after the last wrong code
+        self.assertTrue(lc.closed(self.now))
+        self.now = made + timedelta(hours=1, minutes=10, seconds=1)
         self.assertFalse(lc.closed(self.now))
 
     def test_a_right_code_used_is_not_a_wrong_one(self):
