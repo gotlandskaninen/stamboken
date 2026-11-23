@@ -277,8 +277,8 @@ export default function IntegritetspolicyPage() {
               överlåtelsebevis, och ägarbytet registreras i Stamboken Online.
               Det gäller också dig som inte är medlem.{" "}
               <mark>
-                [INTE KLART: avsnittet gäller först när överlåtelsebeviset och
-                registret för köpare är införda.]
+                [INTE KLART: överlåtelsebeviset och mejlet till köparen är inte
+                införda än.]
               </mark>
             </p>
             <ul>
