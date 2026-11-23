@@ -1572,7 +1572,7 @@ class User(BaseModel, UserMixin):
         who have not seen the rabbit (Jonas 2026-11-23, #141). Uses origin_herd, not current_herd: the breeder keeps
         the right after the rabbit moves to a new herd.
         """
-        return bool(self.is_owner and individual.origin_herd.herd in self.is_owner)
+        return individual.origin_herd_id in self.effective_herd_ids()  # by id: a herd code is unique per genebank only
 
     def can_view_certificate(self, individual):
         """Who may download or preview the certificate (ADR-0016): the
