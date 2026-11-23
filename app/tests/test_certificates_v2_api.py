@@ -998,7 +998,10 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
         )
         db.DigitalCertificateV2.update(issued_as=None).where(db.DigitalCertificateV2.id == cert.id).execute()
         cert = db.DigitalCertificateV2.get_by_id(cert.id)
-        self.assertEqual(certificates._attested_by(cert, may_name=True), "Uppfödaren")  # an older row: judged now
+        self.assertEqual(certificates._attested_by(cert, may_name=True), "Uppfödaren")  # an older row, fixed text
+        db.User.get_by_id(self.manager.id).add_role("admin", None)  # the issuer becomes admin
+        cert = db.DigitalCertificateV2.get_by_id(cert.id)
+        self.assertEqual(certificates._attested_by(cert, may_name=True), "Uppfödaren")  # roles today do not matter
         db.User.update(fullname="Maja Ansvarig", name_on_check_page=True, is_active=False).where(
             db.User.id == self.manager.id
         ).execute()

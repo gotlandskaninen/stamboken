@@ -20,7 +20,6 @@ from utils.cert_service_v2 import (
     check_first_certificate_quota,
     generate_and_store,
     invalidate_caches,
-    issuer_role,
     normalize_color,
     update_breeding_if_changed,
 )
@@ -431,12 +430,13 @@ ROLE_LABELS = {
 def _attested_by(cert, may_name):
     """
     "Intygas av" on the public check page (stamboken #6, Jonas 2026-11-23): the person who issued the certificate,
-    by her full name only when she chose it; otherwise the role she issued in (judged now on older rows).
+    by her full name only when she chose it; otherwise the role she issued in. A row from before issued_as existed
+    says "Uppfödaren": a role judged at the scan could change under an unchanged certificate.
     """
     user = cert.issued_by
     if may_name and user.is_active and user.name_on_check_page and (user.fullname or "").strip():
         return user.fullname.strip()
-    return ROLE_LABELS[cert.issued_as or issuer_role(user, cert.individual)]
+    return ROLE_LABELS[cert.issued_as or "breeder"]
 
 
 @certificates_bp.route("/v2/certificates/check-page-name", methods=["GET", "PUT"])  # [Next.js]
