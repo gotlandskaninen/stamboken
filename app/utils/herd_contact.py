@@ -103,38 +103,102 @@ def _compared(herd, persons):
     return HerdContact(mode, person.id if person else None, rows)
 
 
-def is_matrikel_reader(user: User | None, herd: Herd) -> bool:
-    """Decision 11: admin, the genebank's manager, and active persons on the herd's active membership
-    (main and family members, caretakers with an active grant on the herd). Not the old owner role."""
+def matrikel_reader_herd_ids(user: User | None, herds: Sequence[Herd]) -> set[int]:
+    """Decision 11: of `herds`, those the user reads the register's values for: admin, the genebank's manager,
+    and active persons on the herd's active membership (main and family members, caretakers with an active
+    grant on the herd). Not the old owner role. At most two queries, however many herds."""
     if user is None:
-        return False
-    if user.is_admin or herd.genebank_id in (user.is_manager or []):
-        return True
-    if herd.membership_id is None:
-        return False
+        return set()
+    if user.is_admin:
+        return {h.id for h in herds}
+    found = {h.id for h in herds if h.genebank_id in (user.is_manager or [])}
+    linked = [h for h in herds if h.membership_id is not None and h.id not in found]
+    if not linked:
+        return found
     persons = list(
-        Member.select(Member.id, Member.role)
+        Member.select(Member.id, Member.membership, Member.role)
         .join(Membership)
         .where(
             Member.user == user.id,
-            Member.membership == herd.membership_id,
+            Member.membership.in_({h.membership_id for h in linked}),
             Member.end_date.is_null(True),
             Membership.membership_status == "active",
         )
     )
-    if any(p.role in ("huvudmedlem", "familjemedlem") for p in persons):
-        return True
-    caretakers = [p.id for p in persons if p.role == "skotare"]
-    return bool(caretakers) and (
-        HerdAccessGrant.select()
-        .where(
-            HerdAccessGrant.member.in_(caretakers),
-            HerdAccessGrant.herd == herd.id,
+    household = {p.membership_id for p in persons if p.role in ("huvudmedlem", "familjemedlem")}
+    found |= {h.id for h in linked if h.membership_id in household}
+    caretakers = {p.id: p.membership_id for p in persons if p.role == "skotare"}
+    pending = {h.id: h.membership_id for h in linked if h.id not in found}
+    if caretakers and pending:
+        grants = HerdAccessGrant.select(HerdAccessGrant.herd, HerdAccessGrant.member).where(
+            HerdAccessGrant.member.in_(list(caretakers)),
+            HerdAccessGrant.herd.in_(list(pending)),
             HerdAccessGrant.revoked_at.is_null(True),
             HerdAccessGrant.valid_until.is_null(True) | (HerdAccessGrant.valid_until >= date.today()),
         )
-        .exists()
+        # a grant counts only on the caretaker's own membership's herd
+        found |= {g.herd_id for g in grants if caretakers[g.member_id] == pending[g.herd_id]}
+    return found
+
+
+def is_matrikel_reader(user: User | None, herd: Herd) -> bool:
+    return herd.id in matrikel_reader_herd_ids(user, [herd])
+
+
+def active_persons(herd: Herd) -> list[Member]:
+    """The active persons on the herd's active membership, main member first."""
+    if herd.membership_id is None:
+        return []
+    return list(
+        Member.select(Member.id, Member.user, Member.first_name, Member.last_name, Member.role)
+        .join(Membership)
+        .where(
+            Member.membership == herd.membership_id,
+            Member.end_date.is_null(True),
+            Membership.membership_status == "active",
+        )
+        .order_by(Member.role != "huvudmedlem", Member.id)
     )
+
+
+def _person_json(person) -> dict:
+    return {"id": person.id, "name": f"{person.first_name} {person.last_name}", "role": person.role}
+
+
+def contact_field(user: User, herd: Herd, contact: HerdContact, *, reader: bool, private_access: bool) -> dict | None:
+    """The `contact` object of a herd response: whole for a matrikel reader, a smaller one for others with
+    private access (no mode, person, fetched values or their privacy), none for anyone else."""
+    privacy = {f: getattr(herd, f"{f}_privacy") or "private" for f in CONTACT_FIELDS}  # NULL counts as private
+    if not reader:
+        if not private_access:
+            return None
+        rows = {
+            f: {"source": "egen", "value": r.value, "privacy": privacy[f]}
+            if r.source == "egen"
+            else {"source": "hamtad"}
+            for f, r in contact.rows.items()
+        }
+        return {"rows": rows}
+    persons = active_persons(herd)
+    chooses = (
+        user.is_admin
+        or herd.genebank_id in (user.is_manager or [])
+        or any(p.user_id == user.id and p.role == "huvudmedlem" for p in persons)
+    )
+    current = next((p for p in persons if p.id == contact.contact_member_id), None)
+    data = {
+        "mode": contact.mode,
+        "contact_member": _person_json(current) if current else None,
+        "rows": {
+            f: {"source": r.source, "privacy": privacy[f], "pending": r.pending, "alternative": r.alternative}
+            for f, r in contact.rows.items()
+        },
+    }
+    if not chooses and contact.mode == "fritext":
+        data["rows"]["name"]["alternative"] = None  # the main member's name: not for those who cannot choose
+    if chooses:
+        data["persons"] = [_person_json(p) for p in persons]
+    return data
 
 
 def normalize(field: str, value: str | None) -> object:

@@ -2676,3 +2676,20 @@ class TestLegacyHostCompat(FlaskTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHerdContactFormat(FlaskTest):
+    def test_herd_read_keys_unchanged_for_unlinked_herd(self):
+        """An unlinked herd answers as before; `contact` is the only new key, and only with private access."""
+        with self.app as ctx:
+            self.login(ctx, self.owner)
+            owner_data = ctx.get(f"/api/herd/{self.herds[0].herd}").get_json()
+        with APP.test_client(use_cookies=True) as ctx:
+            self.login(ctx, self.viewer)
+            viewer_data = ctx.get(f"/api/herd/{self.herds[0].herd}").get_json()
+        self.assertIn("contact", owner_data)
+        self.assertNotIn("contact", viewer_data)
+        self.assertEqual(owner_data["name"], "owner1")
+        self.assertEqual(viewer_data["email"], "o@h1")
+        for key in ("contact_member_id", "contact_member", "contact_pending"):
+            self.assertNotIn(key, owner_data)

@@ -50,6 +50,7 @@ from utils.database import ACCOUNT_MASK, BANK_PRIVACY_FIELDS, PRIVACY_LEVELS, ac
 from utils.database import ht_not_voided  # isort: skip
 from utils.database import ht_order_desc  # isort: skip
 from utils.database import latest_ht_per_individual  # isort: skip
+from utils.herd_contact import contact_field, herd_contact, herd_contacts  # isort: skip
 from utils.database import lock_individuals  # isort: skip
 from utils.database import not_voided  # isort: skip
 from utils.database import validate_date  # isort: skip
@@ -1269,6 +1270,12 @@ def list_all_herds(user, *, genebank_id=None, active=None, has_owner=None, searc
     # Materialise before slicing: herd is a small table (~1200 rows) and
     # the owner/search filters can only run Python-side (TEXT JSON).
     herds = list(q)
+    contacts = herd_contacts(herds)
+
+    def contact_name(h):  # the resolved name; an own name stays exactly as stored
+        row = contacts[h.id].rows["name"]
+        return h.name if row.source == "egen" else row.value
+
     # Natural sort: G2 before G10 before G1274 (lexicographic herd-code
     # sort would interleave them).
     herds.sort(key=lambda h: (h.genebank_id, int(re.sub(r"\D", "", h.herd) or 0), h.herd))
@@ -1282,7 +1289,7 @@ def list_all_herds(user, *, genebank_id=None, active=None, has_owner=None, searc
             for h in herds
             if needle in (h.herd or "").lower()
             or needle in (h.herd_name or "").lower()
-            or needle in (h.name or "").lower()
+            or needle in (contact_name(h) or "").lower()
         ]
     total = len(herds)
     page = max(page, 1)
@@ -1296,7 +1303,7 @@ def list_all_herds(user, *, genebank_id=None, active=None, has_owner=None, searc
                 "id": h.id,
                 "herd": h.herd,
                 "herd_name": h.herd_name,
-                "name": h.name,
+                "name": contact_name(h),
                 "is_active": bool(h.is_active),
                 "genebank_id": h.genebank_id,
                 "genebank_name": h.genebank.name,
@@ -1312,21 +1319,24 @@ def get_herd_for_admin(user, herd):
     caller is admin or manager(gb).
     """
     herd_owners = _herd_owner_map().get(herd.id, [])
+    contact = herd_contact(herd)
+    value = {f: getattr(herd, f) if row.source == "egen" else row.value for f, row in contact.rows.items()}
     return {
         "id": herd.id,
         "herd": herd.herd,
         "herd_name": herd.herd_name,
-        "name": herd.name,
+        "name": value["name"],
         "name_privacy": herd.name_privacy,
-        "physical_address": herd.physical_address,
-        "email": herd.email,
-        "mobile_phone": herd.mobile_phone,
+        "physical_address": value["physical_address"],
+        "email": value["email"],
+        "mobile_phone": value["mobile_phone"],
         "wire_phone": herd.wire_phone,
         "www": herd.www,
         "is_active": bool(herd.is_active),
         "genebank_id": herd.genebank_id,
         "genebank_name": herd.genebank.name,
         "owners": [{"id": o.id, "username": o.username or o.email, "fullname": o.fullname} for o in herd_owners],
+        "contact": contact_field(user, herd, contact, reader=True, private_access=True),
     }
 
 

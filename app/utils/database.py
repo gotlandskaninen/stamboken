@@ -220,10 +220,15 @@ class Genebank(BaseModel):
         if self.id not in user.accessible_genebanks:
             return None
 
-        herds = []
-        for herd in Herd.select().where(Herd.genebank == self):
-            herds += [herd.filtered_dict(user)]
-        return herds
+        from utils.herd_contact import (  # pylint: disable=import-outside-toplevel
+            herd_contacts,
+            matrikel_reader_herd_ids,
+        )
+
+        rows = list(Herd.select().where(Herd.genebank == self))
+        contacts = herd_contacts(rows)
+        readers = matrikel_reader_herd_ids(user, rows)
+        return [h.filtered_dict(user, contact=contacts[h.id], reader=h.id in readers, with_contact=False) for h in rows]
 
 
 # The optional billing address, the same columns on Membership and
@@ -396,10 +401,18 @@ class Herd(BaseModel):
             "is_active": self.is_active,
         }
 
-    def filtered_dict(self, user=None):
+    def filtered_dict(self, user=None, *, contact=None, reader=None, with_contact=True):
         """
         Returns the model data filtered by the access level of the given `user`.
+
+        The contact rows are the resolved ones (#117). `contact` and `reader` can be given when the caller
+        has them for many herds at once; `with_contact` adds the `contact` field to the answer.
         """
+        from utils.herd_contact import (  # pylint: disable=import-outside-toplevel
+            contact_field,
+            herd_contact,
+            is_matrikel_reader,
+        )
 
         access_level = "public"
         effective = None  # the user's herd ids, fetched at most once
@@ -435,8 +448,22 @@ class Herd(BaseModel):
         # legacy herd response (ADR-0006: don't perturb legacy contracts).
         data.pop("membership", None)
 
+        contact = contact or herd_contact(self)
+        reader = is_matrikel_reader(user, self) if reader is None else reader
         raw = data
         data = remove_fields_by_privacy(raw, access_level)
+        # fetched rows: the register's value in the same field, seen by a matrikel reader at "private" and
+        # by anyone else at most at "authenticated" (decision 11); own rows are filtered as above
+        derived = {f: r.value for f, r in contact.rows.items() if r.source != "egen"}
+        if derived:
+            levels = list(PRIVACY_LEVELS)
+            level = "private" if reader else min(access_level, "authenticated", key=levels.index)
+            shown = remove_fields_by_privacy({**raw, **derived}, level)
+            for field, value in derived.items():
+                if field in shown:
+                    data[field] = value
+                else:
+                    data.pop(field, None)
         # Bank details: whole for admin, matrikel_admin (who has no genebank role, so only these
         # fields are added, not the other private ones) and the herd's own users. The genebank
         # manager (private level, but none of those) sees the last two digits of the account.
@@ -446,6 +473,10 @@ class Herd(BaseModel):
             data.update({f: raw[f] for f in ("bank_account_number", "bank_name") if f in raw})
         elif "bank_account_number" in data:
             data["bank_account_number"] = account_end(data["bank_account_number"])
+        if with_contact and user:
+            field = contact_field(user, self, contact, reader=reader, private_access=access_level == "private")
+            if field:
+                data["contact"] = field
         return data
 
     class Meta:  # pylint: disable=too-few-public-methods

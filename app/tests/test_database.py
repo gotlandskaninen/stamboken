@@ -211,12 +211,17 @@ class TestDatabase(DatabaseTest):
         h0_expected = self.herds[0].as_dict()
         h1_expected = self.herds[1].as_dict()
 
+        # the contact object (#117) comes on top of the plain row, for those entitled to it
+        for result in (h0_result, h1_result):
+            self.assertEqual(result.pop("contact")["mode"], "ej_jamford")
         self.assertDictEqual(h0_result, h0_expected)
         self.assertDictEqual(h1_result, h1_expected)
 
         # manager
         h0_result = self.herds[0].filtered_dict(self.manager)
         h1_result = self.herds[1].filtered_dict(self.manager)
+        for result in (h0_result, h1_result):
+            result.pop("contact")
         self.assertDictEqual(h0_result, h0_expected)
         self.assertDictEqual(h1_result, h1_expected)
 
@@ -261,6 +266,8 @@ class TestDatabase(DatabaseTest):
             if field in h1_expected:
                 del h1_expected[field]
 
+        self.assertEqual(set(h0_result.pop("contact")), {"rows"})  # the owner's own rows, nothing fetched
+        self.assertNotIn("contact", h1_result)  # not the owner's herd
         self.assertDictEqual(h0_result, h0_expected)
         self.assertDictEqual(h1_result, h1_expected)
 
