@@ -75,6 +75,10 @@ services:
   redis:
     image: redis:7-alpine
     restart: always
+    # AOF: a logout or a revoked session survives a crash; a snapshot alone can be minutes old.
+    # First deploy: run `redis-cli config set appendonly yes` in the running container before it
+    # is recreated. Started with this flag and no AOF file, Redis 7 ignores the snapshot and comes up empty.
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
     healthcheck:
