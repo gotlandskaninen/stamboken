@@ -63,6 +63,12 @@ jobs:
       - uses: actions/checkout@v6
 
       - uses: ./.github/actions/start-api
+        env:
+          KODINLOGGNING: 'true'
+          SJALVSKAPAT_KONTO_PROD: 'true'
+          NEXT_INTERNAL_ORIGIN: http://localhost:3000
+          MAIL_MODE: log
+          LINK_SECRET: code-login-e2e-fixture
 
       # Node 24 (Active LTS) — Node 22's stream/web has a TransformStream
       # shutdown race (nodejs/node#62036) that 500:ar RSC-navigering
@@ -97,9 +103,12 @@ jobs:
         working-directory: next-app
 
       - name: Run Next.js e2e tests
-        run: pnpm exec playwright test --config=playwright.config.ts --reporter=github,html
+        run: |
+          pnpm exec payload run e2e/fixtures/code-login-rules.ts
+          pnpm exec playwright test --config=playwright.config.ts --reporter=github,html
         working-directory: next-app
         env:
+          E2E_CODE_LOGIN: '1'
           API_INTERNAL_URL: http://localhost:9090
           CMS_DATABASE_URL: postgres://herdbook_cms:herdbook_cms_insecure@localhost:5433/herdbook_cms
 

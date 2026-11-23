@@ -4,11 +4,11 @@ import { readFileSync } from "node:fs";
 import { expect, test } from "@playwright/test";
 import sharp from "sharp";
 
-// Opt in on the CI-style local test-api with a test LINK_SECRET, log-only mail,
+// For a local run, opt in on the CI-style test-api with a test LINK_SECRET, log-only mail,
 // KODINLOGGNING=true, SJALVSKAPAT_KONTO_PROD=true and NEXT_INTERNAL_ORIGIN
 // pointing to this Next server. Its test CMS needs published kontoregler content.
 test.skip(
-  process.env.E2E_CODE_LOGIN !== "1",
+  process.env.GITHUB_ACTIONS !== "true" && process.env.E2E_CODE_LOGIN !== "1",
   "Requires the code-login fixture stack",
 );
 test.use({
@@ -42,6 +42,11 @@ test("a member signs in by code, accepts the rules and uploads a certificate on 
 }) => {
   test.setTimeout(120_000);
   expect(baseURL).toBe("http://localhost:3000");
+  expect(process.env.E2E_CODE_LOGIN).toBe("1");
+  // Check the published fixture and warm this dev route before Flask asks for it.
+  const rules = await page.request.get("/cms-api/kontoregler/version");
+  expect(rules.status()).toBe(200);
+  expect((await rules.json()).version).toEqual(expect.any(String));
   const email = `pw-code-${randomUUID().replaceAll("-", "")}@example.org`;
   const herd = fixture("seed", email);
   await page.goto("/auth/sign-in?return_to=%2Fstamboken%2Finskick%2Fny");
