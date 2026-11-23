@@ -213,7 +213,8 @@ class TestVerify(MyEmailTest):
     def same_session(self):
         """A second client on this session, as another tab of the same browser."""
         tab = APP.test_client(use_cookies=True)
-        tab.set_cookie("session", self.client.get_cookie("session").value)
+        name = APP.config["SESSION_COOKIE_NAME"]  # other test classes rename it and leave it so
+        tab.set_cookie(name, self.client.get_cookie(name).value)
         return tab
 
     def test_a_logout_meanwhile_stops_the_change(self):
