@@ -381,6 +381,7 @@
     "certificatePaper": "Papper",
     "certificateDigital": "Digitalt",
     "certificateDigitalDisabled": "Kommer när digitala intyg är aktiverade",
+    "certificateAttester": "Ditt namn står som intygare på intyget.",
     "paperCertificateNumber": "Intygsnummer",
     "save": "Registrera",
     "saving": "Registrerar...",

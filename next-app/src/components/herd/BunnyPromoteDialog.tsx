@@ -638,6 +638,14 @@ export function BunnyPromoteDialog({
                   </MenuItem>
                 </Select>
               </FormControl>
+              {certificateType === "digital" && (
+                <Typography
+                  variant="caption"
+                  sx={{ color: "text.secondary", mt: -1, ml: 1.5 }}
+                >
+                  {t("addRabbit.certificateAttester")}
+                </Typography>
+              )}
 
               {/* Paper certificate number */}
               {certificateType === "paper" && (
