@@ -146,8 +146,10 @@ docker exec "$CONTAINER" psql -U "$DB_USER" -d postgres -v ON_ERROR_STOP=1 -c \
 # The queue tables come over without their data: the demo API keeps running
 # through the load, and its sender must never see production's mail queue or
 # intake items, not even for a moment. A pattern that matches no table (an
-# older schema) is fine; notice_setting, a user preference, is copied.
-SKIP_QUEUE_DATA="--exclude-table-data='mail_*' --exclude-table-data='inbox_*' --exclude-table-data=notice --exclude-table-data='gmail_*'"
+# older schema) is fine; notice_setting, a user preference, is copied. Login
+# codes and previous addresses stay too: unconfirmed and abandoned addresses
+# have no place in the test environment.
+SKIP_QUEUE_DATA="--exclude-table-data='mail_*' --exclude-table-data='inbox_*' --exclude-table-data=notice --exclude-table-data='gmail_*' --exclude-table-data=login_code --exclude-table-data=member_previous_address"
 echo "Syncing $SOURCE_DB -> $TARGET_DB via pg_dump..."
 # ON_ERROR_STOP=1 aborts psql on the first SQL error; the
 # outer set -Eeo pipefail then fires the ERR trap so the failure telemetry row
