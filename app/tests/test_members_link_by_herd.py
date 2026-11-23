@@ -19,6 +19,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         super().setUp()
         self.runner = CliRunner()
         self._n = 0
+        self._memberships = {}
 
     def _run(self, *extra):
         """Plan only, unless extra says otherwise."""
@@ -39,12 +40,15 @@ class TestMembersLinkByHerd(DatabaseTest):
 
     def _membership(self, number, first="Anna", last="Svensson", status="active", **member_kwargs):
         membership = db.Membership.create(member_number=number, membership_status=status)
+        self._memberships[number] = membership
         person = db.Member.create(
             membership=membership, role="huvudmedlem", first_name=first, last_name=last, **member_kwargs
         )
         return membership, person
 
     def _herd(self, code, genebank=0, **kwargs):
+        """The herd is tied to the membership with its number, as the import does; membership=None unties it."""
+        kwargs.setdefault("membership", self._memberships.get(int(code[1:]) if re.fullmatch(r"[GM][1-9][0-9]*", code) else None))
         return db.Herd.create(genebank=self.genebanks[genebank], herd=code, **{"is_active": True, **kwargs})
 
     def _account(self, fullname="Anna Svensson", owns=None):
@@ -143,22 +147,19 @@ class TestMembersLinkByHerd(DatabaseTest):
         self.assertEqual(db.Member.select().where(db.Member.user.is_null(False), db.Member.membership == membership).count(), 0)
         self.assertIn("ingen kvarvarande huvudmedlem", result.output)
 
-    def test_g_and_m_herds_with_same_number_go_to_their_memberships(self):
+    def test_g_and_m_herds_go_to_the_membership_with_their_number(self):
         _, g_person = self._membership(901, first="Gunnar", last="Gran")
         _, m_person = self._membership(902, first="Maja", last="Malm")
-        # Same number in both genebanks: M901 belongs to membership 901 only through its own code.
         g_user = self._account(fullname="Gunnar Gran", owns=self._herd("G901", genebank=0))
+        g_user.add_role("owner", self._herd("M901", genebank=1).id)
         m_user = self._account(fullname="Maja Malm", owns=self._herd("M902", genebank=1))
-        self._account(fullname="Maja Malm", owns=self._herd("M901", genebank=1))
 
         result = self._apply()
 
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(self._linked_user_id(g_person), g_user.id)
         self.assertEqual(self._linked_user_id(m_person), m_user.id)
-        # M901 has an owner named Maja Malm, but membership 901's main member is Gunnar Gran.
-        self.assertIn("M901", result.output)
-        self.assertIn("namnet skiljer sig", result.output)
+        self.assertIn("G901/M901", result.output)
 
     def test_main_member_already_linked_to_this_account_counts_as_done(self):
         _, person = self._membership(901)
@@ -635,3 +636,12 @@ class TestMembersLinkByHerd(DatabaseTest):
         self.assertIsNone(self._linked_user_id(p2))
         self.assertIn("Kopplade: 0", result.output)
         self.assertEqual(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_user_linked").count(), 0)
+
+    def test_herd_not_tied_to_the_membership_is_listed_not_linked(self):
+        _, person = self._membership(901)
+        self._account(owns=self._herd("G901", membership=None))
+
+        result = self._apply()
+
+        self.assertIsNone(self._linked_user_id(person))
+        self.assertIn("besättningen är inte knuten till medlemskapet", result.output)

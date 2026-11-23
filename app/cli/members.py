@@ -810,7 +810,7 @@ def _print_report(report: dict, dry_run: bool) -> None:
 def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None, plan_value: str | None) -> None:
     """Link accounts to the main member of the membership whose herd they own.
 
-    The only account with role `owner` on herd G<Nr>/M<Nr> whose name equals the
+    The only account with role `owner` on herd G<Nr>/M<Nr> (tied to membership Nr) whose name equals the
     name of membership Nr's main member is proposed as that member's account.
     THE NAME IS NO PROOF: the account holder can edit it, and so can a genebank
     manager, who can also hand out `owner`. Read every printed pair first.
@@ -961,6 +961,8 @@ def _plan_herd_links() -> tuple[list, list, int]:
             listed.append(([code], "inget konto har rollen ägare på besättningen"))
         elif len(owner_users) > 1:
             listed.append(([code], "flera konton har rollen ägare på besättningen"))
+        elif herds[0].membership_id is None:  # the import ties the herd when the matrikel row is marked G/M
+            listed.append(([code], "besättningen är inte knuten till medlemskapet (matrikelraden saknar markeringen)"))
         else:
             _check_owner(code, main, next(iter(owner_users.values())), incomplete, listed, already, pairs)
 
