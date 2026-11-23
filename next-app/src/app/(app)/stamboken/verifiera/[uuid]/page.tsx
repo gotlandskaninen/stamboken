@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { fetchApi } from "@/lib/api";
+import { TyckTillLink } from "@/components/tyck-till/TyckTillDialog.client";
 
 interface VerificationResponse {
   verified: boolean;
@@ -67,7 +68,7 @@ export default async function VerifieraPage({
         </main>
         <footer className="vf-foot">
           Ett äkta digitalt intyg har alltid en QR-kod som leder till
-          gotlandskaninen.se.
+          gotlandskaninen.se. <TyckTillLink />
         </footer>
       </>
     );
@@ -140,8 +141,11 @@ export default async function VerifieraPage({
         <footer className="vf-foot">
           {replaced
             ? "Be säljaren om den senaste versionen av intyget."
-            : "Be säljaren om kaninens gällande intyg."}
-          <span className="tok">token {uuid}</span>
+            : "Be säljaren om kaninens gällande intyg."}{" "}
+          <TyckTillLink />
+          <span className="tok" data-tyck-till="dolj">
+            token {uuid}
+          </span>
         </footer>
       </>
     );
@@ -188,8 +192,11 @@ export default async function VerifieraPage({
         </div>
       </main>
       <footer className="vf-foot">
-        Verifieringen gäller detta intygs äkthet vid skanningstillfället.
-        <span className="tok">token {uuid}</span>
+        Verifieringen gäller detta intygs äkthet vid skanningstillfället.{" "}
+        <TyckTillLink />
+        <span className="tok" data-tyck-till="dolj">
+          token {uuid}
+        </span>
       </footer>
     </>
   );

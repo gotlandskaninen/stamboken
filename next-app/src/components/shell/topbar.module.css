@@ -274,6 +274,15 @@
   border-radius: var(--sb-r-2);
 }
 
+.mobileNavButton {
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
 .mobileNavItem:hover {
   background: var(--sb-paper-2);
 }

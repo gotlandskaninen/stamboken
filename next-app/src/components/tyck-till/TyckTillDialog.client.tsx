@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { usePathname } from "next/navigation";
 import { useOptionalUser } from "@/lib/user-context";
 import { sendTyckTill, type TyckTillResult } from "./actions";
@@ -719,13 +720,16 @@ export function TyckTillDialog({
   const [generation, setGeneration] = useState(0);
   if (open && !seen) setSeen(true);
   if (!seen) return null;
-  return (
+  // In body: the link may sit in a footer with its own font size, or in a
+  // banner that unmounts.
+  return createPortal(
     <Sheet
       key={generation}
       open={open}
       onClose={onClose}
       onFinished={() => setGeneration((g) => g + 1)}
-    />
+    />,
+    document.body,
   );
 }
 
