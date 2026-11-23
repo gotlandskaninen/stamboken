@@ -6,7 +6,13 @@ export default defineConfig({
     environment: "jsdom",
     // .next/dev/node_modules symlinks into the pnpm store — without the
     // exclude, vitest collects Payload's own *.spec.ts through them.
-    exclude: ["e2e/**", "e2e-legacy/**", "node_modules/**", ".next/**"],
+    exclude: [
+      "e2e/**",
+      "e2e-legacy/**",
+      "e2e-access/**",
+      "node_modules/**",
+      ".next/**",
+    ],
   },
   resolve: {
     alias: {
