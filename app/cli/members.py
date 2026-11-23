@@ -815,7 +815,8 @@ def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None, plan_value: s
     name of membership Nr's main member is proposed as that member's account.
     NEITHER THE NAME NOR THE ACCOUNT'S E-MAIL IS PROOF: the account holder can
     edit both, and so can a genebank manager, who can also hand out `owner`.
-    Only the Google address was verified at sign-in. Read every printed pair first.
+    The Google address was verified at a Google sign-in, but it can be older
+    than the account's present Google link. Read every printed pair first.
     Without --apply nothing is written; the plan ends with a "Kontrollvärde"
     (a hash of the printed pairs). --apply needs that value in --plan: the plan
     is recomputed and, if it no longer gives the same value, the run stops
@@ -875,7 +876,8 @@ def _echo_plan(heading: str, pair_lines: list[str], listed: list, already: int) 
 
 
 def _norm_name(name: str | None) -> str:
-    return " ".join((name or "").split()).casefold()
+    # NFC: "Å" typed as one character and as A with a combining ring are the same name.
+    return " ".join(unicodedata.normalize("NFC", name or "").split()).casefold()
 
 
 def _q(text) -> str:
@@ -894,12 +896,13 @@ def _q(text) -> str:
 
 
 def _pair_detail(main, user) -> str:
-    """Ids first, then the free text in quotes. The account's e-mail is unverified; the Google address is verified."""
+    """Ids first, then the free text in quotes. The account's e-mail is unverified; the Google address was verified
+    when it was stored, at a Google sign-in."""
     return (
         f"medlem {main.id} -> konto {user.id} | "
         f"medlem: {_q(f'{main.first_name} {main.last_name}'.strip())} {_q(main.email)} | "
         f"konto: namn {_q(user.fullname)}, användarnamn {_q(user.username)}, "
-        f"e-post (overifierad) {_q(user.email)}, Google {_q(user.google_email)}"
+        f"e-post (overifierad) {_q(user.email)}, Google vid senaste inloggning {_q(user.google_email)}"
     )
 
 
@@ -939,19 +942,16 @@ def _plan_herd_links() -> tuple[list, list, int]:
     already: set[tuple[int, int]] = set()
     pairs: dict[tuple[int, int], list] = {}  # (main id, user id) -> [main, user, codes]
     possible: set[tuple[int, int]] = set()  # every name-matching owner: a counterpart, linked only through pairs
-    # Any herd stored on a membership, whatever its code: that membership's main member is a counterpart too.
+    # Any herd stored on a membership, whatever its code: every person left in that membership with the
+    # owner's name is a counterpart too, the main member or not.
     for herd in Herd.select().where(Herd.membership.is_null(False)):
-        stored = (
-            Member.select()
-            .where(Member.membership == herd.membership_id, Member.role == "huvudmedlem", Member.end_date.is_null(True))
-            .first()
-        )
-        wanted = _norm_name(f"{stored.first_name} {stored.last_name}") if stored else ""
-        possible |= {
-            (stored.id, uid)
-            for uid, u in owners.get(herd.id, {}).items()
-            if wanted and _norm_name(u.fullname) == wanted
-        }
+        for person in Member.select().where(Member.membership == herd.membership_id, Member.end_date.is_null(True)):
+            wanted = _norm_name(f"{person.first_name} {person.last_name}")
+            possible |= {
+                (person.id, uid)
+                for uid, u in owners.get(herd.id, {}).items()
+                if wanted and _norm_name(u.fullname) == wanted
+            }
     for code in sorted(herds_by_code, key=lambda c: (int(c[1:]), c[0])):
         herds = herds_by_code[code]
         owner_users = {uid: u for h in herds for uid, u in owners.get(h.id, {}).items()}

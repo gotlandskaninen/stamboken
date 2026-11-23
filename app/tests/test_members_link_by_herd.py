@@ -477,7 +477,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         self.assertIn(
             f'  G901: medlem {person.id} -> konto {user.id} | medlem: "Anna Svensson" "anna@example.org" | '
             f'konto: namn "Anna Svensson", användarnamn "konto1", e-post (overifierad) "konto1@example.org", '
-            f'Google "anna.svensson@example.org"\n',
+            f'Google vid senaste inloggning "anna.svensson@example.org"\n',
             result.output,
         )
 
@@ -554,7 +554,10 @@ class TestMembersLinkByHerd(DatabaseTest):
 
         for user in users:
             self.assertIn(f"-> konto {user.id} | ", result.output)
-            self.assertIn('användarnamn -, e-post (overifierad) "delad@example.org", Google -', result.output)
+            self.assertIn(
+                'användarnamn -, e-post (overifierad) "delad@example.org", Google vid senaste inloggning -',
+                result.output,
+            )
 
     def test_other_owner_with_a_broken_role_still_blocks_the_link(self):
         _, person = self._membership(901)
@@ -739,6 +742,29 @@ class TestMembersLinkByHerd(DatabaseTest):
         for result in (self._run(), self._apply()):
             self.assertEqual(result.exit_code, 0, result.output)
             self.assertIn("flera personer i medlemskapet har kontots namn", result.output)
+        self.assertIsNone(self._linked_user_id(person))
+        self.assertIsNone(self._linked_user_id(family))
+
+    def test_family_member_with_the_name_in_another_owned_membership_blocks_the_link(self):
+        _, p1 = self._membership(901)
+        m902, _ = self._membership(902, first="Eva", last="Lund")
+        family = db.Member.create(membership=m902, role="familjemedlem", first_name="Anna", last_name="Svensson")
+        user = self._account(owns=self._herd("G901"))
+        user.add_role("owner", self._herd("G902").id)
+
+        for result in (self._run(), self._apply()):
+            self.assertEqual(result.exit_code, 0, result.output)
+            self.assertIn("flera möjliga kopplingar", result.output)
+        self.assertIsNone(self._linked_user_id(p1))
+        self.assertIsNone(self._linked_user_id(family))
+
+    def test_the_same_name_in_two_unicode_forms_is_one_name(self):
+        membership, person = self._membership(901, first="\u00c5sa", last="Berg")
+        family = db.Member.create(membership=membership, role="familjemedlem", first_name="A\u030asa", last_name="Berg")
+        self._account(fullname="\u00c5sa Berg", owns=self._herd("G901"))
+
+        for result in (self._run(), self._apply()):
+            self.assertEqual(result.exit_code, 0, result.output)
         self.assertIsNone(self._linked_user_id(person))
         self.assertIsNone(self._linked_user_id(family))
 
