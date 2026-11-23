@@ -350,7 +350,8 @@ def preview_certificate(i_number):
     # Herd access, not can_issue_certificate: admin and the genebank manager still issue until #141, but have not
     # seen the rabbit, so they too get the signed PDF.
     viewer = da.fetch_user_info(user_id)
-    may_issue = bool(viewer.is_owner and individual.origin_herd.herd in viewer.is_owner)
+    # By id: a herd code is unique only within its genebank.
+    may_issue = individual.origin_herd_id in viewer.effective_herd_ids()
     has_current = (
         db.DigitalCertificateV2.select()
         .where((db.DigitalCertificateV2.individual == individual) & (db.DigitalCertificateV2.is_current == True))  # noqa: E712
