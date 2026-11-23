@@ -124,6 +124,13 @@ export default async function AdminLandingPage() {
                 : `${gbCount} ${gbCount === 1 ? "genbank" : "genbanker"}`,
             icon: "rabbit",
           },
+          {
+            href: "/stamboken/admin/utskick",
+            title: "Utskick",
+            description: "Status för utgående e-post, med omförsök och stopp.",
+            countLabel: null,
+            icon: "mail",
+          },
         ] satisfies AdminCard[])
       : []),
     // Utlänk: /medlem har egen layout utan adminflikar (navConfig.isMemberAdmin).

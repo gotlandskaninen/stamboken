@@ -129,7 +129,7 @@ git -C "$ROOT" ls-files -z -co --exclude-standard |
 		if [ -e "$ROOT/$f" ] || [ -L "$ROOT/$f" ]; then printf '%s\0' "$f"; fi
 	done | tar -C "$ROOT" --null -T - -cf - | tar -C "$TREE" -xf - || die "snapshot av $ROOT misslyckades"
 for f in "$TREE"/.docker/*.env.default; do cp "$f" "${f%.default}"; done
-mkdir -p "$TREE"/{config,logs,logs-test,cache,cache-test,uppladdningar,s3data,letsencrypt,local_ca}
+mkdir -p "$TREE"/{config,logs,logs-test,cache,cache-test,uppladdningar,skyddat,skyddat-test,s3data,letsencrypt,local_ca}
 cat >"$TREE/ci-local.override.yml" <<EOF
 # Egna image-namn så att bygget inte skriver över next-app/s3backend som andra worktrees dev-stackar använder.
 services:

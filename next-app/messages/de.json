@@ -8,6 +8,8 @@
     "search": "Suchen..."
   },
   "sidebar": {
+    "minaInskick": "Meine Einsendungen",
+    "inkorg": "Eingang",
     "minBesattning": "Mein Bestand",
     "genetik": "Genetik",
     "provparning": "Probepaarung",
