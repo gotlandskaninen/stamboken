@@ -646,12 +646,12 @@ inte hittas".
 <!-- route: /stamboken/alla-kaniner -->
 
 Sök bland alla kaniner i genbankerna du har tillgång till. Listan öppnas med
-**Gotlandskanin** och status **Aktiv**, och den nyast födda kaninen står först. Har du
-bara mellerudskaniner öppnas den med **Mellerudskanin**. Välj ras med **Gotlandskanin**,
+**Gotlandskanin** och status **Aktiv**, och den nyast födda kaninen står först. Föder du
+upp mellerudskaniner, klicka **Mellerudskanin**. Välj ras med **Gotlandskanin**,
 **Mellerudskanin** eller **Alla**, sök i sökfältet och filtrera på **Status** (Alla,
 Aktiv, Inaktiv, Död, Slaktad, Avlivad, Försvunnen) och **Kön**. Sökningen gäller bara
-den status du har valt. Välj **Alla** under **Status** för att hitta en kanin som är
-såld, död eller inaktiv. På datorn visas en
+den ras och status du har valt. Välj **Alla** under **Status** för att hitta en kanin
+som är såld, död eller inaktiv. På datorn visas en
 tabell med kolumnerna **Individnummer**, **Namn**, **Kön**, **Födelsedatum**, **Status**,
 **Besättning**, **Kullstorlek**, **Mor**, **Far** och **Färg**; **Kolumner** väljer
 vilka som syns. På mobilen är det en lista med **Visa fler** längst ned. Klicka en rad
