@@ -1,8 +1,8 @@
 """
-One address, one person: every write that can make an address a login address reserves it under a lock on the
-address (utils.login_code.reserve_login_address). The matrikel admin and the approver of an application get 409 on an
-address another person holds, also as a previous address that still counts; the member herself never sees it.
-Synthetic data only.
+One address, one person, and the seven days' wait (utils.matrikel.set_member_email). Every write that can make an
+address a login address reserves it under a lock on the address (utils.login_code.reserve_login_address). The
+matrikel admin and the approver of an application get 409 on an address another person holds, also as a previous
+address that still counts; the member herself never sees it. Synthetic data only.
 
 isort:skip_file
 """
@@ -10,10 +10,13 @@ isort:skip_file
 import json
 import threading
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
 import utils.login_code as lc  # noqa: E402
+import utils.matrikel as matrikel  # noqa: E402
+import utils.settings as settings  # noqa: E402
 from cli.members import members_cli  # noqa: E402
 from click.testing import CliRunner
 from flask.cli import ScriptInfo
@@ -176,3 +179,141 @@ class TestWriters(LoginAddressTest):
         resp = self.post("/api/v2/my-membership/persons", {"first_name": "A", "last_name": "B", "email": TAKEN})
         self.assertEqual(resp.status_code, 201, resp.data)
         self.assertFalse(resp.get_json()["duplicate_contact_email"])
+
+
+WEEK = timedelta(days=7)
+
+
+class TestSevenDays(LoginAddressTest):
+    """The three rows of the table, the chain A to B to C, back to A, and what goes with every change."""
+
+    def setUp(self):
+        super().setUp()
+        self.user = da.register_user("a@example.org", "pass", username="medlemmen")
+        self.person = _mk_person(_mk_membership(number=11), "Maja", "Medlem", "a@example.org", user=self.user)
+        self.started = datetime.now(timezone.utc)
+
+    def change(self, address, by):
+        return matrikel.set_member_email(self.person, address, self.user if by == "self" else self.matrikel_user, by=by)
+
+    def previous(self):
+        return {
+            r.address: r.login_until
+            for r in db.MemberPreviousAddress.select().where(db.MemberPreviousAddress.member == self.person.id)
+        }
+
+    def assert_about(self, moment, expected):
+        self.assertIsNotNone(moment)
+        self.assertLess(abs(moment - (datetime.now(timezone.utc) + expected)), timedelta(minutes=1))
+
+    def besked(self):
+        """(previous address, by_self, by_matrikel) of each besked queued, in order."""
+        rows = db.MailMessage.select().where(db.MailMessage.kind == "kontakt.epost_besked").order_by(db.MailMessage.id)
+        out = []
+        for row in rows:
+            previous = db.MemberPreviousAddress.get_by_id(row.recipient_id)
+            out.append((previous.address, row.params["by_self"], row.params["by_matrikel"]))
+        return out
+
+    def test_the_member_herself(self):
+        person = self.change("b@example.org", "self")
+        self.assertEqual((person.email, person.email_login_from), ("b@example.org", None))
+        (until,) = self.previous().values()
+        self.assert_about(until, WEEK)
+        self.assertEqual(self.besked(), [("a@example.org", True, False)])
+
+    def test_someone_else(self):
+        person = self.change("b@example.org", "other")
+        self.assert_about(person.email_login_from, WEEK)
+        self.assert_about(self.previous()["a@example.org"], WEEK)
+        self.assertEqual(self.besked(), [("a@example.org", False, False)])
+
+    def test_the_matrikel_admin(self):
+        person = self.change("b@example.org", "matrikel")
+        self.assertEqual((person.email, person.email_login_from), ("b@example.org", None))
+        self.assertEqual(self.previous(), {"a@example.org": None})
+        self.assertEqual(self.besked(), [("a@example.org", False, True)])
+
+    def test_a_to_b_to_c_never_makes_b_count_and_tells_a(self):
+        self.change("b@example.org", "self")
+        self.change("c@example.org", "self")
+        self.assertEqual(list(self.previous()), ["a@example.org"])
+        self.assert_about(self.previous()["a@example.org"], WEEK)
+        self.assertEqual([b[0] for b in self.besked()], ["a@example.org", "a@example.org"])
+        other = _mk_person(_mk_membership(number=12), "Bo", "Other", None)
+        self.reserve("b@example.org", other.id)  # nobody holds b
+        with self.assertRaises(lc.AddressTaken):
+            self.reserve("a@example.org", other.id)
+
+    def test_back_to_a_ends_the_wait(self):
+        self.change("b@example.org", "other")
+        person = self.change("A@example.org", "self")
+        self.assertEqual((person.email, person.email_login_from), ("A@example.org", None))
+        self.assertEqual(self.previous(), {"a@example.org": None, "b@example.org": None})
+        self.assertEqual([b[0] for b in self.besked()], ["a@example.org", "b@example.org"])
+
+    def test_after_the_matrikel_admin_an_own_change_does_not_bring_the_old_address_back(self):
+        self.change("b@example.org", "matrikel")
+        self.change("c@example.org", "self")
+        previous = self.previous()
+        self.assertIsNone(previous["a@example.org"])
+        self.assert_about(previous["b@example.org"], WEEK)
+        self.assertEqual([b[0] for b in self.besked()], ["a@example.org", "b@example.org"])
+
+    def test_every_change_ends_the_sessions_and_voids_the_codes(self):
+        marks = [da.account_generation(self.user.uuid)]
+        with mock.patch.object(settings.mail, "link_secret", "test-link-secret"), db.DB_PROXY.atomic():
+            code = lc.issue(self.person, "ny_adress", "webblasare", "b@example.org")
+        for address in ("b@example.org", "a@example.org"):  # the intruder's change, and the member's way back
+            self.change(address, "self")
+            marks.append(da.account_generation(self.user.uuid))
+        self.assertEqual(len(set(marks)), 3)
+        self.assertIsNotNone(db.LoginCode.get_by_id(code.id).used_at)
+
+    def test_another_persons_address_is_refused_and_nothing_changes(self):
+        with self.assertRaises(lc.AddressTaken):
+            self.change(TAKEN, "self")
+        person = db.Member.get_by_id(self.person.id)
+        self.assertEqual(person.email, "a@example.org")
+        self.assertEqual((self.previous(), self.besked()), ({}, []))
+
+    def test_a_person_without_a_login_address_just_gets_the_new_one(self):
+        family = _mk_person(self.person.membership, "Kim", "Medlem", "kim@example.org", role="familjemedlem")
+        person = matrikel.set_member_email(family, TAKEN, self.matrikel_user, by="matrikel")
+        self.assertEqual(person.email, TAKEN)
+        self.assertFalse(db.MemberPreviousAddress.select().exists())
+        self.assertEqual(self.besked(), [])
+
+    def test_erasure_takes_the_previous_addresses(self):
+        self.change("b@example.org", "self")
+        (mail_id,) = [r.id for r in db.MailMessage.select()]
+        matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)
+        self.assertFalse(db.MemberPreviousAddress.select().exists())
+        self.assertEqual(db.MailMessage.get_by_id(mail_id).status, "cancelled")
+
+    def test_the_matrikel_admins_edit_goes_through_it(self):
+        self.login("matrikel")
+        resp = self.client.patch(
+            f"/api/v2/persons/{self.person.id}",
+            data=json.dumps({"email": "b@example.org", "phone": "0701"}),
+            content_type="application/json",
+        )
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(self.previous(), {"a@example.org": None})
+        self.assertEqual(db.Member.get_by_id(self.person.id).phone, "0701")
+        resp = self.client.patch(
+            f"/api/v2/persons/{self.person.id}", data=json.dumps({"email": TAKEN}), content_type="application/json"
+        )
+        self.assertEqual(resp.status_code, 409, resp.data)
+        self.assertEqual(resp.get_json()["title"], lc.AddressTaken.title)
+        self.assertEqual(db.Member.get_by_id(self.person.id).email, "b@example.org")
+
+    def test_previous_addresses_go_at_their_purge_time(self):
+        self.change("b@example.org", "matrikel")
+        (row,) = db.MemberPreviousAddress.select()
+        (mail_id,) = [r.id for r in db.MailMessage.select()]
+        db.MailMessage.update(status="sent", address_hash="hash").where(db.MailMessage.id == mail_id).execute()
+        self.assertEqual(matrikel.purge_previous_addresses(row.purge_at), 0)
+        self.assertEqual(matrikel.purge_previous_addresses(row.purge_at + timedelta(seconds=1)), 1)
+        self.assertFalse(db.MemberPreviousAddress.select().exists())
+        self.assertIsNone(db.MailMessage.get_by_id(mail_id).address_hash)

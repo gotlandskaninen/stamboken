@@ -15,11 +15,12 @@ anonymization — mutation endpoints must follow the convention.
 """
 
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 
 from peewee import Case, IntegrityError, fn
 
 from utils.cache_invalidation import trigger_invalidation
+from utils.data_access import new_generation
 
 # DB_PROXY is the runtime proxy that data_access.py uses; importing the
 # module-level DATABASE symbol directly would be None at call time.
@@ -32,12 +33,13 @@ from utils.database import (
     Member,
     MemberApplication,
     MemberNumberCounter,
+    MemberPreviousAddress,
     Membership,
     User,
 )
 from utils.inbox_purge import erase_person_from_inbox, remove_originals
-from utils.login_code import AddressTaken, reserve_login_address
-from utils.mail import cancel_member_added, forget_recipient, queue_member_added
+from utils.login_code import AddressTaken, reserve_login_address, void
+from utils.mail import cancel_member_added, enqueue_mail, forget_recipient, queue_member_added
 from utils.membership_lifecycle import Event, Status, next_state, state_of
 from utils.postal import (  # noqa: F401 — public helpers
     format_postal_address,
@@ -514,6 +516,13 @@ def anonymize_person(member, actor):
         ]
         applications_redacted = len(application_ids)
         forget_recipient("member", person.id)  # the queue keeps no address hash or dedupe key of the erased
+        for previous in (
+            MemberPreviousAddress.delete()
+            .where(MemberPreviousAddress.member == person.id)
+            .returning(MemberPreviousAddress.id)
+        ):
+            forget_recipient("member_previous_address", previous.id)
+        void(person.id)
         for application_id in application_ids:
             forget_recipient("application", application_id)
         write_matrikel_audit(
@@ -531,6 +540,100 @@ def anonymize_person(member, actor):
     remove_originals(originals)  # only after the commit: a row never names a removed file
     _invalidate_genebanks(lost_genebanks)
     return person
+
+
+WAIT = timedelta(days=7)
+# A previous address is purged this long after it stops counting: its besked has gone by then (retries end in 21 h).
+PREVIOUS_KEPT = timedelta(days=2)
+SET_BY = ("self", "other", "matrikel")
+
+
+def _same(a, b):
+    return (a or "").strip().lower() == (b or "").strip().lower()
+
+
+def set_member_email(person, address, actor, *, by):
+    """
+    THE writer of an existing person's Member.email. For a person who holds a login address (a main member, or a
+    person with an account; utils.login_code) the address is reserved (AddressTaken) and:
+
+    - by="self", the member after a code to the new address: the old address counts for login seven more days, the
+      new one at once;
+    - by="other": the old one seven more days, the new one only after them (email_login_from);
+    - by="matrikel": the old one stops, the new one counts at once.
+
+    During a wait the first previous address stays fixed: a new change restarts its clock, but never makes the
+    address in between count, nor one that has stopped. Changing back to it ends the wait. The previous address
+    hears of the change (kontakt.epost_besked), and the account's sessions end (new_generation). Every change voids
+    the person's unused codes. Opens its own transaction; returns the person as written.
+    """
+    if by not in SET_BY:
+        raise ValueError(f"unknown change {by!r}")
+    address = (address or "").strip() or None
+    with DB_PROXY.atomic():
+        person, user = _lock_for_detach(person.id)  # membership → user → person
+        if _same(person.email, address):
+            if person.email != address:  # the same address, spelled otherwise
+                Member.update(email=address).where(Member.id == person.id).execute()
+            return Member.get_by_id(person.id)
+        holder = person.end_date is None and (person.role == "huvudmedlem" or person.user_id is not None)
+        told, login_from = None, None
+        if holder:
+            reserve_login_address(address, person.id)
+            now = datetime.now(timezone.utc)
+            told, back = _keep_previous(person, address, actor, by, now)
+            if by == "other" and not back:
+                login_from = now + WAIT
+        Member.update(email=address, email_login_from=login_from, updated_at=datetime.now()).where(
+            Member.id == person.id
+        ).execute()
+        void(person.id)
+        if holder:
+            if told is not None:
+                params = {"previous_id": told.id, "by_self": by == "self", "by_matrikel": by == "matrikel"}
+                ref = ("membership", person.membership_id)
+                enqueue_mail("kontakt.epost_besked", "member_previous_address", told.id, params, ref=ref)
+            if user is not None:
+                new_generation(user.uuid)
+    return Member.get_by_id(person.id)
+
+
+def _keep_previous(person, address, actor, by, now):
+    """The previous-address rows of a change (set_member_email): (the row to tell, whether the change went back)."""
+    waiting = (
+        MemberPreviousAddress.select()
+        .where((MemberPreviousAddress.member == person.id) & (MemberPreviousAddress.login_until > now))
+        .order_by(MemberPreviousAddress.id)
+        .first()
+    )
+    back = waiting is not None and _same(waiting.address, address)
+    until = None if by == "matrikel" or back else now + WAIT
+    if waiting is not None:
+        waiting.login_until, waiting.purge_at, waiting.changed_by = until, (until or now) + PREVIOUS_KEPT, actor
+        waiting.save()
+        if not back:
+            return waiting, back
+    if person.email is None:
+        return None, back
+    if person.email_login_from is not None and person.email_login_from > now:
+        until = None  # it never counted, and never will
+    row = MemberPreviousAddress.create(
+        member=person.id,
+        address=person.email,
+        login_until=until,
+        purge_at=(until or now) + PREVIOUS_KEPT,
+        changed_by=actor,
+    )
+    return row, back
+
+
+def purge_previous_addresses(now):
+    """Nightly: previous addresses past their purge_at go, and the mail queue forgets where their mails went."""
+    gone = MemberPreviousAddress.delete().where(MemberPreviousAddress.purge_at < now)
+    ids = [row.id for row in gone.returning(MemberPreviousAddress.id).execute()]
+    for row_id in ids:
+        forget_recipient("member_previous_address", row_id)
+    return len(ids)
 
 
 def new_membership(status, **fields):

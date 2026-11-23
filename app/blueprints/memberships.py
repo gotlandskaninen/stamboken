@@ -33,6 +33,7 @@ from utils.matrikel import (
     resolve_own_membership,
     retire_membership,
     revoke_grant,
+    set_member_email,
     set_membership_status,
     soft_delete_person,
     swap_main_member,
@@ -555,8 +556,11 @@ def patch_person(person_id: int):
             # UPDATE only what this body changed: a full-row save() would write
             # member.user_id back from the re-read copy too, and the audit rows
             # must name exactly the columns that moved. `role` stays in `after`,
-            # so the huvudmedlem IntegrityError backstop below still fires.
-            person.save(only=[getattr(Member, field) for field in after] + [Member.updated_at])
+            # so the huvudmedlem IntegrityError backstop below still fires. The
+            # e-mail has its own writer: a login address stops at once.
+            person.save(only=[getattr(Member, field) for field in after if field != "email"] + [Member.updated_at])
+            if "email" in after:
+                set_member_email(person, after["email"], current_user, by="matrikel")
             write_matrikel_audit(
                 current_user,
                 "person_updated",
@@ -565,6 +569,8 @@ def patch_person(person_id: int):
             )
     except IntegrityError:
         return problem(409, "Huvudmedlem finns redan", "Medlemskapet har redan en aktiv huvudmedlem")
+    except AddressTaken:
+        return _address_taken()
 
     return jsonify(_person_to_dict(person))
 
