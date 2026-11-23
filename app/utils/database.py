@@ -4219,6 +4219,21 @@ def migrate_46_to_47():
             # dropping it leaves NULL for every account created afterwards.
             DATABASE.execute_sql("ALTER TABLE hbuser ADD COLUMN name_on_check_page BOOLEAN DEFAULT true")
             DATABASE.execute_sql("ALTER TABLE hbuser ALTER COLUMN name_on_check_page DROP DEFAULT")
+            # Accounts whose person was anonymised already: off, as anonymize_person sets it from now on. The audit
+            # trigger is off for it, as in migrate_39_to_40: a row per account would copy her data into audit_log.
+            if "matrikel_audit" in DATABASE.get_tables():
+                audited = DATABASE.execute_sql(
+                    "SELECT 1 FROM pg_trigger WHERE tgrelid = 'hbuser'::regclass AND tgname = 'audit_trigger'"
+                ).fetchone()
+                if audited:
+                    DATABASE.execute_sql('ALTER TABLE "hbuser" DISABLE TRIGGER "audit_trigger"')
+                DATABASE.execute_sql(
+                    "UPDATE hbuser SET name_on_check_page = false WHERE user_id IN ("
+                    " SELECT (payload->>'user_id')::int FROM matrikel_audit"
+                    " WHERE action = 'person_user_unlinked' AND payload->>'source' = 'anonymize')"
+                )
+                if audited:
+                    DATABASE.execute_sql('ALTER TABLE "hbuser" ENABLE TRIGGER "audit_trigger"')
         if "digitalcertificatev2" in DATABASE.get_tables():
             DATABASE.execute_sql("ALTER TABLE digitalcertificatev2 ADD COLUMN IF NOT EXISTS issued_as VARCHAR(20)")
         SchemaHistory.insert(  # pylint: disable=E1120
