@@ -254,8 +254,22 @@ def _code_mail(params):
     return {"code": shown(code(row))} if row else None
 
 
+def address_collisions(now=None):
+    """How many login addresses two or more persons hold, a write having missed the reservation. Never which."""
+    return DB_PROXY.execute_sql(
+        f"SELECT count(*) FROM (SELECT address FROM ({_ADDRESSES}) a GROUP BY address HAVING count(*) > 1) c",
+        {"now": now or _utcnow()},
+    ).fetchone()[0]
+
+
 def alarms(now=None):
     """The status view's alarms of code login (utils.mail.sender_alarms)."""
+    found = []
     if closed(now):
-        return [{"code": "kodinloggning_stangd", "message": "Kodinloggningen är stängd: för många felaktiga koder"}]
-    return []
+        found.append(
+            {"code": "kodinloggning_stangd", "message": "Kodinloggningen är stängd: för många felaktiga koder"}
+        )
+    collisions = address_collisions(now)
+    if collisions:
+        found.append({"code": "adresskrock", "message": f"{collisions} inloggningsadresser hör till fler än en person"})
+    return found

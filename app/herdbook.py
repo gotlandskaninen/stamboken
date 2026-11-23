@@ -255,8 +255,8 @@ def _reconcile_all_history():
 def _purge_command_free_text():
     """Nightly leader job (ADR-0017), built as _reconcile_all_history: it closes its thread's connection itself.
 
-    It purges the mail queue, the login codes and the previous addresses first, each on its own, so no purge failing
-    skips another."""
+    It purges the mail queue, the login codes and the previous addresses first and counts the login address
+    collisions, each on its own, so no step failing skips another."""
     now = datetime.datetime.now(datetime.timezone.utc)
     try:
         try:
@@ -267,6 +267,12 @@ def _purge_command_free_text():
             APP.logger.info("Purged %s login codes", login_code.purge(now))
         except Exception:  # pylint: disable=broad-except
             APP.logger.exception("Purging the login codes failed")
+        try:
+            collisions = login_code.address_collisions(now)
+            if collisions:  # also an alarm in the status view (Utskick); counted, never named
+                APP.logger.warning("%s login addresses are held by more than one person", collisions)
+        except Exception:  # pylint: disable=broad-except
+            APP.logger.exception("Counting the login address collisions failed")
         try:
             APP.logger.info("Purged %s previous addresses", purge_previous_addresses(now))
         except Exception:  # pylint: disable=broad-except

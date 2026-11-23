@@ -12,9 +12,11 @@ import threading
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
+import herdbook  # noqa: E402
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
 import utils.login_code as lc  # noqa: E402
+import utils.mail as mail  # noqa: E402
 import utils.matrikel as matrikel  # noqa: E402
 import utils.settings as settings  # noqa: E402
 from cli.members import members_cli  # noqa: E402
@@ -317,3 +319,34 @@ class TestSevenDays(LoginAddressTest):
         self.assertEqual(matrikel.purge_previous_addresses(row.purge_at + timedelta(seconds=1)), 1)
         self.assertFalse(db.MemberPreviousAddress.select().exists())
         self.assertIsNone(db.MailMessage.get_by_id(mail_id).address_hash)
+
+
+class TestCollisions(LoginAddressTest):
+    """A write that missed the reservation: counted at night and in the status view, never named."""
+
+    def test_two_holders_of_one_address_are_counted_and_alarmed(self):
+        self.assertEqual(lc.address_collisions(), 0)
+        _mk_person(self.holder.membership, "Kim", "Holder", TAKEN, role="familjemedlem")  # no account: no holder
+        self.assertEqual(lc.address_collisions(), 0)
+        _mk_person(_mk_membership(number=11), "Bo", "Other", f" {TAKEN.upper()}")
+        now = datetime.now(timezone.utc)
+        db.MemberPreviousAddress.create(
+            member=self.holder, address="b@example.org", login_until=now + timedelta(days=1), purge_at=now
+        )
+        _mk_person(_mk_membership(number=12), "Cid", "Third", "b@example.org")
+        self.assertEqual(lc.address_collisions(), 2)
+        alarm = [a for a in mail.sender_alarms()["alarms"] if a["code"] == "adresskrock"]
+        self.assertEqual(
+            alarm, [{"code": "adresskrock", "message": "2 inloggningsadresser hör till fler än en person"}]
+        )
+
+    def test_the_nightly_job_logs_the_count_only(self):
+        _mk_person(_mk_membership(number=11), "Bo", "Other", TAKEN)
+        with (
+            mock.patch.object(herdbook, "purge_command_free_text", return_value=0),
+            mock.patch.object(herdbook.genetics.ps, "_close_db_connection"),
+            self.assertLogs(herdbook.APP.logger, "WARNING") as logs,
+        ):
+            herdbook._purge_command_free_text()
+        self.assertIn("1 login addresses are held by more than one person", "\n".join(logs.output))
+        self.assertNotIn("example.org", "\n".join(logs.output))
