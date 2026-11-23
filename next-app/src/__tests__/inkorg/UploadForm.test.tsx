@@ -8,6 +8,11 @@ import {
   waitFor,
 } from "@testing-library/react";
 
+import "@/i18n";
+import { useMode } from "@/lib/mode-context";
+
+vi.mock("@/lib/mode-context", () => ({ useMode: vi.fn() }));
+
 const push = vi.fn();
 const uploadIntyg = vi.fn();
 
@@ -30,12 +35,21 @@ function pick() {
 }
 
 beforeEach(() => {
+  vi.mocked(useMode).mockReturnValue("prod");
   push.mockReset();
   uploadIntyg.mockReset();
 });
 afterEach(cleanup);
 
 describe("UploadForm", () => {
+  it("explains where demo submissions go before a file is chosen", () => {
+    vi.mocked(useMode).mockReturnValue("demo");
+    render(<UploadForm herds={["G9001"]} />);
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "föreningens riktiga inkorg",
+    );
+  });
+
   it("preselects the only herd and disables Skicka until a file is chosen", () => {
     render(<UploadForm herds={["G9001"]} />);
     expect(screen.getByLabelText("Besättning")).toHaveValue("G9001");

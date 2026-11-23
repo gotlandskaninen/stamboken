@@ -1,6 +1,8 @@
 "use client";
 
 import { useRef, useState, useTransition } from "react";
+import Link from "next/link";
+import { useTranslation } from "react-i18next";
 import { Switch } from "@mui/material";
 import { useSnackbar } from "@/components/SnackbarProvider";
 import { useNotifications } from "@/contexts/NotificationContext";
@@ -9,6 +11,7 @@ import { updateProfilePicture, updateSettings } from "./actions";
 import styles from "./profil.module.css";
 
 export function KontoCard({ user }: { user: UserContext }) {
+  const { t } = useTranslation();
   const { showSnackbar } = useSnackbar();
   const { addNotification } = useNotifications();
   const [isPending, startTransition] = useTransition();
@@ -187,9 +190,12 @@ export function KontoCard({ user }: { user: UserContext }) {
             </div>
           )}
         </dl>
-        <p className={styles.hint}>
-          Hanteras via Google Workspace. Kontakta admin för ändringar.
-        </p>
+        <Link href="/kontoregler">{t("codeLogin.rules")}</Link>
+        {user.google_email && (
+          <p className={styles.hint}>
+            Hanteras via Google Workspace. Kontakta admin för ändringar.
+          </p>
+        )}
       </div>
     </section>
   );
