@@ -582,7 +582,7 @@ def refuse_demo_role_without_google():
     if (session.get("auth_method") == "google" and session.get("google_domain")) or request.endpoint == "logout":
         return None
     account = db.User.get_or_none(db.User.uuid == session["user_id"])
-    if account is None or not da.holds_role(account):
+    if account is None or not da.holds_role(account, password_override=session.get("auth_method") != "kod"):
         return None
     message = "Kontot har en roll. Logga in med föreningens Google-konto för att använda den i testmiljön."
     return jsonify({"status": "error", "message": message}), 403
@@ -755,21 +755,22 @@ def _session_revoked():
         if "auth_method" not in session or not da.session_holds(session):
             return True
         on_domain = session["auth_method"] == "google" and session.get("google_domain")
-        if on_domain or settings.service.allow_role_password_login:
+        password_override = session["auth_method"] != "kod"
+        if on_domain or (password_override and settings.service.allow_role_password_login):
             return False
         if settings.service.demo_instance and not session.get("demo_login"):
             # The demo's roles are a copy up to a day old: production judges the sessions it made, in the shared store,
             # and refuse_demo_role_without_google refuses their requests here.
             return False
         account = db.User.get_or_none(db.User.uuid == session["user_id"])
-        return account is not None and da.holds_role(account)
+        return account is not None and da.holds_role(account, password_override=password_override)
     return session.get("logout_epoch", 0) < _logout_epoch()
 
 
 def establish_session(user, method, generation, on_domain=False):
     """
     The one way a login becomes a session: marks a demo login, stamps the
-    logout epoch, the sign-in method ("google" or "losenord"), whether a
+    logout epoch, the sign-in method ("google", "losenord" or "kod"), whether a
     Google login verified the association's domain (`on_domain`, stored
     only when true) and the account's mark read under its row lock, then
     rotates the sid. A session's stamps are never rewritten; a change of
@@ -794,6 +795,9 @@ def establish_session(user, method, generation, on_domain=False):
     # EACH_REQUEST; the authenticated session is unaffected and the orphan
     # expires via TTL. Inherent to sid rotation (cf. Django cycle_key).
     APP.session_interface.regenerate(session)
+
+
+APP.extensions["establish_session"] = establish_session
 
 
 def _stamp_login():

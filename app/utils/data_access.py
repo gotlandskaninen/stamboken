@@ -405,9 +405,9 @@ def storable_google_email(email, hosted_domain):
     return email
 
 
-def holds_role(user):
-    """The account has a role in ROLE_LEVELS, and ALLOW_ROLE_PASSWORD_LOGIN (development, tests) is off."""
-    return not settings.service.allow_role_password_login and any(
+def holds_role(user, *, password_override=True):
+    """A protected role. Only password sign-in in development and tests can opt out."""
+    return not (password_override and settings.service.allow_role_password_login) and any(
         p.get("level") in ROLE_LEVELS for p in user.privileges
     )
 

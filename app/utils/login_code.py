@@ -15,8 +15,9 @@ from datetime import datetime, timedelta, timezone
 from peewee import fn
 
 import utils.settings as settings
+from utils.data_access import holds_role
 from utils.database import DB_PROXY, LoginCode, Member, MemberPreviousAddress
-from utils.mail import Recipient, address_hash, forget_recipient, mail_kind, one_time_code, recipient_kind
+from utils.mail import Recipient, address_hash, forget_recipient, link_token, mail_kind, one_time_code, recipient_kind
 
 logger = logging.getLogger("herdbook.login_code")
 
@@ -38,6 +39,10 @@ class CodeLoginClosed(Exception):
 
 def _utcnow():
     return datetime.now(timezone.utc)
+
+
+def enabled():
+    return os.environ.get("KODINLOGGNING", "false").lower() == "true" and not settings.service.demo_instance
 
 
 def refuse_unsafe():
@@ -122,21 +127,27 @@ _SEPARATORS = re.compile(r"[\s-]")
 _DIGITS = re.compile(r"[0-9]{8}")
 
 
-def check(purpose, browser, entered, member_id=None):
+def check(purpose, browser, entered, member_id=None, *, link=False):
     """
-    The browser's live code row for `purpose` when `entered` is its code, else None. The try is counted on the row
-    first, in the statement that checks the limit of TRIES, and commits on its own, before the comparison: the
-    caller cannot roll a wrong try back. A right code is then used with consume() in the transaction that acts on
-    it. Raises CodeLoginClosed when code login is closed; the row is not touched then.
+    Return the live row for this browser and credential. A link lookup spends no try.
+    Count a numeric try before comparing. Address changes commit the count independently.
+    Sign-in checks inside its redemption transaction and commits every wrong numeric try.
     """
     refuse_unsafe()
-    if DB_PROXY.in_transaction():
+    if DB_PROXY.in_transaction() and purpose != "login":
         raise RuntimeError("check() commits the try on its own: call it outside a transaction")
     with DB_PROXY.atomic():
         _lock()
         now = _utcnow()
         if closed(now):
             raise CodeLoginClosed
+        if link:
+            if purpose != "login" or not isinstance(entered, str) or not entered.isascii():
+                return None
+            row = login_row(browser)
+            if row and hmac.compare_digest(login_link_token(row), entered):
+                return row
+            return None
         params = [browser_hash(browser), purpose, now - VALID_FOR]
         mine = ""
         if member_id is not None:
@@ -164,13 +175,13 @@ def check(purpose, browser, entered, member_id=None):
     return row
 
 
-def consume(row):
+def consume(row, *, link=False):
     """
     Uses the row check() gave, in the caller's transaction: one UPDATE, so of two uses at once at most one wins. The
     try check() counted is taken back, as it was right. False when the row has been used, voided or has expired.
     """
     now = _utcnow()
-    used = LoginCode.update(used_at=now, failed=LoginCode.failed - 1, new_address=None).where(
+    used = LoginCode.update(used_at=now, failed=LoginCode.failed - (0 if link else 1), new_address=None).where(
         (LoginCode.id == row.id) & LoginCode.used_at.is_null(True) & (LoginCode.created_at > now - VALID_FOR)
     )
     return used.execute() == 1
@@ -232,6 +243,56 @@ _ADDRESSES = """
 """
 
 
+def login_holder(address):
+    """Resolve only an unambiguous reservation, including addresses still in their waiting period."""
+    rows = DB_PROXY.execute_sql(
+        f"SELECT member_id FROM ({_ADDRESSES}) a WHERE address = %(address)s LIMIT 2",
+        {"now": _utcnow(), "address": address},
+    ).fetchall()
+    return Member.get_or_none(Member.id == rows[0][0]) if len(rows) == 1 else None
+
+
+def login_address(person, hashed_address):
+    """Resolve the original recipient again, using today's account, membership and address validity."""
+    if person.end_date or person.membership.membership_status == "inactive":
+        return None
+    if person.user_id:
+        if not person.user.is_active or holds_role(person.user, password_override=False):
+            return None
+    elif person.role != "huvudmedlem":
+        return None
+    now = _utcnow()
+    previous = MemberPreviousAddress.select(MemberPreviousAddress.address).where(
+        (MemberPreviousAddress.member == person.id) & (MemberPreviousAddress.login_until > now)
+    )
+    addresses = [p.address for p in previous]
+    if person.email and (person.email_login_from is None or person.email_login_from <= now):
+        addresses.append(person.email)
+    for address in addresses:
+        normalized = address.strip().lower()
+        if address_hash(normalized) == hashed_address:
+            holder = login_holder(normalized)
+            if holder and holder.id == person.id:
+                return normalized
+    return None
+
+
+def login_row(browser):
+    """The browser's current redeemable login row. Only check() counts a numeric try."""
+    return (
+        LoginCode.select()
+        .where(
+            (LoginCode.browser_hash == browser_hash(browser))
+            & (LoginCode.purpose == "login")
+            & LoginCode.used_at.is_null(True)
+            & (LoginCode.failed < TRIES)
+            & (LoginCode.created_at > _utcnow() - VALID_FOR)
+        )
+        .order_by(LoginCode.id.desc())
+        .first()
+    )
+
+
 class AddressTaken(Exception):
     """Another person holds the address for login. Only the matrikel admin and the approver of an application see it."""
 
@@ -275,6 +336,11 @@ def reserve_login_address(address, person_id):
     ).fetchone()
     if taken:
         raise AddressTaken(AddressTaken.title)
+
+
+def login_link_token(row):
+    """Bind the mail link to the same row and nonce as its eight digits."""
+    return link_token(f"login:{row.nonce}", row.id)
 
 
 @recipient_kind("login_code")
