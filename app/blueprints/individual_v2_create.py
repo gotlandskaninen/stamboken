@@ -145,6 +145,10 @@ def register_individual(form, may_register=None, created=None):
                 # re-dated) since the check above, and the rabbit is born in the locked litter's herd.
                 if refusal := _registration_refusal(breeding, may_register):
                     return refusal
+                if certificate_type == "digital" and (
+                    refusal := digital_certificate_refusal(current_user, breeding.breeding_herd_id_id)
+                ):
+                    return problem(*refusal)
             herd = breeding.breeding_herd_id
 
             # If form provides litter_size6w and breeding doesn't have it yet,

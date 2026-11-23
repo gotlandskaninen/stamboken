@@ -294,9 +294,9 @@ def digital_certificate_refusal(user, herd_id):
     from utils.cert_service_v2 import ATTESTER_NAME_MISSING, attester_name
 
     if herd_id not in user.effective_herd_ids():
-        return 403, "Forbidden", DIGITAL_FORBIDDEN
+        return 403, "digital_certificate_forbidden", DIGITAL_FORBIDDEN
     if not attester_name(user):
-        return 400, "Bad Request", ATTESTER_NAME_MISSING
+        return 400, "attester_name_missing", ATTESTER_NAME_MISSING
     return None
 
 
@@ -408,6 +408,11 @@ def promote_bunny(
         # 1. Authorize — owner of the breeding herd, or genebank manager/admin.
         if not user.can_edit(herd.herd):
             raise RosterActionError(403, "Forbidden", "Åtkomst nekad")
+        # Again on the locked litter: it may have moved to another herd since the check before the lock.
+        if certificate_type == "digital" and (
+            refusal := digital_certificate_refusal(user, breeding.breeding_herd_id_id)
+        ):
+            raise RosterActionError(*refusal)
 
         # 2. Litter-size precondition (the mint helper defaults max to 9 when
         #    null and would mint a colliding "…1" — guard explicitly).

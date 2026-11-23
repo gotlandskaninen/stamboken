@@ -357,7 +357,7 @@ def preview_certificate(i_number):
     # seen the rabbit, so they too get the signed PDF.
     viewer = da.fetch_user_info(user_id)
     # By id: a herd code is unique only within its genebank.
-    may_issue = individual.origin_herd_id in viewer.effective_herd_ids()
+    may_issue = individual.origin_herd_id in viewer.effective_herd_ids() and bool(attester_name(viewer))
     has_current = (
         db.DigitalCertificateV2.select()
         .where((db.DigitalCertificateV2.individual == individual) & (db.DigitalCertificateV2.is_current == True))  # noqa: E712

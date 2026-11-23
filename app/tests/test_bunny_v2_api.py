@@ -899,6 +899,31 @@ class TestBunnyPromoteDigitalV2(CertV2Mixin, DatabaseTest):
                 self.assertEqual(db.Individual.select().count(), before)
                 self.assertNotEqual(db.Bunny.get_by_id(b.id).fate, "registered")
 
+    def test_digital_right_is_checked_again_on_the_locked_litter(self):
+        """A litter moved to another herd between the check and the lock: refused, nothing written."""
+        from blueprints.bunny_v2 import DIGITAL_FORBIDDEN
+
+        litter = db.Breeding.create(
+            breeding_herd_id=self.herds[0],
+            birth_date=date(2025, 1, 10),
+            litter_number=1,
+            litter_size=6,
+            litter_size6w=6,
+            mother=self.individuals[0],
+            father=self.individuals[1],
+        )
+        b = db.Bunny.create(breeding=litter, slot_order=1, observed_sex="female", observed_color="bleighe")
+        db.User.update(fullname="Besättnings Ägare").where(db.User.id == self.owner.id).execute()
+        before = db.Individual.select().count()
+        refused = (403, "digital_certificate_forbidden", DIGITAL_FORBIDDEN)
+        self.assertEqual(self._login().status_code, 200)
+        with mock.patch("blueprints.bunny_v2.digital_certificate_refusal", side_effect=[None, refused]) as check:
+            resp = self._promote(b.id, certificate_type="digital")
+        self.assertEqual(resp.status_code, 403, resp.get_data(as_text=True))
+        self.assertEqual(check.call_count, 2)
+        self.assertEqual(db.Individual.select().count(), before)
+        self.assertNotEqual(db.Bunny.get_by_id(b.id).fate, "registered")
+
     def test_digital_issuance_rechecks_the_quota_under_the_litter_lock(self):
         """The digital certificate is issued after the promote commit; a slot taken meanwhile refuses it."""
         from blueprints.bunny_v2 import _issue_digital_certificate

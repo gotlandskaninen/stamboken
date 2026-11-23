@@ -1192,7 +1192,9 @@ class TestCertificateV2ViewAuthorization(CertV2Mixin, FlaskTest):
         # The buyer, the manager and admin get the signed certificate as issued, so nothing changed since appears
         # under the issuer's name; also when older code cleared the rabbit's number but the v2 row is current
         db.Individual.update(digital_certificate=None).where(db.Individual.id == individual.id).execute()
-        for viewer in (buyer, self.manager, self.admin):
+        nameless = da.register_user("skotare", "pass")
+        nameless.add_role("owner", self.herds[0].id)  # herd access, but no name: may not issue, so no rendered preview
+        for viewer in (buyer, self.manager, self.admin, nameless):
             with mock.patch.object(_generator, "generate_pedigree") as render:
                 self.assertEqual(self._status(viewer, f"/api/v2/certificates/preview/{individual.number}"), 200)
             render.assert_not_called()
