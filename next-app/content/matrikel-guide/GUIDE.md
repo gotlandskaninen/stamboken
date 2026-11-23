@@ -78,8 +78,9 @@ klicka **Avslå**. Den som ansökte får inget besked från Stamboken, så medde
 hen själv.
 
 En ansökan som inte har lett till ett medlemskap, alltså en avslagen eller en som
-fortfarande väntar, tas bort automatiskt natten innan det har gått 12 månader
-sedan den skickades in. En väntande ansökan måste alltså godkännas inom ett år.
+fortfarande väntar, tas bort automatiskt när det nästan har gått 12 månader sedan
+den skickades in, upp till ett dygn tidigare. En väntande ansökan behöver alltså
+godkännas senast två dagar innan det har gått ett år.
 
 ## Matrikeln
 
