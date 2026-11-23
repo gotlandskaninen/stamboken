@@ -24,6 +24,8 @@ from utils.herd_tracking import (
 from tests.database_test import _USE_POSTGRES, DatabaseTest
 from tests.ht_helpers import _active, ht_row, make_individual
 
+BUYER = {"name": "Köpare Test", "town": "Visby"}  # synthetic: a sale outside the association carries its buyer
+
 
 class CorrectionBase(DatabaseTest):
     def setUp(self):
@@ -41,7 +43,7 @@ class CorrectionBase(DatabaseTest):
             self.manager,
             op or uuid.uuid4(),
             [self.report.id],
-            [{"date": "2025-09-30", "herd": "GX1", "kind": "TRANSFER", "notes": None}],
+            [{"date": "2025-09-30", "herd": "GX1", "kind": "TRANSFER", "buyer": BUYER, "notes": None}],
             reason="Felaktig årsrapport, såld utanför genbanken",
         )
 
@@ -68,7 +70,7 @@ class TestCorrection(CorrectionBase):
                 self.manager,
                 uuid.uuid4(),
                 [],
-                [{"date": "2026-03-01", "herd": "GX1", "kind": "CORRECTION"}],
+                [{"date": "2026-03-01", "herd": "G1", "kind": "CORRECTION"}],
             )
         self.assertEqual([r["id"] for r in ctx.exception.rows], [sale.id])
 
@@ -115,7 +117,7 @@ class TestCorrection(CorrectionBase):
             user,
             uuid.uuid4(),
             [self.report.id],
-            [{"date": "2025-09-30", "herd": "GX1", "kind": "TRANSFER"}],
+            [{"date": "2025-09-30", "herd": "GX1", "kind": "TRANSFER", "buyer": BUYER}],
             reason="test",
         )
 
@@ -145,7 +147,7 @@ class TestCorrection(CorrectionBase):
                 self.manager,
                 uuid.uuid4(),
                 [self.report.id],
-                [{"date": "2025-09-30", "herd": "GX1", "kind": "TRANSFER"}],
+                [{"date": "2025-09-30", "herd": "GX1", "kind": "TRANSFER", "buyer": BUYER}],
                 reason="Köparen nås på 070-123 45 67",
             )
         self.assertEqual(len(_active(self.rabbit)), 2)
@@ -192,7 +194,7 @@ class TestCorrection(CorrectionBase):
         op = uuid.uuid4()
         events = [
             {"date": "2025-09-30", "herd": "G2", "kind": "TRANSFER"},
-            {"date": "2025-10-15", "herd": "GX1", "kind": "TRANSFER"},
+            {"date": "2025-10-15", "herd": "GX1", "kind": "TRANSFER", "buyer": BUYER},
         ]
         reason = "Två flyttar"
         first = correct_herd_tracking(self.rabbit, self.manager, op, [self.report.id], events, reason=reason)

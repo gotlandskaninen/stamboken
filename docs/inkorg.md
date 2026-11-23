@@ -725,6 +725,17 @@ det. Efter sparandet har dokumentet
 
 ## Registrera en försäljning
 
+### `GET /api/v2/inkorg/{id}/kanin/{nummer}/forsaljningar`
+
+Kaninens aktiva flyttar (`TRANSFER`, `CORRECTION`), för panelen: visar beviset en försäljning som redan
+är registrerad, och har den köparen? `buyer` är `present`, `none` eller `removed` (köparen raderad eller
+gallrad: panelen frågar inte efter den igen), aldrig namn eller ort. För den som
+arbetar i kön och får läsa kaninen; 404 annars.
+
+```json
+{"sales": [{"herd": "GX1", "date": "2026-10-03", "kind": "TRANSFER", "buyer": "present"}]}
+```
+
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/overlat`
 
 Registrerar att kaninen sålts, med samma regler som försäljningen på kaninens sida.
@@ -733,21 +744,28 @@ Registrerar att kaninen sålts, med samma regler som försäljningen på kaninen
 {"individual": "G1-2511", "herd": "G2", "date": "2026-10-03"}
 ```
 
+En köpare utanför föreningen:
+
+```json
+{"individual": "G1-2511", "herd": "GX1", "date": "2026-10-03", "buyer": {"name": "…", "town": "…", "contact_consent": false, "membership_optin": false}}
+```
+
 | Fält | |
 |---|---|
 | `individual` | kaninens nummer |
-| `herd` | köparens besättningsnummer. En köpare utanför föreningen: genbankens besättning för kaniner sålda utanför genbanken, `GX1` (gotlandskanin) eller `MX1` (mellerudskanin). Köparens namn och adress sparas inte; de finns bara på originalfotot. |
+| `herd` | köparens besättningsnummer. En köpare utanför föreningen: genbankens besättning för kaniner sålda utanför genbanken, `GX1` (gotlandskanin) eller `MX1` (mellerudskanin). |
 | `date` | försäljningsdatumet |
+| `buyer` | valfritt, bara till GX1/MX1: köparen utanför föreningen ([ADR-0016](adr/0016-agarbyte-flytt-dag-0-och-berattigat-intresse.md)). `name` och `town` krävs, och `postal_address` när den som registrerar varken är genbanksansvarig eller admin; `email` och `phone` bara med `contact_consent` eller `membership_optin`. Annars 400. Med `buyer` går också GX1 till GX1, för genbanksansvarig och admin. När beviset kopplas till en försäljning som redan finns sätts köparen på den bara om försäljningen saknar köpare (registrerad i gamla appen); har den redan en köpare blir svaret 409 |
 
 **Vem:** handläggaren, med samma krav på posten som för `…/spara` men för alla dokumenttyper.
 En hjälpare får sälja kaniner i sin genbank som en ägare får.
 
 **Bevis.** Är dokumentet ett överlåtelsebevis (`doc_type: "bevis"`) blir det klart och kopplas
 till försäljningens rad (`herd_tracking_id`). Annars registreras försäljningen ändå, och posten
-får `missing_proof: true` ("bevis saknas"). Kommer beviset senare till samma post skickas det med
-`…/overlat` med samma kanin, köpare och datum: det kopplas då till försäljningen som redan finns,
-utan att den registreras igen, och `missing_proof` blir `false` när ingen försäljning i posten
-längre saknar bevis. Den som kopplar måste få sälja kaninen, som för en försäljning.
+får `missing_proof: true` ("bevis saknas"). Kommer beviset senare, eller är försäljningen redan
+registrerad någon annanstans (till exempel på kaninens sida), skickas det med `…/overlat` med samma
+kanin, köpare och datum: det kopplas då till den aktiva försäljningen som redan finns, utan att den
+registreras igen, och `missing_proof` blir `false` när ingen försäljning i posten längre saknar bevis. Den som kopplar måste få sälja kaninen, som för en försäljning.
 
 **Korrigering.** Ligger datumet före kaninens senaste händelse är det en korrigering. Den gör
 bara genbanksansvarig för kaninens genbank och admin, och anropet skriver då in försäljningen på
