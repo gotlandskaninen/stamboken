@@ -246,7 +246,6 @@ services:
       - STAGING=${CERTBOT_STAGING:-0}
     volumes:
       - ./nginx/nginx.main:/etc/nginx/nginx.conf:ro
-      - ./nginx/production/upstreams.conf:/etc/nginx/user_conf.d/00-upstreams.conf:ro
       - ./nginx/production/herdbook-production.conf:/etc/nginx/user_conf.d/herdbook.conf:ro
       - ./nginx/production/stamboken-legacy.conf:/etc/nginx/user_conf.d/stamboken-legacy.conf:ro
       - ./nginx/production/gotlandskaninen.conf:/etc/nginx/user_conf.d/gotlandskaninen.conf:ro
