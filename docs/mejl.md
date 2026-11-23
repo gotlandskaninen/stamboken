@@ -125,10 +125,11 @@ av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas.
   en ny adress (`purpose = ny_adress`): mottagaren har bett om att byta
   e-postadress, och mejlet har koden men ingen länk. En rad för inloggning
   stoppas tills inloggningssidan finns.
-- `kontakt.epost_besked` (prioritet 0) går till den tidigare adressen när en
-  inloggningsadress byts: att den är bytt, av vem (medlemmen själv,
-  matrikelansvarig eller någon annan) och vart man vänder sig. Den nya adressen
-  står aldrig i mejlet.
+- `kontakt.epost_besked` (prioritet 0) går till adressen som byts ut när en
+  inloggningsadress byts, och under en väntan också till den första tidigare
+  adressen: att adressen är bytt och av vem (medlemmen själv, matrikelansvarig
+  eller någon annan). Den som inte känner igen bytet svarar på mejlet, som
+  hamnar i brevlådan som inläsningskön läser. Ingen adress står i mejlet.
 
 ## Engångskoder och inloggningsadresser
 
@@ -145,35 +146,48 @@ Koden finns i `app/utils/login_code.py` och `set_member_email` i
   försöket räknas då tillbaka.
 - **Webbläsaren:** raden sparar en hash av en hemlighet som bara webbläsaren som
   bad om koden har. Vid byte av adress ligger hemligheten i sessionen
-  (`login_request`); en ny begäran byter den, så bara den senaste koden gäller.
+  (`login_request`). En ny begäran byter den och gör webbläsarens tidigare
+  koder ogiltiga i databasen. Bytet görs bara om sessionen fortfarande gäller
+  när kontots rad är låst. Demon vägrar bytet ("E-postadressen kan inte bytas i
+  testmiljön.") och sparar resten, eftersom kontots märke aldrig byts där.
 - **Gränser:** fem koder per person och dygn, 120 koder i timmen sammanlagt,
   och efter 50 felaktiga koder på en timme tas inga koder emot eller skickas
-  förrän de har åldrats ut. Statusvyn visar då `kodinloggning_stangd`.
+  förrän de har åldrats ut. Felen räknas på rader skapade den senaste timmen
+  och tio minuter till, så ett fel räknas minst en timme. Statusvyn visar då
+  `kodinloggning_stangd`.
 - **Utan `LINK_SECRET`, och i produktion med `MAIL_MODE=log`,** vägrar
   koderna (503). I läget `log` utanför produktion står koden i loggen.
 - **Gallring:** en kod som har gått ut tappar den nya adressen inom en minut
   (`login_code_expire`), och raderna raderas efter ett dygn i nattjobbet
-  kl. 03:30.
+  kl. 03:30, i samma transaktion som mejlkön glömmer vart deras mejl gick.
+  Demokopian får inga rader ur `login_code` eller `member_previous_address`.
 - **En adress, en person.** En adress som kan ta emot en kod hör till en
   person: `Member.email` och en tidigare adress som fortfarande gäller, för en
   person som inte är avslutad och är huvudmedlem eller har ett konto.
   `reserve_login_address` kontrollerar det under ett lås på adressen i varje
   skrivning som kan skapa en sådan adress (ändrad adress, nytt medlemskap, ny
   huvudmedlem, byte av huvudmedlem, koppling av konto, godkänd ansökan och
-  importen). Matrikelansvarig och den som godkänner en ansökan får 409
+  importen). Blir en person innehavare igen (koppling av konto, byte av
+  huvudmedlem) reserveras också hennes tidigare adresser som fortfarande
+  gäller, med låsen i en fast ordning. Matrikelansvarig och den som godkänner en
+  ansökan får 409
   "Adressen används redan av en annan medlem"; medlemmen själv får aldrig det
   beskedet. Två personer med samma adress räknas i nattjobbet och visas i
-  statusvyn som `adresskrock`.
+  statusvyn som `adresskrock`. En tom sträng är ingen adress.
 - **Sju dagar.** All skrivning av en befintlig persons `Member.email` går
-  genom `set_member_email`. Byter medlemmen själv adress (efter en kod till
-  den nya) gäller den gamla för inloggning i sju dagar till och den nya genast.
-  Byter någon annan gäller den gamla i sju dagar och den nya först efter dem.
-  Matrikelansvarigs byte gäller genast, och den gamla slutar gälla. Under en
-  väntan ligger den första tidigare adressen fast: ett nytt byte startar om
-  klockan men gör aldrig adressen däremellan giltig. Ett byte tillbaka avslutar
-  väntan. Varje byte gör personens oanvända koder ogiltiga och avslutar
-  kontots sessioner. Raderna i `member_previous_address` raderas två dygn efter
-  att adressen slutat gälla, och vid anonymisering.
+  genom `set_member_email`, utom anonymiseringen, som tömmer adressen själv och
+  raderar personens tidigare adresser och kodrader. Byter medlemmen själv
+  adress (efter en kod till den nya) gäller den gamla för inloggning i sju
+  dagar till och den nya genast. Byte gjort av någon annan (gamla adressen sju
+  dagar till, den nya först efter dem) finns i funktionen men har ingen
+  anropare än; det kommer senare, med blankettvägen. Matrikelansvarigs byte
+  gäller genast, och den gamla slutar gälla. Under en väntan ligger den första
+  tidigare adressen fast: ett nytt byte startar om klockan, med låset på den
+  gamla adressen, men gör aldrig adressen däremellan giltig; den får en rad som
+  aldrig gäller för inloggning, så att beskedet har en mottagare. Ett byte
+  tillbaka avslutar väntan. Varje byte gör personens oanvända koder ogiltiga
+  och avslutar kontots sessioner. Raderna i `member_previous_address` raderas
+  två dygn efter att adressen slutat gälla, och vid anonymisering.
 
 ## Mottagare
 
