@@ -4114,6 +4114,7 @@ def migrate_44_to_45():
             DATABASE.execute_sql('ALTER TABLE "matrikel_audit" ALTER COLUMN "actor_id" DROP NOT NULL')
         SchemaHistory.insert(  # pylint: disable=E1120
             version=45, comment="matrikel_audit.actor may be NULL", applied=datetime.now()
+        ).execute()
 
 
 _REX_MENTION = "rex"  # unanchored: "ickerex" and "dvärgrex" are candidates too, and fail the shape below
