@@ -234,15 +234,23 @@ class TestLoginAccount(MatrikelApiTest):
             self.assertEqual(sorted(pool.map(submit, clients)), [200, 409])
         self.assertEqual(db.User.select().count(), self.initial_count + 1)
 
-    def test_registration_paths_wait_for_the_same_address_in_either_order(self):
+    def test_registrations_and_account_edits_wait_for_the_same_address(self):
         def register(path):
             address = f" {self.member.email.upper()} "
             if path == "manual":
                 result = data_access.add_user({"email": address, "password": "test"}, self.admin.uuid)
                 return result["status"] == "created"
+            if path == "edit":
+                result = data_access.update_user(
+                    {"id": self.viewer.id, "email": address, "validated": False}, self.viewer.uuid
+                )
+                self.assertEqual(result, {"status": "error", "message": "email already in use"})
+                return False
             try:
                 if path == "google":
                     data_access.register_user(address.strip(), None, adopt_existing=False)
+                elif path == "admin-edit":
+                    data_access.edit_admin_user(self.viewer.id, {"email": address})
                 else:
                     login_account.create_pending_account("23")
                 return True
@@ -257,7 +265,7 @@ class TestLoginAccount(MatrikelApiTest):
             finally:
                 db.DB_PROXY.close()
 
-        for first, second in permutations(("code", "manual", "google"), 2):
+        for first, second in [*permutations(("code", "manual", "google"), 2), ("code", "edit"), ("code", "admin-edit")]:
             with self.subTest(first=first, second=second):
                 address = f"{first}-{second}@example.org"
                 self.member = _mk_person(_mk_membership(), "Test", "Member", address)

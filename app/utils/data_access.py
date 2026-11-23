@@ -492,12 +492,7 @@ def register_user(
         if adopt_existing:
             user = User.select().where(User.email == email).first()
         else:
-            from utils.login_code import lock_addresses
-
-            lock_addresses([email])
-            taken = User.select(User.id).where(fn.LOWER(fn.BTRIM(User.email)) == email.strip().lower()).first()
-            if taken:
-                raise AddressInUseError(taken.id)
+            _lock_available_account_email(email)
             user = None
         if user is None:
             user = User.create(
@@ -539,11 +534,24 @@ class InactiveAccountError(Exception):
 
 
 class AddressInUseError(Exception):
-    """register_user(adopt_existing=False): account `user_id` already holds the address."""
+    """Account `user_id` already holds the requested address."""
 
     def __init__(self, user_id):
         super().__init__(user_id)
         self.user_id = user_id
+
+
+def _lock_available_account_email(email, excluding=None):
+    """Hold the normalized address through the caller's insert or update."""
+    from utils.login_code import lock_addresses
+
+    lock_addresses([email])
+    accounts = User.select(User.id).where(fn.LOWER(fn.BTRIM(User.email)) == email.strip().lower())
+    if excluding is not None:
+        accounts = accounts.where(User.id != excluding)
+    taken = accounts.first()
+    if taken:
+        raise AddressInUseError(taken.id)
 
 
 def authenticate_user(name, password):
@@ -966,31 +974,25 @@ def update_user(form, user_uuid=None):
     if not user.is_admin and target_user.is_admin and target_user.id != user.id:
         return {"status": "error", "message": "forbidden"}
 
-    # No taking an address another account holds: it is the password-login key
-    # (stop-gap; CMS identity keys on google_email, never on this field).
-    if (
-        form["email"] != target_user.email
-        and User.select()
-        .where((fn.LOWER(User.email) == str(form["email"]).lower()) & (User.id != target_user.id))
-        .exists()
-    ):
+    try:
+        changed = _save_user_fields(target_user, form, ("email", "username", "validated", "fullname"))
+    except AddressInUseError:
         return {"status": "error", "message": "email already in use"}
+    return {"status": "updated" if changed else "unchanged"}
 
-    # update target user data if needed
-    changed = []
-    for field in ["email", "username", "validated", "fullname"]:
-        if field in form and getattr(target_user, field) != form[field]:
-            setattr(target_user, field, form[field])
-            changed.append(getattr(User, field))
 
-    if changed:
-        # Only the changed columns: target_user was read without a lock, so a
-        # full-row save would write back a stale is_active/_privileges.
-        with DATABASE.atomic():
-            target_user.save(only=changed)
-        return {"status": "updated"}
-
-    return {"status": "unchanged"}
+def _save_user_fields(user, fields, allowed):
+    changed = [name for name in allowed if name in fields and fields[name] != getattr(user, name)]
+    if not changed:
+        return False
+    with DATABASE.atomic():
+        if "email" in changed and str(fields["email"]).strip():
+            _lock_available_account_email(str(fields["email"]), excluding=user.id)
+        for name in changed:
+            setattr(user, name, fields[name])
+        # A full-row save could restore stale privileges or reactivate an account.
+        user.save(only=[getattr(User, name) for name in changed])
+    return True
 
 
 _ALLOWED_LEVELS = ("admin", "matrikel_admin", "manager", "helper", "viewer", "owner")
@@ -4052,14 +4054,7 @@ def edit_admin_user(u_id, fields):
     user = User.get_or_none(User.id == u_id)
     if user is None:
         raise ValueError("user-not-found")
-    if "fullname" in fields:
-        user.fullname = fields["fullname"]
-    if "email" in fields:
-        user.email = fields["email"]
-    # Only the edited columns, never a stale is_active/_privileges.
-    only = [getattr(User, f) for f in ("fullname", "email") if f in fields]
-    if only:
-        user.save(only=only)
+    _save_user_fields(user, fields, ("fullname", "email"))
     return get_admin_user_detail(u_id)
 
 
