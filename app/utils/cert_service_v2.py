@@ -123,7 +123,7 @@ def issuer_role(user, individual):
     genebank's manager issues for the association.
     """
     herd = individual.origin_herd
-    if herd and herd.herd in (user.is_owner or []):
+    if herd and herd.id in user.effective_herd_ids():  # by id: a herd code is unique only within a genebank
         return "breeder"
     if user.is_admin:
         return "admin"

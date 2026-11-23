@@ -34,7 +34,8 @@ export function IntygareClient({ initial }: { initial: boolean }) {
           Alla som har ett intygs QR-kod kan öppna intygets kontrollsida. Där
           står &quot;Intygas av: Uppfödaren&quot; för intyg som du har utfärdat.
           Väljer du det står ditt namn där i stället. På själva intyget står
-          ditt namn alltid.
+          ditt namn alltid. Valet gäller dina riktiga intyg, också när du provar
+          Stamboken i testläget.
         </p>
         <FormControlLabel
           className={styles.switchRow}
