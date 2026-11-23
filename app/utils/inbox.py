@@ -940,28 +940,65 @@ def require_same_rabbit(document, individual=None):
         raise InboxError(409, f"Dokumentet gäller {number}. Det som sparas genom det måste gälla samma kanin.")
 
 
-def proven_sale(item, document, individual, herd, date):
+def active_sales(individual_id):
     """
-    The sale a proof (bevis) shows when it is already registered from another document of the item, without proof:
-    the same rabbit, buyer and date. The proof is then linked to it rather than registering it again.
+    The rabbit's active moves (TRANSFER, CORRECTION), each with its buyer as "present", "none" or "removed"
+    (erased or purged: never asked for again); no name, no town.
+    """
+    rows = (
+        HerdTracking.select(
+            HerdTracking.herd_tracking_date,
+            HerdTracking.kind,
+            HerdTracking.holder_contact,
+            HerdTracking.buyer_removed,
+            Herd.herd,
+        )
+        .join(Herd, on=(HerdTracking.herd == Herd.id))
+        .where(
+            (HerdTracking.individual == individual_id)
+            & HerdTracking.kind.in_(("TRANSFER", "CORRECTION"))
+            & HerdTracking.voided_at.is_null(True)
+        )
+        .order_by(HerdTracking.id)
+    )
+    return [
+        {
+            "herd": herd,
+            "date": _iso(day),
+            "kind": kind,
+            "buyer": "present" if contact is not None else "removed" if removed else "none",
+        }
+        for day, kind, contact, removed, herd in rows.tuples()
+    ]
+
+
+SALES_THE_SAME_DAY = "Flera försäljningar samma dag; registrera beviset via rätt försäljning."
+
+
+def proven_sale(item, document, individual, herd, date):  # pylint: disable=unused-argument  # the item: kept
+    """
+    The sale a proof (bevis) shows when it is already registered, from another document of the item or anywhere
+    else (the sell dialog): an active move of the same rabbit to the same herd on the same date. The proof is then
+    linked to it rather than registering it again. More than one such move is a 409: never a guess.
     """
     if document.doc_type != "bevis":
         return None
-    sales = item.documents.select(InboxDocument.herd_tracking_id).where(
-        (InboxDocument.doc_type != "bevis") & InboxDocument.herd_tracking_id.is_null(False)
-    )
-    return (
+    rows = list(
         HerdTracking.select()
         .join(Herd, on=(HerdTracking.herd == Herd.id))
         .where(
-            HerdTracking.id.in_(sales)
-            & (HerdTracking.individual == individual.id)
+            (HerdTracking.individual == individual.id)
+            & HerdTracking.kind.in_(("TRANSFER", "CORRECTION"))
             & (Herd.herd == herd)
             & (HerdTracking.herd_tracking_date == date)
             & HerdTracking.voided_at.is_null(True)
         )
-        .first()
+        .order_by(HerdTracking.id)
+        .limit(2)
     )
+    if len(rows) > 1:
+        raise InboxError(409, SALES_THE_SAME_DAY)
+    return rows[0] if rows else None
 
 
 def transferred(item, document, user, individual, row, *, linked=False):

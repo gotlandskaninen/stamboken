@@ -7,7 +7,7 @@ import {
   DialogContent,
   DialogTitle,
 } from "@mui/material";
-import type { GenebankHerd } from "@/utils/saleRules";
+import { isOutsideGenebankHerd, type GenebankHerd } from "@/utils/saleRules";
 import {
   KIND_LABELS,
   newOperationId,
@@ -15,6 +15,14 @@ import {
   type HerdTrackingKind,
 } from "@/lib/herdTracking";
 import { BUYER_PRIVACY_HELP, htErrorMessage } from "./VoidHerdTrackingDialog";
+import {
+  BuyerFields,
+  EMPTY_BUYER,
+  buyerComplete,
+  buyerPayload,
+  type BuyerDraft,
+  type SaleBuyer,
+} from "./BuyerFields";
 import styles from "./HerdTrackingCorrectionDialog.module.css";
 
 export interface CorrectionEvent {
@@ -22,6 +30,8 @@ export interface CorrectionEvent {
   herd: string;
   kind: HerdTrackingKind;
   notes: string | null;
+  /** A new sale out of the genebank (TRANSFER into GX1/MX1) that replaces no voided sale there. */
+  buyer?: SaleBuyer;
 }
 
 export interface CorrectionPayload {
@@ -101,6 +111,7 @@ function CorrectionContent({
     errorRef.current?.focus();
   }, [error]);
   const [events, setEvents] = React.useState<CorrectionEvent[]>([]);
+  const [buyers, setBuyers] = React.useState<BuyerDraft[]>([]);
   const [reason, setReason] = React.useState("");
   const [herds, setHerds] = React.useState<GenebankHerd[]>([]);
   const [herdsError, setHerdsError] = React.useState<string | null>(null);
@@ -132,7 +143,19 @@ function CorrectionContent({
       list.map((e, i) => (i === index ? { ...e, ...patch } : e)),
     );
 
-  const complete = events.every((e) => e.date && e.herd);
+  // A voided sale into the same herd outside hands its buyer to the new event (the server carries it).
+  const carried = (herd: string) =>
+    activeRows.some(
+      (r) =>
+        voidIds.includes(r.id) &&
+        (r.kind === "TRANSFER" || r.kind === "CORRECTION") &&
+        r.herd.herd === herd,
+    );
+  const needsBuyer = (e: CorrectionEvent) =>
+    e.kind === "TRANSFER" && isOutsideGenebankHerd(e.herd) && !carried(e.herd);
+  const complete = events.every(
+    (e, i) => e.date && e.herd && (!needsBuyer(e) || buyerComplete(buyers[i])),
+  );
   const chronological = isChronological(events);
   const needsReason = voidIds.length > 0 && !reason.trim();
   const canSubmit =
@@ -221,6 +244,19 @@ function CorrectionContent({
                   }
                 />
               </label>
+              {needsBuyer(event) && (
+                <div style={{ flexBasis: "100%" }}>
+                  <BuyerFields
+                    value={buyers[index]}
+                    size="small"
+                    onChange={(value) =>
+                      setBuyers((list) =>
+                        list.map((b, i) => (i === index ? value : b)),
+                      )
+                    }
+                  />
+                </div>
+              )}
             </div>
           ))}
           {herdsError && (
@@ -235,12 +271,13 @@ function CorrectionContent({
           <button
             type="button"
             className={`sb-btn sb-btn-secondary sb-btn-sm ${styles.btn}`}
-            onClick={() =>
+            onClick={() => {
               setEvents((list) => [
                 ...list,
                 { date: "", herd: "", kind: "TRANSFER", notes: null },
-              ])
-            }
+              ]);
+              setBuyers((list) => [...list, EMPTY_BUYER]);
+            }}
           >
             Lägg till händelse
           </button>
@@ -294,7 +331,9 @@ function CorrectionContent({
             onConfirm({
               operation_id: operationId,
               void_ids: voidIds,
-              events,
+              events: events.map((e, i) =>
+                needsBuyer(e) ? { ...e, buyer: buyerPayload(buyers[i]) } : e,
+              ),
               reason: voidIds.length > 0 ? reason.trim() : "",
             })
           }
