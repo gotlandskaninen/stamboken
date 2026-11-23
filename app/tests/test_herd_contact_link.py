@@ -250,6 +250,27 @@ class TestLinkHerd(LinkTest):
         self.assertEqual((report["herd_links"], report["contact_cases"]), (0, Counter()))
         self.assertEqual(report["herd_warnings"], ["herd G1 changed or linked meanwhile — not linked"])
 
+    def test_link_paused_membership_compares_its_persons(self):
+        """O4: a paused membership (inactive, its main member still active) is compared with its persons: the name
+        is the main member's, not fritext. While paused nothing is fetched; once active, her values show."""
+        self._set_status("inactive")
+        self._herd(name="Anna Exempel", email="anna@example.invalid")
+
+        cases = link_herd(self.herd.id, self.membership.id)
+
+        self.assertEqual((cases["name"], cases["email"]), ("person", "lika"))
+        state = self._state()
+        self.assertEqual(
+            (state["contact_member_id"], state["name"], state["email"], state["contact_pending"]),
+            (self.main.id, None, None, []),
+        )
+        rows = herd_contact(db.Herd.get_by_id(self.herd.id)).rows
+        self.assertEqual({f: r.value for f, r in rows.items()}, dict.fromkeys(rows))
+        self._set_status("active")
+        rows = herd_contact(db.Herd.get_by_id(self.herd.id)).rows
+        self.assertEqual(rows["name"], _row("Anna Exempel", "person"))
+        self.assertEqual(rows["email"], _row("anna@example.invalid", "person"))
+
 
 @unittest.skipUnless(_USE_POSTGRES, "FOR UPDATE serialisation needs PostgreSQL")
 class TestLinkHerdConcurrency(LinkTest):

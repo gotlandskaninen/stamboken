@@ -4388,6 +4388,16 @@ def _compare_linked_herds():
     cannot change while the herds are compared."""
     from utils.herd_contact import compare_with_register  # pylint: disable=import-outside-toplevel
 
+    # A household erased before the comparison existed: what on_household_erased does, since the nightly job
+    # skips erased persons. Erased is matrikel.is_anonymized, the name pair anonymize_person writes.
+    cleared = ", ".join(f'"{c}" = NULL, "{c}_privacy" = \'private\'' for c in HERD_CONTACT_COLUMNS)
+    DATABASE.execute_sql(
+        f"""UPDATE herd SET {cleared}, contact_member_id = NULL, contact_pending = '[]'
+            WHERE membership_id IS NOT NULL AND contact_pending IS NULL
+              AND EXISTS (SELECT 1 FROM member m WHERE m.membership_id = herd.membership_id)
+              AND NOT EXISTS (SELECT 1 FROM member m WHERE m.membership_id = herd.membership_id
+                              AND NOT (m.first_name = 'Borttagen' AND m.last_name = 'person'))"""
+    )
     columns = ("name", "email", "mobile_phone", "physical_address")
     rows = Herd.select(
         Herd.id,
@@ -4407,8 +4417,9 @@ def migrate_49_to_50():
     Then the herds already linked are compared with the register, with the new triggers in place."""
     with DATABASE.atomic():
         if not isinstance(DATABASE, SqliteDatabase):
-            # membership first: the comparison reads its status twice and must see one (order membership, member, herd)
-            DATABASE.execute_sql("LOCK TABLE membership IN SHARE MODE")
+            # membership first (order membership, member, herd). EXCLUSIVE waits for a transaction holding a
+            # membership row FOR UPDATE: retire_membership then writes member and membership, which SHARE deadlocks
+            DATABASE.execute_sql("LOCK TABLE membership IN EXCLUSIVE MODE")
             # Take member's lock first: ALTER herd then ADD FOREIGN KEY on member, in that order, could
             # deadlock with a matrikel import that inserts a member and then reads herd.
             DATABASE.execute_sql("LOCK TABLE member IN SHARE ROW EXCLUSIVE MODE")

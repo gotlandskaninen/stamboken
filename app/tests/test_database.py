@@ -12,7 +12,7 @@ isort:skip_file
 import inspect
 import threading
 import time
-from datetime import datetime
+from datetime import date, datetime
 
 import peewee
 import utils.data_access as da
@@ -1296,6 +1296,81 @@ class TestDatabaseMigration(DatabaseTest):
         replay()
         herd = db.Herd.get_by_id(linked.id)
         self.assertEqual((herd.contact_pending, herd.mobile_phone), ([], "070-999 99 99"))
+
+    def test_replay_49_to_50_clears_erased_households(self):
+        """FC1: a herd linked to a household whose persons are all erased loses every own contact row, the fixed
+        phone and the website too, as on_household_erased does; the rows start hidden and the herd is compared.
+        A household whose persons only ended is compared as usual: the farm's own rows stay."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("trigger requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        gb = db.Genebank.create(name="Replay50e")
+        own = {
+            "name": "Gårdens Kontakt",
+            "email": "gard@example.invalid",
+            "mobile_phone": "070-999 99 99",
+            "wire_phone": "0498-00 00 00",
+            "physical_address": "Gårdsvägen 5|62300|Roma",
+            "www": "exempelgarden.invalid",
+        }
+        shown = {f"{c}_privacy": "public" for c in db.HERD_CONTACT_COLUMNS}
+        herds = {}
+        for kind, (first, last) in {"erased": ("Borttagen", "person"), "ended": ("Anna", "Exempel")}.items():
+            membership = db.Membership.create(member_number=len(herds) + 5050, membership_status="inactive")
+            for role in ("huvudmedlem", "familjemedlem"):
+                db.Member.create(
+                    membership=membership, first_name=first, last_name=last, role=role, end_date=date(2025, 1, 1)
+                )
+            herds[kind] = db.Herd.create(genebank=gb, herd=f"R50{kind[:2]}", membership=membership, **own, **shown)
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 50).execute()
+
+        db.check_migrations()
+
+        erased = db.Herd.get_by_id(herds["erased"].id)
+        for column in db.HERD_CONTACT_COLUMNS:
+            self.assertEqual((getattr(erased, column), getattr(erased, f"{column}_privacy")), (None, "private"), column)
+        self.assertEqual((erased.contact_member_id, erased.contact_pending), (None, []))
+        ended = db.Herd.get_by_id(herds["ended"].id)
+        self.assertEqual({c: getattr(ended, c) for c in own}, own)
+        self.assertEqual({c: getattr(ended, c) for c in shown}, shown)
+        self.assertEqual(ended.contact_pending, ["name"])  # fritext: nobody on the membership is active
+
+    def test_replay_49_to_50_waits_for_a_locked_membership_row(self):
+        """FC3: the migration takes membership in EXCLUSIVE mode, so it waits for a transaction that holds a
+        membership row FOR UPDATE (retire_membership, which then writes member and membership) instead of
+        taking member first and deadlocking with it."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("table locks require PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        membership = db.Membership.create(member_number=5052)
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 50).execute()
+        errors = []
+
+        def replay():
+            try:
+                db.check_migrations()
+            except Exception as exception:  # pylint: disable=broad-except
+                errors.append(exception)
+            finally:
+                if not db.DATABASE.is_closed():
+                    db.DATABASE.close()
+
+        waiting_sql = "SELECT count(*) FROM pg_locks WHERE relation = 'membership'::regclass AND NOT granted"
+        thread = threading.Thread(target=replay)
+        waited = False
+        with db.DATABASE.atomic():
+            db.Membership.select().where(db.Membership.id == membership.id).for_update().get()
+            thread.start()
+            deadline = time.time() + 10
+            while not waited and thread.is_alive() and time.time() < deadline:
+                waited = db.DATABASE.execute_sql(waiting_sql).fetchone()[0] > 0
+                time.sleep(0.05)
+        thread.join(timeout=120)
+
+        self.assertTrue(waited, "the migration should wait for the membership row lock")
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
 
     def _contact_member_fk(self):
         return db.DATABASE.execute_sql(

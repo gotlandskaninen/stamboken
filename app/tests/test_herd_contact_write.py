@@ -312,6 +312,22 @@ class TestRows(HerdContactWriteTest):
         self.assertEqual(self._patch(main, body).status_code, 200)
         self.assertEqual((self._state()["email"], self._state()["email_privacy"]), (None, "private"))
 
+    def test_cleared_own_row_equal_to_the_register_is_fetched(self):
+        """O2: an own mobile equal to the contact person's has no alternative. A reader clears it: the row is
+        fetched, shows the same value and keeps its privacy."""
+        self._set(mobile_phone="070-111 11 11", mobile_phone_privacy="authenticated")
+        main = self._main_user()
+        shown, rows = self._form(main)
+        self.assertEqual((rows["mobile_phone"]["source"], rows["mobile_phone"]["alternative"]), ("egen", None))
+        row = {"source": "egen", "value": None, "shown": rows["mobile_phone"]}
+        response = self._patch(main, {"contact": {"shown": shown, "rows": {"mobile_phone": row}}})
+        self.assertEqual(response.status_code, 200, response.data)
+        state = self._state()
+        self.assertEqual((state["mobile_phone"], state["mobile_phone_privacy"]), (None, "authenticated"))
+        data = self._read(main)
+        source = data["contact"]["rows"]["mobile_phone"]["source"]
+        self.assertEqual((source, data["mobile_phone"]), ("person", "070-111 11 11"))
+
 
 class TestContactPerson(HerdContactWriteTest):
     def _to_person(self, shown, person_id):

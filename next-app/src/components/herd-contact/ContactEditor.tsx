@@ -56,6 +56,10 @@ interface Form {
   rows: Partial<Record<ContactField, RowState>>;
 }
 
+/** a read-only value on one line: the address's parts joined with commas */
+const oneLine = (f: ContactField, v: string | null | undefined) =>
+  f === "physical_address" && v ? v.split("|").filter(Boolean).join(", ") : v;
+
 const privacyOf = (p: string | null | undefined): Privacy =>
   p === "authenticated" || p === "public" ? p : "private";
 
@@ -427,10 +431,25 @@ export default function ContactEditor({
         const r = form.rows[f];
         const i = init.rows[f];
         if (!r || !i) {
+          // a non-reader's fetched row: the current read's value when its visibility lets the user see it
+          // (not `herd`, which can be older data, with a value that was own then)
+          const live =
+            !isReader(contactProp) && contactProp.rows[f]?.source === "hamtad"
+              ? oneLine(f, herdProp[f] ?? null)
+              : null;
           return (
             <div key={f}>
               <span className={styles.label}>{FIELD_LABEL[f]}</span>
-              <div className={styles.readonly}>Hämtas från medlemskapet</div>
+              <div className={styles.readonly}>
+                {live ? (
+                  <>
+                    <span>{live}</span>
+                    <small>Hämtas från medlemskapet</small>
+                  </>
+                ) : (
+                  "Hämtas från medlemskapet"
+                )}
+              </div>
             </div>
           );
         }
@@ -449,10 +468,7 @@ export default function ContactEditor({
           : i.source === "medlemskap"
             ? i.text
             : row?.alternative;
-        const registerShown =
-          f === "physical_address" && registerValue
-            ? registerValue.split("|").filter(Boolean).join(", ")
-            : registerValue;
+        const registerShown = oneLine(f, registerValue);
         return (
           <div key={f}>
             <span className={styles.label} id={labelId}>

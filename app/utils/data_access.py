@@ -4334,6 +4334,7 @@ def revert_audit_entry(audit_id, fields=None, is_admin=False):
     params = []
     values = {}
     bank_ignored = False
+    skipped = []  # #117: the history keeps no herd contact values, so they cannot be written back
     for field in fields:
         if table_name == "herd" and field in BANK_PRIVACY_FIELDS:  # fixed 'private' (#33): ignored, not an error
             bank_ignored = True
@@ -4346,13 +4347,18 @@ def revert_audit_entry(audit_id, fields=None, is_admin=False):
             set_clauses.append(f'"{field}" = %s')
             params.append(entry.old_data[field])
             values[field] = entry.old_data[field]
+        elif table_name == "herd" and field in HERD_CONTACT_COLUMNS:
+            skipped.append(field)
+    done = "Ändring ångrad"
+    if skipped:
+        done += f" utom {', '.join(sorted(skipped))}: historiken sparar inte de värdena."
 
     if refusal := _audit_undo_refusal(table_name, values, is_admin):
         return {"status": "error", "message": refusal}, 409
 
     if not set_clauses:
         if bank_ignored:  # only bank privacy was selected (e.g. a migration 40 entry): nothing to write
-            return {"status": "success", "message": "Ändring ångrad"}, 200
+            return {"status": "success", "message": done}, 200
         return {"status": "error", "message": "Inga fält att ångra"}, 400
 
     params.append(entry.record_id)
@@ -4370,7 +4376,7 @@ def revert_audit_entry(audit_id, fields=None, is_admin=False):
     except Exception as e:
         return {"status": "error", "message": f"Ångra misslyckades: {e}"}, 409
 
-    return {"status": "success", "message": "Ändring ångrad"}, 200
+    return {"status": "success", "message": done}, 200
 
 
 def restore_record(table_name, record_id, audit_id, is_admin=False):

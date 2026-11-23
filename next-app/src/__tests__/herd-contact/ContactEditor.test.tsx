@@ -1029,3 +1029,51 @@ describe("review round 5", () => {
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
   });
 });
+
+describe("final review", () => {
+  // the owner role without register access: GET marks fetched rows "hamtad" and gives the flat field only when
+  // the row's visibility lets the user read it (here the mobile, "authenticated"; the e-post, "private", is left out)
+  const owner = {
+    rows: {
+      email: { source: "hamtad" as const },
+      mobile_phone: { source: "hamtad" as const },
+    },
+  };
+  const ownerHerd = { mobile_phone: "070-111 11 11" };
+  const rowOf = (label: string) =>
+    within(screen.getByText(label, { selector: "dt, span" }).parentElement!);
+
+  it("FC5: a non-reader's view shows a fetched value the read gives, else the placeholder", () => {
+    render(<ContactView herd={ownerHerd} contact={owner} />);
+    expect(rowOf("Mobil").getByText("070-111 11 11")).toBeTruthy();
+    expect(rowOf("Mobil").getByText("Hämtas från medlemskapet")).toBeTruthy();
+    expect(rowOf("E-post").getByText("Hämtas från medlemskapet")).toBeTruthy();
+  });
+
+  it("FC5: a non-reader's editor shows the fetched value read-only, else the placeholder", () => {
+    render(<ContactEditor herd={ownerHerd} contact={owner} onSave={ok()} />);
+    const mobile = rowOf("Mobil");
+    expect(mobile.getByText("070-111 11 11")).toBeTruthy();
+    expect(mobile.getByText("Hämtas från medlemskapet")).toBeTruthy();
+    expect(mobile.queryByRole("textbox")).toBeNull();
+    expect(rowOf("E-post").getByText("Hämtas från medlemskapet")).toBeTruthy();
+  });
+
+  it("T9: a rejected answer unlocks the buttons and allows a retry", async () => {
+    const onSave = vi
+      .fn()
+      .mockRejectedValueOnce(new TypeError("fetch failed"))
+      .mockResolvedValueOnce({ success: true });
+    render(<ContactView herd={herd} contact={contact()} onSave={onSave} />);
+    fireEvent.click(screen.getByRole("button", { name: "Ja, behåll" }));
+    expect((await screen.findByRole("status")).textContent).toBe(
+      "Kunde inte spara. Försök igen.",
+    );
+    const keep = screen.getByRole("button", {
+      name: "Ja, behåll",
+    }) as HTMLButtonElement;
+    expect(keep.disabled).toBe(false);
+    fireEvent.click(keep);
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(2));
+  });
+});

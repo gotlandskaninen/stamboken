@@ -169,18 +169,18 @@ def is_matrikel_reader(user: User | None, herd: Herd) -> bool:
     return herd.id in matrikel_reader_herd_ids(user, [herd])
 
 
-def active_persons(herd: Herd) -> list[Member]:
-    """The active persons on the herd's active membership, main member first."""
+def active_persons(herd: Herd, *, any_status: bool = False) -> list[Member]:
+    """The active persons on the herd's active membership, main member first. `any_status`: of a membership in any
+    status, as herd_contacts."""
     if herd.membership_id is None:
         return []
+    where = [Member.membership == herd.membership_id, Member.end_date.is_null(True)]
+    if not any_status:
+        where.append(Membership.membership_status == "active")
     return list(
         Member.select(Member.id, Member.user, Member.first_name, Member.last_name, Member.role)
         .join(Membership)
-        .where(
-            Member.membership == herd.membership_id,
-            Member.end_date.is_null(True),
-            Membership.membership_status == "active",
-        )
+        .where(*where)
         .order_by(Member.role != "huvudmedlem", Member.id)
     )
 
@@ -278,7 +278,8 @@ def compare_with_register(herd: Herd) -> tuple[dict, dict[str, str]]:
 
     Returns the columns to write and the case per row: "lika", "olika", "bara_besattningen", "bara_matrikeln" or
     "bada_tomma", and for the name "person" or "fritext" when the name is filled in."""
-    persons = active_persons(herd)
+    # a paused membership too: its persons are compared, and its rows show once it is active again
+    persons = active_persons(herd, any_status=True)
     main = next((p for p in persons if p.role == "huvudmedlem"), None)
     name = herd.name if normalize("name", herd.name) else None
     same = [p for p in persons if normalize("name", f"{p.first_name} {p.last_name}") == normalize("name", name)]
@@ -292,7 +293,7 @@ def compare_with_register(herd: Herd) -> tuple[dict, dict[str, str]]:
     # step 2: each row against what the read gives afterwards, without the herd's own values
     contact_id = contact.id if contact is not None else None
     probe = Herd(id=herd.id, membership=herd.membership_id, contact_member=contact_id, name=name, contact_pending=[])
-    fetched = herd_contact(probe).rows
+    fetched = herd_contacts([probe], any_status=True)[probe.id].rows
     for field in CONTACT_FIELDS[1:]:
         own, register = normalize(field, getattr(herd, field)), normalize(field, fetched[field].value)
         if own is None:
@@ -627,11 +628,11 @@ def apply_contact_patch(herd_id: int, patch: dict, user: User) -> None:
         for field, row in rows.items():
             if field in switching:
                 # the own value gives way to the register's: only to the value the form showed
-                after, wanted = final.rows[field].value, _given(row["shown"].get("alternative"))
-                if row["source"] == "medlemskap":
-                    wanted = wanted or _given(row["shown"].get("value"))  # no alternative: the two were equal
-                    if after is None:
-                        raise ContactConflict(STALE)
+                after = final.rows[field].value
+                # no alternative: the two were equal, so the value the form showed is the one fetched
+                wanted = _given(row["shown"].get("alternative")) or _given(row["shown"].get("value"))
+                if row["source"] == "medlemskap" and after is None:
+                    raise ContactConflict(STALE)
                 if after is not None and normalize(field, after) != normalize(field, wanted):
                     raise ContactConflict(STALE)
 

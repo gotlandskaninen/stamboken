@@ -212,6 +212,25 @@ class TestLifecycle(LifecycleTest):
                 self.assertEqual({c: row[c] for c in protected}, {c: stored[c] for c in protected})
                 self.assertEqual(row["herd_name"], "Gammalt namn")  # the rest of the snapshot is restored
 
+    def test_revert_names_the_contact_fields_it_cannot_write(self):
+        """O6: the history keeps no contact values, so a revert of an entry that changed one says which it left."""
+        self._set(herd_name="Gammalt namn")
+        self._set(herd_name="Nytt namn", www="ny.example.invalid", email=FARM_EMAIL)
+        entry = (
+            db.AuditLog.select()
+            .where(db.AuditLog.table_name == "herd", db.AuditLog.record_id == str(self.herd.id))
+            .order_by(db.AuditLog.id.desc())
+            .get()
+        )
+        self.assertEqual(set(entry.changed_fields), {"herd_name", "www", "email"})
+
+        body, status = da.revert_audit_entry(entry.id)
+
+        self.assertEqual(status, 200, body)
+        self.assertEqual(body["message"], "Ändring ångrad utom email, www: historiken sparar inte de värdena.")
+        herd = self._herd()
+        self.assertEqual((herd.herd_name, herd.www, herd.email), ("Gammalt namn", "ny.example.invalid", FARM_EMAIL))
+
     def test_sequence_fritext_then_anonymize(self):
         self._set(
             contact_member=None,

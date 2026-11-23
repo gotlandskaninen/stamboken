@@ -30,7 +30,7 @@ interface Line {
   value: string | null;
   fetched: boolean;
   privacy?: string;
-  /** a non-reader's fetched row: no value shown */
+  /** a non-reader's fetched row the read gives no value for */
   hidden?: boolean;
 }
 
@@ -53,9 +53,11 @@ function lines(contact: Contact, herd: HerdFields): Line[] {
     }
     const r = contact.rows[field];
     if (!r) return [];
-    return r.source === "hamtad"
-      ? [{ field, value: null, fetched: true, hidden: true }]
-      : [{ field, value: r.value, fetched: false, privacy: r.privacy }];
+    if (r.source !== "hamtad")
+      return [{ field, value: r.value, fetched: false, privacy: r.privacy }];
+    // the flat field is there when the row's visibility lets this user read it
+    const value = herd[field] ?? null;
+    return [{ field, value, fetched: true, hidden: value === null }];
   });
 }
 
@@ -165,6 +167,11 @@ function Rows({
                   <PrivacyBadge level={l.privacy} />
                 </span>
               )}
+              {!isReader(contact) && l.fetched && !l.hidden && (
+                <span className={`${styles.metaLine} ${styles.muted}`}>
+                  Hämtas från medlemskapet
+                </span>
+              )}
               {ask && row && (
                 <AskBox
                   field={l.field}
@@ -218,29 +225,34 @@ export default function ContactView({
     const shown = shownRow(field, c.rows[field], herd);
     setBusy(true);
     setMessage(null);
-    const res = await onSave({
-      contact: {
-        shown: shownTop(c, herd),
-        rows: {
-          [field]:
-            a === "behall"
-              ? { source: "egen", privacy: shown.privacy, answer: a, shown }
-              : { source: "medlemskap", value: null, answer: a, shown },
+    try {
+      const res = await onSave({
+        contact: {
+          shown: shownTop(c, herd),
+          rows: {
+            [field]:
+              a === "behall"
+                ? { source: "egen", privacy: shown.privacy, answer: a, shown }
+                : { source: "medlemskap", value: null, answer: a, shown },
+          },
         },
-      },
-    });
-    setBusy(false);
-    if (res.success) {
-      setMessage(
-        a === "behall"
-          ? "Sparat: uppgiften är egen för besättningen."
-          : "Sparat: uppgiften hämtas nu från ditt medlemskap. Synligheten är Endast genbanksansvarig.",
-      );
-    } else if (isConflict(res)) {
-      setMessage(CONFLICT_TEXT);
-      onReload?.();
-    } else {
-      setMessage(res.error);
+      });
+      if (res.success) {
+        setMessage(
+          a === "behall"
+            ? "Sparat: uppgiften är egen för besättningen."
+            : "Sparat: uppgiften hämtas nu från ditt medlemskap. Synligheten är Endast genbanksansvarig.",
+        );
+      } else if (isConflict(res)) {
+        setMessage(CONFLICT_TEXT);
+        onReload?.();
+      } else {
+        setMessage(res.error);
+      }
+    } catch {
+      setMessage("Kunde inte spara. Försök igen.");
+    } finally {
+      setBusy(false);
     }
   }
 
