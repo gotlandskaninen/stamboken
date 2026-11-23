@@ -67,8 +67,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # audit_log IP retention index (39) + herd bank privacy reset (40) + the mail queue (41) +
 # the intake queue (42) and its retention (43) + buyer_contact (44) +
 # matrikel_audit rows without a user, written by the nightly anonymization (45) +
-# the coat column individual.rex (46) + one account per Google identity (47).
-CURRENT_SCHEMA_VERSION = 47
+# the coat column individual.rex (46) + one account per Google identity (47) +
+# one-time codes and members' previous addresses (48).
+CURRENT_SCHEMA_VERSION = 48
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -2034,6 +2035,8 @@ class Member(BaseModel):
     # Workspace account provisioning. The auto-link helper matches
     # User.email == Member.workspace_email — never against contact email.
     workspace_email = CharField(max_length=255, null=True)
+    # When `email` starts to count for login (utils.matrikel.set_member_email); NULL: at once.
+    email_login_from = TimestampTZField(null=True)
     membership = ForeignKeyField(Membership, null=False, backref="persons")
     role = CharField(max_length=20, default="huvudmedlem")
     end_date = DateField(null=True)
@@ -2222,6 +2225,41 @@ class MailSender(BaseModel):
 
     class Meta:
         table_name = "mail_sender"
+
+
+class LoginCode(BaseModel):
+    """One one-time code by mail (utils.login_code). It holds a nonce, never the code, which is computed from it."""
+
+    id = AutoField()
+    member = ForeignKeyField(Member, on_delete="CASCADE")
+    user = ForeignKeyField(User, null=True, on_delete="CASCADE")  # the person's account when the code was made
+    purpose = TextField(constraints=[Check("purpose IN ('login', 'ny_adress')")])
+    address_hash = TextField()  # where the code went
+    new_address = TextField(null=True)  # ny_adress only, until the code is used or has expired
+    nonce = TextField()
+    browser_hash = TextField()
+    created_at = TimestampTZField(default=_utcnow)
+    failed = SmallIntegerField(default=0)
+    used_at = TimestampTZField(null=True)  # used, or voided by an address change
+
+    class Meta:
+        table_name = "login_code"
+        indexes = ((("browser_hash",), False), (("created_at",), False))
+
+
+class MemberPreviousAddress(BaseModel):
+    """An address a person had (utils.matrikel.set_member_email), and how long it still counts for login."""
+
+    id = AutoField()
+    member = ForeignKeyField(Member, on_delete="CASCADE")
+    address = TextField()
+    login_until = TimestampTZField(null=True)  # NULL: not a login address at all
+    purge_at = TimestampTZField()
+    changed_by = ForeignKeyField(User, null=True, on_delete="SET NULL", column_name="changed_by")
+
+    class Meta:
+        table_name = "member_previous_address"
+        indexes = ((("purge_at",), False),)
 
 
 # The intake queue (docs/inkorg.md). None of these tables is audited: inbox_event is the history, and audit
@@ -2422,6 +2460,8 @@ MODELS = [
     MailMessage,
     MailAttempt,
     MailSender,
+    LoginCode,
+    MemberPreviousAddress,
     *INBOX_MODELS,
 ]
 
@@ -4222,6 +4262,17 @@ def migrate_46_to_47():
         ).execute()
 
 
+def migrate_47_to_48():
+    """One-time codes by mail, members' previous addresses and when a member's address starts to count for login.
+    Not audited: the rows hold addresses, and both tables are purged."""
+    with DATABASE.atomic():
+        DATABASE.execute_sql("ALTER TABLE member ADD COLUMN IF NOT EXISTS email_login_from TIMESTAMPTZ")
+        DATABASE.create_tables([LoginCode, MemberPreviousAddress], safe=True)
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=48, comment="login_code, member_previous_address, member.email_login_from", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4706,6 +4757,7 @@ MIGRATIONS = {
     (44, 45): migrate_44_to_45,  # matrikel_audit actor NULL for the nightly job
     (45, 46): migrate_45_to_46,  # individual.rex
     (46, 47): migrate_46_to_47,  # unique Google identity
+    (47, 48): migrate_47_to_48,  # one-time codes, previous addresses
 }
 
 

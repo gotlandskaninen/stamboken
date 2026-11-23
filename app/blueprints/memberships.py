@@ -13,6 +13,7 @@ from flask import Blueprint, jsonify, request
 from flask_login import current_user
 from peewee import IntegrityError, fn
 from utils.database import BILLING_FIELDS, DB_PROXY, Herd, HerdAccessGrant, Member, Membership, User
+from utils.login_code import AddressTaken
 from utils.matrikel import (
     VALID_PERSON_ROLES,
     AddressValidationError,
@@ -32,6 +33,7 @@ from utils.matrikel import (
     resolve_own_membership,
     retire_membership,
     revoke_grant,
+    set_member_email,
     set_membership_status,
     soft_delete_person,
     swap_main_member,
@@ -203,23 +205,31 @@ def create_membership_endpoint():
     except AddressValidationError as err:
         return problem(400, err.title, err.detail)
 
-    membership = create_membership(
-        {
-            "first_name": first_name,
-            "last_name": last_name,
-            "email": email,
-            "phone": (body.get("phone") or "").strip() or None,
-            "address": (body.get("address") or "").strip() or None,
-            "postal_code": postal.get("postal_code"),
-            "city": postal.get("city"),
-            "payment_note": (body.get("payment_note") or "").strip() or None,
-            "notes": (body.get("notes") or "").strip() or None,
-            "membership_status": status,
-            "allocate": bool(body.get("allocate", False)),
-        },
-        current_user,
-    )
+    try:
+        membership = create_membership(
+            {
+                "first_name": first_name,
+                "last_name": last_name,
+                "email": email,
+                "phone": (body.get("phone") or "").strip() or None,
+                "address": (body.get("address") or "").strip() or None,
+                "postal_code": postal.get("postal_code"),
+                "city": postal.get("city"),
+                "payment_note": (body.get("payment_note") or "").strip() or None,
+                "notes": (body.get("notes") or "").strip() or None,
+                "membership_status": status,
+                "allocate": bool(body.get("allocate", False)),
+            },
+            current_user,
+        )
+    except AddressTaken:
+        return _address_taken()
     return jsonify(_membership_to_dict(membership)), 201
+
+
+def _address_taken():
+    """For the matrikel admin and the approver of an application only: never for the member herself."""
+    return problem(409, AddressTaken.title, "En annan medlem kan redan logga in med e-postadressen")
 
 
 @memberships_bp.route("/v2/memberships/<int:membership_id>", methods=["DELETE"])
@@ -444,6 +454,8 @@ def add_membership_person(membership_id: int):
         return problem(400, "Kan inte lägga till person", str(err))
     except IntegrityError:
         return problem(409, "Huvudmedlem finns redan", "Medlemskapet har redan en aktiv huvudmedlem")
+    except AddressTaken:
+        return _address_taken()
 
     data = _person_to_dict(person)
     data["duplicate_contact_email"] = _duplicate_contact_email(email, person.id)
@@ -544,8 +556,11 @@ def patch_person(person_id: int):
             # UPDATE only what this body changed: a full-row save() would write
             # member.user_id back from the re-read copy too, and the audit rows
             # must name exactly the columns that moved. `role` stays in `after`,
-            # so the huvudmedlem IntegrityError backstop below still fires.
-            person.save(only=[getattr(Member, field) for field in after] + [Member.updated_at])
+            # so the huvudmedlem IntegrityError backstop below still fires. The
+            # e-mail has its own writer: a login address stops at once.
+            person.save(only=[getattr(Member, field) for field in after if field != "email"] + [Member.updated_at])
+            if "email" in after:
+                set_member_email(person, after["email"], current_user, by="matrikel")
             write_matrikel_audit(
                 current_user,
                 "person_updated",
@@ -554,6 +569,8 @@ def patch_person(person_id: int):
             )
     except IntegrityError:
         return problem(409, "Huvudmedlem finns redan", "Medlemskapet har redan en aktiv huvudmedlem")
+    except AddressTaken:
+        return _address_taken()
 
     return jsonify(_person_to_dict(person))
 
@@ -603,6 +620,8 @@ def set_main_member(membership_id: int):
         swap_main_member(ms, person, current_user)
     except ValueError as err:
         return problem(409, "Ogiltigt byte av huvudmedlem", str(err))
+    except AddressTaken:
+        return _address_taken()
     return jsonify(_membership_to_dict(ms))
 
 

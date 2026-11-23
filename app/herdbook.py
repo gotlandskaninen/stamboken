@@ -71,6 +71,8 @@ from utils import number_assets  # isort:skip
 from utils.individual_commands import purge_command_free_text  # isort:skip
 from utils.log_masking import TokenMaskFilter  # isort:skip
 from utils.mail import purge_old_mail, send_pending  # isort:skip
+from utils import login_code  # isort:skip
+from utils.matrikel import purge_previous_addresses  # isort:skip
 from utils import inbox  # isort:skip
 from utils.inbox import queue_digests  # isort:skip
 from utils import inbox_gmail  # isort:skip
@@ -254,13 +256,28 @@ def _reconcile_all_history():
 def _purge_command_free_text():
     """Nightly leader job (ADR-0017), built as _reconcile_all_history: it closes its thread's connection itself.
 
-    It purges the mail queue first, on its own, so neither purge failing skips the other."""
+    It purges the mail queue, the login codes and the previous addresses first and counts the login address
+    collisions, each on its own, so no step failing skips another."""
     now = datetime.datetime.now(datetime.timezone.utc)
     try:
         try:
             APP.logger.info("Purged %s mail queue rows", purge_old_mail(now))
         except Exception:  # pylint: disable=broad-except
             APP.logger.exception("Purging the mail queue failed")
+        try:
+            APP.logger.info("Purged %s login codes", login_code.purge(now))
+        except Exception:  # pylint: disable=broad-except
+            APP.logger.exception("Purging the login codes failed")
+        try:
+            collisions = login_code.address_collisions(now)
+            if collisions:  # also an alarm in the status view (Utskick); counted, never named
+                APP.logger.warning("%s login addresses are held by more than one person", collisions)
+        except Exception:  # pylint: disable=broad-except
+            APP.logger.exception("Counting the login address collisions failed")
+        try:
+            APP.logger.info("Purged %s previous addresses", purge_previous_addresses(now))
+        except Exception:  # pylint: disable=broad-except
+            APP.logger.exception("Purging the previous addresses failed")
         count = purge_command_free_text(now)
         APP.logger.info("Purged free text from %s command log rows", count)
     finally:
@@ -295,6 +312,16 @@ def _send_mail():
         send_pending()
     except Exception:  # pylint: disable=broad-except
         APP.logger.exception("Mail sender run failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _expire_login_codes():
+    """Leader job every minute, built as _send_mail: an expired code keeps no new address (utils.login_code)."""
+    try:
+        login_code.expire(datetime.datetime.now(datetime.timezone.utc))
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Expiring login codes failed")
     finally:
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
 
@@ -1902,6 +1929,8 @@ def logout():
     Logs out the current user from the system.
     """
     logout_user()
+    # A verification of a new address that already read this session must not finish after the logout.
+    login_code.cancel(session.get("login_request"))
     # Full clear (not just a user_id pop) so save_session deletes the Redis
     # record outright instead of leaving an anonymous shell with up to 31
     # days of TTL.
@@ -3112,6 +3141,15 @@ def initialize_app():
             trigger="interval",
             seconds=30,
             id="mail_send",
+            max_instances=1,
+            coalesce=True,
+        )
+
+        scheduler.add_job(
+            _expire_login_codes,
+            trigger="interval",
+            minutes=1,
+            id="login_code_expire",
             max_instances=1,
             coalesce=True,
         )

@@ -527,7 +527,8 @@ medlemskapets uppgifter.
   **Använd Google-profilbild**.
 - **Kontaktuppgifter**: fyll i **Telefon**, **E-post**, **Gatuadress**, **Postnummer**
   och **Postort**, klicka **Spara**. Uppgifterna används i medlemsmatrikeln och för
-  föreningens utskick.
+  föreningens utskick. Byter du e-postadress får den nya adressen en kod. Skriv koden
+  under **Kod** och klicka **Byt adress**. Sedan loggas du ut och loggar in igen.
 - **Publicering i Koharen**: slå på eller av **Namn**, **Telefon**, **E-post** och
   **Adress** för den tryckta medlemsmatrikeln, klicka **Spara**.
 - **Notiser**: slå på eller av **Skicka notiser per e-post en gång om dagen**. Notiserna

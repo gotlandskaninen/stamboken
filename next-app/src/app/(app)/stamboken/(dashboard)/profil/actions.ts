@@ -71,20 +71,57 @@ type AddPersonResult =
   | { ok: true; duplicateEmail: boolean }
   | { ok: false; error: string };
 
+// A new e-mail address is not saved by the PATCH: the API sends a code to it
+// (codeSent), and verifyEmailCode makes the change. The test environment
+// refuses the change and saves the rest (emailRefused).
+type ContactResult =
+  | { ok: true; codeSent: boolean; emailRefused?: string }
+  | { ok: false; error: string };
+
 export async function updateContact(patch: {
   phone?: string;
   email?: string;
   address?: string;
   postal_code?: string;
   city?: string;
-}): Promise<Result> {
+}): Promise<ContactResult> {
   try {
-    await fetchApi("/v2/members/me/contact", {
+    const me = await fetchApi<{
+      email_code_sent?: boolean;
+      email_refused?: string;
+    }>("/v2/members/me/contact", {
       method: "PATCH",
       body: JSON.stringify(patch),
       headers: { "Content-Type": "application/json" },
     });
     revalidatePath("/stamboken/profil");
+    return me?.email_refused
+      ? { ok: true, codeSent: false, emailRefused: me.email_refused }
+      : { ok: true, codeSent: !!me?.email_code_sent };
+  } catch (err) {
+    return { ok: false, error: describe(err) };
+  }
+}
+
+// Avbryt: the session's pending code stops working on the server too.
+export async function cancelEmailCode(): Promise<Result> {
+  try {
+    await fetchApi("/v2/members/me/contact/kod", { method: "DELETE" });
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: describe(err) };
+  }
+}
+
+// The change ends every session of the account, this one too: no revalidate,
+// the form asks the member to sign in again.
+export async function verifyEmailCode(code: string): Promise<Result> {
+  try {
+    await fetchApi("/v2/members/me/contact/verifiera", {
+      method: "POST",
+      body: JSON.stringify({ code }),
+      headers: { "Content-Type": "application/json" },
+    });
     return { ok: true };
   } catch (err) {
     return { ok: false, error: describe(err) };
