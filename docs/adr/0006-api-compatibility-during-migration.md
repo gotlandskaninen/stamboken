@@ -1,6 +1,6 @@
 ---
 status: "accepted"
-date: 2026-11-06
+date: 2026-11-23
 decision-makers: Jonas
 ---
 
@@ -40,7 +40,9 @@ endpoints.
 3. **Ny funktionalitet** får en ny endpoint, i en Blueprint
    ([ADR-0007](0007-blueprint-refactor.md)).
 4. **Ta inte bort endpoints eller fält** förrän legacy är helt avvecklad.
-5. **Ändra inte HTTP-statuskoder** på befintliga endpoints.
+5. **Ändra inte HTTP-statuskoder** på befintliga endpoints. Undantag: en
+   skrivväg som stängs enligt [ADR-0020](0020-gamla-appen-stangs-en-funktion-i-taget.md)
+   svarar 410.
 
 Behövs ett annat svar än legacy-endpointen ger: skriv en ny endpoint under
 `/api/v2/<resurs>` enligt [ADR-0008](0008-server-first-data-architecture.md)
@@ -82,3 +84,4 @@ befintliga endpoints.
 | 2026-02 | Jonas | Beslutat |
 | 2026-10-27 | Jonas | Baslinje inför publik export |
 | 2026-11-06 | Jonas | MADR-format, kortad |
+| 2026-11-23 | Jonas | Undantag i regel 5 för stängda skrivvägar (ADR-0020) |
