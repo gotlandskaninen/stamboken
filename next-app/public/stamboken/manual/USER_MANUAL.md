@@ -1021,9 +1021,11 @@ I kortet **Status och åtkomst** på användarens sida:
 
 - **Tillgång till den riktiga stamboken i den nya versionen** – slå på när medlemmen
   ska lämna testmiljön. Användaren byter sedan själv via avatarmenyn.
-- **Webbkurs genomförd (validerad)** – nya Stamboken frågar inte efter den. Den krävs
-  däremot för Google-inloggning i gamla Stamboken och för att en redaktör ska komma in
-  i hemsidans redigering (`/admin`). Stäng inte av den för en redaktör.
+- **Webbkurs genomförd (validerad)** – i produktion frågar nya Stamboken inte efter den.
+  Gamla Stamboken kräver den, både vid Google-inloggning och för att visa kaninerna
+  efter en lösenordsinloggning, och en redaktör behöver den för hemsidans redigering
+  (`/admin`). Stäng därför inte av den för någon som använder gamla Stamboken eller
+  redigerar hemsidan.
 
 Reglagen sparas direkt.
 
