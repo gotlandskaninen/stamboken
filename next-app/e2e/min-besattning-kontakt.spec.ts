@@ -65,13 +65,27 @@ test.describe("Min besättning: kontakt från matrikeln", () => {
   }) => {
     await page.setViewportSize({ width: 375, height: 800 });
     await page.goto(PAGE);
-    await expect(card(page).getByRole("group", { name: ASK })).toBeVisible();
+    const ask = card(page).getByRole("group", { name: ASK });
+    await expect(ask).toBeVisible();
     const overflow = await page.evaluate(
       () =>
         document.documentElement.scrollWidth -
         document.documentElement.clientWidth,
     );
     expect(overflow).toBeLessThanOrEqual(0);
+
+    // the card clips its content (overflow: hidden), so a cut-off button leaves the page width alone
+    const box = await page
+      .getByRole("heading", { name: "Kontakt för besättningen", level: 2 })
+      .locator("xpath=ancestor::section[1]")
+      .boundingBox();
+    expect(box).not.toBeNull();
+    for (const name of ["Ja, behåll", "Använd medlemskapets"]) {
+      const b = await ask.getByRole("button", { name }).boundingBox();
+      expect(b).not.toBeNull();
+      expect(b!.x).toBeGreaterThanOrEqual(box!.x);
+      expect(b!.x + b!.width).toBeLessThanOrEqual(box!.x + box!.width);
+    }
   });
 
   test("answering 'Använd medlemskapets' fetches the register's mobile", async ({
@@ -92,6 +106,20 @@ test.describe("Min besättning: kontakt från matrikeln", () => {
     const mobile = row(group(page, FETCHED), "Mobil");
     await expect(mobile.getByText(MAIN_MOBILE)).toBeVisible();
     await expect(mobile.getByText("Endast genbanksansvarig")).toBeVisible();
+  });
+
+  test("legacy owner does not get the fetched private mobile", async ({
+    page,
+    context,
+  }) => {
+    // test-gk-owner only has the old owner role: not a register reader, so the row is a placeholder
+    await loginInline(page, context, TEST_USERS.owner);
+    const response = await page.goto(PAGE);
+    await expect(
+      row(group(page, FETCHED), "Mobil").getByText("Hämtas från medlemskapet"),
+    ).toBeVisible();
+    expect(await response!.text()).not.toContain(MAIN_MOBILE);
+    expect(await page.locator("body").innerText()).not.toContain(MAIN_MOBILE);
   });
 
   test("switching contact person to the family member shows her e-post and makes the name private", async ({
