@@ -26,6 +26,7 @@ export function KontaktClient({
   // "code": a code went to the new address; "done": the address is changed and the session has ended.
   const [emailStep, setEmailStep] = useState<"none" | "code" | "done">("none");
   const [code, setCode] = useState("");
+  const waiting = emailStep === "code";
   const [pending, start] = useTransition();
   const { showSnackbar } = useSnackbar();
   const { addNotification } = useNotifications();
@@ -40,11 +41,13 @@ export function KontaktClient({
       // `email` before it looks at the address fields (blueprints/members.py),
       // so a blank one must be omitted, not sent as "" — otherwise a member
       // without an e-mail could never save a postnummer.
+      // While a code waits the address is locked: sending it again would ask
+      // for another code and spend one of the day's five.
       const patch: Partial<Contact> = {
         ...contact,
         email: contact.email.trim(),
       };
-      if (!patch.email) delete patch.email;
+      if (!patch.email || waiting) delete patch.email;
       const result = await updateContact(patch);
       if (result.ok) {
         showSnackbar(
@@ -67,6 +70,12 @@ export function KontaktClient({
         });
       }
     });
+
+  const cancel = () => {
+    setContact((c) => ({ ...c, email: initial.email }));
+    setCode("");
+    setEmailStep("none");
+  };
 
   const verify = () =>
     start(async () => {
@@ -114,7 +123,7 @@ export function KontaktClient({
               id="kontakt-email"
               className="sb-input"
               type="email"
-              disabled={readOnly}
+              disabled={readOnly || waiting || emailStep === "done"}
               value={contact.email}
               onChange={set("email")}
             />
@@ -181,11 +190,12 @@ export function KontaktClient({
             {pending ? "Sparar..." : "Spara"}
           </button>
         </div>
-        {emailStep === "code" && (
+        {waiting && (
           <div className={styles.form} style={{ marginTop: 16 }}>
             <p className={styles.note}>
-              Vi har skickat en kod till den nya adressen. Skriv in den här.
-              Koden gäller i tio minuter. Sedan byts din adress.
+              Vi har skickat en kod till <strong>{contact.email.trim()}</strong>
+              . Skriv in den här. Koden gäller i tio minuter. Sedan byts din
+              adress.
             </p>
             <div className={styles.field}>
               <label className="sb-label" htmlFor="kontakt-kod">
@@ -209,6 +219,14 @@ export function KontaktClient({
                 onClick={verify}
               >
                 Byt adress
+              </button>
+              <button
+                type="button"
+                className="sb-btn sb-btn-ghost"
+                disabled={pending}
+                onClick={cancel}
+              >
+                Avbryt
               </button>
             </div>
           </div>

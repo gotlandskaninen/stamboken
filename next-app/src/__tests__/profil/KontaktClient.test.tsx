@@ -177,6 +177,41 @@ describe("KontaktClient", () => {
     expect(screen.queryByRole("status")).toBeNull();
   });
 
+  it("shows where the code went, locks the e-mail and lets the request be cancelled", async () => {
+    vi.mocked(updateContact).mockResolvedValue({ ok: true, codeSent: true });
+    renderIt();
+    const email = screen.getByLabelText("E-post") as HTMLInputElement;
+    fireEvent.change(email, { target: { value: "ny@example.org" } });
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    await screen.findByLabelText("Kod");
+    expect(screen.getByText(/ny@example\.org/)).toBeDefined();
+    expect(email.disabled).toBe(true);
+    fireEvent.click(screen.getByRole("button", { name: "Avbryt" }));
+    expect(screen.queryByLabelText("Kod")).toBeNull();
+    expect(email.disabled).toBe(false);
+    expect(email.value).toBe(initial.email);
+  });
+
+  it("saves the other fields while a code waits without asking for another code", async () => {
+    vi.mocked(updateContact).mockResolvedValue({ ok: true, codeSent: true });
+    renderIt();
+    fireEvent.change(screen.getByLabelText("E-post"), {
+      target: { value: "ny@example.org" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    await screen.findByLabelText("Kod");
+    vi.mocked(updateContact).mockResolvedValue({ ok: true, codeSent: false });
+    fireEvent.change(screen.getByLabelText("Telefon"), {
+      target: { value: "070-7654321" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    await waitFor(() => expect(updateContact).toHaveBeenCalledTimes(2));
+    const second = vi.mocked(updateContact).mock.calls[1][0];
+    expect(second.phone).toBe("070-7654321");
+    expect("email" in second).toBe(false);
+    expect(screen.getByLabelText("Kod")).toBeDefined();
+  });
+
   it("says when the test environment refuses a new address", async () => {
     vi.mocked(updateContact).mockResolvedValue({
       ok: true,
