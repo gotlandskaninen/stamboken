@@ -123,28 +123,31 @@ def pending(report) -> list[SaleProposal]:
     )
 
 
+def _finish(proposal, **fields):
+    """Under the report lock, remember an already buyerless outside sale before closing clears every buyer."""
+    pending_row = (SaleProposal.id == proposal.id) & (SaleProposal.state == "foreslagen")
+    if SaleProposal.select().where(pending_row, SaleProposal.to_herd.is_null(), SaleProposal.buyer.is_null()).exists():
+        AuditLog.create(
+            table_name=SaleProposal._meta.table_name,
+            record_id=str(proposal.id),
+            operation="UPDATE",
+            new_data={"action": "kopare_redan_raderad"},
+        )
+    return SaleProposal.update(buyer=None, **fields).where(pending_row).execute()
+
+
 def retract(proposal, *, now: datetime) -> None:
     """The member took the sale back: `atertagen`, the buyer deleted, the item closed. A decided proposal stays."""
     with DB_PROXY.atomic():
         arsrapport.lock_report(proposal.report.round, proposal.report.herd)
         arsrapport._lock_items([], report=proposal.report)  # pylint: disable=protected-access  # K4
-        changed = (
-            SaleProposal.update(state="atertagen", buyer=None, decided_at=now)
-            .where(SaleProposal.id == proposal.id, SaleProposal.state == "foreslagen")
-            .execute()
-        )
-        if changed:
+        if _finish(proposal, state="atertagen", decided_at=now):
             _close_item(proposal, None, "skrap")
 
 
 def _claim(proposal, user, now, **fields):
     """Takes the decision with UPDATE … WHERE state = 'foreslagen' (section 6): a second decider gets 409."""
-    changed = (
-        SaleProposal.update(decided_by=user.id, decided_at=now, buyer=None, **fields)
-        .where(SaleProposal.id == proposal.id, SaleProposal.state == "foreslagen")
-        .execute()
-    )
-    if not changed:
+    if not _finish(proposal, decided_by=user.id, decided_at=now, **fields):
         raise arsrapport.ArsrapportError(409, DECIDED)
 
 

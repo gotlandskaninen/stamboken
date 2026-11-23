@@ -205,6 +205,19 @@ class KeptBuyerTest(ArsrapportTest):
         self.withdrawn(2)
         self.assertEqual(self.refused(self.resent(dag=tomorrow.day, kopare=OTHER)), [(self.a.id, "kopare")])
 
+    def test_future_sale_month_is_refused_after_erasure(self):
+        other_rabbit = self.kvar(self.b, vikt=2.8)
+        self.ok(self.body(self.sald(self.a, "utanfor", 2026, 1, 10, kopare=BUYER), other_rabbit))
+        buyer_contact.erase_buyer_contact(sales(self.a)[0].holder_contact_id, self.admin)
+        self.withdrawn(1)
+        response = self.skicka(self.body(self.sald(self.a, "utanfor", 2026, 2, kopare=OTHER), other_rabbit))
+        self.assertEqual(response.status_code, 422)
+        self.assertEqual(
+            response.json["refusals"],
+            [{"individual_id": self.a.id, "code": "forsaljning", "message": "Säljdatumet får inte ligga i framtiden."}],
+        )
+        self.assertEqual(contacts(), {})
+
     def test_expired_kept_buyer_allows_new_buyer_on_same_sale(self):
         kept, _ = self.sold_and_withdrawn()
         self.at(PURGE_NIGHT)
@@ -219,6 +232,16 @@ class KeptBuyerTest(ArsrapportTest):
         self.ok(self.resent(kopare=OTHER))
         (sale,) = sales(self.a, active=True)
         self.assertEqual((sale.herd_tracking_date, sale.holder_contact.name), (SOLD_ON, OTHER["name"]))
+
+    def test_expired_kept_buyer_allows_correction_after_undo(self):
+        self.sold_and_withdrawn()
+        self.assertEqual(buyer_contact.purge_expired(PURGE_NIGHT), 1)
+        (sale,) = sales(self.a)
+        manager = db.User.get_by_id(self.manager.id)
+        undo_herd_tracking_operation(sale.voided_operation_id, manager, "Fel tillbakadragning")
+        event = {"kind": "TRANSFER", "date": SOLD_ON, "herd": "GX1", "buyer": OTHER}
+        (corrected,) = herd_tracking.correct_herd_tracking(self.a, manager, None, [sale.id], [event], "Rätta köparen")
+        self.assertEqual((corrected.herd_tracking_date, corrected.holder_contact.name), (SOLD_ON, OTHER["name"]))
 
     def test_buyer_erased_while_kept_stays_removed(self):
         kept, _ = self.sold_and_withdrawn()

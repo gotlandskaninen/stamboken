@@ -200,6 +200,28 @@ class TestArsrapportMigration(IsolatedSchemaTest):
             self.assertEqual([row.version for row in db.SchemaHistory.select()], [49])
             tx.rollback()
 
+    def test_boot_without_schema_version(self):
+        with db.DB_PROXY.atomic() as tx:
+            _sql("DROP SCHEMA public CASCADE")
+            _sql("CREATE SCHEMA public")
+            self.assertEqual(db.DATABASE.get_tables(), [])
+            db.init()  # Fresh databases bootstrap the base tables before the API checks migrations.
+            self.assertTrue(db.verify(try_init=False))
+            self.assertEqual(db.SchemaHistory.get_by_id(db.CURRENT_SCHEMA_VERSION).comment, "Bootstrapped")
+            self.assertTrue(db.SaleProposal.table_exists())
+
+            db.SchemaHistory.delete().execute()
+            for history_exists in (True, False):
+                with self.subTest(history_exists=history_exists):
+                    if not history_exists:
+                        db.SchemaHistory.drop_table()
+                    with self.assertRaisesRegex(RuntimeError, "old yearly report v2"):
+                        db.check_migrations()
+                    self.assertEqual(db.SchemaHistory.table_exists(), history_exists)
+                    if history_exists:
+                        self.assertFalse(db.SchemaHistory.select().exists())
+            tx.rollback()
+
     def stamp_50(self, comment):
         """schema_history's 50 as `comment` until the test ends: the class's database was bootstrapped by init()."""
         row = db.SchemaHistory.get_by_id(50)

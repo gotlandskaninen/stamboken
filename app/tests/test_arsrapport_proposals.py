@@ -283,6 +283,33 @@ class ProposalsTest(ArsrapportTest):
         (sale,) = rows(self.a, "TRANSFER")
         self.assertEqual((sale.holder_contact_id, sale.buyer_removed), (None, True))
 
+    def test_closed_buyerless_replacements_keep_their_sale_date(self):
+        def entries(day=None, buyer=None):
+            return [
+                self.sald(self.a, "utanfor", 2025, 10, day, kopare=buyer),
+                self.sald(self.b, "utanfor", 2025, 10, day, kopare=buyer),
+                self.kvar(self.c, vikt=2.8),
+            ]
+
+        self.send(*entries(3, BUYER))
+        for rabbit in (self.a, self.b):
+            self.assertEqual(sp.clear_buyer(proposals(rabbit)[0], "radering"), 1)
+        self.send(*entries(), revision=1)
+        sp.reject(proposals(self.b)[1], self.decider, reason="Fel datum", then="valj_igen", now=arsrapport.now())
+        self.withdraw(3)
+        for rabbit, state in ((self.a, "atertagen"), (self.b, "avvisad")):
+            _, replacement = proposals(rabbit)
+            self.assertEqual((replacement.state, replacement.sale_date), (state, date(2025, 10, 31)))
+
+        with self.assertRaises(ArsrapportError) as caught:
+            self.send(*entries(31, OTHER_BUYER), who="owner")
+        self.assertEqual(caught.exception.status, 422)
+        self.assertCountEqual(
+            [(r["individual_id"], r["message"]) for r in caught.exception.extra["refusals"]],
+            [(rabbit.id, arsrapport.BUYER_REMOVED) for rabbit in (self.a, self.b)],
+        )
+        self.assertFalse(db.BuyerContact.select().exists())
+
     def test_cleared_proposal_allows_new_buyer_on_different_sale_date(self):
         others = [self.kvar(self.b, vikt=2.8), self.kvar(self.c, vikt=2.8)]
         self.send(self.sald(self.a, "utanfor", 2025, 10, 3, kopare=BUYER), *others)

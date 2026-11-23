@@ -884,8 +884,8 @@ class TestDatabaseMigration(DatabaseTest):
         Checks that the schema migration works from very old version.
         Will also run through all migrations.
         """
-        if db.SchemaHistory.table_exists():
-            db.SchemaHistory.drop_table()
+        rewind_migrations(1)
+        db.SchemaHistory.drop_table()
 
         db.check_migrations()
         self.assertTrue(db.SchemaHistory.table_exists())
@@ -1761,15 +1761,10 @@ class TestDatabaseMigration(DatabaseTest):
         """
         db.check_migrations()
 
-        if db.SchemaHistory.table_exists():
+        for _ in range(2):
+            rewind_migrations(1)
             db.SchemaHistory.drop_table()
-
-        db.check_migrations()
-
-        if db.SchemaHistory.table_exists():
-            db.SchemaHistory.drop_table()
-
-        db.check_migrations()
+            db.check_migrations()
 
         self.assertTrue(db.SchemaHistory.table_exists())
         self.assertEqual(

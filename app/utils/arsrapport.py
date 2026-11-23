@@ -1987,10 +1987,10 @@ def _removed_buyers(herd, round_, rabbits, current_ops):
         .order_by(HerdTracking.id)
         .objects()
     )
-    # Retracting a proposal clears its buyer too. Only clear_buyer records an erasure or purge.
+    # Closing a proposal clears its buyer too. The audit distinguishes a buyer already missing at that point.
     erased_proposals = AuditLog.select(AuditLog.record_id).where(
         AuditLog.table_name == SaleProposal._meta.table_name,
-        AuditLog.new_data["action"].in_(("radering", "gallring_forslag")),
+        AuditLog.new_data["action"].in_(("radering", "gallring_forslag", "kopare_redan_raderad")),
     )
     cleared = SaleProposal.select(SaleProposal.individual, SaleProposal.sale_date).where(
         SaleProposal.individual.in_(rabbits),
@@ -2166,6 +2166,9 @@ def check(
             continue
         # P39a: it writes nothing and is not refused; a rejection rewrote its entry and moved the revision (S1)
         if entry == before:
+            continue
+        if entry.sald and date(entry.sald["ar"], entry.sald["manad"], entry.sald["dag"] or 1) > on:
+            refusals.append(_refusal(rabbit, "forsaljning", "Säljdatumet får inte ligga i framtiden."))
             continue
         erased = rabbit in removed
         if entry.sald and entry.sald["till"] == "utanfor":

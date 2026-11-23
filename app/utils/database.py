@@ -5222,20 +5222,20 @@ def _run_migrations():
     Replay any missing migrations up to CURRENT_SCHEMA_VERSION.
     """
     current_version = None
+    comment = None
     if SchemaHistory.table_exists():
         comment = SchemaHistory.select(SchemaHistory.comment).where(SchemaHistory.version == 42).scalar()
         current_version = SchemaHistory.select(fn.MAX(SchemaHistory.version)).scalar()  # pylint: disable=E1120
-        if (comment or "").startswith(ARSRAPPORT_50) or (
-            current_version is not None
-            and current_version < 50
-            and {model._meta.table_name for model in ARSRAPPORT_MODELS}.intersection(DATABASE.get_tables())
-        ):
-            raise RuntimeError(
-                "This development database uses the old yearly report v2 migration number (42, now 50). "
-                "Rebuild this development database from scratch. For a disposable Compose volume, run "
-                "'docker compose -p <dev-project> down -v' and bootstrap the database again.\n"
-                "Är detta inte en utvecklingsdatabas: stoppa och fråga, kör inte down -v."
-            )
+    if (comment or "").startswith(ARSRAPPORT_50) or (
+        (current_version is None or current_version < 50)
+        and {model._meta.table_name for model in ARSRAPPORT_MODELS}.intersection(DATABASE.get_tables())
+    ):
+        raise RuntimeError(
+            "This development database uses the old yearly report v2 migration number (42, now 50). "
+            "Rebuild this development database from scratch. For a disposable Compose volume, run "
+            "'docker compose -p <dev-project> down -v' and bootstrap the database again.\n"
+            "Är detta inte en utvecklingsdatabas: stoppa och fråga, kör inte down -v."
+        )
 
     logger.debug(
         "Doing (if any) needed migrations from %s to %s",

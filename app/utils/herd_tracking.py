@@ -1473,8 +1473,9 @@ def delete_buyer_contacts(contact_ids, action, user=None, whole_items=False):
     if action == "gallring_fem_ar":
         # Only voided sales hold a buyer kept across Dra tillbaka. An active sale has the five-year deadline.
         kept = {s.holder_contact_id for s in sales} - {s.holder_contact_id for s in sales if s.voided_at is None}
-    # WHITELISTED in-place UPDATE #4: the sales remember that their buyer was removed, before the FK nulls the link.
-    HerdTracking.update(buyer_removed=True).where(HerdTracking.holder_contact.in_(ids)).execute()
+    # WHITELISTED in-place UPDATE #4: only permanent removals block a new buyer after an undo.
+    if removed := set(ids) - kept:
+        HerdTracking.update(buyer_removed=True).where(HerdTracking.holder_contact.in_(removed)).execute()
     # Every queue item the erasures below touch, locked at once in id order (the queue's order): one sale after
     # another would lock them out of order, and the nightly purge could deadlock with a correction.
     buyer_items(sales, lock=True)
