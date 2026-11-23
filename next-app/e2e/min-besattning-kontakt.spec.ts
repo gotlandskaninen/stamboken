@@ -1,29 +1,14 @@
 import { test, expect, type Page } from "@playwright/test";
 import { loginInline, TEST_USERS } from "../e2e-shared/auth";
-import { psql } from "./admin/helpers/db";
 
 // Seed (create_test_users.py, #117 block, then link_herd): test-member's herd is linked to her membership,
 // her name is the contact person's, its e-post is empty (fetched from her) and its own mobile differs from
-// hers (pending "Stämmer det?"). The steps change that herd, so they run in order, and the herd is put back
-// before the group (also on a retry) and after it.
+// hers (pending "Stämmer det?"). The steps change that herd, so they run in order.
 const PAGE = "/stamboken/min-besattning?tab=overview";
 const MAIN = "Playwright TestMember";
 const FAMILY = "Playwright Family";
 const MAIN_MOBILE = "070-000 00 01"; // the register's, from the seed
 const ASK = "Mobilnumret skiljer sig";
-
-function resetHerd() {
-  // ids are looked up by username; one row must change, or the seed is not what the spec assumes
-  const changed = psql(`
-    UPDATE herd h SET contact_member_id = m.member_id, name = NULL, email = NULL, email_privacy = 'private',
-      mobile_phone = '070-000 00 02', contact_pending = '["mobile_phone"]'::jsonb
-    FROM member m JOIN hbuser u ON u.user_id = m.user_id
-    WHERE u.username = '${TEST_USERS.member.username}' AND m.role = 'huvudmedlem' AND m.end_date IS NULL
-      AND h.membership_id = m.membership_id
-    RETURNING h.herd_id;`);
-  expect(changed).toMatch(/^\d+(\n\d+)*$/);
-  expect(changed.split("\n")).toHaveLength(1);
-}
 
 const card = (page: Page) =>
   page.locator("section").filter({
@@ -46,9 +31,9 @@ const row = (list: ReturnType<typeof group>, label: string) =>
 const FETCHED = /^Från ditt medlemskap/;
 const OWN = /^Egna för besättningen/;
 
-test.describe.configure({ mode: "serial" });
-test.beforeAll(resetHerd);
-test.afterAll(resetHerd);
+// The steps use up the seed (the pending mobile), so a retry would start from a changed herd: no retries;
+// a re-run of the job gets a fresh seed.
+test.describe.configure({ mode: "serial", retries: 0 });
 
 test.describe("Min besättning: kontakt från matrikeln", () => {
   test.beforeEach(async ({ page, context }) => {
@@ -73,18 +58,6 @@ test.describe("Min besättning: kontakt från matrikeln", () => {
     await expect(
       ask.getByText("Stämmer numret för besättningen?"),
     ).toBeVisible();
-  });
-
-  test("has no horizontal scroll at 375px", async ({ page }) => {
-    await page.setViewportSize({ width: 375, height: 800 });
-    await page.goto(PAGE);
-    await expect(card(page).getByRole("group", { name: ASK })).toBeVisible();
-    const overflow = await page.evaluate(
-      () =>
-        document.documentElement.scrollWidth -
-        document.documentElement.clientWidth,
-    );
-    expect(overflow).toBeLessThanOrEqual(0);
   });
 
   test("answering 'Använd medlemskapets' fetches the register's mobile", async ({
@@ -139,6 +112,44 @@ test.describe("Min besättning: kontakt från matrikeln", () => {
     await expect(
       card(page).getByRole("link", { name: "test-member@test.local" }),
     ).toBeVisible();
+  });
+
+  test("the name is made private in the flow", async ({ page }) => {
+    // a fresh seed shows the name to logged-in herds; the owner test below needs it private
+    await page.goto(PAGE);
+    await card(page).getByRole("button", { name: "Redigera" }).click();
+    const chip = card(page)
+      .getByRole("group", { name: "Vem ser namnet" })
+      .getByRole("button", { name: "Endast genbanksansvarig" });
+    if ((await chip.getAttribute("aria-pressed")) !== "true") {
+      await chip.click();
+      await card(page)
+        .getByRole("button", { name: "Spara", exact: true })
+        .click();
+      await expect(
+        page.getByText("Kontaktuppgifter sparade").first(),
+      ).toBeVisible();
+    } else {
+      await card(page).getByRole("button", { name: "Avbryt" }).click();
+    }
+    await page.reload();
+    await expect(
+      card(page).getByText("Endast genbanksansvarig").first(),
+    ).toBeVisible();
+  });
+
+  test("has no horizontal scroll at 375px", async ({ page }) => {
+    await page.setViewportSize({ width: 375, height: 800 });
+    await page.goto(PAGE);
+    await expect(
+      card(page).getByRole("heading", { name: FETCHED }),
+    ).toBeVisible();
+    const overflow = await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth -
+        document.documentElement.clientWidth,
+    );
+    expect(overflow).toBeLessThanOrEqual(0);
   });
 });
 
