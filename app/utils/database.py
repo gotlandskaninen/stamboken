@@ -67,8 +67,8 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # audit_log IP retention index (39) + herd bank privacy reset (40) + the mail queue (41) +
 # the intake queue (42) and its retention (43) + buyer_contact (44) +
 # matrikel_audit rows without a user, written by the nightly anonymization (45) +
-# the coat column individual.rex (46).
-CURRENT_SCHEMA_VERSION = 46
+# the coat column individual.rex (46) + one account per Google identity (47).
+CURRENT_SCHEMA_VERSION = 47
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -1887,6 +1887,13 @@ class Authenticators(BaseModel):
     auth_data = TextField(null=True)
 
 
+# A Google identity is its "sub", stored as is. Two accounts linking one at once each lock only their own row.
+GOOGLE_IDENTITY_INDEX_SQL = (
+    'CREATE UNIQUE INDEX IF NOT EXISTS "idx_authenticators_google" ON "authenticators" (auth_data) '
+    "WHERE auth = 'google'"
+)
+
+
 class SchemaHistory(BaseModel):
     """
     Contains schema migration history for the database.
@@ -2483,6 +2490,9 @@ def init():
 
     # Unique litter_number index for fresh databases (migration won't run)
     _create_breeding_litter_number_index()
+
+    # Same for the unique Google identity (migrate_43_to_44)
+    DATABASE.execute_sql(GOOGLE_IDENTITY_INDEX_SQL)
 
     # 999.5: herd_tracking CHECKs, partial indexes, created_at default (migration won't run)
     _create_herd_tracking_guards()
@@ -4201,6 +4211,17 @@ def migrate_45_to_46():
         ).execute()
 
 
+def migrate_46_to_47():
+    """One account per Google identity. Where two accounts hold one, creating the index fails: the schema stays at 46
+    and the API does not start (nor the demo API on its copy). Count before deploying and fix the data while the old
+    release still runs (README, "Sessions")."""
+    with DATABASE.atomic():
+        DATABASE.execute_sql(GOOGLE_IDENTITY_INDEX_SQL)
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=47, comment="authenticators: unique Google identity", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4684,6 +4705,7 @@ MIGRATIONS = {
     (43, 44): migrate_43_to_44,  # buyer contact
     (44, 45): migrate_44_to_45,  # matrikel_audit actor NULL for the nightly job
     (45, 46): migrate_45_to_46,  # individual.rex
+    (46, 47): migrate_46_to_47,  # unique Google identity
 }
 
 

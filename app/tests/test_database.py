@@ -1338,7 +1338,7 @@ class TestDatabaseMigration(DatabaseTest):
             ).fetchone()
         )
         db.DATABASE.execute_sql("ALTER TABLE individual DROP COLUMN rex")
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= db.CURRENT_SCHEMA_VERSION).execute()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 46).execute()
 
     def _individual_audit_rows(self):
         return db.AuditLog.select().where(db.AuditLog.table_name == "individual").count()
@@ -1362,7 +1362,7 @@ class TestDatabaseMigration(DatabaseTest):
             db.DATABASE.execute_sql("SELECT count(*) FROM individual WHERE rex IS DISTINCT FROM false").fetchone()[0], 0
         )
         self.assertEqual(self._individual_audit_rows(), audit_before)  # the ALTER fires no row trigger
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= db.CURRENT_SCHEMA_VERSION).execute()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 46).execute()
         db.check_migrations()  # a second run changes nothing and does not fail
         self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
         (default,) = db.DATABASE.execute_sql(
@@ -1513,7 +1513,7 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertTrue(self._rex(rabbit.id))
         db.DATABASE.execute_sql("UPDATE individual SET rex = false WHERE individual_id = %s", (rabbit.id,))
         audit_before = self._individual_audit_rows()
-        db.SchemaHistory.delete().where(db.SchemaHistory.version >= db.CURRENT_SCHEMA_VERSION).execute()
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 46).execute()
         db.check_migrations()
         self.assertFalse(self._rex(rabbit.id))
         self.assertEqual(self._individual_audit_rows(), audit_before)
@@ -1522,6 +1522,39 @@ class TestDatabaseMigration(DatabaseTest):
         return db.DATABASE.execute_sql(
             "SELECT rex FROM individual WHERE individual_id = %s", (individual_id,)
         ).fetchone()[0]
+
+    def test_replay_46_to_47_makes_a_google_identity_unique(self):
+        """A database stamped at 46 gets the fresh bootstrap's index; one where two accounts hold an identity stays at
+        46 without it, and the next start after the extra one is unlinked migrates."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("index introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+
+        def index():
+            return [(i.columns, i.unique) for i in db.DATABASE.get_indexes("authenticators") if "google" in i.name]
+
+        fresh = index()
+        self.assertEqual(fresh, [(["auth_data"], True)])
+        first, second = da.register_user("ett@example.org", None), da.register_user("tva@example.org", None)
+        db.Authenticators.create(user=first.id, auth="google", auth_data="sub-delad")
+        with self.assertRaises(peewee.IntegrityError), db.DATABASE.atomic():
+            db.Authenticators.create(user=second.id, auth="google", auth_data="sub-delad")
+        db.Authenticators.create(user=second.id, auth="password", auth_data="sub-delad")  # other methods may repeat
+
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 47).execute()
+        db.DATABASE.execute_sql('DROP INDEX "idx_authenticators_google"')
+        duplicate = db.Authenticators.create(user=second.id, auth="google", auth_data="sub-delad")
+        self.addCleanup(duplicate.delete_instance)  # runs before check_migrations if an assert below fails
+
+        with self.assertRaises(peewee.IntegrityError):
+            db.check_migrations()
+        self.assertEqual(self._max_schema_version(), 46)
+        self.assertEqual(index(), [])
+
+        duplicate.delete_instance()
+        db.check_migrations()
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(index(), fresh)
 
     def _max_schema_version(self):
         return db.SchemaHistory.select(  # pylint: disable=E1120
