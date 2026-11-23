@@ -142,7 +142,7 @@ def enqueue_mail(
 
 
 def _mac(message):
-    """One key for three uses, so every input starts with its own prefix: `link:`, `msgid:` or `addr:`."""
+    """One key for four uses, so every input starts with its own prefix: `link:`, `msgid:`, `addr:` or `code:`."""
     secret = settings.mail.link_secret
     if not secret:
         raise RuntimeError("LINK_SECRET is not set")
@@ -177,6 +177,12 @@ def verify_link(purpose, token):
 
 def _hostname():
     return urlparse(settings.service.host).hostname or "localhost"
+
+
+def one_time_code(row_id, nonce):
+    """A login_code row's eight digits: HMAC-SHA256(LINK_SECRET, "code:<host>:<row id>:<nonce>") mod 10^8, as text."""
+    digest = _mac(f"code:{_hostname()}:{row_id}:{nonce}").digest()
+    return f"{int.from_bytes(digest[:8], 'big') % 10**8:08d}"
 
 
 def message_id(row_id):
@@ -684,7 +690,7 @@ def message_view(row):
 
 
 def sender_alarms(now=None):
-    """The status view's alarms: the relay refusing, the queue stalled, and when a mail last went out."""
+    """The status view's alarms: the relay refusing, the queue stalled, code login closed, and the last mail out."""
     now = now or _utcnow()
     sender = MailSender.get_or_none(MailSender.id == 1)
     last_smtp = (
@@ -706,6 +712,9 @@ def sender_alarms(now=None):
         alarms.append({"code": "log_mode", "message": "Utskicksläget är log: inget mejl skickas på riktigt"})
     if last_run_at is None or last_run_at < now - STALLED_AFTER:
         alarms.append({"code": "queue_stalled", "message": "Kön står still"})
+    from utils.login_code import alarms as code_alarms  # pylint: disable=import-outside-toplevel  # imports this
+
+    alarms += code_alarms(now)
     last_sent = MailMessage.select(MailMessage.sent_at).where(MailMessage.sent_at.is_null(False))
     last_sent = last_sent.order_by(MailMessage.sent_at.desc()).first()
     return {
