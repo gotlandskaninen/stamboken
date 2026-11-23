@@ -180,7 +180,8 @@ den här texten.
 Under **Medlemskap** kan du byta **Status** och skriva in eller ändra
 **Medlemsnummer**. Klicka **Spara**. Alla ändringar sparas i en logg. Skriver
 du ett nummer som är högre än något som har delats ut, fortsätter nästa
-automatiska nummer efter det.
+automatiska nummer efter det. Ge inte ett nummer som har använts tidigare:
+Stamboken kontrollerar bara att inget annat medlemskap har numret just nu.
 
 ### Personer i medlemskapet
 
@@ -222,8 +223,9 @@ personer i hushållet kan bara läsa. **Koppla bort** tar bort kopplingen.
 Klicka **Avsluta medlemskap** under **Medlemskap** och sedan **Bekräfta**.
 Medlemskapet blir inaktivt, alla personer i det avslutas och deras åtkomster
 dras in. Ett avslutat medlemskap kan inte göras aktivt igen. Kommer medlemmen
-tillbaka lägger du in ett nytt medlemskap, som får ett nytt nummer. Ett
-medlemsnummer används aldrig igen.
+tillbaka lägger du in ett nytt medlemskap och låter Stamboken tilldela nästa
+nummer automatiskt. Ett medlemsnummer som har använts ska inte ges till någon
+annan.
 
 ### Anonymisering efter 12 månader
 
@@ -242,7 +244,9 @@ Stamboken hoppar över ett avslutat medlemskap där någon av personerna har
 rollen administratör, matrikeladministratör eller genbanksansvarig eller äger
 en aktiv besättning, eller där en av hushållets besättningar fortfarande är
 aktiv. En borttagen person hoppas över om hens eget konto har en sådan roll
-eller äger en aktiv besättning. Systemansvarig avgör de fallen för hand.
+eller äger en aktiv besättning. Undantaget gäller bara så länge rollen eller
+den aktiva besättningen finns. Försvinner den anonymiseras uppgifterna vid nästa
+nattliga körning. Systemansvarig kan bedöma fallen medan undantaget gäller.
 
 Besättningens egna kontaktuppgifter tas inte bort av den här regeln.
 
