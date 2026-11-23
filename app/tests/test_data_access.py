@@ -268,13 +268,22 @@ class TestDataAccess(DatabaseTest):
         self.assertNotEqual(created.id, other.id)
         self.assertEqual(created.genebank_id, self.genebanks[0].id)
 
-    def test_add_herd_membership_is_admin_only(self):
+    def test_update_and_add_herd_do_not_write_membership(self):
+        """#117: only the register import links a herd; `membership` in a form is ignored, admin's too, and the
+        call's other fields are saved."""
         ms = db.Membership.create(member_number=9, membership_status="active")
         gb = self.genebanks[0].id
-        da.add_herd({"genebank": gb, "herd": "N001", "membership": ms.id}, self.manager.uuid)
-        self.assertIsNone(db.Herd.get(db.Herd.herd == "N001").membership_id)
-        da.add_herd({"genebank": gb, "herd": "N002", "membership": ms.id}, self.admin.uuid)
-        self.assertEqual(db.Herd.get(db.Herd.herd == "N002").membership_id, ms.id)
+        for user in (self.manager, self.admin):
+            herd = f"N{user.id:03d}"
+            self.assertEqual(
+                da.add_herd({"genebank": gb, "herd": herd, "membership": ms.id}, user.uuid), {"status": "success"}
+            )
+            self.assertIsNone(db.Herd.get(db.Herd.herd == herd).membership_id)
+            for legacy in (False, True):
+                form = {"id": self.herds[0].id, "herd_name": f"Ny {user.id} {legacy}", "membership": ms.id}
+                self.assertEqual(da.update_herd(form, user.uuid, legacy=legacy), {"status": "updated"})
+                stored = db.Herd.get_by_id(self.herds[0].id)
+                self.assertEqual((stored.herd_name, stored.membership_id), (form["herd_name"], None))
 
     def test_update_herd_does_not_write_back_stale_ownership_columns(self):
         """The row is loaded before can_edit; a full-row save would undo a reassignment committed meanwhile."""

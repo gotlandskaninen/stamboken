@@ -51,7 +51,7 @@ from utils.database import ht_not_voided  # isort: skip
 from utils.database import ht_order_desc  # isort: skip
 from utils.database import latest_ht_per_individual  # isort: skip
 from utils.herd_contact import ContactConflict, apply_contact_patch, check_flat_fields  # isort: skip
-from utils.herd_contact import contact_field, herd_contact, herd_contacts, lock_herd  # isort: skip
+from utils.herd_contact import contact_field, herd_contact, herd_contacts, legacy_contact_form, lock_herd  # isort: skip
 from utils.database import lock_individuals  # isort: skip
 from utils.database import not_voided  # isort: skip
 from utils.database import validate_date  # isort: skip
@@ -1571,8 +1571,8 @@ def add_herd(form, user_uuid):
         if bad:
             return {"status": "error", "message": f"Invalid value for {bad}"}
         # Real columns only: Herd(**form) also took _pk, genebank_id and __data__, which let a
-        # manager overwrite another genebank's herd. membership is admin-only, as in update_herd.
-        locked = {"id", "contact_member", "contact_pending"} | (set() if user.is_admin else {"membership"})
+        # manager overwrite another genebank's herd. membership and the contact columns have their own paths (#117).
+        locked = {"id", "contact_member", "contact_pending", "membership"}
         herd = Herd(**{k: v for k, v in form.items() if k in Herd._meta.fields and k not in locked})
         try:
             herd.save(force_insert=True)
@@ -1691,10 +1691,10 @@ def update_herd(form, user_uuid, *, legacy=False):
     Updates a herd, identified by `form.id`, by the values in `form`, if the
     given `user` has sufficient permissions to do so.
 
-    One transaction, decided on the row under the membership and herd locks (#117). `legacy` is the old app's
-    route, saved as before until #117 Task 5. Otherwise (v2) `contact` goes to apply_contact_patch, flat contact
-    fields are refused on a compared herd, and membership is never written; ContactConflict and ContactForbidden
-    are raised for the route to answer, after the rollback.
+    One transaction, decided on the row under the membership and herd locks (#117); membership is never written.
+    `legacy` is the old app's route: legacy_contact_form keeps a linked herd's contact fields. Otherwise (v2)
+    `contact` goes to apply_contact_patch and flat contact fields are refused on a compared herd;
+    ContactConflict and ContactForbidden are raised for the route to answer, after the rollback.
     """
     user = fetch_user_info(user_uuid)
     if user is None:
@@ -1726,20 +1726,21 @@ def update_herd(form, user_uuid, *, legacy=False):
             bad = invalid_privacy_field(form)
             if bad:
                 return {"status": "error", "message": f"Invalid value for {bad}"}
-            contact = None if legacy else form.get("contact")
-            if not legacy:
+            if legacy:
+                form = legacy_contact_form(herd, form, user)
+            else:
+                contact = form.get("contact")
                 check_flat_fields(herd, form, contact)
-            if contact is not None:
-                apply_contact_patch(herd.id, contact, user)
+                if contact is not None:
+                    apply_contact_patch(herd.id, contact, user)
 
             # Real columns only (hasattr also matches genebank_id, membership_id and
-            # methods such as save). Identity/ownership columns are admin-only; the
-            # legacy SPA echoes the whole herd object, so locked keys are dropped, not refused.
-            locked = (
-                {"id", "contact_member", "contact_pending"}
-                | (set() if legacy else {"membership"})
-                | (set() if user.is_admin else {"herd", "genebank", "membership"})
-            )  # the contact columns are written only by the contact paths, never by a general call
+            # methods such as save). Identity columns are admin-only; the legacy SPA
+            # echoes the whole herd object, so locked keys are dropped, not refused.
+            # The contact and membership columns are written only by their own paths, never by a general call.
+            locked = {"id", "contact_member", "contact_pending", "membership"} | (
+                set() if user.is_admin else {"herd", "genebank"}
+            )
             written = [key for key in form if key in Herd._meta.fields and key not in locked]
             for key in written:
                 setattr(herd, key, form[key])
@@ -4070,8 +4071,8 @@ _AUDIT_UNDO_SKIP = {
 }
 
 
-# A herd's identity and ownership are admin-only, as in update_herd (the primary key herd_id is
-# never written by undo). Its *_privacy columns hold None or one of the levels update_herd accepts.
+# A herd's identity and ownership are admin-only (the primary key herd_id is never written by
+# undo). Its *_privacy columns hold None or one of the levels update_herd accepts.
 _AUDIT_HERD_ADMIN_COLUMNS = {"herd", "genebank_id", "membership_id"}
 _AUDIT_PRIVACY_LEVELS = ("public", "authenticated", "private")
 

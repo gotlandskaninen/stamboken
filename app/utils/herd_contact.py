@@ -11,7 +11,16 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Literal
 
-from utils.database import DB_PROXY, PRIVACY_LEVELS, Herd, HerdAccessGrant, Member, Membership, User
+from utils.database import (
+    DB_PROXY,
+    HERD_CONTACT_COLUMNS,
+    PRIVACY_LEVELS,
+    Herd,
+    HerdAccessGrant,
+    Member,
+    Membership,
+    User,
+)
 
 CONTACT_FIELDS = ("name", "email", "mobile_phone", "physical_address")
 # the flat keys of a general PATCH that only `contact` may change on a compared herd
@@ -20,6 +29,9 @@ Source = Literal["egen", "person", "medlemskap"]
 Mode = Literal["ej_jamford", "person", "fritext", "ingen"]
 
 STALE = "Kontaktuppgifterna har ändrats sedan sidan öppnades. Ladda om sidan och försök igen."
+LEGACY_REFUSED = "Kontaktuppgifterna ändras i nya Stamboken. Har du inte tillgång där, kontakta genbanksansvarig."
+# the old app's empty address: its herd form joins an absent (hidden) or null street as text
+LEGACY_EMPTY_ADDRESSES = ("||", "undefined||", "null||")
 
 
 class ContactConflict(Exception):
@@ -243,6 +255,8 @@ def normalize(field: str, value: str | None) -> object:
         return parts if any(parts) else None
     if field == "name":
         return frozenset(value.lower().split())
+    if field == "www":  # not in the register: compared only with the old app's echo
+        return value.strip()
     raise ValueError(f"no normalisation for {field}")
 
 
@@ -264,6 +278,36 @@ def check_flat_fields(herd: Herd, fields, contact) -> None:
     flat = sorted(CONTACT_KEYS & set(fields))
     if flat and (herd.contact_pending is not None or contact is not None):
         raise ValueError(f"Kontaktuppgifterna ändras med fältet contact, inte med {', '.join(flat)}.")
+
+
+def _rank(level):
+    """public < authenticated < private; NULL, and an unknown stored value, counts as private."""
+    return PRIVACY_LEVELS.index(level) if level in PRIVACY_LEVELS else len(PRIVACY_LEVELS) - 1
+
+
+def legacy_contact_form(herd: Herd, form: dict, user: User) -> dict:
+    """Spec, Skrivningar, Gamla appen (decision 15): the old app sends back the whole herd it read, also fields
+    hidden from the reader, and on a herd linked to a membership it changes no contact field. Each one sent must
+    be an echo of this user's read (`herd` under lock_herd), so a hidden one only empty, whatever the register
+    holds: the answer never tells whether a guess was right. Else ValueError, and the call saves nothing.
+
+    Returns the form to save: without the contact fields, and without a privacy wider than the stored one."""
+    if herd.membership_id is None:
+        return form
+    shown = herd.filtered_dict(user, with_contact=False)
+    for field in (f for f in HERD_CONTACT_COLUMNS if f in form):
+        sent = form[field]
+        # an exact echo stands as it is: a marker can also be stored, saved before the link
+        if field == "physical_address" and sent in LEGACY_EMPTY_ADDRESSES and sent != shown.get(field):
+            sent = None
+        if not isinstance(sent, (str, type(None))) or normalize(field, sent) != normalize(field, shown.get(field)):
+            raise ValueError(LEGACY_REFUSED)
+    privacy = {f"{f}_privacy" for f in HERD_CONTACT_COLUMNS}
+    return {
+        key: value
+        for key, value in form.items()
+        if key not in HERD_CONTACT_COLUMNS and (key not in privacy or _rank(value) >= _rank(getattr(herd, key)))
+    }
 
 
 def _given(value):
@@ -301,15 +345,13 @@ def _parse(patch) -> dict:
     return rows
 
 
-def apply_contact_patch(herd_id: int, patch: dict, user: User, *, legacy: bool = False) -> None:
+def apply_contact_patch(herd_id: int, patch: dict, user: User) -> None:
     """Apply the `contact` object of a PATCH (spec: Skrivningar) in the caller's transaction, so that a refusal
     rolls back the whole call. Under the locks it decides, in this order: the permission (403, before any value
     is compared, so that a refusal never tells whether a guess was right), the state the form showed (409), the
     chosen person (400). It writes only the columns that change.
 
-    A row the patch leaves out is unchanged. `legacy` is the old app's route, #117 Task 5."""
-    if legacy:
-        raise NotImplementedError("the old app's contact rules come with #117 Task 5")
+    A row the patch leaves out is unchanged."""
     rows = _parse(patch)
     with DB_PROXY.atomic():
         herd = lock_herd(herd_id)
