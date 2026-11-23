@@ -1,2 +1,4 @@
 # Undantag för scripts/check-ui-terms.sh: en rad per undantag, "sökväg:regex"
 # (sökväg från repo-roten, ERE som träffraden ska matcha). Kommentera varje rad.
+# Överlåtelsebeviset är papperets namn (ADR-0016), inte ordet för en försäljning.
+next-app/messages/sv.json:"buyerNote": "Ge köparen överlåtelsebeviset\.

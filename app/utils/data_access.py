@@ -2020,7 +2020,9 @@ LEGACY_GENEBANK_CHANGE_NOTE = "Genbanksbyte av admin via legacy"
 
 
 @number_assets.finishing  # inside a caller's transaction, teardown_request finishes instead
-def update_individual(form, user_uuid, issue_digital=False, genebank_change_reason=None, clear_nulls=False):
+def update_individual(
+    form, user_uuid, issue_digital=False, genebank_change_reason=None, clear_nulls=False, buyer=None, legacy=False
+):
     """
     Updates the individual `form["id"]` by the values in `form`, if the user identified by `user_uuid`
     may: translate (utils.individual_legacy) turns the form into write commands, which execute runs under
@@ -2029,7 +2031,8 @@ def update_individual(form, user_uuid, issue_digital=False, genebank_change_reas
     required note for an admin's move into another genebank (legacy PATCH passes
     LEGACY_GENEBANK_CHANGE_NOTE, the v2 certificate routes the body's reason; the legacy certificate
     routes pass none, and their form drops herd). `clear_nulls` (v2) clears the death and castration
-    fields sent as null.
+    fields sent as null. `buyer` (v2) is the buyer outside the association on a sale to GX1/MX1, which every
+    caller requires except the legacy app's two routes (`legacy`), whose forms cannot send one.
     """
     user = fetch_user_info(user_uuid)
     if user is None:
@@ -2055,6 +2058,8 @@ def update_individual(form, user_uuid, issue_digital=False, genebank_change_reas
                 issue_digital=issue_digital,
                 clear_nulls=clear_nulls,
                 genebank_change_reason=genebank_change_reason,
+                buyer=buyer,
+                legacy=legacy,
             ),
             target_breeding=form.get("breeding"),
         )
@@ -4380,6 +4385,31 @@ def purge_audit_ip(now, batch=AUDIT_IP_BATCH) -> int:
             DATABASE.execute_sql(AUDIT_LOG_NO_UPDATE_RULE)
         total += changed
         last = rows[-1]
+
+
+APPLICATION_RETENTION = "12 months"  # a PostgreSQL interval: calendar months, as the privacy policy says
+
+
+def purge_member_applications(now) -> int:
+    """
+    Deletes member_application rows that never led to membership (rejected or pending) 12 calendar months after
+    submission, as the privacy policy promises; the decision date does not matter. Approved rows stay.
+    The table is not in AUDITED_TABLES, so audit_log holds no copy; matrikel_audit has no row for these.
+    Returns the rows deleted.
+    """
+    # The columns are naive local times (datetime.now()): compare in that clock, and add the interval to the
+    # row's date so the 29 February case lands on 28 February instead of rounding down from today.
+    # One day of margin: the job runs nightly, so a normal run keeps every row within its 12 months (the policy's
+    # upper bound); a missed run can still leave one a day too long.
+    cutoff = now.astimezone().replace(tzinfo=None) + timedelta(days=1)  # a calendar day in the local clock
+    cursor = DATABASE.execute_sql(
+        """
+        DELETE FROM member_application
+        WHERE status IN ('rejected', 'pending') AND created_at + %s::interval <= %s
+        """,
+        (APPLICATION_RETENTION, cutoff),
+    )
+    return cursor.rowcount or 0
 
 
 # Session-store counter of mass logouts. Outside 'session:*', so the sweep never

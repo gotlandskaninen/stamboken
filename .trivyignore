@@ -15,3 +15,12 @@ GHSA-gv7w-rqvm-qjhr
 # @payloadcms/next -> sass@1.77.4 -> chokidar@3 (sass CLI watch mode). No request
 # input reaches it. Expires so the entry is revisited; drop it once braces ships a fix.
 CVE-2026-93687 exp:2027-01-04
+
+# picomatch GHSA-fc5q-39xc-vjpf (CVE-2026-112366) — ReDoS via single-branch repeated
+# extglob patterns. No fixed release (4.0.7 is affected too, OSV 2026-11-18). picomatch
+# only comes in through build and dev tooling (vite, vitest, eslint, fast-glob,
+# tinyglobby, sass/chokidar); no code in next-app or app passes a pattern to a glob
+# library, and next.config has no remotePatterns. Exploiting it needs an
+# attacker-controlled pattern. Remove this line when a fixed picomatch is released.
+GHSA-fc5q-39xc-vjpf
+CVE-2026-112366
