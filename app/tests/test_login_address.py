@@ -240,12 +240,15 @@ class TestSevenDays(SevenDaysTest):
         self.assertEqual(self.previous(), {"a@example.org": None})
         self.assertEqual(self.besked(), [("a@example.org", False, True)])
 
-    def test_a_to_b_to_c_never_makes_b_count_and_tells_a(self):
+    def test_a_to_b_to_c_never_makes_b_count_and_tells_a_and_b(self):
+        """B was the member's own new address; whoever changes it within the wait, A and B both hear of it."""
         self.change("b@example.org", "self")
         self.change("c@example.org", "self")
-        self.assertEqual(list(self.previous()), ["a@example.org"])
-        self.assert_about(self.previous()["a@example.org"], WEEK)
-        self.assertEqual([b[0] for b in self.besked()], ["a@example.org", "a@example.org"])
+        previous = self.previous()
+        self.assertEqual(sorted(previous), ["a@example.org", "b@example.org"])
+        self.assert_about(previous["a@example.org"], WEEK)
+        self.assertIsNone(previous["b@example.org"])
+        self.assertEqual([b[0] for b in self.besked()], ["a@example.org", "a@example.org", "b@example.org"])
         other = _mk_person(_mk_membership(number=12), "Bo", "Other", None)
         self.reserve("b@example.org", other.id)  # nobody holds b
         with self.assertRaises(lc.AddressTaken):

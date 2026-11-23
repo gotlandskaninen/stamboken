@@ -564,8 +564,9 @@ def set_member_email(person, address, actor, *, by):
     - by="matrikel": the old one stops, the new one counts at once.
 
     During a wait the first previous address stays fixed: a new change restarts its clock, but never makes the
-    address in between count, nor one that has stopped. Changing back to it ends the wait. The previous address
-    hears of the change (kontakt.epost_besked), and the account's sessions end (new_generation). Every change voids
+    address in between count, nor one that has stopped. Changing back to it ends the wait. The address replaced,
+    and during a wait the first previous one, hear of the change (kontakt.epost_besked); an address that does not
+    count gets a row with login_until NULL for it. The account's sessions end (new_generation). Every change voids
     the person's unused codes. Opens its own transaction; returns the person as written.
     """
     if by not in SET_BY:
@@ -578,7 +579,7 @@ def set_member_email(person, address, actor, *, by):
                 Member.update(email=address).where(Member.id == person.id).execute()
             return Member.get_by_id(person.id)
         holder = person.end_date is None and (person.role == "huvudmedlem" or person.user_id is not None)
-        told, login_from = None, None
+        told, login_from = [], None
         if holder:
             # Every address this change can touch, locked in one order before the previous ones are read: a clock
             # restarted on an old address must not race another person reserving it as it stops counting.
@@ -595,18 +596,21 @@ def set_member_email(person, address, actor, *, by):
             Member.id == person.id
         ).execute()
         void(person.id)
-        if holder:
-            if told is not None:
-                params = {"previous_id": told.id, "by_self": by == "self", "by_matrikel": by == "matrikel"}
-                ref = ("membership", person.membership_id)
-                enqueue_mail("kontakt.epost_besked", "member_previous_address", told.id, params, ref=ref)
-            if user is not None:
-                new_generation(user.uuid)
+        for row in told:
+            params = {"previous_id": row.id, "by_self": by == "self", "by_matrikel": by == "matrikel"}
+            ref = ("membership", person.membership_id)
+            enqueue_mail("kontakt.epost_besked", "member_previous_address", row.id, params, ref=ref)
+        if holder and user is not None:
+            new_generation(user.uuid)
     return Member.get_by_id(person.id)
 
 
 def _keep_previous(person, address, actor, by, now):
-    """The previous-address rows of a change (set_member_email): (the row to tell, whether the change went back)."""
+    """
+    The previous-address rows of a change (set_member_email): (the rows to tell, whether the change went back). The
+    address replaced is always told; during a wait the first previous address is told too, as the change may come
+    from whoever took over the account.
+    """
     waiting = (
         MemberPreviousAddress.select()
         .where((MemberPreviousAddress.member == person.id) & (MemberPreviousAddress.login_until > now))
@@ -615,23 +619,26 @@ def _keep_previous(person, address, actor, by, now):
     )
     back = waiting is not None and _same(waiting.address, address)
     until = None if by == "matrikel" or back else now + WAIT
+    told = []
     if waiting is not None:
         waiting.login_until, waiting.purge_at, waiting.changed_by = until, (until or now) + PREVIOUS_KEPT, actor
         waiting.save()
         if not back:
-            return waiting, back
-    if person.email is None:
-        return None, back
-    if person.email_login_from is not None and person.email_login_from > now:
-        until = None  # it never counted, and never will
-    row = MemberPreviousAddress.create(
-        member=person.id,
-        address=person.email,
-        login_until=until,
-        purge_at=(until or now) + PREVIOUS_KEPT,
-        changed_by=actor,
-    )
-    return row, back
+            told.append(waiting)
+            until = None  # the address in between never counts
+    if person.email is not None:
+        if person.email_login_from is not None and person.email_login_from > now:
+            until = None  # it never counted, and never will
+        told.append(
+            MemberPreviousAddress.create(
+                member=person.id,
+                address=person.email,
+                login_until=until,
+                purge_at=(until or now) + PREVIOUS_KEPT,
+                changed_by=actor,
+            )
+        )
+    return told, back
 
 
 def purge_previous_addresses(now):
