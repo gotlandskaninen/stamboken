@@ -1,3 +1,4 @@
+import { buildEditorState } from "@payloadcms/richtext-lexical";
 import { getPayload } from "payload";
 import config from "../../src/payload.config";
 
@@ -18,8 +19,14 @@ try {
     data: {
       slug: "kontoregler",
       title: "Kontoregler för webbläsartestet",
-      subtitle: "Använd bara testuppgifter.",
-      layout: [{ blockType: "divider" }],
+      layout: [
+        {
+          blockType: "richText",
+          content: buildEditorState({
+            text: "Använd bara ditt eget testkonto.",
+          }),
+        },
+      ],
       _status: "published",
     },
   });

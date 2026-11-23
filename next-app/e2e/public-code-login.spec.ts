@@ -6,7 +6,7 @@ import sharp from "sharp";
 
 // For a local run, opt in on the CI-style test-api with a test LINK_SECRET, log-only mail,
 // KODINLOGGNING=true, SJALVSKAPAT_KONTO_PROD=true and NEXT_INTERNAL_ORIGIN
-// pointing to this Next server. Its test CMS needs published kontoregler content.
+// pointing to this Next server. Publish the Actions fixture's rule in the test CMS.
 test.skip(
   process.env.GITHUB_ACTIONS !== "true" && process.env.E2E_CODE_LOGIN !== "1",
   "Requires the code-login fixture stack",
@@ -81,6 +81,9 @@ test("a member signs in by code, accepts the rules and uploads a certificate on 
   await page.getByRole("button", { name: "Logga in med kod" }).click();
   const create = page.getByRole("button", { name: "Skapa mitt konto" });
   await expect(create).toBeDisabled();
+  await expect(
+    page.getByText("Använd bara ditt eget testkonto.", { exact: true }),
+  ).toBeVisible();
   await page
     .getByRole("checkbox", { name: "Jag har läst reglerna och följer dem." })
     .check();
