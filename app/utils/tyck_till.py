@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import os
 import re
+from pathlib import Path
 
 import utils.settings as settings
 from utils.log_masking import mask_tokens
@@ -20,6 +21,15 @@ _PRIVATE_TITLES = {"fel": "Tyck till: något fungerar inte", "onskemal": "Tyck t
 _UUID = re.compile(r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 _GENERIC_SEGMENT = re.compile(r"[a-z-]+")
 _VERSION = re.compile(r"[0-9A-Za-z.+-]{1,40}")
+
+
+def root():
+    return Path(settings.service.private_upload_folder) / "tyck-till"
+
+
+def folder(inskick_id):
+    """The submission's files: inskick.json, the images, svar.json. `inskick_id` is a uuid.UUID, so no path escapes."""
+    return root() / str(inskick_id)
 
 
 def reference(inskick_id):
