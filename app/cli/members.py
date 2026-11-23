@@ -877,8 +877,9 @@ def _norm_name(name: str | None) -> str:
 
 
 def _safe(text) -> str:
-    """Control characters as visible escapes, so a pair is always exactly one line (å, ä, ö stay readable)."""
-    return re.sub(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]", lambda m: m.group().encode("unicode_escape").decode(), str(text))
+    """Control, bidi and zero-width characters as visible escapes: a pair is one line, read left to right."""
+    hidden = r"[\x00-\x1f\x7f-\x9f\u200b-\u200f\u2028-\u202e\u2060-\u2069\ufeff]"
+    return re.sub(hidden, lambda m: m.group().encode("unicode_escape").decode(), str(text))
 
 
 def _user_label(user) -> str:

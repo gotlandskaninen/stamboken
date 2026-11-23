@@ -656,13 +656,16 @@ class TestMembersLinkByHerd(DatabaseTest):
 
     def test_control_characters_in_labels_stay_on_one_visible_line(self):
         self._membership(901, first="Åsa", last="Öberg", email="å\nx@example.org")
-        user = db.User.create(email="a\nb@example.org\x1b[2K", username="u\rv", uuid=uuid4(), fullname="Åsa Öberg")
+        user = db.User.create(
+            email="a\nb@example.org\x1b[2K", username="u\rv\u202e", uuid=uuid4(), fullname="Åsa Öberg"
+        )
         user.add_role("owner", self._herd("G901").id)
 
         result = self._run()
 
         self.assertNotIn("\x1b", result.output)
         self.assertNotIn("\r", result.output)
+        self.assertNotIn("\u202e", result.output)  # a right-to-left override would reorder the line on screen
         lines = [line for line in result.output.splitlines() if line.startswith("  G901:")]
         self.assertEqual(len(lines), 1, result.output)
         self.assertIn("\\x1b[2K", lines[0])
