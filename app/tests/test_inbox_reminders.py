@@ -154,6 +154,21 @@ class TestReminder(ReminderTest):
         self.assertIn(f"{due.received_at + inbox.months(12):%Y-%m-%d}", body)
         self.assertNotIn(f"ärende {early.id}", subject)
 
+    def test_undo_takeover_requeues_the_cancelled_reminder_without_repeating_the_sent_request(self):
+        item, _ = self.incomplete(NOW - inbox.months(11) - MINUTE)
+        self.sent()
+        self.assertEqual(purge.remind_incomplete(NOW), 1)
+        self.login(self.manager.email)
+        undo = self.post(f"/{item.id}/ta-over").get_json()["undo"]
+        self.assertEqual(self.sent(), [])
+        (reminder,) = self.mails("inlasning.paminnelse")
+        self.assertEqual(reminder.status, "cancelled")
+        self.assertEqual(self.post("/angra", undo=undo).status_code, 200)
+        self.assertEqual(self.row(reminder.id).status, "queued")
+        ((subject, _, _),) = self.sent()
+        self.assertIn("Påminnelse", subject)
+        self.assertEqual(self.sent(), [])
+
     def test_the_nightly_job_reminds(self):
         item, _ = self.incomplete(NOW - inbox.months(11) - MINUTE)
         purge.run(NOW)

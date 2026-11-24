@@ -510,27 +510,26 @@ def _restore_attachment_request(item):
         .order_by(InboxEvent.id.desc())
         .scalar()
     )
-    # Hold the original row until the restored item state commits. The sender skips locked rows.
-    message = (
+    # Keep the sender from claiming either row before the restored state commits.
+    messages = (
         MailMessage.select()
         .where(
             MailMessage.ref_type == "inbox_item",
             MailMessage.ref_id == item.id,
-            MailMessage.kind == "inlasning.ofullstandig",
+            MailMessage.kind.in_(("inlasning.ofullstandig", "inlasning.paminnelse")),
             MailMessage.params.contains({"event_id": event_id}),
         )
+        .order_by(MailMessage.id)
         .for_update()
-        .first()
     )
-    if message is None:
-        return
-    if message.status == "sending":
-        raise InboxError(409, "Utskicket pågår. Det går inte att ångra medan mejlet behandlas.")
-    if message.status == "cancelled":
-        if message.last_error != MAIL_NO_LONGER_RELEVANT:
-            raise InboxError(409, "Begäran om bilaga har makulerats och kan inte skickas igen.")
-        message.status, message.last_error = "queued", None
-        message.save(only=[MailMessage.status, MailMessage.last_error])
+    for message in messages:
+        if message.status == "sending":
+            raise InboxError(409, "Utskicket pågår. Det går inte att ångra medan mejlet behandlas.")
+        if message.status == "cancelled":
+            if message.last_error != MAIL_NO_LONGER_RELEVANT:
+                raise InboxError(409, "Begäran om bilaga har makulerats och kan inte skickas igen.")
+            message.status, message.last_error = "queued", None
+            message.save(only=[MailMessage.status, MailMessage.last_error])
 
 
 def undo_assignments(receipts, user):
