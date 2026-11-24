@@ -1223,17 +1223,27 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertEqual(row.get(), {**before, "organization_name": "Testföreningen"})
 
     def test_branch_numbered_organization_migration_stops_the_replay(self):
-        """A dev database that ran the organization fields as 51 lacks the yearly report: no 52 is stamped."""
+        """A dev database that ran or bootstrapped the organization fields as 51 lacks the yearly report: no 52."""
         if not isinstance(db.DATABASE, db.PostgresqlDatabase):
             self.skipTest("migration history guard is tested on PostgreSQL")
-        self.addCleanup(db.check_migrations)
-        rewind_migrations(52)
-        db.SchemaHistory.update(comment=db.ORGANIZATION_52).where(db.SchemaHistory.version == 51).execute()
-        self.addCleanup(db.SchemaHistory.update(comment="test seed").where(db.SchemaHistory.version == 51).execute)
+        for comment in (db.ORGANIZATION_52, "Bootstrapped"):
+            with self.subTest(comment=comment):
+                self.addCleanup(db.check_migrations)
+                self.addCleanup(rewind_migrations, 51)  # LIFO: rewind first, then replay 50 -> 52
+                rewind_migrations(52)
+                db.SchemaHistory.update(comment=comment).where(db.SchemaHistory.version == 51).execute()
+                db.DATABASE.drop_tables(db.ARSRAPPORT_MODELS, cascade=True)
 
-        with self.assertRaisesRegex(RuntimeError, "organization fields as migration 51"):
-            db.check_migrations()
-        self.assertEqual(self._max_schema_version(), 51)
+                with self.assertRaisesRegex(RuntimeError, "organization fields as migration 51"):
+                    db.check_migrations()
+                self.assertEqual(self._max_schema_version(), 51)
+                self.doCleanups()
+
+        # main's 51 with its tables replays to 52
+        rewind_migrations(52)
+        db.SchemaHistory.update(comment="Bootstrapped").where(db.SchemaHistory.version == 51).execute()
+        db.check_migrations()
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
 
     def test_replay_49_to_50_keeps_contact_values_out_of_audit(self):
         """After the migration an UPDATE of herd.email is listed in changed_fields without its value."""

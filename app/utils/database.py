@@ -5409,8 +5409,15 @@ def _run_migrations():
             .scalar()
         )
         current_version = SchemaHistory.select(fn.MAX(SchemaHistory.version)).scalar()  # pylint: disable=E1120
-        # the organization fields' migration under its branch number 51, which the yearly report now holds
-        if SchemaHistory.select().where(SchemaHistory.version != 52, SchemaHistory.comment == ORGANIZATION_52).exists():
+        # a 51 that is not the yearly report's, without its tables: the organization fields' branch ran as 51
+        # (migrated or bootstrapped) before the yearly report took the number; main's 51 always has the tables
+        row_51 = SchemaHistory.get_or_none(SchemaHistory.version == 51)
+        report_tables = {model._meta.table_name for model in ARSRAPPORT_MODELS}
+        if (
+            row_51 is not None
+            and not (row_51.comment or "").startswith(ARSRAPPORT_51)
+            and not report_tables <= set(DATABASE.get_tables())
+        ):
             raise RuntimeError(
                 "This development database ran the organization fields as migration 51, now 52, and lacks the "
                 "yearly report v2 schema. Rebuild this development database from scratch. For a disposable Compose "
