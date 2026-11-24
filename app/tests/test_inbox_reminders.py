@@ -46,7 +46,7 @@ class TestIncompleteMail(ReminderTest):
         inbox.change_state(item, self.helper, "tagen")
         self.assertEqual(self.sent(), [])  # an older, cancelled request for the same item
         inbox.change_state(item, self.helper, "ofullstandig", note="Skicka den saknade bilagan.")
-        self.login("hjalp")
+        self.login(self.helper.email)  # InboxMailTest gives every account a new address
         token = self.post(f"/{item.id}/slapp").get_json()["undo"]
         self.assertEqual(self.sent(), [])
         older, current = self.mails("inlasning.ofullstandig")
@@ -63,7 +63,7 @@ class TestIncompleteMail(ReminderTest):
     def test_undo_release_leaves_a_claimed_or_sent_request_to_the_sender(self):
         item, _ = self.incomplete()
         (row,) = self.mails("inlasning.ofullstandig")
-        self.login("hjalp")
+        self.login(self.helper.email)
         token = refused = None
 
         def while_sending(_msg):
