@@ -16,7 +16,7 @@ from zoneinfo import ZoneInfo
 from peewee import Case, Expression, IntegrityError, fn
 
 from utils import settings
-from utils.buyer_mail import queue_buyer_mails
+from utils.buyer_mail import lock_buyer_addresses, queue_buyer_mails
 from utils.database import (
     DB_PROXY,
     HOLDER_CHANGING_KINDS,
@@ -40,7 +40,6 @@ from utils.database import (
     ht_sort_key,
     lock_individuals,
 )
-from utils.login_code import lock_addresses
 from utils.mail import address_hash, cancel_withdrawn_buyer_mails, forget_recipient, is_address, resume_buyer_mails
 
 UNPROMOTE_REASON = "avpromoverad"
@@ -118,7 +117,7 @@ def _buyer_for_sale(fields, user, sale_date, *, replaces=None):
     with DB_PROXY.atomic():
         if email := fields["email"]:
             email = email.strip().lower()
-            lock_addresses([email])
+            lock_buyer_addresses([email])
             same_address = fn.lower(fn.trim(BuyerContact.email)) == email
             if settings.mail.link_secret:  # the erase link also covers rows whose e-mail has been purged
                 same_address |= BuyerContact.erased_email_hash == address_hash(email)
@@ -1113,6 +1112,7 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
         carried = {
             i: r.holder_contact_id for i, r in pairs.items() if parsed[i]["buyer"] is None and r.holder_contact_id
         }
+        lock_buyer_addresses(e["buyer"]["email"] for e in parsed if e["buyer"])
         voided = _void_rows([by_id[v] for v in void_ids], user, cleaned, op)
         written, current = [], list(kept)
         for index, event in enumerate(parsed):

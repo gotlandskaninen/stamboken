@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 from peewee import fn
 
+from utils import settings
 from utils.database import (
     DB_PROXY,
     HOLDER_CHANGING_KINDS,
@@ -46,6 +47,23 @@ _MONTHS = (
     "november",
     "december",
 )
+
+
+BUYER_ADDRESS_LOCK = 0x48424241  # "HBBA": buyers' addresses
+
+
+def lock_buyer_addresses(addresses):
+    """After the rabbits, take every address lock in ascending lock-id order, including on a multi-sale report."""
+    keys = {(email or "").strip().lower() for email in addresses} - {""}
+    if not keys:
+        return
+    if settings.mail.link_secret:
+        keys = {address_hash(email) for email in keys}
+    DB_PROXY.execute_sql(
+        "SELECT pg_advisory_xact_lock(%s, id) FROM "
+        "(SELECT DISTINCT hashtext(key) AS id FROM unnest(%s::text[]) AS a(key) ORDER BY id) AS locks",
+        (BUYER_ADDRESS_LOCK, list(keys)),
+    )
 
 
 def queue_buyer_mails(contact, sale):

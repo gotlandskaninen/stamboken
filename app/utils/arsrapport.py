@@ -23,6 +23,7 @@ from peewee import JOIN, IntegrityError, fn
 import utils.inbox as inbox
 import utils.report_code as report_code
 from utils.arsrapport_statistik import SEXES, Kanin, innehav, statistik
+from utils.buyer_mail import lock_buyer_addresses
 from utils.data_access import MAX_GESTATION_DAYS
 from utils.database import (
     DB_PROXY,
@@ -3025,6 +3026,7 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         refusals, _ = check(herd, round_, access, report, sub, on=on, check_email=False, transfers=transfers)
         if refusals:
             raise _cannot(refusals)
+        lock_buyer_addresses(t.buyer.get("email") for t in transfers.values() if t.buyer)
         grant = ReportGrant(
             inbox.InboxGrant(item, user, pages[0]) if paper else None, code=access.code, report=report, herd=herd
         )

@@ -177,6 +177,29 @@ class KeptBuyerTest(ArsrapportTest):
         for text in (json.dumps(view), json.dumps(receipt), text_of(receipt_pdf(report, submission)), mailed):
             self.assertFalse([value for value in BUYER_TEXTS if value in text], text[:200])
 
+    def test_submission_holds_both_address_locks_before_the_first_sale(self):
+        create = db.BuyerContact.create
+        locks = []
+
+        def create_buyer(**fields):
+            locks.append(
+                db.DB_PROXY.execute_sql(
+                    "SELECT count(*) FROM pg_locks WHERE pid = pg_backend_pid() AND granted "
+                    "AND locktype = 'advisory' AND classid = %s",
+                    (buyer_mail.BUYER_ADDRESS_LOCK,),
+                ).fetchone()[0]
+            )
+            return create(**fields)
+
+        with mock.patch.object(db.BuyerContact, "create", side_effect=create_buyer):
+            self.ok(
+                self.body(
+                    self.sald(self.a, "utanfor", 2025, 10, 10, kopare={**BUYER, "email": "z@example.org"}),
+                    self.sald(self.b, "utanfor", 2025, 10, 10, kopare={**BUYER, "email": "a@example.org"}),
+                )
+            )
+        self.assertEqual(locks, [2, 2])
+
     def test_withdraw_stops_buyer_mail_and_resubmit_sends_each_kind_once(self):
         buyer = {**BUYER, "email": "kopare@example.org", "membership_optin": True}
         self.ok(self.body(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=buyer), self.kvar(self.b, vikt=2.8)))
