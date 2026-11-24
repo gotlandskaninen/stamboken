@@ -91,6 +91,20 @@ def pointed(pekat):
     return " ".join(_EMAIL.sub("[e-post]", _CODE_FRAGMENT.sub("[kod]", mask_codes(pekat))).split())
 
 
+# A public issue keeps the text of controls and headings only: rows, paragraphs, boxes and links show the page's
+# data, such as a contact person's name (Jonas 2026-11-24). The private issue and the mail keep the whole text.
+_PUBLIC_TEXT = ("knappen", "rubriken", "fältet")
+_KINDS = (*_PUBLIC_TEXT, "länken", "raden", "bilden", "rutan", "texten")
+
+
+def public_pointed(pekat):
+    element = pointed(pekat)
+    kind = element.split(" ", 1)[0]
+    if kind in _PUBLIC_TEXT:
+        return element
+    return kind if kind in _KINDS else ""
+
+
 def _longest_backticks(text):
     return max((len(run) for run in re.findall(r"`+", text)), default=0)
 
@@ -103,7 +117,7 @@ def issue_body(kind, visibility, text, path, version, device, images, ref, pekat
         "",
         f"Sida: {generic_path(path)}",
     ]
-    if element := pointed(pekat):
+    if element := pointed(pekat) if visibility == "privat" else public_pointed(pekat):
         # Inline code as the fence above: mentions, links and HTML in the element's text stay text.
         ticks = "`" * (_longest_backticks(element) + 1)
         lines.append(f"Pekade på: {ticks} {element} {ticks}")

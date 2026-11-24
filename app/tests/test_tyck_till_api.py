@@ -219,11 +219,11 @@ class TestChecks(TyckTillTest):
 
     def test_the_issue_names_the_pointed_element_but_never_the_email_or_the_account(self):
         self.login("hjalp")
-        self.send(vem="publik", email="annan@example.org", pekat="texten ”Kullista”")
+        self.send(vem="publik", email="annan@example.org", pekat="raden ”Kontaktperson Anna Andersson”")
         issue = self.github.created[0]
         text = issue["title"] + issue["body"]
-        self.assertIn("Pekade på: ` texten ”Kullista” `", text)
-        for private in ("annan@example.org", "hjalp", "Konto"):
+        self.assertIn("Pekade på: ` raden `", text)
+        for private in ("Anna Andersson", "annan@example.org", "hjalp", "Konto"):
             self.assertNotIn(private, text)
         # The id as a word of its own, outside the version and the reference, whose digits it may share.
         rest = "\n".join(line for line in text.splitlines() if not line.startswith(("Version:", "Referens:")))
