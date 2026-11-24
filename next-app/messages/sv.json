@@ -1,4 +1,74 @@
 {
+  "queue": {
+    "modesLabel": "Lägen",
+    "modes": {
+      "nya": "Nya",
+      "mina": "Mina",
+      "oppna": "Alla öppna",
+      "klara": "Klara"
+    },
+    "helpTitle": "Vad betyder lägena?",
+    "help": {
+      "nya": "Ingen har tagit ärendet än.",
+      "mina": "Ärenden du har tagit, också de som väntar på svar.",
+      "oppna": "Allt som inte är klart, oavsett vem som har det.",
+      "klara": "Registrerade och stängda. Mejl och meddelanden utan dokument gallras efter 13 månader."
+    },
+    "listLabel": "Ärendelista",
+    "caseLabel": "Valt ärende",
+    "scope": "Genbanker",
+    "myScope": "Mina genbanker",
+    "allScope": "Alla",
+    "search": "Sök besättning",
+    "order": "Ordning",
+    "oldest": "Äldst först",
+    "newest": "Nyast först",
+    "count_one": "{{count}} ärende",
+    "count_other": "{{count}} ärenden",
+    "keys": "Upp- och nedpil byter ärende",
+    "empty": "Inga ärenden här.",
+    "reset": "Visa alla öppna",
+    "pages": "Sidor i ärendelistan",
+    "prev": "Föregående",
+    "next": "Nästa",
+    "unknownSender": "okänd avsändare",
+    "unknownHerd": "okänd besättning",
+    "untaken": "Ingen har tagit det",
+    "with": "Hos {{name}}",
+    "photos_zero": "inga foton",
+    "photos_one": "1 foto",
+    "photos_other": "{{count}} foton",
+    "minutes": "{{count}} min",
+    "hours": "{{count}} tim",
+    "days_one": "1 dag",
+    "days_other": "{{count}} dagar",
+    "flags": {
+      "blurry": "kan vara oskarp",
+      "noProof": "bevis saknas",
+      "stalled": "står still",
+      "skipped": "bilden sparades inte",
+      "longWait": "har väntat länge"
+    },
+    "states": {
+      "ny": "Ny",
+      "tagen": "Taget",
+      "mine": "Ditt",
+      "vantar_uppfodare": "Väntar på svar",
+      "vantar_foralder": "Väntar på förälder",
+      "hos_genbanksansvarig": "Hos genbanksansvarig",
+      "ofullstandig": "Ofullständig",
+      "klar": "Klar",
+      "dubblett": "Dubblett",
+      "skrap": "Skräp"
+    },
+    "kinds": {
+      "upload": "Uppladdning",
+      "mail": "Mejl",
+      "meddelande": "Meddelande",
+      "kontroll": "Kontroll",
+      "avisering": "Avisering"
+    }
+  },
   "common": {
     "save": "Spara",
     "cancel": "Avbryt",

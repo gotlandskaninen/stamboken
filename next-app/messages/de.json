@@ -1,4 +1,74 @@
 {
+  "queue": {
+    "modesLabel": "Ansichten",
+    "modes": {
+      "nya": "Neu",
+      "mina": "Meine",
+      "oppna": "Alle offenen",
+      "klara": "Erledigt"
+    },
+    "helpTitle": "Was bedeuten die Ansichten?",
+    "help": {
+      "nya": "Der Vorgang wurde noch nicht übernommen.",
+      "mina": "Von dir übernommene Vorgänge, auch wenn du auf eine Antwort wartest.",
+      "oppna": "Alle offenen Vorgänge, unabhängig von der Zuständigkeit.",
+      "klara": "Registrierte und geschlossene Vorgänge. E-Mails und Nachrichten ohne Dokumente werden nach 13 Monaten gelöscht."
+    },
+    "listLabel": "Vorgangsliste",
+    "caseLabel": "Ausgewählter Vorgang",
+    "scope": "Genbanken",
+    "myScope": "Meine Genbanken",
+    "allScope": "Alle",
+    "search": "Bestand suchen",
+    "order": "Sortierung",
+    "oldest": "Älteste zuerst",
+    "newest": "Neueste zuerst",
+    "count_one": "{{count}} Vorgang",
+    "count_other": "{{count}} Vorgänge",
+    "keys": "Pfeiltasten wechseln den Vorgang",
+    "empty": "Keine Vorgänge vorhanden.",
+    "reset": "Alle offenen Vorgänge anzeigen",
+    "pages": "Seiten der Vorgangsliste",
+    "prev": "Zurück",
+    "next": "Weiter",
+    "unknownSender": "Absender unbekannt",
+    "unknownHerd": "Bestand unbekannt",
+    "untaken": "Noch nicht übernommen",
+    "with": "Bei {{name}}",
+    "photos_zero": "keine Fotos",
+    "photos_one": "1 Foto",
+    "photos_other": "{{count}} Fotos",
+    "minutes": "{{count}} Min.",
+    "hours": "{{count}} Std.",
+    "days_one": "1 Tag",
+    "days_other": "{{count}} Tage",
+    "flags": {
+      "blurry": "möglicherweise unscharf",
+      "noProof": "Übergabenachweis fehlt",
+      "stalled": "ohne Fortschritt",
+      "skipped": "Bild wurde nicht gespeichert",
+      "longWait": "lange Wartezeit"
+    },
+    "states": {
+      "ny": "Neu",
+      "tagen": "Übernommen",
+      "mine": "Dein Vorgang",
+      "vantar_uppfodare": "Wartet auf Antwort",
+      "vantar_foralder": "Wartet auf Elterntier",
+      "hos_genbanksansvarig": "Bei der Genbankleitung",
+      "ofullstandig": "Unvollständig",
+      "klar": "Erledigt",
+      "dubblett": "Duplikat",
+      "skrap": "Spam"
+    },
+    "kinds": {
+      "upload": "Upload",
+      "mail": "E-Mail",
+      "meddelande": "Nachricht",
+      "kontroll": "Prüfung",
+      "avisering": "Benachrichtigung"
+    }
+  },
   "common": {
     "save": "Speichern",
     "cancel": "Abbrechen",

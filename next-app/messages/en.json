@@ -1,4 +1,74 @@
 {
+  "queue": {
+    "modesLabel": "Views",
+    "modes": {
+      "nya": "New",
+      "mina": "Mine",
+      "oppna": "All open",
+      "klara": "Closed"
+    },
+    "helpTitle": "What do the views mean?",
+    "help": {
+      "nya": "No one has taken the case yet.",
+      "mina": "Cases you have taken, including those awaiting a reply.",
+      "oppna": "All open cases, whoever is handling them.",
+      "klara": "Registered and closed cases. Emails and messages without documents are deleted after 13 months."
+    },
+    "listLabel": "Case list",
+    "caseLabel": "Selected case",
+    "scope": "Gene banks",
+    "myScope": "My gene banks",
+    "allScope": "All",
+    "search": "Search herds",
+    "order": "Sort order",
+    "oldest": "Oldest first",
+    "newest": "Newest first",
+    "count_one": "{{count}} case",
+    "count_other": "{{count}} cases",
+    "keys": "Use the up and down arrows to change case",
+    "empty": "No cases here.",
+    "reset": "Show all open cases",
+    "pages": "Case list pages",
+    "prev": "Previous",
+    "next": "Next",
+    "unknownSender": "unknown sender",
+    "unknownHerd": "unknown herd",
+    "untaken": "Unassigned",
+    "with": "With {{name}}",
+    "photos_zero": "no photos",
+    "photos_one": "1 photo",
+    "photos_other": "{{count}} photos",
+    "minutes": "{{count}} min",
+    "hours": "{{count}} h",
+    "days_one": "1 day",
+    "days_other": "{{count}} days",
+    "flags": {
+      "blurry": "may be blurry",
+      "noProof": "missing proof of transfer",
+      "stalled": "stalled",
+      "skipped": "image was not saved",
+      "longWait": "long wait"
+    },
+    "states": {
+      "ny": "New",
+      "tagen": "Taken",
+      "mine": "Yours",
+      "vantar_uppfodare": "Awaiting reply",
+      "vantar_foralder": "Awaiting parent",
+      "hos_genbanksansvarig": "With gene bank manager",
+      "ofullstandig": "Incomplete",
+      "klar": "Done",
+      "dubblett": "Duplicate",
+      "skrap": "Junk"
+    },
+    "kinds": {
+      "upload": "Upload",
+      "mail": "Email",
+      "meddelande": "Message",
+      "kontroll": "Check",
+      "avisering": "Notification"
+    }
+  },
   "common": {
     "save": "Save",
     "cancel": "Cancel",

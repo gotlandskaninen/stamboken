@@ -1,6 +1,7 @@
 // The intake queue ("Inkorgen"): types, labels and the rules the two pages
 // share. The API contract is docs/inkorg.md; Flask decides, this only chooses
 // what to offer.
+import type { TFunction } from "i18next";
 import type { NumberCheck } from "@/app/(app)/stamboken/(dashboard)/min-besattning/actions";
 import { OUTSIDE_GENEBANK_HERDS } from "@/utils/saleRules";
 
@@ -20,6 +21,9 @@ export type Person = { id: number; name: string };
 export interface InboxItem {
   id: number;
   kind: string;
+  subject?: string | null;
+  has_skipped?: boolean;
+  sender_address?: string | null;
   state: ItemState;
   genebank_id: number | null;
   herd: string | null;
@@ -66,6 +70,7 @@ export interface InboxDocument {
   individual: string | null;
   /** The sale registered from the document (for a proof: the sale it shows). */
   herd_tracking_id?: number | null;
+  has_original?: boolean;
   has_copy: boolean;
 }
 
@@ -120,12 +125,16 @@ export interface QueueList {
   items: InboxItem[];
   total: number;
   counts: Partial<Record<ItemState, number>>;
+  next_untaken: number[];
+  mode_counts: Record<QueueMode, number>;
   interpretation?: InterpretationSummary;
   /** The scope the server applied, and the genebanks the user manages or helps in. */
   scope?: QueueScope;
   my_genebanks?: number[];
 }
 
+export const QUEUE_MODES = ["nya", "mina", "oppna", "klara"] as const;
+export type QueueMode = (typeof QUEUE_MODES)[number];
 export type QueueScope = "mina" | "alla";
 
 /** An item of a genebank the user has no role in: readable, but nothing can be saved. */
@@ -215,6 +224,33 @@ export const WARNING_LABEL: Record<string, string> = {
 };
 
 export const kindLabel = (kind: string) => KIND_LABEL[kind] ?? kind;
+
+export const queueSubject = (
+  item: Pick<InboxItem, "subject" | "kind">,
+  t: TFunction,
+) =>
+  item.subject?.trim() ||
+  t(`queue.kinds.${item.kind}`, { defaultValue: kindLabel(item.kind) });
+
+export function queueStatus(
+  item: Pick<InboxItem, "state" | "assigned_to">,
+  userId: number,
+  t: TFunction,
+) {
+  const state =
+    item.state === "tagen" && item.assigned_to?.id === userId
+      ? "mine"
+      : item.state;
+  return t(`queue.states.${state}`);
+}
+
+export function queueWait(from: string, now: number, t: TFunction) {
+  const minutes = Math.max(0, (now - Date.parse(from)) / 60_000);
+  if (minutes < 60) return t("queue.minutes", { count: Math.floor(minutes) });
+  if (minutes < 1440)
+    return t("queue.hours", { count: Math.round(minutes / 60) });
+  return t("queue.days", { count: Math.round(minutes / 1440) });
+}
 
 /** Time since `from`, in plain words. */
 export function waited(from: string, now = Date.now()): string {
@@ -603,4 +639,17 @@ export function people(
   for (const p of [...items.map((i) => i.assigned_to), ...extra])
     if (p && !byId.has(p.id)) byId.set(p.id, p);
   return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, "sv"));
+}
+
+export function queueHref(
+  query: string,
+  changes: Record<string, string | number | null>,
+) {
+  const params = new URLSearchParams(query);
+  for (const [key, value] of Object.entries(changes)) {
+    if (value === null || value === "") params.delete(key);
+    else params.set(key, String(value));
+  }
+  const search = params.toString();
+  return "/stamboken/inkorg" + (search ? `?${search}` : "");
 }

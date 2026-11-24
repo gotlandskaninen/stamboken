@@ -1,14 +1,26 @@
 import "@testing-library/jest-dom/vitest";
+import "@/i18n";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  within,
+} from "@testing-library/react";
 
-const fetchApi = vi.hoisted(() => vi.fn());
-vi.mock("@/lib/api", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("@/lib/api")>()),
+const { fetchApi, replace, push } = vi.hoisted(() => ({
+  fetchApi: vi.fn(),
+  replace: vi.fn(),
+  push: vi.fn(),
+}));
+vi.mock("next/navigation", () => ({ useRouter: () => ({ replace, push }) }));
+vi.mock("@/lib/api", async (original) => ({
+  ...(await original<typeof import("@/lib/api")>()),
   fetchApi,
 }));
 vi.mock("@/lib/auth", () => ({
-  requireUser: async () => ({ id: 3, fullname: "Konto 3" }),
+  requireUser: async () => ({ id: 3, fullname: "Konto 3", is_manager: [1] }),
 }));
 vi.mock("@/lib/inkorg-server", () => ({
   requireQueueWorker: async () => undefined,
@@ -19,41 +31,143 @@ vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/GmailAlarm", () => ({
 }));
 vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/QueueControls", () => ({
   AssignHerd: () => null,
-  RowActions: () => null,
 }));
 
 import InkorgPage from "@/app/(app)/stamboken/(dashboard)/inkorg/page";
 
+const row = {
+  id: 14,
+  subject: "Intyg för kullen",
+  kind: "mail",
+  herd: "G12",
+  state: "ny",
+  sender_address: "avsandare@example.org",
+  documents: 2,
+  received_at: "2020-01-01T12:00:00Z",
+  assigned_to: null,
+  maybe_blurry: true,
+  has_skipped: true,
+};
+const queue = {
+  items: [row, { ...row, id: 15, subject: "En följdfråga" }],
+  total: 2,
+  mode_counts: { nya: 2, mina: 5, oppna: 8, klara: 40 },
+  scope: "mina",
+  my_genebanks: [1],
+};
 beforeEach(() => {
-  fetchApi.mockReset();
-  fetchApi.mockImplementation(async (path: string) =>
-    path.startsWith("/v2/inkorg?")
-      ? { items: [], total: 0, counts: {}, scope: "mina", my_genebanks: [1] }
-      : { genebanks: [] },
+  vi.clearAllMocks();
+  vi.stubGlobal(
+    "matchMedia",
+    vi.fn(() => ({
+      matches: false,
+      addEventListener() {},
+      removeEventListener() {},
+    })),
   );
+  fetchApi.mockResolvedValue(queue);
 });
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+});
 
 const show = async (sp: Record<string, string> = {}) =>
   render(await InkorgPage({ searchParams: Promise.resolve(sp) }));
 
-describe("the queue list's scope switch", () => {
-  it("marks the scope the server applied and sends none unless chosen", async () => {
+describe("Inkorg", () => {
+  it("shows the scoped totals, initial scope and oldest-first ordering", async () => {
     await show();
-    expect(fetchApi.mock.calls[0][0]).not.toContain("scope");
+    expect(fetchApi.mock.calls[0][0]).not.toContain("scope=");
     expect(
       screen.getByRole("link", { name: "Mina genbanker" }),
     ).toHaveAttribute("aria-current", "page");
-    expect(
-      screen.getByRole("link", { name: "Alla genbanker" }),
-    ).not.toHaveAttribute("aria-current");
-    expect(
-      screen.getByRole("link", { name: "Alla genbanker" }),
-    ).toHaveAttribute("href", "/stamboken/inkorg?scope=alla");
+    expect(screen.getByRole("link", { name: "Alla" })).toHaveAttribute(
+      "href",
+      "/stamboken/inkorg?scope=alla",
+    );
+    expect(screen.getByRole("link", { name: "Mina 5" })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Klara 40" })).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Ordning" })).toHaveValue(
+      "oldest",
+    );
+    expect(replace).not.toHaveBeenCalled();
   });
 
-  it("passes the chosen scope on to the API", async () => {
+  it("links by subject, includes sender, flags and exactly one state label", async () => {
+    await show();
+    const item = screen.getByRole("link", { name: /#14 Intyg för kullen/ });
+    expect(item).toHaveAttribute("href", "/stamboken/inkorg?arende=14");
+    expect(item).toHaveTextContent(
+      "avsandare@example.org · G12 · mejl · 2 foton · Ingen har tagit det",
+    );
+    expect(within(item).getByText("Ny")).toBeVisible();
+    for (const flag of [
+      "kan vara oskarp",
+      "bilden sparades inte",
+      "har väntat länge",
+    ])
+      expect(within(item).getByText(flag)).toBeVisible();
+  });
+
+  it("moves focus and opens the adjacent item with the arrow keys", async () => {
     await show({ scope: "alla" });
-    expect(fetchApi.mock.calls[0][0]).toContain("scope=alla");
+    const first = screen.getByRole("link", { name: /#14/ });
+    const second = screen.getByRole("link", { name: /#15/ });
+    first.focus();
+    fireEvent.keyDown(first, { key: "ArrowDown" });
+    expect(second).toHaveFocus();
+    expect(replace).toHaveBeenLastCalledWith(
+      "/stamboken/inkorg?scope=alla&arende=15",
+      { scroll: false },
+    );
+    fireEvent.keyDown(second, { key: "ArrowUp" });
+    expect(first).toHaveFocus();
+    expect(replace).toHaveBeenLastCalledWith(
+      "/stamboken/inkorg?scope=alla&arende=14",
+      { scroll: false },
+    );
+  });
+
+  it("opens the first item by URL on a wide screen", async () => {
+    vi.mocked(matchMedia).mockReturnValue({
+      matches: true,
+      addEventListener() {},
+      removeEventListener() {},
+    } as unknown as MediaQueryList);
+    await show();
+    expect(replace).toHaveBeenCalledWith("/stamboken/inkorg?arende=14", {
+      scroll: false,
+    });
+  });
+
+  it("resets an empty filtered list and keeps its scope", async () => {
+    fetchApi.mockResolvedValue({ ...queue, items: [], total: 0 });
+    await show({ mode: "mina", scope: "alla", herd: "M44", order: "newest" });
+    const query = new URL(fetchApi.mock.calls[0][0], "https://example.org")
+      .searchParams;
+    expect(Object.fromEntries(query)).toMatchObject({
+      mode: "mina",
+      scope: "alla",
+      herd_prefix: "M44",
+      order: "newest",
+    });
+    expect(screen.getByText("Inga ärenden här.")).toBeVisible();
+    const reset = screen.getByRole("link", { name: "Visa alla öppna" });
+    expect(reset.getAttribute("href")).toContain("scope=alla");
+    expect(reset.getAttribute("href")).not.toMatch(/herd|mode=mina/);
+  });
+
+  it("updates the herd search and clears the page offset", async () => {
+    vi.useFakeTimers();
+    await show({ offset: "50" });
+    fireEvent.change(screen.getByRole("searchbox"), {
+      target: { value: "g12" },
+    });
+    vi.advanceTimersByTime(350);
+    expect(replace).toHaveBeenLastCalledWith("/stamboken/inkorg?herd=G12", {
+      scroll: false,
+    });
   });
 });
