@@ -9,7 +9,7 @@ import utils.data_access as da
 import utils.database as db
 from peewee import IntegrityError
 
-from tests.database_test import _USE_POSTGRES, IsolatedSchemaTest
+from tests.database_test import _USE_POSTGRES, IsolatedSchemaTest, rewind_migrations
 from tests.ht_helpers import ht_row
 
 NEW_TABLES = (
@@ -197,6 +197,7 @@ class TestArsrapportMigration(IsolatedSchemaTest):
 
     def test_earlier_53_imports_delivered_invitations_after_address_purge(self):
         with db.DB_PROXY.atomic() as tx:
+            rewind_migrations(54)
             db.BuyerInvitation.drop_table()
             buyer = db.BuyerContact.create(
                 name="Testköpare", town="Testort", erased_email_hash="a" * 64, created_by_user=self.admin, purge_at=NOW
@@ -213,6 +214,17 @@ class TestArsrapportMigration(IsolatedSchemaTest):
             db.MailMessage.create(**invitation, status="cancelled", address_hash="b" * 64)
             db.check_migrations()
             self.assertEqual(list(db.BuyerInvitation.select().tuples()), [("a" * 64, NOW)])
+            tx.rollback()
+
+    def test_boot_refuses_account_rules_branch_53_before_buyer_invitation_backfill(self):
+        with db.DB_PROXY.atomic() as tx:
+            rewind_migrations(54)
+            _sql("ALTER TABLE buyer_contact DROP COLUMN erased_email_hash")
+            db.BuyerInvitation.drop_table()
+            with self.assertRaisesRegex(RuntimeError, r"earlier.*account rules.*53.*Rebuild"):
+                db.check_migrations()
+            self.assertFalse(db.BuyerInvitation.table_exists())
+            self.assertEqual(db.SchemaHistory.select(db.fn.MAX(db.SchemaHistory.version)).scalar(), 53)
             tx.rollback()
 
     def test_boot_refuses_buyer_branch_50_before_replaying_main(self):
@@ -252,7 +264,7 @@ class TestArsrapportMigration(IsolatedSchemaTest):
                     self.assertEqual(db.SchemaHistory.select(db.fn.MAX(db.SchemaHistory.version)).scalar(), version)
             tx.rollback()
 
-    def test_main_50_can_advance_to_53_and_restart(self):
+    def test_main_50_can_advance_to_current_version_and_restart(self):
         with db.DB_PROXY.atomic() as tx:
             to_v49_shape()
             _sql("ALTER TABLE herd DROP COLUMN contact_member_id, DROP COLUMN contact_pending")
@@ -265,7 +277,8 @@ class TestArsrapportMigration(IsolatedSchemaTest):
             db.check_migrations()
             db.check_migrations()  # the fully migrated database passes the same guard on every boot
             self.assertEqual(
-                [r.version for r in db.SchemaHistory.select().order_by(db.SchemaHistory.version)], [50, 51, 52, 53]
+                [r.version for r in db.SchemaHistory.select().order_by(db.SchemaHistory.version)],
+                list(range(50, db.CURRENT_SCHEMA_VERSION + 1)),
             )
             self.assertEqual(snapshot(), self.bootstrapped)
             self.assertTrue(

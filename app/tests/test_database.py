@@ -1988,6 +1988,8 @@ class TestDatabaseMigration(DatabaseTest):
             "ALTER TABLE hbuser DROP COLUMN rules_accepted_at, DROP COLUMN rules_version, DROP COLUMN rules_sha256"
         )
         db.DATABASE.execute_sql("DROP TABLE account_rules_snapshot")
+        db.DATABASE.execute_sql("ALTER TABLE mail_sender DROP COLUMN code_queue_errors, DROP COLUMN code_limit_at")
+        self.assertIn("erased_email_hash", {c.name for c in db.DATABASE.get_columns("buyer_contact")})
         db.check_migrations()
         self.assertEqual(db.SchemaHistory.get_by_id(version).comment, "hbuser account rules acceptance")
         self.assertEqual(shape(), fresh)

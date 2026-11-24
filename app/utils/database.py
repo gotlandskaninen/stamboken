@@ -5559,11 +5559,21 @@ def _run_migrations():
         CURRENT_SCHEMA_VERSION,
     )
 
-    if current_version == 53:  # earlier 53 on the buyer branch
+    if current_version == 53:
+        buyer_columns = {c.name for c in DATABASE.get_columns("buyer_contact")}
+        if "erased_email_hash" not in buyer_columns and {"rules_sha256", "rules_accepted_at", "rules_version"} <= {
+            c.name for c in DATABASE.get_columns("hbuser")
+        }:
+            raise RuntimeError(
+                "An earlier version of the login branch applied account rules as migration 53, now 54, "
+                "and lacks buyer_contact.erased_email_hash. Rebuild the disposable development or CI database. "
+                "Är detta inte en utvecklings- eller CI-databas: stoppa och utred migreringen."
+            )
+        # Earlier versions of the buyer mail migration lacked the invitation table or the review flag.
         if not BuyerInvitation.table_exists():
             with DATABASE.atomic():
                 _create_buyer_invitations()
-        if "email_review_pending" not in {c.name for c in DATABASE.get_columns("buyer_contact")}:
+        if "email_review_pending" not in buyer_columns:
             _add_buyer_email_review()
 
     while current_version is None or current_version < CURRENT_SCHEMA_VERSION:
