@@ -92,6 +92,10 @@ function measure() {
         b.closest("header, [role=tablist]")
       )
         continue;
+      // The Tyck till tab floats at the right edge over whatever scrolls by
+      // (Jonas 2026-11-24, docs/tyck-till.md), like the sticky bars above.
+      if ([a, b].some((el) => el.matches("[aria-label='Tyck till om sidan']")))
+        continue;
       // Tabs, segmented buttons, list rows and cards sit edge to edge.
       const parent = a.parentElement;
       if (
