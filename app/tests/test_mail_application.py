@@ -354,6 +354,29 @@ class TestMemberAdded(MailTest):
         self.later(days=1)
         self.assertEqual(self.sent_to(), ["person10@example.org", "person11@example.org"])
 
+    def test_no_day_holds_more_than_ten_of_a_membership_s_notices(self):
+        for group, hours in enumerate((0, 23.98, 0.04)):  # ten at 10.00, ten the next day at 09.59 and at 10.01
+            self.later(hours=hours)
+            for n in range(mail.ADDED_A_DAY):
+                self.add(first_name=f"Nummer {group} {n}", email=f"person{group}-{n}@example.org")
+        due = sorted(row.next_attempt_at for row in self.mails())
+        self.assertTrue(all(b - a >= timedelta(days=1) for a, b in zip(due, due[mail.ADDED_A_DAY :], strict=False)))
+
+    def test_a_claim_taken_away_before_the_sender_reads_its_row_is_not_sent(self):
+        person = self.add()
+        relay = self.relay()
+        read = db.MailMessage.get_by_id
+
+        def meanwhile(row_id):  # between the claim and its read: a new address queues the row again, then "Stoppa"
+            matrikel.set_member_email(db.Member.get_by_id(person.id), "annan@example.org", self.actor, by="matrikel")
+            stopped = {"status": "cancelled", "last_error": "stoppat i statusvyn"}
+            db.MailMessage.update(**stopped).where(db.MailMessage.status == "queued").execute()
+            return read(row_id)
+
+        with mock.patch.object(db.MailMessage, "get_by_id", side_effect=meanwhile):
+            mail.send_pending(self.now)
+        self.assertEqual((relay.sent, self.mails()[0].status), ([], "cancelled"))
+
     def test_a_refused_notice_uses_a_place_of_the_membership_s_day(self):
         refusal = smtplib.SMTPRecipientsRefused({"x": (550, b"5.1.1 no such user")})
         for n in range(mail.ADDED_A_DAY):

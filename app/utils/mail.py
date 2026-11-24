@@ -418,10 +418,14 @@ def _claim(now):
         )
         RETURNING id
         """,
-        (now, str(uuid.uuid4()), now),
+        (now, str(token := uuid.uuid4()), now),
     )
     found = cursor.fetchone()
-    return MailMessage.get_by_id(found[0]) if found else None
+    if found is None:
+        return None
+    row = MailMessage.get_by_id(found[0])
+    row.claim_token = token  # ours, also if the claim was taken away before this read: _renew must not match NULL
+    return row
 
 
 def _renew(row):
@@ -878,15 +882,20 @@ def queue_member_added(person):
     if person.role not in _ADDED_AS or not person.email or person.end_date is not None:
         return None
     ref = ("membership", person.membership_id)
-    now = _utcnow()
-    # Every row of the membership due in the last day or later holds a place: older notices go first.
-    held = (
-        (MailMessage.kind == "medlemskap.tillagd")
-        & (MailMessage.ref_type == ref[0])
-        & (MailMessage.ref_id == ref[1])
-        & (MailMessage.next_attempt_at > now - timedelta(days=1))
+    # A day after the membership's tenth latest notice at the earliest: no day holds more than ADDED_A_DAY, and
+    # older notices go first.
+    tenth = (
+        MailMessage.select(MailMessage.next_attempt_at)
+        .where(
+            (MailMessage.kind == "medlemskap.tillagd")
+            & (MailMessage.ref_type == ref[0])
+            & (MailMessage.ref_id == ref[1])
+        )
+        .order_by(MailMessage.next_attempt_at.desc())
+        .offset(ADDED_A_DAY - 1)
+        .first()
     )
-    not_before = now + timedelta(days=MailMessage.select().where(held).count() // ADDED_A_DAY)
+    not_before = max(_utcnow(), tenth.next_attempt_at + timedelta(days=1)) if tenth else _utcnow()
     key = f"medlemskap.tillagd:{person.id}"
     params = {"member_id": person.id}
     queued = enqueue_mail(
