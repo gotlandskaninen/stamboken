@@ -103,17 +103,16 @@ def _existing_account(person, address):
 
 def create_pending_account(_displayed_version, displayed_sha256):
     """Recheck the proof and possible accounts under lock, then insert and link one new user atomically."""
-    with DB_PROXY.atomic():
-        # Fetch at submission, before taking the member and account-table locks.
-        rules = published_rules()
-        if rules is None:
-            raise RulesUnavailable
-        version, text = rules
-        digest = sha256(text.encode("utf-8")).hexdigest()
-        # The text decides, not the revision: a reseed republishes the same text under a new revision.
-        if digest != displayed_sha256:
-            raise RulesChanged
+    rules = published_rules()
+    if rules is None:
+        raise RulesUnavailable
+    version, text = rules
+    digest = sha256(text.encode("utf-8")).hexdigest()
+    # A reseed can republish the same text under a new revision.
+    if digest != displayed_sha256:
+        raise RulesChanged
 
+    with DB_PROXY.atomic():
         person_id = session["pending_member_id"]
         try:
             matrikel.lock_person_membership(person_id)

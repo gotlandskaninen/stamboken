@@ -265,6 +265,16 @@ class TestLoginAccount(MatrikelApiTest):
         self.assertEqual(self.create().status_code, 503)
         self.assert_no_account()
 
+    def test_cms_fetch_happens_outside_the_account_transaction(self):
+        self.pending()
+
+        def read_rules(*args, **kwargs):
+            self.assertFalse(db.DB_PROXY.in_transaction())
+            return self.cms.return_value
+
+        self.cms.side_effect = read_rules
+        self.assertEqual(self.create().status_code, 200)
+
     def test_mass_logout_while_fetching_rules_invalidates_pending_proof(self):
         self.pending()
         with self.client.session_transaction() as proof:
