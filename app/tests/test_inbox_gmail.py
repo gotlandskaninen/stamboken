@@ -12,6 +12,7 @@ import errno
 import io
 import os
 import time
+from contextlib import closing
 from datetime import date, timedelta
 from email.message import EmailMessage
 from email.utils import make_msgid
@@ -19,6 +20,7 @@ from unittest import mock
 
 import herdbook
 import peewee
+import psycopg2
 import requests
 import utils.database as db
 import utils.inbox as inbox
@@ -1087,6 +1089,29 @@ class TestSync(GmailTest):
         self.read()
         self.assertEqual([i.gmail_message_id for i in self.items()], [good])
         self.assertEqual(self.sync().history_id, str(self.fake.history_id))
+
+    def test_a_locked_replier_is_retried_without_counting_or_blocking_other_mail(self):
+        holder = self.holder(self.herds[0])
+        item = self.waiting()
+        reply = self.fake.deliver(message(subject=f"Svar (ärende {item.id})"))
+        other = self.fake.deliver(message(sender="annan@example.org"))
+        db.GmailProcessed.create(gmail_message_id=reply, kind="retry", failures=1)
+
+        with closing(psycopg2.connect(database=db.DATABASE.database, **db.DATABASE.connect_params)) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SET LOCAL idle_in_transaction_session_timeout = '30s'")
+                cursor.execute("SELECT member_id FROM member WHERE member_id = %s FOR UPDATE", (holder.id,))
+            for _ in range(inbox_gmail.FAILED_AFTER + 1):
+                self.read()
+                row = db.GmailProcessed.get_by_id(reply)
+                self.assertEqual((row.kind, row.failures), ("retry", 1))
+                self.assertEqual(self.fake.messages[reply]["labelIds"], ["INBOX"])
+                self.assertIsNone(self.sync().last_error)
+                self.assertTrue(self.done(other))
+
+        self.read()
+        self.assertTrue(self.done(reply))
+        self.assertEqual(item.events.where(db.InboxEvent.kind == "svar").count(), 1)
 
     def test_a_database_or_disk_error_stops_the_run_without_labelling_and_the_next_run_reads_it(self):
         self.read()  # the reader's row, with a history id

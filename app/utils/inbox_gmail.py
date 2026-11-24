@@ -26,6 +26,7 @@ import requests
 from google.auth.exceptions import GoogleAuthError
 from peewee import InterfaceError, OperationalError, fn
 from PIL import Image
+from psycopg2.errors import LockNotAvailable
 
 import utils.inbox as inbox
 import utils.mail as mail
@@ -188,7 +189,17 @@ def _handle(gmail, message_id):
             if _attempt(message_id) > FAILED_AFTER:  # the earlier runs died on it, as a PDF that kills the renderer
                 raise RuntimeError("earlier runs died while reading it")
             received = datetime.fromtimestamp(int(found["internalDate"]) / 1000, timezone.utc)
-            if read_message(message_id, found["raw"], received) == DEMO:
+            try:
+                result = read_message(message_id, found["raw"], received)
+            except (OperationalError, LockNotAvailable) as exc:
+                if not isinstance(getattr(exc, "orig", exc), LockNotAvailable):
+                    raise
+                # Keep the retry row after the history moves on, undoing only this attempt.
+                GmailProcessed.update(failures=GmailProcessed.failures - 1).where(
+                    (GmailProcessed.gmail_message_id == message_id) & (GmailProcessed.kind == RETRY)
+                ).execute()
+                return None
+            if result == DEMO:
                 GmailProcessed.delete().where(GmailProcessed.gmail_message_id == message_id).execute()  # no row for it
                 gmail.modify(message_id, add=[gmail.label(DEMO)])
                 return None
