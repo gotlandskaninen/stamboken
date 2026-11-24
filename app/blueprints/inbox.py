@@ -7,6 +7,7 @@ import datetime
 import logging
 import os
 import re
+import struct
 import threading
 import uuid
 from contextlib import contextmanager
@@ -155,7 +156,11 @@ def _each_image(file, room, handle):
             if source.width * source.height > MAX_PIXELS:  # Image.open reads only the header
                 raise _Refused(_too_many_pixels())
             source.load()
-            image = ImageOps.exif_transpose(source).convert("RGB")
+            try:
+                image = ImageOps.exif_transpose(source)
+            except (SyntaxError, struct.error, ValueError, TypeError, OSError):
+                image = source  # damaged metadata, but the pixels have already been decoded
+            image = image.convert("RGB")
     try:
         handle(image)
     finally:

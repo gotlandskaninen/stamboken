@@ -79,6 +79,7 @@ class _HtmlText(HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
         self.parts, self.hidden = [], 0
+        self.image_urls = set()
 
     def handle_starttag(self, tag, attrs):
         if tag in self.HIDDEN:
@@ -87,6 +88,10 @@ class _HtmlText(HTMLParser):
             self.hidden = 0  # a head left open hides nothing of the body
         elif tag == "br":
             self.parts.append("\n")
+        elif tag == "img" and not self.hidden:
+            src = (dict(attrs).get("src") or "").strip()
+            if src.lower().startswith(("https://", "http://")):
+                self.image_urls.add(src)
 
     def handle_endtag(self, tag):
         if tag in self.HIDDEN:
@@ -259,9 +264,16 @@ def read_message(gmail_id, raw, received_at=None):
     replied_to = _hosts(msg.get("In-Reply-To"), msg.get("References"))
     if replied_to and here not in replied_to:
         return DEMO
-    text = _text(msg)
+    text, linked_image = _body(msg)
     stored, skipped = _store(_attachments(msg))
     try:
+        if linked_image:
+            skipped.append(
+                {
+                    "name": "Länkad bild",
+                    "reason": "Bilden finns bara som en extern länk. Be avsändaren bifoga bildfilen.",
+                }
+            )
         with DB_PROXY.atomic():
             replied = _replied_item(msg)
             if replied is not None and _may_answer(msg, sender, replied):
@@ -307,18 +319,23 @@ def _content(part):
         return part.get_payload(decode=True).decode("utf-8", "replace")
 
 
-def _text(msg):
-    """The mail's own text: its plain text, or its HTML without the tags."""
-    part = msg.get_body(preferencelist=("plain", "html"))
-    if part is None:
-        return None
-    text = _content(part)[:MAX_BODY]
-    if part.get_content_subtype() == "html":
-        parser = _HtmlText()
-        parser.feed(text)
+def _body(msg):
+    """The preferred text and whether the HTML refers to an image available only by URL."""
+    parser = _HtmlText()
+    html = msg.get_body(preferencelist=("html",))
+    if html is not None:
+        parser.feed(_content(html)[:MAX_BODY])
         parser.close()
+    plain = msg.get_body(preferencelist=("plain",))
+    if plain is not None:
+        text = _content(plain)[:MAX_BODY]
+    else:
         text = "\n".join(" ".join(line.split()) for line in "".join(parser.parts).splitlines() if line.strip())
-    return _no_nul(text).strip()[:MAX_TEXT] or None
+    if parser.image_urls:
+        parser.image_urls.difference_update(
+            part.get("Content-Location") for part in msg.walk() if part.get_content_maintype() == "image"
+        )
+    return _no_nul(text).strip()[:MAX_TEXT] or None, bool(parser.image_urls)
 
 
 def _attachments(msg):

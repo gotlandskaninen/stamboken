@@ -534,6 +534,30 @@ class TestItemsFromMail(GmailTest):
         self.assertNotIn(b"Exif", data)
         self.assertNotIn(b"SecretCam", data)
 
+    def test_a_linked_image_without_a_mime_part_has_a_reason(self):
+        msg = message(body="Här är intyget.")
+        msg.add_alternative('<img src="https://example.org/intyg.png">', subtype="html")
+        self.fake.deliver(msg)
+        self.read()
+        (item,) = self.items()
+        self.assertEqual(item.message, "Här är intyget.")
+        self.assertEqual(self.documents(item), [])
+        (skipped,) = item.events.get().detail["not_saved_reasons"]
+        self.assertEqual(skipped["name"], "Länkad bild")
+        self.assertIn("extern länk", skipped["reason"])
+
+    def test_a_link_resolved_by_a_related_image_is_saved(self):
+        url = "https://example.org/intyg.png"
+        msg = message()
+        msg.set_content(f'<img src="{url}">', subtype="html")
+        msg.add_related(encoded(photo((600, 800)), "PNG"), maintype="image", subtype="png", disposition="inline")
+        msg.get_payload()[-1]["Content-Location"] = url
+        self.fake.deliver(msg)
+        self.read()
+        (item,) = self.items()
+        self.assertEqual(len(self.documents(item)), 1)
+        self.assertNotIn("not_saved", item.events.get().detail)
+
     def test_an_html_only_mail_becomes_text(self):
         msg = message()
         msg.set_content(
@@ -556,7 +580,7 @@ class TestItemsFromMail(GmailTest):
                 msg = message()
                 msg.set_content(body, subtype="html")
                 started = time.monotonic()
-                text = inbox_gmail._text(msg)
+                text, _ = inbox_gmail._body(msg)
                 self.assertLess(time.monotonic() - started, 1.0)  # linear; the old regexes took minutes
                 self.assertLessEqual(len(text or ""), inbox_gmail.MAX_TEXT)
                 if name == "a head left open":
