@@ -195,6 +195,26 @@ class TestArsrapportMigration(IsolatedSchemaTest):
             self.assertEqual(db.SchemaHistory.select(db.fn.MAX(db.SchemaHistory.version)).scalar(), 50)  # pylint: disable=E1120
             tx.rollback()
 
+    def test_boot_refuses_buyer_branch_50_before_replaying_main(self):
+        for bootstrap in (False, True):
+            with self.subTest(bootstrap=bootstrap), db.DB_PROXY.atomic() as tx:
+                to_v49_shape()
+                _sql("ALTER TABLE herd DROP COLUMN contact_member_id, DROP COLUMN contact_pending")
+                db.SchemaHistory.delete().execute()
+                if bootstrap:
+                    db.SchemaHistory.create(version=50, comment="Bootstrapped")
+                else:
+                    db.SchemaHistory.create(version=49, comment="test seed")
+                    _sql("ALTER TABLE notice DROP COLUMN individual_id")
+                    _sql("ALTER TABLE buyer_contact DROP COLUMN erased_email_hash")
+                    db.migrate_52_to_53()  # the buyer branch's original 49 -> 50
+                    db.SchemaHistory.update(version=50).where(db.SchemaHistory.version == 53).execute()
+                with self.assertRaisesRegex(RuntimeError, r"buyer mail as migration 50.*herd contact"):
+                    db.check_migrations()
+                self.assertFalse(db.SchemaHistory.select().where(db.SchemaHistory.version > 50).exists())
+                self.assertFalse(db.SaleProposal.table_exists())
+                tx.rollback()
+
     def test_boot_refuses_lone_round_genebank_table_before_50(self):
         with db.DB_PROXY.atomic() as tx:
             to_v49_shape()

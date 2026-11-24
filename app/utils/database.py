@@ -5429,6 +5429,18 @@ def _run_migrations():
             .scalar()
         )
         current_version = SchemaHistory.select(fn.MAX(SchemaHistory.version)).scalar()  # pylint: disable=E1120
+        # A fresh bootstrap only says "Bootstrapped". Identify the buyer branch's 50 by its actual columns.
+        if (
+            current_version == 50
+            and not {"contact_member_id", "contact_pending"} <= {c.name for c in DATABASE.get_columns("herd")}
+            and "individual_id" in {c.name for c in DATABASE.get_columns("notice")}
+            and "erased_email_hash" in {c.name for c in DATABASE.get_columns("buyer_contact")}
+        ):
+            raise RuntimeError(
+                "This database ran buyer mail as migration 50, now 53, and lacks main's herd contact migration "
+                "and audit-log cleanup (49 -> 50). Rebuild a disposable development database from scratch. "
+                "Är detta inte en utvecklingsdatabas: stoppa och utred migreringen."
+            )
         # a 51 that is not the yearly report's, without its tables: the organization fields' branch ran as 51
         # (migrated or bootstrapped) before the yearly report took the number; main's 51 always has the tables
         row_51 = SchemaHistory.get_or_none(SchemaHistory.version == 51)
