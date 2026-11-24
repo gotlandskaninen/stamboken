@@ -490,8 +490,12 @@ def assign_herd():
         return problem(400, "Bad Request", "Ange herd (besättningsnummer) och user_id.")
     try:
         with DB_PROXY.atomic():
-            items = list(inbox.herd_items(herd, current_user).for_update())
-            if "revision" in body and body["revision"] != inbox.assignment_revision(items):
+            query = inbox.herd_items(herd, current_user)
+            revision = body.get("revision")
+            if not isinstance(revision, str) or not revision.strip():
+                raise inbox.InboxError(400, "Ange revision från förhandsvisningen.")
+            items = list(query.for_update())
+            if revision != inbox.assignment_revision(items):
                 raise inbox.InboxError(409, "Ärendena har ändrats. Kontrollera förhandsvisningen och försök igen.")
             change = partial(inbox.assign, by=current_user, to=to)
             receipts = [inbox.record_assignment(item, change) for item in items]

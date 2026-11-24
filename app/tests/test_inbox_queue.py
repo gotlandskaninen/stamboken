@@ -396,7 +396,12 @@ class TestTakeAndAssign(InboxTest):
         inbox.take(closed, self.helper, over=False)
         inbox.change_state(closed, self.helper, "skrap")
         self.login("man")
-        resp = self.post("/tilldela", herd="G1", user_id=self.helper.id)
+        refused = self.post("/tilldela", herd="G1", user_id=self.helper.id)
+        self.assertEqual(refused.status_code, 400)
+        self.assertIn("revision", refused.get_json()["detail"])
+        self.assertIsNone(self.reload(first).assigned_to_id)
+        revision = self.client.get("/api/v2/inkorg/tilldela?herd=G1").get_json()["revision"]
+        resp = self.post("/tilldela", herd="G1", user_id=self.helper.id, revision=revision)
         self.assertEqual(resp.status_code, 200, resp.get_json())
         self.assertEqual(resp.get_json()["assigned"], [first.id, second.id])
         self.assertIsNone(self.reload(other).assigned_to_id)
