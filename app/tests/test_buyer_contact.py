@@ -46,7 +46,7 @@ from tests.test_inbox_purge import PurgeTest
 limiter.enabled = False
 
 RABBIT = "G1-2111"  # registered, born 2021-02-01, in G1 since birth
-SALE = date.today() - timedelta(days=365)  # within the five years; test dates keep their order and gaps from it
+SALE = date.today() - timedelta(days=360)  # within the membership opt-in period; other test dates are relative
 RECENT = date.today() - timedelta(days=90)
 OLD = (date.today() - timedelta(days=5 * 365 + 30)).isoformat()  # past its five years: no buyer is stored
 
@@ -244,7 +244,9 @@ class TestRegistration(BuyerBase):
             "St.gatan 3",
         ):
             self.assertEqual(
-                buyer_contact_fields({**BUYER, "postal_address": address}, address_required=True)["postal_address"],
+                buyer_contact_fields({**BUYER, "postal_address": address}, SALE_DATE, address_required=True)[
+                    "postal_address"
+                ],
                 address,
             )
 
@@ -799,7 +801,7 @@ class TestRetention(BuyerBase):
 
     def test_the_buyer_goes_30_days_after_the_death_was_recorded(self):
         self.assertEqual(buyer_contact.purge_dead(NOW), 0)
-        db.Individual.update(death_date=on(365)).where(db.Individual.id == self.rabbit.id).execute()
+        db.Individual.update(death_date=date.today()).where(db.Individual.id == self.rabbit.id).execute()
         self.assertEqual(buyer_contact.purge_dead(NOW), 0)  # recorded today: it may be a mistake
         self.assertEqual(buyer_contact.purge_dead(NOW + timedelta(days=31)), 1)
         self.assertIsNone(self._contact(self.contact_id))
@@ -808,7 +810,7 @@ class TestRetention(BuyerBase):
         self.assertEqual(buyer_contact.purge_dead(NOW + timedelta(days=31)), 0)
 
     def test_a_death_cleared_within_30_days_keeps_the_buyer(self):
-        db.Individual.update(death_date=on(365)).where(db.Individual.id == self.rabbit.id).execute()
+        db.Individual.update(death_date=date.today()).where(db.Individual.id == self.rabbit.id).execute()
         db.Individual.update(death_date=None).where(db.Individual.id == self.rabbit.id).execute()  # a mistake
         self.assertEqual(buyer_contact.purge_dead(NOW + timedelta(days=31)), 0)
         self.assertIsNotNone(self._contact(self.contact_id))
@@ -816,7 +818,7 @@ class TestRetention(BuyerBase):
     def test_the_death_is_read_again_under_the_lock(self):
         # A death cleared and recorded anew while the purge waited starts its 30 days over. audit_log takes no
         # UPDATE, so the age cannot be staged: the test checks that the age is read after the rabbits' lock.
-        db.Individual.update(death_date=on(365)).where(db.Individual.id == self.rabbit.id).execute()
+        db.Individual.update(death_date=date.today()).where(db.Individual.id == self.rabbit.id).execute()
         calls = []
         real_lock, real_dead_since = buyer_contact.lock_individuals, buyer_contact._dead_since
         with (

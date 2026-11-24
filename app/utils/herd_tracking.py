@@ -12,7 +12,7 @@ from collections import namedtuple
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
-from peewee import Expression, IntegrityError, fn
+from peewee import Case, Expression, IntegrityError, fn
 
 from utils.buyer_mail import queue_buyer_mails
 from utils.database import (
@@ -68,6 +68,18 @@ class HerdTrackingConflict(HerdTrackingError):
 
 def _now_utc():
     return datetime.now(timezone.utc)
+
+
+def _sale_midnight(sale_date):
+    return datetime.combine(coerce_date(sale_date), datetime.min.time(), ZoneInfo("Europe/Stockholm"))
+
+
+def _set_buyer_sale_date(contact_id, sale_date):
+    optin = BuyerContact.membership_optin_at
+    BuyerContact.update(
+        purge_at=BuyerContact.purge_at_for(sale_date),
+        membership_optin_at=Case(None, [(optin.is_null(False), _sale_midnight(sale_date))], optin),
+    ).where(BuyerContact.id == contact_id).execute()
 
 
 def _new_buyer(fields, user, sale_date):
@@ -388,7 +400,7 @@ def record_herd_tracking(
     if buyer is not None:
         # A new sale needs the address, except from a manager or admin (old paper certificates); corrections never.
         address_required = not is_manager_of(user, target.genebank_id)
-        contact_fields = buyer_contact_fields(buyer, address_required=address_required)
+        contact_fields = buyer_contact_fields(buyer, when, address_required=address_required)
     individual_id = individual.id if isinstance(individual, Individual) else int(individual)
     with DB_PROXY.atomic():
         lock_individuals([individual_id])
@@ -760,7 +772,7 @@ def _parse_events(events, individual):
                 "herd": herd,
                 "kind": kind,
                 "notes": notes,
-                "buyer": buyer_contact_fields(buyer) if buyer is not None else None,
+                "buyer": buyer_contact_fields(buyer, when) if buyer is not None else None,
             }
         )
         previous = when
@@ -926,9 +938,7 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
             if event["buyer"]:
                 queue_buyer_mails(row.holder_contact, row)
             if index in carried:  # a corrected sale's buyer: five years from the sale's corrected date
-                BuyerContact.update(purge_at=BuyerContact.purge_at_for(event["date"])).where(
-                    BuyerContact.id == carried[index]
-                ).execute()
+                _set_buyer_sale_date(carried[index], event["date"])
             written.append(row)
             current.append(row)
         # Admin only (rolled back). An event's herd is in the origin genebank, but the holder before it may
@@ -976,7 +986,7 @@ def attach_buyer(row, buyer, user):
     trigger records the id on the row. Never on a row that has a buyer or that is not a sale into GX1/MX1. Once
     the five years have passed: None, and the row is marked buyer_removed instead.
     """
-    fields = buyer_contact_fields(buyer)
+    fields = buyer_contact_fields(buyer, row.herd_tracking_date)
     if row.holder_contact_id is not None:
         raise HerdTrackingConflict("Försäljningen har redan en köpare. Genbanksansvarig ändrar den.")
     if row.buyer_removed:  # an erased or purged buyer is never registered again from a paper
@@ -1107,9 +1117,7 @@ def undo_herd_tracking_operation(operation_id, user, reason, undo_operation_id=N
                 _unvoid_rows(unvoid, undo_op)
                 for row in unvoid:  # a restored sale's buyer goes five years after that sale's date again
                     if row.holder_contact_id:
-                        BuyerContact.update(purge_at=BuyerContact.purge_at_for(row.herd_tracking_date)).where(
-                            BuyerContact.id == row.holder_contact_id
-                        ).execute()
+                        _set_buyer_sale_date(row.holder_contact_id, row.herd_tracking_date)
                 paths = _drop_orphan_buyers(voided, VOID_ACTION, user)
         except IntegrityError as exc:
             if _violated_constraint(exc) not in ("idx_herdtracking_one_birth", "idx_herdtracking_report_attestation"):
@@ -1198,7 +1206,7 @@ CONTACT_OR_MEMBERSHIP_NEEDED = (
 )
 
 
-def buyer_contact_fields(buyer, address_required=False):
+def buyer_contact_fields(buyer, sale_date, address_required=False):
     """
     The BuyerContact columns from a sale's `buyer` object: name and town required, postal_address too when
     `address_required`; email and phone only with contact_consent or membership_optin (ADR-0016). Swedish 400s.
@@ -1237,9 +1245,8 @@ def buyer_contact_fields(buyer, address_required=False):
         raise HerdTrackingInvalid("Köparens kryss ska vara ja eller nej.")
     if (fields["email"] or fields["phone"]) and not (consent or optin):
         raise HerdTrackingInvalid(CONTACT_OR_MEMBERSHIP_NEEDED)
-    now = _now_utc()
-    fields["contact_consent_at"] = now if consent else None
-    fields["membership_optin_at"] = now if optin else None
+    fields["contact_consent_at"] = _now_utc() if consent else None
+    fields["membership_optin_at"] = _sale_midnight(sale_date) if optin else None
     return fields
 
 

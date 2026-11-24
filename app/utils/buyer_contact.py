@@ -11,7 +11,16 @@ from datetime import datetime, timedelta, timezone
 from peewee import Case, fn
 
 from utils import settings
-from utils.database import DB_PROXY, AuditLog, BuyerContact, HerdTracking, Individual, ht_sort_key, lock_individuals
+from utils.database import (
+    DB_PROXY,
+    MEMBERSHIP_OPTIN_FOR,
+    AuditLog,
+    BuyerContact,
+    HerdTracking,
+    Individual,
+    ht_sort_key,
+    lock_individuals,
+)
 from utils.herd_tracking import (
     QUEUE_CHANGED,
     HerdTrackingConflict,
@@ -29,8 +38,6 @@ from utils.inbox_purge import remove_originals
 from utils.mail import address_hash, forget_recipient, is_address
 
 logger = logging.getLogger("herdbook.buyer_contact")
-
-MEMBERSHIP_OPTIN_FOR = timedelta(days=365)  # at most 12 months
 
 
 def buyer_genebank(contact_id):
@@ -235,7 +242,7 @@ def purge_membership_optin(now):
         BuyerContact.email: Case(None, [(only_for_membership, None)], BuyerContact.email),
         BuyerContact.phone: Case(None, [(only_for_membership, None)], BuyerContact.phone),
     }
-    return _null_fields(BuyerContact.membership_optin_at < now - MEMBERSHIP_OPTIN_FOR, changes, "gallring_medlemskap")
+    return _null_fields(BuyerContact.membership_optin_at <= now - MEMBERSHIP_OPTIN_FOR, changes, "gallring_medlemskap")
 
 
 RULES = (purge_membership_optin, purge_sold_on, purge_dead, purge_expired)

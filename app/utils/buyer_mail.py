@@ -7,6 +7,7 @@ utils.herd_tracking imports this module, so it imports nothing that imports that
 
 import logging
 import os
+from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
 from peewee import fn
@@ -15,6 +16,7 @@ from utils import settings
 from utils.database import (
     DB_PROXY,
     HOLDER_CHANGING_KINDS,
+    MEMBERSHIP_OPTIN_FOR,
     BuyerContact,
     DigitalCertificateV2,
     HerdTracking,
@@ -78,6 +80,11 @@ def _swedish_date(moment):
     return f"{day.day} {_MONTHS[day.month - 1]} {day.year}"
 
 
+def _membership_current(contact):
+    at = contact.membership_optin_at
+    return at is not None and at > datetime.now(timezone.utc) - MEMBERSHIP_OPTIN_FOR
+
+
 def _certificate_pdf(rabbit):
     """
     The rabbit's digital certificate as GET /api/v2/certificates/<number> serves it, or None when it has none. A
@@ -111,6 +118,9 @@ def _information_mail(params, attempt=1):
     rabbit = Individual.get_or_none(Individual.id == params["individual_id"])
     if contact is None or rabbit is None:
         return None
+    membership = _membership_current(contact)
+    if not membership and contact.contact_consent_at is None:
+        return None
     note = None
     try:
         with DB_PROXY.atomic():
@@ -140,7 +150,7 @@ def _information_mail(params, attempt=1):
         "address": bool(contact.postal_address),  # kept with the name since #111; an older buyer has only a town
         "token": link_token(ERASE_PURPOSE, contact.id),
         "consent": contact.contact_consent_at is not None,
-        "membership": contact.membership_optin_at is not None,
+        "membership": membership,
         "certificate": pdf is not None,
         "sent_note": note,
         "attachments": [(f"genbanksintyg-{rabbit.number}.pdf", "application/pdf", pdf)] if pdf else [],
@@ -152,7 +162,7 @@ def _membership_mail(params):
     """The welcome the buyer said yes to; none once the yes or the buyer is gone, or the address has had one."""
     contact = BuyerContact.get_or_none(BuyerContact.id == params["buyer_contact_id"])
     rabbit = Individual.get_or_none(Individual.id == params["individual_id"])
-    if contact is None or contact.membership_optin_at is None or rabbit is None:
+    if contact is None or rabbit is None or not _membership_current(contact):
         return None
     # Once per address, from the mails that have gone: each buyer holds an invitation of its own, so one buyer's
     # deletion never cancels the invitation of another with the same address.

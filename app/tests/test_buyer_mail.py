@@ -9,8 +9,9 @@ import subprocess
 import sys
 import textwrap
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from unittest import mock
+from zoneinfo import ZoneInfo
 
 os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), "auth.ini.test"))
 
@@ -112,6 +113,8 @@ class TestInformationQueued(BuyerMailTest):
         event = {"kind": "TRANSFER", "date": on(30), "herd": "GX1"}  # no buyer: the sale's own is carried over
         correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
         self.assertEqual(self._latest().holder_contact_id, contact.id)  # the correction kept the buyer
+        corrected = db.BuyerContact.get_by_id(contact.id).membership_optin_at.astimezone(ZoneInfo("Europe/Stockholm"))
+        self.assertEqual(corrected.date().isoformat(), on(30))
         queue_buyer_mails(contact, self._latest())  # and if anything queued again, the dedupe_key holds
         self.assertEqual(
             [(row.kind, row.recipient_id) for row in self.mails()],
@@ -390,6 +393,25 @@ class TestMembership(BuyerMailTest):
     def test_only_with_the_yes_to_membership_contact(self):
         self._sale(WITH_EMAIL)
         self.assertEqual(self.mails("kopare.medlemskap"), [])
+
+    def test_registering_an_old_proof_does_not_renew_the_optin(self):
+        sale_date = date.today() - timedelta(days=370)
+        sale = record_herd_tracking(self.rabbit, self.gx1, sale_date, "TRANSFER", self.manager)
+        with db.DB_PROXY.atomic():
+            contact = attach_buyer(sale, {**WITH_EMAIL, "membership_optin": True}, self.manager)
+        self.assertEqual(contact.membership_optin_at.date(), sale_date)
+        (notice,) = self.send()  # the independent consent to keep the address still holds
+        self.assertNotIn("12 månader", notice.get_body(("plain",)).get_content())
+        self.assertEqual(self.mails("kopare.medlemskap")[0].status, "cancelled")
+
+    def test_a_queued_mail_cannot_use_an_optin_that_expires_before_sending(self):
+        sale = self._sale({**BUYER, "email": EMAIL, "membership_optin": True})
+        self.assertIn("Välkommen", self.text("kopare.medlemskap")[0])
+        expires = sale.holder_contact.membership_optin_at + timedelta(days=365)
+        with mock.patch.object(buyer_mail, "datetime") as clock:
+            clock.now.return_value = expires
+            self.assertEqual(self.send(), [])
+        self.assertEqual([row.status for row in self.mails()], ["cancelled", "cancelled"])
 
     def test_log_mode_without_a_link_secret_builds_the_welcome(self):
         contact_id = self._sale({**WITH_EMAIL, "membership_optin": True}).holder_contact_id

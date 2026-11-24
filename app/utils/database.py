@@ -1657,6 +1657,7 @@ class YearlyHerdReport(BaseModel):
 
 
 BUYER_CONTACT_YEARS = 5
+MEMBERSHIP_OPTIN_FOR = timedelta(days=365)  # at most 12 months from the sale
 
 
 class BuyerContact(BaseModel):

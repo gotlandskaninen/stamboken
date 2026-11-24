@@ -274,8 +274,9 @@ igen. Är köparen raderad när mejlet ska gå blir det `cancelled`.
   kunde inte hämtas", så att det syns i statusvyn. Utan `LINK_SECRET` kan mejlet
   inte byggas.
 - **`kopare.medlemskap`** går när köparen har sagt ja till att föreningen
-  hör av sig om medlemskap (`membership_optin_at`). Är ja:et gallrat när
-  mejlet ska gå blir det `cancelled`.
+  hör av sig om medlemskap (`membership_optin_at`). Ja:et räknas från
+  överlåtelsedagen. Har det gått tolv månader när mejlet ska skickas,
+  eller har ja:et tagits bort, blir mejlet `cancelled`.
 
 ### Raderingslänken
 
