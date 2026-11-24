@@ -12,7 +12,7 @@ import { useTranslation } from "react-i18next";
 import { undoAssignment } from "./actions";
 import styles from "./inkorg.module.css";
 
-type Notice = { message: string; token?: string | null; error?: boolean };
+type Notice = { message: string; token?: string | null; error?: string };
 const QueueUndo = createContext<{
   offerUndo: (token: string | null, message: string) => void;
   revision: number;
@@ -47,13 +47,19 @@ export function QueueUndoProvider({ children }: { children: ReactNode }) {
     start(async () => {
       const res = await undoAssignment(token);
       setRevision((r) => r + 1);
-      setNotice((current) =>
-        current && current !== notice
-          ? current
-          : res.ok
-            ? { message: t("queueAssignment.undone") }
-            : { error: true, message: res.problem.detail },
-      );
+      setNotice((current) => {
+        if (current !== notice) return current;
+        if (res.ok) return { message: t("queueAssignment.undone") };
+        const { status, detail } = res.problem;
+        const retryable =
+          status >= 500 ||
+          (status === 409 && detail.startsWith("Utskicket pågår"));
+        return {
+          message: notice.message,
+          error: detail,
+          token: retryable ? token : null,
+        };
+      });
     });
   };
 
@@ -61,11 +67,9 @@ export function QueueUndoProvider({ children }: { children: ReactNode }) {
     <QueueUndo.Provider value={{ offerUndo, revision }}>
       {children}
       {notice && (
-        <div
-          className={styles.undoBar}
-          role={notice.error ? "alert" : "status"}
-        >
+        <div className={styles.undoBar} role="status">
           <span>{notice.message}</span>
+          {notice.error && <span role="alert">{notice.error}</span>}
           {notice.token && (
             <button
               type="button"

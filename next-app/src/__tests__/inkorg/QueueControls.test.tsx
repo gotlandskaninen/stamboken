@@ -87,6 +87,35 @@ describe("handläggning och ångra", () => {
     );
   });
 
+  it.each([
+    [409, "Utskicket pågår. Försök igen."],
+    [502, "Det gick inte att nå servern."],
+  ])("allows retrying undo after %i", async (status, detail) => {
+    actions.takeItem.mockResolvedValue({
+      ok: true,
+      data: { undo: "same-token" },
+    });
+    actions.undoAssignment.mockResolvedValueOnce({
+      ok: false,
+      problem: { status, detail },
+    });
+    render(itemView("tagen", other));
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: /Ta över/ })),
+    );
+    const undo = () => screen.getByRole("button", { name: "Ångra" });
+    await act(async () => fireEvent.click(undo()));
+    expect(screen.getByRole("alert")).toHaveTextContent(String(detail));
+    await act(async () => fireEvent.click(undo()));
+    expect(actions.undoAssignment.mock.calls).toEqual([
+      ["same-token"],
+      ["same-token"],
+    ]);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Ändringen har ångrats.",
+    );
+  });
+
   it("offers undo for takeover and putting a taken case back", async () => {
     actions.takeItem.mockResolvedValue({ ok: true, data: { undo: "over" } });
     actions.releaseItem.mockResolvedValue({
