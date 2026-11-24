@@ -469,6 +469,17 @@ class ProposalsTest(ArsrapportTest):
         proposed = db.InboxItem.get_by_id(proposals(self.a)[0].inbox_item_id)
         photo = self.item_of(self.c)
         self.assertLess(proposed.id, photo.id)
+        self.login("man")
+
+        def preview_revision():
+            response = self.client.get("/api/v2/inkorg/tilldela?herd=G9001")
+            self.assertEqual(response.status_code, 200)
+            return response.get_json()["revision"]
+
+        def assign(revision):
+            return self.post("/tilldela", herd="G9001", user_id=self.helper.id, revision=revision)
+
+        revision = preview_revision()
         barrier, results = threading.Barrier(2, timeout=10), {}
         original = arsrapport._lock_rabbits
 
@@ -489,12 +500,9 @@ class ProposalsTest(ArsrapportTest):
                 db.DB_PROXY.close()
 
         def bulk_assign():
-            client = APP.test_client(use_cookies=True)
-            client.post("/api/login", json={"username": "man", "password": "pass"})
             try:
                 barrier.wait()
-                response = client.post("/api/v2/inkorg/tilldela", json={"herd": "G9001", "user_id": self.helper.id})
-                results["queue"] = response.status_code
+                results["queue"] = assign(revision).status_code
             finally:
                 db.DB_PROXY.close()
 
@@ -505,8 +513,10 @@ class ProposalsTest(ArsrapportTest):
             for thread in threads:
                 thread.join(timeout=30)
         self.assertFalse(any(thread.is_alive() for thread in threads), "hung threads")
-        self.assertEqual(results, {"report": "ok", "queue": 200})
+        # Withdrawal closed the proposal while the queue waited for its locks, so the preview is stale.
+        self.assertEqual(results, {"report": "ok", "queue": 409})
         self.assertEqual(db.InboxItem.get_by_id(proposed.id).state, "skrap")
+        self.assertEqual(assign(preview_revision()).status_code, 200)
         self.assertEqual(db.InboxItem.get_by_id(photo.id).assigned_to_id, self.helper.id)
 
     def item_of(self, rabbit):
