@@ -160,7 +160,12 @@ def _each_image(file, room, handle):
                 image = ImageOps.exif_transpose(source)
             except (SyntaxError, struct.error, ValueError, TypeError, OSError):
                 image = source  # damaged metadata, but the pixels have already been decoded
-            image = image.convert("RGB")
+            if image.has_transparency_data:
+                with image.convert("RGBA") as rgba:
+                    image = Image.new("RGB", rgba.size, "white")
+                    image.paste(rgba, mask=rgba)
+            else:
+                image = image.convert("RGB")
     try:
         handle(image)
     finally:

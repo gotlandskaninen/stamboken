@@ -10,7 +10,7 @@ from unittest import mock
 import utils.database as db  # noqa: E402
 import utils.inbox as inbox  # noqa: E402
 from herdbook import limiter  # noqa: E402
-from PIL import Image  # noqa: E402
+from PIL import Image, ImageDraw  # noqa: E402
 
 from tests.inbox_fixtures import InboxTest, blurry, encoded, pdf, photo  # noqa: E402
 
@@ -60,6 +60,24 @@ class TestUpload(InboxTest):
         with Image.open(io.BytesIO(data)) as image:
             self.assertEqual(len(image.getexif()), 0)
             self.assertEqual(image.size, (1200, 1600))
+
+    def test_black_text_on_transparent_png_is_legible_in_the_stored_jpeg(self):
+        self.login("owner")
+        for mode in ("RGBA", "P"):
+            with self.subTest(mode=mode):
+                image = Image.new(mode, (240, 200))
+                ink = (0, 0, 0, 255)
+                if mode == "P":
+                    image.putpalette([0, 0, 0, 0, 0, 0])  # black in both entries, only index 0 is transparent
+                    image.info["transparency"] = 0
+                    ink = 1
+                ImageDraw.Draw(image).text((40, 40), "Intyg", fill=ink, font_size=36)
+                resp = self.upload(("intyg.png", encoded(image, "PNG")), accept_warnings="1")
+                self.assertEqual(resp.status_code, 201, resp.get_json())
+                (document,) = self.documents(resp.get_json()["item"]["id"])
+                with Image.open(self.stored(document)) as stored:
+                    self.assertGreater(min(stored.getpixel((10, 10))), 245)  # white background
+                    self.assertLess(stored.crop((40, 40, 145, 96)).convert("L").getextrema()[0], 20)  # black text
 
     def test_heic_and_pdf_become_jpeg_page_by_page(self):
         self.login("owner")
