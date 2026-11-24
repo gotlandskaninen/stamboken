@@ -233,6 +233,25 @@ class TestMembersLinkSameNumber(DatabaseTest):
         self.assertIsNone(db.Herd.get_by_id(herd.id).membership_id)
         self.assertEqual(db.MatrikelAudit.select().count(), 0)
 
+    def test_a_main_member_with_an_account_is_shown_and_linked(self):
+        herd = self._herd("G7")
+        _, main = self._membership(7)
+        account = da.register_user("har.konto@example.invalid", "pass", username="harkonto", fullname="Har Konto")
+        db.Member.update(user=account.id).where(db.Member.id == main.id).execute()
+        output, value = self._plan()
+        self.assertIn(f"(konto {account.id})", output)
+
+        result = self._apply(value)
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("Kopplade: 1, Överhoppade: 0", result.output)
+        self.assertIsNotNone(db.Herd.get_by_id(herd.id).membership_id)
+
+        db.Herd.update(membership=None).where(db.Herd.id == herd.id).execute()
+        other = da.register_user("annat.konto@example.invalid", "pass", username="annatkonto", fullname="Annat Konto")
+        db.Member.update(user=other.id).where(db.Member.id == main.id).execute()
+        _, changed = self._plan()
+        self.assertNotEqual(changed, value)  # a swapped account changes the control value
+
     def test_changed_rows_are_skipped_under_lock_and_each_reason_is_printed(self):
         renumbered = self._herd("G7")
         membership, _ = self._membership(7)

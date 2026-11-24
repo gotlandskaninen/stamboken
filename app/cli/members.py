@@ -1117,7 +1117,7 @@ def _owner_membership_detail(owner_ids, membership_by_user, membership_id, incom
 
 
 def _active_main_members():
-    return Member.select(Member.id, Member.membership, Member.first_name, Member.last_name).where(
+    return Member.select(Member.id, Member.membership, Member.user, Member.first_name, Member.last_name).where(
         Member.role == "huvudmedlem", Member.end_date.is_null(True)
     )
 
