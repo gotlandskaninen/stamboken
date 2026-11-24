@@ -255,7 +255,7 @@ def normalize(field: str, value: str | None) -> object:
         return parts if any(parts) else None
     if field == "name":
         return frozenset(value.lower().split())
-    if field == "www":  # not in the register: compared only with the old app's echo
+    if field in ("www", "location"):  # not in the register: compared with an echo or what a form showed
         return value.strip()
     raise ValueError(f"no normalisation for {field}")
 
@@ -423,11 +423,11 @@ def check_flat_fields(herd: Herd, fields, contact) -> None:
         raise ValueError(f"Kontaktuppgifterna ändras med fältet contact, inte med {', '.join(flat)}.")
 
 
-PLACE_FIELDS = ("wire_phone", "www")
+PLACE_FIELDS = ("wire_phone", "www", "location")
 
 
 def check_place_shown(herd: Herd, fields, shown, *, with_privacy=True) -> None:
-    """Spec, Skrivningar, "Varje ändring gäller det som formuläret visade", for the fixed phone and the website: a
+    """Spec, Skrivningar, "Varje ändring gäller det som formuläret visade", for the fixed phone, website and place: a
     call that sends one of them or its privacy also sends what the form showed of it, {"value", "privacy"} in
     `shown` (place_shown), and `herd` is under lock_herd. `with_privacy=False` is the admin form, which shows no
     privacy: there it is compared only when sent. Missing or malformed: ValueError (400); another row than the

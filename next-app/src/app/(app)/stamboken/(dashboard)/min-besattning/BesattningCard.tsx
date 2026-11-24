@@ -71,8 +71,8 @@ export default function BesattningCard({
           k.endsWith("_privacy") ? data[k] : data[k] || null,
         ]),
       );
-      // the fixed phone and the website are saved only against the row the form showed (409 otherwise)
-      const place = (["www", "wire_phone"] as const).filter((k) =>
+      // the place, website and fixed phone are saved only against the row the form showed (409 otherwise)
+      const place = (["location", "www", "wire_phone"] as const).filter((k) =>
         changed.some((c) => c === k || c === `${k}_privacy`),
       );
       if (place.length)

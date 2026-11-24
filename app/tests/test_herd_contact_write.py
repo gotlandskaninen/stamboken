@@ -882,6 +882,26 @@ class TestPlaceShown(HerdContactWriteTest):
         self.assertEqual(self._patch(main, body).status_code, 400)
         self.assertEqual(self._state(), before)
 
+    def test_location_is_saved_only_against_what_the_form_showed(self):
+        """Ort is a place field too: "Vem ser orten" is chosen for the place the form showed."""
+        main = self._main_user()
+        self._set(location="Visby", location_privacy="private")
+
+        def place():
+            herd = db.Herd.get_by_id(self.herd.id)
+            return herd.location, herd.location_privacy
+
+        shown = {"location": {"value": "Roma", "privacy": "private"}}
+        stale = {"location_privacy": "authenticated", "place_shown": shown}
+        self._assert_problem(self._patch(main, stale), 409, "contact-changed")
+        self.assertEqual(place(), ("Visby", "private"))
+        self.assertEqual(self._patch(main, {"location": "Roma"}).status_code, 400)
+        self.assertEqual(place(), ("Visby", "private"))
+        fresh = {**stale, "place_shown": {"location": {"value": " Visby ", "privacy": "private"}}}
+        response = self._patch(main, fresh)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(place(), ("Visby", "authenticated"))
+
     def test_old_app_route_is_unchanged(self):
         """The old app sends the whole herd it read and no place_shown: it saves as before (its echo rules for a
         linked herd are in test_herd_contact_legacy)."""

@@ -1356,7 +1356,7 @@ HERD_EDITABLE_FIELDS = {
     "www",
     "is_active",
     "contact",  # the contact rows of a compared herd (#117): apply_contact_patch
-    "place_shown",  # what the form showed of wire_phone and www (#117): check_place_shown
+    "place_shown",  # what the form showed of wire_phone, www and location (#117): check_place_shown
 }
 
 

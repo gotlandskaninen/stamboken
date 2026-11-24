@@ -77,7 +77,7 @@ describe("BesattningCard place fields", () => {
     ]);
   });
 
-  it("a changed website is sent with the row it replaces; the name needs none", async () => {
+  it("a changed website or place is sent with the row it replaces; the name needs none", async () => {
     updateHerd.mockResolvedValue({ success: true, data: {} });
     render(<BesattningCard herd={herd()} herdNumber="G1274" />);
     edit();
@@ -107,7 +107,10 @@ describe("BesattningCard place fields", () => {
     });
     save();
     await waitFor(() => expect(updateHerd).toHaveBeenCalledTimes(1));
-    expect(updateHerd.mock.calls[0][1]).toStrictEqual({ location: "Visby" });
+    expect(updateHerd.mock.calls[0][1]).toStrictEqual({
+      location: "Visby",
+      place_shown: { location: { value: "Roma", privacy: "authenticated" } },
+    });
   });
 
   it("a 409 reloads the herd and the form follows the new data", async () => {
