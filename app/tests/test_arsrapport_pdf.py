@@ -11,7 +11,7 @@ import fitz
 import utils.arsrapport as arsrapport
 import utils.database as db
 import utils.mail as mail
-from utils.arsrapport_pdf import receipt_pdf, register_extract_pdf
+from utils.arsrapport_pdf import extract_context, receipt_context, receipt_pdf, register_extract_pdf, render_text
 
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.ht_helpers import ht_row
@@ -47,7 +47,7 @@ class PdfTest(ArsrapportTest):
         text = text_of(register_extract_pdf(self.h, self.round_))
         for rabbit in rabbits:
             self.assertIn(rabbit.number, text)
-        self.assertIn("Registerutdrag, bara för kontroll", text)
+        self.assertIn("registerutdrag, bara för kontroll", text.lower())
         self.assertIn("2025-05-02", text)  # the litter line, with its mother and father
         self.assertEqual(text.count(rabbits[0].number), 2)  # on the list, and as the litter's mother
 
@@ -72,6 +72,68 @@ class PdfTest(ArsrapportTest):
         self.assertNotIn("Testbanken", text)
         self.assertIn("Inga sjukdomsfall eller defekter", text)
 
+    def test_pdfs_embed_the_form_fonts_not_a_fallback(self):
+        rabbits = self.rabbits(self.h, 1)
+        report = self.reported(self.h, self.kvar(rabbits[0], vikt=2.8), health="inga")
+        submission = arsrapport._submissions(report)[-1]  # pylint: disable=protected-access
+        submission.created_at = datetime(2026, 1, 5, 11, 0, tzinfo=timezone.utc)
+        for pdf in (register_extract_pdf(self.h, self.round_), receipt_pdf(report, submission)):
+            with fitz.open(stream=pdf, filetype="pdf") as doc:
+                fonts = " ".join(font[3] for page in doc for font in page.get_fonts())
+            for name in ("IBM-Plex-Sans", "Source-Serif-4", "IBM-Plex-Mono"):
+                self.assertIn(name, fonts)
+            self.assertNotIn("DejaVu", fonts)
+
+    def test_text_versions_carry_the_same_facts_as_the_pdfs(self):
+        kept, sold = self.rabbits(self.h, 2)
+        db.Breeding.create(
+            breeding_herd_id=self.h, mother=kept, father=sold, breed_date=date(2025, 4, 1),
+            birth_date=date(2025, 5, 2), litter_size=5, litter_size6w=4,
+        )  # fmt: skip
+        report = self.reported(
+            self.h, self.kvar(kept, vikt=2.8), self.sald(sold, "utanfor", 2025, 10, 3, kopare=BUYER), health="inga"
+        )
+        submission = arsrapport._submissions(report)[-1]  # pylint: disable=protected-access
+        submission.created_at = datetime(2026, 1, 5, 11, 0, tzinfo=timezone.utc)
+        extract, receipt = (
+            render_text(extract_context(self.h, self.round_)),
+            render_text(receipt_context(report, submission)),
+        )
+        for text in (extract, receipt):
+            self.assertIn(kept.number, text)
+            self.assertIn(sold.number, text)
+            self.assertNotIn(BUYER["name"], text)
+        self.assertIn("Registerutdrag, bara för kontroll", extract)
+        self.assertIn("2025-05-02", extract)
+        self.assertIn("2025-10-03", extract)
+        self.assertIn("utanför genbanken", receipt)
+        self.assertIn("Inga sjukdomsfall eller defekter", receipt)
+
+    def test_text_extract_puts_the_name_last_so_a_long_name_cannot_move_a_date(self):
+        (rabbit,) = self.rabbits(self.h, 1)
+        db.Individual.update(name="Drottning Kristina av Ängsbo").where(db.Individual.id == rabbit.id).execute()
+        line = next(ln for ln in render_text(extract_context(self.h, self.round_)).splitlines() if rabbit.number in ln)
+        self.assertTrue(line.endswith("Drottning Kristina av Ängsbo"))
+
+    def test_paper_receipt_says_the_day_it_came_in_not_the_day_it_was_entered(self):
+        (rabbit,) = self.rabbits(self.h, 1)
+        report = self.reported(self.h, self.kvar(rabbit, vikt=2.8), health="inga")
+        submission = arsrapport._submissions(report)[-1]  # pylint: disable=protected-access
+        submission.created_at = datetime(2026, 1, 15, 11, 0, tzinfo=timezone.utc)
+        submission.source, submission.data = "paper", {**submission.data, "received_on": "2026-01-12"}
+        self.assertEqual(receipt_context(report, submission)["received"], "2026-01-12")
+
+    def test_long_extract_repeats_the_header_and_keeps_a_heading_with_its_content(self):
+        self.rabbits(self.h, 70)
+        with fitz.open(stream=register_extract_pdf(self.h, self.round_), filetype="pdf") as doc:
+            pages = [page.get_text() for page in doc]
+        self.assertGreater(len(pages), 1)
+        for text in pages[1:]:
+            self.assertIn("FÖRENINGENGOTLANDSKANINEN", "".join(text.split()))  # letter-spaced: no word gaps
+        for text in pages:
+            if "SÅLDA UNDER" in text:
+                self.assertIn("Inga försäljningar", text)
+
     def test_extract_lists_sold_during_the_year(self):
         kept, sold = self.rabbits(self.h, 2)
         self.reported(self.h, self.kvar(kept, vikt=2.8), self.sald(sold, "utanfor", 2025, 10, 3, kopare=BUYER))
@@ -81,7 +143,12 @@ class PdfTest(ArsrapportTest):
 
     def test_extract_shows_the_month_of_a_sale_or_death_given_without_its_day(self):
         kept, sold, dead = self.rabbits(self.h, 3)
-        self.reported(self.h, self.kvar(kept, vikt=2.8), self.sald(sold, "utanfor", 2025, 5, kopare=BUYER), self.dod(dead, 2025, 6))
+        self.reported(
+            self.h,
+            self.kvar(kept, vikt=2.8),
+            self.sald(sold, "utanfor", 2025, 5, kopare=BUYER),
+            self.dod(dead, 2025, 6),
+        )
         text = text_of(register_extract_pdf(self.h, self.round_))
         for month in ("2025-05", "2025-06"):
             self.assertRegex(text, rf"{month}(?!-)")  # the month, not a made-up day such as -31 or -30
@@ -130,4 +197,5 @@ class PdfTest(ArsrapportTest):
             ((name, mime, data),) = built["attachments"]
             self.assertEqual((name, mime), ("kvittens.pdf", "application/pdf"), kind)
             self.assertIn(kept.number, text_of(data))
-            mail.render(kind, {k: v for k, v in built.items() if k != "attachments"})
+            _, body = mail.render(kind, {k: v for k, v in built.items() if k != "attachments"})
+            self.assertIn(kept.number, body, kind)  # the text receipt is in both mails

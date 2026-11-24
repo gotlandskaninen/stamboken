@@ -1,0 +1,42 @@
+{% macro rad(cells, widths) %}{% for c in cells %}{{ ("%-" ~ widths[loop.index0] ~ "s")|format(c|string) }}{% if not loop.last %}  {% endif %}{% endfor %}{% endmacro %}
+{% macro rubrik(text) %}
+{{ text }}
+{{ "-" * (text|length) }}{% endmacro %}
+{% if mode == "utdrag" %}
+{{ herd }} {{ year }}: Registerutdrag, bara för kontroll
+Så här står det i Stamboken. Utdraget skickas inte in. Rätta i rapporten, i Stamboken Online eller på blanketten.
+{{ rubrik("Kaniner i besättningen den 31 december " ~ year) }}
+{% if rabbits %}{% set w = [12, 7, 10, 18, 12, 0] %}
+{{ rad(["Nummer", "Kön", "Född", "Senast rapporterad", "Senaste vikt", "Namn"], w)|trim }}
+{% for r in rabbits %}{{ rad([r.number, r.sex, r.born or "", r.last_reported or "", r.weight if r.weight is not none else "", r.name or ""], w)|trim }}
+{% endfor %}{% else %}Inga kaniner.
+{% endif %}
+{{ rubrik("Sålda under " ~ year) }}
+{% for s in sold %}{{ s.number }}  {{ s.date }}
+{% else %}Inga försäljningar under {{ year }} i Stamboken.
+{% endfor %}
+{{ rubrik("Döda under " ~ year) }}
+{% for d in dead %}{{ d.number }}  {{ d.date }}
+{% else %}Inga döda.
+{% endfor %}
+{{ rubrik("Kullar under " ~ year) }}
+{% if litters %}{% set w = [10, 8, 12, 12, 6, 8] %}
+{{ rad(["Datum", "Kull", "Mor", "Far", "Födda", "Levande vid 6 veckor"], w)|trim }}
+{% for l in litters %}{{ rad([l.date, l.number or "", l.mother or "", l.father or "", l.born if l.born is not none else "", l.alive if l.alive is not none else ""], w)|trim }}
+{% endfor %}{% else %}Inga kullar under {{ year }} i Stamboken.
+{% endif %}
+{% else %}
+{{ herd }} {{ year }}: Kvittens
+Årsrapporten kom in {{ received }}.
+{{ rubrik("Kaniner") }}
+{% if rabbits %}{% set w = [12, 44, 10, 6] %}
+{{ rad(["Nummer", "Val", "Datum", "Vikt", "Hull"], w + [0])|trim }}
+{% for r in rabbits %}{{ rad([r.number, r.choice, r.when or "", r.weight if r.weight is not none else "", r.hull or ""], w + [0])|trim }}
+{% endfor %}{% else %}Inga kaniner.
+{% endif %}
+{{ rubrik("Hälsa") }}
+{{ health }}
+{% for d in diseases %}- {{ d }}
+{% endfor %}{% if defects %}Defekter
+{% for d in defects %}- {{ d.number }}: {{ d.text }}
+{% endfor %}{% endif %}{% endif %}
