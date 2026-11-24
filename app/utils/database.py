@@ -1179,6 +1179,12 @@ class Bodyfat(BaseModel):
     bodyfat_date = DateField()
 
 
+def normalize_legacy_herd_id(herd_id):
+    if isinstance(herd_id, str) and re.fullmatch(r"[0-9]+", herd_id):
+        return int(herd_id)
+    return herd_id
+
+
 class User(BaseModel, UserMixin):
     """
     Table keeping track of system users.
@@ -1386,7 +1392,7 @@ class User(BaseModel, UserMixin):
         herd_ids = set()
         for role in self.privileges:
             if role["level"] == "owner":
-                herd_ids.add(role["herd"])
+                herd_ids.add(normalize_legacy_herd_id(role["herd"]))
 
         persons = list(
             Member.select(Member.id, Member.membership, Member.role)

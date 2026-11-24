@@ -112,6 +112,8 @@ async function chooseBank() {
 }
 
 const button = (name: string) => screen.getByRole("button", { name });
+const ownerRights =
+  /ge hushållet tillgång, utfärda intyg för kaniner med besättningen som ursprung och se hela utbetalningskontot/;
 
 describe("KopplaBesattningDialog", () => {
   it("filters by number, marks inactive herds and prevents selecting a linked herd", async () => {
@@ -151,9 +153,9 @@ describe("KopplaBesattningDialog", () => {
     fireEvent.click(button("Visa vad kopplingen ger"));
     expect(
       await screen.findByText(
-        /testkonto.*innehavare.*ändra, sälja och flytta kaniner och ge hushållet tillgång/,
+        /testkonto.*innehavare.*ändra, sälja och flytta kaniner/,
       ),
-    ).toBeInTheDocument();
+    ).toHaveTextContent(ownerRights);
     expect(
       screen.getByText(/tidigare.*saknar aktiv person i medlemskapet/i),
     ).toBeInTheDocument();
@@ -192,9 +194,9 @@ describe("KopplaBesattningDialog", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        /nyttkonto.*redan ändra.*också sälja och flytta kaniner och ge hushållet tillgång/,
+        /nyttkonto.*redan ändra kaniner.*också sälja och flytta dem/,
       ),
-    ).toBeInTheDocument();
+    ).toHaveTextContent(ownerRights);
     expect(screen.queryByText(/testkonto/)).not.toBeInTheDocument();
     expect(link).toHaveBeenLastCalledWith(3, 8, "first");
     expect(snackbar).not.toHaveBeenCalled();
@@ -228,8 +230,12 @@ describe("KopplaBesattningDialog", () => {
     });
     fireEvent.click(button("Visa vad kopplingen ger"));
     expect(
-      await screen.findByText(/åtkomst först när medlemskapet blir aktivt/i),
-    ).toBeInTheDocument();
+      await screen.findByText(
+        /Huvudmedlemmen kan genast ge hushållet skötartillstånd/,
+      ),
+    ).toHaveTextContent(
+      /Ändringsrätten och tillstånden gäller först när medlemskapet blir aktivt/,
+    );
     expect(
       screen.getByText(/jämförs när medlemskapet blir aktivt/i),
     ).toBeInTheDocument();
@@ -262,9 +268,9 @@ describe("KopplaBesattningDialog", () => {
     fireEvent.click(button("Visa vad kopplingen ger"));
     expect(
       await screen.findByText(
-        /ansvarig.*innehavare.*redan ändra, sälja och flytta kaniner.*ge hushållet tillgång/,
+        /ansvarig.*innehavare.*redan ändra, sälja och flytta kaniner/,
       ),
-    ).toBeInTheDocument();
+    ).toHaveTextContent(ownerRights);
   });
 
   it("identifies an inactive main account even when a family member gains read access", async () => {

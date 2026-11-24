@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import utils.database as db
 from utils.herd_contact import is_matrikel_reader
+from utils.matrikel import _herd_link_preview
 
 from tests.test_person_link_api import LinkApiBase
 
@@ -269,15 +270,32 @@ class TestMembershipHerdLink(LinkApiBase):
         self.assertEqual(preview["new_readers"], [])
         self.assertEqual(preview["grant_holders"], [])
 
-    def test_string_owner_id_is_interpreted_like_transfer_herd_ids(self):
-        self.account.privileges = [{"level": "owner", "herd": str(self.herd.id)}]
-        self.account.save()
+    def test_string_owner_role_appears_under_remaining_access(self):
+        self.account.add_role("owner", str(self.herd.id))
         self.main.user = self.account
         self.main.save()
         preview = self.preview()["preview"]
-        self.assertNotIn(self.herd.id, self.account.transfer_herd_ids())
-        self.assertFalse(preview["new_access"]["already_edits"])
-        self.assertEqual(preview["legacy_owners"], [])
+        self.assertIn(self.herd.id, self.account.transfer_herd_ids())
+        self.assertIsNone(preview["new_access"])
+        self.assertEqual([u["id"] for u in preview["legacy_owners"]], [self.account.id])
+        self.assertTrue(preview["legacy_owners"][0]["gains_household_grants"])
+
+    def test_user_endpoint_after_link_with_string_owner_role_on_another_herd(self):
+        legacy_herd = self.herds[0]
+        legacy_herd.membership = None
+        legacy_herd.save()
+        self.account.add_role("owner", str(legacy_herd.id))
+        self.main.user = self.account
+        self.main.save()
+        member_client = self.client.application.test_client()
+        login = member_client.post("/api/login", json={"username": self.account.username, "password": "pass"})
+        self.assertEqual(login.get_json()["is_owner"], [legacy_herd.herd])
+
+        token = self.preview()["confirm_token"]
+        self.assertEqual(self.post(confirm_token=token).status_code, 201)
+        response = member_client.get("/api/user")
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertCountEqual(response.get_json()["is_owner"], [legacy_herd.herd, self.herd.herd])
 
     def test_family_read_access_alone_invalidates_confirmation(self):
         self.family.user = self.account
@@ -287,6 +305,18 @@ class TestMembershipHerdLink(LinkApiBase):
         self.account.add_role("manager", self.herd.genebank_id)
         second = self.preview(confirm_token=first["confirm_token"])
         self.assertEqual(second["preview"], {**first["preview"], "new_readers": []})
+
+    def test_account_with_two_active_grants_on_the_herd_is_listed_once(self):
+        with db.DB_PROXY.atomic() as txn:
+            # Before v29 one account could be linked to both grant holders.
+            db.DB_PROXY.execute_sql("DROP INDEX idx_member_user_unique")
+            for person in (self.family, self.skotare):
+                person.user = self.account
+                person.save()
+                db.HerdAccessGrant.create(member=person, herd=self.herd, granted_by=self.admin)
+            preview, _ = _herd_link_preview(self.herd, self.ms, None, {self.account.id: self.account})
+            txn.rollback()
+        self.assertEqual(preview["grant_holders"], [{"id": self.account.id, "username": self.account.username}])
 
     def test_readers_before_and_after_link_and_grants_on_other_memberships(self):
         self.main.user = self.admin
@@ -310,7 +340,7 @@ class TestMembershipHerdLink(LinkApiBase):
         body = self.preview(confirm_token=first["confirm_token"])
         readers = {u["id"] for u in body["preview"]["new_readers"]}
         self.assertEqual(readers, {self.account.id, self.viewer.id})
-        self.assertEqual({u["id"] for u in body["preview"]["grant_holders"]}, {self.owner.id, self.viewer.id})
+        self.assertCountEqual([u["id"] for u in body["preview"]["grant_holders"]], [self.owner.id, self.viewer.id])
         grant.revoked_at = datetime.now()
         grant.save()
         final = self.preview(confirm_token=body["confirm_token"])

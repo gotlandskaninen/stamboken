@@ -41,6 +41,7 @@ from utils.database import (
     MemberPreviousAddress,
     Membership,
     User,
+    normalize_legacy_herd_id,
 )
 from utils.herd_contact import (
     compare_with_register,
@@ -1261,7 +1262,7 @@ def unlink_member_user(person_id, *, actor, mode="admin"):
     return person, lost_genebanks
 
 
-def legacy_owner_index(*fields, match_string_ids=True) -> tuple[dict[int, dict[int, User]], set[int]]:
+def legacy_owner_index(*fields) -> tuple[dict[int, dict[int, User]], set[int]]:
     """Herd id -> {user id: user} with role owner, and the users with an incomplete owner role."""
     owners: dict[int, dict[int, User]] = {}
     incomplete: set[int] = set()
@@ -1272,9 +1273,7 @@ def legacy_owner_index(*fields, match_string_ids=True) -> tuple[dict[int, dict[i
                 continue
             if role["level"] != "owner":
                 continue
-            herd_id = role.get("herd")
-            if match_string_ids and isinstance(herd_id, str) and re.fullmatch(r"[0-9]+", herd_id):
-                herd_id = int(herd_id)  # older rows may store the id as a string
+            herd_id = normalize_legacy_herd_id(role.get("herd"))
             if isinstance(herd_id, bool) or not isinstance(herd_id, int):
                 incomplete.add(user.id)
                 continue
@@ -1358,9 +1357,7 @@ def _herd_link_preview(
     herd: Herd, membership: Membership, main: User | None, accounts: dict[int, User]
 ) -> tuple[dict, dict]:
     active = membership.membership_status == Status.ACTIVE
-    # The CLI matches historical numeric strings when finding possible owners. A live access
-    # preview compares integer herd ids, just as effective_herd_ids and transfer_herd_ids do.
-    owners, _ = legacy_owner_index(User.id, User.username, User._privileges, User.is_active, match_string_ids=False)
+    owners, _ = legacy_owner_index(User.id, User.username, User._privileges, User.is_active)
     legacy_owners = [
         {**_account_summary(u), "in_membership": uid in accounts, "gains_household_grants": active and u == main}
         for uid, u in owners.get(herd.id, {}).items()
@@ -1380,6 +1377,7 @@ def _herd_link_preview(
             HerdAccessGrant.revoked_at.is_null(True),
             HerdAccessGrant.valid_until.is_null(True) | (HerdAccessGrant.valid_until >= date.today()),
         )
+        .distinct()
         .order_by(User.id)
     )
     new_access, new_readers, contact_rows, contact_changes = None, [], None, {}

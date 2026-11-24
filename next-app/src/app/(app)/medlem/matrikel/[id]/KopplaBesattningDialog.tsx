@@ -25,13 +25,15 @@ function accountLabel(account: HerdAccount) {
 }
 
 function ownerEffect(access: NonNullable<HerdLinkPreview["new_access"]>) {
+  let rabbitRights = "Kontot får ändra, sälja och flytta kaniner.";
   if (access.already_manages) {
-    return "Kontot får redan ändra, sälja och flytta kaniner genom sin roll. Som innehavare får kontot ge hushållet tillgång.";
+    rabbitRights =
+      "Kontot får redan ändra, sälja och flytta kaniner genom sin roll.";
+  } else if (access.already_edits) {
+    rabbitRights =
+      "Kontot får redan ändra kaniner och får nu också sälja och flytta dem.";
   }
-  if (access.already_edits) {
-    return "Kontot får redan ändra kaniner och får nu också sälja och flytta kaniner och ge hushållet tillgång.";
-  }
-  return "Kontot får ändra, sälja och flytta kaniner och ge hushållet tillgång.";
+  return `${rabbitRights} Som innehavare får kontot ge hushållet tillgång, utfärda intyg för kaniner med besättningen som ursprung och se hela utbetalningskontot.`;
 }
 
 function Preview({ preview }: { preview: HerdLinkPreview }) {
@@ -68,7 +70,10 @@ function Preview({ preview }: { preview: HerdLinkPreview }) {
         </p>
       )}
       {membership.membership_status !== "active" ? (
-        <p>Kopplingen ger åtkomst först när medlemskapet blir aktivt.</p>
+        <p>
+          Huvudmedlemmen kan genast ge hushållet skötartillstånd. Ändringsrätten
+          och tillstånden gäller först när medlemskapet blir aktivt.
+        </p>
       ) : (
         <>
           {new_access && (
