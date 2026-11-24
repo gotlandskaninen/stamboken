@@ -101,7 +101,7 @@ def _existing_account(person, address):
     )
 
 
-def create_pending_account(displayed_version, displayed_sha256):
+def create_pending_account(_displayed_version, displayed_sha256):
     """Recheck the proof and possible accounts under lock, then insert and link one new user atomically."""
     with DB_PROXY.atomic():
         # Fetch at submission, before taking the member and account-table locks.
@@ -110,7 +110,8 @@ def create_pending_account(displayed_version, displayed_sha256):
             raise RulesUnavailable
         version, text = rules
         digest = sha256(text.encode("utf-8")).hexdigest()
-        if (version, digest) != (displayed_version, displayed_sha256):
+        # The text decides, not the revision: a reseed republishes the same text under a new revision.
+        if digest != displayed_sha256:
             raise RulesChanged
 
         person_id = session["pending_member_id"]

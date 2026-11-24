@@ -138,6 +138,13 @@ class TestLoginAccount(MatrikelApiTest):
         self.assert_no_account()
         self.assertFalse(db.AccountRulesSnapshot.select().exists())
 
+    def test_the_same_text_under_a_new_revision_is_still_accepted(self):
+        self.pending()
+        self.cms.return_value.json.return_value = {"version": "24", "text": RULE_TEXT}
+        self.assertEqual(self.create().status_code, 200)
+        user = db.Member.get_by_id(self.member.id).user
+        self.assertEqual((user.rules_version, user.rules_snapshot.text), ("24", RULE_TEXT))
+
     def test_failed_account_link_rolls_back_the_snapshot(self):
         self.pending()
         with mock.patch.object(matrikel, "link_member_user", side_effect=matrikel.LinkError("test", "test")):
