@@ -25,6 +25,7 @@ import utils.inbox as inbox
 import utils.inbox_gmail as inbox_gmail
 import utils.inbox_purge as purge
 import utils.mail as mail
+import utils.matrikel as matrikel
 import utils.settings as settings
 from PIL import Image
 from utils.gmail import Gmail, HistoryTooOld
@@ -318,6 +319,29 @@ class TestSorting(GmailTest):
         self.assertEqual(event.detail["subject"], "Re: Fråga")
         (notice,) = db.Notice.select().where(db.Notice.kind == "svar")
         self.assertEqual((notice.user_id, notice.item_id), (self.helper.id, item.id))
+
+    def test_anonymizing_the_replier_erases_only_their_reply_on_another_users_upload(self):
+        holder = self.holder(self.herds[0])
+        owner_address = "uppladdare@example.org"
+        db.User.update(email=owner_address).where(db.User.id == self.owner.id).execute()
+        item = self.waiting()
+        item.message = "Uppladdarens meddelande."
+        item.save()
+        subject = f"Komplettering (ärende {item.id})"
+        self.fake.deliver(message(subject=subject, files=[("bilaga.txt", "text/plain", b"test")]))
+        self.fake.deliver(message(subject=subject, sender=owner_address, body="Uppladdarens svar."))
+        self.read()
+        replies = item.events.where(db.InboxEvent.kind == "svar")
+        reply = replies.where(db.InboxEvent.detail.contains({"not_saved": ["bilaga.txt"]})).get()
+        other = replies.where(db.InboxEvent.detail.contains({"text": "Uppladdarens svar."})).get()
+        self.assertIn("not_saved_reasons", reply.detail)
+
+        matrikel.anonymize_person(holder, self.admin)
+
+        self.assertEqual(db.InboxEvent.get_by_id(reply.id).detail, {"documents": []})
+        self.assertEqual(other.detail["sender_user"], self.owner.id)
+        self.assertEqual(db.InboxEvent.get_by_id(other.id).detail, other.detail)
+        self.assertEqual(self.reload(item).message, "Uppladdarens meddelande.")
 
     def test_a_reply_to_an_incomplete_item_returns_it_and_restarts_its_year(self):
         self.holder(self.herds[0])

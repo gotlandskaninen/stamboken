@@ -40,7 +40,6 @@ from utils.database import (
     InboxItem,
     MailMessage,
     Member,
-    User,
 )
 from utils.gmail import Gmail, HistoryTooOld
 from utils.mail import Recipient, _hostname, _normalize, _scrub, enqueue_mail, mail_kind, recipient_kind
@@ -276,8 +275,9 @@ def read_message(gmail_id, raw, received_at=None):
             )
         with DB_PROXY.atomic():
             replied = _replied_item(msg)
-            if replied is not None and _may_answer(msg, sender, replied):
-                _attach_reply(replied, subject, text, stored, skipped)
+            reply_sender = _reply_sender(msg, sender, replied)
+            if reply_sender is not None:
+                _attach_reply(replied, reply_sender, subject, text, stored, skipped)
                 _processed(gmail_id, "reply", replied)
             else:
                 maybe = replied.id if replied is not None else None
@@ -387,11 +387,15 @@ def _documents(item, stored):
     ]
 
 
+def _active_sender(address):
+    return (fn.LOWER(fn.TRIM(Member.email)) == address) & Member.end_date.is_null(True)
+
+
 def _match(address):
     """The member, herd and genebank the sender's address gives in the member register: a hint, never a gate."""
     member = (
         Member.select()
-        .where((fn.LOWER(fn.TRIM(Member.email)) == address) & Member.end_date.is_null(True))
+        .where(_active_sender(address))
         .order_by((Member.role == "huvudmedlem").desc(), Member.id)
         .first()
         if address
@@ -440,7 +444,7 @@ def _replied_item(msg):
     """
     The item a reply is about, locked: by one of our mails about it in In-Reply-To (its Message-ID checked like
     a bounce's, host and HMAC), failing that by "(ärende <id>)" at the end of the subject. This only says which
-    item; whether the sender may answer there is _may_answer's.
+    item; whether the sender may answer there is _reply_sender's.
     """
     item_id = None
     for match in _OUR_ID.finditer(str(msg.get("In-Reply-To", ""))):
@@ -456,24 +460,35 @@ def _replied_item(msg):
     return InboxItem.select().where(InboxItem.id == item_id).for_update().first() if item_id else None
 
 
-def _may_answer(msg, sender, item):
-    """An answer goes on an open item only from an authenticated sender who is related to it."""
-    return item.state not in inbox.CLOSED_STATES and authenticated(msg, sender) and sender in _related(item)
-
-
-def _related(item):
-    """Whom a question on the item went to, its sender, and its herd's holder per the member register."""
+def _reply_sender(msg, sender, item):
+    """The sender to record for erasure, {} for an unmatched original sender, or None if the reply cannot attach."""
+    if item is None or item.state in inbox.CLOSED_STATES or not authenticated(msg, sender):
+        return None
     asked = MailMessage.select(MailMessage.recipient_id).where(
         (MailMessage.kind == "inlasning.fraga")
         & (MailMessage.recipient_kind == "member")
         & (MailMessage.ref_type == "inbox_item")
         & (MailMessage.ref_id == item.id)
     )
-    addresses = [m.email for m in Member.select(Member.email).where(Member.id.in_(asked))]
+    related = Member.id.in_(asked)
     holder = inbox.herd_holder(item.herd_id)
-    uploader = User.get_or_none(User.id == item.sender_user_id) if item.sender_user_id else None
-    addresses += [item.sender_address, holder and holder.email, uploader and uploader.email]
-    return {_normalize(address) for address in addresses} - {None}
+    if holder:
+        related |= Member.id == holder.id
+    original_sender = sender == _normalize(item.sender_address)
+    if original_sender:
+        related |= _active_sender(sender)
+    # Anonymization locks the person first. If it is underway, retry the mail after it commits.
+    members = (
+        Member.select(Member.id, Member.email).where(related).order_by((Member.role == "huvudmedlem").desc(), Member.id)
+    )
+    for member in members.for_update("FOR SHARE NOWAIT"):
+        if sender == _normalize(member.email):
+            return {"sender_member": member.id}
+    if item.sender_user_id and sender == _normalize(item.sender_user.email):
+        return {"sender_user": item.sender_user_id}
+    if original_sender:
+        return {"sender_member": item.member_id} if item.member_id else {}
+    return None
 
 
 def authenticated(msg, sender):
@@ -510,14 +525,14 @@ def _mail_detail(subject, skipped):
     return detail
 
 
-def _attach_reply(item, subject, text, stored=(), skipped=()):
+def _attach_reply(item, reply_sender, subject, text, stored=(), skipped=()):
     """
     An answer on the item: an event with its text and new documents, a notice, and back to its handler if it
     waited for the answer or was incomplete (the mail about it asked the sender to reply with what is missing).
     """
     documents = _documents(item, stored)
     detail = {"text": text, "documents": [document.id for document in documents], **_mail_detail(subject, skipped)}
-    InboxEvent.create(item=item, kind="svar", detail=detail)
+    InboxEvent.create(item=item, kind="svar", detail={**detail, **reply_sender})
     if item.state in ("vantar_uppfodare", "ofullstandig"):
         inbox._set_state(item, "tagen")  # pylint: disable=protected-access
         item.save()

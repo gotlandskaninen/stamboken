@@ -1172,7 +1172,9 @@ Det personen själv har skickat in raderas också: poster där personen är den 
 mejl (`member`) och poster som personens konto har laddat upp. En sådan post som inte har lagt något på
 en kanin raderas med sina filer. En post som har det står kvar utan original, text och
 `sender_address`, och mejl till avsändaren som ännu inte har gått stoppas (`cancelled`), och mejlkön
-glömmer adressen.
+glömmer adressen. På andras ärenden rensas fritexten i de svar som vid inläsningen kopplades till
+personen eller personens konto. Ämne, svarstext, avvisade filnamn och bilageskäl tas bort tillsammans
+med avsändarkopplingen. Händelsens tid och dokumentreferenser finns kvar.
 
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/radera-original`
 
