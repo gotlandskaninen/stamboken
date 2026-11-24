@@ -3,7 +3,7 @@
 import { useEffect, useState, useTransition } from "react";
 import { useTranslation } from "react-i18next";
 import { assignHerd, assignItem, previewHerd } from "./actions";
-import { useQueueUndo } from "./QueueUndo";
+import { QueueUndoStatus, useQueueUndo } from "./QueueUndo";
 import type { Person } from "./lib";
 import styles from "./inkorg.module.css";
 
@@ -134,6 +134,7 @@ export function AssignHerd({ people }: { people: Person[] }) {
           count: res.data.assigned.length,
           name: person.name,
         }),
+        "herd",
       );
     });
   }
@@ -219,6 +220,7 @@ export function AssignHerd({ people }: { people: Person[] }) {
             {error}
           </p>
         )}
+        <QueueUndoStatus location="herd" />
       </form>
     </details>
   );

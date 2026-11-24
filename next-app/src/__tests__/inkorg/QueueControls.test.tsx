@@ -22,7 +22,10 @@ vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/actions", () => actions);
 
 import { ItemControls } from "@/app/(app)/stamboken/(dashboard)/inkorg/ItemControls";
 import { AssignHerd } from "@/app/(app)/stamboken/(dashboard)/inkorg/QueueControls";
-import { QueueUndoProvider } from "@/app/(app)/stamboken/(dashboard)/inkorg/QueueUndo";
+import {
+  QueueUndoProvider,
+  QueueUndoStatus,
+} from "@/app/(app)/stamboken/(dashboard)/inkorg/QueueUndo";
 import type {
   ItemState,
   Person,
@@ -80,6 +83,7 @@ describe("handläggning och ångra", () => {
     view.rerender(
       <QueueUndoProvider>
         <p>Registrering</p>
+        <QueueUndoStatus />
       </QueueUndoProvider>,
     );
     await act(async () => {
@@ -120,6 +124,36 @@ describe("handläggning och ångra", () => {
     );
   });
 
+  it("announces in an existing status and pauses the timer for hover and focus", async () => {
+    actions.takeItem.mockResolvedValue({ ok: true, data: { undo: "over" } });
+    render(
+      <>
+        <h2 id="case-subject" tabIndex={-1}>
+          Ärendet
+        </h2>
+        {itemView("tagen", other)}
+      </>,
+    );
+    const status = screen.getByRole("status");
+    expect(status).toBeEmptyDOMElement();
+    await act(async () =>
+      fireEvent.click(screen.getByRole("button", { name: /Ta över/ })),
+    );
+    expect(screen.getByRole("status")).toBe(status);
+    const undo = screen.getByRole("button", { name: "Ångra" });
+    fireEvent.mouseEnter(status);
+    await advance(20_001);
+    expect(undo).toBeVisible();
+    act(() => undo.focus());
+    fireEvent.mouseLeave(status);
+    await advance(20_001);
+    expect(undo).toHaveFocus();
+    await act(async () => fireEvent.click(undo));
+    expect(screen.getByRole("heading", { name: "Ärendet" })).toHaveFocus();
+    await advance(20_000);
+    expect(status).toBeEmptyDOMElement();
+  });
+
   it("offers undo for takeover and putting a taken case back", async () => {
     actions.takeItem.mockResolvedValue({ ok: true, data: { undo: "over" } });
     actions.releaseItem.mockResolvedValue({
@@ -137,7 +171,7 @@ describe("handläggning och ångra", () => {
       assigned_at: "2026-11-14T08:00:00+00:00",
     });
     expect(push).not.toHaveBeenCalled();
-    await advance(9999);
+    await advance(19_999);
     expect(screen.getByRole("button", { name: "Ångra" })).toBeEnabled();
     await advance(1);
     expect(screen.queryByRole("button", { name: "Ångra" })).toBeNull();

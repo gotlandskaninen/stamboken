@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { releaseItem, takeItem } from "./actions";
-import { useQueueUndo } from "./QueueUndo";
+import { QueueUndoStatus, useQueueUndo } from "./QueueUndo";
 import {
   itemActions,
   lacksRole,
@@ -107,6 +107,7 @@ export function ItemControls({
           </button>
         )
       )}
+      <QueueUndoStatus />
       {error && (
         <p role="alert" className={styles.error}>
           {error}

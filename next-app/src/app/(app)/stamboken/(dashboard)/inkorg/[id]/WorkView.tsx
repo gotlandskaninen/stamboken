@@ -47,7 +47,7 @@ import {
   type Rect,
 } from "../lib";
 import { AssignItem } from "../QueueControls";
-import { useQueueUndo } from "../QueueUndo";
+import { QueueUndoStatus, useQueueUndo } from "../QueueUndo";
 import { AskBreeder } from "./AskBreeder";
 import { CertificateForm } from "./CertificateForm";
 import { MailFacts, MailThread, SenderUnconfirmed } from "./MailFacts";
@@ -436,6 +436,7 @@ export function WorkView({
             <AssignItem id={item.id} people={people} />
           )}
 
+          <QueueUndoStatus />
           <details className={styles.history}>
             <summary>Historik ({item.events.length})</summary>
             <ol>
