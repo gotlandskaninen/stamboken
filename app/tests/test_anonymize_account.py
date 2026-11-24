@@ -22,7 +22,7 @@ import utils.data_access as da
 import utils.database as db
 import utils.mail as mail
 import utils.matrikel as matrikel
-from herdbook import APP
+from herdbook import APP, limiter
 
 from tests.database_test import DatabaseTest
 
@@ -66,6 +66,9 @@ class TestAnonymizeEmptiesTheAccount(DatabaseTest):
         folder = mock.patch.dict(APP.config, {"PROFILE_UPLOAD_FOLDER": os.path.join(self.uploads.name, "profiler")})
         folder.start()
         self.addCleanup(folder.stop)
+        limit = mock.patch.object(limiter, "enabled", False)  # these tests log in more often than the login limit
+        limit.start()
+        self.addCleanup(limit.stop)
         self.addCleanup(self.uploads.cleanup)
 
     def _account(self, tag):
@@ -400,3 +403,76 @@ class TestAnonymizeEmptiesTheAccount(DatabaseTest):
             content_type="multipart/form-data",
         )
         self.assertEqual(os.listdir(os.path.join(self.uploads.name, "profiler")), [])
+
+    def test_no_password_reset_and_no_activation_after_the_erasure(self):
+        user = self._account("w")
+        matrikel.anonymize_person(self._person(db.Membership.create(member_number=450), user), self.admin)
+        self.assertFalse(da.change_password(self.admin, user.id, {"newpassword": "nytt-losen"}))
+        with self.assertRaises(da.ValidationError):
+            da.set_account_active(user.id, True, actor_user_id=self.admin.id)
+        self._assert_emptied(user, "w")
+
+    def test_a_reset_waiting_for_the_erasure_creates_no_password(self):
+        user = self._account("v")
+        person = self._person(db.Membership.create(member_number=460), user)
+        locked, results = threading.Event(), []
+
+        def reset_when_locked():
+            try:
+                self.assertTrue(locked.wait(10))
+                results.append(da.change_password(self.admin, user.id, {"newpassword": "nytt-losen"}))
+            finally:
+                db.DB_PROXY.close()
+
+        real_erase = matrikel.erase_account
+
+        def erase_then_pause(account):  # the account's row is locked from here to the commit
+            real_erase(account)
+            locked.set()
+            time.sleep(1)
+
+        resetter = threading.Thread(target=reset_when_locked)
+        resetter.start()
+        with mock.patch.object(matrikel, "erase_account", side_effect=erase_then_pause):
+            matrikel.anonymize_person(person, self.admin)
+        resetter.join(15)
+        self.assertEqual(results, [None])
+        self._assert_emptied(user, "v")
+
+    def test_a_current_address_another_account_had_keeps_that_accounts_rows(self):
+        user = self._account("c")
+        other = da.register_user("forst-c@example.invalid", "losen")
+        _written_by("kontoc@example.invalid")  # written by the other account while it had the address
+        db.DB_PROXY.execute_sql(
+            """
+            INSERT INTO audit_log (table_name, record_id, operation, old_data, new_data)
+            VALUES ('hbuser', %s, 'UPDATE', jsonb_build_object('email', 'kontoc@example.invalid'), '{}'::jsonb)
+            """,
+            (str(other.id),),
+        )
+        with self.assertLogs(da.logger, "WARNING"):
+            matrikel.anonymize_person(self._person(db.Membership.create(member_number=470), user), self.admin)
+        kept = db.DB_PROXY.execute_sql(
+            "SELECT count(*) FROM audit_log WHERE changed_by = %s", ("kontoc@example.invalid",)
+        ).fetchone()[0]
+        self.assertEqual(kept, 1)  # written under the address: it may be the other account's
+        row = db.User.get_by_id(user.id)
+        self.assertEqual((row.email, row.username), (f"raderad-{user.id}", None))
+
+    def test_a_failed_upload_leaves_no_partial_file(self):
+        user = self._account("y")
+        client = APP.test_client(use_cookies=True)
+        client.post("/api/login", json={"username": "anvandarey", "password": "losen"})
+
+        def write_then_fail(self_, dst, *args, **kwargs):
+            with open(dst, "wb") as partial:
+                partial.write(b"jp")
+            raise OSError("disk full")
+
+        with mock.patch("werkzeug.datastructures.FileStorage.save", write_then_fail):
+            client.patch(
+                "/api/profile",
+                data={"profile_picture": (io.BytesIO(b"jpeg"), "ny.jpg")},
+                content_type="multipart/form-data",
+            )
+        self.assertEqual(sorted(os.listdir(os.path.join(self.uploads.name, "profiler"))), ["profily.jpg"])

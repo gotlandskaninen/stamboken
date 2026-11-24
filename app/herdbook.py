@@ -912,6 +912,7 @@ def user_profile():
                     APP.logger.info("Profile picture uploaded")
                 except Exception as e:
                     APP.logger.error("Error uploading file: %s", type(e).__name__)  # e carries the path
+                    da.remove_profile_picture(unique_filename)  # a partly written file, which no row names
                     return jsonify({"status": "error", "message": "Failed to upload image"})
 
         # Get settings from JSON or form data

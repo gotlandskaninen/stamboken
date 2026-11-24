@@ -604,7 +604,8 @@ def change_password(active_user, changed_user, form, session_stamps=None):
     # The account's row, as a login takes it: the new password and the new mark (new_generation) are one change.
     with DATABASE.atomic():
         try:
-            target = User.select(User.id, User.uuid).where(User.id == changed_user).for_update().get()
+            # never an account an erasure emptied (#190), also one emptied while this waited for the lock
+            target = User.select(User.id, User.uuid).where((User.id == changed_user) & not_erased()).for_update().get()
         except DoesNotExist:
             return None
         if _revoked_meanwhile(target, session_stamps):
@@ -1135,6 +1136,8 @@ def set_account_active(u_id, active, actor_user_id=None):
                 target = next((u for u in locked if u.id == u_id), None)
                 if target is None:
                     raise ValueError("user-not-found")
+                if active and target.email == f"raderad-{target.id}":  # not_erased(), on the locked row
+                    raise ValidationError("erased", "Kontot tömdes när personen anonymiserades och kan inte aktiveras.")
                 if not active and _count_current_admins(locked, exclude_user_id=u_id) == 0:
                     raise ValidationError(
                         "last-admin",
@@ -4559,8 +4562,9 @@ def purge_user_audit_pii(user_id: int, username: str, email: str) -> int:
 
     The caller must capture username and email BEFORE emptying the hbuser
     row. The names the account had before them (its own hbuser snapshots) are
-    matched too, unless another account has or had one: changed_by is only a
-    name, and such a row may be the other account's. Returns the number of
+    matched too. A name another account has or had is not, current or not:
+    changed_by is only a name, and such a row may be the other account's
+    (logged when it is a current name). Returns the number of
     rows redacted (0 for a fresh account). Called by anonymize_person (#190),
     last in its transaction: from the DROP RULE on, audit_log is locked until
     the commit, and a lock wait over AUDIT_IP_LOCK_TIMEOUT raises instead.
@@ -4599,9 +4603,9 @@ def purge_user_audit_pii(user_id: int, username: str, email: str) -> int:
                 (user_id, list(earlier), str(user_id), list(earlier)),
             )
         }
-        names = sorted(((earlier - shared) | {username, email}) - {None})
-        if shared & {username, email}:  # changed_by is only a name: that account's rows get this pseudonym too
-            logger.warning("purge_user_audit_pii: user %s has a current name another account has or had", user_id)
+        names = sorted((earlier | {username, email}) - shared - {None})
+        if shared & {username, email}:  # changed_by is only a name: such a row may be the other account's
+            logger.warning("purge_user_audit_pii: user %s keeps a current name another account has or had", user_id)
         # A queued DROP RULE would hold up every audited write behind it, as in purge_audit_ip.
         DATABASE.execute_sql("SELECT set_config('lock_timeout', %s, true)", (AUDIT_IP_LOCK_TIMEOUT,))
         DATABASE.execute_sql("DROP RULE IF EXISTS audit_log_no_update ON audit_log")
