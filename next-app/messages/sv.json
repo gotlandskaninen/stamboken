@@ -1,5 +1,9 @@
 {
   "queue": {
+    "reading_one": "Bildtolkning: 1 foto väntar.",
+    "reading_other": "Bildtolkning: {{count}} foton väntar.",
+    "lastRead": "Senast klar {{time}}.",
+    "selectCase": "Välj ett ärende i listan.",
     "modesLabel": "Lägen",
     "modes": {
       "nya": "Nya",
@@ -68,6 +72,42 @@
       "kontroll": "Kontroll",
       "avisering": "Avisering"
     }
+  },
+  "queueDetail": {
+    "back": "Tillbaka till listan",
+    "herd": "Besättning {{herd}}",
+    "elapsed": "Inkom för {{age}} sedan",
+    "next": "Nästa ärende",
+    "skipped": "Sparades inte",
+    "skippedReply": "Sparades inte i svaret {{date}}",
+    "mentioned": "Nämnda kaniner",
+    "about": "Om ärendet",
+    "sender": "Skickat av",
+    "kind": "Typ",
+    "received": "Inkommet",
+    "registration": "Visa registrering och historik",
+    "mail": "Mejlet",
+    "reply": "Svar · {{date}}",
+    "subject": "Ämne",
+    "unverified": "Avsändaren är inte bekräftad",
+    "noEmail": "Inget mejl skickas till adressen.",
+    "related": "Gäller kanske",
+    "caseNumber": "Ärende {{id}}",
+    "original": "Originalet",
+    "loading": "Fotot hämtas",
+    "failed": "Fotot kunde inte hämtas.",
+    "zoomOut": "Zooma ut",
+    "zoomIn": "Zooma in",
+    "photos": "Foton",
+    "erased": "Originalet är raderat.",
+    "photoCount": "Foto {{index}} av {{total}}",
+    "selectPhoto": "Välj foto",
+    "photo": "Foto {{index}}",
+    "request": "Be avsändaren bifoga bilden",
+    "requestNote": "Bifoga bildfilen i ditt svar så att vi kan läsa den.",
+    "messageToSender": "Meddelande till avsändaren",
+    "requestEffect": "När du skickar markeras ärendet som ofullständigt. Avsändaren kan svara på mejlet med bilden.",
+    "send": "Skicka"
   },
   "common": {
     "save": "Spara",

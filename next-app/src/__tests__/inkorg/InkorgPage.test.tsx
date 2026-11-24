@@ -25,12 +25,17 @@ vi.mock("@/lib/auth", () => ({
 vi.mock("@/lib/inkorg-server", () => ({
   requireQueueWorker: async () => undefined,
   fetchHandlers: async () => [],
+  getInboxCount: async () => ({ unread: 0 }),
 }));
 vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/GmailAlarm", () => ({
   GmailAlarm: () => null,
 }));
 vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/QueueControls", () => ({
   AssignHerd: () => null,
+}));
+
+vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/ItemControls", () => ({
+  ItemControls: () => null,
 }));
 
 import InkorgPage from "@/app/(app)/stamboken/(dashboard)/inkorg/page";
@@ -51,6 +56,7 @@ const row = {
 const queue = {
   items: [row, { ...row, id: 15, subject: "En följdfråga" }],
   total: 2,
+  next_untaken: [14, 15],
   mode_counts: { nya: 2, mina: 5, oppna: 8, klara: 40 },
   scope: "mina",
   my_genebanks: [1],
@@ -157,6 +163,39 @@ describe("Inkorg", () => {
     const reset = screen.getByRole("link", { name: "Visa alla öppna" });
     expect(reset.getAttribute("href")).toContain("scope=alla");
     expect(reset.getAttribute("href")).not.toMatch(/herd|mode=mina/);
+  });
+
+  it("loads a bookmarked case even outside the current page, and finds the next free case in scope", async () => {
+    fetchApi.mockImplementation(async (path: string) =>
+      path === "/v2/inkorg/17"
+        ? {
+            ...row,
+            id: 17,
+            documents: [],
+            events: [],
+            subject: "Mejlet i länken",
+          }
+        : { ...queue, next_untaken: [17, 25] },
+    );
+    await show({
+      arende: "17",
+      scope: "alla",
+      mode: "mina",
+      herd: "G12",
+      offset: "50",
+    });
+    expect(
+      screen.getByRole("heading", { name: "#17 Mejlet i länken" }),
+    ).toBeVisible();
+    expect(screen.getByRole("link", { name: "Nästa ärende" })).toHaveAttribute(
+      "href",
+      "/stamboken/inkorg?scope=alla&mode=nya&arende=25",
+    );
+    expect(
+      screen
+        .getByRole("link", { name: "Tillbaka till listan" })
+        .getAttribute("href"),
+    ).toContain("offset=50");
   });
 
   it("updates the herd search and clears the page offset", async () => {

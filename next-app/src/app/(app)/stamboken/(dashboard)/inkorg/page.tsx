@@ -1,12 +1,19 @@
 import Link from "next/link";
 import { ApiError, fetchApi } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
-import { formatTime } from "@/lib/inkorg";
-import { fetchHandlers, requireQueueWorker } from "@/lib/inkorg-server";
+import { RefreshBadge } from "@/components/shell/RefreshBadge";
+import {
+  fetchHandlers,
+  getInboxCount,
+  requireQueueWorker,
+} from "@/lib/inkorg-server";
 import { GmailAlarm } from "./GmailAlarm";
-import { QueueBrowser } from "./QueueBrowser";
+import { CasePane } from "./CasePane";
+import { InboxHeader, QueueBrowser } from "./QueueBrowser";
 import { AssignHerd } from "./QueueControls";
 import {
+  queueHref,
+  type InboxDetail,
   manages,
   people,
   QUEUE_MODES,
@@ -60,30 +67,45 @@ export default async function InkorgPage({
       </div>
     );
   }
-  const canAssign = manages(user, null);
-  const handlers = canAssign
-    ? people(
-        { id: user.id, name: user.fullname || `Konto ${user.id}` },
-        data.items,
-        await fetchHandlers(),
+  const query = filters.toString();
+  const next = data.next_untaken.find((id) => id !== selected);
+  const nextHref = next
+    ? queueHref(
+        query,
+        data.items.some((item) => item.id === next)
+          ? { arende: next }
+          : {
+              mode: "nya",
+              herd: null,
+              order: null,
+              offset: null,
+              arende: next,
+            },
       )
-    : [];
-  const reading = data.interpretation;
+    : null;
+  const canAssign = manages(user, null);
+  const [item, handlers, count] = await Promise.all([
+    selected
+      ? fetchApi<InboxDetail>(`/v2/inkorg/${selected}`).catch((error) => {
+          if (error instanceof ApiError && error.status === 404) return null;
+          throw error;
+        })
+      : null,
+    canAssign ? fetchHandlers() : [],
+    selected ? getInboxCount() : null,
+  ]);
+  const pickable = people(
+    { id: user.id, name: user.fullname || `Konto ${user.id}` },
+    data.items,
+    handlers,
+  );
+  const now = Date.now();
   return (
     <div className={styles.inbox}>
-      <header className={styles.inboxHeader}>
-        <h1>Inkorg</h1>
-        {reading && reading.interpreter !== "av" && (
-          <p>
-            Bildtolkning: {reading.waiting}{" "}
-            {reading.waiting === 1 ? "foto väntar" : "foton väntar"}.
-            {reading.last_done_at &&
-              ` Senast klar ${formatTime(reading.last_done_at)}.`}
-          </p>
-        )}
-      </header>
+      {count && <RefreshBadge key={selected} unread={count.unread} />}
+      <InboxHeader reading={data.interpretation} />
       <GmailAlarm />
-      {reading?.alarm && (
+      {data.interpretation?.alarm && (
         <p role="alert" className={styles.error}>
           Tre foton i rad gick inte att tolka. Kontrollera att bildtolkningen är
           igång.
@@ -91,23 +113,37 @@ export default async function InkorgPage({
       )}
       <QueueBrowser
         data={data}
-        query={filters.toString()}
+        query={query}
         selected={selected}
         userId={user.id}
-        now={Date.now()}
-        assignment={canAssign && <AssignHerd people={handlers} />}
+        now={now}
+        assignment={canAssign && <AssignHerd people={pickable} />}
       >
-        {selected ? (
-          <Link
-            href={`/stamboken/inkorg/${selected}`}
-            prefetch={false}
-            className="sb-btn"
-          >
-            Öppna ärende {selected}
-          </Link>
-        ) : (
-          <p className={styles.muted}>Välj ett ärende i listan.</p>
-        )}
+        {item ? (
+          <CasePane
+            key={item.id}
+            item={item}
+            user={{
+              id: user.id,
+              is_admin: user.is_admin,
+              is_manager: user.is_manager,
+            }}
+            myGenebanks={data.my_genebanks ?? null}
+            now={now}
+            nextHref={nextHref}
+            backHref={queueHref(query, {})}
+          />
+        ) : selected !== null ? (
+          <div className={`sb-card ${styles.emptyList}`}>
+            <p>Ärendet finns inte.</p>
+            <Link
+              href={queueHref(query, {})}
+              className="sb-btn sb-btn-secondary"
+            >
+              Tillbaka till listan
+            </Link>
+          </div>
+        ) : null}
       </QueueBrowser>
     </div>
   );

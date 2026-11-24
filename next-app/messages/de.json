@@ -1,5 +1,9 @@
 {
   "queue": {
+    "reading_one": "1 Foto wartet auf die Auswertung.",
+    "reading_other": "{{count}} Fotos warten auf die Auswertung.",
+    "lastRead": "Zuletzt fertig um {{time}}.",
+    "selectCase": "Wähle einen Vorgang aus der Liste.",
     "modesLabel": "Ansichten",
     "modes": {
       "nya": "Neu",
@@ -68,6 +72,42 @@
       "kontroll": "Prüfung",
       "avisering": "Benachrichtigung"
     }
+  },
+  "queueDetail": {
+    "back": "Zurück zur Liste",
+    "herd": "Bestand {{herd}}",
+    "elapsed": "Zeit seit Eingang: {{age}}",
+    "next": "Nächster Vorgang",
+    "skipped": "Nicht gespeichert",
+    "skippedReply": "Aus der Antwort vom {{date}} nicht gespeichert",
+    "mentioned": "Erwähnte Kaninchen",
+    "about": "Zum Vorgang",
+    "sender": "Gesendet von",
+    "kind": "Art",
+    "received": "Eingang",
+    "registration": "Erfassung und Verlauf ansehen",
+    "mail": "E-Mail",
+    "reply": "Antwort · {{date}}",
+    "subject": "Betreff",
+    "unverified": "Absender nicht bestätigt",
+    "noEmail": "An diese Adresse wird keine E-Mail gesendet.",
+    "related": "Möglicher Bezug",
+    "caseNumber": "Vorgang {{id}}",
+    "original": "Original",
+    "loading": "Foto wird geladen",
+    "failed": "Das Foto konnte nicht geladen werden.",
+    "zoomOut": "Verkleinern",
+    "zoomIn": "Vergrößern",
+    "photos": "Fotos",
+    "erased": "Das Original wurde gelöscht.",
+    "photoCount": "Foto {{index}} von {{total}}",
+    "selectPhoto": "Foto auswählen",
+    "photo": "Foto {{index}}",
+    "request": "Absender um das Bild als Anhang bitten",
+    "requestNote": "Bitte füge deiner Antwort die Bilddatei bei, damit wir sie lesen können.",
+    "messageToSender": "Nachricht an den Absender",
+    "requestEffect": "Beim Senden wird der Vorgang als unvollständig markiert. Der Absender kann das Bild in der Antwort anhängen.",
+    "send": "Senden"
   },
   "common": {
     "save": "Speichern",

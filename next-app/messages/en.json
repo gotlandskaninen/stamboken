@@ -1,5 +1,9 @@
 {
   "queue": {
+    "reading_one": "1 photo is waiting to be read.",
+    "reading_other": "{{count}} photos are waiting to be read.",
+    "lastRead": "Last completed {{time}}.",
+    "selectCase": "Select a case from the list.",
     "modesLabel": "Views",
     "modes": {
       "nya": "New",
@@ -68,6 +72,42 @@
       "kontroll": "Check",
       "avisering": "Notification"
     }
+  },
+  "queueDetail": {
+    "back": "Back to list",
+    "herd": "Herd {{herd}}",
+    "elapsed": "Received {{age}} ago",
+    "next": "Next case",
+    "skipped": "Not saved",
+    "skippedReply": "Not saved from the reply on {{date}}",
+    "mentioned": "Rabbits mentioned",
+    "about": "About this case",
+    "sender": "Sent by",
+    "kind": "Type",
+    "received": "Received",
+    "registration": "View registration and history",
+    "mail": "Email",
+    "reply": "Reply · {{date}}",
+    "subject": "Subject",
+    "unverified": "Unverified sender",
+    "noEmail": "No email is sent to this address.",
+    "related": "Possibly related to",
+    "caseNumber": "Case {{id}}",
+    "original": "Original",
+    "loading": "Loading photo",
+    "failed": "The photo could not be loaded.",
+    "zoomOut": "Zoom out",
+    "zoomIn": "Zoom in",
+    "photos": "Photos",
+    "erased": "The original has been deleted.",
+    "photoCount": "Photo {{index}} of {{total}}",
+    "selectPhoto": "Choose photo",
+    "photo": "Photo {{index}}",
+    "request": "Ask the sender to attach the image",
+    "requestNote": "Please attach the image file to your reply so we can read it.",
+    "messageToSender": "Message to sender",
+    "requestEffect": "Sending marks the case as incomplete. The sender can attach the image in a reply.",
+    "send": "Send"
   },
   "common": {
     "save": "Save",

@@ -15,7 +15,25 @@ import {
   type QueueList,
   type QueueMode,
 } from "./lib";
+import { formatTime } from "@/lib/inkorg";
+import type { InterpretationSummary } from "./lib";
 import styles from "./inkorg.module.css";
+
+export function InboxHeader({ reading }: { reading?: InterpretationSummary }) {
+  const { t } = useTranslation();
+  return (
+    <header className={styles.inboxHeader}>
+      <h1>{t("sidebar.inkorg")}</h1>
+      {reading && reading.interpreter !== "av" && (
+        <p>
+          {t("queue.reading", { count: reading.waiting })}{" "}
+          {reading.last_done_at &&
+            t("queue.lastRead", { time: formatTime(reading.last_done_at) })}
+        </p>
+      )}
+    </header>
+  );
+}
 
 function QueueRow({
   item,
@@ -332,7 +350,9 @@ export function QueueBrowser({
         className={styles.detailPane}
         aria-label={t("queue.caseLabel")}
       >
-        {children}
+        {children ?? (
+          <p className={styles.emptyPane}>{t("queue.selectCase")}</p>
+        )}
       </section>
     </div>
   );

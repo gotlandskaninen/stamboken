@@ -137,7 +137,27 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
           .first()
           .evaluate((c: HTMLCanvasElement) => [c.width, c.height]);
       // Read the photo first and turn it for reading: nothing is saved before the case is taken.
-      await desk.goto(`/stamboken/inkorg/${itemId}`);
+      await desk.setViewportSize({ width: 375, height: 812 });
+      await desk.goto("/stamboken/inkorg?herd=G1274&order=newest");
+      const row = desk.locator(`#case-row-${itemId}`);
+      await row.click();
+      await expect(desk).toHaveURL(new RegExp(`[?&]arende=${itemId}(?:&|$)`));
+      await desk.reload();
+      const back = desk.getByRole("link", { name: "Tillbaka till listan" });
+      await expect(back).toBeVisible();
+      await back.click();
+      await expect(row).toBeVisible();
+      await desk.setViewportSize({ width: 1280, height: 900 });
+      await row.click();
+      await expect(row).toHaveAttribute("aria-current", "true");
+      await expect(back).toBeHidden();
+      await expect(
+        desk.getByRole("heading", { name: "Foton", exact: true }),
+      ).toBeVisible();
+      await desk
+        .getByRole("link", { name: "Visa registrering och historik" })
+        .click();
+      await expect(desk).toHaveURL(new RegExp(`/inkorg/${itemId}$`));
       await expect
         .poll(async () => (await canvasSize())[0])
         .toBeGreaterThan(300);

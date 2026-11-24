@@ -82,6 +82,11 @@ export async function takeItem(id: number, over = false) {
   return call<InboxItem>(id, `/${id}/${over ? "ta-over" : "ta"}`, "POST");
 }
 
+export async function releaseItem(id: number) {
+  if (!isId(id)) return refused("Ogiltigt ärende.");
+  return call<InboxItem>(id, `/${id}/slapp`, "POST");
+}
+
 export async function assignItem(id: number, userId: number) {
   if (!isId(id) || !isId(userId)) return refused("Välj en person.");
   return call<InboxItem>(id, `/${id}/tilldela`, "POST", { user_id: userId });
