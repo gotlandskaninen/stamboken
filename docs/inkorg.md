@@ -116,6 +116,8 @@ bort.
 | Till | Hur | Från | Vem |
 |---|---|---|---|
 | `ny` | posten kommer in | – | – |
+| `ny` | Lägg tillbaka (`…/slapp`) tar bort handläggaren | `tagen` | handläggaren |
+| föregående läge | Ångra (`…/angra`) återställer också handläggare och tidsstämplar | läget direkt efter åtgärden | den som gjorde åtgärden |
 | `tagen` | `…/ta`, `…/ta-over` | alla öppna lägen | den som arbetar i postens genbank, admin; vem som helst i kön när posten saknar genbank |
 | `tagen` | `…/tilldela` | `ny`, `hos_genbanksansvarig`, `tagen` (de väntande lägena behåller sitt läge och byter bara handläggare) | genbanksansvarig för postens genbank, admin |
 | `tagen` | `…/lage` | `vantar_foralder`, `ofullstandig` | handläggaren |
@@ -210,6 +212,9 @@ Kölistan och de flesta anrop som ändrar en post svarar med posten i listform:
   besättningar; `genebank_id` är då också `null` om besättningarna ligger i olika genbanker.
 - `sender` och `assigned_to`: `null` eller `{id, name}`. `name` är kontots fullständiga namn, och
   `"Konto <id>"` när namnet saknas. E-postadressen visas aldrig.
+- Kölistan visar ämnet från det ursprungliga mejlet i `subject`, eller `null` när ämnet saknas.
+  För matchad mejlavsändare finns medlemmens namn i `member_name`. Listan visar kontots eller medlemmens
+  namn och annars ”okänd avsändare”. Avsändaradressen finns i detaljsvaret.
 - `missing_proof`: en försäljning har registrerats utan överlåtelsebevis ("bevis saknas").
 - `stalled`: "står still". Nattjobbet sätter den på en post som varit `tagen` i 14 dagar utan någon
   händelse (att öppna posten eller visa originalet räknas inte), och tar bort den när något har hänt.
@@ -329,6 +334,8 @@ till avsändaren väntar, och senast 30 dagar efter stängningen.
 | `inkommen` | `{"documents": 2}`; för ett mejl också `not_saved` (namnen på bilagor som inte sparades) och `maybe_item` (posten ett svar från någon annan kanske gäller), när de finns |
 | `oppnad` | `null`; någon i kön öppnade posten (högst en gång i timmen per person och post) |
 | `tagen` | `null` |
+| `slappt` | `null` (Lades tillbaka) |
+| `angrad` | `{"event": 18}` (id för händelsen som ångrades) |
 | `overtagen` | `{"from_user": 7}` |
 | `tilldelad` | `{"to_user": 7, "from_user": null}` |
 | `lage` | `{"from": "tagen", "to": "ofullstandig", "note": "Pappersintyget saknas"}`; `note` bara när den gavs, `duplicate_of` vid `dubblett` |
@@ -441,12 +448,16 @@ Kölistan, äldst först (`received_at`).
 |---|---|
 | `scope=mina` | poster i de genbanker där anroparen är genbanksansvarig eller hjälpare, och poster utan genbank. Standard för genbanksansvariga och hjälpare |
 | `scope=alla` | alla poster. Standard för admin |
+| `mode=<vy>` | `nya` (öppna utan handläggare), `mina` (mina öppna), `oppna` (alla öppna) eller `klara` (alla stängda) |
+| `order=<ordning>` | `oldest` (standard) eller `newest`, efter mottagningstid och därefter id |
+| `herd_prefix=<prefix>` | besättningsnummer som börjar med prefixet, oavsett inmatningens skiftläge |
+| `after=<id>` | utgångspunkt för `next_untaken`, oberoende av listans sidindelning |
 | `mine=1` | poster där anroparen är handläggare |
 | `untaken=1` | poster utan handläggare |
 | `assigned_to=<user id>` | en viss handläggares poster |
 | `genebank_id=<id>` | en genbank |
 | `herd=<besättningsnummer>` | en besättning |
-| `state=<läge>[,<läge>…]` | ett eller flera lägen; utelämnad: alla öppna lägen; `state=alla`: alla lägen |
+| `state=<läge>[,<läge>…]` | ett eller flera lägen; utan `state` gäller vald vy, annars alla öppna; `state=alla` lägger inte till något lägesfilter |
 | `kind=<typ>` | posttyp |
 | `limit`, `offset` | sidindelning; `limit` 1–200, standard 50 |
 
@@ -454,7 +465,9 @@ Kölistan, äldst först (`received_at`).
 
 ```json
 {
-  "items": [ { "…": "poster i listform" } ],
+  "items": [ { "id": 12, "subject": "Intyg", "…": "övriga listfält" } ],
+  "mode_counts": {"nya": 9, "mina": 3, "oppna": 17, "klara": 2},
+  "next_untaken": [12, 15],
   "total": 17,
   "counts": {"ny": 9, "tagen": 6, "klar": 2},
   "interpretation": {"interpreter": "gemma", "waiting": 3, "last_done_at": "2026-11-14T08:01:02+00:00", "alarm": false},
@@ -467,7 +480,11 @@ Kölistan, äldst först (`received_at`).
 genbanksansvarig eller hjälpare (tom för en admin utan sådana roller), oberoende av filtren, så att
 `GET /api/v2/inkorg?limit=1` räcker för att läsa dem. `scope` avgränsar bara listan: alla som arbetar
 i kön kan öppna och läsa varje post, och reglerna för att skriva är desamma. `total` är antalet poster
-med alla filter. `counts` är antalet per läge med alla filter utom `state` (också `scope`), så att
+med alla filter. `mode_counts` räknar varje vy inom vald `scope` före övriga filter.
+`next_untaken` innehåller upp till två av områdets äldsta otagna ärenden. Med `after` innehåller
+fältet endast det första otagna ärendet efter det angivna i ordningen mottagningstid och id,
+eller en tom lista vid slutet. Om id:t saknas i databasen börjar sökningen från början.
+`counts` är antalet per läge efter sakfiltren men före `mode` och `state`, så att
 flikar per läge kan visa sina antal. Ett läge utan poster saknas i `counts`.
 `interpretation` är tolkningens läge, oberoende av filtren: `interpreter` (`av` när den är
 avstängd), `waiting` (intyg i kö), `last_done_at` (när det senaste förslaget blev klart) och
@@ -493,7 +510,8 @@ när), högst en gång i timmen per person och post så att en omladdning inte f
 
 ## Ta, ta över och tilldela
 
-Svaren är posten i listform.
+Åtgärder på en post svarar med posten i listform och `undo`, en signerad token för Ångra.
+Om posten redan var tagen av anroparen och inget ändrades är `undo` null.
 
 ### `POST /api/v2/inkorg/{id}/ta`
 
@@ -512,6 +530,23 @@ Inkorgens knapp ”Ta över” skickar handläggarens id i `assigned_to` och den
 tilldelningstiden i `assigned_at`. Flask jämför båda under ärendets lås. Om någon
 har ändrat tilldelningen svarar Flask med **409** och den aktuella handläggaren behåller ärendet.
 
+### `POST /api/v2/inkorg/{id}/slapp`
+
+Lägg tillbaka gäller ett ärende i läget `tagen` som anroparen handlägger. Ärendet hamnar under
+Nya, så att någon annan kan ta det. Ett väntande ärende ger **409**. Det kan tas över eller tilldelas.
+
+### `POST /api/v2/inkorg/angra`
+
+Skicka `{"undo": "<token>"}` inom fem minuter. Svaret innehåller de återställda ärendenas id i
+`restored`. Ångra återställer tilldelning, läge och tidsstämplar för hela åtgärden och tar bort
+åtgärdens notis. Endast den som gjorde ändringen kan ångra den. Ett senare öppnande eller en
+originalvisning påverkar inte Ångra. En senare ändring av ärendet ger **409**.
+
+Om ett övertagande ångras tillbaka till `ofullstandig` kan den aktuella bilagebegäran och
+påminnelsen köas om när lägesbytet makulerat dem. Ett pågående utskick ger **409** och kan
+försökas igen. Har mejlet makulerats av annat skäl återställs ärendet och svaret innehåller en
+förklaring i `warning`.
+
 ### `POST /api/v2/inkorg/{id}/tilldela`
 
 ```json
@@ -527,16 +562,21 @@ sig själv.
 **Fel:** 400 utan giltigt `user_id` eller när mottagaren inte kan få posten, 403 utan rätt att
 tilldela, 409 när posten är stängd.
 
+### `GET /api/v2/inkorg/tilldela`
+
+Ange besättningsnummer i `herd`. Förhandsvisningen innehåller antalet öppna ärenden i `total`,
+nuvarande handläggare i `assignees` (id, namn och antal) och en `revision` för tilldelningen.
+
 ### `POST /api/v2/inkorg/tilldela`
 
 Alla öppna poster för en besättning till en person.
 
 ```json
-{"herd": "G1", "user_id": 7}
+{"herd": "G1", "user_id": 7, "revision": "<revision från förhandsvisningen>"}
 ```
 
-**Svar 200:** `{"assigned": [12, 15]}`, postnumren som tilldelades. Samma regler och fel som
-ovan; ett fel på någon post stoppar alla.
+**Svar 200:** `{"assigned": [12, 15], "undo": "<token>"}`. En saknad revision ger **400**,
+en inaktuell revision ger **409**. Ett fel på någon post stoppar hela tilldelningen.
 
 ## Byta läge
 
