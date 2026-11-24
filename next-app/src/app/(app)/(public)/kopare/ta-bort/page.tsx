@@ -1,6 +1,7 @@
 import { Box } from "@mui/material";
 import type { Metadata } from "next";
 import { PageHeader } from "@/components/public/PageHeader";
+import sv from "../../../../../../messages/sv.json";
 import { EraseBuyer } from "./EraseBuyer";
 
 export const metadata: Metadata = { title: "Ta bort dina uppgifter" };
@@ -14,7 +15,7 @@ export default function TaBortPage() {
         component="section"
         sx={{ p: { xs: "40px 24px", md: "80px 56px" }, maxWidth: 720 }}
       >
-        <EraseBuyer />
+        <EraseBuyer description={sv.eraseBuyer.description} />
       </Box>
     </>
   );

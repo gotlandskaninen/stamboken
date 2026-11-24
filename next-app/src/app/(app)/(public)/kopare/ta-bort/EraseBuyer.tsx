@@ -25,7 +25,7 @@ const DONE: Record<Exclude<EraseResult, "error">, string> = {
 };
 
 /** Erases only on the button (a POST): a link preview that opens the page erases nothing. */
-export function EraseBuyer() {
+export function EraseBuyer({ description }: { description: string }) {
   const token = useRef<string | null>(null);
   const [result, setResult] = useState<EraseResult | null>(null);
   const [pending, startTransition] = useTransition();
@@ -51,10 +51,7 @@ export function EraseBuyer() {
         gap: 2,
       }}
     >
-      <Typography>
-        Vi tar bort ditt namn, din ort och dina kontaktuppgifter. Det går inte
-        att ångra.
-      </Typography>
+      <Typography>{description}</Typography>
       {result === "error" && (
         <Alert severity="error">Något gick fel. Försök igen om en stund.</Alert>
       )}

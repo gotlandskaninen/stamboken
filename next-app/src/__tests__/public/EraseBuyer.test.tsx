@@ -16,10 +16,8 @@ vi.mock("@/app/(app)/(public)/kopare/ta-bort/actions", () => ({
   eraseBuyer: eraseBuyerMock,
 }));
 
-import {
-  EraseBuyer,
-  takeToken,
-} from "@/app/(app)/(public)/kopare/ta-bort/EraseBuyer";
+import { takeToken } from "@/app/(app)/(public)/kopare/ta-bort/EraseBuyer";
+import TaBortPage from "@/app/(app)/(public)/kopare/ta-bort/page";
 
 const PAGE = "/kopare/ta-bort";
 const TOKEN = "17." + "x".repeat(22); // shaped like a link token, built so no scanner flags it
@@ -29,7 +27,7 @@ function open(hash: string) {
   window.history.replaceState(null, "", PAGE + hash);
   render(
     <StrictMode>
-      <EraseBuyer />
+      <TaBortPage />
     </StrictMode>,
   );
 }
@@ -68,7 +66,9 @@ describe("EraseBuyer", () => {
   it("says what goes, erases nothing on opening, and hides the token", () => {
     open(`#${TOKEN}`);
     expect(
-      screen.getByText(/ditt namn, din ort och dina kontaktuppgifter/),
+      screen.getByText(
+        /ditt namn, din postadress eller ort och dina övriga kontaktuppgifter/,
+      ),
     ).toBeInTheDocument();
     expect(button()).toBeEnabled();
     expect(eraseBuyerMock).not.toHaveBeenCalled();
