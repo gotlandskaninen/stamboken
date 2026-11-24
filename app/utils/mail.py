@@ -558,6 +558,13 @@ def _send_one(row, relay, now):
         return _finish(row, now, status="logged", last_error=note)
     if mode == "allowlist" and not _allowed(address):
         return _finish(row, now, status="blocked", last_error="spärrat: adressen finns inte i MAIL_ALLOWLIST")
+    # For buyer mail, keep _renew's row lock through the SMTP handoff and its outcome.
+    # forget_recipient then either cancels before the handoff or waits until it is over.
+    with DB_PROXY.atomic() if row.kind.startswith("kopare.") else contextlib.nullcontext():
+        return _deliver(row, relay, now, msg, address, note)
+
+
+def _deliver(row, relay, now, msg, address, note):
     try:
         relay.send(msg, address, lambda: _renew(row))
     except _ClaimLost:

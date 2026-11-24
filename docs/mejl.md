@@ -54,8 +54,10 @@ mejlet går då till den adress som är aktuell just då.
   just då förlorar sitt anspråk på raden, så sändaren skickar det inte och
   skriver inte tillbaka någon adresshash. Sändaren frågar efter anspråket när
   anslutningen till reläet är uppe, omedelbart före själva mejlet. Raderas
-  mottagaren medan mejlet lämnas över till reläet går det ändå: det är redan
-  på väg, som ett mejl som skickades sekunden innan.
+  mottagaren medan mejlet lämnas över till reläet är det redan på väg.
+  För `kopare.*` håller sändaren mejlradens lås tills reläet har svarat eller
+  försöket har avbrutits och utfallet är registrerat. En samtidig radering
+  väntar då på låset innan köparen får sin bekräftelse.
 - Den publika ansökan tar emot vilken adress som helst, så kvittot
   `ansokan.mottagen` går högst en gång per adress och dag: `dedupe_key` är
   adressens HMAC och datumet, aldrig adressen.

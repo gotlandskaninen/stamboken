@@ -8,10 +8,14 @@ import re
 import subprocess
 import sys
 import textwrap
+import threading
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 from zoneinfo import ZoneInfo
+
+from peewee import OperationalError
 
 os.environ.setdefault("AUTHCONFIGFILE", os.path.join(os.path.dirname(__file__), "auth.ini.test"))
 
@@ -387,6 +391,32 @@ class TestInformationSent(BuyerMailTest):
         subject, body = self.text()
         self.assertEqual(subject, "Din kanin Stjärna igen (G1-2111) är registrerad hos Föreningen Gotlandskaninen")
         self.assertIn("Hej Test Köpare,\n\ndu har köpt kaninen Stjärna igen, G1-2111.", body)
+
+    def test_erasure_waits_for_an_ongoing_smtp_handoff(self):
+        token = mail.link_token(ERASE_PURPOSE, self.contact_id)
+        started, resume = threading.Event(), threading.Event()
+
+        def handoff(_msg):
+            started.set()
+            resume.wait(timeout=10)
+
+        def send():
+            with db.DB_PROXY.connection_context():
+                return mail.send_pending()
+
+        with mock.patch.object(mail.smtplib, "SMTP", FakeRelay(gate=handoff)), ThreadPoolExecutor(1) as pool:
+            sending = pool.submit(send)
+            try:
+                self.assertTrue(started.wait(timeout=10))
+                with self.assertRaisesRegex(OperationalError, "lock timeout"), db.DB_PROXY.atomic():
+                    db.DB_PROXY.execute_sql("SET LOCAL lock_timeout = '250ms'")
+                    buyer_mail.erase_by_link(token)
+            finally:
+                resume.set()
+            self.assertEqual(sending.result(timeout=10), 1)
+        self.assertEqual(buyer_mail.erase_by_link(token), "removed")
+        (row,) = self.mails()
+        self.assertEqual((row.status, row.address_hash), ("sent", None))
 
     def test_not_sent_once_the_buyer_is_erased(self):
         buyer_contact.erase_buyer_contact(self.contact_id, self.admin)
