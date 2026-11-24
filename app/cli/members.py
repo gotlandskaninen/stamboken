@@ -930,6 +930,7 @@ _GENERIC_LOCAL_PARTS = frozenset(
     kassor kassör klubben kontakt kontakta kontakten kontoret mail medlem medlemmar museet museum no-reply
     noreply office order ordforande ordförande post posten postmaster reception receptionen sekretariat
     sekretariatet sekreterare styrelse styrelsen support webmaster
+    gotlandskanin gotlandskaninen mellerudskanin mellerudskaninen
     """.split()
 )
 
@@ -943,6 +944,9 @@ def _match_reason(person: Member, user: User) -> str | None:
     name = _norm_name(user.fullname)
     if name and name == _norm_name(f"{person.first_name} {person.last_name}"):
         return "namn lika"
+    # the association's own address for the person, which Google sign-in also links by
+    if (workspace := _norm_email(person.workspace_email)) and workspace == _norm_email(user.google_email):
+        return "Workspace-adress lika (Google)"
 
     address = _norm_email(person.email)
     if not address:

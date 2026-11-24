@@ -118,7 +118,7 @@ class TestMembersLinkByHerd(DatabaseTest):
         )
 
     def test_generic_and_short_local_parts_are_listed(self):
-        for number, local in enumerate(("info", "kontakt", "abc", "kansliet"), start=901):
+        for number, local in enumerate(("info", "kontakt", "abc", "kansliet", "gotlandskanin"), start=901):
             self._membership(number, first="Exempelmuseet", last="", email=f"{local}@example.org")
             self._account(fullname="Anna Exempel", owns=self._herd(f"G{number}"), email=f"{local}@example.invalid")
 
@@ -126,8 +126,8 @@ class TestMembersLinkByHerd(DatabaseTest):
 
         self.assertEqual(plan.exit_code, 0, plan.output)
         self.assertIn("Att koppla: 0", plan.output)
-        self.assertIn("Till granskning: 4", plan.output)
-        for number in (901, 902, 903, 904):
+        self.assertIn("Till granskning: 5", plan.output)
+        for number in (901, 902, 903, 904, 905):
             self.assertIn(f"G{number}: namnet skiljer sig", plan.output)
 
     def test_different_name_is_listed_not_linked(self):
@@ -808,6 +808,25 @@ class TestMembersLinkByHerd(DatabaseTest):
         user = self._account(fullname="Eva Lund", owns=self._herd("G901"), email="familjen@example.net")
         db.Member.create(
             membership=membership, role="familjemedlem", first_name="Bo", last_name="Lund", email=user.email
+        )
+
+        plan = self._run()
+
+        self.assertEqual(plan.exit_code, 0, plan.output)
+        self.assertIn("Att koppla: 0", plan.output)
+        self.assertIn("G901: flera möjliga kopplingar", plan.output)
+
+    def test_family_members_workspace_address_blocks_main_members_local_part_match(self):
+        membership, _ = self._membership(901, email="bo.lund@example.org")
+        user = self._account(fullname="Eva Lund", owns=self._herd("G901"))
+        user.google_email = "bo.lund@example.invalid"
+        user.save()
+        db.Member.create(
+            membership=membership,
+            role="familjemedlem",
+            first_name="Bo",
+            last_name="Lund",
+            workspace_email="bo.lund@example.invalid",
         )
 
         plan = self._run()
