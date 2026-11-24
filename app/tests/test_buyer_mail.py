@@ -739,8 +739,9 @@ class TestNoTokenInLogs(BuyerMailTest):
         """
     )
 
-    def test_the_token_reaches_no_app_or_mail_log(self):
-        contact_id = self._sale(WITH_EMAIL).holder_contact_id
+    def test_neither_the_token_nor_the_buyers_name_reaches_the_log(self):
+        contact_id = self._sale({**WITH_EMAIL, "membership_optin": True}).holder_contact_id
+        queued = self.mails()
         token = mail.link_token(ERASE_PURPOSE, contact_id)
         app_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         env = {**os.environ, "MAIL_MODE": "log", "LINK_SECRET": SECRET, "FLASK_ENV": "testing"}
@@ -754,7 +755,11 @@ class TestNoTokenInLogs(BuyerMailTest):
         )
         logs = p.stdout + p.stderr
         self.assertEqual(re.findall(r"^answer (\d+)$", logs, re.MULTILINE), ["404", "500", "200", "200"], logs)
-        self.assertIn(f"/kopare/ta-bort#{contact_id}.***", logs)  # the mail's text, logged and masked
+        for row in queued:
+            self.assertIn(f"Mail {row.id} ({row.kind}) logged", logs)
+        self.assertNotIn(NAME, logs)
+        self.assertNotIn("/kopare/ta-bort#", logs)
+        self.assertNotIn("Din kanin Stjärna", logs)
         self.assertIn("Exception on /api/v2/kopare/ta-bort [POST]", logs)
         self.assertNotIn(token, logs)
         self.assertNotIn(token.split(".")[1], logs)  # nor the mac alone, which the mask would not catch
