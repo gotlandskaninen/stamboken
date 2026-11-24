@@ -507,6 +507,15 @@ class TestSelfService(MatrikelApiTest):
         self.login("linked")
         self.assertIsNone(self.client.get("/api/v2/members/me").get_json()["main_member_name"])
 
+    def test_main_member_name_for_organization_contact(self):
+        self.ms.organization_name = "Exempelby museum"
+        self.ms.save()
+        self.login("linked")
+        for first, last, expected in [("", "", "Exempelby museum"), (" Bo ", " Exempel ", "Bo Exempel")]:
+            with self.subTest(first=first):
+                db.Member.update(first_name=first, last_name=last).where(db.Member.id == self.person.id).execute()
+                self.assertEqual(self.client.get("/api/v2/members/me").get_json()["main_member_name"], expected)
+
     def test_patch_contact_structured_address_round_trip(self):
         self.login("linked")
         resp = self.client.patch(
@@ -694,6 +703,7 @@ MATR_HEADER = [
     "Fakturapostort",
     "E-post för faktura",
     "Fakturareferens",
+    "c/o",
 ]
 
 
@@ -725,6 +735,15 @@ class TestStatsAndExport(MatrikelApiTest):
         rows = list(_csv_lib.reader(_io.StringIO(resp.data.decode("utf-8-sig"))))
         return resp, rows[0], rows[1:]
 
+    def _reimport_export(self, response):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "export.csv")
+            with open(path, "wb") as f:
+                f.write(response.data)
+            result = APP.test_cli_runner().invoke(args=["members", "import", path])
+        self.assertEqual(result.exit_code, 0, result.output)
+        return result.output
+
     def test_stats_counts_memberships_and_persons_separately(self):
         self.login("man")
         resp = self.client.get("/api/v2/members/stats")
@@ -746,6 +765,82 @@ class TestStatsAndExport(MatrikelApiTest):
         self.login("matrikel")
         _, header, _ = self._export_rows()
         self.assertEqual(header, MATR_HEADER)
+
+    def test_matr_reimport_preserves_memberships_and_people(self):
+        _mk_person(self.ms_a, "Kim", "af Exempel", role="familjemedlem")
+        named = _mk_membership(number=12, organization_name="=Testföreningen", organization_number="552222-0002")
+        db.Herd.create(herd="G13", genebank=self.genebanks[0], membership=named)
+        db.Herd.create(herd="G12", genebank=self.genebanks[0])
+        _mk_person(named, "Tora", "Test", email="tora@example.invalid", phone="070-12")
+        _mk_person(named, "Alex", "af Test", role="familjemedlem")
+        unnamed = _mk_membership(status="friexemplar", organization_name="Testbiblioteket")
+        _mk_person(unnamed, "", "", email="bibliotek@example.invalid")
+        _mk_membership(status="friexemplar", organization_name="Museet")
+        ended = _mk_membership(
+            number=14,
+            organization_name="Utan aktiv huvudmedlem",
+            address="Box 14",
+            postal_code="123 45",
+            city="Exempelby",
+        )
+        _mk_person(ended, "Avslutad", "Kontakt", end_date=date.today(), email="gammal@example.invalid", phone="070-14")
+        _mk_person(ended, "Annan", "Person", role="familjemedlem", email="annan@example.invalid", phone="070-15")
+        with db.DB_PROXY.atomic():
+            matrikel.raise_counter_to(14)
+
+        self.login("matrikel")
+        response, header, rows = self._export_rows()
+        self.assertEqual(
+            [(r[3], r[-1]) for r in rows],
+            [
+                ("Biblioteket Visby", ""),
+                ("Testbiblioteket", ""),
+                ("Museet", ""),
+                ("Ada A", ""),
+                ("Alf A", ""),
+                ("Kim af Exempel", ""),
+                (" =Testföreningen", "c/o Tora Test"),
+                ("Alex af Test", ""),
+                ("Utan aktiv huvudmedlem", ""),
+                ("Annan Person", ""),
+            ],
+        )
+        self.assertEqual(header[-1], "c/o")
+        by_name = {r[3]: dict(zip(header, r, strict=True)) for r in rows}
+        self.assertEqual(by_name[" =Testföreningen"]["Telefonnr"], "070-12")
+        self.assertEqual(by_name[" =Testföreningen"]["e-postadress"], "tora@example.invalid")
+        self.assertEqual(by_name["Testbiblioteket"]["e-postadress"], "bibliotek@example.invalid")
+        headless = by_name["Utan aktiv huvudmedlem"]
+        self.assertEqual(
+            [headless[key] for key in ("Adress", "Postnummer", "Postort", "Telefonnr", "e-postadress")],
+            ["Box 14", "123 45", "Exempelby", "", ""],
+        )
+        self.assertNotIn(named.organization_number, response.get_data(as_text=True))
+
+        def snapshot():
+            return [
+                list(model.select().order_by(model._meta.primary_key).dicts())
+                for model in (db.Membership, db.Member, db.MemberNumberCounter, db.Herd)
+            ]
+
+        before = snapshot()
+        self._reimport_export(response)
+        self.assertEqual(snapshot(), before)
+
+    def test_reimport_reviews_retired_friexemplar_organization_without_person(self):
+        org = _mk_membership(status="friexemplar", organization_name="Testmuseet")
+        self.login("matrikel")
+        response, header, rows = self._export_rows()
+        self.assertIn(("0", "Testmuseet"), [(r[header.index("Nr")], r[header.index("Namn Efternamn")]) for r in rows])
+        self.assertEqual(self.client.delete(f"/api/v2/memberships/{org.id}").status_code, 200)
+        count = db.Membership.select().count()
+
+        output = self._reimport_export(response)
+
+        self.assertIn(f"friexemplar Testmuseet -> membership {org.id}: inaktivt medlemskap", output)
+        self.assertEqual(db.Membership.select().count(), count)
+        self.assertEqual(db.Membership.get_by_id(org.id).membership_status, "inactive")
+        self.assertFalse(db.Member.select().where(db.Member.membership == org).exists())
 
     def test_export_friexemplar_first_with_nr_zero(self):
         """friexemplar rows lead the file (as in the paper matrikel), carry
@@ -907,6 +1002,31 @@ class TestKoharenExport(MatrikelApiTest):
 
     def test_per_key_blanking(self):
         self.assertEqual(self._rows()[3], ["7", "Bo Bengtsson", "", "bo@example.com", "", "", "", "angivet"])
+
+    def test_organization_lists_only_main_contact_fields_with_consent(self):
+        for membership in (self.full, self.partial, self.opted_out, self.unset):
+            membership.organization_name = f"Testförening {membership.member_number}"
+            membership.organization_number = "552222-0002"
+            membership.save()
+        _mk_person(self.full, "Gammal", "Kontakt", end_date=date.today())
+        # A family member cannot replace a missing active main contact.
+        no_main = _mk_membership(
+            number=11,
+            organization_name="Utan huvudmedlem",
+            address="Box 11",
+            publication_consent=self.full.publication_consent,
+        )
+        _mk_person(no_main, "Familje", "Medlem", role="familjemedlem", phone="070-11", email="familj@example.invalid")
+        self.assertEqual(
+            self._rows()[1:],
+            [
+                ["6", "Testförening 6", "070-1", "anna@example.com", "Gatan 1", "623 55", "Visby", "angivet"],
+                ["7", "Testförening 7", "", "bo@example.com", "", "", "", "angivet"],
+                ["8", "", "", "", "", "", "", "angivet"],
+                ["9", "", "", "", "", "", "", "ej angivet"],
+                ["11", "Utan huvudmedlem", "", "", "Box 11", "", "", "angivet"],
+            ],
+        )
 
     def test_explicit_opt_out_keeps_nr_and_samtycke(self):
         self.assertEqual(self._rows()[4], ["8", "", "", "", "", "", "", "angivet"])

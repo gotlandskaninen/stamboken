@@ -233,8 +233,13 @@ class TestArsrapportMigration(IsolatedSchemaTest):
             tx.rollback()
 
     def stamp_51(self, comment):
-        """schema_history's 51 as `comment` until the test ends: the class's database was bootstrapped by init()."""
-        row = db.SchemaHistory.get_by_id(51)
+        """schema_history's 51 as `comment` until the test ends: the class's database was bootstrapped by init(),
+        which stamps only the current version once a later migration exists."""
+        row = db.SchemaHistory.get_or_none(db.SchemaHistory.version == 51)
+        if row is None:
+            db.SchemaHistory.create(version=51, comment=comment, applied=datetime.now())
+            self.addCleanup(db.SchemaHistory.delete().where(db.SchemaHistory.version == 51).execute)
+            return
         db.SchemaHistory.update(comment=comment).where(db.SchemaHistory.version == 51).execute()
         self.addCleanup(db.SchemaHistory.update(comment=row.comment).where(db.SchemaHistory.version == 51).execute)
 
@@ -254,7 +259,10 @@ class TestArsrapportMigration(IsolatedSchemaTest):
         helper.assert_not_called()  # L4: the two columns alone
         self.assertIn("breeding.litter_size6w_preliminary, inbox_item.ref_data", logs.output[0])
         self.assertEqual(snapshot(), self.bootstrapped)
-        self.assertEqual(db.SchemaHistory.select(db.fn.MAX(db.SchemaHistory.version)).scalar(), 51)  # pylint: disable=E1120
+        self.assertEqual(
+            db.SchemaHistory.select(db.fn.MAX(db.SchemaHistory.version)).scalar(),  # pylint: disable=E1120
+            db.CURRENT_SCHEMA_VERSION,
+        )
 
     def test_boot_creates_a_yearly_report_table_a_database_at_50_lacks(self):  # Codex round 2, P2
         """Under the migration lock, not by a worker's verify() and init() racing for it."""

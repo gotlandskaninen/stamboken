@@ -8,7 +8,7 @@ import { useNotifications } from "@/contexts/NotificationContext";
 import { readModeCookieClient } from "@/lib/mode";
 import { linkPersonUser } from "../actions";
 import type { Person } from "../types";
-import { ROLE_LABELS } from "../types";
+import { personName, roleLabel } from "../types";
 import ds from "@/styles/ds-admin.module.css";
 import styles from "../../medlem.module.css";
 
@@ -25,12 +25,14 @@ export function KopplaKontoDialog({
   person,
   membershipId,
   membershipNumber,
+  organizationName,
   onClose,
 }: {
   open: boolean;
   person: Person | null;
   membershipId: number;
   membershipNumber: number | null;
+  organizationName?: string | null;
   onClose: () => void;
 }) {
   const [q, setQ] = useState("");
@@ -41,6 +43,7 @@ export function KopplaKontoDialog({
   const [pending, start] = useTransition();
   const { showSnackbar } = useSnackbar();
   const { addNotification } = useNotifications();
+  const name = person ? personName(person) : "";
 
   // Monotonic request id. The effect's abort only fires once the DEBOUNCED
   // value changes, so a slow response for an older query could otherwise land
@@ -107,7 +110,7 @@ export function KopplaKontoDialog({
         showSnackbar("Konto kopplat", "success");
         addNotification({
           title: "Konto kopplat",
-          message: `${selected.username ?? selected.email} är nu kopplat till ${person.first_name} ${person.last_name}.`,
+          message: `${selected.username ?? selected.email} är nu kopplat till ${name || "medlemskapets kontaktperson"}.`,
           type: "success",
         });
         close();
@@ -155,8 +158,8 @@ export function KopplaKontoDialog({
         </h2>
         {person && (
           <p className={ds["ad-note"]}>
-            {person.first_name} {person.last_name} ·{" "}
-            {ROLE_LABELS[person.role] ?? person.role} i medlemskap nr{" "}
+            {name && `${name} · `}
+            {roleLabel(person.role, organizationName)} i medlemskap nr{" "}
             {membershipNumber ?? "–"}
           </p>
         )}

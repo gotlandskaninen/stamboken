@@ -72,8 +72,8 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # the coat column individual.rex (46) + hbuser.name_on_check_page and digitalcertificatev2.issued_as (47) +
 # one account per Google identity (48) + one-time codes and members' previous addresses (49) +
 # the herd's contact from the member register, herd.contact_member and herd.contact_pending (50) +
-# the yearly report v2 (51).
-CURRENT_SCHEMA_VERSION = 51
+# the yearly report v2 (51) + organization name and number on membership (52).
+CURRENT_SCHEMA_VERSION = 52
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -273,6 +273,8 @@ class Membership(BaseModel):
     member_number = IntegerField(null=True)
     # CHECK-constrained: active | inactive | pending | friexemplar
     membership_status = CharField(max_length=20, default="active")
+    organization_name = CharField(max_length=200, null=True)
+    organization_number = CharField(max_length=11, null=True)
     address = TextField(null=True)
     # Structured postal address. The paper matrikel's single
     # "Postadress" column is derived — see the postal_address property.
@@ -316,13 +318,14 @@ class Membership(BaseModel):
 
         Street, postal code and city come from the billing address as soon as
         one of them is set, otherwise all three from the postal address: an
-        invoice never gets a billing street with the postal city. Recipient,
-        e-mail and reference only exist for the invoice and are returned as
-        stored (None means the main member and their own e-mail).
+        invoice never gets a billing street with the postal city. Without a
+        billing name, the recipient is the organization name for a legal entity
+        or None for the main member. An unset e-mail means the main member's
+        own e-mail. The reference is returned as stored.
         """
         billing = any((self.billing_address, self.billing_postal_code, self.billing_city))
         return {
-            "name": self.billing_name,
+            "name": self.billing_name or self.organization_name,
             "address": self.billing_address if billing else self.address,
             "postal_code": self.billing_postal_code if billing else self.postal_code,
             "city": self.billing_city if billing else self.city,
@@ -2141,6 +2144,13 @@ class Member(BaseModel):
 
     class Meta:
         table_name = "member"
+
+    @property
+    def display_name(self) -> str:
+        name = f"{self.first_name.strip()} {self.last_name.strip()}".strip()
+        if not name and self.role == "huvudmedlem":
+            return self.membership.organization_name or ""
+        return name
 
     def save(self, *args, **kwargs):
         self.updated_at = datetime.now()
@@ -4633,7 +4643,7 @@ def _compare_linked_herds():
         Herd.membership.in_(Membership.select(Membership.id).where(Membership.membership_status == "active")),
     )
     for herd in rows:
-        changes, _ = compare_with_register(herd)
+        changes, _ = compare_with_register(herd, include_organization=False)
         Herd.update(**changes).where(Herd.id == herd.id, Herd.contact_pending.is_null(True)).execute()
 
 
@@ -4808,6 +4818,21 @@ def migrate_50_to_51():
             "change requests, consent history",
             applied=datetime.now(),
         ).execute()
+
+
+ORGANIZATION_52 = "membership.organization_name and organization_number"  # migration 52's schema_history comment
+
+
+def migrate_51_to_52():
+    """Optional legal entity on a membership. Existing memberships keep NULL for both fields."""
+    with DATABASE.atomic():
+        existing = {c.name for c in DATABASE.get_columns("membership")}
+        for field in (Membership.organization_name, Membership.organization_number):
+            if field.name not in existing:
+                migrate(DATABASE_MIGRATOR.add_column("membership", field.name, field))
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=52, comment=ORGANIZATION_52, applied=datetime.now()
+        ).on_conflict_ignore().execute()
 
 
 def migrate_21_to_22():
@@ -5298,6 +5323,7 @@ MIGRATIONS = {
     (48, 49): migrate_48_to_49,  # one-time codes, previous addresses
     (49, 50): migrate_49_to_50,  # herd contact from the matrikel
     (50, 51): migrate_50_to_51,  # yearly report v2
+    (51, 52): migrate_51_to_52,  # legal entity on membership
 }
 
 
@@ -5383,6 +5409,21 @@ def _run_migrations():
             .scalar()
         )
         current_version = SchemaHistory.select(fn.MAX(SchemaHistory.version)).scalar()  # pylint: disable=E1120
+        # a 51 that is not the yearly report's, without its tables: the organization fields' branch ran as 51
+        # (migrated or bootstrapped) before the yearly report took the number; main's 51 always has the tables
+        row_51 = SchemaHistory.get_or_none(SchemaHistory.version == 51)
+        report_tables = {model._meta.table_name for model in ARSRAPPORT_MODELS}
+        if (
+            row_51 is not None
+            and not (row_51.comment or "").startswith(ARSRAPPORT_51)
+            and not report_tables <= set(DATABASE.get_tables())
+        ):
+            raise RuntimeError(
+                "This development database ran the organization fields as migration 51, now 52, and lacks the "
+                "yearly report v2 schema. Rebuild this development database from scratch. For a disposable Compose "
+                "volume, run 'docker compose -p <dev-project> down -v' and bootstrap the database again.\n"
+                "Är detta inte en utvecklingsdatabas: stoppa och fråga, kör inte down -v."
+            )
     if comment is not None or (
         (current_version is None or current_version < 51)
         and {model._meta.table_name for model in ARSRAPPORT_MODELS}.intersection(DATABASE.get_tables())

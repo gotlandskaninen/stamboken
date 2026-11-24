@@ -44,8 +44,12 @@ const columns: GridColDef<MembershipRow>[] = [
     flex: 1,
     minWidth: 160,
     valueGetter: (_value, row) =>
-      [row.main_first_name, row.main_last_name].filter(Boolean).join(" ") ||
-      "—",
+      row.organization_name
+        ? [row.organization_name, row.organization_number]
+            .filter(Boolean)
+            .join(" · ")
+        : [row.main_first_name, row.main_last_name].filter(Boolean).join(" ") ||
+          "—",
   },
   {
     field: "contact",

@@ -47,6 +47,7 @@ const rows: MembershipRow[] = [
     id: 11,
     member_number: 101,
     membership_status: "active",
+    organization_name: null,
     main_first_name: "Anna",
     main_last_name: "Lindqvist",
     main_email: "anna@example.com",
@@ -83,6 +84,7 @@ const rows: MembershipRow[] = [
     id: 12,
     member_number: 102,
     membership_status: "pending",
+    organization_name: null,
     main_first_name: "Bertil",
     main_last_name: "Ek",
     main_email: null,
@@ -97,6 +99,7 @@ const rows: MembershipRow[] = [
     id: 13,
     member_number: null,
     membership_status: "friexemplar",
+    organization_name: null,
     main_first_name: "Cecilia",
     main_last_name: "Sund",
     main_email: "cecilia@example.com",
@@ -124,10 +127,35 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("MembershipsGridClient", () => {
+  it("identifies organisations even without a named contact or visible number", () => {
+    const org = {
+      ...rows[1],
+      main_first_name: "",
+      main_last_name: "",
+      organization_name: "Exempelföreningen",
+    };
+    const { rerender } = render(
+      <MembershipsGridClient rows={[org]} total={1} />,
+    );
+    expect(screen.getByText("Exempelföreningen")).toBeInTheDocument();
+    rerender(
+      <MembershipsGridClient
+        rows={[{ ...org, organization_number: "123456-7897" }]}
+        total={1}
+      />,
+    );
+    expect(
+      screen.getByText("Exempelföreningen · 123456-7897"),
+    ).toBeInTheDocument();
+  });
+
   it("renders one row per membership with status label, huvudmedlem, address and active person count", () => {
     render(<MembershipsGridClient rows={rows} total={3} />);
 
     expect(screen.getAllByRole("row")).toHaveLength(4); // header + 3
+    expect(
+      screen.getByRole("columnheader", { name: "Huvudmedlem" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Anna Lindqvist")).toBeInTheDocument();
     expect(screen.getByText("Bertil Ek")).toBeInTheDocument();
     expect(screen.getByText("Cecilia Sund")).toBeInTheDocument();
