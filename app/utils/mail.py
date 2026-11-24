@@ -651,8 +651,7 @@ def record_bounce(message_id_header, diagnostic):
     """
     Marks the row behind a delivery report's Message-ID as bounced. Returns False when the id is not one of
     this environment's mails, or the row is not `sent` (a bounce never revives or overwrites another state),
-    so the caller can hand the report to a human instead. A medlemskap.tillagd whose person has had her address
-    corrected since it went is queued again, to the new one.
+    so the caller can hand the report to a human instead.
     """
     match = _MESSAGE_ID.fullmatch(message_id_header or "")
     if match is None or match.group(3).lower() != _hostname().lower():
@@ -676,10 +675,6 @@ def record_bounce(message_id_header, diagnostic):
             smtp_code=enhanced.group(1) if enhanced else None,
             detail=detail,
         )
-        row = MailMessage.get_by_id(row_id)
-        person = Member.get_or_none(Member.id == row.recipient_id) if row.kind == "medlemskap.tillagd" else None
-        if person is not None and person.email and address_hash(person.email) != row.address_hash:
-            queue_member_added(person)
     return True
 
 
