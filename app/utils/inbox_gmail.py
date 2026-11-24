@@ -237,6 +237,7 @@ def read_message(gmail_id, raw, received_at=None):
     nothing here touches (no row either: it has no effects to guard).
     """
     msg = email.message_from_bytes(raw, policy=policy.default)
+    subject = _CASE.sub("", " ".join(_no_nul(str(msg.get("Subject", ""))).split())).strip()[:MAX_TEXT]
     sender = _normalize(_no_nul(parseaddr(str(msg.get("From", "")))[1]))
     here = _hostname().lower()
     report = _delivery_report(msg)
@@ -248,7 +249,7 @@ def read_message(gmail_id, raw, received_at=None):
             if mail.record_bounce(original, diagnostic):
                 _processed(gmail_id, "bounce")
             else:  # a report on no mail of ours: a human has a look
-                item = _new_item(gmail_id, sender, text, received_at, verified=authenticated(msg, sender))
+                item = _new_item(gmail_id, sender, subject, text, received_at, verified=authenticated(msg, sender))
                 _processed(gmail_id, "item", item)
         return None
     if _auto_reply(msg):
@@ -264,13 +265,13 @@ def read_message(gmail_id, raw, received_at=None):
         with DB_PROXY.atomic():
             replied = _replied_item(msg)
             if replied is not None and _may_answer(msg, sender, replied):
-                _attach_reply(replied, text, stored, skipped)
+                _attach_reply(replied, subject, text, stored, skipped)
                 _processed(gmail_id, "reply", replied)
             else:
                 maybe = replied.id if replied is not None else None
                 verified = authenticated(msg, sender)
                 item = _new_item(
-                    gmail_id, sender, text, received_at, stored, skipped, maybe_item=maybe, verified=verified
+                    gmail_id, sender, subject, text, received_at, stored, skipped, maybe_item=maybe, verified=verified
                 )
                 if stored and verified:  # never a receipt to an address the sender only typed
                     _receipt(item, len(stored))
@@ -485,17 +486,20 @@ def authenticated(msg, sender):
     return False
 
 
-def _not_saved(skipped):
-    return {"not_saved": [s["name"] for s in skipped], "not_saved_reasons": skipped} if skipped else {}
+def _mail_detail(subject, skipped):
+    detail = {"subject": subject} if subject else {}
+    if skipped:
+        detail.update(not_saved=[s["name"] for s in skipped], not_saved_reasons=skipped)
+    return detail
 
 
-def _attach_reply(item, text, stored=(), skipped=()):
+def _attach_reply(item, subject, text, stored=(), skipped=()):
     """
     An answer on the item: an event with its text and new documents, a notice, and back to its handler if it
     waited for the answer or was incomplete (the mail about it asked the sender to reply with what is missing).
     """
     documents = _documents(item, stored)
-    detail = {"text": text, "documents": [document.id for document in documents], **_not_saved(skipped)}
+    detail = {"text": text, "documents": [document.id for document in documents], **_mail_detail(subject, skipped)}
     InboxEvent.create(item=item, kind="svar", detail=detail)
     if item.state in ("vantar_uppfodare", "ofullstandig"):
         inbox._set_state(item, "tagen")  # pylint: disable=protected-access
@@ -508,7 +512,7 @@ def _attach_reply(item, text, stored=(), skipped=()):
         inbox.notify(handler, "svar", item)
 
 
-def _new_item(gmail_id, sender, text, received_at, stored=(), skipped=(), maybe_item=None, verified=False):
+def _new_item(gmail_id, sender, subject, text, received_at, stored=(), skipped=(), maybe_item=None, verified=False):
     """
     An item of kind mail (with attachments) or meddelande, its herd guessed from the sender; with no match the
     genebank is unknown and every queue worker is told. The files not stored and the case a reply may be about
@@ -528,7 +532,9 @@ def _new_item(gmail_id, sender, text, received_at, stored=(), skipped=(), maybe_
         received_at=received_at or inbox.now(),
     )
     documents = _documents(item, stored)
-    detail = {"documents": len(documents), **_not_saved(skipped), **({"maybe_item": maybe_item} if maybe_item else {})}
+    detail = {"documents": len(documents), **_mail_detail(subject, skipped)}
+    if maybe_item:
+        detail["maybe_item"] = maybe_item
     InboxEvent.create(item=item, kind="inkommen", detail=detail)
     for worker in inbox.queue_workers(item.genebank_id):
         inbox.notify(worker, "ny_post", item)

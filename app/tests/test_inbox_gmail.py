@@ -315,6 +315,7 @@ class TestSorting(GmailTest):
         self.assertEqual(self.reload(item).state, "tagen")
         (event,) = item.events.where(db.InboxEvent.kind == "svar")
         self.assertEqual(event.detail["text"], "Det är G1-2112.")
+        self.assertEqual(event.detail["subject"], "Re: Fråga")
         (notice,) = db.Notice.select().where(db.Notice.kind == "svar")
         self.assertEqual((notice.user_id, notice.item_id), (self.helper.id, item.id))
 
@@ -425,7 +426,7 @@ class TestItemsFromMail(GmailTest):
         for document in documents:
             with Image.open(self.stored(document)) as image:
                 self.assertEqual(image.format, "JPEG")
-        self.assertEqual(item.events.get().detail, {"documents": 2})
+        self.assertEqual(item.events.get().detail, {"documents": 2, "subject": "Intyg"})
         self.assertEqual(self.notified(), sorted([self.manager.id, self.helper.id]))  # Gotland's workers
 
     def test_an_unknown_sender_is_seen_by_every_queue_worker(self):
@@ -436,6 +437,13 @@ class TestItemsFromMail(GmailTest):
         self.assertEqual(item.message, "Var skickar jag intyget?")
         self.assertEqual(self.notified(), sorted(u.id for u in inbox.queue_workers(None)))
         self.assertIn(self.mellerud_helper.id, self.notified())
+
+    def test_a_case_reference_alone_does_not_become_a_subject(self):
+        self.fake.deliver(message(subject="(ärende 98765)", body="En fråga"))
+        self.read()
+        (item,) = self.items()
+        self.assertNotIn("subject", item.events.get().detail)
+        self.assertEqual(item.message, "En fråga")
 
     def test_files_too_big_too_many_or_of_another_type_are_named_and_not_stored(self):
         big = encoded(photo()) + b"\0" * (10 * 1024 * 1024)  # a JPEG by its first bytes, over 10 MB

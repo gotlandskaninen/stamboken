@@ -47,7 +47,7 @@ import {
 import { RowActions } from "../QueueControls";
 import { AskBreeder } from "./AskBreeder";
 import { CertificateForm } from "./CertificateForm";
-import { MailFacts, SenderUnconfirmed } from "./MailFacts";
+import { MailFacts, MailSubject, SenderUnconfirmed } from "./MailFacts";
 import { PhotoViewer } from "./PhotoViewer";
 import { SalePanel } from "./SalePanel";
 import styles from "../inkorg.module.css";
@@ -428,6 +428,12 @@ export function WorkView({
                 <li key={e.id}>
                   {formatTime(e.at)} · {eventText(e)}
                   {e.user ? ` · ${e.user.name}` : ""}
+                  {e.kind === "svar" &&
+                    typeof e.detail?.subject === "string" && (
+                      <dl className={styles.facts}>
+                        <MailSubject subject={e.detail.subject} />
+                      </dl>
+                    )}
                 </li>
               ))}
             </ol>

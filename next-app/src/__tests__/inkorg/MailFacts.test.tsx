@@ -22,6 +22,7 @@ describe("MailFacts", () => {
           item={item({
             documents: 1,
             maybe_item: 12,
+            subject: "Intyg",
             not_saved: ["brev.docx", "stor.jpg"],
           })}
         />
@@ -32,6 +33,8 @@ describe("MailFacts", () => {
       "/stamboken/inkorg/12",
     );
     expect(screen.getByText("Sparades inte")).toBeInTheDocument();
+    expect(screen.getByText("Ämne")).toBeInTheDocument();
+    expect(screen.getByText("Intyg")).toBeInTheDocument();
     expect(screen.getByText("brev.docx")).toBeInTheDocument();
     expect(screen.getByText("stor.jpg")).toBeInTheDocument();
   });

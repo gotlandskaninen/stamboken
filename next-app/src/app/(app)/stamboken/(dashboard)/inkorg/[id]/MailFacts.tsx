@@ -1,6 +1,16 @@
 import Link from "next/link";
 import type { InboxDetail } from "../lib";
 
+export function MailSubject({ subject }: { subject: unknown }) {
+  if (typeof subject !== "string" || !subject) return null;
+  return (
+    <>
+      <dt>Ämne</dt>
+      <dd>{subject}</dd>
+    </>
+  );
+}
+
 /** Beside the sender address of a mail whose sender could not be confirmed. */
 export function SenderUnconfirmed({ item }: { item: InboxDetail }) {
   if (item.sender_authenticated !== false) return null;
@@ -32,6 +42,7 @@ export function MailFacts({ item }: { item: InboxDetail }) {
   });
   return (
     <>
+      <MailSubject subject={arrived.subject} />
       {maybe !== null && (
         <>
           <dt>Gäller kanske</dt>
