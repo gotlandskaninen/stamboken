@@ -154,6 +154,13 @@ describe("WorkView: mail", () => {
                 not_saved: ["bilaga_till_intyget_20260101.png"],
               },
             },
+            {
+              id: 2,
+              kind: "svar",
+              at: "2026-11-24T11:00:00Z",
+              user: null,
+              detail: { text: "Här är kompletteringen." },
+            },
           ],
           documents: hasDoc ? [doc()] : [],
         }),
@@ -163,11 +170,14 @@ describe("WorkView: mail", () => {
     const mail = screen.getByRole("region", { name: "Meddelande" });
     expect(within(mail).getByText("Intyg")).toBeVisible();
     expect(within(mail).getByText("Här är intyget.")).toBeVisible();
+    expect(within(mail).getByText("Här är kompletteringen.")).toBeVisible();
     const facts = within(
       screen.getByRole("complementary", { name: "Ärendet" }),
     );
     expect(facts.getByText("inkorg@example.org")).toBeVisible();
     expect(facts.getByText("bilaga_till_intyget_20260101.png")).toBeVisible();
+    expect(facts.getByText(/· Svar inkommet$/)).toBeInTheDocument();
+    expect(facts.queryByText(/Här är kompletteringen/)).toBeNull();
     for (const name of ["Jag tar den", "Tilldela"]) {
       const button = facts.getByRole("button", { name });
       expect(button).toHaveClass("sb-btn");

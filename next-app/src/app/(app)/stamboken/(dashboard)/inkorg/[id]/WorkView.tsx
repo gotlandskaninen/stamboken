@@ -65,7 +65,7 @@ const EVENT_LABEL: Record<string, string> = {
   original_visat: "Originalet visat",
   foralder_inlagd: "Förälder inlagd",
   fraga: "Fråga till uppfödaren",
-  svar: "Svar från uppfödaren",
+  svar: "Svar inkommet",
   tolka_igen: "Tolkas igen",
 };
 
@@ -77,8 +77,7 @@ function eventText(e: InboxEvent): string {
   if (e.kind === "sparad")
     return `${label}: ${d.individual}${d.action === "overlatelse" ? `, såld till ${d.herd}` : ""}`;
   if (e.kind === "foralder_inlagd") return `${label}: ${d.individual}`;
-  if (e.kind === "fraga" || e.kind === "svar")
-    return d.text ? `${label}: ${d.text}` : label;
+  if (e.kind === "fraga" && d.text) return `${label}: ${d.text}`;
   return label;
 }
 
