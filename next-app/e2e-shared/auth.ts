@@ -8,6 +8,7 @@ export const TEST_USERS = {
   admin: { username: "test-admin", password: "test-admin-pass" },
   manager: { username: "test-gk-manager", password: "test-gk-pass" },
   helper: { username: "test-gk-helper", password: "test-gk-helper-pass" },
+  member: { username: "test-member", password: "test-member-pass" },
 } as const;
 
 export type TestRole = keyof typeof TEST_USERS;

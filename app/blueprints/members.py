@@ -19,6 +19,7 @@ from peewee import IntegrityError
 from utils.csv_safe import csv_safe
 from utils.data_access import session_holds
 from utils.database import BILLING_FIELDS, DB_PROXY, Herd, HerdAccessGrant, Member, Membership, User
+from utils.herd_contact import on_membership_active
 from utils.login_code import (
     AddressTaken,
     CodeLoginClosed,
@@ -251,8 +252,9 @@ def patch_membership(membership_id: int):
             # linked huvudmedlem's herd access (same rule as memberships.py).
             ms = Membership.select().where(Membership.id == ms.id).for_update().get()
             changed = []
+            activated = False
             if new_status is not None and new_status != ms.membership_status:
-                set_membership_status(ms, new_status, current_user)
+                activated = set_membership_status(ms, new_status, current_user)
                 changed.append(Membership.membership_status)
             if "notes" in body:
                 ms.notes = (body["notes"] or "").strip() or None
@@ -260,6 +262,8 @@ def patch_membership(membership_id: int):
             # UPDATE only the changed columns — a full-row save would push every
             # attribute the instance carries, changed or not.
             ms.save(only=changed + [Membership.updated_at])
+            if activated:  # after the save: the comparison reads the saved membership (#117)
+                on_membership_active(ms.id)
     except TransitionRefused:
         # Raised, not returned: a `return` inside atomic() would commit the rest of the request.
         return problem(

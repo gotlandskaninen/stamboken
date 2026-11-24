@@ -5,6 +5,11 @@ import { fileURLToPath } from "url";
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: "standalone",
+  // The matrikel guide is read from disk outside public/ (it is not public).
+  outputFileTracingIncludes: {
+    "/medlem/guide": ["./content/matrikel-guide/**/*"],
+    "/medlem/guide/bild/[name]": ["./content/matrikel-guide/**/*"],
+  },
   transpilePackages: ["react-easy-crop"],
   experimental: {
     // Intyg uploads go through a Server Action. Next.js only has this limit

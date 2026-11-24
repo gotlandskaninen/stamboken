@@ -5,6 +5,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from "@testing-library/react";
 
@@ -26,6 +27,7 @@ vi.mock("@/app/(app)/stamboken/(dashboard)/admin/anvandare/actions", () => ({
   updateUserProfile: vi.fn(),
 }));
 
+import { resetPassword } from "@/app/(app)/stamboken/(dashboard)/admin/anvandare/actions";
 import { UserEditClient } from "@/app/(app)/stamboken/(dashboard)/admin/anvandare/[userId]/UserEditClient";
 import type { AdminUserDetail } from "@/app/(app)/stamboken/(dashboard)/admin/_lib/types";
 
@@ -69,6 +71,23 @@ describe("UserEditClient roles", () => {
       screen.getByRole("button", { name: "Ta bort Matrikeladministratör" }),
     );
     expect(revokeRole).toHaveBeenCalledWith(7, { level: "matrikel_admin" });
+  });
+
+  it("hides the newly issued password from the Tyck till picture", async () => {
+    vi.mocked(resetPassword).mockResolvedValue({ plaintext: "nytt-hemligt" });
+    render(
+      <UserEditClient
+        detail={detail}
+        actorId={1}
+        genebanks={[]}
+        herds={[]}
+        recentAudit={[]}
+        concurrentEditWarning={null}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Återställ lösenord" }));
+    const code = await waitFor(() => screen.getByText("nytt-hemligt"));
+    expect(code.closest('[data-tyck-till="dolj"]')).not.toBeNull();
   });
 });
 

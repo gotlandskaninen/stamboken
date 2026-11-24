@@ -70,8 +70,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # matrikel_audit rows without a user, written by the nightly anonymization (45) +
 # the coat column individual.rex (46) + hbuser.name_on_check_page and digitalcertificatev2.issued_as (47) +
 # one account per Google identity (48) + one-time codes and members' previous addresses (49) +
-# the yearly report v2 (50).
-CURRENT_SCHEMA_VERSION = 50
+# the herd's contact from the member register, herd.contact_member and herd.contact_pending (50) +
+# the yearly report v2 (51).
+CURRENT_SCHEMA_VERSION = 51
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -223,10 +224,15 @@ class Genebank(BaseModel):
         if self.id not in user.accessible_genebanks:
             return None
 
-        herds = []
-        for herd in Herd.select().where(Herd.genebank == self):
-            herds += [herd.filtered_dict(user)]
-        return herds
+        from utils.herd_contact import (  # pylint: disable=import-outside-toplevel
+            herd_contacts,
+            matrikel_reader_herd_ids,
+        )
+
+        rows = list(Herd.select().where(Herd.genebank == self))
+        contacts = herd_contacts(rows)
+        readers = matrikel_reader_herd_ids(user, rows)
+        return [h.filtered_dict(user, contact=contacts[h.id], reader=h.id in readers, with_contact=False) for h in rows]
 
 
 # The optional billing address, the same columns on Membership and
@@ -373,6 +379,18 @@ class Herd(BaseModel):
     bank_account_number_privacy = CharField(15, null=True, default="private")
     bank_name = TextField(null=True)
     bank_name_privacy = CharField(15, null=True, default="private")
+    # Contact from the member register (#117). contact_member is the person whose details the herd shows;
+    # its FK constraint is added after both tables exist (see init and migrate_49_to_50).
+    contact_member = DeferredForeignKey("Member", null=True, on_delete="SET NULL")
+    # NULL: not compared with the register yet. A list: compared, holding the rows waiting for an answer.
+    contact_pending = BinaryJSONField(null=True)
+
+    def as_dict(self):
+        """The row as a dict, without the contact plumbing (contact_member, contact_pending)."""
+        data = super().as_dict()
+        data.pop("contact_member", None)
+        data.pop("contact_pending", None)
+        return data
 
     def short_info(self):
         """
@@ -387,10 +405,18 @@ class Herd(BaseModel):
             "is_active": self.is_active,
         }
 
-    def filtered_dict(self, user=None):
+    def filtered_dict(self, user=None, *, contact=None, reader=None, with_contact=True):
         """
         Returns the model data filtered by the access level of the given `user`.
+
+        The contact rows are the resolved ones (#117). `contact` and `reader` can be given when the caller
+        has them for many herds at once; `with_contact` adds the `contact` field to the answer.
         """
+        from utils.herd_contact import (  # pylint: disable=import-outside-toplevel
+            contact_field,
+            herd_contact,
+            is_matrikel_reader,
+        )
 
         access_level = "public"
         effective = None  # the user's herd ids, fetched at most once
@@ -426,8 +452,22 @@ class Herd(BaseModel):
         # legacy herd response (ADR-0006: don't perturb legacy contracts).
         data.pop("membership", None)
 
+        contact = contact or herd_contact(self)
+        reader = is_matrikel_reader(user, self) if reader is None else reader
         raw = data
         data = remove_fields_by_privacy(raw, access_level)
+        # fetched rows: the register's value in the same field, seen by a matrikel reader at "private" and
+        # by anyone else at most at "authenticated" (decision 11); own rows are filtered as above
+        derived = {f: r.value for f, r in contact.rows.items() if r.source != "egen"}
+        if derived:
+            levels = list(PRIVACY_LEVELS)
+            level = "private" if reader else min(access_level, "authenticated", key=levels.index)
+            shown = remove_fields_by_privacy({**raw, **derived}, level)
+            for field, value in derived.items():
+                if field in shown:
+                    data[field] = value
+                else:
+                    data.pop(field, None)
         # Bank details: whole for admin, matrikel_admin (who has no genebank role, so only these
         # fields are added, not the other private ones) and the herd's own users. The genebank
         # manager (private level, but none of those) sees the last two digits of the account.
@@ -437,6 +477,10 @@ class Herd(BaseModel):
             data.update({f: raw[f] for f in ("bank_account_number", "bank_name") if f in raw})
         elif "bank_account_number" in data:
             data["bank_account_number"] = account_end(data["bank_account_number"])
+        if with_contact and user:
+            field = contact_field(user, self, contact, reader=reader, private_access=access_level == "private")
+            if field:
+                data["contact"] = field
         return data
 
     class Meta:  # pylint: disable=too-few-public-methods
@@ -446,6 +490,9 @@ class Herd(BaseModel):
 
         indexes = ((("herd", "genebank"), True),)
 
+
+# The herd's own contact values: kept out of audit snapshots, so the register can retire them (#117).
+HERD_CONTACT_COLUMNS = ("name", "email", "mobile_phone", "wire_phone", "physical_address", "www")
 
 PRIVACY_LEVELS = ("public", "authenticated", "private")
 
@@ -1646,7 +1693,7 @@ class YearlyHerdReport(BaseModel):
     The data field stores the report data in json format, but we refrained from
     storing it in a JSONField so that we could still use sqlite for testing.
 
-    v2 (migration 50) writes status submitted or voided and leaves name, publish* and generated_by NULL; the legacy
+    v2 (migration 51) writes status submitted or voided and leaves name, publish* and generated_by NULL; the legacy
     rows are status legacy. The CHECKs, the access-code FKs and the one-submitted index come from
     _create_arsrapport_schema.
     """
@@ -2465,7 +2512,7 @@ INBOX_MODELS = [
     GmailProcessed,
 ]
 
-# Yearly report v2 (migration 50). Not audited: buyers, contact values and free text must not stay in audit_log.
+# Yearly report v2 (migration 51). Not audited: buyers, contact values and free text must not stay in audit_log.
 
 REPORT_STATUSES = ("submitted", "voided", "legacy")
 REPORT_SOURCES = ("login", "link", "paper")
@@ -2706,6 +2753,8 @@ def init():
         # pylint: disable=protected-access
         Breeding._schema.create_foreign_key(Breeding.mother)
         Breeding._schema.create_foreign_key(Breeding.father)
+    if not isinstance(DATABASE, SqliteDatabase):
+        _add_herd_contact_member_fk()  # every init: an interrupted first one may have died before member existed
 
     # Stamp the bootstrap version — but ONLY on a database this call created
     # from nothing. Stamping an existing (possibly partially migrated) database
@@ -3295,7 +3344,7 @@ AUDITED_TABLES = {
     "individual": ("individual_id", [], ["updated_at"]),
     "breeding": ("breeding_id", [], ["updated_at"]),
     "bunny": ("bunny_id", [], ["updated_at"]),  # from develop (22→23 roster)
-    "herd": ("herd_id", [], []),
+    "herd": ("herd_id", list(HERD_CONTACT_COLUMNS), []),
     "weight": ("weight_id", [], []),
     "bodyfat": ("bodyfat_id", [], []),
     "individualdisease": ("individual_disease_id", [], []),
@@ -4519,6 +4568,94 @@ def migrate_48_to_49():
         ).execute()
 
 
+def _add_herd_contact_member_fk():
+    """herd.contact_member_id -> member, added once both tables exist (a deferred FK is not in CREATE TABLE).
+    Safe on every init(): does nothing while the column or the member table is missing or the constraint exists."""
+    DATABASE.execute_sql(
+        """
+        DO $$ BEGIN
+            IF to_regclass('member') IS NOT NULL
+               AND EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_schema = current_schema() AND table_name = 'herd'
+                             AND column_name = 'contact_member_id')
+               AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'herd_contact_member_id_fkey'
+                               AND conrelid = 'herd'::regclass) THEN
+                ALTER TABLE herd ADD CONSTRAINT herd_contact_member_id_fkey
+                    FOREIGN KEY (contact_member_id) REFERENCES member (member_id) ON DELETE SET NULL;
+            END IF;
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+        """
+    )
+
+
+def _compare_linked_herds():
+    """#117, Överflyttning: herds linked before the comparison existed are compared once (contact_pending NULL), if
+    their membership is active; the others stay uncompared and read their own columns until it is.
+    Version 50's columns only, read and written by name, so a replay works after later migrations add columns.
+    membership and member are locked by the LOCKs and herd by the ALTER in migrate_49_to_50, so the register
+    cannot change while the herds are compared."""
+    from utils.herd_contact import compare_with_register  # pylint: disable=import-outside-toplevel
+
+    # A household erased before the comparison existed: what on_household_erased does, since the nightly job
+    # skips erased persons. Erased is matrikel.is_anonymized, the name pair anonymize_person writes.
+    cleared = ", ".join(f'"{c}" = NULL, "{c}_privacy" = \'private\'' for c in HERD_CONTACT_COLUMNS)
+    DATABASE.execute_sql(
+        f"""UPDATE herd SET {cleared}, contact_member_id = NULL, contact_pending = '[]'
+            WHERE membership_id IS NOT NULL AND contact_pending IS NULL
+              AND EXISTS (SELECT 1 FROM member m WHERE m.membership_id = herd.membership_id)
+              AND NOT EXISTS (SELECT 1 FROM member m WHERE m.membership_id = herd.membership_id
+                              AND NOT (m.first_name = 'Borttagen' AND m.last_name = 'person'))"""
+    )
+    columns = ("name", "email", "mobile_phone", "physical_address")
+    rows = Herd.select(
+        Herd.id,
+        Herd.membership,
+        *(getattr(Herd, c) for c in columns),
+        *(getattr(Herd, f"{c}_privacy") for c in columns),
+    ).where(
+        Herd.contact_pending.is_null(True),
+        # a membership that is not active is compared when it becomes active (on_membership_active)
+        Herd.membership.in_(Membership.select(Membership.id).where(Membership.membership_status == "active")),
+    )
+    for herd in rows:
+        changes, _ = compare_with_register(herd)
+        Herd.update(**changes).where(Herd.id == herd.id, Herd.contact_pending.is_null(True)).execute()
+
+
+def migrate_49_to_50():
+    """#117: herd.contact_member and herd.contact_pending; herd contact values leave the audit history.
+    The columns are added in raw SQL (no audit rows). The contact columns become snapshot_excluded, and the
+    values already in audit_log are removed with the purge_user_audit_pii mechanism (rule lifted, same transaction).
+    Then the herds already linked are compared with the register, with the new triggers in place."""
+    with DATABASE.atomic():
+        if not isinstance(DATABASE, SqliteDatabase):
+            # membership first (order membership, member, herd). EXCLUSIVE waits for a transaction holding a
+            # membership row FOR UPDATE: retire_membership then writes member and membership, which SHARE deadlocks
+            DATABASE.execute_sql("LOCK TABLE membership IN EXCLUSIVE MODE")
+            # Take member's lock first: ALTER herd then ADD FOREIGN KEY on member, in that order, could
+            # deadlock with a matrikel import that inserts a member and then reads herd.
+            DATABASE.execute_sql("LOCK TABLE member IN SHARE ROW EXCLUSIVE MODE")
+        DATABASE.execute_sql('ALTER TABLE herd ADD COLUMN IF NOT EXISTS "contact_member_id" INTEGER')
+        DATABASE.execute_sql('ALTER TABLE herd ADD COLUMN IF NOT EXISTS "contact_pending" JSONB')
+        if not isinstance(DATABASE, SqliteDatabase):
+            _add_herd_contact_member_fk()
+            _create_audit_table_and_triggers()  # re-runnable; picks up the new snapshot_excluded list
+            DATABASE.execute_sql("DROP RULE IF EXISTS audit_log_no_update ON audit_log")
+            DATABASE.execute_sql(
+                "UPDATE audit_log SET old_data = old_data - %s::text[], new_data = new_data - %s::text[]"
+                " WHERE table_name = 'herd'",
+                (list(HERD_CONTACT_COLUMNS), list(HERD_CONTACT_COLUMNS)),
+            )
+            DATABASE.execute_sql(AUDIT_LOG_NO_UPDATE_RULE)
+            _compare_linked_herds()
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=50,
+            comment="herd.contact_member, herd.contact_pending; herd contact values out of audit_log",
+            applied=datetime.now(),
+        ).execute()
+
+
 _REPORT_V2_COLUMNS = (
     ("status", "TEXT NOT NULL DEFAULT 'legacy'"),  # existing rows are the legacy reports
     ("source", "TEXT"),
@@ -4544,8 +4681,8 @@ _ACCESS_CODE_COLUMNS = (
     ("herd_tracking", "voided_by_access_code_id"),
     ("individual_command", "access_code_id"),
 )
-# (table, column, DDL): what migration 50 adds to tables it does not create, grouped by table; the boot's repair
-# adds the ones a database at 50 lacks (S5)
+# (table, column, DDL): what migration 51 adds to tables it does not create, grouped by table; the boot's repair
+# adds the ones a database at 51 lacks (S5)
 _ADDED_COLUMNS = (
     ("yearlyreportround", "deadline", "DATE"),
     ("publication_consent_change", "submission_id", "INTEGER"),  # Task 11
@@ -4556,7 +4693,7 @@ _ADDED_COLUMNS = (
     ("herd_tracking", "voided_by_access_code_id", "INTEGER"),
     ("individual_command", "access_code_id", "INTEGER"),
 )
-ARSRAPPORT_50 = "yearly report v2:"  # how migration 50's schema_history comment starts
+ARSRAPPORT_51 = "yearly report v2:"  # how migration 51's schema_history comment starts
 # A voided row has exactly one voider: the account or the report link. PostgreSQL keeps this text in
 # pg_get_constraintdef, so the swap in _create_arsrapport_schema looks for it.
 _HT_VOID_ACTOR = "(voided_by_user_id IS NULL) <> (voided_by_access_code_id IS NULL)"
@@ -4572,7 +4709,7 @@ def _create_arsrapport_schema():
     """
     Idempotent: the yearly report v2 tables, and what they add to yearlyreportround, yearlyherdreport, breeding,
     herd_tracking, individual_command and inbox_item, with the names a fresh bootstrap gives them (an FK is
-    <table>_<column>_fkey). Called from init() and migrate_49_to_50. Skipped on SQLite.
+    <table>_<column>_fkey). Called from init() and migrate_50_to_51. Skipped on SQLite.
     """
     if isinstance(DATABASE, SqliteDatabase):
         return
@@ -4612,7 +4749,7 @@ def _create_arsrapport_schema():
                 END $$;"""
         )
     # Replace, once, the CHECK that _create_herd_tracking_guards adds (migration 30 runs before the column exists),
-    # and the "user or code" version this branch's 50 first had.
+    # and the "user or code" version this branch's yearly report migration first had.
     sql(
         f"""DO $$ BEGIN
                 IF NOT EXISTS (SELECT 1 FROM pg_constraint
@@ -4647,13 +4784,13 @@ def _add_columns(columns):
         )
 
 
-def migrate_49_to_50():
+def migrate_50_to_51():
     """Yearly report v2: rounds per genebank, the report row's status and actors, and the tables around it."""
     with DATABASE.atomic():
         _create_arsrapport_schema()
         SchemaHistory.insert(  # pylint: disable=E1120
-            version=50,
-            comment=f"{ARSRAPPORT_50} rounds per genebank, submissions, drafts, sale proposals, access codes, "
+            version=51,
+            comment=f"{ARSRAPPORT_51} rounds per genebank, submissions, drafts, sale proposals, access codes, "
             "change requests, consent history",
             applied=datetime.now(),
         ).execute()
@@ -5145,7 +5282,8 @@ MIGRATIONS = {
     (46, 47): migrate_46_to_47,  # the attester's name on the certificate check page
     (47, 48): migrate_47_to_48,  # unique Google identity
     (48, 49): migrate_48_to_49,  # one-time codes, previous addresses
-    (49, 50): migrate_49_to_50,  # yearly report v2
+    (49, 50): migrate_49_to_50,  # herd contact from the matrikel
+    (50, 51): migrate_50_to_51,  # yearly report v2
 }
 
 
@@ -5187,11 +5325,11 @@ def check_migrations():
 def _repair_arsrapport_columns():
     """
     S5: the yearly report's migration keeps its number while the branch adds columns to it, so a database that ran
-    an earlier 50 (dev and agent stacks) never replays it, and verify() fails on the missing column. The catalog is
+    an earlier 51 (dev and agent stacks) never replays it, and verify() fails on the missing column. The catalog is
     read first, so a healthy database takes no table lock at boot. A column the migration adds and the database lacks
     is added alone; a missing table of the yearly report's own reruns the migration's idempotent helper, here under
-    the migration lock rather than in a worker's verify() and init(). Only when schema_history's 50 is this migration:
-    another 50 is a collision of migration numbers, which a repair would hide, so it is logged and left alone. A
+    the migration lock rather than in a worker's verify() and init(). Only when schema_history's 51 is this migration:
+    another 51 is a collision of migration numbers, which a repair would hide, so it is logged and left alone. A
     database not bootstrapped yet has none of the tables and is init()'s.
     """
     tables = set(DATABASE.get_tables())
@@ -5203,17 +5341,17 @@ def _repair_arsrapport_columns():
     if not (gone or missing):
         return
     lacking = ", ".join(sorted(gone) + [f"{table}.{name}" for table, name, _ in missing])
-    comment = SchemaHistory.select(SchemaHistory.comment).where(SchemaHistory.version == 50).scalar()
-    if not (comment or "").startswith(ARSRAPPORT_50):
-        logger.error("Schema version 50 is %r, not the yearly report's migration: not repairing %s", comment, lacking)
+    comment = SchemaHistory.select(SchemaHistory.comment).where(SchemaHistory.version == 51).scalar()
+    if not (comment or "").startswith(ARSRAPPORT_51):
+        logger.error("Schema version 51 is %r, not the yearly report's migration: not repairing %s", comment, lacking)
         return
-    logger.warning("Repairing the yearly report's schema at version 50: %s", lacking)
+    logger.warning("Repairing the yearly report's schema at version 51: %s", lacking)
     with DATABASE.atomic():
         if gone:
             _create_arsrapport_schema()
         else:
             # shortcut: the columns alone, not an FK, index or CHECK on them nor the helper's in-place changes (the
-            # void CHECK swap); every 50 of this branch had those from the start. Rerun the helper if one changes.
+            # void CHECK swap); every 51 of this branch had those from the start. Rerun the helper if one changes.
             _add_columns(missing)
 
 
@@ -5224,14 +5362,19 @@ def _run_migrations():
     current_version = None
     comment = None
     if SchemaHistory.table_exists():
-        comment = SchemaHistory.select(SchemaHistory.comment).where(SchemaHistory.version == 42).scalar()
+        # the yearly report's migration under an older number (42 or 50 on its branch)
+        comment = (
+            SchemaHistory.select(SchemaHistory.comment)
+            .where(SchemaHistory.version != 51, SchemaHistory.comment.startswith(ARSRAPPORT_51))
+            .scalar()
+        )
         current_version = SchemaHistory.select(fn.MAX(SchemaHistory.version)).scalar()  # pylint: disable=E1120
-    if (comment or "").startswith(ARSRAPPORT_50) or (
-        (current_version is None or current_version < 50)
+    if comment is not None or (
+        (current_version is None or current_version < 51)
         and {model._meta.table_name for model in ARSRAPPORT_MODELS}.intersection(DATABASE.get_tables())
     ):
         raise RuntimeError(
-            "This development database uses the old yearly report v2 migration number (42, now 50). "
+            "This development database uses the old yearly report v2 migration number (42 or 50, now 51). "
             "Rebuild this development database from scratch. For a disposable Compose volume, run "
             "'docker compose -p <dev-project> down -v' and bootstrap the database again.\n"
             "Är detta inte en utvecklingsdatabas: stoppa och fråga, kör inte down -v."

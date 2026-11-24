@@ -21,7 +21,7 @@ interface Herd {
 
 type ActionResult<T = void> =
   | { success: true; data: T }
-  | { success: false; error: string };
+  | { success: false; error: string; status?: number; type?: string };
 
 export async function registerBreeding(data: {
   mother: string;
@@ -152,7 +152,12 @@ export async function updateHerd(
     return { success: true, data: herd };
   } catch (e) {
     if (e instanceof ApiError) {
-      return { success: false, error: e.detail };
+      return {
+        success: false,
+        error: e.detail,
+        status: e.status,
+        type: e.type,
+      };
     }
     console.error("updateHerd failed:", e);
     return { success: false, error: "unexpected_error" };

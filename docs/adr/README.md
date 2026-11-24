@@ -12,7 +12,7 @@ rad här. Regler för dagligt arbete får också en rad med länk i `CLAUDE.md`.
 | [ADR-0003](0003-payload-cms-in-nextjs.md) | Payload CMS inbäddat i Next.js | förslag | 2026-11-06 |
 | [ADR-0004](0004-replace-r-api-with-python.md) | Python ersätter R-API:et för genetiska beräkningar | accepterad | 2026-11-06 |
 | [ADR-0005](0005-genetic-dashboard-metrics.md) | Genetiksida med bevarandemått | accepterad | 2026-11-06 |
-| [ADR-0006](0006-api-compatibility-during-migration.md) | API-kompatibilitet under migreringsperioden | accepterad | 2026-11-06 |
+| [ADR-0006](0006-api-compatibility-during-migration.md) | API-kompatibilitet under migreringsperioden | accepterad | 2026-11-23 |
 | [ADR-0007](0007-blueprint-refactor.md) | Flask-API:et delas upp i blueprints per domän | accepterad | 2026-11-06 |
 | [ADR-0008](0008-server-first-data-architecture.md) | Serverförst dataarkitektur i Next.js | accepterad | 2026-11-06 |
 | [ADR-0009](0009-stamboken-design-system.md) | Stambokens designsystem för all UI | accepterad | 2026-11-06 |
@@ -26,3 +26,4 @@ rad här. Regler för dagligt arbete får också en rad med länk i `CLAUDE.md`.
 | [ADR-0017](0017-individual-command-log-and-undo.md) | Kommandologg och ångra för skrivningar på individ | förslag | 2026-11-06 |
 | [ADR-0018](0018-ett-organisationsprojekt-och-issues-som-ko.md) | Ett publikt organisationsprojekt, med issues som enda kö | förslag | 2026-11-10 |
 | [ADR-0019](0019-explicit-state-machines.md) | Explicita tillståndsmaskiner där en implicit har ett hål | förslag | 2026-11-15 |
+| [ADR-0020](0020-gamla-appen-stangs-en-funktion-i-taget.md) | Gamla appen stängs en funktion i taget | accepterad | 2026-11-23 |

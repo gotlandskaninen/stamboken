@@ -228,6 +228,16 @@ inbox.original_months = int(os.environ.get("INLASNING_ORIGINAL_MANADER") or 12)
 if inbox.original_months < 1:
     raise RuntimeError(f"INLASNING_ORIGINAL_MANADER={inbox.original_months} is not a number of months, 1 or more.")
 
+tyck_till = Namespace()  # pylint: disable=C0103
+# "Tyck till" (docs/tyck-till.md): `app` creates the issues with the GitHub app, `logg` (the default in development
+# and CI) is a fake that succeeds. Production sets `app`, and without the app's key and ids the endpoint answers 503.
+tyck_till.github = (os.environ.get("TYCK_TILL_GITHUB") or "logg").strip().lower()
+tyck_till.app_id = os.environ.get("GITHUB_APP_ID", "")
+tyck_till.installation_id = os.environ.get("GITHUB_APP_INSTALLATION_ID", "")
+tyck_till.key_path = Path(os.environ.get("GITHUB_APP_KEY") or "/config/github_app_key.pem")
+tyck_till.project_id = os.environ.get("TYCK_TILL_PROJEKT") or "PVT_kwDOFJznr84Bq3Yo"
+tyck_till.recipient = os.environ.get("TYCK_TILL_MOTTAGARE") or "admin@gotlandskaninen.se"
+
 s3.bucket = os.environ.get("S3_BUCKET", "test")
 s3.endpoint = os.environ.get("S3_ENDPOINT", None)
 s3.region = os.environ.get("S3_REGION", "us-east-1")
