@@ -220,7 +220,11 @@ class PurchaseNoticeTest(ArsrapportTest):
         self.assertEqual(response.status_code, 422)
         body = response.get_json()
         self.assertEqual((body["code"], body["field"]), ("inte_i_stamboken", "number"))
-        self.assertEqual(body["detail"], purchase_notice.NOT_IN_STAMBOKEN)
+        self.assertEqual(
+            body["detail"],
+            "Kaninen finns inte i Stamboken än. Skicka foto av intyget. "
+            "Genbanksansvarig registrerar kaninen och för över den till dig.",
+        )
         db.Individual.update(voided=True).where(db.Individual.id == self.b.id).execute()  # an unpromoted slot
         self.assertEqual(self.notify(number=self.b.number).status_code, 422)
         self.assertEqual(notices(), [])
@@ -596,19 +600,19 @@ class PurchaseNoticeTest(ArsrapportTest):
     # The photo field (4a Task 5, wired to 4b's report upload): a photo of the transfer proof or the certificate, bound
     # to the notice under the photo's item lock and the session's own uploads, as a rabbit's photo is (FC1)
 
-    def upload(self, client=None, purpose=None):
+    def upload(self, client=None, purpose=None, year=2025):
         data = {"file": (io.BytesIO(encoded(photo((600, 800)))), "bevis.jpg")}
         query = f"?syfte={purpose}" if purpose else ""
         response = (client or self.client).post(
-            f"/api/v2/arsrapport/besattning/G9001/2025/foto{query}", data=data, content_type="multipart/form-data"
+            f"/api/v2/arsrapport/besattning/G9001/{year}/foto{query}", data=data, content_type="multipart/form-data"
         )
         self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
         return response.get_json()
 
-    def notify_with(self, document_id, doc_type="bevis", number=None, client=None):
-        body = {"number": number or self.a.number, "from_herd": "G9002", "date": "2025-05-14"}
+    def notify_with(self, document_id, doc_type="intyg", number=None, client=None, year=2025):
+        body = {"number": number or self.a.number, "from_herd": "G9002", "date": f"{year}-05-14"}
         body |= {"document_id": document_id, "doc_type": doc_type}
-        return (client or self.client).post("/api/v2/arsrapport/besattning/G9001/2025/kop", json=body)
+        return (client or self.client).post(f"/api/v2/arsrapport/besattning/G9001/{year}/kop", json=body)
 
     @staticmethod
     def heard(item):
@@ -624,7 +628,7 @@ class PurchaseNoticeTest(ArsrapportTest):
         (item,) = notices()
         (document,) = item.documents
         self.assertEqual(
-            (document.id, document.doc_type, document.interpretation_status), (uploaded["document_id"], "bevis", "av")
+            (document.id, document.doc_type, document.interpretation_status), (uploaded["document_id"], "intyg", "av")
         )
         self.assertFalse(db.InboxItem.select().where(db.InboxItem.id == uploaded["item_id"]).exists())
         (event,) = item.events
@@ -759,9 +763,11 @@ class PurchaseNoticeTest(ArsrapportTest):
     def test_the_queue_never_sends_a_notice_photo_to_be_read(self):
         """Neither a new type, Tolka igen nor a status set to waiting has the worker read a notice's photo."""
         read = self.reading_on()
+        self.round(2027)
+        self.at(date(2028, 1, 10))
         self.login("owner")
-        uploaded = self.upload(purpose="kop")
-        item_id = self.notify_with(uploaded["document_id"], "bevis").get_json()["id"]
+        uploaded = self.upload(purpose="kop", year=2027)
+        item_id = self.notify_with(uploaded["document_id"], "bevis", year=2027).get_json()["id"]
         self.login("man")
         self.assertEqual(self.client.post(f"/api/v2/inkorg/{item_id}/ta", json={}).status_code, 200)
         path = f"/api/v2/inkorg/{item_id}/dokument/{uploaded['document_id']}"
@@ -782,7 +788,7 @@ class PurchaseNoticeTest(ArsrapportTest):
 
     def send(self, *uploads, number=NEW, types=("intyg", "bevis"), herd="G9001", year=2025, client=None):
         documents = [{"id": u["document_id"], "doc_type": t} for u, t in zip(uploads, types, strict=False)]
-        body = {"number": number, "from_herd": "G9002", "date": "2025-05-14", "documents": documents}
+        body = {"number": number, "from_herd": "G9002", "date": f"{year}-05-14", "documents": documents}
         return (client or self.client).post(f"/api/v2/arsrapport/besattning/{herd}/{year}/kop/inskick", json=body)
 
     @staticmethod
@@ -790,12 +796,14 @@ class PurchaseNoticeTest(ArsrapportTest):
         return list(db.InboxItem.select().where(db.InboxItem.kind == "upload").order_by(db.InboxItem.id))
 
     def test_owner_sends_photos_as_an_ordinary_upload(self):
+        self.round(2027)
+        self.at(date(2028, 1, 10))
         self.login("owner")
-        first, second = self.upload(purpose="inskick"), self.upload(purpose="inskick")
-        response = self.send(first, second, number=f" {self.NEW.lower()} ")
+        first, second = self.upload(purpose="inskick", year=2027), self.upload(purpose="inskick", year=2027)
+        response = self.send(first, second, year=2027, number=f" {self.NEW.lower()} ")
         self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
         (item,) = self.uploads()
-        fields = {"number": self.NEW, "from_herd": "G9002", "date": "2025-05-14"}
+        fields = {"number": self.NEW, "from_herd": "G9002", "date": "2027-05-14"}
         self.assertEqual(response.get_json(), {"id": item.id, **fields, "state": "ny"})
         # the receipt a retry is known by: the photos' own items, and a hash of who sent what for which year
         stored = {**fields, "receipt": {"staged": [first["item_id"], second["item_id"]], "request": mock.ANY}}
@@ -813,7 +821,7 @@ class PurchaseNoticeTest(ArsrapportTest):
         self.assertIn(self.helper.id, heard)
         self.assertEqual(len(heard), len(set(heard)))
         # the same request again, as after a lost answer: the item, with nothing written or told twice
-        again = self.send(first, second)
+        again = self.send(first, second, year=2027)
         self.assertEqual((again.status_code, again.get_json()["id"]), (200, item.id))
         self.assertEqual((len(self.uploads()), self.heard(item), item.events.count()), (1, heard, 1))
         self.assertEqual(notices(), [])  # not a notice
@@ -824,7 +832,7 @@ class PurchaseNoticeTest(ArsrapportTest):
         self.assertEqual(self.client.post(f"/api/v2/inkorg/{item.id}/ta", json={}).status_code, 200)
         # registered and transferred while a worker holds it: opening it does not close it under the worker's hands
         rabbit = db.Individual.create(origin_herd=self.seller, number=self.NEW, sex="female")
-        ht_row("TRANSFER", from_herd=self.seller, herd=self.h, individual=rabbit, herd_tracking_date=date(2025, 5, 20))
+        ht_row("TRANSFER", from_herd=self.seller, herd=self.h, individual=rabbit, herd_tracking_date=date(2027, 5, 20))
         self.assertEqual(self.client.get(f"/api/v2/inkorg/{item.id}").get_json()["state"], "tagen")
 
     def test_link_sends_photos_and_its_code_is_the_sender(self):
@@ -886,7 +894,7 @@ class PurchaseNoticeTest(ArsrapportTest):
             self.assertEqual((refused.status_code, refused.get_json()["detail"]), (403, arsrapport.PHOTO_NOT_OURS))
             self.assertFalse({"id", "number", "from_herd", "date", "state"} & set(refused.get_json()))
             self.assertNotIn("2024-11-02", refused.get_data(as_text=True))
-        changed = self.send(uploaded, types=("bevis",))  # the same session, another payload: not the same request
+        changed = self.send(uploaded, number="G9002-25098")  # the same session, another payload: not the same request
         self.assertEqual(changed.status_code, 403)
         again = self.send(uploaded)  # the same request again: its receipt
         self.assertEqual((again.status_code, again.get_json()["id"]), (200, item_id))
@@ -919,12 +927,28 @@ class PurchaseNoticeTest(ArsrapportTest):
         self.assertEqual(self.send(uploaded).status_code, 403)
         self.assertEqual(self.uploads(), [])
 
+    def test_both_purchase_paths_refuse_transfer_proofs_for_2026(self):
+        self.round(2026)
+        self.at(date(2027, 1, 10))
+        self.login("owner")
+        uploaded = self.upload(purpose="kop", year=2026)
+        for refused in (
+            self.notify_with(uploaded["document_id"], "bevis", year=2026),
+            self.send(uploaded, types=("bevis",), year=2026),
+        ):
+            self.assertEqual(
+                (refused.status_code, refused.get_json()["detail"]), (400, "Ladda upp ett foto av intyget.")
+            )
+        self.assertEqual(self.notify_with(uploaded["document_id"], "intyg", year=2026).status_code, 200)
+
     def test_sent_photos_are_read_as_an_upload(self):
         read = self.reading_on()
+        self.round(2027)
+        self.at(date(2028, 1, 10))
         self.login("owner")
-        certificate, proof = self.upload(purpose="inskick"), self.upload(purpose="inskick")
+        certificate, proof = self.upload(purpose="inskick", year=2027), self.upload(purpose="inskick", year=2027)
         self.assertIsNone(interpreter.interpret_next())  # not before they are sent
-        self.assertEqual(self.send(certificate, proof).status_code, 200)
+        self.assertEqual(self.send(certificate, proof, year=2027).status_code, 200)
         self.assertEqual(interpreter.interpret_next(), certificate["document_id"])
         self.assertIsNone(interpreter.interpret_next())  # a transfer proof is not read
         self.assertEqual(len(read), 1)
@@ -1003,7 +1027,7 @@ class PurchaseNoticeTest(ArsrapportTest):
             self.assertEqual(self.send(uploaded, number=number).status_code, 200)
         refused = self.send(self.upload(purpose="inskick"))
         self.assertEqual((refused.status_code, refused.mimetype), (429, "application/problem+json"))
-        self.assertIn("Du har skickat många köp den senaste timmen", refused.get_json()["detail"])
+        self.assertIn("Du har skickat 20 köpanmälningar den senaste timmen", refused.get_json()["detail"])
 
     def test_sent_photos_show_registered_and_only_the_queue_closes_them(self):
         self.login("owner")

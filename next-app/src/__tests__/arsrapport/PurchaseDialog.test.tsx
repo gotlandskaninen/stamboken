@@ -1,5 +1,5 @@
 import React from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   cleanup,
   fireEvent,
@@ -20,7 +20,13 @@ import {
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/PurchaseDialog";
 import { PURCHASE_SENT_TEXT } from "@/app/(app)/stamboken/(dashboard)/arsrapport/lib";
 
-afterEach(cleanup);
+beforeEach(() => {
+  vi.setSystemTime(new Date("2028-01-10T12:00:00Z"));
+});
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
 
 const herds = () =>
   Promise.resolve({
@@ -37,11 +43,12 @@ function dialog(
   onSent = vi.fn(),
   upload = vi.fn(),
   sendPhotos = vi.fn(),
+  year = 2027,
 ) {
   render(
     <PurchaseDialog
       open
-      year={2025}
+      year={year}
       genebankId={1}
       ownHerd="G9001"
       loadHerds={herds}
@@ -81,8 +88,8 @@ describe("PurchaseDialog", () => {
     click();
     expect(screen.getByRole("alert").textContent).toBe("Välj datum för köpet.");
     const day = screen.getByLabelText("Datum för köpet") as HTMLInputElement;
-    expect(day.min).toBe("2025-01-01");
-    fill("Datum för köpet", "2025-05-14");
+    expect(day.min).toBe("2027-01-01");
+    fill("Datum för köpet", "2027-05-14");
     send.mockResolvedValue({
       ok: false,
       problem: { status: 502, title: "", detail: "x" },
@@ -92,7 +99,7 @@ describe("PurchaseDialog", () => {
       expect(send).toHaveBeenCalledWith({
         number: "G9002-2501",
         from_herd: "G9002",
-        date: "2025-05-14",
+        date: "2027-05-14",
       }),
     );
   });
@@ -104,14 +111,14 @@ describe("PurchaseDialog", () => {
         id: 1,
         number: "G9002-2501",
         from_herd: "GX1",
-        date: "2025-05-14",
+        date: "2027-05-14",
         state: "ny",
       },
     });
     const { onSent } = dialog(send);
     fill("Kaninens nummer", "G9002-2501");
     fireEvent.click(screen.getByLabelText("Utanför genbanken"));
-    fill("Datum för köpet", "2025-05-14");
+    fill("Datum för köpet", "2027-05-14");
     click();
     expect((await screen.findByRole("status")).textContent).toBe(
       PURCHASE_SENT_TEXT,
@@ -143,7 +150,7 @@ describe("PurchaseDialog", () => {
         id: 1,
         number: "G9002-9999",
         from_herd: "GX1",
-        date: "2025-05-14",
+        date: "2027-05-14",
         state: "ny",
       },
     });
@@ -151,7 +158,7 @@ describe("PurchaseDialog", () => {
     expect(screen.queryByText(NOT_IN_STAMBOKEN_TEXT)).toBeNull(); // only once the server says so
     fill("Kaninens nummer", "G9002-9999");
     fireEvent.click(screen.getByLabelText("Utanför genbanken"));
-    fill("Datum för köpet", "2025-05-14");
+    fill("Datum för köpet", "2027-05-14");
     click();
     // the number first, in plain text, and nothing in red before the photos are asked for
     expect((await screen.findByRole("status")).textContent).toBe(
@@ -211,7 +218,7 @@ describe("PurchaseDialog", () => {
       expect(sendPhotos).toHaveBeenCalledWith({
         number: "G9002-9999",
         from_herd: "utanfor",
-        date: "2025-05-14",
+        date: "2027-05-14",
         documents: [
           { id: 31, doc_type: "intyg" },
           { id: 32, doc_type: "bevis" },
@@ -225,7 +232,7 @@ describe("PurchaseDialog", () => {
     expect(send).toHaveBeenCalledTimes(2); // once more after Ändra numret, never with the photos
   });
 
-  it("carries a photo already uploaded into the photos sent when Stamboken lacks the rabbit (S7)", async () => {
+  it("uses the certificate without asking its type for either purchase path in 2026", async () => {
     const send = vi.fn().mockResolvedValue({
       ok: false,
       problem: {
@@ -244,34 +251,35 @@ describe("PurchaseDialog", () => {
         id: 1,
         number: "G9002-9999",
         from_herd: "GX1",
-        date: "2025-05-14",
+        date: "2026-05-14",
         state: "ny",
       },
     });
-    dialog(send, vi.fn(), upload, sendPhotos);
+    dialog(send, vi.fn(), upload, sendPhotos, 2026);
     fill("Kaninens nummer", "G9002-9999");
     fireEvent.click(screen.getByLabelText("Utanför genbanken"));
-    fill("Datum för köpet", "2025-05-14");
-    fireEvent.change(
-      screen.getByLabelText(
-        "Foto av överlåtelsebeviset eller intyget (om du har)",
-      ),
-      {
-        target: {
-          files: [new File(["x"], "intyg.jpg", { type: "image/jpeg" })],
-        },
+    fill("Datum för köpet", "2026-05-14");
+    fireEvent.change(screen.getByLabelText("Foto av intyget (om du har)"), {
+      target: {
+        files: [new File(["x"], "intyg.jpg", { type: "image/jpeg" })],
       },
-    );
+    });
     await screen.findByText("Fotot är uppladdat.");
-    fireEvent.click(screen.getByLabelText("Intyg"));
-    click();
-    await screen.findByText(NOT_IN_STAMBOKEN_TEXT);
-    // the first of the photos sent, still uploaded, with what it shows; the second may follow
-    const first = screen.getByRole("radiogroup", { name: "Vad visar foto 1?" });
+    expect(screen.queryByLabelText("Överlåtelsebevis")).toBeNull();
     expect(
-      (within(first).getByLabelText("Intyg") as HTMLInputElement).checked,
-    ).toBe(true);
-    expect(screen.getByLabelText("Foto 2 (om du har)")).toBeTruthy();
+      screen.queryByRole("radiogroup", { name: "Vad visar fotot?" }),
+    ).toBeNull();
+    click();
+    await screen.findByText(
+      "Kaninen finns inte i Stamboken än. Skicka foto av intyget. Genbanksansvarig registrerar kaninen och för över den till dig.",
+    );
+    expect(send.mock.calls[0][0]).toMatchObject({
+      document_id: 31,
+      doc_type: "intyg",
+    });
+    expect(
+      screen.queryByRole("radiogroup", { name: "Vad visar foto 1?" }),
+    ).toBeNull();
     fireEvent.click(
       screen.getByRole("button", { name: "Skicka till genbanksansvarig" }),
     );
@@ -279,7 +287,7 @@ describe("PurchaseDialog", () => {
       expect(sendPhotos).toHaveBeenCalledWith({
         number: "G9002-9999",
         from_herd: "utanfor",
-        date: "2025-05-14",
+        date: "2026-05-14",
         documents: [{ id: 31, doc_type: "intyg" }],
       }),
     );
@@ -296,7 +304,7 @@ describe("PurchaseDialog", () => {
     render(
       <PurchaseDialog
         open
-        year={2025}
+        year={2027}
         genebankId={1}
         ownHerd="G9001"
         loadHerds={herds}
@@ -309,7 +317,7 @@ describe("PurchaseDialog", () => {
     );
     fill("Kaninens nummer", "G9002-2501");
     fireEvent.click(screen.getByLabelText("Utanför genbanken"));
-    fill("Datum för köpet", "2025-05-14");
+    fill("Datum för köpet", "2027-05-14");
     const beforeAny = new Event("beforeunload", { cancelable: true });
     window.dispatchEvent(beforeAny);
     expect(beforeAny.defaultPrevented).toBe(false); // nothing uploaded yet
@@ -357,14 +365,14 @@ describe("PurchaseDialog", () => {
         id: 1,
         number: "G9002-2501",
         from_herd: "GX1",
-        date: "2025-05-14",
+        date: "2027-05-14",
         state: "ny",
       },
     });
     dialog(send, vi.fn(), upload);
     fill("Kaninens nummer", "G9002-2501");
     fireEvent.click(screen.getByLabelText("Utanför genbanken"));
-    fill("Datum för köpet", "2025-05-14");
+    fill("Datum för köpet", "2027-05-14");
     const file = new File(["x"], "bevis.jpg", { type: "image/jpeg" });
     fireEvent.change(
       screen.getByLabelText(
@@ -396,7 +404,7 @@ describe("PurchaseDialog", () => {
       expect(send).toHaveBeenCalledWith({
         number: "G9002-2501",
         from_herd: "utanfor",
-        date: "2025-05-14",
+        date: "2027-05-14",
         document_id: 31,
         doc_type: "intyg",
       }),
@@ -419,7 +427,7 @@ describe("PurchaseDialog", () => {
     dialog(send, vi.fn(), upload);
     fill("Kaninens nummer", "G9002-2501");
     fireEvent.click(screen.getByLabelText("Utanför genbanken"));
-    fill("Datum för köpet", "2025-05-14");
+    fill("Datum för köpet", "2027-05-14");
     fireEvent.change(
       screen.getByLabelText(
         "Foto av överlåtelsebeviset eller intyget (om du har)",

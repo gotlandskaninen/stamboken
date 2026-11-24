@@ -3,6 +3,7 @@ The register extract (before the report) and the receipt (after it) as PDFs, fro
 Neither carries the account or a buyer's name, town or contact details.
 """
 
+import re
 from datetime import date
 from pathlib import Path
 
@@ -22,8 +23,21 @@ _HEALTH = {None: "Ej besvarad", "inga": "Inga sjukdomsfall eller defekter"}
 _HULL = {"low": "mager", "normal": "normal", "high": "fet"}
 
 
-def _render(**context) -> bytes:
-    return HTML(string=_ENV.get_template("registerutdrag.html").render(**context)).write_pdf()
+# Mails are plain text: no autoescape, or names would be garbled (as in utils/mail.py).
+_TEXT_ENV = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=False)  # nosemgrep
+
+
+def render_pdf(context) -> bytes:
+    """The PDF of a context from `extract_context` or `receipt_context`."""
+    html = _ENV.get_template("registerutdrag.html").render(**context)
+    # base_url: the template finds fonts and logo under ../certificates/ with no network.
+    return HTML(string=html, base_url=str(_TEMPLATE_DIR)).write_pdf()
+
+
+def render_text(context) -> str:
+    """The same facts as plain text, for the mail. Build the context once and render both from it."""
+    text = _TEXT_ENV.get_template("registerutdrag.txt").render(**context)
+    return re.sub(r"\n{3,}", "\n\n", text).strip()  # the macros leave blank lines; one is enough
 
 
 def _numbers(ids):
@@ -100,8 +114,7 @@ def _litters(herd, year):
     ]
 
 
-def register_extract_pdf(herd, round_) -> bytes:
-    """The rabbits the register holds in `herd` on 31 December, and its sold, dead and litters that year."""
+def extract_context(herd, round_) -> dict:
     year = round_.report_year
     rows = arsrapport.report_list(herd, year)
     weights = _latest_weights(row["id"] for row in rows)
@@ -117,9 +130,20 @@ def register_extract_pdf(herd, round_) -> bytes:
         }
         for row in rows
     ]
-    return _render(
-        mode="utdrag", herd=herd.herd, year=year, rabbits=rabbits, sold=sold, dead=dead, litters=_litters(herd, year)
-    )
+    return {
+        "mode": "utdrag",
+        "herd": herd.herd,
+        "year": year,
+        "rabbits": rabbits,
+        "sold": sold,
+        "dead": dead,
+        "litters": _litters(herd, year),
+    }
+
+
+def register_extract_pdf(herd, round_) -> bytes:
+    """The rabbits the register holds in `herd` on 31 December, and its sold, dead and litters that year."""
+    return render_pdf(extract_context(herd, round_))
 
 
 def _choice(entry, waiting=False):
@@ -133,7 +157,7 @@ def _choice(entry, waiting=False):
     return "Ej angiven"
 
 
-def receipt_pdf(report, submission) -> bytes:
+def receipt_context(report, submission) -> dict:
     """What the submission reported: each rabbit's choice, weight and hull, and the health answer."""
     data = submission.data
     entries = arsrapport._entries(data.get("rabbits") or {})  # pylint: disable=protected-access
@@ -152,16 +176,23 @@ def receipt_pdf(report, submission) -> bytes:
     diseases = [_disease(name, value) for name, value in (data.get("diseases") or {}).items()]
     named = _numbers(d["individual_id"] for d in data.get("defects") or [])
     defects = [{"number": named.get(d["individual_id"]), "text": d["beskrivning"]} for d in data.get("defects") or []]
-    return _render(
-        mode="kvittens",
-        herd=report.herd.herd,
-        year=report.round.report_year,
-        received=submission.created_at.astimezone(arsrapport.STOCKHOLM).strftime("%Y-%m-%d %H:%M"),
-        rabbits=rabbits,
-        health=_HEALTH.get(health, "Sjukdomsfall eller defekter"),
-        diseases=diseases,
-        defects=defects,
-    )
+    return {
+        "mode": "kvittens",
+        "herd": report.herd.herd,
+        "year": report.round.report_year,
+        # a paper form came in on received_on; created_at is only when it was entered (the mail text says the same)
+        "received": (data.get("received_on") if submission.source == "paper" else None)
+        or submission.created_at.astimezone(arsrapport.STOCKHOLM).strftime("%Y-%m-%d %H:%M"),
+        "rabbits": rabbits,
+        "health": _HEALTH.get(health, "Sjukdomsfall eller defekter"),
+        "diseases": diseases,
+        "defects": defects,
+    }
+
+
+def receipt_pdf(report, submission) -> bytes:
+    """What the submission reported: each rabbit's choice, weight and hull, and the health answer."""
+    return render_pdf(receipt_context(report, submission))
 
 
 def _disease(name, value):

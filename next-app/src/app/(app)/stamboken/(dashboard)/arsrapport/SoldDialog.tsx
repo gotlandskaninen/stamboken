@@ -31,6 +31,7 @@ import {
   type RabbitView,
   type SaldState,
 } from "./lib";
+import { reportError } from "./reportError";
 import styles from "./arsrapport.module.css";
 
 interface Props {
@@ -77,9 +78,10 @@ export function HerdPicker({
   error?: string | null; // beside the field, as its description
   variant?: "member"; // the report's member fields, as BuyerFields' (the sale dialog)
 }) {
-  const [loaded, setLoaded] = React.useState<Awaited<
-    ReturnType<typeof getGenebankHerds>
-  > | null>(null);
+  type HerdsResult = Awaited<ReturnType<typeof getGenebankHerds>> & {
+    status?: number;
+  };
+  const [loaded, setLoaded] = React.useState<HerdsResult | null>(null);
 
   React.useEffect(() => {
     if (loaded !== null) return;
@@ -139,7 +141,11 @@ export function HerdPicker({
       </div>
       {loaded && !loaded.success && (
         <p className={styles.errorText} role="alert">
-          Det gick inte att hämta besättningarna.{" "}
+          {reportError("Besättningarna", "hämtas", {
+            status: loaded.status,
+            detail:
+              loaded.error === "unexpected_error" ? undefined : loaded.error,
+          })}{" "}
           <button
             type="button"
             className="sb-btn sb-btn-secondary sb-btn-sm"

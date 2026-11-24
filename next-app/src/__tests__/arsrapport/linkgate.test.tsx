@@ -50,7 +50,7 @@ describe("LinkGate", () => {
     render(<LinkGate missing="ute" />);
     expect(
       await screen.findByText(
-        "Provlänken fungerar. I det riktiga mejlet öppnar länken besättningens årsrapport.",
+        "Det här var ett provmejl. Länken fungerar. I medlemmarnas mejl öppnar den deras årsrapport.",
       ),
     ).toBeTruthy();
     expect(location.hash).toBe("");

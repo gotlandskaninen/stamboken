@@ -60,8 +60,8 @@ function BoughtBadge({ kopt }: { kopt: NonNullable<RabbitView["kopt"]> }) {
   const from = !kopt.fran
     ? undefined
     : isOutsideGenebankHerd(kopt.fran)
-      ? "Köpt utanför genbanken"
-      : `Köpt från ${kopt.fran}`;
+      ? "Köpt tillbaka från någon utanför genbanken"
+      : `Köpt från besättning ${kopt.fran}`;
   return (
     <span className="sb-badge" title={from} style={{ marginLeft: 8 }}>
       Köpt {fmtDay(kopt.datum)}

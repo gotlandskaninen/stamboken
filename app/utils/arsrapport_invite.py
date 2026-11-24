@@ -12,7 +12,7 @@ import utils.arsrapport as arsrapport
 import utils.report_code as report_code
 import utils.settings as settings
 from utils.arsrapport import ArsrapportError
-from utils.arsrapport_pdf import register_extract_pdf
+from utils.arsrapport_pdf import extract_context, render_pdf, render_text
 from utils.database import (
     DB_PROXY,
     OUTSIDE_GENEBANK_HERDS,
@@ -221,11 +221,13 @@ def _inbjudan(params):
         if arsrapport.current_report(herd, round_) is not None:  # already reported on paper or elsewhere
             return None
         link = report_code.code_url(code)
+    extract = extract_context(herd, round_)  # one read for the mail text and the attachment
     return {
         **_common(herd, round_),
         "link": link,
         "prov": bool(params.get("prov")),
-        "attachments": [(f"registerutdrag-{herd.herd}.pdf", "application/pdf", register_extract_pdf(herd, round_))],
+        "utdrag": render_text(extract),
+        "attachments": [(f"registerutdrag-{herd.herd}.pdf", "application/pdf", render_pdf(extract))],
     }
 
 

@@ -185,7 +185,7 @@ describe("RabbitRow", () => {
       />,
     );
     const badge = screen.getByText("Köpt 14 maj");
-    expect(badge.getAttribute("title")).toBe("Köpt från G9002");
+    expect(badge.getAttribute("title")).toBe("Köpt från besättning G9002");
     cleanup();
     render(
       <RabbitRow
@@ -195,7 +195,7 @@ describe("RabbitRow", () => {
       />,
     );
     expect(screen.getByText("Köpt 2 januari").getAttribute("title")).toBe(
-      "Köpt utanför genbanken",
+      "Köpt tillbaka från någon utanför genbanken",
     );
     cleanup();
     render(<RabbitRow {...props()} />);

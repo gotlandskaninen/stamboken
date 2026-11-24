@@ -15,6 +15,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import type { getGenebankHerds } from "../individ/[number]/actions";
 import type { ActionResult } from "../inkorg/actions";
 import {
+  BEVIS_FROM_YEAR,
   PURCHASE_SENT_TEXT,
   todayStockholm,
   type PurchaseBody,
@@ -25,12 +26,13 @@ import { HerdPicker } from "./SoldDialog";
 import { MAX_BYTES } from "./AddRabbit";
 import { prepare } from "../inskick/ny/prepare";
 import { useLeaveWarning } from "./useLeaveWarning";
+import { reportError } from "./reportError";
 import styles from "./arsrapport.module.css";
 
 type Photo = {
   status: "tom" | "skickar" | "klar" | "fel";
   document_id?: number;
-  error?: string;
+  error?: React.ReactNode;
   docType?: "bevis" | "intyg"; // what the photo shows, chosen once it is uploaded
 };
 const EMPTY: Photo = { status: "tom" };
@@ -76,7 +78,7 @@ function PhotoField({
   onChange,
 }: {
   label: string;
-  typeLabel: string;
+  typeLabel?: string;
   purpose: "kop" | "inskick";
   upload: Upload;
   disabled: boolean;
@@ -100,8 +102,15 @@ function PhotoField({
         data.set("file", prepared);
         const res = await upload(data, purpose);
         next = res.ok
-          ? { status: "klar", document_id: res.data.document_id }
-          : { status: "fel", error: res.problem.detail };
+          ? {
+              status: "klar",
+              document_id: res.data.document_id,
+              docType: typeLabel ? undefined : "intyg",
+            }
+          : {
+              status: "fel",
+              error: reportError("Fotot", "laddas upp", res.problem),
+            };
       }
     } catch {
       next = { status: "fel", error: "Uppladdningen avbröts. Försök igen." };
@@ -136,30 +145,32 @@ function PhotoField({
           <p className={styles.meta} role="status">
             Fotot är uppladdat.
           </p>
-          <div
-            className={styles.choices}
-            role="radiogroup"
-            aria-label={typeLabel}
-          >
-            <label className={styles.choice}>
-              <input
-                type="radio"
-                name={name}
-                checked={photo.docType === "bevis"}
-                onChange={() => onChange({ ...photo, docType: "bevis" })}
-              />
-              <span>Överlåtelsebevis</span>
-            </label>
-            <label className={styles.choice}>
-              <input
-                type="radio"
-                name={name}
-                checked={photo.docType === "intyg"}
-                onChange={() => onChange({ ...photo, docType: "intyg" })}
-              />
-              <span>Intyg</span>
-            </label>
-          </div>
+          {typeLabel && (
+            <div
+              className={styles.choices}
+              role="radiogroup"
+              aria-label={typeLabel}
+            >
+              <label className={styles.choice}>
+                <input
+                  type="radio"
+                  name={name}
+                  checked={photo.docType === "bevis"}
+                  onChange={() => onChange({ ...photo, docType: "bevis" })}
+                />
+                <span>Överlåtelsebevis</span>
+              </label>
+              <label className={styles.choice}>
+                <input
+                  type="radio"
+                  name={name}
+                  checked={photo.docType === "intyg"}
+                  onChange={() => onChange({ ...photo, docType: "intyg" })}
+                />
+                <span>Intyg</span>
+              </label>
+            </div>
+          )}
         </>
       )}
     </>
@@ -188,7 +199,7 @@ function Body({
   const [date, setDate] = React.useState("");
   const [tried, setTried] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
-  const [refused, setRefused] = React.useState<string | null>(null);
+  const [refused, setRefused] = React.useState<React.ReactNode>(null);
   const [missing, setMissing] = React.useState(false); // the number is not in Stamboken: photos to the queue (S7)
   const [sent, setSent] = React.useState<string | null>(null); // what was sent, in words
   const [photo, setPhoto] = React.useState<Photo>(EMPTY); // the notice's
@@ -197,6 +208,7 @@ function Body({
     setPhotos((all) => all.map((old, k) => (k === i ? p : old)));
   const today = todayStockholm();
   const last = `${year}-12-31` < today ? `${year}-12-31` : today;
+  const allowBevis = year >= BEVIS_FROM_YEAR;
   const uploaded = photos.filter((p) => p.status === "klar");
   const uploading = [photo, ...photos].some((p) => p.status === "skickar");
   // an uploaded photo is held, not sent, until the notice is
@@ -211,10 +223,10 @@ function Body({
       "Välj en besättning i genbanken, eller Utanför genbanken.") ||
     (!date && "Välj datum för köpet.") ||
     (missing && uploaded.length === 0 && PHOTO_REQUIRED_TEXT) ||
-    (missing && uploaded.some((p) => !p.docType) && PHOTO_TYPE_TEXT) ||
-    (!missing &&
-      photo.status === "klar" &&
-      !photo.docType &&
+    (allowBevis &&
+      (missing
+        ? uploaded.some((p) => !p.docType)
+        : photo.status === "klar" && !photo.docType) &&
       PHOTO_TYPE_TEXT) ||
     null;
 
@@ -241,8 +253,15 @@ function Body({
           setSent(PHOTOS_SENT_TEXT);
           onSent();
         } else if (res.problem.extensions?.field === "photo")
-          setPhotos([{ status: "fel", error: res.problem.detail }, EMPTY]); // chosen again
-        else setRefused(res.problem.detail || res.problem.title);
+          setPhotos([
+            {
+              status: "fel",
+              error: reportError("Fotot", "laddas upp", res.problem),
+            },
+            EMPTY,
+          ]);
+        // chosen again
+        else setRefused(reportError("Fotona", "skickas", res.problem));
         return;
       }
       const res = await send({
@@ -266,8 +285,12 @@ function Body({
           setPhoto(EMPTY);
         }
       } else if (res.problem.extensions?.field === "photo")
-        setPhoto({ status: "fel", error: res.problem.detail }); // chosen again
-      else setRefused(res.problem.detail || res.problem.title);
+        setPhoto({
+          status: "fel",
+          error: reportError("Fotot", "laddas upp", res.problem),
+        });
+      // chosen again
+      else setRefused(reportError("Köpanmälan", "skickas", res.problem));
     } catch {
       setRefused("Det gick inte att nå servern. Försök igen.");
     } finally {
@@ -379,10 +402,14 @@ function Body({
                 >
                   Ändra numret
                 </button>
-                <p className={styles.meta}>{NOT_IN_STAMBOKEN_TEXT}</p>
+                <p className={styles.meta}>
+                  {allowBevis
+                    ? NOT_IN_STAMBOKEN_TEXT
+                    : "Kaninen finns inte i Stamboken än. Skicka foto av intyget. Genbanksansvarig registrerar kaninen och för över den till dig."}
+                </p>
                 <PhotoField
                   label="Foto 1"
-                  typeLabel="Vad visar foto 1?"
+                  typeLabel={allowBevis ? "Vad visar foto 1?" : undefined}
                   purpose="inskick"
                   upload={upload}
                   disabled={busy}
@@ -394,7 +421,7 @@ function Body({
                   photos[1].status !== "tom") && (
                   <PhotoField
                     label="Foto 2 (om du har)"
-                    typeLabel="Vad visar foto 2?"
+                    typeLabel={allowBevis ? "Vad visar foto 2?" : undefined}
                     purpose="inskick"
                     upload={upload}
                     disabled={busy}
@@ -405,8 +432,12 @@ function Body({
               </>
             ) : (
               <PhotoField
-                label="Foto av överlåtelsebeviset eller intyget (om du har)"
-                typeLabel="Vad visar fotot?"
+                label={
+                  allowBevis
+                    ? "Foto av överlåtelsebeviset eller intyget (om du har)"
+                    : "Foto av intyget (om du har)"
+                }
+                typeLabel={allowBevis ? "Vad visar fotot?" : undefined}
                 purpose="kop"
                 upload={upload}
                 disabled={busy}
@@ -486,5 +517,5 @@ function Body({
 }
 
 export function PurchaseDialog(props: Props) {
-  return props.open ? <Body {...props} /> : null;
+  return props.open ? <Body key={props.year} {...props} /> : null;
 }

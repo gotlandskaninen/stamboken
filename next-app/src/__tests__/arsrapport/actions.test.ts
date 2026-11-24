@@ -28,7 +28,10 @@ import {
   submitReport,
   withdrawReport,
 } from "@/app/(app)/stamboken/(dashboard)/arsrapport/actions";
-import { getGenebankHerds as linkHerds } from "@/app/(app)/rapport/actions";
+import {
+  getGenebankHerds as linkHerds,
+  dryRun as linkDryRun,
+} from "@/app/(app)/rapport/actions";
 import { uploadPhoto } from "@/app/(app)/stamboken/(dashboard)/arsrapport/rabbitActions";
 import { ApiError } from "@/lib/api";
 import {
@@ -76,6 +79,39 @@ describe("arsrapport actions", () => {
       await submitReport("G9001", 2026, body, "demo", -1),
     ])
       expect(r.ok).toBe(false);
+    expect(fetchApi).not.toHaveBeenCalled();
+  });
+  it("explains malformed report addresses and a switched environment separately", async () => {
+    const file = new FormData();
+    for (const [herd, year] of [
+      ["../x", 2026],
+      ["G9001", 20.5],
+    ] as const) {
+      for (const refusal of [
+        await linkDryRun(herd, year, body),
+        await uploadPhoto(herd, year, file, "demo"),
+      ]) {
+        expect(refusal).toMatchObject({
+          ok: false,
+          problem: {
+            status: 400,
+            title: "Fel i adressen",
+            detail:
+              "Besättningen eller året i adressen stämmer inte. Öppna rapporten från länken i mejlet eller från Min besättning.",
+          },
+        });
+      }
+    }
+    modeCookie = "prod";
+    expect(await uploadPhoto("G9001", 2026, file, "demo")).toMatchObject({
+      ok: false,
+      problem: {
+        status: 400,
+        title: "Sidan behöver laddas om",
+        detail:
+          "Du har bytt mellan Stamboken och testmiljön i en annan flik. Ladda om sidan, så sparas det på rätt ställe.",
+      },
+    });
     expect(fetchApi).not.toHaveBeenCalled();
   });
   it("answers a dropped connection as a 502 the form can show", async () => {
@@ -172,6 +208,7 @@ describe("the link's herd picker", () => {
     expect(await linkHerds("G9001", 2025, 1)).toEqual({
       success: false,
       error: "Nej",
+      status: 404,
     });
     fetchApi.mockClear();
     expect((await linkHerds("../x", 2025, 1)).success).toBe(false);
