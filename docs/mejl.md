@@ -331,7 +331,7 @@ notis. Den dagliga notismejlen följer den vanliga strömbrytaren.
 | Svar | När |
 |---|---|
 | 200 `{"result": "removed"}` | köparen raderades nu |
-| 200 `{"result": "already_removed"}` | koden är äkta men köparen finns inte längre. Sidan säger att länken redan har använts eller ersatts, eftersom en ångrad och ny försäljning ger en ny köpare och ett nytt mejl, och hänvisar till länken i det nyare mejlet och annars till `dataskydd@gotlandskaninen.se` |
+| 200 `{"result": "already_removed"}` | koden är äkta men köparen finns inte längre. Sidan säger att köparuppgifterna för den försäljningen redan är borttagna och hänvisar den som köpt fler kaniner till länken för respektive köp eller föreningens dataskyddsadress |
 | 404 med `detail` "Länken gäller inte längre. Skriv till `dataskydd@gotlandskaninen.se`." | allt annat: förfalskad, trasig eller saknad kod, eller en kod för ett annat syfte. Svaret är detsamma vilket id koden än nämner |
 | 429 | för många anrop |
 
