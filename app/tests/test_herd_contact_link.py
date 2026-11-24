@@ -6,9 +6,10 @@ from collections import Counter
 from datetime import date
 from unittest.mock import patch
 
+import utils.data_access as da
 import utils.database as db
-import utils.matrikel as matrikel
 from cli.members import _link_flag_herds
+from herdbook import APP, limiter
 from utils.herd_contact import herd_contact, link_herd
 
 from tests.database_test import _USE_POSTGRES
@@ -276,31 +277,68 @@ class TestLinkHerd(LinkTest):
                 self.assertEqual(contact.mode, "ej_jamford")
                 self.assertEqual(contact.rows["email"], _row("anna@example.invalid", "egen"))
 
-    def test_membership_becoming_active_compares_its_herds(self):
-        """O4: set_membership_status to active compares the herds linked while it was not, in its transaction: the
-        main member is the contact, equal rows are fetched, a different one waits for an answer. A herd already
-        compared is left as it is."""
+
+class TestActivation(LinkTest):
+    """A membership that becomes active through the matrikel admin's PATCH (either route) has its herds linked
+    meanwhile compared, after the whole membership is saved."""
+
+    def setUp(self):
+        APP.config["TESTING"] = True  # nosemgrep
+        limiter.enabled = False
+        super().setUp()
+        matadmin = da.register_user("matadmin@example.invalid", "pass", username="matadmin")
+        matadmin.add_role("matrikel_admin", None)
+        self.client = APP.test_client(use_cookies=True)
+        self.client.post("/api/login", json={"username": "matadmin", "password": "pass"})
+
+    def _link_paused(self, **columns):
+        db.Herd.update(membership=None, contact_member=None, contact_pending=None).where(
+            db.Herd.id == self.herd.id
+        ).execute()
+        self._herd(**columns)
         self._set_status("inactive")
-        self._herd(name="Anna Exempel", email="anna@example.invalid", mobile_phone="070-999 99 99")
         link_herd(self.herd.id, self.membership.id)
+        self.assertIsNone(self._state()["contact_pending"])
+
+    def test_membership_becoming_active_compares_its_herds(self):
+        """O4: the main member is the contact, equal rows are fetched, a different one waits for an answer. A herd
+        already compared is left as it is."""
         compared = self._herd(self.herds[1], email="anna@example.invalid")
         db.Herd.update(membership=self.membership, contact_member=self.main, contact_pending=[]).where(
             db.Herd.id == compared.id
         ).execute()
+        for url in (f"/api/v2/memberships/{self.membership.id}", f"/api/v2/members/{self.membership.id}"):
+            with self.subTest(url=url):
+                self._link_paused(name="Anna Exempel", email="anna@example.invalid", mobile_phone="070-999 99 99")
 
-        with db.DATABASE.atomic():
-            locked = db.Membership.select().where(db.Membership.id == self.membership.id).for_update().get()
-            matrikel.set_membership_status(locked, "active", self.admin)
-            locked.save(only=[db.Membership.membership_status, db.Membership.updated_at])
+                response = self.client.patch(url, json={"membership_status": "active"})
 
+                self.assertEqual(response.status_code, 200, response.data)
+                state = self._state()
+                self.assertEqual(
+                    (state["contact_member_id"], state["contact_pending"]), (self.main.id, ["mobile_phone"])
+                )
+                self.assertEqual((state["name"], state["email"], state["mobile_phone"]), (None, None, "070-999 99 99"))
+                rows = herd_contact(db.Herd.get_by_id(self.herd.id)).rows
+                self.assertEqual(rows["name"], _row("Anna Exempel", "person"))
+                self.assertEqual(rows["email"], _row("anna@example.invalid", "person"))
+                self.assertEqual(rows["mobile_phone"], _row("070-999 99 99", "egen", True, "070-111 11 11"))
+                self.assertEqual(self._state(compared)["email"], "anna@example.invalid")
+
+    def test_activation_compares_with_the_address_saved_in_the_same_call(self):
+        """Status and address in one PATCH: the herd's address, the old home address, is compared with the new one.
+        It differs, so it stays own and waits for an answer, with its privacy."""
+        self._link_paused(physical_address=ADDRESS, physical_address_privacy="authenticated")
+        body = {"membership_status": "active", "address": "Nyvägen 2", "postal_code": "62300", "city": "Roma"}
+
+        response = self.client.patch(f"/api/v2/memberships/{self.membership.id}", json=body)
+
+        self.assertEqual(response.status_code, 200, response.data)
         state = self._state()
-        self.assertEqual((state["contact_member_id"], state["contact_pending"]), (self.main.id, ["mobile_phone"]))
-        self.assertEqual((state["name"], state["email"], state["mobile_phone"]), (None, None, "070-999 99 99"))
-        rows = herd_contact(db.Herd.get_by_id(self.herd.id)).rows
-        self.assertEqual(rows["name"], _row("Anna Exempel", "person"))
-        self.assertEqual(rows["email"], _row("anna@example.invalid", "person"))
-        self.assertEqual(rows["mobile_phone"], _row("070-999 99 99", "egen", True, "070-111 11 11"))
-        self.assertEqual(self._state(compared)["email"], "anna@example.invalid")
+        self.assertEqual((state["physical_address"], state["physical_address_privacy"]), (ADDRESS, "authenticated"))
+        self.assertEqual(state["contact_pending"], ["physical_address"])
+        row = herd_contact(db.Herd.get_by_id(self.herd.id)).rows["physical_address"]
+        self.assertEqual(row, _row(ADDRESS, "egen", True, "Nyvägen 2|623 00|Roma"))
 
 
 @unittest.skipUnless(_USE_POSTGRES, "FOR UPDATE serialisation needs PostgreSQL")
