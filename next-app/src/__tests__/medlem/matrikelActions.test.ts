@@ -275,3 +275,22 @@ describe("kontokoppling server actions", () => {
     expect(revalidatePathMock).toHaveBeenCalledWith("/medlem/matrikel");
   });
 });
+
+it.each([
+  [404, "about:blank", true],
+  [409, "herd-unavailable", true],
+  [409, "about:blank", false],
+  [409, "stale", false],
+  [503, "about:blank", false],
+] as const)(
+  "classifies herd link error %i %s",
+  async (status, type, resetSelection) => {
+    fetchApiMock.mockRejectedValueOnce({ status, type, detail: "Testfel" });
+    expect(await linkMembershipHerd(5, 3)).toEqual({
+      ok: false,
+      error: "Testfel",
+      resetSelection,
+    });
+    expect(revalidatePathMock).not.toHaveBeenCalled();
+  },
+);

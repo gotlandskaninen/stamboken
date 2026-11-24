@@ -286,7 +286,9 @@ export async function linkMembershipHerd(
   herdId: number,
   confirmToken?: string,
 ): Promise<
-  ActionResult | { ok: false; confirmRequired: HerdLinkConfirmation }
+  | { ok: true }
+  | { ok: false; error: string; resetSelection: boolean }
+  | { ok: false; confirmRequired: HerdLinkConfirmation }
 > {
   try {
     await fetchApi(`/v2/memberships/${membershipId}/herds`, {
@@ -317,6 +319,12 @@ export async function linkMembershipHerd(
         },
       };
     }
-    return { ok: false, error: extractError(err) };
+    return {
+      ok: false,
+      error: extractError(err),
+      resetSelection:
+        problem?.status === 404 ||
+        (problem?.status === 409 && problem.type === "herd-unavailable"),
+    };
   }
 }

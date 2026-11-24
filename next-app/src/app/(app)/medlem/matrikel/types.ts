@@ -59,10 +59,11 @@ export type MembershipHerd = {
 export type HerdCandidate = MembershipHerd & {
   is_active: boolean;
   link: "ingen" | "detta" | "annat";
+  unavailable_reason: string | null;
   member_number: number | null;
 };
 
-type HerdAccount = { id: number; username: string | null };
+export type HerdAccount = { id: number; username: string | null };
 
 export type HerdLinkPreview = {
   herd: MembershipHerd & {
@@ -74,8 +75,16 @@ export type HerdLinkPreview = {
     MembershipDetail,
     "id" | "member_number" | "membership_status"
   >;
-  new_access: HerdAccount | null;
-  legacy_owners: (HerdAccount & { in_membership: boolean })[];
+  new_access:
+    | (HerdAccount & { already_edits: boolean; already_manages: boolean })
+    | null;
+  inactive_main_account: HerdAccount | null;
+  new_readers: HerdAccount[];
+  grant_holders: HerdAccount[];
+  legacy_owners: (HerdAccount & {
+    in_membership: boolean;
+    gains_household_grants: boolean;
+  })[];
   contact_rows:
     | { field: string; label: string; case: string; effect: string }[]
     | null;

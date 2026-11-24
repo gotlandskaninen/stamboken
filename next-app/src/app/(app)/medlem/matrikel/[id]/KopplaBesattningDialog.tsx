@@ -10,6 +10,7 @@ import ds from "@/styles/ds-admin.module.css";
 import styles from "../../medlem.module.css";
 import { linkMembershipHerd } from "../actions";
 import type {
+  HerdAccount,
   HerdCandidate,
   HerdLinkConfirmation,
   HerdLinkPreview,
@@ -19,8 +20,32 @@ function membershipLabel(number: number | null) {
   return number === null ? "medlemskap utan nummer" : `medlemskap nr ${number}`;
 }
 
+function accountLabel(account: HerdAccount) {
+  return account.username ?? `nr ${account.id}`;
+}
+
+function ownerEffect(access: NonNullable<HerdLinkPreview["new_access"]>) {
+  if (access.already_manages) {
+    return "Kontot får redan ändra, sälja och flytta kaniner genom sin roll. Som innehavare får kontot ge hushållet tillgång.";
+  }
+  if (access.already_edits) {
+    return "Kontot får redan ändra kaniner och får nu också sälja och flytta kaniner och ge hushållet tillgång.";
+  }
+  return "Kontot får ändra, sälja och flytta kaniner och ge hushållet tillgång.";
+}
+
 function Preview({ preview }: { preview: HerdLinkPreview }) {
-  const { herd, membership, new_access, legacy_owners, contact_rows } = preview;
+  const {
+    herd,
+    membership,
+    new_access,
+    inactive_main_account,
+    new_readers,
+    legacy_owners,
+    grant_holders,
+    contact_rows,
+  } = preview;
+  const gainsGrants = legacy_owners.find((u) => u.gains_household_grants);
   return (
     <div aria-live="polite">
       <h3 className="sb-h6">
@@ -36,22 +61,60 @@ function Preview({ preview }: { preview: HerdLinkPreview }) {
         {statusLabel(membership.membership_status)}
       </p>
       <h3 className="sb-h6">Åtkomst som tillkommer</h3>
-      <p>
-        {membership.membership_status !== "active"
-          ? "Kopplingen ger åtkomst först när medlemskapet blir aktivt."
-          : new_access
-            ? `Huvudmedlemmens konto ${new_access.username ?? `nr ${new_access.id}`} får ändra besättningen.`
-            : "Inget konto får ny åtkomst."}
-      </p>
+      {inactive_main_account && (
+        <p>
+          Huvudmedlemmens konto {accountLabel(inactive_main_account)} är
+          inaktivt.
+        </p>
+      )}
+      {membership.membership_status !== "active" ? (
+        <p>Kopplingen ger åtkomst först när medlemskapet blir aktivt.</p>
+      ) : (
+        <>
+          {new_access && (
+            <p>
+              Huvudmedlemmens konto {accountLabel(new_access)} blir
+              besättningens innehavare. {ownerEffect(new_access)}
+            </p>
+          )}
+          {gainsGrants && (
+            <p>
+              Huvudmedlemmens konto {accountLabel(gainsGrants)} kan nu ge
+              hushållet tillgång till besättningen.
+            </p>
+          )}
+          {new_readers.length > 0 && (
+            <ul>
+              {new_readers.map((u) => (
+                <li key={u.id}>
+                  {accountLabel(u)} får läsa matrikelns kontaktuppgifter för
+                  besättningen.
+                </li>
+              ))}
+            </ul>
+          )}
+          {!new_access && !gainsGrants && !new_readers.length && (
+            <p>Inget konto får ny åtkomst.</p>
+          )}
+        </>
+      )}
       <h3 className="sb-h6">Åtkomst som finns kvar</h3>
-      {legacy_owners.length === 0 ? (
-        <p>Inget konto har en gammal ägarroll på besättningen.</p>
+      {legacy_owners.length === 0 && grant_holders.length === 0 ? (
+        <p>
+          Inget konto har en gammal ägarroll eller ett aktivt skötartillstånd på
+          besättningen.
+        </p>
       ) : (
         <ul>
           {legacy_owners.map((u) => (
-            <li key={u.id}>
-              {u.username ?? `Konto nr ${u.id}`} · gammal ägarroll
+            <li key={`owner-${u.id}`}>
+              {accountLabel(u)} · gammal ägarroll
               {!u.in_membership && " · saknar aktiv person i medlemskapet"}
+            </li>
+          ))}
+          {grant_holders.map((u) => (
+            <li key={`grant-${u.id}`}>
+              {accountLabel(u)} · aktivt skötartillstånd
             </li>
           ))}
         </ul>
@@ -169,11 +232,18 @@ export function KopplaBesattningDialog({
   const submit = () => {
     if (!selected) return;
     start(async () => {
-      const result = await linkMembershipHerd(
-        membershipId,
-        selected.id,
-        confirmation?.confirm_token,
-      );
+      setError("");
+      let result;
+      try {
+        result = await linkMembershipHerd(
+          membershipId,
+          selected.id,
+          confirmation?.confirm_token,
+        );
+      } catch {
+        setError("Kunde inte nå servern. Försök igen.");
+        return;
+      }
       if (result.ok) {
         showSnackbar("Besättning kopplad", "success");
         addNotification({
@@ -188,9 +258,11 @@ export function KopplaBesattningDialog({
           changed: confirmation !== null,
         });
       } else {
-        chooseBank("");
+        if (result.resetSelection) {
+          chooseBank("");
+          setConfirmation(null);
+        }
         setError(result.error);
-        setConfirmation(null);
       }
     });
   };
@@ -282,13 +354,18 @@ export function KopplaBesattningDialog({
                           type="radio"
                           name="herd"
                           checked={h.id === selected?.id}
-                          disabled={pending || h.link !== "ingen"}
+                          disabled={
+                            pending ||
+                            h.link !== "ingen" ||
+                            !!h.unavailable_reason
+                          }
                           onChange={() => setSelected(h)}
                         />
                         <span>
                           {h.herd}
                           {h.herd_name && ` — ${h.herd_name}`}
                           {!h.is_active && " · Inaktiv"}
+                          {h.unavailable_reason && ` · ${h.unavailable_reason}`}
                           {h.link === "annat" &&
                             ` · Kopplad till ${membershipLabel(h.member_number)}`}
                           {h.link === "detta" &&

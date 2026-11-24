@@ -1,8 +1,10 @@
 """Preview and confirmation of a herd link from the member register."""
 
+from datetime import date, datetime, timedelta
 from unittest.mock import patch
 
 import utils.database as db
+from utils.herd_contact import is_matrikel_reader
 
 from tests.test_person_link_api import LinkApiBase
 
@@ -24,7 +26,7 @@ class TestMembershipHerdLink(LinkApiBase):
         body = response.get_json()
         self.assertEqual(body["type"], "confirm-required")
         self.assertIsNone(db.Herd.get_by_id(self.herd.id).membership_id)
-        self.assertFalse(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "herd_linked").exists())
+        self.assertFalse(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "herd_membership_linked").exists())
         self.invalidate.assert_not_called()
         return body
 
@@ -38,6 +40,7 @@ class TestMembershipHerdLink(LinkApiBase):
             [(r["herd"], r["is_active"], r["link"], r["member_number"]) for r in rows],
             [("G1", False, "detta", None), ("G2", False, "ingen", None), ("G10", True, "annat", 17)],
         )
+        self.assertIsNone(rows[1]["unavailable_reason"])
         self.assertEqual(rows[1]["id"], self.herd.id)
         self.assertEqual(rows[1]["herd_name"], self.herd.herd_name)
 
@@ -75,7 +78,23 @@ class TestMembershipHerdLink(LinkApiBase):
         preview = body["preview"]
         self.assertEqual(preview["herd"]["genebank_name"], self.genebanks[0].name)
         self.assertEqual(preview["membership"], {"id": self.ms.id, "member_number": 6, "membership_status": "active"})
-        self.assertEqual(preview["new_access"]["id"], self.account.id)
+        self.assertEqual(
+            preview["new_access"],
+            {
+                "id": self.account.id,
+                "username": self.account.username,
+                "already_edits": False,
+                "already_manages": False,
+            },
+        )
+        self.assertEqual(preview["new_readers"], [{"id": self.account.id, "username": self.account.username}])
+        self.assertNotIn(self.herd.id, self.account.transfer_herd_ids())
+        self.assertFalse(is_matrikel_reader(self.account, self.herd))
+        self.assertIn(
+            f"{self.main.first_name} {self.main.last_name} blir kontaktperson", preview["contact_rows"][0]["effect"]
+        )
+        for value in (self.main.email, self.herd.email, self.main.phone, self.herd.mobile_phone):
+            self.assertNotIn(value, str(body))
         self.assertEqual([(u["id"], u["in_membership"]) for u in preview["legacy_owners"]], [(self.owner.id, False)])
         cases = {"name": "person", "email": "lika", "mobile_phone": "olika", "physical_address": "bada_tomma"}
         self.assertEqual({r["field"]: r["case"] for r in preview["contact_rows"]}, cases)
@@ -98,12 +117,14 @@ class TestMembershipHerdLink(LinkApiBase):
         self.assertEqual(linked.mobile_phone, self.herd.mobile_phone)
         self.assertEqual(linked.contact_pending, ["mobile_phone"])
         self.assertIn(linked.id, self.account.effective_herd_ids())
+        self.assertIn(linked.id, self.account.transfer_herd_ids())
+        self.assertTrue(is_matrikel_reader(self.account, linked))
         self.assertIn(linked.id, self.owner.effective_herd_ids())
-        audit = db.MatrikelAudit.get(db.MatrikelAudit.action == "herd_linked")
+        audit = db.MatrikelAudit.get(db.MatrikelAudit.action == "herd_membership_linked")
         self.assertEqual((audit.actor_id, audit.membership_id), (self.matrikel_user.id, self.ms.id))
         self.assertEqual(
             audit.payload,
-            {"herd_id": linked.id, "herd": linked.herd, "genebank_id": linked.genebank_id, "cases": cases},
+            {"herd_id": linked.id, "source": "matrikel", "main_member_id": self.main.id},
         )
         self.invalidate.assert_called_once_with([linked.genebank_id])
 
@@ -117,12 +138,13 @@ class TestMembershipHerdLink(LinkApiBase):
         self.assertEqual(after["preview"]["new_access"]["id"], self.account.id)
         self.assertEqual(self.post(confirm_token=after["confirm_token"]).status_code, 201)
 
-    def test_main_account_that_already_owns_herd_gains_no_access(self):
+    def test_main_with_legacy_owner_role_keeps_it_and_can_now_grant_household_access(self):
         self.main.user = self.owner
         self.main.save()
         self.owner.add_role("owner", self.herd.id)
         preview = self.preview()["preview"]
         self.assertIsNone(preview["new_access"])
+        self.assertTrue(preview["legacy_owners"][0]["gains_household_grants"])
         self.assertEqual([(u["id"], u["in_membership"]) for u in preview["legacy_owners"]], [(self.owner.id, True)])
 
     def test_incomplete_role_on_main_account_refuses_an_uncertain_preview(self):
@@ -143,6 +165,7 @@ class TestMembershipHerdLink(LinkApiBase):
             response = self.post(confirm_token=token)
             self.assertEqual(response.status_code, 409)
             self.assertEqual(response.get_json()["title"], "Besättningen är redan kopplad")
+            self.assertEqual(response.get_json()["type"], "herd-unavailable")
             if membership == other:
                 self.assertIn("17", response.get_json()["detail"])
             self.assertEqual(db.Herd.get_by_id(self.herd.id).membership_id, membership.id)
@@ -169,7 +192,7 @@ class TestMembershipHerdLink(LinkApiBase):
             response = self.post(confirm_token=token)
         self.assertEqual((response.status_code, response.get_json()["type"]), (409, "stale"))
         self.assertIsNone(db.Herd.get_by_id(self.herd.id).membership_id)
-        self.assertFalse(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "herd_linked").exists())
+        self.assertFalse(db.MatrikelAudit.select().where(db.MatrikelAudit.action == "herd_membership_linked").exists())
         self.invalidate.assert_not_called()
 
     def test_inactive_membership_defers_access_and_comparison(self):
@@ -186,4 +209,162 @@ class TestMembershipHerdLink(LinkApiBase):
         self.assertIsNone(linked.contact_pending)
         self.assertEqual(linked.name, self.herd.name)
         self.assertNotIn(linked.id, self.account.effective_herd_ids())
-        self.assertEqual(db.MatrikelAudit.get(db.MatrikelAudit.action == "herd_linked").payload["cases"], {})
+        self.assertFalse(body["preview"]["new_readers"])
+        self.assertFalse(is_matrikel_reader(self.account, linked))
+
+    def candidates(self, bank):
+        return self.client.get(f"{self.url}/herd-candidates?genebank_id={bank.id}").json["herds"]
+
+    def test_outside_genebank_herds_are_never_candidates_and_cannot_be_linked(self):
+        for code, bank in zip(("GX1", "MX1"), self.genebanks, strict=True):
+            herd = db.Herd.create(herd=code, genebank=bank)
+            self.assertNotIn(herd.id, [r["id"] for r in self.candidates(bank)])
+            refused = self.post(herd_id=herd.id)
+            self.assertEqual(refused.status_code, 409)
+            self.assertEqual(refused.json["title"], "Besättningen kan inte kopplas")
+            self.assertEqual(refused.json["type"], "herd-unavailable")
+            self.assertIn("kaniner sålda utanför genbanken", refused.json["detail"])
+            self.assertIsNone(db.Herd.get_by_id(herd.id).membership_id)
+
+    def test_duplicate_code_blocks_even_a_previously_confirmable_herd(self):
+        token = self.preview()["confirm_token"]
+        other = db.Herd.create(herd=self.herd.herd, genebank=self.genebanks[1])
+        for herd in (self.herd, other):
+            candidate = next(row for row in self.candidates(herd.genebank) if row["id"] == herd.id)
+            self.assertEqual(candidate["unavailable_reason"], "koden finns i flera genbanker")
+            response = self.post(herd_id=herd.id, confirm_token=token)
+            self.assertEqual(response.status_code, 409)
+            self.assertEqual(response.json["type"], "herd-unavailable")
+            self.assertIn(candidate["unavailable_reason"], response.json["detail"].lower())
+            self.assertIsNone(db.Herd.get_by_id(herd.id).membership_id)
+
+    def test_membership_without_active_main_refuses_even_an_existing_token(self):
+        token = self.preview()["confirm_token"]
+        self.main.end_date = date.today()
+        self.main.save()
+        for status in ("active", "inactive"):
+            self.ms.membership_status = status
+            self.ms.save()
+            response = self.post(confirm_token=token)
+            self.assertEqual(response.status_code, 409)
+            self.assertIn("saknar aktiv huvudmedlem", response.json["detail"])
+            self.assertNotIn("confirm_token", response.json)
+            self.assertIsNone(db.Herd.get_by_id(self.herd.id).membership_id)
+
+    def test_main_with_grant_gains_owner_rights_and_inactive_account_gains_nothing(self):
+        self.main.user = self.account
+        self.main.save()
+        first = self.preview()
+        db.HerdAccessGrant.create(member=self.main, herd=self.herd, granted_by=self.admin)
+        body = self.preview(confirm_token=first["confirm_token"])
+        self.assertIn(self.herd.id, self.account.effective_herd_ids())
+        self.assertNotIn(self.herd.id, self.account.transfer_herd_ids())
+        self.assertTrue(body["preview"]["new_access"]["already_edits"])
+        self.assertEqual([u["id"] for u in body["preview"]["grant_holders"]], [self.account.id])
+        self.account.is_active = False
+        self.account.save()
+        preview = self.preview(confirm_token=body["confirm_token"])["preview"]
+        self.assertEqual(preview["inactive_main_account"], {"id": self.account.id, "username": self.account.username})
+        self.assertIsNone(preview["new_access"])
+        self.assertEqual(preview["new_readers"], [])
+        self.assertEqual(preview["grant_holders"], [])
+
+    def test_string_owner_id_is_interpreted_like_transfer_herd_ids(self):
+        self.account.privileges = [{"level": "owner", "herd": str(self.herd.id)}]
+        self.account.save()
+        self.main.user = self.account
+        self.main.save()
+        preview = self.preview()["preview"]
+        self.assertNotIn(self.herd.id, self.account.transfer_herd_ids())
+        self.assertFalse(preview["new_access"]["already_edits"])
+        self.assertEqual(preview["legacy_owners"], [])
+
+    def test_family_read_access_alone_invalidates_confirmation(self):
+        self.family.user = self.account
+        self.family.save()
+        first = self.preview()
+        self.assertEqual(first["preview"]["new_readers"], [{"id": self.account.id, "username": self.account.username}])
+        self.account.add_role("manager", self.herd.genebank_id)
+        second = self.preview(confirm_token=first["confirm_token"])
+        self.assertEqual(second["preview"], {**first["preview"], "new_readers": []})
+
+    def test_readers_before_and_after_link_and_grants_on_other_memberships(self):
+        self.main.user = self.admin
+        self.main.save()
+        self.family.user = self.account
+        self.family.save()
+        self.skotare.user = self.viewer
+        self.skotare.save()
+        db.Member.create(
+            membership=self.ms, role="familjemedlem", first_name="Test", last_name="Chef", user=self.manager
+        )
+        outside = db.Member.create(
+            membership=db.Membership.create(), role="skotare", first_name="Test", last_name="Extern", user=self.owner
+        )
+        grant = db.HerdAccessGrant.create(member=outside, herd=self.herd, granted_by=self.admin)
+        first = self.preview()
+        self.assertTrue(first["preview"]["new_access"]["already_manages"])
+        self.assertEqual([u["id"] for u in first["preview"]["new_readers"]], [self.account.id])
+        self.assertEqual([u["id"] for u in first["preview"]["grant_holders"]], [self.owner.id])
+        db.HerdAccessGrant.create(member=self.skotare, herd=self.herd, valid_until=date.today(), granted_by=self.admin)
+        body = self.preview(confirm_token=first["confirm_token"])
+        readers = {u["id"] for u in body["preview"]["new_readers"]}
+        self.assertEqual(readers, {self.account.id, self.viewer.id})
+        self.assertEqual({u["id"] for u in body["preview"]["grant_holders"]}, {self.owner.id, self.viewer.id})
+        grant.revoked_at = datetime.now()
+        grant.save()
+        final = self.preview(confirm_token=body["confirm_token"])
+        self.assertEqual([u["id"] for u in final["preview"]["grant_holders"]], [self.viewer.id])
+        accounts = [self.admin, self.manager, self.account, self.viewer, self.owner]
+        before = {u.id for u in accounts if is_matrikel_reader(u, self.herd)}
+        self.assertEqual(self.post(confirm_token=final["confirm_token"]).status_code, 201)
+        linked = db.Herd.get_by_id(self.herd.id)
+        self.assertEqual({u.id for u in accounts if is_matrikel_reader(u, linked)} - before, readers)
+
+    def test_suspended_ended_and_expired_grants_convey_no_access(self):
+        other = db.Membership.create(membership_status="inactive")
+        person = db.Member.create(
+            membership=other, role="skotare", first_name="Test", last_name="Paus", user=self.owner
+        )
+        db.HerdAccessGrant.create(member=person, herd=self.herd, granted_by=self.admin)
+        self.family.user = self.viewer
+        self.family.end_date = date.today()
+        self.family.save()
+        db.HerdAccessGrant.create(member=self.family, herd=self.herd, granted_by=self.admin)
+        self.skotare.user = self.account
+        self.skotare.save()
+        db.HerdAccessGrant.create(
+            member=self.skotare, herd=self.herd, valid_until=date.today() - timedelta(days=1), granted_by=self.admin
+        )
+        preview = self.preview()["preview"]
+        self.assertEqual(preview["grant_holders"], [])
+        self.assertEqual(preview["new_readers"], [])
+
+    def test_same_cases_require_new_confirmation_when_contact_write_changes(self):
+        self.herd.name = None
+        self.herd.save()
+        first = self.preview()
+        name = first["preview"]["contact_rows"][0]["effect"]
+        self.assertIn(f"{self.main.first_name} {self.main.last_name} blir kontaktperson", name)
+        self.assertIn("visas inte förrän någon väljer", name)
+        # Same cases and contact values. Only the privacy write, then the column to clear, differ.
+        self.herd.name_privacy = "private"
+        self.herd.save()
+        second = self.preview(confirm_token=first["confirm_token"])
+        self.herd.name = " "
+        self.herd.save()
+        third = self.preview(confirm_token=second["confirm_token"])
+        # Switch the matched family contact to another person with the same name.
+        self.family.first_name, self.family.last_name = "Test", "Kontakt"
+        self.family.save()
+        self.herd.name = "Test Kontakt"
+        self.herd.save()
+        fourth = self.preview(confirm_token=third["confirm_token"])
+        self.family.end_date = date.today()
+        self.family.save()
+        self.skotare.first_name, self.skotare.last_name = "Test", "Kontakt"
+        self.skotare.save()
+        last = self.preview(confirm_token=fourth["confirm_token"])
+        self.assertEqual(last["preview"], fourth["preview"])
+        self.assertEqual(self.post(confirm_token=last["confirm_token"]).status_code, 201)
+        self.assertEqual(db.Herd.get_by_id(self.herd.id).contact_member_id, self.skotare.id)
