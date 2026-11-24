@@ -123,6 +123,17 @@ class PdfTest(ArsrapportTest):
         submission.source, submission.data = "paper", {**submission.data, "received_on": "2026-01-12"}
         self.assertEqual(receipt_context(report, submission)["received"], "2026-01-12")
 
+    def test_long_extract_repeats_the_header_and_keeps_a_heading_with_its_content(self):
+        self.rabbits(self.h, 70)
+        with fitz.open(stream=register_extract_pdf(self.h, self.round_), filetype="pdf") as doc:
+            pages = [page.get_text() for page in doc]
+        self.assertGreater(len(pages), 1)
+        for text in pages[1:]:
+            self.assertIn("FÖRENINGENGOTLANDSKANINEN", "".join(text.split()))  # letter-spaced: no word gaps
+        for text in pages:
+            if "SÅLDA UNDER" in text:
+                self.assertIn("Inga försäljningar", text)
+
     def test_extract_lists_sold_during_the_year(self):
         kept, sold = self.rabbits(self.h, 2)
         self.reported(self.h, self.kvar(kept, vikt=2.8), self.sald(sold, "utanfor", 2025, 10, 3, kopare=BUYER))
@@ -186,4 +197,5 @@ class PdfTest(ArsrapportTest):
             ((name, mime, data),) = built["attachments"]
             self.assertEqual((name, mime), ("kvittens.pdf", "application/pdf"), kind)
             self.assertIn(kept.number, text_of(data))
-            mail.render(kind, {k: v for k, v in built.items() if k != "attachments"})
+            _, body = mail.render(kind, {k: v for k, v in built.items() if k != "attachments"})
+            self.assertIn(kept.number, body, kind)  # the text receipt is in both mails
