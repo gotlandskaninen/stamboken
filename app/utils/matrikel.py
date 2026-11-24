@@ -23,7 +23,13 @@ from datetime import date, datetime, timedelta, timezone
 from peewee import JOIN, Case, IntegrityError, fn
 
 from utils.cache_invalidation import trigger_invalidation
-from utils.data_access import erase_account, new_generation, purge_user_audit_pii, remove_profile_picture
+from utils.data_access import (
+    erase_account,
+    new_generation,
+    profile_pictures_of,
+    purge_user_audit_pii,
+    remove_profile_picture,
+)
 
 # DB_PROXY is the runtime proxy that data_access.py uses; importing the
 # module-level DATABASE symbol directly would be None at call time.
@@ -490,7 +496,8 @@ def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=N
     in RETENTION_HOLD_LEVELS refuses the erasure (LinkError) before any write.
     A caller inside its own transaction passes `deferred_originals` and
     `deferred_accounts`, purges those accounts last in it, and after its commit
-    removes those files and the accounts' profile pictures.
+    removes those files and the accounts' profile pictures (profile_pictures_of,
+    read before the purge).
     Returns the scrubbed person: the caller's pre-lock instance is stale
     afterwards.
     """
@@ -590,15 +597,17 @@ def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=N
         )
         # the intake queue's photos that show the person, and what they sent (their account read before the detach)
         originals = erase_person_from_inbox(person, user.id if user is not None else None)
+        pictures = set()
         if user is not None and deferred_accounts is None:
+            pictures = profile_pictures_of(user)  # before the purge takes their names
             purge_user_audit_pii(user.id, user.username, user.email)  # last: it locks audit_log until the commit
     if deferred_originals is None:
         remove_originals(originals)  # only after the commit: a row never names a removed file
     else:
         deferred_originals.extend(originals)
-    if user is not None and deferred_accounts is None:
-        remove_profile_picture(user.profile_picture)
-    elif user is not None:
+    for name in pictures:
+        remove_profile_picture(name)
+    if user is not None and deferred_accounts is not None:
         deferred_accounts.append(user)
     _invalidate_genebanks(lost_genebanks)
     return person
@@ -678,7 +687,7 @@ def anonymize_ended_persons(now):
     ).fetchone()[0]
     done, failed, held = 0, 0, []
     for membership in _memberships_with_ended_persons(cutoff):
-        originals, erased = [], []
+        originals, erased, pictures = [], [], set()
         try:
             with DB_PROXY.atomic():
                 Membership.select().where(Membership.id == membership.id).for_update("FOR NO KEY UPDATE").get()
@@ -698,6 +707,7 @@ def anonymize_ended_persons(now):
                 # writes audit_log, which that purge locks until the commit.
                 for account in erased:
                     purge_command_free_text(datetime.now(timezone.utc), actor_id=account.id)
+                    pictures |= profile_pictures_of(account)  # before the purge takes their names
                 for account in erased:  # last: the purge locks audit_log until the commit
                     purge_user_audit_pii(account.id, account.username, account.email)
         except Exception:  # pylint: disable=broad-exception-caught
@@ -705,8 +715,8 @@ def anonymize_ended_persons(now):
             failed += 1
             continue
         remove_originals(originals)  # after this membership's commit, as anonymize_person does after its own
-        for account in erased:
-            remove_profile_picture(account.profile_picture)
+        for name in pictures:
+            remove_profile_picture(name)
         done += len(due)
         held += membership_held
     return done, failed, held

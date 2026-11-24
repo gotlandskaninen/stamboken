@@ -989,10 +989,15 @@ def update_user(form, user_uuid=None):
 
     if changed:
         # Only the changed columns: target_user was read without a lock, so a
-        # full-row save would write back a stale is_active/_privileges.
+        # full-row save would write back a stale is_active/_privileges. Never
+        # on an account an erasure emptied, also one committed since the read.
         with DATABASE.atomic():
-            target_user.save(only=changed)
-        return {"status": "updated"}
+            saved = (
+                User.update({field: getattr(target_user, field.name) for field in changed})
+                .where((User.id == target_user.id) & not_erased())
+                .execute()
+            )
+        return {"status": "updated"} if saved else {"status": "error", "message": "unknown user"}
 
     return {"status": "unchanged"}
 
@@ -4100,17 +4105,12 @@ def edit_admin_user(u_id, fields):
     (POST /api/v2/admin/role) and flags through their dedicated endpoints;
     the endpoint rejects everything else before calling this.
     """
-    user = User.get_or_none(User.id == u_id)
-    if user is None:
+    if User.get_or_none(User.id == u_id) is None:
         raise ValueError("user-not-found")
-    if "fullname" in fields:
-        user.fullname = fields["fullname"]
-    if "email" in fields:
-        user.email = fields["email"]
-    # Only the edited columns, never a stale is_active/_privileges.
-    only = [getattr(User, f) for f in ("fullname", "email") if f in fields]
-    if only:
-        user.save(only=only)
+    # Only the edited columns, never a stale is_active/_privileges, and never on an account an erasure emptied.
+    values = {getattr(User, f): fields[f] for f in ("fullname", "email") if f in fields}
+    if values and not User.update(values).where((User.id == u_id) & not_erased()).execute():
+        raise ValueError("user-not-found")
     return get_admin_user_detail(u_id)
 
 
@@ -4489,6 +4489,24 @@ PII_KEYS = [
 ]
 
 
+def not_erased():
+    """A WHERE term: the account is not one erase_account emptied (its e-mail is the pseudonym)."""
+    return User.email != fn.CONCAT("raderad-", User.id)
+
+
+def profile_pictures_of(user):
+    """Every picture file the account `user` has had, from its row and its audit snapshots: read before the purge."""
+    cursor = DATABASE.execute_sql(
+        """
+        SELECT DISTINCT v FROM audit_log,
+            LATERAL (VALUES (old_data->>'profile_picture'), (new_data->>'profile_picture')) AS picture(v)
+        WHERE table_name = 'hbuser' AND record_id = %s AND v IS NOT NULL
+        """,
+        (str(user.id),),
+    )
+    return {row[0] for row in cursor} | ({user.profile_picture} if user.profile_picture else set())
+
+
 def erase_account(user):
     """
     Empties the account `user` (#190), inside the caller's transaction with its row locked: no name, address or
@@ -4500,7 +4518,7 @@ def erase_account(user):
     User.update(
         username=None,
         fullname=None,
-        email=f"raderad-{user.id}",
+        email=f"raderad-{user.id}",  # not_erased() knows the account by it
         google_email=None,
         google_name=None,
         google_picture=None,
@@ -4528,11 +4546,11 @@ def purge_user_audit_pii(user_id: int, username: str, email: str) -> int:
     """GDPR Article 17 right-to-erasure helper for audit_log.
 
     Redacts PII_KEYS from old_data/new_data on every audit_log row about
-    the user (table_name='hbuser' AND record_id=<user_id>) or WRITTEN BY
-    them (changed_by IN (username, email) — changed_by stores
-    current_user.username-or-email, never the numeric id. Pseudonymises
-    changed_by to 'raderad-<user_id>' and NULLs ip_address on matched
-    rows. One transaction with the same DROP RULE → UPDATE → marker →
+    the user (table_name='hbuser' AND record_id=<user_id>). On those and on
+    the rows WRITTEN BY them (changed_by IN (username, email) — changed_by
+    stores current_user.username-or-email, never the numeric id), whose
+    values are another record's and stay, it pseudonymises changed_by to
+    'raderad-<user_id>' and NULLs ip_address. One transaction with the same DROP RULE → UPDATE → marker →
     CREATE RULE sequence as the credential-redaction migration; Postgres DDL is
     transactional, so a rollback also restores the rule.
     In the same transaction the free text of the user's command log rows
@@ -4587,15 +4605,17 @@ def purge_user_audit_pii(user_id: int, username: str, email: str) -> int:
         cursor = DATABASE.execute_sql(
             """
             UPDATE audit_log
-            SET old_data   = old_data - %s::text[],
-                new_data   = new_data - %s::text[],
+            SET old_data   = CASE WHEN table_name = 'hbuser' AND record_id = %s
+                                  THEN old_data - %s::text[] ELSE old_data END,
+                new_data   = CASE WHEN table_name = 'hbuser' AND record_id = %s
+                                  THEN new_data - %s::text[] ELSE new_data END,
                 changed_by = CASE WHEN changed_by = ANY(%s::text[])
                                   THEN %s ELSE changed_by END,
                 ip_address = NULL
             WHERE (table_name = 'hbuser' AND record_id = %s)
                OR changed_by = ANY(%s::text[])
             """,
-            (PII_KEYS, PII_KEYS, names, pseudonym, str(user_id), names),
+            (str(user_id), PII_KEYS, str(user_id), PII_KEYS, names, pseudonym, str(user_id), names),
         )
         rows_redacted = cursor.rowcount or 0
         if rows_redacted == 0:

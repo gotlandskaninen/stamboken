@@ -330,3 +330,58 @@ class TestAnonymizeEmptiesTheAccount(DatabaseTest):
         self.assertEqual(response.status_code, 503, response.get_json())
         self.assertFalse(matrikel.is_anonymized(db.Member.get_by_id(person.id)))  # all of it rolled back
         self.assertEqual(db.User.get_by_id(user.id).username, "anvandarel")
+
+    def test_an_open_edit_form_cannot_write_the_account_back(self):
+        user = self._account("f")
+        stale = db.User.get_by_id(user.id)  # what the admin's open form shows
+        matrikel.anonymize_person(self._person(db.Membership.create(member_number=400), user), self.admin)
+        result = da.update_user(
+            {"id": user.id, "email": stale.email, "username": stale.username, "fullname": stale.fullname,
+             "validated": True},
+            self.admin.uuid,
+        )
+        self.assertEqual(result, {"status": "error", "message": "unknown user"})
+        with self.assertRaises(ValueError):
+            da.edit_admin_user(user.id, {"fullname": stale.fullname, "email": stale.email})
+        self._assert_emptied(user, "f")
+
+    def test_a_stale_read_before_the_erasure_cannot_write_the_account_back(self):
+        user = self._account("g")
+        stale = db.User.get_by_id(user.id)
+        person = self._person(db.Membership.create(member_number=410), user)
+        real_get = db.User.get_by_id
+
+        def get_then_erase(user_id):
+            row = real_get(user_id)
+            if user_id == user.id:
+                matrikel.anonymize_person(person, self.admin)
+            return row
+
+        with mock.patch.object(da.User, "get_by_id", side_effect=get_then_erase):
+            result = da.update_user({"id": user.id, "email": "ny-g@example.invalid", "validated": True}, self.admin.uuid)
+        self.assertEqual(result, {"status": "error", "message": "unknown user"})
+        self.assertEqual(db.User.get_by_id(user.id).email, f"raderad-{user.id}")
+        self.assertNotEqual(stale.email, f"raderad-{user.id}")
+
+    def test_earlier_profile_pictures_go_too(self):
+        user = self._account("o")
+        earlier = os.path.join(self.uploads.name, "profiler", "tidigareo.jpg")
+        with open(earlier, "wb") as picture:
+            picture.write(b"jpeg")
+        db.User.update(profile_picture="tidigareo.jpg").where(db.User.id == user.id).execute()  # audited
+        db.User.update(profile_picture="profilo.jpg").where(db.User.id == user.id).execute()  # replaced, kept on disk
+        matrikel.anonymize_person(self._person(db.Membership.create(member_number=420), user), self.admin)
+        self.assertEqual(os.listdir(os.path.join(self.uploads.name, "profiler")), [])
+        self._assert_emptied(user, "o")
+
+    def test_an_upload_after_the_erasure_leaves_no_file(self):
+        user = self._account("x")
+        client = APP.test_client(use_cookies=True)
+        client.post("/api/login", json={"username": "anvandarex", "password": "losen"})
+        matrikel.anonymize_person(self._person(db.Membership.create(member_number=430), user), self.admin)
+        client.patch(
+            "/api/profile",
+            data={"profile_picture": (io.BytesIO(b"jpeg"), "ny.jpg")},
+            content_type="multipart/form-data",
+        )
+        self.assertEqual(os.listdir(os.path.join(self.uploads.name, "profiler")), [])

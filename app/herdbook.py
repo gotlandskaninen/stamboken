@@ -892,6 +892,10 @@ def user_profile():
     elif request.method == "PATCH":
         # Handle profile updates (profile picture and settings)
         profile_picture_url = None
+        # Before the upload: a file saved for an account that is gone would stay with no row naming it.
+        user = da.fetch_user_info(session.get("user_id", None))
+        if not user:
+            return jsonify({"status": "error", "message": "User not found"}), 404
 
         # Handle file upload for profile pictures
         if "profile_picture" in request.files:
@@ -915,11 +919,6 @@ def user_profile():
             settings = request.form.to_dict()
         else:
             settings = request.json or {}
-
-        # Update profile
-        user = da.fetch_user_info(session.get("user_id", None))
-        if not user:
-            return jsonify({"status": "error", "message": "User not found"}), 404
 
         try:
             # Update profile picture if uploaded
@@ -945,6 +944,8 @@ def user_profile():
 
         except Exception as e:
             APP.logger.error("Error updating profile: %s", type(e).__name__)
+            if profile_picture_url:
+                da.remove_profile_picture(profile_picture_url)
             return jsonify({"status": "error", "message": "Failed to update profile"})
 
 
