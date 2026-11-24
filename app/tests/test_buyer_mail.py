@@ -499,6 +499,24 @@ class TestEraseLink(PurgeTest):
         self.assertEqual((sent.address_hash, sent.dedupe_key), (None, None))  # forget_recipient
         self.assertEqual(self.deletions(), [(str(self.contact_id), {"action": "invandning"}, None)])
 
+    def queued_receipt(self, sender):
+        item_id = self.proof.item_id
+        db.InboxItem.update(kind="mail", sender_address=sender).where(db.InboxItem.id == item_id).execute()
+        return mail.enqueue_mail("inlasning.kvitto", "inbox_sender", item_id, {"item_id": item_id, "images": 1})
+
+    def test_erasure_forgets_the_buyer_who_sent_the_proof_and_cancels_the_receipt(self):
+        receipt = self.queued_receipt(EMAIL.upper())
+        self.assertEqual(self.erase(self.token).get_json(), {"result": "removed"})
+        self.assertIsNone(db.InboxItem.get_by_id(self.proof.item_id).sender_address)
+        self.assertEqual(db.MailMessage.get_by_id(receipt).status, "cancelled")
+
+    def test_erasure_keeps_the_sellers_address_and_receipt_when_the_seller_sent_the_proof(self):
+        seller = "saljare@example.org"
+        receipt = self.queued_receipt(seller)
+        self.assertEqual(self.erase(self.token).get_json(), {"result": "removed"})
+        self.assertEqual(db.InboxItem.get_by_id(self.proof.item_id).sender_address, seller)
+        self.assertEqual(db.MailMessage.get_by_id(receipt).status, "queued")
+
     def notices(self):
         return [
             (n.user_id, n.kind, n.individual.number, n.item_id)
