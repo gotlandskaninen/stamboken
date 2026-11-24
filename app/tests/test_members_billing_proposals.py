@@ -44,9 +44,17 @@ class TestBillingNote(unittest.TestCase):
                 self.assertEqual(parse_billing_note(f"Annan notering; {excerpt}\nPrivat rad"), (BILLING, excerpt))
 
     def test_labelled_email_and_reference(self):
-        excerpt = f"{NOTE}, ref: K-77., e-post: kassa@example.invalid."
         fields = {**BILLING, "billing_reference": "K-77", "billing_email": "kassa@example.invalid"}
-        self.assertEqual(parse_billing_note(f"{excerpt}; annan uppgift"), (fields, excerpt))
+        for details in (
+            ", ref: K-77., e-post: kassa@example.invalid.",
+            "\r\nreferens: K-77\ne-post: kassa@example.invalid",
+        ):
+            with self.subTest(details=details):
+                excerpt = NOTE + details
+                self.assertEqual(parse_billing_note(f"{excerpt}; annan uppgift"), (fields, excerpt))
+
+    def test_detail_after_a_blank_line_is_not_taken(self):
+        self.assertEqual(parse_billing_note(f"{NOTE}\n\ne-post: annan@example.invalid"), (BILLING, NOTE))
 
     def test_box_and_multiword_city(self):
         excerpt = "Fakt. Låtsasgården; Box 17; 98765 Östra Sagoby"
@@ -73,6 +81,10 @@ class TestBillingNote(unittest.TestCase):
             f"{NOTE}; inte längre aktuell",
             f"Ej längre aktuell; {NOTE}",
             f"{NOTE}; ANVÄND POSTADRESSEN",
+            f"{NOTE}; återkallad",
+            f"{NOTE}; återkallas",
+            f"{NOTE}; ska inte användas",
+            f"{NOTE}; får ej användas",
             f"{NOTE}, ref:  ; ring senare",
             f"{NOTE}, ref: K-77. Ring senare för besked",
         ):
@@ -201,6 +213,37 @@ class TestMembersBillingProposals(DatabaseTest):
         self.assertRegex(row["underlag"], r"^[0-9a-f]{64}$")
         self.assertEqual(Membership.get_by_id(membership.id).billing_city, "Gammelby")
         self.assertEqual(self.run_cli().exit_code, 2)
+
+    def test_ending_main_member_invalidates_proposal_even_with_current_family_member(self):
+        ms = self.membership(notes=NOTE)
+        Member.create(membership=ms, first_name="Familj", last_name="Exempel", role="familjemedlem")
+        self.export()
+        self.review({"beslut": "godkänn"})
+        Member.update(end_date=date(2020, 1, 1)).where(Member.membership == ms, Member.role == "huvudmedlem").execute()
+        self.assert_counts(stale=1)
+        self.assertIsNone(Membership.get_by_id(ms.id).billing_name)
+        self.path = self.path.with_name("ny-export.csv")
+        self.assertEqual(self.export(), "Med anteckning: 0, med förslag: 0, utan förslag: 0\n")
+        self.assertEqual(self.rows, [])
+
+    def test_export_proposes_next_line_email_over_current_email(self):
+        self.membership(
+            notes="Faktura: Namn, Storgatan 1, 12345 Visby\ne-post: ny@example.invalid",
+            billing_email="gammal@example.invalid",
+        )
+        self.export()
+        (row,) = self.rows
+        self.assertEqual(row["current_billing_email"], "gammal@example.invalid")
+        self.assertEqual(row["proposed_billing_email"], "ny@example.invalid")
+
+    def test_export_counts_notes_over_100000_characters_as_without_proposal(self):
+        at_limit = (NOTE + "\n").ljust(100_000, "ö")
+        self.membership(notes=at_limit)
+        self.membership(notes=at_limit + "ö")
+        self.assertEqual(self.export(), "Med anteckning: 2, med förslag: 1, utan förslag: 1\n")
+        self.assertEqual([row["anteckning"] for row in self.rows], [at_limit])
+        self.review({"beslut": "godkänn"})
+        self.assert_counts(written=1)
 
     def test_apply_only_reviewed_rows_and_audit_before_and_after(self):
         members = [

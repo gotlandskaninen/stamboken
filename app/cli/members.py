@@ -949,7 +949,7 @@ def _billing_proof(source: dict, exported: dict) -> str:
 
 
 def _memberships_with_current_persons():
-    return Member.select(Member.membership).where(Member.end_date.is_null(True))
+    return _active_main_members().select(Member.membership)
 
 
 def _export_billing_proposals(path: str) -> None:
@@ -960,6 +960,9 @@ def _export_billing_proposals(path: str) -> None:
         if not ms.notes.strip():
             continue
         with_notes += 1
+        # The full note must fit in a CSV field when the reviewed file is read back.
+        if len(ms.notes) > 100_000:
+            continue
         proposal = parse_billing_note(ms.notes)
         if proposal is None:
             continue

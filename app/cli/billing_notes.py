@@ -6,7 +6,8 @@ from utils.postal import normalize_postal_code
 
 _LABEL = re.compile(r"\b(?:faktura(?:adress|mottagare)?|fakt\.)(?:[ \t]+till)?(?=[:\s]|$)", re.I)
 _REVOKED = re.compile(
-    r"\b(?:gäller\s+(?:inte|ej)|(?:inte|ej)\s+längre|ny\s+fakturaadress|använd\s+postadressen)\b", re.I
+    r"\b(?:gäller\s+(?:inte|ej)|(?:inte|ej)\s+(?:längre|användas)|återkall\w*|ny\s+fakturaadress|använd\s+postadressen)\b",
+    re.I,
 )
 # Require a separator between recipient and street, a recognizable street or
 # box with a number, and a complete postal town. Ignore less certain layouts.
@@ -25,7 +26,7 @@ _ADDRESS = re.compile(
     """,
     re.VERBOSE,
 )
-_DETAIL = re.compile(r"[ \t]*[,;][ \t]*(e-post|ref\.?|(?:faktura)?referens)[ \t]*:([^,;|\r\n]*)", re.I)
+_DETAIL = re.compile(r"[ \t]*(?:[,;\n]|\r\n?)[ \t]*(e-post|ref\.?|(?:faktura)?referens)[ \t]*:([^,;|\r\n]*)", re.I)
 
 
 def parse_billing_note(note: str) -> tuple[dict, str] | None:
