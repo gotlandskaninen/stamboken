@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { cookies } from "next/headers";
+import { MODE_COOKIE, parseMode } from "@/lib/mode";
 import { fetchApi } from "@/lib/api";
 import { Masthead } from "@/components/shell/Masthead";
 import {
@@ -15,14 +17,17 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Mina inskick" };
 
 export default async function MinaInskickPage() {
-  const { items } = await fetchApi<{ items: Inskick[] }>(
-    "/v2/inkorg/mina-inskick",
-    { isolateDemo: true },
-  );
+  const demo = parseMode((await cookies()).get(MODE_COOKIE)?.value) === "demo";
+  const canRead = !demo || !!process.env.API_TEST_INTERNAL_URL;
+  const { items } = canRead
+    ? await fetchApi<{ items: Inskick[] }>("/v2/inkorg/mina-inskick", {
+        isolateDemo: true,
+      })
+    : { items: [] };
 
   return (
     <>
-      <MarkSeen />
+      {canRead && <MarkSeen />}
       <Masthead
         eyebrow="Inläsning"
         title="Mina inskick"
@@ -33,6 +38,12 @@ export default async function MinaInskickPage() {
         }
       />
       <div className={styles.container}>
+        {demo && (
+          <p>
+            Du är i testmiljön. Det du har skickat in till riktiga Stamboken
+            visas inte här.
+          </p>
+        )}
         {items.length === 0 ? (
           <section className="sb-card">
             <div className={styles.cardBody}>
