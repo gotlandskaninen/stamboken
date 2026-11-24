@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
+import { useTranslation } from "react-i18next";
 import Link from "next/link";
 import { formatTime } from "@/lib/inkorg";
 import { useMode } from "@/lib/mode-context";
@@ -44,7 +45,8 @@ import {
   type QueueUser,
   type Rect,
 } from "../lib";
-import { RowActions } from "../QueueControls";
+import { AssignItem } from "../QueueControls";
+import { useQueueUndo } from "../QueueUndo";
 import { AskBreeder } from "./AskBreeder";
 import { CertificateForm } from "./CertificateForm";
 import { MailFacts, MailThread, SenderUnconfirmed } from "./MailFacts";
@@ -58,6 +60,8 @@ const EVENT_LABEL: Record<string, string> = {
   tagen: "Taget",
   overtagen: "Övertaget",
   tilldelad: "Tilldelat",
+  slappt: "Släppt",
+  angrad: "Ändringen ångrad",
   lage: "Nytt läge",
   dokument: "Dokument ändrat",
   sparad: "Sparat",
@@ -104,7 +108,9 @@ export function WorkView({
   herds: GenebankHerd[];
   people: Person[];
 }) {
+  const { t } = useTranslation();
   const mode = useMode();
+  const { offerUndo } = useQueueUndo();
   // As RegisterRabbitDialog: demo reads from /api-test when it is configured.
   const apiBase =
     mode === "demo" && process.env.NEXT_PUBLIC_API_TEST_URL
@@ -218,9 +224,11 @@ export function WorkView({
     switch (action) {
       case "ta":
       case "arbeta_vidare":
-        return run(() => takeItem(id));
       case "ta_over":
-        return run(() => takeItem(id, true));
+        return run(
+          () => takeItem(id, action === "ta_over"),
+          ({ undo }) => offerUndo(undo, t("queueAssignment.taken", { id })),
+        );
       case "oppna":
         return run(() => changeState(id, "tagen"));
       case "vantar_foralder":
@@ -411,13 +419,7 @@ export function WorkView({
             )}
 
           {allActions.includes("tilldela") && (
-            <RowActions
-              id={item.id}
-              canTake={false}
-              canAssign
-              compact={false}
-              people={people}
-            />
+            <AssignItem id={item.id} people={people} />
           )}
 
           <details className={styles.history}>

@@ -1,3 +1,4 @@
+import "@/i18n";
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
@@ -14,6 +15,7 @@ const actions = vi.hoisted(() => ({
   confirmMask: vi.fn(),
   reinterpretDocument: vi.fn(),
   takeItem: vi.fn(),
+  undoAssignment: vi.fn(),
   updateDocument: vi.fn(),
   waitForParent: vi.fn(),
 }));
@@ -48,6 +50,7 @@ vi.mock(
 );
 
 import { WorkView } from "@/app/(app)/stamboken/(dashboard)/inkorg/[id]/WorkView";
+import { QueueUndoProvider } from "@/app/(app)/stamboken/(dashboard)/inkorg/QueueUndo";
 import { ModeProvider } from "@/lib/mode-context";
 import type {
   InboxDetail,
@@ -110,14 +113,16 @@ const item = (changes: Partial<InboxDetail> = {}): InboxDetail => ({
 
 const view = (i: InboxDetail, user: QueueUser = helper, noRole = false) => (
   <ModeProvider mode="prod">
-    <WorkView
-      item={i}
-      user={user}
-      noRole={noRole}
-      colors={[]}
-      herds={[]}
-      people={[]}
-    />
+    <QueueUndoProvider>
+      <WorkView
+        item={i}
+        user={user}
+        noRole={noRole}
+        colors={[]}
+        herds={[]}
+        people={[]}
+      />
+    </QueueUndoProvider>
   </ModeProvider>
 );
 
@@ -134,6 +139,22 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe("WorkView: mail", () => {
+  it("can undo a takeover started in the registration view", async () => {
+    actions.takeItem.mockResolvedValue({
+      ok: true,
+      data: { undo: "takeover" },
+    });
+    actions.undoAssignment.mockResolvedValue({
+      ok: true,
+      data: { restored: [12] },
+    });
+    render(view(item({ assigned_to: other, documents: [] })));
+    fireEvent.click(screen.getByRole("button", { name: "Ta över" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Ångra" }));
+    expect(actions.takeItem).toHaveBeenCalledWith(12, true);
+    expect(actions.undoAssignment).toHaveBeenCalledWith("takeover");
+    await screen.findByText("Ändringen har ångrats.");
+  });
   it.each([false, true])("shows the message with documents=%s", (hasDoc) => {
     render(
       view(

@@ -1,0 +1,203 @@
+import "@/i18n";
+import "@testing-library/jest-dom/vitest";
+import {
+  act,
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+} from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const actions = vi.hoisted(() => ({
+  previewHerd: vi.fn(),
+  assignHerd: vi.fn(),
+  takeItem: vi.fn(),
+  releaseItem: vi.fn(),
+  undoAssignment: vi.fn(),
+}));
+const push = vi.hoisted(() => vi.fn());
+vi.mock("next/navigation", () => ({ useRouter: () => ({ push }) }));
+vi.mock("@/app/(app)/stamboken/(dashboard)/inkorg/actions", () => actions);
+
+import { ItemControls } from "@/app/(app)/stamboken/(dashboard)/inkorg/ItemControls";
+import { AssignHerd } from "@/app/(app)/stamboken/(dashboard)/inkorg/QueueControls";
+import { QueueUndoProvider } from "@/app/(app)/stamboken/(dashboard)/inkorg/QueueUndo";
+import type {
+  ItemState,
+  Person,
+} from "@/app/(app)/stamboken/(dashboard)/inkorg/lib";
+
+const me = { id: 3, name: "Konto 3" };
+const other = { id: 7, name: "Handläggare B" };
+const user = { ...me, is_admin: false, is_manager: [1] };
+const itemView = (state: ItemState, handler: Person | null) => (
+  <QueueUndoProvider>
+    <ItemControls
+      item={{ id: 12, genebank_id: 1, state, assigned_to: handler }}
+      user={user}
+      myGenebanks={[1]}
+    />
+  </QueueUndoProvider>
+);
+
+async function advance(ms: number) {
+  await act(() => vi.advanceTimersByTimeAsync(ms));
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  vi.useFakeTimers();
+  actions.undoAssignment.mockResolvedValue({
+    ok: true,
+    data: { restored: [12] },
+  });
+});
+afterEach(() => {
+  cleanup();
+  vi.useRealTimers();
+});
+
+describe("handläggning och ångra", () => {
+  it("keeps undo in the layout when a taken item opens in registration", async () => {
+    actions.takeItem.mockResolvedValue({ ok: true, data: { undo: "taken" } });
+    const view = render(itemView("ny", null));
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Börja registrera" }));
+    });
+    expect(actions.takeItem).toHaveBeenCalledWith(12, false);
+    expect(push).toHaveBeenCalledWith("/stamboken/inkorg/12");
+    view.rerender(
+      <QueueUndoProvider>
+        <p>Registrering</p>
+      </QueueUndoProvider>,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Ångra" }));
+    });
+    expect(actions.undoAssignment).toHaveBeenCalledWith("taken");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Ändringen har ångrats.",
+    );
+  });
+
+  it("offers ten seconds to undo takeover, and releases a waiting item", async () => {
+    actions.takeItem.mockResolvedValue({ ok: true, data: { undo: "over" } });
+    actions.releaseItem.mockResolvedValue({
+      ok: true,
+      data: { undo: "released" },
+    });
+    const view = render(itemView("tagen", other));
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Ta över från Handläggare" }),
+      );
+    });
+    expect(actions.takeItem).toHaveBeenCalledWith(12, true);
+    expect(push).not.toHaveBeenCalled();
+    await advance(9999);
+    expect(screen.getByRole("button", { name: "Ångra" })).toBeEnabled();
+    await advance(1);
+    expect(screen.queryByRole("button", { name: "Ångra" })).toBeNull();
+
+    view.rerender(itemView("vantar_uppfodare", me));
+    expect(
+      screen.getByRole("link", { name: "Börja registrera" }),
+    ).toHaveAttribute("href", "/stamboken/inkorg/12");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Släpp ärendet" }));
+    });
+    expect(actions.releaseItem).toHaveBeenCalledWith(12);
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Ångra" }));
+    });
+    expect(actions.undoAssignment).toHaveBeenCalledWith("released");
+  });
+});
+
+describe("tilldelning av en besättning", () => {
+  function openForm() {
+    render(
+      <QueueUndoProvider>
+        <AssignHerd people={[me, other]} />
+      </QueueUndoProvider>,
+    );
+    fireEvent.click(screen.getByText("Ge en hel besättning till en person"));
+    fireEvent.change(screen.getByLabelText("Besättning"), {
+      target: { value: " g9001 " },
+    });
+    fireEvent.change(screen.getByLabelText("Till"), { target: { value: "3" } });
+  }
+
+  it("shows who already handles items and assigns the exact preview with one undo", async () => {
+    actions.previewHerd.mockResolvedValue({
+      ok: true,
+      data: {
+        total: 4,
+        revision: "preview",
+        assignees: [
+          { ...other, count: 2 },
+          { ...me, count: 1 },
+        ],
+      },
+    });
+    actions.assignHerd.mockResolvedValue({
+      ok: true,
+      data: { assigned: [12, 13, 14, 15], undo: "batch" },
+    });
+    openForm();
+    expect(screen.getByRole("button", { name: "Tilldela" })).toBeDisabled();
+    await advance(260);
+    expect(actions.previewHerd).toHaveBeenCalledWith("G9001");
+    expect(
+      screen.getByText("4 öppna ärenden i G9001").parentElement,
+    ).toHaveTextContent(
+      "4 öppna ärenden i G9001, varav 2 redan ligger hos Handläggare B.",
+    );
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Tilldela 4 ärenden" }),
+      );
+    });
+    expect(actions.assignHerd).toHaveBeenCalledWith("G9001", 3, "preview");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Ångra" }));
+    });
+    expect(actions.undoAssignment).toHaveBeenCalledWith("batch");
+  });
+
+  it("disables assignment on herd change and reloads a refused preview for review", async () => {
+    actions.previewHerd.mockResolvedValue({
+      ok: true,
+      data: { total: 1, revision: "older", assignees: [] },
+    });
+    actions.assignHerd.mockResolvedValue({
+      ok: false,
+      problem: { status: 409, detail: "Ärendena har ändrats." },
+    });
+    openForm();
+    await advance(260);
+    fireEvent.change(screen.getByLabelText("Besättning"), {
+      target: { value: "G9002" },
+    });
+    expect(screen.getByRole("button", { name: "Tilldela" })).toBeDisabled();
+    await advance(260);
+    actions.previewHerd.mockResolvedValue({
+      ok: true,
+      data: { total: 0, revision: "newer", assignees: [] },
+    });
+    await act(async () => {
+      fireEvent.click(
+        screen.getByRole("button", { name: "Tilldela 1 ärende" }),
+      );
+    });
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "Ärendena har ändrats.",
+    );
+    await advance(260);
+    expect(
+      screen.getByText("Besättningen har inga öppna ärenden."),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: "Tilldela" })).toBeDisabled();
+  });
+});

@@ -1,8 +1,9 @@
 "use client";
 
-import { useId, useState, useTransition } from "react";
-import { useRouter } from "next/navigation";
-import { assignHerd, assignItem, takeItem } from "./actions";
+import { useEffect, useState, useTransition } from "react";
+import { useTranslation } from "react-i18next";
+import { assignHerd, assignItem, previewHerd } from "./actions";
+import { useQueueUndo } from "./QueueUndo";
 import type { Person } from "./lib";
 import styles from "./inkorg.module.css";
 
@@ -17,6 +18,7 @@ function PersonSelect({
   onChange: (v: string) => void;
   label: string;
 }) {
+  const { t } = useTranslation();
   return (
     <select
       className="sb-input"
@@ -24,7 +26,7 @@ function PersonSelect({
       onChange={(e) => onChange(e.target.value)}
       aria-label={label}
     >
-      <option value="">Välj person</option>
+      <option value="">{t("queueAssignment.choose")}</option>
       {people.map((p) => (
         <option key={p.id} value={p.id}>
           {p.name}
@@ -34,68 +36,41 @@ function PersonSelect({
   );
 }
 
-/** "Jag tar den" on an untaken row, and assigning for managers and admins. */
-export function RowActions({
-  id,
-  canTake,
-  canAssign,
-  people,
-  compact = true,
-}: {
-  id: number;
-  canTake: boolean;
-  canAssign: boolean;
-  people: Person[];
-  compact?: boolean;
-}) {
-  const router = useRouter();
+export function AssignItem({ id, people }: { id: number; people: Person[] }) {
+  const { t } = useTranslation();
+  const { offerUndo } = useQueueUndo();
   const [pending, start] = useTransition();
   const [to, setTo] = useState("");
-  const [error, setError] = useState<string | null>(null);
-  if (!canTake && !canAssign) return null;
-
-  const take = () =>
+  const [error, setError] = useState("");
+  const person = people.find((p) => p.id === Number(to));
+  const assign = () => {
+    if (!person) return;
     start(async () => {
-      const res = await takeItem(id);
-      if (res.ok) router.push(`/stamboken/inkorg/${id}`);
-      else setError(res.problem.detail);
+      const res = await assignItem(id, person.id);
+      if (!res.ok) return setError(res.problem.detail);
+      setError("");
+      offerUndo(
+        res.data.undo,
+        t("queueAssignment.assignedItem", { id, name: person.name }),
+      );
     });
-  const assign = () =>
-    start(async () => {
-      const res = await assignItem(id, Number(to));
-      setError(res.ok ? null : res.problem.detail);
-    });
-
+  };
   return (
     <div className={styles.rowActions}>
-      {canTake && (
-        <button
-          type="button"
-          className={compact ? "sb-btn sb-btn-sm" : "sb-btn"}
-          disabled={pending}
-          onClick={take}
-        >
-          Jag tar den
-        </button>
-      )}
-      {canAssign && (
-        <>
-          <PersonSelect
-            people={people}
-            value={to}
-            onChange={setTo}
-            label={`Tilldela ärende ${id} till`}
-          />
-          <button
-            type="button"
-            className={`sb-btn sb-btn-secondary${compact ? " sb-btn-sm" : ""}`}
-            disabled={pending || !to}
-            onClick={assign}
-          >
-            Tilldela
-          </button>
-        </>
-      )}
+      <PersonSelect
+        people={people}
+        value={to}
+        onChange={setTo}
+        label={t("queueAssignment.assignTo", { id })}
+      />
+      <button
+        type="button"
+        className="sb-btn sb-btn-secondary"
+        disabled={pending || !person}
+        onClick={assign}
+      >
+        {t("queueAssignment.assign")}
+      </button>
       {error && (
         <p role="alert" className={styles.error}>
           {error}
@@ -105,77 +80,146 @@ export function RowActions({
   );
 }
 
-/** Every open item of one herd to one person (POST /inkorg/tilldela). */
+type PreviewResult = Awaited<ReturnType<typeof previewHerd>>;
+
 export function AssignHerd({ people }: { people: Person[] }) {
+  const { t, i18n } = useTranslation();
+  const { offerUndo, revision } = useQueueUndo();
   const [pending, start] = useTransition();
   const [herd, setHerd] = useState("");
   const [to, setTo] = useState("");
-  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(
-    null,
-  );
-  const herdId = useId();
+  const [error, setError] = useState("");
+  const [refresh, setRefresh] = useState(0);
+  const [loaded, setLoaded] = useState<{
+    key: string;
+    result: PreviewResult;
+  } | null>(null);
+  const code = herd.trim().toUpperCase();
+  const key = `${code}/${revision}/${refresh}`;
+  const result = loaded?.key === key ? loaded.result : null;
+  const preview = result?.ok ? result.data : null;
+  const person = people.find((p) => p.id === Number(to));
+  const others = preview?.assignees.filter((p) => p.id !== Number(to)) ?? [];
+  const othersCount = others.reduce((sum, p) => sum + p.count, 0);
 
-  const submit = (e: React.FormEvent) => {
+  // Look up the whole herd, independently of the list's pagination and filters.
+  useEffect(() => {
+    if (!code) return;
+    let active = true;
+    const timer = window.setTimeout(async () => {
+      const result = await previewHerd(code);
+      if (active) setLoaded({ key, result });
+    }, 250);
+    return () => {
+      active = false;
+      window.clearTimeout(timer);
+    };
+  }, [key, code]);
+
+  function submit(e: React.FormEvent) {
     e.preventDefault();
+    if (!preview?.total || !person || pending) return;
+    setError("");
     start(async () => {
-      const res = await assignHerd(herd, Number(to));
-      setMessage(
-        res.ok
-          ? {
-              ok: true,
-              text: res.data.assigned.length
-                ? `Tilldelade ärende ${res.data.assigned.join(", ")}.`
-                : "Besättningen har inga öppna ärenden.",
-            }
-          : { ok: false, text: res.problem.detail },
+      const res = await assignHerd(code, person.id, preview.revision);
+      if (!res.ok) {
+        setError(res.problem.detail);
+        if (res.problem.status === 409) setRefresh((v) => v + 1);
+        return;
+      }
+
+      offerUndo(
+        res.data.undo,
+        t("queueAssignment.assignedCount", {
+          count: res.data.assigned.length,
+          name: person.name,
+        }),
       );
     });
-  };
+  }
 
   return (
-    <section className={`sb-card ${styles.card}`}>
-      <h2 className={styles.cardTitle}>Tilldela en hel besättning</h2>
-      <p className={styles.muted}>
-        Alla öppna ärenden för besättningen går till samma person.
-      </p>
+    <details className={styles.assignHerd}>
+      <summary>{t("queueAssignment.herdTitle")}</summary>
       <form className={styles.filters} onSubmit={submit}>
-        <label htmlFor={herdId}>
-          Besättning
+        <label>
+          {t("queueAssignment.herd")}
           <input
-            id={herdId}
             className="sb-input"
             value={herd}
-            onChange={(e) => setHerd(e.target.value)}
-            placeholder="G1274"
-            size={8}
+            onChange={(e) => {
+              setHerd(e.target.value);
+              setError("");
+            }}
+            placeholder={t("queueAssignment.example")}
+            autoComplete="off"
             required
           />
         </label>
         <label>
-          Till
+          {t("queueAssignment.to")}
           <PersonSelect
             people={people}
             value={to}
-            onChange={setTo}
-            label="Till"
+            onChange={(value) => {
+              setTo(value);
+              setError("");
+            }}
+            label={t("queueAssignment.to")}
           />
         </label>
+        <div className={styles.assignPreview} aria-live="polite">
+          {preview &&
+            (preview.total ? (
+              <>
+                <strong>
+                  {t("queueAssignment.count", {
+                    count: preview.total,
+                    herd: code,
+                  })}
+                </strong>
+                {othersCount > 0 &&
+                  t("queueAssignment.others", {
+                    count: othersCount,
+                    names: new Intl.ListFormat(i18n.language).format(
+                      others.map((p) => p.name),
+                    ),
+                  })}
+                .
+              </>
+            ) : (
+              t("queueAssignment.none")
+            ))}
+        </div>
+        {result && !result.ok && (
+          <div>
+            <p role="alert" className={styles.error}>
+              {result.problem.detail}
+            </p>
+            <button
+              type="button"
+              className="sb-btn sb-btn-secondary"
+              onClick={() => setRefresh((v) => v + 1)}
+            >
+              {t("queueAssignment.retry")}
+            </button>
+          </div>
+        )}
         <button
           type="submit"
-          className="sb-btn sb-btn-sm"
-          disabled={pending || !to || !herd.trim()}
+          className="sb-btn"
+          disabled={pending || !person || !preview?.total}
         >
-          Tilldela alla öppna
+          {preview?.total
+            ? t("queueAssignment.assignCount", { count: preview.total })
+            : t("queueAssignment.assign")}
         </button>
+        {error && (
+          <p role="alert" className={styles.error}>
+            {error}
+          </p>
+        )}
       </form>
-      {message && (
-        <p
-          role={message.ok ? "status" : "alert"}
-          className={message.ok ? styles.muted : styles.error}
-        >
-          {message.text}
-        </p>
-      )}
-    </section>
+    </details>
   );
 }

@@ -2,11 +2,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { revalidatePath } from "next/cache";
 import { ApiError, fetchApi } from "@/lib/api";
 import {
+  assignHerd,
   assignItem,
   changeState,
   confirmMask,
+  previewHerd,
+  releaseItem,
   saveCertificate,
   takeItem,
+  undoAssignment,
   updateDocument,
   waitForParent,
 } from "@/app/(app)/stamboken/(dashboard)/inkorg/actions";
@@ -28,6 +32,28 @@ beforeEach(() => {
 });
 
 describe("the queue's server actions", () => {
+  it("previews a herd without refreshing the queue and submits the reviewed revision", async () => {
+    await previewHerd(" g9001 ");
+    expect(api.mock.calls[0][0]).toBe("/v2/inkorg/tilldela?herd=G9001");
+    expect(api.mock.calls[0][1]?.method).toBe("GET");
+    expect(revalidated).not.toHaveBeenCalled();
+    await assignHerd(" g9001 ", 7, "reviewed");
+    expect(body(1)).toEqual({
+      herd: "G9001",
+      user_id: 7,
+      revision: "reviewed",
+    });
+    expect((await assignHerd("G9001", 7, "")).ok).toBe(false);
+  });
+
+  it("releases the item and submits the server's undo receipt", async () => {
+    await releaseItem(12);
+    expect(api.mock.calls[0][0]).toBe("/v2/inkorg/12/slapp");
+    await undoAssignment("receipt");
+    expect(api.mock.calls[1][0]).toBe("/v2/inkorg/angra");
+    expect(body(1)).toEqual({ undo: "receipt" });
+    expect(revalidated).toHaveBeenCalledWith("/stamboken/inkorg", "layout");
+  });
   it("never put an id that is not a whole number into the URL", async () => {
     for (const bad of [0, -1, 1.5, NaN, "12/../x" as unknown as number]) {
       expect((await takeItem(bad)).ok).toBe(false);

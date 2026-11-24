@@ -1,9 +1,11 @@
 "use client";
 
+import { useTranslation } from "react-i18next";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { releaseItem, takeItem } from "./actions";
+import { useQueueUndo } from "./QueueUndo";
 import {
   itemActions,
   lacksRole,
@@ -22,7 +24,9 @@ export function ItemControls({
   user: QueueUser;
   myGenebanks: number[] | null;
 }) {
+  const { t } = useTranslation();
   const router = useRouter();
+  const { offerUndo } = useQueueUndo();
   const [pending, start] = useTransition();
   const [error, setError] = useState("");
   const href = `/stamboken/inkorg/${item.id}`;
@@ -42,6 +46,15 @@ export function ItemControls({
           ? await releaseItem(item.id)
           : await takeItem(item.id, action === "over");
       if (!res.ok) return setError(res.problem.detail);
+      const message = {
+        take: "taken",
+        over: "takenOver",
+        release: "released",
+      };
+      offerUndo(
+        res.data.undo,
+        t(`queueAssignment.${message[action]}`, { id: item.id }),
+      );
       if (action === "take") router.push(href);
     });
   }
@@ -51,7 +64,7 @@ export function ItemControls({
       {mine ? (
         <>
           <Link className="sb-btn" href={href} prefetch={false}>
-            Börja registrera
+            {t("queueAssignment.register")}
           </Link>
           <button
             type="button"
@@ -59,7 +72,7 @@ export function ItemControls({
             disabled={pending}
             onClick={() => change("release")}
           >
-            Släpp ärendet
+            {t("queueAssignment.release")}
           </button>
         </>
       ) : actions.includes("ta") ? (
@@ -69,7 +82,7 @@ export function ItemControls({
           disabled={pending}
           onClick={() => change("take")}
         >
-          Börja registrera
+          {t("queueAssignment.register")}
         </button>
       ) : (
         actions.includes("ta_over") && (
@@ -79,7 +92,9 @@ export function ItemControls({
             disabled={pending}
             onClick={() => change("over")}
           >
-            Ta över från {item.assigned_to?.name.trim().split(/\s+/)[0]}
+            {t("queueAssignment.takeOver", {
+              name: item.assigned_to?.name.trim().split(/\s+/)[0],
+            })}
           </button>
         )
       )}
