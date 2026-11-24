@@ -4,6 +4,7 @@
     "reading_other": "{{count}} Fotos warten auf die Auswertung.",
     "lastRead": "Zuletzt fertig um {{time}}.",
     "selectCase": "Wähle einen Vorgang aus der Liste.",
+    "toolsLabel": "Werkzeuge für den Posteingang",
     "modesLabel": "Ansichten",
     "modes": {
       "nya": "Neu",

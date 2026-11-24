@@ -218,7 +218,7 @@ export function QueueBrowser({
           cancelSearch();
       }}
     >
-      <aside className={styles.queueSidebar} aria-label={t("queue.modesLabel")}>
+      <aside className={styles.queueSidebar} aria-label={t("queue.toolsLabel")}>
         {modeCounts && (
           <>
             <nav className={styles.modeNav} aria-label={t("queue.modesLabel")}>

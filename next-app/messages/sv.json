@@ -4,6 +4,7 @@
     "reading_other": "Bildtolkning: {{count}} foton väntar.",
     "lastRead": "Senast klar {{time}}.",
     "selectCase": "Välj ett ärende i listan.",
+    "toolsLabel": "Inkorgsverktyg",
     "modesLabel": "Lägen",
     "modes": {
       "nya": "Nya",

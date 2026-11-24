@@ -169,7 +169,7 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
         await desk.emulateMedia({ colorScheme });
         expect(await background()).toBe(lightBackground);
         const contrast = await new AxeBuilder({ page: desk })
-          .include('aside[aria-label="Lägen"]')
+          .include('aside[aria-label="Inkorgsverktyg"]')
           .include('section[aria-label="Ärendelista"]')
           .include('section[aria-label="Valt ärende"]')
           .withRules(["color-contrast"])

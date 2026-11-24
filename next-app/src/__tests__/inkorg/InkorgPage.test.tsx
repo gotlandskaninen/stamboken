@@ -154,6 +154,10 @@ describe("Inkorg", () => {
       "href",
       "/stamboken/inkorg?scope=alla",
     );
+    const tools = screen.getByRole("complementary", { name: "Inkorgsverktyg" });
+    expect(
+      within(tools).getByRole("navigation", { name: "Lägen" }),
+    ).toBeVisible();
     expect(screen.getByRole("link", { name: "Mina 5" })).toBeVisible();
     expect(screen.getByRole("link", { name: "Klara 40" })).toBeVisible();
     expect(screen.getByRole("combobox", { name: "Ordning" })).toHaveValue(

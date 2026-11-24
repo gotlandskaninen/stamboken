@@ -4,6 +4,7 @@
     "reading_other": "{{count}} photos are waiting to be read.",
     "lastRead": "Last completed {{time}}.",
     "selectCase": "Select a case from the list.",
+    "toolsLabel": "Inbox tools",
     "modesLabel": "Views",
     "modes": {
       "nya": "New",
