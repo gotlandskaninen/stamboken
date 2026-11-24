@@ -839,6 +839,17 @@ sitt ärende, och en notis blir läst när du klickar på den. **Markera alla so
 läser alla. Antalet olästa visas i menyn, vid **Mina inskick** (eller **Inkorg**) och
 vid **Notiser** under kontomenyn.
 
+#### Kontrollera köparens e-postadress
+
+<!-- route: /stamboken/notiser/koparadress/[number] -->
+
+För genbanksansvariga. Sidan öppnas från en notis när en köpare utanför föreningen har
+registrerats med en e-postadress som en annan köpare med ett annat namn redan har.
+Försäljningen är sparad, men mejlen till köparen väntar tills du har kontrollerat
+adressen. Kontrollera mot överlåtelsebeviset. Rätta namnet eller adressen om något är
+fel, eller bekräfta att adressen tillhör samma person vid båda köpen. Då skickas mejlen
+till köparen. Säljaren får inget besked om detta.
+
 #### Verifiera intyg
 
 <!-- route: /stamboken/verifiera/[uuid] -->
