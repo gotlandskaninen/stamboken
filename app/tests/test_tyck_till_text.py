@@ -98,6 +98,7 @@ class TestIssue(unittest.TestCase):
             f"raden ”token{uuid.replace('-', '')}”": "raden ”token[kod]”",
             f"texten ”token {uuid[:-1]}…”": "texten ”token [kod]…”",
             f"texten ”{uuid}”": "texten ”[uuid]”",
+            "länken ”test.person+x@example.org”": "länken ”[e-post]”",
             "raden ”G1274-2312 Ada, född 2026-11-02, version 2.15.1”": "raden ”G1274-2312 Ada, född 2026-11-02, version 2.15.1”",
         }
         for given, expected in cases.items():

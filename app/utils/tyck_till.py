@@ -82,9 +82,13 @@ def issue_title(kind, visibility, text):
 _CODE_FRAGMENT = re.compile(r"[0-9a-fA-F]{8}(?:-?[0-9a-fA-F]){4,}|\d{1,19}\.[A-Za-z0-9_-]{8,}")
 
 
+# An address shown as text, for example a contact link on Min besättning, even when its owner keeps it private.
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
 def pointed(pekat):
-    """What the member pointed at, on one line, without link codes or UUIDs (the mail and the issue)."""
-    return " ".join(_CODE_FRAGMENT.sub("[kod]", mask_codes(pekat)).split())
+    """What the member pointed at, on one line, without link codes, UUIDs or e-mail addresses (mail and issue)."""
+    return " ".join(_EMAIL.sub("[e-post]", _CODE_FRAGMENT.sub("[kod]", mask_codes(pekat))).split())
 
 
 def _longest_backticks(text):

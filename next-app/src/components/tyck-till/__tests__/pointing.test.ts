@@ -79,6 +79,14 @@ suite("describe", () => {
     expect(describe(q("textarea"))).toBe("fältet");
   });
 
+  it("leaves the choices of a list out, also when the label wraps it", () => {
+    document.body.innerHTML =
+      "<label>Handläggare <select><option>Alla</option><option>Test Person</option></select></label>";
+    const q = (sel: string) => document.body.querySelector(sel)!;
+    expect(describe(q("select"))).toBe("fältet ”Handläggare”");
+    expect(describe(q("label"))).toBe("texten ”Handläggare”");
+  });
+
   it("reads .value from nothing", () => {
     document.body.innerHTML =
       "<ul><li value='3'>Ada</li></ul><progress value='0.5'></progress><button value='x'>Spara</button>";

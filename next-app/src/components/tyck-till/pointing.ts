@@ -24,11 +24,22 @@ function kindOf(el: Element): string {
   return "texten";
 }
 
-// A field is named by its label, never by what is typed in it (an e-mail address, a code).
+const CONTROLS = "input, textarea, select";
+
+// The text of an element without some of its parts.
+function textWithout(el: Element, selector: string): string {
+  const clone = el.cloneNode(true) as Element;
+  clone.querySelectorAll(selector).forEach((n) => n.remove());
+  return clone.textContent ?? "";
+}
+
+// A field is named by its label, never by what is typed or chosen in it (an
+// e-mail address, a code, the names in a list of handlers).
 function fieldName(el: HTMLInputElement): string {
+  const label = el.labels?.[0];
   return (
     el.getAttribute("aria-label") ||
-    el.labels?.[0]?.textContent ||
+    (label && textWithout(label, CONTROLS)) ||
     el.getAttribute("placeholder") ||
     ""
   );
@@ -36,14 +47,11 @@ function fieldName(el: HTMLInputElement): string {
 
 export function describe(el: Element): string {
   if (el.closest(HIDE)) return "en dold uppgift";
-  const clone = el.cloneNode(true) as Element;
-  // A textarea's text is what was typed in it.
-  clone.querySelectorAll(`${HIDE}, textarea`).forEach((n) => n.remove());
   let t = (
     el.matches("input, textarea, select")
       ? fieldName(el as HTMLInputElement)
       : el.getAttribute("aria-label") ||
-        clone.textContent ||
+        textWithout(el, `${HIDE}, textarea, select`) ||
         el.getAttribute("alt") ||
         ""
   )
