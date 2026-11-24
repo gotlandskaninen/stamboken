@@ -13,7 +13,7 @@
     },
     "helpTitle": "What do the views mean?",
     "help": {
-      "nya": "No one has taken the case yet.",
+      "nya": "These cases have no handler. Put back returns a taken case to New so someone else can take it.",
       "mina": "Cases you have taken, including those awaiting a reply.",
       "oppna": "All open cases, whoever is handling them.",
       "klara": "Registered and closed cases. Emails and messages without documents are deleted after 13 months."
@@ -395,10 +395,10 @@
   "queueAssignment": {
     "register": "Start registration",
     "takeOver": "Take over from {{name}}",
-    "release": "Release case",
+    "release": "Put back",
     "taken": "Case {{id}} is yours.",
     "takenOver": "You took over case {{id}}.",
-    "released": "You released case {{id}}.",
+    "released": "You put case {{id}} back.",
     "undo": "Undo",
     "undone": "Change undone.",
     "choose": "Choose a person",

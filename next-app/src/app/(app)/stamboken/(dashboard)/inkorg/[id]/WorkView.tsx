@@ -61,7 +61,7 @@ const EVENT_LABEL: Record<string, string> = {
   tagen: "Taget",
   overtagen: "Övertaget",
   tilldelad: "Tilldelat",
-  slappt: "Släppt",
+  slappt: "Lades tillbaka",
   angrad: "Ändringen ångrad",
   lage: "Nytt läge",
   dokument: "Dokument ändrat",

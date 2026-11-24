@@ -13,7 +13,7 @@
     },
     "helpTitle": "Vad betyder lägena?",
     "help": {
-      "nya": "Ingen har tagit ärendet än.",
+      "nya": "Ingen handlägger ärendet. Lägg tillbaka kan användas när ett taget ärende inte väntar på något. Ärendet hamnar under Nya, så att någon annan kan ta det.",
       "mina": "Ärenden du har tagit, också de som väntar på svar.",
       "oppna": "Allt som inte är klart, oavsett vem som har det.",
       "klara": "Registrerade och stängda. Mejl och meddelanden utan dokument gallras efter 13 månader."
@@ -441,10 +441,10 @@
   "queueAssignment": {
     "register": "Börja registrera",
     "takeOver": "Ta över från {{name}}",
-    "release": "Släpp ärendet",
+    "release": "Lägg tillbaka",
     "taken": "Ärende {{id}} är ditt.",
     "takenOver": "Du har tagit över ärende {{id}}.",
-    "released": "Du släppte ärende {{id}}.",
+    "released": "Du lade tillbaka ärende {{id}}.",
     "undo": "Ångra",
     "undone": "Ändringen har ångrats.",
     "choose": "Välj person",

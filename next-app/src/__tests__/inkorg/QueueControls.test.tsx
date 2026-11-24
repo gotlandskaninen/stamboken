@@ -114,9 +114,10 @@ describe("handläggning och ångra", () => {
       screen.getByRole("link", { name: "Börja registrera" }),
     ).toHaveAttribute("href", "/stamboken/inkorg/12");
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Släpp ärendet" }));
+      fireEvent.click(screen.getByRole("button", { name: "Lägg tillbaka" }));
     });
     expect(actions.releaseItem).toHaveBeenCalledWith(12);
+    expect(screen.getByRole("status")).toHaveTextContent("Du lade tillbaka ärende 12.");
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Ångra" }));
     });
