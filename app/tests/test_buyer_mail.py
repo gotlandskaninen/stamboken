@@ -687,11 +687,11 @@ class TestMembership(BuyerMailTest):
         buyer_contact.run(now + timedelta(days=1))
         self.assertIsNone(self._contact(sale.holder_contact_id).email)
 
-    def test_failed_notice_keeps_the_address_only_until_the_queue_retention_cutoff(self):
+    def test_failed_notice_keeps_the_address_only_for_a_month(self):
         sale = self._sale({**BUYER, "email": EMAIL, "membership_optin": True})
         (row,) = self.mails("kopare.information")
         db.MailMessage.update(status="failed").where(db.MailMessage.id == row.id).execute()
-        last_retry = row.created_at + mail.RETENTION
+        last_retry = row.created_at + buyer_contact.FAILED_NOTICE_KEPT
         buyer_contact.run(last_retry)
         self.assertEqual(self._contact(sale.holder_contact_id).email, EMAIL)
         buyer_contact.run(last_retry + timedelta(microseconds=1))

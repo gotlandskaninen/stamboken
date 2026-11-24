@@ -45,10 +45,10 @@ from utils.herd_tracking import (
 )
 from utils.inbox_purge import remove_originals
 from utils.individual_commands import FREE_TEXT_RETENTION
-from utils.mail import RETENTION as MAIL_RETENTION
 from utils.mail import address_hash, forget_recipient, is_address
 
 logger = logging.getLogger("herdbook.buyer_contact")
+FAILED_NOTICE_KEPT = timedelta(days=30)  # a failed first notice to the buyer can be retried this long
 
 PROPOSAL_BUYER_FOR = FREE_TEXT_RETENTION  # spec section 6: 13 months, as the command log's free text
 
@@ -326,8 +326,9 @@ def _null_fields(where, changes, action):
 
 def _purge_consent(now, due, consent, other_consent, action):
     """Expire a consent, keeping the email while the first notice still needs it."""
-    # A failed notice can be retried from the status view until purge_old_mail removes it.
-    retryable = (MailMessage.status == "failed") & (MailMessage.created_at >= now - MAIL_RETENTION)
+    # A failed notice keeps the address for a retry from the status view, but at most FAILED_NOTICE_KEPT: the mail
+    # log's own retention is over a year, far longer than the consent that held the address.
+    retryable = (MailMessage.status == "failed") & (MailMessage.created_at >= now - FAILED_NOTICE_KEPT)
     # Peewee 3 renders a Select inside UPDATE SET ... CASE as its table alias. Keep the parameters bound.
     sql, params = (
         MailMessage.select(MailMessage.recipient_id)
