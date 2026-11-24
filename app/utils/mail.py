@@ -36,6 +36,7 @@ import utils.tyck_till as tyck_till
 from utils.database import (
     DB_PROXY,
     BuyerContact,
+    BuyerInvitation,
     HerdTracking,
     MailAttempt,
     MailMessage,
@@ -628,6 +629,11 @@ def _send_one(row, relay, now):
     # For buyer mail, keep _renew's row lock through the SMTP handoff and its outcome.
     # forget_recipient then either cancels before the handoff or waits until it is over.
     with DB_PROXY.atomic() if row.kind.startswith("kopare.") else contextlib.nullcontext():
+        if row.kind == "kopare.medlemskap":
+            key = address_hash(address)
+            DB_PROXY.execute_sql("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"buyer_invitation:{key}",))
+            if BuyerInvitation.select().where(BuyerInvitation.email_hash == key).exists():
+                return _finish(row, now, status="cancelled", last_error=MAIL_NO_LONGER_RELEVANT)
         return _deliver(row, relay, now, msg, address, note, login_address)
 
 
@@ -653,6 +659,8 @@ def _deliver(row, relay, now, msg, address, note, login_address):
         relay.refused = 0
         return _failed(row, now, "temporary", None, _describe(exc))
     relay.refused = 0
+    if row.kind == "kopare.medlemskap":
+        BuyerInvitation.create(email_hash=address_hash(address), created_at=row.created_at)
     return _finish(
         row,
         now,
@@ -792,7 +800,10 @@ def forget_recipient(kind, recipient_id):
 
 def purge_old_mail(now):
     """Deletes rows older than 13 months; their attempts follow (ON DELETE CASCADE)."""
-    return MailMessage.delete().where(MailMessage.created_at < now - RETENTION).execute()
+    with DB_PROXY.atomic():
+        cutoff = now - RETENTION
+        BuyerInvitation.delete().where(BuyerInvitation.created_at < cutoff).execute()
+        return MailMessage.delete().where(MailMessage.created_at < cutoff).execute()
 
 
 # --- Status views ---

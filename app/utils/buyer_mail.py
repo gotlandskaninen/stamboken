@@ -12,7 +12,6 @@ from zoneinfo import ZoneInfo
 
 from peewee import fn
 
-from utils import settings
 from utils.database import (
     DB_PROXY,
     HOLDER_CHANGING_KINDS,
@@ -21,7 +20,6 @@ from utils.database import (
     DigitalCertificateV2,
     HerdTracking,
     Individual,
-    MailMessage,
     SaleProposal,
     YearlyHerdReport,
     ht_order_desc,
@@ -55,7 +53,7 @@ def queue_buyer_mails(contact, sale):
     For a buyer just created with `sale` (its TRANSFER row) who gave an e-mail: kopare.information, and
     kopare.medlemskap with the yes to membership contact. One of each per buyer: a corrected sale keeps its
     buyer, and the dedupe_key holds if anything queues again. A buyer of several rabbits is one buyer per sale;
-    the invitation then goes once per address, decided when it is sent (_membership_mail).
+    the invitation then goes once per address, decided at the SMTP handoff.
     """
     if contact is None or not contact.email:  # None: a sale older than five years stores no buyer
         return
@@ -186,16 +184,6 @@ def _membership_mail(params):
     rabbit = Individual.get_or_none(Individual.id == params["individual_id"])
     if contact is None or rabbit is None or not _membership_current(contact):
         return None
-    # Once per address, from the mails that have gone: each buyer holds an invitation of its own, so one buyer's
-    # deletion never cancels the invitation of another with the same address.
-    if settings.mail.link_secret:  # without it (log mode only) there is no HMAC, and nothing is sent to find
-        gone = (
-            (MailMessage.kind == "kopare.medlemskap")
-            & MailMessage.status.in_(("sent", "bounced"))
-            & (MailMessage.address_hash == address_hash(contact.email))
-        )
-        if MailMessage.select().where(gone).exists():
-            return None
     return {"buyer": _one_line(contact.name), "rabbit": _rabbit_name(rabbit) or rabbit.number}
 
 

@@ -96,7 +96,18 @@ def _buyer_name_key(name):
     return unicodedata.normalize("NFC", name.strip()).casefold()
 
 
-def _new_buyer(fields, user, sale_date, *, replaces=None):
+def _same_contact_fields(contact, fields):
+    for key in BUYER_TEXT_FIELDS:
+        old, new = getattr(contact, key), fields[key]
+        if key == "email":
+            old, new = (old or "").strip().lower(), (new or "").strip().lower()
+        if old != new:
+            return False
+    ticks = ("contact_consent_at", "membership_optin_at")
+    return all(bool(getattr(contact, key)) == bool(fields[key]) for key in ticks)
+
+
+def _buyer_for_sale(fields, user, sale_date, *, replaces=None):
     """
     The BuyerContact of a sale outside, five years from its date; None when those have passed: such a buyer is
     never stored (nor mailed), and the sale is written as one whose buyer was removed.
@@ -117,6 +128,11 @@ def _new_buyer(fields, user, sale_date, *, replaces=None):
             name = _buyer_name_key(fields["name"])
             if any(_buyer_name_key(contact.name) != name for contact in contacts):
                 raise HerdTrackingConflict("E-postadressen finns redan hos en annan köpare. Kontrollera adressen.")
+        if replaces is not None:
+            previous = BuyerContact.select().where(BuyerContact.id == replaces).for_update().first()
+            if previous and _same_contact_fields(previous, fields):
+                _set_buyer_sale_date(previous.id, sale_date)
+                return previous
         return BuyerContact.create(**fields, created_by_user=user, purge_at=purge_at)
 
 
@@ -517,7 +533,7 @@ def record_herd_tracking(
             if contact_fields is None:
                 _set_buyer_sale_date(contact.id, when)
         if contact_fields:
-            contact = _new_buyer(contact_fields, user, when, replaces=holder_contact)
+            contact = _buyer_for_sale(contact_fields, user, when, replaces=holder_contact)
         try:
             with DB_PROXY.atomic():
                 row = HerdTracking.create(
@@ -538,7 +554,7 @@ def record_herd_tracking(
             if _violated_constraint(exc) != "idx_herdtracking_report_attestation":
                 raise
             raise HerdTrackingConflict("Kaninen har redan en aktiv rad för den här rapporten.") from exc
-        if contact_fields and contact is not None:
+        if contact_fields and contact is not None and contact.id != holder_contact:
             queue_buyer_mails(contact, row)
         _assert_no_new_violations(ind, before, before + [row])
     return row
@@ -1103,9 +1119,9 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
             birth = event["kind"] == "BIRTH"
             from_herd = None if birth else _holder_before(ind, current, event["date"], event["kind"])
             contact = carried.get(index)
+            replaces = pairs[index].holder_contact_id if index in pairs else None
             if event["buyer"]:
-                replaces = pairs[index].holder_contact_id if index in pairs else None
-                contact = _new_buyer(event["buyer"], user, event["date"], replaces=replaces)
+                contact = _buyer_for_sale(event["buyer"], user, event["date"], replaces=replaces)
             try:
                 with DB_PROXY.atomic():
                     row = HerdTracking.create(
@@ -1125,7 +1141,7 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
                 if _violated_constraint(exc) != "herd_tracking_holder_contact_id_fkey":
                     raise
                 raise HerdTrackingConflict(BUYER_GONE) from exc
-            if event["buyer"]:
+            if event["buyer"] and row.holder_contact_id != replaces:
                 queue_buyer_mails(row.holder_contact, row)
             if index in carried:  # a corrected sale's buyer: five years from the sale's corrected date
                 _set_buyer_sale_date(carried[index], event["date"])
@@ -1184,7 +1200,7 @@ def attach_buyer(row, buyer, user):
         raise HerdTrackingConflict(BUYER_REMOVED)
     if row.voided_at is not None or row.herd.herd not in OUTSIDE_GENEBANK_HERDS:
         raise HerdTrackingInvalid("Köparens namn och ort registreras bara vid försäljning utanför genbanken.")
-    contact = _new_buyer(fields, user, row.herd_tracking_date)
+    contact = _buyer_for_sale(fields, user, row.herd_tracking_date)
     HerdTracking.update(holder_contact=contact, buyer_removed=contact is None).where(
         HerdTracking.id == row.id, HerdTracking.holder_contact.is_null(True)
     ).execute()

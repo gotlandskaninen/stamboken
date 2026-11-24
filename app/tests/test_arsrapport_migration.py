@@ -195,6 +195,26 @@ class TestArsrapportMigration(IsolatedSchemaTest):
             self.assertEqual(db.SchemaHistory.select(db.fn.MAX(db.SchemaHistory.version)).scalar(), 50)  # pylint: disable=E1120
             tx.rollback()
 
+    def test_earlier_53_imports_delivered_invitations_after_address_purge(self):
+        with db.DB_PROXY.atomic() as tx:
+            db.BuyerInvitation.drop_table()
+            buyer = db.BuyerContact.create(
+                name="Testköpare", town="Testort", erased_email_hash="a" * 64, created_by_user=self.admin, purge_at=NOW
+            )
+            invitation = dict(
+                kind="kopare.medlemskap",
+                recipient_kind="buyer_contact",
+                recipient_id=buyer.id,
+                category="T",
+                priority=1,
+                created_at=NOW,
+            )
+            db.MailMessage.create(**invitation, status="bounced")
+            db.MailMessage.create(**invitation, status="cancelled", address_hash="b" * 64)
+            db.check_migrations()
+            self.assertEqual(list(db.BuyerInvitation.select().tuples()), [("a" * 64, NOW)])
+            tx.rollback()
+
     def test_boot_refuses_buyer_branch_50_before_replaying_main(self):
         for bootstrap in (False, True):
             with self.subTest(bootstrap=bootstrap), db.DB_PROXY.atomic() as tx:

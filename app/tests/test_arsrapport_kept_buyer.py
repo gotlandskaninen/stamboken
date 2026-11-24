@@ -207,9 +207,11 @@ class KeptBuyerTest(ArsrapportTest):
             self.ok(self.resent())
             mail.send_pending()
             self.assertEqual([m.status for m in buyer_mails()], ["sent", "sent"])
+            original = [(row.id, row.recipient_id) for row in buyer_mails()]
             self.withdrawn(2)
             mail.send_pending()
-            self.ok(self.resent())
+            self.ok(self.resent(kopare=buyer, kopare_id=None))
+            self.assertEqual([(row.id, row.recipient_id) for row in buyer_mails()], original)
             mail.send_pending()
         self.assertEqual(len(relay.sent), 2)
 

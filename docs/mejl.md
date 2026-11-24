@@ -274,9 +274,10 @@ post per försäljning. Den som har köpt flera kaniner får alltså ett
 adress: när mejlet ska gå och ett `kopare.medlemskap` redan är skickat till
 samma adress blir det `cancelled`, även om den första inbjudan studsade.
 Varje köpare har sin egen inbjudan i kön,
-så att en köpare som raderas aldrig tar med sig en annan köpares. En köpare
-som skrivs in på nytt i en rättning är en ny köpare och får båda mejlen
-igen. Är köparen raderad när mejlet ska gå blir det `cancelled`.
+så att en köpare som raderas aldrig tar med sig en annan köpares. Om samma kontakt och samtycken skrivs in igen för samma försäljning används de
+befintliga mejlraderna. Vid SMTP-leverans sparas adressens HMAC i
+`mail_buyer_invitation` utan köpar- eller försäljnings-id. Markeringen följer
+mejlhistorikens gallring och finns kvar om köparen raderas först. Är köparen raderad när mejlet ska gå blir det `cancelled`.
 
 - **`kopare.information`** berättar vad föreningen sparar om köparen och
   varför, och till vilket datum namn och postadress sparas (namn och ort för

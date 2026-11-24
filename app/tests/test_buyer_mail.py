@@ -212,7 +212,7 @@ class TestInformationQueued(BuyerMailTest):
     def test_a_correction_that_replaces_the_buyer_sends_one_invitation(self):
         optin = {**WITH_EMAIL, "membership_optin": True}
         sale = self._sale(optin)
-        event = {"kind": "TRANSFER", "date": on(30), "herd": "GX1", "buyer": optin}  # the buyer typed again
+        event = {"kind": "TRANSFER", "date": on(30), "herd": "GX1", "buyer": {**optin, "town": "Testort"}}
         (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
         self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == sale.holder_contact_id))
         self.assertEqual(self.invitations("cancelled"), [sale.holder_contact_id])  # the old buyer's, erased with it
@@ -260,19 +260,30 @@ class TestInformationQueued(BuyerMailTest):
         sale = self._sale(optin)
         claimed = db.MailMessage.update(status="sending", claim_token=uuid.uuid4())
         claimed.where(db.MailMessage.kind == "kopare.medlemskap").execute()
-        event = {"kind": "TRANSFER", "date": on(30), "herd": "GX1", "buyer": optin}
+        event = {"kind": "TRANSFER", "date": on(30), "herd": "GX1", "buyer": {**optin, "contact_consent": False}}
         (written,) = correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
         self.assertEqual(self.invitations("cancelled"), [sale.holder_contact_id])  # lost its claim: not sent
         self.assertEqual(self.invitations("queued"), [written.holder_contact_id])
 
-    def test_a_buyer_typed_again_after_the_invitation_went_is_a_new_buyer(self):
-        """The erased buyer's mails forget the address (forget_recipient), so nothing says it has had one."""
+    def test_retyping_the_same_contact_in_a_correction_preserves_deliveries(self):
         optin = {**WITH_EMAIL, "membership_optin": True}
         sale = self._sale(optin)
         self.assertEqual(len(self.send()), 2)
         event = {"kind": "TRANSFER", "date": on(30), "herd": "GX1", "buyer": optin}
-        correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
-        self.assertEqual(len(self.send()), 2)  # both mails again, as for any new buyer
+        (new,) = correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Fel datum")
+        self.assertEqual(new.holder_contact_id, sale.holder_contact_id)
+        self.assertEqual(self.send(), [])
+
+    def test_new_sale_after_erasure_sends_only_its_information(self):
+        optin = {**WITH_EMAIL, "membership_optin": True}
+        first = self._sale(optin)
+        delivered = self.send()
+        buyer_contact.erase_buyer_contact(first.holder_contact_id, self.manager)
+        self.assertTrue(all(row.address_hash is None for row in self.mails()))
+        record_herd_tracking(self.individuals[1], self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=optin)
+        delivered += self.send()
+        self.assertEqual(len(delivered), 3)
+        self.assertEqual(sum(msg["Subject"].startswith("Välkommen") for msg in delivered), 1)
 
     def test_a_correction_never_mails_a_buyer_who_was_removed(self):
         sale = self._sale(WITH_EMAIL)

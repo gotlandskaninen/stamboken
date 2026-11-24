@@ -2310,6 +2310,16 @@ class MailMessage(BaseModel):
         )
 
 
+class BuyerInvitation(BaseModel):
+    """A delivered invitation, without a link to the buyer or the sale. Follows the mail history's retention."""
+
+    email_hash = TextField(primary_key=True)
+    created_at = TimestampTZField()
+
+    class Meta:
+        table_name = "mail_buyer_invitation"
+
+
 class MailAttempt(BaseModel):
     """One SMTP attempt or bounce of a mail."""
 
@@ -2743,6 +2753,7 @@ MODELS = [
     MatrikelAudit,
     IndividualCommand,
     MailMessage,
+    BuyerInvitation,
     MailAttempt,
     MailSender,
     LoginCode,
@@ -4839,6 +4850,21 @@ def migrate_51_to_52():
         ).on_conflict_ignore().execute()
 
 
+def _create_buyer_invitations():
+    BuyerInvitation.create_table(safe=True)
+    DATABASE.execute_sql(
+        """
+        INSERT INTO mail_buyer_invitation (email_hash, created_at)
+        SELECT coalesce(m.address_hash, b.erased_email_hash), max(m.created_at)
+        FROM mail_message m LEFT JOIN buyer_contact b ON b.id = m.recipient_id
+        WHERE m.kind = 'kopare.medlemskap' AND m.recipient_kind = 'buyer_contact'
+          AND m.status IN ('sent', 'bounced') AND coalesce(m.address_hash, b.erased_email_hash) IS NOT NULL
+        GROUP BY coalesce(m.address_hash, b.erased_email_hash)
+        ON CONFLICT DO NOTHING
+        """
+    )
+
+
 def migrate_52_to_53():
     """A notice can point at a rabbit instead of an intake item (a buyer erased their own data)."""
     with DATABASE.atomic():
@@ -4847,6 +4873,7 @@ def migrate_52_to_53():
             "REFERENCES individual (individual_id) ON DELETE CASCADE"
         )
         DATABASE.execute_sql("ALTER TABLE buyer_contact ADD COLUMN IF NOT EXISTS erased_email_hash TEXT")
+        _create_buyer_invitations()
         # The index a fresh bootstrap gives the foreign key: the cascade looks the notices up by rabbit.
         DATABASE.execute_sql("CREATE INDEX IF NOT EXISTS notice_individual_id ON notice (individual_id)")
         SchemaHistory.insert(  # pylint: disable=E1120
@@ -5476,6 +5503,10 @@ def _run_migrations():
         current_version,
         CURRENT_SCHEMA_VERSION,
     )
+
+    if current_version == 53 and not BuyerInvitation.table_exists():  # earlier 53 on the buyer branch
+        with DATABASE.atomic():
+            _create_buyer_invitations()
 
     while current_version is None or current_version < CURRENT_SCHEMA_VERSION:
         next_version = (current_version if current_version else 0) + 1
