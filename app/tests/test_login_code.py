@@ -466,6 +466,33 @@ class TestMails(LoginCodeTest):
         self.assertEqual([self.status(m) for m in (disabled, closed, exhausted)], ["cancelled"] * 3)
         self.assertEqual(self.fake.sent, [])
 
+    def test_a_friexemplar_request_gets_the_unknown_address_result_and_sends_no_code(self):
+        person = self.person_row("Frida", "friblad@example.invalid")
+        db.Membership.update(membership_status="friexemplar").where(db.Membership.id == person.membership_id).execute()
+        for purpose in ("login", "ny_adress"):
+            with db.DB_PROXY.atomic():
+                self.assertIsNone(lc.issue(None, purpose, "okänd", "okand@example.invalid"))
+                self.assertIsNone(lc.issue(person, purpose, "friblad", person.email))
+        self.assertFalse(db.LoginCode.select().exists())
+        self.assertFalse(db.MailMessage.select().where(db.MailMessage.kind == "konto.kod").exists())
+        mail.send_pending()
+        self.assertEqual(self.fake.sent, [])
+
+    def test_becoming_friexemplar_stops_pending_mail_and_redemption(self):
+        person = self.person_row("Mira", "mira@example.invalid")
+        login = self.issue(person=person, purpose="login", address=person.email)
+        found = lc.check("login", "webblasare-1", lc.code(login))
+        self.assertIsNotNone(found)
+        change, mail_id = self.queue_code(person=person, address="ny@example.invalid")
+        db.Membership.update(membership_status="friexemplar").where(db.Membership.id == person.membership_id).execute()
+
+        mail.send_pending()
+        self.assertEqual((self.fake.sent, self.status(mail_id)), ([], "cancelled"))
+        for row in (login, change):
+            self.assertIsNone(lc.check(row.purpose, "webblasare-1", lc.code(row)))
+        with db.DB_PROXY.atomic():
+            self.assertFalse(lc.consume(found))
+
     def test_the_code_is_in_the_log_in_development_only(self):
         row, _ = self.queue_code(browser="w1")
         with mock.patch.object(settings.mail, "mode", "log"), self.assertLogs(level="DEBUG") as logs:

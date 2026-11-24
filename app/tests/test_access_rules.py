@@ -345,6 +345,7 @@ class TestLegacyList(unittest.TestCase):
                 ("inbox.notice_count", "GET"),
                 ("certificates_v2.check_page_name", "GET"),
                 ("certificates_v2.check_page_name", "PUT"),
+                ("tyck_till.send", "POST"),
                 ("health_check", "GET"),
                 ("main", "GET"),
                 ("static", "GET"),

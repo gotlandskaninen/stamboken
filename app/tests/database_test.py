@@ -89,6 +89,20 @@ _TABLES_TO_TRUNCATE = [
 ]
 
 
+def rewind_migrations(first_version):
+    """Remove the replayed history and the v51-only tables that would identify an old report-branch database."""
+    with db.DB_PROXY.atomic():
+        if first_version <= 51:
+            db.DATABASE.drop_tables(db.ARSRAPPORT_MODELS, cascade=_USE_POSTGRES)
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= first_version).execute()
+        if first_version > 51:
+            # init() stamps only the current version: without a row below the rewind, the report tables in an
+            # empty history look like an old report-branch database to the migration guard
+            db.SchemaHistory.get_or_create(
+                version=first_version - 1, defaults={"comment": "test seed", "applied": datetime.now()}
+            )
+
+
 class DatabaseTest(unittest.TestCase):
     """
     Database test wrapper that sets up the database connection.

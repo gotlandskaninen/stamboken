@@ -1,9 +1,17 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
+import { MODE_COOKIE, parseMode, type Mode } from "@/lib/mode";
 import type { SaleBuyer } from "@/components/individual/BuyerFields";
 import { fetchApi, ApiError } from "@/lib/api";
-import type { InboxDocument, InboxItem, Problem, Rect } from "./lib";
+import type {
+  InboxDocument,
+  InboxItem,
+  Problem,
+  Rect,
+  shownAssignment,
+} from "./lib";
 
 // Every mutation of the queue, as docs/inkorg.md describes it. Flask decides;
 // a refusal comes back as the whole problem so the form can place it.
@@ -11,6 +19,12 @@ export type ActionResult<T> =
   | { ok: true; data: T }
   | { ok: false; problem: Problem };
 type DocResult = { item: InboxItem; document: InboxDocument };
+type AssignmentResult = InboxItem & { undo: string | null };
+export type HerdPreview = {
+  total: number;
+  assignees: { id: number; name: string; count: number }[];
+  revision: string;
+};
 
 const LIST = "/stamboken/inkorg";
 const STATES = [
@@ -40,8 +54,12 @@ async function call<T>(
   body?: unknown,
 ): Promise<ActionResult<T>> {
   const refresh = () => {
-    revalidatePath(LIST);
-    if (itemId !== null) revalidatePath(`${LIST}/${itemId}`);
+    if (method === "GET") return;
+    if (itemId === null) revalidatePath(LIST, "layout");
+    else {
+      revalidatePath(LIST);
+      revalidatePath(`${LIST}/${itemId}`);
+    }
   };
   try {
     const data = await fetchApi<T>(`/v2/inkorg${path}`, {
@@ -77,23 +95,64 @@ async function call<T>(
   }
 }
 
-export async function takeItem(id: number, over = false) {
+export async function takeItem(
+  id: number,
+  expected?: ReturnType<typeof shownAssignment>,
+) {
   if (!isId(id)) return refused("Ogiltigt ärende.");
-  return call<InboxItem>(id, `/${id}/${over ? "ta-over" : "ta"}`, "POST");
+  return expected
+    ? call<AssignmentResult>(id, `/${id}/ta-over`, "PUT", expected)
+    : call<AssignmentResult>(id, `/${id}/ta`, "POST");
+}
+
+export async function releaseItem(id: number) {
+  if (!isId(id)) return refused("Ogiltigt ärende.");
+  return call<AssignmentResult>(id, `/${id}/slapp`, "POST");
 }
 
 export async function assignItem(id: number, userId: number) {
   if (!isId(id) || !isId(userId)) return refused("Välj en person.");
-  return call<InboxItem>(id, `/${id}/tilldela`, "POST", { user_id: userId });
-}
-
-export async function assignHerd(herd: string, userId: number) {
-  if (typeof herd !== "string" || !herd.trim() || !isId(userId))
-    return refused("Ange besättningsnummer och välj en person.");
-  return call<{ assigned: number[] }>(null, "/tilldela", "POST", {
-    herd: herd.trim().toUpperCase(),
+  return call<AssignmentResult>(id, `/${id}/tilldela`, "POST", {
     user_id: userId,
   });
+}
+
+export async function previewHerd(herd: string) {
+  if (typeof herd !== "string" || !herd.trim())
+    return refused("Ange besättningsnummer.");
+  const query = new URLSearchParams({ herd: herd.trim().toUpperCase() });
+  return call<HerdPreview>(null, `/tilldela?${query}`, "GET");
+}
+
+export async function assignHerd(
+  herd: string,
+  userId: number,
+  revision: string,
+) {
+  if (typeof herd !== "string" || !herd.trim() || !isId(userId))
+    return refused("Ange besättningsnummer och välj en person.");
+  if (typeof revision !== "string" || !revision)
+    return refused("Kontrollera vilka ärenden som ska tilldelas.");
+  return call<{ assigned: number[]; undo: string | null }>(
+    null,
+    "/tilldela",
+    "POST",
+    {
+      herd: herd.trim().toUpperCase(),
+      user_id: userId,
+      revision,
+    },
+  );
+}
+
+export async function undoAssignment(undo: string) {
+  if (typeof undo !== "string" || !undo) return refused("Ogiltig ändring.");
+  return call<{ restored: number[]; warning?: string }>(
+    null,
+    "/angra",
+    "POST",
+    { undo },
+  );
 }
 
 export async function changeState(
@@ -116,8 +175,13 @@ export async function updateDocument(
   id: number,
   doc: number,
   changes: Record<string, unknown>,
+  // A caller that lives on after an environment switch (paper entry) says which
+  // environment it expects; the cookie must agree.
+  env?: Mode,
 ) {
   if (!isId(id) || !isId(doc)) return refused("Ogiltigt dokument.");
+  if (env && parseMode((await cookies()).get(MODE_COOKIE)?.value) !== env)
+    return refused("Miljön har bytts. Ladda om sidan.");
   const body = Object.fromEntries(
     Object.entries(changes ?? {}).filter(([k]) => DOCUMENT_FIELDS.includes(k)),
   );
@@ -155,6 +219,20 @@ export async function saveCertificate(
 ) {
   if (!isId(id) || !isId(doc)) return refused("Ogiltigt dokument.");
   return call<DocResult>(id, `/${id}/dokument/${doc}/spara`, "POST", payload);
+}
+
+/** A report photo compared with its rabbit: "Stämmer", or "Rättat" when the rabbit was corrected; it closes. */
+export async function checkReportPhoto(
+  id: number,
+  doc: number,
+  outcome: "stammer" | "rattat",
+) {
+  if (!isId(id) || !isId(doc)) return refused("Ogiltigt dokument.");
+  if (outcome !== "stammer" && outcome !== "rattat")
+    return refused("Välj Stämmer eller Rättat.");
+  return call<DocResult>(id, `/${id}/dokument/${doc}/kontrollerad`, "POST", {
+    outcome,
+  });
 }
 
 export async function registerSale(

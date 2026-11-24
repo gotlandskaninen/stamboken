@@ -12,7 +12,8 @@ import os
 import sys
 
 from utils import data_access as da
-from utils.database import Genebank, Herd, Individual, Member, User, latest_ht_per_individual, not_voided
+from utils.database import DB_PROXY, Genebank, Herd, Individual, Member, User, latest_ht_per_individual, not_voided
+from utils.herd_contact import link_herd
 from utils.matrikel import new_membership
 from utils.membership_lifecycle import Status
 
@@ -221,6 +222,7 @@ def create_test_users():
     # Rows are resolved through their USER link (unique since migrate_28_to_29),
     # never by the non-unique contact e-mail alone.
     test_member = User.select().where(User.email == "test-member@test.local").first()
+    link_to = None  # the membership gk_herd is linked to once its persons exist
     if test_member is not None:
         # A row carrying the fixture's contact e-mail but linked to ANOTHER
         # account is an ambiguous seed state. Refuse, naming both
@@ -250,13 +252,12 @@ def create_test_users():
             existing = Member.select().where(Member.email == "test-member@test.local").first()
         if existing is None:
             membership = new_membership(Status.ACTIVE)
-            if gk_herd is not None and gk_herd.membership_id is None:
-                gk_herd.membership = membership
-                gk_herd.save()
+            link_to = membership
             Member.create(
                 first_name="Playwright",
                 last_name="TestMember",
                 email="test-member@test.local",
+                phone="070-000 00 01",
                 # Test fixture bypasses Phase 9. We link directly so
                 # Playwright can hit /stamboken/profil without OAuth.
                 workspace_email=None,
@@ -355,6 +356,15 @@ def create_test_users():
         sys.exit(1)
     else:
         print("  Linked familjemedlem for test-family already present")
+
+    if link_to is not None and gk_herd is not None:
+        # #117: the link compares the herd's contact with the register. The name is the main member's, so she is
+        # the contact; the empty e-mail is fetched from her; the herd's own mobile differs and waits for an answer.
+        with DB_PROXY.atomic():  # a failed link leaves the herd's own values as they were
+            Herd.update(name="Playwright TestMember", email=None, mobile_phone="070-000 00 02").where(
+                Herd.id == gk_herd.id, Herd.membership.is_null(True)
+            ).execute()
+            link_herd(gk_herd.id, link_to.id)
 
     print(f"  Done: {created} created, {len(users) - created} existing")
 

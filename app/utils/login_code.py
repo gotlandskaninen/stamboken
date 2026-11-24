@@ -16,8 +16,9 @@ from peewee import fn
 
 import utils.settings as settings
 from utils.data_access import holds_role
-from utils.database import DB_PROXY, LoginCode, Member, MemberPreviousAddress
+from utils.database import DB_PROXY, LoginCode, Member, MemberPreviousAddress, Membership
 from utils.mail import Recipient, address_hash, forget_recipient, link_mac, mail_kind, one_time_code, recipient_kind
+from utils.membership_lifecycle import Status
 
 logger = logging.getLogger("herdbook.login_code")
 
@@ -89,6 +90,16 @@ def shown(digits):
     return f"{digits[:4]} {digits[4:]}"
 
 
+def _may_use_code(person):
+    """Serialize issuing and redeeming a code with changes to the membership's status."""
+    if person is None:
+        return False
+    eligible = Membership.select(Membership.id).where(
+        Membership.id == person.membership_id, Membership.membership_status != Status.FRIEXEMPLAR
+    )
+    return eligible.for_update().first() is not None
+
+
 def issue(person, purpose, browser, address, replaces=None):
     """
     A code for `person`, to `address`, bound to the browser holding the secret `browser`, in the caller's
@@ -101,6 +112,8 @@ def issue(person, purpose, browser, address, replaces=None):
     refuse_unsafe()
     if not DB_PROXY.in_transaction():
         raise RuntimeError("issue() runs in the transaction that queues the code's mail")
+    if not _may_use_code(person):
+        return None
     _lock()
     now = _utcnow()
     earlier = (LoginCode.purpose == purpose) & LoginCode.used_at.is_null(True)
@@ -163,9 +176,10 @@ def check(purpose, browser, entered, member_id=None, *, link=False):
             f"""
             UPDATE login_code SET failed = failed + 1
             WHERE id = (
-                SELECT id FROM login_code
-                WHERE browser_hash = %s AND purpose = %s AND used_at IS NULL AND created_at > %s {mine}
-                ORDER BY id DESC LIMIT 1
+                SELECT c.id FROM login_code c JOIN member USING (member_id) JOIN membership USING (membership_id)
+                WHERE c.browser_hash = %s AND c.purpose = %s AND c.used_at IS NULL AND c.created_at > %s {mine}
+                    AND membership_status <> 'friexemplar'
+                ORDER BY c.id DESC LIMIT 1
             ) AND failed < %s
             RETURNING *
             """,
@@ -185,6 +199,8 @@ def consume(row, *, link=False):
     Uses the row check() gave, in the caller's transaction: one UPDATE, so of two uses at once at most one wins. The
     try check() counted is taken back, as it was right. False when the row has been used, voided or has expired.
     """
+    if not _may_use_code(row.member):
+        return False
     now = _utcnow()
     used = LoginCode.update(used_at=now, failed=LoginCode.failed - (0 if link else 1), new_address=None).where(
         (LoginCode.id == row.id) & LoginCode.used_at.is_null(True) & (LoginCode.created_at > now - VALID_FOR)
@@ -234,17 +250,21 @@ def purge(now):
     return len(ids)
 
 
-# Every address a person holds for login, or will hold once a wait is over (utils.matrikel.set_member_email): her
-# address, and a previous one while it still counts; an empty string is none. A holder is a person not ended who is
-# the main member of her membership or has an account. That is wider than who gets a code (the membership must not
-# be inactive too), so reactivating a membership cannot give a main member an address another person holds.
-_ADDRESSES = """
-    SELECT m.member_id, lower(btrim(m.email)) AS address FROM member m
+# Current and still-valid previous addresses of potential holders, including addresses in their seven-day wait.
+_PERSON_ADDRESSES = """
+    SELECT m.member_id, m.membership_id, lower(btrim(m.email)) AS address FROM member m
     WHERE m.end_date IS NULL AND (m.role = 'huvudmedlem' OR m.user_id IS NOT NULL) AND btrim(m.email) <> ''
     UNION
-    SELECT m.member_id, lower(btrim(r.address)) FROM member_previous_address r JOIN member m USING (member_id)
+    SELECT m.member_id, m.membership_id, lower(btrim(r.address))
+    FROM member_previous_address r JOIN member m USING (member_id)
     WHERE m.end_date IS NULL AND (m.role = 'huvudmedlem' OR m.user_id IS NOT NULL) AND r.login_until > %(now)s
         AND btrim(r.address) <> ''
+"""
+
+# Both sources are contact addresses only while the membership is a friexemplar.
+_ADDRESSES = f"""
+    SELECT a.member_id, a.address FROM ({_PERSON_ADDRESSES}) a JOIN membership ms ON ms.membership_id = a.membership_id
+    WHERE ms.membership_status <> 'friexemplar'
 """
 
 
@@ -322,10 +342,23 @@ def reserve_holder(person_id):
     still counts are all reserved for her, or AddressTaken and the caller's change is rolled back.
     """
     person = Member.get_by_id(person_id)
+    if person.membership.membership_status == Status.FRIEXEMPLAR:
+        return
     rows = lock_holder_addresses(person)
     now = _utcnow()
     for address in [person.email, *(r.address for r in rows.where(MemberPreviousAddress.login_until > now))]:
         reserve_login_address(address, person_id)
+
+
+def login_address_taken(address, person_id):
+    """Whether another person holds the address now. A write must still reserve it under the address lock."""
+    return (
+        DB_PROXY.execute_sql(
+            f"SELECT 1 FROM ({_ADDRESSES}) a WHERE address = %(address)s AND member_id <> %(person)s LIMIT 1",
+            {"now": _utcnow(), "address": address.strip().lower(), "person": person_id},
+        ).fetchone()
+        is not None
+    )
 
 
 def reserve_login_address(address, person_id):
@@ -340,12 +373,23 @@ def reserve_login_address(address, person_id):
     if not DB_PROXY.in_transaction():
         raise RuntimeError("reserve_login_address() runs in the transaction that writes the address")
     DB_PROXY.execute_sql("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"login_address:{address}",))
-    taken = DB_PROXY.execute_sql(
-        f"SELECT 1 FROM ({_ADDRESSES}) a WHERE address = %(address)s AND member_id <> %(person)s LIMIT 1",
-        {"now": _utcnow(), "address": address, "person": person_id},
-    ).fetchone()
-    if taken:
+    if login_address_taken(address, person_id):
         raise AddressTaken(AddressTaken.title)
+
+
+def reserve_on_leaving_friexemplar(membership_id):
+    """Before leaving friexemplar, check for competing holders both inside and outside this membership."""
+    rows = DB_PROXY.execute_sql(
+        f"SELECT member_id, address FROM ({_PERSON_ADDRESSES}) a WHERE membership_id = %(membership)s "
+        'ORDER BY address COLLATE "C"',
+        {"membership": membership_id, "now": _utcnow()},
+    )
+    previous = None
+    for person_id, address in rows:
+        if address == previous:
+            raise AddressTaken(AddressTaken.title)
+        reserve_login_address(address, person_id)
+        previous = address
 
 
 def login_link_token(row):
@@ -360,7 +404,7 @@ def _code_recipient(row_id):
     if row is None or row.used_at or row.failed >= TRIES or row.created_at <= _utcnow() - VALID_FOR or closed():
         return None
     person = row.member
-    if person.user_id != row.user_id:
+    if person.user_id != row.user_id or person.membership.membership_status == Status.FRIEXEMPLAR:
         return None
     if row.purpose == "ny_adress":
         address = row.new_address

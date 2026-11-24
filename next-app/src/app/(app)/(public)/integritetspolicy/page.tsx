@@ -181,6 +181,40 @@ export default function IntegritetspolicyPage() {
             </p>
           </Section>
 
+          <Section title="När du får Koharen utan att vara medlem">
+            <p>
+              Föreningen skickar Koharen gratis till bland andra bibliotek,
+              föreningar och tidskrifter som byter tidning med oss. Får du
+              Koharen själv, eller står du som kontaktperson för en
+              organisation, sparar vi ditt namn och din postadress, och e-post
+              eller telefon bara om vi behöver nå dig om tidningen. Att du får
+              Koharen gör dig inte till medlem och ger ingen inloggning i
+              Stamboken Online.
+            </p>
+            <p>
+              Vi använder uppgifterna för att skicka tidningen och sprida
+              kunskap om arbetet med att bevara raserna (berättigat intresse).
+              Har du själv avtalat med oss om att byta tidning använder vi det
+              som behövs för avtalet (avtal). Uppgifterna finns i
+              medlemsregistret och kan läsas av dem som sköter det, av
+              genbanksansvariga och av föreningens systemansvarig. Tryckeriet
+              får namn och adress för att kunna skicka tidningen.
+            </p>
+            <p>
+              Ber du själv om tidningen får du den här informationen då. Har vi
+              fått din adress från någon annan berättar vi varifrån och hur vi
+              använder den, senast en månad efter att vi fick den och innan den
+              går till tryckeriet. Uppgifterna sparas så länge du får tidningen,
+              och vi går igenom listan en gång om året.
+            </p>
+            <p>
+              Du kan när som helst säga att du inte vill ha tidningen längre,
+              till exempel till {contactLink}. Då stryker vi dig direkt från
+              utskickslistan och tar bort eller anonymiserar dina uppgifter utan
+              onödigt dröjsmål.
+            </p>
+          </Section>
+
           <Section title="När någon annan har lämnat dina uppgifter">
             <p>
               En huvudmedlem kan lägga in familjemedlemmar och personer som
@@ -410,6 +444,28 @@ export default function IntegritetspolicyPage() {
             </p>
           </Section>
 
+          <Section title="När du tycker till om Stamboken">
+            <p>
+              Med Tyck till, i kanten på webbplatsen och i Stamboken Online, kan
+              du berätta vad som inte fungerar eller vad du önskar. Det du
+              skriver blir ett ärende på GitHub, där vi samlar arbetet med
+              Stamboken. Du väljer själv vem som får läsa det. Väljer du Alla
+              läggs hela texten ut öppet, precis som du skrev den, men utan ditt
+              namn. Väljer du Bara föreningen, eller skickar du utan att vara
+              inloggad, kan bara de som utvecklar Stamboken läsa den.
+            </p>
+            <p>
+              Bilder och ditt konto-id hamnar aldrig på GitHub, och inte heller
+              ditt namn och din e-postadress när du vill ha svar. De mejlas till
+              föreningen, så att vi kan se vilket konto som hade problemet och
+              svara dig. Mejlet sparas i tolv månader efter att vi har svarat
+              eller avslutat ärendet, och kopian på vår server tas bort efter 30
+              dagar. Ärendena på GitHub sparas som en del av Stambokens
+              historik. Vi gör detta för att kunna rätta fel och förbättra
+              Stamboken (berättigat intresse).
+            </p>
+          </Section>
+
           <Section title="Vilka som får dina uppgifter">
             <p>
               Vi säljer aldrig personuppgifter och lämnar inte ut dem för
@@ -431,11 +487,11 @@ export default function IntegritetspolicyPage() {
                 Stamboken Online i datacenter i Stockholm.
               </li>
               <li>
-                GitHub, där föreningens kod och ärenden om driften ligger. Där
-                finns namn och roller för funktionärer, men inga
-                medlemsregister. Överföringen till USA stöds av EU-kommissionens
-                beslut om att skyddet där är tillräckligt och av EU:s
-                standardavtal.
+                GitHub, där föreningens kod och ärenden om driften ligger,
+                liksom synpunkter som skickats med Tyck till. Där finns namn och
+                roller för funktionärer, men inga medlemsregister. Överföringen
+                till USA stöds av EU-kommissionens beslut om att skyddet där är
+                tillräckligt och av EU:s standardavtal.
               </li>
               <li>
                 Tryckeriet som trycker och skickar ut Koharen. Det får

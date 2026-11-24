@@ -5,7 +5,8 @@ Write commands on an individual (ADR-0015).
 roles and the rabbit's state, and runs the commands' checks stage by stage, in the error order
 of update_individual, before anything
 is written. Errors are not mapped here: callers turn them into their responses.
-data_access.py imports this module; this module never imports data_access.py.
+data_access.py imports this module; this module never imports data_access.py at load time (RegisterLitter
+reads its date rules from it when it runs).
 """
 
 import logging
@@ -25,6 +26,7 @@ from utils.database import (
     OUTSIDE_GENEBANK_HERDS,
     Bodyfat,
     Breeding,
+    Bunny,
     Color,
     DigitalCertificateV2,
     Herd,
@@ -37,24 +39,30 @@ from utils.database import (
     ht_not_voided,
     lock_breedings,
     lock_individuals,
+    not_voided,
     validate_date,
 )
 from utils.herd_tracking import (
     BIRTH_DATE_CHANGED_REASON,
     BIRTH_HERD_CHANGED_REASON,
     CONTACT_MANAGER,
+    REPORT_ROW,
+    UNDO_REASON,
     HerdTrackingConflict,
     HerdTrackingError,
     HerdTrackingForbidden,
     HerdTrackingInvalid,
     HerdTrackingNotFound,
+    latest_death_op,
     record_herd_tracking,
     replace_birth_row,
+    report_owners,
     require_reason,
     resolve_herd,
     void_herd_tracking,
 )
 from utils.individual_number_v2 import (
+    LITTER_SIZE6W_ABOVE_BORN,
     RosterAliveExceeds6w,
     conflict_extensions,
     litter_mismatch,
@@ -64,6 +72,7 @@ from utils.individual_number_v2 import (
 )
 from utils.individual_policy import COMMAND_FIELDS, Role, State, allowed
 from utils.pedigree_guard import CYCLE_PROBLEM, pedigree_cycle_error
+from utils.report_code import actor_key
 
 logger = logging.getLogger("herdbook.da")  # the helpers moved from data_access keep their log name
 
@@ -103,6 +112,19 @@ class IndividualRefused(Exception):
         super().__init__(self.envelope.get("message"))
 
 
+class SameLitter(IndividualRefused):
+    """
+    409, code samma_kull: the mother has a litter (`breeding`) born within LITTER_DUPLICATE_DAYS, which the caller
+    asks about.
+    """
+
+    status = 409
+
+    def __init__(self, breeding, message):
+        envelope = {"status": "error", "message": message, "code": "samma_kull", "breeding_id": breeding.id}
+        super().__init__(envelope=envelope)
+
+
 @dataclass
 class WriteContext:
     user: User
@@ -115,6 +137,7 @@ class WriteContext:
     log_rows: list = field(default_factory=list)  # inserted together once every command has run
     number_verified: bool = False  # _verify_number runs once per request, whichever command asks
     granted: frozenset[Role] = frozenset()  # the roles a Grant added to `roles`
+    grant: "Grant | None" = None
 
     def record(self, command, before, after, *, undoes=None, reason=None) -> uuid.UUID:
         """A command log row (ADR-0017); its operation_id now, the row with the others at the end of execute."""
@@ -126,6 +149,7 @@ class WriteContext:
                 "command": command,
                 "individual": self.individual.id,
                 "actor": self.user.id,
+                "access_code_id": getattr(self.user, "access_code_id", None),
                 "before": before,
                 "after": after,
                 "undoes": undoes,
@@ -139,6 +163,8 @@ class Command(Protocol):
     """A write intent. Subclass it to inherit the no-op defaults."""
 
     apply_rank: ClassVar[int] = 0  # apply/after_save order across commands (stable)
+    # Authorizes against a herd it names (the litter's), not the rabbit it runs on: execute leaves out can_edit.
+    herd_scoped: ClassVar[bool] = False
 
     def check(self, stage: Stage, ctx: WriteContext) -> None:
         return None
@@ -207,23 +233,32 @@ class Grant(Protocol):
 
     def roles(self, user, individual) -> frozenset[Role]: ...
 
+    def roles_in(self, user, herd) -> frozenset[Role]:
+        """What `roles` gives for a write in `herd`, whichever rabbit it runs on (the litter commands)."""
+        ...
+
     def record(self, ctx: WriteContext) -> None: ...
 
 
 def roles_for(user, individual, grant: Grant | None = None) -> frozenset[Role]:
     """The user's roles on `individual`, from the same sources as User.can_edit and User.can_transfer, and `grant`."""
-    herd = individual.current_herd  # the holder row's herd, else the origin herd (current_holder_row)
-    managed = user.is_manager or []
+    # the holder row's herd, else the origin herd (current_holder_row)
+    held = _herd_roles(user, individual.current_herd)
+    if individual.origin_herd.genebank_id in (user.is_manager or []):
+        held |= {Role.MANAGER_ORIGIN}
+    return held | grant.roles(user, individual) if grant is not None else held
+
+
+def _herd_roles(user, herd) -> frozenset[Role]:
+    """The user's own roles for writing in `herd`."""
     owned = user.transfer_herd_ids()
     roles = {
         Role.ADMIN: user.is_admin,
-        Role.MANAGER_CURRENT: herd.genebank_id in managed,
-        Role.MANAGER_ORIGIN: individual.origin_herd.genebank_id in managed,
+        Role.MANAGER_CURRENT: herd.genebank_id in (user.is_manager or []),
         Role.OWNER: herd.id in owned,
         Role.CARETAKER: herd.id in user.effective_herd_ids() - owned,
     }
-    held = frozenset(role for role, held in roles.items() if held)
-    return held | grant.roles(user, individual) if grant is not None else held
+    return frozenset(role for role, held in roles.items() if held)
 
 
 def state_for(individual) -> State:
@@ -233,9 +268,12 @@ def state_for(individual) -> State:
     )
 
 
-def _shared_guards(ctx):
+def _shared_guards(ctx, commands):
     """Every write, whatever its commands: permission, then voided, both under the lock (IR-03, IR-05)."""
-    if not ctx.granted and not ctx.user.can_edit(ctx.individual.id):
+    herd_scoped = bool(commands) and all(
+        command.herd_scoped for command in commands
+    )  # they ask the policy for their own herd
+    if not (ctx.granted or herd_scoped or ctx.user.can_edit(ctx.individual.id)):
         raise IndividualRefused("Forbidden")
     if ctx.individual.voided:  # unpromoted while this request waited: its slot is free again
         raise IndividualRefused("Individual not found")
@@ -250,10 +288,15 @@ def execute(
     target_breeding: int | None = None,
     with_parents: bool = False,
     grant: Grant | None = None,
+    lock_also: tuple[int, ...] = (),
 ) -> Individual:
-    """Run the commands `translate` builds from the locked row; raises their refusals unmapped. See Grant."""
+    """
+    Run the commands `translate` builds from the locked row; raises their refusals unmapped. See Grant.
+    `lock_also`: other individuals the commands read or write (RegisterLitter's father), locked with this one.
+    """
     with DATABASE.atomic():
-        lock_individual_for_edit(individual_id, target_breeding, with_parents)
+        if not lock_individual_for_edit(individual_id, target_breeding, with_parents, lock_also):
+            raise IndividualRefused("Individual not found")  # an unknown id: a 404 to the caller, not a 500
         individual = Individual.get_by_id(individual_id)
         target = canonical_breeding_id(target_breeding)
         granted = grant.roles(user, individual) if grant is not None else frozenset()
@@ -265,13 +308,14 @@ def execute(
             state=state_for(individual),
             breeding_after=individual.breeding_id if target is None else target,
             granted=granted,
+            grant=grant,
         )
         commands = translate(ctx)
         if not any(isinstance(command, MoveToLitter) for command in commands):
             ctx.breeding_after = individual.breeding_id  # a lock target alone moves nothing (the quota's litter)
         for stage in Stage:
             if stage == Stage.REAUTH:
-                _shared_guards(ctx)
+                _shared_guards(ctx, commands)
             for command in commands:
                 try:
                     command.check(stage, ctx)
@@ -346,13 +390,13 @@ def canonical_breeding_id(value):
     raise ValueError(f"Unknown breeding event: '{value}''")
 
 
-def lock_individual_for_edit(individual_id, breeding_id=None, with_parents=False):
+def lock_individual_for_edit(individual_id, breeding_id=None, with_parents=False, also=()):
     """
     Lock an individual edit in the global order: its Breeding
     row(s) first — the stored one plus `breeding_id` if the edit moves it — then the
     individual. update_breeding holds Breeding → kits, so individual-first could deadlock.
     `with_parents`: the edit also runs update_breeding (certificates), which locks the
-    litter's parents — lock them with the individual in the same ascending call.
+    litter's parents — lock them with the individual in the same ascending call, and so for `also`.
     Returns the locked individual rows ([] if it does not exist).
 
     The stored breeding is read before any lock; if a concurrent edit moved the rabbit to
@@ -363,7 +407,7 @@ def lock_individual_for_edit(individual_id, breeding_id=None, with_parents=False
     stored = Individual.select(Individual.breeding).where(Individual.id == individual_id).scalar()
     breeding_ids = {b for b in (stored, breeding_id) if b is not None}
     lock_breedings(breeding_ids)
-    wanted = {individual_id}
+    wanted = {individual_id, *also}
     if with_parents and breeding_ids:  # read under the Breeding locks: parents cannot change now
         for parents in Breeding.select(Breeding.mother, Breeding.father).where(Breeding.id.in_(breeding_ids)):
             wanted |= {p for p in (parents.mother_id, parents.father_id) if p is not None}
@@ -551,8 +595,25 @@ class EditDescription(_FormFields):
     apply_rank = 10
 
 
+def _guard_report_death(ctx):
+    """
+    The rabbit's death, written by a submitted yearly report, is changed on the rabbit page only by an editor:
+    the page leads to Ändra (spec 8). The report's own writes come with RAPPORT and pass.
+    """
+    if ctx.stored.death_date is None or ctx.roles & {Role.MANAGER_CURRENT, Role.ADMIN, Role.RAPPORT}:
+        return
+    if report_owners([latest_death_op(ctx.individual.id)]):
+        raise HerdTrackingForbidden(REPORT_ROW)
+
+
 class RecordDeath(_FormFields):
     apply_rank = 10
+
+    def verify(self, ctx):
+        # A change, not an echo (as _log_changes sees it): it would become the latest RecordDeath and free
+        # "Ångra död" of the report's death in a second request.
+        if any(_column_value(ctx.stored, c) != _column_value(ctx.individual, c) for c in self.changes):
+            _guard_report_death(ctx)
 
 
 @dataclass(frozen=True)
@@ -569,6 +630,11 @@ class ClearFields(PolicyCommand):
 
     def pre_write(self, ctx):
         return dict.fromkeys(self.fields)
+
+    def check_reauth(self, ctx):
+        """The rabbit page's "Ångra död" of a death the yearly report wrote leads to Ändra (spec 8)."""
+        if any(getattr(ctx.stored, f) for f in self.fields & set(COMMAND_FIELDS["RecordDeath"])):
+            _guard_report_death(ctx)
 
 
 @dataclass(frozen=True)
@@ -603,6 +669,7 @@ class RecordAttestation(PolicyCommand):
 
     herd: object
     date: str
+    report: int | None = None  # the yearly herd report that writes it (yearly_herd_report_id)
     apply_rank = 70
     policy_stage = None  # asked in apply, after the measurements are written (IR-52)
 
@@ -614,7 +681,9 @@ class RecordAttestation(PolicyCommand):
             raise AssertionError(f"{target.herd} does not hold the rabbit: that is a TransferIndividual")
         # The herd-tracking row with the same operation_id holds what was written.
         op = ctx.record(type(self).__name__, None, None)
-        record_herd_tracking(ctx.individual, target, when, "ATTESTATION", ctx.user, operation_id=op)
+        record_herd_tracking(
+            ctx.individual, target, when, "ATTESTATION", ctx.user, operation_id=op, yearly_herd_report=self.report
+        )
 
 
 def _genebank_correction(ctx, from_herd, to_herd, reason):
@@ -638,7 +707,8 @@ class TransferIndividual(PolicyCommand):
     """
     A sale or move out of the holder's herd; into another genebank an admin's correction (IR-32, IR-54). On a sale
     to GX1/MX1, `buyer` is the buyer outside the association (herd_tracking.buyer_contact_fields), never logged,
-    and required (ADR-0016), except on the legacy app's form, which cannot send one (`legacy`).
+    and required (ADR-0016), except on the legacy app's form, which cannot send one (`legacy`). `buyer_contact_id`
+    is a buyer kept across Dra tillbaka, linked again in place of `buyer` (K1); only utils.arsrapport sets it.
     """
 
     herd: object
@@ -646,6 +716,9 @@ class TransferIndividual(PolicyCommand):
     reason: str | None = None
     buyer: dict | None = None
     legacy: bool = False
+    buyer_contact_id: int | None = None
+    address_optional: bool = False  # the report corrects its own registered sale, or enters a paper form as written
+    buyer_removed: bool = False
     apply_rank = 70
     policy_stage = None  # asked in apply, after the measurements are written (IR-52)
 
@@ -657,14 +730,30 @@ class TransferIndividual(PolicyCommand):
         target = _target(self.herd)
         self.authorize(ctx)
         holder = _holder(ctx)
-        if target.herd in OUTSIDE_GENEBANK_HERDS and self.buyer is None and not self.legacy:
+        if (
+            target.herd in OUTSIDE_GENEBANK_HERDS
+            and self.buyer is None
+            and self.buyer_contact_id is None
+            and not self.legacy
+            and not self.buyer_removed
+        ):
             raise HerdTrackingInvalid(BUYER_REQUIRED)
         note = None
         if target.genebank_id != holder.genebank_id:
             note = _genebank_correction(ctx, holder, target, self.reason)
         op = ctx.record(type(self).__name__, None, None)
         record_herd_tracking(
-            ctx.individual, target, when, "TRANSFER", ctx.user, operation_id=op, notes=note, buyer=self.buyer
+            ctx.individual,
+            target,
+            when,
+            "TRANSFER",
+            ctx.user,
+            operation_id=op,
+            notes=note,
+            buyer=self.buyer,
+            holder_contact=self.buyer_contact_id,
+            address_optional=self.address_optional,
+            buyer_removed=self.buyer_removed,
         )
 
 
@@ -961,9 +1050,242 @@ def assign_certificate_number(individual):
     check(before, Event.ISSUE_NUMBER, individual.cert_state())
 
 
+GESTATION_DAYS = 31  # the middle of a rabbit's 26–38 days: the mating is put this long before a litter's birth
+BORN_BELOW_KITS = "Kullen har redan {kits} ungar i registret. Antal födda kan inte vara färre."
+ALIVE_BELOW_KITS = (
+    "Kullen har {kits} registrerade ungar som levde vid 6 veckor. Antal levande vid 6 veckor kan inte vara färre."
+)
+CERTIFIED_LITTER = "Kontakta genbanksansvarig för att ändra en kull med intyg."
+LITTER_CHANGED = "Kullen ändrades samtidigt. Försök igen."  # a 409 to the callers
+LITTER_DUPLICATE_DAYS = 3  # a litter of the same mother this close may be the same one (spec 5.8, G2)
+_LITTER_LOCK = 0x48424C52  # "HBLR": classid of the advisory lock on the mother while a litter is added
+
+
+def lock_mother_litters(mother_id):
+    """
+    Serializes the writers of a mother's litters until the transaction ends; taken before any row lock. Keyed on the
+    mother alone: a doe that changed herd around a birth date must give the writers one lock, not two.
+    """
+    DATABASE.execute_sql("SELECT pg_advisory_xact_lock(%s, %s)", (_LITTER_LOCK, mother_id))
+
+
+def _authorize_litter(command, ctx, herd, year):
+    """
+    The actor's right to write a litter of `herd` (L2): the litter's herd, which is the mother's holder on the birth
+    date and may not be her herd now, never the report list. A link only for its own report year.
+    """
+    roles = _herd_roles(ctx.user, herd)
+    if ctx.grant is not None:
+        roles |= ctx.grant.roles_in(ctx.user, herd)
+    state = State(certified=False, outside_genebank=herd.herd in OUTSIDE_GENEBANK_HERDS)
+    code = getattr(ctx.user, "code", None)
+    if not allowed(type(command).__name__, roles, state) or (code is not None and year != code.round.report_year):
+        raise command.denied()
+
+
+@dataclass(frozen=True)
+class RegisterLitter(PolicyCommand):
+    """
+    A litter without a certificate (spec 5.8): the mating and the birth in one step, in `herd` (the mother's holder
+    on the birth date), run on the mother. `litter_number` stays NULL until a certificate numbers it. A missing
+    `litter_size6w` is the count born, marked preliminary (fråga 17). A litter of the mother within
+    LITTER_DUPLICATE_DAYS is a SameLitter (a doe does not litter twice in 3 days).
+    """
+
+    father_id: int
+    birth_date: date
+    litter_size: int
+    litter_size6w: int | None
+    herd: str
+    year: int  # the report year: a litter is born in it
+    apply_rank = 80
+    herd_scoped = True
+
+    def _herd(self):
+        return Herd.get(Herd.herd == self.herd)
+
+    def authorize(self, ctx):
+        herd = Herd.get_or_none(Herd.herd == self.herd)
+        if herd is None:
+            raise self.denied()
+        _authorize_litter(self, ctx, herd, self.year)
+
+    def check_parents(self, ctx):
+        herd = self._herd()
+        holder = current_holder_row(ctx.individual.id, as_of=self.birth_date)
+        in_herd = holder.herd if holder is not None and holder.herd_id else ctx.stored.origin_herd
+        if in_herd.id != herd.id:
+            raise IndividualRefused("Modern fanns inte i besättningen vid födelsedatumet.")
+        father = Individual.get_or_none(Individual.id == self.father_id)
+        # one text for a father missing and one of another genebank: nothing is told outside the genebank
+        if father is None or father.voided or father.origin_herd.genebank_id != herd.genebank_id:
+            raise IndividualRefused("Fadern måste vara registrerad i samma genbank som modern.")
+
+    def check_dates(self, ctx):
+        if self.birth_date > date.today():
+            raise IndividualRefused("Födelsedatum kan inte vara i framtiden.")
+        if self.birth_date.year != self.year:
+            raise IndividualRefused(f"Kullen måste vara född under {self.year}.")
+        if self.litter_size < 1:
+            raise IndividualRefused("Ange antal födda (minst 1).")
+        if self.litter_size6w is not None:
+            if self.litter_size6w < 0:
+                raise IndividualRefused("Ange antal levande vid 6 veckor (0 eller fler).")
+            if self.litter_size6w > self.litter_size:
+                raise IndividualRefused(LITTER_SIZE6W_ABOVE_BORN)
+
+    def check_litter(self, ctx):
+        window = timedelta(days=LITTER_DUPLICATE_DAYS)
+        near = Breeding.select().where(
+            (Breeding.mother == ctx.individual.id)
+            & Breeding.birth_date.between(self.birth_date - window, self.birth_date + window)
+        )
+        near = near.order_by(Breeding.birth_date, Breeding.id)
+        if (found := near.first()) is not None:  # includes the unique (mother, father, birth_date)
+            raise SameLitter(found, f"Modern har redan en kull född {found.birth_date}.")
+        # The mating and birth rules of "Ny parning" and a birth, which data_access owns (it imports this module).
+        from utils import data_access  # pylint: disable=import-outside-toplevel,cyclic-import
+
+        errors, _warnings = data_access.validate_breeding_dates(
+            breed_date=self.birth_date - timedelta(days=GESTATION_DAYS),
+            birth_date=self.birth_date,
+            mother=ctx.individual,
+            father=Individual.get_by_id(self.father_id),
+            litter_size=self.litter_size,
+        )
+        if errors:
+            raise IndividualRefused(" ".join(errors))
+
+    def apply(self, ctx):
+        preliminary = self.litter_size6w is None
+        breeding = Breeding.create(
+            breeding_herd_id=self._herd(),
+            mother=ctx.individual.id,
+            father=self.father_id,
+            breed_date=self.birth_date - timedelta(days=GESTATION_DAYS),
+            birth_date=self.birth_date,
+            litter_size=self.litter_size,
+            litter_size6w=self.litter_size if preliminary else self.litter_size6w,
+            litter_size6w_preliminary=preliminary,
+        )
+        after = {"breeding": breeding.id, "birth_date": self.birth_date.isoformat()}
+        ctx.record(type(self).__name__, None, {**after, "litter_size": self.litter_size, "preliminary": preliminary})
+
+
+@dataclass(frozen=True)
+class ConfirmLitterSize(PolicyCommand):
+    """
+    The count alive at 6 weeks of a litter, confirmed or changed: it clears the preliminary mark. Run on the
+    litter's mother, in the litter's herd (L2). No correction, so it moves no `received_at` (spec 5.8).
+    """
+
+    breeding_id: int
+    litter_size6w: int | None  # None keeps the count preliminary (the count born)
+    year: int | None = None  # the report year, when the caller knows it; a link's own is always checked
+    litter_size: int | None = None  # the count born, changed in the same step (the report's "Ja, ändra den")
+    herd: str | None = None  # the report's herd: the litter must still be in it under the lock
+    apply_rank = 80
+    herd_scoped = True
+
+    def _litter(self, ctx):
+        litter = Breeding.get_or_none(Breeding.id == self.breeding_id)
+        if litter is None:
+            raise IndividualRefused("Kullen finns inte.")
+        if litter.mother_id != ctx.individual.id:  # its mother corrected since the caller read it
+            raise IndividualRefused(LITTER_CHANGED)
+        return litter
+
+    def authorize(self, ctx):
+        litter = self._litter(ctx)
+        born = litter.birth_date
+        # the right first: whether the litter has a birth or is in the year is told only to whoever may write it
+        _authorize_litter(self, ctx, litter.breeding_herd_id, born.year if born else None)
+        if born is None:
+            raise IndividualRefused("Kullen har ingen födelse registrerad.")
+        if self.year is not None and self.year != born.year:
+            raise IndividualRefused(f"Kullen är inte född under {self.year}.")
+        if self.herd is not None and litter.breeding_herd_id.herd != self.herd:  # moved since the caller looked
+            raise IndividualRefused("Kullen finns inte i besättningens rapport.")
+
+    def check_dates(self, ctx):
+        litter = self._litter(ctx)
+        if self.litter_size is not None:
+            registered = Individual.select().where((Individual.breeding == litter.id) & not_voided()).count()
+            unlinked = Bunny.select().where((Bunny.breeding == litter.id) & Bunny.individual.is_null(True)).count()
+            if self.litter_size < registered + unlinked:
+                raise IndividualRefused(BORN_BELOW_KITS.format(kits=registered + unlinked))
+        born = self.litter_size if self.litter_size is not None else litter.litter_size
+        if born is None or born < 1 or (self.litter_size6w is not None and not 0 <= self.litter_size6w <= born):
+            raise IndividualRefused(LITTER_SIZE6W_ABOVE_BORN)
+        if self.litter_size6w is not None:  # the registered kits alive at 6 weeks are the floor (the roster: #79)
+            six_weeks = litter.birth_date + timedelta(weeks=6)
+            alive = Individual.select().where(
+                (Individual.breeding == litter.id)
+                & not_voided()
+                & (Individual.death_date.is_null(True) | (Individual.death_date >= six_weeks))
+            )
+            if self.litter_size6w < (kits := alive.count()):
+                raise IndividualRefused(ALIVE_BELOW_KITS.format(kits=kits))
+        certified = Individual.certificate.is_null(False) | Individual.digital_certificate.is_null(False)
+        # confirming a preliminary count is no correction (5.8): the born count stays and the 6-week count is given
+        confirms = (
+            litter.litter_size6w_preliminary
+            and self.litter_size6w is not None
+            and self.litter_size in (None, litter.litter_size)
+        )
+        if not confirms and Individual.select().where((Individual.breeding == litter.id) & certified).exists():
+            raise IndividualRefused(CERTIFIED_LITTER)  # under the litter's lock: a kit's certificate is counted in it
+        # shortcut: no roster lock yet (4b Task 3, issue #79); add the refusal when count_at_6_weeks exists
+
+    def apply(self, ctx):
+        litter = self._litter(ctx)
+        before = {"breeding": litter.id, "litter_size": litter.litter_size, "litter_size6w": litter.litter_size6w}
+        before["preliminary"] = litter.litter_size6w_preliminary
+        if self.litter_size is not None:
+            litter.litter_size = self.litter_size
+        preliminary = self.litter_size6w is None
+        litter.litter_size6w = litter.litter_size if preliminary else self.litter_size6w
+        litter.litter_size6w_preliminary = preliminary
+        litter.save(
+            only=[Breeding.litter_size, Breeding.litter_size6w, Breeding.litter_size6w_preliminary, Breeding.updated_at]
+        )
+        after = {
+            "breeding": litter.id,
+            "litter_size": litter.litter_size,
+            "litter_size6w": litter.litter_size6w,
+            "preliminary": preliminary,
+        }
+        ctx.record(type(self).__name__, before, after)
+
+
+def register_litter(user, mother_id, father_id, birth_date, litter_size, litter_size6w, herd, *, year, grant=None):
+    """
+    RegisterLitter on the mother; returns the new Breeding. Two requests for the same mother run one
+    after the other (advisory lock, taken before the rows: the 3-day window is read under it), so two tabs
+    give one litter and a samma_kull (L3).
+    """
+    with DATABASE.atomic():
+        lock_mother_litters(mother_id)
+        command = RegisterLitter(father_id, birth_date, litter_size, litter_size6w, herd, year)
+        execute(user, mother_id, lambda ctx: [command], grant=grant, lock_also=(father_id,))
+        return Breeding.get(
+            Breeding.mother == mother_id, Breeding.father == father_id, Breeding.birth_date == birth_date
+        )
+
+
+def confirm_litter_size(user, breeding_id, litter_size6w, *, year=None, grant=None, litter_size=None, herd=None):
+    """ConfirmLitterSize on the litter's mother; returns the litter. A litter without a mother is not one to confirm."""
+    litter = Breeding.get_or_none(Breeding.id == breeding_id)
+    if litter is None or litter.mother_id is None:
+        raise IndividualRefused("Kullen finns inte.")
+    command = ConfirmLitterSize(litter.id, litter_size6w, year, litter_size, herd)
+    execute(user, litter.mother_id, lambda ctx: [command], target_breeding=litter.id, grant=grant)
+    return Breeding.get_by_id(litter.id)
+
+
 UNDO_WINDOW = timedelta(days=7)  # as undoing a sale or an attestation in herd-tracking
 UNDOABLE = frozenset({"EditDescription", "RecordDeath", "ClearFields", "RecordAttestation"})
-UNDO_REASON = "Ångrad av den som registrerade den"
+REPORT_UNDO_REASON = "Årsrapporten ändrades eller drogs tillbaka"
 # The TextFields of FORM_WRITABLE_FIELDS; not name, the rabbit's name.
 FREE_TEXT_FIELDS = ("notes", "hair_notes", "color_note", "death_note", "eye_color", "claw_color", "belly_color")
 FREE_TEXT_RETENTION = timedelta(days=396)  # 13 months, rounded up
@@ -971,7 +1293,8 @@ FREE_TEXT_RETENTION = timedelta(days=396)  # 13 months, rounded up
 
 def actor_role(user, entry) -> frozenset[Role]:
     """{ACTOR} when `user` ran the logged command `entry`: only Undo derives it, never roles_for."""
-    return frozenset({Role.ACTOR}) if entry.actor_id == user.id else frozenset()
+    ran = ("code", entry.access_code_id) if entry.access_code_id is not None else ("user", entry.actor_id)
+    return frozenset({Role.ACTOR}) if ran == actor_key(user) else frozenset()
 
 
 def _active_attestation_rows(entry):
@@ -998,11 +1321,14 @@ def _undone(entry):
 class Undo(Command):
     """
     Undoes a logged command: its actor within UNDO_WINDOW, or a correction by an editor with a reason
-    (ADR-0017). The steps run in apply, under the individual's lock, in this order.
+    (ADR-0017). The steps run in apply, under the individual's lock, in this order. With Role.RAPPORT granted,
+    `report_ops` (str operation ids) are the yearly report's own commands, which the report's right may undo
+    whoever ran them and however old they are (ADR-0017, addendum 2026-11-14); WriteContext carries only roles.
     """
 
     operation_id: uuid.UUID
     reason: str | None = None
+    report_ops: frozenset[str] = frozenset()
 
     def apply(self, ctx):
         # FOR UPDATE: the free-text purge's UPDATE waits for this undo, or this undo reads the purged row.
@@ -1021,11 +1347,19 @@ class Undo(Command):
         if _undone(entry):
             raise HerdTrackingConflict("Ändringen är redan ångrad.")
         actor = actor_role(ctx.user, entry)
-        if not (allowed("Undo", ctx.roles | actor, ctx.state) and allowed(entry.command, ctx.roles, ctx.state)):
+        report = Role.RAPPORT in ctx.granted and str(self.operation_id) in self.report_ops
+        roles = ctx.roles if report else ctx.roles - {Role.RAPPORT}  # RAPPORT reaches only the report's own ops
+        if not (allowed("Undo", roles | actor, ctx.state) and allowed(entry.command, ctx.roles, ctx.state)):
             raise HerdTrackingForbidden(f"Bara den som gjorde ändringen kan ångra den. {CONTACT_MANAGER}")
-        if actor and datetime.now(timezone.utc) - entry.created_at <= UNDO_WINDOW:
+        editor = ctx.roles & {Role.MANAGER_CURRENT, Role.ADMIN}
+        # First: the report's backout often runs as the original actor within the window.
+        if report:
+            note = self.reason or REPORT_UNDO_REASON
+        elif not editor and report_owners([entry.operation_id]):
+            raise HerdTrackingForbidden(REPORT_ROW)
+        elif actor and datetime.now(timezone.utc) - entry.created_at <= UNDO_WINDOW:
             note = UNDO_REASON
-        elif ctx.roles & {Role.MANAGER_CURRENT, Role.ADMIN}:
+        elif editor:
             note = require_reason(self.reason)
         else:
             raise HerdTrackingForbidden(f"Ändringen gjordes för mer än 7 dagar sedan. {CONTACT_MANAGER}")
@@ -1033,8 +1367,16 @@ class Undo(Command):
             raise HerdTrackingConflict("Uppgifterna är rensade och kan inte återställas.")
         if entry.command == "RecordAttestation":
             undo_op = ctx.record("Undo", None, None, undoes=entry.operation_id, reason=note)
-            for row in _active_attestation_rows(entry):  # herd-tracking's void rules apply unchanged
-                void_herd_tracking(row.id, ctx.user, note, operation_id=undo_op, typed=note != UNDO_REASON)
+            ops = self.report_ops if report else None  # an empty set would refuse every row as not the report's
+            for row in _active_attestation_rows(entry):  # herd-tracking's void rules, or the report's
+                void_herd_tracking(
+                    row.id,
+                    ctx.user,
+                    note,
+                    operation_id=undo_op,
+                    typed=note not in (UNDO_REASON, REPORT_UNDO_REASON),
+                    report_ops=ops,
+                )
             return
         changed = sorted(key for key, value in entry.after.items() if _column_value(ctx.individual, key) != value)
         if changed:

@@ -23,8 +23,10 @@ from .member_applications import member_applications_bp
 from .members import members_bp
 from .memberships import memberships_bp
 from .pedigree import pedigree_bp
+from .rapport_link import rapport_link_bp
 from .testbreed_v2 import testbreed_v2_bp
 from .tokens import tokens_bp
+from .tyck_till import tyck_till_bp
 from .uploads import uploads_bp
 
 
@@ -49,6 +51,8 @@ def register_blueprints(app):
     app.register_blueprint(members_bp)
     app.register_blueprint(memberships_bp)
     app.register_blueprint(pedigree_bp)
+    app.register_blueprint(rapport_link_bp)
     app.register_blueprint(testbreed_v2_bp)
     app.register_blueprint(tokens_bp)
+    app.register_blueprint(tyck_till_bp)
     app.register_blueprint(uploads_bp)

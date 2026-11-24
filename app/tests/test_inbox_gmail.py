@@ -12,6 +12,7 @@ import errno
 import io
 import os
 import time
+from contextlib import closing
 from datetime import date, timedelta
 from email.message import EmailMessage
 from email.utils import make_msgid
@@ -19,12 +20,14 @@ from unittest import mock
 
 import herdbook
 import peewee
+import psycopg2
 import requests
 import utils.database as db
 import utils.inbox as inbox
 import utils.inbox_gmail as inbox_gmail
 import utils.inbox_purge as purge
 import utils.mail as mail
+import utils.matrikel as matrikel
 import utils.settings as settings
 from PIL import Image
 from utils.gmail import Gmail, HistoryTooOld
@@ -285,6 +288,126 @@ class TestSorting(GmailTest):
         self.assertIn("kom inte fram", item.message)
         self.assertTrue(self.done(gmail_id))
 
+    def quoted_link(self):
+        """A link as an invitation carries it, and its mac."""
+        token = mail.link_token("rapport", 12)
+        return f"https://{HOST}/rapport#{token}", token.split(".")[1]
+
+    def test_a_reply_quoting_the_link_stores_no_token(self):  # FA3
+        link, mac = self.quoted_link()
+        self.holder(self.herds[0])
+        item = self.waiting()
+        self.fake.deliver(
+            message(
+                subject=f"Re: Fråga (ärende {item.id})",
+                body=f"Tack!\n\n> Rapportera här:\n> {link}\n",
+                In_Reply_To=self.our_mail(item),
+            )
+        )
+        self.fake.deliver(message(subject="Re: Årsrapporten", body=f"Hej\n> {link}\n"))
+        self.read()
+        (event,) = item.events.where(db.InboxEvent.kind == "svar")
+        self.assertNotIn(mac, str(event.detail))
+        self.assertIn("Tack!", event.detail["text"])
+        (new,) = [i for i in self.items() if i.id != item.id]
+        self.assertNotIn(mac, new.message)
+
+    def test_a_link_rebuilt_by_normalizing_is_masked_on_both_paths(self):  # FA3
+        link, mac = self.quoted_link()
+        row, secret = link.rpartition("#")[2].split(".")
+        html = lambda inner: f"<p>Tack</p><p>{inner}</p>"  # noqa: E731
+        variants = {
+            "entity": html(f"{HOST}/rapport#{row}&#46;{secret}"),
+            "wbr": html(f"{HOST}/rapport#{row}.{secret[:10]}<wbr>{secret[10:]}"),
+            "nul": f"Tack {row}.{secret[:10]}\x00{secret[10:]}",
+        }
+        self.holder(self.herds[0])
+        for name, body in variants.items():
+            with self.subTest(name=name):
+                item = self.waiting()
+                known = {i.id for i in self.items()}
+                reply, plain = (
+                    message(In_Reply_To=self.our_mail(item), subject=f"Re: Fråga (ärende {item.id})"),
+                    message(),
+                )
+                for msg in (reply, plain):
+                    msg.set_content(body, subtype="plain" if name == "nul" else "html")
+                    self.fake.deliver(msg)
+                self.read()
+                (event,) = item.events.where(db.InboxEvent.kind == "svar").order_by(db.InboxEvent.id.desc()).limit(1)
+                self.assertNotIn(mac, str(event.detail))
+                (new,) = [i for i in self.items() if i.id not in known and i.id != item.id]
+                self.assertNotIn(mac, new.message)
+
+    def test_a_token_ending_at_the_cut_is_masked(self):  # FA3
+        link, mac = self.quoted_link()
+        url = f"{HOST}/rapport#{link.rpartition('#')[2]}"
+        body = "a" * (inbox_gmail.MAX_TEXT - len(url)) + url + "X"
+        self.holder(self.herds[0])
+        item = self.waiting()
+        self.fake.deliver(message(body=body, subject=f"Re: Fråga (ärende {item.id})", In_Reply_To=self.our_mail(item)))
+        self.fake.deliver(message(body=body))
+        sentence = (
+            "Mejlet till mottagare@example.org kom inte fram: "  # the report's own first line, as the text starts
+        )
+        text = sentence + "a" * (inbox_gmail.MAX_TEXT - len(sentence) - len(url)) + url + "X"
+        self.assertEqual(text.index(url) + len(url), inbox_gmail.MAX_TEXT)  # the token ends exactly at the cut
+        self.fake.deliver(
+            report("<CAsomething@mail.example.org>").replace(
+                b"Mejlet till mottagare@example.org kom inte fram.", text.encode()
+            )
+        )
+        self.read()
+        (event,) = item.events.where(db.InboxEvent.kind == "svar")
+        self.assertNotIn(mac, str(event.detail))
+        others = [i for i in self.items() if i.id != item.id]
+        self.assertEqual(len(others), 2)
+        for other in others:
+            self.assertNotIn(mac, other.message)
+
+    def test_no_token_from_file_names_notes_or_questions(self):  # FA3
+        link, mac = self.quoted_link()
+        token = link.rpartition("#")[2]
+        self.holder(self.herds[0])
+        item = self.waiting()
+        self.fake.deliver(
+            message(
+                subject=f"Re: Fråga (ärende {item.id})",
+                files=[(f"{token}.txt", "text/plain", b"x")],
+                In_Reply_To=self.our_mail(item),
+            )
+        )
+        self.fake.deliver(message(files=[(f"{token}.txt", "text/plain", b"x")]))
+        self.read()
+        (event,) = item.events.where(db.InboxEvent.kind == "svar")
+        self.assertNotIn(mac, str(event.detail))
+        (new,) = [i for i in self.items() if i.id != item.id]
+        self.assertNotIn(mac, str(list(new.events.dicts())))
+        upload, _ = inbox.create_upload(self.owner, self.herds[0], f"Se {link}", [])
+        self.assertNotIn(mac, db.InboxItem.get_by_id(upload.id).message)
+        taken = self.item(0)
+        inbox.take(taken, self.helper, over=False)
+        inbox.change_state(taken, self.helper, "ofullstandig", note=f"Saknas, se {link}")
+        self.assertNotIn(mac, str(list(taken.events.dicts())))
+        asked = self.item(0)
+        inbox.take(asked, self.helper, over=False)
+        inbox_gmail.ask_breeder(asked, self.helper, f"Är det din länk? {link}")
+        self.assertNotIn(mac, str(list(asked.events.dicts())))
+
+    def test_a_delivery_report_quoting_the_link_stores_no_token(self):  # FA3
+        link, mac = self.quoted_link()
+        row, secret = link.rpartition("#")[2].split(".")
+        split = f"{row}.{secret[:10]}\x00{secret[10:]}"  # removing the NUL after masking would rebuild the token
+        for quoted in (link, split):
+            raw = report("<CAsomething@mail.example.org>").replace(
+                b"kom inte fram.", f"kom inte fram: {quoted}".encode()
+            )
+            self.fake.deliver(raw)
+        self.read()
+        for item in self.items():
+            self.assertIn("kom inte fram", item.message)
+            self.assertNotIn(mac, item.message)
+
     def test_an_automatic_answer_is_ignored(self):
         for header in ({"Auto-Submitted": "auto-replied"}, {"X-Autoreply": "yes"}, {"Precedence": "auto_reply"}):
             with self.subTest(header=header):
@@ -315,8 +438,32 @@ class TestSorting(GmailTest):
         self.assertEqual(self.reload(item).state, "tagen")
         (event,) = item.events.where(db.InboxEvent.kind == "svar")
         self.assertEqual(event.detail["text"], "Det är G1-2112.")
+        self.assertEqual(event.detail["subject"], "Re: Fråga")
         (notice,) = db.Notice.select().where(db.Notice.kind == "svar")
         self.assertEqual((notice.user_id, notice.item_id), (self.helper.id, item.id))
+
+    def test_anonymizing_the_replier_erases_only_their_reply_on_another_users_upload(self):
+        holder = self.holder(self.herds[0])
+        owner_address = "uppladdare@example.org"
+        db.User.update(email=owner_address).where(db.User.id == self.owner.id).execute()
+        item = self.waiting()
+        item.message = "Uppladdarens meddelande."
+        item.save()
+        subject = f"Komplettering (ärende {item.id})"
+        self.fake.deliver(message(subject=subject, files=[("bilaga.txt", "text/plain", b"test")]))
+        self.fake.deliver(message(subject=subject, sender=owner_address, body="Uppladdarens svar."))
+        self.read()
+        replies = item.events.where(db.InboxEvent.kind == "svar")
+        reply = replies.where(db.InboxEvent.detail.contains({"not_saved": ["bilaga.txt"]})).get()
+        other = replies.where(db.InboxEvent.detail.contains({"text": "Uppladdarens svar."})).get()
+        self.assertIn("not_saved_reasons", reply.detail)
+
+        matrikel.anonymize_person(holder, self.admin)
+
+        self.assertEqual(db.InboxEvent.get_by_id(reply.id).detail, {"documents": []})
+        self.assertEqual(other.detail["sender_user"], self.owner.id)
+        self.assertEqual(db.InboxEvent.get_by_id(other.id).detail, other.detail)
+        self.assertEqual(self.reload(item).message, "Uppladdarens meddelande.")
 
     def test_a_reply_to_an_incomplete_item_returns_it_and_restarts_its_year(self):
         self.holder(self.herds[0])
@@ -403,6 +550,16 @@ class TestSorting(GmailTest):
 JPEG = "image/jpeg"
 
 
+def inline_png(data, filename="gmail_images20261124_132239.png"):
+    msg = message(body="Se bilden.")
+    msg.add_alternative('<p>Se bilden.</p><img src="cid:bild@example.org">', subtype="html")
+    html = msg.get_body(preferencelist=("html",))
+    html.add_related(
+        data, maintype="image", subtype="png", cid="<bild@example.org>", disposition="inline", filename=filename
+    )
+    return msg
+
+
 class TestItemsFromMail(GmailTest):
     def documents(self, item):
         return list(item.documents.order_by(db.InboxDocument.id))
@@ -425,7 +582,7 @@ class TestItemsFromMail(GmailTest):
         for document in documents:
             with Image.open(self.stored(document)) as image:
                 self.assertEqual(image.format, "JPEG")
-        self.assertEqual(item.events.get().detail, {"documents": 2})
+        self.assertEqual(item.events.get().detail, {"documents": 2, "subject": "Intyg"})
         self.assertEqual(self.notified(), sorted([self.manager.id, self.helper.id]))  # Gotland's workers
 
     def test_an_unknown_sender_is_seen_by_every_queue_worker(self):
@@ -437,6 +594,13 @@ class TestItemsFromMail(GmailTest):
         self.assertEqual(self.notified(), sorted(u.id for u in inbox.queue_workers(None)))
         self.assertIn(self.mellerud_helper.id, self.notified())
 
+    def test_a_case_reference_alone_does_not_become_a_subject(self):
+        self.fake.deliver(message(subject="(ärende 98765)", body="En fråga"))
+        self.read()
+        (item,) = self.items()
+        self.assertNotIn("subject", item.events.get().detail)
+        self.assertEqual(item.message, "En fråga")
+
     def test_files_too_big_too_many_or_of_another_type_are_named_and_not_stored(self):
         big = encoded(photo()) + b"\0" * (10 * 1024 * 1024)  # a JPEG by its first bytes, over 10 MB
         docx = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -446,19 +610,73 @@ class TestItemsFromMail(GmailTest):
         self.read()
         (item,) = self.items()
         self.assertEqual(len(self.documents(item)), 10)
-        self.assertEqual(item.events.get().detail["not_saved"], ["stor.jpg", "brev.docx", "10.jpg"])
+        detail = item.events.get().detail
+        self.assertEqual(detail["not_saved"], ["stor.jpg", "brev.docx", "10.jpg"])
+        self.assertEqual([s["name"] for s in detail["not_saved_reasons"]], detail["not_saved"])
+        reasons = ("för stor", "Otillåten filtyp", "Högst 10 bilder")
+        for skipped, reason in zip(detail["not_saved_reasons"], reasons, strict=True):
+            self.assertIn(reason, skipped["reason"])
 
-    def test_logos_and_tracking_pixels_are_not_documents(self):
+    def test_png_size_limit_and_palette_and_alpha_images(self):
+        side = inbox_gmail.MIN_SIDE
         files = [
             ("pixel.png", "image/png", encoded(Image.new("RGB", (1, 1), (255, 255, 255)), "PNG")),
-            ("logo.png", "image/png", encoded(photo((400, 120)), "PNG")),
-            ("intyg.jpg", JPEG, encoded(photo())),
+            ("logo.png", "image/png", encoded(photo((400, side - 1)), "PNG")),
+            ("palett.png", "image/png", encoded(photo((400, side)).convert("P"), "PNG")),
+            ("alfa.png", "image/png", encoded(Image.new("RGBA", (400, side + 1), (0, 64, 0, 128)), "PNG")),
         ]
         self.fake.deliver(message(files=files))
         self.read()
         (item,) = self.items()
-        self.assertEqual(len(self.documents(item)), 1)
-        self.assertEqual(item.events.get().detail["not_saved"], ["pixel.png", "logo.png"])
+        documents = self.documents(item)
+        self.assertEqual(len(documents), 2)
+        for document, height in zip(documents, (side, side + 1), strict=True):
+            with Image.open(self.stored(document)) as image:
+                self.assertEqual((image.format, image.mode, image.size), ("JPEG", "RGB", (400, height)))
+        detail = item.events.get().detail
+        self.assertEqual(detail["not_saved"], ["pixel.png", "logo.png"])
+        self.assertEqual(
+            detail["not_saved_reasons"],
+            [{"name": name, "reason": f"Bilden har en sida under {side} pixlar."} for name in detail["not_saved"]],
+        )
+
+    def test_gmail_related_png_becomes_a_document(self):
+        size = (600, 800)
+        rgb = photo(size)
+        rgba = rgb.convert("RGBA")
+        rgba.putalpha(128)
+        exif = Image.Exif()
+        exif[0x0112] = 6  # rotate 90 degrees clockwise
+        broken_exif = b"XX" + exif.tobytes()[8:]  # invalid TIFF byte order, orientation tag still present
+        for variant, msg, expected_size in (
+            ("RGBA", inline_png(encoded(rgba, "PNG")), size),
+            ("palette", inline_png(encoded(rgb.convert("P"), "PNG", transparency=0)), size),
+            ("EXIF", inline_png(encoded(rgb, "PNG", exif=exif)), (800, 600)),
+            ("broken EXIF", inline_png(encoded(rgb, "PNG", exif=broken_exif)), size),
+            ("no filename", inline_png(encoded(rgb, "PNG"), filename=None), size),
+        ):
+            with self.subTest(variant):
+                gmail_id = self.fake.deliver(msg)
+                self.read()
+                item = db.InboxItem.get(db.InboxItem.gmail_message_id == gmail_id)
+                self.assertEqual(item.message, "Se bilden.")
+                self.assertNotIn("not_saved", item.events.get().detail)
+                (document,) = self.documents(item)
+                with Image.open(self.stored(document)) as image:
+                    self.assertEqual((image.format, image.mode, image.size), ("JPEG", "RGB", expected_size))
+                    self.assertFalse(image.getexif())
+
+    def test_a_small_inline_signature_is_skipped_with_its_reason(self):
+        side = inbox_gmail.MIN_SIDE
+        logo = Image.new("RGBA", (800, side - 1), (0, 64, 0, 128))
+        self.fake.deliver(inline_png(encoded(logo, "PNG"), filename="signatur.png"))
+        self.read()
+        (item,) = self.items()
+        self.assertEqual(self.documents(item), [])
+        self.assertEqual(
+            item.events.get().detail["not_saved_reasons"],
+            [{"name": "signatur.png", "reason": f"Bilden har en sida under {side} pixlar."}],
+        )
 
     def test_exif_is_gone_and_an_inline_photo_counts(self):
         exif = Image.Exif()
@@ -473,6 +691,57 @@ class TestItemsFromMail(GmailTest):
             data = stored.read()
         self.assertNotIn(b"Exif", data)
         self.assertNotIn(b"SecretCam", data)
+
+    def test_a_linked_image_without_a_mime_part_has_a_reason(self):
+        msg = message(body="Här är intyget.")
+        msg.add_alternative('<img src="https://example.org/intyg.png">', subtype="html")
+        self.fake.deliver(msg)
+        self.read()
+        (item,) = self.items()
+        self.assertEqual(item.message, "Här är intyget.")
+        self.assertEqual(item.kind, "meddelande")
+        self.assertEqual(self.documents(item), [])
+        (skipped,) = item.events.get().detail["not_saved_reasons"]
+        self.assertEqual(skipped["name"], "Länkad bild")
+        self.assertIn("extern länk", skipped["reason"])
+
+    def test_closed_mail_with_only_a_linked_image_or_a_refused_attachment_is_purged(self):
+        linked = message()
+        linked.add_alternative(
+            '<img src="https://example.org/pixel.png" width="1">'
+            f'<img src="https://example.org/logo.png" width="600" height="{inbox_gmail.MIN_SIDE - 1}">',
+            subtype="html",
+        )
+        self.fake.deliver(linked)
+        self.fake.deliver(message(files=[("bilaga.txt", "text/plain", b"test")]))
+        self.read()
+        items = self.items()
+        details = {item.kind: item.events.get().detail for item in items}
+        self.assertNotIn("not_saved", details["meddelande"])
+        self.assertNotIn("not_saved_reasons", details["meddelande"])
+        self.assertEqual(details["mail"]["not_saved"], ["bilaga.txt"])
+        closed_at = inbox.now()
+        for item in items:
+            self.assertEqual(item.documents.count(), 0)
+            item.state, item.closed_at = "klar", closed_at
+            item.save()
+        limit = closed_at + inbox.months(13)
+        self.assertEqual(purge.purge_messages(limit), 0)
+        self.assertEqual(purge.purge_messages(limit + timedelta(seconds=1)), 2)
+        self.assertEqual(self.items(), [])
+        self.assertFalse(db.InboxEvent.select().exists())
+
+    def test_a_link_resolved_by_a_related_image_is_saved(self):
+        url = "https://example.org/intyg.png"
+        msg = message()
+        msg.set_content(f'<img src="{url}">', subtype="html")
+        msg.add_related(encoded(photo((600, 800)), "PNG"), maintype="image", subtype="png", disposition="inline")
+        msg.get_payload()[-1]["Content-Location"] = url
+        self.fake.deliver(msg)
+        self.read()
+        (item,) = self.items()
+        self.assertEqual(len(self.documents(item)), 1)
+        self.assertNotIn("not_saved", item.events.get().detail)
 
     def test_an_html_only_mail_becomes_text(self):
         msg = message()
@@ -496,7 +765,7 @@ class TestItemsFromMail(GmailTest):
                 msg = message()
                 msg.set_content(body, subtype="html")
                 started = time.monotonic()
-                text = inbox_gmail._text(msg)
+                text, _ = inbox_gmail._body(msg)
                 self.assertLess(time.monotonic() - started, 1.0)  # linear; the old regexes took minutes
                 self.assertLessEqual(len(text or ""), inbox_gmail.MAX_TEXT)
                 if name == "a head left open":
@@ -940,6 +1209,29 @@ class TestSync(GmailTest):
         self.read()
         self.assertEqual([i.gmail_message_id for i in self.items()], [good])
         self.assertEqual(self.sync().history_id, str(self.fake.history_id))
+
+    def test_a_locked_replier_is_retried_without_counting_or_blocking_other_mail(self):
+        holder = self.holder(self.herds[0])
+        item = self.waiting()
+        reply = self.fake.deliver(message(subject=f"Svar (ärende {item.id})"))
+        other = self.fake.deliver(message(sender="annan@example.org"))
+        db.GmailProcessed.create(gmail_message_id=reply, kind="retry", failures=1)
+
+        with closing(psycopg2.connect(database=db.DATABASE.database, **db.DATABASE.connect_params)) as conn:
+            with conn.cursor() as cursor:
+                cursor.execute("SET LOCAL idle_in_transaction_session_timeout = '30s'")
+                cursor.execute("SELECT member_id FROM member WHERE member_id = %s FOR UPDATE", (holder.id,))
+            for _ in range(inbox_gmail.FAILED_AFTER + 1):
+                self.read()
+                row = db.GmailProcessed.get_by_id(reply)
+                self.assertEqual((row.kind, row.failures), ("retry", 1))
+                self.assertEqual(self.fake.messages[reply]["labelIds"], ["INBOX"])
+                self.assertIsNone(self.sync().last_error)
+                self.assertTrue(self.done(other))
+
+        self.read()
+        self.assertTrue(self.done(reply))
+        self.assertEqual(item.events.where(db.InboxEvent.kind == "svar").count(), 1)
 
     def test_a_database_or_disk_error_stops_the_run_without_labelling_and_the_next_run_reads_it(self):
         self.read()  # the reader's row, with a history id

@@ -9,10 +9,12 @@ import styles from "./topbar.module.css";
 
 export function MobileMenu({
   onNavigate,
+  onTyckTill,
   worksInQueue = false,
   unread = 0,
 }: {
   onNavigate: () => void;
+  onTyckTill: () => void;
   worksInQueue?: boolean;
   unread?: number;
 }) {
@@ -45,6 +47,14 @@ export function MobileMenu({
           </Link>
         );
       })}
+      <button
+        type="button"
+        onClick={onTyckTill}
+        className={`${styles.mobileNavItem} ${styles.mobileNavButton}`}
+      >
+        <SbIcon name="message" size={18} />
+        Tyck till
+      </button>
     </nav>
   );
 }

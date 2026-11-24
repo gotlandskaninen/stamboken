@@ -101,6 +101,10 @@ class TestErasePerson(ErasureTest):
     def test_the_original_is_replaced_by_the_copy_and_the_text_goes(self):
         item, document = self.certified()
         other, other_document = self.uploaded()  # shows nobody recorded
+        arrived = item.events.where(db.InboxEvent.kind == "inkommen").get()
+        arrived.detail = {**arrived.detail, "subject": "Första ämnet"}
+        arrived.save()
+        reply = inbox.log_event(item, None, "svar", subject="Andra ämnet", text="Svarstext", documents=[])
 
         with db.DB_PROXY.atomic():
             paths = purge.erase_person_from_inbox(self.seller)
@@ -113,6 +117,8 @@ class TestErasePerson(ErasureTest):
         self.assertEqual(erased.public_path, document.public_path)
         self.assertTrue(self.exists(document.public_path))  # only the masked copy is left
         self.assertEqual(self.certificate_served(), 200)
+        self.assertNotIn("subject", db.InboxEvent.get_by_id(arrived.id).detail)
+        self.assertEqual(db.InboxEvent.get_by_id(reply.id).detail, {"documents": []})
         self.assertNotIn(PHONE, self.text(item))
         self.assertIn(PHONE, self.text(other))
         self.assertTrue(self.exists(other_document.original_path))

@@ -1,8 +1,10 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import {
   KIND_LABELS,
+  reportHref,
   PERIOD_START_LABELS,
   type HerdTrackingHistory,
   type HerdTrackingRow,
@@ -128,6 +130,14 @@ export function HerdHistorySection({
                   )}
                   {row.notes && <span className="sb-meta">{row.notes}</span>}
                   <span className={styles.actions}>
+                    {row.report && !row.can_void && row.voided_at === null && (
+                      <Link
+                        className="sb-btn sb-btn-ghost sb-btn-sm"
+                        href={reportHref(row.report)}
+                      >
+                        Ändra i årsrapporten
+                      </Link>
+                    )}
                     {row.can_void && onVoid && (
                       <button
                         type="button"

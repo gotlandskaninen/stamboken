@@ -80,7 +80,9 @@ mejlet går då till den adress som är aktuell just då.
 
 2. Registrera typen med en byggfunktion som tar `params` och returnerar
    mallens variabler. Returnerar den `None`, till exempel för att ansökan
-   har tagits bort, stoppas mejlet med status `cancelled`.
+   har tagits bort, stoppas mejlet med status `cancelled`. Kastar den
+   `Later(tid, skäl)` läggs mejlet tillbaka i kön till den tiden, utan att
+   räknas som ett försök.
 
    ```python
    from utils.mail import mail_kind
@@ -103,7 +105,8 @@ mejlet går då till den adress som är aktuell just då.
 mejl, 2 för massutskick. **Kategori:** `T` (transaktion) eller `N` (notis).
 
 **Bilagor:** byggfunktionen kan returnera nyckeln `attachments` med en lista
-av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas.
+av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas. Nyckeln
+`reply_to` sätter `Reply-To` till en annan adress än avsändarens.
 
 ## Mejltyper om medlemskap
 
@@ -116,11 +119,23 @@ av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas.
   e-postadress. Det är informationen enligt dataskyddsförordningen artikel 14:
   vad som sparas, vem som lade in uppgifterna, länken `/dataskydd` och adressen
   att skriva till. En huvudmedlem får det inte, och inte heller den som kommer
-  in med importen av matrikeln, som skriver sina rader själv. Har personen
-  lämnat medlemskapet eller blivit huvudmedlem när mejlet ska gå blir det
-  `cancelled`. Huvudmedlemmen väljer adressen, så mejlet får inte bli ett sätt
-  att överösa någon: ett medlemskap ger högst tio om dagen, och en adress får
-  högst tre om dagen, räknat på mejl som har gått när nästa ska skickas.
+  in med importen av matrikeln, som skriver sina rader själv. Får någon som
+  `add_person` lade in en adress senare (`set_member_email`) köas mejlet då.
+  Personen har en enda rad i kön, och den visar att mejlet har gått. En rad
+  som aldrig nådde fram (`failed`, `cancelled` för att adressen saknades,
+  eller köad eller under sändning till adressen som just byttes) köas igen
+  när adressen ändras. En rad som har gått, som stoppats i statusvyn eller
+  som är `bounced` köas inte igen: en rapport om försenad leverans räknas
+  också som studs. För en studsad rad skickar "Försök igen" i statusvyn
+  mejlet till personens adress nu. Har personen lämnat medlemskapet eller
+  någon gång varit huvudmedlem när mejlet ska gå blir det `cancelled`. En
+  rad som köas igen räknar sina 13 månader från dess. Huvudmedlemmen väljer adressen, så
+  mejlet får inte bli ett sätt att överösa någon. Ett medlemskaps mejl sprids
+  över dygnen när de köas, så att högst tio ska gå samma dygn. Ett mejl som
+  gränsen per adress har skjutit upp kan hamna på ett dygn som redan har tio. En adress får högst tre om
+  dagen, räknat på mejl som har gått när nästa ska skickas, och ett mejl över
+  gränsen väntar tills det äldsta av dem är ett dygn gammalt. Inget mejl
+  stryks för en gräns.
 - `konto.kod` (prioritet 0) väljer text efter kodens syfte. För inloggning
   innehåller mejlet både åtta siffror och en länk. För ett adressbyte
   innehåller det enbart koden till den nya adressen.
@@ -209,14 +224,26 @@ Koden finns i `app/utils/login_code.py` och `set_member_email` i
   och avslutar kontots sessioner. Raderna i `member_previous_address` raderas
   två dygn efter att adressen slutat gälla, och vid anonymisering.
 
+## Mejltypen om Tyck till
+
+`tyck_till.inskick` går till föreningens funktionsadress (mottagartypen
+`tyck_till`, adressen ur `TYCK_TILL_MOTTAGARE`) när någon har skickat en
+synpunkt med knappen "Tyck till" ([tyck-till.md](tyck-till.md)). Raden
+har bara heltal (inskickets UUID som `UUID.int`, issuens nummer, vilket repo och
+om issuen hamnade på tavlan). Texten, sidan, bilderna och kontaktuppgifterna
+läses ur inskickets mapp när mejlet byggs, och finns mappen inte längre blir
+mejlet `cancelled`. Bilderna är bilagor, och `Reply-To` är den adress medlemmen
+vill ha svar till.
+
 ## Mottagare
 
 `recipient_kind` säger var adressen finns. Inbyggda: `member`
 (`Member.email`), `user` (`hbuser.email`), `application` (ansökan om
 medlemskap), `inbox_sender` (avsändaren av en mejlad post i
 inläsningskön, [inkorg-gmail.md](inkorg-gmail.md)), `login_code` (adressen en
-kod går till, ingen när koden är använd, ogiltig eller för gammal) och
-`member_previous_address` (en tidigare adress). En ny sort registreras med
+kod går till, ingen när koden är använd, ogiltig eller för gammal),
+`member_previous_address` (en tidigare adress) och `tyck_till`
+(funktionsadressen för Tyck till, alltid samma). En ny sort registreras med
 `@recipient_kind("<namn>")` och en funktion som tar id:t och returnerar
 `Recipient(address, label)` eller `None`. `label` är det statusvyn visar, ett
 namn, aldrig adressen. Saknas mottagaren, adressen eller

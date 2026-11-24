@@ -7,10 +7,10 @@ export default defineConfig({
   // prod-mode admin session) — they run ONLY via playwright.admin.config.ts,
   // never in this default CI config. Ignored globally here; owner-tests below
   // overrides testIgnore, so it repeats the admin-dir exclusion in its array.
-  // e2e/manual/screenshots.spec.ts skriver public/stamboken/manual/*.png och körs bara via
+  // e2e/manual/*screenshots.spec.ts skriver skärmbilder till manualen och guiden och körs bara via
   // playwright.manual-screenshots.config.ts; mutation-manual-flows.spec.ts i
   // samma mapp hör till mutation-tests nedan.
-  testIgnore: [/e2e\/admin\//, /e2e\/manual\/screenshots\.spec\.ts$/],
+  testIgnore: [/e2e\/admin\//, /e2e\/manual\/[^\\/]*screenshots\.spec\.ts$/],
   workers: process.env.CI ? 2 : undefined,
   timeout: process.env.CI ? 60000 : 30000,
   expect: { timeout: process.env.CI ? 15000 : 5000 },
@@ -37,11 +37,19 @@ export default defineConfig({
       // the global testIgnore because a project-level testIgnore overrides it).
       testIgnore: [
         /[\\/](?:(?:admin|manager|mutation|public)-[^\\/]*|demo-banner|promoted-toggle)\.spec\.ts$/,
+        /arsrapport-lank\.spec\.ts$/,
         /e2e\/admin\//,
-        /e2e\/manual\/screenshots\.spec\.ts$/,
+        /e2e\/manual\/[^\\/]*screenshots\.spec\.ts$/,
       ],
       use: { storageState: "e2e/.auth/gk-owner.json" },
       dependencies: ["setup"],
+    },
+    {
+      // The personal report links: nobody is signed in, and the herds are its own (M9201-M9203). It waits for
+      // owner-tests, so the Mellerud round that arsrapport-typer activates is already open (it tolerates either).
+      name: "arsrapport-lank",
+      testMatch: /arsrapport-lank\.spec\.ts$/,
+      dependencies: ["owner-tests"],
     },
     {
       name: "public-tests",

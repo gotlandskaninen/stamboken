@@ -84,6 +84,8 @@ services:
       - FLASK_ENV=${FLASK_ENV:-development}
       - FLASK_DEBUG=${FLASK_DEBUG:-1}
       - RATELIMIT_ENABLED=false
+      # A throwaway: the e2e opens the personal report links of `flask seed arsrapport-lankar`.
+      - LINK_SECRET=local-production-throwaway-link-secret
       - POSTGRES_DB=herdbook
       - REDIS_URL=redis://redis:6379/0
       - SESSION_REDIS_URL=redis://redis:6379/2

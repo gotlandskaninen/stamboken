@@ -22,6 +22,7 @@ import {
   usePickerTranslations,
 } from "@mui/x-date-pickers/hooks";
 import { useTranslation } from "react-i18next";
+import { isValid, parseISO } from "date-fns";
 import {
   BuyerFields,
   EMPTY_BUYER,
@@ -78,6 +79,8 @@ interface SellRabbitDialogProps {
   isSaving: boolean;
   /** Problem detail from the last failed attempt; shown inline (the snackbar sits behind the modal). */
   error?: string | null;
+  /** The buyer herd and the date to start from (a purchase notice's, ?salj=1&till&datum); still checked as typed. */
+  initial?: { herd?: string | null; date?: string | null };
 }
 
 const herdText = (herd: string, name?: string | null) =>
@@ -119,6 +122,7 @@ function SellRabbitDialogContent({
   canResellOutside = false,
   isSaving,
   error,
+  initial,
 }: SellRabbitDialogProps) {
   const { t } = useTranslation();
   const theme = useTheme();
@@ -135,7 +139,11 @@ function SellRabbitDialogContent({
     null,
   );
   const [target, setTarget] = React.useState<GenebankHerd | null>(null);
-  const [date, setDate] = React.useState<Date | null>(() => stockholmToday());
+  const [date, setDate] = React.useState<Date | null>(() =>
+    initial?.date && isValid(parseISO(initial.date))
+      ? parseISO(initial.date)
+      : stockholmToday(),
+  );
   const [acknowledged, setAcknowledged] = React.useState(false);
   const [buyer, setBuyer] = React.useState<BuyerDraft>(EMPTY_BUYER);
 
@@ -172,6 +180,13 @@ function SellRabbitDialogContent({
         ),
     [herds, currentHerd.herd, isRegistered, canResellOutside],
   );
+
+  // The initial buyer herd, chosen once its list has come (never one the picker does not offer)
+  const [prefilled, setPrefilled] = React.useState(!initial?.herd);
+  if (!prefilled && herds) {
+    setPrefilled(true);
+    setTarget(options.find((h) => h.herd === initial?.herd) ?? null);
+  }
 
   const dateProblem = validateSaleDate(date, minDate, today);
   const outsideCode = options.find((h) => isOutsideGenebankHerd(h.herd))?.herd;

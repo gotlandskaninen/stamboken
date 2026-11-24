@@ -3,9 +3,15 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { fetchApi, ApiError } from "@/lib/api";
+import type { SaveResult } from "@/components/herd-contact/contactTypes";
 import { requireAdminProdMode } from "../_lib/requireAdminProdMode";
 
-export type AdminActionError = { error: string; field?: string };
+export type AdminActionError = {
+  error: string;
+  field?: string;
+  status?: number;
+  type?: string;
+};
 
 // POST /api/manage/herd is a LEGACY endpoint: it answers HTTP 200 with
 // {status: "error", message} on validation failures (duplicate herd-ID,
@@ -68,15 +74,12 @@ export async function createHerd(
 }
 
 export interface UpdateHerdFields {
-  // Exactly the PATCH allow-list.
-  name?: string | null;
-  name_privacy?: string | null;
-  physical_address?: string | null;
-  email?: string | null;
-  mobile_phone?: string | null;
+  // The PATCH allow-list minus the contact fields (those go in `contact`).
   wire_phone?: string | null;
   www?: string | null;
   is_active?: boolean;
+  // what the form showed of each changed place field: the server saves only against it, 409 otherwise
+  place_shown?: Partial<Record<"wire_phone" | "www", { value: string | null }>>;
 }
 
 export async function updateHerd(
@@ -93,10 +96,38 @@ export async function updateHerd(
       forceProd: true,
     });
   } catch (e) {
-    if (e instanceof ApiError) return { error: e.detail };
+    if (e instanceof ApiError)
+      return { error: e.detail, status: e.status, type: e.type };
     throw e;
   }
   revalidatePath("/stamboken/admin/besattningar");
   revalidatePath(`/stamboken/admin/besattningar/${herdRef}`);
   redirect("/stamboken/admin/besattningar");
+}
+
+/** The contact object of a herd (Task 8's editor); no redirect, the page reloads itself. */
+export async function saveHerdContact(
+  herdRef: string,
+  patch: { contact: Record<string, unknown> },
+): Promise<SaveResult> {
+  await requireAdminProdMode();
+  try {
+    await fetchApi(`/manage/herd/${encodeURIComponent(herdRef)}`, {
+      method: "PATCH",
+      body: JSON.stringify(patch),
+      forceProd: true,
+    });
+  } catch (e) {
+    if (e instanceof ApiError)
+      return {
+        success: false,
+        error: e.detail,
+        status: e.status,
+        type: e.type,
+      };
+    // a network failure: the editor keeps its draft and offers a retry
+    return { success: false, error: "Kunde inte nå servern. Försök igen." };
+  }
+  revalidatePath(`/stamboken/admin/besattningar/${herdRef}`);
+  return { success: true };
 }

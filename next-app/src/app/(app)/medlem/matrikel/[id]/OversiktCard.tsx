@@ -1,6 +1,7 @@
 import ds from "@/styles/ds-admin.module.css";
 import styles from "../../medlem.module.css";
 import type { MembershipDetail } from "../types";
+import { KopplaBesattningButton } from "./KopplaBesattningDialog";
 
 // Spec-copy for the publiceringsval (matrikel label "Publiceras i Koharen").
 const CONSENT_LABELS: Record<string, string> = {
@@ -13,14 +14,17 @@ const CONSENT_LABELS: Record<string, string> = {
 function Cell({
   label,
   children,
+  action,
 }: {
   label: string;
   children: React.ReactNode;
+  action?: React.ReactNode;
 }) {
   return (
     <div className={`${ds["ad-status-cell"]} ${styles.ovCell}`}>
       <div className={styles.ovVal}>{children}</div>
       <div className="sb-stat-label">{label}</div>
+      {action}
     </div>
   );
 }
@@ -31,7 +35,13 @@ function Cell({
  * meta-rad, så remsan bär bara det som inte syns någon annanstans — fyra
  * celler, vilket är precis remsans desktopkolumner.
  */
-export function OversiktCard({ membership }: { membership: MembershipDetail }) {
+export function OversiktCard({
+  membership,
+  canEdit,
+}: {
+  membership: MembershipDetail;
+  canEdit: boolean;
+}) {
   const consent =
     Object.entries(membership.publication_consent)
       .filter(([, v]) => v)
@@ -48,7 +58,12 @@ export function OversiktCard({ membership }: { membership: MembershipDetail }) {
           note has to live here too (it did in the pre-reskin summary). */}
       <Cell label="Betalningsnotering">{membership.payment_note || "–"}</Cell>
       <Cell label="Publiceras i Koharen">{consent}</Cell>
-      <Cell label="Besättningar">
+      <Cell
+        label="Besättningar"
+        action={
+          canEdit && <KopplaBesattningButton membershipId={membership.id} />
+        }
+      >
         {membership.herds.length === 0 ? (
           "inga"
         ) : (

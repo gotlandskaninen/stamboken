@@ -9,12 +9,14 @@ import { MobileMenu } from "./MobileMenu";
 import { LanguageToggle } from "./LanguageToggle";
 import { NotificationBell } from "./NotificationBell";
 import { AvatarMenu } from "./AvatarMenu";
+import { TyckTillDialog } from "@/components/tyck-till/TyckTillDialog.client";
 import { SbIcon } from "./SbIcon";
 import { NO_INBOX, type InboxCount } from "@/lib/inkorg";
 import styles from "./topbar.module.css";
 
 export function Topbar({ inbox = NO_INBOX }: { inbox?: InboxCount }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [tyckTillOpen, setTyckTillOpen] = useState(false);
   const pathname = usePathname();
 
   // Close the mobile menu whenever the route changes.
@@ -59,10 +61,18 @@ export function Topbar({ inbox = NO_INBOX }: { inbox?: InboxCount }) {
       {mobileOpen && (
         <MobileMenu
           onNavigate={() => setMobileOpen(false)}
+          onTyckTill={() => {
+            setMobileOpen(false);
+            setTyckTillOpen(true);
+          }}
           worksInQueue={inbox.works_in_queue}
           unread={inbox.unread}
         />
       )}
+      <TyckTillDialog
+        open={tyckTillOpen}
+        onClose={() => setTyckTillOpen(false)}
+      />
     </header>
   );
 }

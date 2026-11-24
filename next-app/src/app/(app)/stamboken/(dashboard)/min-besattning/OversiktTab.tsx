@@ -1,6 +1,7 @@
 "use client";
 
 import React from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import type { Individual } from "@/redux/api/apiSlice";
 import {
@@ -12,7 +13,9 @@ import {
   type BreedingRecord,
   type TabValue,
 } from "./min-besattning-ui";
-import BesattningsuppgifterCard from "./BesattningsuppgifterCard";
+import BesattningCard from "./BesattningCard";
+import KontaktCard from "./KontaktCard";
+import { fmtDate, type MyReport } from "../arsrapport/lib";
 import OnboardingChecklist from "./OnboardingChecklist";
 import styles from "./min-besattning.module.css";
 
@@ -20,6 +23,7 @@ interface OversiktTabProps {
   herd: any;
   breedings: BreedingRecord[] | null;
   herdNumber: string;
+  reportTodo?: MyReport | null;
   onGoTab: (tab: TabValue) => void;
   onNewLitter: () => void;
   onNewMating: () => void;
@@ -29,12 +33,14 @@ interface Todo {
   badge: string;
   badgeCls: string;
   text: string;
+  href?: string;
 }
 
 export default function OversiktTab({
   herd,
   breedings,
   herdNumber,
+  reportTodo,
   onGoTab,
   onNewLitter,
   onNewMating,
@@ -70,6 +76,15 @@ export default function OversiktTab({
   // eslint-disable-next-line react-hooks/purity
   const now = Date.now();
   const todos: Todo[] = [];
+  if (reportTodo)
+    todos.push({
+      badge: "Årsrapport",
+      badgeCls: "sb-badge-skog",
+      text: `Årsrapport ${reportTodo.year}: skicka${
+        reportTodo.deadline ? ` senast ${fmtDate(reportTodo.deadline)}` : ""
+      }`,
+      href: `/stamboken/arsrapport/${reportTodo.herd}/${reportTodo.year}`,
+    });
   for (const b of breedings ?? []) {
     if (!b.birth_date) continue;
     const ageDays = Math.floor(
@@ -193,7 +208,13 @@ export default function OversiktTab({
                     <span className={`sb-badge ${todo.badgeCls}`}>
                       {todo.badge}
                     </span>
-                    <p>{todo.text}</p>
+                    <p>
+                      {todo.href ? (
+                        <Link href={todo.href}>{todo.text}</Link>
+                      ) : (
+                        todo.text
+                      )}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -239,7 +260,8 @@ export default function OversiktTab({
             </div>
           </MbCard>
 
-          <BesattningsuppgifterCard herd={herd} herdNumber={herdNumber} />
+          <BesattningCard herd={herd} herdNumber={herdNumber} />
+          <KontaktCard herd={herd} herdNumber={herdNumber} />
         </div>
       </div>
     </div>

@@ -12,6 +12,7 @@ from tests.database_test import DatabaseTest  # noqa: E402
 class TestGeneticsRouteAccess(DatabaseTest):
     def setUp(self):
         APP.config["TESTING"] = True  # nosemgrep
+        self.addCleanup(APP.config.__setitem__, "SESSION_COOKIE_NAME", APP.config["SESSION_COOKIE_NAME"])  # restored
         APP.config["SESSION_COOKIE_NAME"] = "test_session"
         limiter.enabled = False
         self.client = APP.test_client(use_cookies=True)

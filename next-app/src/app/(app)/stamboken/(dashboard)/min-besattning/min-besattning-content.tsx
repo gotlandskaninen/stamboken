@@ -8,6 +8,7 @@ import {
   registerBreeding as registerBreedingAction,
   registerBirth as registerBirthAction,
   updateBreeding as updateBreedingAction,
+  confirmLitterCount,
   deleteBreeding as deleteBreedingAction,
 } from "./actions";
 import { useNotifications } from "@/contexts/NotificationContext";
@@ -18,6 +19,7 @@ import { Masthead } from "@/components/shell/Masthead";
 import { HerdSwitcher } from "@/components/shell/HerdSwitcher";
 import { TabBar } from "@/components/shell/TabBar";
 import { MB_TABS, TabPanel, type TabValue } from "./min-besattning-ui";
+import type { MyReport } from "../arsrapport/lib";
 import OversiktTab from "./OversiktTab";
 import KaninerTab from "./KaninerTab";
 import KullarTab from "./KullarTab";
@@ -29,6 +31,7 @@ interface MinBesattningContentProps {
   breedings: any[] | null;
   herdNumber: string | null;
   initialTab: string | null;
+  reportTodo?: MyReport | null;
 }
 
 export default function MinBesattningContent({
@@ -36,6 +39,7 @@ export default function MinBesattningContent({
   breedings,
   herdNumber,
   initialTab,
+  reportTodo,
 }: MinBesattningContentProps) {
   const router = useRouter();
   const user = useUser();
@@ -325,6 +329,22 @@ export default function MinBesattningContent({
     return false;
   };
 
+  const handleConfirmCount = async (
+    id: number,
+    count: number,
+  ): Promise<boolean> => {
+    const result = await confirmLitterCount(id, count);
+    if (result.success) {
+      showSnackbar(t("breeding.updated"), "success");
+      return true;
+    }
+    showBreedingError(
+      result.error || t("breeding.errorGeneric"),
+      t("breeding.confirmCount"),
+    );
+    return false;
+  };
+
   // Programmatic tab change (quick actions, "Se alla kaniner →" links) — same
   // URL contract as the old MUI Tabs onChange
   const goTab = (tab: TabValue) => {
@@ -430,6 +450,7 @@ export default function MinBesattningContent({
             herd={herdData}
             breedings={breedingList}
             herdNumber={userHerdId}
+            reportTodo={reportTodo}
             onGoTab={goTab}
             onNewLitter={() => {
               setShowLitterForm(true);
@@ -473,6 +494,7 @@ export default function MinBesattningContent({
             onDeleteBreeding={handleDeleteBreeding}
             onRegisterBirth={handleRegisterBirth}
             onUpdateBreeding={handleUpdateBreeding}
+            onConfirmCount={handleConfirmCount}
           />
         </TabPanel>
         <TabPanel value={activeTab} index="pedigree">

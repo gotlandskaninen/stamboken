@@ -109,6 +109,11 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - SESSION_REDIS_URL=redis://redis:6379/2
       - RATELIMIT_STORAGE_URL=redis://redis:6379/3
+      # Tyck till makes real GitHub issues; a missing key in /config then answers 503, never the fake.
+      - TYCK_TILL_GITHUB=app
+      # The organisation's app "Stamboken Tyck till" and its installation (not secrets; the key is in /config).
+      - GITHUB_APP_ID=5893013
+      - GITHUB_APP_INSTALLATION_ID=185130434
     volumes:
       - type: bind
         source: ./config
@@ -162,6 +167,9 @@ services:
       # Own limiter counters (db 3 is `api`'s): demo attempts must not spend
       # production's login budget.
       - RATELIMIT_STORAGE_URL=redis://redis:6379/4
+      - TYCK_TILL_GITHUB=app
+      - GITHUB_APP_ID=5893013
+      - GITHUB_APP_INSTALLATION_ID=185130434
       # Demo instance: stamp v2 certificates "DEMO – EJ GILTIGT INTYG".
       - CERT_DEMO_WATERMARK=true
       # Pin signing to the throwaway committed dev cert (baked into the image).

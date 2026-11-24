@@ -262,6 +262,28 @@ class TestLoginAccount(MatrikelApiTest):
                 self.assert_no_account()
                 model.update({column: original}).where(model.id == target).execute()
 
+    def test_an_erased_account_cannot_be_created_again_by_code(self):
+        self.pending()
+        other_browser = self.pending(APP.test_client())
+        self.assertEqual(self.create().status_code, 200)
+        user = db.Member.get_by_id(self.member.id).user
+
+        matrikel.anonymize_person(self.member, self.admin)
+
+        self.assertEqual(self.create(client=other_browser).status_code, 401)
+        response = other_browser.post(BASE + "/kod", json={"email": self.member.email})
+        self.assertEqual(response.status_code, 200)
+        response.close()  # issuing the code runs after the response
+        self.assertFalse(db.LoginCode.select().where(db.LoginCode.member == self.member.id).exists())
+        self.assertIsNone(db.Member.get_by_id(self.member.id).user_id)
+        self.assertEqual(db.User.select().count(), self.initial_count + 1)
+        erased = db.User.get_by_id(user.id)
+        self.assertEqual((erased.is_active, erased.email), (False, f"raderad-{user.id}"))
+        self.assertEqual(
+            (erased.rules_accepted_at, erased.rules_version, erased.rules_sha256),
+            (user.rules_accepted_at, RULES["rules_version"], RULES["rules_sha256"]),
+        )
+
     def test_explicit_acceptance_and_matching_published_rules_are_required(self):
         self.pending()
         for body in ({}, {**RULES, "accepted": 1}, {"accepted": True}, {"accepted": True, "rules_version": "23"}):

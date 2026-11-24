@@ -274,6 +274,15 @@
   border-radius: var(--sb-r-2);
 }
 
+.mobileNavButton {
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  width: 100%;
+  text-align: left;
+  cursor: pointer;
+}
+
 .mobileNavItem:hover {
   background: var(--sb-paper-2);
 }
@@ -318,6 +327,27 @@
 
   .langBtn {
     padding: 0 4px;
+  }
+}
+
+/* 320px (WCAG 1.4.10): the row was 22px too wide, so below 360px the bar gives up
+   padding, the gap after the menu button, 4px between the right-hand buttons and
+   3px of the wordmark. */
+@media (max-width: 359px) {
+  .inner {
+    padding: 0 8px;
+  }
+
+  .left {
+    gap: 0;
+  }
+
+  .right {
+    gap: 4px;
+  }
+
+  .wordmarkText {
+    font-size: 14px;
   }
 }
 

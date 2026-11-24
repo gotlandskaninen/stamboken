@@ -39,21 +39,24 @@ export default async function MembershipDetailPage({
     (p) => p.role === "huvudmedlem" && p.end_date === null,
   );
   const badge = statusBadge(membership.membership_status, styles.badgeWarning);
+  const membershipTitle = membership.member_number
+    ? `Medlemskap nr ${membership.member_number}`
+    : "Medlemskap (utan nummer)";
 
   return (
     <>
       <Masthead
         eyebrow="Matrikel"
-        title={
-          membership.member_number
-            ? `Medlemskap nr ${membership.member_number}`
-            : "Medlemskap (utan nummer)"
-        }
+        title={membership.organization_name || membershipTitle}
         meta={
           <>
             <span className={badge.className}>{badge.label}</span>
             <span>
-              Huvudmedlem {main ? `${main.first_name} ${main.last_name}` : "–"}{" "}
+              {membership.organization_name
+                ? [membershipTitle, membership.organization_number]
+                    .filter(Boolean)
+                    .join(" · ")
+                : `Huvudmedlem ${main ? `${main.first_name} ${main.last_name}` : "–"}`}{" "}
               · medlem sedan {membership.joined_date ?? "–"}
             </span>
           </>
@@ -67,7 +70,7 @@ export default async function MembershipDetailPage({
             kolumner behöver ~1100px för att inte radbrytas på desktop, och
             Översikt blir en statusremsa ovanför (samma recept som
             /medlem/statistik). */}
-        <OversiktCard membership={membership} />
+        <OversiktCard membership={membership} canEdit={canEdit} />
         <div className={ds["ad-col"]}>
           <PersonsCard membership={membership} canEdit={canEdit} />
           {canEdit ? <MembershipFormCard membership={membership} /> : null}

@@ -34,6 +34,15 @@ export interface HerdTrackingRow {
   can_void: boolean;
   can_undo_sale: boolean;
   can_undo_operation: boolean;
+  /** A void by this viewer stores the system's reason, not a typed one: a buyer outside the genebank is on the rabbit. */
+  reason_replaced?: boolean;
+  /** The submitted yearly report that wrote the row; changed there, not here. */
+  report: ReportRef | null;
+}
+
+export interface ReportRef {
+  herd: string;
+  year: number;
 }
 
 export interface HerdTrackingPeriod {
@@ -48,6 +57,8 @@ export interface HerdTrackingPeriod {
 export interface HerdTrackingHistory {
   individual: { id: number; number: string };
   viewer: { can_manage: boolean };
+  /** The yearly report that wrote the death "Ångra död" would undo. */
+  death_report: ReportRef | null;
   /** Server order (newest first, BIRTH first within a day) — never re-sort. */
   rows: HerdTrackingRow[];
   /** Chronological. */
@@ -67,6 +78,9 @@ export const PERIOD_START_LABELS: Record<HerdTrackingKind, string> = {
   CORRECTION: "Korrigerad",
   ATTESTATION: "Rapporterad",
 };
+
+export const reportHref = (r: ReportRef) =>
+  `/stamboken/arsrapport/${r.herd}/${r.year}`;
 
 /** The newest active row, if the viewer may undo it as a sale (rows arrive newest first). */
 export function latestUndoableSale(

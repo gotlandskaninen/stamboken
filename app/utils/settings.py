@@ -164,6 +164,8 @@ mail.smtp_port = int(os.environ.get("SMTP_PORT") or "587")
 mail.sender = os.environ.get("MAIL_FROM") or "stamboken@gotlandskaninen.se"
 # Its own secret per environment, not SECRET_KEY: link tokens, Message-IDs and address hashes.
 mail.link_secret = os.environ.get("LINK_SECRET", "")
+# Earlier host names whose links still verify after HERDBOOK_HOST changes; new links always use the current host.
+mail.link_hosts = [host.strip() for host in os.environ.get("LINK_HOSTS", "").split(",") if host.strip()]
 
 
 def refuse_unsafe_mail_settings():
@@ -175,6 +177,21 @@ def refuse_unsafe_mail_settings():
     if mail.mode != "log" and not mail.link_secret:
         raise RuntimeError(f"MAIL_MODE={mail.mode} requires LINK_SECRET.")
 
+
+arsrapport = Namespace()  # pylint: disable=C0103
+
+
+def _contacts(raw):
+    """E6: the contacts the expired-link page shows, `[{"ras", "namn", "telefon"}]`; none when unreadable."""
+    try:
+        rows = json.loads(raw or "[]")
+        return [{key: str(row[key]) for key in ("ras", "namn", "telefon")} for row in rows]
+    except (ValueError, TypeError, KeyError):
+        logging.warning("ARSRAPPORT_KONTAKT is not a JSON list of {ras, namn, telefon}; no contacts shown.")
+        return []
+
+
+arsrapport.kontakt = _contacts(os.environ.get("ARSRAPPORT_KONTAKT"))
 
 gmail = Namespace()  # pylint: disable=C0103
 # Reading the association's mailbox into the intake queue (docs/inkorg-gmail.md). Reading moves mail to the trash.
@@ -210,6 +227,16 @@ inbox = Namespace()  # pylint: disable=C0103
 inbox.original_months = int(os.environ.get("INLASNING_ORIGINAL_MANADER") or 12)
 if inbox.original_months < 1:
     raise RuntimeError(f"INLASNING_ORIGINAL_MANADER={inbox.original_months} is not a number of months, 1 or more.")
+
+tyck_till = Namespace()  # pylint: disable=C0103
+# "Tyck till" (docs/tyck-till.md): `app` creates the issues with the GitHub app, `logg` (the default in development
+# and CI) is a fake that succeeds. Production sets `app`, and without the app's key and ids the endpoint answers 503.
+tyck_till.github = (os.environ.get("TYCK_TILL_GITHUB") or "logg").strip().lower()
+tyck_till.app_id = os.environ.get("GITHUB_APP_ID", "")
+tyck_till.installation_id = os.environ.get("GITHUB_APP_INSTALLATION_ID", "")
+tyck_till.key_path = Path(os.environ.get("GITHUB_APP_KEY") or "/config/github_app_key.pem")
+tyck_till.project_id = os.environ.get("TYCK_TILL_PROJEKT") or "PVT_kwDOFJznr84Bq3Yo"
+tyck_till.recipient = os.environ.get("TYCK_TILL_MOTTAGARE") or "admin@gotlandskaninen.se"
 
 s3.bucket = os.environ.get("S3_BUCKET", "test")
 s3.endpoint = os.environ.get("S3_ENDPOINT", None)
