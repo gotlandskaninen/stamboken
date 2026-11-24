@@ -565,7 +565,8 @@ def patch_person(person_id: int):
                     after[field] = val
                     setattr(person, field, val)
 
-            if {"first_name", "last_name", "role"} & proposed.keys():
+            # Only a real change of name or role: the form resends unchanged names and the role.
+            if {"first_name", "last_name", "role"} & after.keys():
                 organization_contact = (
                     membership.organization_name and person.role == "huvudmedlem" and person.end_date is None
                 )

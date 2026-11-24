@@ -130,11 +130,19 @@ class TestMembersImport(DatabaseTest):
         client = APP.test_client()
         client.post("/api/login", json={"username": "admin", "password": "pass"})
 
-        response = client.patch(f"/api/v2/persons/{person.id}", json={"phone": "070-1234567"})
+        for body in (
+            {"phone": "070-1234567"},
+            # what the person form sends: the unchanged names and role too
+            {"first_name": "", "last_name": "Testbiblioteket", "role": "huvudmedlem", "phone": "070-1234567"},
+        ):
+            with self.subTest(body=body):
+                response = client.patch(f"/api/v2/persons/{person.id}", json=body)
 
-        self.assertEqual(response.status_code, 200, response.data)
-        stored = db.Member.get_by_id(person.id)
-        self.assertEqual((stored.first_name, stored.last_name, stored.phone), ("", "Testbiblioteket", "070-1234567"))
+                self.assertEqual(response.status_code, 200, response.data)
+                stored = db.Member.get_by_id(person.id)
+                self.assertEqual(
+                    (stored.first_name, stored.last_name, stored.phone), ("", "Testbiblioteket", "070-1234567")
+                )
 
     def test_two_friexemplar_can_share_an_email(self):
         address = "redaktion@example.invalid"

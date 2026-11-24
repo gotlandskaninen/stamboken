@@ -534,7 +534,8 @@ class TestOrganizationMembershipEndpoints(MatrikelAdminTestBase):
         self.assertEqual(self.client.delete(self.url).status_code, 200)
         self.assertIsNotNone(db.Member.get_by_id(self.main.id).end_date)
         self.assertEqual(self.patch_json(person_url, {"notes": "Arkiverad"}).status_code, 200)
-        self.assertEqual(self.patch_json(person_url, {"first_name": "", "last_name": ""}).status_code, 400)
+        # unchanged names change nothing: no name rule to apply
+        self.assertEqual(self.patch_json(person_url, {"first_name": "", "last_name": ""}).status_code, 200)
         self.assertEqual(self.patch_json(person_url, {"role": "familjemedlem"}).status_code, 400)
         self.assertEqual(self.patch_json(self.url, {"organization_name": None}).status_code, 200)
         self.assertEqual(self.patch_json(person_url, {"role": "familjemedlem"}).status_code, 400)
