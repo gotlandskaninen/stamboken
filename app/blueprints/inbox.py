@@ -20,6 +20,7 @@ import utils.inbox as inbox
 import utils.inbox_interpreter as interpreter
 import utils.inbox_purge as inbox_purge
 import utils.purchase_notice as purchase_notice
+import utils.settings as settings
 from extensions import limiter
 from flask import Blueprint, current_app, jsonify, request, send_file
 from flask_login import current_user
@@ -47,6 +48,7 @@ from utils.individual_commands import (
     record_sale,
 )
 from utils.individual_number_v2 import PAPER_NUMBER_REQUIRED, parse_number
+from utils.legacy_compat import NOT_PROMOTED
 from utils.matrikel import resolve_own_membership
 
 from .common import json_login_required, problem
@@ -192,6 +194,17 @@ def rate_limited(exc):
     return problem(429, "För många anrop", f"För många inskick: högst {exc.description}.", type="rate-limit-exceeded")
 
 
+def certificate_upload_refusal():
+    """Keep demo uploads out of production, also when the general access rules are off."""
+    if settings.service.demo_instance:
+        return None
+    if request.cookies.get("sb_mode", "prod") != "prod":
+        return problem(403, "Förbjudet", "Intyg från testmiljön får bara laddas upp i testmiljön.")
+    if current_user.is_authenticated and not current_user.v2_promoted:
+        return problem(403, "Förbjudet", NOT_PROMOTED)
+    return None
+
+
 # [Next.js] Upload photos of certificates from the phone (docs/inkorg.md).
 @inbox_bp.route("/inkorg/upload", methods=["POST"])
 @json_login_required
@@ -202,6 +215,8 @@ def rate_limited(exc):
 # Every request counts here, refused or not: a refused upload is decoded all the same.
 @limiter.limit("60 per hour", key_func=lambda: str(current_user.id))
 def upload():
+    if (refused := certificate_upload_refusal()) is not None:
+        return refused
     # Set before the body is read: the same limit as nginx's, so a larger upload never half reaches Flask.
     request.max_content_length = MAX_REQUEST
     herd = Herd.get_or_none(Herd.herd == request.form.get("herd"))

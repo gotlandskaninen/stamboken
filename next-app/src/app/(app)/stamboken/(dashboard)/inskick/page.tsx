@@ -15,10 +15,9 @@ export const dynamic = "force-dynamic";
 export const metadata = { title: "Mina inskick" };
 
 export default async function MinaInskickPage() {
-  // Production in every mode, where the uploads go (ny/actions.ts).
   const { items } = await fetchApi<{ items: Inskick[] }>(
     "/v2/inkorg/mina-inskick",
-    { forceProd: true },
+    { isolateDemo: true },
   );
 
   return (
@@ -39,8 +38,8 @@ export default async function MinaInskickPage() {
             <div className={styles.cardBody}>
               <p className={styles.note} style={{ margin: 0 }}>
                 Här ser du de intyg du har skickat in och hur långt vi har
-                kommit med dem. Ladda upp ett foto av ett pappersintyg så läser
-                vi in kaninen åt dig.
+                kommit med dem. Du kan ladda upp ett foto eller en PDF av ett
+                pappersintyg.
               </p>
             </div>
           </section>

@@ -28,7 +28,7 @@
     "created": "Ditt konto är skapat",
     "nextDay": "Du börjar i testmiljön. Ditt konto kopieras dit i natt. Välkommen tillbaka i morgon.",
     "toDashboard": "Till Stamboken",
-    "demoUpload": "Du är i testmiljön. Intyg som du skickar här går till föreningens riktiga inkorg för registrering."
+    "demoUpload": "Du är i testmiljön. Det du laddar upp här stannar i testmiljön och läses inte in i Stamboken."
   },
   "queue": {
     "reading_one": "Bildtolkning: 1 foto väntar.",

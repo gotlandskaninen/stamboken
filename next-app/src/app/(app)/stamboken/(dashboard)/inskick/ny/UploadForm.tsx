@@ -84,7 +84,7 @@ export function UploadForm({
       if (acceptWarnings) fd.set("accept_warnings", "1");
       let res: Awaited<ReturnType<typeof uploadIntyg>>;
       try {
-        res = await uploadIntyg(fd);
+        res = await uploadIntyg(fd, mode);
       } catch {
         // The connection dropped: the call itself rejects. The files stay chosen.
         return setError("Uppladdningen avbröts. Försök igen.");

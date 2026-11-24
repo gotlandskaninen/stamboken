@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { loginInline, TEST_USERS } from "../e2e-shared/auth";
 
 // Inläsningskön från uppladdning till kaninens sida (docs/inkorg.md), med syntetiska data:
-// uppfödaren (test-gk-owner, äger G1274) fotograferar ett intyg på en telefon, en genbanks-
+// uppfödaren med produktionsåtkomst fotograferar ett intyg för G1274 på en telefon, en genbanks-
 // hjälpare (test-gk-helper, seedas av cli/create_test_users) tar ärendet och lägger in en
 // ny kanin med Visby Vilda × Visby Viking som föräldrar, och uppfödaren ser pappersintyget.
 // Filnamnet matchar inget mutation-/public-mönster, så specen körs i projektet owner-tests.
@@ -65,6 +65,12 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
   browser,
   baseURL,
 }) => {
+  await loginInline(page, page.context(), {
+    username: "test-gk-owner-promoted",
+    password: "test-gk-owner-promoted-pass",
+  });
+  const prodMode = { name: "sb_mode", value: "prod", url: baseURL! };
+  await page.context().addCookies([prodMode]);
   let itemId = "";
   let rabbit = "";
 
@@ -132,6 +138,7 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
   try {
     await test.step("3. Hjälparen tar ärendet i Inkorg", async () => {
       await loginInline(desk, worker, TEST_USERS.helper);
+      await worker.addCookies([prodMode]);
       const canvasSize = () =>
         desk
           .locator("canvas")

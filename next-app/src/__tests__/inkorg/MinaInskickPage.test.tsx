@@ -20,7 +20,7 @@ describe("Mina inskick", () => {
     api.mockResolvedValueOnce({ items: [] });
     const page = await MinaInskickPage();
     expect(api.mock.calls).toEqual([
-      ["/v2/inkorg/mina-inskick", { forceProd: true }],
+      ["/v2/inkorg/mina-inskick", { isolateDemo: true }],
     ]);
     expect(markUploadsSeen).not.toHaveBeenCalled();
     render(page);

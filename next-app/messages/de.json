@@ -28,7 +28,7 @@
     "created": "Dein Konto wurde erstellt",
     "nextDay": "Du startest in der Testumgebung. Dein Konto wird in der Nacht dorthin kopiert. Komm morgen wieder.",
     "toDashboard": "Zu Stamboken",
-    "demoUpload": "Du bist in der Testumgebung. Hier eingesendete Bescheinigungen gehen zur Registrierung an den Verein."
+    "demoUpload": "Du bist in der Testumgebung. Bescheinigungen, die du hier hochlädst, bleiben in der Testumgebung und werden nicht in Stamboken eingetragen."
   },
   "queue": {
     "reading_one": "1 Foto wartet auf die Auswertung.",

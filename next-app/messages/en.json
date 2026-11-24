@@ -28,7 +28,7 @@
     "created": "Your account has been created",
     "nextDay": "You will start in the test environment. Your account will be copied there overnight. Come back tomorrow.",
     "toDashboard": "Go to Stamboken",
-    "demoUpload": "You are in the test environment. Certificates submitted here go to the association’s real inbox for registration."
+    "demoUpload": "You are in the test environment. Certificates you upload here stay in the test environment and are not entered in Stamboken."
   },
   "queue": {
     "reading_one": "1 photo is waiting to be read.",

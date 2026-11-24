@@ -90,8 +90,7 @@ LEGACY_ENDPOINTS = frozenset(
 
 # Open to every logged-in account on every host. The Next.js server forwards
 # the visitor's cookies to public URLs too, so a logged-in member who is not
-# promoted must still reach the public functions, and her own uploads to the
-# intake queue.
+# promoted must still reach the public functions and read her own submissions.
 EXEMPT_ENDPOINTS = frozenset(
     {
         ("get_user", "GET"),
@@ -118,12 +117,7 @@ EXEMPT_ENDPOINTS = frozenset(
         # and the genebank names its form shows.
         ("member_applications.create_application", "POST"),
         ("member_applications.list_public_genebanks", "GET"),
-        # Skicka in intyg and Mina inskick always reach production, also from
-        # the demo, or an upload would be gone by the next night. The upload
-        # takes the caller's own herds (any herd from a queue worker); the
-        # others answer with her own uploads and notice count. The queue's
-        # work and the originals stay gated.
-        ("inbox.upload", "POST"),
+        # A member can still read her own submissions and manage their notices.
         ("inbox.my_uploads", "GET"),
         ("inbox.uploads_seen", "POST"),
         ("inbox.notice_count", "GET"),

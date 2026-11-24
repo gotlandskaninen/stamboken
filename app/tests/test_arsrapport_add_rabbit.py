@@ -129,6 +129,13 @@ class TestPhoto(AddRabbitTest):
         self.assertIn(self.helper.id, noticed)
         self.assertEqual(len(noticed), len(set(noticed)))
 
+    def test_demo_mode_cannot_upload_or_send_photos_to_the_production_queue(self):
+        self.login("owner")
+        self.client.set_cookie("sb_mode", "demo")
+        self.assertEqual(self.upload_photo().status_code, 403)
+        self.assertEqual(self.client.post(f"/api/v2/arsrapport{REPORT}/kop/inskick", json={}).status_code, 403)
+        self.assertFalse(db.InboxItem.select().exists())
+
     def test_a_login_is_the_items_sender(self):
         self.login("owner")
         item = self.reload(self.photo_item())
@@ -190,6 +197,7 @@ class TestPhoto(AddRabbitTest):
         """Opus L4: a caretaker (a herd-access grant) may register in the herd, so may upload for it; whoever may not
         register may not upload either, so no photo is left without its rabbit."""
         caretaker = self.user("skotare")
+        db.User.update(v2_prod_access=True).where(db.User.id == caretaker.id).execute()
         person = db.Member.create(
             first_name="Test", last_name="Skötare", membership=self.h.membership, role="skotare", user=caretaker
         )

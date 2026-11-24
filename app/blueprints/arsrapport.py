@@ -37,7 +37,7 @@ from utils.matrikel import resolve_own_membership
 from utils.report_code import CodeActor, actor_key
 
 from .common import check_genebank_access, json_login_required, manager_required, problem
-from .inbox import MAX_REQUEST, REGISTRATION_FIELDS, _each_image, _Refused
+from .inbox import MAX_REQUEST, REGISTRATION_FIELDS, _each_image, _Refused, certificate_upload_refusal
 from .individual_v2_create import may_register_in, number_suggestion, paper_number_check, register_individual_as
 from .rapport_link import _environment, session_codes, touch
 
@@ -247,6 +247,8 @@ def report_purchase(herd, year):
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/kop/inskick", methods=["POST"])
 @report_actor_required
 def send_purchase_photos(herd, year):
+    if (refusal := certificate_upload_refusal()) is not None:
+        return refusal
     herd, round_, access = _report_target(herd, year)  # a link writes only its own herd and year
     body = request.get_json(silent=True)
     if not isinstance(body, dict):
@@ -559,6 +561,8 @@ def _send_limit(access):
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/foto", methods=["POST"])
 @report_actor_required
 def upload_photo(herd, year):
+    if (refusal := certificate_upload_refusal()) is not None:
+        return refusal
     request.max_content_length = MAX_REQUEST  # before the body is read, as the queue's upload
     herd, round_, access = _report_target(herd, year)
     if access.item is not None:

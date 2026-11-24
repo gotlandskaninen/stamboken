@@ -20,7 +20,7 @@ import {
 
 // The report actions of the page behind the personal link. The same four as the logged-in page, with the same
 // signatures so ReportForm can call either, but every call goes to the production API (the link works there only)
-// and none checks the mode cookie: a visitor with a link has no sb_mode.
+// and a visitor with a link needs no mode cookie. Photo submissions cannot cross over from demo mode.
 export type MineEntry = {
   code_id: number;
   herd: string;
@@ -45,7 +45,7 @@ async function call<T>(
   url: string | null,
   method: string,
   body?: unknown,
-  timeout?: number,
+  options?: { timeout?: number; isolateDemo?: boolean },
 ): Promise<ActionResult<T>> {
   if (url === null) return refused("Ogiltig besättning eller år.");
   try {
@@ -53,7 +53,7 @@ async function call<T>(
       method,
       forceProd: true,
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      ...(timeout ? { timeout } : {}),
+      ...options,
     });
     return { ok: true, data };
   } catch (e) {
@@ -109,7 +109,7 @@ export async function dryRun(herd: string, year: number, body: Submission) {
     path(herd, year, "/torrkorning"),
     "POST",
     body,
-    SUBMIT_TIMEOUT_MS,
+    { timeout: SUBMIT_TIMEOUT_MS },
   );
 }
 
@@ -118,12 +118,9 @@ export async function submitReport(
   year: number,
   body: Submission,
 ) {
-  return call<Receipt>(
-    path(herd, year, "/skicka"),
-    "POST",
-    body,
-    SUBMIT_TIMEOUT_MS,
-  );
+  return call<Receipt>(path(herd, year, "/skicka"), "POST", body, {
+    timeout: SUBMIT_TIMEOUT_MS,
+  });
 }
 
 export async function withdrawReport(
@@ -136,7 +133,7 @@ export async function withdrawReport(
     path(herd, year, "/dra-tillbaka"),
     "POST",
     { revision, reason: reason ?? null },
-    SUBMIT_TIMEOUT_MS,
+    { timeout: SUBMIT_TIMEOUT_MS },
   );
 }
 
@@ -153,7 +150,9 @@ export async function sendPurchasePhotos(
   year: number,
   body: PurchasePhotosBody,
 ) {
-  return call<PurchaseNotice>(path(herd, year, "/kop/inskick"), "POST", body);
+  return call<PurchaseNotice>(path(herd, year, "/kop/inskick"), "POST", body, {
+    isolateDemo: true,
+  });
 }
 
 // The sale dialog's herd picker: the report herd's genebank, as the logged-in picker has it (4a). The page binds

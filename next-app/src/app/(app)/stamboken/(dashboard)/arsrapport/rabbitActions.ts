@@ -29,7 +29,12 @@ function path(herd: string, year: number, tail: string) {
 async function call<T>(
   env: Mode | undefined,
   url: string | null,
-  init: { method: string; body?: BodyInit; timeout?: number },
+  init: {
+    method: string;
+    body?: BodyInit;
+    timeout?: number;
+    isolateDemo?: boolean;
+  },
 ): Promise<ActionResult<T>> {
   const refused = (detail: string): ActionResult<never> => ({
     ok: false,
@@ -82,7 +87,7 @@ export async function uploadPhoto(
   return call<{ item_id: number; document_id: number }>(
     env,
     path(herd, year, purpose ? `/foto?syfte=${purpose}` : "/foto"),
-    { method: "POST", body: data, timeout: 60000 },
+    { method: "POST", body: data, timeout: 60000, isolateDemo: true },
   );
 }
 

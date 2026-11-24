@@ -203,12 +203,11 @@ class TestAccessRules(DatabaseTest):
 
 
 class TestOwnUploadsUnpromoted(InboxTest):
-    """Skicka in intyg and Mina inskick reach production for every account; the queue's work does not."""
-
-    OWN_HERDS_ONLY = "Du kan bara skicka in för dina egna besättningar."
+    """Production access is required to submit new certificates. Members can still read their own submissions."""
 
     def setUp(self):
         super().setUp()
+        db.User.update(v2_prod_access=False).where(db.User.id.in_([self.owner.id, self.helper.id])).execute()
         for patcher in (mock.patch.object(settings.service, "access_rules", "enforce"), mock.patch.dict(os.environ)):
             patcher.start()
             self.addCleanup(patcher.stop)
@@ -224,23 +223,52 @@ class TestOwnUploadsUnpromoted(InboxTest):
         data = {"herd": herd, "files": [(io.BytesIO(encoded(photo())), "intyg.jpg")]}
         return client.post("/api/v2/inkorg/upload", data=data, content_type="multipart/form-data", base_url=base_url)
 
-    def test_an_unpromoted_owner_uploads_and_reads_only_her_own(self):
-        other = self.item(herd=1, sender=self.manager)
-        # Neither promoted nor validated: on a legacy host the exemption comes before the course check.
+    def test_an_unpromoted_owner_can_only_read_her_existing_submissions(self):
+        own = self.item(sender=self.owner)
+        self.item(herd=1, sender=self.manager)
         for base in (NEW, LEGACY):
             with self.subTest(base):
                 client = self.client_of(self.owner, base)
                 resp = self.send(client, base)
-                self.assertEqual(resp.status_code, 201, resp.get_json())
+                self.assertEqual(resp.status_code, 403, resp.get_json())
                 listed = client.get("/api/v2/inkorg/mina-inskick", base_url=base)
                 self.assertEqual(listed.status_code, 200, listed.data)
                 ids = [item["id"] for item in listed.get_json()["items"]]
-                self.assertIn(resp.get_json()["item"]["id"], ids)
-                self.assertNotIn(other.id, ids)
+                self.assertEqual(ids, [own.id])
                 count = client.get("/api/v2/inkorg/notiser/antal", base_url=base)
                 self.assertEqual(count.get_json(), {"unread": 0, "works_in_queue": False})
-                refused = self.send(client, base, herd="G2")
-                self.assertEqual((refused.status_code, refused.get_json()["detail"]), (403, self.OWN_HERDS_ONLY))
+        self.assertEqual(db.InboxItem.select().count(), 2)
+        self.assertEqual(os.listdir(self.folder), [])
+
+    def test_demo_upload_stays_on_demo_even_for_a_promoted_owner(self):
+        db.User.update(v2_prod_access=True).where(db.User.id == self.owner.id).execute()
+        with mock.patch.object(settings.service, "demo_instance", True):
+            client = self.client_of(self.owner)
+            self.assertEqual(self.send(client).status_code, 201)
+        client.set_cookie("sb_mode", "prod", domain=urlparse(NEW).hostname)
+        self.assertEqual(self.send(client).status_code, 401)
+        self.assertEqual(db.InboxItem.select().count(), 1)
+
+    def test_demo_accepts_an_owner_without_production_access(self):
+        with (
+            mock.patch.object(settings.service, "demo_instance", True),
+            mock.patch.object(settings.service, "access_rules", "off"),
+        ):
+            client = self.client_of(self.owner)
+            client.set_cookie("sb_mode", "demo", domain=urlparse(NEW).hostname)
+            self.assertEqual(self.send(client).status_code, 201)
+
+    def test_production_refuses_demo_mode_and_unpromoted_accounts_with_rules_off(self):
+        with mock.patch.object(settings.service, "access_rules", "off"):
+            client = self.client_of(self.owner)
+            self.assertEqual(self.send(client).status_code, 403)
+            db.User.update(v2_prod_access=True).where(db.User.id == self.owner.id).execute()
+            client.set_cookie("sb_mode", "demo", domain=urlparse(NEW).hostname)
+            self.assertEqual(self.send(client).status_code, 403)
+            self.assertFalse(db.InboxItem.select().exists())
+            self.assertEqual(os.listdir(self.folder), [])
+            client.set_cookie("sb_mode", "prod", domain=urlparse(NEW).hostname)
+            self.assertEqual(self.send(client).status_code, 201)
 
     def test_the_queue_its_items_and_originals_stay_gated(self):
         own = self.item(herd=0, sender=self.owner)
@@ -339,7 +367,6 @@ class TestLegacyList(unittest.TestCase):
                 ("certificates_v2.verify_certificate_post", "POST"),
                 ("member_applications.create_application", "POST"),
                 ("member_applications.list_public_genebanks", "GET"),
-                ("inbox.upload", "POST"),
                 ("inbox.my_uploads", "GET"),
                 ("inbox.uploads_seen", "POST"),
                 ("inbox.notice_count", "GET"),

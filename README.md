@@ -94,8 +94,8 @@ the rules in `app/utils/legacy_compat.py`):
 
 Open to every logged-in account on every host: `/api/user`, `/api/logout`,
 the login routes, linking Google to one's own account, the public certificate
-verification, posting a membership application, uploading certificates to the
-intake queue, reading one's own uploads and unread-notice count there and
+verification, posting a membership application, reading one's own uploads
+and unread-notice count in the intake queue and
 marking those notices seen (the queue's work and the original photos stay
 gated), and the health check
 (`EXEMPT_ENDPOINTS`).
