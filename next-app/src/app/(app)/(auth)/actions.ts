@@ -1,7 +1,7 @@
 "use server";
 import { cookies, headers } from "next/headers";
 import { redirect } from "next/navigation";
-import { revalidatePath } from "next/cache";
+import { refresh, revalidatePath } from "next/cache";
 import { fetchApi } from "@/lib/api";
 import { forwardedFor } from "@/lib/forwardedFor";
 import { MODE_COOKIE, parseMode, type Mode } from "@/lib/mode";
@@ -361,15 +361,20 @@ export async function redeemLoginLink(token: string, confirmUserId?: number) {
   return finishCodeLogin("lank", { token, confirm_user_id: confirmUserId });
 }
 
+export type DisplayedRules = { version: string; sha256: string };
+
 export async function createMemberAccount(
   accepted: boolean,
-  rulesVersion: string,
+  rules: DisplayedRules,
   returnTo?: string,
 ): Promise<LoginResult> {
-  if (accepted !== true || !rulesVersion) return { error: "rulesChanged" };
-  return finishCodeLogin(
+  if (accepted !== true || !rules?.version || !rules.sha256)
+    return { error: "rulesChanged" };
+  const result = await finishCodeLogin(
     "skapa-konto",
-    { accepted, rules_version: rulesVersion },
+    { accepted, rules_version: rules.version, rules_sha256: rules.sha256 },
     returnTo,
   );
+  if ("error" in result && result.error === "rulesChanged") refresh();
+  return result;
 }

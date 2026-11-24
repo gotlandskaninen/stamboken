@@ -11,6 +11,7 @@ import Link from "next/link";
 import { useTranslation } from "react-i18next";
 import "@/i18n";
 import {
+  type DisplayedRules,
   createMemberAccount,
   lookupLoginLink,
   redeemLoginLink,
@@ -184,16 +185,17 @@ export function LoginLink({ enabled }: { enabled: boolean }) {
 }
 
 export function CreateAccount({
-  version,
+  rules,
   returnTo,
   children,
 }: {
-  version?: string;
+  rules?: DisplayedRules;
   returnTo?: string;
   children?: ReactNode;
 }) {
   const { t } = useTranslation();
-  const [accepted, setAccepted] = useState(false);
+  const [acceptedHash, setAcceptedHash] = useState<string | null>(null);
+  const accepted = !!rules && acceptedHash === rules.sha256;
   const [error, setError] = useState("");
   const [created, setCreated] = useState(false);
   const [pending, start] = useTransition();
@@ -214,7 +216,7 @@ export function CreateAccount({
         {t("codeLogin.accountPurpose")}{" "}
         <Link href="/dataskydd">{t("codeLogin.privacy")}</Link>
       </p>
-      {version ? (
+      {rules ? (
         <>
           {children}
           <form
@@ -226,10 +228,13 @@ export function CreateAccount({
               start(async () => {
                 const result = await createMemberAccount(
                   accepted,
-                  version,
+                  rules,
                   returnTo,
                 );
-                if ("error" in result) setError(result.error);
+                if ("error" in result) {
+                  setError(result.error);
+                  if (result.error === "rulesChanged") setAcceptedHash(null);
+                }
                 if ("demoAccountCreated" in result) setCreated(true);
               });
             }}
@@ -239,7 +244,9 @@ export function CreateAccount({
                 type="checkbox"
                 checked={accepted}
                 required
-                onChange={(event) => setAccepted(event.target.checked)}
+                onChange={(event) =>
+                  setAcceptedHash(event.target.checked ? rules.sha256 : null)
+                }
               />{" "}
               {t("codeLogin.accept")}
             </label>

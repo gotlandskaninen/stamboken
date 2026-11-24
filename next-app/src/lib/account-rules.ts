@@ -3,13 +3,6 @@ import { convertLexicalToPlaintext } from "@payloadcms/richtext-lexical/plaintex
 import { getPayload } from "payload";
 import config from "@payload-config";
 
-function hasRuleText(content?: SerializedEditorState | null) {
-  return (
-    !!content &&
-    /[\p{L}\p{N}]/u.test(convertLexicalToPlaintext({ data: content }))
-  );
-}
-
 // Match the current public document to its exact version. A newer draft, an
 // old publication under a former slug, or a removed page cannot supply rules.
 export async function getAccountRules() {
@@ -27,15 +20,32 @@ export async function getAccountRules() {
       overrideAccess: false,
       limit: 1,
     });
-    if (
-      !page?.layout?.some(
-        (block) =>
-          (block.blockType === "richText" && hasRuleText(block.content)) ||
-          (block.blockType === "columns" &&
-            block.columns?.some(({ content }) => hasRuleText(content))),
-      )
-    )
-      return null;
+    if (!page) return null;
+    // Only editorial rule text enables acceptance. Captions can accompany it.
+    let hasRuleText = false;
+    function ruleText(content?: SerializedEditorState | null) {
+      const text = content ? convertLexicalToPlaintext({ data: content }) : "";
+      if (/[\p{L}\p{N}]/u.test(text)) hasRuleText = true;
+      return text;
+    }
+    const sections = (page.layout ?? []).flatMap((block) => {
+      switch (block.blockType) {
+        case "richText":
+          return [ruleText(block.content)];
+        case "columns":
+          return (block.columns ?? []).map(({ content }) => ruleText(content));
+        case "image":
+          return [block.caption];
+        case "gallery":
+          return (block.images ?? []).map(({ caption }) => caption);
+        default:
+          return [];
+      }
+    });
+    if (!hasRuleText) return null;
+    const text = [page.title, page.subtitle, ...sections]
+      .filter(Boolean)
+      .join("\n\n");
     const {
       docs: [revision],
     } = await payload.findVersions({
@@ -49,7 +59,7 @@ export async function getAccountRules() {
       sort: "-id",
       limit: 1,
     });
-    return revision ? { version: String(revision.id), page } : null;
+    return revision ? { version: String(revision.id), text } : null;
   } catch {
     return null;
   }

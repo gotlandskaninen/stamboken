@@ -16,8 +16,10 @@ vi.mock("next/navigation", () => ({
     throw new Error("redirect " + path);
   },
 }));
-vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+const refresh = vi.hoisted(() => vi.fn());
+vi.mock("next/cache", () => ({ revalidatePath: vi.fn(), refresh }));
 const http = vi.fn<typeof fetch>();
+const rules = { version: "7", sha256: "a".repeat(64) };
 const prod = "https://example.org/prod";
 
 beforeEach(() => {
@@ -144,13 +146,17 @@ describe("code login server actions", () => {
     http.mockResolvedValueOnce(
       flask({ v2_prod_access: true }, 200, "session=test-login; Path=/"),
     );
-    await expect(createMemberAccount(true, "7", destination)).rejects.toThrow(
+    await expect(createMemberAccount(true, rules, destination)).rejects.toThrow(
       "redirect " + destination,
     );
     expect(http).toHaveBeenLastCalledWith(
       prod + "/api/v2/login/skapa-konto",
       expect.objectContaining({
-        body: JSON.stringify({ accepted: true, rules_version: "7" }),
+        body: JSON.stringify({
+          accepted: true,
+          rules_version: "7",
+          rules_sha256: rules.sha256,
+        }),
       }),
     );
   });
@@ -159,7 +165,7 @@ describe("code login server actions", () => {
     http.mockResolvedValueOnce(
       flask({ v2_prod_access: false }, 200, "session=test-login; Path=/"),
     );
-    expect(await createMemberAccount(true, "7")).toEqual({
+    expect(await createMemberAccount(true, rules)).toEqual({
       demoAccountCreated: true,
     });
     expect(store.set).toHaveBeenCalledWith(
@@ -170,12 +176,13 @@ describe("code login server actions", () => {
   });
   it("rejects an unchecked agreement and reports a stale version", async () => {
     const { createMemberAccount } = await import("@/app/(app)/(auth)/actions");
-    expect(await createMemberAccount(false, "7")).toHaveProperty("error");
+    expect(await createMemberAccount(false, rules)).toHaveProperty("error");
     expect(http).not.toHaveBeenCalled();
     http.mockResolvedValueOnce(flask({}, 412));
-    expect(await createMemberAccount(true, "7")).toEqual({
+    expect(await createMemberAccount(true, rules)).toEqual({
       error: "rulesChanged",
     });
+    expect(refresh).toHaveBeenCalledOnce();
     expect(store.set).not.toHaveBeenCalled();
   });
 });

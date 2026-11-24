@@ -1,7 +1,7 @@
+import { createHash } from "node:crypto";
 import { redirect } from "next/navigation";
 import { cookies } from "next/headers";
 import { CreateAccount } from "@/components/auth/CodeLogin";
-import { RenderBlocks } from "@/components/blocks/RenderBlocks";
 import { getAccountRules } from "@/lib/account-rules";
 import { codeLoginEnabled } from "@/lib/code-login-enabled";
 
@@ -15,14 +15,20 @@ export default async function CreateAccountPage({
   if (!(await cookies()).has("session") || !(await codeLoginEnabled()))
     redirect("/auth/sign-in");
   const rules = await getAccountRules();
+  const displayed = rules && {
+    version: rules.version,
+    sha256: createHash("sha256").update(rules.text, "utf8").digest("hex"),
+  };
+  const [title, ...paragraphs] = rules?.text.split("\n\n") ?? [];
   const { return_to } = await searchParams;
   return (
-    <CreateAccount version={rules?.version} returnTo={return_to}>
+    <CreateAccount rules={displayed ?? undefined} returnTo={return_to}>
       {rules && (
-        <section>
-          <h2>{rules.page.title}</h2>
-          {rules.page.subtitle && <p>{rules.page.subtitle}</p>}
-          <RenderBlocks blocks={rules.page.layout!} />
+        <section style={{ whiteSpace: "pre-wrap" }}>
+          <h2>{title}</h2>
+          {paragraphs.map((paragraph, index) => (
+            <p key={index}>{paragraph}</p>
+          ))}
         </section>
       )}
     </CreateAccount>

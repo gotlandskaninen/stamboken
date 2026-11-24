@@ -21,7 +21,7 @@
     "accept": "Ich habe die Regeln gelesen und werde sie einhalten.",
     "unavailable": "Der Dienst ist vorübergehend nicht verfügbar. Versuche es später erneut.",
     "rulesMissing": "Die Regeln konnten nicht geladen werden. Sobald sie wieder verfügbar sind, kannst du dein Konto erstellen.",
-    "rulesChanged": "Die Regeln wurden aktualisiert. Lade die Seite neu und lies sie, bevor du dein Konto erstellst.",
+    "rulesChanged": "Die Regeln wurden aktualisiert. Lies sie und setze das Häkchen erneut, bevor du dein Konto erstellst.",
     "accountConflict": "Möglicherweise gehört dir bereits ein Konto. Melde dich damit an oder wende dich an die Mitgliederverwaltung.",
     "expired": "Die Frist für die Kontoerstellung ist abgelaufen. Gehe zur Anmeldung und fordere einen neuen Code an.",
     "created": "Dein Konto wurde erstellt",

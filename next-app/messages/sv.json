@@ -21,7 +21,7 @@
     "accept": "Jag har läst reglerna och följer dem.",
     "unavailable": "Tjänsten är tillfälligt otillgänglig. Försök igen senare.",
     "rulesMissing": "Reglerna går inte att hämta. Du kan skapa kontot när reglerna går att läsa igen.",
-    "rulesChanged": "Reglerna har uppdaterats. Ladda om sidan och läs dem innan du skapar kontot.",
+    "rulesChanged": "Reglerna har uppdaterats. Läs dem och kryssa i rutan igen innan du skapar kontot.",
     "accountConflict": "Det finns redan ett konto som kan vara ditt. Logga in med det eller kontakta matrikelansvarig.",
     "expired": "Tiden för att skapa kontot har gått ut. Gå till inloggningen och be om en ny kod.",
     "created": "Ditt konto är skapat",

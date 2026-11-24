@@ -84,6 +84,7 @@ _TABLES_TO_TRUNCATE = [
     "herd",  # before membership (FK membership)
     "membership",
     "hbuser",
+    "account_rules_snapshot",
     "genebank",
 ]
 

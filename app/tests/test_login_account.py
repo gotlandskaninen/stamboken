@@ -4,6 +4,7 @@ import os
 import secrets
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from itertools import permutations
 from threading import Barrier
 from time import monotonic, sleep
@@ -18,7 +19,8 @@ from utils import database as db
 from tests.test_member_api import MatrikelApiTest, _mk_membership, _mk_person
 
 BASE = "/api/v2/login"
-RULES = {"accepted": True, "rules_version": "23"}
+RULE_TEXT = "Kontoregler\n\nAnvänd bara ditt eget testkonto."
+RULES = {"accepted": True, "rules_version": "23", "rules_sha256": sha256(RULE_TEXT.encode()).hexdigest()}
 
 
 class TestLoginAccount(MatrikelApiTest):
@@ -36,7 +38,7 @@ class TestLoginAccount(MatrikelApiTest):
         self.cms = cms.start()
         self.addCleanup(cms.stop)
         self.cms.return_value.status_code = 200
-        self.cms.return_value.json.return_value = {"version": "23"}
+        self.cms.return_value.json.return_value = {"version": "23", "text": RULE_TEXT}
         self.member = _mk_person(_mk_membership(), "Test", "Member", "member@example.org")
         db.Herd.update(membership=self.member.membership_id).where(db.Herd.id == self.herds[1].id).execute()
         self.initial_count = db.User.select().count()
@@ -95,6 +97,53 @@ class TestLoginAccount(MatrikelApiTest):
             self.assertNotIn("pending_member_id", session)
             self.assertEqual(session["auth_method"], "kod")
             self.assertTrue(data_access.session_holds(session))
+
+    def test_republished_text_shares_its_first_snapshot_and_changed_text_gets_a_new_one(self):
+        def accept(version, text):
+            self.member = _mk_person(_mk_membership(), "Test", "Member", f"member-{version}@example.org")
+            self.cms.return_value.json.return_value = {"version": version, "text": text}
+            client = self.pending(APP.test_client())
+            digest = sha256(text.encode()).hexdigest()
+            response = self.create({**RULES, "rules_version": version, "rules_sha256": digest}, client)
+            self.assertEqual(response.status_code, 200, response.data)
+            user = db.Member.get_by_id(self.member.id).user
+            self.assertEqual((user.rules_version, user.rules_sha256, user.rules_snapshot.text), (version, digest, text))
+            return user
+
+        first = accept("23", RULE_TEXT)
+        second = accept("24", RULE_TEXT)
+        self.assertEqual(db.AccountRulesSnapshot.select().count(), 1)
+        self.assertEqual(second.rules_snapshot.first_accepted_at, first.rules_accepted_at)
+        self.assertEqual(second.rules_snapshot.cms_version, "23")
+
+        third = accept("25", RULE_TEXT + " Nya regler.")
+        self.assertEqual(db.AccountRulesSnapshot.select().count(), 2)
+        self.assertEqual(third.rules_snapshot.first_accepted_at, third.rules_accepted_at)
+        self.assertEqual(third.rules_snapshot.cms_version, "25")
+
+    def test_account_still_has_the_exact_text_after_the_cms_page_is_deleted(self):
+        self.pending()
+        self.assertEqual(self.create().status_code, 200)
+        self.cms.return_value.status_code = 404
+        self.assertIsNone(login_account.published_rules())
+        self.assertEqual(db.AccountRulesSnapshot.update(text="Ersatt").execute(), 0)
+        self.assertEqual(db.AccountRulesSnapshot.delete().execute(), 0)
+        user = db.Member.get_by_id(self.member.id).user
+        self.assertEqual(user.rules_snapshot.text, RULE_TEXT)
+
+    def test_changed_text_with_the_same_revision_requires_a_new_acceptance(self):
+        self.pending()
+        self.cms.return_value.json.return_value = {"version": "23", "text": RULE_TEXT + " Ny regel."}
+        self.assertEqual(self.create().status_code, 412)
+        self.assert_no_account()
+        self.assertFalse(db.AccountRulesSnapshot.select().exists())
+
+    def test_failed_account_link_rolls_back_the_snapshot(self):
+        self.pending()
+        with mock.patch.object(matrikel, "link_member_user", side_effect=matrikel.LinkError("test", "test")):
+            self.assertEqual(self.create().status_code, 401)
+        self.assert_no_account()
+        self.assertFalse(db.AccountRulesSnapshot.select().exists())
 
     def test_account_linked_after_issue_cannot_be_entered_by_either_credential(self):
         response = self.client.post(BASE + "/kod", json={"email": self.member.email})
@@ -208,11 +257,18 @@ class TestLoginAccount(MatrikelApiTest):
 
     def test_explicit_acceptance_and_matching_published_rules_are_required(self):
         self.pending()
-        for body in ({}, {"accepted": 1, "rules_version": "23"}, {"accepted": True}):
+        for body in ({}, {**RULES, "accepted": 1}, {"accepted": True}, {"accepted": True, "rules_version": "23"}):
             self.assertEqual(self.create(body).status_code, 400)
         self.cms.assert_not_called()
-        self.assertEqual(self.create({"accepted": True, "rules_version": "22"}).status_code, 412)
-        for bad in ({}, {"version": None}, [], {"version": ""}):
+        self.assertEqual(self.create({**RULES, "rules_version": "22"}).status_code, 412)
+        for bad in (
+            {},
+            {"version": None},
+            [],
+            {"version": "", "text": RULE_TEXT},
+            {"version": "23"},
+            {"version": "23", "text": " "},
+        ):
             self.cms.return_value.json.return_value = bad
             self.assertEqual(self.create().status_code, 503)
         self.cms.side_effect = requests.Timeout
@@ -252,7 +308,7 @@ class TestLoginAccount(MatrikelApiTest):
                 elif path == "admin-edit":
                     data_access.edit_admin_user(self.viewer.id, {"email": address})
                 else:
-                    login_account.create_pending_account("23")
+                    login_account.create_pending_account("23", RULES["rules_sha256"])
                 return True
             except (data_access.AddressInUseError, login_account.AccountConflict):
                 return False

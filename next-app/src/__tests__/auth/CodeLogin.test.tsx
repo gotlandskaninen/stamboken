@@ -101,7 +101,7 @@ it("shows the full rules and requires an explicit agreement to the displayed ver
     demoAccountCreated: true,
   });
   render(
-    <CreateAccount version="23">
+    <CreateAccount rules={{ version: "23", sha256: "a".repeat(64) }}>
       <p>Hela regeltexten</p>
     </CreateAccount>,
   );
@@ -121,9 +121,29 @@ it("shows the full rules and requires an explicit agreement to the displayed ver
   await screen.findByText(/Ditt konto kopieras dit i natt/);
   expect(actions.createMemberAccount).toHaveBeenCalledWith(
     true,
-    "23",
+    { version: "23", sha256: "a".repeat(64) },
     undefined,
   );
+});
+it("clears the agreement when updated rules arrive after submission", async () => {
+  vi.mocked(actions.createMemberAccount).mockResolvedValue({
+    error: "rulesChanged",
+  });
+  const form = (text: string, sha256: string) => (
+    <CreateAccount rules={{ version: "23", sha256 }}>{text}</CreateAccount>
+  );
+  const { rerender } = render(form("Första texten", "a".repeat(64)));
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: "Skapa mitt konto" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent(
+    "Reglerna har uppdaterats",
+  );
+  rerender(form("Nya regler", "b".repeat(64)));
+  expect(screen.getByText("Nya regler")).toBeVisible();
+  expect(screen.getByRole("checkbox")).not.toBeChecked();
+  expect(
+    screen.getByRole("button", { name: "Skapa mitt konto" }),
+  ).toBeDisabled();
 });
 it("explains a missing publication and provides no creation button", () => {
   render(<CreateAccount />);

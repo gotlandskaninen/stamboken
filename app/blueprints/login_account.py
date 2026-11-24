@@ -21,15 +21,19 @@ def create_account():
     if not login_account.pending_valid():
         return problem(401, "Inloggningen har gått ut", expired)
     body = request.get_json(silent=True)
-    if not isinstance(body, dict) or body.get("accepted") is not True or not isinstance(body.get("rules_version"), str):
+    if (
+        not isinstance(body, dict)
+        or body.get("accepted") is not True
+        or not isinstance(body.get("rules_version"), str)
+        or not isinstance(body.get("rules_sha256"), str)
+    ):
         return problem(400, "Godkänn reglerna", "Läs och godkänn reglerna för användarkonton.")
-    version = login_account.published_rules_version()
-    if version is None:
-        return problem(503, "Reglerna kunde inte hämtas", "Försök igen senare.")
-    if body["rules_version"] != version:
-        return problem(412, "Reglerna har ändrats", "Ladda om sidan och läs de aktuella reglerna.")
     try:
-        user, generation = login_account.create_pending_account(version)
+        user, generation = login_account.create_pending_account(body["rules_version"], body["rules_sha256"])
+    except login_account.RulesUnavailable:
+        return problem(503, "Reglerna kunde inte hämtas", "Försök igen senare.")
+    except login_account.RulesChanged:
+        return problem(412, "Reglerna har ändrats", "Läs de aktuella reglerna innan du skapar ditt konto.")
     except login_account.AccountConflict:
         return problem(
             409,

@@ -21,7 +21,7 @@
     "accept": "I have read the rules and agree to follow them.",
     "unavailable": "The service is temporarily unavailable. Please try again later.",
     "rulesMissing": "We could not load the rules. You can create your account once they are available again.",
-    "rulesChanged": "The rules have changed. Reload the page and read them before creating your account.",
+    "rulesChanged": "The rules have changed. Read them and tick the box again before creating your account.",
     "accountConflict": "An existing account may be yours. Sign in with it or contact the membership registrar.",
     "expired": "Your time to create the account has expired. Return to sign-in and request a new code.",
     "created": "Your account has been created",

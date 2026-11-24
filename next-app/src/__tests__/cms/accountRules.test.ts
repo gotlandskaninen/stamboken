@@ -1,8 +1,18 @@
 // @vitest-environment node
+import { createHash } from "node:crypto";
+import { renderToStaticMarkup } from "react-dom/server";
+import CreateAccountPage from "@/app/(app)/(auth)/auth/skapa-konto/page";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GET } from "@/app/(payload)/cms-api/kontoregler/version/route";
 
 const db = vi.hoisted(() => ({ find: vi.fn(), findVersions: vi.fn() }));
+vi.mock("next/headers", () => ({
+  cookies: async () => new Map([["session", "test"]]),
+}));
+vi.mock("@/lib/code-login-enabled", () => ({
+  codeLoginEnabled: async () => true,
+}));
+vi.mock("@/components/auth/CodeLogin", () => ({ CreateAccount: vi.fn() }));
 vi.mock("@payload-config", () => ({ default: {} }));
 vi.mock("payload", () => ({ getPayload: async () => db }));
 
@@ -18,6 +28,8 @@ describe("published account rules revision", () => {
   });
   const page = {
     id: 3,
+    title: "Kontoregler",
+    subtitle: "För alla konton",
     updatedAt: "2026-01-02T00:00:00.000Z",
     layout: [
       {
@@ -26,7 +38,7 @@ describe("published account rules revision", () => {
       },
     ],
   };
-  it("matches the live publication's parent and timestamp and returns only the version ID", async () => {
+  it("matches the live publication's parent and timestamp and returns the exact text with its version", async () => {
     db.find.mockResolvedValue({ docs: [page] });
     db.findVersions.mockResolvedValue({ docs: [{ id: 8 }] });
     const response = await GET();
@@ -49,8 +61,25 @@ describe("published account rules revision", () => {
         },
       }),
     );
-    expect(await response.json()).toEqual({ version: "8" });
+    expect(await response.json()).toEqual({
+      version: "8",
+      text: "Kontoregler\n\nFör alla konton\n\nAnvänd bara ditt eget testkonto.",
+    });
     expect(response.headers.get("cache-control")).toBe("no-store");
+  });
+  it("displays the text that Flask will archive and binds the form to its UTF-8 digest", async () => {
+    db.find.mockResolvedValue({ docs: [page] });
+    db.findVersions.mockResolvedValue({ docs: [{ id: 8 }] });
+    const form = await CreateAccountPage({ searchParams: Promise.resolve({}) });
+    const { text, version } = await (await GET()).json();
+    expect(form.props.rules).toEqual({
+      version,
+      sha256: createHash("sha256").update(text).digest("hex"),
+    });
+    const markup = renderToStaticMarkup(form.props.children);
+    expect(markup).toContain(
+      "<h2>Kontoregler</h2><p>För alla konton</p><p>Använd bara ditt eget testkonto.</p>",
+    );
   });
   it.each([[], [{ ...page, layout: [] }]])(
     "does not accept a missing or empty publication",
@@ -67,6 +96,7 @@ describe("published account rules revision", () => {
   });
   it.each([
     [{ blockType: "divider" }],
+    [{ blockType: "image", caption: "En bildtext" }],
     [{ blockType: "richText", content: paragraph("  \n") }],
   ])(
     "refuses a published revision without readable rule text",
@@ -85,6 +115,9 @@ describe("published account rules revision", () => {
       docs: [{ ...page, layout: [{ blockType: "columns", columns }] }],
     });
     db.findVersions.mockResolvedValue({ docs: [{ id: 8 }] });
-    expect(await (await GET()).json()).toEqual({ version: "8" });
+    expect(await (await GET()).json()).toEqual({
+      version: "8",
+      text: "Kontoregler\n\nFör alla konton\n\nAnvänd bara ditt eget testkonto.",
+    });
   });
 });

@@ -2,6 +2,7 @@
 
 import os
 from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from uuid import uuid4
 
 import requests
@@ -9,7 +10,7 @@ from flask import current_app, session
 from peewee import fn
 
 from utils import data_access, login_code, matrikel, settings
-from utils.database import DB_PROXY, Herd, Member, User
+from utils.database import DB_PROXY, AccountRulesSnapshot, Herd, Member, User
 from utils.mail import address_hash
 
 PENDING_FOR = timedelta(minutes=15)
@@ -21,6 +22,14 @@ class InvalidPending(Exception):
 
 class AccountConflict(Exception):
     """An account may already belong to this member."""
+
+
+class RulesUnavailable(Exception):
+    """The CMS has no readable published rules."""
+
+
+class RulesChanged(Exception):
+    """The current publication differs from the one displayed."""
 
 
 def start_pending(person, row, epoch):
@@ -48,7 +57,7 @@ def pending_valid():
     )
 
 
-def published_rules_version():
+def published_rules():
     """Read the current published version through the server-configured CMS endpoint."""
     origin = os.getenv("NEXT_INTERNAL_ORIGIN")
     if not origin:
@@ -60,11 +69,10 @@ def published_rules_version():
             allow_redirects=False,
             headers={"Cache-Control": "no-store"},
         )
-        if response.status_code == 200:
-            body = response.json()
-            version = body.get("version") if isinstance(body, dict) else None
-            if isinstance(version, str) and version.strip():
-                return version
+        if response.status_code == 200 and isinstance(body := response.json(), dict):
+            version, text = body.get("version"), body.get("text")
+            if isinstance(version, str) and version.strip() and isinstance(text, str) and text.strip():
+                return version, text
     except (requests.RequestException, ValueError):
         pass
     return None
@@ -93,9 +101,18 @@ def _existing_account(person, address):
     )
 
 
-def create_pending_account(version):
+def create_pending_account(displayed_version, displayed_sha256):
     """Recheck the proof and possible accounts under lock, then insert and link one new user atomically."""
     with DB_PROXY.atomic():
+        # Fetch at submission, before taking the member and account-table locks.
+        rules = published_rules()
+        if rules is None:
+            raise RulesUnavailable
+        version, text = rules
+        digest = sha256(text.encode("utf-8")).hexdigest()
+        if (version, digest) != (displayed_version, displayed_sha256):
+            raise RulesChanged
+
         person_id = session["pending_member_id"]
         try:
             matrikel.lock_person_membership(person_id)
@@ -119,13 +136,18 @@ def create_pending_account(version):
             raise InvalidPending
         if _existing_account(person, address):
             raise AccountConflict
+        accepted_at = datetime.now(timezone.utc)
+        AccountRulesSnapshot.get_or_create(
+            sha256=digest, defaults={"text": text, "cms_version": version, "first_accepted_at": accepted_at}
+        )
         user = User.create(
             uuid=uuid4(),
             email=contact,
             fullname=f"{person.first_name} {person.last_name}".strip(),
             privileges=[{"level": "viewer", "genebank": n} for n in (1, 2)],
             rules_version=version,
-            rules_accepted_at=datetime.now(timezone.utc),
+            rules_accepted_at=accepted_at,
+            rules_snapshot=digest,
             v2_prod_access=os.getenv("SJALVSKAPAT_KONTO_PROD", "false").lower() == "true",
         )
         try:

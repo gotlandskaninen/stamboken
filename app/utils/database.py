@@ -1133,6 +1133,16 @@ class Bodyfat(BaseModel):
     bodyfat_date = DateField()
 
 
+class AccountRulesSnapshot(BaseModel):
+    sha256 = TextField(primary_key=True)
+    text = TextField()
+    cms_version = TextField()
+    first_accepted_at = TimestampTZField()
+
+    class Meta:
+        table_name = "account_rules_snapshot"
+
+
 class User(BaseModel, UserMixin):
     """
     Table keeping track of system users.
@@ -1156,6 +1166,7 @@ class User(BaseModel, UserMixin):
     v2_prod_access = BooleanField(default=False)
     rules_accepted_at = TimestampTZField(null=True)
     rules_version = TextField(null=True)
+    rules_snapshot = ForeignKeyField(AccountRulesSnapshot, column_name="rules_sha256", null=True, index=False)
     # Phase 17 — account deactivation. Peewee's FieldAccessor shadows
     # flask_login UserMixin.is_active (same pattern as Herd.is_active), so
     # login_user() natively refuses inactive users. Normal audited column —
@@ -2449,6 +2460,7 @@ MODELS = [
     IndividualDisease,
     Weight,
     Bodyfat,
+    AccountRulesSnapshot,
     User,
     UserMessage,
     YearlyReportRound,
@@ -2504,6 +2516,8 @@ def init():
         # pylint: disable=protected-access
         Breeding._schema.create_foreign_key(Breeding.mother)
         Breeding._schema.create_foreign_key(Breeding.father)
+
+    _lock_account_rules_snapshots()
 
     # Stamp the bootstrap version — but ONLY on a database this call created
     # from nothing. Stamping an existing (possibly partially migrated) database
@@ -4314,9 +4328,22 @@ def migrate_48_to_49():
         ).execute()
 
 
+def _lock_account_rules_snapshots():
+    for action in ("UPDATE", "DELETE"):
+        DATABASE.execute_sql(
+            f"CREATE OR REPLACE RULE account_rules_no_{action.lower()} AS ON {action} TO account_rules_snapshot "
+            "DO INSTEAD NOTHING"
+        )
+
+
 def migrate_49_to_50():
     """Record the published rules accepted by self-registered accounts."""
     with DATABASE.atomic():
+        DATABASE.create_tables([AccountRulesSnapshot], safe=True)
+        _lock_account_rules_snapshots()
+        DATABASE.execute_sql(
+            "ALTER TABLE hbuser ADD COLUMN IF NOT EXISTS rules_sha256 TEXT REFERENCES account_rules_snapshot(sha256)"
+        )
         DATABASE.execute_sql("ALTER TABLE hbuser ADD COLUMN IF NOT EXISTS rules_accepted_at TIMESTAMPTZ")
         DATABASE.execute_sql("ALTER TABLE hbuser ADD COLUMN IF NOT EXISTS rules_version TEXT")
         SchemaHistory.insert(  # pylint: disable=E1120
