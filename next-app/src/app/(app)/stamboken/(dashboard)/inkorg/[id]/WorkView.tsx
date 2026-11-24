@@ -232,7 +232,16 @@ export function WorkView({
               id,
               action === "ta_over" ? shownAssignment(item) : undefined,
             ),
-          ({ undo }) => offerUndo(undo, t("queueAssignment.taken", { id })),
+          ({ undo }) =>
+            offerUndo(
+              undo,
+              t(
+                action === "ta_over"
+                  ? "queueAssignment.takenOver"
+                  : "queueAssignment.taken",
+                { id },
+              ),
+            ),
         );
       case "oppna":
         return run(() => changeState(id, "tagen"));

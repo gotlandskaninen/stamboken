@@ -151,6 +151,9 @@ describe("WorkView: mail", () => {
     const assigned_at = "2026-11-14T08:00:00.123456+00:00";
     render(view(item({ assigned_to: other, assigned_at, documents: [] })));
     fireEvent.click(screen.getByRole("button", { name: "Ta över" }));
+    expect(
+      await screen.findByText("Du har tagit över ärende 12."),
+    ).toBeVisible();
     fireEvent.click(await screen.findByRole("button", { name: "Ångra" }));
     expect(actions.takeItem).toHaveBeenCalledWith(12, {
       assigned_to: other.id,
