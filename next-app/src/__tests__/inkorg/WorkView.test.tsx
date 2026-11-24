@@ -149,11 +149,20 @@ describe("WorkView: mail", () => {
       data: { restored: [12] },
     });
     const assigned_at = "2026-11-14T08:00:00.123456+00:00";
-    render(view(item({ assigned_to: other, assigned_at, documents: [] })));
+    render(
+      <main>
+        <h1>Ärende 12</h1>
+        {view(item({ assigned_to: other, assigned_at, documents: [] }))}
+      </main>,
+    );
+    const heading = screen.getByRole("heading", { name: "Ärende 12" });
+    expect(heading).toHaveFocus();
+    screen.getByRole("button", { name: "Ta över" }).focus();
     fireEvent.click(screen.getByRole("button", { name: "Ta över" }));
     expect(
       await screen.findByText("Du har tagit över ärende 12."),
     ).toBeVisible();
+    expect(heading).toHaveFocus();
     fireEvent.click(await screen.findByRole("button", { name: "Ångra" }));
     expect(actions.takeItem).toHaveBeenCalledWith(12, {
       assigned_to: other.id,

@@ -36,6 +36,7 @@ const other = { id: 7, name: "Handläggare B" };
 const user = { ...me, is_admin: false, is_manager: [1] };
 const itemView = (state: ItemState, handler: Person | null) => (
   <QueueUndoProvider>
+    <h2 id="case-subject">Ärendet</h2>
     <ItemControls
       item={{
         id: 12,
@@ -55,7 +56,7 @@ async function advance(ms: number) {
 }
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  vi.resetAllMocks();
   vi.useFakeTimers();
   actions.undoAssignment.mockResolvedValue({
     ok: true,
@@ -80,6 +81,7 @@ describe("handläggning och ångra", () => {
     });
     expect(actions.takeItem).toHaveBeenCalledWith(12, undefined);
     expect(push).toHaveBeenCalledWith("/stamboken/inkorg/12");
+    expect(screen.getByRole("heading")).toHaveFocus();
     view.rerender(
       <QueueUndoProvider>
         <p>Registrering</p>
@@ -126,14 +128,7 @@ describe("handläggning och ångra", () => {
 
   it("announces in an existing status and pauses the timer for hover and focus", async () => {
     actions.takeItem.mockResolvedValue({ ok: true, data: { undo: "over" } });
-    render(
-      <>
-        <h2 id="case-subject" tabIndex={-1}>
-          Ärendet
-        </h2>
-        {itemView("tagen", other)}
-      </>,
-    );
+    render(itemView("tagen", other));
     const status = screen.getByRole("status");
     expect(status).toBeEmptyDOMElement();
     await act(async () =>
@@ -171,6 +166,7 @@ describe("handläggning och ångra", () => {
       assigned_at: "2026-11-14T08:00:00+00:00",
     });
     expect(push).not.toHaveBeenCalled();
+    expect(screen.getByRole("heading")).toHaveFocus();
     await advance(19_999);
     expect(screen.getByRole("button", { name: "Ångra" })).toBeEnabled();
     await advance(1);
@@ -191,9 +187,12 @@ describe("handläggning och ångra", () => {
       screen.getByRole("link", { name: "Börja registrera" }),
     ).toHaveAttribute("href", "/stamboken/inkorg/12");
     await act(async () => {
-      fireEvent.click(screen.getByRole("button", { name: "Lägg tillbaka" }));
+      const putBack = screen.getByRole("button", { name: "Lägg tillbaka" });
+      putBack.focus();
+      fireEvent.click(putBack);
     });
     expect(actions.releaseItem).toHaveBeenCalledWith(12);
+    expect(screen.getByRole("heading")).toHaveFocus();
     expect(screen.getByRole("status")).toHaveTextContent(
       "Du lade tillbaka ärende 12.",
     );

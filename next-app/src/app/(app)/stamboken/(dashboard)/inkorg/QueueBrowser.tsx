@@ -73,8 +73,7 @@ function QueueRow({
           {queueSubject(item, t)}
         </div>
         <div className={styles.rowMeta}>
-          {item.sender?.name || item.member_name || t("queue.unknownSender")}{" "}
-          ·{" "}
+          {item.sender?.name || item.member_name || t("queue.unknownSender")} ·{" "}
           {item.herd ? (
             <span className={styles.herdCode}>{item.herd}</span>
           ) : (

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { releaseItem, takeItem } from "./actions";
-import { QueueUndoStatus, useQueueUndo } from "./QueueUndo";
+import { focusCaseHeading, QueueUndoStatus, useQueueUndo } from "./QueueUndo";
 import {
   itemActions,
   lacksRole,
@@ -62,6 +62,7 @@ export function ItemControls({
         res.data.undo,
         t(`queueAssignment.${message[action]}`, { id: item.id }),
       );
+      focusCaseHeading();
       if (action === "take") router.push(href);
     });
   }

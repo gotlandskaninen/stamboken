@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useState, useTransition } from "react";
 import { useTranslation } from "react-i18next";
 import Link from "next/link";
 import { formatTime } from "@/lib/inkorg";
@@ -47,7 +47,7 @@ import {
   type Rect,
 } from "../lib";
 import { AssignItem } from "../QueueControls";
-import { QueueUndoStatus, useQueueUndo } from "../QueueUndo";
+import { focusCaseHeading, QueueUndoStatus, useQueueUndo } from "../QueueUndo";
 import { AskBreeder } from "./AskBreeder";
 import { CertificateForm } from "./CertificateForm";
 import { MailFacts, MailThread, SenderUnconfirmed } from "./MailFacts";
@@ -112,6 +112,9 @@ export function WorkView({
   const { t } = useTranslation();
   const mode = useMode();
   const { offerUndo } = useQueueUndo();
+  useEffect(() => {
+    if (document.activeElement === document.body) focusCaseHeading();
+  }, [item.id]);
   // As RegisterRabbitDialog: demo reads from /api-test when it is configured.
   const apiBase =
     mode === "demo" && process.env.NEXT_PUBLIC_API_TEST_URL
@@ -232,7 +235,8 @@ export function WorkView({
               id,
               action === "ta_over" ? shownAssignment(item) : undefined,
             ),
-          ({ undo }) =>
+          ({ undo }) => {
+            focusCaseHeading();
             offerUndo(
               undo,
               t(
@@ -241,7 +245,8 @@ export function WorkView({
                   : "queueAssignment.taken",
                 { id },
               ),
-            ),
+            );
+          },
         );
       case "oppna":
         return run(() => changeState(id, "tagen"));
