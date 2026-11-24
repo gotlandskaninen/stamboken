@@ -49,6 +49,22 @@ suite("describe", () => {
     expect(describe(el)).toBe("raden ”Född 2026-11-02”");
   });
 
+  it("puts a space between blocks and a stat cell's label first", () => {
+    const cell = html(
+      "<div class='cell'><div>inga</div><div class='sb-stat-label'>Besättningar</div></div>",
+    );
+    expect(describe(cell)).toBe("texten ”Besättningar: inga”");
+    document.body.innerHTML =
+      "<table><tbody><tr><td>Ada</td><td>G9999-2601</td><td>Hona</td></tr></tbody></table>";
+    expect(describe(document.querySelector("tr")!)).toBe(
+      "raden ”Ada G9999-2601 Hona”",
+    );
+    const card = html(
+      "<div class='card'><h2>Kullen</h2><p>Född<br>2026-11-02</p></div>",
+    );
+    expect(describe(card)).toBe("rutan ”Kullen Född 2026-11-02”");
+  });
+
   it("cuts long text at 50 characters", () => {
     const el = html(`<p>${"a".repeat(60)}</p>`);
     expect(describe(el)).toBe(`texten ”${"a".repeat(50)}…”`);
