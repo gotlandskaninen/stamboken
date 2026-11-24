@@ -19,6 +19,12 @@ class TestLogMasking(unittest.TestCase):
             mask_tokens(f"https://example.org/rapport/{TOKEN}?x=1"), "https://example.org/rapport/4711.***?x=1"
         )
 
+    def test_link_with_the_token_after_a_hash_is_masked(self):
+        """The link is /rapport#<token>: no server sees the fragment, but a mail or a quote in a log may carry it."""
+        self.assertEqual(
+            mask_tokens(f"Öppna https://example.org/rapport#{TOKEN}"), "Öppna https://example.org/rapport#4711.***"
+        )
+
     def test_ordinary_text_is_untouched(self):
         for text in ("GET /api/v2/individual/G9001-2512 200", "version 2.8.0", "12.5 kg", None, ""):
             self.assertEqual(mask_tokens(text), text)

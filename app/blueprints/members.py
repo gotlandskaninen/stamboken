@@ -38,8 +38,16 @@ from utils.matrikel import (
     parse_postal_fields,
     set_member_email,
     set_membership_status,
+    write_matrikel_audit,
 )
-from utils.members import CONSENT_KEYS, consent_answered, effective_consent, stored_consent
+from utils.members import (
+    CONSENT_KEYS,
+    PROFILE_CONSENT_TEXT_VERSION,
+    consent_answered,
+    effective_consent,
+    set_consent,
+    stored_consent,
+)
 from utils.membership_lifecycle import Status, TransitionRefused
 
 from blueprints.common import (
@@ -435,6 +443,11 @@ def patch_me_contact():
             m, ms, err = _relock_me(membership_id, person_id)
             if err is not None:
                 return err
+            changed = [f for f, v in membership_updates.items() if getattr(ms, f) != v]
+            changed += [f for f, v in person_updates.items() if getattr(m, f) != v]
+            if changed:  # D19: a paper form signed before this change must not overwrite it; the names only
+                payload = {"person_id": m.id, "fields": changed, "source": "profil"}
+                write_matrikel_audit(current_user, "kontakt_andrad", ms, payload)
             for field, value in person_updates.items():
                 setattr(m, field, value)
             for field, value in membership_updates.items():
@@ -544,14 +557,18 @@ def verify_me_email():
         User.select().where(User.id == current_user.id).for_update().get()
         if not session_holds(session):  # revoked while the request waited for the account's row
             return problem(401, "Sessionen gäller inte längre", "Logga in igen.")
-        m, _ms, err = _relock_me(membership_id, person_id)
+        m, ms, err = _relock_me(membership_id, person_id)
         if err is not None:
             return err
         if not row.new_address or row.user_id != m.user_id or not consume(row):
             return _wrong_code()
         try:
             with DB_PROXY.atomic():
+                previous = m.email
                 m = set_member_email(m, row.new_address, current_user, by="self")
+                if m.email != previous:
+                    payload = {"person_id": m.id, "fields": ["email"], "source": "profil"}
+                    write_matrikel_audit(current_user, "kontakt_andrad", ms, payload)
         except AddressTaken:
             return _wrong_code()  # taken since the code went; the code stays used (the return commits)
     session.pop("login_request", None)
@@ -619,10 +636,7 @@ def patch_me_consent():
         # (fail-closed).
         merged = {k: v is True for k, v in stored_consent(ms).items() if k in CONSENT_KEYS}
         merged.update(updates)
-        ms.publication_consent = merged
-        # Consent only — never carry membership_status or the address along
-        # (same rule as the contact route).
-        ms.save(only=[Membership.publication_consent, Membership.updated_at])
+        set_consent(ms, merged, source="profil", text_version=PROFILE_CONSENT_TEXT_VERSION, user=current_user.id)
     return jsonify(_me_response(m))
 
 

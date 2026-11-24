@@ -37,6 +37,7 @@ from utils.database import (
     MatrikelAudit,
     Member,
     MemberApplication,
+    MemberChangeRequest,
     MemberNumberCounter,
     MemberPreviousAddress,
     Membership,
@@ -499,6 +500,8 @@ def anonymize_person(member, actor, deferred_originals=None):
         if user is not None:  # her name leaves the public certificate check page too (stamboken #6)
             User.update(name_on_check_page=False).where(User.id == user.id).execute()
         redact_person_from_audits(person)
+        # the old and new e-mail of each change (Fable 8); a queued mail to one finds no address and is cancelled
+        MemberChangeRequest.delete().where(MemberChangeRequest.member == person.id).execute()
         now = datetime.now()
         HerdAccessGrant.update(revoked_at=now, updated_at=now).where(
             HerdAccessGrant.member == person,

@@ -1,0 +1,9 @@
+{% block subject %}Årsrapporten för {{ herd }} är tillbakadragen{% endblock %}
+
+{% block body %}
+Hej!
+
+Årsrapporten för besättning {{ herd }} drogs tillbaka den {{ datum }}. Kaninerna räknas inte som levande 31 december förrän rapporten skickas igen.
+
+Var det inte du? Kontakta genbanksansvarig genom att svara på det här mejlet.
+{% endblock %}

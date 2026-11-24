@@ -7,6 +7,7 @@ import { Masthead } from "@/components/shell/Masthead";
 import { GmailAlarm } from "./GmailAlarm";
 import { AssignHerd, RowActions } from "./QueueControls";
 import {
+  accountOrLink,
   CLOSED_STATES,
   itemActions,
   kindLabel,
@@ -297,7 +298,7 @@ export default async function InkorgPage({
                       </td>
                       <td data-label="Besättning">{item.herd ?? "–"}</td>
                       <td data-label="Inskickat av">
-                        {item.sender?.name ?? "–"}
+                        {accountOrLink(item) ?? "–"}
                       </td>
                       <td data-label="Typ">{kindLabel(item.kind)}</td>
                       <td data-label="Läge">

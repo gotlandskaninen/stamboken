@@ -63,6 +63,7 @@ from utils.database import AUDITED_TABLES  # isort: skip
 from utils.database import IndividualDisease  # isort: skip
 
 from utils.database import YearlyReportRound  # isort:skip
+from utils.database import YearlyReportRoundGenebank  # isort:skip
 from utils.csv_safe import csv_cell  # isort:skip
 from utils.herd_tracking import BIRTH_HERD_CHANGED_REASON  # isort:skip
 from utils.herd_tracking import HerdTrackingError  # isort:skip
@@ -79,6 +80,7 @@ from utils.individual_commands import update_birth_date_herd_tracking  # isort:s
 from utils.individual_commands import update_bodyfat, update_weights  # isort:skip
 from utils.individual_commands import IndividualRefused, execute, purge_command_free_text  # isort:skip
 from utils.individual_commands import known_color, known_litter, known_origin_herd, known_parent  # isort:skip
+from utils.individual_commands import lock_mother_litters  # isort:skip
 from utils.individual_legacy import translate  # isort:skip
 from utils import settings  # isort:skip
 from extensions import session_redis  # isort:skip
@@ -1755,6 +1757,17 @@ def save_yearly_report(herd_id, form_data, user):
                     "message": "Report year does not match report round year",
                 }
 
+            # Legacy closes for a genebank once v2 activated it for the year, whatever the round's flags say
+            if (
+                YearlyReportRoundGenebank.select()
+                .where(
+                    (YearlyReportRoundGenebank.round == report_round.id)
+                    & (YearlyReportRoundGenebank.genebank == herd.genebank_id)
+                )
+                .exists()
+            ):
+                return {"status": "error", "message": "Årsrapporten för den här genbanken lämnas i nya Stamboken."}
+
             # Validate that no other report exists for this herd in this year
             existing_reports = (
                 YearlyHerdReport.select()
@@ -1763,6 +1776,7 @@ def save_yearly_report(herd_id, form_data, user):
                     (YearlyHerdReport.herd == herd_id)
                     & (YearlyReportRound.report_year == report_year)
                     & (YearlyHerdReport.round != report_round_id)
+                    & (YearlyHerdReport.status == "legacy")
                 )
             )
             if existing_reports.exists():
@@ -1779,7 +1793,11 @@ def save_yearly_report(herd_id, form_data, user):
         # Check if a report already exists for this herd and round
         existing_report = (
             YearlyHerdReport.select()
-            .where((YearlyHerdReport.herd == herd_id) & (YearlyHerdReport.round == report_round_id))
+            .where(
+                (YearlyHerdReport.herd == herd_id)
+                & (YearlyHerdReport.round == report_round_id)
+                & (YearlyHerdReport.status == "legacy")
+            )
             .first()
         )
 
@@ -3152,6 +3170,9 @@ def register_birth(form, user_uuid):
         return max(existing_numbers) if existing_numbers else 0
 
     with DATABASE.atomic():
+        # The mother's litters first, as RegisterLitter: the dates are decided again under it below.
+        if breeding.mother_id is not None:
+            lock_mother_litters(breeding.mother_id)
         # Serialise the herd/year litter-number space before reading it,
         # deterministic order to avoid deadlocks — mirrors renumber_litters.
         # This litter is in the same ascending lock call even when its breed date falls in another year.
@@ -3184,6 +3205,17 @@ def register_birth(form, user_uuid):
             Individual.get_by_id(locked.mother_id) if locked.mother_id else None
         ):
             return {"status": "error", "message": not_owned}
+        # The date rules again under the mother's lock: a litter of hers registered meanwhile counts.
+        date_errors, date_warnings = validate_breeding_dates(
+            breed_date=locked.breed_date,
+            birth_date=birth_date,
+            mother=breeding.mother,
+            father=breeding.father,
+            exclude_breeding_id=locked.id,
+            litter_size=litter_size,
+        )
+        if date_errors:
+            return {"status": "error", "message": ", ".join(date_errors)}
 
         suggestion = suggest_litter_number(herd_identifier, birth_date_only, exclude_breeding_id=breeding.id)
         litter_conflicts = suggestion["conflicts"]
@@ -3331,6 +3363,7 @@ def update_breeding(form, user_uuid):
         # a correction committed before the lock.
         if new_sizes[1] != breeding.litter_size6w:
             changes["litter_size6w"] = new_sizes[1]
+            changes["litter_size6w_preliminary"] = False  # a typed count is not the guess
     except (TypeError, ValueError):
         errors += ["Unknown litter size."]
 
@@ -3342,6 +3375,7 @@ def update_breeding(form, user_uuid):
         return {"status": "error", "message": ", ".join(errors)}
 
     parents_changed = "mother" in changes or "father" in changes
+    litter_dates_changed = bool(changes.keys() & {"mother", "father", "breed_date", "birth_date"})
     validation_input_changed = bool(changes.keys() & {"mother", "father", "breed_date", "birth_date", "litter_size"})
     # The BIRTH rows move below, in the same transaction as the breeding save.
     new_birth_date = changes.get("birth_date")
@@ -3350,9 +3384,21 @@ def update_breeding(form, user_uuid):
     # refused sibling (HerdTrackingError) must leave every kit and the breeding untouched.
     try:
         with DATABASE.atomic():
+            # A parent or date change takes the litter's mothers first, as RegisterLitter takes its mother's (the 3- and
+            # 35-day rules): the one it has now (read afresh, since a correction may have come after this request's
+            # read) and any new one, in ascending order. A count alone takes none: a certificate calls this holding
+            # the litter's row already, and that row lock serializes it with ConfirmLitterSize.
+            mothers = []
+            if litter_dates_changed:
+                now_mother = Breeding.select(Breeding.mother).where(Breeding.id == breeding.id).scalar()
+                mothers = sorted({m for m in (now_mother, getattr(changes.get("mother"), "id", None)) if m})
+            for mother_id in mothers:
+                lock_mother_litters(mother_id)
             # LOCK ORDER: Breeding first, then individuals in ascending id in ONE call — the order
             # delete_breeding and set_litter_number/renumber_litters take.
             stored = Breeding.select().where(Breeding.id == breeding.id).for_update().get()
+            if litter_dates_changed and stored.mother_id is not None and stored.mother_id not in mothers:  # not ours
+                return {"status": "error", "message": "Kullen ändrades samtidigt. Försök igen."}
             # Authorize again under the lock: the pre-check above read an unlocked herd.
             if not user.can_edit(stored.breeding_herd_id.herd):
                 return {"status": "error", "message": "Forbidden"}
@@ -3508,18 +3554,24 @@ def update_yearly_report_round(round_id, form, user_uuid):
     Updates an existing YearlyReportRound with data from the form.
     Only accessible to admin or manager users.
     """
+    import utils.arsrapport as arsrapport  # pylint: disable=import-outside-toplevel  # it imports half the app
+
     user = fetch_user_info(user_uuid)
     if not (user.is_admin or user.is_manager):
         return {"status": "error", "message": "Forbidden"}
     try:
-        yr_round = YearlyReportRound.get(YearlyReportRound.id == round_id)
-        yr_round.start_date = form.get("start_date", yr_round.start_date)
-        yr_round.end_date = form.get("end_date", yr_round.end_date)
-        yr_round.is_active = form.get("is_active", yr_round.is_active)
-        yr_round.manually_activated = form.get("manually_activated", yr_round.manually_activated)
-        yr_round.report_year = form.get("report_year", yr_round.report_year)
-        # Do not update 'created_by' or 'creation_date'
-        yr_round.save()
+        with DATABASE.atomic():  # as save_round: the UPDATE holds the round row until the end_date has been followed
+            yr_round = YearlyReportRound.get(YearlyReportRound.id == round_id)
+            yr_round.start_date = form.get("start_date", yr_round.start_date)
+            yr_round.end_date = form.get("end_date", yr_round.end_date)
+            yr_round.is_active = form.get("is_active", yr_round.is_active)
+            yr_round.manually_activated = form.get("manually_activated", yr_round.manually_activated)
+            yr_round.report_year = form.get("report_year", yr_round.report_year)
+            # Do not update 'created_by' or 'creation_date'
+            yr_round.save()
+            # Always, from the row read back under its lock: save() writes every column, so a form without end_date
+            # may still write back one read before a save_round that moved it
+            arsrapport.follow_end_date(YearlyReportRound.get_by_id(round_id))
         return {"status": "success", "round": yr_round.id}
     except YearlyReportRound.DoesNotExist:
         return {"status": "error", "message": "YearlyReportRound not found."}
@@ -3546,7 +3598,7 @@ def get_yearly_report_rounds_with_counts(user_uuid=None):
             .join(
                 YearlyHerdReport,
                 JOIN.LEFT_OUTER,
-                on=(YearlyHerdReport.round == YearlyReportRound.id),
+                on=((YearlyHerdReport.round == YearlyReportRound.id) & (YearlyHerdReport.status == "legacy")),
             )
             .group_by(YearlyReportRound, User.username)
             .dicts()
@@ -3584,7 +3636,11 @@ def get_yearly_report_by_round(herd_id, round_id):
     try:
         report = (
             YearlyHerdReport.select()
-            .where((YearlyHerdReport.herd == herd_id) & (YearlyHerdReport.round == round_id))
+            .where(
+                (YearlyHerdReport.herd == herd_id)
+                & (YearlyHerdReport.round == round_id)
+                & (YearlyHerdReport.status == "legacy")
+            )
             .get()
         )
         report_data = report.as_dict()
@@ -3608,7 +3664,11 @@ def get_yearly_reports(
             reports = (
                 YearlyHerdReport.select(YearlyHerdReport, Herd)
                 .join(Herd)
-                .where((YearlyHerdReport.round == round_id) & (Herd.genebank == genebank_id))
+                .where(
+                    (YearlyHerdReport.round == round_id)
+                    & (Herd.genebank == genebank_id)
+                    & (YearlyHerdReport.status == "legacy")
+                )
             )
 
             formatted_reports = []

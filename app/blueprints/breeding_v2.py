@@ -61,7 +61,8 @@ def check_order():
     if not _can_manage_herd(current_user, herd):
         return problem(403, "Forbidden", "Åtkomst nekad")
 
-    result = check_litter_order(herd_id, year)
+    # allow_gaps=1, before a registration: the rule promotion applies, where a paper certificate's number may skip
+    result = check_litter_order(herd_id, year, allow_gaps=request.args.get("allow_gaps") == "1")
     return jsonify(result), 200
 
 

@@ -10,6 +10,7 @@ import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
 from herdbook import APP, limiter  # noqa: E402
 from utils.herd_tracking import (
+    UNDO_REASON,
     HerdTrackingInvalid,
     can_see_buyer,
     herd_tracking_history,
@@ -37,8 +38,10 @@ ROW_KEYS = {
     "notes",
     "buyer",
     "can_void",
+    "reason_replaced",
     "can_undo_sale",
     "can_undo_operation",
+    "report",
 }
 
 
@@ -145,6 +148,32 @@ class TestBuyerVisibility(HistoryBase):
         self.assertFalse(can_see_buyer(db.User.get_by_id(other.id), self.genebanks[0].id))
         self.assertTrue(can_see_buyer(self.manager, self.genebanks[0].id))
         self.assertFalse(can_see_buyer(self.owner, self.genebanks[0].id))
+
+    def test_reason_replaced_where_a_void_would_put_the_system_reason(self):  # the seller types none that goes
+        helper = da.register_user("hjalpare", "pass")
+        helper.add_role("helper", self.genebanks[0].id)
+        flags = {}
+        for username in ("owner", "hjalpare", "man"):
+            self._login(username)
+            for rabbit in (self.rabbit, self.out):
+                response = self.client.get(f"/api/v2/individual/{rabbit.number}/herd-tracking?include_voided=1")
+                self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+                flags[username, rabbit.number] = {row["reason_replaced"] for row in response.get_json()["rows"]}
+        self.assertEqual(
+            flags,
+            {
+                ("owner", self.rabbit.number): {False},  # no buyer: her reason is kept
+                ("owner", self.out.number): {True},
+                ("hjalpare", self.rabbit.number): {False},
+                ("hjalpare", self.out.number): {False},  # may see the buyer: types and is checked
+                ("man", self.rabbit.number): {False},
+                ("man", self.out.number): {False},
+            },
+        )
+        self._login("owner")  # the page sends the system reason in place of the hidden field
+        response = self.client.post(f"/api/v2/herd-tracking/{self.out_row.id}/void", json={"reason": UNDO_REASON})
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(db.HerdTracking.get_by_id(self.out_row.id).voided_reason, UNDO_REASON)
 
     def test_v1_never_carries_buyer_fields(self):
         data = db.Individual.get_by_id(self.out.id).as_dict()

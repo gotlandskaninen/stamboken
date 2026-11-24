@@ -429,6 +429,11 @@ class TestErrorClasses(MailTest):
         self.assertEqual(mail.send_pending(self.now + timedelta(minutes=6)), 2)
         self.assertEqual(sorted(_row_id(msg) for msg, _, _ in relay.sent), [first, second])
 
+    def test_scrub_masks_a_token_that_ends_at_the_cut(self):
+        token = mail.link_token("rapport", 12)
+        text = "a" * (999 - len(token)) + " " + token + "X"
+        self.assertNotIn(token.split(".")[1], mail._scrub(text))
+
     def test_refused_sender_is_systemic_whatever_the_code(self):
         """A refused MAIL FROM would fail every mail alike, so it pauses the sender instead."""
         first, second = self.queue("a@example.org"), self.queue("b@example.org")

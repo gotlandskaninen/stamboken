@@ -42,7 +42,7 @@ from utils.database import (
     MemberPreviousAddress,
     User,
 )
-from utils.log_masking import mask_tokens
+from utils.log_masking import mask_cut, mask_tokens
 
 logger = logging.getLogger("herdbook.mail")
 
@@ -66,7 +66,7 @@ RETRY_DELAYS = (
 )
 RETENTION = timedelta(days=396)
 
-MailKind = namedtuple("MailKind", "priority category build")
+MailKind = namedtuple("MailKind", "priority category build login_address", defaults=[None])
 Recipient = namedtuple("Recipient", "address label")
 
 # kind -> MailKind; build(params) returns the template variables (plus an optional "attachments" list of
@@ -76,11 +76,11 @@ MAIL_KINDS = {}
 RECIPIENT_KINDS = {}
 
 
-def mail_kind(name, *, priority, category):
-    """Registers the decorated `build(params)` as the builder of mail kind `name` (template `email/<name>.txt`)."""
+def mail_kind(name, *, priority, category, login_address=None):
+    """Registers a builder and, for personal links, how to find the member's login address from the mail's params."""
 
     def register(build):
-        MAIL_KINDS[name] = MailKind(priority, category, build)
+        MAIL_KINDS[name] = MailKind(priority, category, build, login_address)
         return build
 
     return register
@@ -115,6 +115,7 @@ def enqueue_mail(
     dedupe_key=None,
     not_before=None,
     created_by=None,
+    priority=None,
 ):
     """
     Queues one mail in the caller's transaction and returns its id, or None when a row with `dedupe_key`
@@ -139,7 +140,7 @@ def enqueue_mail(
             ref_id=ref_id,
             herd=herd,
             genebank=genebank,
-            priority=spec.priority,
+            priority=spec.priority if priority is None else priority,  # a mail of the kind may be more urgent
             category=spec.category,
             dedupe_key=dedupe_key,
             next_attempt_at=not_before or _utcnow(),
@@ -161,9 +162,9 @@ def _mac(message):
     return hmac.new(secret.encode(), message.encode(), hashlib.sha256)
 
 
-def _link_mac(purpose, row_id):
+def _link_mac(purpose, row_id, host=None):
     # The hostname binds a link to its environment: the demo is a copy of production with the same row ids.
-    message = f"link:{_hostname()}:{purpose}:{row_id}"
+    message = f"link:{host or _hostname()}:{purpose}:{row_id}"
     return base64.urlsafe_b64encode(_mac(message).digest()[:16]).rstrip(b"=").decode()
 
 
@@ -184,7 +185,11 @@ def verify_link(purpose, token):
     if match is None or not settings.mail.link_secret:
         return None
     row_id = int(match.group(1))
-    return row_id if hmac.compare_digest(_link_mac(purpose, row_id), match.group(2)) else None
+    # A link made under an earlier host name still verifies while that name is in LINK_HOSTS (FA4).
+    hosts = [_hostname(), *settings.mail.link_hosts]
+    return (
+        row_id if any(hmac.compare_digest(_link_mac(purpose, row_id, host), match.group(2)) for host in hosts) else None
+    )
 
 
 def _hostname():
@@ -207,6 +212,15 @@ def address_hash(address):
     return _mac(f"addr:{_normalize(address) or ''}").hexdigest()
 
 
+def _delivery_hash(row, address):
+    """A member's bounce flag tracks their current mailbox. A link may have gone to a previous one."""
+    if row.recipient_kind == "member":
+        current = Member.select(Member.email).where(Member.id == row.recipient_id).scalar()
+        if address != _normalize(current):
+            return None
+    return address_hash(address)
+
+
 _ADDRESS = re.compile(r"[^@\s<>,;\"']+@[^@\s<>,;\"']+")
 _ADDRESS_LIKE = re.compile(r"<?[^\s<>@]*@[^\s<>]*>?")
 
@@ -218,8 +232,8 @@ def _normalize(raw):
 
 
 def _scrub(text):
-    """SMTP errors often quote the recipient: nothing that looks like an address is stored."""
-    return _ADDRESS_LIKE.sub("<adress>", text)[:1000] if text else text
+    """SMTP errors and bounces often quote the recipient or the link: no address and no token is stored."""
+    return mask_cut(_ADDRESS_LIKE.sub("<adress>", mask_tokens(text)), 1000)
 
 
 # --- Templates ---
@@ -413,7 +427,7 @@ def _claim(now):
     return MailMessage.get_by_id(found[0]) if found else None
 
 
-def _renew(row):
+def _renew(row, login_address, address):
     """
     Restarts the claim's clock just before the mail goes, so the row cannot be reclaimed until long after
     SEND_DEADLINE. False when another sender has taken the row since (this one was slow) or the recipient has
@@ -422,7 +436,18 @@ def _renew(row):
     renewed = MailMessage.update(claimed_at=_utcnow()).where(
         (MailMessage.id == row.id) & (MailMessage.claim_token == row.claim_token)
     )
-    return renewed.execute() == 1
+    if renewed.execute() != 1:
+        return False
+    # Rendering attachments or opening SMTP may have outlasted a login address's validity. Rebuild for its successor.
+    if login_address is not None:
+        current = _normalize(login_address(row.params))
+        if current is None:
+            _finish(row, _utcnow(), status="cancelled", last_error="mejlet är inte längre aktuellt")
+            return False
+        if current != address:
+            _finish(row, _utcnow(), status="queued")
+            return False
+    return True
 
 
 def _finish(row, now, attempt=None, **fields):
@@ -451,7 +476,7 @@ def _failed(row, now, result, smtp_code, detail, address=None):
     else:
         fields = {"status": "failed"}
     if address and (smtp_code or "")[:4] in ("5.1.", "5.2.", "5.3."):
-        fields["address_hash"] = address_hash(address)  # the recipient's mailbox refused: the bounce flag
+        fields["address_hash"] = _delivery_hash(row, address)
     attempt = {"result": result, "smtp_code": smtp_code, "detail": detail}
     return _finish(row, now, attempt, attempts=attempts, last_error=detail, **fields)
 
@@ -519,9 +544,15 @@ def _send_one(row, relay, now):
     if resolve is None:
         return _finish(row, now, status="cancelled", last_error=f"okänd mottagartyp: {row.recipient_kind}")
     mode = settings.mail.mode
+    login_address = kind.login_address if row.recipient_kind in ("member", "member_previous_address") else None
     try:
-        recipient = resolve(row.recipient_id)
-        address = _normalize(recipient.address) if recipient else None
+        if login_address is not None:
+            address = _normalize(login_address(row.params))
+            if address is None:
+                return _finish(row, now, status="cancelled", last_error="mottagaren saknar en giltig inloggningsadress")
+        else:
+            recipient = resolve(row.recipient_id)
+            address = _normalize(recipient.address) if recipient else None
         if address is None:
             return _finish(row, now, status="cancelled", last_error="mottagaren saknar e-post")
         variables = kind.build(row.params)
@@ -544,7 +575,7 @@ def _send_one(row, relay, now):
     if mode == "allowlist" and not _allowed(address):
         return _finish(row, now, status="blocked", last_error="spärrat: adressen finns inte i MAIL_ALLOWLIST")
     try:
-        relay.send(msg, address, lambda: _renew(row))
+        relay.send(msg, address, lambda: _renew(row, login_address, address))
     except _ClaimLost:
         logger.warning("Mail %s was reclaimed by another sender or lost its recipient; it is not sent", row.id)
         return True
@@ -570,7 +601,7 @@ def _send_one(row, relay, now):
         status="sent",
         sent_at=now,
         attempts=row.attempts + 1,
-        address_hash=address_hash(address),
+        address_hash=_delivery_hash(row, address),
         last_error=None,
     )
 

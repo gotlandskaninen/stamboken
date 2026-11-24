@@ -20,6 +20,7 @@ import threading
 import time
 import uuid
 from urllib.parse import urlparse
+from zoneinfo import ZoneInfo
 
 import apscheduler.schedulers.background
 import click
@@ -76,6 +77,7 @@ from utils import login_code  # isort:skip
 from utils.matrikel import purge_previous_addresses  # isort:skip
 from utils import inbox  # isort:skip
 from utils.inbox import queue_digests  # isort:skip
+from utils.arsrapport_invite import send_due_invitations  # isort:skip
 from utils import inbox_gmail  # isort:skip
 from utils import inbox_purge  # isort:skip
 from utils import buyer_contact  # isort:skip
@@ -336,6 +338,28 @@ def _expire_login_codes():
         APP.logger.exception("Expiring login codes failed")
     finally:
         genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _send_arsrapport_invitations():
+    """Leader job at 07:00 (step 3, FA9), built as _send_mail: it closes its thread's connection."""
+    try:
+        APP.logger.info(
+            "Queued %s yearly report invitations", send_due_invitations(datetime.datetime.now(datetime.timezone.utc))
+        )
+    except Exception:  # pylint: disable=broad-except
+        APP.logger.exception("Queueing the yearly report invitations failed")
+    finally:
+        genetics.ps._close_db_connection()  # pylint: disable=protected-access
+
+
+def _catch_up_arsrapport_invitations(now=None):
+    """
+    At startup: a restart across 07:00 leaves the day's cron run to tomorrow, so run the job once now if it is past
+    07:00 (FA9). send_due_invitations only does what is due and unsent, so a second run changes nothing.
+    """
+    now = now or datetime.datetime.now(ZoneInfo("Europe/Stockholm"))
+    if now.astimezone(ZoneInfo("Europe/Stockholm")).hour >= 7:
+        _send_arsrapport_invitations()
 
 
 def _queue_notice_digests():
@@ -3170,6 +3194,24 @@ def initialize_app():
             id="mail_send",
             max_instances=1,
             coalesce=True,
+        )
+
+        # The yearly report's invitations on each genebank's send day, when someone is awake to see them (FA9).
+        scheduler.add_job(
+            _send_arsrapport_invitations,
+            "cron",
+            hour=7,
+            id="arsrapport_invitations",
+            max_instances=1,
+            coalesce=True,
+            misfire_grace_time=3600,
+        )
+
+        scheduler.add_job(
+            _catch_up_arsrapport_invitations,
+            trigger="date",
+            id="arsrapport_invitations_catch_up",
+            misfire_grace_time=None,
         )
 
         scheduler.add_job(

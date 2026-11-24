@@ -46,7 +46,7 @@ export const NAV_ITEMS: {
 
 export type NavItem = (typeof NAV_ITEMS)[number];
 
-// "Mina inskick" is for every logged-in user; "Inkorg" only for those who work
+// "Mina inskick" and "Årsrapport" are for every logged-in user; "Inkorg" only for those who work
 // in the intake queue (works_in_queue from /v2/inkorg/notiser/antal).
 export function navItemsFor(worksInQueue: boolean): NavItem[] {
   return [
@@ -56,6 +56,12 @@ export function navItemsFor(worksInQueue: boolean): NavItem[] {
       i18nKey: "sidebar.minaInskick",
       href: "/stamboken/inskick",
       icon: "camera",
+    },
+    {
+      key: "arsrapport",
+      i18nKey: "sidebar.arsrapport",
+      href: "/stamboken/arsrapport",
+      icon: "calendar",
     },
     ...(worksInQueue
       ? [

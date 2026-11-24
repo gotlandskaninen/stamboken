@@ -48,6 +48,9 @@ class FlaskTest(DatabaseTest):
         """
         APP.config["TESTING"] = True  # fmt: skip  # noqa: E501  # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_TESTING
         APP.config["DEBUG"] = False  # fmt: skip  # noqa: E501  # nosemgrep: python.flask.security.audit.hardcoded-config.avoid_hardcoded_config_DEBUG
+        # Restored afterwards: a test file that runs later reads the session cookie by its real name
+        for key in ("SESSION_COOKIE_NAME", "SESSION_PERMANENT"):
+            self.addCleanup(APP.config.__setitem__, key, APP.config[key])
         APP.config["SESSION_COOKIE_NAME"] = "test_session"
         APP.config["SESSION_PERMANENT"] = False
         # Disable rate limiting during tests to prevent 429 errors

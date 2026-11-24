@@ -43,6 +43,7 @@ from utils.database import (
     User,
 )
 from utils.gmail import Gmail, HistoryTooOld
+from utils.log_masking import mask_cut, mask_tokens
 from utils.mail import Recipient, _hostname, _normalize, _scrub, enqueue_mail, mail_kind, recipient_kind
 
 logger = logging.getLogger("herdbook.inbox_gmail")
@@ -311,13 +312,14 @@ def _text(msg):
     part = msg.get_body(preferencelist=("plain", "html"))
     if part is None:
         return None
-    text = _content(part)[:MAX_BODY]
+    text = mask_tokens(_content(part))[:MAX_BODY]  # a reply may quote the invitation's link (FA3)
     if part.get_content_subtype() == "html":
         parser = _HtmlText()
         parser.feed(text)
         parser.close()
         text = "\n".join(" ".join(line.split()) for line in "".join(parser.parts).splitlines() if line.strip())
-    return _no_nul(text).strip()[:MAX_TEXT] or None
+    # Last, on the finished text: decoding entities, dropping tags and NULs can rebuild a token masking saw in pieces.
+    return mask_cut(_no_nul(text).strip(), MAX_TEXT) or None
 
 
 def _attachments(msg):
@@ -327,7 +329,7 @@ def _attachments(msg):
         name = part.get_filename()
         if part.is_multipart() or (part.get_content_maintype() == "text" and not name):
             continue
-        found.append((_no_nul(name or "namnlös")[:200], part.get_payload(decode=True) or b""))
+        found.append((mask_cut(_no_nul(name or "namnlös"), 200), part.get_payload(decode=True) or b""))
     return found
 
 
@@ -397,7 +399,7 @@ def _delivery_report(msg):
     for part in msg.walk():
         kind = part.get_content_type()
         if kind == "text/plain" and text is None:
-            text = _no_nul(_content(part)[:MAX_BODY]).strip()[:MAX_TEXT] or None
+            text = mask_cut(_no_nul(mask_tokens(_content(part))[:MAX_BODY]).strip(), MAX_TEXT) or None
         elif kind == "message/delivery-status":
             for fields in part.get_payload():
                 diagnostic = diagnostic or fields.get("Diagnostic-Code") or fields.get("Status")
@@ -585,7 +587,7 @@ def ask_breeder(item, user, text, document_id=None, crop=None):
         raise inbox.InboxError(409, "Posten väntar. Arbeta vidare med den för att fråga uppfödaren.")
     if not isinstance(text, str) or not text.strip() or len(text) > inbox.MAX_NOTE:
         raise inbox.InboxError(400, f"Skriv frågan, högst {inbox.MAX_NOTE} tecken.")
-    detail = {"text": text.strip()}
+    detail = {"text": mask_tokens(text.strip())}
     if crop is not None:
         if isinstance(document_id, bool) or not isinstance(document_id, int):
             raise inbox.InboxError(400, "Ange dokumentet som utsnittet är ur.")

@@ -35,6 +35,7 @@ const row = (over: Partial<HerdTrackingRow>): HerdTrackingRow => ({
   can_void: false,
   can_undo_sale: false,
   can_undo_operation: false,
+  report: null,
   ...over,
 });
 
@@ -43,6 +44,7 @@ const history = (
 ): HerdTrackingHistory => ({
   individual: { id: 7, number: "G1274-2401" },
   viewer: { can_manage: false },
+  death_report: null,
   rows: [
     row({
       id: 4,
@@ -176,6 +178,22 @@ describe("HerdHistorySection", () => {
     expect(buttons).toHaveLength(1);
     fireEvent.click(buttons[0]);
     expect(onVoid).toHaveBeenCalledWith(expect.objectContaining({ id: 4 }));
+  });
+
+  it("links an active row a report wrote to Ändra i årsrapporten, not Ångra", () => {
+    const h = history();
+    h.rows[0] = {
+      ...h.rows[0],
+      can_void: false,
+      report: { herd: "G1", year: 2025 },
+    };
+    h.rows[1] = { ...h.rows[1], report: { herd: "G1", year: 2024 } }; // voided: no link
+    render(<HerdHistorySection history={h} onVoid={vi.fn()} />);
+    fireEvent.click(screen.getByRole("button", { name: "Visa allt" }));
+    const links = screen.getAllByRole("link", { name: "Ändra i årsrapporten" });
+    expect(links).toHaveLength(1);
+    expect(links[0].getAttribute("href")).toBe("/stamboken/arsrapport/G1/2025");
+    expect(screen.queryByRole("button", { name: "Ångra" })).toBeNull();
   });
 
   it("shows 'Korrigera historik' only to managers", () => {

@@ -209,6 +209,33 @@ Konkret:
 * Dåligt, eftersom informationen enligt art. 14 måste nå köparen inom en
   månad, vilket kräver att säljaren ger beviset vid överlämningen.
 
+## Tillägg 2026-11-16 (årsrapport v2, steg 4a): köparen sparas över Dra tillbaka
+
+En köpare utanför föreningen som en årsrapport sålde till går annars med
+försäljningen när rapporten dras tillbaka, och medlemmen måste skriva in
+köparen igen för att skicka rapporten på nytt. Köparen sparas därför kvar
+över Dra tillbaka, på berättigat intresse (Jonas beslut 2026-11-16).
+
+* Den makulerade försäljningen (`TRANSFER`) behåller sin `holder_contact`.
+  Raden visar var köparen kom ifrån, och genbanksansvarig läser och raderar
+  köparen genom den som förut. Ingen aktiv rad håller köparen under tiden,
+  och säljaren ser bara "Köparen finns sparad".
+* Köparen sparas till natten efter rundans `end_date`: `purge_at` blir
+  midnatt i Stockholm två dagar efter `end_date` (`kept_until`), så att
+  gallringen natten efter `end_date` inte tar den. Förlängs rundan flyttar
+  `save_round` datumet. Dras rapporten tillbaka efter det sparas ingenting.
+* Bara samma rapports nya inskick kopplar köparen igen, och bara när tre
+  villkor håller: rapporten köparen kom från är en tillbakadragen rapport för
+  samma besättning och runda, en av dess operationer skrev en `TRANSFER` av
+  samma kanin som höll köparen, och ingen aktiv rad håller köparen. Bara
+  servern skriver in köparens id och rapporten i utkastet (`kopare_id`,
+  `fran_rapport`). `TransferIndividual` kopplar då den sparade raden
+  (`buyer_contact_id`) i stället för att skapa en ny, och `purge_at` blir
+  åter fem år från försäljningen.
+* Tas försäljningen bort ur utkastet raderas köparen direkt, och likaså när
+  rapporten skickas utan den eller med en ny köpare. Ett försäljningsförslag
+  tar ingen sparad köpare.
+
 ## Mer information
 
 Delarna om köparens uppgifter väntar på styrelsens beslut per capsulam.
@@ -230,5 +257,6 @@ Relaterade beslut: [ADR-0014](0014-authorization-model.md)
 | 2026-10-28 | Jonas Hagberg | Skapad |
 | 2026-10-29 | Jonas Hagberg | Två rättsliga grunder (namn och ort 6.1 f, kontakt 6.1 a med kryss före raderna), månad på kontrollsidan, utskriftsrätt för intyget, ångra och avvisa som registerregler |
 | 2026-11-06 | Jonas Hagberg | MADR-format inför publikt repo, interna beteckningar förklarade, månad och år på kontrollsidan, spärren för nedladdning av intyget genomförd |
+| 2026-11-16 | Jonas Hagberg | Tillägg: köparen utanför föreningen sparas över årsrapportens Dra tillbaka (`kept_until`) |
 | 2026-11-18 | Jonas Hagberg | Postadressen sparas på berättigat intresse som namn och ort och krävs vid en ny försäljning utom från genbanksansvarig och admin (issue #111); krysset gäller bara e-post och telefon |
 | 2026-11-23 | Jonas Hagberg | Kontrollsidan: "Såld" för varje byte av besättning i den rättade historiken, och "Intygas av" är den fysiska person som utfärdade intyget, med namn bara efter eget val (issue #6) |

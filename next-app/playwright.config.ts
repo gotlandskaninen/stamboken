@@ -37,11 +37,19 @@ export default defineConfig({
       // the global testIgnore because a project-level testIgnore overrides it).
       testIgnore: [
         /[\\/](?:(?:admin|manager|mutation|public)-[^\\/]*|demo-banner|promoted-toggle)\.spec\.ts$/,
+        /arsrapport-lank\.spec\.ts$/,
         /e2e\/admin\//,
         /e2e\/manual\/[^\\/]*screenshots\.spec\.ts$/,
       ],
       use: { storageState: "e2e/.auth/gk-owner.json" },
       dependencies: ["setup"],
+    },
+    {
+      // The personal report links: nobody is signed in, and the herds are its own (M9201-M9203). It waits for
+      // owner-tests, so the Mellerud round that arsrapport-typer activates is already open (it tolerates either).
+      name: "arsrapport-lank",
+      testMatch: /arsrapport-lank\.spec\.ts$/,
+      dependencies: ["owner-tests"],
     },
     {
       name: "public-tests",

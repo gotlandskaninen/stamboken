@@ -94,6 +94,30 @@ export async function updateBreeding(
   }
 }
 
+// "Bekräfta antalet": clears "preliminärt" on a litter added from the yearly report.
+export async function confirmLitterCount(
+  breedingId: number,
+  count: number,
+): Promise<ActionResult<Breeding>> {
+  if (!Number.isSafeInteger(breedingId) || breedingId <= 0) {
+    return { success: false, error: "Kullen finns inte." };
+  }
+  try {
+    const breeding = await fetchApi<Breeding>(
+      `/v2/breeding/${breedingId}/antal`,
+      { method: "POST", body: JSON.stringify({ litter_size6w: count }) },
+    );
+    revalidatePath("/stamboken/min-besattning");
+    return { success: true, data: breeding };
+  } catch (e) {
+    if (e instanceof ApiError) {
+      return { success: false, error: e.detail };
+    }
+    console.error("confirmLitterCount failed:", e);
+    return { success: false, error: "unexpected_error" };
+  }
+}
+
 export async function deleteBreeding(
   breedingId: number,
 ): Promise<ActionResult> {
@@ -327,9 +351,12 @@ export async function suggestIndividualNumber(
   }
 }
 
+// `allowGaps`: before a registration, the rule promotion applies, where a paper certificate's litter number may skip
+// ahead (litter 6 after litter 1); without it, the renumber view's consecutive rule.
 export async function checkLitterOrder(
   herd: string,
   year: number,
+  allowGaps = false,
 ): Promise<
   ActionResult<{ consistent: boolean; conflicts: Record<string, unknown>[] }>
 > {
@@ -338,7 +365,7 @@ export async function checkLitterOrder(
       consistent: boolean;
       conflicts: Record<string, unknown>[];
     }>(
-      `/v2/breeding/check-order?herd=${encodeURIComponent(herd)}&year=${year}`,
+      `/v2/breeding/check-order?herd=${encodeURIComponent(herd)}&year=${year}${allowGaps ? "&allow_gaps=1" : ""}`,
     );
     return { success: true, data: result };
   } catch (e) {
