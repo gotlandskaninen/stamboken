@@ -87,7 +87,7 @@ describe("handläggning och ångra", () => {
     );
   });
 
-  it("offers ten seconds to undo takeover, and releases a waiting item", async () => {
+  it("offers undo for takeover and putting a taken case back", async () => {
     actions.takeItem.mockResolvedValue({ ok: true, data: { undo: "over" } });
     actions.releaseItem.mockResolvedValue({
       ok: true,
@@ -109,7 +109,17 @@ describe("handläggning och ångra", () => {
     await advance(1);
     expect(screen.queryByRole("button", { name: "Ångra" })).toBeNull();
 
-    view.rerender(itemView("vantar_uppfodare", me));
+    for (const waiting of [
+      "vantar_uppfodare",
+      "vantar_foralder",
+      "ofullstandig",
+    ] as const) {
+      view.rerender(itemView(waiting, me));
+      expect(
+        screen.queryByRole("button", { name: "Lägg tillbaka" }),
+      ).toBeNull();
+    }
+    view.rerender(itemView("tagen", me));
     expect(
       screen.getByRole("link", { name: "Börja registrera" }),
     ).toHaveAttribute("href", "/stamboken/inkorg/12");
@@ -117,7 +127,9 @@ describe("handläggning och ångra", () => {
       fireEvent.click(screen.getByRole("button", { name: "Lägg tillbaka" }));
     });
     expect(actions.releaseItem).toHaveBeenCalledWith(12);
-    expect(screen.getByRole("status")).toHaveTextContent("Du lade tillbaka ärende 12.");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Du lade tillbaka ärende 12.",
+    );
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Ångra" }));
     });

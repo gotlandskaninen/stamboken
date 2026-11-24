@@ -41,13 +41,13 @@ class ReminderTest(InboxMailTest):
 
 
 class TestIncompleteMail(ReminderTest):
-    def test_undo_release_requeues_only_the_cancelled_request_once(self):
+    def test_undo_takeover_requeues_only_the_cancelled_request_once(self):
         item, _ = self.incomplete()
         inbox.change_state(item, self.helper, "tagen")
         self.assertEqual(self.sent(), [])  # an older, cancelled request for the same item
         inbox.change_state(item, self.helper, "ofullstandig", note="Skicka den saknade bilagan.")
-        self.login(self.helper.email)  # InboxMailTest gives every account a new address
-        token = self.post(f"/{item.id}/slapp").get_json()["undo"]
+        self.login(self.manager.email)  # InboxMailTest gives every account a new address
+        token = self.post(f"/{item.id}/ta-over").get_json()["undo"]
         self.assertEqual(self.sent(), [])
         older, current = self.mails("inlasning.ofullstandig")
         self.assertEqual(current.status, "cancelled")
@@ -60,15 +60,15 @@ class TestIncompleteMail(ReminderTest):
         self.assertEqual(self.post("/angra", undo=token).status_code, 409)
         self.assertEqual(self.sent(), [])
 
-    def test_undo_release_leaves_a_claimed_or_sent_request_to_the_sender(self):
+    def test_undo_takeover_leaves_a_claimed_or_sent_request_to_the_sender(self):
         item, _ = self.incomplete()
         (row,) = self.mails("inlasning.ofullstandig")
-        self.login(self.helper.email)
+        self.login(self.manager.email)
         token = refused = None
 
         def while_sending(_msg):
             nonlocal token, refused
-            token = self.post(f"/{item.id}/slapp").get_json()["undo"]
+            token = self.post(f"/{item.id}/ta-over").get_json()["undo"]
             refused = self.post("/angra", undo=token)
 
         relay = self.relay(gate=while_sending)
@@ -76,7 +76,7 @@ class TestIncompleteMail(ReminderTest):
         self.assertEqual(len(relay.sent), 1)
         self.assertEqual(refused.status_code, 409)
         self.assertIn("Utskicket pågår", refused.get_json()["detail"])
-        self.assertEqual(self.reload(item).state, "ny")
+        self.assertEqual(self.reload(item).state, "tagen")
         self.assertEqual(self.post("/angra", undo=token).status_code, 200)
         self.assertEqual(self.row(row.id).status, "sent")
         self.assertEqual(self.sent(), [])

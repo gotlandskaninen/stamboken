@@ -437,6 +437,8 @@ def assign(item, by, to):
 
 def release(item, user):
     require_handler(item, user)
+    if item.state != "tagen":
+        raise InboxError(409, "Ärendet väntar på något och kan inte läggas tillbaka.")
     _set_state(item, "ny")
     item.assigned_to, item.assigned_at = None, None
     item.save()

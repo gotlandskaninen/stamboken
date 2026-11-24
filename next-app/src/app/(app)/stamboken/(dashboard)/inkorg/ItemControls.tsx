@@ -73,14 +73,16 @@ export function ItemControls({
           <Link className="sb-btn" href={href} prefetch={false}>
             {t("queueAssignment.register")}
           </Link>
-          <button
-            type="button"
-            className="sb-btn sb-btn-secondary"
-            disabled={pending}
-            onClick={() => change("release")}
-          >
-            {t("queueAssignment.release")}
-          </button>
+          {item.state === "tagen" && (
+            <button
+              type="button"
+              className="sb-btn sb-btn-secondary"
+              disabled={pending}
+              onClick={() => change("release")}
+            >
+              {t("queueAssignment.release")}
+            </button>
+          )}
         </>
       ) : actions.includes("ta") ? (
         <button
