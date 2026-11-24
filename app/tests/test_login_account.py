@@ -160,6 +160,22 @@ class TestLoginAccount(MatrikelApiTest):
         user = db.Member.get_by_id(self.member.id).user
         self.assertEqual((user.rules_version, user.rules_snapshot.text), ("24", RULE_TEXT))
 
+    def test_link_invalidates_the_genebank_only_after_the_account_commits(self):
+        self.pending()
+        calls = []
+
+        def invalidate(genebank_ids):
+            calls.append((list(genebank_ids), db.DB_PROXY.in_transaction()))
+
+        with mock.patch.object(matrikel, "_invalidate_genebanks", side_effect=invalidate):
+            with mock.patch.object(data_access, "login_generation", side_effect=RuntimeError("generation unavailable")):
+                with self.assertRaisesRegex(RuntimeError, "generation unavailable"):
+                    self.create()
+            self.assert_no_account()
+            self.assertEqual(calls, [])
+            self.assertEqual(self.create().status_code, 200)
+        self.assertEqual(calls, [([self.herds[1].genebank_id], False)])
+
     def test_failed_account_link_rolls_back_the_snapshot(self):
         self.pending()
         with mock.patch.object(matrikel, "link_member_user", side_effect=matrikel.LinkError("test", "test")):

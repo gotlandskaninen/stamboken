@@ -155,7 +155,11 @@ def create_pending_account(_displayed_version, displayed_sha256):
             v2_prod_access=os.getenv("SJALVSKAPAT_KONTO_PROD", "false").lower() == "true",
         )
         try:
-            matrikel.link_member_user(person.id, user.id, actor=user, mode="matrikel_epost")
+            _, conveyed = matrikel.link_member_user(
+                person.id, user.id, actor=user, mode="matrikel_epost", invalidate=False
+            )
         except matrikel.LinkError as exc:
             raise InvalidPending from exc
-        return user, data_access.login_generation(user.uuid)
+        generation = data_access.login_generation(user.uuid)
+    matrikel._invalidate_genebanks(h["genebank_id"] for h in conveyed)
+    return user, generation

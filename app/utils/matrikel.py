@@ -1267,9 +1267,10 @@ def _lock_for_detach(person_id: int):
     return person, user
 
 
-def link_member_user(person_id, user_id, *, actor, mode, confirmed_herd_ids=None):
+def link_member_user(person_id, user_id, *, actor, mode, confirmed_herd_ids=None, invalidate=True):
     """THE writer of member.user_id. Opens its own transaction and
-    owns every lock — callers pass ids, never pre-locked rows.
+    owns every lock — callers pass ids, never pre-locked rows. A caller with an outer
+    transaction passes invalidate=False and invalidates the conveyed herds after its commit.
 
     Returns (person, conveyed). Raises LinkError (404/409 shapes) or
     ConfirmRequired when the link would convey herd access without the
@@ -1343,7 +1344,8 @@ def link_member_user(person_id, user_id, *, actor, mode, confirmed_herd_ids=None
             person.membership,
             {"person_id": person.id, "user_id": user.id, "conveys_herd_ids": sorted(conveyed_ids), "source": mode},
         )
-    _invalidate_genebanks(h["genebank_id"] for h in conveyed)
+    if invalidate:
+        _invalidate_genebanks(h["genebank_id"] for h in conveyed)
     return person, conveyed
 
 
