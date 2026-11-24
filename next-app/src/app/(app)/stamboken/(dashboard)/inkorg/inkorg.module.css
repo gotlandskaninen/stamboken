@@ -1018,9 +1018,6 @@
   .assignHerd {
     padding-top: 2px;
   }
-  .keyHint {
-    display: none;
-  }
   .queueRow {
     grid-template-columns: minmax(0, 1fr);
   }

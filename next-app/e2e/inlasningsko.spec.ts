@@ -141,6 +141,7 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
       await desk.setViewportSize({ width: 375, height: 812 });
       await desk.goto("/stamboken/inkorg?herd=G1274&order=newest");
       const row = desk.locator(`#case-row-${itemId}`);
+      await expect(desk.getByText(/Upp- och nedpil.*Enter/)).toBeVisible();
       expect(
         await desk.evaluate(() => document.documentElement.scrollWidth),
       ).toBeLessThanOrEqual(375);

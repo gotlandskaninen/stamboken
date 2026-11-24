@@ -192,7 +192,7 @@ describe("Inkorg", () => {
     const first = screen.getByRole("link", { name: /#14/ });
     const second = screen.getByRole("link", { name: /#15/ });
     expect(first.tabIndex).toBe(0);
-    expect(second.tabIndex).toBe(-1);
+    expect(second.tabIndex).toBe(0);
     first.focus();
     fireEvent.keyDown(first, { key: "ArrowDown" });
     expect(second).toHaveFocus();
@@ -216,6 +216,7 @@ describe("Inkorg", () => {
     expect(screen.getByRole("link", { name: /#15/ })).toHaveFocus();
     fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
     const third = screen.getByRole("link", { name: /#16/ });
+    expect(third.tabIndex).toBe(0);
     expect(third).toHaveFocus();
     expect(third).toHaveAttribute("href", "/stamboken/inkorg?arende=16");
     expect(replace).not.toHaveBeenCalled();

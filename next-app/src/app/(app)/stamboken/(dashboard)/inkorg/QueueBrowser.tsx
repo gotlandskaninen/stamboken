@@ -154,11 +154,6 @@ export function QueueBrowser({
       document.getElementById(`case-row-${last.selected}`)?.focus();
     }
   }, [selected, query]);
-  const first = data.items[0]?.id;
-  const tabStop = data.items.some((item) => item.id === selected)
-    ? selected
-    : first;
-
   useEffect(() => {
     if (input.current !== document.activeElement) setSearchText(herd);
   }, [herd]);
@@ -311,7 +306,7 @@ export function QueueBrowser({
         </div>
         <div className={styles.listMeta}>
           <span>{t("queue.count", { count: data.total })}</span>
-          <span className={styles.keyHint}>{t("queue.keys")}</span>
+          <span>{t("queue.keys")}</span>
         </div>
         {data.items.length ? (
           <ul className={`sb-card ${styles.caseList}`} onKeyDown={arrow}>
@@ -322,7 +317,6 @@ export function QueueBrowser({
                   prefetch={false}
                   scroll={false}
                   id={`case-row-${item.id}`}
-                  tabIndex={item.id === tabStop ? 0 : -1}
                   className={styles.queueRow}
                   aria-current={selected === item.id ? "true" : undefined}
                 >
