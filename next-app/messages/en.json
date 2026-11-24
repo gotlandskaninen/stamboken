@@ -150,6 +150,9 @@
     "retry": "Try again",
     "search": "Search..."
   },
+  "eraseBuyer": {
+    "description": "We will delete your name, your postal address or town, and your other contact details. You cannot undo this."
+  },
   "sidebar": {
     "minaInskick": "My submissions",
     "inkorg": "Inbox",

@@ -29,7 +29,8 @@ export async function fetchApi<T>(
   path: string,
   options?: FetchApiOptions,
 ): Promise<T> {
-  const cookieStore = await cookies();
+  const cookieStore =
+    options?.credentials === "omit" ? undefined : await cookies();
   const {
     timeout = 10000,
     forceProd = false,
@@ -40,13 +41,13 @@ export async function fetchApi<T>(
   // Mode-aware base URL: reuse the already-fetched cookieStore (no second
   // cookies() call). Demo routes to api-test ONLY when a test URL is configured;
   // base dev (API_TEST_BASE unset) normally falls back to prod.
-  const modeCookie = cookieStore.get(MODE_COOKIE)?.value;
+  const modeCookie = cookieStore?.get(MODE_COOKIE)?.value;
   const mode = parseMode(modeCookie);
   // parseMode(undefined) is "demo", so a visitor with no sb_mode cookie reads as
   // demo. Only a signed-in user (login sets sb_mode together with the session)
   // can be in demo; an anonymous request must reach prod or it lands in the
   // nightly-wiped demo database.
-  const signedIn = !!cookieStore.get("session")?.value;
+  const signedIn = !!cookieStore?.get("session")?.value;
   const demoBase =
     !forceProd && mode === "demo" && signedIn ? API_TEST_BASE : undefined;
   const needsDemo = mode === "demo";
@@ -75,9 +76,9 @@ export async function fetchApi<T>(
 
   // Forward ALL cookies (not just session) — more robust if Flask
   // or middleware adds additional cookies in the future
-  const forwardedCookies = cookieStore
-    .getAll()
-    .map((c) => `${c.name}=${c.value}`);
+  const forwardedCookies = (cookieStore?.getAll() ?? []).map(
+    (c) => `${c.name}=${c.value}`,
+  );
   // Flask must also see the implicit demo mode if the demo URL points at the wrong instance.
   if (isolateDemo && needsDemo && modeCookie === undefined)
     forwardedCookies.push(`${MODE_COOKIE}=demo`);

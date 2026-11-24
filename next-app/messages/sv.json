@@ -150,6 +150,9 @@
     "retry": "Försök igen",
     "search": "Sök..."
   },
+  "eraseBuyer": {
+    "description": "Vi tar bort ditt namn, din postadress eller ort och dina övriga kontaktuppgifter. Det går inte att ångra."
+  },
   "sidebar": {
     "minaInskick": "Mina inskick",
     "inkorg": "Inkorg",

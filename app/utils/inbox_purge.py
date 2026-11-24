@@ -30,7 +30,7 @@ from utils.database import (
     MemberChangeRequest,
 )
 from utils.herd_tracking import sold_on
-from utils.mail import forget_recipient
+from utils.mail import address_hash, forget_recipient
 
 logger = logging.getLogger("herdbook.inbox_purge")
 
@@ -473,6 +473,21 @@ def erase_buyer_from_inbox(herd_tracking_id, whole_items=False):
     shown = InboxDocument.herd_tracking_id == herd_tracking_id
     if whole_items:
         items = InboxDocument.select(InboxDocument.item).where(shown)
+        buyer = sale.holder_contact
+        senders = InboxItem.select().where(InboxItem.id.in_(items), InboxItem.sender_address.is_null(False))
+        for item in senders:
+            sender = item.sender_address.strip().lower()
+            if buyer.email:
+                matches = sender == buyer.email.strip().lower()
+            else:
+                matches = (
+                    buyer.erased_email_hash
+                    and settings.mail.link_secret
+                    and address_hash(sender) == buyer.erased_email_hash
+                )
+            if matches:
+                InboxItem.update(sender_address=None).where(InboxItem.id == item.id).execute()
+                forget_recipient("inbox_sender", item.id)
         shown |= (
             InboxDocument.item.in_(items)
             & (InboxDocument.individual == sale.individual_id)

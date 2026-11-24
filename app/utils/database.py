@@ -73,8 +73,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # one account per Google identity (48) + one-time codes and members' previous addresses (49) +
 # the herd's contact from the member register, herd.contact_member and herd.contact_pending (50) +
 # the yearly report v2 (51) + organization name and number on membership (52) +
-# acceptance of the account rules (53).
-CURRENT_SCHEMA_VERSION = 53
+# notice.individual and buyer_contact.erased_email_hash (53) +
+# acceptance of the account rules (54).
+CURRENT_SCHEMA_VERSION = 54
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -1759,6 +1760,7 @@ class YearlyHerdReport(BaseModel):
 
 
 BUYER_CONTACT_YEARS = 5
+MEMBERSHIP_OPTIN_FOR = timedelta(days=365)  # at most 12 months from the sale
 
 
 class BuyerContact(BaseModel):
@@ -1773,6 +1775,8 @@ class BuyerContact(BaseModel):
     town = TextField()
     postal_address = TextField(null=True)
     email = TextField(null=True)
+    email_review_pending = BooleanField(default=False, constraints=[SQL("DEFAULT false")])
+    erased_email_hash = TextField(null=True)  # lets the erase link find this contact after its e-mail is purged
     phone = TextField(null=True)
     contact_consent_at = TimestampTZField(null=True)  # may keep e-mail and phone while the buyer has it
     membership_optin_at = TimestampTZField(null=True)  # may be contacted about membership
@@ -2321,6 +2325,16 @@ class MailMessage(BaseModel):
         )
 
 
+class BuyerInvitation(BaseModel):
+    """A delivered invitation, without a link to the buyer or the sale. Follows the mail history's retention."""
+
+    email_hash = TextField(primary_key=True)
+    created_at = TimestampTZField()
+
+    class Meta:
+        table_name = "mail_buyer_invitation"
+
+
 class MailAttempt(BaseModel):
     """One SMTP attempt or bounce of a mail."""
 
@@ -2500,6 +2514,7 @@ class Notice(BaseModel):
     user = ForeignKeyField(User, on_delete="CASCADE", backref="+")
     kind = TextField()
     item = ForeignKeyField(InboxItem, null=True, on_delete="CASCADE", backref="+")
+    individual = ForeignKeyField(Individual, null=True, on_delete="CASCADE", backref="+")
     created_at = TimestampTZField(default=_utcnow)
     read_at = TimestampTZField(null=True)
     mailed_at = TimestampTZField(null=True)
@@ -2756,6 +2771,7 @@ MODELS = [
     MatrikelAudit,
     IndividualCommand,
     MailMessage,
+    BuyerInvitation,
     MailAttempt,
     MailSender,
     LoginCode,
@@ -4854,6 +4870,44 @@ def migrate_51_to_52():
         ).on_conflict_ignore().execute()
 
 
+def _create_buyer_invitations():
+    BuyerInvitation.create_table(safe=True)
+    DATABASE.execute_sql(
+        """
+        INSERT INTO mail_buyer_invitation (email_hash, created_at)
+        SELECT coalesce(m.address_hash, b.erased_email_hash), max(m.created_at)
+        FROM mail_message m LEFT JOIN buyer_contact b ON b.id = m.recipient_id
+        WHERE m.kind = 'kopare.medlemskap' AND m.recipient_kind = 'buyer_contact'
+          AND m.status IN ('sent', 'bounced') AND coalesce(m.address_hash, b.erased_email_hash) IS NOT NULL
+        GROUP BY coalesce(m.address_hash, b.erased_email_hash)
+        ON CONFLICT DO NOTHING
+        """
+    )
+
+
+def _add_buyer_email_review():
+    DATABASE.execute_sql(
+        "ALTER TABLE buyer_contact ADD COLUMN IF NOT EXISTS email_review_pending BOOLEAN NOT NULL DEFAULT false"
+    )
+
+
+def migrate_52_to_53():
+    """A notice can point at a rabbit instead of an intake item (a buyer erased their own data)."""
+    with DATABASE.atomic():
+        DATABASE.execute_sql(
+            "ALTER TABLE notice ADD COLUMN IF NOT EXISTS individual_id INTEGER "
+            "REFERENCES individual (individual_id) ON DELETE CASCADE"
+        )
+        DATABASE.execute_sql("ALTER TABLE buyer_contact ADD COLUMN IF NOT EXISTS erased_email_hash TEXT")
+        _add_buyer_email_review()
+        _create_buyer_invitations()
+        # The index a fresh bootstrap gives the foreign key: the cascade looks the notices up by rabbit.
+        DATABASE.execute_sql("CREATE INDEX IF NOT EXISTS notice_individual_id ON notice (individual_id)")
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=53, comment="notice.individual, buyer_contact.erased_email_hash", applied=datetime.now()
+        ).execute()
+
+
 def _lock_account_rules_snapshots():
     if isinstance(DATABASE, SqliteDatabase):
         return
@@ -4864,7 +4918,7 @@ def _lock_account_rules_snapshots():
         )
 
 
-def migrate_52_to_53():
+def migrate_53_to_54():
     """Record the published rules accepted by self-registered accounts."""
     with DATABASE.atomic():
         DATABASE.create_tables([AccountRulesSnapshot], safe=True)
@@ -4877,7 +4931,7 @@ def migrate_52_to_53():
         DATABASE.execute_sql("ALTER TABLE mail_sender ADD COLUMN IF NOT EXISTS code_queue_errors TIMESTAMPTZ[]")
         DATABASE.execute_sql("ALTER TABLE mail_sender ADD COLUMN IF NOT EXISTS code_limit_at TIMESTAMPTZ")
         SchemaHistory.insert(  # pylint: disable=E1120
-            version=53, comment="hbuser account rules acceptance", applied=datetime.now()
+            version=54, comment="hbuser account rules acceptance", applied=datetime.now()
         ).execute()
 
 
@@ -5370,7 +5424,8 @@ MIGRATIONS = {
     (49, 50): migrate_49_to_50,  # herd contact from the matrikel
     (50, 51): migrate_50_to_51,  # yearly report v2
     (51, 52): migrate_51_to_52,  # legal entity on membership
-    (52, 53): migrate_52_to_53,  # account rules acceptance
+    (52, 53): migrate_52_to_53,  # notice.individual, buyer_contact.erased_email_hash
+    (53, 54): migrate_53_to_54,  # account rules acceptance
 }
 
 
@@ -5456,6 +5511,18 @@ def _run_migrations():
             .scalar()
         )
         current_version = SchemaHistory.select(fn.MAX(SchemaHistory.version)).scalar()  # pylint: disable=E1120
+        # A bootstrap has no migration comment. Every buyer 50 (even before erased_email_hash) added
+        # notice.individual_id; running 51–53 afterwards still never adds main's missing herd contact columns.
+        if (
+            current_version is not None and current_version >= 50
+            and not {"contact_member_id", "contact_pending"} <= {c.name for c in DATABASE.get_columns("herd")}
+            and "individual_id" in {c.name for c in DATABASE.get_columns("notice")}
+        ):
+            raise RuntimeError(
+                "This database ran buyer mail as migration 50, now 53, and lacks main's herd contact migration "
+                "and audit-log cleanup (49 -> 50). Rebuild a disposable development database from scratch. "
+                "Är detta inte en utvecklingsdatabas: stoppa och utred migreringen."
+            )
         # the organization fields' branch ran as 51 before the yearly report took the number: migrated (its own
         # comment) or bootstrapped (another 51 without any of the report's tables; main's 51 always has them).
         # Only version and comment: a version-1 history has no `applied` column yet.
@@ -5491,6 +5558,13 @@ def _run_migrations():
         current_version,
         CURRENT_SCHEMA_VERSION,
     )
+
+    if current_version == 53:  # earlier 53 on the buyer branch
+        if not BuyerInvitation.table_exists():
+            with DATABASE.atomic():
+                _create_buyer_invitations()
+        if "email_review_pending" not in {c.name for c in DATABASE.get_columns("buyer_contact")}:
+            _add_buyer_email_review()
 
     while current_version is None or current_version < CURRENT_SCHEMA_VERSION:
         next_version = (current_version if current_version else 0) + 1

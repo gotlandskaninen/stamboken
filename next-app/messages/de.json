@@ -149,6 +149,9 @@
     "retry": "Erneut versuchen",
     "search": "Suchen..."
   },
+  "eraseBuyer": {
+    "description": "Wir löschen deinen Namen, deine Postanschrift oder deinen Wohnort und deine übrigen Kontaktdaten. Das lässt sich nicht rückgängig machen."
+  },
   "sidebar": {
     "minaInskick": "Meine Einsendungen",
     "inkorg": "Eingang",

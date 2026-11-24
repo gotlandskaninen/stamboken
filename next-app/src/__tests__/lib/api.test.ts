@@ -10,7 +10,8 @@ const { cookieGetMock, incoming } = vi.hoisted(() => ({
 
 vi.mock("next/headers", () => ({
   cookies: vi.fn(async () => ({
-    getAll: () => [],
+    getAll: () =>
+      ["session", "sb_mode"].map((name) => cookieGetMock(name)).filter(Boolean),
     get: cookieGetMock,
   })),
   headers: vi.fn(async () => incoming.headers),
@@ -87,6 +88,26 @@ describe("fetchApi mode-aware base URL selection", () => {
     process.env.API_TEST_INTERNAL_URL = TEST_HOST;
     const url = await fetchedUrlFor("prod");
     expect(url).toBe(`${PROD_HOST}/api/user`);
+  });
+
+  it("posts the public buyer token to prod without the signed-in demo visitor's cookies", async () => {
+    process.env.API_TEST_INTERNAL_URL = TEST_HOST;
+    cookieGetMock.mockImplementation((name: string) => ({
+      name,
+      value: name === "session" ? "test-session" : "demo",
+    }));
+    const { eraseBuyer } = await import(
+      "@/app/(app)/(public)/kopare/ta-bort/actions"
+    );
+    vi.mocked(fetch).mockResolvedValueOnce(
+      Response.json({ result: "removed" }),
+    );
+    await expect(eraseBuyer("test-token")).resolves.toBe("removed");
+    const [[url, init]] = vi.mocked(fetch).mock.calls;
+    expect(url).toBe(`${PROD_HOST}/api/v2/kopare/ta-bort`);
+    expect(init?.method).toBe("POST");
+    expect(init?.body).toBe(JSON.stringify({ token: "test-token" }));
+    expect(new Headers(init?.headers).has("Cookie")).toBe(false);
   });
 
   // parseMode(undefined) is "demo", so every anonymous visitor read as
