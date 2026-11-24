@@ -721,14 +721,15 @@ class TestMembersImport(DatabaseTest):
             + _row_split(nr="8", name="Solflik", **contact)
             + _row_split(nr="0", name="Snöbladet")
             + _row_split(nr="0", name="Snöbladet")
-            + _row_split(nr="0", name="Aftonluddet", **contact)
+            # a friexemplar never holds a login address (#179): this one fails on a name over 100 characters
+            + _row_split(nr="0", name="Aftonluddet" * 10, **contact)
         )
         counts = self._run_import(csv, ["--counts-only"])
         self.assertEqual(counts.exit_code, 1, counts.output)
         for line in (
             "Error: row 3: ogiltigt-postnummer",
             "Error: Nr 8: AddressTaken",
-            "Error: friexemplar 2: AddressTaken",
+            "Error: friexemplar 2: DataError",
             "  warning: herd G1 already linked",
         ):
             self.assertIn(line, counts.stderr.splitlines())
@@ -749,16 +750,16 @@ class TestMembersImport(DatabaseTest):
 
         real = self._run_import(csv)
         self.assertEqual(real.exit_code, 1, real.output)
-        self.assertEqual(
-            real.stderr.splitlines(),
-            [
-                f"  warning: herd G1 already linked to membership {other.id}",
-                "Error: row 4: ogiltigt postnummer: '54-321'",
-                "Error: Nr 8: Adressen används redan av en annan medlem",
-                "Error: friexemplar 'aftonluddet': Adressen används redan av en annan medlem",
-                "Error: 3 row(s) failed to import — see stderr for details",
-            ],
-        )
+        lines = real.stderr.splitlines()
+        for line in (
+            f"  warning: herd G1 already linked to membership {other.id}",
+            "Error: row 4: ogiltigt postnummer: '54-321'",
+            "Error: Nr 8: Adressen används redan av en annan medlem",
+            "Error: 3 row(s) failed to import — see stderr for details",
+        ):
+            self.assertIn(line, lines)
+        # the regular import keeps the database's own message for the friexemplar
+        self.assertTrue(any(line.startswith(f"Error: friexemplar '{'aftonluddet' * 10}': ") for line in lines))
 
     def test_counts_only_reports_header_errors_without_column_values(self):
         csv = "Matrikeltitel\nNr,Namn Efternamn,Hemlig rubrik,Hemlig rubrik\n"
