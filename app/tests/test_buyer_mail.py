@@ -312,10 +312,11 @@ class TestInformationSent(BuyerMailTest):
         (row,) = self.mails()
         self.assertEqual((row.status, row.last_error), ("sent", None))
 
-    def test_the_date_is_the_rows_purge_at_in_stockholm(self):
+    def test_until_is_the_last_calendar_day_before_purge_in_stockholm(self):
         cases = (
-            (datetime(2031, 11, 13, 23, 30, tzinfo=timezone.utc), "14 november 2031"),  # after midnight in Sweden
-            (datetime(2030, 3, 1, 10, 0, tzinfo=timezone.utc), "1 mars 2030"),
+            (datetime(2031, 11, 13, 23, tzinfo=timezone.utc), "13 november 2031"),
+            (datetime(2030, 2, 28, 23, tzinfo=timezone.utc), "28 februari 2030"),
+            (datetime(2026, 3, 29, 22, tzinfo=timezone.utc), "29 mars 2026"),  # 23-hour day in Sweden
         )
         for purge_at, shown in cases:
             with self.subTest(shown=shown):

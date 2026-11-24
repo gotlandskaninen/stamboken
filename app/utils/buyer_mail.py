@@ -7,7 +7,7 @@ utils.herd_tracking imports this module, so it imports nothing that imports that
 
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 from peewee import fn
@@ -89,8 +89,8 @@ def _rabbit_name(rabbit):
     return name
 
 
-def _swedish_date(moment):
-    day = moment.astimezone(_STOCKHOLM)
+def _last_kept_date(purge_at):
+    day = purge_at.astimezone(_STOCKHOLM).date() - timedelta(days=1)
     return f"{day.day} {_MONTHS[day.month - 1]} {day.year}"
 
 
@@ -160,7 +160,7 @@ def _information_mail(params, attempt=1):
         "buyer": _one_line(contact.name),
         "name": _rabbit_name(rabbit),
         "number": rabbit.number,
-        "until": _swedish_date(contact.purge_at),
+        "until": _last_kept_date(contact.purge_at),
         "address": bool(contact.postal_address),  # kept with the name since #111; an older buyer has only a town
         "token": link_token(ERASE_PURPOSE, contact.id),
         "consent": contact.contact_consent_at is not None,
