@@ -237,6 +237,20 @@ def _detect_layout(normalized: list[str]) -> str:
     )
 
 
+class _BadEncoding(ValueError):
+    def __init__(self, line_num: int):
+        super().__init__(f"line {line_num}")
+        self.line_num = line_num
+
+
+def _decoded_lines(f):
+    for line_num, raw in enumerate(f, 1):
+        try:
+            yield raw.decode("utf-8-sig" if line_num == 1 else "utf-8")
+        except UnicodeDecodeError as e:
+            raise _BadEncoding(line_num) from e
+
+
 def _read_rows(csv_path: str) -> tuple[list[dict], list[tuple[str, str]], list[tuple[str, str]]]:
     """Parse the CSV into normalized row dicts.
 
@@ -252,20 +266,19 @@ def _read_rows(csv_path: str) -> tuple[list[dict], list[tuple[str, str]], list[t
     without a name still errors — that is corruption, not filler.
     """
     rows, errors, file_errors = [], [], []
-    with open(csv_path, "rb") as fb:  # find a bad byte by its physical line; the text reader buffers ahead
-        for line_num, line in enumerate(fb, 1):
-            try:
-                line.decode("utf-8")
-            except UnicodeDecodeError as e:  # the message carries the byte: only the detail keeps it
-                return [], [], [(f"rad {line_num}: {e}", f"row {line_num}: ogiltig-teckenkodning")]
-    with open(csv_path, encoding="utf-8-sig", newline="") as f:
-        reader = csv.reader(f)
+    with open(csv_path, "rb") as f:
+        # Decoded one physical line at a time, so a bad byte is reported on its own line (a text reader buffers
+        # ahead). shortcut: a file with bare CR line ends reads as one line and fails as ogiltig-csv.
+        reader = csv.reader(_decoded_lines(f))
         fieldnames = None
         layout = None
         while True:
             start_line = reader.line_num + 1
             try:
                 cells = next(reader, None)
+            except _BadEncoding as e:  # the message carries the byte: only the detail keeps it
+                file_errors.append((f"rad {e.line_num}: {e.__cause__}", f"row {e.line_num}: ogiltig-teckenkodning"))
+                return [], [], file_errors
             except csv.Error as e:  # the raw message can carry text from the file
                 file_errors.append((f"rad {start_line}: {e}", f"row {start_line}: ogiltig-csv"))
                 return [], [], file_errors

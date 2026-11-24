@@ -748,6 +748,17 @@ class TestMembersImport(DatabaseTest):
         self.assertNotIn("0xc5", result.stdout + result.stderr)
         self.assertEqual(db.Membership.select().count(), 0)
 
+    def test_counts_only_reports_bad_encoding_on_its_crlf_line(self):
+        content = (HEADER + _row(nr="6", name="Bo Exempel") + _row(nr="7", name="Åsa Exempel")).replace("\n", "\r\n")
+        with self.runner.isolated_filesystem():
+            with open("matrikel.csv", "wb") as f:
+                f.write(content.encode("latin-1"))
+            result = self.runner.invoke(
+                members_cli, ["import", "matrikel.csv", "--counts-only"], obj=ScriptInfo(create_app=lambda: APP)
+            )
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn("Error: row 3: ogiltig-teckenkodning", result.stderr.splitlines())
+
     def test_counts_only_reports_too_large_nr_with_the_other_row_errors(self):
         before = self._counter()
         csv = HEADER + _row(nr="7", name="Bo Exempel", postadress="ABC Visby") + _row(nr="1000000", name="Ida Exempel")
