@@ -279,6 +279,19 @@ class TestSevenDays(SevenDaysTest):
         self.assertEqual(resp.get_json()["membership_status"], "active")
         self.reserve(old, self.holder.id)  # only the new holder may use it
 
+    def test_reactivating_an_older_friexemplar_drops_its_leftover_previous_address(self):
+        old = self.person.email
+        self.change("b@example.org", "self")
+        # A friexemplar from before this change, with a wait still left on its previous address.
+        ms_id = self.person.membership_id
+        db.Membership.update(membership_status="friexemplar").where(db.Membership.id == ms_id).execute()
+        matrikel.set_member_email(self.holder, old, self.matrikel_user, by="matrikel")
+        self.login("matrikel")
+        resp = self.client.patch(f"/api/v2/memberships/{ms_id}", json={"membership_status": "active"})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assert_about(self.previous()[old], timedelta(0))
+        self.reserve(old, self.holder.id)  # only the other member holds it
+
     def test_editing_a_friexemplars_email_expires_a_still_valid_previous_address(self):
         self.change("b@example.org", "self")
         # An existing friexemplar with a wait left over from its active membership.

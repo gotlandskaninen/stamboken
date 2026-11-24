@@ -820,10 +820,11 @@ def set_membership_status(membership, new_status, actor):
         .exists()
     )
     next_state(state_of(membership.membership_status, has_main), Event.SET_STATUS, new_status)
+    if (membership.membership_status == Status.FRIEXEMPLAR) != (new_status == Status.FRIEXEMPLAR):
+        # an address a friexemplar kept from before (or from earlier as a member) never counts again
+        _expire_previous_addresses(Member.select(Member.id).where(Member.membership == membership))
     if membership.membership_status == Status.FRIEXEMPLAR and new_status != Status.FRIEXEMPLAR:
         reserve_on_leaving_friexemplar(membership.id)
-    elif new_status == Status.FRIEXEMPLAR and membership.membership_status != Status.FRIEXEMPLAR:
-        _expire_previous_addresses(Member.select(Member.id).where(Member.membership == membership))
     write_matrikel_audit(
         actor,
         "membership_status_changed",
