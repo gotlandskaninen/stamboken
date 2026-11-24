@@ -119,7 +119,9 @@ def membership_recipient(membership: Membership) -> tuple[str, str | None]:
     main = next((p for p in membership.persons if p.role == "huvudmedlem" and p.end_date is None), None)
     name = f"{main.first_name} {main.last_name}".strip() if main else ""
     if membership.organization_name:
-        return membership.organization_name, f"c/o {name}" if name else None
+        # An imported friexemplar keeps the organization's name as its contact: no "X, c/o X".
+        same = name.casefold() == membership.organization_name.strip().casefold()
+        return membership.organization_name, f"c/o {name}" if name and not same else None
     return name, None
 
 

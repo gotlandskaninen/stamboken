@@ -19,7 +19,17 @@ from flask_login import current_user
 from peewee import IntegrityError
 from utils.csv_safe import csv_safe
 from utils.data_access import session_holds
-from utils.database import BILLING_FIELDS, DB_PROXY, AuditLog, Herd, HerdAccessGrant, Member, Membership, User
+from utils.database import (
+    BILLING_FIELDS,
+    DB_PROXY,
+    AuditLog,
+    Herd,
+    HerdAccessGrant,
+    Member,
+    Membership,
+    User,
+    snapshot_read,
+)
 from utils.herd_contact import on_membership_active
 from utils.login_code import (
     AddressTaken,
@@ -893,35 +903,37 @@ def export_address_list():
         Member.select().where(Member.end_date.is_null(True)).order_by(Member.role != "huvudmedlem", Member.id)
     )
     memberships = Membership.select().where(Membership.membership_status.in_(("active", "friexemplar")))
-    for ms in memberships.prefetch(active_persons):
-        if not ms.address and not ms.postal_address:
-            continue
-        if ms.organization_name:
-            # As in MATR: the organization receives even without an active contact.
-            recipient, care_of = membership_recipient(ms)
-            name = f"{recipient}, {care_of}" if care_of else recipient
-        elif ms.persons:
-            name = ms.persons[0].display_name  # the huvudmedlem, else the first active person
-        else:
-            continue
-        if ms.member_number is not None:
-            nr = str(ms.member_number)
-        else:
-            nr = "0" if ms.membership_status == "friexemplar" else ""
-        unpaid = fee_reminder and ms.membership_status == "active" and fee_unpaid(ms.payment_note, year)
-        sort_key = (ms.postal_code is None, ms.postal_code or "", ms.id)  # a foreign address has no postal code: last
-        rows.append(
-            (
-                sort_key,
-                [
-                    nr,
-                    csv_safe(name),
-                    csv_safe(ms.address),
-                    csv_safe(ms.postal_address),
-                    "Betala nu" if unpaid else "",
-                ],
+    with snapshot_read():  # persons and memberships from one snapshot: no label loses its c/o mid-registration
+        for ms in memberships.prefetch(active_persons):
+            if not ms.address and not ms.postal_address:
+                continue
+            if ms.organization_name:
+                # As in MATR: the organization receives even without an active contact.
+                recipient, care_of = membership_recipient(ms)
+                name = f"{recipient}, {care_of}" if care_of else recipient
+            elif ms.persons:
+                name = ms.persons[0].display_name  # the huvudmedlem, else the first active person
+            else:
+                continue
+            if ms.member_number is not None:
+                nr = str(ms.member_number)
+            else:
+                nr = "0" if ms.membership_status == "friexemplar" else ""
+            unpaid = fee_reminder and ms.membership_status == "active" and fee_unpaid(ms.payment_note, year)
+            # A foreign address has no postal code: last.
+            sort_key = (ms.postal_code is None, ms.postal_code or "", ms.id)
+            rows.append(
+                (
+                    sort_key,
+                    [
+                        nr,
+                        csv_safe(name),
+                        csv_safe(ms.address),
+                        csv_safe(ms.postal_address),
+                        "Betala nu" if unpaid else "",
+                    ],
+                )
             )
-        )
 
     buf = io.StringIO()
     buf.write("\ufeff")  # UTF-8 BOM for Excel
