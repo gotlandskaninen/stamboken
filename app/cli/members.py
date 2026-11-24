@@ -627,8 +627,7 @@ def _ensure_main_person(membership, main: dict) -> None:
     """Reconciliation: create the huvudmedlem if a prior interrupted run left
     the membership without one; a matching active huvudmedlem is left as is."""
     if membership.organization_name:
-        # The name in this cell belongs to the organization. The export-only c/o
-        # column cannot be used to restore a missing contact either.
+        # The recipient is the organization. It cannot restore a missing contact.
         return
     has_main = (
         Member.select()
@@ -663,19 +662,17 @@ def _add_family_members(membership, rows: list[dict], dry_run: bool, report: dic
     membership is None on the dry-run new-membership path — nothing to
     dedupe against, every row counts as a would-be person.
     """
+    names = set()
+    if membership is not None and rows:
+        people = Member.select(Member.first_name, Member.last_name).where(
+            Member.membership == membership, Member.end_date.is_null(True)
+        )
+        names = {_name_key(f"{p.first_name} {p.last_name}") for p in people}
     for row in rows:
-        if membership is not None:
-            people = Member.select().where(Member.membership == membership, Member.end_date.is_null(True))
-            if membership.organization_name:
-                # A single MATR name cell cannot reconstruct compound surnames.
-                exists = any(_name_key(f"{p.first_name} {p.last_name}") == row["name"].lower() for p in people)
-            else:
-                exists = people.where(
-                    fn.LOWER(Member.first_name) == row["first_name"].lower(),
-                    fn.LOWER(Member.last_name) == row["last_name"].lower(),
-                ).exists()
-            if exists:
-                continue
+        # A MATR name cell cannot distinguish compound surnames from given names.
+        name = _name_key(row["name"])
+        if name in names:
+            continue
         report["persons_created"] += 1
         if not dry_run and membership is not None:
             Member.create(
@@ -686,6 +683,7 @@ def _add_family_members(membership, rows: list[dict], dry_run: bool, report: dic
                 email=row["email"],
                 phone=row["phone"],
             )
+            names.add(name)
 
 
 def _flag_genebank_ids(prefix: str) -> list[int]:
@@ -779,6 +777,13 @@ def _import_friexemplar_group(name_key: str, group: list[dict], dry_run: bool, r
             report["matched_existing"] += 1
         else:
             report["review"].append((f"friexemplar {group[0]['name']}", matches[0].membership_id, "avslutad kontakt"))
+        return
+    # A friexemplar organization can receive the magazine without a person row.
+    organizations = Membership.select(Membership.organization_name).where(
+        Membership.membership_status == Status.FRIEXEMPLAR, Membership.organization_name.is_null(False)
+    )
+    if any(_name_key(ms.organization_name) == name_key for ms in organizations):
+        report["matched_existing"] += 1
         return
     if _erased_friexemplar_exists():
         report["review"].append((f"friexemplar {group[0]['name']}", None, "en raderad kontakt kan inte uteslutas"))

@@ -332,14 +332,15 @@ def _me_response(m: Member) -> dict:
     # PATCH of an all-off answer would otherwise leave the row "ej angivet".
     data["consent_answered"] = consent_answered(ms)
     main = (
-        Member.select(Member.first_name, Member.last_name)
+        Member.select(Member.first_name, Member.last_name, Member.role, Membership.id, Membership.organization_name)
+        .join(Membership)
         .where(Member.membership == ms, Member.role == "huvudmedlem", Member.end_date.is_null(True))
         .order_by(Member.id)
         .first()
     )
     # Additive: /v2/my-membership hides other persons from
     # non-main members, so the profile card gets the name here.
-    data["main_member_name"] = f"{main.first_name} {main.last_name}".strip() if main else None
+    data["main_member_name"] = main.display_name if main else None
     return data
 
 
@@ -722,10 +723,12 @@ def export_members():
     )
     for ms in q.prefetch(active_persons):
         persons = ms.persons
-        if not persons or (ms.organization_name and persons[0].role != "huvudmedlem"):
-            # A family member cannot stand in for the organization's contact.
+        if ms.organization_name and (not persons or persons[0].role != "huvudmedlem"):
+            # The organization still receives the magazine without an active contact.
+            persons = [None, *persons]
+        if not persons:
             continue
-        recipient, care_of = membership_recipient(ms)
+        _, care_of = membership_recipient(ms)
 
         herd_codes = [h.herd or "" for h in Herd.select().where(Herd.membership == ms)]
         g_flag = "G" if any(code.startswith("G") for code in herd_codes) else ""
@@ -745,7 +748,7 @@ def export_members():
 
         for index, person in enumerate(persons):
             main_row = index == 0
-            name = recipient if main_row and recipient else f"{person.first_name} {person.last_name}".strip()
+            name = ms.organization_name if main_row and ms.organization_name else person.display_name
             writer.writerow(
                 [
                     # Membership-level cells only on the main row; the Nr is
@@ -758,8 +761,8 @@ def export_members():
                     csv_safe(ms.address) if main_row else "",
                     csv_safe(ms.postal_code) if main_row else "",
                     csv_safe(ms.city) if main_row else "",
-                    csv_safe(person.phone),
-                    csv_safe(person.email),
+                    csv_safe(person.phone if person else None),
+                    csv_safe(person.email if person else None),
                     csv_safe(ms.payment_note) if main_row else "",
                     csv_safe(ms.notes) if main_row else "",
                     *(invoice_cells if main_row else [""] * len(INVOICE_KEYS)),
@@ -791,21 +794,23 @@ def export_koharen():
     for ms in q.order_by(Membership.member_number.asc(nulls="LAST"), Membership.id):
         persons = Member.select().where(Member.membership == ms, Member.end_date.is_null(True))
         if ms.organization_name:
-            persons = persons.where(Member.role == "huvudmedlem")
+            persons = [persons.where(Member.role == "huvudmedlem").first()]
+        else:
+            persons = persons.order_by(Member.role != "huvudmedlem", Member.id)
         # {} = never answered: blank PII + "ej angivet" so the keeper
         # can fall back to the yearly-report answer by hand. No automatic seeding.
         answered = consent_answered(ms)
         consent = effective_consent(ms) if answered else {key: False for key in CONSENT_KEYS}
         samtycke = "angivet" if answered else "ej angivet"
         nr = str(ms.member_number) if ms.member_number is not None else ""
-        for person in persons.order_by(Member.role != "huvudmedlem", Member.id):
-            name = ms.organization_name or f"{person.first_name} {person.last_name}".strip()
+        for person in persons:
+            name = ms.organization_name or person.display_name
             writer.writerow(
                 [
                     nr,
                     csv_safe(name) if consent["name"] else "",
-                    csv_safe(person.phone) if consent["phone"] else "",
-                    csv_safe(person.email) if consent["email"] else "",
+                    csv_safe(person.phone) if consent["phone"] and person else "",
+                    csv_safe(person.email) if consent["email"] and person else "",
                     csv_safe(ms.address) if consent["address"] else "",
                     csv_safe(ms.postal_code) if consent["address"] else "",
                     csv_safe(ms.city) if consent["address"] else "",

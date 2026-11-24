@@ -40,7 +40,7 @@ const columns: GridColDef<MembershipRow>[] = [
   },
   {
     field: "main_member",
-    headerName: "Medlem",
+    headerName: "Huvudmedlem",
     flex: 1,
     minWidth: 160,
     valueGetter: (_value, row) =>

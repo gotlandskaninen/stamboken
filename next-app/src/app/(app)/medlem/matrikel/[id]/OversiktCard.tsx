@@ -25,6 +25,12 @@ function Cell({
   );
 }
 
+/**
+ * Översikt som statusremsa ovanför persontabellen (statistik-sidans
+ * .ad-status-strip). Huvudmedlem och "medlem sedan" står redan i mastheadens
+ * meta-rad, så remsan bär bara det som inte syns någon annanstans — fyra
+ * celler, vilket är precis remsans desktopkolumner.
+ */
 export function OversiktCard({ membership }: { membership: MembershipDetail }) {
   const consent =
     Object.entries(membership.publication_consent)
@@ -38,14 +44,6 @@ export function OversiktCard({ membership }: { membership: MembershipDetail }) {
       className={`sb-card ${ds["ad-status-strip"]}`}
       aria-label="Översikt"
     >
-      {membership.organization_name && (
-        <Cell label="Organisationsnamn">{membership.organization_name}</Cell>
-      )}
-      {membership.organization_number && (
-        <Cell label="Organisationsnummer">
-          {membership.organization_number}
-        </Cell>
-      )}
       {/* Read-only managers never see MembershipFormCard, so the payment
           note has to live here too (it did in the pre-reskin summary). */}
       <Cell label="Betalningsnotering">{membership.payment_note || "–"}</Cell>

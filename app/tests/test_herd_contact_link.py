@@ -10,7 +10,7 @@ import utils.data_access as da
 import utils.database as db
 from cli.members import _link_flag_herds
 from herdbook import APP, limiter
-from utils.herd_contact import herd_contact, link_herd
+from utils.herd_contact import contact_field, herd_contact, link_herd
 
 from tests.database_test import _USE_POSTGRES
 from tests.test_herd_contact import ADDRESS, HerdContactTest, _row
@@ -188,6 +188,22 @@ class TestLinkHerd(LinkTest):
         other = self._herd(db.Herd.get_by_id(self.herds[1].id), name="Ida Exempel")
         self.assertEqual(link_herd(other.id, self.membership.id)["name"], "person")
         self.assertEqual((self._state(other)["contact_member_id"], self._state(other)["name"]), (self.family.id, None))
+
+    def test_organization_name_matches_and_identifies_unnamed_contact(self):
+        self.membership.organization_name = "Exempelby museum"
+        self.membership.save()
+        db.Member.update(first_name="", last_name="").where(db.Member.id == self.main.id).execute()
+        self._herd(name="EXEMPELBY  MUSEUM")
+
+        self.assertEqual(link_herd(self.herd.id, self.membership.id)["name"], "person")
+        herd = db.Herd.get_by_id(self.herd.id)
+        contact = herd_contact(herd)
+        self.assertEqual(contact.rows["name"], _row("Exempelby museum", "person"))
+        data = contact_field(self.admin, herd, contact, reader=True, private_access=True)
+        self.assertEqual(
+            data["contact_member"], {"id": self.main.id, "name": "Exempelby museum", "role": "huvudmedlem"}
+        )
+        self.assertEqual([p["name"] for p in data["persons"]], ["Exempelby museum", "Ida Exempel"])
 
     def test_link_ambiguous_name_is_fritext_pending(self):
         for herd, name in ((self.herd, "Anna och Per Exempel"), (db.Herd.get_by_id(self.herds[1].id), "Exempel")):

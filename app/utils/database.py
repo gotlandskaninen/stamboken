@@ -304,13 +304,14 @@ class Membership(BaseModel):
 
         Street, postal code and city come from the billing address as soon as
         one of them is set, otherwise all three from the postal address: an
-        invoice never gets a billing street with the postal city. Recipient,
-        e-mail and reference only exist for the invoice and are returned as
-        stored (None means the main member and their own e-mail).
+        invoice never gets a billing street with the postal city. Without a
+        billing name, the recipient is the organization name for a legal entity
+        or None for the main member. An unset e-mail means the main member's
+        own e-mail. The reference is returned as stored.
         """
         billing = any((self.billing_address, self.billing_postal_code, self.billing_city))
         return {
-            "name": self.billing_name,
+            "name": self.billing_name or self.organization_name,
             "address": self.billing_address if billing else self.address,
             "postal_code": self.billing_postal_code if billing else self.postal_code,
             "city": self.billing_city if billing else self.city,
@@ -2103,6 +2104,13 @@ class Member(BaseModel):
 
     class Meta:
         table_name = "member"
+
+    @property
+    def display_name(self) -> str:
+        name = f"{self.first_name.strip()} {self.last_name.strip()}".strip()
+        if not name and self.role == "huvudmedlem":
+            return self.membership.organization_name or ""
+        return name
 
     def save(self, *args, **kwargs):
         self.updated_at = datetime.now()
@@ -4414,7 +4422,7 @@ def _compare_linked_herds():
         Herd.membership.in_(Membership.select(Membership.id).where(Membership.membership_status == "active")),
     )
     for herd in rows:
-        changes, _ = compare_with_register(herd)
+        changes, _ = compare_with_register(herd, include_organization=False)
         Herd.update(**changes).where(Herd.id == herd.id, Herd.contact_pending.is_null(True)).execute()
 
 

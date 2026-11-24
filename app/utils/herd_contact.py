@@ -57,33 +57,40 @@ class HerdContact:
     rows: dict[str, Row]  # keys = CONTACT_FIELDS
 
 
+def _contact_persons(membership_ids, *, any_status=False, include_organization=True):
+    where = [Member.membership.in_(membership_ids), Member.end_date.is_null(True)]
+    if not any_status:
+        where.append(Membership.membership_status == "active")
+    # The version 49→50 backfill runs before organization_name exists.
+    fields = [Membership.organization_name] if include_organization else []
+    return (
+        Member.select(
+            Member.id,
+            Member.membership,
+            Member.first_name,
+            Member.last_name,
+            Member.email,
+            Member.phone,
+            Member.role,
+            Member.user,
+            Membership.id,
+            Membership.address,
+            Membership.postal_code,
+            Membership.city,
+            *fields,
+        )
+        .join(Membership)
+        .where(*where)
+    )
+
+
 def herd_contacts(herds: Sequence[Herd], *, any_status: bool = False) -> dict[int, HerdContact]:
     """The contact of each herd, by herd id, with one query for all of them. `any_status`: as if the membership
     were active, for the lifecycle, so that a paused membership also compares the values it would show."""
     compared = [h for h in herds if h.membership_id is not None and h.contact_pending is not None]
     persons = {}  # membership id -> {person id: person}: active persons, of active memberships unless any_status
     if compared:
-        where = [Member.membership.in_({h.membership_id for h in compared}), Member.end_date.is_null(True)]
-        if not any_status:
-            where.append(Membership.membership_status == "active")
-        query = (
-            Member.select(
-                Member.id,
-                Member.membership,
-                Member.first_name,
-                Member.last_name,
-                Member.email,
-                Member.phone,
-                Member.role,
-                Membership.id,
-                Membership.address,
-                Membership.postal_code,
-                Membership.city,
-            )
-            .join(Membership)
-            .where(*where)
-        )
-        for person in query:
+        for person in _contact_persons({h.membership_id for h in compared}, any_status=any_status):
             persons.setdefault(person.membership_id, {})[person.id] = person
     contacts = {h.id: _uncompared(h) for h in herds}
     contacts.update({h.id: _compared(h, persons.get(h.membership_id, {})) for h in compared})
@@ -109,7 +116,7 @@ def _compared(herd, persons):
     main = next((p for p in persons.values() if p.role == "huvudmedlem"), None) if mode == "fritext" else None
     named = person or main
     fetched = {
-        "name": f"{named.first_name} {named.last_name}" if named else None,
+        "name": named.display_name if named else None,
         "email": (person.email or None) if person else None,
         "mobile_phone": (person.phone or None) if person else None,
         "physical_address": "|".join(p or "" for p in parts) if any(parts) else None,
@@ -173,20 +180,11 @@ def active_persons(herd: Herd) -> list[Member]:
     """The active persons on the herd's active membership, main member first."""
     if herd.membership_id is None:
         return []
-    return list(
-        Member.select(Member.id, Member.user, Member.first_name, Member.last_name, Member.role)
-        .join(Membership)
-        .where(
-            Member.membership == herd.membership_id,
-            Member.end_date.is_null(True),
-            Membership.membership_status == "active",
-        )
-        .order_by(Member.role != "huvudmedlem", Member.id)
-    )
+    return list(_contact_persons([herd.membership_id]).order_by(Member.role != "huvudmedlem", Member.id))
 
 
 def _person_json(person) -> dict:
-    return {"id": person.id, "name": f"{person.first_name} {person.last_name}", "role": person.role}
+    return {"id": person.id, "name": person.display_name, "role": person.role}
 
 
 def may_choose_contact(user: User, herd: Herd, persons: Sequence[Member]) -> bool:
@@ -272,17 +270,17 @@ def lock_herd(herd_id: int) -> Herd:
     return herd
 
 
-def compare_with_register(herd: Herd) -> tuple[dict, dict[str, str]]:
+def compare_with_register(herd: Herd, *, include_organization: bool = True) -> tuple[dict, dict[str, str]]:
     """Spec, Överflyttning: the first comparison of a linked herd's contact with the register. `herd` needs only
     its id, membership, contact columns and their privacy, so the migration can pass a row with those alone.
 
     Returns the columns to write and the case per row: "lika", "olika", "bara_besattningen", "bara_matrikeln" or
     "bada_tomma", and for the name "person" or "fritext" when the name is filled in. Only for an active membership:
     the reads show nothing of another, so link_herd leaves its herds uncompared until on_membership_active."""
-    persons = active_persons(herd)
+    persons = list(_contact_persons([herd.membership_id], include_organization=include_organization))
     main = next((p for p in persons if p.role == "huvudmedlem"), None)
     name = herd.name if normalize("name", herd.name) else None
-    same = [p for p in persons if normalize("name", f"{p.first_name} {p.last_name}") == normalize("name", name)]
+    same = [p for p in persons if normalize("name", p.display_name) == normalize("name", name)]
     # step 1, the contact person: the main member for an empty name, the one person the name is, else fritext
     if name is None:
         contact, cases = main, {"name": "bara_matrikeln" if main else "bada_tomma"}
@@ -293,7 +291,7 @@ def compare_with_register(herd: Herd) -> tuple[dict, dict[str, str]]:
     # step 2: each row against what the read gives afterwards, without the herd's own values
     contact_id = contact.id if contact is not None else None
     probe = Herd(id=herd.id, membership=herd.membership_id, contact_member=contact_id, name=name, contact_pending=[])
-    fetched = herd_contact(probe).rows
+    fetched = _compared(probe, {p.id: p for p in persons}).rows
     for field in CONTACT_FIELDS[1:]:
         own, register = normalize(field, getattr(herd, field)), normalize(field, fetched[field].value)
         if own is None:

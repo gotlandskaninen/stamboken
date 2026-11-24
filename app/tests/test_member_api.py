@@ -505,6 +505,15 @@ class TestSelfService(MatrikelApiTest):
         self.login("linked")
         self.assertIsNone(self.client.get("/api/v2/members/me").get_json()["main_member_name"])
 
+    def test_main_member_name_for_organization_contact(self):
+        self.ms.organization_name = "Exempelby museum"
+        self.ms.save()
+        self.login("linked")
+        for first, last, expected in [("", "", "Exempelby museum"), (" Bo ", " Exempel ", "Bo Exempel")]:
+            with self.subTest(first=first):
+                db.Member.update(first_name=first, last_name=last).where(db.Member.id == self.person.id).execute()
+                self.assertEqual(self.client.get("/api/v2/members/me").get_json()["main_member_name"], expected)
+
     def test_patch_contact_structured_address_round_trip(self):
         self.login("linked")
         resp = self.client.patch(
@@ -745,17 +754,25 @@ class TestStatsAndExport(MatrikelApiTest):
         _, header, _ = self._export_rows()
         self.assertEqual(header, MATR_HEADER)
 
-    def test_org_matr_reimport_preserves_memberships_and_people(self):
+    def test_matr_reimport_preserves_memberships_and_people(self):
+        _mk_person(self.ms_a, "Kim", "af Exempel", role="familjemedlem")
         named = _mk_membership(number=12, organization_name="=Testföreningen", organization_number="552222-0002")
         db.Herd.create(herd="G13", genebank=self.genebanks[0], membership=named)
         db.Herd.create(herd="G12", genebank=self.genebanks[0])
-        _mk_person(named, "Tora", "Test", email="tora@example.invalid")
+        _mk_person(named, "Tora", "Test", email="tora@example.invalid", phone="070-12")
         _mk_person(named, "Alex", "af Test", role="familjemedlem")
         unnamed = _mk_membership(status="friexemplar", organization_name="Testbiblioteket")
         _mk_person(unnamed, "", "", email="bibliotek@example.invalid")
-        ended = _mk_membership(number=14, organization_name="Utan aktiv huvudmedlem")
-        _mk_person(ended, "Avslutad", "Kontakt", end_date=date.today())
-        _mk_person(ended, "Annan", "Person", role="familjemedlem")
+        _mk_membership(status="friexemplar", organization_name="Museet")
+        ended = _mk_membership(
+            number=14,
+            organization_name="Utan aktiv huvudmedlem",
+            address="Box 14",
+            postal_code="123 45",
+            city="Exempelby",
+        )
+        _mk_person(ended, "Avslutad", "Kontakt", end_date=date.today(), email="gammal@example.invalid", phone="070-14")
+        _mk_person(ended, "Annan", "Person", role="familjemedlem", email="annan@example.invalid", phone="070-15")
         with db.DB_PROXY.atomic():
             matrikel.raise_counter_to(14)
 
@@ -766,13 +783,26 @@ class TestStatsAndExport(MatrikelApiTest):
             [
                 ("Biblioteket Visby", ""),
                 ("Testbiblioteket", ""),
+                ("Museet", ""),
                 ("Ada A", ""),
                 ("Alf A", ""),
+                ("Kim af Exempel", ""),
                 (" =Testföreningen", "c/o Tora Test"),
                 ("Alex af Test", ""),
+                ("Utan aktiv huvudmedlem", ""),
+                ("Annan Person", ""),
             ],
         )
         self.assertEqual(header[-1], "c/o")
+        by_name = {r[3]: dict(zip(header, r, strict=True)) for r in rows}
+        self.assertEqual(by_name[" =Testföreningen"]["Telefonnr"], "070-12")
+        self.assertEqual(by_name[" =Testföreningen"]["e-postadress"], "tora@example.invalid")
+        self.assertEqual(by_name["Testbiblioteket"]["e-postadress"], "bibliotek@example.invalid")
+        headless = by_name["Utan aktiv huvudmedlem"]
+        self.assertEqual(
+            [headless[key] for key in ("Adress", "Postnummer", "Postort", "Telefonnr", "e-postadress")],
+            ["Box 14", "123 45", "Exempelby", "", ""],
+        )
         self.assertNotIn(named.organization_number, response.get_data(as_text=True))
 
         def snapshot():
@@ -958,8 +988,13 @@ class TestKoharenExport(MatrikelApiTest):
             membership.save()
         _mk_person(self.full, "Gammal", "Kontakt", end_date=date.today())
         # A family member cannot replace a missing active main contact.
-        no_main = _mk_membership(number=11, organization_name="Utan huvudmedlem", publication_consent={"name": True})
-        _mk_person(no_main, "Familje", "Medlem", role="familjemedlem")
+        no_main = _mk_membership(
+            number=11,
+            organization_name="Utan huvudmedlem",
+            address="Box 11",
+            publication_consent=self.full.publication_consent,
+        )
+        _mk_person(no_main, "Familje", "Medlem", role="familjemedlem", phone="070-11", email="familj@example.invalid")
         self.assertEqual(
             self._rows()[1:],
             [
@@ -967,6 +1002,7 @@ class TestKoharenExport(MatrikelApiTest):
                 ["7", "Testförening 7", "", "bo@example.com", "", "", "", "angivet"],
                 ["8", "", "", "", "", "", "", "angivet"],
                 ["9", "", "", "", "", "", "", "ej angivet"],
+                ["11", "Utan huvudmedlem", "", "", "Box 11", "", "", "angivet"],
             ],
         )
 

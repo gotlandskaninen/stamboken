@@ -527,6 +527,17 @@ class TestOrganizationMembershipEndpoints(MatrikelAdminTestBase):
         self.assertEqual(resp.status_code, 201, resp.data)
         self.assertEqual(resp.get_json()["last_name"], "")
 
+    def test_ended_unnamed_contact_needs_a_name_after_organization_is_removed(self):
+        person_url = f"/api/v2/persons/{self.main.id}"
+        self.assertEqual(self.patch_json(self.url, {"organization_name": "Museet"}).status_code, 200)
+        self.assertEqual(self.patch_json(person_url, {"first_name": "", "last_name": ""}).status_code, 200)
+        self.assertEqual(self.client.delete(self.url).status_code, 200)
+        self.assertIsNotNone(db.Member.get_by_id(self.main.id).end_date)
+        self.assertEqual(self.patch_json(person_url, {"notes": "Arkiverad"}).status_code, 400)
+        self.assertEqual(self.patch_json(self.url, {"organization_name": None}).status_code, 200)
+        self.assertEqual(self.patch_json(person_url, {"role": "familjemedlem"}).status_code, 400)
+        self.assertEqual(db.Member.get_by_id(self.main.id).role, "huvudmedlem")
+
     def test_search_and_visibility_of_organization_fields(self):
         self.assertEqual(self.patch_json(self.url, self.organization).status_code, 200)
         _make_membership(number=7)  # must not match the organization search

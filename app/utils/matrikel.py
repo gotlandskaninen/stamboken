@@ -94,7 +94,8 @@ def is_anonymized(person) -> bool:
 
 
 def membership_recipient(membership: Membership) -> tuple[str, str | None]:
-    """Postal recipient and optional c/o line for the active main contact."""
+    """Postal recipient and optional c/o line: an organization receives, its named active contact is c/o.
+    Reads membership.persons, so prefetch the active persons when looping over memberships."""
     main = next((p for p in membership.persons if p.role == "huvudmedlem" and p.end_date is None), None)
     name = f"{main.first_name} {main.last_name}".strip() if main else ""
     if membership.organization_name:
@@ -1219,15 +1220,28 @@ def link_member_user(person_id, user_id, *, actor, mode, confirmed_herd_ids=None
             raise LinkError("Kontot är inaktivt", "Ett inaktivt konto kan inte kopplas")
         if person.user_id is not None:
             raise LinkError("Personen har redan ett konto", "Koppla bort det befintliga kontot först")
-        holder = Member.select().where(Member.user == user).first()
+        holder = (
+            Member.select(
+                Member.id,
+                Member.first_name,
+                Member.last_name,
+                Member.role,
+                Member.end_date,
+                Membership.id,
+                Membership.member_number,
+                Membership.organization_name,
+            )
+            .join(Membership)
+            .where(Member.user == user)
+            .first()
+        )
         if holder is not None:
-            name = f"{holder.first_name} {holder.last_name}".strip()
             # A friexemplar/pending membership has no number — never render "nr None".
             number = holder.membership.member_number or "–"
             ended = f" (avslutad {holder.end_date.isoformat()})" if holder.end_date else ""
             raise LinkError(
                 "Kontot är redan kopplat",
-                f"Kontot är redan kopplat till {name} i medlemskap nr {number}{ended}",
+                f"Kontot är redan kopplat till {holder.display_name} i medlemskap nr {number}{ended}",
                 holder_person_id=holder.id,
             )
         try:

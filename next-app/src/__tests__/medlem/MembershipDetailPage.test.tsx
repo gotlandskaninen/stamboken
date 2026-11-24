@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
 import { afterEach, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, render, screen } from "@testing-library/react";
 import MembershipDetailPage from "@/app/(app)/medlem/matrikel/[id]/page";
 import type { MembershipDetail } from "@/app/(app)/medlem/matrikel/types";
 
@@ -43,7 +43,7 @@ const org: MembershipDetail = {
 afterEach(cleanup);
 
 it.each([true, false])(
-  "shows the organisation in the heading and overview (admin=%s)",
+  "shows the organisation in the heading and keeps four overview cells (admin=%s)",
   async (admin) => {
     fetchApi.mockResolvedValue(
       admin ? { ...org, organization_number: "123456-7897" } : org,
@@ -55,15 +55,13 @@ it.each([true, false])(
     expect(
       screen.getByRole("heading", { level: 1, name: "Exempelföreningen" }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/Medlemskap nr 123/)).toBeInTheDocument();
-    const overview = within(screen.getByRole("region", { name: "Översikt" }));
-    expect(overview.getByText("Exempelföreningen")).toBeInTheDocument();
+    const meta = screen.getByText(/Medlemskap nr 123/);
+    expect(
+      screen.getByRole("region", { name: "Översikt" }).children,
+    ).toHaveLength(4);
     if (admin) {
-      expect(overview.getByText("123456-7897")).toBeInTheDocument();
+      expect(meta).toHaveTextContent("123456-7897");
     } else {
-      expect(
-        overview.queryByText("Organisationsnummer"),
-      ).not.toBeInTheDocument();
       expect(screen.queryByText(/123456-7897/)).not.toBeInTheDocument();
     }
   },

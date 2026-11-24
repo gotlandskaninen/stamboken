@@ -153,6 +153,9 @@ describe("MembershipsGridClient", () => {
     render(<MembershipsGridClient rows={rows} total={3} />);
 
     expect(screen.getAllByRole("row")).toHaveLength(4); // header + 3
+    expect(
+      screen.getByRole("columnheader", { name: "Huvudmedlem" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Anna Lindqvist")).toBeInTheDocument();
     expect(screen.getByText("Bertil Ek")).toBeInTheDocument();
     expect(screen.getByText("Cecilia Sund")).toBeInTheDocument();
