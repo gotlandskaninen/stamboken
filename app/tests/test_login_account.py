@@ -23,6 +23,11 @@ RULE_TEXT = "Kontoregler\n\nAnvänd bara ditt eget testkonto."
 RULES = {"accepted": True, "rules_version": "23", "rules_sha256": sha256(RULE_TEXT.encode()).hexdigest()}
 
 
+def test_sqlite_skips_the_postgres_rules_for_snapshots():
+    with db.SqliteDatabase(":memory:") as sqlite, mock.patch.object(db, "DATABASE", sqlite):
+        db._lock_account_rules_snapshots()
+
+
 class TestLoginAccount(MatrikelApiTest):
     def setUp(self):
         super().setUp()

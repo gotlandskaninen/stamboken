@@ -4855,6 +4855,8 @@ def migrate_51_to_52():
 
 
 def _lock_account_rules_snapshots():
+    if isinstance(DATABASE, SqliteDatabase):
+        return
     for action in ("UPDATE", "DELETE"):
         DATABASE.execute_sql(
             f"CREATE OR REPLACE RULE account_rules_no_{action.lower()} AS ON {action} TO account_rules_snapshot "
