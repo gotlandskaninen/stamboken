@@ -115,6 +115,7 @@ describe("MailThread", () => {
     const [first, reply] = screen.getAllByRole("article");
     expect(first).toHaveTextContent("ÄmneFörsta ämnet");
     expect(first.querySelector("p")?.textContent).toBe(mail.message);
+    expect(screen.getByRole("heading", { name: /^Svar · / })).toBeVisible();
     expect(reply).toHaveTextContent("ÄmneKomplettering");
     expect(reply).toHaveTextContent("Svar på frågan.");
   });

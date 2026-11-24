@@ -19,7 +19,7 @@ export function MailThread({ item }: { item: InboxDetail }) {
       .filter((e) => e.kind === "svar")
       .map((e) => ({
         id: e.id,
-        label: `Svar från uppfödaren · ${formatTime(e.at)}`,
+        label: `Svar · ${formatTime(e.at)}`,
         subject: e.detail?.subject,
         text: e.detail?.text,
       })),
