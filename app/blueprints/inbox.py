@@ -425,11 +425,12 @@ def take(item_id):
     return _locked(item_id, _then_assignment(lambda item: inbox.take(item, current_user, over=False)))
 
 
-@inbox_bp.route("/inkorg/<int:item_id>/ta-over", methods=["POST"])
+@inbox_bp.route("/inkorg/<int:item_id>/ta-over", methods=["POST", "PUT"])
 @json_login_required
 @_queue_worker
 def take_over(item_id):
-    return _locked(item_id, _then_assignment(lambda item: inbox.take(item, current_user, over=True)))
+    expected = _body() if request.method == "PUT" else None
+    return _locked(item_id, _then_assignment(lambda item: inbox.take(item, current_user, over=True, expected=expected)))
 
 
 @inbox_bp.route("/inkorg/<int:item_id>/slapp", methods=["POST"])

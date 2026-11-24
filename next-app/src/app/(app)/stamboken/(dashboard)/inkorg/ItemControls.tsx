@@ -9,6 +9,7 @@ import { useQueueUndo } from "./QueueUndo";
 import {
   itemActions,
   lacksRole,
+  shownAssignment,
   OPEN_STATES,
   type InboxItem,
   type QueueUser,
@@ -20,7 +21,10 @@ export function ItemControls({
   user,
   myGenebanks,
 }: {
-  item: Pick<InboxItem, "id" | "assigned_to" | "genebank_id" | "state">;
+  item: Pick<
+    InboxItem,
+    "id" | "assigned_to" | "assigned_at" | "genebank_id" | "state"
+  >;
   user: QueueUser;
   myGenebanks: number[] | null;
 }) {
@@ -44,7 +48,10 @@ export function ItemControls({
       const res =
         action === "release"
           ? await releaseItem(item.id)
-          : await takeItem(item.id, action === "over");
+          : await takeItem(
+              item.id,
+              action === "over" ? shownAssignment(item) : undefined,
+            );
       if (!res.ok) return setError(res.problem.detail);
       const message = {
         take: "taken",

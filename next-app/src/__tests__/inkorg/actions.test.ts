@@ -32,6 +32,17 @@ beforeEach(() => {
 });
 
 describe("the queue's server actions", () => {
+  it("sends the displayed assignment with the conditional takeover request", async () => {
+    const expected = {
+      assigned_to: 7,
+      assigned_at: "2026-11-14T08:00:00.123456+00:00",
+    };
+    await takeItem(12, expected);
+    expect(api.mock.calls[0][0]).toBe("/v2/inkorg/12/ta-over");
+    expect(api.mock.calls[0][1]?.method).toBe("PUT");
+    expect(body(0)).toEqual(expected);
+  });
+
   it("previews a herd without refreshing the queue and submits the reviewed revision", async () => {
     await previewHerd(" g9001 ");
     expect(api.mock.calls[0][0]).toBe("/v2/inkorg/tilldela?herd=G9001");

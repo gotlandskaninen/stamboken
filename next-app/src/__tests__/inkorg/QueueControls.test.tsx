@@ -34,7 +34,13 @@ const user = { ...me, is_admin: false, is_manager: [1] };
 const itemView = (state: ItemState, handler: Person | null) => (
   <QueueUndoProvider>
     <ItemControls
-      item={{ id: 12, genebank_id: 1, state, assigned_to: handler }}
+      item={{
+        id: 12,
+        genebank_id: 1,
+        state,
+        assigned_to: handler,
+        assigned_at: handler ? "2026-11-14T08:00:00+00:00" : null,
+      }}
       user={user}
       myGenebanks={[1]}
     />
@@ -65,7 +71,7 @@ describe("handläggning och ångra", () => {
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Börja registrera" }));
     });
-    expect(actions.takeItem).toHaveBeenCalledWith(12, false);
+    expect(actions.takeItem).toHaveBeenCalledWith(12, undefined);
     expect(push).toHaveBeenCalledWith("/stamboken/inkorg/12");
     view.rerender(
       <QueueUndoProvider>
@@ -93,7 +99,10 @@ describe("handläggning och ångra", () => {
         screen.getByRole("button", { name: "Ta över från Handläggare" }),
       );
     });
-    expect(actions.takeItem).toHaveBeenCalledWith(12, true);
+    expect(actions.takeItem).toHaveBeenCalledWith(12, {
+      assigned_to: other.id,
+      assigned_at: "2026-11-14T08:00:00+00:00",
+    });
     expect(push).not.toHaveBeenCalled();
     await advance(9999);
     expect(screen.getByRole("button", { name: "Ångra" })).toBeEnabled();

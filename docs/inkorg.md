@@ -506,6 +506,12 @@ läget `tagen` händer ingenting. **409** när någon annan har posten
 "Ta över": som `…/ta`, men också när någon annan har posten. Den som hade posten får notisen
 `overtagen`. Posten blir `tagen` också om den väntade. **409** när posten är stängd.
 
+### `PUT /api/v2/inkorg/{id}/ta-over`
+
+Inkorgens knapp ”Ta över” skickar handläggarens id i `assigned_to` och den visade
+tilldelningstiden i `assigned_at`. Flask jämför båda under ärendets lås. Om någon
+har ändrat tilldelningen svarar Flask med **409** och den aktuella handläggaren behåller ärendet.
+
 ### `POST /api/v2/inkorg/{id}/tilldela`
 
 ```json

@@ -148,10 +148,14 @@ describe("WorkView: mail", () => {
       ok: true,
       data: { restored: [12] },
     });
-    render(view(item({ assigned_to: other, documents: [] })));
+    const assigned_at = "2026-11-14T08:00:00.123456+00:00";
+    render(view(item({ assigned_to: other, assigned_at, documents: [] })));
     fireEvent.click(screen.getByRole("button", { name: "Ta över" }));
     fireEvent.click(await screen.findByRole("button", { name: "Ångra" }));
-    expect(actions.takeItem).toHaveBeenCalledWith(12, true);
+    expect(actions.takeItem).toHaveBeenCalledWith(12, {
+      assigned_to: other.id,
+      assigned_at,
+    });
     expect(actions.undoAssignment).toHaveBeenCalledWith("takeover");
     await screen.findByText("Ändringen har ångrats.");
   });

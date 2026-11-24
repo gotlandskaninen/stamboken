@@ -33,6 +33,7 @@ import {
   itemActions,
   manages,
   nextOpenDocument,
+  shownAssignment,
   STATE_LABEL,
   waited,
   WARNING_LABEL,
@@ -226,7 +227,11 @@ export function WorkView({
       case "arbeta_vidare":
       case "ta_over":
         return run(
-          () => takeItem(id, action === "ta_over"),
+          () =>
+            takeItem(
+              id,
+              action === "ta_over" ? shownAssignment(item) : undefined,
+            ),
           ({ undo }) => offerUndo(undo, t("queueAssignment.taken", { id })),
         );
       case "oppna":

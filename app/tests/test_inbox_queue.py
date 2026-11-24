@@ -235,6 +235,31 @@ class TestVisibility(InboxTest):
 
 
 class TestTakeAndAssign(InboxTest):
+    def test_takeover_requires_the_displayed_handler_and_assignment_time(self):
+        item = self.item()
+        inbox.take(item, self.helper, over=False)
+        self.login("man")
+        path = f"/api/v2/inkorg/{item.id}"
+        shown = self.client.get(path).get_json()
+        expected = {"assigned_to": shown["assigned_to"]["id"], "assigned_at": shown["assigned_at"]}
+
+        def refused(stale):
+            response = self.client.put(f"{path}/ta-over", json=stale)
+            self.assertEqual(response.status_code, 409)
+            self.assertIn("Tilldelningen har ändrats", response.get_json()["detail"])
+
+        inbox.assign(item, self.manager, self.manager)
+        refused({**expected, "assigned_at": self.client.get(path).get_json()["assigned_at"]})
+        self.assertEqual(self.reload(item).assigned_to_id, self.manager.id)
+        inbox.assign(item, self.manager, self.helper)
+        refused(expected)  # back with the displayed handler, under a new assignment
+        self.assertEqual(self.reload(item).assigned_to_id, self.helper.id)
+        self.assertFalse(item.events.where(db.InboxEvent.kind == "overtagen").exists())
+        current = self.client.get(path).get_json()
+        response = self.client.put(f"{path}/ta-over", json={**expected, "assigned_at": current["assigned_at"]})
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.reload(item).assigned_to_id, self.manager.id)
+
     def test_only_actor_undoes_a_take_and_a_view_does_not_invalidate_it(self):
         item = self.item()
         self.login("hjalp")

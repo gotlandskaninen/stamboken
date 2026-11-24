@@ -313,6 +313,13 @@ type ItemFacts = Pick<InboxItem, "state" | "assigned_to" | "genebank_id"> & {
   documents?: number | unknown[];
 };
 
+export const shownAssignment = (
+  item: Pick<InboxItem, "assigned_to" | "assigned_at">,
+) => ({
+  assigned_to: item.assigned_to?.id ?? null,
+  assigned_at: item.assigned_at,
+});
+
 const isMine = (item: ItemFacts, user: QueueUser) =>
   item.assigned_to?.id === user.id;
 

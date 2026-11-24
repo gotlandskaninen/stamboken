@@ -391,12 +391,17 @@ def _set_state(item, state):
     item.closed_at = item.state_changed_at if state in CLOSED_STATES else None
 
 
-def take(item, user, *, over):
+def take(item, user, *, over, expected=None):
     """ "Jag tar den", or with `over` "Ta över": the item becomes the user's, in "tagen"."""
     require_worker_of(item, user)
     if item.state in CLOSED_STATES:
         raise InboxError(409, "Posten är stängd.")
     previous = item.assigned_to_id
+    if expected is not None:
+        if type(expected.get("assigned_to")) is not int or "assigned_at" not in expected:
+            raise InboxError(400, "Ange handläggarens id och tilldelningstid.")
+        if expected["assigned_to"] != previous or expected["assigned_at"] != _iso(item.assigned_at):
+            raise InboxError(409, "Tilldelningen har ändrats. Kontrollera vem som har ärendet innan du tar över.")
     if previous == user.id and item.state == "tagen":
         return
     if previous not in (None, user.id) and not over:

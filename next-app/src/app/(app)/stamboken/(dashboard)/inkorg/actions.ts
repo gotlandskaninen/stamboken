@@ -3,7 +3,13 @@
 import { revalidatePath } from "next/cache";
 import type { SaleBuyer } from "@/components/individual/BuyerFields";
 import { fetchApi, ApiError } from "@/lib/api";
-import type { InboxDocument, InboxItem, Problem, Rect } from "./lib";
+import type {
+  InboxDocument,
+  InboxItem,
+  Problem,
+  Rect,
+  shownAssignment,
+} from "./lib";
 
 // Every mutation of the queue, as docs/inkorg.md describes it. Flask decides;
 // a refusal comes back as the whole problem so the form can place it.
@@ -87,13 +93,14 @@ async function call<T>(
   }
 }
 
-export async function takeItem(id: number, over = false) {
+export async function takeItem(
+  id: number,
+  expected?: ReturnType<typeof shownAssignment>,
+) {
   if (!isId(id)) return refused("Ogiltigt ärende.");
-  return call<AssignmentResult>(
-    id,
-    `/${id}/${over ? "ta-over" : "ta"}`,
-    "POST",
-  );
+  return expected
+    ? call<AssignmentResult>(id, `/${id}/ta-over`, "PUT", expected)
+    : call<AssignmentResult>(id, `/${id}/ta`, "POST");
 }
 
 export async function releaseItem(id: number) {
