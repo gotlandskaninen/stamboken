@@ -267,7 +267,7 @@ class TestLoginAccount(MatrikelApiTest):
         for body in ({}, {**RULES, "accepted": 1}, {"accepted": True}, {"accepted": True, "rules_version": "23"}):
             self.assertEqual(self.create(body).status_code, 400)
         self.cms.assert_not_called()
-        self.assertEqual(self.create({**RULES, "rules_version": "22"}).status_code, 412)
+        self.assertEqual(self.create({**RULES, "rules_sha256": "0" * 64}).status_code, 412)
         for bad in (
             {},
             {"version": None},
