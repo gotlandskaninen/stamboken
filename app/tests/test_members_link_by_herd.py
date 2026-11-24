@@ -819,14 +819,14 @@ class TestMembersLinkByHerd(DatabaseTest):
     def test_family_members_workspace_address_blocks_main_members_local_part_match(self):
         membership, _ = self._membership(901, email="bo.lund@example.org")
         user = self._account(fullname="Eva Lund", owns=self._herd("G901"))
-        user.google_email = "bo.lund@example.invalid"
+        user.google_email = "bo.lund@gotlandskaninen.se"
         user.save()
         db.Member.create(
             membership=membership,
             role="familjemedlem",
             first_name="Bo",
             last_name="Lund",
-            workspace_email="bo.lund@example.invalid",
+            workspace_email="bo.lund@gotlandskaninen.se",
         )
 
         plan = self._run()
@@ -834,6 +834,19 @@ class TestMembersLinkByHerd(DatabaseTest):
         self.assertEqual(plan.exit_code, 0, plan.output)
         self.assertIn("Att koppla: 0", plan.output)
         self.assertIn("G901: flera möjliga kopplingar", plan.output)
+
+    def test_workspace_address_outside_the_association_is_no_match(self):
+        _, main = self._membership(901, first="Exempelmuseet", last="", email="museet@example.org")
+        user = self._account(fullname="Eva Lund", owns=self._herd("G901"))
+        user.google_email = "eva.lund@example.invalid"
+        user.save()
+        db.Member.update(workspace_email="eva.lund@example.invalid").where(db.Member.id == main.id).execute()
+
+        plan = self._run()
+
+        self.assertEqual(plan.exit_code, 0, plan.output)
+        self.assertIn("Att koppla: 0", plan.output)
+        self.assertIn("G901: namnet skiljer sig", plan.output)
 
     def test_family_member_with_the_main_members_name_blocks_the_link(self):
         membership, person = self._membership(901)

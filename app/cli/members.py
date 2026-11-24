@@ -83,6 +83,7 @@ from utils.matrikel import (
     raise_counter_to,
     split_postal_address,
 )
+from utils.members import WORKSPACE_DOMAIN
 from utils.membership_lifecycle import Status
 
 logger = logging.getLogger(__name__)
@@ -945,7 +946,8 @@ def _match_reason(person: Member, user: User) -> str | None:
     if name and name == _norm_name(f"{person.first_name} {person.last_name}"):
         return "namn lika"
     # the association's own address for the person, which Google sign-in also links by
-    if (workspace := _norm_email(person.workspace_email)) and workspace == _norm_email(user.google_email):
+    workspace = _norm_email(person.workspace_email)
+    if workspace.endswith(WORKSPACE_DOMAIN) and workspace == _norm_email(user.google_email):
         return "Workspace-adress lika (Google)"
 
     address = _norm_email(person.email)
