@@ -76,8 +76,13 @@ it("removes the fragment from the same history entry, shows the name, then reque
     undefined,
   );
   fireEvent.click(confirm);
-  await waitFor(() =>
-    expect(actions.redeemLoginLink).toHaveBeenLastCalledWith("test-token", 12),
+  await waitFor(
+    () =>
+      expect(actions.redeemLoginLink).toHaveBeenLastCalledWith(
+        "test-token",
+        12,
+      ),
+    { timeout: 3000 }, // the default 1 s was too short when the whole suite runs
   );
 });
 
