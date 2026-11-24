@@ -231,26 +231,24 @@ class TestLinkHerd(LinkTest):
         self.assertEqual((report["herd_links"], report["contact_cases"]), (0, Counter()))
         self.assertEqual(self._state(), before)
 
-    def test_link_refuses_a_herd_renumbered_since_the_lookup(self):
-        """The import finds the herd by its G/M code before the locks. A herd an admin renumbered meanwhile is not
-        linked to the old number's membership: link_herd checks the code on the locked row."""
-        self._herd(name="Anna Exempel")
-        self.assertIsNone(link_herd(self.herd.id, self.membership.id, herd_code="G7"))  # G1 is not G7
-        self.assertIsNone(self._state()["membership_id"])
+    def test_link_refuses_herds_renumbered_or_moved_since_the_lookup(self):
+        """The import finds G1 and M1 before the locks. An admin then renumbers G1 and moves M1 to Gotland."""
+        m1 = db.Herd.create(herd="M1", genebank=self.genebanks[1])
 
-        real_lookup = db.Herd.get_or_none
-
-        def lookup_then_renumber(*args, **kwargs):
-            herd = real_lookup(*args, **kwargs)
-            db.Herd.update(herd="G1001").where(db.Herd.id == herd.id).execute()  # the admin, before the lock
-            return herd
+        def change_then_link(herd_id, membership_id, **expected):
+            change = {"herd": "G1001"} if herd_id == self.herd.id else {"genebank": self.genebanks[0]}
+            db.Herd.update(**change).where(db.Herd.id == herd_id).execute()
+            return link_herd(herd_id, membership_id, **expected)
 
         report = {"herd_warnings": [], "herd_links": 0, "contact_cases": Counter()}
-        with patch.object(db.Herd, "get_or_none", lookup_then_renumber):
-            _link_flag_herds(1, [{"g": True, "m": False}], self.membership, False, report)
+        with patch("cli.members.link_herd", change_then_link):
+            _link_flag_herds(1, [{"g": True, "m": True}], self.membership, False, report)
         self.assertIsNone(self._state()["membership_id"])
+        self.assertIsNone(db.Herd.get_by_id(m1.id).membership_id)
         self.assertEqual((report["herd_links"], report["contact_cases"]), (0, Counter()))
-        self.assertEqual(report["herd_warnings"], ["herd G1 changed or linked meanwhile — not linked"])
+        self.assertEqual(
+            report["herd_warnings"], [f"herd {code} changed or linked meanwhile — not linked" for code in ("G1", "M1")]
+        )
 
     def test_link_to_a_membership_not_active_leaves_it_uncompared(self):
         """O4: the reads show nothing of a membership that is not active, so the link compares nothing: the herd is

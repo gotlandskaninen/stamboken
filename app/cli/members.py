@@ -628,15 +628,18 @@ def _add_family_members(membership, rows: list[dict], dry_run: bool, report: dic
 
 def _link_flag_herds(nr: int, group: list[dict], membership, dry_run: bool, report: dict) -> None:
     """G/M flags link herd G<Nr>/M<Nr> with link_herd, which compares the herd's contact with the register (#117).
-    A missing herd is a warning, never a row skip."""
+    A missing or ambiguous herd is a warning, never a row skip."""
     for key, prefix in (("g", "G"), ("m", "M")):
         if not any(row[key] for row in group):
             continue
         code = f"{prefix}{nr}"
-        herd = Herd.get_or_none(Herd.herd == code)
-        if herd is None:
-            report["herd_warnings"].append(f"herd {code} not found — flag ignored")
+        candidates = Herd.select(Herd, Genebank).join(Genebank).where(Herd.herd == code)
+        matches = [herd for herd in candidates if herd.genebank.name[:1].upper() == prefix]
+        if len(matches) != 1:
+            reason = "not found" if not matches else "matches multiple genebanks"
+            report["herd_warnings"].append(f"herd {code} {reason} — flag ignored")
             continue
+        herd = matches[0]
         if herd.membership_id is not None:
             if membership is not None and herd.membership_id == membership.id:
                 continue  # already linked (re-import)
@@ -645,8 +648,8 @@ def _link_flag_herds(nr: int, group: list[dict], membership, dry_run: bool, repo
         if dry_run or membership is None:
             report["herd_links"] += 1
             continue
-        cases = link_herd(herd.id, membership.id, herd_code=code)
-        if cases is None:  # linked or renumbered by someone else since the read above
+        cases = link_herd(herd.id, membership.id, herd_code=code, genebank_id=herd.genebank_id)
+        if cases is None:  # linked, renumbered or moved since the lookup
             report["herd_warnings"].append(f"herd {code} changed or linked meanwhile — not linked")
             continue
         report["herd_links"] += 1

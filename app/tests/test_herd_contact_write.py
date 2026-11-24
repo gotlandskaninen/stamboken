@@ -666,6 +666,19 @@ class TestReviewRound1(HerdContactWriteTest):
         self.assertEqual(self._state(), before)
         self.assertNotIn("anna@example.invalid", response.get_data(as_text=True))
 
+    def test_admin_patch_refuses_manager_role_revoked_before_the_lock(self):
+        before = self._state()
+        lock = herdbook.da.lock_herd
+
+        def revoke_then_lock(herd_id):
+            self.manager.remove_role("manager", self.herd.genebank_id)
+            return lock(herd_id)
+
+        with patch.object(herdbook.da, "lock_herd", revoke_then_lock):
+            response = self._patch(self.manager, {"www": "ny.example.invalid", "place_shown": WWW1}, admin=True)
+        self._assert_problem(response, 403, "manager-of-genebank-required")
+        self.assertEqual(self._state(), before)
+
     def test_reader_corrects_own_row_with_short_shown(self):
         """F5: the short shown (source, value, privacy) works for a reader too while the row stays own."""
         self._set(email="gard@example.invalid", email_privacy="private")

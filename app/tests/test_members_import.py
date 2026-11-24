@@ -160,12 +160,45 @@ class TestMembersImport(DatabaseTest):
         self.assertEqual(herd_g1.contact_pending, ["name"])
         self.assertIn("Contact name fritext: 2", result.output)
 
+    def test_both_flags_link_only_in_their_genebanks(self):
+        gotland, mellerud = self.genebanks
+        db.Herd.create(herd="G7", genebank=mellerud)
+        db.Herd.create(herd="M7", genebank=gotland)
+        g7 = db.Herd.create(herd="G7", genebank=gotland)
+        m7 = db.Herd.create(herd="M7", genebank=mellerud)
+        csv = HEADER + _row(g="x", m="x", nr="7", name="Ida Exempel", epost="ida@example.invalid")
+
+        result = self._run_import(csv)
+        self.assertEqual(result.exit_code, 0, result.output)
+        membership = db.Membership.get(db.Membership.member_number == 7)
+        linked = db.Herd.select().where(db.Herd.membership == membership)
+        self.assertCountEqual([herd.id for herd in linked], [g7.id, m7.id])
+        self.assertIn("Herd warnings: 0", result.output)
+
     def test_missing_flag_herd_warns_but_creates_membership(self):
-        csv = HEADER + _row(g="x", nr="7", name="Doris Al")
+        wrong_bank = db.Herd.create(herd="G7", genebank=self.genebanks[1])
+        csv = HEADER + _row(g="x", nr="7", name="Doris Exempel", epost="doris@example.invalid")
         result = self._run_import(csv)
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("herd G7 not found", result.output)
+        self.assertIn("Herd warnings: 1", result.output)
+        self.assertIsNone(db.Herd.get_by_id(wrong_bank.id).membership_id)
         self.assertTrue(db.Membership.select().where(db.Membership.member_number == 7).exists())
+
+    def test_ambiguous_g_flag_warns_and_still_links_m_flag(self):
+        other_g = db.Genebank.create(name="gotländsk testgenbank")
+        db.Herd.create(herd="G7", genebank=self.genebanks[0])
+        db.Herd.create(herd="G7", genebank=other_g)
+        m7 = db.Herd.create(herd="M7", genebank=self.genebanks[1])
+        csv = HEADER + _row(g="x", m="x", nr="7", name="Ida Exempel", epost="ida@example.invalid")
+
+        result = self._run_import(csv)
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("herd G7 matches multiple genebanks — flag ignored", result.output)
+        self.assertIn("Herd warnings: 1", result.output)
+        membership = db.Membership.get(db.Membership.member_number == 7)
+        linked = db.Herd.select().where(db.Herd.membership == membership)
+        self.assertEqual([herd.id for herd in linked], [m7.id])
 
     def test_name_split_heuristics(self):
         rows = [

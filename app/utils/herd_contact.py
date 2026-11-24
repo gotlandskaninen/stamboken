@@ -315,18 +315,24 @@ def compare_with_register(herd: Herd) -> tuple[dict, dict[str, str]]:
     return changes, cases
 
 
-def link_herd(herd_id: int, membership_id: int, herd_code: str | None = None) -> dict[str, str] | None:
+def link_herd(
+    herd_id: int, membership_id: int, herd_code: str | None = None, genebank_id: int | None = None
+) -> dict[str, str] | None:
     """Spec, Livscykel: the one function that sets Herd.membership. Links a herd without membership and compares
     its contact with the register (compare_with_register); returns the case per row. A membership that is not
     active is linked uncompared, {}: the herd reads its own columns until on_membership_active. A herd already
-    linked, to this membership or another, is left as it is: None (a move is #153). So is one whose code is no
-    longer `herd_code`, the G/M code the caller found it by (renumbered meanwhile). Locks the membership and then
-    the herd, re-reads the herd under the locks and writes only the columns that change."""
+    linked, to this membership or another, is left as it is: None (a move is #153). So is one whose code or
+    genebank no longer matches the caller's lookup. Locks the membership and then the herd, re-reads the herd
+    under the locks and writes only the columns that change."""
     with DB_PROXY.atomic():
         membership = Membership.select(Membership.membership_status).where(Membership.id == membership_id)
         status = membership.for_update().get().membership_status
         herd = Herd.select().where(Herd.id == herd_id).for_update().get()
-        if herd.membership_id is not None or herd_code not in (None, herd.herd):
+        if (
+            herd.membership_id is not None
+            or herd_code not in (None, herd.herd)
+            or genebank_id not in (None, herd.genebank_id)
+        ):
             return None
         herd.membership = membership_id
         changes, cases = compare_with_register(herd) if status == "active" else ({}, {})
