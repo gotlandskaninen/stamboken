@@ -220,7 +220,7 @@ def _membership_mail(params):
 
 
 def _same_buyer(contact_id):
-    """All contacts with the linked buyer's address, including contacts whose e-mail has been purged."""
+    """The linked contact and reviewed or unambiguous matches, also after an e-mail has been purged."""
     contact = BuyerContact.get_or_none(BuyerContact.id == contact_id)
     if contact is None:
         return {contact_id}
@@ -231,9 +231,10 @@ def _same_buyer(contact_id):
     same = BuyerContact.erased_email_hash == key
     if email:
         same |= fn.lower(fn.trim(BuyerContact.email)) == email
-    ids = {row.id for row in BuyerContact.select(BuyerContact.id).where(same)}
+    eligible = BuyerContact.select(BuyerContact.id, BuyerContact.email).where(~BuyerContact.email_review_pending)
+    ids = {row.id for row in eligible.where(same)}
     if not email:  # only the HMAC remains to compare with the addresses that are still held
-        live = BuyerContact.select(BuyerContact.id, BuyerContact.email).where(BuyerContact.email.is_null(False))
+        live = eligible.where(BuyerContact.email.is_null(False))
         ids.update(row.id for row in live if address_hash(row.email) == key)
     return ids | {contact_id}
 

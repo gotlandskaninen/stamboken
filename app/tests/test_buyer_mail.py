@@ -802,6 +802,31 @@ class TestEraseLink(PurgeTest):
         db.InboxItem.update(kind="mail", sender_address=sender).where(db.InboxItem.id == item_id).execute()
         return mail.enqueue_mail("inlasning.kvitto", "inbox_sender", item_id, {"item_id": item_id, "images": 1})
 
+    def check_held_buyer_survives(self, *, purge_email):
+        rabbit = db.Individual.get(db.Individual.number == "G1-2111")
+        held = record_herd_tracking(
+            rabbit, self.sale.herd, "2026-01-02", "TRANSFER", self.manager, buyer={**WITH_EMAIL, "name": "Testköpare B"}
+        )
+        proof = self.document(self.make(doc_type="bevis"))
+        db.InboxDocument.update(herd_tracking_id=held.id).where(db.InboxDocument.id == proof.id).execute()
+        if purge_email:
+            record_herd_tracking(self.sale.individual, self.herds[0], "2026-01-03", "TRANSFER", self.manager)
+            self.assertEqual(buyer_contact.purge_sold_on(datetime.now(timezone.utc)), 1)
+        self.assertEqual(self.erase(self.token).get_json(), {"result": "removed"})
+        self.assertIsNone(db.BuyerContact.get_or_none(db.BuyerContact.id == self.contact_id))
+        self.assertEqual(
+            buyer_contact.buyer_email_reviews(rabbit.number, self.manager),
+            [{"id": held.holder_contact_id, "name": "Testköpare B", "email": EMAIL}],
+        )
+        self.assertEqual(db.InboxDocument.get_by_id(proof.id).original_path, proof.original_path)
+        self.assertTrue(self.exists(proof.original_path))
+
+    def test_older_link_leaves_the_buyer_under_review_and_their_proof(self):
+        self.check_held_buyer_survives(purge_email=False)
+
+    def test_older_link_with_only_an_address_hash_leaves_the_review_and_proof(self):
+        self.check_held_buyer_survives(purge_email=True)
+
     def test_erasure_forgets_the_buyer_who_sent_the_proof_and_cancels_the_receipt(self):
         receipt = self.queued_receipt(EMAIL.upper())
         self.assertEqual(self.erase(self.token).get_json(), {"result": "removed"})
