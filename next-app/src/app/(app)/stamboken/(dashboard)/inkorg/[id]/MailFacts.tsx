@@ -1,13 +1,48 @@
 import Link from "next/link";
+import { formatTime } from "@/lib/inkorg";
 import type { InboxDetail } from "../lib";
+import styles from "../inkorg.module.css";
 
-export function MailSubject({ subject }: { subject: unknown }) {
-  if (typeof subject !== "string" || !subject) return null;
+export function MailThread({ item }: { item: InboxDetail }) {
+  const arrived = item.events.find((e) => e.kind === "inkommen");
+  const messages = [
+    {
+      id: 0,
+      label:
+        item.kind === "mail" || item.kind === "meddelande"
+          ? "Mejl"
+          : "Meddelande",
+      subject: arrived?.detail?.subject,
+      text: item.message,
+    },
+    ...item.events
+      .filter((e) => e.kind === "svar")
+      .map((e) => ({
+        id: e.id,
+        label: `Svar från uppfödaren · ${formatTime(e.at)}`,
+        subject: e.detail?.subject,
+        text: e.detail?.text,
+      })),
+  ].filter((m) => m.subject || m.text);
+  if (!messages.length) return null;
   return (
-    <>
-      <dt>Ämne</dt>
-      <dd>{subject}</dd>
-    </>
+    <section
+      aria-label="Meddelande"
+      className={`sb-card ${styles.card} ${styles.mailThread}`}
+    >
+      {messages.map(({ id, label, subject, text }) => (
+        <article key={id}>
+          <h2 className={styles.cardTitle}>{label}</h2>
+          {typeof subject === "string" && (
+            <dl>
+              <dt className="sb-meta">Ämne</dt>
+              <dd className="sb-h5">{subject}</dd>
+            </dl>
+          )}
+          {typeof text === "string" && <p>{text}</p>}
+        </article>
+      ))}
+    </section>
   );
 }
 
@@ -42,7 +77,6 @@ export function MailFacts({ item }: { item: InboxDetail }) {
   });
   return (
     <>
-      <MailSubject subject={arrived.subject} />
       {item.mentioned_individuals.length > 0 && (
         <>
           <dt>Nämnda kaniner</dt>
