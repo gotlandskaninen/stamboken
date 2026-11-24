@@ -469,9 +469,8 @@ class TestMemberAdded(MailTest):
         self.sent_to(replies=[refusal])
         db.MailMessage.update(created_at=self.now - mail.RETENTION - timedelta(days=1)).execute()
         matrikel.set_member_email(person, "ratt@example.org", self.actor, by="matrikel")
-        self.assertEqual(mail.purge_old_mail(self.now), 0)
+        self.assertEqual(mail.purge_old_mail(self.now), 0)  # queued again, it counts from now
         self.assertEqual(self.sent_to(), ["ratt@example.org"])
-        self.assertEqual(mail.purge_old_mail(self.now), 1)  # gone once it went
 
     def test_a_notice_stopped_by_hand_stays_stopped(self):
         person = self.add()

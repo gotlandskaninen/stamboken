@@ -694,9 +694,8 @@ def forget_recipient(kind, recipient_id):
 
 
 def purge_old_mail(now):
-    """Deletes rows older than 13 months, but never one still to go; their attempts follow (ON DELETE CASCADE)."""
-    old = (MailMessage.created_at < now - RETENTION) & MailMessage.status.not_in(("queued", "sending"))
-    return MailMessage.delete().where(old).execute()
+    """Deletes rows older than 13 months; their attempts follow (ON DELETE CASCADE)."""
+    return MailMessage.delete().where(MailMessage.created_at < now - RETENTION).execute()
 
 
 # --- Status views ---
@@ -922,6 +921,7 @@ def queue_member_added(person):
     not_before = max(_utcnow(), tenth.next_attempt_at + timedelta(days=1)) if tenth else _utcnow()
     key = f"medlemskap.tillagd:{person.id}"
     params = {"member_id": person.id}
+    MailMessage.select().where(MailMessage.dedupe_key == key).for_update().first()  # not purged while we look
     queued = (
         enqueue_mail("medlemskap.tillagd", "member", person.id, params, ref=ref, dedupe_key=key, not_before=not_before)
         if person.email
@@ -932,7 +932,13 @@ def queue_member_added(person):
         # queued one is locked until the change commits, so the sender cannot read the old address meanwhile. Not
         # a bounced one: a delay report counts as a bounce too (status view, "Försök igen").
         MailMessage.update(
-            status="queued", next_attempt_at=not_before, attempts=0, last_error=None, claim_token=None, claimed_at=None
+            status="queued",
+            next_attempt_at=not_before,
+            attempts=0,
+            last_error=None,
+            claim_token=None,
+            claimed_at=None,
+            created_at=_utcnow(),
         ).where(
             (MailMessage.dedupe_key == key)
             & (
