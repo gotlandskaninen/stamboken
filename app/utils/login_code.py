@@ -16,7 +16,7 @@ from peewee import fn
 
 import utils.settings as settings
 from utils.data_access import holds_role
-from utils.database import DB_PROXY, LoginCode, Member, MemberPreviousAddress, Membership
+from utils.database import DB_PROXY, LoginCode, MailSender, Member, MemberPreviousAddress, Membership
 from utils.mail import Recipient, address_hash, forget_recipient, link_mac, mail_kind, one_time_code, recipient_kind
 from utils.membership_lifecycle import Status
 
@@ -435,9 +435,26 @@ def address_collisions(now=None):
     ).fetchone()[0]
 
 
+def record_queue_error():
+    """Keep just the three most recent errors across workers, outside the failed request's transaction."""
+    DB_PROXY.execute_sql(
+        "INSERT INTO mail_sender (id, code_queue_errors) VALUES (1, ARRAY[%s]::timestamptz[]) "
+        "ON CONFLICT (id) DO UPDATE SET code_queue_errors = "
+        "EXCLUDED.code_queue_errors || mail_sender.code_queue_errors[1:2]",
+        (_utcnow(),),
+    )
+
+
 def alarms(now=None):
     """The status view's alarms of code login (utils.mail.sender_alarms)."""
+    now = now or _utcnow()
+    since = now - timedelta(hours=1)
     found = []
+    sender = MailSender.get_or_none(MailSender.id == 1)
+    if sender and sum(at > since for at in sender.code_queue_errors or []) >= 3:
+        found.append(
+            {"code": "kodinloggning_kofel", "message": "Flera förfrågningar om inloggningskod har misslyckats"}
+        )
     if closed(now):
         found.append(
             {"code": "kodinloggning_stangd", "message": "Kodinloggningen är stängd: för många felaktiga koder"}

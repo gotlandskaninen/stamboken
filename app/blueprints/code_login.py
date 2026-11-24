@@ -69,8 +69,12 @@ def _queue_request(address, browser, replaces, source):
             lc.cancel(replaces, purpose="login")
     except LinkError:
         pass  # The member disappeared before the lock.
-    except Exception:  # The HTTP response has already been sent. Never log the address or the credential.
-        logger.error("Could not queue a code login request")
+    except Exception as exc:  # The exception message can contain the address or credential.
+        logger.error("Code login queue error: %s", type(exc).__name__)
+        try:
+            lc.record_queue_error()
+        except Exception as counter_error:
+            logger.error("Could not count code login queue error: %s", type(counter_error).__name__)
 
 
 @code_login_bp.post("/kod")

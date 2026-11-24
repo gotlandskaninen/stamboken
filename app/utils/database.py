@@ -2342,6 +2342,7 @@ class MailSender(BaseModel):
     id = IntegerField(primary_key=True, default=1, constraints=[Check("id = 1")])
     last_run_at = TimestampTZField(null=True)
     paused_until = TimestampTZField(null=True)
+    code_queue_errors = ArrayField(TimestampTZField, null=True, index=False)  # three most recent failures
 
     class Meta:
         table_name = "mail_sender"
@@ -4870,6 +4871,7 @@ def migrate_52_to_53():
         )
         DATABASE.execute_sql("ALTER TABLE hbuser ADD COLUMN IF NOT EXISTS rules_accepted_at TIMESTAMPTZ")
         DATABASE.execute_sql("ALTER TABLE hbuser ADD COLUMN IF NOT EXISTS rules_version TEXT")
+        DATABASE.execute_sql("ALTER TABLE mail_sender ADD COLUMN IF NOT EXISTS code_queue_errors TIMESTAMPTZ[]")
         SchemaHistory.insert(  # pylint: disable=E1120
             version=53, comment="hbuser account rules acceptance", applied=datetime.now()
         ).execute()

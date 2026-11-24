@@ -2,7 +2,7 @@
 
 import os
 import threading
-from datetime import date
+from datetime import date, timedelta
 from unittest import mock
 
 import utils.data_access as da
@@ -140,6 +140,32 @@ class CodeLoginTest(MatrikelApiTest):
         with mock.patch.dict(APP.extensions, establish_session=logout_then_establish):
             self.assertEqual(self.redeem("/kod/verifiera", code=lc.code(row)).status_code, 200)
         self.assertEqual(self.client.get("/api/user").status_code, 401)
+
+    def test_queue_and_limiter_errors_are_logged_and_alarm_for_one_hour(self):
+        start = lc._utcnow()
+        alarm = "kodinloggning_kofel"
+
+        def active(at):
+            return alarm in [row["code"] for row in lc.alarms(at)]
+
+        with mock.patch.object(lc, "_utcnow", return_value=start), self.assertLogs(code_login.logger, "ERROR") as log:
+            with mock.patch.object(code_login, "enqueue_mail", side_effect=ValueError(ADDRESS)):
+                self.ask()
+                self.ask()
+            self.assertFalse(active(start))
+            with (
+                mock.patch.object(limiter, "enabled", True),
+                mock.patch.object(limiter.limiter, "hit", side_effect=RuntimeError(ADDRESS)),
+            ):
+                self.ask()
+        self.assertEqual(
+            [record.getMessage() for record in log.records],
+            ["Code login queue error: ValueError"] * 2 + ["Code login queue error: RuntimeError"],
+        )
+        self.assertNotIn(ADDRESS, "".join(log.output))
+        self.assertFalse(db.LoginCode.select().exists())
+        self.assertTrue(active(start + timedelta(minutes=59)))
+        self.assertFalse(active(start + timedelta(hours=1)))
 
     def test_ten_requests_per_source_including_misses(self):
         with mock.patch.object(limiter, "enabled", True):
