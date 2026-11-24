@@ -41,7 +41,7 @@ from utils.database import (
     lock_individuals,
 )
 from utils.login_code import lock_addresses
-from utils.mail import address_hash, forget_recipient, is_address
+from utils.mail import address_hash, cancel_withdrawn_buyer_mails, forget_recipient, is_address, resume_buyer_mails
 
 UNPROMOTE_REASON = "avpromoverad"
 UNDO_REASON = "Ångrad av den som registrerade den"
@@ -89,6 +89,7 @@ def _set_buyer_sale_date(contact_id, sale_date):
         purge_at=BuyerContact.purge_at_for(sale_date),
         membership_optin_at=Case(None, [(optin.is_null(False), _sale_midnight(sale_date))], optin),
     ).where(BuyerContact.id == contact_id).execute()
+    resume_buyer_mails(contact_id)
 
 
 def _buyer_name_key(name):
@@ -889,6 +890,8 @@ def void_herd_tracking(ht_id, user, reason, operation_id=None, typed=True, *, re
         else:
             paths, kept = [], list(_unheld(voided))
             BuyerContact.update(purge_at=keep_buyer_until).where(BuyerContact.id.in_(kept)).execute()
+            if kept:
+                cancel_withdrawn_buyer_mails(kept)
     _remove_after_commit(paths)
     return HerdTracking.get_by_id(ht_id)
 

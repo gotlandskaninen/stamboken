@@ -36,6 +36,7 @@ import utils.tyck_till as tyck_till
 from utils.database import (
     DB_PROXY,
     BuyerContact,
+    HerdTracking,
     MailAttempt,
     MailMessage,
     MailSender,
@@ -69,6 +70,7 @@ RETRY_DELAYS = (
 )
 RETENTION = timedelta(days=396)
 NO_ADDRESS = "mottagaren saknar e-post"
+SALE_WITHDRAWN = "försäljningen är ångrad"
 
 MailKind = namedtuple("MailKind", "priority category build login_address", defaults=[None])
 Recipient = namedtuple("Recipient", "address label")
@@ -580,6 +582,8 @@ def _send_one(row, relay, now):
     mode = settings.mail.mode
     login_address = kind.login_address if row.recipient_kind in ("member", "member_previous_address") else None
     try:
+        if row.recipient_kind == "buyer_contact" and cancel_withdrawn_buyer_mails([row.recipient_id]):
+            return True
         if login_address is not None:
             address = _normalize(login_address(row.params))
             if address is None:
@@ -738,6 +742,37 @@ def record_bounce(message_id_header, diagnostic):
             detail=detail,
         )
     return True
+
+
+def cancel_withdrawn_buyer_mails(contact_ids):
+    """A kept buyer gets no mail until a sale holds it again. Also covers mail queued before withdrawal cancelled it."""
+    with DB_PROXY.atomic():
+        # Resubmission locks the contact before relinking the sale and resuming its mail.
+        contacts = BuyerContact.select(BuyerContact.id).where(BuyerContact.id.in_(contact_ids))
+        ids = [c.id for c in contacts.order_by(BuyerContact.id).for_update()]
+        # A correction can carry the sale's buyer onto its replacement row.
+        active = HerdTracking.select(HerdTracking.holder_contact).where(
+            HerdTracking.holder_contact.in_(ids), HerdTracking.voided_at.is_null()
+        )
+        return (
+            MailMessage.update(status="cancelled", last_error=SALE_WITHDRAWN, claim_token=None, claimed_at=None)
+            .where(
+                MailMessage.recipient_kind == "buyer_contact",
+                MailMessage.recipient_id.in_(ids),
+                MailMessage.recipient_id.not_in(active),
+                MailMessage.status.in_(("queued", "sending")),
+            )
+            .execute()
+        )
+
+
+def resume_buyer_mails(contact_id):
+    MailMessage.update(status="queued", next_attempt_at=_utcnow(), last_error=None).where(
+        MailMessage.recipient_kind == "buyer_contact",
+        MailMessage.recipient_id == contact_id,
+        MailMessage.status == "cancelled",
+        MailMessage.last_error == SALE_WITHDRAWN,
+    ).execute()
 
 
 def forget_recipient(kind, recipient_id):

@@ -31,6 +31,7 @@ from utils.report_code import CodeActor
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.database_test import _USE_POSTGRES
 from tests.test_arsrapport_pdf import text_of
+from tests.test_mail_queue import FakeRelay
 
 DAY0 = date(2026, 1, 10)
 STOCKHOLM = arsrapport.STOCKHOLM
@@ -175,6 +176,42 @@ class KeptBuyerTest(ArsrapportTest):
         self.assertIn("Såld", text_of(receipt_pdf(report, submission)))
         for text in (json.dumps(view), json.dumps(receipt), text_of(receipt_pdf(report, submission)), mailed):
             self.assertFalse([value for value in BUYER_TEXTS if value in text], text[:200])
+
+    def test_withdraw_stops_buyer_mail_and_resubmit_sends_each_kind_once(self):
+        buyer = {**BUYER, "email": "kopare@example.org", "membership_optin": True}
+        self.ok(self.body(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=buyer), self.kvar(self.b, vikt=2.8)))
+
+        def buyer_mails():
+            return (
+                db.MailMessage.select()
+                .where(db.MailMessage.recipient_kind == "buyer_contact")
+                .order_by(db.MailMessage.id)
+            )
+
+        self.assertEqual([m.kind for m in buyer_mails()], ["kopare.information", "kopare.medlemskap"])
+        relay = FakeRelay()
+        with (
+            mock.patch.multiple(settings.mail, mode="allowlist", allowlist=[buyer["email"]]),
+            mock.patch.object(mail.smtplib, "SMTP", relay),
+            mock.patch.object(buyer_mail, "datetime", wraps=datetime) as clock,
+        ):
+            clock.now.return_value = arsrapport.now()
+            self.withdrawn(1)
+            # A withdrawal made before the fix can still have a queued row. The sender must check the sale too.
+            db.MailMessage.update(status="queued", last_error=None).where(
+                db.MailMessage.kind == "kopare.medlemskap"
+            ).execute()
+            mail.send_pending()
+            self.assertEqual(relay.sent, [])
+            self.assertEqual([m.status for m in buyer_mails()], ["cancelled", "cancelled"])
+            self.ok(self.resent())
+            mail.send_pending()
+            self.assertEqual([m.status for m in buyer_mails()], ["sent", "sent"])
+            self.withdrawn(2)
+            mail.send_pending()
+            self.ok(self.resent())
+            mail.send_pending()
+        self.assertEqual(len(relay.sent), 2)
 
     def assert_erased_buyer_stays_removed(self, typed, blank, day, original=SOLD_ON):
         response = self.skicka(typed)
