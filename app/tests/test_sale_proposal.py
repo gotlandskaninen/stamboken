@@ -15,9 +15,10 @@ import utils.buyer_contact as buyer_contact
 import utils.buyer_mail as buyer_mail
 import utils.database as db
 import utils.mail as mail
+import utils.report_code as report_code
 import utils.sale_proposal as sp
 import utils.settings as settings
-from utils.herd_tracking import HerdTrackingConflict, HerdTrackingInvalid
+from utils.herd_tracking import HerdTrackingConflict, HerdTrackingInvalid, record_herd_tracking
 
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.ht_helpers import ht_row
@@ -170,44 +171,85 @@ class ProposalTest(ArsrapportTest):
         self.assertFalse(db.BuyerContact.select().exists())
         self.assertEqual([db.SaleProposal.get_by_id(p.id).buyer for p in proposals], [None, None, proposals[2].buyer])
 
-    def test_erasure_waits_for_an_uncommitted_proposal_and_rechecks(self):
+    def report_form(self, buyer):
+        (rabbit,) = self.rabbits(self.g9002, 1)
+        member = self.main_member(self.g9002, "saljare@example.org")
+        code = report_code.issue_code(self.g9002, self.report.round, member, now=arsrapport.now())
+        opened = self.client.post("/api/v2/rapport/oppna", json={"token": mail.link_token("rapport", code.id)})
+        self.assertEqual(opened.status_code, 200)
+        body = self.body(self.sald(rabbit, "utanfor", 2025, 10, 3, kopare=buyer))
+        return lambda: self.api("POST", "/besattning/G9002/2025/skicka", **body)
+
+    def assert_address_waiter(self):
+        waiting = """SELECT 1 FROM pg_locks WHERE NOT granted AND classid = %s
+                     AND pg_backend_pid() = ANY(pg_blocking_pids(pid))"""
+        self.assertTrue(until(lambda: db.DB_PROXY.execute_sql(waiting, (buyer_mail.BUYER_ADDRESS_LOCK,)).fetchone()))
+
+    def assert_proposal_receipt(self, response):
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        receipt = response.get_json()
+        self.assertEqual(receipt["summary"], {"salda": 1, "vantar": 1, "kvar": 0, "doda": 0, "ej_angivna": 0})
+        return db.SaleProposal.get(db.SaleProposal.submission == receipt["submission_id"])
+
+    def test_erasure_waits_for_an_uncommitted_report_and_rechecks(self):
         buyer = {**BUYER, "email": "test@example.org", "contact_consent": True}
         with mock.patch.object(settings.mail, "link_secret", "test-link-secret"), ThreadPoolExecutor(1) as worker:
             token = self.purged_contact_and_link(buyer)
+            submit = self.report_form(buyer)
 
             def erase():
                 with db.DB_PROXY.connection_context():
                     return buyer_mail.erase_by_link(token)
 
-            with db.DB_PROXY.atomic():
-                pending = self.propose(self.other, buyer=buyer)
+            erasure = None
+            propose = arsrapport._propose
+
+            def erase_before_commit(*args):
+                nonlocal erasure
+                propose(*args)
                 erasure = worker.submit(erase)
-                waiting = """SELECT 1 FROM pg_locks WHERE NOT granted AND classid = %s
-                             AND pg_backend_pid() = ANY(pg_blocking_pids(pid))"""
-                self.assertTrue(
-                    until(lambda: db.DB_PROXY.execute_sql(waiting, (buyer_mail.BUYER_ADDRESS_LOCK,)).fetchone())
-                )
+                self.assert_address_waiter()
+
+            with mock.patch.object(arsrapport, "_propose", erase_before_commit):
+                pending = self.assert_proposal_receipt(submit())
             with self.assertRaises(HerdTrackingConflict):
                 erasure.result(timeout=10)
-            self.assertTrue(db.BuyerContact.select().exists())
+            self.assertIsNotNone(pending.buyer)
             self.assertEqual(erase(), "removed")
             self.assertIsNone(db.SaleProposal.get_by_id(pending.id).buyer)
 
-    def test_proposal_cannot_restore_details_during_an_erasure(self):
+    def test_report_waits_for_an_erasure_and_returns_the_usual_receipt(self):
         buyer = {**BUYER, "email": "test@example.org", "contact_consent": True}
         with mock.patch.object(settings.mail, "link_secret", "test-link-secret"), ThreadPoolExecutor(1) as worker:
             token = self.purged_contact_and_link(buyer)
-
-            def propose():
-                with db.DB_PROXY.connection_context():
-                    return self.propose(self.other, buyer=buyer)
-
+            submit = self.report_form(buyer)
             with db.DB_PROXY.atomic():
                 self.assertEqual(buyer_mail.erase_by_link(token), "removed")
-                with self.assertRaises(arsrapport.ArsrapportError) as busy:
-                    worker.submit(propose).result(timeout=10)
-                self.assertEqual(busy.exception.status, 409)
-            self.assertEqual(sp.pending(self.report), [])
+                response = worker.submit(submit)
+                self.assert_address_waiter()
+            self.assertIsNone(self.assert_proposal_receipt(response.result(timeout=10)).buyer)
+
+    def test_report_waits_for_a_direct_sale_and_keeps_the_proposed_buyer(self):
+        buyer = {**BUYER, "email": "test@example.org", "contact_consent": True}
+        with mock.patch.object(settings.mail, "link_secret", "test-link-secret"), ThreadPoolExecutor(1) as worker:
+            submit = self.report_form(buyer)
+            with db.DB_PROXY.atomic():
+                record_herd_tracking(self.rabbit, "GX1", SALE, "TRANSFER", self.manager, buyer=buyer)
+                response = worker.submit(submit)
+                self.assert_address_waiter()
+            self.assertEqual(self.assert_proposal_receipt(response.result(timeout=10)).buyer["email"], buyer["email"])
+
+    def test_report_lock_timeout_is_generic_and_the_same_submission_can_be_retried(self):
+        buyer = {**BUYER, "email": "test@example.org", "contact_consent": True}
+        with mock.patch.object(settings.mail, "link_secret", "test-link-secret"), ThreadPoolExecutor(1) as worker:
+            submit = self.report_form(buyer)
+            with db.DB_PROXY.atomic(), mock.patch.object(arsrapport, "SALE_LOCK_TIMEOUT", "200ms"):
+                buyer_mail.lock_buyer_addresses([buyer["email"]])
+                response = worker.submit(submit).result(timeout=10)
+            self.assertEqual(response.status_code, 503)
+            self.assertEqual(response.get_json()["detail"], "Rapporten kunde inte sparas just nu. Försök igen.")
+            self.assertFalse(db.SaleProposal.select().exists())
+            self.assertEqual(self.assert_proposal_receipt(submit()).buyer["email"], buyer["email"])
 
     def test_retract_is_idempotent_and_clears_buyer(self):
         proposal = self.propose()

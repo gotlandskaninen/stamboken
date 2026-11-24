@@ -75,7 +75,9 @@ def _close_item(proposal, user, state):
         inbox.log_event(item, user, "lage", **{"from": previous, "to": state})
 
 
-def propose(report, submission, individual, *, to_herd, buyer, sale_date: date, buyer_removed=False) -> SaleProposal:
+def propose(
+    report, submission, individual, *, to_herd, buyer, sale_date: date, buyer_removed=False, locks_held=False
+) -> SaleProposal:
     """
     A pending sale of `individual` from the report's herd, to `to_herd` or, with None, to a buyer outside the
     genebank (then `buyer` is required unless already erased). Its `kontroll` item goes to the genebank's queue.
@@ -89,11 +91,12 @@ def propose(report, submission, individual, *, to_herd, buyer, sale_date: date, 
     at = submission.created_at  # when the seller sent it, and ticked the buyer's boxes
     stored = _stored_buyer(buyer, at, sale_date) if buyer is not None else None
     with DB_PROXY.atomic():
-        if stored and stored["email"]:
-            # Skicka already holds these for the whole batch. The service can also create a single proposal.
+        if stored and stored["email"] and not locks_held:
+            # Skicka already checked for erasure under these locks for the whole report.
             arsrapport.lock_report(report.round, report.herd)
             lock_individuals([individual.id])
-            arsrapport.lock_sale_addresses([stored["email"]], proposal=True)
+            if arsrapport.lock_sale_buyers({individual.id: stored}, proposal=True):
+                stored = None
         try:
             proposal = SaleProposal.create(
                 report=report.id,

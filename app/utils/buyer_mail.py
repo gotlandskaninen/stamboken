@@ -60,15 +60,13 @@ def lock_buyer_addresses(addresses, *, erased_hash=None, proposal=False):
     if erased_hash:
         keys.add(erased_hash)
     if not keys:
-        return True
-    # Proposals may coexist, but must not wait out an erasure and then reintroduce its buyer.
-    lock = "pg_try_advisory_xact_lock_shared" if proposal else "pg_advisory_xact_lock"
-    result = DB_PROXY.execute_sql(
+        return
+    lock = "pg_advisory_xact_lock_shared" if proposal else "pg_advisory_xact_lock"
+    DB_PROXY.execute_sql(
         f"SELECT {lock}(%s, id) FROM "
         "(SELECT DISTINCT hashtext(key) AS id FROM unnest(%s::text[]) AS a(key) ORDER BY id) AS locks",
         (BUYER_ADDRESS_LOCK, list(keys)),
     )
-    return not proposal or all(acquired for (acquired,) in result.fetchall())
 
 
 def queue_buyer_mails(contact, sale):
