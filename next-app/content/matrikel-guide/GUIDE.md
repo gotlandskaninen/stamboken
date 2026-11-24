@@ -202,7 +202,11 @@ Under **Personer** står hushållets personer med roll, kontakt, konto och
   - **Gör till huvudmedlem** byter huvudmedlem i hushållet.
   - **Ta bort** avslutar personen i medlemskapet och drar in hens åtkomster.
   - **Anonymisera** ersätter personens namn med en platshållare, tar bort
-    kontaktuppgifterna och drar in åtkomsterna. Ansökningar med personens namn
+    kontaktuppgifterna och drar in åtkomsterna. Personens konto töms: namn,
+    e-post, Google-uppgifter, profilbild och roller tas bort, och kontot kan inte
+    längre logga in. Har kontot rollen administratör, matrikeladministratör eller
+    genbanksansvarig går det inte att anonymisera personen förrän rollen är
+    borttagen. Ansökningar med personens namn
     och e-post anonymiseras också, och en sådan ansökan som väntar avslås.
     Intyg och bevis i inkorgen som är kopplade till personen förlorar sina
     original. Ett inskick som inkorgen har kopplat till personen som avsändare,
@@ -238,7 +242,8 @@ annan.
 ### Anonymisering efter 12 månader
 
 Stamboken anonymiserar personer automatiskt: namnen ersätts med en platshållare
-och kontaktuppgifterna tas bort. Intyg och bevis i inkorgen som är kopplade
+och kontaktuppgifterna tas bort. Personens konto töms på samma sätt som vid
+**Anonymisera**. Intyg och bevis i inkorgen som är kopplade
 till personen förlorar sina original. Tiden räknas från när personerna avslutades, alltså från
 **Avsluta medlemskap**, **Ta bort** eller **Anonymisera**. Att bara välja status
 Inaktiv avslutar ingen, och då börjar ingen tid räknas.

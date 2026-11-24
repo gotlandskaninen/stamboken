@@ -189,9 +189,10 @@ class TestStaleUserWriters(DatabaseTest):
         self.client.post("/api/login", json={"username": target.email, "password": "pass"})
         with mock.patch.object(da, "fetch_user_info", side_effect=fetch_then_deactivate):
             resp = self.client.patch("/api/profile", json={"use_google_picture": False})
-        self.assertEqual(resp.status_code, 200, resp.get_json())
+        # an account no longer active gets no write: an erasure (#190) may have emptied it
+        self.assertEqual(resp.status_code, 404, resp.get_json())
         self.assertStillDeactivated(target)
-        self.assertFalse(db.User.get_by_id(target.id).use_google_picture)
+        self.assertTrue(db.User.get_by_id(target.id).use_google_picture)
         self.assertEqual(self.client.get("/api/user").status_code, 401)
 
     def test_v2_prod_access_keeps_deactivation(self):
@@ -273,7 +274,8 @@ class TestStaleUserWriters(DatabaseTest):
 
         redirect_login(self.client, lambda method, ident: db.User.get_by_id(self.viewer.id), userinfo=userinfo)
         self.assertStillDeactivated(self.viewer)
-        self.assertEqual(db.User.get_by_id(self.viewer.id).google_picture, "https://example.com/ny.png")
+        # nor does it write the profile of an account no longer active (an erasure, #190, may have emptied it)
+        self.assertIsNone(db.User.get_by_id(self.viewer.id).google_picture)
 
     def test_google_idtoken_save_keeps_deactivation(self):
         self._validate(self.viewer)
@@ -288,4 +290,5 @@ class TestStaleUserWriters(DatabaseTest):
 
         redirect_login(self.client, lambda method, ident: db.User.get_by_id(self.viewer.id), idtoken=idtoken)
         self.assertStillDeactivated(self.viewer)
-        self.assertEqual(db.User.get_by_id(self.viewer.id).google_picture, "https://example.com/ny.png")
+        # nor does it write the profile of an account no longer active (an erasure, #190, may have emptied it)
+        self.assertIsNone(db.User.get_by_id(self.viewer.id).google_picture)

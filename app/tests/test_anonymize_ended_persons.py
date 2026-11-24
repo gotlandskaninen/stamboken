@@ -261,10 +261,10 @@ class TestAnonymizeEndedPersons(DatabaseTest):
         second = _person(_membership(109), OLD, role="huvudmedlem")
         real = matrikel.anonymize_person
 
-        def fail_first(person, actor, deferred_originals=None):
+        def fail_first(person, actor, **deferred):
             if person.id == first.id:
                 raise RuntimeError("lock timeout")
-            return real(person, actor, deferred_originals=deferred_originals)
+            return real(person, actor, **deferred)
 
         with mock.patch.object(matrikel, "anonymize_person", side_effect=fail_first):
             with self.assertLogs(matrikel.logger, "ERROR"):
@@ -278,10 +278,10 @@ class TestAnonymizeEndedPersons(DatabaseTest):
         _person(ended, OLD)
         real = matrikel.anonymize_person
 
-        def second_fails(person, actor, deferred_originals=None):
+        def second_fails(person, actor, **deferred):
             if person.id != first.id:
                 raise RuntimeError("lock timeout")
-            return real(person, actor, deferred_originals=deferred_originals)
+            return real(person, actor, **deferred)
 
         with (
             mock.patch.object(matrikel, "erase_person_from_inbox", return_value=["inkorg/original/a.jpg"]),

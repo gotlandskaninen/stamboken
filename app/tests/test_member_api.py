@@ -437,7 +437,9 @@ class TestSelfService(MatrikelApiTest):
         lock must answer 409 and leave the row scrubbed."""
         self.login("linked")
         stale = db.Member.get_by_id(self.person.id)  # what the route reads at request start
-        matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)
+        # the request's session was loaded before the erasure closed the account (#190)
+        with patch.object(matrikel, "erase_account"):
+            matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)
         with patch.object(members_routes, "_member_for_current_user", return_value=stale):
             resp = self.client.patch(
                 "/api/v2/members/me/contact",
@@ -668,7 +670,8 @@ class TestSelfService(MatrikelApiTest):
     def test_self_service_writes_refuse_after_anonymization(self):
         self.login("linked")
         stale = db.Member.get_by_id(self.person.id)
-        matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)
+        with patch.object(matrikel, "erase_account"):  # sessions loaded before the erasure closed the account (#190)
+            matrikel.anonymize_person(db.Member.get_by_id(self.person.id), self.matrikel_user)
         # The sole person's erasure cleared the household address (no stale "Box 1" either).
         self._assert_both_writes_refuse(stale, 409, "Kontot är inte längre kopplat", address=None)
 

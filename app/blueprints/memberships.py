@@ -11,7 +11,7 @@ from datetime import date
 
 from flask import Blueprint, jsonify, request
 from flask_login import current_user
-from peewee import IntegrityError, fn
+from peewee import IntegrityError, OperationalError, fn
 from utils.database import BILLING_FIELDS, DB_PROXY, Genebank, Herd, HerdAccessGrant, Member, Membership, User
 from utils.herd_contact import on_membership_active
 from utils.login_code import AddressTaken
@@ -606,7 +606,16 @@ def anonymize_person_endpoint(person_id: int):
         return problem(404, "Hittades inte", f"Personen {person_id} finns inte")
     # The caller's pre-lock instance is stale after the scrub — serialise the
     # instance the operation re-read and wrote under its locks.
-    person = anonymize_person(person, current_user)
+    try:
+        person = anonymize_person(person, current_user)
+    except LinkError as err:
+        return problem(err.status, err.title, err.detail, **err.extensions)
+    except OperationalError as exc:
+        # The account's audit purge locks audit_log: another erasure or a long write held it (deadlock or
+        # lock_timeout), and the transaction rolled back whole.
+        if not any(getattr(e, "pgcode", None) in ("40P01", "55P03") for e in (exc, exc.__cause__, exc.__context__)):
+            raise
+        return problem(503, "Försök igen", "Anonymiseringen krockade med en annan ändring. Försök igen om en stund.")
     return jsonify(_person_to_dict(person))
 
 

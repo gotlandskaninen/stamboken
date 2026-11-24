@@ -23,7 +23,13 @@ from datetime import date, datetime, timedelta, timezone
 from peewee import JOIN, Case, IntegrityError, fn
 
 from utils.cache_invalidation import trigger_invalidation
-from utils.data_access import new_generation
+from utils.data_access import (
+    erase_account,
+    new_generation,
+    profile_pictures_of,
+    purge_user_audit_pii,
+    remove_profile_picture,
+)
 
 # DB_PROXY is the runtime proxy that data_access.py uses; importing the
 # module-level DATABASE symbol directly would be None at call time.
@@ -53,6 +59,7 @@ from utils.herd_contact import (
     snapshot_before_leaving,
 )
 from utils.inbox_purge import erase_person_from_inbox, remove_originals
+from utils.individual_commands import purge_command_free_text
 from utils.login_code import (
     AddressTaken,
     lock_addresses,
@@ -459,7 +466,7 @@ def _applications_of(person):
     return where
 
 
-def anonymize_person(member, actor, deferred_originals=None):
+def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=None):
     """GDPR erasure: anonymize the person row, keep membership history.
 
     Placeholder names (columns are NOT NULL), nulls contact fields +
@@ -484,14 +491,22 @@ def anonymize_person(member, actor, deferred_originals=None):
     access the account loses. Erases the intake queue's originals and texts
     that show the person as seller or buyer, and what they sent
     (erase_person_from_inbox). Takes the person's previous addresses and codes,
-    with the queue's trace of where their mails went. A caller inside its own
-    transaction passes `deferred_originals` and removes those files after its commit.
+    with the queue's trace of where their mails went. Empties the account
+    (erase_account) and purges its old values from audit_log
+    (purge_user_audit_pii, last in the transaction); an account with a role
+    in RETENTION_HOLD_LEVELS refuses the erasure (LinkError) before any write.
+    A caller inside its own transaction passes `deferred_originals` and
+    `deferred_accounts`, purges those accounts last in it, and after its commit
+    removes those files and the accounts' profile pictures (profile_pictures_of,
+    read before the purge).
     Returns the scrubbed person: the caller's pre-lock instance is stale
     afterwards.
     """
     with DB_PROXY.atomic():
         # current user_id under the membership lock, never the caller's stale copy
         person, user = _lock_for_detach(member.id)
+        if user is not None and any(p["level"] in RETENTION_HOLD_LEVELS for p in user.privileges or []):
+            raise LinkError("Kontot har en roll", "Ta bort kontots roller innan personen anonymiseras")
         membership = person.membership
         erased_before = is_anonymized(person)  # read under the lock: a repeated erasure is no transition
         contacts = snapshot_before_leaving(person)  # the herds' contact, with her values still in it
@@ -561,6 +576,8 @@ def anonymize_person(member, actor, deferred_originals=None):
         ]
         applications_redacted = len(application_ids)
         forget_recipient("member", person.id)  # the queue keeps no address hash or dedupe key of the erased
+        if user is not None:
+            forget_recipient("user", user.id)  # nor of the account's mail (notices, applications, the intake queue)
         for previous in (
             MemberPreviousAddress.delete()
             .where(MemberPreviousAddress.member == person.id)
@@ -577,16 +594,26 @@ def anonymize_person(member, actor, deferred_originals=None):
             membership,
             {"person_id": person.id, "applications_redacted": applications_redacted},
         )
+        if user is not None:
+            erase_account(user)  # `user` keeps the values read under the lock
         lost = before - User.get_by_id(user.id).effective_herd_ids() if user is not None else set()
         lost_genebanks = (
             {h.genebank_id for h in Herd.select(Herd.genebank).where(Herd.id.in_(list(lost)))} if lost else set()
         )
         # the intake queue's photos that show the person, and what they sent (their account read before the detach)
         originals = erase_person_from_inbox(person, user.id if user is not None else None)
+        pictures = set()
+        if user is not None and deferred_accounts is None:
+            pictures = profile_pictures_of(user)  # before the purge takes their names
+            purge_user_audit_pii(user.id, user.username, user.email)  # last: it locks audit_log until the commit
     if deferred_originals is None:
         remove_originals(originals)  # only after the commit: a row never names a removed file
     else:
         deferred_originals.extend(originals)
+    for name in pictures:
+        remove_profile_picture(name)
+    if user is not None and deferred_accounts is not None:
+        deferred_accounts.append(user)
     _invalidate_genebanks(lost_genebanks)
     return person
 
@@ -665,7 +692,7 @@ def anonymize_ended_persons(now):
     ).fetchone()[0]
     done, failed, held = 0, 0, []
     for membership in _memberships_with_ended_persons(cutoff):
-        originals = []
+        originals, erased, pictures = [], [], set()
         try:
             with DB_PROXY.atomic():
                 Membership.select().where(Membership.id == membership.id).for_update("FOR NO KEY UPDATE").get()
@@ -677,13 +704,24 @@ def anonymize_ended_persons(now):
                 herds = Herd.select(Herd.id).where((Herd.membership == membership) | Herd.id.in_(owned))
                 list(herds.order_by(Herd.id).for_update("FOR NO KEY UPDATE"))
                 due, membership_held = _due_in(membership, cutoff)
-                for person in due:  # an ended person conveys no herd: its cache invalidation inside this tx is empty
-                    anonymize_person(person, None, deferred_originals=originals)
+                # An ended person conveys no herd, and the owner entries erase_account drops are on inactive herds (an
+                # active one holds): an invalidation inside this tx only schedules a rebuild of an unchanged genebank.
+                for person in due:
+                    anonymize_person(person, None, deferred_originals=originals, deferred_accounts=erased)
+                # Every account's command rows before the first purge's DROP RULE: an Undo that holds one of them
+                # writes audit_log, which that purge locks until the commit.
+                for account in erased:
+                    purge_command_free_text(datetime.now(timezone.utc), actor_id=account.id)
+                    pictures |= profile_pictures_of(account)  # before the purge takes their names
+                for account in erased:  # last: the purge locks audit_log until the commit
+                    purge_user_audit_pii(account.id, account.username, account.email)
         except Exception:  # pylint: disable=broad-exception-caught
             logger.exception("Automatic anonymization failed for membership=%s", membership.id)
             failed += 1
             continue
         remove_originals(originals)  # after this membership's commit, as anonymize_person does after its own
+        for name in pictures:
+            remove_profile_picture(name)
         done += len(due)
         held += membership_held
     return done, failed, held
