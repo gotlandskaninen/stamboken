@@ -17,6 +17,7 @@ export async function eraseBuyer(token: string): Promise<EraseResult> {
         body: JSON.stringify({ token }),
         // Public page: the buyer is in prod, also for a signed-in visitor in demo mode.
         forceProd: true,
+        credentials: "omit", // The link alone authorizes the erasure.
       },
     );
     return data.result;
