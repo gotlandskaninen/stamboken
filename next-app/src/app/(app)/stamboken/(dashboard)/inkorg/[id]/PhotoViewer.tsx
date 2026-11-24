@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
+import { useMode } from "@/lib/mode-context";
 import { enhancePencil, moveRect, resizeRect } from "../image";
-import type { Rect } from "../lib";
+import type { InboxDocument, Rect } from "../lib";
 import styles from "../inkorg.module.css";
 
 // shortcut: originals (up to 40 MP) are drawn at most 2400 px a side, which
@@ -41,9 +43,10 @@ export function PhotoViewer({
 }: {
   src: string;
   rotation: number;
-  onRotate: (quarterTurns: number) => void;
+  onRotate?: (quarterTurns: number) => void;
   mask?: MaskLayer;
 }) {
+  const { t } = useTranslation();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
@@ -69,8 +72,9 @@ export function PhotoViewer({
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    const ctx = canvas?.getContext("2d");
-    if (!image || !canvas || !ctx) return;
+    if (!image || !canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
     const scale = Math.min(
       1,
       MAX_SIDE / Math.max(image.naturalWidth, image.naturalHeight),
@@ -157,6 +161,42 @@ export function PhotoViewer({
     }
   };
 
+  const canvas = (
+    <canvas
+      ref={canvasRef}
+      style={{ filter: `contrast(${contrast}%)` }}
+      role="img"
+      aria-label={
+        onRotate
+          ? image
+            ? "Originalet"
+            : "Fotot hämtas"
+          : t(image ? "queueDetail.original" : "queueDetail.loading")
+      }
+    />
+  );
+
+  if (!onRotate)
+    return (
+      <div className={styles.caseViewport}>
+        {failed ? (
+          <p role="status" className={styles.error}>
+            {t("queueDetail.failed")}
+          </p>
+        ) : (
+          <button
+            type="button"
+            className={styles.casePhoto}
+            aria-label={t(zoom ? "queueDetail.zoomOut" : "queueDetail.zoomIn")}
+            aria-pressed={Boolean(zoom)}
+            onClick={() => setZoom(zoom ? 0 : 1)}
+          >
+            {canvas}
+          </button>
+        )}
+      </div>
+    );
+
   return (
     <>
       <div className={styles.toolbar}>
@@ -232,12 +272,7 @@ export function PhotoViewer({
             className={styles.stage}
             style={{ width: `${ZOOMS[zoom] * 100}%` }}
           >
-            <canvas
-              ref={canvasRef}
-              style={{ filter: `contrast(${contrast}%)` }}
-              role="img"
-              aria-label={image ? "Originalet" : "Fotot hämtas"}
-            />
+            {canvas}
             {image &&
               mask?.rects.map((r, i) => (
                 <button
@@ -266,5 +301,65 @@ export function PhotoViewer({
         )}
       </div>
     </>
+  );
+}
+
+export function CasePhotos({
+  itemId,
+  documents,
+}: {
+  itemId: number;
+  documents: InboxDocument[];
+}) {
+  const mode = useMode();
+  const { t } = useTranslation();
+  const [selected, setSelected] = useState(0);
+  const index = Math.min(selected, documents.length - 1);
+  const photo = documents[index];
+  if (!photo) return null;
+  const apiBase =
+    mode === "demo" && process.env.NEXT_PUBLIC_API_TEST_URL
+      ? process.env.NEXT_PUBLIC_API_TEST_URL
+      : "/api";
+
+  return (
+    <section
+      className={styles.caseSection}
+      aria-label={t("queueDetail.photos")}
+    >
+      <h3>{t("queueDetail.photos")}</h3>
+      {photo.has_original === false ? (
+        <p>{t("queueDetail.erased")}</p>
+      ) : (
+        <PhotoViewer
+          key={photo.id}
+          src={`${apiBase}/v2/inkorg/${itemId}/dokument/${photo.id}/original`}
+          rotation={photo.rotation}
+        />
+      )}
+      <div className={styles.photoNav}>
+        <span aria-live="polite">
+          {t("queueDetail.photoCount", {
+            index: index + 1,
+            total: documents.length,
+          })}
+        </span>
+        {documents.length > 1 && (
+          <div role="group" aria-label={t("queueDetail.selectPhoto")}>
+            {documents.map((d, i) => (
+              <button
+                type="button"
+                key={d.id}
+                aria-current={i === index}
+                aria-label={t("queueDetail.photo", { index: i + 1 })}
+                onClick={() => setSelected(i)}
+              >
+                {i + 1}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
   );
 }

@@ -1,6 +1,7 @@
 // The intake queue ("Inkorgen"): types, labels and the rules the two pages
 // share. The API contract is docs/inkorg.md; Flask decides, this only chooses
 // what to offer.
+import type { TFunction } from "i18next";
 import type { NumberCheck } from "@/app/(app)/stamboken/(dashboard)/min-besattning/actions";
 import { OUTSIDE_GENEBANK_HERDS } from "@/utils/saleRules";
 
@@ -20,6 +21,9 @@ export type Person = { id: number; name: string };
 export interface InboxItem {
   id: number;
   kind: string;
+  subject?: string | null;
+  has_skipped?: boolean;
+  member_name?: string | null;
   state: ItemState;
   genebank_id: number | null;
   herd: string | null;
@@ -66,6 +70,7 @@ export interface InboxDocument {
   individual: string | null;
   /** The sale registered from the document (for a proof: the sale it shows). */
   herd_tracking_id?: number | null;
+  has_original?: boolean;
   has_copy: boolean;
 }
 
@@ -131,12 +136,16 @@ export interface QueueList {
   items: InboxItem[];
   total: number;
   counts: Partial<Record<ItemState, number>>;
+  next_untaken?: number[];
+  mode_counts?: Record<QueueMode, number>;
   interpretation?: InterpretationSummary;
   /** The scope the server applied, and the genebanks the user manages or helps in. */
   scope?: QueueScope;
   my_genebanks?: number[];
 }
 
+export const QUEUE_MODES = ["nya", "mina", "oppna", "klara"] as const;
+export type QueueMode = (typeof QUEUE_MODES)[number];
 export type QueueScope = "mina" | "alla";
 
 /** An item of a genebank the user has no role in: readable, but nothing can be saved. */
@@ -227,6 +236,33 @@ export const WARNING_LABEL: Record<string, string> = {
 
 export const kindLabel = (kind: string) => KIND_LABEL[kind] ?? kind;
 
+export const queueSubject = (
+  item: Pick<InboxItem, "subject" | "kind">,
+  t: TFunction,
+) =>
+  item.subject?.trim() ||
+  t(`queue.kinds.${item.kind}`, { defaultValue: kindLabel(item.kind) });
+
+export function queueStatus(
+  item: Pick<InboxItem, "state" | "assigned_to">,
+  userId: number,
+  t: TFunction,
+) {
+  const state =
+    item.state === "tagen" && item.assigned_to?.id === userId
+      ? "mine"
+      : item.state;
+  return t(`queue.states.${state}`);
+}
+
+export function queueWait(from: string, now: number, t: TFunction) {
+  const minutes = Math.max(0, (now - Date.parse(from)) / 60_000);
+  if (minutes < 60) return t("queue.minutes", { count: Math.floor(minutes) });
+  if (minutes < 1440)
+    return t("queue.hours", { count: Math.round(minutes / 60) });
+  return t("queue.days", { count: Math.round(minutes / 1440) });
+}
+
 // Who sent an item with an account; the report's photo through a member's personal link has none, so the
 // link is named by the herd of its report code (old items too: no event is read).
 export const accountOrLink = (item: {
@@ -238,6 +274,20 @@ export const accountOrLink = (item: {
   (item.kind === "kontroll" && item.herd
     ? `Länken för besättning ${item.herd}`
     : null);
+
+// Who sent the item: its account, else the link or the account its arrival names (a purchase notice has no
+// sender_user: a link's history says `via`, an account's is the event's user), else the mail's address.
+export function senderText(item: InboxDetail): string | null {
+  const arrived = item.events.find((e) => e.kind === "inkommen");
+  const via = arrived?.detail?.via;
+  return (
+    item.sender?.name ??
+    (typeof via === "string" ? via : null) ??
+    arrived?.user?.name ??
+    accountOrLink(item) ??
+    item.sender_address
+  );
+}
 
 /** Time since `from`, in plain words. */
 export function waited(from: string, now = Date.now()): string {
@@ -299,6 +349,13 @@ type ItemFacts = Pick<InboxItem, "state" | "assigned_to" | "genebank_id"> & {
   /** The count (queue list) or the documents themselves (working view). */
   documents?: number | unknown[];
 };
+
+export const shownAssignment = (
+  item: Pick<InboxItem, "assigned_to" | "assigned_at">,
+) => ({
+  assigned_to: item.assigned_to?.id ?? null,
+  assigned_at: item.assigned_at,
+});
 
 const isMine = (item: ItemFacts, user: QueueUser) =>
   item.assigned_to?.id === user.id;
@@ -626,6 +683,19 @@ export function people(
   for (const p of [...items.map((i) => i.assigned_to), ...extra])
     if (p && !byId.has(p.id)) byId.set(p.id, p);
   return [...byId.values()].sort((a, b) => a.name.localeCompare(b.name, "sv"));
+}
+
+export function queueHref(
+  query: string,
+  changes: Record<string, string | number | null>,
+) {
+  const params = new URLSearchParams(query);
+  for (const [key, value] of Object.entries(changes)) {
+    if (value === null || value === "") params.delete(key);
+    else params.set(key, String(value));
+  }
+  const search = params.toString();
+  return "/stamboken/inkorg" + (search ? `?${search}` : "");
 }
 
 /** A round as /v2/arsrapport/rundor lists it (newest year first). */

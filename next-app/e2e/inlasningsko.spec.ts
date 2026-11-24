@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { loginInline, TEST_USERS } from "../e2e-shared/auth";
 
@@ -137,7 +138,51 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
           .first()
           .evaluate((c: HTMLCanvasElement) => [c.width, c.height]);
       // Read the photo first and turn it for reading: nothing is saved before the case is taken.
-      await desk.goto(`/stamboken/inkorg/${itemId}`);
+      await desk.setViewportSize({ width: 375, height: 812 });
+      await desk.goto("/stamboken/inkorg?herd=G1274&order=newest");
+      const row = desk.locator(`#case-row-${itemId}`);
+      await expect(desk.getByText(/Upp- och nedpil.*Enter/)).toBeVisible();
+      expect(
+        await desk.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(375);
+      await row.click();
+      await expect(desk).toHaveURL(
+        (url) => url.searchParams.get("arende") === itemId,
+      );
+      await desk.reload();
+      const back = desk.getByRole("link", { name: "Tillbaka till listan" });
+      await expect(back).toBeVisible();
+      expect(
+        await desk.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(375);
+      await back.click();
+      await expect(row).toBeVisible();
+      await desk.setViewportSize({ width: 1280, height: 900 });
+      await row.click();
+      await expect(row).toHaveAttribute("aria-current", "true");
+      await expect(back).toBeHidden();
+      await expect(
+        desk.getByRole("heading", { name: "Foton", exact: true }),
+      ).toBeVisible();
+      const background = () =>
+        row.evaluate((link) => getComputedStyle(link).backgroundColor);
+      await desk.emulateMedia({ colorScheme: "light" });
+      const lightBackground = await background();
+      for (const colorScheme of ["dark", "light"] as const) {
+        await desk.emulateMedia({ colorScheme });
+        expect(await background()).toBe(lightBackground);
+        const contrast = await new AxeBuilder({ page: desk })
+          .include('aside[aria-label="Inkorgsverktyg"]')
+          .include('section[aria-label="Ärendelista"]')
+          .include('section[aria-label="Valt ärende"]')
+          .withRules(["color-contrast"])
+          .analyze();
+        expect(contrast.violations, colorScheme).toEqual([]);
+      }
+      await desk
+        .getByRole("link", { name: "Visa registrering och historik" })
+        .click();
+      await expect(desk).toHaveURL(`/stamboken/inkorg/${itemId}`);
       await expect
         .poll(async () => (await canvasSize())[0])
         .toBeGreaterThan(300);
