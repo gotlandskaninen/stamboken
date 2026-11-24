@@ -77,6 +77,7 @@ from utils.matrikel import (
     ANONYMIZED_LAST_NAME,
     ConfirmRequired,
     LinkError,
+    legacy_owner_index,
     link_access_delta,
     link_member_user,
     new_membership,
@@ -1083,30 +1084,9 @@ def _pair_detail(main, user) -> str:
     )
 
 
-def _owner_index() -> tuple[dict[int, dict[int, User]], set[int]]:
-    """Herd id -> {user id: user} with role owner, and the users with an incomplete owner role."""
-    owners: dict[int, dict[int, User]] = {}
-    incomplete: set[int] = set()
-    for user in User.select().order_by(User.id):
-        for role in user.privileges:
-            if not isinstance(role, dict) or "level" not in role:
-                incomplete.add(user.id)  # link_access_delta reads role["level"]
-                continue
-            if role["level"] != "owner":
-                continue
-            herd_id = role.get("herd")
-            if isinstance(herd_id, str) and re.fullmatch(r"[0-9]+", herd_id):
-                herd_id = int(herd_id)  # older rows may store the id as a string
-            if isinstance(herd_id, bool) or not isinstance(herd_id, int):
-                incomplete.add(user.id)
-                continue
-            owners.setdefault(herd_id, {})[user.id] = user
-    return owners, incomplete
-
-
 def _plan_herd_links() -> tuple[list, list, int]:
     """Decide every link first: returns (to_link [(main, user, codes, reason)], listed [(codes, reason)], already)."""
-    owners, incomplete = _owner_index()
+    owners, incomplete = legacy_owner_index()
     memberships = {m.member_number: m for m in Membership.select().where(Membership.member_number.is_null(False))}
     herds_by_code: dict[str, list] = {}
     for herd in Herd.select(Herd, Genebank).join(Genebank):
@@ -1234,7 +1214,7 @@ def _active_main_members():
 
 def _plan_same_number_links() -> tuple[list, list[str]]:
     banks = {prefix: _flag_genebank_ids(prefix) for prefix in "GM"}
-    owners, incomplete = _owner_index()
+    owners, incomplete = legacy_owner_index()
     membership_by_user = dict(
         Member.select(Member.user, Member.membership)
         .where(Member.user.is_null(False), Member.end_date.is_null())
