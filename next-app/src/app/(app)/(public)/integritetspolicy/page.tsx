@@ -181,6 +181,24 @@ export default function IntegritetspolicyPage() {
             </p>
           </Section>
 
+          <Section title="När du får Koharen utan att vara medlem">
+            <p>
+              Föreningen skickar Koharen gratis till bland andra bibliotek,
+              föreningar och tidskrifter som byter tidning med oss. Är
+              mottagaren en person sparar vi namn och postadress, och e-post
+              eller telefon bara om vi behöver nå dig om tidningen. Uppgifterna
+              finns i medlemsregistret och ses av dem som sköter det.
+              Tryckeriet får namn och adress för att kunna skicka tidningen.
+            </p>
+            <p>
+              Vi gör det för att sprida kunskap om arbetet med att bevara
+              raserna (berättigat intresse), eller för att vi byter tidning med
+              dig (avtal). Uppgifterna sparas så länge du får tidningen, och vi
+              går igenom listan en gång om året. Vill du inte längre ha den,
+              säg till, så tar vi bort dig.
+            </p>
+          </Section>
+
           <Section title="När någon annan har lämnat dina uppgifter">
             <p>
               En huvudmedlem kan lägga in familjemedlemmar och personer som
