@@ -1,6 +1,7 @@
 import React from "react";
 import { Box, Typography } from "@mui/material";
 
+import { codeLoginEnabled } from "@/lib/code-login-enabled";
 import SignInComponent from "@/components/auth/SignIn";
 import { EUFundingBadge } from "@/components/public/EUFundingBadge";
 
@@ -68,7 +69,7 @@ function Brand({ light }: { light?: boolean }) {
 
 export const metadata = { title: "Logga in" };
 
-export default function SignInPage() {
+export default async function SignInPage() {
   return (
     <Box
       sx={{
@@ -219,7 +220,7 @@ export default function SignInPage() {
             Välkommen tillbaka. Logga in för att komma åt stamboken.
           </Typography>
 
-          <SignInComponent />
+          <SignInComponent codeEnabled={await codeLoginEnabled()} />
 
           {/* EU attribution on mobile (left panel is hidden) */}
           <Box

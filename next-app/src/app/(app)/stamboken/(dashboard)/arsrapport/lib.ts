@@ -8,6 +8,10 @@ import type { InboxDetail } from "../inkorg/lib";
 
 export const BEVIS_FROM_YEAR = 2027;
 
+export function reportLinkPath(path: string) {
+  return `${path}${path.includes("?") ? "&" : "?"}via=lank`;
+}
+
 export type Val = "kvar" | "dod" | "sald" | "ej_angiven";
 export type Hull = "low" | "normal" | "high";
 export type Membership = "kvar_utan_genbank" | "avsluta_medlemskap";

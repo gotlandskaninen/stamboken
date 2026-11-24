@@ -145,10 +145,9 @@ eller, i läget `log`, loggats.
   dagen, räknat på mejl som har gått när nästa ska skickas, och ett mejl över
   gränsen väntar tills det äldsta av dem är ett dygn gammalt. Inget mejl
   stryks för en gräns.
-- `konto.kod` (prioritet 0) har en engångskod. Hittills finns bara texten för
-  en ny adress (`purpose = ny_adress`): mottagaren har bett om att byta
-  e-postadress, och mejlet har koden men ingen länk. En rad för inloggning
-  stoppas tills inloggningssidan finns.
+- `konto.kod` (prioritet 0) väljer text efter kodens syfte. För inloggning
+  innehåller mejlet både åtta siffror och en länk. För ett adressbyte
+  innehåller det enbart koden till den nya adressen.
 - `kontakt.epost_besked` (prioritet 0) går till adressen som byts ut när en
   inloggningsadress byts, och under en väntan också till den första tidigare
   adressen: att adressen är bytt och av vem (medlemmen själv, matrikelansvarig
@@ -165,7 +164,7 @@ Koden finns i `app/utils/login_code.py` och `set_member_email` i
   HMAC-SHA256(`LINK_SECRET`, `"code:<värdnamn>:<rad-id>:<slumptal>"`) modulo
   10^8 och lagras aldrig. Inmatningen bortser från mellanslag och bindestreck.
 - **Tio minuter, en gång, tre försök.** Försöket räknas upp i samma `UPDATE`
-  som kontrollerar gränsen och sparas för sig, före jämförelsen. Koden
+  som kontrollerar gränsen, före jämförelsen. Koden
   förbrukas med en enda `UPDATE`, så av två samtidiga lyckas högst en, och
   försöket räknas då tillbaka.
 - **Webbläsaren:** raden sparar en hash av en hemlighet som bara webbläsaren som
@@ -180,7 +179,22 @@ Koden finns i `app/utils/login_code.py` och `set_member_email` i
   en adress som inget mejl kan gå till får samma fel som en ogiltig adress och
   kostar ingen kod. Demon vägrar bytet ("E-postadressen kan inte bytas i
   testmiljön.") och sparar resten, eftersom kontots märke aldrig byts där.
-- **Gränser:** fem koder per person och dygn, 120 koder i timmen sammanlagt,
+- **Inloggning.** När `KODINLOGGNING=true` ger `POST /api/v2/login/kod`
+  alltid samma besked och en ny HttpOnly-kaka, `login_request`. Servern slår
+  upp adressen och köar mejlet efter att svaret har skickats. Sändaren
+  kontrollerar på nytt att samma person och konto kan använda adressen när
+  SMTP-anslutningen är uppe. Om adressen dras in mellan den sista kontrollen
+  och överlämningen till reläet kan mejlet ändå gå till den indragna adressen.
+  Sändaren håller inga adresslås under SMTP-anropet. Vid inlösen kontrolleras
+  adressen på nytt, så både koden och länken nekas om adressen har dragits in.
+  URL-fragmentet innehåller enbart länkens HMAC och tas bort ur historiken när
+  sidan öppnas. Servern hittar kodraden via kakan och använder radens id och
+  slumptal för att kontrollera länken.
+  Uppslagningen visar namnet i webbläsaren som begärde mejlet. Först när
+  medlemmen trycker på knappen förbrukas koden. Byte från ett annat inloggat
+  konto kräver bekräftelse.
+- **Gränser:** tio inloggningsbegäranden per avsändande IP-adress och timme,
+  fem koder per person och dygn, 120 koder i timmen sammanlagt,
   och efter 50 felaktiga koder på en timme tas inga koder emot eller skickas
   förrän de har åldrats ut. Felen räknas på rader skapade den senaste timmen
   och tio minuter till, så ett fel räknas minst en timme. Statusvyn visar då

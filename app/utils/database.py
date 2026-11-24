@@ -73,8 +73,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # one account per Google identity (48) + one-time codes and members' previous addresses (49) +
 # the herd's contact from the member register, herd.contact_member and herd.contact_pending (50) +
 # the yearly report v2 (51) + organization name and number on membership (52) +
-# notice.individual and buyer_contact.erased_email_hash (53).
-CURRENT_SCHEMA_VERSION = 53
+# notice.individual and buyer_contact.erased_email_hash (53) +
+# acceptance of the account rules (54).
+CURRENT_SCHEMA_VERSION = 54
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -1201,6 +1202,16 @@ class Bodyfat(BaseModel):
     bodyfat_date = DateField()
 
 
+class AccountRulesSnapshot(BaseModel):
+    sha256 = TextField(primary_key=True)
+    text = TextField()
+    cms_version = TextField()
+    first_accepted_at = TimestampTZField()
+
+    class Meta:
+        table_name = "account_rules_snapshot"
+
+
 class User(BaseModel, UserMixin):
     """
     Table keeping track of system users.
@@ -1222,6 +1233,9 @@ class User(BaseModel, UserMixin):
     use_google_picture = BooleanField(default=True)  # User preference
     # Additive column for per-user v2-prod promotion; never read by legacy.
     v2_prod_access = BooleanField(default=False)
+    rules_accepted_at = TimestampTZField(null=True)
+    rules_version = TextField(null=True)
+    rules_snapshot = ForeignKeyField(AccountRulesSnapshot, column_name="rules_sha256", null=True, index=False)
     # Phase 17 — account deactivation. Peewee's FieldAccessor shadows
     # flask_login UserMixin.is_active (same pattern as Herd.is_active), so
     # login_user() natively refuses inactive users. Normal audited column —
@@ -2342,6 +2356,8 @@ class MailSender(BaseModel):
     id = IntegerField(primary_key=True, default=1, constraints=[Check("id = 1")])
     last_run_at = TimestampTZField(null=True)
     paused_until = TimestampTZField(null=True)
+    code_limit_at = TimestampTZField(null=True)
+    code_queue_errors = ArrayField(TimestampTZField, null=True, index=False)  # three most recent failures
 
     class Meta:
         table_name = "mail_sender"
@@ -2736,6 +2752,7 @@ MODELS = [
     IndividualDisease,
     Weight,
     Bodyfat,
+    AccountRulesSnapshot,
     User,
     UserMessage,
     YearlyReportRound,
@@ -2795,6 +2812,8 @@ def init():
         Breeding._schema.create_foreign_key(Breeding.father)
     if not isinstance(DATABASE, SqliteDatabase):
         _add_herd_contact_member_fk()  # every init: an interrupted first one may have died before member existed
+
+    _lock_account_rules_snapshots()
 
     # Stamp the bootstrap version — but ONLY on a database this call created
     # from nothing. Stamping an existing (possibly partially migrated) database
@@ -4889,6 +4908,33 @@ def migrate_52_to_53():
         ).execute()
 
 
+def _lock_account_rules_snapshots():
+    if isinstance(DATABASE, SqliteDatabase):
+        return
+    for action in ("UPDATE", "DELETE"):
+        DATABASE.execute_sql(
+            f"CREATE OR REPLACE RULE account_rules_no_{action.lower()} AS ON {action} TO account_rules_snapshot "
+            "DO INSTEAD NOTHING"
+        )
+
+
+def migrate_53_to_54():
+    """Record the published rules accepted by self-registered accounts."""
+    with DATABASE.atomic():
+        DATABASE.create_tables([AccountRulesSnapshot], safe=True)
+        _lock_account_rules_snapshots()
+        DATABASE.execute_sql(
+            "ALTER TABLE hbuser ADD COLUMN IF NOT EXISTS rules_sha256 TEXT REFERENCES account_rules_snapshot(sha256)"
+        )
+        DATABASE.execute_sql("ALTER TABLE hbuser ADD COLUMN IF NOT EXISTS rules_accepted_at TIMESTAMPTZ")
+        DATABASE.execute_sql("ALTER TABLE hbuser ADD COLUMN IF NOT EXISTS rules_version TEXT")
+        DATABASE.execute_sql("ALTER TABLE mail_sender ADD COLUMN IF NOT EXISTS code_queue_errors TIMESTAMPTZ[]")
+        DATABASE.execute_sql("ALTER TABLE mail_sender ADD COLUMN IF NOT EXISTS code_limit_at TIMESTAMPTZ")
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=54, comment="hbuser account rules acceptance", applied=datetime.now()
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -5379,6 +5425,7 @@ MIGRATIONS = {
     (50, 51): migrate_50_to_51,  # yearly report v2
     (51, 52): migrate_51_to_52,  # legal entity on membership
     (52, 53): migrate_52_to_53,  # notice.individual, buyer_contact.erased_email_hash
+    (53, 54): migrate_53_to_54,  # account rules acceptance
 }
 
 
@@ -5512,11 +5559,21 @@ def _run_migrations():
         CURRENT_SCHEMA_VERSION,
     )
 
-    if current_version == 53:  # earlier 53 on the buyer branch
+    if current_version == 53:
+        buyer_columns = {c.name for c in DATABASE.get_columns("buyer_contact")}
+        if "erased_email_hash" not in buyer_columns and {"rules_sha256", "rules_accepted_at", "rules_version"} <= {
+            c.name for c in DATABASE.get_columns("hbuser")
+        }:
+            raise RuntimeError(
+                "An earlier version of the login branch applied account rules as migration 53, now 54, "
+                "and lacks buyer_contact.erased_email_hash. Rebuild the disposable development or CI database. "
+                "Är detta inte en utvecklings- eller CI-databas: stoppa och utred migreringen."
+            )
+        # Earlier versions of the buyer mail migration lacked the invitation table or the review flag.
         if not BuyerInvitation.table_exists():
             with DATABASE.atomic():
                 _create_buyer_invitations()
-        if "email_review_pending" not in {c.name for c in DATABASE.get_columns("buyer_contact")}:
+        if "email_review_pending" not in buyer_columns:
             _add_buyer_email_review()
 
     while current_version is None or current_version < CURRENT_SCHEMA_VERSION:

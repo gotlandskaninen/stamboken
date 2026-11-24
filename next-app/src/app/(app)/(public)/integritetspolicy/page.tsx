@@ -327,7 +327,10 @@ export default function IntegritetspolicyPage() {
               <li>
                 Din e-postadress och ditt telefonnummer sparar vi bara om du har
                 kryssat ja på beviset (samtycke), och bara tills kaninen byter
-                ägare igen.
+                ägare igen. När e-postadressen tas bort sparar vi ett krypterat
+                avtryck av den, inte själva adressen, så länge köpet finns i
+                registret. Det använder vi för att kunna ta bort alla dina
+                uppgifter när du ber om det.
               </li>
               <li>
                 Har du kryssat ja till att föreningen får kontakta dig om
@@ -378,9 +381,39 @@ export default function IntegritetspolicyPage() {
               profilbild. Lösenord sparas aldrig i klartext.
             </p>
             <p>
+              Du kan logga in med e-postadressen i medlemsregistret. Då får du
+              en engångskod och en länk. Båda gäller i tio minuter och fungerar
+              bara i den webbläsare där du bad om dem. Själva koden sparar vi
+              aldrig. Enligt föreningens beslut får uppgifterna om en kod sparas
+              i högst ett dygn. I dag raderas de vid den första nattliga
+              gallringen efter det dygnet.
+            </p>
+            <p>
+              När du byter e-postadress skickar vi ett besked till den tidigare
+              adressen. Den kan normalt användas för inloggning i sju dagar från
+              det senaste bytet. Byter matrikelansvarig adressen i
+              medlemsregistret slutar den tidigare adressen att gälla direkt.
+              För att beskedet ska hinna fram sparar vi adressen i två dygn
+              efter att den har slutat gälla och tar sedan bort den vid nästa
+              nattliga gallring.
+            </p>
+            <p>
+              När du skapar ditt konto med engångskod sparar vi när du godkände{" "}
+              <a href="/kontoregler">kontoreglerna</a> och en kopia av den text
+              du godkände. Föreningens systemansvarig ser hela användarlistan.
+              Genbanksansvariga kan se alla användare utom dem som är
+              systemansvariga. De som sköter medlemsregistret kan söka efter
+              aktiva konton med användarnamn eller e-postadress för att koppla
+              ett konto till en medlem.
+            </p>
+            <p>
               Kontot behövs för att du ska kunna använda Stamboken Online och
               för att bara rätt person ska se och ändra uppgifter (avtal). Det
               finns kvar så länge du är medlem eller har en genbanksbesättning.
+            </p>
+            <p>
+              Upptäcker du en incident eller misstänker att någon annan har
+              kommit åt ett konto, mejla {contactLink}.
             </p>
           </Section>
 
@@ -399,16 +432,18 @@ export default function IntegritetspolicyPage() {
 
           <Section title="Föreningskonto, e-post och forum">
             <p>
-              Som medlem kan du få ett föreningskonto: en e-postadress på
-              gotlandskaninen.se hos Google Workspace. Med det loggar du in i
-              Stamboken Online och i medlemsforumet. Kontot ingår i medlemskapet
-              (avtal). När du mejlar föreningen lagras mejlet hos Google och
-              läses av den funktionär som har adressen, för att vi ska kunna
-              svara dig (berättigat intresse). I forumet sparas ditt
-              användarnamn, din e-postadress och det du skriver. Det fristående
-              forumet ska ersättas av en motsvarande funktion i Stamboken
-              Online. Vi berättar i förväg om konton och inlägg flyttas dit
-              eller tas bort.
+              Har du ett uppdrag i föreningen kan du få ett föreningskonto hos
+              Google Workspace med en e-postadress på gotlandskaninen.se. Med
+              det kan du logga in i Stamboken Online och i medlemsforumet. När
+              uppdraget upphör stänger föreningen kontot.
+            </p>
+            <p>
+              När du mejlar föreningen lagras mejlet hos Google och läses av den
+              funktionär som har adressen, för att vi ska kunna svara dig
+              (berättigat intresse). I forumet sparas ditt användarnamn, din
+              e-postadress och det du skriver. Det fristående forumet ska
+              ersättas av en motsvarande funktion i Stamboken Online. Vi
+              berättar i förväg om konton och inlägg flyttas dit eller tas bort.
             </p>
           </Section>
 

@@ -17,7 +17,11 @@ const blockComponents: Record<string, React.ComponentType<any>> = {
 };
 
 interface RenderBlocksProps {
-  blocks: Array<{ blockType: string; id?: string; [key: string]: unknown }>;
+  blocks: Array<{
+    blockType: string;
+    id?: string | null;
+    [key: string]: unknown;
+  }>;
 }
 
 export function RenderBlocks({ blocks }: RenderBlocksProps) {

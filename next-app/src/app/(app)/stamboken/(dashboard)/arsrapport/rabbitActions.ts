@@ -5,10 +5,11 @@ import { fetchApi, ApiError } from "@/lib/api";
 import { MODE_COOKIE, parseMode, type Mode } from "@/lib/mode";
 import type { Found } from "@/components/register/RegisterFromCertificate";
 import type { ActionResult } from "../inkorg/actions";
+import { reportLinkPath } from "./lib";
 
 // "Lägg till kanin från intyget" (4b): the certificate's photo, the registration and the form's lookups. `env` is
 // the logged-in page's data environment, checked against the mode cookie as its other actions are; without it the
-// call is the personal link's, which works against the production API only and has no mode cookie
+// call is the personal link's and uses the production API with the report code
 // (rapport/actions.ts). Flask decides who may do what.
 
 const HERD = /^[A-Z]{1,3}[0-9]{1,6}$/;
@@ -29,7 +30,12 @@ function path(herd: string, year: number, tail: string) {
 async function call<T>(
   env: Mode | undefined,
   url: string | null,
-  init: { method: string; body?: BodyInit; timeout?: number },
+  init: {
+    method: string;
+    body?: BodyInit;
+    timeout?: number;
+    isolateDemo?: boolean;
+  },
 ): Promise<ActionResult<T>> {
   const refused = (title: string, detail: string): ActionResult<never> => ({
     ok: false,
@@ -49,10 +55,13 @@ async function call<T>(
       "Du har bytt mellan Stamboken och testmiljön i en annan flik. Ladda om sidan, så sparas det på rätt ställe.",
     );
   try {
-    const data = await fetchApi<T>(url, {
-      ...init,
-      ...(env === undefined ? { forceProd: true } : {}),
-    });
+    const data = await fetchApi<T>(
+      env === undefined ? reportLinkPath(url) : url,
+      {
+        ...init,
+        ...(env === undefined ? { forceProd: true } : {}),
+      },
+    );
     return { ok: true, data };
   } catch (e) {
     if (e instanceof ApiError)
@@ -89,7 +98,12 @@ export async function uploadPhoto(
   return call<{ item_id: number; document_id: number }>(
     env,
     path(herd, year, purpose ? `/foto?syfte=${purpose}` : "/foto"),
-    { method: "POST", body: data, timeout: 60000 },
+    {
+      method: "POST",
+      body: data,
+      timeout: 60000,
+      isolateDemo: env !== undefined,
+    },
   );
 }
 

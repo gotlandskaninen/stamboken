@@ -35,20 +35,20 @@ const STEPS: Array<{
   },
   {
     title: "Ditt konto",
-    text: "Har du ett föreningskonto, alltså en e-postadress på gotlandskaninen.se, loggar du in med det. Har du användarnamn och lösenord från gamla Stamboken fungerar de också. Saknar du båda, mejla admin@gotlandskaninen.se.",
+    text: "Du kan logga in med ditt föreningskonto eller med användarnamn och lösenord. Visas knappen Skicka kod kan du använda e-postadressen i matrikeln. Som huvudmedlem kan du då också skapa ett konto.",
     link: {
-      href: "mailto:admin@gotlandskaninen.se",
-      label: "Mejla administratören",
+      href: "/kontoregler",
+      label: "Läs reglerna för användarkonton",
     },
   },
   {
     title: "Logga in",
-    text: "Klicka på Stamboken uppe till höger och sedan på Logga in i Stamboken. Där klickar du på Logga in med ditt föreningskonto (Google) och väljer föreningskontot i Googles kontoväljare, inte ett privat Gmail-konto. Har du inget föreningskonto loggar du in med användarnamn och lösenord.",
+    text: "Klicka på Stamboken uppe till höger och sedan på Logga in i Stamboken. Välj ditt inloggningssätt. Använder du Google väljer du föreningskontot i Googles kontoväljare.",
     link: { href: `${MANUAL_PATH}#logga-in`, label: "Logga in steg för steg" },
   },
   {
     title: "Öva i testmiljön",
-    text: "Nya användare börjar i testmiljön, en kopia av stamboken som återställs varje natt. Där kan du prova allt utan att något sparas på riktigt. När administratören har gett dig tillgång byter du till riktiga stamboken i menyn under din bild.",
+    text: "Om ditt konto börjar i testmiljön kan du öva på att registrera kaniner där. Testmiljön uppdateras med en kopia av stamboken varje natt. När du har fått tillgång till riktiga stamboken kan du byta miljö i menyn under din bild.",
     link: {
       href: `${MANUAL_PATH}#testmiljön-och-riktiga-stamboken`,
       label: "Om testmiljön",

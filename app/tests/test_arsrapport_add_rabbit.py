@@ -62,10 +62,10 @@ class AddRabbitTest(ArsrapportTest):
         response = (client or self.client).post("/api/v2/rapport/oppna", json={"token": token})
         self.assertEqual(response.status_code, 200)
 
-    def upload_photo(self, path=REPORT, content=None, client=None):
+    def upload_photo(self, path=REPORT, content=None, client=None, query_string=None):
         data = {"file": (io.BytesIO(content or encoded(photo((600, 800)))), "intyg.jpg")}
         return (client or self.client).post(
-            f"/api/v2/arsrapport{path}/foto", data=data, content_type="multipart/form-data"
+            f"/api/v2/arsrapport{path}/foto", data=data, content_type="multipart/form-data", query_string=query_string
         )
 
     def photo_item(self, path=REPORT, client=None):
@@ -73,7 +73,7 @@ class AddRabbitTest(ArsrapportTest):
         self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
         return response.get_json()["item_id"]
 
-    def kit(self, item_id, path=REPORT, client=None, **fields):
+    def kit(self, item_id, path=REPORT, client=None, query_string=None, **fields):
         """A kit of doe and buck born in 2025: G9001's first litter of the year, so Stamboken gives G9001-2511."""
         body = {
             "item_id": item_id,
@@ -88,7 +88,7 @@ class AddRabbitTest(ArsrapportTest):
             "name": "Kulla",
             **fields,
         }
-        return (client or self.client).post(f"/api/v2/arsrapport{path}/kanin", json=body)
+        return (client or self.client).post(f"/api/v2/arsrapport{path}/kanin", json=body, query_string=query_string)
 
     def kits(self):
         return db.Individual.select().where(db.Individual.origin_herd << [self.h.id, self.h2.id]).count() - 4
@@ -128,6 +128,32 @@ class TestPhoto(AddRabbitTest):
         ]
         self.assertIn(self.helper.id, noticed)
         self.assertEqual(len(noticed), len(set(noticed)))
+
+    def test_demo_mode_cannot_upload_or_send_photos_to_the_production_queue(self):
+        self.login("owner")
+        self.client.set_cookie("sb_mode", "demo")
+        self.assertEqual(self.upload_photo().status_code, 403)
+        self.assertEqual(self.client.post(f"/api/v2/arsrapport{REPORT}/kop/inskick", json={}).status_code, 403)
+        self.assertFalse(db.InboxItem.select().exists())
+
+    def test_demo_owner_uploads_and_registers_only_for_the_opened_production_link(self):
+        db.User.update(v2_prod_access=False).where(db.User.id == self.owner.id).execute()
+        self.login("owner")
+        self.client.set_cookie("sb_mode", "demo")
+        link = {"via": "lank"}
+        with mock.patch.object(settings.service, "access_rules", "enforce"):
+            self.assertEqual(self.upload_photo(query_string=link).status_code, 401)
+            self.open_link(self.code2)
+            self.assertEqual(self.upload_photo(query_string=link).status_code, 404)
+            self.open_link()
+            self.assertEqual(self.client.post("/api/v2/inkorg/upload", query_string=link).status_code, 403)
+            self.assertEqual(self.upload_photo().status_code, 403)
+            uploaded = self.upload_photo(query_string=link)
+            self.assertEqual(uploaded.status_code, 201, uploaded.data)
+            item = self.reload(uploaded.get_json()["item_id"])
+            self.assertIsNone(item.sender_user_id)
+            self.assertEqual(item.events.get().detail["access_code_id"], self.code.id)
+            self.assertEqual(self.kit(item.id, query_string=link).status_code, 201)
 
     def test_a_login_is_the_items_sender(self):
         self.login("owner")
@@ -190,6 +216,7 @@ class TestPhoto(AddRabbitTest):
         """Opus L4: a caretaker (a herd-access grant) may register in the herd, so may upload for it; whoever may not
         register may not upload either, so no photo is left without its rabbit."""
         caretaker = self.user("skotare")
+        db.User.update(v2_prod_access=True).where(db.User.id == caretaker.id).execute()
         person = db.Member.create(
             first_name="Test", last_name="Skötare", membership=self.h.membership, role="skotare", user=caretaker
         )

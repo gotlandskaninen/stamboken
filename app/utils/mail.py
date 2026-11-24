@@ -75,7 +75,7 @@ NO_ADDRESS = "mottagaren saknar e-post"
 SALE_WITHDRAWN = "försäljningen är ångrad"
 
 MailKind = namedtuple("MailKind", "priority category build login_address", defaults=[None])
-Recipient = namedtuple("Recipient", "address label")
+Recipient = namedtuple("Recipient", "address label recheck_before_send", defaults=[False])
 
 # kind -> MailKind; build(params) returns the template variables (plus an optional "attachments" list of
 # (filename, mime type, bytes)), returns None to cancel, or raises Later to postpone delivery. A builder that
@@ -184,7 +184,7 @@ def _mac(message):
     return hmac.new(secret.encode(), message.encode(), hashlib.sha256)
 
 
-def _link_mac(purpose, row_id, host=None):
+def link_mac(purpose, row_id, host=None):
     # The hostname binds a link to its environment: the demo is a copy of production with the same row ids.
     message = f"link:{host or _hostname()}:{purpose}:{row_id}"
     return base64.urlsafe_b64encode(_mac(message).digest()[:16]).rstrip(b"=").decode()
@@ -192,7 +192,7 @@ def _link_mac(purpose, row_id, host=None):
 
 def link_token(purpose, row_id):
     """`<row id>.<mac>`, mac = base64url(HMAC-SHA256(LINK_SECRET, "link:<host>:<purpose>:<row id>")) cut to 128 bits."""
-    return f"{row_id}.{_link_mac(purpose, row_id)}"
+    return f"{row_id}.{link_mac(purpose, row_id)}"
 
 
 _LINK_TOKEN = re.compile(r"([1-9][0-9]{0,18})\.([A-Za-z0-9_-]{22})")
@@ -210,7 +210,7 @@ def verify_link(purpose, token):
     # A link made under an earlier host name still verifies while that name is in LINK_HOSTS (FA4).
     hosts = [_hostname(), *settings.mail.link_hosts]
     return (
-        row_id if any(hmac.compare_digest(_link_mac(purpose, row_id, host), match.group(2)) for host in hosts) else None
+        row_id if any(hmac.compare_digest(link_mac(purpose, row_id, host), match.group(2)) for host in hosts) else None
     )
 
 
@@ -582,6 +582,7 @@ def _send_one(row, relay, now):
     if resolve is None:
         return _finish(row, now, status="cancelled", last_error=f"okänd mottagartyp: {row.recipient_kind}")
     mode = settings.mail.mode
+    recipient = None
     login_address = kind.login_address if row.recipient_kind in ("member", "member_previous_address") else None
     try:
         if row.recipient_kind == "buyer_contact" and cancel_withdrawn_buyer_mails([row.recipient_id]):
@@ -626,6 +627,16 @@ def _send_one(row, relay, now):
         return _finish(row, now, status="logged", last_error=note)
     if mode == "allowlist" and not _allowed(address):
         return _finish(row, now, status="blocked", last_error="spärrat: adressen finns inte i MAIL_ALLOWLIST")
+
+    def still_ours():
+        if recipient is not None and recipient.recheck_before_send:
+            current = resolve(row.recipient_id)
+            if current is None or _normalize(current.address) != address:
+                _finish(row, now, status="cancelled", last_error="mottagaren gäller inte längre")
+                return False
+        buyer_certificate = row.kind == "kopare.information" and msg.is_multipart()
+        return _renew(row, login_address, address, buyer_certificate)
+
     # For buyer mail, keep _renew's row lock through the SMTP handoff and its outcome.
     # forget_recipient then either cancels before the handoff or waits until it is over.
     with DB_PROXY.atomic() if row.kind.startswith("kopare.") else contextlib.nullcontext():
@@ -634,13 +645,12 @@ def _send_one(row, relay, now):
             DB_PROXY.execute_sql("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"buyer_invitation:{key}",))
             if BuyerInvitation.select().where(BuyerInvitation.email_hash == key).exists():
                 return _finish(row, now, status="cancelled", last_error=MAIL_NO_LONGER_RELEVANT)
-        return _deliver(row, relay, now, msg, address, note, login_address)
+        return _deliver(row, relay, now, msg, address, note, still_ours)
 
 
-def _deliver(row, relay, now, msg, address, note, login_address):
+def _deliver(row, relay, now, msg, address, note, still_ours):
     try:
-        buyer_certificate = row.kind == "kopare.information" and msg.is_multipart()
-        relay.send(msg, address, lambda: _renew(row, login_address, address, buyer_certificate))
+        relay.send(msg, address, still_ours)
     except _ClaimLost:
         logger.warning("Mail %s was reclaimed by another sender or lost its recipient; it is not sent", row.id)
         return True

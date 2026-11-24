@@ -1,8 +1,22 @@
-{% block subject %}Din kod för att byta e-postadress i Stamboken{% endblock %}
-{# Only the text for a new address (purpose ny_adress): no link, so a mistyped address gets no key to the account. #}
+{% block subject %}{% if token %}Logga in i Stamboken{% else %}Din kod för att byta e-postadress i Stamboken{% endif %}{% endblock %}
 {% block body %}
 Hej!
 
+{% if token -%}
+Är du på samma telefon eller dator där du bad om koden? Öppna länken i samma webbläsare och tryck på ”Logga in här”.
+
+{{ base_url }}/auth/kod#{{ token }}
+
+Läser du mejlet på en annan skärm? Skriv koden i webbläsaren där du bad om den.
+
+{{ code }}
+
+Du kan logga in en gång inom tio minuter.
+
+Ge aldrig koden eller länken till någon annan. Ingen kommer att be dig om dem, inte ens föreningen.
+
+Om du inte har bett om en kod kan du bortse från mejlet.
+{% else -%}
 Du har bett om att byta e-postadress i Stamboken. Här är din kod:
 
 {{ code }}
@@ -12,4 +26,5 @@ Skriv koden i Stamboken, där du bytte adress. Koden gäller i tio minuter och b
 Lämna aldrig ut koden till någon annan! Ingen kommer någonsin att fråga dig efter den. Inte föreningen heller.
 
 Var det inte du som bad om koden? Då behöver du inte göra något. Din adress ändras inte.
+{% endif -%}
 {% endblock %}

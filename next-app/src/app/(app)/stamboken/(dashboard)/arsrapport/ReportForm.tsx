@@ -28,6 +28,7 @@ import {
   newKey,
   paperKey,
   refusalText,
+  reportLinkPath,
   incompleteText,
   editClears,
   stockholmDay,
@@ -1402,7 +1403,9 @@ export function ReportForm({
       {link && (
         <p className={styles.lead}>
           <a
-            href={`/api/v2/arsrapport/besattning/${herd.herd}/${year}/registerutdrag.pdf`}
+            href={reportLinkPath(
+              `/api/v2/arsrapport/besattning/${herd.herd}/${year}/registerutdrag.pdf`,
+            )}
           >
             Registerutdraget (PDF)
           </a>

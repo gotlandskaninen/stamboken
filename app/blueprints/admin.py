@@ -278,6 +278,8 @@ def update_user_admin(u_id):
         result = da.edit_admin_user(u_id, body)
         auth_log.info("user profile changed actor=%s target=%s", current_user.id, u_id)
         return jsonify(result), 200
+    except da.AddressInUseError:
+        return problem(400, "Ogiltigt värde", "Ett annat konto har e-postadressen.", type="invalid-value")
     except ValueError as exc:
         if str(exc) == "user-not-found":
             return problem(

@@ -80,6 +80,7 @@ services:
       - ./.docker/database-variables.env
       - ./.docker/api-variables.env
     environment:
+      - NEXT_INTERNAL_ORIGIN=http://next-app:3000
       - FLASK_ENV=${FLASK_ENV:-development}
       - FLASK_DEBUG=${FLASK_DEBUG:-1}
       - RATELIMIT_ENABLED=false

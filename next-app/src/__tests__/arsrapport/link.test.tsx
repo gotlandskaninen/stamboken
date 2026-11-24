@@ -212,7 +212,7 @@ describe("ReportForm in link mode", () => {
     render(linkForm(actions()));
     const a = screen.getByRole("link", { name: "Registerutdraget (PDF)" });
     expect(a.getAttribute("href")).toBe(
-      "/api/v2/arsrapport/besattning/G9001/2026/registerutdrag.pdf",
+      "/api/v2/arsrapport/besattning/G9001/2026/registerutdrag.pdf?via=lank",
     );
     expect(
       a.compareDocumentPosition(row(1)) & Node.DOCUMENT_POSITION_FOLLOWING,

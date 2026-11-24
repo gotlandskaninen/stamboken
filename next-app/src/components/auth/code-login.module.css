@@ -1,0 +1,28 @@
+.page {
+  max-width: 54rem;
+  margin: 0 auto;
+  padding: clamp(1.25rem, 5vw, 4rem);
+  color: var(--sb-ink);
+}
+
+.form {
+  display: grid;
+  gap: 0.65rem;
+  margin: 1.5rem 0;
+}
+
+.form p {
+  margin: 0;
+}
+
+.form input,
+.form button,
+.page button {
+  min-height: 44px;
+}
+
+.check {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
