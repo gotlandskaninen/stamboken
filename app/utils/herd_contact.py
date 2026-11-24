@@ -280,7 +280,7 @@ def compare_with_register(herd: Herd, *, include_organization: bool = True) -> t
     persons = list(_contact_persons([herd.membership_id], include_organization=include_organization))
     main = next((p for p in persons if p.role == "huvudmedlem"), None)
     name = herd.name if normalize("name", herd.name) else None
-    same = [p for p in persons if normalize("name", p.display_name) == normalize("name", name)]
+    same = [p for p in persons if normalize("name", f"{p.first_name} {p.last_name}") == normalize("name", name)]
     # step 1, the contact person: the main member for an empty name, the one person the name is, else fritext
     if name is None:
         contact, cases = main, {"name": "bara_matrikeln" if main else "bada_tomma"}

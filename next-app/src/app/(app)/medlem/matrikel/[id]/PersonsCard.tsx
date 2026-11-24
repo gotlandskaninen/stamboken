@@ -94,7 +94,13 @@ export function PersonsCard({
   const [editPersonId, setEditPersonId] = useState<number | null>(null);
   const [personForm, setPersonForm] = useState(EMPTY_PERSON_FORM);
   const editingContact =
-    Boolean(membership.organization_name) && personForm.role === "huvudmedlem";
+    Boolean(membership.organization_name) &&
+    membership.persons.some(
+      (p) =>
+        p.id === editPersonId &&
+        p.role === "huvudmedlem" &&
+        p.end_date === null,
+    );
 
   // Grant dialog
   const [grantPerson, setGrantPerson] = useState<Person | null>(null);

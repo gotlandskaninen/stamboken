@@ -565,11 +565,12 @@ def patch_person(person_id: int):
                     after[field] = val
                     setattr(person, field, val)
 
-            organization_contact = (
-                membership.organization_name and person.role == "huvudmedlem" and person.end_date is None
-            )
-            if not organization_contact and not (person.first_name.strip() and person.last_name.strip()):
-                return problem(400, "Namn krävs", "Både förnamn och efternamn krävs")
+            if {"first_name", "last_name", "role"} & proposed.keys():
+                organization_contact = (
+                    membership.organization_name and person.role == "huvudmedlem" and person.end_date is None
+                )
+                if not organization_contact and not (person.first_name.strip() and person.last_name.strip()):
+                    return problem(400, "Namn krävs", "Både förnamn och efternamn krävs")
 
             if not after:
                 return jsonify(_person_to_dict(person))

@@ -763,30 +763,35 @@ def _import_friexemplar_group(name_key: str, group: list[dict], dry_run: bool, r
     # Idempotent re-import: a friexemplar contact with this name exists. A retired
     # friexemplar (status inactive, no number) or an ended contact counts as
     # present too, but is reported for review instead of being created again.
-    existing = (
-        Member.select(Member, Membership)
-        .join(Membership)
-        .where(
-            (Membership.membership_status == "friexemplar")
-            | ((Membership.membership_status == "inactive") & Membership.member_number.is_null(True))
-        )
+    candidates = (Membership.membership_status == Status.FRIEXEMPLAR) | (
+        (Membership.membership_status == Status.INACTIVE) & Membership.member_number.is_null()
     )
+    label = f"friexemplar {group[0]['name']}"
+    # An organization can receive the magazine without a person row, even in the last export before retirement.
+    organizations = Membership.select(Membership.id, Membership.organization_name, Membership.membership_status).where(
+        candidates, Membership.organization_name.is_null(False)
+    )
+    organization_match = False
+    for ms in organizations:
+        if _name_key(ms.organization_name) == name_key:
+            if ms.membership_status == Status.INACTIVE:
+                report["review"].append((label, ms.id, "inaktivt medlemskap"))
+                return
+            organization_match = True
+
+    existing = Member.select(Member, Membership).join(Membership).where(candidates)
     matches = [person for person in existing if _main_person_matches(person, person.membership, name_key)]
     if matches:
         if any(p.end_date is None and p.membership.membership_status == "friexemplar" for p in matches):
             report["matched_existing"] += 1
         else:
-            report["review"].append((f"friexemplar {group[0]['name']}", matches[0].membership_id, "avslutad kontakt"))
+            report["review"].append((label, matches[0].membership_id, "avslutad kontakt"))
         return
-    # A friexemplar organization can receive the magazine without a person row.
-    organizations = Membership.select(Membership.organization_name).where(
-        Membership.membership_status == Status.FRIEXEMPLAR, Membership.organization_name.is_null(False)
-    )
-    if any(_name_key(ms.organization_name) == name_key for ms in organizations):
+    if organization_match:
         report["matched_existing"] += 1
         return
     if _erased_friexemplar_exists():
-        report["review"].append((f"friexemplar {group[0]['name']}", None, "en raderad kontakt kan inte uteslutas"))
+        report["review"].append((label, None, "en raderad kontakt kan inte uteslutas"))
         return
 
     # First row verbatim — no cross-row field mixing.

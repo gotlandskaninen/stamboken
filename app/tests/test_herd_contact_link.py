@@ -189,21 +189,24 @@ class TestLinkHerd(LinkTest):
         self.assertEqual(link_herd(other.id, self.membership.id)["name"], "person")
         self.assertEqual((self._state(other)["contact_member_id"], self._state(other)["name"]), (self.family.id, None))
 
-    def test_organization_name_matches_and_identifies_unnamed_contact(self):
+    def test_organization_name_stays_freetext_when_contact_later_gets_a_name(self):
         self.membership.organization_name = "Exempelby museum"
         self.membership.save()
         db.Member.update(first_name="", last_name="").where(db.Member.id == self.main.id).execute()
-        self._herd(name="EXEMPELBY  MUSEUM")
+        name = "EXEMPELBY  MUSEUM"
+        self._herd(name=name, name_privacy="public")
 
-        self.assertEqual(link_herd(self.herd.id, self.membership.id)["name"], "person")
+        self.assertEqual(link_herd(self.herd.id, self.membership.id)["name"], "fritext")
         herd = db.Herd.get_by_id(self.herd.id)
         contact = herd_contact(herd)
-        self.assertEqual(contact.rows["name"], _row("Exempelby museum", "person"))
+        self.assertEqual((herd.name, herd.contact_member_id, herd.name_privacy), (name, None, "public"))
+        self.assertEqual(contact.rows["name"], _row(name, "egen", True))
         data = contact_field(self.admin, herd, contact, reader=True, private_access=True)
-        self.assertEqual(
-            data["contact_member"], {"id": self.main.id, "name": "Exempelby museum", "role": "huvudmedlem"}
-        )
+        self.assertIsNone(data["contact_member"])
         self.assertEqual([p["name"] for p in data["persons"]], ["Exempelby museum", "Ida Exempel"])
+
+        db.Member.update(first_name="Anna", last_name="Exempel").where(db.Member.id == self.main.id).execute()
+        self.assertEqual(herd_contact(herd).rows["name"], _row(name, "egen", True, "Anna Exempel"))
 
     def test_link_ambiguous_name_is_fritext_pending(self):
         for herd, name in ((self.herd, "Anna och Per Exempel"), (db.Herd.get_by_id(self.herds[1].id), "Exempel")):

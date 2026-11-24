@@ -732,6 +732,15 @@ class TestStatsAndExport(MatrikelApiTest):
         rows = list(_csv_lib.reader(_io.StringIO(resp.data.decode("utf-8-sig"))))
         return resp, rows[0], rows[1:]
 
+    def _reimport_export(self, response):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "export.csv")
+            with open(path, "wb") as f:
+                f.write(response.data)
+            result = APP.test_cli_runner().invoke(args=["members", "import", path])
+        self.assertEqual(result.exit_code, 0, result.output)
+        return result.output
+
     def test_stats_counts_memberships_and_persons_separately(self):
         self.login("man")
         resp = self.client.get("/api/v2/members/stats")
@@ -812,13 +821,23 @@ class TestStatsAndExport(MatrikelApiTest):
             ]
 
         before = snapshot()
-        with tempfile.TemporaryDirectory() as tmpdir:
-            path = os.path.join(tmpdir, "export.csv")
-            with open(path, "wb") as f:
-                f.write(response.data)
-            result = APP.test_cli_runner().invoke(args=["members", "import", path])
-        self.assertEqual(result.exit_code, 0, result.output)
+        self._reimport_export(response)
         self.assertEqual(snapshot(), before)
+
+    def test_reimport_reviews_retired_friexemplar_organization_without_person(self):
+        org = _mk_membership(status="friexemplar", organization_name="Testmuseet")
+        self.login("matrikel")
+        response, header, rows = self._export_rows()
+        self.assertIn(("0", "Testmuseet"), [(r[header.index("Nr")], r[header.index("Namn Efternamn")]) for r in rows])
+        self.assertEqual(self.client.delete(f"/api/v2/memberships/{org.id}").status_code, 200)
+        count = db.Membership.select().count()
+
+        output = self._reimport_export(response)
+
+        self.assertIn(f"friexemplar Testmuseet -> membership {org.id}: inaktivt medlemskap", output)
+        self.assertEqual(db.Membership.select().count(), count)
+        self.assertEqual(db.Membership.get_by_id(org.id).membership_status, "inactive")
+        self.assertFalse(db.Member.select().where(db.Member.membership == org).exists())
 
     def test_export_friexemplar_first_with_nr_zero(self):
         """friexemplar rows lead the file (as in the paper matrikel), carry

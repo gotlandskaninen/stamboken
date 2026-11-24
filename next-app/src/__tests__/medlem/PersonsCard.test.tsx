@@ -153,6 +153,30 @@ describe("PersonsCard — organisationens kontaktperson", () => {
     expect(dialog.getByLabelText(/^Förnamn/)).toBeRequired();
     expect(dialog.getByRole("button", { name: "Spara" })).toBeDisabled();
   });
+
+  it("requires both names when editing an ended organisation contact", () => {
+    const ended = { ...contact, end_date: "2026-01-01" };
+    render(
+      <PersonsCard
+        membership={{ ...organization, persons: [ended] }}
+        canEdit
+      />,
+    );
+    fireEvent.click(
+      within(row(/avslutad/)).getByRole("button", { name: "Redigera" }),
+    );
+    const dialog = within(screen.getByRole("dialog"));
+    const firstName = dialog.getByLabelText(/^Förnamn/);
+    const lastName = dialog.getByLabelText(/^Efternamn/);
+    const save = dialog.getByRole("button", { name: "Spara" });
+    expect(firstName).toBeRequired();
+    expect(lastName).toBeRequired();
+    expect(save).toBeDisabled();
+    fireEvent.change(firstName, { target: { value: "Lo" } });
+    expect(save).toBeDisabled();
+    fireEvent.change(lastName, { target: { value: "Exempel" } });
+    expect(save).toBeEnabled();
+  });
 });
 
 describe("PersonsCard — Konto column", () => {

@@ -122,6 +122,20 @@ class TestMembersImport(DatabaseTest):
         membership = db.Membership.select().first()
         self.assertIn("2 identiska rader", membership.notes)
 
+    def test_patch_phone_of_imported_friexemplar_with_empty_first_name(self):
+        result = self._run_import(HEADER + _row(nr="0", name="Testbiblioteket"))
+        self.assertEqual(result.exit_code, 0, result.output)
+        person = db.Member.get()
+        self.assertEqual(person.first_name, "")
+        client = APP.test_client()
+        client.post("/api/login", json={"username": "admin", "password": "pass"})
+
+        response = client.patch(f"/api/v2/persons/{person.id}", json={"phone": "070-1234567"})
+
+        self.assertEqual(response.status_code, 200, response.data)
+        stored = db.Member.get_by_id(person.id)
+        self.assertEqual((stored.first_name, stored.last_name, stored.phone), ("", "Testbiblioteket", "070-1234567"))
+
     def test_two_friexemplar_can_share_an_email(self):
         address = "redaktion@example.invalid"
         names = ["Tidskriften Moroten", "Tidskriften Klövern"]
