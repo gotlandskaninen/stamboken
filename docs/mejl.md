@@ -296,6 +296,10 @@ mejlhistorikens gallring och finns kvar om köparen raderas först. Är köparen
   överlåtelsedagen. Har det gått tolv månader när mejlet ska skickas,
   eller har ja:et tagits bort, blir mejlet `cancelled`.
 
+Informationsmejlet förklarar hur länge avtrycket sparas.
+
+> Vi sparar också ett krypterat avtryck av e-postadressen, inte själva adressen, så länge köpet finns i registret. Det använder vi för att kunna ta bort alla dina uppgifter när du ber om det.
+
 ### Raderingslänken
 
 `<HERDBOOK_HOST>/kopare/ta-bort#<länkkod>`, med
