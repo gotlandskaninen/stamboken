@@ -881,7 +881,7 @@ def queue_member_added(person):
     medlemskap.tillagd in the transaction that adds `person` or gives it an address (the caller holds the
     membership's row lock): only someone put in by another (never a main member, who applied or was written in
     from the register) and only with an e-mail. The person's one row (its dedupe_key) is the record that the
-    notice went: a row that never reached the person (refused, bounced, stopped for want of an address, or
+    notice went: a row that never reached the person (refused, stopped for want of an address, or
     being sent to the address just replaced) is queued again; one that went, or that someone stopped, is not.
 
     A main member chooses the addresses, so the association's mail must not become a way to flood them: a
@@ -913,14 +913,15 @@ def queue_member_added(person):
         else None
     )
     if queued is None:
-        # A row being sent loses its claim, so it does not go to the address replaced or removed (_renew); a
-        # queued one is locked until the change commits, so the sender cannot read the old address meanwhile.
+        # A row being sent loses its claim, so before _renew it does not go to the address replaced or removed; a
+        # queued one is locked until the change commits, so the sender cannot read the old address meanwhile. Not
+        # a bounced one: a delay report counts as a bounce too (status view, "Försök igen").
         MailMessage.update(
             status="queued", next_attempt_at=not_before, attempts=0, last_error=None, claim_token=None, claimed_at=None
         ).where(
             (MailMessage.dedupe_key == key)
             & (
-                MailMessage.status.in_(("queued", "sending", "failed", "bounced"))
+                MailMessage.status.in_(("queued", "sending", "failed"))
                 | ((MailMessage.status == "cancelled") & (MailMessage.last_error == NO_ADDRESS))
             )
         ).execute()
