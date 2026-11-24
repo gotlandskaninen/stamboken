@@ -633,10 +633,12 @@ def _link_flag_herds(nr: int, group: list[dict], membership, dry_run: bool, repo
         if not any(row[key] for row in group):
             continue
         code = f"{prefix}{nr}"
-        candidates = Herd.select(Herd, Genebank).join(Genebank).where(Herd.herd == code)
-        matches = [herd for herd in candidates if herd.genebank.name[:1].upper() == prefix]
-        if len(matches) != 1:
-            reason = "not found" if not matches else "matches multiple genebanks"
+        genebanks = [gb.id for gb in Genebank.select(Genebank.id, Genebank.name) if gb.name[:1].upper() == prefix]
+        matches = (
+            list(Herd.select().where(Herd.herd == code, Herd.genebank.in_(genebanks))) if len(genebanks) == 1 else []
+        )
+        if len(matches) != 1:  # the flag's genebank must be one, and the herd in it one
+            reason = "not found" if len(genebanks) == 1 else f"flag {prefix} names {len(genebanks)} genebanks"
             report["herd_warnings"].append(f"herd {code} {reason} — flag ignored")
             continue
         herd = matches[0]

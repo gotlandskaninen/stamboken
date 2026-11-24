@@ -1489,7 +1489,7 @@ def edit_herd(herd, fields, actor):
         herd = lock_herd(herd.id)
         # Both the herd's genebank and the actor's roles may have changed since the route checked them.
         actor = User.get_or_none(User.id == actor.id)
-        if actor is None or not (actor.is_admin or herd.genebank_id in (actor.is_manager or [])):
+        if actor is None or not actor.is_active or not (actor.is_admin or herd.genebank_id in (actor.is_manager or [])):
             raise PermissionError(f"Kräver manager(gb={herd.genebank_id}) eller admin.")
         check_flat_fields(herd, fields, contact)
         check_place_shown(herd, fields, place_shown, with_privacy=False)  # the admin form shows no privacy

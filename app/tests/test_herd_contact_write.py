@@ -679,6 +679,19 @@ class TestReviewRound1(HerdContactWriteTest):
         self._assert_problem(response, 403, "manager-of-genebank-required")
         self.assertEqual(self._state(), before)
 
+    def test_admin_patch_refuses_account_deactivated_before_the_lock(self):
+        before = self._state()
+        lock = herdbook.da.lock_herd
+
+        def deactivate_then_lock(herd_id):
+            db.User.update(is_active=False).where(db.User.id == self.manager.id).execute()
+            return lock(herd_id)
+
+        with patch.object(herdbook.da, "lock_herd", deactivate_then_lock):
+            response = self._patch(self.manager, {"www": "ny.example.invalid", "place_shown": WWW1}, admin=True)
+        self._assert_problem(response, 403, "manager-of-genebank-required")
+        self.assertEqual(self._state(), before)
+
     def test_reader_corrects_own_row_with_short_shown(self):
         """F5: the short shown (source, value, privacy) works for a reader too while the row stays own."""
         self._set(email="gard@example.invalid", email_privacy="private")

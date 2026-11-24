@@ -187,14 +187,13 @@ class TestMembersImport(DatabaseTest):
 
     def test_ambiguous_g_flag_warns_and_still_links_m_flag(self):
         other_g = db.Genebank.create(name="gotländsk testgenbank")
-        db.Herd.create(herd="G7", genebank=self.genebanks[0])
-        db.Herd.create(herd="G7", genebank=other_g)
+        db.Herd.create(herd="G7", genebank=other_g)  # the only G7 is in the second G genebank: still not linked
         m7 = db.Herd.create(herd="M7", genebank=self.genebanks[1])
         csv = HEADER + _row(g="x", m="x", nr="7", name="Ida Exempel", epost="ida@example.invalid")
 
         result = self._run_import(csv)
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertIn("herd G7 matches multiple genebanks — flag ignored", result.output)
+        self.assertIn("herd G7 flag G names 2 genebanks — flag ignored", result.output)
         self.assertIn("Herd warnings: 1", result.output)
         membership = db.Membership.get(db.Membership.member_number == 7)
         linked = db.Herd.select().where(db.Herd.membership == membership)
