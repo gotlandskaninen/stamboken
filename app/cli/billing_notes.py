@@ -31,6 +31,7 @@ _DETAIL = re.compile(
     r"(e-post|ref\.?|(?:faktura)?referens)[ \t]*:([^,;|\r\n]*)",
     re.I,
 )
+_EMAIL = re.compile(r"[^\s()<>,;@]+@(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}")
 
 
 def parse_billing_note(note: str) -> tuple[dict, str] | None:
@@ -52,6 +53,8 @@ def parse_billing_note(note: str) -> tuple[dict, str] | None:
         key = "billing_email" if detail[1].lower() == "e-post" else "billing_reference"
         value = detail[2].strip().rstrip(".,").rstrip()
         if key in fields or len(value.split()) != 1:
+            return None
+        if key == "billing_email" and not _EMAIL.fullmatch(value):
             return None
         fields[key] = value
         end = detail.end()

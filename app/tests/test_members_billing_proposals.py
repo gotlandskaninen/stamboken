@@ -100,6 +100,7 @@ class TestBillingNote(unittest.TestCase):
             f"{NOTE}, e-post: kassa@example.invalid, ref: K-77; annan uppgift",
             f"{NOTE}, e-post: ett@example.invalid, tva@example.invalid",
             f"{NOTE}, e-post: ett@example.invalid/tva@example.invalid",
+            f"{NOTE}, e-post: privat@example.invalid(utgått)",
             f"{NOTE}\n\ne-post: annan@example.invalid",
             f"{NOTE}; kontakt: annan@example.invalid",
         ):
