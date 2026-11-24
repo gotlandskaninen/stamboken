@@ -9,6 +9,7 @@ import subprocess
 import sys
 import textwrap
 import threading
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
@@ -70,6 +71,79 @@ class BuyerMailTest(BuyerBase):
         variables = mail.MAIL_KINDS[kind].build(row.params)
         variables.pop("attachments", None)
         return mail.render(kind, variables)
+
+
+class TestBuyerAddress(BuyerMailTest):
+    email = "kopare@example.org"
+    buyer = {**BUYER, "name": "Testköpare", "email": email, "contact_consent": True}
+    other = {**buyer, "name": "Annan testköpare", "email": email.upper()}
+    conflict = "E-postadressen finns redan hos en annan köpare. Kontrollera adressen."
+
+    def sell_second_rabbit(self, buyer):
+        return record_herd_tracking(self.individuals[1], self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=buyer)
+
+    def test_sale_refuses_an_address_held_under_another_name(self):
+        sale = self.sell_second_rabbit(self.other)
+        response = self._sell(buyer=self.buyer)
+        self.assertEqual((response.status_code, response.get_json()["detail"]), (409, self.conflict))
+        self.assertEqual(self._latest().kind, "BIRTH")
+        self.assertEqual([row.recipient_id for row in self.mails()], [sale.holder_contact_id])
+
+    def test_same_name_and_address_allow_another_sale(self):
+        sale = self.sell_second_rabbit(self.buyer)
+        # Older rows may have surrounding spaces, mixed case or decomposed characters.
+        db.BuyerContact.update(name=" TESTKO\u0308PARE ", email=f" {self.email.upper()} ").where(
+            db.BuyerContact.id == sale.holder_contact_id
+        ).execute()
+        self._sale(self.buyer)
+        self.assertEqual(db.BuyerContact.select().count(), 2)
+
+    def test_proof_can_register_the_address_once_the_other_contact_is_erased(self):
+        sale = self.sell_second_rabbit(self.other)
+        legacy = record_herd_tracking(self.rabbit, self.gx1, SALE_DATE, "TRANSFER", self.manager)
+        with self.assertRaises(HerdTrackingConflict) as refused:
+            attach_buyer(legacy, self.buyer, self.manager)
+        self.assertEqual(refused.exception.detail, self.conflict)
+        buyer_contact.erase_buyer_contact(sale.holder_contact_id, self.manager)
+        contact = attach_buyer(legacy, self.buyer, self.manager)
+        self.assertEqual(self._latest().holder_contact_id, contact.id)
+        self.assertEqual([row.id for row in db.BuyerContact.select()], [contact.id])
+
+    def test_purged_email_still_identifies_a_contact_the_link_can_erase(self):
+        sale = self.sell_second_rabbit(self.other)
+        record_herd_tracking(self.individuals[1], self.herds[1], on(30), "TRANSFER", self.manager)
+        self.assertEqual(buyer_contact.purge_sold_on(datetime.now(timezone.utc)), 1)
+        self.assertIsNone(self._contact(sale.holder_contact_id).email)
+        self._login("man")
+        event = {"kind": "TRANSFER", "herd": "GX1", "date": SALE_DATE, "buyer": self.buyer}
+        response = self.client.post(
+            f"/api/v2/individual/{self.rabbit.number}/herd-tracking/corrections", json={"events": [event]}
+        )
+        self.assertEqual((response.status_code, response.get_json()["detail"]), (409, self.conflict))
+
+    def test_concurrent_sales_of_different_rabbits_can_only_register_one_name(self):
+        def second_sale():
+            with db.DB_PROXY.connection_context():
+                return self.sell_second_rabbit(self.other)
+
+        with ThreadPoolExecutor(1) as pool:
+            with db.DB_PROXY.atomic():
+                first = record_herd_tracking(
+                    self.rabbit, self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=self.buyer
+                )
+                second = pool.submit(second_sale)
+                # Keep the first sale uncommitted until PostgreSQL sees the other writer waiting for its lock.
+                waiting = """SELECT 1 FROM pg_locks WHERE NOT granted AND locktype = 'advisory'
+                             AND pg_backend_pid() = ANY(pg_blocking_pids(pid))"""
+                deadline = time.monotonic() + 10
+                while not db.DB_PROXY.execute_sql(waiting).fetchone():
+                    if second.done() or time.monotonic() >= deadline:
+                        self.fail("The second sale did not wait for the first sale's address lock")
+                    time.sleep(0.02)
+            with self.assertRaises(HerdTrackingConflict) as refused:
+                second.result(timeout=10)
+        self.assertEqual(refused.exception.detail, self.conflict)
+        self.assertEqual([row.id for row in db.BuyerContact.select()], [first.holder_contact_id])
 
 
 class TestInformationQueued(BuyerMailTest):

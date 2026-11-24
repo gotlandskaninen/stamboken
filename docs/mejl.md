@@ -302,7 +302,10 @@ raderar köparen med samma funktion som när genbanksansvarig raderar
 bevisets original, adressen i mejlkön (`forget_recipient`) och en rad i
 `audit_log` följer med. Varje försäljning ger en egen köparrad, så köparens
 alla rader med samma e-postadress (versaler och blanksteg räknas inte)
-raderas i samma transaktion.
+raderas i samma transaktion. Så länge en köparrad finns kvar får samma
+e-postadress bara registreras med samma namn. Namnen jämförs i Unicode-formen
+NFC, utan omgivande blanksteg och oberoende av versaler och gemener.
+Spärren gäller även när bara adressens HMAC finns kvar på raden.
 
 Varje genbanksansvarig i försäljningens genbank får en notis i Stamboken,
 `kopare_borttagen`, med kaninens nummer (en notis per genbanksansvarig och

@@ -7,6 +7,7 @@ imports this module; this module never imports data_access.py.
 """
 
 import re
+import unicodedata
 import uuid
 from collections import namedtuple
 from datetime import datetime, timedelta, timezone
@@ -14,6 +15,7 @@ from zoneinfo import ZoneInfo
 
 from peewee import Case, Expression, IntegrityError, fn
 
+from utils import settings
 from utils.buyer_mail import queue_buyer_mails
 from utils.database import (
     DB_PROXY,
@@ -33,7 +35,8 @@ from utils.database import (
     ht_sort_key,
     lock_individuals,
 )
-from utils.mail import forget_recipient, is_address
+from utils.login_code import lock_addresses
+from utils.mail import address_hash, forget_recipient, is_address
 
 UNPROMOTE_REASON = "avpromoverad"
 
@@ -82,6 +85,10 @@ def _set_buyer_sale_date(contact_id, sale_date):
     ).where(BuyerContact.id == contact_id).execute()
 
 
+def _buyer_name_key(name):
+    return unicodedata.normalize("NFC", name.strip()).casefold()
+
+
 def _new_buyer(fields, user, sale_date):
     """
     The BuyerContact of a sale outside, five years from its date; None when those have passed: such a buyer is
@@ -90,7 +97,18 @@ def _new_buyer(fields, user, sale_date):
     purge_at = BuyerContact.purge_at_for(sale_date)
     if purge_at <= _now_utc():
         return None
-    return BuyerContact.create(**fields, created_by_user=user, purge_at=purge_at)
+    with DB_PROXY.atomic():
+        if email := fields["email"]:
+            email = email.strip().lower()
+            lock_addresses([email])
+            same_address = fn.lower(fn.trim(BuyerContact.email)) == email
+            if settings.mail.link_secret:  # the erase link also covers rows whose e-mail has been purged
+                same_address |= BuyerContact.erased_email_hash == address_hash(email)
+            contacts = BuyerContact.select(BuyerContact.name).where(same_address)
+            name = _buyer_name_key(fields["name"])
+            if any(_buyer_name_key(contact.name) != name for contact in contacts):
+                raise HerdTrackingConflict("E-postadressen finns redan hos en annan köpare. Kontrollera adressen.")
+        return BuyerContact.create(**fields, created_by_user=user, purge_at=purge_at)
 
 
 def new_operation_id(value=None):
