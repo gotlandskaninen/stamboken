@@ -472,6 +472,14 @@ class TestAdminUserMutations(DatabaseTest):
         for key in ("id", "username", "email", "fullname", "_privileges"):
             self.assertIn(key, body)
 
+    def test_admin_users_patch_reports_a_taken_email_as_an_invalid_value(self):
+        self.login("admin")
+        db.User.update(email="taken@example.org").where(db.User.id == self.owner.id).execute()
+        response = self.client.patch(f"/api/v2/admin/users/{self.viewer.id}", json={"email": "TAKEN@example.org"})
+        self.assertEqual((response.status_code, response.mimetype), (400, "application/problem+json"))
+        self.assertEqual(response.get_json()["type"], "invalid-value")
+        self.assertEqual(db.User.get_by_id(self.viewer.id).email, self.viewer.email)
+
     def test_admin_users_patch_manager_gets_403(self):
         self.login("man")
         resp = self.client.patch(f"/api/v2/admin/users/{self.viewer.id}", json={"fullname": "x"})
