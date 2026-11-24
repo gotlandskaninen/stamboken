@@ -355,6 +355,47 @@ class TestInformationSent(BuyerMailTest):
         self.assertNotIn("bilaga", body)
         self.assertEqual(list(msg.iter_attachments()), [])
 
+    def test_resale_after_pdf_fetch_rebuilds_the_notice_without_the_certificate(self):
+        self.certificate()
+        connect = mail._connect
+
+        def resell():
+            with db.DB_PROXY.connection_context():
+                record_herd_tracking(self.rabbit, self.herds[1], on(30), "TRANSFER", self.manager)
+
+        with ThreadPoolExecutor(1) as pool:
+
+            def resell_then_connect(conn):
+                pool.submit(resell).result(timeout=10)
+                connect(conn)
+
+            with mock.patch.object(mail, "_connect", resell_then_connect):
+                (msg,) = self.send()
+        self.assertEqual(msg["To"], EMAIL)
+        self.assertEqual(list(msg.iter_attachments()), [])
+        self.assertNotIn("bilaga", msg.get_body(("plain",)).get_content())
+
+    def test_resale_waits_while_smtp_has_the_certificate(self):
+        self.certificate()
+
+        def resell():
+            with db.DB_PROXY.connection_context(), db.DB_PROXY.atomic():
+                db.DB_PROXY.execute_sql("SET LOCAL lock_timeout = '250ms'")
+                record_herd_tracking(self.rabbit, self.herds[1], on(30), "TRANSFER", self.manager)
+
+        with ThreadPoolExecutor(1) as pool:
+
+            def handoff(_msg):
+                with self.assertRaisesRegex(OperationalError, "lock timeout"):
+                    pool.submit(resell).result(timeout=10)
+
+            relay = FakeRelay(gate=handoff)
+            with mock.patch.object(mail.smtplib, "SMTP", relay):
+                mail.send_pending()
+        (delivery,) = relay.sent
+        (pdf,) = delivery[0].iter_attachments()
+        self.assertEqual(pdf.get_content(), PDF)
+
     def test_a_certificate_that_cannot_be_fetched_is_tried_again_not_left_out(self):
         db.Individual.update(digital_certificate=9001).where(db.Individual.id == self.rabbit.id).execute()
         with mock.patch("utils.cert_acess.download_certificate_s3", side_effect=OSError("S3 is down")):

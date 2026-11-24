@@ -124,6 +124,24 @@ def _certificate_pdf(rabbit):
         return pdf.read()
 
 
+def lock_certificate_holder(params):
+    """In the caller's transaction, keep the holder stable through PDF fetch or SMTP handoff."""
+    individual = params["individual_id"]
+    lock_individuals([individual])
+    holder = (
+        HerdTracking.select(HerdTracking.holder_contact)
+        .where(
+            HerdTracking.individual == individual,
+            HerdTracking.voided_at.is_null(True),
+            HerdTracking.kind.in_(HOLDER_CHANGING_KINDS),
+        )
+        .order_by(*ht_order_desc())
+        .limit(1)
+        .scalar()
+    )
+    return holder == params["buyer_contact_id"]
+
+
 @mail_kind("kopare.information", priority=1, category="T")
 def _information_mail(params, attempt=1):
     """
@@ -140,19 +158,7 @@ def _information_mail(params, attempt=1):
     note = None
     try:
         with DB_PROXY.atomic():
-            lock_individuals([rabbit.id])  # a resale cannot replace the certificate between check and fetch
-            holder = (
-                HerdTracking.select(HerdTracking.holder_contact)
-                .where(
-                    HerdTracking.individual == rabbit.id,
-                    HerdTracking.voided_at.is_null(True),
-                    HerdTracking.kind.in_(HOLDER_CHANGING_KINDS),
-                )
-                .order_by(*ht_order_desc())
-                .limit(1)
-                .scalar()
-            )
-            pdf = _certificate_pdf(rabbit) if holder == contact.id else None
+            pdf = _certificate_pdf(rabbit) if lock_certificate_holder(params) else None
     except Exception:  # pylint: disable=broad-except  # S3, disk or PDF: the queue retries, then the notice matters more
         if attempt < ATTACHMENT_GIVE_UP:
             raise

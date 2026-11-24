@@ -454,12 +454,19 @@ def _claim(now):
     return row
 
 
-def _renew(row, login_address, address):
+def _renew(row, login_address, address, buyer_certificate):
     """
     Restarts the claim's clock just before the mail goes, so the row cannot be reclaimed until long after
     SEND_DEADLINE. False when another sender has taken the row since (this one was slow) or the recipient has
     been erased (forget_recipient): it must not send.
     """
+    if buyer_certificate:
+        from utils.buyer_mail import lock_certificate_holder  # pylint: disable=import-outside-toplevel
+
+        # The sale writer locks the rabbit before the mail row. Keep that order here through send_message.
+        if not lock_certificate_holder(row.params):
+            _finish(row, _utcnow(), status="queued")  # rebuild both the notice text and its attachments
+            return False
     renewed = MailMessage.update(claimed_at=_utcnow()).where(
         (MailMessage.id == row.id) & (MailMessage.claim_token == row.claim_token)
     )
@@ -621,7 +628,8 @@ def _send_one(row, relay, now):
 
 def _deliver(row, relay, now, msg, address, note, login_address):
     try:
-        relay.send(msg, address, lambda: _renew(row, login_address, address))
+        buyer_certificate = row.kind == "kopare.information" and msg.is_multipart()
+        relay.send(msg, address, lambda: _renew(row, login_address, address, buyer_certificate))
     except _ClaimLost:
         logger.warning("Mail %s was reclaimed by another sender or lost its recipient; it is not sent", row.id)
         return True
