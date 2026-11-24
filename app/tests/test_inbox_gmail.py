@@ -446,19 +446,35 @@ class TestItemsFromMail(GmailTest):
         self.read()
         (item,) = self.items()
         self.assertEqual(len(self.documents(item)), 10)
-        self.assertEqual(item.events.get().detail["not_saved"], ["stor.jpg", "brev.docx", "10.jpg"])
+        detail = item.events.get().detail
+        self.assertEqual(detail["not_saved"], ["stor.jpg", "brev.docx", "10.jpg"])
+        self.assertEqual([s["name"] for s in detail["not_saved_reasons"]], detail["not_saved"])
+        reasons = ("för stor", "Otillåten filtyp", "Högst 10 bilder")
+        for skipped, reason in zip(detail["not_saved_reasons"], reasons, strict=True):
+            self.assertIn(reason, skipped["reason"])
 
-    def test_logos_and_tracking_pixels_are_not_documents(self):
+    def test_png_size_limit_and_palette_and_alpha_images(self):
+        side = inbox_gmail.MIN_SIDE
         files = [
             ("pixel.png", "image/png", encoded(Image.new("RGB", (1, 1), (255, 255, 255)), "PNG")),
-            ("logo.png", "image/png", encoded(photo((400, 120)), "PNG")),
-            ("intyg.jpg", JPEG, encoded(photo())),
+            ("logo.png", "image/png", encoded(photo((400, side - 1)), "PNG")),
+            ("palett.png", "image/png", encoded(photo((400, side)).convert("P"), "PNG")),
+            ("alfa.png", "image/png", encoded(Image.new("RGBA", (400, side + 1), (0, 64, 0, 128)), "PNG")),
         ]
         self.fake.deliver(message(files=files))
         self.read()
         (item,) = self.items()
-        self.assertEqual(len(self.documents(item)), 1)
-        self.assertEqual(item.events.get().detail["not_saved"], ["pixel.png", "logo.png"])
+        documents = self.documents(item)
+        self.assertEqual(len(documents), 2)
+        for document, height in zip(documents, (side, side + 1), strict=True):
+            with Image.open(self.stored(document)) as image:
+                self.assertEqual((image.format, image.mode, image.size), ("JPEG", "RGB", (400, height)))
+        detail = item.events.get().detail
+        self.assertEqual(detail["not_saved"], ["pixel.png", "logo.png"])
+        self.assertEqual(
+            detail["not_saved_reasons"],
+            [{"name": name, "reason": f"Bilden har en sida under {side} pixlar."} for name in detail["not_saved"]],
+        )
 
     def test_exif_is_gone_and_an_inline_photo_counts(self):
         exif = Image.Exif()

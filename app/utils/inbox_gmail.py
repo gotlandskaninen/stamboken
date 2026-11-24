@@ -334,7 +334,7 @@ def _attachments(msg):
 def _store(attachments):
     """
     Each attachment through the upload's checks and conversion (at most MAX_FILES images in all, 10 MB a file,
-    re-saved as JPEG without EXIF): (stored (path, sha256, quality), names of the files not stored).
+    re-saved as JPEG without EXIF): (stored (path, sha256, quality), names and reasons for skipped files).
     """
     from blueprints.inbox import MAX_FILES, _each_image, _Refused  # the upload's; its refusals need an app context
 
@@ -351,11 +351,11 @@ def _store(attachments):
             small.clear()
             try:
                 _each_image(io.BytesIO(data), MAX_FILES - len(stored), keep)
-            except _Refused:
-                skipped.append(name)
+            except _Refused as refused:
+                skipped.append({"name": name, "reason": refused.response[0].get_json()["detail"]})
                 continue
             if small:
-                skipped.append(name)
+                skipped.append({"name": name, "reason": f"Bilden har en sida under {MIN_SIDE} pixlar."})
     except BaseException:
         inbox.remove_files(path for path, _, _ in stored)
         raise
@@ -486,7 +486,7 @@ def authenticated(msg, sender):
 
 
 def _not_saved(skipped):
-    return {"not_saved": list(skipped)} if skipped else {}
+    return {"not_saved": [s["name"] for s in skipped], "not_saved_reasons": skipped} if skipped else {}
 
 
 def _attach_reply(item, text, stored=(), skipped=()):

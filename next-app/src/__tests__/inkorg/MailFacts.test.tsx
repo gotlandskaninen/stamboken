@@ -32,8 +32,30 @@ describe("MailFacts", () => {
       "/stamboken/inkorg/12",
     );
     expect(screen.getByText("Sparades inte")).toBeInTheDocument();
-    expect(screen.getByText("brev.docx, stor.jpg")).toBeInTheDocument();
+    expect(screen.getByText("brev.docx")).toBeInTheDocument();
+    expect(screen.getByText("stor.jpg")).toBeInTheDocument();
   });
+
+  it.each(["inkommen", "svar"])(
+    "shows why a file in %s was skipped",
+    (kind) => {
+      const mail = item({
+        not_saved: ["logo.png"],
+        not_saved_reasons: [
+          { name: "logo.png", reason: "Bilden är för liten." },
+        ],
+      });
+      mail.events[0].kind = kind;
+      render(
+        <dl>
+          <MailFacts item={mail} />
+        </dl>,
+      );
+      expect(
+        screen.getByText("logo.png – Bilden är för liten."),
+      ).toBeInTheDocument();
+    },
+  );
 
   it("shows nothing for an upload", () => {
     const { container } = render(

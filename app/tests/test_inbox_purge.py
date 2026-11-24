@@ -92,6 +92,21 @@ class PurgeTest(InboxTest):
 class TestOriginals(PurgeTest):
     limit = NOW - inbox.months(12)
 
+    def test_attachment_names_and_reasons_go_with_the_message(self):
+        item = self.make(self.limit - MINUTE, kind="mail")
+        arrived = item.events.where(db.InboxEvent.kind == "inkommen").get()
+        arrived.detail = {
+            "documents": 1,
+            "not_saved": ["logo.png"],
+            "not_saved_reasons": [{"name": "logo.png", "reason": "Bilden är för liten."}],
+        }
+        arrived.save()
+
+        purge.purge_originals(NOW)
+
+        self.assertEqual(db.InboxEvent.get_by_id(arrived.id).detail, {"documents": 1})
+        self.assertIsNone(self.reload(item).message)
+
     def test_the_original_goes_after_the_months_with_the_text_and_the_copy_stays(self):
         kept, gone = self.make(self.limit + MINUTE), self.make(self.limit - MINUTE)
         kept_document, gone_document = self.with_copy(kept), self.with_copy(gone, "G1-2111")

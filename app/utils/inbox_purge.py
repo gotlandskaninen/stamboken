@@ -34,7 +34,7 @@ from utils.mail import forget_recipient
 logger = logging.getLogger("herdbook.inbox_purge")
 
 ORIGINAL_TYPES = ("intyg", "bevis")  # certificates and proofs; other photos are kept until decided
-FREE_TEXT = ["text", "note", "not_saved"]  # in inbox_event.detail: questions, answers, notes, attachment names
+FREE_TEXT = ["text", "note", "not_saved", "not_saved_reasons"]  # free text and attachment names in inbox_event.detail
 OPENED_MONTHS = 13
 MESSAGE_MONTHS = 13
 JUNK_AFTER = timedelta(days=30)

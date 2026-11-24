@@ -22,7 +22,14 @@ export function MailFacts({ item }: { item: InboxDetail }) {
   const arrived = item.events.find((e) => e.kind === "inkommen")?.detail ?? {};
   const maybe =
     typeof arrived.maybe_item === "number" ? arrived.maybe_item : null;
-  const notSaved = Array.isArray(arrived.not_saved) ? arrived.not_saved : [];
+  const notSaved = item.events.flatMap(({ kind, detail }) => {
+    if (kind !== "inkommen" && kind !== "svar") return [];
+    if (Array.isArray(detail?.not_saved_reasons))
+      return detail.not_saved_reasons.map(
+        ({ name, reason }) => `${name} – ${reason}`,
+      );
+    return Array.isArray(detail?.not_saved) ? detail.not_saved : [];
+  });
   return (
     <>
       {maybe !== null && (
@@ -36,7 +43,11 @@ export function MailFacts({ item }: { item: InboxDetail }) {
       {notSaved.length > 0 && (
         <>
           <dt>Sparades inte</dt>
-          <dd>{notSaved.join(", ")}</dd>
+          <dd>
+            {notSaved.map((file, index) => (
+              <div key={index}>{file}</div>
+            ))}
+          </dd>
         </>
       )}
     </>
