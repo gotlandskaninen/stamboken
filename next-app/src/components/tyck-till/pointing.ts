@@ -9,8 +9,14 @@ const BACKGROUND = "#F4F1EA";
 const PICKABLE =
   "button, a, input, textarea, select, label, li, tr, .facts > div, h1, h2, p, img, .card";
 
+// A stat cell (a value with its .sb-stat-label) is one thing to point at.
+const STAT_LABEL = ":scope > .sb-stat-label";
+
 export function pickable(hit: Element): Element {
-  return hit.closest(PICKABLE) ?? hit;
+  const cell = [hit, hit.parentElement].find((n) =>
+    n?.querySelector(STAT_LABEL),
+  );
+  return cell ?? hit.closest(PICKABLE) ?? hit;
 }
 
 function kindOf(el: Element): string {
@@ -26,11 +32,25 @@ function kindOf(el: Element): string {
 
 const CONTROLS = "input, textarea, select";
 
-// The text of an element without some of its parts.
+// Elements that render on their own line or in their own cell. The clone is
+// detached, so innerText cannot tell, and textContent glues their text.
+const BLOCKS = "div, p, li, td, th, dt, dd, h1, h2, h3, h4, h5, h6, tr, br";
+
+// The text of an element without some of its parts, a space between blocks.
+// A stat cell (value above, .sb-stat-label below) reads label first:
+// "Besättningar: inga".
 function textWithout(el: Element, selector: string): string {
   const clone = el.cloneNode(true) as Element;
   clone.querySelectorAll(selector).forEach((n) => n.remove());
-  return clone.textContent ?? "";
+  clone.querySelectorAll(BLOCKS).forEach((n) => {
+    n.before(" ");
+    n.after(" ");
+  });
+  const label = clone.querySelector(STAT_LABEL);
+  if (!label) return clone.textContent ?? "";
+  const name = (label.textContent ?? "").trim();
+  label.remove();
+  return `${name}: ${clone.textContent ?? ""}`;
 }
 
 // A field is named by its label, never by what is typed or chosen in it (an
@@ -39,7 +59,9 @@ function fieldName(el: HTMLInputElement): string {
   const label = el.labels?.[0];
   return (
     el.getAttribute("aria-label") ||
-    (label && textWithout(label, CONTROLS)) ||
+    (label &&
+      !label.closest(HIDE) &&
+      textWithout(label, `${CONTROLS}, ${HIDE}`)) ||
     el.getAttribute("placeholder") ||
     ""
   );

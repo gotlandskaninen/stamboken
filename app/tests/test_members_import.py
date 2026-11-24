@@ -6,7 +6,9 @@ from unittest.mock import patch
 import cli.members as members_cli_module  # noqa: E402
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
+import utils.login_code as lc  # noqa: E402
 import utils.matrikel as matrikel  # noqa: E402
+import utils.settings as settings  # noqa: E402
 from cli.members import members_cli  # noqa: E402
 from click.testing import CliRunner
 from flask.cli import ScriptInfo
@@ -119,6 +121,36 @@ class TestMembersImport(DatabaseTest):
         self.assertEqual(db.Membership.select().count(), 1)
         membership = db.Membership.select().first()
         self.assertIn("2 identiska rader", membership.notes)
+
+    def test_two_friexemplar_can_share_an_email(self):
+        address = "redaktion@example.invalid"
+        names = ["Tidskriften Moroten", "Tidskriften Klövern"]
+        result = self._run_import(HEADER + "".join(_row(nr="0", name=name, epost=address) for name in names))
+        self.assertEqual(result.exit_code, 0, result.output)
+        persons = db.Member.select().join(db.Membership).where(db.Membership.membership_status == "friexemplar")
+        self.assertCountEqual([(p.last_name, p.email) for p in persons], [(name, address) for name in names])
+
+    def test_friexemplar_sharing_the_main_members_email_leaves_her_login_code_working(self):
+        address = "klover@example.invalid"
+        csv = (
+            HEADER
+            + _row(nr="17", name="Mira Morot", epost=address)
+            + _row(nr="0", name="Klöverbiblioteket", epost=address)
+        )
+        result = self._run_import(csv)
+        self.assertEqual(result.exit_code, 0, result.output)
+        persons = db.Member.select(db.Member, db.Membership).join(db.Membership).where(db.Member.email == address)
+        self.assertCountEqual([p.membership.membership_status for p in persons], ["active", "friexemplar"])
+        main = persons.where(db.Membership.member_number == 17).get()
+        self.assertEqual(lc.address_collisions(), 0)
+        with patch.object(settings.mail, "link_secret", "test-link-secret"):
+            with db.DB_PROXY.atomic():
+                lc.reserve_login_address(address, main.id)
+                row = lc.issue(main, "login", "webblasare", address)
+            found = lc.check("login", "webblasare", lc.code(row))
+            self.assertEqual(found.member_id, main.id)
+            with db.DB_PROXY.atomic():
+                self.assertTrue(lc.consume(found))
 
     def test_nr_zero_conflicting_rows_import_first_and_report(self):
         """Same Nr=0 name but DIFFERENT fields (a common paper-matrikel case:
@@ -597,8 +629,7 @@ class TestMembersImport(DatabaseTest):
 
     def test_import_counts_only_matches_real_run(self):
         """#117, Torrkörning: --counts-only runs the real import, persons, counter and links included, in a
-        transaction it rolls back, and prints only counts: no name, e-mail, address or herd code, also for a row
-        that fails. A real run on the same input gives the same counts."""
+        transaction it rolls back. A real run on the same input gives the same counts."""
         herds = {code: db.Herd.get(db.Herd.herd == code).id for code in ("G1", "G2", "M3")}
         contact = dict.fromkeys(("name", "email", "mobile_phone", "physical_address"))
         db.Herd.update(
@@ -647,10 +678,12 @@ class TestMembersImport(DatabaseTest):
             real = self._run_import(HEADER + "".join(rows))
 
         self.assertNotEqual(dry.exit_code, 0)  # the failed row
-        for text in (*secrets, "G1", "G2", "G5", "M3"):
+        for text in (*secrets, "G1", "G2", "M3"):
             self.assertNotIn(text, dry.output)
             self.assertNotIn(text, dry.stderr)
-        self.assertIn("Dora Fel", real.output)  # the real run does name it
+        self.assertIn("Error: Nr 4: ValueError", dry.stderr.splitlines())
+        self.assertIn("  warning: herd G5 not found — flag ignored", dry.stderr.splitlines())
+        self.assertIn("Error: Nr 4: duplicate key (address)=(Stigen 4) for Dora Fel", real.stderr.splitlines())
         self.assertIn("Okändort", real.output)
         self.assertEqual(counts(dry.output), counts(real.output))
         for line in (
@@ -667,6 +700,105 @@ class TestMembersImport(DatabaseTest):
             self.assertIn(line, "\n".join(counts(dry.output)))
         self.assertEqual(db.MemberNumberCounter.select().first().value, 5)
         self.assertEqual(db.Herd.get_by_id(herds["G1"]).contact_pending, ["mobile_phone"])
+
+    def test_counts_only_reports_locations_without_cell_values(self):
+        other = db.Membership.create(member_number=19)
+        db.Herd.update(membership=other).where(db.Herd.herd == "G1").execute()
+        contact = dict(
+            epost="delad@example.invalid",
+            adress="Rimstigen 14",
+            postnummer="54321",
+            postort="Frostköping",
+            telefon="070-555 12 34",
+            noteringar="Lila provanteckning",
+        )
+        csv = (
+            "Matrikeltitel\n"
+            + HEADER_SPLIT
+            # This record starts on line 3. The regular import reports its last line.
+            + _row_split(nr="6", name='"Isruta\nMånfrö"', postnummer="54-321")
+            + _row_split(g="x", nr="1", name="Månfrö", **contact)
+            + _row_split(nr="8", name="Solflik", **contact)
+            + _row_split(nr="0", name="Snöbladet")
+            + _row_split(nr="0", name="Snöbladet")
+            + _row_split(nr="0", name="Aftonluddet", **contact)
+        )
+        counts = self._run_import(csv, ["--counts-only"])
+        self.assertEqual(counts.exit_code, 1, counts.output)
+        for line in (
+            "Error: row 3: ogiltigt-postnummer",
+            "Error: Nr 8: AddressTaken",
+            "Error: friexemplar 2: AddressTaken",
+            "  warning: herd G1 already linked",
+        ):
+            self.assertIn(line, counts.stderr.splitlines())
+        output = (counts.stdout + counts.stderr).casefold()
+        for value in (
+            "Matrikeltitel",
+            "Isruta",
+            "Månfrö",
+            "Solflik",
+            "Snöbladet",
+            "Aftonluddet",
+            "54-321",
+            "543 21",
+            *contact.values(),
+            f"membership {other.id}",
+        ):
+            self.assertNotIn(value.casefold(), output)
+
+        real = self._run_import(csv)
+        self.assertEqual(real.exit_code, 1, real.output)
+        self.assertEqual(
+            real.stderr.splitlines(),
+            [
+                f"  warning: herd G1 already linked to membership {other.id}",
+                "Error: row 4: ogiltigt postnummer: '54-321'",
+                "Error: Nr 8: Adressen används redan av en annan medlem",
+                "Error: friexemplar 'aftonluddet': Adressen används redan av en annan medlem",
+                "Error: 3 row(s) failed to import — see stderr for details",
+            ],
+        )
+
+    def test_counts_only_reports_header_errors_without_column_values(self):
+        csv = "Matrikeltitel\nNr,Namn Efternamn,Hemlig rubrik,Hemlig rubrik\n"
+        result = self._run_import(csv, ["--counts-only"])
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn("Error: row 2: dubblettkolumn", result.stderr.splitlines())
+        self.assertIn("Error: row 2: ogiltig-adresslayout", result.stderr.splitlines())
+        self.assertNotIn("Hemlig rubrik", result.stdout + result.stderr)
+
+    def test_counts_only_reports_bad_encoding_without_bytes(self):
+        with self.runner.isolated_filesystem():
+            with open("matrikel.csv", "wb") as f:
+                f.write((HEADER + _row(nr="6", name="Åsa Exempel")).encode("latin-1"))
+            result = self.runner.invoke(
+                members_cli, ["import", "matrikel.csv", "--counts-only"], obj=ScriptInfo(create_app=lambda: APP)
+            )
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn("Error: row 2: ogiltig-teckenkodning", result.stderr.splitlines())
+        self.assertNotIn("0xc5", result.stdout + result.stderr)
+        self.assertEqual(db.Membership.select().count(), 0)
+
+    def test_counts_only_reports_bad_encoding_on_its_crlf_line(self):
+        content = (HEADER + _row(nr="6", name="Bo Exempel") + _row(nr="7", name="Åsa Exempel")).replace("\n", "\r\n")
+        with self.runner.isolated_filesystem():
+            with open("matrikel.csv", "wb") as f:
+                f.write(content.encode("latin-1"))
+            result = self.runner.invoke(
+                members_cli, ["import", "matrikel.csv", "--counts-only"], obj=ScriptInfo(create_app=lambda: APP)
+            )
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn("Error: row 3: ogiltig-teckenkodning", result.stderr.splitlines())
+
+    def test_counts_only_reports_too_large_nr_with_the_other_row_errors(self):
+        before = self._counter()
+        csv = HEADER + _row(nr="7", name="Bo Exempel", postadress="ABC Visby") + _row(nr="1000000", name="Ida Exempel")
+        result = self._run_import(csv, ["--counts-only"])
+        self.assertEqual(result.exit_code, 1, result.output)
+        self.assertIn("Error: row 3: ogiltigt-nr", result.stderr.splitlines())
+        self.assertNotIn("1000000", result.stdout + result.stderr)
+        self.assertEqual(self._counter(), before)
 
     def test_import_never_auto_links_user(self):
         """Per design spec: import does not auto-link. OAuth login does."""
