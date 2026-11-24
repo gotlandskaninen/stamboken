@@ -6,7 +6,9 @@ from unittest.mock import patch
 import cli.members as members_cli_module  # noqa: E402
 import utils.data_access as da  # noqa: E402
 import utils.database as db  # noqa: E402
+import utils.login_code as lc  # noqa: E402
 import utils.matrikel as matrikel  # noqa: E402
+import utils.settings as settings  # noqa: E402
 from cli.members import members_cli  # noqa: E402
 from click.testing import CliRunner
 from flask.cli import ScriptInfo
@@ -119,6 +121,36 @@ class TestMembersImport(DatabaseTest):
         self.assertEqual(db.Membership.select().count(), 1)
         membership = db.Membership.select().first()
         self.assertIn("2 identiska rader", membership.notes)
+
+    def test_two_friexemplar_can_share_an_email(self):
+        address = "redaktion@example.invalid"
+        names = ["Tidskriften Moroten", "Tidskriften Klövern"]
+        result = self._run_import(HEADER + "".join(_row(nr="0", name=name, epost=address) for name in names))
+        self.assertEqual(result.exit_code, 0, result.output)
+        persons = db.Member.select().join(db.Membership).where(db.Membership.membership_status == "friexemplar")
+        self.assertCountEqual([(p.last_name, p.email) for p in persons], [(name, address) for name in names])
+
+    def test_friexemplar_sharing_the_main_members_email_leaves_her_login_code_working(self):
+        address = "klover@example.invalid"
+        csv = (
+            HEADER
+            + _row(nr="17", name="Mira Morot", epost=address)
+            + _row(nr="0", name="Klöverbiblioteket", epost=address)
+        )
+        result = self._run_import(csv)
+        self.assertEqual(result.exit_code, 0, result.output)
+        persons = db.Member.select(db.Member, db.Membership).join(db.Membership).where(db.Member.email == address)
+        self.assertCountEqual([p.membership.membership_status for p in persons], ["active", "friexemplar"])
+        main = persons.where(db.Membership.member_number == 17).get()
+        self.assertEqual(lc.address_collisions(), 0)
+        with patch.object(settings.mail, "link_secret", "test-link-secret"):
+            with db.DB_PROXY.atomic():
+                lc.reserve_login_address(address, main.id)
+                row = lc.issue(main, "login", "webblasare", address)
+            found = lc.check("login", "webblasare", lc.code(row))
+            self.assertEqual(found.member_id, main.id)
+            with db.DB_PROXY.atomic():
+                self.assertTrue(lc.consume(found))
 
     def test_nr_zero_conflicting_rows_import_first_and_report(self):
         """Same Nr=0 name but DIFFERENT fields (a common paper-matrikel case:

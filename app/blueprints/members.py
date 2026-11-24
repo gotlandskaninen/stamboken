@@ -256,6 +256,8 @@ def patch_membership(membership_id: int):
             ms.save(only=changed + [Membership.updated_at])
             if activated:  # after the save: the comparison reads the saved membership (#117)
                 on_membership_active(ms.id)
+    except AddressTaken:
+        return problem(409, AddressTaken.title, "En annan medlem kan redan logga in med e-postadressen")
     except TransitionRefused:
         # Raised, not returned: a `return` inside atomic() would commit the rest of the request.
         return problem(
@@ -445,7 +447,7 @@ def patch_me_contact():
             if membership_updates:
                 ms.save(only=[getattr(Membership, f) for f in membership_updates] + [Membership.updated_at])
             m.save(only=[getattr(Member, f) for f in person_updates] + [Member.updated_at])
-            if new_email is not None:
+            if new_email is not None and ms.membership_status != Status.FRIEXEMPLAR:
                 _ask_for_code(m, new_email)
     except IntegrityError:
         # DEAD BACKSTOP: the legacy

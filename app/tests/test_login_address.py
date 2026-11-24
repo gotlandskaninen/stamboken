@@ -74,6 +74,14 @@ class TestReserve(LoginAddressTest):
             previous.save()
             self.reserve("tidigare@example.org", other.id)
 
+    def test_friexemplar_holds_neither_its_current_nor_its_previous_address(self):
+        person = _mk_person(_mk_membership(status="friexemplar"), "Fia", "Friblad", "friblad@example.invalid")
+        until = datetime.now(timezone.utc) + timedelta(days=7)
+        old = "gammalt-friblad@example.invalid"
+        db.MemberPreviousAddress.create(member=person, address=old, login_until=until, purge_at=until)
+        self.reserve(person.email, self.holder.id)
+        self.reserve(old, self.holder.id)
+
     def test_two_reservations_at_once_give_the_address_to_one(self):
         first = _mk_person(_mk_membership(number=11), "Bo", "First", None)
         second = _mk_person(_mk_membership(number=12), "Cid", "Second", None)
@@ -130,6 +138,21 @@ class TestWriters(LoginAddressTest):
         )
         resp = self.post(f"/api/v2/memberships/{ms.id}/persons", {"first_name": "A", "last_name": "B", "email": TAKEN})
         self.assertEqual(resp.status_code, 201, resp.data)  # a family member without account holds no address
+
+    def test_friexemplar_can_use_a_members_address_until_it_changes_status(self):
+        address = "kontakt@example.invalid"
+        _mk_person(_mk_membership(number=12), "Maj", "Gullblad", address)
+        self.login("matrikel")
+        resp = self.post(
+            "/api/v2/memberships",
+            {"first_name": "Liv", "last_name": "Friblad", "membership_status": "friexemplar", "email": address},
+        )
+        self.assertEqual(resp.status_code, 201, resp.data)
+        ms_id = resp.get_json()["id"]
+        for route in ("members", "memberships"):
+            self.assert_taken(self.client.patch(f"/api/v2/{route}/{ms_id}", json={"membership_status": "active"}))
+        self.assertEqual(db.Membership.get_by_id(ms_id).membership_status, "friexemplar")
+        self.assertEqual(lc.address_collisions(), 0)
 
     def test_swap_the_main_member(self):
         ms = _mk_membership(number=11)

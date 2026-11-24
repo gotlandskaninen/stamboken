@@ -49,7 +49,7 @@ Rules (Member Model v2 design spec):
 - gdpr_consented_at is NEVER fabricated: MATR2026 has no consent column,
   so imported persons always have NULL.
 - Import never sets Member.user and never calls the auto-link helper.
-- A main member's address becomes a login address (reserve_login_address): when
+- Except for friexemplar, a main member's address becomes a login address: when
   another person holds it, the whole group fails and is listed as an error.
 
 `link-by-herd` links existing accounts to member rows through herd
@@ -581,8 +581,7 @@ def _ensure_main_person(membership, main: dict) -> None:
 
 
 def _create_main(membership, row: dict) -> None:
-    """The main member from a CSV row. Her address becomes a login address: AddressTaken (the group's error, nothing
-    of the group written) when another person holds it."""
+    """Create the main person. A friexemplar keeps its e-mail for contact only."""
     person = Member.create(
         membership=membership,
         role="huvudmedlem",
@@ -591,7 +590,8 @@ def _create_main(membership, row: dict) -> None:
         email=row["email"],
         phone=row["phone"],
     )
-    reserve_login_address(person.email, person.id)
+    if membership.membership_status != Status.FRIEXEMPLAR:
+        reserve_login_address(person.email, person.id)
 
 
 def _add_family_members(membership, rows: list[dict], dry_run: bool, report: dict) -> None:

@@ -40,7 +40,14 @@ from utils.database import (
 )
 from utils.herd_contact import on_household_erased, on_person_anonymizing, on_person_leaving, snapshot_before_leaving
 from utils.inbox_purge import erase_person_from_inbox, remove_originals
-from utils.login_code import AddressTaken, lock_addresses, reserve_holder, reserve_login_address, void
+from utils.login_code import (
+    AddressTaken,
+    lock_addresses,
+    reserve_holder,
+    reserve_login_address,
+    reserve_on_leaving_friexemplar,
+    void,
+)
 from utils.mail import cancel_member_added, enqueue_mail, forget_recipient, queue_member_added
 from utils.membership_lifecycle import Event, Status, next_state, state_of
 from utils.postal import (  # noqa: F401 — public helpers
@@ -305,7 +312,7 @@ def add_person(membership, data, actor):
             phone=data.get("phone") or None,
             role=role,
         )
-        if role == "huvudmedlem":
+        if role == "huvudmedlem" and locked.membership_status != Status.FRIEXEMPLAR:
             reserve_login_address(person.email, person.id)
         write_matrikel_audit(
             actor,
@@ -702,7 +709,11 @@ def set_member_email(person, address, actor, *, by):
             if person.email != address:  # the same address, spelled otherwise
                 Member.update(email=address).where(Member.id == person.id).execute()
             return Member.get_by_id(person.id)
-        holder = person.end_date is None and (person.role == "huvudmedlem" or person.user_id is not None)
+        holder = (
+            person.end_date is None
+            and (person.role == "huvudmedlem" or person.user_id is not None)
+            and person.membership.membership_status != Status.FRIEXEMPLAR
+        )
         told, login_from = [], None
         if holder:
             # Every address this change can touch, locked in one order before the previous ones are read: a clock
@@ -801,6 +812,8 @@ def set_membership_status(membership, new_status, actor):
         .exists()
     )
     next_state(state_of(membership.membership_status, has_main), Event.SET_STATUS, new_status)
+    if membership.membership_status == Status.FRIEXEMPLAR and new_status != Status.FRIEXEMPLAR:
+        reserve_on_leaving_friexemplar(membership.id)
     write_matrikel_audit(
         actor,
         "membership_status_changed",
@@ -846,7 +859,8 @@ def create_membership(data, actor):
             email=data.get("email") or None,
             phone=data.get("phone") or None,
         )
-        reserve_login_address(main.email, main.id)
+        if status != Status.FRIEXEMPLAR:
+            reserve_login_address(main.email, main.id)
         write_matrikel_audit(
             actor,
             "membership_created",
@@ -1173,7 +1187,7 @@ def link_member_user(person_id, user_id, *, actor, mode, confirmed_herd_ids=None
                 holder_person_id=holder.id,
             )
         try:
-            reserve_holder(person.id)  # with an account, her addresses are login addresses
+            reserve_holder(person.id)
         except AddressTaken as exc:
             detail = "En annan medlem kan redan logga in med personens e-postadress"
             raise LinkError(AddressTaken.title, detail) from exc
