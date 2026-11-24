@@ -184,18 +184,33 @@ export default function IntegritetspolicyPage() {
           <Section title="När du får Koharen utan att vara medlem">
             <p>
               Föreningen skickar Koharen gratis till bland andra bibliotek,
-              föreningar och tidskrifter som byter tidning med oss. Är
-              mottagaren en person sparar vi namn och postadress, och e-post
-              eller telefon bara om vi behöver nå dig om tidningen. Uppgifterna
-              finns i medlemsregistret och ses av dem som sköter det.
-              Tryckeriet får namn och adress för att kunna skicka tidningen.
+              föreningar och tidskrifter som byter tidning med oss. Får du
+              Koharen själv, eller står du som kontaktperson för en
+              organisation, sparar vi ditt namn och din postadress, och e-post
+              eller telefon bara om vi behöver nå dig om tidningen. Att du får
+              Koharen gör dig inte till medlem och ger ingen inloggning i
+              Stamboken Online.
             </p>
             <p>
-              Vi gör det för att sprida kunskap om arbetet med att bevara
-              raserna (berättigat intresse), eller för att vi byter tidning med
-              dig (avtal). Uppgifterna sparas så länge du får tidningen, och vi
-              går igenom listan en gång om året. Vill du inte längre ha den,
-              säg till, så tar vi bort dig.
+              Vi använder uppgifterna för att skicka tidningen och sprida
+              kunskap om arbetet med att bevara raserna (berättigat intresse).
+              Har du själv avtalat med oss om att byta tidning använder vi det
+              som behövs för avtalet (avtal). Uppgifterna finns i
+              medlemsregistret och kan läsas av dem som sköter det, av
+              genbanksansvariga och av föreningens systemansvarig. Tryckeriet
+              får namn och adress för att kunna skicka tidningen.
+            </p>
+            <p>
+              Ber du själv om tidningen får du den här informationen då. Har vi
+              lagt in dig på eget initiativ skriver vi till dig innan tidningen
+              skickas första gången. Uppgifterna sparas så länge du får
+              tidningen, och vi går igenom listan en gång om året.
+            </p>
+            <p>
+              Du kan när som helst säga att du inte vill ha tidningen längre,
+              till exempel till {contactLink}. Då slutar vi skicka den, och dina
+              uppgifter tas bort eller anonymiseras inom 12 månader, som för den
+              som går ur föreningen.
             </p>
           </Section>
 
