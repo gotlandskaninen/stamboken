@@ -97,8 +97,9 @@ def _transition(message_id, from_statuses, fields, refused):
 @manager_required
 @limiter.limit("30 per minute", key_func=lambda: str(current_user.id))
 def retry_message(message_id):
-    """ "Försök igen": failed, bounced or logged back to the queue, with a fresh retry ladder."""
-    fields = {"status": "queued", "attempts": 0, "next_attempt_at": datetime.now(timezone.utc)}
+    """ "Försök igen": failed, bounced or logged back to the queue, with a fresh retry ladder and 13 months to go."""
+    now = datetime.now(timezone.utc)
+    fields = {"status": "queued", "attempts": 0, "next_attempt_at": now, "created_at": now}
     return _transition(
         message_id,
         ("failed", "bounced", "logged"),

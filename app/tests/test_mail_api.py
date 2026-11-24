@@ -93,10 +93,14 @@ class TestStatusApi(MailTest):
         self.assertEqual((resp.status_code, resp.get_json()["status"]), (200, "cancelled"))
         self.assertEqual(self.client.post(f"/api/v2/mail/messages/{self.gotland}/cancel").status_code, 409)
         self.assertEqual(self.client.post(f"/api/v2/mail/messages/{self.mellerud}/retry").status_code, 409)
-        db.MailMessage.update(status="failed", attempts=7).where(db.MailMessage.id == self.mellerud).execute()
+        old = self.now - mail.RETENTION + timedelta(hours=1)  # a limit may hold it past the nightly purge
+        db.MailMessage.update(status="failed", attempts=7, created_at=old).where(
+            db.MailMessage.id == self.mellerud
+        ).execute()
         resp = self.client.post(f"/api/v2/mail/messages/{self.mellerud}/retry")
         self.assertEqual(resp.status_code, 200)
         self.assertEqual((resp.get_json()["status"], resp.get_json()["attempts"]), ("queued", 0))
+        self.assertEqual(mail.purge_old_mail(self.now + timedelta(days=1)), 0)
 
     def test_a_logged_mail_can_be_retried(self):
         self.login("admin")
