@@ -125,10 +125,12 @@ av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas. Nyckeln
   som aldrig nådde fram (`failed`, `bounced`, `cancelled` för att adressen
   saknades, eller som skickas till adressen som just byttes) köas igen när
   adressen ändras. En rad som har gått eller som stoppats i statusvyn köas
-  inte igen. Har personen lämnat medlemskapet eller blivit huvudmedlem när
+  inte igen. Studsar mejlet först efter att adressen har rättats skickar
+  "Försök igen" i statusvyn det till den nya adressen. Har personen lämnat medlemskapet eller blivit huvudmedlem när
   mejlet ska gå blir det `cancelled`. Huvudmedlemmen väljer adressen, så
   mejlet får inte bli ett sätt att överösa någon. Ett medlemskaps mejl sprids
-  över dygnen, högst tio om dagen, när de köas. En adress får högst tre om
+  över dygnen när de köas, så att högst tio ska gå samma dygn. Ett mejl som
+  gränsen per adress har skjutit upp kan hamna på ett dygn som redan har tio. En adress får högst tre om
   dagen, räknat på mejl som har gått när nästa ska skickas, och ett mejl över
   gränsen väntar tills det äldsta av dem är ett dygn gammalt. Inget mejl
   stryks för en gräns.
