@@ -33,7 +33,7 @@ function ownerEffect(access: NonNullable<HerdLinkPreview["new_access"]>) {
     rabbitRights =
       "Kontot får redan ändra kaniner och får nu också sälja och flytta dem.";
   }
-  return `${rabbitRights} Som innehavare får kontot ge hushållet tillgång, utfärda intyg för kaniner med besättningen som ursprung och se hela utbetalningskontot.`;
+  return `${rabbitRights} Som innehavare får kontot ge hushållet tillgång och utfärda intyg för kaniner med besättningen som ursprung. Kontot får också se och ändra besättningens utbetalningskonto.`;
 }
 
 function Preview({ preview }: { preview: HerdLinkPreview }) {
@@ -71,8 +71,9 @@ function Preview({ preview }: { preview: HerdLinkPreview }) {
       )}
       {membership.membership_status !== "active" ? (
         <p>
-          Huvudmedlemmen kan genast ge hushållet skötartillstånd. Ändringsrätten
-          och tillstånden gäller först när medlemskapet blir aktivt.
+          {new_access &&
+            "Huvudmedlemmen kan genast ge hushållet skötartillstånd. "}
+          Åtkomsten börjar när medlemskapet blir aktivt.
         </p>
       ) : (
         <>
@@ -82,7 +83,7 @@ function Preview({ preview }: { preview: HerdLinkPreview }) {
               besättningens innehavare. {ownerEffect(new_access)}
             </p>
           )}
-          {gainsGrants && (
+          {!new_access && gainsGrants && (
             <p>
               Huvudmedlemmens konto {accountLabel(gainsGrants)} kan nu ge
               hushållet tillgång till besättningen.

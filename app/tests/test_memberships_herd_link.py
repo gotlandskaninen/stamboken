@@ -199,10 +199,11 @@ class TestMembershipHerdLink(LinkApiBase):
     def test_inactive_membership_defers_access_and_comparison(self):
         self.ms.membership_status = "inactive"
         self.ms.save()
+        self.assertIsNone(self.preview()["preview"]["new_access"])
         self.main.user = self.account
         self.main.save()
         body = self.preview()
-        self.assertIsNone(body["preview"]["new_access"])
+        self.assertEqual(body["preview"]["new_access"]["id"], self.account.id)
         self.assertIsNone(body["preview"]["contact_rows"])
         self.assertEqual(self.post(confirm_token=body["confirm_token"]).status_code, 201)
         linked = db.Herd.get_by_id(self.herd.id)
@@ -275,8 +276,9 @@ class TestMembershipHerdLink(LinkApiBase):
         self.main.user = self.account
         self.main.save()
         preview = self.preview()["preview"]
-        self.assertIn(self.herd.id, self.account.transfer_herd_ids())
-        self.assertIsNone(preview["new_access"])
+        self.assertNotIn(self.herd.id, self.account.transfer_herd_ids())
+        self.assertIn(self.herd.herd, self.account.is_owner)
+        self.assertTrue(preview["new_access"]["already_edits"])
         self.assertEqual([u["id"] for u in preview["legacy_owners"]], [self.account.id])
         self.assertTrue(preview["legacy_owners"][0]["gains_household_grants"])
 
@@ -296,6 +298,13 @@ class TestMembershipHerdLink(LinkApiBase):
         response = member_client.get("/api/user")
         self.assertEqual(response.status_code, 200, response.data)
         self.assertCountEqual(response.get_json()["is_owner"], [legacy_herd.herd, self.herd.herd])
+
+    def test_accessible_genebanks_with_string_owner_role_and_membership_herd(self):
+        legacy_herd = self.herds[2]
+        self.account.add_role("owner", str(legacy_herd.id))
+        self.main.user = self.account
+        self.main.save()
+        self.assertEqual(self.account.accessible_genebanks, [self.herds[0].genebank_id, legacy_herd.genebank_id])
 
     def test_family_read_access_alone_invalidates_confirmation(self):
         self.family.user = self.account

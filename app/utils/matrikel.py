@@ -41,7 +41,6 @@ from utils.database import (
     MemberPreviousAddress,
     Membership,
     User,
-    normalize_legacy_herd_id,
 )
 from utils.herd_contact import (
     compare_with_register,
@@ -1273,7 +1272,9 @@ def legacy_owner_index(*fields) -> tuple[dict[int, dict[int, User]], set[int]]:
                 continue
             if role["level"] != "owner":
                 continue
-            herd_id = normalize_legacy_herd_id(role.get("herd"))
+            herd_id = role.get("herd")
+            if isinstance(herd_id, str) and re.fullmatch(r"[0-9]+", herd_id):
+                herd_id = int(herd_id)  # Match historical ids for the listing only.
             if isinstance(herd_id, bool) or not isinstance(herd_id, int):
                 incomplete.add(user.id)
                 continue
@@ -1381,23 +1382,20 @@ def _herd_link_preview(
         .order_by(User.id)
     )
     new_access, new_readers, contact_rows, contact_changes = None, [], None, {}
-    if active:
-        try:
-            if main is not None and main.is_active:
-                already_edits = herd.id in main.effective_herd_ids()
-                if herd.id not in main.transfer_herd_ids():
-                    new_access = {
-                        **_account_summary(main),
-                        "already_edits": already_edits,
-                        "already_manages": main.is_admin or herd.genebank_id in (main.is_manager or []),
-                    }
+    try:
+        if main is not None and main.is_active and (not active or herd.id not in main.transfer_herd_ids()):
+            new_access = {
+                **_account_summary(main),
+                "already_edits": herd.herd in (main.is_owner or []),
+                "already_manages": main.is_admin or herd.genebank_id in (main.is_manager or []),
+            }
+        if active:
             potential_readers = [u for u in accounts.values() if u.is_active and not is_matrikel_reader(u, herd)]
             herd.membership = membership  # in memory only; link_herd re-reads the locked row
             new_readers = [_account_summary(u) for u in potential_readers if is_matrikel_reader(u, herd)]
-        except (KeyError, TypeError) as err:
-            raise LinkError(
-                "Åtkomsten kan inte beräknas", "Ett konto i medlemskapet har en ofullständig roll."
-            ) from err
+    except (KeyError, TypeError) as err:
+        raise LinkError("Åtkomsten kan inte beräknas", "Ett konto i medlemskapet har en ofullständig roll.") from err
+    if active:
         contact_rows, contact_changes = _contact_link_preview(herd)
     return {
         "herd": {**_link_herd_summary(herd), "genebank_id": herd.genebank_id, "genebank_name": herd.genebank.name},

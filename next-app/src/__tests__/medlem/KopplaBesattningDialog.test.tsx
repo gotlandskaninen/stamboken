@@ -1,6 +1,7 @@
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  act,
   cleanup,
   fireEvent,
   render,
@@ -63,6 +64,13 @@ const preview: HerdLinkPreview = {
   ],
 };
 
+const pausedPreview: HerdLinkPreview = {
+  ...preview,
+  membership: { ...preview.membership, membership_status: "inactive" },
+  new_readers: [],
+  contact_rows: null,
+};
+
 beforeEach(() => {
   vi.resetAllMocks();
   vi.stubGlobal(
@@ -112,8 +120,15 @@ async function chooseBank() {
 }
 
 const button = (name: string) => screen.getByRole("button", { name });
+
+async function clickButton(name: string) {
+  await act(async () => {
+    fireEvent.click(button(name));
+  });
+}
+
 const ownerRights =
-  /ge hushållet tillgång, utfärda intyg för kaniner med besättningen som ursprung och se hela utbetalningskontot/;
+  /ge hushållet tillgång och utfärda intyg för kaniner med besättningen som ursprung\. Kontot får också se och ändra besättningens utbetalningskonto/;
 
 describe("KopplaBesattningDialog", () => {
   it("filters by number, marks inactive herds and prevents selecting a linked herd", async () => {
@@ -150,7 +165,7 @@ describe("KopplaBesattningDialog", () => {
       ok: false,
       confirmRequired: { preview, confirm_token: "first" },
     });
-    fireEvent.click(button("Visa vad kopplingen ger"));
+    await clickButton("Visa vad kopplingen ger");
     expect(
       await screen.findByText(
         /testkonto.*innehavare.*ändra, sälja och flytta kaniner/,
@@ -188,7 +203,7 @@ describe("KopplaBesattningDialog", () => {
         confirm_token: "next",
       },
     });
-    fireEvent.click(button("Koppla"));
+    await clickButton("Koppla");
     expect(
       await screen.findByText(/Underlaget har ändrats/),
     ).toBeInTheDocument();
@@ -202,7 +217,7 @@ describe("KopplaBesattningDialog", () => {
     expect(snackbar).not.toHaveBeenCalled();
 
     link.mockResolvedValueOnce({ ok: true });
-    fireEvent.click(button("Koppla"));
+    await clickButton("Koppla");
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
@@ -219,34 +234,51 @@ describe("KopplaBesattningDialog", () => {
       ok: false,
       confirmRequired: {
         confirm_token: "inactive",
-        preview: {
-          ...preview,
-          membership: { ...preview.membership, membership_status: "inactive" },
-          new_access: null,
-          new_readers: [],
-          contact_rows: null,
-        },
+        preview: pausedPreview,
       },
     });
-    fireEvent.click(button("Visa vad kopplingen ger"));
+    await clickButton("Visa vad kopplingen ger");
     expect(
       await screen.findByText(
         /Huvudmedlemmen kan genast ge hushållet skötartillstånd/,
       ),
-    ).toHaveTextContent(
-      /Ändringsrätten och tillstånden gäller först när medlemskapet blir aktivt/,
-    );
+    ).toHaveTextContent(/Åtkomsten börjar när medlemskapet blir aktivt/);
     expect(
       screen.getByText(/jämförs när medlemskapet blir aktivt/i),
     ).toBeInTheDocument();
-    fireEvent.click(button("Avbryt"));
+    await clickButton("Avbryt");
     expect(link).toHaveBeenCalledTimes(1);
-    fireEvent.click(button("Koppla besättning"));
+    await clickButton("Koppla besättning");
     await screen.findByRole("option", { name: "Gotland" });
     expect(
       screen.queryByRole("button", { name: "Koppla" }),
     ).not.toBeInTheDocument();
   });
+
+  it.each([null, { id: 41, username: "vilande" }])(
+    "only shows deferred access for a paused membership without an active main account (%j)",
+    async (inactive_main_account) => {
+      fireEvent.click(await chooseBank());
+      link.mockResolvedValueOnce({
+        ok: false,
+        confirmRequired: {
+          confirm_token: "inactive",
+          preview: {
+            ...pausedPreview,
+            new_access: null,
+            inactive_main_account,
+          },
+        },
+      });
+      await clickButton("Visa vad kopplingen ger");
+      expect(
+        await screen.findByText(
+          "Åtkomsten börjar när medlemskapet blir aktivt.",
+        ),
+      ).toBeInTheDocument();
+      expect(screen.queryByText(/genast ge hushållet/)).not.toBeInTheDocument();
+    },
+  );
 
   it("shows which rights a main account with administrative access already has", async () => {
     fireEvent.click(await chooseBank());
@@ -265,7 +297,7 @@ describe("KopplaBesattningDialog", () => {
         },
       },
     });
-    fireEvent.click(button("Visa vad kopplingen ger"));
+    await clickButton("Visa vad kopplingen ger");
     expect(
       await screen.findByText(
         /ansvarig.*innehavare.*redan ändra, sälja och flytta kaniner/,
@@ -286,7 +318,7 @@ describe("KopplaBesattningDialog", () => {
         },
       },
     });
-    fireEvent.click(button("Visa vad kopplingen ger"));
+    await clickButton("Visa vad kopplingen ger");
     expect(
       await screen.findByText(/Huvudmedlemmens konto vilande är inaktivt/),
     ).toBeInTheDocument();
@@ -301,14 +333,14 @@ describe("KopplaBesattningDialog", () => {
   it("keeps the choice and confirmation on retryable errors and clears old errors on retry", async () => {
     fireEvent.click(await chooseBank());
     link.mockRejectedValueOnce(new Error("Failed to fetch"));
-    fireEvent.click(button("Visa vad kopplingen ger"));
+    await clickButton("Visa vad kopplingen ger");
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Kunde inte nå servern",
     );
     expect(screen.getByRole("radio", { name: /G12/ })).toBeChecked();
     const error = { ok: false, error: "Försök igen", resetSelection: false };
     link.mockResolvedValueOnce(error);
-    fireEvent.click(button("Visa vad kopplingen ger"));
+    await clickButton("Visa vad kopplingen ger");
     expect(await screen.findByText("Försök igen")).toHaveAttribute(
       "role",
       "alert",
@@ -318,17 +350,17 @@ describe("KopplaBesattningDialog", () => {
       ok: false,
       confirmRequired: { preview, confirm_token: "first" },
     });
-    fireEvent.click(button("Visa vad kopplingen ger"));
+    await clickButton("Visa vad kopplingen ger");
     await screen.findByRole("button", { name: "Koppla" });
     expect(screen.queryByText("Försök igen")).not.toBeInTheDocument();
     link.mockResolvedValueOnce(error);
-    fireEvent.click(button("Koppla"));
+    await clickButton("Koppla");
     expect(await screen.findByText("Försök igen")).toHaveAttribute(
       "role",
       "alert",
     );
     link.mockResolvedValueOnce({ ok: true });
-    fireEvent.click(button("Koppla"));
+    await clickButton("Koppla");
     await waitFor(() =>
       expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
     );
@@ -341,14 +373,14 @@ describe("KopplaBesattningDialog", () => {
       ok: false,
       confirmRequired: { preview, confirm_token: "first" },
     });
-    fireEvent.click(button("Visa vad kopplingen ger"));
+    await clickButton("Visa vad kopplingen ger");
     await screen.findByRole("button", { name: "Koppla" });
     link.mockResolvedValueOnce({
       ok: false,
       error: "Redan kopplad",
       resetSelection: true,
     });
-    fireEvent.click(button("Koppla"));
+    await clickButton("Koppla");
     expect(await screen.findByRole("alert")).toHaveTextContent("Redan kopplad");
     expect(screen.getByLabelText("Genbank")).toHaveValue("");
     expect(button("Visa vad kopplingen ger")).toBeDisabled();

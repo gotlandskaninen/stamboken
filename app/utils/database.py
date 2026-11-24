@@ -1179,12 +1179,6 @@ class Bodyfat(BaseModel):
     bodyfat_date = DateField()
 
 
-def normalize_legacy_herd_id(herd_id):
-    if isinstance(herd_id, str) and re.fullmatch(r"[0-9]+", herd_id):
-        return int(herd_id)
-    return herd_id
-
-
 class User(BaseModel, UserMixin):
     """
     Table keeping track of system users.
@@ -1379,7 +1373,7 @@ class User(BaseModel, UserMixin):
         herd_ids = self.effective_herd_ids()
         if not herd_ids:
             return None
-        return [h.herd for h in Herd.select().where(Herd.id.in_(sorted(herd_ids))).order_by(Herd.id)]
+        return [h.herd for h in Herd.select().where(Herd.id.in_(list(herd_ids))).order_by(Herd.id)]
 
     def _owned_herd_ids_and_persons(self):
         """
@@ -1392,7 +1386,7 @@ class User(BaseModel, UserMixin):
         herd_ids = set()
         for role in self.privileges:
             if role["level"] == "owner":
-                herd_ids.add(normalize_legacy_herd_id(role["herd"]))
+                herd_ids.add(role["herd"])
 
         persons = list(
             Member.select(Member.id, Member.membership, Member.role)
@@ -1490,7 +1484,7 @@ class User(BaseModel, UserMixin):
                 has_access += [role["genebank"]]
         herd_ids = self.effective_herd_ids()
         if herd_ids:
-            for herd in Herd.select().where(Herd.id.in_(sorted(herd_ids))).order_by(Herd.id):
+            for herd in Herd.select().where(Herd.id.in_(list(herd_ids))).order_by(Herd.id):
                 if herd.genebank_id not in has_access:
                     has_access += [herd.genebank_id]
         return has_access
