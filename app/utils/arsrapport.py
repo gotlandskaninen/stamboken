@@ -3394,7 +3394,11 @@ def _kvitto(params):
     report = YearlyHerdReport.get_by_id(submission.report_id)
     received = submission.data.get("received_on") if submission.source == "paper" else None
     # Late import: arsrapport_pdf imports this module.
-    from utils.arsrapport_pdf import receipt_context, render_pdf, render_text  # pylint: disable=import-outside-toplevel,cyclic-import
+    from utils.arsrapport_pdf import (  # pylint: disable=import-outside-toplevel,cyclic-import
+        receipt_context,
+        render_pdf,
+        render_text,
+    )
 
     shown = receipt_context(report, submission)  # one read for the mail text and the attachment
     return {
