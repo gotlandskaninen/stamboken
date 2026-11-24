@@ -6,9 +6,9 @@
 {{ herd }} {{ year }}: Registerutdrag, bara för kontroll
 Så här står det i Stamboken. Utdraget skickas inte in. Rätta i rapporten, i Stamboken Online eller på blanketten.
 {{ rubrik("Kaniner i besättningen den 31 december " ~ year) }}
-{% if rabbits %}{% set w = [12, 16, 7, 10, 18, 12] %}
-{{ rad(["Nummer", "Namn", "Kön", "Född", "Senast rapporterad", "Senaste vikt"], w)|trim }}
-{% for r in rabbits %}{{ rad([r.number, r.name or "", r.sex, r.born or "", r.last_reported or "", r.weight if r.weight is not none else ""], w)|trim }}
+{% if rabbits %}{% set w = [12, 7, 10, 18, 12, 0] %}
+{{ rad(["Nummer", "Kön", "Född", "Senast rapporterad", "Senaste vikt", "Namn"], w)|trim }}
+{% for r in rabbits %}{{ rad([r.number, r.sex, r.born or "", r.last_reported or "", r.weight if r.weight is not none else "", r.name or ""], w)|trim }}
 {% endfor %}{% else %}Inga kaniner.
 {% endif %}
 {{ rubrik("Sålda under " ~ year) }}

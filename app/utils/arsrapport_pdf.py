@@ -27,13 +27,15 @@ _HULL = {"low": "mager", "normal": "normal", "high": "fet"}
 _TEXT_ENV = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=False)  # nosemgrep
 
 
-def _render(**context) -> bytes:
+def render_pdf(context) -> bytes:
+    """The PDF of a context from `extract_context` or `receipt_context`."""
     html = _ENV.get_template("registerutdrag.html").render(**context)
     # base_url: the template finds fonts and logo under ../certificates/ with no network.
     return HTML(string=html, base_url=str(_TEMPLATE_DIR)).write_pdf()
 
 
-def _text(context) -> str:
+def render_text(context) -> str:
+    """The same facts as plain text, for the mail. Build the context once and render both from it."""
     text = _TEXT_ENV.get_template("registerutdrag.txt").render(**context)
     return re.sub(r"\n{3,}", "\n\n", text).strip()  # the macros leave blank lines; one is enough
 
@@ -112,7 +114,7 @@ def _litters(herd, year):
     ]
 
 
-def _extract_context(herd, round_) -> dict:
+def extract_context(herd, round_) -> dict:
     year = round_.report_year
     rows = arsrapport.report_list(herd, year)
     weights = _latest_weights(row["id"] for row in rows)
@@ -141,12 +143,7 @@ def _extract_context(herd, round_) -> dict:
 
 def register_extract_pdf(herd, round_) -> bytes:
     """The rabbits the register holds in `herd` on 31 December, and its sold, dead and litters that year."""
-    return _render(**_extract_context(herd, round_))
-
-
-def register_extract_text(herd, round_) -> str:
-    """The same extract as plain text, for the invitation mail."""
-    return _text(_extract_context(herd, round_))
+    return render_pdf(extract_context(herd, round_))
 
 
 def _choice(entry, waiting=False):
@@ -160,7 +157,8 @@ def _choice(entry, waiting=False):
     return "Ej angiven"
 
 
-def _receipt_context(report, submission) -> dict:
+def receipt_context(report, submission) -> dict:
+    """What the submission reported: each rabbit's choice, weight and hull, and the health answer."""
     data = submission.data
     entries = arsrapport._entries(data.get("rabbits") or {})  # pylint: disable=protected-access
     numbers, waiting = _numbers(entries), arsrapport._waiting_sales(data)  # pylint: disable=protected-access
@@ -182,7 +180,9 @@ def _receipt_context(report, submission) -> dict:
         "mode": "kvittens",
         "herd": report.herd.herd,
         "year": report.round.report_year,
-        "received": submission.created_at.astimezone(arsrapport.STOCKHOLM).strftime("%Y-%m-%d %H:%M"),
+        # a paper form came in on received_on; created_at is only when it was entered (the mail text says the same)
+        "received": (data.get("received_on") if submission.source == "paper" else None)
+        or submission.created_at.astimezone(arsrapport.STOCKHOLM).strftime("%Y-%m-%d %H:%M"),
         "rabbits": rabbits,
         "health": _HEALTH.get(health, "Sjukdomsfall eller defekter"),
         "diseases": diseases,
@@ -192,12 +192,7 @@ def _receipt_context(report, submission) -> dict:
 
 def receipt_pdf(report, submission) -> bytes:
     """What the submission reported: each rabbit's choice, weight and hull, and the health answer."""
-    return _render(**_receipt_context(report, submission))
-
-
-def receipt_text(report, submission) -> str:
-    """The same receipt as plain text, for the receipt mail."""
-    return _text(_receipt_context(report, submission))
+    return render_pdf(receipt_context(report, submission))
 
 
 def _disease(name, value):
