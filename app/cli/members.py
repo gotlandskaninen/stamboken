@@ -925,9 +925,11 @@ def _norm_name(name: str | None) -> str:
 
 _GENERIC_LOCAL_PARTS = frozenset(
     """
-    admin administrator contact e-post epost foreningen föreningen hej info kaniner kansli kassor kassör
-    kontakt kontakta mail medlem medlemmar no-reply noreply office ordforande ordförande post sekreterare
-    styrelse styrelsen support webmaster
+    admin administrator bibliotek biblioteket bokning contact e-post ekonomi epost expedition expeditionen
+    faktura fakturor foreningen föreningen garden gården hej hello info info- kaniner kansli kansliet kassan
+    kassor kassör klubben kontakt kontakta kontakten kontoret mail medlem medlemmar museet museum no-reply
+    noreply office order ordforande ordförande post posten postmaster reception receptionen sekretariat
+    sekretariatet sekreterare styrelse styrelsen support webmaster
     """.split()
 )
 
@@ -941,22 +943,19 @@ def _match_reason(person: Member, user: User) -> str | None:
     name = _norm_name(user.fullname)
     if name and name == _norm_name(f"{person.first_name} {person.last_name}"):
         return "namn lika"
-    if person.role != "huvudmedlem":
-        return None
 
     address = _norm_email(person.email)
     if not address:
         return None
-    account_addresses = (_norm_email(user.google_email), _norm_email(user.email))
-    if address in account_addresses:
-        return "e-post lika"
+    account_addresses = (("Google", _norm_email(user.google_email)), ("kontots e-post", _norm_email(user.email)))
+    for source, email in account_addresses:
+        if email == address:
+            return f"e-post lika ({source})"
     local = address.partition("@")[0]
-    if (
-        len(local) >= 5
-        and local not in _GENERIC_LOCAL_PARTS
-        and any(email.partition("@")[0] == local for email in account_addresses)
-    ):
-        return "lokaldel lika"
+    if len(local) >= 5 and local not in _GENERIC_LOCAL_PARTS:
+        for source, email in account_addresses:
+            if email.partition("@")[0] == local:
+                return f"lokaldel lika ({source})"
     return None
 
 
