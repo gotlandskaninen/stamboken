@@ -61,12 +61,14 @@ const queue = {
   scope: "mina",
   my_genebanks: [1],
 };
+let wideScreen = false;
 beforeEach(() => {
+  wideScreen = false;
   vi.clearAllMocks();
   vi.stubGlobal(
     "matchMedia",
     vi.fn(() => ({
-      matches: false,
+      matches: wideScreen,
       addEventListener() {},
       removeEventListener() {},
     })),
@@ -173,7 +175,8 @@ describe("Inkorg", () => {
       expect(within(item).getByText(flag)).toBeVisible();
   });
 
-  it("moves focus and opens the adjacent item with the arrow keys", async () => {
+  it("moves focus and opens the adjacent item with the arrow keys on a wide screen", async () => {
+    wideScreen = true;
     await show({ scope: "alla" });
     const first = screen.getByRole("link", { name: /#14/ });
     const second = screen.getByRole("link", { name: /#15/ });
@@ -194,12 +197,26 @@ describe("Inkorg", () => {
     );
   });
 
+  it("keeps the narrow list open through two arrow presses", async () => {
+    fetchApi.mockResolvedValue({
+      ...queue,
+      items: [...queue.items, { ...row, id: 16 }],
+      total: 3,
+    });
+    await show();
+    screen.getByRole("link", { name: /#14/ }).focus();
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
+    expect(screen.getByRole("link", { name: /#15/ })).toHaveFocus();
+    fireEvent.keyDown(document.activeElement!, { key: "ArrowDown" });
+    const third = screen.getByRole("link", { name: /#16/ });
+    expect(third).toHaveFocus();
+    expect(third).toHaveAttribute("href", "/stamboken/inkorg?arende=16");
+    expect(replace).not.toHaveBeenCalled();
+    expect(push).not.toHaveBeenCalled();
+  });
+
   it("opens the first item by URL on a wide screen", async () => {
-    vi.mocked(matchMedia).mockReturnValue({
-      matches: true,
-      addEventListener() {},
-      removeEventListener() {},
-    } as unknown as MediaQueryList);
+    wideScreen = true;
     await show();
     expect(replace).toHaveBeenCalledWith("/stamboken/inkorg?arende=14", {
       scroll: false,

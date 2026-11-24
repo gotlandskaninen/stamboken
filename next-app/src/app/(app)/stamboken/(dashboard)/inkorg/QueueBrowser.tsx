@@ -19,6 +19,8 @@ import { formatTime } from "@/lib/inkorg";
 import type { InterpretationSummary } from "./lib";
 import styles from "./inkorg.module.css";
 
+const WIDE_LAYOUT = "(min-width: 1100px)";
+
 export function InboxHeader({ reading }: { reading?: InterpretationSummary }) {
   const { t } = useTranslation();
   return (
@@ -137,7 +139,7 @@ export function QueueBrowser({
     if (last?.selected === selected) return;
     if (selected !== null && pane.current) {
       pane.current.scrollTop = 0;
-      if (!window.matchMedia("(min-width: 1100px)").matches) {
+      if (!window.matchMedia(WIDE_LAYOUT).matches) {
         pane.current.focus({ preventScroll: true });
         pane.current.scrollIntoView?.({ block: "start" });
       }
@@ -162,7 +164,7 @@ export function QueueBrowser({
     const id = data.items.some((item) => item.id === lastOpened.current)
       ? lastOpened.current
       : first;
-    const wide = window.matchMedia("(min-width: 1100px)");
+    const wide = window.matchMedia(WIDE_LAYOUT);
     const openVisible = () => {
       const typing =
         input.current === document.activeElement &&
@@ -215,7 +217,8 @@ export function QueueBrowser({
     if (next) {
       next.focus({ preventScroll: true });
       next.scrollIntoView?.({ block: "nearest" });
-      router.replace(next.getAttribute("href")!, { scroll: false });
+      if (window.matchMedia(WIDE_LAYOUT).matches)
+        router.replace(next.getAttribute("href")!, { scroll: false });
     }
   }
 
