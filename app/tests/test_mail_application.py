@@ -453,6 +453,16 @@ class TestMemberAdded(MailTest):
         self.queue("kvitto@example.org")
         self.assertEqual(self.sent_to(), ["kvitto@example.org"])
 
+    def test_a_bounce_after_the_address_was_corrected_sends_to_the_new_one(self):
+        corrected, unchanged = self.add(email="fel@example.org"), self.add(first_name="Andra", email="kvar@example.org")
+        self.sent_to()
+        matrikel.set_member_email(corrected, "ratt@example.org", self.actor, by="matrikel")  # it went already
+        for row in self.mails():
+            self.assertTrue(mail.record_bounce(mail.message_id(row.id), "550 5.1.1 user unknown"))
+        self.assertEqual(self.sent_to(), ["ratt@example.org"])
+        status = {row.recipient_id: row.status for row in self.mails()}
+        self.assertEqual((status[corrected.id], status[unchanged.id]), ("sent", "bounced"))
+
     def test_a_notice_stopped_by_hand_stays_stopped(self):
         person = self.add()
         db.MailMessage.update(status="cancelled", last_error="stoppat i statusvyn").execute()  # as "Stoppa" does

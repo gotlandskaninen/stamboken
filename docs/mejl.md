@@ -124,8 +124,9 @@ av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas. Nyckeln
   Personen har en enda rad i kön, och den visar att mejlet har gått. En rad
   som aldrig nådde fram (`failed`, `bounced`, `cancelled` för att adressen
   saknades, eller som skickas till adressen som just byttes) köas igen när
-  adressen ändras. En rad som har gått eller som stoppats i statusvyn köas
-  inte igen. Har personen lämnat medlemskapet eller blivit huvudmedlem när
+  adressen ändras. Studsar mejlet efter att adressen har rättats köas det
+  igen till den nya adressen. En rad som har gått eller som stoppats i
+  statusvyn köas inte igen. Har personen lämnat medlemskapet eller blivit huvudmedlem när
   mejlet ska gå blir det `cancelled`. Huvudmedlemmen väljer adressen, så
   mejlet får inte bli ett sätt att överösa någon. Ett medlemskaps mejl sprids
   över dygnen, högst tio om dagen, när de köas. En adress får högst tre om
