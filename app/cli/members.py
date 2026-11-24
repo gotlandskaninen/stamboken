@@ -1097,8 +1097,9 @@ def _check_owner(code, main, user, incomplete, listed, already, pairs) -> None:
         pairs.setdefault((main.id, user.id), [main, user, []])[2].append(code)
 
 
-def _owner_membership_detail(owner_ids, membership_by_user, membership_id) -> str:
+def _owner_membership_detail(owner_ids, membership_by_user, membership_id, incomplete) -> tuple[str, bool]:
     details = []
+    needs_review = False
     for user_id in owner_ids:
         linked_id = membership_by_user.get(user_id)
         if linked_id is None:
@@ -1107,14 +1108,29 @@ def _owner_membership_detail(owner_ids, membership_by_user, membership_id) -> st
             relation = "ägaren hör till medlemskapet"
         else:
             relation = "ägaren hör till ett annat medlemskap"
+            needs_review = True
+        if user_id in incomplete:
+            relation += ", kontots ägarroll är ofullständig"
+            needs_review = True
         details.append(f"konto {user_id}: {relation}")
-    return ", ".join(details) or "ingen ägare"
+    return ", ".join(details) or "ingen ägare", needs_review
+
+
+def _active_main_members():
+    return Member.select(Member.id, Member.membership, Member.first_name, Member.last_name).where(
+        Member.role == "huvudmedlem", Member.end_date.is_null(True)
+    )
 
 
 def _plan_same_number_links() -> tuple[list, list[str]]:
     banks = {prefix: _flag_genebank_ids(prefix) for prefix in "GM"}
-    owners, _ = _owner_index()
-    membership_by_user = dict(Member.select(Member.user, Member.membership).where(Member.user.is_null(False)).tuples())
+    owners, incomplete = _owner_index()
+    membership_by_user = dict(
+        Member.select(Member.user, Member.membership)
+        .where(Member.user.is_null(False), Member.end_date.is_null())
+        .tuples()
+    )
+    mains = {main.membership_id: main for main in _active_main_members()}
     memberships = {
         m.member_number: m
         for m in Membership.select(Membership.id, Membership.member_number, Membership.membership_status).where(
@@ -1128,19 +1144,65 @@ def _plan_same_number_links() -> tuple[list, list[str]]:
         if not re.fullmatch(r"[GM][1-9][0-9]*", code):
             continue
         prefix, number = code[0], int(code[1:])
-        detail = f"{code} (id {herd.id}), genbank {_q(herd.genebank.name)}, {'aktiv' if herd.is_active else 'inaktiv'}"
+        status = "inaktiv" if herd.is_active is False else "aktiv"
+        detail = f"{code} (id {herd.id}), genbank {_q(herd.genebank.name)}, {status}"
         membership = memberships.get(number)
         if len(banks[prefix]) != 1:
             listed.append(f"{detail} | {prefix} motsvarar {len(banks[prefix])} genbanker")
+        elif herd.genebank_id != banks[prefix][0]:
+            listed.append(f"{detail} | fel genbank för prefixet")
         elif membership is None:
             listed.append(f"{detail} | medlemskap nr {number} saknas")
-        elif herd.genebank_id == banks[prefix][0]:
-            relation = _owner_membership_detail(owners.get(herd.id, ()), membership_by_user, membership.id)
-            line = (
-                f"{detail} -> medlemskap nr {number} (id {membership.id}, {membership.membership_status}) | {relation}"
+        else:
+            detail += f" -> medlemskap nr {number} (id {membership.id}, {membership.membership_status})"
+            main = mains.get(membership.id)
+            if main is None:
+                end_dates = [person.end_date for person in membership.persons.select(Member.end_date)]
+                reason = (
+                    "medlemskapet är avslutat" if end_dates and all(end_dates) else "medlemskapet saknar huvudmedlem"
+                )
+                listed.append(f"{detail} | {reason}")
+                continue
+            relation, needs_review = _owner_membership_detail(
+                owners.get(herd.id, ()), membership_by_user, membership.id, incomplete
             )
-            to_link.append((herd, membership, line))
+            name = _q(f"{main.first_name} {main.last_name}".strip())
+            line = f"{detail} | huvudmedlem {main.id}: {name} | {relation}"
+            if needs_review:
+                listed.append(line)
+            else:
+                to_link.append((herd, membership, main.id, line))
     return to_link, listed
+
+
+def _apply_same_number_link(herd, membership, main_id, actor) -> str | None:
+    """Return the reason if the herd could no longer be linked as planned."""
+    with DB_PROXY.atomic():
+        current = _locked_membership_by_number(membership.member_number)
+        if current is None or current.id != membership.id:
+            return "medlemsnumret hör inte längre till medlemskapet"
+        if current.membership_status != membership.membership_status:
+            return "medlemskapets status har ändrats"
+        if not _active_main_members().where(Member.membership == current, Member.id == main_id).exists():
+            return "medlemskapets huvudmedlem har ändrats"
+        try:
+            cases = link_herd(herd.id, membership.id, herd_code=herd.herd, genebank_id=herd.genebank_id)
+        except Herd.DoesNotExist:
+            return "besättningen finns inte längre"
+        if cases is None:
+            current_herd = Herd.get_by_id(herd.id)  # still locked by link_herd
+            if current_herd.membership_id is not None:
+                return "besättningen är redan kopplad"
+            if current_herd.herd != herd.herd:
+                return "besättningens kod har ändrats"
+            return "besättningens genbank har ändrats"
+        write_matrikel_audit(
+            actor,
+            "herd_membership_linked",
+            membership,
+            {"herd_id": herd.id, "main_member_id": main_id, "source": "cli"},
+        )
+    return None
 
 
 @members_cli.command("link-same-number")
@@ -1156,7 +1218,7 @@ def link_same_number_cmd(apply_links: bool, actor_user_id: int | None, plan_valu
     candidates, listed = _plan_same_number_links()
     lines = [
         f"Att koppla: {len(candidates)}",
-        *(f"  {line}" for _, _, line in candidates),
+        *(f"  {line}" for _, _, _, line in candidates),
         f"Till granskning: {len(listed)}",
         *(f"  {line}" for line in listed),
     ]
@@ -1169,23 +1231,11 @@ def link_same_number_cmd(apply_links: bool, actor_user_id: int | None, plan_valu
     if plan_value != value:
         raise click.ClickException(_PLAN_CHANGED)
 
-    linked = 0
-    for herd, membership, _ in candidates:
-        with DB_PROXY.atomic():
-            # A renumber after the plan must not give the old household access.
-            current = _locked_membership_by_number(membership.member_number)
-            if (
-                current is None
-                or current.id != membership.id
-                or current.membership_status != membership.membership_status
-            ):
-                continue
-            try:
-                cases = link_herd(herd.id, membership.id, herd_code=herd.herd, genebank_id=herd.genebank_id)
-            except Herd.DoesNotExist:
-                continue
-            if cases is None:
-                continue
-            write_matrikel_audit(actor, "herd_membership_linked", membership, {"herd_id": herd.id, "source": "cli"})
-            linked += 1
-    click.echo(f"Kopplade: {linked}, Överhoppade: {len(candidates) - linked}")
+    skipped = []
+    for herd, membership, main_id, _ in candidates:
+        reason = _apply_same_number_link(herd, membership, main_id, actor)
+        if reason:
+            skipped.append(f"  {herd.herd} (id {herd.id}): {reason}")
+    click.echo(f"Kopplade: {len(candidates) - len(skipped)}, Överhoppade: {len(skipped)}")
+    for line in skipped:
+        click.echo(line)

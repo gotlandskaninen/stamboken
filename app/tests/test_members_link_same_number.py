@@ -1,11 +1,12 @@
 """Tests for flask members link-same-number."""
 
 import re
+from datetime import date
 from unittest.mock import patch
 
 import utils.data_access as da
 import utils.database as db
-from cli.members import members_cli
+from cli.members import _plan_same_number_links, members_cli
 from click.testing import CliRunner
 from flask.cli import ScriptInfo
 from herdbook import APP
@@ -30,18 +31,25 @@ class TestMembersLinkSameNumber(DatabaseTest):
     def _herd(self, code, bank=0, **kwargs):
         return db.Herd.create(herd=code, genebank=self.genebanks[bank], **kwargs)
 
+    def _membership(self, number, status="active", **person_fields):
+        membership = db.Membership.create(member_number=number, membership_status=status, address="Testvägen 7")
+        person = db.Member.create(membership=membership, first_name="Alva", last_name="Kvistskog", **person_fields)
+        return membership, person
+
     def test_plan_and_apply_an_inactive_herd_and_membership(self):
         herd = self._herd("G7", is_active=False)
-        membership = db.Membership.create(member_number=7, membership_status="inactive")
+        membership, main = self._membership(7, "inactive", email="alva@example.invalid", phone="000-000000")
 
         output, value = self._plan()
 
         self.assertIn("Att koppla: 1", output)
         self.assertIn(
             f'G7 (id {herd.id}), genbank "Gotland", inaktiv -> '
-            f"medlemskap nr 7 (id {membership.id}, inactive) | ingen ägare",
+            f'medlemskap nr 7 (id {membership.id}, inactive) | huvudmedlem {main.id}: "Alva Kvistskog" | ingen ägare',
             output,
         )
+        self.assertNotIn("@example.invalid", output)
+        self.assertNotIn("000-000000", output)
         self.assertIsNone(db.Herd.get_by_id(herd.id).membership_id)
         self.assertEqual(db.MatrikelAudit.select().count(), 0)
 
@@ -54,7 +62,7 @@ class TestMembersLinkSameNumber(DatabaseTest):
         self.assertIsNone(linked.contact_pending)
         audit = db.MatrikelAudit.get(db.MatrikelAudit.action == "herd_membership_linked")
         self.assertEqual((audit.actor_id, audit.membership_id), (self.admin.id, membership.id))
-        self.assertEqual(audit.payload, {"herd_id": herd.id, "source": "cli"})
+        self.assertEqual(audit.payload, {"herd_id": herd.id, "main_member_id": main.id, "source": "cli"})
         self.assertEqual(db.MatrikelAudit.select().count(), 1)
 
     def test_already_linked_herd_is_omitted_and_missing_membership_goes_to_review(self):
@@ -77,16 +85,17 @@ class TestMembersLinkSameNumber(DatabaseTest):
         self.assertEqual(db.MatrikelAudit.select().count(), 0)
 
     def test_only_the_unique_genebank_for_the_prefix_qualifies(self):
-        membership = db.Membership.create(member_number=7)
+        membership, _ = self._membership(7)
         db.Genebank.create(name="Gotland två")
         self._herd("G7")
-        self._herd("M7")  # right number, wrong genebank
-        candidate = self._herd("M7", bank=1, is_active=True)
+        wrong = self._herd("M7", is_active=True)
+        candidate = self._herd("M7", bank=1, is_active=None)
 
         output, value = self._plan()
         candidates, review = output.split("Till granskning:")
         self.assertIn("Att koppla: 1", candidates)
         self.assertIn(f'M7 (id {candidate.id}), genbank "Mellerud", aktiv', candidates)
+        self.assertIn(f'M7 (id {wrong.id}), genbank "Gotland", aktiv | fel genbank för prefixet', review)
         self.assertRegex(review, r"G7 .*G motsvarar 2 genbanker")
 
         result = self._apply(value)
@@ -94,8 +103,10 @@ class TestMembersLinkSameNumber(DatabaseTest):
         self.assertEqual([h.id for h in db.Herd.select().where(db.Herd.membership == membership)], [candidate.id])
         self.assertIsNotNone(db.Herd.get_by_id(candidate.id).contact_pending)
 
-    def test_each_owner_relationship_is_shown_without_contact_details(self):
+    def test_conflicting_owner_is_listed_and_only_the_safe_herd_is_linked(self):
         herd = self._herd("G7")
+        safe = self._herd("G9")
+        membership, _ = self._membership(9)
         expected = []
         for name, number, relation in (
             ("Alva", 7, "ägaren hör till medlemskapet"),
@@ -106,28 +117,78 @@ class TestMembersLinkSameNumber(DatabaseTest):
             user.add_role("owner", herd.id)
             expected.append(f"konto {user.id}: {relation}")
             if number is not None:
-                membership = db.Membership.create(member_number=number, address="Testvägen 7")
+                household, _ = self._membership(number)
                 db.Member.create(
                     first_name=name,
                     last_name="Kvistskog",
                     role="familjemedlem",
                     user=user,
-                    membership=membership,
+                    membership=household,
                     email=user.email,
                     phone="000-000000",
                 )
 
-        output, _ = self._plan()
-        line = next(line for line in output.splitlines() if line.startswith("  G7 "))
+        output, value = self._plan()
+        candidates, review = output.split("Till granskning:")
+        self.assertIn("Att koppla: 1", candidates)
+        self.assertIn(f"G9 (id {safe.id})", candidates)
+        line = next(line for line in review.splitlines() if line.startswith(f"  G7 (id {herd.id})"))
         for relation in expected:
             self.assertIn(relation, line)
         for private in ("@example.invalid", "Testvägen", "000-000000"):
             self.assertNotIn(private, output)
 
+        result = self._apply(value)
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIsNone(db.Herd.get_by_id(herd.id).membership_id)
+        self.assertEqual(db.Herd.get_by_id(safe.id).membership_id, membership.id)
+        self.assertEqual([row.payload["herd_id"] for row in db.MatrikelAudit.select()], [safe.id])
+
+    def test_ended_owner_is_not_linked_to_the_register(self):
+        herd = self._herd("G7")
+        self._membership(7)
+        user = da.register_user("liv@example.invalid", "pass")
+        user.add_role("owner", herd.id)
+        self._membership(8, "inactive", user=user, end_date=date(2025, 1, 1))
+
+        output, _ = self._plan()
+        candidates, _ = output.split("Till granskning:")
+        self.assertRegex(candidates, rf"G7 .*konto {user.id}: ägaren är inte kopplad till matrikeln")
+
+    def test_retired_and_headless_memberships_go_to_review(self):
+        retired = self._herd("G7")
+        self._membership(7, "inactive", end_date=date(2025, 1, 1))
+        headless = self._herd("G8")
+        self._membership(8, "inactive", role="familjemedlem")
+
+        output, value = self._plan()
+        candidates, review = output.split("Till granskning:")
+        self.assertIn("Att koppla: 0", candidates)
+        self.assertRegex(review, rf"G7 \(id {retired.id}\).*medlemskapet är avslutat")
+        self.assertRegex(review, rf"G8 \(id {headless.id}\).*medlemskapet saknar huvudmedlem")
+        result = self._apply(value)
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIsNone(db.Herd.get_by_id(retired.id).membership_id)
+        self.assertIsNone(db.Herd.get_by_id(headless.id).membership_id)
+        self.assertEqual(db.MatrikelAudit.select().count(), 0)
+
+    def test_owner_with_an_incomplete_role_goes_to_review(self):
+        herd = self._herd("G7")
+        self._membership(7)
+        user = da.register_user("vide@example.invalid", "pass")
+        user.add_role("owner", herd.id)
+        user.privileges = [*user.privileges, {"level": "owner"}]
+        user.save()
+
+        output, _ = self._plan()
+        candidates, review = output.split("Till granskning:")
+        self.assertIn("Att koppla: 0", candidates)
+        self.assertRegex(review, rf"G7 \(id {herd.id}\).*kontots ägarroll är ofullständig")
+
     def test_changes_to_candidate_or_review_lines_invalidate_the_plan(self):
         herd = self._herd("G7", is_active=True)
         review = self._herd("G8", is_active=True)
-        db.Membership.create(member_number=7)
+        self._membership(7)
         _, value = self._plan()
         self.owner.add_role("owner", herd.id)
         result = self._apply(value)
@@ -142,13 +203,43 @@ class TestMembersLinkSameNumber(DatabaseTest):
         self.assertIsNone(db.Herd.get_by_id(herd.id).membership_id)
         self.assertEqual(db.MatrikelAudit.select().count(), 0)
 
-    def test_link_refused_under_lock_is_counted_and_not_logged(self):
-        herd = self._herd("G7")
-        membership = db.Membership.create(member_number=7)
+    def test_plan_checksum_changes_when_the_new_main_has_the_same_name(self):
+        self._herd("G7")
+        membership, main = self._membership(7)
         _, value = self._plan()
-        with patch("cli.members.link_herd", return_value=None) as link:
+        db.Member.update(role="familjemedlem").where(db.Member.id == main.id).execute()
+        db.Member.create(membership=membership, first_name=main.first_name, last_name=main.last_name)
+
+        result = self._apply(value)
+        self.assertNotEqual(result.exit_code, 0, result.output)
+        self.assertIn("planen har ändrats", result.output)
+        self.assertEqual(db.MatrikelAudit.select().count(), 0)
+
+    def test_changed_rows_are_skipped_under_lock_and_each_reason_is_printed(self):
+        renumbered = self._herd("G7")
+        membership, _ = self._membership(7)
+        swapped = self._herd("G8")
+        other, main = self._membership(8)
+        linked = self._herd("G9")
+        self._membership(9)
+        _, value = self._plan()
+
+        def plan_then_change():
+            plan = _plan_same_number_links()
+            db.Membership.update(member_number=17).where(db.Membership.id == membership.id).execute()
+            db.Member.update(role="familjemedlem").where(db.Member.id == main.id).execute()
+            db.Member.create(membership=other, first_name="Lova", last_name="Kvistskog")
+            db.Herd.update(membership=other).where(db.Herd.id == linked.id).execute()
+            return plan
+
+        with patch("cli.members._plan_same_number_links", plan_then_change):
             result = self._apply(value)
         self.assertEqual(result.exit_code, 0, result.output)
-        link.assert_called_once_with(herd.id, membership.id, herd_code="G7", genebank_id=herd.genebank_id)
-        self.assertIn("Kopplade: 0, Överhoppade: 1", result.output)
+        self.assertIn("Kopplade: 0, Överhoppade: 3", result.output)
+        self.assertIn(f"G7 (id {renumbered.id}): medlemsnumret hör inte längre till medlemskapet", result.output)
+        self.assertIn(f"G8 (id {swapped.id}): medlemskapets huvudmedlem har ändrats", result.output)
+        self.assertIn(f"G9 (id {linked.id}): besättningen är redan kopplad", result.output)
+        self.assertIsNone(db.Herd.get_by_id(renumbered.id).membership_id)
+        self.assertIsNone(db.Herd.get_by_id(swapped.id).membership_id)
+        self.assertEqual(db.Herd.get_by_id(linked.id).membership_id, other.id)
         self.assertEqual(db.MatrikelAudit.select().count(), 0)
