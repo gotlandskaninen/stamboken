@@ -181,6 +181,40 @@ export default function IntegritetspolicyPage() {
             </p>
           </Section>
 
+          <Section title="När du får Koharen utan att vara medlem">
+            <p>
+              Föreningen skickar Koharen gratis till bland andra bibliotek,
+              föreningar och tidskrifter som byter tidning med oss. Får du
+              Koharen själv, eller står du som kontaktperson för en
+              organisation, sparar vi ditt namn och din postadress, och e-post
+              eller telefon bara om vi behöver nå dig om tidningen. Att du får
+              Koharen gör dig inte till medlem och ger ingen inloggning i
+              Stamboken Online.
+            </p>
+            <p>
+              Vi använder uppgifterna för att skicka tidningen och sprida
+              kunskap om arbetet med att bevara raserna (berättigat intresse).
+              Har du själv avtalat med oss om att byta tidning använder vi det
+              som behövs för avtalet (avtal). Uppgifterna finns i
+              medlemsregistret och kan läsas av dem som sköter det, av
+              genbanksansvariga och av föreningens systemansvarig. Tryckeriet
+              får namn och adress för att kunna skicka tidningen.
+            </p>
+            <p>
+              Ber du själv om tidningen får du den här informationen då. Har vi
+              fått din adress från någon annan berättar vi varifrån och hur vi
+              använder den, senast en månad efter att vi fick den och innan den
+              går till tryckeriet. Uppgifterna sparas så länge du får tidningen,
+              och vi går igenom listan en gång om året.
+            </p>
+            <p>
+              Du kan när som helst säga att du inte vill ha tidningen längre,
+              till exempel till {contactLink}. Då stryker vi dig direkt från
+              utskickslistan och tar bort eller anonymiserar dina uppgifter utan
+              onödigt dröjsmål.
+            </p>
+          </Section>
+
           <Section title="När någon annan har lämnat dina uppgifter">
             <p>
               En huvudmedlem kan lägga in familjemedlemmar och personer som
