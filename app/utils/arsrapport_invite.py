@@ -12,7 +12,7 @@ import utils.arsrapport as arsrapport
 import utils.report_code as report_code
 import utils.settings as settings
 from utils.arsrapport import ArsrapportError
-from utils.arsrapport_pdf import register_extract_pdf
+from utils.arsrapport_pdf import register_extract_pdf, register_extract_text
 from utils.database import (
     DB_PROXY,
     OUTSIDE_GENEBANK_HERDS,
@@ -225,6 +225,7 @@ def _inbjudan(params):
         **_common(herd, round_),
         "link": link,
         "prov": bool(params.get("prov")),
+        "utdrag": register_extract_text(herd, round_),
         "attachments": [(f"registerutdrag-{herd.herd}.pdf", "application/pdf", register_extract_pdf(herd, round_))],
     }
 

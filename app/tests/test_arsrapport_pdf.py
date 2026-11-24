@@ -11,7 +11,7 @@ import fitz
 import utils.arsrapport as arsrapport
 import utils.database as db
 import utils.mail as mail
-from utils.arsrapport_pdf import receipt_pdf, register_extract_pdf
+from utils.arsrapport_pdf import receipt_pdf, receipt_text, register_extract_pdf, register_extract_text
 
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.ht_helpers import ht_row
@@ -71,6 +71,40 @@ class PdfTest(ArsrapportTest):
         self.assertNotIn(ACCOUNT, text)
         self.assertNotIn("Testbanken", text)
         self.assertIn("Inga sjukdomsfall eller defekter", text)
+
+    def test_pdfs_embed_the_form_fonts_not_a_fallback(self):
+        rabbits = self.rabbits(self.h, 1)
+        report = self.reported(self.h, self.kvar(rabbits[0], vikt=2.8), health="inga")
+        submission = arsrapport._submissions(report)[-1]  # pylint: disable=protected-access
+        submission.created_at = datetime(2026, 1, 5, 11, 0, tzinfo=timezone.utc)
+        for pdf in (register_extract_pdf(self.h, self.round_), receipt_pdf(report, submission)):
+            with fitz.open(stream=pdf, filetype="pdf") as doc:
+                fonts = " ".join(font[3] for page in doc for font in page.get_fonts())
+            for name in ("IBM-Plex-Sans", "Source-Serif-4", "IBM-Plex-Mono"):
+                self.assertIn(name, fonts)
+            self.assertNotIn("DejaVu", fonts)
+
+    def test_text_versions_carry_the_same_facts_as_the_pdfs(self):
+        kept, sold = self.rabbits(self.h, 2)
+        db.Breeding.create(
+            breeding_herd_id=self.h, mother=kept, father=sold, breed_date=date(2025, 4, 1),
+            birth_date=date(2025, 5, 2), litter_size=5, litter_size6w=4,
+        )  # fmt: skip
+        report = self.reported(
+            self.h, self.kvar(kept, vikt=2.8), self.sald(sold, "utanfor", 2025, 10, 3, kopare=BUYER), health="inga"
+        )
+        submission = arsrapport._submissions(report)[-1]  # pylint: disable=protected-access
+        submission.created_at = datetime(2026, 1, 5, 11, 0, tzinfo=timezone.utc)
+        extract, receipt = register_extract_text(self.h, self.round_), receipt_text(report, submission)
+        for text in (extract, receipt):
+            self.assertIn(kept.number, text)
+            self.assertIn(sold.number, text)
+            self.assertNotIn(BUYER["name"], text)
+        self.assertIn("Registerutdrag, bara för kontroll", extract)
+        self.assertIn("2025-05-02", extract)
+        self.assertIn("2025-10-03", extract)
+        self.assertIn("utanför genbanken", receipt)
+        self.assertIn("Inga sjukdomsfall eller defekter", receipt)
 
     def test_extract_lists_sold_during_the_year(self):
         kept, sold = self.rabbits(self.h, 2)
