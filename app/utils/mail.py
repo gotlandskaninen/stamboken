@@ -69,6 +69,7 @@ RETRY_DELAYS = (
     timedelta(hours=12),
 )
 RETENTION = timedelta(days=396)
+MAIL_NO_LONGER_RELEVANT = "mejlet är inte längre aktuellt"
 NO_ADDRESS = "mottagaren saknar e-post"
 SALE_WITHDRAWN = "försäljningen är ångrad"
 
@@ -596,7 +597,7 @@ def _send_one(row, relay, now):
         extra = {"attempt": row.attempts + 1} if "attempt" in inspect.signature(kind.build).parameters else {}
         variables = kind.build(row.params, **extra)
         if variables is None:
-            return _finish(row, now, status="cancelled", last_error="mejlet är inte längre aktuellt")
+            return _finish(row, now, status="cancelled", last_error=MAIL_NO_LONGER_RELEVANT)
         attachments = variables.pop("attachments", [])
         note = variables.pop("sent_note", None)
         reply_to = variables.pop("reply_to", None)

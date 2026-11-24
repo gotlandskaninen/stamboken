@@ -5441,14 +5441,18 @@ def _run_migrations():
                 "and audit-log cleanup (49 -> 50). Rebuild a disposable development database from scratch. "
                 "Är detta inte en utvecklingsdatabas: stoppa och utred migreringen."
             )
-        # a 51 that is not the yearly report's, without its tables: the organization fields' branch ran as 51
-        # (migrated or bootstrapped) before the yearly report took the number; main's 51 always has the tables
-        row_51 = SchemaHistory.get_or_none(SchemaHistory.version == 51)
+        # the organization fields' branch ran as 51 before the yearly report took the number: migrated (its own
+        # comment) or bootstrapped (another 51 without any of the report's tables; main's 51 always has them).
+        # Only version and comment: a version-1 history has no `applied` column yet.
+        row_51 = SchemaHistory.select(SchemaHistory.comment).where(SchemaHistory.version == 51).tuples().first()
         report_tables = {model._meta.table_name for model in ARSRAPPORT_MODELS}
-        if (
+        organization_51 = SchemaHistory.select(SchemaHistory.version).where(
+            SchemaHistory.version != 52, SchemaHistory.comment == ORGANIZATION_52
+        )
+        if organization_51.exists() or (
             row_51 is not None
-            and not (row_51.comment or "").startswith(ARSRAPPORT_51)
-            and not report_tables <= set(DATABASE.get_tables())
+            and not (row_51[0] or "").startswith(ARSRAPPORT_51)
+            and not report_tables & set(DATABASE.get_tables())
         ):
             raise RuntimeError(
                 "This development database ran the organization fields as migration 51, now 52, and lacks the "

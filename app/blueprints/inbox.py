@@ -21,8 +21,9 @@ import utils.inbox_interpreter as interpreter
 import utils.inbox_purge as inbox_purge
 import utils.purchase_notice as purchase_notice
 from extensions import limiter
-from flask import Blueprint, jsonify, request, send_file
+from flask import Blueprint, current_app, jsonify, request, send_file
 from flask_login import current_user
+from itsdangerous import BadData, SignatureExpired, URLSafeTimedSerializer
 from peewee import fn
 from PIL import Image, ImageOps
 from utils.database import (
@@ -296,6 +297,22 @@ def _body():
     return body if isinstance(body, dict) else {}
 
 
+def _undo_signer():
+    return URLSafeTimedSerializer(current_app.secret_key, salt="inkorg/angra/v1")
+
+
+def _undo_token(receipts):
+    return _undo_signer().dumps([current_user.id, receipts]) if receipts else None
+
+
+def _then_assignment(change):
+    def action(item):
+        receipt = inbox.record_assignment(item, change)
+        return jsonify({**inbox.queue_items_json([item])[0], "undo": _undo_token([receipt] if receipt else [])})
+
+    return action
+
+
 def _user_in_body():
     user_id = _body().get("user_id")
     if isinstance(user_id, bool) or not isinstance(user_id, int):
@@ -303,7 +320,7 @@ def _user_in_body():
     return User.get_or_none(User.id == user_id)
 
 
-# [Next.js] The queue: filters, sorted oldest first, with the count per state.
+# [Next.js] Counts for the four tabs follow the genebank scope, even when the displayed list is filtered.
 @inbox_bp.route("/inkorg", methods=["GET"])
 @json_login_required
 @_queue_worker
@@ -317,6 +334,31 @@ def queue():
     query = InboxItem.select().where(inbox.not_held())
     if scope == "mina":  # a narrower view only: anyone in the queue may still open any item
         query = query.where(InboxItem.genebank.in_(mine) | InboxItem.genebank.is_null(True))
+    open_item = InboxItem.state.in_(inbox.OPEN_STATES)
+    modes = {
+        "nya": open_item & InboxItem.assigned_to.is_null(True),
+        "mina": open_item & (InboxItem.assigned_to == current_user.id),
+        "oppna": open_item,
+        "klara": InboxItem.state.in_(inbox.CLOSED_STATES),
+    }
+    mode, order = args.get("mode"), args.get("order", "oldest")
+    if mode is not None and mode not in modes:
+        return problem(400, "Bad Request", "Okänd inkorgsvy.")
+    if order not in ("oldest", "newest"):
+        return problem(400, "Bad Request", "order är oldest eller newest.")
+    totals = query.select(*(fn.COUNT(InboxItem.id).filter(expr) for expr in modes.values())).tuples().get()
+    oldest = (InboxItem.received_at, InboxItem.id)
+    untaken = query.select(InboxItem.id).where(modes["nya"]).order_by(*oldest)
+    if "after" in args:
+        after = args.get("after", type=int)
+        if after is None or after < 1:
+            return problem(400, "Bad Request", "after ska vara ett positivt ärende-id.")
+        received = InboxItem.select(InboxItem.received_at).where(InboxItem.id == after).scalar()
+        if received is not None:
+            untaken = untaken.where(
+                (InboxItem.received_at > received) | ((InboxItem.received_at == received) & (InboxItem.id > after))
+            )
+    next_untaken = list(untaken.limit(1 if "after" in args else 2).scalars())
     if args.get("mine") in ("1", "true"):
         query = query.where(InboxItem.assigned_to == current_user.id)
     if args.get("untaken") in ("1", "true"):
@@ -329,22 +371,30 @@ def queue():
             query = query.where(column == value)
     if args.get("herd"):
         query = query.where(InboxItem.herd.in_(Herd.select(Herd.id).where(Herd.herd == args["herd"])))
+    if prefix := args.get("herd_prefix", "").strip().upper():
+        matching = Herd.select(Herd.id).where(Herd.herd.startswith(prefix))
+        query = query.where(InboxItem.herd.in_(matching))
     if args.get("kind"):
         query = query.where(InboxItem.kind == args["kind"])
     counts = dict(query.select(InboxItem.state, fn.COUNT(InboxItem.id)).group_by(InboxItem.state).tuples())
-    if args.get("state") != "alla":
+    if mode:
+        query = query.where(modes[mode])
+    if args.get("state") != "alla" and (args.get("state") or not mode):
         states = args["state"].split(",") if args.get("state") else list(inbox.OPEN_STATES)
         if set(states) - set(inbox.OPEN_STATES + inbox.CLOSED_STATES):
             return problem(400, "Bad Request", "Okänt läge.")
         query = query.where(InboxItem.state.in_(states))
     limit = min(max(args.get("limit", 50, type=int) or 50, 1), 200)
     offset = max(args.get("offset", 0, type=int) or 0, 0)
-    items = list(query.order_by(InboxItem.received_at, InboxItem.id).limit(limit).offset(offset))
+    ordering = tuple(column.desc() for column in oldest) if order == "newest" else oldest
+    items = list(query.order_by(*ordering).limit(limit).offset(offset))
     return jsonify(
         {
-            "items": inbox.items_json(items),
+            "items": inbox.queue_items_json(items),
             "total": query.count(),
             "counts": counts,
+            "mode_counts": dict(zip(modes, totals, strict=True)),
+            "next_untaken": next_untaken,
             "interpretation": interpreter.status(),
             "scope": scope,
             "my_genebanks": mine,
@@ -400,14 +450,22 @@ def rabbit_sales(item_id, number):
 @json_login_required
 @_queue_worker
 def take(item_id):
-    return _locked(item_id, _then_item(lambda item: inbox.take(item, current_user, over=False)))
+    return _locked(item_id, _then_assignment(lambda item: inbox.take(item, current_user, over=False)))
 
 
-@inbox_bp.route("/inkorg/<int:item_id>/ta-over", methods=["POST"])
+@inbox_bp.route("/inkorg/<int:item_id>/ta-over", methods=["POST", "PUT"])
 @json_login_required
 @_queue_worker
 def take_over(item_id):
-    return _locked(item_id, _then_item(lambda item: inbox.take(item, current_user, over=True)))
+    expected = _body() if request.method == "PUT" else None
+    return _locked(item_id, _then_assignment(lambda item: inbox.take(item, current_user, over=True, expected=expected)))
+
+
+@inbox_bp.route("/inkorg/<int:item_id>/slapp", methods=["POST"])
+@json_login_required
+@_queue_worker
+def release(item_id):
+    return _locked(item_id, _then_assignment(lambda item: inbox.release(item, current_user)))
 
 
 @inbox_bp.route("/inkorg/<int:item_id>/tilldela", methods=["POST"])
@@ -417,7 +475,24 @@ def assign(item_id):
     to = _user_in_body()
     if to is None:
         return problem(400, "Bad Request", "Ange user_id för den som ska få posten.")
-    return _locked(item_id, _then_item(lambda item: inbox.assign(item, current_user, to)))
+    return _locked(item_id, _then_assignment(lambda item: inbox.assign(item, current_user, to)))
+
+
+@inbox_bp.route("/inkorg/tilldela", methods=["GET"])
+@json_login_required
+@_queue_worker
+def preview_assignment():
+    if not inbox.manages(current_user, None):
+        return problem(403, "Åtkomst nekad", "Bara genbanksansvarig och admin kan tilldela ärenden.")
+    number = request.args.get("herd", "").strip().upper()
+    if not number:
+        return problem(400, "Bad Request", "Ange besättningsnummer.")
+    herd = Herd.get_or_none(Herd.herd == number)
+    try:
+        items = list(inbox.herd_items(herd, current_user)) if herd else []
+    except inbox.InboxError as exc:
+        return problem(exc.status, exc.title, exc.detail)
+    return jsonify(inbox.assignment_preview(items))
 
 
 # [Next.js] Every open item of a herd to one handler.
@@ -425,22 +500,49 @@ def assign(item_id):
 @json_login_required
 @_queue_worker
 def assign_herd():
-    to, herd = _user_in_body(), Herd.get_or_none(Herd.herd == _body().get("herd"))
+    body = _body()
+    number = body.get("herd")
+    to = _user_in_body()
+    herd = Herd.get_or_none(Herd.herd == number.strip().upper()) if isinstance(number, str) else None
     if to is None or herd is None:
         return problem(400, "Bad Request", "Ange herd (besättningsnummer) och user_id.")
     try:
         with DB_PROXY.atomic():
-            items = list(
-                InboxItem.select()
-                .where((InboxItem.herd == herd.id) & InboxItem.state.in_(inbox.OPEN_STATES))
-                .order_by(InboxItem.id)
-                .for_update()
-            )
-            for item in items:
-                inbox.assign(item, current_user, to)
+            query = inbox.herd_items(herd, current_user)
+            revision = body.get("revision")
+            if not isinstance(revision, str) or not revision.strip():
+                raise inbox.InboxError(400, "Ange revision från förhandsvisningen.")
+            items = list(query.for_update())
+            if revision != inbox.assignment_revision(items):
+                raise inbox.InboxError(409, "Ärendena har ändrats. Kontrollera förhandsvisningen och försök igen.")
+            change = partial(inbox.assign, by=current_user, to=to)
+            receipts = [inbox.record_assignment(item, change) for item in items]
     except inbox.InboxError as exc:
         return problem(exc.status, exc.title, exc.detail)
-    return jsonify({"assigned": [item.id for item in items]})
+    return jsonify({"assigned": [item.id for item in items], "undo": _undo_token(receipts)})
+
+
+@inbox_bp.route("/inkorg/angra", methods=["POST"])
+@json_login_required
+@_queue_worker
+def undo_assignment():
+    token = _body().get("undo")
+    if not isinstance(token, str):
+        return problem(400, "Bad Request", "Ange vilken tilldelning som ska ångras.")
+    try:
+        user_id, receipts = _undo_signer().loads(token, max_age=300)
+    except SignatureExpired:
+        return problem(409, "Konflikt", "Tiden för att ångra har gått ut.")
+    except BadData:
+        return problem(400, "Bad Request", "Ogiltig begäran om att ångra.")
+    if current_user.id != user_id:
+        return problem(403, "Åtkomst nekad", "Du kan bara ångra din egen ändring.")
+    try:
+        with DB_PROXY.atomic():
+            result = inbox.undo_assignments(receipts, current_user)
+    except inbox.InboxError as exc:
+        return problem(exc.status, exc.title, exc.detail)
+    return jsonify(result)
 
 
 @inbox_bp.route("/inkorg/<int:item_id>/lage", methods=["POST"])
