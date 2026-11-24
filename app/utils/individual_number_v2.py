@@ -519,8 +519,11 @@ def provisional_number(breeding: Breeding, bunny: Bunny) -> str | None:
     return f"{state['prefix']}{available[ahead_count]}"
 
 
-def check_litter_order(herd_identifier: str, year: int) -> dict:
+def check_litter_order(herd_identifier: str, year: int, allow_gaps: bool = False) -> dict:
     """Check if litter numbers match chronological birth_date order.
+
+    `allow_gaps`: only an order that is not rising is a conflict, since a paper certificate may give a litter a
+    number above the next free one (L4); the suggested number stays the consecutive one.
 
     Returns:
         {"consistent": bool, "conflicts": list[dict]}
@@ -553,7 +556,11 @@ def check_litter_order(herd_identifier: str, year: int) -> dict:
     conflicts = []
     for i, lit in enumerate(litters):
         correct_number = i + 1
-        if lit.litter_number != correct_number:
+        if allow_gaps:
+            wrong = i > 0 and lit.litter_number <= litters[i - 1].litter_number
+        else:
+            wrong = lit.litter_number != correct_number
+        if wrong:
             # Count affected individuals
             affected = list(Individual.select(Individual.number).where(Individual.breeding == lit.id))
             conflicts.append(
@@ -825,7 +832,13 @@ NUMBER_PATTERN = re.compile(r"([A-Za-z]+\d+)-(\d{2})(\d+)(\d)")
 PAPER_NUMBER_REQUIRED = "Skriv individnumret som det står på pappersintyget, till exempel G1274-2512."
 DUPLICATE_LITTER_DAYS = 35  # a litter of the same mother this close is the same litter registered twice
 CHOICES = ("use_stamboken_number", "paper_is_right")
-ONLY_PAPER_IS_RIGHT = {"litter_order", "prefix", "year"}  # facts the breeder must correct, not the paper
+ONLY_PAPER_IS_RIGHT = {
+    "litter_order",
+    "litter_number_taken",
+    "litter_number_invalid",
+    "prefix",
+    "year",
+}  # facts the breeder must correct, not the paper
 
 
 def parse_number(number):
@@ -892,6 +905,71 @@ def new_litter_number(herd, birth_date, *, lock):
     return max((b.litter_number for b in numbered), default=0) + 1
 
 
+def number_from_certificate(breeding, paper_number):
+    """
+    The litter number an unnumbered litter takes from the paper certificate's individual number (spec 5.8, L4): the
+    paper's own, not max+1. Returns (number, None), or (None, the litter that blocks it) when a numbered litter of
+    the herd's year has that number or a higher one, or is born later (its lower number would break the birth order):
+    a renumber the genebank manager does, so the certificate goes to them and nothing is written. A number below 1
+    (G1-2501) is no litter number: (None, None). Call under the herd/year lock (lock_litter) when writing.
+    """
+    wanted = parse_number(paper_number)[2]
+    if wanted < 1:
+        return None, None
+    born = fn.COALESCE(Breeding.birth_date, Breeding.breed_date + 30)  # as new_litter_number counts
+    blocker = (
+        herd_year(breeding.breeding_herd_id, breeding.birth_date.year)
+        .where(
+            Breeding.litter_number.is_null(False)
+            & ((Breeding.litter_number >= wanted) | (born > breeding.birth_date))
+            & (Breeding.id != breeding.id)
+        )
+        .order_by(Breeding.litter_number, Breeding.id)
+        .first()
+    )
+    return (None, blocker) if blocker is not None else (wanted, None)
+
+
+NO_LITTER_NUMBER = "Breeding record has no litter_number. Assign one first."
+
+
+def numbered_by_certificate(breeding):
+    """
+    A litter added without a certificate, which its first certificate numbers (L4): no number and no rabbit yet,
+    voided ones included. An older litter without a number that has rabbits keeps the refusal NO_LITTER_NUMBER.
+    """
+    return breeding.litter_number is None and not Individual.select().where(Individual.breeding == breeding.id).exists()
+
+
+LITTER_BORN_BEFORE_NUMBERED = (
+    "Kullen är född före en kull som redan har kullnummer det året. Registrera den med "
+    "+ Ny kull under Kullar och parningar och numrera om kullarna."
+)
+
+
+def number_unnumbered_litter(user, breeding, certificate_type, paper_number, paper_certificate, resolution):
+    """
+    The first certificate of a litter added without one numbers it (spec 5.8, L4), under lock_litter and in the
+    caller's transaction: a paper one from the paper's individual number (number_check, then number_to_register:
+    a conflict is a 409 number_conflict with nothing written), a digital one the year's next. Returns (check,
+    position) for the caller's registration; check is None for a digital certificate. An older unnumbered litter
+    that has rabbits is refused with the old 400 (numbered_by_certificate).
+    """
+    if not numbered_by_certificate(breeding):
+        raise RosterActionError(400, "Bad Request", NO_LITTER_NUMBER)
+    check = position = None
+    if certificate_type == "paper":
+        check = number_check(user, paper_number, breeding=breeding, paper_certificate=paper_certificate)
+        _, number, position = parse_number(number_to_register(check, resolution))[1:]
+    else:
+        number = new_litter_number(breeding.breeding_herd_id, breeding.birth_date, lock=True)
+        if number is None:
+            raise RosterActionError(409, "litter_order_conflict", LITTER_BORN_BEFORE_NUMBERED)
+    breeding.litter_number = number
+    breeding.save(only=[Breeding.litter_number])
+    return check, position
+
+
 def _litter_text(litter):
     parts = [f"parning {litter.breed_date}" if litter.breed_date else None]
     parts.append(f"född {litter.birth_date}" if litter.birth_date else None)
@@ -934,20 +1012,27 @@ def number_check(
     if breeding is not None:
         herd, birth_date = breeding.breeding_herd_id, breeding.birth_date
         mother, father = breeding.mother, breeding.father
-    stamboken, reason, later_litter = None, None, None
-    if new_litter and birth_date is not None:
-        litter_number = new_litter_number(herd, birth_date, lock=False)
-        if litter_number is None:
-            born = fn.COALESCE(Breeding.birth_date, Breeding.breed_date + 30)  # as new_litter_number counts
-            later_litter = (
-                herd_year(herd, birth_date.year)
-                .where(Breeding.litter_number.is_null(False) & (born > birth_date))
-                .order_by(born, Breeding.id)
-                .first()
-            )
+    stamboken, reason, later_litter, unusable = None, None, None, False
+    # a litter added without a certificate (not an existing rabbit's: its check stays as it was)
+    unnumbered = breeding is not None and individual is None and numbered_by_certificate(breeding)
+    if (new_litter or unnumbered) and birth_date is not None:
+        if unnumbered:
+            litter_number, later_litter = number_from_certificate(breeding, paper_number)
         else:
+            litter_number = new_litter_number(herd, birth_date, lock=False)
+            if litter_number is None:
+                born = fn.COALESCE(Breeding.birth_date, Breeding.breed_date + 30)  # as new_litter_number counts
+                later_litter = (
+                    herd_year(herd, birth_date.year)
+                    .where(Breeding.litter_number.is_null(False) & (born > birth_date))
+                    .order_by(born, Breeding.id)
+                    .first()
+                )
+        if litter_number is not None:
             position = paper[3] if 1 <= paper[3] <= HARD_CEILING else 1
             stamboken = f"{herd.herd}-{birth_date:%y}{litter_number}{position}"
+        elif unnumbered:
+            unusable = True
     elif breeding is not None and breeding.litter_number is not None and birth_date is not None:
         if individual is not None:
             own = parse_number(individual.number)
@@ -1000,6 +1085,16 @@ def number_check(
                 sibling = Individual.get_or_none(Individual.number == f"{stamboken[:-1]}{paper[3]}")
                 found = holder(rabbit=sibling) if sibling is not None else None
             conflicts.append({"kind": kind, "paper": str(paper[i]), "stamboken": str(ours[i]), "holder": found})
+    elif unusable:  # a litter that has no number takes the paper's, and cannot (L4)
+        kind = "litter_number_taken" if later_litter is not None else "litter_number_invalid"
+        conflicts.append(
+            {
+                "kind": kind,
+                "paper": str(paper[2]),
+                "stamboken": None,
+                "holder": holder(litter=later_litter) if later_litter else None,
+            }
+        )
     elif later_litter is not None:
         conflicts.append(
             {"kind": "litter_order", "paper": str(paper[2]), "stamboken": None, "holder": holder(litter=later_litter)}
@@ -1048,7 +1143,7 @@ def number_check(
                 {"kind": "duplicate_litter", "paper": None, "stamboken": str(other.birth_date), "holder": found}
             )
 
-    if stamboken is None and later_litter is None:
+    if stamboken is None and later_litter is None and not unusable:
         status = "uncomputable"
     else:
         status = "conflict" if conflicts else "match"
@@ -1104,6 +1199,24 @@ def _action(conflict, paper, stamboken, litter):
         claim = f"kaninen är född i kull {conflict['paper']} år {born.year}; årets kullar behöver numreras om"
     elif kind == "litter_missing":
         text, link = f"Kullen finns inte i Stamboken. Lägg in den så blir numret {stamboken}.", litters
+    elif kind == "litter_number_taken":
+        number = held.get("litter_number")
+        if number is None or number == int(conflict["paper"]):
+            text = f"Kullnummer {conflict['paper']} finns redan för {born.year}. Genbanksansvarig rättar numret."
+        elif number > int(conflict["paper"]):
+            text = (
+                f"Kull {number} finns redan för {born.year} och har ett högre nummer än "
+                f"{conflict['paper']}. Genbanksansvarig rättar numret."
+            )
+        else:  # a litter born later with a lower number (number_from_certificate)
+            text = (
+                f"Kull {number} finns redan för {born.year} och är född efter den här kullen, men har ett lägre "
+                f"nummer än {conflict['paper']}. Genbanksansvarig rättar numret."
+            )
+        link = litters
+    elif kind == "litter_number_invalid":
+        text = "Kullnumret på intyget måste vara 1 eller högre. Kontakta genbanksansvarig."
+        link = litters
     elif kind == "litter_order":
         later = f"kull {held['litter_number']}" if held else "en kull"
         text = (
@@ -1187,7 +1300,8 @@ def record_number_choice(individual, user, check):
         request_id=uuid.uuid4(),
         command="UseStambokenNumber",
         individual=individual,
-        actor=user.id,
+        actor=user.id,  # None for the report link, which signs with its access code
+        access_code_id=getattr(user, "access_code_id", None),
         before={"paper_number": check["paper_number"]},
         after={"number": individual.number, "conflicts": sorted({c["kind"] for c in check["conflicts"]})},
     )

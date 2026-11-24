@@ -289,6 +289,14 @@ kaninens mor och far; den anges när kaninen läggs in och kan inte ändras av u
 har intyg. På de publika sidorna används stamtavla i samma mening.\
 Kod: `Breeding.mother`, `Breeding.father` · Legacy-manual: "Släktträd", "härstamning" · Legacy: samma · Nytt UI: "Släktträd", "stamtavla", "Mor", "Far"
 
+**Stamboken / Stamboken Online**\
+Stamboken är föreningens register över kaninerna i genbankerna: det som står registrerat, vem som än
+har lagt in det. Stamboken Online är webbsystemet där registret förs, där medlemmar rapporterar och
+genbanksansvariga lägger in intyg. I texter som når medlemmen utanför systemet (blanketter, mejl,
+Koharen, hemsidan) skrivs Stamboken Online när läsaren ska gå dit och göra något, och Stamboken när
+texten gäller det som står registrerat. Inne i systemet räcker Stamboken. Stort O.\
+Kod: – · Legacy-manual: "Stamboken Online" · Legacy: "Stamboken Online" · Nytt UI: "Stamboken Online" på hemsidan och inloggningen
+
 **Sälja / säljdatum / såld**\
 När en kanin byter besättning registrerar säljaren försäljningen: ny besättning (eller GX1/MX1) och
 säljdatum. Datumet får inte ligga i framtiden och tidigast 43 dagar efter födseln. Kaninen flyttas
@@ -438,6 +446,7 @@ Projektägaren beslutade 2026-10-30:
     (beslutat 2026-11-12).
 13. Beslutat 2026-11-12: **Besättning** om en enskild uppfödares kaniner, aldrig genbank. **Genbank** är hela rasens bevarade population, och föreningen har två. **Genbanksbesättning** får användas som förtydligande. Orden följer handlingsplanen och FAO, se posterna Besättning och Genbank.
 14. **Medlemsavgift**, inte årsavgift, om avgiften för ett års medlemskap (beslutat 2026-11-18).
+15. Beslutat 2026-11-21: **Stamboken Online** om webbsystemet när texten utanför systemet ber läsaren göra något där, **Stamboken** om registret. Se posten Stamboken / Stamboken Online.
 
 ## Öppna frågor
 

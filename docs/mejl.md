@@ -80,7 +80,9 @@ mejlet går då till den adress som är aktuell just då.
 
 2. Registrera typen med en byggfunktion som tar `params` och returnerar
    mallens variabler. Returnerar den `None`, till exempel för att ansökan
-   har tagits bort, stoppas mejlet med status `cancelled`.
+   har tagits bort, stoppas mejlet med status `cancelled`. Kastar den
+   `Later(tid, skäl)` läggs mejlet tillbaka i kön till den tiden, utan att
+   räknas som ett försök.
 
    ```python
    from utils.mail import mail_kind
@@ -117,11 +119,23 @@ av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas. Nyckeln
   e-postadress. Det är informationen enligt dataskyddsförordningen artikel 14:
   vad som sparas, vem som lade in uppgifterna, länken `/dataskydd` och adressen
   att skriva till. En huvudmedlem får det inte, och inte heller den som kommer
-  in med importen av matrikeln, som skriver sina rader själv. Har personen
-  lämnat medlemskapet eller blivit huvudmedlem när mejlet ska gå blir det
-  `cancelled`. Huvudmedlemmen väljer adressen, så mejlet får inte bli ett sätt
-  att överösa någon: ett medlemskap ger högst tio om dagen, och en adress får
-  högst tre om dagen, räknat på mejl som har gått när nästa ska skickas.
+  in med importen av matrikeln, som skriver sina rader själv. Får någon som
+  `add_person` lade in en adress senare (`set_member_email`) köas mejlet då.
+  Personen har en enda rad i kön, och den visar att mejlet har gått. En rad
+  som aldrig nådde fram (`failed`, `cancelled` för att adressen saknades,
+  eller köad eller under sändning till adressen som just byttes) köas igen
+  när adressen ändras. En rad som har gått, som stoppats i statusvyn eller
+  som är `bounced` köas inte igen: en rapport om försenad leverans räknas
+  också som studs. För en studsad rad skickar "Försök igen" i statusvyn
+  mejlet till personens adress nu. Har personen lämnat medlemskapet eller
+  någon gång varit huvudmedlem när mejlet ska gå blir det `cancelled`. En
+  rad som köas igen räknar sina 13 månader från dess. Huvudmedlemmen väljer adressen, så
+  mejlet får inte bli ett sätt att överösa någon. Ett medlemskaps mejl sprids
+  över dygnen när de köas, så att högst tio ska gå samma dygn. Ett mejl som
+  gränsen per adress har skjutit upp kan hamna på ett dygn som redan har tio. En adress får högst tre om
+  dagen, räknat på mejl som har gått när nästa ska skickas, och ett mejl över
+  gränsen väntar tills det äldsta av dem är ett dygn gammalt. Inget mejl
+  stryks för en gräns.
 - `konto.kod` (prioritet 0) har en engångskod. Hittills finns bara texten för
   en ny adress (`purpose = ny_adress`): mottagaren har bett om att byta
   e-postadress, och mejlet har koden men ingen länk. En rad för inloggning

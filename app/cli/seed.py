@@ -18,6 +18,7 @@ Idempotent — safe to run multiple times (skips existing data), except that a d
 have other ids than the atlas numbers (seeded before they were fixed) makes the seed stop: recreate it.
 """
 
+import json
 import logging
 import os
 import re
@@ -28,6 +29,8 @@ from typing import NamedTuple
 
 import click
 from flask.cli import AppGroup
+from PIL import Image, ImageDraw
+from utils import arsrapport, inbox, report_code, settings
 from utils import data_access as da
 from utils.database import (
     DATABASE,
@@ -36,12 +39,17 @@ from utils.database import (
     Genebank,
     Herd,
     HerdTracking,
+    InboxDocument,
     Individual,
+    Member,
+    Membership,
     User,
     Weight,
+    YearlyReportRound,
     ht_not_voided,
 )
 from utils.fargatlas import seed_colors
+from utils.mail import link_token
 
 logger = logging.getLogger("herdbook.seed")
 
@@ -1004,3 +1012,230 @@ def _track(individual, herd, from_herd, manager, tracking_date, kind, log):
         kind=kind,
         operation_id=uuid.uuid4(),
     )
+
+
+# ══════════════════════════════════════════════════
+# Yearly report round (flask seed arsrapport)
+# ══════════════════════════════════════════════════
+
+
+def _blank_form():
+    """A one-page placeholder under PRIVATE_UPLOAD_FOLDER, so "Skriv ut tom blankett" has something to open."""
+    path = inbox.private_path(arsrapport.BLANK_FORM)
+    if os.path.isfile(path):
+        return
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    page = Image.new("RGB", (1240, 1754), "white")
+    ImageDraw.Draw(page).text((100, 100), "Tom årsblankett (testversion)", fill="black")
+    page.save(path, format="PDF", title="Tom årsblankett (testversion)")
+
+
+def _member_herd(genebank, code, name, email, owner, bank, log):
+    """
+    The herd with a new membership (main member `email`, and `owner`'s account if given), or None when the herd
+    already exists: an existing herd, and everything under it, is left alone.
+    """
+    if Herd.select().where(Herd.herd == code, Herd.genebank == genebank).exists():
+        log(f"Herd: {code} (left alone)", created=False)
+        return None
+    herd = _herd(genebank, code, name, True, None, None, log)
+    if Individual.select().where(Individual.number.startswith(f"{code}-")).exists():
+        raise click.ClickException(f"rabbits numbered {code}- exist already; refusing to seed under them.")
+    membership = Membership.create()
+    Member.create(first_name="Test", last_name=f"Huvudmedlem {code}", email=email, membership=membership, user=owner)
+    herd.membership, herd.bank_account_number, herd.bank_name = membership, *bank
+    herd.save()
+    return herd
+
+
+def _rabbits(herd, manager, log, count, born, first, sexes, litter=None):
+    """`count` certified rabbits of one litter (made here unless given), numbered {herd}-{YY}{first + k}."""
+    litter = litter or _breeding(herd, born, None, None, None, count, count, log)
+    return [
+        _individual(
+            f"{herd.herd}-{born:%y}{first + k}",
+            f"Testkanin {first + k}",
+            sexes[k % len(sexes)],
+            herd,
+            born,
+            None,
+            None,
+            None,
+            f"C-{herd.herd}-{first + k}",
+            manager,
+            log,
+            breeding=litter,
+        )
+        for k in range(count)
+    ]
+
+
+@seed_cli.command("arsrapport")
+@click.option("--verbose", "-v", is_flag=True, help="Print detailed output")
+def create_arsrapport_seed(verbose):
+    """Seed a yearly report round for the trial run (synthetic herds G9001-G9004). Run `seed create` first."""
+    # The demo is a copy of real data, so it is refused as production is. (`seed create` has the same gap.)
+    if os.environ.get("FLASK_ENV") == "production" or settings.service.demo_instance:
+        raise click.ClickException("refusing to seed test data with public passwords in production or the demo.")
+    gk = Genebank.get_or_none(Genebank.name == "Gotlandskanin")
+    manager = User.get_or_none(User.email == "seed-gk-mgr@test.local")
+    if gk is None or manager is None:
+        raise click.ClickException("run `flask seed create` first.")
+    stats = {"created": 0, "existing": 0}
+
+    def log(msg, created=True):
+        stats["created" if created else "existing"] += 1
+        if verbose:
+            click.echo(f"  {'✓' if created else '='} {msg}")
+
+    with DATABASE.atomic():
+        _user(
+            "seed-gk-hjalp@test.local", "seed-gk-hjalp-pass", "seed-gk-hjalp", "GK Hjälpare", [("helper", gk.id)], log
+        )
+        owner = _user(
+            "seed-gk-arsrapport@test.local", "seed-gk-arsrapport-pass", "seed-gk-arsrapport", "GK Uppfödare", [], log
+        )
+
+        # Only missing herds are created, with everything under them; an existing herd is never touched.
+        # G9001: 14 rabbits in three litters. Report list for 2025: 12 att_valja, one dead (August 2025), one
+        # moved to G9002 on 2026-01-10 (via_flytt).
+        g1 = _member_herd(gk, "G9001", "Årsrapport Testbesättning", "g9001@example.invalid", owner, (None, None), log)
+        g2 = _member_herd(
+            gk, "G9002", "Pappersbesättning", "g9002@example.invalid", None, ("1234-123456712", "Testbanken"), log
+        )
+        _member_herd(gk, "G9003", "Utan e-post", None, None, (None, None), log)
+        g4 = _member_herd(gk, "G9004", "Stora besättningen", "g9004@example.invalid", None, (None, None), log)
+
+        if g1:
+            a = _rabbits(g1, manager, log, 4, date(2023, 5, 1), 11, ("female", "male"))
+            b = _rabbits(g1, manager, log, 5, date(2024, 5, 1), 15, ("female", "male"))
+            litter = _breeding(g1, date(2025, 5, 2), date(2025, 4, 1), a[1], a[0], 6, 5, log)  # 6 born, 5 alive
+            _rabbits(g1, manager, log, 5, date(2025, 5, 2), 20, ("female", "male"), litter)
+            Individual.update(castration_date=date(2024, 6, 1)).where(Individual.id == a[3].id).execute()  # a male
+            Individual.update(death_date=date(2025, 8, 15), death_note="Sjuk").where(Individual.id == b[3].id).execute()
+            for rabbit in a + b:
+                _track(rabbit, g1, None, manager, date(2024, 12, 31), "ATTESTATION", log)
+            if g2:  # a row in G9002 only when G9002 is new too
+                _transfer(b[2], g2, g1, manager, date(2026, 1, 10), log)
+
+        if g2:  # 12 adults, one male, a 2025 litter, and a paper form waiting in the queue
+            paper = _rabbits(g2, manager, log, 12, date(2024, 5, 1), 11, ("female",) * 11 + ("male",))
+            _breeding(g2, date(2025, 5, 2), date(2025, 4, 1), paper[-1], paper[0], 5, 4, log)
+            _paper_form(g2, manager, log)
+
+        if g4:  # the largest herd's size, none needing a weight; the owner is a legacy role (one Member per user)
+            owner.add_role("owner", g4.id)
+            _rabbits(g4, manager, log, 183, date(2025, 4, 1), 100, ("female", "male"))
+
+        _user_types(log)
+
+        today = arsrapport.today()
+        _get_or_create(
+            YearlyReportRound,
+            report_year=2025,
+            defaults={
+                "start_date": date(2025, 12, 31),
+                "deadline": today + timedelta(days=30),
+                "end_date": today + timedelta(days=60),
+                "created_by": manager,
+            },
+        )
+        _blank_form()
+
+    click.echo(f"\nSeed complete: {stats['created']} created, {stats['existing']} existing.")
+    click.echo("\nTest users:")
+    click.echo("  seed-gk-mgr@test.local / seed-gk-pass (activates the round)")
+    click.echo("  seed-gk-arsrapport@test.local / seed-gk-arsrapport-pass (owns G9001 and G9004)")
+    click.echo("  seed-gk-hjalp@test.local / seed-gk-hjalp-pass (genebank helper, enters G9002's paper form)")
+    click.echo("  seed-mk-uppfodare@test.local / seed-mk-uppfodare-pass (owns M9001-M9004, M9006, M9007, M9101)")
+    click.echo("  seed-mk-hjalp@test.local / seed-mk-hjalp-pass (genebank helper, M9005, M9006 and M9102 on paper)")
+
+
+@seed_cli.command("arsrapport-lankar")
+def create_arsrapport_links():
+    """Print the personal report links of M9201, M9202 and M9203 as JSON {"herd": "/rapport#<token>"}."""
+    if os.environ.get("FLASK_ENV") == "production" or settings.service.demo_instance:
+        raise click.ClickException("refusing to seed test data with public passwords in production or the demo.")
+    round_ = YearlyReportRound.get_or_none(YearlyReportRound.report_year == 2025)
+    if round_ is None:
+        raise click.ClickException("run `flask seed arsrapport` first.")
+    links = {}
+    for code in ("M9201", "M9202", "M9203"):
+        herd = Herd.get_or_none(Herd.herd == code)
+        member = report_code.invitation_recipient(herd) if herd else None
+        if member is None:
+            raise click.ClickException(f"{code} has no main member to issue a link to; run `flask seed arsrapport`.")
+        access = report_code.issue_code(herd, round_, member, now=arsrapport.now())
+        links[code] = f"/rapport#{link_token('rapport', access.id)}"
+    click.echo(json.dumps(links))
+
+
+def _paper_form(herd, manager, log):
+    """A synthetic scanned yearly form for `herd`, waiting in the genebank's inbox."""
+    image = Image.new("RGB", (1200, 1600), (235, 240, 225))
+    ImageDraw.Draw(image).text((100, 100), f"Syntetisk årsblankett {herd.herd}", fill=(20, 20, 30))
+    path, sha256 = inbox.store_jpeg(image, "original")
+    _, documents = inbox.create_upload(manager, herd, None, [(path, sha256, inbox.measure(image))])
+    InboxDocument.update(doc_type="arsblankett").where(InboxDocument.id == documents[0].id).execute()
+    log(f"Inbox item: arsblankett for {herd.herd}")
+
+
+def _user_types(log):
+    """
+    Mellerud herds for the user-type e2e tests (e2e/arsrapport-typer.spec.ts), apart from the G round so the two
+    files can run in parallel. Sizes follow old prod's 2025 year-end (2026-11-15): median herd 6 rabbits, 5 of them
+    adults; 90th percentile 30. M9101 and M9102 are identical, one reported in Stamboken and one on paper.
+    """
+    mk = Genebank.get(Genebank.name == "Mellerudskanin")
+    manager = User.get(User.email == "seed-mk-mgr@test.local")
+    _user("seed-mk-hjalp@test.local", "seed-mk-hjalp-pass", "seed-mk-hjalp", "MK Hjälpare", [("helper", mk.id)], log)
+    owner = _user(
+        "seed-mk-uppfodare@test.local", "seed-mk-uppfodare-pass", "seed-mk-uppfodare", "MK Uppfödare", [], log
+    )
+
+    def kits(herd, adults, count, first):  # a 2025 litter of the herd's own: mother a female, father a male
+        litter = _breeding(herd, date(2025, 5, 2), date(2025, 4, 1), adults[1], adults[0], count, count, log)
+        _rabbits(herd, manager, log, count, date(2025, 5, 2), first, ("female", "male"), litter)
+
+    def median(herd):  # 5 adults born 2024 and one 2025 kit
+        kits(herd, _rabbits(herd, manager, log, 5, date(2024, 5, 1), 11, ("female", "male")), 1, 20)
+
+    def large(herd):  # 24 adults and 6 kits; the certificate number is unique per herd, hence 11, 31, 51
+        _rabbits(herd, manager, log, 12, date(2023, 5, 1), 11, ("female", "male"))
+        adults = _rabbits(herd, manager, log, 12, date(2024, 5, 1), 31, ("female", "male"))
+        kits(herd, adults, 6, 51)
+
+    def ending(herd):
+        _rabbits(herd, manager, log, 3, date(2023, 5, 1), 11, ("female", "male"))
+
+    def pair(herd):  # the only male and the only female: a death or sale at the year-end decides the support
+        _rabbits(herd, manager, log, 2, date(2024, 5, 1), 11, ("male", "female"))
+
+    # code, name, phone, owned by seed-mk-uppfodare, paper forms in the inbox, rabbits. M9006 sent two forms.
+    herds = [
+        ("M9001", "Typ A median", None, True, 0, median),
+        ("M9002", "Typ B ovan", "0700000002", True, 0, median),
+        ("M9003", "Typ C stor", None, True, 0, large),
+        ("M9004", "Typ D avslutar", None, True, 0, ending),
+        ("M9005", "Typ E papper", "0700000005", False, 1, median),
+        ("M9006", "Typ F dubbel", None, True, 2, median),
+        ("M9007", "Typ G årsskiftet", None, True, 0, pair),
+        ("M9101", "Paritet digital", None, True, 0, median),
+        ("M9102", "Paritet papper", None, False, 1, median),
+        # Only e2e/arsrapport-lank.spec.ts uses these (the personal links), so it never collides with the Typ tests.
+        ("M9201", "Länk A", None, False, 0, median),
+        ("M9202", "Länk B", None, False, 0, median),
+        ("M9203", "Länk C", None, False, 0, median),
+    ]
+    for code, name, phone, owned, forms, rabbits in herds:
+        account = owner if code == "M9001" else None  # one Member per user; the other herds get the owner role
+        herd = _member_herd(mk, code, name, f"{code.lower()}@example.invalid", account, (None, None), log)
+        if herd is None:
+            continue
+        if owned and account is None:
+            owner.add_role("owner", herd.id)
+        if phone:
+            Member.update(phone=phone).where(Member.membership == herd.membership).execute()
+        rabbits(herd)
+        for _ in range(forms):
+            _paper_form(herd, manager, log)

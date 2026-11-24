@@ -164,6 +164,8 @@ mail.smtp_port = int(os.environ.get("SMTP_PORT") or "587")
 mail.sender = os.environ.get("MAIL_FROM") or "stamboken@gotlandskaninen.se"
 # Its own secret per environment, not SECRET_KEY: link tokens, Message-IDs and address hashes.
 mail.link_secret = os.environ.get("LINK_SECRET", "")
+# Earlier host names whose links still verify after HERDBOOK_HOST changes; new links always use the current host.
+mail.link_hosts = [host.strip() for host in os.environ.get("LINK_HOSTS", "").split(",") if host.strip()]
 
 
 def refuse_unsafe_mail_settings():
@@ -175,6 +177,21 @@ def refuse_unsafe_mail_settings():
     if mail.mode != "log" and not mail.link_secret:
         raise RuntimeError(f"MAIL_MODE={mail.mode} requires LINK_SECRET.")
 
+
+arsrapport = Namespace()  # pylint: disable=C0103
+
+
+def _contacts(raw):
+    """E6: the contacts the expired-link page shows, `[{"ras", "namn", "telefon"}]`; none when unreadable."""
+    try:
+        rows = json.loads(raw or "[]")
+        return [{key: str(row[key]) for key in ("ras", "namn", "telefon")} for row in rows]
+    except (ValueError, TypeError, KeyError):
+        logging.warning("ARSRAPPORT_KONTAKT is not a JSON list of {ras, namn, telefon}; no contacts shown.")
+        return []
+
+
+arsrapport.kontakt = _contacts(os.environ.get("ARSRAPPORT_KONTAKT"))
 
 gmail = Namespace()  # pylint: disable=C0103
 # Reading the association's mailbox into the intake queue (docs/inkorg-gmail.md). Reading moves mail to the trash.

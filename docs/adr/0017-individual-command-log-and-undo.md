@@ -92,6 +92,48 @@ Regler:
 * Tabelltest: för alla andra kommandon än `Undo` ger `ACTOR` samma svar som
   utan.
 
+## Tillägg 2026-11-14 (årsrapport v2, fråga 15)
+
+Den som har rätt till en årsrapport (ägare, skötare, genbanksansvarig, admin
+och en hjälpare genom en post hon har tagit) får makulera och ångra de rader
+som rapportens inskick skrev, så länge rundan är öppen, oavsett vem som skrev
+dem och hur gamla de är. Rätten prövas på rapportnivå, i årsrapportens modul
+utils/arsrapport.py. Den når kommandona som `Role.RAPPORT` tillsammans med
+rapportens operations-id (`report_ops`), och en rad eller ett kommando utanför
+dem vägras. Den vanliga makuleringen, `Undo` och "Ångra död" vägrar
+rapportens rader för alla utom genbanksansvarig och admin och hänvisar till
+Ändra. Koden som aktör (`access_code_id`) kom i steg 3, se tillägget 2026-11-16.
+
+## Tillägg 2026-11-16 (årsrapport v2, steg 3): aktören kan vara en rapportkod
+
+Den som öppnar den personliga länken i inbjudan har inget konto. Länkens kod
+(`report_access_code`) kan därför vara aktör, och `execute` tar en `CodeActor`
+där den tog en användare. Loggraden i `individual_command` får då
+`actor = NULL` och `access_code_id` satt, och exakt en av de två finns
+(`individual_command_actor_check`). Herd-tracking-rader som koden skriver får
+`signature = NULL` och `access_code_id`, och rader den makulerar får
+`voided_by_access_code_id`. Spåret pekar på koden, som pekar på besättningen,
+rundan och huvudmedlemmen som fick länken.
+Länken är sidan rapport med koden efter ett #-tecken: webbläsaren skickar aldrig fragmentet, så koden
+syns i ingen serverlogg. Sidan växlar in koden med ett POST-anrop till API:ets oppna-väg.
+
+Koden har en enda roll, `Role.RAPPORT`, och `ReportGrant` med en kod ger den bara
+för en kanin som finns i kodens besättning nu och står på rapportens lista.
+En kanin som såldes vidare och godkändes ligger i en annan besättning, och
+länken når den inte längre. Policytabellen ger `RAPPORT` raden `Entry` (aldrig
+i GX1/MX1) och raderna för `RecordAttestation`, `RecordDeath` och
+`SetMeasurements`, och `Undo` som förut för rapportens egna operationer.
+Allt annat är nekat: utfärda intyg, byta nummer, flytta mellan kullar,
+beskrivning och försäljning.
+
+En aktör jämförs med art och id, aldrig med id ensamt (`actor_key`): en kod och
+en användare kan ha samma nummer, och en gammal och en ny kod för samma
+besättning är olika aktörer. Därför ger `actor_role` `ACTOR` bara åt den som
+skrev raden.
+
+Fritexten i loggraden rensas efter 13 månader som för användare. En kodrad har
+ingen användare att pseudonymisera, och koden följer med rapporten.
+
 ## Mer information
 
 * [ADR-0014: Behörighetsmodell för Stambokens API](0014-authorization-model.md)
@@ -106,3 +148,5 @@ interna dokumentation.
 |-------|------------|------------|
 | 2026-10-29 | Jonas | Utkast |
 | 2026-11-06 | Jonas | MADR-format, kortad |
+| 2026-11-14 | Jonas | Tillägg: årsrapportens rätt att makulera och ångra sina egna rader (`Role.RAPPORT`, `report_ops`) |
+| 2026-11-16 | Jonas | Tillägg: rapportkoden som aktör (`CodeActor`, `access_code_id`) |
