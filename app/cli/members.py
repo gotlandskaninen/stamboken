@@ -1167,15 +1167,16 @@ def _plan_same_number_links() -> tuple[list, list[str]]:
                 owners.get(herd.id, ()), membership_by_user, membership.id, incomplete
             )
             name = _q(f"{main.first_name} {main.last_name}".strip())
-            line = f"{detail} | huvudmedlem {main.id}: {name} | {relation}"
+            account = f"konto {main.user_id}" if main.user_id else "inget konto"
+            line = f"{detail} | huvudmedlem {main.id}: {name} ({account}) | {relation}"
             if needs_review:
                 listed.append(line)
             else:
-                to_link.append((herd, membership, main.id, line))
+                to_link.append((herd, membership, (main.id, main.user_id), line))
     return to_link, listed
 
 
-def _apply_same_number_link(herd, membership, main_id, actor) -> str | None:
+def _apply_same_number_link(herd, membership, main, actor) -> str | None:
     """Return the reason if the herd could no longer be linked as planned."""
     with DB_PROXY.atomic():
         current = _locked_membership_by_number(membership.member_number)
@@ -1183,8 +1184,10 @@ def _apply_same_number_link(herd, membership, main_id, actor) -> str | None:
             return "medlemsnumret hör inte längre till medlemskapet"
         if current.membership_status != membership.membership_status:
             return "medlemskapets status har ändrats"
-        if not _active_main_members().where(Member.membership == current, Member.id == main_id).exists():
-            return "medlemskapets huvudmedlem har ändrats"
+        main_id, user_id = main  # the account that gets access is part of the plan
+        account = Member.user == user_id if user_id else Member.user.is_null(True)
+        if not _active_main_members().where(Member.membership == current, Member.id == main_id, account).exists():
+            return "huvudmedlemmen eller huvudmedlemmens konto har ändrats"
         try:
             cases = link_herd(herd.id, membership.id, herd_code=herd.herd, genebank_id=herd.genebank_id)
         except Herd.DoesNotExist:
@@ -1232,8 +1235,8 @@ def link_same_number_cmd(apply_links: bool, actor_user_id: int | None, plan_valu
         raise click.ClickException(_PLAN_CHANGED)
 
     skipped = []
-    for herd, membership, main_id, _ in candidates:
-        reason = _apply_same_number_link(herd, membership, main_id, actor)
+    for herd, membership, main, _ in candidates:
+        reason = _apply_same_number_link(herd, membership, main, actor)
         if reason:
             skipped.append(f"  {herd.herd} (id {herd.id}): {reason}")
     click.echo(f"Kopplade: {len(candidates) - len(skipped)}, Överhoppade: {len(skipped)}")

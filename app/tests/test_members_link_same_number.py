@@ -45,7 +45,8 @@ class TestMembersLinkSameNumber(DatabaseTest):
         self.assertIn("Att koppla: 1", output)
         self.assertIn(
             f'G7 (id {herd.id}), genbank "Gotland", inaktiv -> '
-            f'medlemskap nr 7 (id {membership.id}, inactive) | huvudmedlem {main.id}: "Alva Kvistskog" | ingen ägare',
+            f'medlemskap nr 7 (id {membership.id}, inactive) | huvudmedlem {main.id}: "Alva Kvistskog" '
+            "(inget konto) | ingen ägare",
             output,
         )
         self.assertNotIn("@example.invalid", output)
@@ -215,6 +216,23 @@ class TestMembersLinkSameNumber(DatabaseTest):
         self.assertIn("planen har ändrats", result.output)
         self.assertEqual(db.MatrikelAudit.select().count(), 0)
 
+    def test_an_account_linked_to_the_main_member_after_the_plan_is_skipped(self):
+        herd = self._herd("G7")
+        _, main = self._membership(7)
+        _, value = self._plan()
+        account = da.register_user("nytt.konto@example.invalid", "pass", username="nyttkonto", fullname="Ny Person")
+
+        def plan_then_link():
+            plan = _plan_same_number_links()
+            db.Member.update(user=account.id).where(db.Member.id == main.id).execute()
+            return plan
+
+        with patch("cli.members._plan_same_number_links", plan_then_link):
+            result = self._apply(value)
+        self.assertIn(f"G7 (id {herd.id}): huvudmedlemmen eller huvudmedlemmens konto har ändrats", result.output)
+        self.assertIsNone(db.Herd.get_by_id(herd.id).membership_id)
+        self.assertEqual(db.MatrikelAudit.select().count(), 0)
+
     def test_changed_rows_are_skipped_under_lock_and_each_reason_is_printed(self):
         renumbered = self._herd("G7")
         membership, _ = self._membership(7)
@@ -237,7 +255,7 @@ class TestMembersLinkSameNumber(DatabaseTest):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertIn("Kopplade: 0, Överhoppade: 3", result.output)
         self.assertIn(f"G7 (id {renumbered.id}): medlemsnumret hör inte längre till medlemskapet", result.output)
-        self.assertIn(f"G8 (id {swapped.id}): medlemskapets huvudmedlem har ändrats", result.output)
+        self.assertIn(f"G8 (id {swapped.id}): huvudmedlemmen eller huvudmedlemmens konto har ändrats", result.output)
         self.assertIn(f"G9 (id {linked.id}): besättningen är redan kopplad", result.output)
         self.assertIsNone(db.Herd.get_by_id(renumbered.id).membership_id)
         self.assertIsNone(db.Herd.get_by_id(swapped.id).membership_id)
