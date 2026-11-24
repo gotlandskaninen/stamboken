@@ -8,7 +8,7 @@ Registration, visibility and the deletion on a void live with the sale in utils.
 import logging
 from datetime import datetime, timedelta, timezone
 
-from peewee import Case, fn
+from peewee import SQL, Case, fn
 
 import utils.sale_proposal as sale_proposal
 from utils import settings
@@ -350,10 +350,15 @@ def purge_sold_on(now):  # pylint: disable=unused-argument  # every rule takes t
 def purge_membership_optin(now):
     """The yes to membership contact after 12 months, with the e-mail and phone kept only for it."""
     only_for_membership = BuyerContact.contact_consent_at.is_null(True)
-    pending = MailMessage.select(MailMessage.recipient_id).where(
-        MailMessage.recipient_kind == "buyer_contact",
-        MailMessage.kind == "kopare.information",
-        MailMessage.status.in_(("queued", "sending")),
+    # Peewee 3 renders a Select inside UPDATE SET ... CASE as its table alias. Keep the parameters bound.
+    sql, params = (
+        MailMessage.select(MailMessage.recipient_id)
+        .where(
+            MailMessage.recipient_kind == "buyer_contact",
+            MailMessage.kind == "kopare.information",
+            MailMessage.status.in_(("queued", "sending")),
+        )
+        .sql()
     )
     optin = BuyerContact.membership_optin_at
     # Only an already expired yes on entry needs the address for its first notice. The phone can go immediately.
@@ -361,7 +366,7 @@ def purge_membership_optin(now):
         only_for_membership
         & BuyerContact.email.is_null(False)
         & (optin <= BuyerContact.created_at - MEMBERSHIP_OPTIN_FOR)
-        & (BuyerContact.email_review_pending | BuyerContact.id.in_(pending))
+        & (BuyerContact.email_review_pending | BuyerContact.id.in_(SQL(f"({sql})", params)))
     )
     changes = {
         optin: Case(None, [(keep_for_notice, optin)], None),

@@ -628,6 +628,19 @@ class TestInformationSent(BuyerMailTest):
 
 
 class TestMembership(BuyerMailTest):
+    def test_expiry_distinguishes_sent_and_pending_notices_in_the_same_purge(self):
+        day = date.today() - timedelta(days=370)
+        buyer = {**BUYER, "email": "forsta@example.org", "membership_optin": True, "phone": "000000"}
+        sent = record_herd_tracking(self.rabbit, self.gx1, day, "TRANSFER", self.manager, buyer=buyer)
+        self.assertEqual(len(self.send()), 1)
+        pending = record_herd_tracking(
+            self.individuals[1], self.gx1, day, "TRANSFER", self.manager, buyer={**buyer, "email": "andra@example.org"}
+        )
+        self.assertEqual(buyer_contact.purge_membership_optin(datetime.now(timezone.utc)), 2)
+        self.assertIsNone(self._contact(sent.holder_contact_id).email)
+        contact = self._contact(pending.holder_contact_id)
+        self.assertEqual((contact.email, contact.phone), ("andra@example.org", None))
+
     def test_only_with_the_yes_to_membership_contact(self):
         self._sale(WITH_EMAIL)
         self.assertEqual(self.mails("kopare.medlemskap"), [])
