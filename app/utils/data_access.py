@@ -4489,6 +4489,40 @@ PII_KEYS = [
 ]
 
 
+def erase_account(user):
+    """
+    Empties the account `user` (#190), inside the caller's transaction with its row locked: no name, address or
+    picture, no way to sign in and no role. The row stays, as other tables name its id; its e-mail (NOT NULL) becomes
+    the audit pseudonym. The caller keeps `user` as read before, for purge_user_audit_pii and
+    remove_profile_picture. The acceptance of the account rules (#187) holds no personal data and stays.
+    """
+    Authenticators.delete().where(Authenticators.user == user.id).execute()
+    User.update(
+        username=None,
+        fullname=None,
+        email=f"raderad-{user.id}",
+        google_email=None,
+        google_name=None,
+        google_picture=None,
+        profile_picture=None,
+        is_active=False,
+        _privileges="[]",
+    ).where(User.id == user.id).execute()
+
+
+def remove_profile_picture(name):
+    """After the commit: removes an uploaded profile picture that no row names any more. Logs no names."""
+    base = os.path.basename(name or "")  # the row holds a bare file name; never let it reach outside the folder
+    if not base:
+        return
+    try:
+        os.remove(os.path.join(os.getenv("UPLOAD_FOLDER", "/app/uppladdningar"), "profiler", base))
+    except FileNotFoundError:
+        pass
+    except OSError:
+        logger.error("Could not remove the profile picture of an erased account")
+
+
 def purge_user_audit_pii(user_id: int, username: str, email: str) -> int:
     """GDPR Article 17 right-to-erasure helper for audit_log.
 
@@ -4503,10 +4537,12 @@ def purge_user_audit_pii(user_id: int, username: str, email: str) -> int:
     In the same transaction the free text of the user's command log rows
     goes too (ADR-0017); the actor id stays as their pseudonym.
 
-    The caller must capture username and email BEFORE deleting the hbuser
-    row. Returns the number of rows redacted (0 for a fresh account).
-    NOT wired to any endpoint in Phase 17 — user deletion is out of scope;
-    a future deletion endpoint calls this inside the same request atomic().
+    The caller must capture username and email BEFORE emptying the hbuser
+    row. The names the account had before them (its own hbuser snapshots) are
+    matched too, unless another account holds one now. Returns the number of
+    rows redacted (0 for a fresh account). Called by anonymize_person (#190),
+    last in its transaction: from the DROP RULE on, audit_log is locked until
+    the commit, and a lock wait over AUDIT_IP_LOCK_TIMEOUT raises instead.
     """
     pseudonym = f"raderad-{user_id}"
     marker_id = "purge-user-{}-{}".format(user_id, datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ"))
@@ -4514,28 +4550,42 @@ def purge_user_audit_pii(user_id: int, username: str, email: str) -> int:
         # Before the DROP RULE: it locks audit_log exclusively until commit, and an Undo that holds one of these
         # rows writes audit_log through its trigger, so the other order can deadlock.
         purge_command_free_text(datetime.now(timezone.utc), actor_id=user_id)  # the actor stays: a pseudonym
+        # changed_by holds the username or e-mail as it was at the time; read them before the snapshots go
+        earlier = {
+            row[0]
+            for row in DATABASE.execute_sql(
+                """
+                SELECT DISTINCT v FROM audit_log,
+                    LATERAL (VALUES (old_data->>'username'), (old_data->>'email'),
+                                    (new_data->>'username'), (new_data->>'email')) AS earlier(v)
+                WHERE table_name = 'hbuser' AND record_id = %s AND v IS NOT NULL
+                """,
+                (str(user_id),),
+            )
+        }
+        held = {
+            value
+            for row in User.select(User.username, User.email).where(
+                (User.id != user_id) & (User.username.in_(list(earlier)) | User.email.in_(list(earlier)))
+            )
+            for value in (row.username, row.email)
+        }
+        names = sorted(((earlier - held) | {username, email}) - {None})
+        # A queued DROP RULE would hold up every audited write behind it, as in purge_audit_ip.
+        DATABASE.execute_sql("SELECT set_config('lock_timeout', %s, true)", (AUDIT_IP_LOCK_TIMEOUT,))
         DATABASE.execute_sql("DROP RULE IF EXISTS audit_log_no_update ON audit_log")
         cursor = DATABASE.execute_sql(
             """
             UPDATE audit_log
             SET old_data   = old_data - %s::text[],
                 new_data   = new_data - %s::text[],
-                changed_by = CASE WHEN changed_by IN (%s, %s)
+                changed_by = CASE WHEN changed_by = ANY(%s::text[])
                                   THEN %s ELSE changed_by END,
                 ip_address = NULL
             WHERE (table_name = 'hbuser' AND record_id = %s)
-               OR changed_by IN (%s, %s)
+               OR changed_by = ANY(%s::text[])
             """,
-            (
-                PII_KEYS,
-                PII_KEYS,
-                username,
-                email,
-                pseudonym,
-                str(user_id),
-                username,
-                email,
-            ),
+            (PII_KEYS, PII_KEYS, names, pseudonym, str(user_id), names),
         )
         rows_redacted = cursor.rowcount or 0
         if rows_redacted == 0:

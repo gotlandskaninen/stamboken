@@ -604,7 +604,10 @@ def anonymize_person_endpoint(person_id: int):
         return problem(404, "Hittades inte", f"Personen {person_id} finns inte")
     # The caller's pre-lock instance is stale after the scrub — serialise the
     # instance the operation re-read and wrote under its locks.
-    person = anonymize_person(person, current_user)
+    try:
+        person = anonymize_person(person, current_user)
+    except LinkError as err:
+        return problem(err.status, err.title, err.detail, **err.extensions)
     return jsonify(_person_to_dict(person))
 
 
