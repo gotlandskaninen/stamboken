@@ -55,6 +55,7 @@ from utils.herd_contact import ContactConflict, apply_contact_patch, check_flat_
 from utils.herd_contact import contact_field, herd_contact, herd_contacts, legacy_contact_form, lock_herd  # isort: skip
 from utils.database import lock_individuals  # isort: skip
 from utils.database import not_voided  # isort: skip
+from utils.database import snapshot_read  # isort: skip
 from utils.database import validate_date  # isort: skip
 from utils.database import YearlyHerdReport
 
@@ -1590,7 +1591,7 @@ def get_herd(herd_id, user_uuid=None):
         return None
     try:
         data = None
-        with DATABASE.atomic():
+        with snapshot_read():
             herd = Herd.get(Herd.herd == herd_id)
             data = herd.filtered_dict(user)
             data["individuals"] = []
