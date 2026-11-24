@@ -143,9 +143,7 @@ describe("CasePane", () => {
       try {
         view({ subject: " " });
         expect(screen.getByRole("link", { name: next })).toBeVisible();
-        expect(
-          screen.getByRole("heading", { name: mail, exact: true }),
-        ).toBeVisible();
+        expect(screen.getByRole("heading", { name: mail })).toBeVisible();
         expect(
           screen.getByRole("heading", { name: "#12 Beviset för kaninen" }),
         ).toBeVisible();

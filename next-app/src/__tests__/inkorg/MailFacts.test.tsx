@@ -113,6 +113,9 @@ describe("MailThread", () => {
     });
     render(<MailThread item={mail} />);
     const [first, reply] = screen.getAllByRole("article");
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Mejl" }),
+    ).toBeVisible();
     expect(first).toHaveTextContent("ÄmneFörsta ämnet");
     expect(first.querySelector("p")?.textContent).toBe(mail.message);
     expect(screen.getByRole("heading", { name: /^Svar · / })).toBeVisible();

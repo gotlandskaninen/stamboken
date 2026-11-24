@@ -1,3 +1,4 @@
+import { cache } from "react";
 import Link from "next/link";
 import { ApiError, fetchApi } from "@/lib/api";
 import { requireUser } from "@/lib/auth";
@@ -23,6 +24,7 @@ import {
 import styles from "./inkorg.module.css";
 
 export const dynamic = "force-dynamic";
+const requestTime = cache(Date.now);
 
 export default async function InkorgPage({
   searchParams,
@@ -99,7 +101,7 @@ export default async function InkorgPage({
     data.items,
     handlers,
   );
-  const now = Date.now();
+  const now = requestTime();
   return (
     <div className={styles.inbox}>
       {count && <RefreshBadge key={selected} unread={count.unread} />}

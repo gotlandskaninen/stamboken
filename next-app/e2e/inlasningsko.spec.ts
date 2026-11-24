@@ -1,3 +1,4 @@
+import AxeBuilder from "@axe-core/playwright";
 import { expect, test, type Page } from "@playwright/test";
 import { loginInline, TEST_USERS } from "../e2e-shared/auth";
 
@@ -140,11 +141,17 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
       await desk.setViewportSize({ width: 375, height: 812 });
       await desk.goto("/stamboken/inkorg?herd=G1274&order=newest");
       const row = desk.locator(`#case-row-${itemId}`);
+      expect(
+        await desk.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(375);
       await row.click();
       await expect(desk).toHaveURL(new RegExp(`[?&]arende=${itemId}(?:&|$)`));
       await desk.reload();
       const back = desk.getByRole("link", { name: "Tillbaka till listan" });
       await expect(back).toBeVisible();
+      expect(
+        await desk.evaluate(() => document.documentElement.scrollWidth),
+      ).toBeLessThanOrEqual(375);
       await back.click();
       await expect(row).toBeVisible();
       await desk.setViewportSize({ width: 1280, height: 900 });
@@ -154,6 +161,16 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
       await expect(
         desk.getByRole("heading", { name: "Foton", exact: true }),
       ).toBeVisible();
+      for (const colorScheme of ["dark", "light"] as const) {
+        await desk.emulateMedia({ colorScheme });
+        const contrast = await new AxeBuilder({ page: desk })
+          .include('aside[aria-label="Lägen"]')
+          .include('section[aria-label="Ärendelista"]')
+          .include('section[aria-label="Valt ärende"]')
+          .withRules(["color-contrast"])
+          .analyze();
+        expect(contrast.violations, colorScheme).toEqual([]);
+      }
       await desk
         .getByRole("link", { name: "Visa registrering och historik" })
         .click();

@@ -121,6 +121,8 @@ describe("Inkorg", () => {
     await show({ scope: "alla" });
     const first = screen.getByRole("link", { name: /#14/ });
     const second = screen.getByRole("link", { name: /#15/ });
+    expect(first.tabIndex).toBe(0);
+    expect(second.tabIndex).toBe(-1);
     first.focus();
     fireEvent.keyDown(first, { key: "ArrowDown" });
     expect(second).toHaveFocus();
@@ -196,6 +198,23 @@ describe("Inkorg", () => {
         .getByRole("link", { name: "Tillbaka till listan" })
         .getAttribute("href"),
     ).toContain("offset=50");
+  });
+
+  it("keeps a newer search pending when the previous results arrive", async () => {
+    vi.useFakeTimers();
+    const view = await show();
+    const input = screen.getByRole("searchbox");
+    input.focus();
+    fireEvent.change(input, { target: { value: "G" } });
+    vi.advanceTimersByTime(250);
+    fireEvent.change(input, { target: { value: "G12" } });
+    view.rerender(
+      await InkorgPage({ searchParams: Promise.resolve({ herd: "G" }) }),
+    );
+    vi.advanceTimersByTime(250);
+    expect(replace).toHaveBeenLastCalledWith("/stamboken/inkorg?herd=G12", {
+      scroll: false,
+    });
   });
 
   it("updates the herd search and clears the page offset", async () => {

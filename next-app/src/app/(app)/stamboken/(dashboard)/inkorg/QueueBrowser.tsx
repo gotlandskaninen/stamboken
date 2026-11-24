@@ -144,31 +144,50 @@ export function QueueBrowser({
       document.getElementById(`case-row-${last.selected}`)?.focus();
     }
   }, [selected, query]);
+  const lastOpened = useRef<number | null>(null);
   const first = data.items[0]?.id;
+  const tabStop = data.items.some((item) => item.id === selected)
+    ? selected
+    : first;
 
-  // Opening a detail marks it read. Only the wide layout automatically opens the first.
+  // Opening a detail marks it read. Only the wide layout selects automatically.
+  // Keep the previously opened case when it is still visible after filtering.
   useEffect(() => {
-    if (selected !== null || first === undefined) return;
+    if (selected !== null) {
+      lastOpened.current = selected;
+      return;
+    }
+    if (first === undefined) return;
+    const id = data.items.some((item) => item.id === lastOpened.current)
+      ? lastOpened.current
+      : first;
     const wide = window.matchMedia("(min-width: 1100px)");
-    const selectFirst = () => {
-      if (wide.matches)
-        router.replace(queueHref(query, { arende: first }), { scroll: false });
+    const openVisible = () => {
+      const typing =
+        input.current === document.activeElement &&
+        input.current?.value.trim().toUpperCase() !== herd;
+      if (wide.matches && !typing)
+        router.replace(queueHref(query, { arende: id }), { scroll: false });
     };
-    selectFirst();
-    wide.addEventListener("change", selectFirst);
-    return () => wide.removeEventListener("change", selectFirst);
-  }, [first, query, router, selected]);
+    openVisible();
+    wide.addEventListener("change", openVisible);
+    return () => wide.removeEventListener("change", openVisible);
+  }, [data.items, first, query, router, selected, herd]);
 
   useEffect(() => {
     if (input.current && input.current !== document.activeElement)
       input.current.value = herd;
   }, [herd]);
-  useEffect(
-    () => () => {
-      if (timer.current !== null) clearTimeout(timer.current);
-    },
-    [query],
-  );
+  function cancelSearch() {
+    if (timer.current !== null) clearTimeout(timer.current);
+  }
+  useEffect(() => {
+    window.addEventListener("popstate", cancelSearch);
+    return () => {
+      window.removeEventListener("popstate", cancelSearch);
+      cancelSearch();
+    };
+  }, []);
 
   const filterHref = (changes: Record<string, string | null>) =>
     queueHref(query, { arende: null, offset: null, ...changes });
@@ -200,7 +219,14 @@ export function QueueBrowser({
   }
 
   return (
-    <div className={styles.queueGrid} data-show-item={selected !== null}>
+    <div
+      className={styles.queueGrid}
+      data-show-item={selected !== null}
+      onClickCapture={(e) => {
+        if (e.target instanceof Element && e.target.closest("a"))
+          cancelSearch();
+      }}
+    >
       <aside className={styles.queueSidebar} aria-label={t("queue.modesLabel")}>
         <nav className={styles.modeNav} aria-label={t("queue.modesLabel")}>
           {QUEUE_MODES.map((value) => (
@@ -248,7 +274,7 @@ export function QueueBrowser({
             role="search"
             onSubmit={(event) => {
               event.preventDefault();
-              if (timer.current !== null) clearTimeout(timer.current);
+              cancelSearch();
               search(input.current?.value ?? "");
             }}
           >
@@ -261,7 +287,7 @@ export function QueueBrowser({
               autoComplete="off"
               defaultValue={herd}
               onChange={(event) => {
-                if (timer.current !== null) clearTimeout(timer.current);
+                cancelSearch();
                 const value = event.target.value;
                 timer.current = setTimeout(() => search(value), 250);
               }}
@@ -271,15 +297,16 @@ export function QueueBrowser({
             className="sb-input"
             aria-label={t("queue.order")}
             value={params.get("order") || "oldest"}
-            onChange={(event) =>
+            onChange={(event) => {
+              cancelSearch();
               router.replace(
                 filterHref({
                   order: event.target.value === "newest" ? "newest" : null,
                   herd: input.current?.value.trim().toUpperCase() || null,
                 }),
                 { scroll: false },
-              )
-            }
+              );
+            }}
           >
             <option value="oldest">{t("queue.oldest")}</option>
             <option value="newest">{t("queue.newest")}</option>
@@ -298,6 +325,7 @@ export function QueueBrowser({
                   prefetch={false}
                   scroll={false}
                   id={`case-row-${item.id}`}
+                  tabIndex={item.id === tabStop ? 0 : -1}
                   className={styles.queueRow}
                   aria-current={selected === item.id ? "true" : undefined}
                 >
