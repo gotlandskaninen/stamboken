@@ -153,6 +153,23 @@ class ProposalTest(ArsrapportTest):
         ).execute()
         return mail.link_token(buyer_mail.ERASE_PURPOSE, sale.holder_contact_id)
 
+    def test_older_link_clears_proposals_under_both_confirmed_names(self):
+        first = {**BUYER, "name": "Testköpare A", "email": "delad@example.org", "contact_consent": True}
+        second = {**first, "name": "Testköpare B"}
+        with mock.patch.object(settings.mail, "link_secret", "test-link-secret"):
+            token = self.purged_contact_and_link(first)
+            sale = sp.approve(self.propose(self.other, buyer=second), self.manager, now=NOW)
+            self.assertTrue(sale.holder_contact.email_review_pending)
+            buyer_contact.review_buyer_email(sale.holder_contact_id, {"confirm": True}, self.manager)
+            rabbits = self.rabbits(self.h, 3)
+            proposals = [
+                self.propose(rabbit, buyer=buyer)
+                for rabbit, buyer in zip(rabbits, [first, second, {**first, "name": "Annan testköpare"}], strict=True)
+            ]
+            self.assertEqual(buyer_mail.erase_by_link(token), "removed")
+        self.assertFalse(db.BuyerContact.select().exists())
+        self.assertEqual([db.SaleProposal.get_by_id(p.id).buyer for p in proposals], [None, None, proposals[2].buyer])
+
     def test_erasure_waits_for_an_uncommitted_proposal_and_rechecks(self):
         buyer = {**BUYER, "email": "test@example.org", "contact_consent": True}
         with mock.patch.object(settings.mail, "link_secret", "test-link-secret"), ThreadPoolExecutor(1) as worker:

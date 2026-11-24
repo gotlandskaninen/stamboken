@@ -239,24 +239,24 @@ def _same_buyer(contact_id):
     return ids | {contact_id}
 
 
-def _pending_proposals(contact_id):
+def _pending_proposals(contact_ids):
     from utils.herd_tracking import _buyer_name_key  # pylint: disable=import-outside-toplevel
 
-    contact = BuyerContact.get_or_none(BuyerContact.id == contact_id)
-    if contact is None or not (contact.email or contact.erased_email_hash):
+    contacts = list(BuyerContact.select().where(BuyerContact.id.in_(contact_ids)))
+    addresses = {address_hash(c.email): c.email.strip().lower() for c in contacts if c.email}
+    buyers = {
+        (_buyer_name_key(c.name), address_hash(c.email) if c.email else c.erased_email_hash)
+        for c in contacts
+        if c.email or c.erased_email_hash
+    }
+    if not buyers:
         return []
     email = SaleProposal.buyer["email"]
     pending = SaleProposal.select().where(SaleProposal.state == "foreslagen", email.is_null(False))
-    if contact.email:
-        pending = pending.where(fn.lower(fn.trim(email)) == contact.email.strip().lower())
-    # A proposal has not passed the shared-address check yet. Only erase the linked buyer's name and address.
-    name = _buyer_name_key(contact.name)
-    return [
-        p
-        for p in pending
-        if _buyer_name_key(p.buyer["name"]) == name
-        and (contact.email or address_hash(p.buyer["email"]) == contact.erased_email_hash)
-    ]
+    if all(key in addresses for _, key in buyers):
+        pending = pending.where(fn.lower(fn.trim(email)).in_(list(addresses.values())))
+    # An unreviewed proposal must match both the address and one of the buyer's established names.
+    return [p for p in pending if (_buyer_name_key(p.buyer["name"]), address_hash(p.buyer["email"])) in buyers]
 
 
 def erase_by_link(token):
@@ -289,14 +289,14 @@ def erase_by_link(token):
         # The locks a correction takes, in its order (the queue's items, then the rabbits), as
         # utils.buyer_contact.erase_buyer_contact: without them a correction that carries the buyer over to a new
         # row commits in between, and that row loses its buyer without the mark that one was removed.
-        proposals = _pending_proposals(contact_id)
+        ids = _same_buyer(contact_id)
+        proposals = _pending_proposals(ids)
         report_ids = {p.report_id for p in proposals}
         reports = YearlyHerdReport.select().where(YearlyHerdReport.id.in_(report_ids))
         for report in reports.order_by(YearlyHerdReport.round, YearlyHerdReport.herd):
             arsrapport.lock_report(report.round, report.herd)
         if report_ids:
             list(reports.order_by(YearlyHerdReport.id).for_update())
-        ids = _same_buyer(contact_id)
         holding = sales(ids)
         proposed_rabbits = {p.individual_id for p in proposals}
         # All reports before any items, then all rabbits in one pass, even across several reports and sales.
@@ -308,7 +308,7 @@ def erase_by_link(token):
             lock_buyer_addresses([linked.email], erased_hash=linked.erased_email_hash)
         ids = _same_buyer(contact_id)  # again, under the locks: a correction may have put a new contact in
         holding = sales(ids)
-        pending = _pending_proposals(contact_id)
+        pending = _pending_proposals(ids)
         active = HerdTracking.select().where(
             HerdTracking.individual.in_(proposed_rabbits), HerdTracking.voided_at.is_null()
         )
