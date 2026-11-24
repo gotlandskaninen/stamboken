@@ -4,6 +4,7 @@ Flask CLI for member registry operations.
 Usage:
     flask members import <csv_path> [--dry-run | --counts-only]
     flask members link-by-herd [--apply --actor-user-id <id> --plan <value>]
+    flask members link-same-number [--apply --actor-user-id <id> --plan <value>]
 
 `import` expects the MATR2026 paper-matrikel layout (headers matched
 case-insensitively after normalization):
@@ -82,6 +83,7 @@ from utils.matrikel import (
     normalize_postal_code,
     raise_counter_to,
     split_postal_address,
+    write_matrikel_audit,
 )
 from utils.members import WORKSPACE_DOMAIN
 from utils.membership_lifecycle import Status
@@ -673,6 +675,10 @@ def _add_family_members(membership, rows: list[dict], dry_run: bool, report: dic
             )
 
 
+def _flag_genebank_ids(prefix: str) -> list[int]:
+    return [gb.id for gb in Genebank.select(Genebank.id, Genebank.name) if gb.name[:1].upper() == prefix]
+
+
 def _link_flag_herds(nr: int, group: list[dict], membership, dry_run: bool, report: dict) -> None:
     """G/M flags link herd G<Nr>/M<Nr> with link_herd, which compares the herd's contact with the register (#117).
     A missing or ambiguous herd is a warning, never a row skip."""
@@ -680,7 +686,7 @@ def _link_flag_herds(nr: int, group: list[dict], membership, dry_run: bool, repo
         if not any(row[key] for row in group):
             continue
         code = f"{prefix}{nr}"
-        genebanks = [gb.id for gb in Genebank.select(Genebank.id, Genebank.name) if gb.name[:1].upper() == prefix]
+        genebanks = _flag_genebank_ids(prefix)
         matches = (
             list(Herd.select().where(Herd.herd == code, Herd.genebank.in_(genebanks))) if len(genebanks) == 1 else []
         )
@@ -887,15 +893,42 @@ def _count_lines(report: dict) -> list[str]:
     ]
 
 
-@members_cli.command("link-by-herd")
-@click.option("--apply", "apply_links", is_flag=True, help="Write the links (default prints the plan only).")
-@click.option(
+_apply_option = click.option(
+    "--apply", "apply_links", is_flag=True, help="Write the links (default prints the plan only)."
+)
+_actor_option = click.option(
     "--actor-user-id",
     type=int,
     default=None,
     help="Admin/matrikel_admin user recorded as audit actor (required with --apply).",
 )
-@click.option("--plan", "plan_value", default=None, help="Kontrollvärde från planen du läst (required with --apply).")
+_plan_option = click.option("--plan", "plan_value", help="Kontrollvärde från planen du läst (required with --apply).")
+_PLAN_CHANGED = "planen har ändrats sedan du läste den — läs den nya planen ovan och kör om med dess värde"
+
+
+def _link_actor(apply_links, actor_user_id, plan_value):
+    if not apply_links:
+        return None
+    if actor_user_id is None:
+        raise click.UsageError("--apply kräver --actor-user-id <id> (auditloggens aktör)")
+    if plan_value is None:
+        raise click.UsageError("--apply kräver --plan <kontrollvärde> från planen du har läst")
+    actor = User.get_or_none(User.id == actor_user_id)
+    if actor is None or not actor.is_active or not (actor.is_admin or actor.is_matrikel_admin):
+        raise click.UsageError(
+            f"--actor-user-id {actor_user_id}: måste vara ett aktivt konto med rollen admin eller matrikel_admin"
+        )
+    return actor
+
+
+def _plan_checksum(lines) -> str:
+    return hashlib.sha256("\n".join(sorted(lines)).encode()).hexdigest()[:16]
+
+
+@members_cli.command("link-by-herd")
+@_apply_option
+@_actor_option
+@_plan_option
 def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None, plan_value: str | None) -> None:
     """Link accounts to the main member of the membership whose herd they own.
 
@@ -913,27 +946,14 @@ def link_by_herd_cmd(apply_links: bool, actor_user_id: int | None, plan_value: s
     before the first write and prints the new plan. Everything else is listed
     for the register manager. Each link commits on its own (mode "cli").
     """
-    actor = None
-    if apply_links:
-        if actor_user_id is None:
-            raise click.UsageError("--apply kräver --actor-user-id <id> (auditloggens aktör)")
-        if plan_value is None:
-            raise click.UsageError("--apply kräver --plan <kontrollvärde> från planen du har läst")
-        actor = User.get_or_none(User.id == actor_user_id)
-        if actor is None or not actor.is_active or not (actor.is_admin or actor.is_matrikel_admin):
-            raise click.UsageError(
-                f"--actor-user-id {actor_user_id}: måste vara ett aktivt konto med rollen admin eller matrikel_admin"
-            )
-
+    actor = _link_actor(apply_links, actor_user_id, plan_value)
     to_link, listed, already = _plan_herd_links()
     lines = {id(pair): _pair_line(*pair) for pair in to_link}
-    value = hashlib.sha256("\n".join(sorted(lines.values())).encode()).hexdigest()[:16]
+    value = _plan_checksum(lines.values())
     if apply_links and plan_value != value:
         _echo_plan("Att koppla", [lines[id(p)] for p in to_link], listed, already)
         click.echo(f"Kontrollvärde: {value}")
-        raise click.ClickException(
-            "planen har ändrats sedan du läste den — läs den nya planen ovan och kör om med dess värde"
-        )
+        raise click.ClickException(_PLAN_CHANGED)
 
     linked = []
     for pair in to_link:
@@ -1159,3 +1179,150 @@ def _check_owner(code, main, user, incomplete, listed, already, pairs) -> None:
         listed.append(([code], "kontot är redan kopplat till en annan medlem"))
     else:
         pairs.setdefault((main.id, user.id), [main, user, [], reason])[2].append(code)
+
+
+def _owner_membership_detail(owner_ids, membership_by_user, membership_id, incomplete) -> tuple[str, bool]:
+    details = []
+    needs_review = False
+    for user_id in owner_ids:
+        linked_id = membership_by_user.get(user_id)
+        if linked_id is None:
+            relation = "ägaren är inte kopplad till matrikeln"
+        elif linked_id == membership_id:
+            relation = "ägaren hör till medlemskapet"
+        else:
+            relation = "ägaren hör till ett annat medlemskap"
+            needs_review = True
+        if user_id in incomplete:
+            relation += ", kontots ägarroll är ofullständig"
+            needs_review = True
+        details.append(f"konto {user_id}: {relation}")
+    return ", ".join(details) or "ingen ägare", needs_review
+
+
+def _active_main_members():
+    return Member.select(Member.id, Member.membership, Member.user, Member.first_name, Member.last_name).where(
+        Member.role == "huvudmedlem", Member.end_date.is_null(True)
+    )
+
+
+def _plan_same_number_links() -> tuple[list, list[str]]:
+    banks = {prefix: _flag_genebank_ids(prefix) for prefix in "GM"}
+    owners, incomplete = _owner_index()
+    membership_by_user = dict(
+        Member.select(Member.user, Member.membership)
+        .where(Member.user.is_null(False), Member.end_date.is_null())
+        .tuples()
+    )
+    mains = {main.membership_id: main for main in _active_main_members()}
+    memberships = {
+        m.member_number: m
+        for m in Membership.select(Membership.id, Membership.member_number, Membership.membership_status).where(
+            Membership.member_number.is_null(False)
+        )
+    }
+    to_link, listed = [], []
+    herds = Herd.select(Herd, Genebank).join(Genebank).where(Herd.membership.is_null()).order_by(Herd.herd, Herd.id)
+    for herd in herds:
+        code = herd.herd
+        if not re.fullmatch(r"[GM][1-9][0-9]*", code):
+            continue
+        prefix, number = code[0], int(code[1:])
+        status = "inaktiv" if herd.is_active is False else "aktiv"
+        detail = f"{code} (id {herd.id}), genbank {_q(herd.genebank.name)}, {status}"
+        membership = memberships.get(number)
+        if len(banks[prefix]) != 1:
+            listed.append(f"{detail} | {prefix} motsvarar {len(banks[prefix])} genbanker")
+        elif herd.genebank_id != banks[prefix][0]:
+            listed.append(f"{detail} | fel genbank för prefixet")
+        elif membership is None:
+            listed.append(f"{detail} | medlemskap nr {number} saknas")
+        else:
+            detail += f" -> medlemskap nr {number} (id {membership.id}, {membership.membership_status})"
+            main = mains.get(membership.id)
+            if main is None:
+                end_dates = [person.end_date for person in membership.persons.select(Member.end_date)]
+                reason = (
+                    "medlemskapet är avslutat" if end_dates and all(end_dates) else "medlemskapet saknar huvudmedlem"
+                )
+                listed.append(f"{detail} | {reason}")
+                continue
+            relation, needs_review = _owner_membership_detail(
+                owners.get(herd.id, ()), membership_by_user, membership.id, incomplete
+            )
+            name = _q(f"{main.first_name} {main.last_name}".strip())
+            account = f"konto {main.user_id}" if main.user_id else "inget konto"
+            line = f"{detail} | huvudmedlem {main.id}: {name} ({account}) | {relation}"
+            if needs_review:
+                listed.append(line)
+            else:
+                to_link.append((herd, membership, (main.id, main.user_id), line))
+    return to_link, listed
+
+
+def _apply_same_number_link(herd, membership, main, actor) -> str | None:
+    """Return the reason if the herd could no longer be linked as planned."""
+    with DB_PROXY.atomic():
+        current = _locked_membership_by_number(membership.member_number)
+        if current is None or current.id != membership.id:
+            return "medlemsnumret hör inte längre till medlemskapet"
+        if current.membership_status != membership.membership_status:
+            return "medlemskapets status har ändrats"
+        main_id, user_id = main  # the account that gets access is part of the plan
+        account = Member.user == user_id if user_id else Member.user.is_null(True)
+        if not _active_main_members().where(Member.membership == current, Member.id == main_id, account).exists():
+            return "huvudmedlemmen eller huvudmedlemmens konto har ändrats"
+        try:
+            cases = link_herd(herd.id, membership.id, herd_code=herd.herd, genebank_id=herd.genebank_id)
+        except Herd.DoesNotExist:
+            return "besättningen finns inte längre"
+        if cases is None:
+            current_herd = Herd.get_by_id(herd.id)  # still locked by link_herd
+            if current_herd.membership_id is not None:
+                return "besättningen är redan kopplad"
+            if current_herd.herd != herd.herd:
+                return "besättningens kod har ändrats"
+            return "besättningens genbank har ändrats"
+        write_matrikel_audit(
+            actor,
+            "herd_membership_linked",
+            membership,
+            {"herd_id": herd.id, "main_member_id": main_id, "source": "cli"},
+        )
+    return None
+
+
+@members_cli.command("link-same-number")
+@_apply_option
+@_actor_option
+@_plan_option
+def link_same_number_cmd(apply_links: bool, actor_user_id: int | None, plan_value: str | None) -> None:
+    """Link unassigned G/M herds to the membership with the same number.
+
+    Read the plan first: each link gives the household access to the herd.
+    """
+    actor = _link_actor(apply_links, actor_user_id, plan_value)
+    candidates, listed = _plan_same_number_links()
+    lines = [
+        f"Att koppla: {len(candidates)}",
+        *(f"  {line}" for _, _, _, line in candidates),
+        f"Till granskning: {len(listed)}",
+        *(f"  {line}" for line in listed),
+    ]
+    value = _plan_checksum(lines)
+    click.echo("\n".join(lines))
+    click.echo(f"Kontrollvärde: {value}")
+    if not apply_links:
+        click.echo("(endast plan — kör om med --apply --actor-user-id <id> --plan <kontrollvärde>)")
+        return
+    if plan_value != value:
+        raise click.ClickException(_PLAN_CHANGED)
+
+    skipped = []
+    for herd, membership, main, _ in candidates:
+        reason = _apply_same_number_link(herd, membership, main, actor)
+        if reason:
+            skipped.append(f"  {herd.herd} (id {herd.id}): {reason}")
+    click.echo(f"Kopplade: {len(candidates) - len(skipped)}, Överhoppade: {len(skipped)}")
+    for line in skipped:
+        click.echo(line)
