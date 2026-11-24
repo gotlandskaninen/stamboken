@@ -577,6 +577,7 @@ class TestItemsFromMail(GmailTest):
         self.read()
         (item,) = self.items()
         self.assertEqual(item.message, "Här är intyget.")
+        self.assertEqual(item.kind, "meddelande")
         self.assertEqual(self.documents(item), [])
         (skipped,) = item.events.get().detail["not_saved_reasons"]
         self.assertEqual(skipped["name"], "Länkad bild")
@@ -584,17 +585,22 @@ class TestItemsFromMail(GmailTest):
 
     def test_closed_mail_with_only_a_linked_image_or_a_refused_attachment_is_purged(self):
         linked = message()
-        linked.add_alternative('<img src="https://example.org/pixel.png">', subtype="html")
+        linked.add_alternative(
+            '<img src="https://example.org/pixel.png" width="1">'
+            f'<img src="https://example.org/logo.png" width="600" height="{inbox_gmail.MIN_SIDE - 1}">',
+            subtype="html",
+        )
         self.fake.deliver(linked)
         self.fake.deliver(message(files=[("bilaga.txt", "text/plain", b"test")]))
         self.read()
         items = self.items()
-        self.assertCountEqual(
-            [item.events.get().detail["not_saved"] for item in items], [["Länkad bild"], ["bilaga.txt"]]
-        )
+        details = {item.kind: item.events.get().detail for item in items}
+        self.assertNotIn("not_saved", details["meddelande"])
+        self.assertNotIn("not_saved_reasons", details["meddelande"])
+        self.assertEqual(details["mail"]["not_saved"], ["bilaga.txt"])
         closed_at = inbox.now()
         for item in items:
-            self.assertEqual((item.kind, item.documents.count()), ("mail", 0))
+            self.assertEqual(item.documents.count(), 0)
             item.state, item.closed_at = "klar", closed_at
             item.save()
         limit = closed_at + inbox.months(13)

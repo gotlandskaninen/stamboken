@@ -66,6 +66,11 @@ _SPF = re.compile(r"spf=pass\s.*\bsmtp\.mailfrom=(\S+)", re.I | re.S)
 _DKIM = re.compile(r"dkim=pass\s+header\.[id]=@?([a-z0-9.-]+)(?:\s|$)", re.I)
 
 
+def _small_side(value):
+    pixels = re.fullmatch(r"([0-9]+(?:\.[0-9]+)?)(?:px)?", (value or "").strip(), re.I)
+    return bool(pixels and float(pixels[1]) < MIN_SIDE)
+
+
 class _HtmlText(HTMLParser):
     """
     An HTML-only mail as text, by the standard library's parser (linear, where regexes over tags were quadratic):
@@ -88,8 +93,11 @@ class _HtmlText(HTMLParser):
         elif tag == "br":
             self.parts.append("\n")
         elif tag == "img" and not self.hidden:
-            src = (dict(attrs).get("src") or "").strip()
-            if src.lower().startswith(("https://", "http://")):
+            attrs = dict(attrs)
+            src = (attrs.get("src") or "").strip()
+            if src.lower().startswith(("https://", "http://")) and not any(
+                _small_side(attrs.get(side)) for side in ("width", "height")
+            ):
                 self.image_urls.add(src)
 
     def handle_endtag(self, tag):
@@ -266,6 +274,7 @@ def read_message(gmail_id, raw, received_at=None):
     text, linked_image = _body(msg)
     stored, skipped = _store(_attachments(msg))
     try:
+        kind = "mail" if stored or skipped else "meddelande"
         if linked_image:
             skipped.append(
                 {
@@ -283,7 +292,16 @@ def read_message(gmail_id, raw, received_at=None):
                 maybe = replied.id if replied is not None else None
                 verified = authenticated(msg, sender)
                 item = _new_item(
-                    gmail_id, sender, subject, text, received_at, stored, skipped, maybe_item=maybe, verified=verified
+                    gmail_id,
+                    sender,
+                    subject,
+                    text,
+                    received_at,
+                    stored,
+                    skipped,
+                    kind=kind,
+                    maybe_item=maybe,
+                    verified=verified,
                 )
                 if stored and verified:  # never a receipt to an address the sender only typed
                     _receipt(item, len(stored))
@@ -544,7 +562,19 @@ def _attach_reply(item, reply_sender, subject, text, stored=(), skipped=()):
         inbox.notify(handler, "svar", item)
 
 
-def _new_item(gmail_id, sender, subject, text, received_at, stored=(), skipped=(), maybe_item=None, verified=False):
+def _new_item(
+    gmail_id,
+    sender,
+    subject,
+    text,
+    received_at,
+    stored=(),
+    skipped=(),
+    *,
+    kind="meddelande",
+    maybe_item=None,
+    verified=False,
+):
     """
     An item of kind mail (with attachments) or meddelande, its herd guessed from the sender; with no match the
     genebank is unknown and every queue worker is told. The files not stored and the case a reply may be about
@@ -553,7 +583,7 @@ def _new_item(gmail_id, sender, subject, text, received_at, stored=(), skipped=(
     """
     member, herd, genebank = _match(sender)
     item = InboxItem.create(
-        kind="mail" if stored or skipped else "meddelande",
+        kind=kind,
         genebank=genebank,
         herd=herd,
         member=member,
