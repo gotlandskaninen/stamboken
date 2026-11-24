@@ -3,7 +3,11 @@
 import { revalidatePath } from "next/cache";
 import { fetchApi } from "@/lib/api";
 import type { MembershipStatus } from "@/lib/membershipStatus";
-import type { BillingAddress } from "./types";
+import type {
+  BillingAddress,
+  HerdLinkConfirmation,
+  Organization,
+} from "./types";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -11,7 +15,7 @@ export type AddPersonResult =
   | { ok: true; duplicateContactEmail: boolean }
   | { ok: false; error: string };
 
-export type MembershipPatch = Partial<BillingAddress> & {
+export type MembershipPatch = Partial<BillingAddress & Organization> & {
   membership_status?: MembershipStatus;
   member_number?: number;
   address?: string | null;
@@ -29,7 +33,7 @@ export type PersonInput = {
   role?: string;
 };
 
-export type MembershipCreateInput = {
+export type MembershipCreateInput = Partial<Organization> & {
   first_name: string;
   last_name: string;
   email?: string | null;
@@ -278,5 +282,53 @@ export async function unlinkPersonUser(
     return { ok: true };
   } catch (err) {
     return { ok: false, error: extractError(err) };
+  }
+}
+
+export async function linkMembershipHerd(
+  membershipId: number,
+  herdId: number,
+  confirmToken?: string,
+): Promise<
+  | { ok: true }
+  | { ok: false; error: string; resetSelection: boolean }
+  | { ok: false; confirmRequired: HerdLinkConfirmation }
+> {
+  try {
+    await fetchApi(`/v2/memberships/${membershipId}/herds`, {
+      method: "POST",
+      body: JSON.stringify({ herd_id: herdId, confirm_token: confirmToken }),
+      headers: JSON_HEADERS,
+    });
+    revalidateMatrikel(membershipId);
+    return { ok: true };
+  } catch (err) {
+    const problem = err as {
+      status?: number;
+      type?: string;
+      extensions?: Partial<HerdLinkConfirmation>;
+    };
+    const data = problem?.extensions;
+    if (
+      problem?.status === 409 &&
+      problem.type === "confirm-required" &&
+      data?.preview &&
+      typeof data.confirm_token === "string"
+    ) {
+      return {
+        ok: false,
+        confirmRequired: {
+          preview: data.preview,
+          confirm_token: data.confirm_token,
+        },
+      };
+    }
+    return {
+      ok: false,
+      error: extractError(err),
+      resetSelection:
+        problem?.status === 404 ||
+        (problem?.status === 409 && problem.type === "herd-unavailable"),
+    };
   }
 }

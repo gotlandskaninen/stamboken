@@ -32,7 +32,7 @@ vi.mock("../pointing", async (orig) => ({
   shrink: (...a: unknown[]) => shrinkMock(...a),
 }));
 
-import { TyckTillDialog } from "../TyckTillDialog.client";
+import { TyckTillDialog, TyckTillLink } from "../TyckTillDialog.client";
 
 const member = { id: 1, email: "anna@exempel.se" } as UserContext;
 
@@ -248,5 +248,27 @@ describe("TyckTillDialog", () => {
       send.mock.calls[0][0].get("inskick_id"),
     );
     vi.useRealTimers();
+  });
+});
+
+describe("two entries on one page", () => {
+  it("gives each sheet its own labels and focuses the open one", () => {
+    render(
+      <>
+        <TyckTillLink>Sidfot</TyckTillLink>
+        <TyckTillLink label="Tyck till om sidan">
+          <span>Tyck till</span>
+        </TyckTillLink>
+      </>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Sidfot" }));
+    fireEvent.click(screen.getAllByRole("button", { name: "Avbryt" })[0]);
+    fireEvent.click(screen.getByRole("button", { name: "Tyck till om sidan" }));
+    const fields = screen.getAllByLabelText("Beskriv med egna ord");
+    expect(fields).toHaveLength(2);
+    expect(new Set(fields.map((f) => f.id)).size).toBe(2);
+    const open = document.querySelector("dialog[open]")!;
+    fireEvent.click(open.querySelector('button[type="submit"]')!);
+    expect(open.contains(document.activeElement)).toBe(true);
   });
 });

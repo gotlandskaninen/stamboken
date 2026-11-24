@@ -7,6 +7,7 @@ import datetime
 import logging
 import os
 import re
+import struct
 import threading
 import uuid
 from contextlib import contextmanager
@@ -159,7 +160,16 @@ def _each_image(file, room, handle, too_many=None):
             if source.width * source.height > MAX_PIXELS:  # Image.open reads only the header
                 raise _Refused(_too_many_pixels())
             source.load()
-            image = ImageOps.exif_transpose(source).convert("RGB")
+            try:
+                image = ImageOps.exif_transpose(source)
+            except (SyntaxError, struct.error, ValueError, TypeError, OSError):
+                image = source  # damaged metadata, but the pixels have already been decoded
+            if image.has_transparency_data:
+                with image.convert("RGBA") as rgba:
+                    image = Image.new("RGB", rgba.size, "white")
+                    image.paste(rgba, mask=rgba)
+            else:
+                image = image.convert("RGB")
     try:
         handle(image)
     finally:
@@ -370,7 +380,7 @@ def item_detail(item_id):
                 purchase_notice.close_registered([item])  # a purchase notice whose transfer is registered closes itself
     except inbox.InboxError as exc:  # the purge took it meanwhile
         return problem(exc.status, exc.title, exc.detail)
-    return jsonify(inbox.item_detail(InboxItem.get_by_id(item.id)))
+    return jsonify(inbox.item_detail(InboxItem.get_by_id(item.id), current_user))
 
 
 # [Next.js] The rabbit's active sales, for the sale panel: does the proof show a sale already registered, and

@@ -9,6 +9,7 @@ import hashlib
 import io
 import math
 import os
+import re
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -35,9 +36,10 @@ from utils.database import (
     User,
     YearlyHerdReport,
     YearlyReportRound,
+    not_voided,
 )
 from utils.inbox_proposal import build_proposal
-from utils.individual_number_v2 import parse_number
+from utils.individual_number_v2 import NUMBER_PATTERN, parse_number
 from utils.individual_policy import Role
 from utils.log_masking import mask_tokens
 from utils.mail import enqueue_mail, forget_recipient, mail_kind
@@ -799,6 +801,27 @@ def documents_json(documents, report=False):
     ]
 
 
+_MENTION = re.compile(rf"\b{NUMBER_PATTERN.pattern}\b")
+
+
+def _rabbit_numbers(item, events, user):
+    """Numbers mentioned in incoming mail that this reader can open, as in get_individual."""
+    texts = [item.message] if item.kind in ("mail", "meddelande") else []
+    for event in events:
+        detail = event.detail or {}
+        if event.kind in ("inkommen", "svar"):
+            texts.append(detail.get("subject"))
+        if event.kind == "svar":
+            texts.append(detail.get("text"))
+    mentions = _MENTION.finditer(" ".join(text for text in texts if text))
+    numbers = {match[0].upper() for match in mentions if parse_number(match[0])}
+    if not numbers:
+        return []
+    accessible = user.accessible_genebanks
+    rabbits = Individual.select().where(Individual.number.in_(numbers), not_voided())
+    return sorted(r.number for r in rabbits if r.current_herd.genebank_id in accessible)
+
+
 def report_photo(item):
     """A certificate photo from the yearly report (4b, G5): its rabbit is registered, and the reading checks it."""
     return item.kind == "kontroll" and item.ref_type == "individual"
@@ -874,10 +897,10 @@ def _report_year(item):
     )
 
 
-def item_detail(item):
+def item_detail(item, user):
     """
     GET …/<id>: the list form plus the message, the documents, the history, a sale proposal's year, a kontroll
-    item's or a sent upload's structured fields (ref_data), and a report photo's rabbit.
+    item's or a sent upload's structured fields (ref_data), a report photo's rabbit, and rabbits the reader can open.
     """
     documents = list(item.documents.order_by(InboxDocument.id))
     events = list(item.events.order_by(InboxEvent.at, InboxEvent.id))
@@ -887,6 +910,7 @@ def item_detail(item):
         "report_year": _report_year(item),
         "ref_data": item.ref_data,
         "message": item.message,
+        "mentioned_individuals": _rabbit_numbers(item, events, user),
         "sender_address": item.sender_address,
         "documents": documents_json(documents, report_photo(item)),
         "events": [

@@ -116,6 +116,8 @@ class TestPurgeUserAuditPii(DatabaseTest):
             row = db.AuditLog.get((db.AuditLog.table_name == "herd") & (db.AuditLog.record_id == record_id))
             self.assertEqual(row.changed_by, f"raderad-{user.id}")
             self.assertIsNone(row.ip_address)
+            # the values are the herd's, not the author's: they stay (#190)
+            self.assertEqual(row.new_data["email"], "kontakt@example.com")
 
     def test_zero_history_returns_zero(self):
         """No history: returns 0, does not raise."""

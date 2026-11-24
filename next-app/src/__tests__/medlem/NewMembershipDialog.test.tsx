@@ -59,6 +59,44 @@ function fill(label: string, value: string) {
 }
 
 describe("NewMembershipDialog", () => {
+  it("requires the organisation's name and accepts an unnamed contact", async () => {
+    render(<NewMembershipDialog open onClose={() => {}} />);
+    const create = screen.getByRole("button", { name: "Skapa" });
+    const organization = screen.getByRole("checkbox", {
+      name: "Juridisk person (organisation)",
+    });
+    expect(create).toBeDisabled();
+    fireEvent.click(organization);
+    expect(field("Organisationsnamn")).toBeRequired();
+    expect(field("Organisationsnamn")).toHaveAttribute("maxlength", "200");
+    fill("Organisationsnamn", "  ");
+    expect(create).toBeDisabled();
+    fill("Organisationsnamn", "Exempelföreningen");
+    expect(create).toBeEnabled();
+    expect(field("Kontaktpersonens förnamn")).not.toBeRequired();
+    expect(field("Kontaktpersonens efternamn")).not.toBeRequired();
+    fill("Organisationsnummer", "12345-6789");
+    expect(create).toBeDisabled();
+    fill("Organisationsnummer", "123456-7897");
+    fireEvent.click(organization);
+    expect(create).toBeDisabled();
+    expect(
+      screen.queryByLabelText("Organisationsnummer"),
+    ).not.toBeInTheDocument();
+    fireEvent.click(organization);
+    fireEvent.click(create);
+    await waitFor(() =>
+      expect(createMembershipMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          organization_name: "Exempelföreningen",
+          organization_number: "123456-7897",
+          first_name: "",
+          last_name: "",
+        }),
+      ),
+    );
+  });
+
   it("sends the address trio and navigates to the new membership", async () => {
     render(<NewMembershipDialog open onClose={() => {}} />);
 

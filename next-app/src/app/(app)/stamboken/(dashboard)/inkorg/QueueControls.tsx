@@ -40,11 +40,13 @@ export function RowActions({
   canTake,
   canAssign,
   people,
+  compact = true,
 }: {
   id: number;
   canTake: boolean;
   canAssign: boolean;
   people: Person[];
+  compact?: boolean;
 }) {
   const router = useRouter();
   const [pending, start] = useTransition();
@@ -69,7 +71,7 @@ export function RowActions({
       {canTake && (
         <button
           type="button"
-          className="sb-btn sb-btn-sm"
+          className={compact ? "sb-btn sb-btn-sm" : "sb-btn"}
           disabled={pending}
           onClick={take}
         >
@@ -86,7 +88,7 @@ export function RowActions({
           />
           <button
             type="button"
-            className="sb-btn sb-btn-secondary sb-btn-sm"
+            className={`sb-btn sb-btn-secondary${compact ? " sb-btn-sm" : ""}`}
             disabled={pending || !to}
             onClick={assign}
           >

@@ -730,13 +730,13 @@ class TestReportPhotoReading(AddRabbitTest):
         self.assertEqual(read.interpretation_status, "klar")
         self.assertIn("fields", read.proposal)
         self.assertEqual(db.InboxDocument.get_by_id(queued_doc.id).interpretation_status, "vantar")
-        detail = inbox.item_detail(item)
+        detail = inbox.item_detail(item, self.helper)
         self.assertEqual(
             {key: detail["registered"][key] for key in ("paper_number", "paper_certificate", "mother", "name")},
             {"paper_number": "G9001-2511", "paper_certificate": "P-2511", "mother": self.doe.number, "name": "Kulla"},
         )
         self.assertEqual(detail["documents"][0]["proposal"], read.proposal)
-        self.assertIsNone(inbox.item_detail(queued)["registered"])
+        self.assertIsNone(inbox.item_detail(queued, self.helper)["registered"])
 
     def test_a_photo_uploaded_for_a_purchase_is_read_once_a_rabbit_is_registered_from_it(self):
         """The purpose is the client's word: a rabbit's photo is read whatever it was uploaded for (G5)."""
@@ -963,7 +963,7 @@ class TestReportPhotoCheck(AddRabbitTest):
         self.assertEqual((item.state, item.ref_id is not None), ("klar", True))
         self.assertIsNotNone(db.InboxDocument.get_by_id(self.document.id).done_at)
         self.assertEqual(response.get_json()["document"]["status"], "klar")  # checked, not dismissed
-        self.assertEqual(inbox.item_detail(item)["documents"][0]["status"], "klar")
+        self.assertEqual(inbox.item_detail(item, self.helper)["documents"][0]["status"], "klar")
         checked = item.events.where(db.InboxEvent.kind == "kontrollerad").get()
         self.assertEqual((checked.user_id, checked.detail["outcome"]), (self.helper.id, "stammer"))
         closed = item.events.where(db.InboxEvent.kind == "lage").order_by(db.InboxEvent.id.desc()).first()
@@ -1001,7 +1001,7 @@ class TestReportPhotoCheck(AddRabbitTest):
         self.assertEqual(self.check("stammer").status_code, 200)
         self.assertEqual(self.reload(self.item_id).state, "klar")
         self.assertEqual(self.queue("/lage", state="tagen").status_code, 200)
-        shown = inbox.item_detail(self.reload(self.item_id))["documents"][0]
+        shown = inbox.item_detail(self.reload(self.item_id), self.manager)["documents"][0]
         self.assertEqual((shown["status"], shown["done_at"]), ("sparad", None))  # Stämmer and Rättat are back
         turned = self.client.patch(f"/api/v2/inkorg/{self.item_id}/dokument/{self.document.id}", json={"rotation": 90})
         self.assertEqual(turned.status_code, 200, turned.get_data(as_text=True))

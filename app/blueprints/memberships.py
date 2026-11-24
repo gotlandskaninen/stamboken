@@ -11,8 +11,8 @@ from datetime import date
 
 from flask import Blueprint, jsonify, request
 from flask_login import current_user
-from peewee import IntegrityError, fn
-from utils.database import BILLING_FIELDS, DB_PROXY, Herd, HerdAccessGrant, Member, Membership, User
+from peewee import IntegrityError, OperationalError, fn
+from utils.database import BILLING_FIELDS, DB_PROXY, Genebank, Herd, HerdAccessGrant, Member, Membership, User
 from utils.herd_contact import on_membership_active
 from utils.login_code import AddressTaken
 from utils.matrikel import (
@@ -20,6 +20,7 @@ from utils.matrikel import (
     AddressValidationError,
     ConfirmRequired,
     LinkError,
+    PersonNameRequired,
     add_person,
     anonymize_person,
     create_grant,
@@ -27,6 +28,8 @@ from utils.matrikel import (
     grant_is_active,
     is_anonymized,
     link_member_user,
+    link_membership_herd,
+    membership_herd_candidates,
     parse_billing_fields,
     parse_postal_fields,
     raise_counter_to,
@@ -42,11 +45,13 @@ from utils.matrikel import (
     write_matrikel_audit,
 )
 from utils.membership_lifecycle import Status, TransitionRefused
+from utils.organization import OrganizationValidationError, parse_organization_fields
 
 from blueprints.common import (
     EMAIL_RE,
     json_login_required,
     matrikel_admin_required,
+    membership_organization_fields,
     problem,
 )
 
@@ -119,6 +124,7 @@ def _membership_to_dict(ms: Membership, *, account_details: bool = True) -> dict
     data = {
         "id": ms.id,
         "member_number": ms.member_number,
+        **membership_organization_fields(ms, account_details=account_details),
         "membership_status": ms.membership_status,
         "address": ms.address,
         "postal_code": ms.postal_code,
@@ -186,12 +192,6 @@ def create_membership_endpoint():
         if key in body and body[key] is not None and not isinstance(body[key], str):
             return problem(400, "Ogiltigt fält", f"{key} måste vara en sträng eller null")
 
-    first_name = (body.get("first_name") or "").strip()
-    last_name = (body.get("last_name") or "").strip()
-    if not first_name or not last_name:
-        return problem(
-            400, "Namn krävs", "first_name och last_name är obligatoriska", fields=["first_name", "last_name"]
-        )
     email = (body.get("email") or "").strip() or None
     if email and not EMAIL_RE.match(email):
         return problem(400, "Ogiltig e-postadress", "email har ogiltigt format")
@@ -209,8 +209,10 @@ def create_membership_endpoint():
     try:
         membership = create_membership(
             {
-                "first_name": first_name,
-                "last_name": last_name,
+                "first_name": body.get("first_name"),
+                "last_name": body.get("last_name"),
+                "organization_name": body.get("organization_name"),
+                "organization_number": body.get("organization_number"),
                 "email": email,
                 "phone": (body.get("phone") or "").strip() or None,
                 "address": (body.get("address") or "").strip() or None,
@@ -223,6 +225,10 @@ def create_membership_endpoint():
             },
             current_user,
         )
+    except OrganizationValidationError as err:
+        return problem(400, "Ogiltiga organisationsuppgifter", str(err))
+    except PersonNameRequired as err:
+        return problem(400, "Namn krävs", str(err), fields=["first_name", "last_name"])
     except AddressTaken:
         return _address_taken()
     return jsonify(_membership_to_dict(membership)), 201
@@ -305,9 +311,6 @@ def patch_membership(membership_id: int):
                 )
         desired["member_number"] = raw
 
-    if not desired:
-        return jsonify(_membership_to_dict(ms))
-
     before = {}
     after = {}
     try:
@@ -334,6 +337,15 @@ def patch_membership(membership_id: int):
             # change": nothing written, no audit, and the stale entity echoed
             # back as if it were current.
             ms = Membership.select().where(Membership.id == ms.id).for_update().get()
+            desired.update(parse_organization_fields(body, ms))
+            if ms.organization_name and "organization_name" in desired and desired["organization_name"] is None:
+                main = Member.get_or_none(
+                    Member.membership == ms, Member.role == "huvudmedlem", Member.end_date.is_null()
+                )
+                if main and not (main.first_name and main.last_name):
+                    raise OrganizationValidationError(
+                        "Ange huvudmedlemmens för- och efternamn innan organisationen tas bort"
+                    )
             for field, new in desired.items():
                 if new != getattr(ms, field):
                     before[field] = getattr(ms, field)
@@ -384,6 +396,8 @@ def patch_membership(membership_id: int):
                     ms,
                     {"before": other_before, "after": other_after},
                 )
+    except OrganizationValidationError as err:
+        return problem(400, "Ogiltiga organisationsuppgifter", str(err))
     except _MemberNumberClash:
         # Rolled back — the counter keeps the value it had before this request.
         return problem(
@@ -391,6 +405,8 @@ def patch_membership(membership_id: int):
             "Medlemsnumret används redan",
             f"Medlemsnummer {after['member_number']} tillhör ett annat medlemskap",
         )
+    except AddressTaken:
+        return _address_taken()
     except TransitionRefused:
         # Rolled back, so nothing of this request is kept.
         return problem(
@@ -432,15 +448,6 @@ def add_membership_person(membership_id: int):
         if key in body and body[key] is not None and not isinstance(body[key], str):
             return problem(400, "Ogiltigt fält", f"{key} måste vara en sträng eller null")
 
-    first_name = (body.get("first_name") or "").strip()
-    last_name = (body.get("last_name") or "").strip()
-    if not first_name or not last_name:
-        return problem(
-            400,
-            "Namn krävs",
-            "first_name och last_name är obligatoriska",
-            fields=["first_name", "last_name"],
-        )
     email = (body.get("email") or "").strip() or None
     if email and not EMAIL_RE.match(email):
         return problem(400, "Ogiltig e-postadress", "email har ogiltigt format")
@@ -450,9 +457,17 @@ def add_membership_person(membership_id: int):
     try:
         person = add_person(
             ms,
-            {"first_name": first_name, "last_name": last_name, "email": email, "phone": phone, "role": role},
+            {
+                "first_name": body.get("first_name"),
+                "last_name": body.get("last_name"),
+                "email": email,
+                "phone": phone,
+                "role": role,
+            },
             current_user,
         )
+    except PersonNameRequired as err:
+        return problem(400, "Namn krävs", str(err), fields=["first_name", "last_name"])
     except ValueError as err:
         # Covers unknown role and "inactive membership" (add_person's guard).
         return problem(400, "Kan inte lägga till person", str(err))
@@ -478,16 +493,14 @@ def patch_person(person_id: int):
     if not isinstance(body, dict):
         return problem(400, "Ogiltig begäran", "Begäran måste vara ett JSON-objekt")
 
-    # Validation (400s) runs on the body alone, before the transaction; the
-    # values are applied to the row re-read under the membership lock below.
+    # An empty name depends on the person's role and the locked membership below.
     proposed = {}
 
     for field in ("first_name", "last_name"):
         if field in body:
-            val = (body[field] or "").strip() if isinstance(body[field], str) else ""
-            if not val:
-                return problem(400, "Ogiltigt namn", f"{field} får inte vara tomt")
-            proposed[field] = val
+            if not isinstance(body[field], str):
+                return problem(400, "Ogiltigt namn", "För- och efternamn måste vara text")
+            proposed[field] = body[field].strip()
 
     if "email" in body:
         if body["email"] is not None and not isinstance(body["email"], str):
@@ -518,7 +531,7 @@ def patch_person(person_id: int):
             # (utils.matrikel.anonymize_person) that committed while this
             # request was in flight would otherwise get the body's name, phone
             # and e-mail written straight back onto the scrubbed row.
-            Membership.select().where(Membership.id == membership_id).for_update().get()
+            membership = Membership.select().where(Membership.id == membership_id).for_update().get()
             person = Member.get_or_none(Member.id == person_id)
             if person is None:
                 return problem(404, "Hittades inte", f"Personen {person_id} finns inte")
@@ -553,6 +566,14 @@ def patch_person(person_id: int):
                     before[field] = getattr(person, field)
                     after[field] = val
                     setattr(person, field, val)
+
+            # Only a real change of name or role: the form resends unchanged names and the role.
+            if {"first_name", "last_name", "role"} & after.keys():
+                organization_contact = (
+                    membership.organization_name and person.role == "huvudmedlem" and person.end_date is None
+                )
+                if not organization_contact and not (person.first_name.strip() and person.last_name.strip()):
+                    return problem(400, "Namn krävs", "Både förnamn och efternamn krävs")
 
             if not after:
                 return jsonify(_person_to_dict(person))
@@ -602,7 +623,16 @@ def anonymize_person_endpoint(person_id: int):
         return problem(404, "Hittades inte", f"Personen {person_id} finns inte")
     # The caller's pre-lock instance is stale after the scrub — serialise the
     # instance the operation re-read and wrote under its locks.
-    person = anonymize_person(person, current_user)
+    try:
+        person = anonymize_person(person, current_user)
+    except LinkError as err:
+        return problem(err.status, err.title, err.detail, **err.extensions)
+    except OperationalError as exc:
+        # The account's audit purge locks audit_log: another erasure or a long write held it (deadlock or
+        # lock_timeout), and the transaction rolled back whole.
+        if not any(getattr(e, "pgcode", None) in ("40P01", "55P03") for e in (exc, exc.__cause__, exc.__context__)):
+            raise
+        return problem(503, "Försök igen", "Anonymiseringen krockade med en annan ändring. Försök igen om en stund.")
     return jsonify(_person_to_dict(person))
 
 
@@ -627,6 +657,37 @@ def set_main_member(membership_id: int):
     except AddressTaken:
         return _address_taken()
     return jsonify(_membership_to_dict(ms))
+
+
+@memberships_bp.route("/v2/memberships/<int:membership_id>/herd-candidates", methods=["GET"])
+@json_login_required
+@matrikel_admin_required
+def list_herd_candidates(membership_id: int):
+    if not Membership.select().where(Membership.id == membership_id).exists():
+        return problem(404, "Hittades inte", f"Medlemskapet {membership_id} finns inte")
+    genebank_id = request.args.get("genebank_id", type=int)
+    if genebank_id is None or not Genebank.select().where(Genebank.id == genebank_id).exists():
+        return problem(400, "Ogiltig genbank", "Ange en befintlig genbank med genebank_id.")
+    return jsonify({"herds": membership_herd_candidates(membership_id, genebank_id)})
+
+
+@memberships_bp.route("/v2/memberships/<int:membership_id>/herds", methods=["POST"])
+@json_login_required
+@matrikel_admin_required
+def link_herd_endpoint(membership_id: int):
+    body = request.get_json(silent=True)
+    herd_id = body.get("herd_id") if isinstance(body, dict) else None
+    if isinstance(herd_id, bool) or not isinstance(herd_id, int):
+        return problem(400, "Ogiltig besättning", "herd_id måste vara ett heltal")
+    token = body.get("confirm_token")
+    if "confirm_token" in body and not isinstance(token, str):
+        return problem(400, "Ogiltigt fält", "confirm_token måste vara en sträng")
+    try:
+        herd = link_membership_herd(membership_id, herd_id, token, current_user)
+    except LinkError as err:
+        return problem(err.status, err.title, err.detail, **err.extensions)
+    auth_log.info("herd linked actor=%s membership=%s herd=%s", current_user.id, membership_id, herd_id)
+    return jsonify(herd), 201
 
 
 # [Next.js] Phase 19 — kontokoppling

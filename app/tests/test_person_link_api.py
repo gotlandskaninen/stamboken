@@ -187,6 +187,14 @@ class TestLinkEndpoint(LinkApiBase):
         self.assertIsNone(resp.get_json()["user"])
         self.assertEqual(self.link(self.skotare.id, {"user_id": self.account.id}).status_code, 200)
 
+    def test_unnamed_account_holder_identified_by_organization(self):
+        org = db.Membership.create(member_number=7, organization_name="Exempelby museum")
+        db.Member.create(membership=org, first_name="", last_name="", user=self.account)
+        self.login("matrikel")
+        resp = self.link(self.family.id, {"user_id": self.account.id})
+        self.assertEqual(resp.status_code, 409)
+        self.assertIn("Exempelby museum i medlemskap nr 7", resp.get_json()["detail"])
+
     def test_unlink_404_409_and_audit(self):
         self.login("matrikel")
         self.assertEqual(self.client.delete("/api/v2/persons/99999/link-user").status_code, 404)

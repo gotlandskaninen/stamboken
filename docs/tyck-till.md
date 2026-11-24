@@ -7,6 +7,14 @@ medlemmen väntar och lägger sedan ett mejl till föreningen i
 `app/blueprints/tyck_till.py`, texterna i `app/utils/tyck_till.py` och
 GitHub-anropen i `app/utils/github_app.py`.
 
+Fliken "Tyck till" sitter i högerkanten på alla sidor: den publika webbplatsen,
+felsidorna, inloggningen, verifieringssidan och Stamboken (`TyckTillTab`, monterad i
+respektive layout, så att Stambokens flik vet vem som är inloggad). Den finns
+också i kontomenyn, mobilmenyn, sidfoten och beta-rutan. På den publika
+webbplatsen och inloggningssidan får man alltid det utloggade formuläret. Den
+är 44 px bred (minsta tryckyta) och kan i mobilen ligga över en kontroll i
+högerkanten; man rullar då förbi den.
+
 ## Inställningar
 
 | Miljövariabel | Standard | Vad |

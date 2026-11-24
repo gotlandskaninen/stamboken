@@ -156,10 +156,20 @@ sitt nummer av Stamboken. När kaninen har ett intygsnummer kan uppfödaren inte
 individnummer eller härstamning, bara namn, färg, kön och anteckningar.\
 Kod: `certificate` (papper), `digital_certificate` (digitalt) · Legacy-manual: "intygsnummer" · Legacy: "Intygsnummer", "Nummer på pappersintyg" · Nytt UI: "Intygsnummer"
 
+**Juridisk person**\
+En organisation som själv är medlem i föreningen, till exempel en förening eller ett företag.
+Medlemskapet registreras i organisationens namn.\
+Kod: `Membership.organization_name` är ifyllt · Legacy-manual: – · Legacy: – · Nytt UI: "Juridisk person (organisation)"
+
 **Kastrerad**\
 En kastrerad kanin har ett kastreringsdatum. Den räknas inte som aktiv och inte som avelsdjur,
 även om den lever.\
 Kod: `castration_date` · Legacy-manual: – · Legacy: – · Nytt UI: "Kastrerad"
+
+**Kontaktperson**\
+I matrikeln är kontaktpersonen den som företräder en juridisk person och har rollen huvudmedlem.
+Kontaktpersonens namn kan lämnas tomt. På en besättning är kontaktpersonen den som valts för besättningens kontaktuppgifter.\
+Kod: `Member.role` = `huvudmedlem` för en juridisk person, `Herd.contact_member` för en besättning · Legacy-manual: – · Legacy: – · Nytt UI: samma
 
 **Kull**\
 Ungarna från en födsel. Parning och kull är samma post: först registreras parningen, sedan födseln
@@ -206,6 +216,15 @@ Kod: `Membership`, `member_number`, `Member` · Legacy-manual: "medlemsregistret
 Avgiften för ett års medlemskap i Föreningen Gotlandskaninen. Samma avgift har också kallats
 årsavgift; skriv medlemsavgift, som inte går att blanda ihop med årsrapporten.\
 Kod: – · Nytt UI: "Medlemsavgiften", "Betala medlemsavgiften"
+
+**Organisationsnamn**\
+Namnet på den juridiska person som har medlemskapet. Det används som mottagarnamn på föreningens tidning.\
+Kod: `Membership.organization_name` · Legacy-manual: – · Legacy: – · Nytt UI: samma
+
+**Organisationsnummer**\
+Den juridiska personens identitetsnummer. I matrikeln är numret frivilligt och skrivs med tio siffror
+och ett bindestreck, NNNNNN-NNNN.\
+Kod: `Membership.organization_number` · Legacy-manual: – · Legacy: – · Nytt UI: samma
 
 **Oregistrerad unge**\
 Gamla manualen: en unge som ännu inte fått ett intyg. I nya Stamboken är det en rad i kullistan
