@@ -146,7 +146,9 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
         await desk.evaluate(() => document.documentElement.scrollWidth),
       ).toBeLessThanOrEqual(375);
       await row.click();
-      await expect(desk).toHaveURL(new RegExp(`[?&]arende=${itemId}(?:&|$)`));
+      await expect(desk).toHaveURL(
+        (url) => url.searchParams.get("arende") === itemId,
+      );
       await desk.reload();
       const back = desk.getByRole("link", { name: "Tillbaka till listan" });
       await expect(back).toBeVisible();
@@ -180,7 +182,7 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
       await desk
         .getByRole("link", { name: "Visa registrering och historik" })
         .click();
-      await expect(desk).toHaveURL(new RegExp(`/inkorg/${itemId}$`));
+      await expect(desk).toHaveURL(`/stamboken/inkorg/${itemId}`);
       await expect
         .poll(async () => (await canvasSize())[0])
         .toBeGreaterThan(300);
