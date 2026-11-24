@@ -399,37 +399,10 @@
 /* Inbox workspace. Light values inherit the house palette, including demo mode. */
 .inbox,
 .undoBar {
-  color-scheme: light dark;
-  --queue-paper: light-dark(var(--sb-paper), #191713);
-  --queue-recess: light-dark(var(--sb-paper-2), #2c2822);
-  --queue-card: light-dark(var(--sb-card), #23201b);
-  --queue-ink: light-dark(var(--sb-ink), #efeae0);
-  --queue-secondary: light-dark(var(--sb-ink-2), #d3ccbf);
-  --queue-muted: light-dark(
-    color-mix(in srgb, var(--sb-ink-3) 80%, var(--sb-ink)),
-    #b3ac9f
-  );
-  --queue-line: light-dark(var(--sb-line), #524b40);
-  --queue-rule: light-dark(var(--sb-line-faint), #3a352d);
-  --queue-forest: light-dark(var(--sb-skog), #8db38f);
-  --queue-forest-deep: light-dark(var(--sb-skog-deep), #a9c9aa);
-  --queue-forest-soft: light-dark(var(--sb-skog-soft), #2a3a2b);
-  --queue-on-forest: light-dark(var(--sb-card), #14130f);
-  --queue-clay: light-dark(
-    color-mix(in srgb, var(--sb-lera) 70%, var(--sb-ink)),
-    #f0a684
-  );
-  --queue-clay-soft: light-dark(var(--sb-lera-soft), #4a2c20);
-  color: var(--queue-ink);
+  --queue-muted: color-mix(in srgb, var(--sb-ink-3) 80%, var(--sb-ink));
+  --queue-clay: color-mix(in srgb, var(--sb-lera) 70%, var(--sb-ink));
+  color: var(--sb-ink);
 }
-:global([data-theme="dark"]) :is(.inbox, .undoBar) {
-  color-scheme: dark;
-}
-:global([data-theme="light"]) :is(.inbox, .undoBar),
-:global([data-mode="demo"]) :is(.inbox, .undoBar) {
-  color-scheme: light;
-}
-
 :global([data-mode="demo"]) :is(.inbox, .undoBar) {
   --queue-muted: var(--sb-ink-2);
   --queue-clay: color-mix(in srgb, var(--sb-lera) 50%, var(--sb-ink));
@@ -437,7 +410,7 @@
 
 .inbox {
   min-height: calc(100dvh - 56px);
-  background: var(--queue-paper);
+  background: var(--sb-paper);
   padding: 0 max(16px, calc((100% - 1440px) / 2)) var(--sb-s-8);
 }
 .inboxHeader {
@@ -447,7 +420,7 @@
   flex-wrap: wrap;
   gap: var(--sb-s-2) var(--sb-s-5);
   padding: var(--sb-s-5) var(--sb-s-1) var(--sb-s-4);
-  border-bottom: 1px solid var(--queue-line);
+  border-bottom: 1px solid var(--sb-line);
 }
 .inboxHeader h1,
 .casePane h2 {
@@ -488,7 +461,7 @@
   overscroll-behavior: contain;
   min-width: 0;
   padding: 4px;
-  scrollbar-color: var(--queue-line) transparent;
+  scrollbar-color: var(--sb-line) transparent;
   scroll-padding: 5px;
 }
 .detailPane {
@@ -509,7 +482,7 @@
   align-items: center;
   min-height: 38px;
   padding: 6px 10px;
-  color: var(--queue-secondary);
+  color: var(--sb-ink-2);
   text-decoration: none;
   border-radius: var(--sb-r-2);
 }
@@ -528,23 +501,23 @@
 .modeNav a:hover,
 .scopeNav a:hover,
 .queueRow:hover {
-  background: var(--queue-recess);
+  background: var(--sb-paper-2);
 }
 .modeNav a[aria-current] {
-  background: var(--queue-forest-soft);
-  color: var(--queue-ink);
+  background: var(--sb-skog-soft);
+  color: var(--sb-ink);
   font-weight: 600;
 }
 .modeHelp,
 .assignHerd {
-  border-top: 1px solid var(--queue-line);
+  border-top: 1px solid var(--sb-line);
   padding-top: var(--sb-s-2);
 }
 .queueSidebar summary {
   min-height: 38px;
   padding: 8px 2px;
   line-height: 1.45;
-  color: var(--queue-secondary);
+  color: var(--sb-ink-2);
   font-size: 15px;
   font-weight: 600;
   cursor: pointer;
@@ -559,7 +532,7 @@
 }
 .modeHelp dd {
   margin: 0 0 8px;
-  color: var(--queue-secondary);
+  color: var(--sb-ink-2);
 }
 .assignHerd .filters {
   display: grid;
@@ -570,7 +543,7 @@
 .assignPreview,
 .inbox :global(.sb-label),
 .inbox :global(.sb-meta) {
-  color: var(--queue-secondary);
+  color: var(--sb-ink-2);
   font-size: var(--sb-fs-sm);
 }
 .assignHerd button {
@@ -581,9 +554,9 @@
 }
 .inbox :global(.sb-btn),
 .undoBar button {
-  --bg: var(--queue-forest);
-  --bd: var(--queue-forest);
-  --fg: var(--queue-on-forest);
+  --bg: var(--sb-skog);
+  --bd: var(--sb-skog);
+  --fg: var(--sb-card);
   padding: 7px 13px;
   min-height: 38px;
   justify-content: center;
@@ -593,23 +566,23 @@
 }
 .inbox :global(.sb-btn):enabled:hover,
 .inbox a:global(.sb-btn):hover {
-  background: var(--queue-forest-deep);
-  border-color: var(--queue-forest-deep);
+  background: var(--sb-skog-deep);
+  border-color: var(--sb-skog-deep);
 }
 .inbox :global(.sb-btn-secondary),
 .undoBar button {
   --bg: transparent;
-  --bd: var(--queue-forest);
-  --fg: var(--queue-forest-deep);
+  --bd: var(--sb-skog);
+  --fg: var(--sb-skog-deep);
 }
 .inbox :global(.sb-btn-secondary):enabled:hover,
 .inbox a:global(.sb-btn-secondary):hover,
 .undoBar button:hover {
-  background: var(--queue-forest-soft);
+  background: var(--sb-skog-soft);
 }
 .inbox :global(.sb-btn):disabled {
-  --bg: var(--queue-recess);
-  --bd: var(--queue-line);
+  --bg: var(--sb-paper-2);
+  --bd: var(--sb-line);
   --fg: var(--queue-muted);
   opacity: 1;
 }
@@ -617,9 +590,9 @@
   min-height: 38px;
   padding: 7px 10px;
   font-size: 15px;
-  background: var(--queue-card);
-  color: var(--queue-ink);
-  border-color: var(--queue-line);
+  background: var(--sb-card);
+  color: var(--sb-ink);
+  border-color: var(--sb-line);
 }
 .inbox input::placeholder {
   color: var(--queue-muted);
@@ -627,12 +600,12 @@
 }
 .inbox :focus-visible,
 .undoBar :focus-visible {
-  outline: 2px solid var(--queue-forest);
+  outline: 2px solid var(--sb-skog);
   outline-offset: 2px;
 }
 .inbox :global(.sb-card) {
-  background: var(--queue-card);
-  border-color: var(--queue-line);
+  background: var(--sb-card);
+  border-color: var(--sb-line);
 }
 .queueList {
   container-type: inline-size;
@@ -648,8 +621,8 @@
   display: inline-flex;
   justify-self: start;
   grid-column: 1 / -1;
-  background: var(--queue-card);
-  border: 1px solid var(--queue-line);
+  background: var(--sb-card);
+  border: 1px solid var(--sb-line);
   border-radius: var(--sb-r-2);
 }
 .scopeNav a {
@@ -663,8 +636,8 @@
   border-radius: 0 3px 3px 0;
 }
 .scopeNav a[aria-current] {
-  background: var(--queue-forest);
-  color: var(--queue-on-forest);
+  background: var(--sb-skog);
+  color: var(--sb-card);
   font-weight: 600;
 }
 .herdSearch {
@@ -691,14 +664,14 @@
   list-style: none;
 }
 .caseList li + li {
-  border-top: 1px solid var(--queue-rule);
+  border-top: 1px solid var(--sb-line-faint);
 }
 .queueRow {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 4px var(--sb-s-3);
   padding: 13px 14px;
-  color: var(--queue-ink);
+  color: var(--sb-ink);
   text-decoration: none;
   overflow-wrap: anywhere;
   scroll-margin: 5px;
@@ -712,8 +685,8 @@
   border-bottom-right-radius: 7px;
 }
 .queueRow[aria-current] {
-  background: var(--queue-forest-soft);
-  box-shadow: inset 0 0 0 1px var(--queue-forest);
+  background: var(--sb-skog-soft);
+  box-shadow: inset 0 0 0 1px var(--sb-skog);
 }
 .queueRow:focus-visible,
 .casePhoto:focus-visible {
@@ -728,7 +701,7 @@
   font-family: var(--sb-mono);
 }
 .caseNumber {
-  color: var(--queue-secondary);
+  color: var(--sb-ink-2);
   font-size: 14px;
   font-weight: 500;
   margin-right: 4px;
@@ -741,7 +714,7 @@
 }
 .rowMeta {
   margin-top: 3px;
-  color: var(--queue-secondary);
+  color: var(--sb-ink-2);
 }
 .rowSide {
   display: grid;
@@ -750,7 +723,7 @@
   gap: 3px;
 }
 .waitTime {
-  color: var(--queue-secondary);
+  color: var(--sb-ink-2);
 }
 .waitTime[data-late="true"],
 .rowFlags {
@@ -775,20 +748,20 @@
   font: 500 14px/1.3 var(--sb-body);
   letter-spacing: 0;
   text-transform: none;
-  background: var(--queue-recess);
-  color: var(--queue-secondary);
+  background: var(--sb-paper-2);
+  color: var(--sb-ink-2);
 }
 .stateBadge[data-state="ny"] {
-  color: light-dark(#2f5463, #a6c8d6);
-  background: light-dark(var(--sb-info-soft), #233238);
+  color: color-mix(in srgb, var(--sb-info) 75%, var(--sb-ink));
+  background: var(--sb-info-soft);
 }
 .stateBadge[data-state="tagen"] {
-  color: var(--queue-forest-deep);
-  background: var(--queue-forest-soft);
+  color: var(--sb-skog-deep);
+  background: var(--sb-skog-soft);
 }
 .stateBadge[data-state^="vantar"] {
-  color: light-dark(#6b4708, #ebc27a);
-  background: light-dark(var(--sb-warning-soft), #3f321a);
+  color: color-mix(in srgb, var(--sb-warning) 50%, var(--sb-ink));
+  background: var(--sb-warning-soft);
 }
 .emptyList,
 .emptyPane {
@@ -830,14 +803,14 @@
 .caseStatus {
   margin: 10px 0 16px;
   font-size: 15px;
-  color: var(--queue-secondary);
+  color: var(--sb-ink-2);
 }
 .caseStatus span + span:not(:nth-child(2))::before {
   content: "·";
   padding-right: 8px;
 }
 .caseActions {
-  border-bottom: 1px solid var(--queue-rule);
+  border-bottom: 1px solid var(--sb-line-faint);
   padding-bottom: var(--sb-s-4);
 }
 .caseActions > :last-child {
@@ -856,7 +829,7 @@
   margin-top: 20px;
 }
 .caseMail article + article {
-  border-top: 1px solid var(--queue-rule);
+  border-top: 1px solid var(--sb-line-faint);
   padding-top: 14px;
   margin-top: 14px;
 }
@@ -891,7 +864,7 @@
   align-items: center;
   min-height: 38px;
   text-underline-offset: 3px;
-  color: var(--queue-forest-deep);
+  color: var(--sb-skog-deep);
 }
 .caseSection > div:has(> a) {
   display: inline-block;
@@ -899,7 +872,7 @@
   font-family: var(--sb-mono);
 }
 .caseSkipped {
-  background: var(--queue-clay-soft);
+  background: var(--sb-lera-soft);
   padding: var(--sb-s-3);
   border-radius: var(--sb-r-2);
 }
@@ -918,7 +891,7 @@
   padding: 0;
 }
 .caseSkipped .muted {
-  color: var(--queue-secondary);
+  color: var(--sb-ink-2);
 }
 .inbox .error {
   color: var(--queue-clay);
@@ -926,8 +899,8 @@
 .caseViewport {
   overflow: auto;
   max-height: 62vh;
-  background: var(--queue-recess);
-  border: 1px solid var(--queue-line);
+  background: var(--sb-paper-2);
+  border: 1px solid var(--sb-line);
   border-radius: var(--sb-r-3);
 }
 .caseViewport p {
@@ -960,23 +933,23 @@
 .photoNav {
   justify-content: space-between;
   margin-top: var(--sb-s-2);
-  color: var(--queue-secondary);
+  color: var(--sb-ink-2);
   font-size: var(--sb-fs-sm);
 }
 .photoNav button {
   min-width: 38px;
   min-height: 38px;
-  background: var(--queue-card);
+  background: var(--sb-card);
   color: inherit;
   font: inherit;
-  border: 1px solid var(--queue-line);
+  border: 1px solid var(--sb-line);
   border-radius: var(--sb-r-2);
   cursor: pointer;
 }
 .photoNav button[aria-current="true"] {
-  background: var(--queue-forest-soft);
-  border-color: var(--queue-forest);
-  color: var(--queue-forest-deep);
+  background: var(--sb-skog-soft);
+  border-color: var(--sb-skog);
+  color: var(--sb-skog-deep);
   font-weight: 600;
 }
 .undoBar {
@@ -992,9 +965,9 @@
   width: max-content;
   max-width: calc(100% - 32px);
   padding: 8px 12px;
-  border: 1px solid var(--queue-forest);
+  border: 1px solid var(--sb-skog);
   border-radius: var(--sb-r-3);
-  background: var(--queue-forest-soft);
+  background: var(--sb-skog-soft);
   box-shadow: var(--sb-shadow-2);
   overflow-wrap: anywhere;
 }

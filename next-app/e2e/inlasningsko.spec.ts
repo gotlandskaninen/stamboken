@@ -161,8 +161,13 @@ test("Ett intyg går från uppladdning till pappersintyg på kaninen", async ({
       await expect(
         desk.getByRole("heading", { name: "Foton", exact: true }),
       ).toBeVisible();
+      const background = () =>
+        row.evaluate((link) => getComputedStyle(link).backgroundColor);
+      await desk.emulateMedia({ colorScheme: "light" });
+      const lightBackground = await background();
       for (const colorScheme of ["dark", "light"] as const) {
         await desk.emulateMedia({ colorScheme });
+        expect(await background()).toBe(lightBackground);
         const contrast = await new AxeBuilder({ page: desk })
           .include('aside[aria-label="Lägen"]')
           .include('section[aria-label="Ärendelista"]')
