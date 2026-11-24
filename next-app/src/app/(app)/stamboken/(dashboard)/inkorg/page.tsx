@@ -69,8 +69,11 @@ export default async function InkorgPage({
       </div>
     );
   }
+  if (!data.mode_counts) {
+    for (const key of ["mode", "herd", "order"]) filters.delete(key);
+  }
   const query = filters.toString();
-  const next = data.next_untaken.find((id) => id !== selected);
+  const next = data.next_untaken?.find((id) => id !== selected);
   const nextHref = next
     ? queueHref(
         query,
@@ -85,7 +88,7 @@ export default async function InkorgPage({
             },
       )
     : null;
-  const canAssign = manages(user, null);
+  const canAssign = Boolean(data.mode_counts) && manages(user, null);
   const [item, handlers, count] = await Promise.all([
     selected
       ? fetchApi<InboxDetail>(`/v2/inkorg/${selected}`).catch((error) => {

@@ -83,6 +83,62 @@ const show = async (sp: Record<string, string> = {}) =>
   render(await InkorgPage({ searchParams: Promise.resolve(sp) }));
 
 describe("Inkorg", () => {
+  it("shows the base API's list, scope and detail with only supported controls", async () => {
+    const received = "2020-01-01T12:00:00+00:00";
+    const item = {
+      id: 14,
+      kind: "mail",
+      state: "ny",
+      genebank_id: 1,
+      herd: "G12",
+      received_at: received,
+      state_changed_at: received,
+      closed_at: null,
+      sender: null,
+      assigned_to: null,
+      assigned_at: null,
+      duplicate_of: null,
+      stalled: false,
+      missing_proof: false,
+      ref_type: null,
+      ref_id: null,
+      sender_authenticated: true,
+      has_message: true,
+      maybe_blurry: false,
+      documents: 0,
+      documents_done: 0,
+    };
+    fetchApi.mockImplementation(async (path: string) =>
+      path === "/v2/inkorg/14"
+        ? {
+            ...item,
+            events: [],
+            documents: [],
+            sender_address: "test@example.org",
+          }
+        : {
+            items: [item],
+            total: 1,
+            counts: { ny: 1 },
+            scope: "mina",
+            my_genebanks: [1],
+            interpretation: {
+              interpreter: "av",
+              waiting: 0,
+              last_done_at: null,
+              alarm: false,
+            },
+          },
+    );
+    await show({ arende: "14" });
+    expect(screen.getByRole("link", { name: /#14 Mejl/ })).toBeVisible();
+    expect(screen.getByRole("link", { name: "Mina genbanker" })).toBeVisible();
+    expect(screen.queryByRole("link", { name: /^Klara/ })).toBeNull();
+    expect(screen.getByRole("searchbox")).toBeDisabled();
+    expect(screen.getByRole("combobox", { name: "Ordning" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Nästa ärende" })).toBeDisabled();
+  });
+
   it("shows the scoped totals, initial scope and oldest-first ordering", async () => {
     await show();
     expect(fetchApi.mock.calls[0][0]).not.toContain("scope=");

@@ -125,8 +125,8 @@ export interface QueueList {
   items: InboxItem[];
   total: number;
   counts: Partial<Record<ItemState, number>>;
-  next_untaken: number[];
-  mode_counts: Record<QueueMode, number>;
+  next_untaken?: number[];
+  mode_counts?: Record<QueueMode, number>;
   interpretation?: InterpretationSummary;
   /** The scope the server applied, and the genebanks the user manages or helps in. */
   scope?: QueueScope;

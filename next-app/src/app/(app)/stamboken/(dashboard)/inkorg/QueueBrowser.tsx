@@ -121,6 +121,7 @@ export function QueueBrowser({
   const { t } = useTranslation();
   const router = useRouter();
   const params = new URLSearchParams(query);
+  const modeCounts = data.mode_counts;
   const mode = (params.get("mode") || "oppna") as QueueMode;
   const herd = params.get("herd") || "";
   const offset = Number(params.get("offset")) || 0;
@@ -228,31 +229,35 @@ export function QueueBrowser({
       }}
     >
       <aside className={styles.queueSidebar} aria-label={t("queue.modesLabel")}>
-        <nav className={styles.modeNav} aria-label={t("queue.modesLabel")}>
-          {QUEUE_MODES.map((value) => (
-            <Link
-              key={value}
-              prefetch={false}
-              scroll={false}
-              href={filterHref({ mode: value === "oppna" ? null : value })}
-              aria-current={mode === value ? "page" : undefined}
-            >
-              {t(`queue.modes.${value}`)} <span>{data.mode_counts[value]}</span>
-            </Link>
-          ))}
-        </nav>
-        <details className={styles.modeHelp}>
-          <summary>{t("queue.helpTitle")}</summary>
-          <dl>
-            {QUEUE_MODES.map((value) => (
-              <div key={value}>
-                <dt>{t(`queue.modes.${value}`)}</dt>
-                <dd>{t(`queue.help.${value}`)}</dd>
-              </div>
-            ))}
-          </dl>
-        </details>
-        {assignment}
+        {modeCounts && (
+          <>
+            <nav className={styles.modeNav} aria-label={t("queue.modesLabel")}>
+              {QUEUE_MODES.map((value) => (
+                <Link
+                  key={value}
+                  prefetch={false}
+                  scroll={false}
+                  href={filterHref({ mode: value === "oppna" ? null : value })}
+                  aria-current={mode === value ? "page" : undefined}
+                >
+                  {t(`queue.modes.${value}`)} <span>{modeCounts[value]}</span>
+                </Link>
+              ))}
+            </nav>
+            <details className={styles.modeHelp}>
+              <summary>{t("queue.helpTitle")}</summary>
+              <dl>
+                {QUEUE_MODES.map((value) => (
+                  <div key={value}>
+                    <dt>{t(`queue.modes.${value}`)}</dt>
+                    <dd>{t(`queue.help.${value}`)}</dd>
+                  </div>
+                ))}
+              </dl>
+            </details>
+            {assignment}
+          </>
+        )}
       </aside>
       <section className={styles.queueList} aria-label={t("queue.listLabel")}>
         <div className={styles.listToolbar}>
@@ -281,6 +286,7 @@ export function QueueBrowser({
             <input
               ref={input}
               type="search"
+              disabled={!modeCounts}
               className="sb-input"
               aria-label={t("queue.search")}
               placeholder={t("queue.search")}
@@ -296,6 +302,7 @@ export function QueueBrowser({
           <select
             className="sb-input"
             aria-label={t("queue.order")}
+            disabled={!modeCounts}
             value={params.get("order") || "oldest"}
             onChange={(event) => {
               cancelSearch();
