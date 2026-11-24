@@ -4820,6 +4820,9 @@ def migrate_50_to_51():
         ).execute()
 
 
+ORGANIZATION_52 = "membership.organization_name and organization_number"  # migration 52's schema_history comment
+
+
 def migrate_51_to_52():
     """Optional legal entity on a membership. Existing memberships keep NULL for both fields."""
     with DATABASE.atomic():
@@ -4828,7 +4831,7 @@ def migrate_51_to_52():
             if field.name not in existing:
                 migrate(DATABASE_MIGRATOR.add_column("membership", field.name, field))
         SchemaHistory.insert(  # pylint: disable=E1120
-            version=52, comment="membership.organization_name and organization_number", applied=datetime.now()
+            version=52, comment=ORGANIZATION_52, applied=datetime.now()
         ).on_conflict_ignore().execute()
 
 
@@ -5406,6 +5409,14 @@ def _run_migrations():
             .scalar()
         )
         current_version = SchemaHistory.select(fn.MAX(SchemaHistory.version)).scalar()  # pylint: disable=E1120
+        # the organization fields' migration under its branch number 51, which the yearly report now holds
+        if SchemaHistory.select().where(SchemaHistory.version != 52, SchemaHistory.comment == ORGANIZATION_52).exists():
+            raise RuntimeError(
+                "This development database ran the organization fields as migration 51, now 52, and lacks the "
+                "yearly report v2 schema. Rebuild this development database from scratch. For a disposable Compose "
+                "volume, run 'docker compose -p <dev-project> down -v' and bootstrap the database again.\n"
+                "Är detta inte en utvecklingsdatabas: stoppa och fråga, kör inte down -v."
+            )
     if comment is not None or (
         (current_version is None or current_version < 51)
         and {model._meta.table_name for model in ARSRAPPORT_MODELS}.intersection(DATABASE.get_tables())

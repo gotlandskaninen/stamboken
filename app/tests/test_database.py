@@ -1193,7 +1193,7 @@ class TestDatabaseMigration(DatabaseTest):
         membership = db.Membership.create(member_number=5101, address="Testgatan 1")
         row = db.Membership.select().where(db.Membership.id == membership.id).dicts()
         before = row.get()
-        version = self._migration_version("membership.organization_name")
+        version = self._migration_version("ORGANIZATION_52")
         db.SchemaHistory.delete().where(db.SchemaHistory.version >= version).execute()
         db.SchemaHistory.get_or_create(
             version=version - 1, defaults={"comment": "test seed", "applied": datetime.now()}
@@ -1221,6 +1221,19 @@ class TestDatabaseMigration(DatabaseTest):
         db.Membership.update(organization_name="Testföreningen").where(db.Membership.id == membership.id).execute()
         db.MIGRATIONS[version - 1, version]()
         self.assertEqual(row.get(), {**before, "organization_name": "Testföreningen"})
+
+    def test_branch_numbered_organization_migration_stops_the_replay(self):
+        """A dev database that ran the organization fields as 51 lacks the yearly report: no 52 is stamped."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("migration history guard is tested on PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        rewind_migrations(52)
+        db.SchemaHistory.update(comment=db.ORGANIZATION_52).where(db.SchemaHistory.version == 51).execute()
+        self.addCleanup(db.SchemaHistory.update(comment="test seed").where(db.SchemaHistory.version == 51).execute)
+
+        with self.assertRaisesRegex(RuntimeError, "organization fields as migration 51"):
+            db.check_migrations()
+        self.assertEqual(self._max_schema_version(), 51)
 
     def test_replay_49_to_50_keeps_contact_values_out_of_audit(self):
         """After the migration an UPDATE of herd.email is listed in changed_fields without its value."""
