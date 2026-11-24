@@ -163,12 +163,9 @@ def is_connected():
 @contextmanager
 def snapshot_read():
     """Read from one snapshot. An existing transaction owns its isolation level."""
-    if DB_PROXY.in_transaction():
-        yield
-        return
-
+    nested = DB_PROXY.in_transaction()
     with DB_PROXY.atomic():
-        if isinstance(DATABASE, PostgresqlDatabase):
+        if not nested and isinstance(DATABASE, PostgresqlDatabase):
             DB_PROXY.execute_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
         yield
 
@@ -233,6 +230,7 @@ class Genebank(BaseModel):
         """
         Returns all herds that the user identified by `user` has access to,
         with restricted fields filtered by access level.
+        Call outside a transaction to read from a dedicated snapshot.
         """
         if self.id not in user.accessible_genebanks:
             return None

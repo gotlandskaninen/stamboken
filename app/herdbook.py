@@ -1237,15 +1237,18 @@ def get_herd_for_admin(h_ref):
 
     Auth: admin OR manager(gb) of the herd's genebank.
     """
-    user = current_user
-    herd = _resolve_admin_herd(h_ref)
-    if herd is None:
-        return problem(404, "Besättning saknas", f"Ingen besättning med id {h_ref}.", type="herd-not-found")
-    if not user.is_admin:
+    with db.snapshot_read():
+        # Flask-Login loaded current_user before the snapshot, including its roles.
+        user = da.fetch_user_info(current_user.uuid)
+        if user is None:
+            return unauthorized()
+        herd = _resolve_admin_herd(h_ref)
+        if herd is None:
+            return problem(404, "Besättning saknas", f"Ingen besättning med id {h_ref}.", type="herd-not-found")
         err = check_genebank_manager_access(user, herd.genebank_id)
         if err is not None:
             return err
-    return jsonify(da.get_herd_for_admin(user, herd)), 200
+        return jsonify(da.get_herd_for_admin(user, herd)), 200
 
 
 @APP.route("/api/manage/herd/<h_ref>", methods=["PATCH"])

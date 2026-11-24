@@ -1585,13 +1585,14 @@ def get_herd(herd_id, user_uuid=None):
     Returns information on the herd given by `herd_id`, including a list of all
     individuals belonging to that herd. The returned data is limited to the
     access permission of the user identified by `user_uuid`.
+    Call outside a transaction to read from a dedicated snapshot.
     """
-    user = fetch_user_info(user_uuid)
-    if user is None:
-        return None
     try:
         data = None
         with snapshot_read():
+            user = fetch_user_info(user_uuid)
+            if user is None:
+                return None
             herd = Herd.get(Herd.herd == herd_id)
             data = herd.filtered_dict(user)
             data["individuals"] = []
