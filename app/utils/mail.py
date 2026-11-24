@@ -930,7 +930,7 @@ def _tyck_till(params):
         "kind": data["kind"],
         "text": data["text"],
         "path": tyck_till.mail_path(data.get("path")),
-        "pekat": " ".join(tyck_till.mask_codes(data.get("pekat")).split()),
+        "pekat": tyck_till.pointed(data.get("pekat")),
         "version": tyck_till.clean_version(data.get("version")),
         "device": data.get("device"),
         "user_id": data.get("user_id"),

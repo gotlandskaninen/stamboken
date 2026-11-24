@@ -77,14 +77,28 @@ def issue_title(kind, visibility, text):
     return f"Tyck till: {line}" if line else "Tyck till"
 
 
-def issue_body(kind, visibility, text, path, version, device, images, ref):
+def pointed(pekat):
+    """What the member pointed at, on one line, without link codes or UUIDs (the mail and the issue)."""
+    return " ".join(mask_codes(pekat).split())
+
+
+def _longest_backticks(text):
+    return max((len(run) for run in re.findall(r"`+", text)), default=0)
+
+
+def issue_body(kind, visibility, text, path, version, device, images, ref, pekat=""):
     # The fence is one backtick longer than the longest run in the text, so the text cannot end it.
-    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
-    fence = "`" * max(3, longest + 1)
+    fence = "`" * max(3, _longest_backticks(text) + 1)
     lines = [
         f"{fence}\n{text.strip()}\n{fence}",
         "",
         f"Sida: {generic_path(path)}",
+    ]
+    if element := pointed(pekat):
+        # Inline code as the fence above: mentions, links and HTML in the element's text stay text.
+        ticks = "`" * (_longest_backticks(element) + 1)
+        lines.append(f"Pekade på: {ticks} {element} {ticks}")
+    lines += [
         f"Version: {clean_version(version)}",
         f"Enhet: {device if device in ('mobil', 'dator') else UNKNOWN_VERSION}",
     ]

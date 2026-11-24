@@ -73,6 +73,24 @@ class TestIssue(unittest.TestCase):
         self.assertIn("Version: okänd\nEnhet: okänd", public)
         self.assertNotIn("@", public)
 
+    def test_body_names_what_was_pointed_at_as_inline_code(self):
+        uuid = "3f2b8c1e-0a4d-4e5f-9a6b-7c8d9e0f1a2b"
+        for visibility in ("publik", "privat"):
+            with self.subTest(visibility=visibility):
+                body = tt.issue_body(
+                    "fel", visibility, "Text", "/stamboken/x", "2.13.0", "mobil", 0, "tt-1", "texten ”Kullista”"
+                )
+                self.assertIn("Sida: /stamboken/x\nPekade på: ` texten ”Kullista” `\nVersion:", body)
+        hostile = f"knappen\n”@jonas `x` <img src=x> {uuid}”" + " " * 300
+        line = next(
+            line
+            for line in tt.issue_body("fel", "publik", "T", "/a", "1", "mobil", 0, "tt-1", hostile).splitlines()
+            if line.startswith("Pekade på:")
+        )
+        self.assertEqual(line, "Pekade på: `` knappen ”@jonas `x` <img src=x> [uuid]” ``")
+        self.assertNotIn("Pekade på", tt.issue_body("fel", "publik", "T", "/a", "1", "mobil", 0, "tt-1", "  "))
+        self.assertNotIn("Pekade på", tt.issue_body("fel", "publik", "T", "/a", "1", "mobil", 0, "tt-1"))
+
     def test_labels(self):
         self.assertEqual(tt.labels("fel"), ["tyck till", "bug"])
         self.assertEqual(tt.labels("onskemal"), ["tyck till", "enhancement"])
