@@ -77,9 +77,14 @@ def issue_title(kind, visibility, text):
     return f"Tyck till: {line}" if line else "Tyck till"
 
 
+# What is left of a code once the browser has glued an element's text together or cut it at 50 characters: a UUID
+# with or without hyphens, or the start of one, and a link token right after a label.
+_CODE_FRAGMENT = re.compile(r"[0-9a-fA-F]{8}(?:-?[0-9a-fA-F]){4,}|\d{1,19}\.[A-Za-z0-9_-]{8,}")
+
+
 def pointed(pekat):
     """What the member pointed at, on one line, without link codes or UUIDs (the mail and the issue)."""
-    return " ".join(mask_codes(pekat).split())
+    return " ".join(_CODE_FRAGMENT.sub("[kod]", mask_codes(pekat)).split())
 
 
 def _longest_backticks(text):

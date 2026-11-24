@@ -91,6 +91,19 @@ class TestIssue(unittest.TestCase):
         self.assertNotIn("Pekade på", tt.issue_body("fel", "publik", "T", "/a", "1", "mobil", 0, "tt-1", "  "))
         self.assertNotIn("Pekade på", tt.issue_body("fel", "publik", "T", "/a", "1", "mobil", 0, "tt-1"))
 
+    def test_pointed_drops_codes_glued_to_labels_compact_or_cut(self):
+        uuid = "3f2b8c1e-0a4d-4e5f-9a6b-7c8d9e0f1a2b"
+        cases = {
+            f"raden ”Länk42.{'A' * 22}”": "raden ”Länk[kod]”",
+            f"raden ”token{uuid.replace('-', '')}”": "raden ”token[kod]”",
+            f"texten ”token {uuid[:-1]}…”": "texten ”token [kod]…”",
+            f"texten ”{uuid}”": "texten ”[uuid]”",
+            "raden ”G1274-2312 Ada, född 2026-11-02, version 2.15.1”": "raden ”G1274-2312 Ada, född 2026-11-02, version 2.15.1”",
+        }
+        for given, expected in cases.items():
+            with self.subTest(given=given):
+                self.assertEqual(tt.pointed(given), expected)
+
     def test_labels(self):
         self.assertEqual(tt.labels("fel"), ["tyck till", "bug"])
         self.assertEqual(tt.labels("onskemal"), ["tyck till", "enhancement"])

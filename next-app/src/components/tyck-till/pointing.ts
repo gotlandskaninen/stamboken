@@ -24,16 +24,28 @@ function kindOf(el: Element): string {
   return "texten";
 }
 
+// A field is named by its label, never by what is typed in it (an e-mail address, a code).
+function fieldName(el: HTMLInputElement): string {
+  return (
+    el.getAttribute("aria-label") ||
+    el.labels?.[0]?.textContent ||
+    el.getAttribute("placeholder") ||
+    ""
+  );
+}
+
 export function describe(el: Element): string {
   if (el.closest(HIDE)) return "en dold uppgift";
   const clone = el.cloneNode(true) as Element;
-  clone.querySelectorAll(HIDE).forEach((n) => n.remove());
+  // A textarea's text is what was typed in it.
+  clone.querySelectorAll(`${HIDE}, textarea`).forEach((n) => n.remove());
   let t = (
-    el.getAttribute("aria-label") ||
-    (el.matches("input, textarea, select") && (el as HTMLInputElement).value) ||
-    clone.textContent ||
-    el.getAttribute("alt") ||
-    ""
+    el.matches("input, textarea, select")
+      ? fieldName(el as HTMLInputElement)
+      : el.getAttribute("aria-label") ||
+        clone.textContent ||
+        el.getAttribute("alt") ||
+        ""
   )
     .replace(/\s+/g, " ")
     .trim();

@@ -30,7 +30,7 @@ suite("describe", () => {
         "<table><tbody><tr><td>Berit</td></tr></tbody></table>",
         "raden ”Berit”",
       ],
-      ["<input value='Ada'>", "fältet ”Ada”"],
+      ["<input value='Ada'>", "fältet"],
       ["<p>Några ord</p>", "texten ”Några ord”"],
     ];
     for (const [markup, want] of cases) {
@@ -65,7 +65,21 @@ suite("describe", () => {
     expect(describe(document.querySelector("b")!)).toBe("en dold uppgift");
   });
 
-  it("reads .value only from fields", () => {
+  it("names a field by its label, never by what is typed in it", () => {
+    document.body.innerHTML =
+      "<label for='e'>E-post</label><input id='e' value='anna@example.org'>" +
+      "<input aria-label='Kod' value='Brokig-1234'>" +
+      "<input placeholder='Sök kanin' value='G9999-2601'>" +
+      "<div class='card'><h2>Anteckning</h2><textarea>hemlig text</textarea></div>";
+    const q = (sel: string) => document.body.querySelector(sel)!;
+    expect(describe(q("#e"))).toBe("fältet ”E-post”");
+    expect(describe(q("[aria-label]"))).toBe("fältet ”Kod”");
+    expect(describe(q("[placeholder]"))).toBe("fältet ”Sök kanin”");
+    expect(describe(q(".card"))).toBe("rutan ”Anteckning”");
+    expect(describe(q("textarea"))).toBe("fältet");
+  });
+
+  it("reads .value from nothing", () => {
     document.body.innerHTML =
       "<ul><li value='3'>Ada</li></ul><progress value='0.5'></progress><button value='x'>Spara</button>";
     const q = (sel: string) => document.body.querySelector(sel)!;
