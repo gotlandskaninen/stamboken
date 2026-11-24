@@ -1,8 +1,10 @@
 """Browser-bound sign-in, using synthetic registry entries and the real outbox."""
 
 import os
+import runpy
 import threading
 from datetime import date, timedelta
+from pathlib import Path
 from unittest import mock
 
 import utils.data_access as da
@@ -10,6 +12,10 @@ import utils.database as db
 import utils.login_code as lc
 import utils.settings as settings
 from blueprints import code_login
+from gunicorn.config import Config
+from gunicorn.http.message import Request
+from gunicorn.http.unreader import IterUnreader
+from gunicorn.http.wsgi import Response
 from herdbook import APP, limiter
 
 from tests.test_member_api import MatrikelApiTest, _mk_membership, _mk_person
@@ -46,9 +52,21 @@ class CodeLoginTest(MatrikelApiTest):
             response = self.client.post(BASE + "/kod", json={"email": ADDRESS})
             self.assertEqual(response.get_json(), {"message": "Finns adressen i matrikeln har vi skickat en kod dit."})
             self.assertIn("login_request=", response.headers["Set-Cookie"])
+            self.assertEqual(response.headers.get("Connection"), "close")
             lookup.assert_not_called()
             response.close()
             self.assertTrue(lookup.called)
+
+    def test_gunicorn_sends_connection_close_to_the_proxy_for_code_requests(self):
+        config = runpy.run_path(str(Path(__file__).resolve().parents[1] / "gunicorn.conf.py"))
+        for path, expected in (("/kod", "close"), ("/status", "keep-alive")):
+            cfg = Config()
+            raw = f"POST {BASE}{path} HTTP/1.1\r\nHost: localhost\r\n\r\n".encode()
+            req = Request(cfg, IterUnreader([raw]), ("127.0.0.1", 1))
+            config["pre_request"](None, req)
+            response = Response(req, None, cfg)
+            response.start_response("200 OK", [("Content-Length", "2"), ("Connection", "close")])
+            self.assertIn(f"Connection: {expected}\r\n", response.default_headers())
 
     def test_request_does_not_disclose_eligibility_or_limits(self):
         replies = [self.ask("unknown@example.org"), *[self.ask() for _ in range(6)]]

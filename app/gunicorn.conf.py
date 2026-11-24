@@ -3,7 +3,7 @@
 import logging
 import os
 import re
-from urllib.parse import quote
+from urllib.parse import quote, unquote
 
 from gunicorn.glogging import Logger
 
@@ -18,6 +18,13 @@ timeout = 120
 # fetch) can reuse them for parallel RSC data fetches without hitting
 # UND_ERR_SOCKET "other side closed" on the default 2s keepalive.
 keepalive = int(os.getenv("GUNICORN_KEEPALIVE", "75"))
+
+
+def pre_request(worker, req):
+    # Gunicorn discards hop-by-hop headers from WSGI. Set its own Connection: close before writing the body.
+    if req.method == "POST" and unquote(req.path) == "/api/v2/login/kod":
+        req.force_close()
+
 
 # Logging
 

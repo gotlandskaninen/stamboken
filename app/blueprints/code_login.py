@@ -48,7 +48,7 @@ def status():
 
 
 def _queue_request(address, browser, replaces, source):
-    # WSGI calls this after handing off the body. Database and limiter latency cannot disclose the recipient.
+    # The fixed response body is written first. Connection: close keeps the next request off this busy connection.
     try:
         allowed = not limiter.enabled or limiter.limiter.hit(IP_LIMIT, "code-login", source)
         with DB_PROXY.atomic():
@@ -98,6 +98,7 @@ def request_code():
         samesite="Lax",
     )
     response.cache_control.no_store = True
+    response.headers["Connection"] = "close"
     response.call_on_close(lambda: _queue_request(address, browser, replaces, source))
     return response
 
