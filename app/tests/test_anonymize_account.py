@@ -20,6 +20,7 @@ import peewee
 
 import utils.data_access as da
 import utils.database as db
+import utils.mail as mail
 import utils.matrikel as matrikel
 from herdbook import APP
 
@@ -106,6 +107,11 @@ class TestAnonymizeEmptiesTheAccount(DatabaseTest):
         )
         self.assertEqual((row.profile_picture, row.is_active, row.privileges), (None, False, []))
         self.assertFalse(db.Authenticators.select().where(db.Authenticators.user == user.id).exists())
+        self.assertNotEqual(row.uuid, user.uuid)
+        authored = db.DB_PROXY.execute_sql(
+            "SELECT count(*), count(ip_address) FROM audit_log WHERE changed_by = %s", (f"raderad-{user.id}",)
+        ).fetchone()
+        self.assertEqual((authored[0] > 0, authored[1]), (True, 0))  # _written_by's row, pseudonymised, no IP
         self.assertFalse(os.path.exists(self._picture(tag)))
         for value in (
             f"anvandare{tag}",
@@ -330,6 +336,15 @@ class TestAnonymizeEmptiesTheAccount(DatabaseTest):
         self.assertEqual(response.status_code, 503, response.get_json())
         self.assertFalse(matrikel.is_anonymized(db.Member.get_by_id(person.id)))  # all of it rolled back
         self.assertEqual(db.User.get_by_id(user.id).username, "anvandarel")
+
+    def test_the_mail_queue_forgets_the_account(self):
+        user = self._account("m")
+        sent = mail.enqueue_mail("notis.sammandrag", "user", user.id, {})
+        db.MailMessage.update(status="sent", address_hash="hash").where(db.MailMessage.id == sent).execute()
+        queued = mail.enqueue_mail("notis.sammandrag", "user", user.id, {})
+        matrikel.anonymize_person(self._person(db.Membership.create(member_number=440), user), self.admin)
+        self.assertIsNone(db.MailMessage.get_by_id(sent).address_hash)
+        self.assertEqual(db.MailMessage.get_by_id(queued).status, "cancelled")
 
     def test_an_open_edit_form_cannot_write_the_account_back(self):
         user = self._account("f")

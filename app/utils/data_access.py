@@ -4519,6 +4519,7 @@ def erase_account(user):
         username=None,
         fullname=None,
         email=f"raderad-{user.id}",  # not_erased() knows the account by it
+        uuid=uuid.uuid4().hex,  # the session key and in PII_KEYS: the old one leads nowhere, also on the demo
         google_email=None,
         google_name=None,
         google_picture=None,
@@ -4526,7 +4527,7 @@ def erase_account(user):
         is_active=False,
         _privileges="[]",
     ).where(User.id == user.id).execute()
-    new_generation(user.uuid)  # its sessions end now, and stay ended if the account is ever activated again
+    new_generation(user.uuid)  # the old key's mark, for a session store shared with the demo
 
 
 def remove_profile_picture(name):
@@ -4599,6 +4600,8 @@ def purge_user_audit_pii(user_id: int, username: str, email: str) -> int:
             )
         }
         names = sorted(((earlier - shared) | {username, email}) - {None})
+        if shared & {username, email}:  # changed_by is only a name: that account's rows get this pseudonym too
+            logger.warning("purge_user_audit_pii: user %s has a current name another account has or had", user_id)
         # A queued DROP RULE would hold up every audited write behind it, as in purge_audit_ip.
         DATABASE.execute_sql("SELECT set_config('lock_timeout', %s, true)", (AUDIT_IP_LOCK_TIMEOUT,))
         DATABASE.execute_sql("DROP RULE IF EXISTS audit_log_no_update ON audit_log")

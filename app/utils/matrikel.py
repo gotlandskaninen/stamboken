@@ -573,6 +573,8 @@ def anonymize_person(member, actor, deferred_originals=None, deferred_accounts=N
         ]
         applications_redacted = len(application_ids)
         forget_recipient("member", person.id)  # the queue keeps no address hash or dedupe key of the erased
+        if user is not None:
+            forget_recipient("user", user.id)  # nor of the account's mail (notices, applications, the intake queue)
         for previous in (
             MemberPreviousAddress.delete()
             .where(MemberPreviousAddress.member == person.id)
