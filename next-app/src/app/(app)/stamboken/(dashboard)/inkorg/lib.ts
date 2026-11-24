@@ -23,7 +23,7 @@ export interface InboxItem {
   kind: string;
   subject?: string | null;
   has_skipped?: boolean;
-  sender_address?: string | null;
+  member_name?: string | null;
   state: ItemState;
   genebank_id: number | null;
   herd: string | null;

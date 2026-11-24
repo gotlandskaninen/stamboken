@@ -54,7 +54,10 @@ const row = {
   has_skipped: true,
 };
 const queue = {
-  items: [row, { ...row, id: 15, subject: "En följdfråga" }],
+  items: [
+    row,
+    { ...row, id: 15, subject: "En följdfråga", member_name: "Medlem A" },
+  ],
   total: 2,
   next_untaken: [14, 15],
   mode_counts: { nya: 2, mina: 5, oppna: 8, klara: 40 },
@@ -164,7 +167,11 @@ describe("Inkorg", () => {
     const item = screen.getByRole("link", { name: /#14 Intyg för kullen/ });
     expect(item).toHaveAttribute("href", "/stamboken/inkorg?arende=14");
     expect(item).toHaveTextContent(
-      "avsandare@example.org · G12 · mejl · 2 foton · Ingen har tagit det",
+      "okänd avsändare · G12 · mejl · 2 foton · Ingen har tagit det",
+    );
+    expect(screen.queryByText(/avsandare@example.org/)).toBeNull();
+    expect(screen.getByRole("link", { name: /#15/ })).toHaveTextContent(
+      "Medlem A",
     );
     expect(within(item).getByText("Ny")).toBeVisible();
     for (const flag of [

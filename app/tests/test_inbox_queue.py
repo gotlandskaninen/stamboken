@@ -165,11 +165,18 @@ class TestVisibility(InboxTest):
 
         def summary():
             row = self.client.get("/api/v2/inkorg").get_json()["items"][0]
-            return row["subject"], row["has_skipped"], row["sender_address"]
+            self.assertNotIn("sender_address", row)
+            return row["subject"], row["has_skipped"], row["member_name"]
 
-        self.assertEqual(summary(), ("Intyg", True, "inkorg@example.org"))
+        self.assertEqual(summary(), ("Intyg", True, None))
         db.InboxEvent.update(detail={}).where(db.InboxEvent.id.in_([start.id, reply.id])).execute()
-        self.assertEqual(summary(), (None, False, "inkorg@example.org"))
+        member = db.Member.create(
+            first_name="Medlem", last_name="A", membership=db.Membership.create(member_number=9001)
+        )
+        db.InboxItem.update(member=member).where(db.InboxItem.id == item.id).execute()
+        self.assertEqual(summary(), (None, False, "Medlem A"))
+        detail = self.client.get(f"/api/v2/inkorg/{item.id}").get_json()
+        self.assertEqual(detail["sender_address"], "inkorg@example.org")
 
     def test_modes_follow_scope_while_prefix_sort_and_pagination_only_change_the_list(self):
         mine, unassigned, done, other, unknown = self.item(0), self.item(1), self.item(0), self.item(2), self.item(0)

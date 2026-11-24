@@ -315,8 +315,11 @@ def queue_items_json(items):
     """Extend the worker's list with mail metadata from the events that own and purge the text."""
     listed = items_json(items)
     by_id = {row["id"]: row for row in listed}
+    member_ids = {item.member_id for item in items if item.member_id}
+    members = Member.select(Member.id, Member.first_name, Member.last_name).where(Member.id.in_(member_ids))
+    names = {m.id: f"{m.first_name} {m.last_name}".strip() for m in members} if member_ids else {}
     for row, item in zip(listed, items, strict=True):
-        row.update(subject=None, has_skipped=False, sender_address=item.sender_address)
+        row.update(subject=None, has_skipped=False, member_name=names.get(item.member_id))
     if by_id:
         detail = InboxEvent.detail
         skipped = fn.jsonb_extract_path_text(detail, "not_saved", "0").is_null(False) | fn.jsonb_extract_path_text(
