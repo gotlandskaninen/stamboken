@@ -52,6 +52,7 @@ from utils.herd_contact import (
     snapshot_before_leaving,
 )
 from utils.inbox_purge import erase_person_from_inbox, remove_originals
+from utils.individual_commands import purge_command_free_text
 from utils.login_code import (
     AddressTaken,
     lock_addresses,
@@ -693,6 +694,10 @@ def anonymize_ended_persons(now):
                 # active one holds): an invalidation inside this tx only schedules a rebuild of an unchanged genebank.
                 for person in due:
                     anonymize_person(person, None, deferred_originals=originals, deferred_accounts=erased)
+                # Every account's command rows before the first purge's DROP RULE: an Undo that holds one of them
+                # writes audit_log, which that purge locks until the commit.
+                for account in erased:
+                    purge_command_free_text(datetime.now(timezone.utc), actor_id=account.id)
                 for account in erased:  # last: the purge locks audit_log until the commit
                     purge_user_audit_pii(account.id, account.username, account.email)
         except Exception:  # pylint: disable=broad-exception-caught

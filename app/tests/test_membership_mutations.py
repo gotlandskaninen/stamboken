@@ -101,11 +101,11 @@ class TestMatrikelDomainFunctions(DatabaseTest):
         self.family.save()
         grant = db.HerdAccessGrant.create(member=self.family, herd=self.herds[0], granted_by=self.admin)
         db.User.update(name_on_check_page=True).where(db.User.id == user.id).execute()
-        account_audits = db.AuditLog.select().where(db.AuditLog.table_name == "hbuser").count()
         matrikel.anonymize_person(self.family, self.admin)
         self.assertFalse(db.User.get_by_id(user.id).name_on_check_page)  # off the public check page (#6)
-        # ...without an audit row that would copy the account's name and e-mail
-        self.assertEqual(db.AuditLog.select().where(db.AuditLog.table_name == "hbuser").count(), account_audits)
+        # ...and no audit row of the account keeps its name or e-mail (#190)
+        for row in db.AuditLog.select().where(db.AuditLog.table_name == "hbuser", db.AuditLog.record_id == str(user.id)):
+            self.assertNotIn("fam", f"{row.old_data} {row.new_data} {row.changed_by}")
         person = db.Member.get_by_id(self.family.id)
         self.assertEqual(person.first_name, "Borttagen")
         self.assertEqual(person.last_name, "person")

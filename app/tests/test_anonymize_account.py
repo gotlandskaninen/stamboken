@@ -5,11 +5,18 @@ Anonymization empties the person's account (#190): no personal data on the hbuse
 Only runs on PostgreSQL (audit_log rules and JSONB). Names and addresses are made up; e-mail uses example.invalid.
 """
 
+import inspect
+import io
 import os
 import tempfile
+import threading
+import time
 import unittest
+import uuid
 from datetime import date, datetime, timezone
 from unittest import mock
+
+import peewee
 
 import utils.data_access as da
 import utils.database as db
@@ -55,6 +62,9 @@ class TestAnonymizeEmptiesTheAccount(DatabaseTest):
         env = mock.patch.dict(os.environ, {"UPLOAD_FOLDER": self.uploads.name})
         env.start()
         self.addCleanup(env.stop)
+        folder = mock.patch.dict(APP.config, {"PROFILE_UPLOAD_FOLDER": os.path.join(self.uploads.name, "profiler")})
+        folder.start()
+        self.addCleanup(folder.stop)
         self.addCleanup(self.uploads.cleanup)
 
     def _account(self, tag):
@@ -137,16 +147,26 @@ class TestAnonymizeEmptiesTheAccount(DatabaseTest):
             """,
             (str(user.id),),
         )
+        # an address the account had once and another account had before it: those rows may be the other's
+        earlier = da.register_user("forre@example.invalid", "losen")
+        db.User.update(email="annan@example.invalid").where(db.User.id == earlier.id).execute()  # audited
+        _written_by("forre@example.invalid")
+        db.DB_PROXY.execute_sql(
+            """
+            INSERT INTO audit_log (table_name, record_id, operation, old_data, new_data)
+            VALUES ('hbuser', %s, 'UPDATE', jsonb_build_object('email', 'forre@example.invalid'), '{}'::jsonb)
+            """,
+            (str(user.id),),
+        )
         person = self._person(db.Membership.create(member_number=302, membership_status="active"), user)
 
         matrikel.anonymize_person(person, self.admin)
 
         self.assertEqual(_audit_mentions("kontob@example.invalid"), 0)
         self.assertEqual(_audit_mentions("ny-b@example.invalid"), 0)
-        by_other = db.DB_PROXY.execute_sql(
-            "SELECT count(*) FROM audit_log WHERE changed_by = %s", ("upptagen@example.invalid",)
-        ).fetchone()[0]
-        self.assertEqual(by_other, 1)
+        for kept in ("upptagen@example.invalid", "forre@example.invalid"):
+            by_other = db.DB_PROXY.execute_sql("SELECT count(*) FROM audit_log WHERE changed_by = %s", (kept,))
+            self.assertEqual(by_other.fetchone()[0], 1, kept)
         self.assertTrue(db.User.get_by_id(other.id).is_active)
 
     def test_an_account_with_a_role_stops_the_anonymization(self):
@@ -223,3 +243,90 @@ class TestAnonymizeEmptiesTheAccount(DatabaseTest):
         self.assertEqual((row.username, row.is_active), ("anvandaref1", True))
         self.assertTrue(os.path.exists(self._picture("f1")))
         self.assertGreater(_audit_mentions("anvandaref1"), 0)  # not purged
+
+    def test_a_session_from_before_stays_ended_if_the_account_is_activated_again(self):
+        user = self._account("s")
+        client = APP.test_client(use_cookies=True)
+        client.post("/api/login", json={"username": "anvandares", "password": "losen"})
+        self.assertEqual(client.get("/api/user").status_code, 200)
+        matrikel.anonymize_person(self._person(db.Membership.create(member_number=360), user), self.admin)
+        db.User.update(is_active=True).where(db.User.id == user.id).execute()
+        self.assertEqual(client.get("/api/user").status_code, 401)
+
+    def test_a_profile_upload_racing_the_erasure_writes_nothing_back(self):
+        user = self._account("p")
+        person = self._person(db.Membership.create(member_number=370), user)
+        client = APP.test_client(use_cookies=True)
+        client.post("/api/login", json={"username": "anvandarep", "password": "losen"})
+        real_fetch = da.fetch_user_info
+
+        def fetch_then_erase(uid):
+            row = real_fetch(uid)
+            if any(f.function == "user_profile" for f in inspect.stack(0)):  # the view's own read, then the erasure
+                matrikel.anonymize_person(person, self.admin)
+            return row
+
+        with mock.patch.object(da, "fetch_user_info", side_effect=fetch_then_erase):
+            resp = client.patch(
+                "/api/profile",
+                data={"profile_picture": (io.BytesIO(b"jpeg"), "ny.jpg")},
+                content_type="multipart/form-data",
+            )
+        self.assertEqual(resp.status_code, 404, resp.get_json())
+        self.assertIsNone(db.User.get_by_id(user.id).profile_picture)
+        self.assertEqual(os.listdir(os.path.join(self.uploads.name, "profiler")), [])
+        self._assert_emptied(user, "p")
+
+    def test_the_nightly_job_waits_for_an_undo_instead_of_deadlocking(self):
+        """The second account's command row is purged before the first DROP RULE locks audit_log."""
+        first, second = self._account("u1"), self._account("u2")
+        ended = db.Membership.create(member_number=380, membership_status="inactive")
+        self._person(ended, first, OLD)
+        self._person(ended, second, OLD, role="familjemedlem")
+        entry = db.IndividualCommand.create(
+            operation_id=uuid.uuid4(),
+            request_id=uuid.uuid4(),
+            command="EditDescription",
+            individual=self.individuals[0],
+            actor=second,
+            reason="fritext",
+        )
+        locked, errors = threading.Event(), []
+
+        def undo_shape():  # an Undo: holds the entry, then writes an audited table, then commits
+            try:
+                with db.DB_PROXY.atomic():
+                    db.IndividualCommand.select().where(db.IndividualCommand.id == entry.id).for_update().get()
+                    locked.set()
+                    time.sleep(1)
+                    db.Herd.update(herd_name="Ny").where(db.Herd.id == self.herds[1].id).execute()
+            except Exception as exc:  # pylint: disable=broad-exception-caught
+                errors.append(repr(exc))
+            finally:
+                db.DB_PROXY.close()
+
+        undoer = threading.Thread(target=undo_shape)
+        undoer.start()
+        self.assertTrue(locked.wait(10))
+        self.assertEqual(matrikel.anonymize_ended_persons(NOW), (2, 0, []))
+        undoer.join(15)
+        self.assertEqual(errors, [])
+        self.assertIsNone(db.IndividualCommand.get_by_id(entry.id).reason)
+
+    def test_the_endpoint_answers_503_when_audit_log_stays_locked(self):
+        user = self._account("l")
+        person = self._person(db.Membership.create(member_number=390), user)
+
+        class LockNotAvailable(Exception):
+            pgcode = "55P03"
+
+        def locked(*_args, **_kwargs):
+            raise peewee.OperationalError("lock timeout") from LockNotAvailable()
+
+        client = APP.test_client(use_cookies=True)
+        client.post("/api/login", json={"username": "admin", "password": "pass"})
+        with mock.patch.object(da, "purge_command_free_text", side_effect=locked):
+            response = client.post(f"/api/v2/persons/{person.id}/anonymize")
+        self.assertEqual(response.status_code, 503, response.get_json())
+        self.assertFalse(matrikel.is_anonymized(db.Member.get_by_id(person.id)))  # all of it rolled back
+        self.assertEqual(db.User.get_by_id(user.id).username, "anvandarel")

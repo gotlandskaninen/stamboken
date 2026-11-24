@@ -4508,6 +4508,7 @@ def erase_account(user):
         is_active=False,
         _privileges="[]",
     ).where(User.id == user.id).execute()
+    new_generation(user.uuid)  # its sessions end now, and stay ended if the account is ever activated again
 
 
 def remove_profile_picture(name):
@@ -4539,7 +4540,8 @@ def purge_user_audit_pii(user_id: int, username: str, email: str) -> int:
 
     The caller must capture username and email BEFORE emptying the hbuser
     row. The names the account had before them (its own hbuser snapshots) are
-    matched too, unless another account holds one now. Returns the number of
+    matched too, unless another account has or had one: changed_by is only a
+    name, and such a row may be the other account's. Returns the number of
     rows redacted (0 for a fresh account). Called by anonymize_person (#190),
     last in its transaction: from the DROP RULE on, audit_log is locked until
     the commit, and a lock wait over AUDIT_IP_LOCK_TIMEOUT raises instead.
@@ -4563,14 +4565,22 @@ def purge_user_audit_pii(user_id: int, username: str, email: str) -> int:
                 (str(user_id),),
             )
         }
-        held = {
-            value
-            for row in User.select(User.username, User.email).where(
-                (User.id != user_id) & (User.username.in_(list(earlier)) | User.email.in_(list(earlier)))
+        shared = {
+            row[0]
+            for row in DATABASE.execute_sql(
+                """
+                SELECT v FROM hbuser, LATERAL (VALUES (username), (email)) AS now(v)
+                WHERE user_id <> %s AND v = ANY(%s::text[])
+                UNION
+                SELECT v FROM audit_log,
+                    LATERAL (VALUES (old_data->>'username'), (old_data->>'email'),
+                                    (new_data->>'username'), (new_data->>'email')) AS before(v)
+                WHERE table_name = 'hbuser' AND record_id <> %s AND v = ANY(%s::text[])
+                """,
+                (user_id, list(earlier), str(user_id), list(earlier)),
             )
-            for value in (row.username, row.email)
         }
-        names = sorted(((earlier - held) | {username, email}) - {None})
+        names = sorted(((earlier - shared) | {username, email}) - {None})
         # A queued DROP RULE would hold up every audited write behind it, as in purge_audit_ip.
         DATABASE.execute_sql("SELECT set_config('lock_timeout', %s, true)", (AUDIT_IP_LOCK_TIMEOUT,))
         DATABASE.execute_sql("DROP RULE IF EXISTS audit_log_no_update ON audit_log")

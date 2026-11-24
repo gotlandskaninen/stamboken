@@ -930,9 +930,17 @@ def user_profile():
             if "use_google_picture" in settings:
                 user.use_google_picture = bool(settings["use_google_picture"])
 
-            # Only the profile columns: a full-row save of this unlocked read
-            # would write back a stale is_active/_privileges.
-            user.save(only=[db.User.profile_picture, db.User.use_google_picture])
+            # Only the profile columns, and only on an active account: a full-row save of this unlocked read would
+            # write back a stale is_active/_privileges, and an erasure (#190) committed since must stay erased.
+            saved = (
+                db.User.update(profile_picture=user.profile_picture, use_google_picture=user.use_google_picture)
+                .where((db.User.id == user.id) & (db.User.is_active == True))  # noqa: E712
+                .execute()
+            )
+            if not saved:
+                if profile_picture_url:
+                    da.remove_profile_picture(profile_picture_url)
+                return jsonify({"status": "error", "message": "User not found"}), 404
             return jsonify({"status": "updated", "message": "Profile updated successfully"})
 
         except Exception as e:
@@ -1533,11 +1541,16 @@ def login_handler():
     return get_user()
 
 
-# The Google profile columns the login routes refresh. They save only these: the
-# user row was read without a lock, so a full-row save would write back a stale
-# is_active/_privileges and undo a concurrent deactivation or role change.
-# google_email is no profile column: da.google_login_generation writes it under the row lock.
-_GOOGLE_PROFILE_COLUMNS = [db.User.google_picture, db.User.google_name]
+def _save_google_profile(user):
+    """
+    The Google profile columns the login routes refresh, and only these: the user row was read without a lock, so a
+    full-row save would write back a stale is_active/_privileges and undo a concurrent deactivation or role change.
+    Only on an active account: a login racing an erasure (#190) never writes them back. google_email is no profile
+    column: da.google_login_generation writes it under the row lock.
+    """
+    db.User.update(google_picture=user.google_picture, google_name=user.google_name).where(
+        (db.User.id == user.id) & (db.User.is_active == True)  # noqa: E712
+    ).execute()
 
 
 def _storable_google_email(verified_email):
@@ -1637,7 +1650,7 @@ def google_token_login():
         if user and not user.validated:
             if _should_auto_validate_users():
                 user.validated = True
-                user.save(only=[db.User.validated])  # see _GOOGLE_PROFILE_COLUMNS
+                user.save(only=[db.User.validated])  # see _save_google_profile
             elif settings.service.access_rules != "enforce":
                 # The course belongs to the legacy frontend, and the access rules
                 # keep an unvalidated account out of it and off production; without
@@ -1653,7 +1666,7 @@ def google_token_login():
             # Update user with Google profile data in database
             user.google_picture = picture
             user.google_name = name
-            user.save(only=_GOOGLE_PROFILE_COLUMNS)
+            _save_google_profile(user)
 
             # After the save: a save that raises must not leave a session that
             # carries user_id without flask-login's _user_id.
@@ -1715,7 +1728,7 @@ def external_login_handler(service):
         if _should_auto_validate_users():
             # Auto-validate user since this environment opted in via env var
             user.validated = True
-            user.save(only=[db.User.validated])  # see _GOOGLE_PROFILE_COLUMNS
+            user.save(only=[db.User.validated])  # see _save_google_profile
         else:
             return _not_validated_response()
 
@@ -1744,7 +1757,7 @@ def external_login_handler(service):
         _link_member_if_any(user, verified_email)
         # Reload unfiltered: fetch_user_info hides an account deactivated mid-login (the
         # provider calls above can take long), and the profile save below writes only
-        # _GOOGLE_PROFILE_COLUMNS, so it cannot undo that deactivation.
+        # the profile columns of an active account (_save_google_profile).
         user = db.User.get_by_id(user.id)
 
         # Save Google profile data (picture, name)
@@ -1754,7 +1767,7 @@ def external_login_handler(service):
             if userinfo:
                 user.google_picture = userinfo.get("picture") or user.google_picture
                 user.google_name = userinfo.get("name") or user.google_name
-                user.save(only=_GOOGLE_PROFILE_COLUMNS)
+                _save_google_profile(user)
             else:
                 # Fallback to id_token if userinfo fails
                 idtoken = utils.external_auth.google_idtoken()
@@ -1763,7 +1776,7 @@ def external_login_handler(service):
                         user.google_picture = idtoken["picture"]
                     if idtoken.get("name"):
                         user.google_name = idtoken["name"]
-                    user.save(only=_GOOGLE_PROFILE_COLUMNS)
+                    _save_google_profile(user)
 
         # Check for saved return_to URL from before OAuth
         return_to = session.pop("return_to_after_oauth", None)
