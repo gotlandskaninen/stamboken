@@ -520,6 +520,18 @@ class TestItemsFromMail(GmailTest):
                     self.assertEqual((image.format, image.mode, image.size), ("JPEG", "RGB", expected_size))
                     self.assertFalse(image.getexif())
 
+    def test_a_small_inline_signature_is_skipped_with_its_reason(self):
+        side = inbox_gmail.MIN_SIDE
+        logo = Image.new("RGBA", (800, side - 1), (0, 64, 0, 128))
+        self.fake.deliver(inline_png(encoded(logo, "PNG"), filename="signatur.png"))
+        self.read()
+        (item,) = self.items()
+        self.assertEqual(self.documents(item), [])
+        self.assertEqual(
+            item.events.get().detail["not_saved_reasons"],
+            [{"name": "signatur.png", "reason": f"Bilden har en sida under {side} pixlar."}],
+        )
+
     def test_exif_is_gone_and_an_inline_photo_counts(self):
         exif = Image.Exif()
         exif[0x0110] = "SecretCam"  # camera model
