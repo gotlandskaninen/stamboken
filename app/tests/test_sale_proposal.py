@@ -6,6 +6,7 @@ the submission's user here; a link code is the other actor the submission can ho
 isort:skip_file
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timedelta, timezone
 from unittest import mock
 
@@ -16,10 +17,11 @@ import utils.database as db
 import utils.mail as mail
 import utils.sale_proposal as sp
 import utils.settings as settings
-from utils.herd_tracking import HerdTrackingInvalid
+from utils.herd_tracking import HerdTrackingConflict, HerdTrackingInvalid
 
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.ht_helpers import ht_row
+from tests.test_purchase_notice import until
 
 SALE = date(2025, 10, 3)
 LAST = date(2025, 12, 31)
@@ -128,6 +130,52 @@ class ProposalTest(ArsrapportTest):
             .where(db.MailMessage.recipient_kind == "buyer_contact", db.MailMessage.status == "queued")
             .exists()
         )
+
+    def purged_contact_and_link(self, buyer):
+        sale = sp.approve(self.propose(buyer=buyer), self.manager, now=NOW)
+        db.BuyerContact.update(email=None, erased_email_hash=mail.address_hash(buyer["email"])).where(
+            db.BuyerContact.id == sale.holder_contact_id
+        ).execute()
+        return mail.link_token(buyer_mail.ERASE_PURPOSE, sale.holder_contact_id)
+
+    def test_erasure_waits_for_an_uncommitted_proposal_and_rechecks(self):
+        buyer = {**BUYER, "email": "test@example.org", "contact_consent": True}
+        with mock.patch.object(settings.mail, "link_secret", "test-link-secret"), ThreadPoolExecutor(1) as worker:
+            token = self.purged_contact_and_link(buyer)
+
+            def erase():
+                with db.DB_PROXY.connection_context():
+                    return buyer_mail.erase_by_link(token)
+
+            with db.DB_PROXY.atomic():
+                pending = self.propose(self.other, buyer=buyer)
+                erasure = worker.submit(erase)
+                waiting = """SELECT 1 FROM pg_locks WHERE NOT granted AND classid = %s
+                             AND pg_backend_pid() = ANY(pg_blocking_pids(pid))"""
+                self.assertTrue(
+                    until(lambda: db.DB_PROXY.execute_sql(waiting, (buyer_mail.BUYER_ADDRESS_LOCK,)).fetchone())
+                )
+            with self.assertRaises(HerdTrackingConflict):
+                erasure.result(timeout=10)
+            self.assertTrue(db.BuyerContact.select().exists())
+            self.assertEqual(erase(), "removed")
+            self.assertIsNone(db.SaleProposal.get_by_id(pending.id).buyer)
+
+    def test_proposal_cannot_restore_details_during_an_erasure(self):
+        buyer = {**BUYER, "email": "test@example.org", "contact_consent": True}
+        with mock.patch.object(settings.mail, "link_secret", "test-link-secret"), ThreadPoolExecutor(1) as worker:
+            token = self.purged_contact_and_link(buyer)
+
+            def propose():
+                with db.DB_PROXY.connection_context():
+                    return self.propose(self.other, buyer=buyer)
+
+            with db.DB_PROXY.atomic():
+                self.assertEqual(buyer_mail.erase_by_link(token), "removed")
+                with self.assertRaises(arsrapport.ArsrapportError) as busy:
+                    worker.submit(propose).result(timeout=10)
+                self.assertEqual(busy.exception.status, 409)
+            self.assertEqual(sp.pending(self.report), [])
 
     def test_retract_is_idempotent_and_clears_buyer(self):
         proposal = self.propose()

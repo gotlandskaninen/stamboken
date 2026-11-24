@@ -89,6 +89,11 @@ def propose(report, submission, individual, *, to_herd, buyer, sale_date: date, 
     at = submission.created_at  # when the seller sent it, and ticked the buyer's boxes
     stored = _stored_buyer(buyer, at, sale_date) if buyer is not None else None
     with DB_PROXY.atomic():
+        if stored and stored["email"]:
+            # Skicka already holds these for the whole batch. The service can also create a single proposal.
+            arsrapport.lock_report(report.round, report.herd)
+            lock_individuals([individual.id])
+            arsrapport.lock_sale_addresses([stored["email"]], proposal=True)
         try:
             proposal = SaleProposal.create(
                 report=report.id,

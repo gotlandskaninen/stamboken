@@ -412,6 +412,11 @@ def without_reason(sub):
     return replace(sub, reason=None) if sub.reason else sub
 
 
+def lock_sale_addresses(addresses, *, proposal):
+    if not lock_buyer_addresses(addresses, proposal=proposal):
+        raise ArsrapportError(409, "Köparuppgifterna ändras samtidigt. Kontrollera försäljningen och försök igen.")
+
+
 def lock_report(round_, herd):
     """The advisory lock on (round, herd): every write to the report or the draft takes it first, in a transaction."""
     DB_PROXY.execute_sql("SELECT pg_advisory_xact_lock(%s, hashtext(%s))", (_REPORT_LOCK, f"{round_.id}/{herd.id}"))
@@ -3026,7 +3031,7 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         refusals, _ = check(herd, round_, access, report, sub, on=on, check_email=False, transfers=transfers)
         if refusals:
             raise _cannot(refusals)
-        lock_buyer_addresses(t.buyer.get("email") for t in transfers.values() if t.buyer)
+        lock_sale_addresses((t.buyer.get("email") for t in transfers.values() if t.buyer), proposal=not access.can_sell)
         grant = ReportGrant(
             inbox.InboxGrant(item, user, pages[0]) if paper else None, code=access.code, report=report, herd=herd
         )

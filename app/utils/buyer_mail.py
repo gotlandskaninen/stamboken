@@ -52,18 +52,23 @@ _MONTHS = (
 BUYER_ADDRESS_LOCK = 0x48424241  # "HBBA": buyers' addresses
 
 
-def lock_buyer_addresses(addresses):
+def lock_buyer_addresses(addresses, *, erased_hash=None, proposal=False):
     """After the rabbits, take every address lock in ascending lock-id order, including on a multi-sale report."""
     keys = {(email or "").strip().lower() for email in addresses} - {""}
-    if not keys:
-        return
     if settings.mail.link_secret:
         keys = {address_hash(email) for email in keys}
-    DB_PROXY.execute_sql(
-        "SELECT pg_advisory_xact_lock(%s, id) FROM "
+    if erased_hash:
+        keys.add(erased_hash)
+    if not keys:
+        return True
+    # Proposals may coexist, but must not wait out an erasure and then reintroduce its buyer.
+    lock = "pg_try_advisory_xact_lock_shared" if proposal else "pg_advisory_xact_lock"
+    result = DB_PROXY.execute_sql(
+        f"SELECT {lock}(%s, id) FROM "
         "(SELECT DISTINCT hashtext(key) AS id FROM unnest(%s::text[]) AS a(key) ORDER BY id) AS locks",
         (BUYER_ADDRESS_LOCK, list(keys)),
     )
+    return not proposal or all(acquired for (acquired,) in result.fetchall())
 
 
 def queue_buyer_mails(contact, sale):
@@ -288,6 +293,9 @@ def erase_by_link(token):
         items = arsrapport._lock_items(proposed_rabbits, kept=ids, reports=report_ids)  # pylint: disable=protected-access
         rabbits = {row.individual_id for row in holding} | proposed_rabbits
         lock_individuals(rabbits)
+        linked = BuyerContact.get_or_none(BuyerContact.id == contact_id)
+        if linked:
+            lock_buyer_addresses([linked.email], erased_hash=linked.erased_email_hash)
         ids = _same_buyer(contact_id)  # again, under the locks: a correction may have put a new contact in
         holding = sales(ids)
         pending = _pending_proposals(contact_id)
