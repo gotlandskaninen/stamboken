@@ -1176,6 +1176,9 @@ glömmer adressen. På andras ärenden rensas fritexten i de svar som vid inläs
 personen eller personens konto. Ämne, svarstext, avvisade filnamn och bilageskäl tas bort tillsammans
 med avsändarkopplingen. Händelsens tid och dokumentreferenser finns kvar.
 
+Avsändarkopplingen sparas från och med driftsättningen. Svar på andras ärenden som lästes in
+tidigare saknar kopplingen och rensas därför inte när avsändaren anonymiseras.
+
 ### `POST /api/v2/inkorg/{id}/dokument/{dok}/radera-original`
 
 Samma sak för ett dokument på begäran, till exempel när en köpare utanför föreningen ber om det.
