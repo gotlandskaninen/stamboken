@@ -391,6 +391,8 @@ def patch_membership(membership_id: int):
             "Medlemsnumret används redan",
             f"Medlemsnummer {after['member_number']} tillhör ett annat medlemskap",
         )
+    except AddressTaken:
+        return _address_taken()
     except TransitionRefused:
         # Rolled back, so nothing of this request is kept.
         return problem(

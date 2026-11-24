@@ -74,6 +74,14 @@ class TestReserve(LoginAddressTest):
             previous.save()
             self.reserve("tidigare@example.org", other.id)
 
+    def test_friexemplar_holds_neither_its_current_nor_its_previous_address(self):
+        person = _mk_person(_mk_membership(status="friexemplar"), "Fia", "Friblad", "friblad@example.invalid")
+        until = datetime.now(timezone.utc) + timedelta(days=7)
+        old = "gammalt-friblad@example.invalid"
+        db.MemberPreviousAddress.create(member=person, address=old, login_until=until, purge_at=until)
+        self.reserve(person.email, self.holder.id)
+        self.reserve(old, self.holder.id)
+
     def test_two_reservations_at_once_give_the_address_to_one(self):
         first = _mk_person(_mk_membership(number=11), "Bo", "First", None)
         second = _mk_person(_mk_membership(number=12), "Cid", "Second", None)
@@ -130,6 +138,21 @@ class TestWriters(LoginAddressTest):
         )
         resp = self.post(f"/api/v2/memberships/{ms.id}/persons", {"first_name": "A", "last_name": "B", "email": TAKEN})
         self.assertEqual(resp.status_code, 201, resp.data)  # a family member without account holds no address
+
+    def test_friexemplar_can_use_a_members_address_until_it_changes_status(self):
+        address = "kontakt@example.invalid"
+        _mk_person(_mk_membership(number=12), "Maj", "Gullblad", address)
+        self.login("matrikel")
+        resp = self.post(
+            "/api/v2/memberships",
+            {"first_name": "Liv", "last_name": "Friblad", "membership_status": "friexemplar", "email": address},
+        )
+        self.assertEqual(resp.status_code, 201, resp.data)
+        ms_id = resp.get_json()["id"]
+        for route in ("members", "memberships"):
+            self.assert_taken(self.client.patch(f"/api/v2/{route}/{ms_id}", json={"membership_status": "active"}))
+        self.assertEqual(db.Membership.get_by_id(ms_id).membership_status, "friexemplar")
+        self.assertEqual(lc.address_collisions(), 0)
 
     def test_swap_the_main_member(self):
         ms = _mk_membership(number=11)
@@ -239,6 +262,43 @@ class TestSevenDays(SevenDaysTest):
         self.assertEqual((person.email, person.email_login_from), ("b@example.org", None))
         self.assertEqual(self.previous(), {"a@example.org": None})
         self.assertEqual(self.besked(), [("a@example.org", False, True)])
+
+    def test_reactivation_leaves_the_previous_address_with_its_new_holder(self):
+        old = self.person.email
+        self.change("b@example.org", "self")
+        self.assert_about(self.previous()[old], WEEK)
+        self.login("matrikel")
+        url = f"/api/v2/memberships/{self.person.membership_id}"
+        resp = self.client.patch(url, json={"membership_status": "friexemplar"})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assert_about(self.previous()[old], timedelta(0))
+
+        matrikel.set_member_email(self.holder, old, self.matrikel_user, by="matrikel")
+        resp = self.client.patch(url, json={"membership_status": "active"})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assertEqual(resp.get_json()["membership_status"], "active")
+        self.reserve(old, self.holder.id)  # only the new holder may use it
+
+    def test_reactivating_an_older_friexemplar_drops_its_leftover_previous_address(self):
+        old = self.person.email
+        self.change("b@example.org", "self")
+        # A friexemplar from before this change, with a wait still left on its previous address.
+        ms_id = self.person.membership_id
+        db.Membership.update(membership_status="friexemplar").where(db.Membership.id == ms_id).execute()
+        matrikel.set_member_email(self.holder, old, self.matrikel_user, by="matrikel")
+        self.login("matrikel")
+        resp = self.client.patch(f"/api/v2/memberships/{ms_id}", json={"membership_status": "active"})
+        self.assertEqual(resp.status_code, 200, resp.data)
+        self.assert_about(self.previous()[old], timedelta(0))
+        self.reserve(old, self.holder.id)  # only the other member holds it
+
+    def test_editing_a_friexemplars_email_expires_a_still_valid_previous_address(self):
+        self.change("b@example.org", "self")
+        # An existing friexemplar with a wait left over from its active membership.
+        ms_id = self.person.membership_id
+        db.Membership.update(membership_status="friexemplar").where(db.Membership.id == ms_id).execute()
+        self.change("c@example.org", "matrikel")
+        self.assert_about(self.previous()["a@example.org"], timedelta(0))
 
     def test_a_to_b_to_c_never_makes_b_count_and_tells_a_and_b(self):
         """B was the member's own new address; whoever changes it within the wait, A and B both hear of it."""

@@ -256,6 +256,8 @@ def patch_membership(membership_id: int):
             ms.save(only=changed + [Membership.updated_at])
             if activated:  # after the save: the comparison reads the saved membership (#117)
                 on_membership_active(ms.id)
+    except AddressTaken:
+        return problem(409, AddressTaken.title, "En annan medlem kan redan logga in med e-postadressen")
     except TransitionRefused:
         # Raised, not returned: a `return` inside atomic() would commit the rest of the request.
         return problem(
@@ -405,11 +407,6 @@ def patch_me_contact():
     if new_email is not None and settings.service.demo_instance:
         # The demo never replaces an account's mark (new_generation): the change could not end the sessions.
         refused, new_email = DEMO_REFUSAL, None
-    if new_email is not None:
-        try:
-            refuse_unsafe()
-        except CodeRefused:
-            return _codes_unavailable()
 
     try:
         # Split keys only — the postal_address alias is an admin/legacy input,
@@ -446,7 +443,13 @@ def patch_me_contact():
                 ms.save(only=[getattr(Membership, f) for f in membership_updates] + [Membership.updated_at])
             m.save(only=[getattr(Member, f) for f in person_updates] + [Member.updated_at])
             if new_email is not None:
-                _ask_for_code(m, new_email)
+                if ms.membership_status == Status.FRIEXEMPLAR:
+                    refused, new_email = "E-postadressen för ett friexemplar kan bara bytas i matrikeln.", None
+                else:
+                    refuse_unsafe()
+                    _ask_for_code(m, new_email)
+    except CodeRefused:
+        return _codes_unavailable()
     except IntegrityError:
         # DEAD BACKSTOP: the legacy
         # per-genebank contact-email index `idx_member_genebank_email_unique`
