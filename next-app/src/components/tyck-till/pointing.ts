@@ -24,16 +24,36 @@ function kindOf(el: Element): string {
   return "texten";
 }
 
+const CONTROLS = "input, textarea, select";
+
+// The text of an element without some of its parts.
+function textWithout(el: Element, selector: string): string {
+  const clone = el.cloneNode(true) as Element;
+  clone.querySelectorAll(selector).forEach((n) => n.remove());
+  return clone.textContent ?? "";
+}
+
+// A field is named by its label, never by what is typed or chosen in it (an
+// e-mail address, a code, the names in a list of handlers).
+function fieldName(el: HTMLInputElement): string {
+  const label = el.labels?.[0];
+  return (
+    el.getAttribute("aria-label") ||
+    (label && textWithout(label, CONTROLS)) ||
+    el.getAttribute("placeholder") ||
+    ""
+  );
+}
+
 export function describe(el: Element): string {
   if (el.closest(HIDE)) return "en dold uppgift";
-  const clone = el.cloneNode(true) as Element;
-  clone.querySelectorAll(HIDE).forEach((n) => n.remove());
   let t = (
-    el.getAttribute("aria-label") ||
-    (el.matches("input, textarea, select") && (el as HTMLInputElement).value) ||
-    clone.textContent ||
-    el.getAttribute("alt") ||
-    ""
+    el.matches("input, textarea, select")
+      ? fieldName(el as HTMLInputElement)
+      : el.getAttribute("aria-label") ||
+        textWithout(el, `${HIDE}, textarea, select`) ||
+        el.getAttribute("alt") ||
+        ""
   )
     .replace(/\s+/g, " ")
     .trim();
