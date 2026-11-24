@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
+  addressListUrl,
   koharenExportUrl,
   memberExportUrl,
 } from "@/app/(app)/medlem/statistik/exportUrl";
@@ -30,6 +31,23 @@ describe("koharenExportUrl", () => {
   it("routes demo mode to the configured test URL", () => {
     expect(koharenExportUrl("demo", "https://demo.example")).toBe(
       "https://demo.example/v2/members/koharen-export",
+    );
+  });
+});
+
+describe("addressListUrl", () => {
+  it("asks for the Betala nu column only when ticked", () => {
+    expect(addressListUrl("prod", undefined, false)).toBe(
+      "/api/v2/members/address-list",
+    );
+    expect(addressListUrl("prod", undefined, true)).toBe(
+      "/api/v2/members/address-list?fee_reminder=1",
+    );
+  });
+
+  it("routes demo mode to the configured test URL", () => {
+    expect(addressListUrl("demo", "https://demo.example", false)).toBe(
+      "https://demo.example/v2/members/address-list",
     );
   });
 });
