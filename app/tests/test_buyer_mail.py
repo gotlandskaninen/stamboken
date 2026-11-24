@@ -146,6 +146,18 @@ class TestBuyerAddress(BuyerMailTest):
         self.assertEqual(self._contact(sale.holder_contact_id).name, self.other["name"])
         self.assertEqual(len(self.send()), 2)
 
+    def test_resale_keeps_the_address_while_the_first_notice_waits_for_review(self):
+        sale = self.held_sale()
+        record_herd_tracking(self.rabbit, self.herds[1], on(30), "TRANSFER", self.manager)
+        now = sale.holder_contact.membership_optin_at + db.MEMBERSHIP_OPTIN_FOR
+        buyer_contact.run(now)
+        self.assertTrue(self._contact(sale.holder_contact_id).email_review_pending)
+        buyer_contact.review_buyer_email(sale.holder_contact_id, {"confirm": True}, self.manager)
+        (notice,) = self.send()
+        self.assertEqual(notice["To"], self.email)
+        buyer_contact.run(now + timedelta(days=1))
+        self.assertIsNone(self._contact(sale.holder_contact_id).email)
+
     def test_corrected_name_releases_mail_and_the_link_erases_both_sales(self):
         sale = self.held_sale()
         event = {
@@ -187,6 +199,7 @@ class TestBuyerAddress(BuyerMailTest):
 
     def test_purged_email_still_identifies_a_contact_the_link_can_erase(self):
         sale = self.sell_second_rabbit(self.other)
+        self.send()
         record_herd_tracking(self.individuals[1], self.herds[1], on(30), "TRANSFER", self.manager)
         self.assertEqual(buyer_contact.purge_sold_on(datetime.now(timezone.utc)), 1)
         self.assertIsNone(self._contact(sale.holder_contact_id).email)
@@ -628,6 +641,62 @@ class TestInformationSent(BuyerMailTest):
 
 
 class TestMembership(BuyerMailTest):
+    def test_resale_and_expired_optin_keep_the_queued_notice_until_delivery(self):
+        sale = self._sale({**WITH_EMAIL, "membership_optin": True, "phone": "000000"})
+        record_herd_tracking(self.rabbit, self.herds[1], on(30), "TRANSFER", self.manager)
+        now = sale.holder_contact.membership_optin_at + db.MEMBERSHIP_OPTIN_FOR
+        buyer_contact.run(now)
+        contact = self._contact(sale.holder_contact_id)
+        self.assertEqual((contact.email, contact.phone, contact.membership_optin_at), (EMAIL, None, None))
+        self.assertEqual(self.mails("kopare.information")[0].status, "queued")
+
+        with mock.patch.object(buyer_mail, "_certificate_pdf", return_value=PDF):
+            (notice,) = self.send()
+        self.assertEqual(notice["To"], EMAIL)
+        self.assertEqual(list(notice.iter_attachments()), [])
+        token = re.search(r"/kopare/ta-bort#(\S+)", notice.get_body(("plain",)).get_content()).group(1)
+        self.assertEqual(mail.verify_link(ERASE_PURPOSE, token), contact.id)
+        self.assertEqual([row.status for row in self.mails()], ["sent", "cancelled"])
+        buyer_contact.run(now + timedelta(days=1))
+        contact = self._contact(contact.id)
+        self.assertEqual((contact.email, contact.contact_consent_at), (None, None))
+
+    def test_failed_notice_survives_purge_and_can_be_retried_from_the_status_view(self):
+        buyer = {**BUYER, "email": EMAIL, "membership_optin": True}
+        sale = record_herd_tracking(
+            self.rabbit, self.gx1, date.today() - timedelta(days=370), "TRANSFER", self.manager, buyer=buyer
+        )
+        (row,) = self.mails("kopare.information")
+        db.MailMessage.update(attempts=len(mail.RETRY_DELAYS)).where(db.MailMessage.id == row.id).execute()
+        with mock.patch.object(mail.smtplib, "SMTP", FakeRelay(replies=[TimeoutError()])):
+            mail.send_pending()
+        self.assertEqual(db.MailMessage.get_by_id(row.id).status, "failed")
+        now = datetime.now(timezone.utc)
+        buyer_contact.run(now)
+        self.assertEqual(self._contact(sale.holder_contact_id).email, EMAIL)
+
+        self._login("man")
+        response = self.client.post(f"/api/v2/mail/messages/{row.id}/retry")
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()["status"], "queued")
+        (notice,) = self.send()
+        self.assertEqual(notice["To"], EMAIL)
+        token = re.search(r"/kopare/ta-bort#(\S+)", notice.get_body(("plain",)).get_content()).group(1)
+        self.assertEqual(mail.verify_link(ERASE_PURPOSE, token), sale.holder_contact_id)
+        self.assertEqual(db.MailMessage.get_by_id(row.id).status, "sent")
+        buyer_contact.run(now + timedelta(days=1))
+        self.assertIsNone(self._contact(sale.holder_contact_id).email)
+
+    def test_failed_notice_keeps_the_address_only_until_the_queue_retention_cutoff(self):
+        sale = self._sale({**BUYER, "email": EMAIL, "membership_optin": True})
+        (row,) = self.mails("kopare.information")
+        db.MailMessage.update(status="failed").where(db.MailMessage.id == row.id).execute()
+        last_retry = row.created_at + mail.RETENTION
+        buyer_contact.run(last_retry)
+        self.assertEqual(self._contact(sale.holder_contact_id).email, EMAIL)
+        buyer_contact.run(last_retry + timedelta(microseconds=1))
+        self.assertIsNone(self._contact(sale.holder_contact_id).email)
+
     def test_expiry_distinguishes_sent_and_pending_notices_in_the_same_purge(self):
         day = date.today() - timedelta(days=370)
         buyer = {**BUYER, "email": "forsta@example.org", "membership_optin": True, "phone": "000000"}

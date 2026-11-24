@@ -45,6 +45,7 @@ from utils.herd_tracking import (
 )
 from utils.inbox_purge import remove_originals
 from utils.individual_commands import FREE_TEXT_RETENTION
+from utils.mail import RETENTION as MAIL_RETENTION
 from utils.mail import address_hash, forget_recipient, is_address
 
 logger = logging.getLogger("herdbook.buyer_contact")
@@ -323,11 +324,39 @@ def _null_fields(where, changes, action):
     return len(changed)
 
 
-def purge_sold_on(now):  # pylint: disable=unused-argument  # every rule takes the clock
+def _purge_consent(now, due, consent, other_consent, action):
+    """Expire a consent, keeping the email while the first notice still needs it."""
+    # A failed notice can be retried from the status view until purge_old_mail removes it.
+    retryable = (MailMessage.status == "failed") & (MailMessage.created_at >= now - MAIL_RETENTION)
+    # Peewee 3 renders a Select inside UPDATE SET ... CASE as its table alias. Keep the parameters bound.
+    sql, params = (
+        MailMessage.select(MailMessage.recipient_id)
+        .where(
+            MailMessage.recipient_kind == "buyer_contact",
+            MailMessage.kind == "kopare.information",
+            MailMessage.status.in_(("queued", "sending")) | retryable,
+        )
+        .sql()
+    )
+    last_consent = other_consent.is_null(True)
+    # The address needs one consent under the database constraint. Only the phone can go while the notice waits.
+    keep_for_notice = (
+        last_consent
+        & BuyerContact.email.is_null(False)
+        & (BuyerContact.email_review_pending | BuyerContact.id.in_(SQL(f"({sql})", params)))
+    )
+    changes = {
+        consent: Case(None, [(keep_for_notice, consent)], None),
+        BuyerContact.email: Case(None, [(last_consent & ~keep_for_notice, None)], BuyerContact.email),
+        BuyerContact.phone: Case(None, [(last_consent, None)], BuyerContact.phone),
+    }
+    return _null_fields(due & (~keep_for_notice | BuyerContact.phone.is_null(False)), changes, action)
+
+
+def purge_sold_on(now):
     """
     The contact consent once the rabbit has another holder: a later active TRANSFER or CORRECTION to another herd
-    or another buyer. E-mail and phone go with it unless the membership yes holds; the postal address stays, on
-    legitimate interest like name and town.
+    or another buyer. The postal address stays, on legitimate interest like name and town.
     """
     sale, later = HerdTracking, HerdTracking.alias()
     moved_on = (
@@ -335,45 +364,16 @@ def purge_sold_on(now):  # pylint: disable=unused-argument  # every rule takes t
         .join(later, on=(later.individual == sale.individual))
         .where(sale.holder_contact.is_null(False) & sale.voided_at.is_null(True) & sold_on(sale, later))
     )
-    no_membership = BuyerContact.membership_optin_at.is_null(True)
-    kept = BuyerContact.contact_consent_at.is_null(False) | (
-        no_membership & (BuyerContact.email.is_null(False) | BuyerContact.phone.is_null(False))
-    )
-    changes = {
-        BuyerContact.contact_consent_at: None,
-        BuyerContact.email: Case(None, [(no_membership, None)], BuyerContact.email),
-        BuyerContact.phone: Case(None, [(no_membership, None)], BuyerContact.phone),
-    }
-    return _null_fields(BuyerContact.id.in_(moved_on) & kept, changes, "gallring_salld_vidare")
+    consent = BuyerContact.contact_consent_at
+    due = BuyerContact.id.in_(moved_on) & consent.is_null(False)
+    return _purge_consent(now, due, consent, BuyerContact.membership_optin_at, "gallring_salld_vidare")
 
 
 def purge_membership_optin(now):
     """The yes to membership contact after 12 months, with the e-mail and phone kept only for it."""
-    only_for_membership = BuyerContact.contact_consent_at.is_null(True)
-    # Peewee 3 renders a Select inside UPDATE SET ... CASE as its table alias. Keep the parameters bound.
-    sql, params = (
-        MailMessage.select(MailMessage.recipient_id)
-        .where(
-            MailMessage.recipient_kind == "buyer_contact",
-            MailMessage.kind == "kopare.information",
-            MailMessage.status.in_(("queued", "sending")),
-        )
-        .sql()
-    )
     optin = BuyerContact.membership_optin_at
-    # The first notice needs the address while under review or awaiting delivery. The phone can go immediately.
-    keep_for_notice = (
-        only_for_membership
-        & BuyerContact.email.is_null(False)
-        & (BuyerContact.email_review_pending | BuyerContact.id.in_(SQL(f"({sql})", params)))
-    )
-    changes = {
-        optin: Case(None, [(keep_for_notice, optin)], None),
-        BuyerContact.email: Case(None, [(only_for_membership & ~keep_for_notice, None)], BuyerContact.email),
-        BuyerContact.phone: Case(None, [(only_for_membership, None)], BuyerContact.phone),
-    }
-    due = (optin <= now - MEMBERSHIP_OPTIN_FOR) & (~keep_for_notice | BuyerContact.phone.is_null(False))
-    return _null_fields(due, changes, "gallring_medlemskap")
+    due = optin <= now - MEMBERSHIP_OPTIN_FOR
+    return _purge_consent(now, due, optin, BuyerContact.contact_consent_at, "gallring_medlemskap")
 
 
 RULES = (purge_membership_optin, purge_sold_on, purge_dead, purge_expired, purge_proposal_buyers)
