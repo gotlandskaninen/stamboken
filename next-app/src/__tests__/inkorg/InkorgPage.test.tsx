@@ -273,6 +273,35 @@ describe("Inkorg", () => {
     ).toContain("offset=50");
   });
 
+  it.each([
+    ["Mina 5", "mode", "mina"],
+    ["Alla", "scope", "alla"],
+  ])(
+    "carries the pending herd search when switching to %s",
+    async (name, key, value) => {
+      vi.useFakeTimers();
+      await show({ offset: "50", herd: "M44" });
+      const input = screen.getByRole("searchbox");
+      fireEvent.change(input, { target: { value: " g12 " } });
+      vi.advanceTimersByTime(200);
+      const link = screen.getByRole("link", { name });
+      const destination = new URL(
+        link.getAttribute("href")!,
+        "https://example.org",
+      );
+      expect(Object.fromEntries(destination.searchParams)).toEqual({
+        herd: "G12",
+        [key]: value,
+      });
+      link.addEventListener("click", (event) => event.preventDefault(), {
+        once: true,
+      });
+      fireEvent.click(link);
+      vi.advanceTimersByTime(250);
+      expect(replace).not.toHaveBeenCalled();
+    },
+  );
+
   it("keeps a newer search pending when the previous results arrive", async () => {
     vi.useFakeTimers();
     const view = await show();

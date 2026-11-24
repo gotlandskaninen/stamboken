@@ -2,7 +2,13 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useRef, type KeyboardEvent, type ReactNode } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+  type ReactNode,
+} from "react";
 import { useTranslation } from "react-i18next";
 import {
   QUEUE_MODES,
@@ -126,6 +132,7 @@ export function QueueBrowser({
   const modeCounts = data.mode_counts;
   const mode = (params.get("mode") || "oppna") as QueueMode;
   const herd = params.get("herd") || "";
+  const [searchText, setSearchText] = useState(herd);
   const offset = Number(params.get("offset")) || 0;
   const input = useRef<HTMLInputElement>(null);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -178,8 +185,7 @@ export function QueueBrowser({
   }, [data.items, first, query, router, selected, herd]);
 
   useEffect(() => {
-    if (input.current && input.current !== document.activeElement)
-      input.current.value = herd;
+    if (input.current !== document.activeElement) setSearchText(herd);
   }, [herd]);
   function cancelSearch() {
     if (timer.current !== null) clearTimeout(timer.current);
@@ -192,10 +198,18 @@ export function QueueBrowser({
     };
   }, []);
 
-  const filterHref = (changes: Record<string, string | null>) =>
-    queueHref(query, { arende: null, offset: null, ...changes });
+  const filterHref = (
+    changes: Record<string, string | null>,
+    value = searchText,
+  ) =>
+    queueHref(query, {
+      arende: null,
+      offset: null,
+      herd: value.trim().toUpperCase() || null,
+      ...changes,
+    });
   const search = (value: string) => {
-    router.replace(filterHref({ herd: value.trim().toUpperCase() || null }), {
+    router.replace(filterHref({}, value), {
       scroll: false,
     });
   };
@@ -283,7 +297,7 @@ export function QueueBrowser({
             onSubmit={(event) => {
               event.preventDefault();
               cancelSearch();
-              search(input.current?.value ?? "");
+              search(searchText);
             }}
           >
             <input
@@ -294,10 +308,11 @@ export function QueueBrowser({
               aria-label={t("queue.search")}
               placeholder={t("queue.search")}
               autoComplete="off"
-              defaultValue={herd}
+              value={searchText}
               onChange={(event) => {
                 cancelSearch();
                 const value = event.target.value;
+                setSearchText(value);
                 timer.current = setTimeout(() => search(value), 250);
               }}
             />
@@ -312,7 +327,6 @@ export function QueueBrowser({
               router.replace(
                 filterHref({
                   order: event.target.value === "newest" ? "newest" : null,
-                  herd: input.current?.value.trim().toUpperCase() || null,
                 }),
                 { scroll: false },
               );
