@@ -877,7 +877,8 @@ def fee_unpaid(payment_note, year):
 
 
 # The printer's mailing list for Koharen (#186), in the layout the printer already gets:
-# one row per household with the huvudmedlem's name only, sorted by postal code.
+# one row per household with the huvudmedlem's name only (an organization with "c/o" its contact),
+# sorted by postal code.
 # New route; the MATR export's contract is untouched (ADR-0006).
 @members_bp.route("/v2/members/address-list", methods=["GET"])
 @json_login_required
@@ -888,14 +889,20 @@ def export_address_list():
     fee_reminder = request.args.get("fee_reminder") == "1"  # only for the year's first two issues
     year = date.today().year
     rows = []
-    for ms in Membership.select().where(Membership.membership_status.in_(("active", "friexemplar"))):
+    active_persons = (
+        Member.select().where(Member.end_date.is_null(True)).order_by(Member.role != "huvudmedlem", Member.id)
+    )
+    memberships = Membership.select().where(Membership.membership_status.in_(("active", "friexemplar")))
+    for ms in memberships.prefetch(active_persons):
         if not ms.address and not ms.postal_address:
             continue
-        persons = sorted(
-            Member.select().where(Member.membership == ms, Member.end_date.is_null(True)),
-            key=lambda p: (p.role != "huvudmedlem", p.id),
-        )
-        if not persons:
+        if ms.organization_name:
+            # As in MATR: the organization receives even without an active contact.
+            recipient, care_of = membership_recipient(ms)
+            name = f"{recipient}, {care_of}" if care_of else recipient
+        elif ms.persons:
+            name = ms.persons[0].display_name  # the huvudmedlem, else the first active person
+        else:
             continue
         if ms.member_number is not None:
             nr = str(ms.member_number)
@@ -908,7 +915,7 @@ def export_address_list():
                 sort_key,
                 [
                     nr,
-                    csv_safe(f"{persons[0].first_name} {persons[0].last_name}".strip()),
+                    csv_safe(name),
                     csv_safe(ms.address),
                     csv_safe(ms.postal_address),
                     "Betala nu" if unpaid else "",

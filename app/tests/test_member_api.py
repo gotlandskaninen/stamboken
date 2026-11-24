@@ -1095,6 +1095,24 @@ class TestAddressListExport(MatrikelApiTest):
             ],
         )
 
+    def test_organization_with_care_of(self):
+        """An organization is the recipient with "c/o" its active huvudmedlem, and is sent without one too."""
+        org = _mk_membership(
+            status="friexemplar", organization_name="Testföreningen", address="Föreningsgatan 1", postal_code="222 22"
+        )
+        _mk_person(org, "Kim", "Kontakt")
+        headless = _mk_membership(status="friexemplar", organization_name="Testbiblioteket", address="Bokgatan 1")
+        _mk_person(headless, "Ex", "Kontakt", end_date=date.today())
+        self.login("matrikel")
+        names = {r[2]: r[1] for r in self._rows()[1:]}
+        self.assertEqual(names["Föreningsgatan 1"], "Testföreningen, c/o Kim Kontakt")
+        self.assertEqual(names["Bokgatan 1"], "Testbiblioteket")
+
+    def test_household_without_huvudmedlem_gets_the_first_active_person(self):
+        db.Member.update(end_date=date.today()).where(db.Member.email == "ada@example.com").execute()
+        self.login("matrikel")
+        self.assertIn(["1", "Alf A", "Adagatan 3", "623 55 Visby", ""], self._rows()[1:])
+
     def test_fee_reminder_marks_last_years_payers(self):
         self.login("matrikel")
         _, *rows = self._rows("?fee_reminder=1")
