@@ -95,6 +95,19 @@ def _buyer_name_key(name):
     return unicodedata.normalize("NFC", name.strip()).casefold()
 
 
+def buyer_address_conflicts(email, name, *, replaces=None):
+    """Called under the address lock. The erase link also covers rows whose e-mail has been purged."""
+    email = email.strip().lower()
+    same_address = fn.lower(fn.trim(BuyerContact.email)) == email
+    if settings.mail.link_secret:
+        same_address |= BuyerContact.erased_email_hash == address_hash(email)
+    contacts = BuyerContact.select(BuyerContact.name).where(same_address)
+    if replaces is not None:
+        contacts = contacts.where(BuyerContact.id != replaces)
+    name = _buyer_name_key(name)
+    return any(_buyer_name_key(contact.name) != name for contact in contacts)
+
+
 def _same_contact_fields(contact, fields):
     for key in BUYER_TEXT_FIELDS:
         old, new = getattr(contact, key), fields[key]
@@ -115,24 +128,15 @@ def _buyer_for_sale(fields, user, sale_date, *, replaces=None):
     if purge_at <= _now_utc():
         return None
     with DB_PROXY.atomic():
-        if email := fields["email"]:
-            email = email.strip().lower()
-            lock_buyer_addresses([email])
-            same_address = fn.lower(fn.trim(BuyerContact.email)) == email
-            if settings.mail.link_secret:  # the erase link also covers rows whose e-mail has been purged
-                same_address |= BuyerContact.erased_email_hash == address_hash(email)
-            contacts = BuyerContact.select(BuyerContact.name).where(same_address)
-            if replaces is not None:
-                contacts = contacts.where(BuyerContact.id != replaces)
-            name = _buyer_name_key(fields["name"])
-            if any(_buyer_name_key(contact.name) != name for contact in contacts):
-                raise HerdTrackingConflict("E-postadressen finns redan hos en annan köpare. Kontrollera adressen.")
+        email = fields["email"]
+        lock_buyer_addresses([email])
         if replaces is not None:
             previous = BuyerContact.select().where(BuyerContact.id == replaces).for_update().first()
             if previous and _same_contact_fields(previous, fields):
                 _set_buyer_sale_date(previous.id, sale_date)
                 return previous
-        return BuyerContact.create(**fields, created_by_user=user, purge_at=purge_at)
+        held = bool(email and buyer_address_conflicts(email, fields["name"], replaces=replaces))
+        return BuyerContact.create(**fields, email_review_pending=held, created_by_user=user, purge_at=purge_at)
 
 
 def new_operation_id(value=None):

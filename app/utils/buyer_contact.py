@@ -12,11 +12,13 @@ from peewee import Case, fn
 
 import utils.sale_proposal as sale_proposal
 from utils import settings
+from utils.buyer_mail import lock_buyer_addresses, queue_buyer_mails
 from utils.database import (
     DB_PROXY,
     MEMBERSHIP_OPTIN_FOR,
     AuditLog,
     BuyerContact,
+    Herd,
     HerdTracking,
     Individual,
     SaleProposal,
@@ -27,9 +29,13 @@ from utils.herd_tracking import (
     QUEUE_CHANGED,
     HerdTrackingConflict,
     HerdTrackingForbidden,
+    HerdTrackingInvalid,
     HerdTrackingNotFound,
+    buyer_address_conflicts,
+    buyer_contact_fields,
     buyer_items,
     can_see_buyer,
+    check_invariants,
     delete_buyer_contacts,
     is_manager_of,
     log_buyer_contact,
@@ -75,6 +81,84 @@ def read_buyer_contact(contact_id, user):
     log_buyer_read(contact.id, user)
     values = {name: getattr(contact, name) for name in CONTACT_FIELDS}
     return {"id": contact.id, **{k: v.isoformat() if hasattr(v, "isoformat") else v for k, v in values.items()}}
+
+
+def _email_reviews(user):
+    sales = (
+        HerdTracking.select(HerdTracking, BuyerContact)
+        .join(BuyerContact, on=(HerdTracking.holder_contact == BuyerContact.id))
+        .switch(HerdTracking)
+        .join(Herd, on=(HerdTracking.herd == Herd.id))
+        .where(HerdTracking.voided_at.is_null(), BuyerContact.email_review_pending, BuyerContact.email.is_null(False))
+    )
+    return sales if user.is_admin else sales.where(Herd.genebank.in_(user.is_manager or []))
+
+
+def buyer_email_reviews(number, user):
+    sales = _email_reviews(user).where(
+        HerdTracking.individual.in_(Individual.select(Individual.id).where(Individual.number == number))
+    )
+    result = []
+    for sale in sales.order_by(HerdTracking.id):
+        buyer = sale.holder_contact
+        log_buyer_read(buyer.id, user)
+        result.append({"id": buyer.id, "name": buyer.name, "email": buyer.email})
+    return result
+
+
+def review_buyer_email(contact_id, body, user):
+    """Resolve one active sale under the rabbit, address and contact locks. A stale review cannot change a buyer."""
+    with DB_PROXY.atomic():
+        query = _email_reviews(user).where(HerdTracking.holder_contact == contact_id)
+        sale = query.first()
+        if sale is None:
+            raise HerdTrackingNotFound("Det finns ingen köparadress att kontrollera.")
+        lock_individuals([sale.individual_id])
+        confirm = set(body) == {"confirm"} and body["confirm"] is True
+        if not confirm and set(body) != {"name", "email"}:
+            raise HerdTrackingInvalid("Rätta namnet eller adressen, eller bekräfta att det är samma person.")
+        if not confirm and not isinstance(body["email"], str):
+            raise HerdTrackingInvalid("Ange köparens e-postadress.")
+        lock_buyer_addresses([sale.holder_contact.email, body.get("email")])
+        sale = query.for_update(of=[BuyerContact]).first()
+        if sale is None:
+            raise HerdTrackingNotFound("Det finns ingen köparadress att kontrollera.")
+        contact = sale.holder_contact
+        changed = ["email_review_pending"]
+        if not confirm:
+            fields = buyer_contact_fields(
+                {
+                    **body,
+                    "town": contact.town,
+                    "contact_consent": bool(contact.contact_consent_at),
+                    "membership_optin": bool(contact.membership_optin_at),
+                },
+                sale.herd_tracking_date,
+            )
+            if not fields["email"]:
+                raise HerdTrackingInvalid("Ange köparens e-postadress.")
+            if buyer_address_conflicts(fields["email"], fields["name"], replaces=contact.id):
+                raise HerdTrackingInvalid("Adressen finns fortfarande hos en köpare med ett annat namn.")
+            if contact.name != fields["name"]:
+                # Name and town identify the two holders in a resale within GX1/MX1.
+                rows = list(
+                    HerdTracking.select().where(
+                        HerdTracking.individual == sale.individual_id, HerdTracking.voided_at.is_null()
+                    )
+                )
+                before = check_invariants(sale.individual, rows)
+                contact.name = fields["name"]
+                contact.save(only=[BuyerContact.name])
+                if check_invariants(sale.individual, rows) - before:
+                    raise HerdTrackingInvalid("Namnet skulle göra besättningshistoriken motsägelsefull.")
+                changed.append("name")
+            if contact.email != fields["email"]:
+                contact.email = fields["email"]
+                changed.append("email")
+        contact.email_review_pending = False
+        contact.save(only=[BuyerContact.email_review_pending, BuyerContact.email])
+        log_buyer_contact(contact.id, "UPDATE", "adress_kontrollerad", user, fields=changed)
+        queue_buyer_mails(contact, sale)
 
 
 def erase_buyer_contact(contact_id, user):

@@ -1761,6 +1761,7 @@ class BuyerContact(BaseModel):
     town = TextField()
     postal_address = TextField(null=True)
     email = TextField(null=True)
+    email_review_pending = BooleanField(default=False, constraints=[SQL("DEFAULT false")])
     erased_email_hash = TextField(null=True)  # lets the erase link find this contact after its e-mail is purged
     phone = TextField(null=True)
     contact_consent_at = TimestampTZField(null=True)  # may keep e-mail and phone while the buyer has it
@@ -4865,6 +4866,12 @@ def _create_buyer_invitations():
     )
 
 
+def _add_buyer_email_review():
+    DATABASE.execute_sql(
+        "ALTER TABLE buyer_contact ADD COLUMN IF NOT EXISTS email_review_pending BOOLEAN NOT NULL DEFAULT false"
+    )
+
+
 def migrate_52_to_53():
     """A notice can point at a rabbit instead of an intake item (a buyer erased their own data)."""
     with DATABASE.atomic():
@@ -4873,6 +4880,7 @@ def migrate_52_to_53():
             "REFERENCES individual (individual_id) ON DELETE CASCADE"
         )
         DATABASE.execute_sql("ALTER TABLE buyer_contact ADD COLUMN IF NOT EXISTS erased_email_hash TEXT")
+        _add_buyer_email_review()
         _create_buyer_invitations()
         # The index a fresh bootstrap gives the foreign key: the cascade looks the notices up by rabbit.
         DATABASE.execute_sql("CREATE INDEX IF NOT EXISTS notice_individual_id ON notice (individual_id)")
@@ -5504,9 +5512,12 @@ def _run_migrations():
         CURRENT_SCHEMA_VERSION,
     )
 
-    if current_version == 53 and not BuyerInvitation.table_exists():  # earlier 53 on the buyer branch
-        with DATABASE.atomic():
-            _create_buyer_invitations()
+    if current_version == 53:  # earlier 53 on the buyer branch
+        if not BuyerInvitation.table_exists():
+            with DATABASE.atomic():
+                _create_buyer_invitations()
+        if "email_review_pending" not in {c.name for c in DATABASE.get_columns("buyer_contact")}:
+            _add_buyer_email_review()
 
     while current_version is None or current_version < CURRENT_SCHEMA_VERSION:
         next_version = (current_version if current_version else 0) + 1

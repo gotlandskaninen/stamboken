@@ -147,29 +147,6 @@ describe("SalePanel with a buyer outside the association", () => {
     });
   });
 
-  it("shows the address conflict and keeps the buyer fields editable", async () => {
-    const detail =
-      "E-postadressen finns redan hos en annan köpare. Kontrollera adressen.";
-    registerSale.mockResolvedValue({
-      ok: false,
-      problem: { status: 409, title: "Konflikt", detail },
-    });
-    panel();
-    fireEvent.click(
-      screen.getByRole("checkbox", { name: "Köparen är utanför föreningen" }),
-    );
-    type(/Köparens namn/, "Testköpare");
-    type(/^Ort/, "Testort");
-    fireEvent.click(screen.getByRole("checkbox", { name: CONSENT }));
-    type(/^E-post/, "kopare@example.org");
-    await waitFor(() => expect(save()).toBeEnabled());
-    fireEvent.click(save());
-
-    expect(await screen.findByRole("alert")).toHaveTextContent(detail);
-    expect(screen.getByLabelText("E-post")).toBeEnabled();
-    expect(screen.getByLabelText("E-post")).toHaveValue("kopare@example.org");
-  });
-
   it("asks for no buyer on a proof of a sale already registered, wherever it was", async () => {
     registerSale.mockResolvedValue({ ok: true, data: { document: doc } });
     panel(registered);

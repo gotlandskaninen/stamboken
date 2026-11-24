@@ -77,17 +77,87 @@ class TestBuyerAddress(BuyerMailTest):
     email = "kopare@example.org"
     buyer = {**BUYER, "name": "Testköpare", "email": email, "contact_consent": True}
     other = {**buyer, "name": "Annan testköpare", "email": email.upper()}
-    conflict = "E-postadressen finns redan hos en annan köpare. Kontrollera adressen."
+    notice = "kopare_adresskontroll"
 
     def sell_second_rabbit(self, buyer):
         return record_herd_tracking(self.individuals[1], self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=buyer)
 
-    def test_sale_refuses_an_address_held_under_another_name(self):
-        sale = self.sell_second_rabbit(self.other)
-        response = self._sell(buyer=self.buyer)
-        self.assertEqual((response.status_code, response.get_json()["detail"]), (409, self.conflict))
-        self.assertEqual(self._latest().kind, "BIRTH")
-        self.assertEqual([row.recipient_id for row in self.mails()], [sale.holder_contact_id])
+    def held_sale(self):
+        self.sell_second_rabbit(self.other)
+        self.send()
+        response = self._sell(buyer={**self.buyer, "membership_optin": True})
+        self.assertEqual(response.status_code, 200, response.get_data(as_text=True))
+        for private in ("annan köpare", self.notice, "email_review", self.email):
+            self.assertNotIn(private, response.get_data(as_text=True))
+        sale = self._latest()
+        self.assertEqual(sale.holder_contact.name, self.buyer["name"])
+        self.assertEqual(self.send(), [])
+        notices = db.Notice.select().where(db.Notice.kind == self.notice)
+        self.assertEqual([(n.user_id, n.individual_id) for n in notices], [(self.manager.id, self.rabbit.id)])
+        listed = inbox.notices_json(self.manager, unread_only=True, limit=20, offset=0)
+        self.assertIn(
+            f"E-postadressen till köparen av {self.rabbit.number} finns redan hos en annan köpare. "
+            "Kontrollera adressen.",
+            [n["text"] for n in listed],
+        )
+        return sale
+
+    def test_only_a_manager_can_confirm_and_release_the_two_mails_once(self):
+        self.viewer.add_role("manager", self.genebanks[1].id)
+        sale = self.held_sale()
+        url = f"/api/v2/buyer-contacts/{sale.holder_contact_id}/review-email"
+        reviews = f"/api/v2/individual/{self.rabbit.number}/buyer-email-reviews"
+        self.assertIn(self.client.get(reviews).status_code, (403, 404))
+        self.assertIn(self.client.post(url, json={"confirm": True}).status_code, (403, 404))
+        self._login("spec")
+        self.assertEqual(self.client.get(reviews).get_json(), [])
+        self.assertEqual(self.client.post(url, json={"confirm": True}).status_code, 404)
+        self._login("man")
+        self.assertEqual(
+            self.client.get(reviews).get_json(),
+            [{"id": sale.holder_contact_id, "name": self.buyer["name"], "email": self.email}],
+        )
+        self.assertEqual(self.client.post(url, json={"confirm": True}).status_code, 204)
+        self.assertEqual(self.client.get(reviews).get_json(), [])
+        self.client.post(url, json={"confirm": True})
+        self.assertEqual([msg["To"] for msg in self.send()], [self.email, self.email])
+
+    def test_manager_corrects_held_address_before_the_link_goes(self):
+        sale = self.held_sale()
+        self._login("man")
+        url = f"/api/v2/buyer-contacts/{sale.holder_contact_id}/review-email"
+        data = {"name": self.buyer["name"], "email": self.email}
+        self.assertEqual(self.client.post(url, json=data).status_code, 400)
+        self.assertEqual(self.send(), [])
+        corrected = "rattad@example.org"
+        self.assertEqual(self.client.post(url, json={**data, "email": corrected}).status_code, 204)
+        self.assertEqual([msg["To"] for msg in self.send()], [corrected, corrected])
+        buyer_mail.erase_by_link(mail.link_token(ERASE_PURPOSE, sale.holder_contact_id))
+        self.assertEqual([c.email for c in db.BuyerContact.select()], [self.other["email"]])
+
+    def test_manager_can_match_the_name_in_the_review(self):
+        sale = self.held_sale()
+        self._login("man")
+        response = self.client.post(
+            f"/api/v2/buyer-contacts/{sale.holder_contact_id}/review-email",
+            json={"name": self.other["name"], "email": self.email},
+        )
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(self._contact(sale.holder_contact_id).name, self.other["name"])
+        self.assertEqual(len(self.send()), 2)
+
+    def test_corrected_name_releases_mail_and_the_link_erases_both_sales(self):
+        sale = self.held_sale()
+        event = {
+            "kind": "TRANSFER",
+            "date": SALE_DATE,
+            "herd": "GX1",
+            "buyer": {**self.other, "membership_optin": True},
+        }
+        (row,) = correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Stavfel")
+        self.assertEqual(len(self.send()), 2)
+        buyer_mail.erase_by_link(mail.link_token(ERASE_PURPOSE, row.holder_contact_id))
+        self.assertFalse(db.BuyerContact.select().exists())
 
     def test_correct_spelling_on_same_sale_and_address(self):
         sale = self._sale({**self.buyer, "name": "Testköpre"})
@@ -105,16 +175,15 @@ class TestBuyerAddress(BuyerMailTest):
         self._sale(self.buyer)
         self.assertEqual(db.BuyerContact.select().count(), 2)
 
-    def test_proof_can_register_the_address_once_the_other_contact_is_erased(self):
-        sale = self.sell_second_rabbit(self.other)
+    def test_proof_registers_the_buyer_and_holds_the_mail(self):
+        self.sell_second_rabbit(self.other)
+        self.send()
         legacy = record_herd_tracking(self.rabbit, self.gx1, SALE_DATE, "TRANSFER", self.manager)
-        with self.assertRaises(HerdTrackingConflict) as refused:
-            attach_buyer(legacy, self.buyer, self.manager)
-        self.assertEqual(refused.exception.detail, self.conflict)
-        buyer_contact.erase_buyer_contact(sale.holder_contact_id, self.manager)
-        contact = attach_buyer(legacy, self.buyer, self.manager)
+        with db.DB_PROXY.atomic():
+            contact = attach_buyer(legacy, self.buyer, self.manager)
         self.assertEqual(self._latest().holder_contact_id, contact.id)
-        self.assertEqual([row.id for row in db.BuyerContact.select()], [contact.id])
+        self.assertTrue(contact.email_review_pending)
+        self.assertEqual(self.send(), [])
 
     def test_purged_email_still_identifies_a_contact_the_link_can_erase(self):
         sale = self.sell_second_rabbit(self.other)
@@ -126,9 +195,11 @@ class TestBuyerAddress(BuyerMailTest):
         response = self.client.post(
             f"/api/v2/individual/{self.rabbit.number}/herd-tracking/corrections", json={"events": [event]}
         )
-        self.assertEqual((response.status_code, response.get_json()["detail"]), (409, self.conflict))
+        self.assertEqual(response.status_code, 201)
+        self.assertTrue(self._latest().holder_contact.email_review_pending)
+        self.assertEqual(self.send(), [])
 
-    def test_concurrent_sales_of_different_rabbits_can_only_register_one_name(self):
+    def test_concurrent_sales_of_different_rabbits_hold_only_the_second_buyers_mail(self):
         def second_sale():
             with db.DB_PROXY.connection_context():
                 return self.sell_second_rabbit(self.other)
@@ -147,10 +218,9 @@ class TestBuyerAddress(BuyerMailTest):
                     if second.done() or time.monotonic() >= deadline:
                         self.fail("The second sale did not wait for the first sale's address lock")
                     time.sleep(0.02)
-            with self.assertRaises(HerdTrackingConflict) as refused:
-                second.result(timeout=10)
-        self.assertEqual(refused.exception.detail, self.conflict)
-        self.assertEqual([row.id for row in db.BuyerContact.select()], [first.holder_contact_id])
+            held = second.result(timeout=10)
+        self.assertTrue(held.holder_contact.email_review_pending)
+        self.assertEqual([row.recipient_id for row in self.mails()], [first.holder_contact_id])
 
 
 class TestInformationQueued(BuyerMailTest):

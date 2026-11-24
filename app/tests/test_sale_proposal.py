@@ -107,6 +107,21 @@ class ProposalTest(ArsrapportTest):
         contact = sp.approve(only_optin, self.manager, now=NOW).holder_contact
         self.assertEqual((contact.contact_consent_at, contact.membership_optin_at), (None, sale_midnight))
 
+    def test_approval_saves_the_sale_but_holds_mail_for_a_shared_address(self):
+        buyer = {**BUYER, "email": "kopare@example.org", "contact_consent": True}
+        sp.approve(self.propose(buyer=buyer), self.manager, now=NOW)
+        proposal = self.propose(self.other, buyer={**buyer, "name": "Testköpare två"})
+        sale = sp.approve(proposal, self.manager, now=NOW)
+        self.assertTrue(sale.holder_contact.email_review_pending)
+        self.assertFalse(
+            db.MailMessage.select()
+            .where(
+                db.MailMessage.recipient_kind == "buyer_contact", db.MailMessage.recipient_id == sale.holder_contact_id
+            )
+            .exists()
+        )
+        self.assertEqual(db.Notice.get(db.Notice.kind == "kopare_adresskontroll").individual_id, self.other.id)
+
     def test_approve_to_herd_in_genebank(self):
         proposal = self.propose(to_herd=self.g9002, buyer=None)
         row = sp.approve(proposal, self.manager, now=NOW)

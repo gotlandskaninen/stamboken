@@ -108,6 +108,8 @@ export function planImage(
 export function noticeHref(
   n: Pick<Notice, "kind" | "item_id" | "individual_number">,
 ): string {
+  if (n.kind === "kopare_adresskontroll" && n.individual_number != null)
+    return `/stamboken/notiser/koparadress/${encodeURIComponent(n.individual_number)}`;
   if (n.individual_number != null)
     return `/stamboken/individ/${encodeURIComponent(n.individual_number)}`;
   if (n.item_id == null) return "/stamboken/inskick";

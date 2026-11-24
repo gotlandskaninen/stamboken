@@ -10,7 +10,7 @@ import logging
 from flask import Blueprint, jsonify, request
 from flask_login import current_user
 from utils import herd_tracking as ht
-from utils.buyer_contact import erase_buyer_contact, read_buyer_contact
+from utils.buyer_contact import buyer_email_reviews, erase_buyer_contact, read_buyer_contact, review_buyer_email
 from utils.database import HerdTracking, Individual, User, not_voided
 
 from .common import check_genebank_access, json_login_required, manager_required, problem
@@ -130,6 +130,26 @@ def get_buyer_contact(contact_id):
         return _error(exc)
     response.headers["Cache-Control"] = "no-store"  # personal data: never kept by a browser or a proxy
     return response, 200
+
+
+@herd_tracking_bp.get("/v2/individual/<number>/buyer-email-reviews")
+@json_login_required
+@manager_required
+def get_buyer_email_reviews(number):
+    response = jsonify(buyer_email_reviews(number, _actor()))
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
+@herd_tracking_bp.post("/v2/buyer-contacts/<int:contact_id>/review-email")
+@json_login_required
+@manager_required
+def post_buyer_email_review(contact_id):
+    try:
+        review_buyer_email(contact_id, _json_body() or {}, _actor())
+    except ht.HerdTrackingError as exc:
+        return _error(exc)
+    return "", 204
 
 
 # [Next.js] Manager correction command.

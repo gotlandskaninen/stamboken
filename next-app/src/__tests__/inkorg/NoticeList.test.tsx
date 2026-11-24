@@ -31,6 +31,31 @@ describe("NoticeList", () => {
     expect(screen.getByText("2026-11-15 00:30:00")).toBeInTheDocument();
   });
 
+  it("opens the address review from the manager's notice", () => {
+    const text =
+      "E-postadressen till köparen av G1-2111 finns redan hos en annan köpare. Kontrollera adressen.";
+    render(
+      <NoticeList
+        unread={1}
+        notices={[
+          {
+            id: 3,
+            kind: "kopare_adresskontroll",
+            text,
+            item_id: null,
+            individual_number: "G1-2111",
+            created_at: "2026-11-14T10:00:00Z",
+            read_at: null,
+          },
+        ]}
+      />,
+    );
+    expect(screen.getByRole("link", { name: text })).toHaveAttribute(
+      "href",
+      "/stamboken/notiser/koparadress/G1-2111",
+    );
+  });
+
   it("links a notice about a rabbit to the rabbit's page", () => {
     render(
       <NoticeList

@@ -80,6 +80,12 @@ def queue_buyer_mails(contact, sale):
     """
     if contact is None or not contact.email:  # None: a sale older than five years stores no buyer
         return
+    if contact.email_review_pending:
+        from utils.inbox import notify, queue_workers  # pylint: disable=import-outside-toplevel
+
+        for manager in queue_workers(sale.herd.genebank_id, managers_only=True):
+            notify(manager, "kopare_adresskontroll", None, individual=sale.individual_id)
+        return
     params = {"buyer_contact_id": contact.id, "individual_id": sale.individual_id}
     kinds = ("kopare.information", "kopare.medlemskap") if contact.membership_optin_at else ("kopare.information",)
     for kind in kinds:

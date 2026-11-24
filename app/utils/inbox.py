@@ -1147,23 +1147,35 @@ def my_uploads(user):
 
 
 def _notice_rabbit_numbers(user, notices):
-    """
-    Notice id -> the number of the rabbit it is about, for the notices `user` may still see it on: a manager of
-    the rabbit's genebank (its origin herd's) or an admin, as when the notice was made. A role withdrawn since
-    leaves the notice without its rabbit. One query, whatever the number of notices.
-    """
-    about = {n.id: n.individual_id for n in notices if n.individual_id}
-    if not about:
-        return {}
-    rabbits = (
-        Individual.select(Individual.id, Individual.number, Herd.genebank)
-        .join(Herd, on=(Individual.origin_herd == Herd.id))
-        .where(Individual.id.in_(set(about.values())))
-        .tuples()
-    )
-    mine = None if user.is_admin else set(user.is_manager or [])
-    numbers = {rabbit: number for rabbit, number, genebank in rabbits if mine is None or genebank in mine}
-    return {notice: numbers[rabbit] for notice, rabbit in about.items() if rabbit in numbers}
+    """Only a current manager or admin sees the number. Address reviews belong to the sale's genebank."""
+    visible = {}
+    for review in (False, True):
+        about = {
+            n.id: n.individual_id for n in notices if n.individual_id and (n.kind == "kopare_adresskontroll") == review
+        }
+        if not about:
+            continue
+        rabbits = Individual.select(Individual.id, Individual.number).where(Individual.id.in_(set(about.values())))
+        if review:
+            rabbits = (
+                rabbits.join(HerdTracking)
+                .join(Herd, on=(HerdTracking.herd == Herd.id))
+                .where(Herd.herd.in_(OUTSIDE_GENEBANK_HERDS), HerdTracking.kind.in_(("TRANSFER", "CORRECTION")))
+            )
+        else:
+            rabbits = rabbits.join(Herd, on=(Individual.origin_herd == Herd.id))
+        if not user.is_admin:
+            rabbits = rabbits.where(Herd.genebank.in_(user.is_manager or []))
+        numbers = dict(rabbits.tuples())
+        visible.update({notice: numbers[rabbit] for notice, rabbit in about.items() if rabbit in numbers})
+    return visible
+
+
+def _notice_text(notice, number):
+    if notice.kind == "kopare_adresskontroll":
+        rabbit = f"köparen av {number}" if number else "köparen"
+        return f"E-postadressen till {rabbit} finns redan hos en annan köpare. Kontrollera adressen."
+    return NOTICE_TEXTS.get(notice.kind, notice.kind)
 
 
 def notices_json(user, *, unread_only, limit, offset):
@@ -1176,7 +1188,7 @@ def notices_json(user, *, unread_only, limit, offset):
         {
             "id": n.id,
             "kind": n.kind,
-            "text": NOTICE_TEXTS.get(n.kind, n.kind),
+            "text": _notice_text(n, numbers.get(n.id)),
             "item_id": n.item_id,
             "individual_number": numbers.get(n.id),
             "created_at": _iso(n.created_at),
@@ -1536,7 +1548,11 @@ def _digest_mail(params):
     )
     numbers = _notice_rabbit_numbers(user, notices)
     rows = [
-        {"text": NOTICE_TEXTS.get(n.kind, n.kind), "item_id": n.item_id, "individual_number": numbers.get(n.id)}
+        {
+            "text": _notice_text(n, numbers.get(n.id)),
+            "item_id": n.item_id,
+            "individual_number": numbers.get(n.id) if n.kind != "kopare_adresskontroll" else None,
+        }
         for n in notices
     ]
     return {"notices": rows} if rows else None

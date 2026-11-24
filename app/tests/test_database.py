@@ -2029,7 +2029,9 @@ class TestDatabaseMigration(DatabaseTest):
                 version=version - 1, comment="test seed", applied=datetime.now()
             ).execute()
         db.DATABASE.execute_sql("ALTER TABLE notice DROP COLUMN individual_id")
-        db.DATABASE.execute_sql("ALTER TABLE buyer_contact DROP COLUMN erased_email_hash")
+        db.DATABASE.execute_sql(
+            "ALTER TABLE buyer_contact DROP COLUMN erased_email_hash, DROP COLUMN email_review_pending"
+        )
 
         db.check_migrations()
 
@@ -2039,6 +2041,7 @@ class TestDatabaseMigration(DatabaseTest):
         self.assertIn(("individual_id", "individual", "individual_id"), fresh[1])
         self.assertIn(("notice_individual_id", ("individual_id",), False), fresh[2])
         self.assertIn(("erased_email_hash", True), fresh[3])
+        self.assertIn(("email_review_pending", False), fresh[3])
 
     @staticmethod
     def _migration_version(marker):
