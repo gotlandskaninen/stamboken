@@ -235,6 +235,45 @@ class TestArsrapportMigration(IsolatedSchemaTest):
                 self.assertFalse(db.SaleProposal.table_exists())
                 tx.rollback()
 
+    def test_buyer_branch_50_is_detected_even_after_later_migrations(self):
+        with db.DB_PROXY.atomic() as tx:
+            to_v49_shape()
+            _sql("ALTER TABLE herd DROP COLUMN contact_member_id, DROP COLUMN contact_pending")
+            _sql("ALTER TABLE buyer_contact DROP COLUMN erased_email_hash")
+            db.BuyerInvitation.drop_table()
+            db.SchemaHistory.delete().execute()
+            db.SchemaHistory.create(version=50, comment="notice.individual")  # 4cc866b
+            for version in range(50, 54):
+                with self.subTest(version=version):
+                    if version > 50:
+                        db.MIGRATIONS[version - 1, version]()  # replay what the old guard let through
+                    with self.assertRaisesRegex(RuntimeError, r"buyer mail as migration 50.*herd contact"):
+                        db.check_migrations()
+                    self.assertEqual(db.SchemaHistory.select(db.fn.MAX(db.SchemaHistory.version)).scalar(), version)
+            tx.rollback()
+
+    def test_main_50_can_advance_to_53_and_restart(self):
+        with db.DB_PROXY.atomic() as tx:
+            to_v49_shape()
+            _sql("ALTER TABLE herd DROP COLUMN contact_member_id, DROP COLUMN contact_pending")
+            _sql("ALTER TABLE notice DROP COLUMN individual_id")
+            _sql("ALTER TABLE buyer_contact DROP COLUMN erased_email_hash")
+            _sql("ALTER TABLE membership DROP COLUMN organization_name, DROP COLUMN organization_number")
+            db.BuyerInvitation.drop_table()
+            db.SchemaHistory.delete().execute()
+            db.migrate_49_to_50()
+            db.check_migrations()
+            db.check_migrations()  # the fully migrated database passes the same guard on every boot
+            self.assertEqual(
+                [r.version for r in db.SchemaHistory.select().order_by(db.SchemaHistory.version)], [50, 51, 52, 53]
+            )
+            self.assertEqual(snapshot(), self.bootstrapped)
+            self.assertTrue(
+                {"contact_member_id", "contact_pending"} <= {c.name for c in db.DATABASE.get_columns("herd")}
+            )
+            self.assertIn("erased_email_hash", {c.name for c in db.DATABASE.get_columns("buyer_contact")})
+            tx.rollback()
+
     def test_boot_refuses_lone_round_genebank_table_before_50(self):
         with db.DB_PROXY.atomic() as tx:
             to_v49_shape()

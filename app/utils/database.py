@@ -5456,12 +5456,12 @@ def _run_migrations():
             .scalar()
         )
         current_version = SchemaHistory.select(fn.MAX(SchemaHistory.version)).scalar()  # pylint: disable=E1120
-        # A fresh bootstrap only says "Bootstrapped". Identify the buyer branch's 50 by its actual columns.
+        # A bootstrap has no migration comment. Every buyer 50 (even before erased_email_hash) added
+        # notice.individual_id; running 51–53 afterwards still never adds main's missing herd contact columns.
         if (
-            current_version == 50
+            current_version is not None and current_version >= 50
             and not {"contact_member_id", "contact_pending"} <= {c.name for c in DATABASE.get_columns("herd")}
             and "individual_id" in {c.name for c in DATABASE.get_columns("notice")}
-            and "erased_email_hash" in {c.name for c in DATABASE.get_columns("buyer_contact")}
         ):
             raise RuntimeError(
                 "This database ran buyer mail as migration 50, now 53, and lacks main's herd contact migration "
