@@ -31,7 +31,6 @@ _DETAIL = re.compile(
     r"(e-post|ref\.?|(?:faktura)?referens)[ \t]*:([^,;|\r\n]*)",
     re.I,
 )
-_UNPARSED_EMAIL_ON_LINE = re.compile(r"[^\r\n]*@")
 
 
 def parse_billing_note(note: str) -> tuple[dict, str] | None:
@@ -56,6 +55,9 @@ def parse_billing_note(note: str) -> tuple[dict, str] | None:
             return None
         fields[key] = value
         end = detail.end()
-    if _UNPARSED_EMAIL_ON_LINE.match(note, end):
+    allowed_at_signs = 1 if "@" in fields.get("billing_email", "") else 0
+    if note.count("@") > allowed_at_signs:
+        return None
+    if end > address.end() and end < len(note) and note[end] not in "\r\n":
         return None
     return fields, note[label.start() : end].strip()

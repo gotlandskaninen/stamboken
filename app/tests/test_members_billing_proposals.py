@@ -54,17 +54,17 @@ class TestBillingNote(unittest.TestCase):
         ):
             with self.subTest(details=details):
                 excerpt = NOTE + details
-                self.assertEqual(parse_billing_note(f"{excerpt}; annan uppgift"), (fields, excerpt))
+                self.assertEqual(parse_billing_note(f"{excerpt} \t\nannan uppgift"), (fields, excerpt))
 
     def test_detail_after_a_blank_line_is_not_taken(self):
         for separator in ("\n\n", ", \n \n", "; \r\n \r\n"):
             with self.subTest(separator=separator):
-                self.assertEqual(parse_billing_note(f"{NOTE}{separator}e-post: annan@example.invalid"), (BILLING, NOTE))
+                self.assertEqual(parse_billing_note(f"{NOTE}{separator}ref: K-77"), (BILLING, NOTE))
 
     def test_box_and_multiword_city(self):
         excerpt = "Fakt. Låtsasgården; Box 17; 98765 Östra Sagoby"
         fields = {**BILLING, "billing_address": "Box 17", "billing_city": "Östra Sagoby"}
-        self.assertEqual(parse_billing_note(excerpt), (fields, excerpt))
+        self.assertEqual(parse_billing_note(f"{excerpt}; annan uppgift"), (fields, excerpt))
 
     def test_uncertain_or_ambiguous_notes_have_no_proposal(self):
         for note in (
@@ -94,7 +94,13 @@ class TestBillingNote(unittest.TestCase):
             f"{NOTE}; får ej användas",
             f"{NOTE}, ref:  ; ring senare",
             f"{NOTE}, ref: K-77. Ring senare för besked",
+            "Byt fakturamejl till ny@example.invalid; Faktura: Provbolaget, Box 1, 12345 Sagoby, "
+            "e-post: gammal@example.invalid",
+            "Faktura: Provbolaget, Box 1, 12345 Sagoby;\ne-post: privat@example.invalid, endast för medlemsbrev",
+            f"{NOTE}, e-post: kassa@example.invalid, ref: K-77; annan uppgift",
             f"{NOTE}, e-post: ett@example.invalid, tva@example.invalid",
+            f"{NOTE}, e-post: ett@example.invalid/tva@example.invalid",
+            f"{NOTE}\n\ne-post: annan@example.invalid",
             f"{NOTE}; kontakt: annan@example.invalid",
         ):
             with self.subTest(note=note):
