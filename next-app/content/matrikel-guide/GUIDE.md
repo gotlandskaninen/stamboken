@@ -171,7 +171,8 @@ gamla matrikelfilen. Skriv till exempel "Betalt 2026-11-16 Swish" och klicka
 exporten.
 
 Stamboken har inget eget fält för om avgiften är betald eller inte. Det är bara
-den här texten.
+den här texten. Skriv alltid med året: adresslistan till tryckeriet sätter
+"Betala nu" när det senaste året i noteringen är före i år.
 
 **Anteckningar** är för annat du vill komma ihåg om medlemskapet.
 
@@ -290,7 +291,7 @@ CSV-fil som går att öppna i Excel.
   hushåll med medlemsnummer, huvudmedlemmens namn, adress och postadress,
   sorterad på postnummer. Aktiva medlemskap och friexemplar ingår, men inte de
   som saknar adress. Kryssa i **Med Betala nu** till årets två första nummer.
-  Då står "Betala nu" hos dem vars senast betalda år är före i år.
+  Då står "Betala nu" hos dem vars betalningsnotering har ett år före i år.
 - **Exportera Koharen** ger personerna i aktiva medlemskap, med bara de
   uppgifter hushållet har sagt ja till att publicera: namn, telefon, e-post och
   adress. Valet gäller hela hushållet och görs av huvudmedlemmen under

@@ -9,6 +9,7 @@ Member row and address/consent on the Membership. See ADR-0007 and ADR-0008.
 
 import csv
 import io
+import re
 import secrets
 from datetime import date, datetime, timezone
 
@@ -817,7 +818,7 @@ def export_koharen():
 
 
 def log_member_export(action, **details):
-    """One audit_log row per download of member data: who, when and which export, never a value (ADR-0016)."""
+    """One audit_log row per download of the MATR export or the address list: who, when and which, never a value."""
     AuditLog.create(
         table_name=Membership._meta.table_name,
         record_id=f"export-{action}-{datetime.now(timezone.utc).isoformat()}",
@@ -831,11 +832,16 @@ ADDRESS_LIST_HEADER = ["Nr", "Namn Efternamn", "Adress", "Postadress", "Betala n
 
 
 def fee_unpaid(payment_note, year):
-    """True when Bet senast is a year before `year` ("25" in 2026), the paper matrikel's mark for an unpaid fee."""
+    """True when the latest year in the payment note is before `year`.
+
+    Two layouts: the paper matrikel's bare "25", and the guide's "Betalt 2026-11-16 Swish".
+    A note without a year (empty, "gratis") never gives a reminder.
+    """
     note = (payment_note or "").strip()
-    if not note.isdigit() or len(note) not in (2, 4):
-        return False  # empty or free text: no reminder
-    return int(note) + (2000 if len(note) == 2 else 0) < year
+    if re.fullmatch(r"\d{2}", note, re.ASCII):
+        return 2000 + int(note) < year
+    years = [int(y) for y in re.findall(r"(?<!\d)(?:19|20)\d{2}(?!\d)", note, re.ASCII)]
+    return bool(years) and max(years) < year
 
 
 # The printer's mailing list for Koharen (#186), in the layout the printer already gets:
@@ -885,5 +891,8 @@ def export_address_list():
     return Response(
         buf.getvalue(),
         mimetype="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="koharen-adresslista-{date.today().isoformat()}.csv"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="koharen-adresslista-{date.today().isoformat()}.csv"',
+            "Cache-Control": "no-store",  # personal data: never kept by a browser or a proxy
+        },
     )

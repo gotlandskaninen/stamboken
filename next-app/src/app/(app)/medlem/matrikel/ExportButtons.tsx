@@ -51,6 +51,15 @@ export function ExportButtons() {
       >
         Exportera Koharen
       </button>
+      {/* No name: inside the matrikel filter form it must not join the query. */}
+      <label>
+        <input
+          type="checkbox"
+          checked={feeReminder}
+          onChange={(e) => setFeeReminder(e.target.checked)}
+        />{" "}
+        Med Betala nu
+      </label>
       <button
         type="button"
         className="sb-btn sb-btn-secondary sb-btn-sm"
@@ -66,15 +75,6 @@ export function ExportButtons() {
       >
         Exportera adresslista
       </button>
-      {/* No name: inside the matrikel filter form it must not join the query. */}
-      <label>
-        <input
-          type="checkbox"
-          checked={feeReminder}
-          onChange={(e) => setFeeReminder(e.target.checked)}
-        />{" "}
-        Med Betala nu
-      </label>
     </>
   );
 }

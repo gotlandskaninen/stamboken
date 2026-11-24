@@ -983,16 +983,25 @@ class TestAddressListExport(MatrikelApiTest):
             ("25", True),
             ("2024", True),
             (" 25 ", True),
+            ("Betalt 2025-11-16 Swish", True),
             ("26", False),
             ("27", False),
             ("2026", False),
+            ("Betalt 2026-11-16 Swish", False),
+            ("2025 och 2026", False),  # the latest year counts
             ("gratis", False),
             ("", False),
             (None, False),
             ("1", False),
+            ("2\u00b2", False),  # str.isdigit() would accept it and int() would raise
+            ("tel 070-1234567", False),
         ):
             with self.subTest(note=note):
                 self.assertEqual(members_routes.fee_unpaid(note, year), expected)
+
+    def test_not_cached(self):
+        self.login("matrikel")
+        self.assertEqual(self.client.get("/api/v2/members/address-list").headers["Cache-Control"], "no-store")
 
     def test_escapes_formula_injection(self):
         db.Member.update(first_name="=HYPERLINK()").where(db.Member.email == "bo@example.com").execute()
