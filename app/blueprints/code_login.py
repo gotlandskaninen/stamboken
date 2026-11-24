@@ -11,7 +11,7 @@ from flask_login import current_user
 from limits import parse
 from utils import login_code as lc
 from utils import settings
-from utils.data_access import fetch_user_info, login_generation, logout_epoch
+from utils.data_access import auth_log, fetch_user_info, login_generation, logout_epoch
 from utils.database import DB_PROXY
 from utils.login_account import start_pending
 from utils.mail import _normalize, address_hash, enqueue_mail
@@ -25,6 +25,7 @@ logger = logging.getLogger("herdbook.code_login")
 
 
 def _wrong():
+    auth_log.info("Login refused: kod")
     return problem(400, "Ogiltig kod eller länk", "Använd webbläsaren där du bad om koden eller be om en ny kod.")
 
 
@@ -149,6 +150,7 @@ def _redeem(*, link, preview=False):
         return jsonify(pending=True)
     session.clear()
     current_app.extensions["establish_session"](user, "kod", generation, verified_epoch=verified_epoch)
+    auth_log.info("Login ok: kod, user id=%s", user.id)
     return jsonify(v2_prod_access=user.v2_promoted)
 
 

@@ -98,6 +98,16 @@ class TestLoginAccount(MatrikelApiTest):
             self.assertEqual(session["auth_method"], "kod")
             self.assertTrue(data_access.session_holds(session))
 
+    def test_created_account_and_login_are_recorded_in_the_auth_log(self):
+        self.pending()
+        with self.assertLogs("herdbook.auth", level="INFO") as logged:
+            self.assertEqual(self.create().status_code, 200)
+        user_id = db.Member.get_by_id(self.member.id).user_id
+        self.assertEqual(
+            [record.getMessage() for record in logged.records],
+            [f"Account created: kod, user id={user_id}", f"Login ok: kod, user id={user_id}"],
+        )
+
     def test_republished_text_shares_its_first_snapshot_and_changed_text_gets_a_new_one(self):
         def accept(version, text):
             self.member = _mk_person(_mk_membership(), "Test", "Member", f"member-{version}@example.org")

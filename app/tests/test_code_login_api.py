@@ -115,6 +115,17 @@ class CodeLoginTest(MatrikelApiTest):
         self.user.add_role("matrikel_admin", None)
         self.assertEqual(self.client.get("/api/v2/members/me").status_code, 401)
 
+    def test_auth_log_records_only_the_login_result_and_account_id(self):
+        self.ask()
+        row = db.LoginCode.get()
+        with self.assertLogs("herdbook.auth", level="INFO") as logged:
+            self.assertEqual(self.redeem("/lank", token=lc.login_link_token(row)).status_code, 200)
+            self.assertEqual(self.redeem("/kod/verifiera", code=lc.code(row)).status_code, 400)
+        self.assertEqual(
+            [record.getMessage() for record in logged.records],
+            [f"Login ok: kod, user id={self.user.id}", "Login refused: kod"],
+        )
+
     def test_mass_logout_after_consumption_invalidates_direct_sign_in(self):
         self.ask()
         row = db.LoginCode.get()

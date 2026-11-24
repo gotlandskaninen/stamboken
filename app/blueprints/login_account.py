@@ -2,6 +2,7 @@
 
 from flask import Blueprint, current_app, jsonify, request, session
 from utils import login_account, login_code
+from utils.data_access import auth_log
 
 from blueprints.common import problem
 
@@ -45,7 +46,9 @@ def create_account():
     except login_account.InvalidPending:
         return problem(401, "Inloggningen har gått ut", expired)
 
+    auth_log.info("Account created: kod, user id=%s", user.id)
     epoch = session["logout_epoch"]
     session.clear()
     current_app.extensions["establish_session"](user, "kod", generation, verified_epoch=epoch)
+    auth_log.info("Login ok: kod, user id=%s", user.id)
     return jsonify(v2_prod_access=user.v2_prod_access)
