@@ -113,6 +113,32 @@ describe("BesattningCard place fields", () => {
     });
   });
 
+  it("an unknown stored privacy is shown and sent as private", async () => {
+    updateHerd.mockResolvedValue({ success: true, data: {} });
+    render(
+      <BesattningCard
+        herd={herd({ www_privacy: "Public " })}
+        herdNumber="G1274"
+      />,
+    );
+    edit();
+    const chips = screen.getByRole("group", { name: "Vem ser hemsidan" });
+    expect(
+      within(chips).getByRole("button", { name: "Endast genbanksansvarig" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    fireEvent.click(
+      within(chips).getByRole("button", { name: "Inloggade besättningar" }),
+    );
+    save();
+    await waitFor(() => expect(updateHerd).toHaveBeenCalledTimes(1));
+    expect(updateHerd.mock.calls[0][1]).toStrictEqual({
+      www_privacy: "authenticated",
+      place_shown: {
+        www: { value: "exempelgarden.invalid", privacy: "private" },
+      },
+    });
+  });
+
   it("a 409 reloads the herd and the form follows the new data", async () => {
     updateHerd.mockResolvedValue({
       success: false,

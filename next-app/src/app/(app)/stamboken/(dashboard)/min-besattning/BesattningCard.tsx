@@ -10,6 +10,7 @@ import PrivacyChips from "@/components/herd-contact/PrivacyChips";
 import {
   CONFLICT_TEXT,
   isConflict,
+  privacyOf,
   type Privacy,
 } from "@/components/herd-contact/contactTypes";
 import { MbCard, MbPrivacy } from "./min-besattning-ui";
@@ -37,7 +38,7 @@ const fromHerd = (h: any): Data => {
   const d: Data = {};
   for (const r of ROWS) {
     d[r.key] = h?.[r.key] ?? "";
-    if (r.chips) d[`${r.key}_privacy`] = h?.[`${r.key}_privacy`] || "private";
+    if (r.chips) d[`${r.key}_privacy`] = privacyOf(h?.[`${r.key}_privacy`]);
   }
   return d;
 };

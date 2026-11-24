@@ -223,11 +223,15 @@ class TestLifecycle(LifecycleTest):
             .get()
         )
         self.assertEqual(set(entry.changed_fields), {"herd_name", "www", "email"})
+        # only contact fields selected: nothing to write, and the answer says which fields and why
+        body, status = da.revert_audit_entry(entry.id, fields=["www", "email"])
+        self.assertEqual(status, 400, body)
+        self.assertEqual(body["message"], "Inga fält att ångra: historiken sparar inte värdena för E-post, Hemsida.")
 
         body, status = da.revert_audit_entry(entry.id)
 
         self.assertEqual(status, 200, body)
-        self.assertEqual(body["message"], "Ändring ångrad utom email, www: historiken sparar inte de värdena.")
+        self.assertEqual(body["message"], "Ändring ångrad utom E-post, Hemsida: historiken sparar inte de värdena.")
         herd = self._herd()
         self.assertEqual((herd.herd_name, herd.www, herd.email), ("Gammalt namn", "ny.example.invalid", FARM_EMAIL))
 

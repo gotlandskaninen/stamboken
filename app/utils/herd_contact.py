@@ -116,7 +116,8 @@ def _compared(herd, persons):
     }
     rows = {}
     for field in CONTACT_FIELDS:
-        own = getattr(herd, field)
+        # a contact person's name is hers: a name column kept while the membership was paused is not an own name
+        own = None if field == "name" and person else getattr(herd, field)
         # a contact outside the register has no person to fetch e-mail and mobile from: those rows are own
         if own or (mode == "fritext" and field in ("email", "mobile_phone")):
             other = fetched[field]
@@ -278,7 +279,7 @@ def compare_with_register(herd: Herd) -> tuple[dict, dict[str, str]]:
 
     Returns the columns to write and the case per row: "lika", "olika", "bara_besattningen", "bara_matrikeln" or
     "bada_tomma", and for the name "person" or "fritext" when the name is filled in."""
-    # a paused membership too: its persons are compared, and its rows show once it is active again
+    # step 1 chooses among the persons of a paused membership too, so the contact is set once it is active again
     persons = active_persons(herd, any_status=True)
     main = next((p for p in persons if p.role == "huvudmedlem"), None)
     name = herd.name if normalize("name", herd.name) else None
@@ -290,10 +291,11 @@ def compare_with_register(herd: Herd) -> tuple[dict, dict[str, str]]:
         contact, name, cases = same[0], None, {"name": "person"}
     else:
         contact, cases = None, {"name": "fritext"}
-    # step 2: each row against what the read gives afterwards, without the herd's own values
+    # step 2: each row against what the read gives afterwards, without the herd's own values; a paused membership
+    # gives nothing, so its own rows stay own
     contact_id = contact.id if contact is not None else None
     probe = Herd(id=herd.id, membership=herd.membership_id, contact_member=contact_id, name=name, contact_pending=[])
-    fetched = herd_contacts([probe], any_status=True)[probe.id].rows
+    fetched = herd_contacts([probe])[probe.id].rows
     for field in CONTACT_FIELDS[1:]:
         own, register = normalize(field, getattr(herd, field)), normalize(field, fetched[field].value)
         if own is None:
@@ -306,8 +308,11 @@ def compare_with_register(herd: Herd) -> tuple[dict, dict[str, str]]:
     if contact_id is not None:
         changes["contact_member"] = contact_id
     for field in CONTACT_FIELDS:
-        if cases[field] not in ("fritext", "olika", "bara_besattningen") and getattr(herd, field):
-            changes[field] = None  # a copy of the register's value, or blank
+        own = getattr(herd, field)
+        # emptied only if blank or the same value can still be read afterwards: a paused membership's name cannot
+        readable = normalize(field, fetched[field].value)
+        if own and cases[field] != "fritext" and normalize(field, own) in (None, readable):
+            changes[field] = None
         # decision 4: a row that was empty starts hidden, so a value added later is not shown before anyone chose
         privacy = f"{field}_privacy"
         if cases[field] in ("bara_matrikeln", "bada_tomma") and (getattr(herd, privacy) or "private") != "private":
@@ -444,7 +449,8 @@ def check_place_shown(herd: Herd, fields, shown, *, with_privacy=True) -> None:
             or seen.get("privacy") not in (None, *PRIVACY_LEVELS)
         ):
             raise ValueError(f"place_shown.{field} krävs: värdet och synligheten som formuläret visade.")
-        stored_privacy = getattr(herd, f"{field}_privacy") or "private"
+        # as the read applies it: NULL, and an unknown stored value ("Public "), is private
+        stored_privacy = PRIVACY_LEVELS[_rank(getattr(herd, f"{field}_privacy"))]
         if normalize(field, seen["value"]) != normalize(field, getattr(herd, field)) or (
             "privacy" in seen and (seen["privacy"] or "private") != stored_privacy
         ):

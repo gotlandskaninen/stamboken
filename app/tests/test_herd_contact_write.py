@@ -8,6 +8,7 @@ from unittest.mock import patch
 import herdbook  # noqa: E402
 import utils.database as db  # noqa: E402
 from herdbook import APP  # noqa: E402
+from utils.herd_contact import link_herd  # noqa: E402
 
 from tests.database_test import _USE_POSTGRES  # noqa: E402
 from tests.test_herd_contact_read import HerdContactReadTest  # noqa: E402
@@ -724,6 +725,31 @@ class TestReviewRound3(HerdContactWriteTest):
         self.assertEqual(self._read(other)["email"].lower(), "anna@example.invalid")
 
 
+class TestLinkedWhilePaused(HerdContactWriteTest):
+    def test_contact_chosen_while_paused_is_writable_once_active(self):
+        """O4: a herd linked while its membership was paused keeps its name column, with the main member as contact
+        person. Once active, the form (as ContactEditor sends it: no name outside fritext) saves without 409, and a
+        privacy change of the name row keeps the contact person."""
+        self._set(membership=None, contact_member=None, contact_pending=None, name="Anna Exempel")
+        self._set_status("inactive")
+        link_herd(self.herd.id, self.membership.id)
+        self._set_status("active")
+        main = self._main_user()
+        data = self._read(main)
+        contact = data["contact"]
+        self.assertEqual((contact["mode"], contact["contact_member"]["id"]), ("person", self.main.id))
+        _, rows = self._form(main)
+        shown = {"mode": "person", "contact_member": self.main.id, "name": None}  # ContactEditor's shownTop
+        name = {"source": "medlemskap", "value": None, "privacy": "authenticated", "shown": rows["name"]}
+
+        response = self._patch(main, {"contact": {"shown": shown, "rows": {"name": name}}})
+
+        self.assertEqual(response.status_code, 200, response.data)
+        state = self._state()
+        self.assertEqual((state["contact_member_id"], state["name_privacy"]), (self.main.id, "authenticated"))
+        self.assertEqual(self._read(main)["contact"]["mode"], "person")
+
+
 @unittest.skipUnless(_USE_POSTGRES, "FOR UPDATE serialisation needs PostgreSQL")
 class TestConcurrentWrites(HerdContactWriteTest):
     def _race(self, first, second):
@@ -901,6 +927,23 @@ class TestPlaceShown(HerdContactWriteTest):
         response = self._patch(main, fresh)
         self.assertEqual(response.status_code, 200, response.data)
         self.assertEqual(place(), ("Visby", "authenticated"))
+
+    def test_unknown_stored_privacy_counts_as_private(self):
+        """A legacy level outside the three ("Public ") reads as private, so Min besättning shows and sends it as
+        private: a privacy change against that is saved. A form that showed another level is still a conflict."""
+        main = self._main_user()
+        self._set(wire_phone=self.OLD, wire_phone_privacy="Public ")
+        before = self._state()
+        stale = {
+            "wire_phone_privacy": "authenticated",
+            "place_shown": {"wire_phone": {"value": self.OLD, "privacy": "authenticated"}},
+        }
+        self._assert_problem(self._patch(main, stale), 409, "contact-changed")
+        self.assertEqual(self._state(), before)
+        body = {**stale, "place_shown": {"wire_phone": {"value": self.OLD, "privacy": "private"}}}
+        response = self._patch(main, body)
+        self.assertEqual(response.status_code, 200, response.data)
+        self.assertEqual(self._state(), {**before, "wire_phone_privacy": "authenticated"})
 
     def test_old_app_route_is_unchanged(self):
         """The old app sends the whole herd it read and no place_shown: it saves as before (its echo rules for a

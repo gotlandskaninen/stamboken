@@ -1,4 +1,7 @@
 export type Privacy = "private" | "authenticated" | "public";
+/** a stored level as the server reads it: NULL and an unknown value ("Public ") are private */
+export const privacyOf = (p: string | null | undefined): Privacy =>
+  p === "authenticated" || p === "public" ? p : "private";
 export type ContactField =
   | "name"
   | "email"

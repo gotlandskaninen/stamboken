@@ -4298,6 +4298,15 @@ def _audit_pedigree_cycle_error(table_name, record_id, values):
 # logs, imported once at cutover by a script in the ops repo) hold partial
 # snapshots in v1's value format.
 IMPORTED_AUDIT_MESSAGE = "Historik från gamla Stamboken kan inte ångras"
+# the herd's contact columns as the admin history names them (auditLabels.ts)
+_HERD_CONTACT_LABELS = {
+    "name": "Namn",
+    "email": "E-post",
+    "mobile_phone": "Mobiltelefon",
+    "wire_phone": "Fast telefon",
+    "physical_address": "Adress",
+    "www": "Hemsida",
+}
 
 
 def revert_audit_entry(audit_id, fields=None, is_admin=False):
@@ -4353,9 +4362,10 @@ def revert_audit_entry(audit_id, fields=None, is_admin=False):
             values[field] = entry.old_data[field]
         elif table_name == "herd" and field in HERD_CONTACT_COLUMNS:
             skipped.append(field)
+    skipped_labels = ", ".join(_HERD_CONTACT_LABELS[f] for f in HERD_CONTACT_COLUMNS if f in skipped)
     done = "Ändring ångrad"
     if skipped:
-        done += f" utom {', '.join(sorted(skipped))}: historiken sparar inte de värdena."
+        done += f" utom {skipped_labels}: historiken sparar inte de värdena."
 
     if refusal := _audit_undo_refusal(table_name, values, is_admin):
         return {"status": "error", "message": refusal}, 409
@@ -4363,6 +4373,9 @@ def revert_audit_entry(audit_id, fields=None, is_admin=False):
     if not set_clauses:
         if bank_ignored:  # only bank privacy was selected (e.g. a migration 40 entry): nothing to write
             return {"status": "success", "message": done}, 200
+        if skipped:
+            message = f"Inga fält att ångra: historiken sparar inte värdena för {skipped_labels}."
+            return {"status": "error", "message": message}, 400
         return {"status": "error", "message": "Inga fält att ångra"}, 400
 
     params.append(entry.record_id)

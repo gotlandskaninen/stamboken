@@ -250,26 +250,48 @@ class TestLinkHerd(LinkTest):
         self.assertEqual((report["herd_links"], report["contact_cases"]), (0, Counter()))
         self.assertEqual(report["herd_warnings"], ["herd G1 changed or linked meanwhile — not linked"])
 
-    def test_link_paused_membership_compares_its_persons(self):
-        """O4: a paused membership (inactive, its main member still active) is compared with its persons: the name
-        is the main member's, not fritext. While paused nothing is fetched; once active, her values show."""
+    def test_link_paused_membership_chooses_the_contact_and_keeps_the_rows(self):
+        """O4: a paused membership (inactive, its main member still active) chooses the contact person among its
+        persons: the name is the main member's, not fritext. Its rows are compared with what the read shows, which is
+        nothing while paused: no column is emptied, the own rows stay own with no question and the reads show them.
+        Once active, the contact person is the main member."""
         self._set_status("inactive")
-        self._herd(name="Anna Exempel", email="anna@example.invalid")
+        self._herd(
+            name="Anna Exempel",
+            email="anna@example.invalid",
+            email_privacy="authenticated",
+            mobile_phone="070-999 99 99",
+        )
 
         cases = link_herd(self.herd.id, self.membership.id)
 
-        self.assertEqual((cases["name"], cases["email"]), ("person", "lika"))
-        state = self._state()
         self.assertEqual(
-            (state["contact_member_id"], state["name"], state["email"], state["contact_pending"]),
-            (self.main.id, None, None, []),
+            cases,
+            {
+                "name": "person",
+                "email": "bara_besattningen",
+                "mobile_phone": "bara_besattningen",
+                "physical_address": "bada_tomma",
+            },
+        )
+        state = self._state()
+        self.assertEqual((state["contact_member_id"], state["contact_pending"]), (self.main.id, []))
+        self.assertEqual(
+            (state["name"], state["email"], state["mobile_phone"], state["email_privacy"]),
+            ("Anna Exempel", "anna@example.invalid", "070-999 99 99", "authenticated"),
         )
         rows = herd_contact(db.Herd.get_by_id(self.herd.id)).rows
-        self.assertEqual({f: r.value for f, r in rows.items()}, dict.fromkeys(rows))
+        self.assertEqual(rows["name"], _row("Anna Exempel", "egen"))
+        self.assertEqual(rows["email"], _row("anna@example.invalid", "egen"))
+        self.assertEqual(rows["mobile_phone"], _row("070-999 99 99", "egen"))
+
         self._set_status("active")
-        rows = herd_contact(db.Herd.get_by_id(self.herd.id)).rows
-        self.assertEqual(rows["name"], _row("Anna Exempel", "person"))
-        self.assertEqual(rows["email"], _row("anna@example.invalid", "person"))
+        contact = herd_contact(db.Herd.get_by_id(self.herd.id))
+        self.assertEqual((contact.mode, contact.contact_member_id), ("person", self.main.id))
+        self.assertEqual(contact.rows["name"], _row("Anna Exempel", "person"))
+        self.assertEqual(contact.rows["email"], _row("anna@example.invalid", "egen"))
+        self.assertEqual(contact.rows["mobile_phone"], _row("070-999 99 99", "egen", alternative="070-111 11 11"))
+        self.assertEqual(contact.rows["physical_address"], _row(ADDRESS, "medlemskap"))
 
 
 @unittest.skipUnless(_USE_POSTGRES, "FOR UPDATE serialisation needs PostgreSQL")

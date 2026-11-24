@@ -8,6 +8,7 @@ import {
   isFetched,
   isReader,
   joinAddress,
+  privacyOf,
   roleLabel,
   shownRow,
   shownTop,
@@ -59,9 +60,6 @@ interface Form {
 /** a read-only value on one line: the address's parts joined with commas */
 const oneLine = (f: ContactField, v: string | null | undefined) =>
   f === "physical_address" && v ? v.split("|").filter(Boolean).join(", ") : v;
-
-const privacyOf = (p: string | null | undefined): Privacy =>
-  p === "authenticated" || p === "public" ? p : "private";
 
 function initForm(herd: HerdFields, contact: Contact): Form {
   const rows: Form["rows"] = {};
