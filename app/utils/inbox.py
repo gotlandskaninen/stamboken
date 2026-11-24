@@ -522,18 +522,22 @@ def _restore_attachment_request(item):
         .order_by(MailMessage.id)
         .for_update()
     )
+    warning = None
     for message in messages:
         if message.status == "sending":
             raise InboxError(409, "Utskicket pågår. Det går inte att ångra medan mejlet behandlas.")
         if message.status == "cancelled":
             if message.last_error != MAIL_NO_LONGER_RELEVANT:
-                raise InboxError(409, "Begäran om bilaga har makulerats och kan inte skickas igen.")
+                warning = "Mejlet kunde inte skickas om."
+                continue
             message.status, message.last_error = "queued", None
             message.save(only=[MailMessage.status, MailMessage.last_error])
+    return warning
 
 
 def undo_assignments(receipts, user):
     """Restore the entire signed operation, or roll it all back. GETs may have logged reads in between."""
+    result = {"restored": []}
     for receipt in receipts:  # signed in ascending item id, the same lock order as assignment
         item = lock_item(receipt["item"])
         require_worker_of(item, user)
@@ -549,7 +553,8 @@ def undo_assignments(receipts, user):
             raise InboxError(403, "Du får inte längre tilldela ärendet.")
         before = receipt["before"]
         if before["state"] == "ofullstandig" and item.state != "ofullstandig":
-            _restore_attachment_request(item)
+            if warning := _restore_attachment_request(item):
+                result["warning"] = warning
         if before["assigned_to"] is not None:
             previous = User.get_or_none(User.id == before["assigned_to"])
             if previous is None or not can_handle(previous, item.genebank_id):
@@ -561,7 +566,8 @@ def undo_assignments(receipts, user):
         if receipt["notice"]:
             Notice.delete().where(Notice.id == receipt["notice"], Notice.item == item.id).execute()
         log_event(item, user, "angrad", event=event.id)
-    return [receipt["item"] for receipt in receipts]
+        result["restored"].append(item.id)
+    return result
 
 
 def change_state(item, user, state, *, note=None, duplicate_of=None):

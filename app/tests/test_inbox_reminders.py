@@ -81,6 +81,21 @@ class TestIncompleteMail(ReminderTest):
         self.assertEqual(self.row(row.id).status, "sent")
         self.assertEqual(self.sent(), [])
 
+    def test_undo_restores_handler_and_reports_a_permanently_cancelled_request(self):
+        item, _ = self.incomplete()
+        self.login(self.manager.email)
+        undo = self.post(f"/{item.id}/ta-over").get_json()["undo"]
+        (request,) = self.mails("inlasning.ofullstandig")
+        db.MailMessage.update(status="cancelled", last_error="mottagaren saknar e-post").where(
+            db.MailMessage.id == request.id
+        ).execute()
+        response = self.post("/angra", undo=undo)
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("kunde inte skickas om", response.get_json()["warning"])
+        restored = self.reload(item)
+        self.assertEqual((restored.assigned_to_id, restored.state), (self.helper.id, "ofullstandig"))
+        self.assertEqual(self.row(request.id).status, "cancelled")
+
     def test_queued_with_ids_only_and_the_note_read_when_it_goes(self):
         item, event = self.incomplete()
         (row,) = self.mails("inlasning.ofullstandig")

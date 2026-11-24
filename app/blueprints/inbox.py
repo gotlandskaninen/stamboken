@@ -521,10 +521,10 @@ def undo_assignment():
         return problem(403, "Åtkomst nekad", "Du kan bara ångra din egen ändring.")
     try:
         with DB_PROXY.atomic():
-            restored = inbox.undo_assignments(receipts, current_user)
+            result = inbox.undo_assignments(receipts, current_user)
     except inbox.InboxError as exc:
         return problem(exc.status, exc.title, exc.detail)
-    return jsonify({"restored": restored})
+    return jsonify(result)
 
 
 @inbox_bp.route("/inkorg/<int:item_id>/lage", methods=["POST"])

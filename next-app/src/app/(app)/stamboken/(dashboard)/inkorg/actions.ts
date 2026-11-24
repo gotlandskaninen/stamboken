@@ -145,7 +145,7 @@ export async function assignHerd(
 
 export async function undoAssignment(undo: string) {
   if (typeof undo !== "string" || !undo) return refused("Ogiltig ändring.");
-  return call<{ restored: number[] }>(null, "/angra", "POST", { undo });
+  return call<{ restored: number[]; warning?: string }>(null, "/angra", "POST", { undo });
 }
 
 export async function changeState(

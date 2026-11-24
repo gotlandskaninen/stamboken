@@ -49,7 +49,12 @@ export function QueueUndoProvider({ children }: { children: ReactNode }) {
       setRevision((r) => r + 1);
       setNotice((current) => {
         if (current !== notice) return current;
-        if (res.ok) return { message: t("queueAssignment.undone") };
+        if (res.ok)
+          return {
+            message: [t("queueAssignment.undone"), res.data.warning]
+              .filter(Boolean)
+              .join(" "),
+          };
         const { status, detail } = res.problem;
         const retryable =
           status >= 500 ||

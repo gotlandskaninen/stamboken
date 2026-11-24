@@ -67,6 +67,10 @@ afterEach(() => {
 describe("handläggning och ångra", () => {
   it("keeps undo in the layout when a taken item opens in registration", async () => {
     actions.takeItem.mockResolvedValue({ ok: true, data: { undo: "taken" } });
+    actions.undoAssignment.mockResolvedValueOnce({
+      ok: true,
+      data: { restored: [12], warning: "Mejlet kunde inte skickas om." },
+    });
     const view = render(itemView("ny", null));
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Börja registrera" }));
@@ -83,7 +87,7 @@ describe("handläggning och ångra", () => {
     });
     expect(actions.undoAssignment).toHaveBeenCalledWith("taken");
     expect(screen.getByRole("status")).toHaveTextContent(
-      "Ändringen har ångrats.",
+      "Ändringen har ångrats. Mejlet kunde inte skickas om.",
     );
   });
 
