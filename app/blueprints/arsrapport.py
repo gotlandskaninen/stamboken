@@ -33,6 +33,7 @@ from utils.database import (
     SaleProposal,
     YearlyReportRound,
 )
+from utils.legacy_compat import report_link_only
 from utils.matrikel import resolve_own_membership
 from utils.report_code import CodeActor, actor_key
 
@@ -122,13 +123,17 @@ def _actor(access):
     return CodeActor(access.code) if access.code else current_user
 
 
+def _report_user():
+    return current_user if not report_link_only() and current_user.is_authenticated else None
+
+
 def _retry_actors(herd, round_):
     """
     Who a retry of Skicka may be looked up for, before the access is read: the account, and the session's codes for
     the herd, valid or not. A submission made with a code gets its receipt only while that code is valid (E4); the
     retry of a paper item's account submission keeps its exception (Codex 5).
     """
-    user = current_user if current_user.is_authenticated else None
+    user = _report_user()
     codes = [CodeActor(code) for code in _codes_in_session(herd, round_)]
     return ([user] if user is not None else []) + codes
 
@@ -142,12 +147,13 @@ def report_actor_required(f):
 
     @wraps(f)
     def decorated(*args, **kwargs):
-        if current_user.is_authenticated or session_codes(arsrapport.now()):
+        if _report_user() or session_codes(arsrapport.now()):
             return f(*args, **kwargs)
         if g.get("rapport_expired"):
             return problem(401, "Sessionen har gått ut", "Öppna länken i mejlet igen.", code="session_ute")
         return problem(401, "Autentisering krävs", "Du måste vara inloggad.")
 
+    decorated.accepts_report_code = True
     return decorated
 
 
@@ -165,8 +171,9 @@ def _report_target(code, year):
     if post is not None and not post.isdecimal():
         raise ArsrapportError(400, "Ange posten som ett nummer.")
     access = None
-    if current_user.is_authenticated:
-        access = arsrapport.report_access(current_user, herd, int(post) if post is not None else None)
+    user = _report_user()
+    if user:
+        access = arsrapport.report_access(user, herd, int(post) if post is not None else None)
     round_ = arsrapport.get_round(year)
     if access is None and post is None and round_ is not None:
         ids = session_codes(arsrapport.now())
@@ -174,7 +181,7 @@ def _report_target(code, year):
         if access is not None:
             touch(arsrapport.now())
     if access is None:
-        if current_user.is_authenticated:
+        if user:
             raise ArsrapportError(403, "Du har inte tillgång till årsrapporten för besättningen.")
         raise ArsrapportError(404, "Besättningen finns inte.")  # a code session, but not for this herd
     if round_ is None:
@@ -247,7 +254,7 @@ def report_purchase(herd, year):
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/kop/inskick", methods=["POST"])
 @report_actor_required
 def send_purchase_photos(herd, year):
-    if (refusal := certificate_upload_refusal()) is not None:
+    if not report_link_only() and (refusal := certificate_upload_refusal()) is not None:
         return refusal
     herd, round_, access = _report_target(herd, year)  # a link writes only its own herd and year
     body = request.get_json(silent=True)
@@ -561,7 +568,7 @@ def _send_limit(access):
 @arsrapport_bp.route("/v2/arsrapport/besattning/<herd>/<int:year>/foto", methods=["POST"])
 @report_actor_required
 def upload_photo(herd, year):
-    if (refusal := certificate_upload_refusal()) is not None:
+    if not report_link_only() and (refusal := certificate_upload_refusal()) is not None:
         return refusal
     request.max_content_length = MAX_REQUEST  # before the body is read, as the queue's upload
     herd, round_, access = _report_target(herd, year)

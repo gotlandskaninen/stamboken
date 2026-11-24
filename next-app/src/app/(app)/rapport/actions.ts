@@ -4,6 +4,7 @@ import { fetchApi, ApiError } from "@/lib/api";
 import type { GenebankHerd } from "@/utils/saleRules";
 import type { ActionResult } from "../stamboken/(dashboard)/inkorg/actions";
 import {
+  reportLinkPath,
   SUBMIT_TIMEOUT_MS,
   type DraftData,
   type Father,
@@ -20,7 +21,7 @@ import {
 
 // The report actions of the page behind the personal link. The same four as the logged-in page, with the same
 // signatures so ReportForm can call either, but every call goes to the production API (the link works there only)
-// and a visitor with a link needs no mode cookie. Photo submissions cannot cross over from demo mode.
+// and the report code authorizes the herd and year, also for a signed-in visitor.
 export type MineEntry = {
   code_id: number;
   herd: string;
@@ -38,14 +39,14 @@ const refused = (detail: string): ActionResult<never> => ({
 function path(herd: string, year: number, tail: string) {
   if (!HERD.test(herd) || !Number.isInteger(year) || year < 2000 || year > 2100)
     return null;
-  return `/v2/arsrapport/besattning/${herd}/${year}${tail}`;
+  return reportLinkPath(`/v2/arsrapport/besattning/${herd}/${year}${tail}`);
 }
 
 async function call<T>(
   url: string | null,
   method: string,
   body?: unknown,
-  options?: { timeout?: number; isolateDemo?: boolean },
+  options?: { timeout?: number },
 ): Promise<ActionResult<T>> {
   if (url === null) return refused("Ogiltig besättning eller år.");
   try {
@@ -150,9 +151,7 @@ export async function sendPurchasePhotos(
   year: number,
   body: PurchasePhotosBody,
 ) {
-  return call<PurchaseNotice>(path(herd, year, "/kop/inskick"), "POST", body, {
-    isolateDemo: true,
-  });
+  return call<PurchaseNotice>(path(herd, year, "/kop/inskick"), "POST", body);
 }
 
 // The sale dialog's herd picker: the report herd's genebank, as the logged-in picker has it (4a). The page binds

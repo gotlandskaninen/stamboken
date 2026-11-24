@@ -49,8 +49,7 @@ export async function fetchApi<T>(
   const signedIn = !!cookieStore.get("session")?.value;
   const demoBase =
     !forceProd && mode === "demo" && signedIn ? API_TEST_BASE : undefined;
-  // The personal report link has no mode cookie and explicitly selects production.
-  const needsDemo = mode === "demo" && (!forceProd || modeCookie !== undefined);
+  const needsDemo = mode === "demo";
   if (isolateDemo && needsDemo && (!demoBase || demoBase === API_BASE)) {
     throw new ApiError({
       status: 503,

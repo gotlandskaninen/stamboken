@@ -13,7 +13,7 @@ misjudged host can be corrected without a code change.
 import logging
 import os
 
-from flask import request
+from flask import current_app, request
 
 # Outside the "herdbook" logger tree: APP.log's formatter appends the request
 # URL, query string included, to every line.
@@ -113,6 +113,10 @@ EXEMPT_ENDPOINTS = frozenset(
         # The public certificate verification (QR) page.
         ("certificates_v2.verify_certificate_get", "GET"),
         ("certificates_v2.verify_certificate_post", "POST"),
+        # The personal report link: the exchange checks the token, and mine only lists the session's codes.
+        ("rapport_link.open_link", "POST"),
+        ("rapport_link.mine", "GET"),
+        ("rapport_link.contacts", "GET"),
         # The public membership application (not its listing, which is GET)
         # and the genebank names its form shows.
         ("member_applications.create_application", "POST"),
@@ -164,6 +168,13 @@ def is_legacy_host():
     return host in legacy_hosts()
 
 
+def report_link_only():
+    """Only code-aware report views can opt out of account access and require the link's grant instead."""
+    return request.args.get("via") == "lank" and getattr(
+        current_app.view_functions.get(request.endpoint), "accepts_report_code", False
+    )
+
+
 def refusal(endpoint, method, user):
     """
     The access rules for a logged-in `user`: the 403 text when this request
@@ -172,7 +183,7 @@ def refusal(endpoint, method, user):
     needs v2_prod_access or admin.
     """
     pair = (endpoint, "GET" if method == "HEAD" else method)
-    if pair in EXEMPT_ENDPOINTS:
+    if pair in EXEMPT_ENDPOINTS or report_link_only():
         return None
     if is_legacy_host() and pair in LEGACY_ENDPOINTS:
         message = None if user.validated else course_message()

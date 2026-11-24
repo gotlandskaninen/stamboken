@@ -166,21 +166,25 @@ describe("certificate photos in the yearly report", () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("allows the personal link without a mode cookie and refuses its upload routes in demo mode", async () => {
-    const { uploadPhoto } = await import(
-      "@/app/(app)/stamboken/(dashboard)/arsrapport/rabbitActions"
-    );
-    const { sendPurchasePhotos } = await import("@/app/(app)/rapport/actions");
-    const data = new FormData();
-    expect((await uploadPhoto("G1", 2026, data)).ok).toBe(false);
-    expect((await sendPurchasePhotos("G1", 2026, purchase)).ok).toBe(false);
-    expect(send).not.toHaveBeenCalled();
-
-    mode = undefined;
-    send.mockResolvedValueOnce(Response.json({ item_id: 1, document_id: 1 }));
-    expect((await uploadPhoto("G1", 2026, data)).ok).toBe(true);
-    expect(send.mock.calls[0][0]).toBe(
-      "http://api:9090/api/v2/arsrapport/besattning/G1/2026/foto",
-    );
-  });
+  it.each(["demo", "prod", undefined] as const)(
+    "uses the production link with mode %s",
+    async (selected) => {
+      mode = selected;
+      const { uploadPhoto } = await import(
+        "@/app/(app)/stamboken/(dashboard)/arsrapport/rabbitActions"
+      );
+      const { sendPurchasePhotos } = await import(
+        "@/app/(app)/rapport/actions"
+      );
+      const data = new FormData();
+      send.mockResolvedValueOnce(Response.json({ item_id: 1, document_id: 1 }));
+      expect((await uploadPhoto("G1", 2026, data)).ok).toBe(true);
+      send.mockResolvedValueOnce(Response.json({}));
+      expect((await sendPurchasePhotos("G1", 2026, purchase)).ok).toBe(true);
+      expect(send.mock.calls.map(([url]) => url)).toEqual([
+        "http://api:9090/api/v2/arsrapport/besattning/G1/2026/foto?via=lank",
+        "http://api:9090/api/v2/arsrapport/besattning/G1/2026/kop/inskick?via=lank",
+      ]);
+    },
+  );
 });

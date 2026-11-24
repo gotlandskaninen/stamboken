@@ -6,6 +6,10 @@ import { newOperationId } from "@/lib/herdTracking";
 import type { Mode } from "@/lib/mode";
 import type { InboxDetail } from "../inkorg/lib";
 
+export function reportLinkPath(path: string) {
+  return `${path}${path.includes("?") ? "&" : "?"}via=lank`;
+}
+
 export type Val = "kvar" | "dod" | "sald" | "ej_angiven";
 export type Hull = "low" | "normal" | "high";
 export type Membership = "kvar_utan_genbank" | "avsluta_medlemskap";

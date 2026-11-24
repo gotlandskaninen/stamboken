@@ -158,7 +158,7 @@ describe("the link's herd picker", () => {
       herds,
     });
     expect(fetchApi.mock.calls[0][0]).toBe(
-      "/v2/arsrapport/besattning/G9001/2025/besattningar",
+      "/v2/arsrapport/besattning/G9001/2025/besattningar?via=lank",
     );
     expect(fetchApi.mock.calls[0][1]).toMatchObject({
       method: "GET",
@@ -185,9 +185,9 @@ describe("the report's photo upload", () => {
     await uploadPhoto("G9001", 2025, new FormData(), undefined, "inskick");
     await uploadPhoto("G9001", 2025, new FormData());
     expect(fetchApi.mock.calls.map((c) => c[0])).toEqual([
-      "/v2/arsrapport/besattning/G9001/2025/foto?syfte=kop",
-      "/v2/arsrapport/besattning/G9001/2025/foto?syfte=inskick",
-      "/v2/arsrapport/besattning/G9001/2025/foto",
+      "/v2/arsrapport/besattning/G9001/2025/foto?syfte=kop&via=lank",
+      "/v2/arsrapport/besattning/G9001/2025/foto?syfte=inskick&via=lank",
+      "/v2/arsrapport/besattning/G9001/2025/foto?via=lank",
     ]);
   });
 });
