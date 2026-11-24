@@ -10,6 +10,7 @@ import os
 import re
 import sys
 import uuid
+from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from itertools import groupby
 from zoneinfo import ZoneInfo
@@ -161,6 +162,16 @@ def is_connected():
     return DATABASE.is_connection_usable()
 
 
+@contextmanager
+def snapshot_read():
+    """Read from one snapshot. An existing transaction owns its isolation level."""
+    nested = DB_PROXY.in_transaction()
+    with DB_PROXY.atomic():
+        if not nested and isinstance(DATABASE, PostgresqlDatabase):
+            DB_PROXY.execute_sql("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+        yield
+
+
 class BaseModel(Model):
     """
     Base model for the herdbook database.
@@ -216,10 +227,12 @@ class Genebank(BaseModel):
             "herds": [h.short_info() for h in Herd.select().where(Herd.genebank == self)],
         }
 
+    @snapshot_read()
     def get_herds(self, user):
         """
         Returns all herds that the user identified by `user` has access to,
         with restricted fields filtered by access level.
+        Call outside a transaction to read from a dedicated snapshot.
         """
         if self.id not in user.accessible_genebanks:
             return None
@@ -411,6 +424,7 @@ class Herd(BaseModel):
 
         The contact rows are the resolved ones (#117). `contact` and `reader` can be given when the caller
         has them for many herds at once; `with_contact` adds the `contact` field to the answer.
+        Load the herd in the same snapshot as its contact data, or under lock_herd when writing.
         """
         from utils.herd_contact import (  # pylint: disable=import-outside-toplevel
             contact_field,

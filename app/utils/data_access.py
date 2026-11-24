@@ -55,6 +55,7 @@ from utils.herd_contact import ContactConflict, apply_contact_patch, check_flat_
 from utils.herd_contact import contact_field, herd_contact, herd_contacts, legacy_contact_form, lock_herd  # isort: skip
 from utils.database import lock_individuals  # isort: skip
 from utils.database import not_voided  # isort: skip
+from utils.database import snapshot_read  # isort: skip
 from utils.database import validate_date  # isort: skip
 from utils.database import YearlyHerdReport
 
@@ -1586,13 +1587,14 @@ def get_herd(herd_id, user_uuid=None):
     Returns information on the herd given by `herd_id`, including a list of all
     individuals belonging to that herd. The returned data is limited to the
     access permission of the user identified by `user_uuid`.
+    Call outside a transaction to read from a dedicated snapshot.
     """
-    user = fetch_user_info(user_uuid)
-    if user is None:
-        return None
     try:
         data = None
-        with DATABASE.atomic():
+        with snapshot_read():
+            user = fetch_user_info(user_uuid)
+            if user is None:
+                return None
             herd = Herd.get(Herd.herd == herd_id)
             data = herd.filtered_dict(user)
             data["individuals"] = []
