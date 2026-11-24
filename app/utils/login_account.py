@@ -135,6 +135,10 @@ def create_pending_account(_displayed_version, displayed_sha256):
         login_code.require_open()
         if not pending_valid():
             raise InvalidPending
+        try:
+            data_access._lock_available_account_email(contact)
+        except data_access.AddressInUseError as exc:
+            raise AccountConflict from exc
         if _existing_account(person, address):
             raise AccountConflict
         accepted_at = datetime.now(timezone.utc)

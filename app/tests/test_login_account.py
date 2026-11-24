@@ -188,6 +188,23 @@ class TestLoginAccount(MatrikelApiTest):
         self.assertEqual(self.create().status_code, 200)
         self.assertEqual(db.Member.get_by_id(self.member.id).user.email, "current@example.org")
 
+    def test_contact_used_by_another_linked_account_refuses_creation(self):
+        _mk_person(_mk_membership(), "Test", "Other", "other@example.org", user=self.viewer)
+        db.User.update(email=f" {self.member.email.upper()} ").where(db.User.id == self.viewer.id).execute()
+        self.pending()
+        self.assertEqual(self.create().status_code, 409)
+        self.assert_no_account()
+
+    def test_contact_previously_set_by_an_owner_refuses_creation(self):
+        _mk_person(_mk_membership(), "Test", "Owner", "owner@example.org", user=self.owner)
+        result = data_access.update_user(
+            {"id": self.owner.id, "email": self.member.email, "validated": False}, self.owner.uuid
+        )
+        self.assertEqual(result["status"], "updated")
+        self.pending()
+        self.assertEqual(self.create().status_code, 409)
+        self.assert_no_account()
+
     def test_possible_owner_or_unlinked_email_account_refuses_creation(self):
         self.pending()
         db.Herd.update(membership=self.member.membership_id).where(db.Herd.id == self.herds[0].id).execute()
