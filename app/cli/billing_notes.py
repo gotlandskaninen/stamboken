@@ -6,7 +6,7 @@ from utils.postal import normalize_postal_code
 
 _LABEL = re.compile(r"\b(?:faktura(?:adress|mottagare)?|fakt\.)(?:[ \t]+till)?(?=[:\s]|$)", re.I)
 _REVOKED = re.compile(
-    r"\b(?:gäller\s+(?:inte|ej)|(?:inte|ej)\s+(?:längre|användas)|återkall\w*|ny\s+fakturaadress|använd\s+postadressen)\b",
+    r"\b(?:gäller\s+(?:inte|ej)|(?:inte|ej)\s+(?:längre|användas)|återkall\w*|ny\s+fakturaadress|använd\s+(?:inte|ej|postadressen))\b",
     re.I,
 )
 # Require a separator between recipient and street, a recognizable street or
@@ -26,7 +26,12 @@ _ADDRESS = re.compile(
     """,
     re.VERBOSE,
 )
-_DETAIL = re.compile(r"[ \t]*(?:[,;\n]|\r\n?)[ \t]*(e-post|ref\.?|(?:faktura)?referens)[ \t]*:([^,;|\r\n]*)", re.I)
+_DETAIL = re.compile(
+    r"[ \t]*(?:[,;]|(?:[,;][ \t]*)?(?:\r\n?|\n))[ \t]*"
+    r"(e-post|ref\.?|(?:faktura)?referens)[ \t]*:([^,;|\r\n]*)",
+    re.I,
+)
+_UNPARSED_EMAIL_ON_LINE = re.compile(r"[^\r\n]*@")
 
 
 def parse_billing_note(note: str) -> tuple[dict, str] | None:
@@ -51,4 +56,6 @@ def parse_billing_note(note: str) -> tuple[dict, str] | None:
             return None
         fields[key] = value
         end = detail.end()
+    if _UNPARSED_EMAIL_ON_LINE.match(note, end):
+        return None
     return fields, note[label.start() : end].strip()

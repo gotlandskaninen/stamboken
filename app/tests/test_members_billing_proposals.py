@@ -47,14 +47,19 @@ class TestBillingNote(unittest.TestCase):
         fields = {**BILLING, "billing_reference": "K-77", "billing_email": "kassa@example.invalid"}
         for details in (
             ", ref: K-77., e-post: kassa@example.invalid.",
+            ", e-post: kassa@example.invalid, ref: K-77",
             "\r\nreferens: K-77\ne-post: kassa@example.invalid",
+            ", \n e-post: kassa@example.invalid; \r\n ref: K-77",
+            "; \r\n e-post: kassa@example.invalid, \n ref: K-77",
         ):
             with self.subTest(details=details):
                 excerpt = NOTE + details
                 self.assertEqual(parse_billing_note(f"{excerpt}; annan uppgift"), (fields, excerpt))
 
     def test_detail_after_a_blank_line_is_not_taken(self):
-        self.assertEqual(parse_billing_note(f"{NOTE}\n\ne-post: annan@example.invalid"), (BILLING, NOTE))
+        for separator in ("\n\n", ", \n \n", "; \r\n \r\n"):
+            with self.subTest(separator=separator):
+                self.assertEqual(parse_billing_note(f"{NOTE}{separator}e-post: annan@example.invalid"), (BILLING, NOTE))
 
     def test_box_and_multiword_city(self):
         excerpt = "Fakt. Låtsasgården; Box 17; 98765 Östra Sagoby"
@@ -81,12 +86,16 @@ class TestBillingNote(unittest.TestCase):
             f"{NOTE}; inte längre aktuell",
             f"Ej längre aktuell; {NOTE}",
             f"{NOTE}; ANVÄND POSTADRESSEN",
+            f"{NOTE}; använd inte denna adress",
+            f"{NOTE}; använd ej denna adress",
             f"{NOTE}; återkallad",
             f"{NOTE}; återkallas",
             f"{NOTE}; ska inte användas",
             f"{NOTE}; får ej användas",
             f"{NOTE}, ref:  ; ring senare",
             f"{NOTE}, ref: K-77. Ring senare för besked",
+            f"{NOTE}, e-post: ett@example.invalid, tva@example.invalid",
+            f"{NOTE}; kontakt: annan@example.invalid",
         ):
             with self.subTest(note=note):
                 self.assertIsNone(parse_billing_note(note))
