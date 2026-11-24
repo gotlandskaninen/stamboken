@@ -274,7 +274,7 @@
 }
 .facts dd {
   margin: 0;
-  overflow-x: auto;
+  overflow-wrap: anywhere;
 }
 .actions {
   display: flex;
