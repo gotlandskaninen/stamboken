@@ -1,10 +1,13 @@
 """Review of billing addresses from notes. All examples are fictitious."""
 
 import csv
+import os
 import stat
 import unittest
+from datetime import date
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 from cli.billing_notes import parse_billing_note
 from cli.members import members_cli
@@ -12,7 +15,9 @@ from cli.proposal_file import read_decisions, write_proposals
 from click.testing import CliRunner
 from flask.cli import ScriptInfo
 from herdbook import APP
-from utils.database import MatrikelAudit, Membership
+from peewee import DatabaseError
+from utils.database import MatrikelAudit, Member, Membership
+from utils.matrikel import REDACTED_VALUE, redact_household_from_audits, write_matrikel_audit
 
 from tests.database_test import DatabaseTest
 
@@ -39,7 +44,7 @@ class TestBillingNote(unittest.TestCase):
                 self.assertEqual(parse_billing_note(f"Annan notering; {excerpt}\nPrivat rad"), (BILLING, excerpt))
 
     def test_labelled_email_and_reference(self):
-        excerpt = f"{NOTE}, ref: K-77, e-post: kassa@example.invalid"
+        excerpt = f"{NOTE}, ref: K-77., e-post: kassa@example.invalid."
         fields = {**BILLING, "billing_reference": "K-77", "billing_email": "kassa@example.invalid"}
         self.assertEqual(parse_billing_note(f"{excerpt}; annan uppgift"), (fields, excerpt))
 
@@ -60,6 +65,14 @@ class TestBillingNote(unittest.TestCase):
             "Faktura: Låtsasgården, Box 123, 12345",
             "Faktura: Låtsasgården, Box 123, 12345 Sagoby när vi öppnar",
             f"{NOTE}; Fakturaadress: Annat bolag, Box 2, 23456 Provby",
+            f"{NOTE}; alternativ fakturamottagare: Annat bolag",
+            f"{NOTE}, gäller ej längre",
+            f"{NOTE}; ny fakturaadress: Annat bolag, Box 2, 23456 Provby",
+            f"GÄLLER INTE; {NOTE}",
+            f"{NOTE}, gäller ej",
+            f"{NOTE}; inte längre aktuell",
+            f"Ej längre aktuell; {NOTE}",
+            f"{NOTE}; ANVÄND POSTADRESSEN",
             f"{NOTE}, ref:  ; ring senare",
             f"{NOTE}, ref: K-77. Ring senare för besked",
         ):
@@ -68,6 +81,28 @@ class TestBillingNote(unittest.TestCase):
 
 
 class TestProposalFile(unittest.TestCase):
+    def test_read_requires_private_owned_regular_file_without_following_symlinks(self):
+        header = ("beslut",)
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "review.csv"
+            path.write_bytes(b"\xff")  # Decoding would fail if a rejected file were read.
+            for mode in (0o640, 0o601):
+                path.chmod(mode)
+                with self.subTest(mode=mode), self.assertRaisesRegex(ValueError, "privat, vanlig fil"):
+                    read_decisions(path, header)
+            path.chmod(0o600)
+            with patch("cli.proposal_file.os.geteuid", return_value=path.stat().st_uid + 1):
+                with self.assertRaisesRegex(ValueError, "ägs av den körande användaren"):
+                    read_decisions(path, header)
+            link = Path(tmp) / "link.csv"
+            link.symlink_to(path)
+            with self.assertRaises(OSError):
+                read_decisions(link, header)
+            fifo = Path(tmp) / "fifo"
+            os.mkfifo(fifo, 0o600)
+            with self.assertRaisesRegex(ValueError, "privat, vanlig fil"):
+                read_decisions(fifo, header)
+
     def test_spreadsheet_protection_preserves_snapshot_for_comparison(self):
         values = ["=1+1", " =1+1", " redan inledande blanksteg"]
         with TemporaryDirectory() as tmp:
@@ -106,6 +141,11 @@ class TestMembersBillingProposals(DatabaseTest):
         self.addCleanup(tmp.cleanup)
         self.path = Path(tmp.name) / "review.csv"
 
+    def membership(self, **fields):
+        ms = Membership.create(**fields)
+        Member.create(membership=ms, first_name="Prov", last_name="Exempel")
+        return ms
+
     def run_cli(self, *args):
         return CliRunner().invoke(members_cli, ["billing-proposals", *args], obj=ScriptInfo(create_app=lambda: APP))
 
@@ -126,24 +166,46 @@ class TestMembersBillingProposals(DatabaseTest):
     def apply(self, actor=None):
         return self.run_cli("--apply", str(self.path), "--actor-user-id", str((actor or self.admin).id))
 
-    def test_export_only_counts_and_the_supporting_excerpt(self):
-        membership = Membership.create(
+    def assert_counts(self, written=0, skipped=0, stale=0, unapproved=0, invalid=0, unchanged=0):
+        result = self.apply()
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertEqual(
+            result.output,
+            f"Skrivna: {written}, hoppa över (beslut): {skipped}, underlaget har ändrats: {stale}, "
+            f"ändrad rad utan beslutet ändra: {unapproved}, ogiltiga värden: {invalid}, oförändrade: {unchanged}\n",
+        )
+
+    def test_export_only_changed_proposals_for_current_memberships_with_whole_note(self):
+        membership = self.membership(
             member_number=901, notes=f"Privat detalj; {NOTE}\nAnnan detalj", billing_city="Gammelby"
         )
-        Membership.create(notes="Ingen adress här")
-        Membership.create(notes="")
-        Membership.create(notes=None)
-        self.assertEqual(self.export(), "Med anteckning: 2, med förslag: 1, utan förslag: 1\n")
+        Member.create(
+            membership=membership,
+            first_name="Före",
+            last_name="Exempel",
+            role="familjemedlem",
+            end_date=date(2020, 1, 1),
+        )
+        ended = self.membership(notes=NOTE)
+        Member.update(end_date=date(2020, 1, 1)).where(Member.membership == ended).execute()
+        self.membership(notes=NOTE, **BILLING)
+        self.membership(notes="Ingen adress här")
+        self.membership(notes="")
+        self.membership(notes=None)
+        self.assertEqual(self.export(), "Med anteckning: 3, med förslag: 1, utan förslag: 2\n")
         self.assertEqual(len(self.rows), 1)
         row = self.rows[0]
         self.assertEqual((row["membership_id"], row["member_number"]), (str(membership.id), "901"))
         self.assertEqual((row["current_billing_city"], row["proposed_billing_city"]), ("Gammelby", "Sagoby"))
-        self.assertEqual((row["anteckningsutdrag"], row["beslut"]), (NOTE, ""))
+        self.assertEqual((row["anteckning"], row["beslut"]), (membership.notes, ""))
+        self.assertRegex(row["underlag"], r"^[0-9a-f]{64}$")
         self.assertEqual(Membership.get_by_id(membership.id).billing_city, "Gammelby")
         self.assertEqual(self.run_cli().exit_code, 2)
 
-    def test_apply_only_reviewed_rows_and_audit_only_field_names(self):
-        members = [Membership.create(notes=NOTE, billing_reference="Behåll-77") for _ in range(4)]
+    def test_apply_only_reviewed_rows_and_audit_before_and_after(self):
+        members = [
+            self.membership(notes=NOTE, billing_reference="Behåll-77", billing_city="Gammelby") for _ in range(4)
+        ]
         self.export()
         self.review(
             {"beslut": "godkänn"},
@@ -155,9 +217,7 @@ class TestMembersBillingProposals(DatabaseTest):
             {"beslut": "hoppa över"},
             {},
         )
-        result = self.apply()
-        self.assertEqual(result.exit_code, 0, result.output)
-        self.assertEqual(result.output, "Skrivna: 2, överhoppade: 2, ogiltiga: 0\n")
+        self.assert_counts(written=2, skipped=2)
         approved, edited, skipped, blank = [Membership.get_by_id(ms.id) for ms in members]
         self.assertEqual({k: getattr(approved, k) for k in BILLING}, BILLING)
         self.assertEqual(approved.billing_reference, "Behåll-77")
@@ -167,38 +227,96 @@ class TestMembersBillingProposals(DatabaseTest):
         audits = list(MatrikelAudit.select().order_by(MatrikelAudit.id))
         self.assertEqual([a.membership_id for a in audits], [approved.id, edited.id])
         self.assertTrue(all(a.actor_id == self.admin.id and a.action == "membership_updated" for a in audits))
-        self.assertEqual(audits[0].payload, {"changed_fields": list(BILLING)})
-        self.assertEqual(self.apply().output, "Skrivna: 0, överhoppade: 4, ogiltiga: 0\n")
+        before = dict.fromkeys(BILLING) | {"billing_city": "Gammelby"}
+        self.assertEqual(audits[0].payload, {"before": before, "after": BILLING})
+        self.assert_counts(stale=2, skipped=2)
         self.assertEqual(MatrikelAudit.select().count(), 2)
+        self.assertEqual(redact_household_from_audits(approved), 1)
+        self.assertEqual(
+            MatrikelAudit.get_by_id(audits[0].id).payload,
+            {"before": before | {"billing_city": REDACTED_VALUE}, "after": dict.fromkeys(BILLING, REDACTED_VALUE)},
+        )
 
-    def test_stale_snapshot_and_erased_note_are_skipped(self):
-        stale = Membership.create(notes=NOTE)
-        erased = Membership.create(notes=NOTE)
+    def test_stale_billing_note_number_or_ended_membership_are_skipped(self):
+        stale, corrected, erased, renumbered, ended = [self.membership(notes=NOTE) for _ in range(5)]
         self.export()
-        self.review({"beslut": "godkänn"}, {"beslut": "godkänn"})
+        corrected_note = f"{NOTE}, gäller ej längre"
+        # Even matching edits to the visible source cells cannot replace the exported proof.
+        self.review(
+            {"beslut": "godkänn", "current_billing_email": "ny@example.invalid"},
+            {"beslut": "godkänn", "anteckning": corrected_note},
+            {"beslut": "godkänn"},
+            {"beslut": "godkänn", "member_number": "902"},
+            {"beslut": "godkänn"},
+        )
         Membership.update(billing_email="ny@example.invalid").where(Membership.id == stale.id).execute()
+        Membership.update(notes=corrected_note).where(Membership.id == corrected.id).execute()
         Membership.update(notes=None).where(Membership.id == erased.id).execute()
-        self.assertEqual(self.apply().output, "Skrivna: 0, överhoppade: 2, ogiltiga: 0\n")
+        Membership.update(member_number=902).where(Membership.id == renumbered.id).execute()
+        Member.update(end_date=date(2020, 1, 1)).where(Member.membership == ended).execute()
+        self.assert_counts(stale=5)
         self.assertEqual(Membership.get_by_id(stale.id).billing_email, "ny@example.invalid")
         self.assertFalse(Membership.select().where(Membership.billing_name.is_null(False)).exists())
         self.assertEqual(MatrikelAudit.select().count(), 0)
 
+    def test_swapped_id_or_edited_exported_values_are_skipped(self):
+        first, second = [self.membership(notes=NOTE) for _ in range(2)]
+        self.export()
+        self.review(
+            {"beslut": "godkänn", "membership_id": second.id},
+            {"beslut": "ändra", "exporterat_billing_city": "Nyby", "proposed_billing_city": "Nyby"},
+        )
+        self.assert_counts(stale=2)
+        self.assertIsNone(Membership.get_by_id(first.id).billing_city)
+        self.assertIsNone(Membership.get_by_id(second.id).billing_city)
+        self.assertEqual(MatrikelAudit.select().count(), 0)
+
+    def test_approved_values_must_match_export_before_normalization(self):
+        for _ in range(4):
+            self.membership(notes=NOTE, billing_reference="=Prov")
+        self.export()
+        self.review(
+            {"beslut": "godkänn", "proposed_billing_postal_code": "98765"},
+            {"beslut": "godkänn", "proposed_billing_city": " Sagoby"},
+            {"beslut": "godkänn", "proposed_billing_reference": "=Prov"},
+            {"beslut": "ändra", **{f"proposed_{key}": "" for key in BILLING}},
+        )
+        self.assert_counts(unapproved=3, unchanged=1)
+        self.assertEqual(MatrikelAudit.select().count(), 0)
+
     def test_bad_values_count_as_invalid_and_do_not_block_a_valid_row(self):
         for _ in range(3):
-            Membership.create(notes=NOTE)
+            self.membership(notes=NOTE)
         self.export()
         self.review(
             {"beslut": "ändra", "proposed_billing_email": "hemligt"},
             {"beslut": "ändra", "proposed_billing_postal_code": "12"},
             {"beslut": "godkänn"},
         )
-        result = self.apply()
-        self.assertEqual(result.output, "Skrivna: 1, överhoppade: 0, ogiltiga: 2\n")
+        self.assert_counts(written=1, invalid=2)
+        self.assertEqual(MatrikelAudit.select().count(), 1)
+
+    def test_database_error_reports_only_committed_count_before_error(self):
+        first, second = [self.membership(notes=NOTE) for _ in range(2)]
+        self.export()
+        self.review({"beslut": "godkänn"}, {"beslut": "godkänn"})
+
+        def fail_second_audit(actor, action, membership, payload):
+            if membership.id == second.id:
+                raise DatabaseError("Privat detalj")
+            return write_matrikel_audit(actor, action, membership, payload)
+
+        with patch("cli.members.write_matrikel_audit", side_effect=fail_second_audit):
+            result = self.apply()
+        self.assertEqual(result.exit_code, 1)
+        self.assertEqual(result.output, "Skrivna: 1\nError: Databasfel vid hantering av fakturaförslag\n")
+        self.assertEqual(Membership.get_by_id(first.id).billing_city, "Sagoby")
+        self.assertIsNone(Membership.get_by_id(second.id).billing_city)
         self.assertEqual(MatrikelAudit.select().count(), 1)
 
     def test_unknown_last_decision_or_wrong_header_rejects_whole_file(self):
         for _ in range(2):
-            Membership.create(notes=NOTE)
+            self.membership(notes=NOTE)
         self.export()
         self.review({"beslut": "godkänn"}, {"beslut": "Privat beslut"})
         for bad_header in (False, True):
@@ -215,7 +333,7 @@ class TestMembersBillingProposals(DatabaseTest):
                 self.assertEqual(MatrikelAudit.select().count(), 0)
 
     def test_apply_requires_active_matrikel_admin_or_admin(self):
-        membership = Membership.create(notes=NOTE)
+        membership = self.membership(notes=NOTE)
         self.export()
         self.review({"beslut": "godkänn"})
         self.admin.is_active = False

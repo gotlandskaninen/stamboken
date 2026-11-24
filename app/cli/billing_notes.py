@@ -4,7 +4,10 @@ import re
 
 from utils.postal import normalize_postal_code
 
-_LABEL = re.compile(r"(?:^|(?<=[,;\n|]))[ \t]*(?:faktura(?:adress|mottagare)?|fakt\.)(?:[ \t]+till)?(?=[:\s])", re.I)
+_LABEL = re.compile(r"\b(?:faktura(?:adress|mottagare)?|fakt\.)(?:[ \t]+till)?(?=[:\s]|$)", re.I)
+_REVOKED = re.compile(
+    r"\b(?:gäller\s+(?:inte|ej)|(?:inte|ej)\s+längre|ny\s+fakturaadress|använd\s+postadressen)\b", re.I
+)
 # Require a separator between recipient and street, a recognizable street or
 # box with a number, and a complete postal town. Ignore less certain layouts.
 _ADDRESS = re.compile(
@@ -28,9 +31,12 @@ _DETAIL = re.compile(r"[ \t]*[,;][ \t]*(e-post|ref\.?|(?:faktura)?referens)[ \t]
 def parse_billing_note(note: str) -> tuple[dict, str] | None:
     """Return proposed fields and the exact supporting excerpt for a single address."""
     labels = list(_LABEL.finditer(note))
-    if len(labels) != 1:
+    if len(labels) != 1 or _REVOKED.search(note):
         return None
     label = labels[0]
+    prefix = note[: label.start()].rstrip(" \t")
+    if prefix and prefix[-1] not in ",;\n|":
+        return None
     address = _ADDRESS.match(note, label.end())
     if not address:
         return None
@@ -39,7 +45,7 @@ def parse_billing_note(note: str) -> tuple[dict, str] | None:
     end = address.end()
     while detail := _DETAIL.match(note, end):
         key = "billing_email" if detail[1].lower() == "e-post" else "billing_reference"
-        value = detail[2].strip()
+        value = detail[2].strip().rstrip(".,").rstrip()
         if key in fields or len(value.split()) != 1:
             return None
         fields[key] = value

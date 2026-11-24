@@ -61,6 +61,7 @@ cases are listed for the register manager. Plan only unless --apply.
 
 import csv
 import hashlib
+import json
 import logging
 import re
 import unicodedata
@@ -90,7 +91,7 @@ from utils.members import WORKSPACE_DOMAIN
 from utils.membership_lifecycle import Status
 
 from cli.billing_notes import parse_billing_note
-from cli.proposal_file import read_decisions, write_proposals
+from cli.proposal_file import proposal_cell, read_decisions, write_proposals
 
 logger = logging.getLogger(__name__)
 
@@ -898,8 +899,10 @@ BILLING_PROPOSAL_HEADER = (
     "member_number",
     *(f"current_{field}" for field in BILLING_FIELDS),
     *(f"proposed_{field}" for field in BILLING_FIELDS),
-    "anteckningsutdrag",
+    "anteckning",
     "beslut",
+    *(f"exporterat_{field}" for field in BILLING_FIELDS),
+    "underlag",
 )
 
 
@@ -927,29 +930,49 @@ def _validated_billing(values: dict) -> dict:
     return fields
 
 
+def _billing_source(ms: Membership) -> dict:
+    return {
+        "membership_id": ms.id,
+        "member_number": ms.member_number,
+        "anteckning": ms.notes,
+        **{f"current_{key}": getattr(ms, key) for key in BILLING_FIELDS},
+    }
+
+
+def _billing_proof(source: dict, exported: dict) -> str:
+    return hashlib.sha256(json.dumps([source, exported], sort_keys=True).encode()).hexdigest()
+
+
+def _memberships_with_current_persons():
+    return Member.select(Member.membership).where(Member.end_date.is_null(True))
+
+
 def _export_billing_proposals(path: str) -> None:
     rows = []
     with_notes = 0
-    for ms in Membership.select().where(Membership.notes != "").order_by(Membership.id).iterator():
+    query = Membership.select().where(Membership.notes != "", Membership.id.in_(_memberships_with_current_persons()))
+    for ms in query.order_by(Membership.id).iterator():
         if not ms.notes.strip():
             continue
         with_notes += 1
         proposal = parse_billing_note(ms.notes)
         if proposal is None:
             continue
-        fields, excerpt = proposal
+        fields, _ = proposal
         try:
             fields = _validated_billing(fields)
         except ValueError:
             continue
-        current = {key: getattr(ms, key) for key in BILLING_FIELDS}
+        if all(value == getattr(ms, key) for key, value in fields.items()):
+            continue
+        source = _billing_source(ms)
+        exported = {key: fields.get(key, getattr(ms, key)) for key in BILLING_FIELDS}
         rows.append(
             {
-                "membership_id": ms.id,
-                "member_number": ms.member_number,
-                **{f"current_{k}": v for k, v in current.items()},
-                **{f"proposed_{k}": v for k, v in (current | fields).items()},
-                "anteckningsutdrag": excerpt,
+                **source,
+                **{f"proposed_{k}": v for k, v in exported.items()},
+                **{f"exporterat_{k}": v for k, v in exported.items()},
+                "underlag": _billing_proof(source, {k: proposal_cell(v) for k, v in exported.items()}),
             }
         )
 
@@ -964,28 +987,38 @@ def _export_billing_proposals(path: str) -> None:
 
 def _apply_billing_row(row: dict, actor: User) -> str:
     if row["beslut"] == "hoppa över":
-        return "skipped"
+        return "hoppa över (beslut)"
     try:
         membership_id = int(row["membership_id"])
-        desired = _validated_billing({key: row[f"proposed_{key}"] for key in BILLING_FIELDS})
     except ValueError:
-        return "invalid"
+        return "ogiltiga värden"
     with DB_PROXY.atomic():
         try:
             ms = _locked_membership(membership_id)
         except Membership.DoesNotExist:
-            return "skipped"
-        if any((getattr(ms, key) or "") != row[f"current_{key}"] for key in BILLING_FIELDS):
-            return "skipped"
-        # Erasure can clear the source note while leaving all six billing fields NULL.
-        if not row["anteckningsutdrag"] or row["anteckningsutdrag"] not in (ms.notes or ""):
-            return "skipped"
+            return "underlaget har ändrats"
+        source = _billing_source(ms)
+        exported = {key: row[f"exporterat_{key}"] for key in BILLING_FIELDS}
+        if (
+            _billing_proof(source, exported) != row["underlag"]
+            or any(row[k] != proposal_cell(v) for k, v in source.items())
+            or not _memberships_with_current_persons().where(Member.membership == ms).exists()
+        ):
+            return "underlaget har ändrats"
+        proposed = {key: row[f"proposed_{key}"] for key in BILLING_FIELDS}
+        if row["beslut"] == "godkänn" and proposed != exported:
+            return "ändrad rad utan beslutet ändra"
+        try:
+            desired = _validated_billing(proposed)
+        except ValueError:
+            return "ogiltiga värden"
         changed = {key: v for key, v in desired.items() if v != getattr(ms, key)}
         if not changed:
-            return "skipped"
+            return "oförändrade"
+        before = {key: getattr(ms, key) for key in changed}
         _save_membership_fields(ms, changed)
-        write_matrikel_audit(actor, "membership_updated", ms, {"changed_fields": list(changed)})
-    return "written"
+        write_matrikel_audit(actor, "membership_updated", ms, {"before": before, "after": changed})
+    return "Skrivna"
 
 
 @members_cli.command("billing-proposals")
@@ -996,26 +1029,37 @@ def billing_proposals_cmd(out: str | None, apply_file: str | None, actor_user_id
     """Föreslå fakturaadresser ur anteckningarna eller verkställ en granskad fil.
 
     Ange godkänn, ändra eller hoppa över i kolumnen beslut. Tomt beslut hoppar
-    över raden. Skriv rättelser i kolumnerna proposed_* före --apply.
+    över raden. Välj ändra om du rättar något i kolumnerna proposed_*.
     """
     if (out is None) == (apply_file is None):
         raise click.UsageError("Ange antingen --out FIL eller --apply FIL")
+    counts = {
+        "Skrivna": 0,
+        "hoppa över (beslut)": 0,
+        "underlaget har ändrats": 0,
+        "ändrad rad utan beslutet ändra": 0,
+        "ogiltiga värden": 0,
+        "oförändrade": 0,
+    }
     try:
         if out is not None:
             _export_billing_proposals(out)
             return
         actor = _require_matrikel_actor(actor_user_id)
         try:
-            rows = read_decisions(apply_file, BILLING_PROPOSAL_HEADER)
+            rows = read_decisions(apply_file, BILLING_PROPOSAL_HEADER, raw_cells=True)
         except (OSError, UnicodeError, csv.Error):
             raise click.ClickException("Förslagsfilen kunde inte läsas") from None
         except ValueError as err:
             raise click.ClickException(str(err)) from None
-        counts = Counter(_apply_billing_row(row, actor) for row in rows)
+        for row in rows:
+            counts[_apply_billing_row(row, actor)] += 1
     except DatabaseError:
         # PostgreSQL diagnostics can include the row or the rejected value.
+        if apply_file is not None:
+            click.echo(f"Skrivna: {counts['Skrivna']}", err=True)
         raise click.ClickException("Databasfel vid hantering av fakturaförslag") from None
-    click.echo(f"Skrivna: {counts['written']}, överhoppade: {counts['skipped']}, ogiltiga: {counts['invalid']}")
+    click.echo(", ".join(f"{reason}: {count}" for reason, count in counts.items()))
 
 
 @members_cli.command("link-by-herd")

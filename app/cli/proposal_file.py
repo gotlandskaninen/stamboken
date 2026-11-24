@@ -2,8 +2,14 @@
 
 import csv
 import os
+import stat
 
 from utils.csv_safe import csv_cell
+
+
+def proposal_cell(value):
+    # csv_cell prefixes formula-like text with a space. Escape literal leading spaces too.
+    return " " + value if isinstance(value, str) and value.startswith(" ") else csv_cell(value)
 
 
 def write_proposals(path, header, rows):
@@ -16,21 +22,25 @@ def write_proposals(path, header, rows):
             writer = csv.DictWriter(dest, fieldnames=header, quoting=csv.QUOTE_ALL)
             writer.writeheader()
             for row in rows:
-                # csv_cell adds a space to formula-like values. Escape literal leading
-                # spaces too, so the snapshot read back for comparison is lossless.
-                cells = {
-                    k: " " + v if isinstance(v, str) and v.startswith(" ") else csv_cell(v) for k, v in row.items()
-                }
+                cells = {k: proposal_cell(v) for k, v in row.items()}
                 writer.writerow({**cells, "beslut": ""})
     except BaseException:
         os.unlink(path)
         raise
 
 
-def read_decisions(path, header):
-    """Validate the whole file before returning any reviewed rows to a writer."""
+def read_decisions(path, header, *, raw_cells=False):
+    """Validate the whole file. Keep spreadsheet escapes when comparing raw cells."""
     rows = []
-    with open(path, encoding="utf-8-sig", newline="") as source:
+
+    def opener(name, flags):
+        # A FIFO must reach the regular-file check without waiting for a writer.
+        return os.open(name, flags | os.O_NOFOLLOW | os.O_NONBLOCK)
+
+    with open(path, encoding="utf-8-sig", newline="", opener=opener) as source:
+        info = os.fstat(source.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+            raise ValueError("Förslagsfilen måste vara en privat, vanlig fil som ägs av den körande användaren")
         reader = csv.DictReader(source, strict=True)
         if reader.fieldnames != list(header) or "beslut" not in header:
             raise ValueError("Fel rubrikrad i förslagsfilen")
@@ -40,5 +50,7 @@ def read_decisions(path, header):
             decision = row["beslut"] or "hoppa över"
             if decision not in ("godkänn", "ändra", "hoppa över"):
                 raise ValueError("Okänt beslut i förslagsfilen")
-            rows.append({**{k: v.removeprefix(" ") for k, v in row.items()}, "beslut": decision})
+            if not raw_cells:
+                row = {k: v.removeprefix(" ") for k, v in row.items()}
+            rows.append({**row, "beslut": decision})
     return rows
