@@ -58,9 +58,9 @@ issuen. Konto-id, namn, e-post och bilder går bara till mejlet, aldrig till
 GitHub. Fritexten ligger i ett kodblock och det man pekade på i en kodrad, så att
 `@namn` inte pingar någon. Det man pekade på är elementets text, utan länkkoder,
 UUID och e-postadresser, och ett fält beskrivs med sin etikett. En publik issue
-får texten bara för knappar, rubriker och fält; för rader, stycken, rutor och
-länkar står bara ordet ("raden"), eftersom de visar sidans uppgifter, till
-exempel ett namn. Den privata issuen och mejlet får hela texten.
+får bara elementets typ ("knappen", "rubriken", "raden"), eftersom all text på en
+sida, också en rubrik eller en knapp, kan innehålla ett namn. Den privata issuen
+och mejlet får hela texten.
 
 ## Gallring
 

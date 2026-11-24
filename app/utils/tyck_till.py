@@ -91,17 +91,13 @@ def pointed(pekat):
     return " ".join(_EMAIL.sub("[e-post]", _CODE_FRAGMENT.sub("[kod]", mask_codes(pekat))).split())
 
 
-# A public issue keeps the text of controls and headings only: rows, paragraphs, boxes and links show the page's
-# data, such as a contact person's name (Jonas 2026-11-24). The private issue and the mail keep the whole text.
-_PUBLIC_TEXT = ("knappen", "rubriken", "fältet")
-_KINDS = (*_PUBLIC_TEXT, "länken", "raden", "bilden", "rutan", "texten")
+# A public issue names only the kind of element: any text on a page, a heading or a button too, may hold a name
+# (Jonas 2026-11-24, choice C). The private issue and the mail keep the whole text.
+_KINDS = ("knappen", "rubriken", "fältet", "länken", "raden", "bilden", "rutan", "texten")
 
 
 def public_pointed(pekat):
-    element = pointed(pekat)
-    kind = element.split(" ", 1)[0]
-    if kind in _PUBLIC_TEXT:
-        return element
+    kind = pointed(pekat).split(" ", 1)[0]
     return kind if kind in _KINDS else ""
 
 
