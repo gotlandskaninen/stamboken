@@ -181,7 +181,10 @@ def _information_mail(params, attempt=1):
         return None
     membership = _membership_current(contact)
     if not membership and contact.contact_consent_at is None:
-        return None
+        # A late registration still owes the buyer information about the name and address just recorded.
+        optin = contact.membership_optin_at
+        if optin is None or optin > contact.created_at - MEMBERSHIP_OPTIN_FOR:
+            return None
     note = None
     try:
         with DB_PROXY.atomic():

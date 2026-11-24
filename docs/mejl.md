@@ -290,7 +290,10 @@ mejlhistorikens gallring och finns kvar om köparen raderas först. Är köparen
   meningen om den: informationen till köparen väger tyngre än intyget. Mejlet
   blir `sent` och `last_error` får noteringen "skickat utan bilaga: intyget
   kunde inte hämtas", så att det syns i statusvyn. Utan `LINK_SECRET` kan mejlet
-  inte byggas.
+  inte byggas. Om köparens enda ja gällde medlemsinbjudan och redan hade gått
+  ut när försäljningen registrerades får köparen ändå informationsmejlet.
+  Nattgallringen låter adressen ligga kvar medan mejlet väntar på adresskontroll
+  eller utskick. Därefter gallras den som vanligt. Inbjudan går inte.
 - **`kopare.medlemskap`** går när köparen har sagt ja till att föreningen
   hör av sig om medlemskap (`membership_optin_at`). Ja:et räknas från
   överlåtelsedagen. Har det gått tolv månader när mejlet ska skickas,

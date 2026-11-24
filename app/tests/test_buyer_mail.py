@@ -642,6 +642,49 @@ class TestMembership(BuyerMailTest):
         self.assertNotIn("12 månader", notice.get_body(("plain",)).get_content())
         self.assertEqual(self.mails("kopare.medlemskap")[0].status, "cancelled")
 
+    def test_expired_membership_yes_at_registration_still_gives_the_buyer_an_erase_link(self):
+        sale_date = (date.today() - timedelta(days=370)).isoformat()
+        buyer = {**BUYER, "email": EMAIL, "phone": "000000", "membership_optin": True}
+        response = self._sell(buyer=buyer, date=sale_date)
+        self.assertEqual(response.status_code, 200)
+        contact_id = self._latest().holder_contact_id
+        # The night job can run between registration and the first sender run.
+        now = datetime.now(timezone.utc)
+        buyer_contact.purge_membership_optin(now)
+        self.assertEqual((self._contact(contact_id).email, self._contact(contact_id).phone), (EMAIL, None))
+        (notice,) = self.send()
+        body = notice.get_body(("plain",)).get_content()
+        self.assertEqual(notice["To"], EMAIL)
+        self.assertIn("Tiden för din medlemsinbjudan har gått ut.", body)
+        token = re.search(r"/kopare/ta-bort#(\S+)", body).group(1)
+        self.assertEqual(mail.verify_link(ERASE_PURPOSE, token), contact_id)
+        self.assertEqual(self.mails("kopare.information")[0].status, "sent")
+        self.assertFalse(db.BuyerInvitation.select().exists())
+        self.assertEqual(buyer_contact.purge_membership_optin(now), 1)
+        contact = self._contact(contact_id)
+        self.assertEqual(
+            (contact.email, contact.membership_optin_at, contact.erased_email_hash),
+            (None, None, mail.address_hash(EMAIL)),
+        )
+        self.assertEqual(buyer_mail.erase_by_link(token), "removed")
+
+    def test_old_membership_yes_with_a_collision_waits_for_review_before_the_notice(self):
+        record_herd_tracking(self.individuals[1], self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=WITH_EMAIL)
+        self.send()
+        buyer = {**BUYER, "name": "Testköpare två", "email": EMAIL, "membership_optin": True}
+        sale = record_herd_tracking(
+            self.rabbit, self.gx1, date.today() - timedelta(days=370), "TRANSFER", self.manager, buyer=buyer
+        )
+        now = datetime.now(timezone.utc)
+        self.assertEqual(buyer_contact.purge_membership_optin(now), 0)
+        self.assertEqual(self.send(), [])
+        buyer_contact.review_buyer_email(sale.holder_contact_id, {"confirm": True}, self.manager)
+        (notice,) = self.send()
+        self.assertIn("/kopare/ta-bort#", notice.get_body(("plain",)).get_content())
+        self.assertEqual(self.mails("kopare.medlemskap")[0].status, "cancelled")
+        self.assertEqual(buyer_contact.purge_membership_optin(now), 1)
+        self.assertIsNone(self._contact(sale.holder_contact_id).email)
+
     def test_a_queued_mail_cannot_use_an_optin_that_expires_before_sending(self):
         sale = self._sale({**BUYER, "email": EMAIL, "membership_optin": True})
         self.assertIn("Välkommen", self.text("kopare.medlemskap")[0])

@@ -21,6 +21,7 @@ from utils.database import (
     Herd,
     HerdTracking,
     Individual,
+    MailMessage,
     SaleProposal,
     ht_sort_key,
     lock_individuals,
@@ -349,12 +350,26 @@ def purge_sold_on(now):  # pylint: disable=unused-argument  # every rule takes t
 def purge_membership_optin(now):
     """The yes to membership contact after 12 months, with the e-mail and phone kept only for it."""
     only_for_membership = BuyerContact.contact_consent_at.is_null(True)
+    pending = MailMessage.select(MailMessage.recipient_id).where(
+        MailMessage.recipient_kind == "buyer_contact",
+        MailMessage.kind == "kopare.information",
+        MailMessage.status.in_(("queued", "sending")),
+    )
+    optin = BuyerContact.membership_optin_at
+    # Only an already expired yes on entry needs the address for its first notice. The phone can go immediately.
+    keep_for_notice = (
+        only_for_membership
+        & BuyerContact.email.is_null(False)
+        & (optin <= BuyerContact.created_at - MEMBERSHIP_OPTIN_FOR)
+        & (BuyerContact.email_review_pending | BuyerContact.id.in_(pending))
+    )
     changes = {
-        BuyerContact.membership_optin_at: None,
-        BuyerContact.email: Case(None, [(only_for_membership, None)], BuyerContact.email),
+        optin: Case(None, [(keep_for_notice, optin)], None),
+        BuyerContact.email: Case(None, [(only_for_membership & ~keep_for_notice, None)], BuyerContact.email),
         BuyerContact.phone: Case(None, [(only_for_membership, None)], BuyerContact.phone),
     }
-    return _null_fields(BuyerContact.membership_optin_at <= now - MEMBERSHIP_OPTIN_FOR, changes, "gallring_medlemskap")
+    due = (optin <= now - MEMBERSHIP_OPTIN_FOR) & (~keep_for_notice | BuyerContact.phone.is_null(False))
+    return _null_fields(due, changes, "gallring_medlemskap")
 
 
 RULES = (purge_membership_optin, purge_sold_on, purge_dead, purge_expired, purge_proposal_buyers)
