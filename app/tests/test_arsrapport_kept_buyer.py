@@ -541,6 +541,15 @@ class KeptBuyerTest(ArsrapportTest):
         self.assertEqual(contacts(), {})
         self.assertNotIn("kopare_id", json.dumps(self.draft()))
 
+    def test_resubmit_corrects_spelling_at_the_same_address(self):
+        buyer = {**BUYER, "email": "kopare@example.org", "name": "Testköpre"}
+        self.ok(self.body(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=buyer), self.kvar(self.b, vikt=2.8)))
+        self.withdrawn(1)
+        self.ok(self.resent(kopare={**buyer, "name": "Testköpare"}, kopare_id=None))
+        (sale,) = sales(self.a, active=True)
+        self.assertEqual((sale.holder_contact.name, sale.holder_contact.email), ("Testköpare", buyer["email"]))
+        self.assertEqual(list(contacts()), [sale.holder_contact_id])
+
     def test_new_buyer_at_skicka_deletes_the_kept_one(self):  # "eller skriv en ny köpare"
         contact, _ = self.sold_and_withdrawn()
         self.ok(self.resent(kopare=OTHER))

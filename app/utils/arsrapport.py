@@ -2027,8 +2027,10 @@ def _kept_contact(herd, round_, entry, claim, sale):
     only when that report is a voided one of the same herd and round, one of its operations wrote a TRANSFER of this
     rabbit holding the buyer, and no active row holds it now.
     """
-    kopare_id = entry.sald["kopare_id"]
-    if kopare_id is None or claim is None or claim["kopare_id"] != kopare_id or not _is_int(claim["fran_rapport"]):
+    if claim is None:
+        return None
+    kopare_id = claim["kopare_id"] if entry.sald["kopare"] is not None else entry.sald["kopare_id"]
+    if kopare_id is None or claim["kopare_id"] != kopare_id or not _is_int(claim["fran_rapport"]):
         return None
     report = YearlyHerdReport.get_or_none(
         (YearlyHerdReport.id == claim["fran_rapport"])
@@ -2063,7 +2065,8 @@ def _report_transfer(herd, round_, entry, current_effects, sale, claim, removed,
     registered = next((e for e in current_effects if e == sale), None)
     if registered is None:
         # a paper form is entered as written: its buyer may lack the address (Jonas 2026-11-23)
-        return TransferIndividual(target, day, buyer=buyer, address_optional=paper)
+        kept = _kept_contact(herd, round_, entry, claim, sale)
+        return TransferIndividual(target, day, buyer=buyer, buyer_contact_id=kept, address_optional=paper)
     contact = (
         BuyerContact.select(BuyerContact.name, BuyerContact.town, BuyerContact.postal_address)
         .join(HerdTracking, on=(HerdTracking.holder_contact == BuyerContact.id))

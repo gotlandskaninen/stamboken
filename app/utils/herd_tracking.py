@@ -96,7 +96,7 @@ def _buyer_name_key(name):
     return unicodedata.normalize("NFC", name.strip()).casefold()
 
 
-def _new_buyer(fields, user, sale_date):
+def _new_buyer(fields, user, sale_date, *, replaces=None):
     """
     The BuyerContact of a sale outside, five years from its date; None when those have passed: such a buyer is
     never stored (nor mailed), and the sale is written as one whose buyer was removed.
@@ -112,6 +112,8 @@ def _new_buyer(fields, user, sale_date):
             if settings.mail.link_secret:  # the erase link also covers rows whose e-mail has been purged
                 same_address |= BuyerContact.erased_email_hash == address_hash(email)
             contacts = BuyerContact.select(BuyerContact.name).where(same_address)
+            if replaces is not None:
+                contacts = contacts.where(BuyerContact.id != replaces)
             name = _buyer_name_key(fields["name"])
             if any(_buyer_name_key(contact.name) != name for contact in contacts):
                 raise HerdTrackingConflict("E-postadressen finns redan hos en annan köpare. Kontrollera adressen.")
@@ -506,13 +508,16 @@ def record_herd_tracking(
                 f"Kaninen finns redan i {target.herd}. En ny köpare utanför föreningen registreras av "
                 "genbanksansvarig, med köparens namn och ort."
             )
-        contact = _new_buyer(contact_fields, user, when) if contact_fields else None
+        contact = None
         if holder_contact is not None:  # locked against the nightly purge, which deletes by id
             contact = BuyerContact.select().where(BuyerContact.id == holder_contact).for_update().first()
             held = HerdTracking.select().where(HerdTracking.holder_contact == holder_contact, ht_not_voided())
             if contact is None or held.exists():
                 raise HerdTrackingInvalid(KEPT_BUYER_GONE)
-            _set_buyer_sale_date(contact.id, when)
+            if contact_fields is None:
+                _set_buyer_sale_date(contact.id, when)
+        if contact_fields:
+            contact = _new_buyer(contact_fields, user, when, replaces=holder_contact)
         try:
             with DB_PROXY.atomic():
                 row = HerdTracking.create(
@@ -1097,7 +1102,10 @@ def correct_herd_tracking(individual, user, operation_id, void_ids, events, reas
         for index, event in enumerate(parsed):
             birth = event["kind"] == "BIRTH"
             from_herd = None if birth else _holder_before(ind, current, event["date"], event["kind"])
-            contact = _new_buyer(event["buyer"], user, event["date"]) if event["buyer"] else carried.get(index)
+            contact = carried.get(index)
+            if event["buyer"]:
+                replaces = pairs[index].holder_contact_id if index in pairs else None
+                contact = _new_buyer(event["buyer"], user, event["date"], replaces=replaces)
             try:
                 with DB_PROXY.atomic():
                     row = HerdTracking.create(

@@ -89,6 +89,13 @@ class TestBuyerAddress(BuyerMailTest):
         self.assertEqual(self._latest().kind, "BIRTH")
         self.assertEqual([row.recipient_id for row in self.mails()], [sale.holder_contact_id])
 
+    def test_correct_spelling_on_same_sale_and_address(self):
+        sale = self._sale({**self.buyer, "name": "Testköpre"})
+        event = {"kind": "TRANSFER", "date": SALE_DATE, "herd": "GX1", "buyer": self.buyer}
+        (corrected,) = correct_herd_tracking(self.rabbit, self.manager, None, [sale.id], [event], "Stavfel")
+        self.assertEqual(corrected.holder_contact.name, self.buyer["name"])
+        self.assertEqual([row.id for row in db.BuyerContact.select()], [corrected.holder_contact_id])
+
     def test_same_name_and_address_allow_another_sale(self):
         sale = self.sell_second_rabbit(self.buyer)
         # Older rows may have surrounding spaces, mixed case or decomposed characters.
