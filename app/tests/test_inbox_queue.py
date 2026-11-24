@@ -204,6 +204,14 @@ class TestVisibility(InboxTest):
         for query in ("mode=okand", "order=okand"):
             self.assertEqual(self.client.get(f"/api/v2/inkorg?{query}").status_code, 400)
 
+    def test_next_untaken_advances_past_each_selected_item_even_when_received_at_ties(self):
+        a, b, c = self.item(), self.item(), self.item()
+        db.InboxItem.update(received_at=a.received_at).where(db.InboxItem.id == b.id).execute()
+        self.login("hjalp")
+        for selected, expected in [(a, [b.id]), (b, [c.id]), (c, [])]:
+            response = self.client.get(f"/api/v2/inkorg?after={selected.id}&mode=mina&order=newest")
+            self.assertEqual(response.get_json()["next_untaken"], expected)
+
     def test_opening_an_item_is_logged_and_reads_its_notices(self):
         item = self.item(0)
         self.login("hjalp")

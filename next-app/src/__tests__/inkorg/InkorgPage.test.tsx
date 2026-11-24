@@ -254,7 +254,14 @@ describe("Inkorg", () => {
             events: [],
             subject: "Mejlet i länken",
           }
-        : { ...queue, next_untaken: [17, 25] },
+        : {
+            ...queue,
+            next_untaken:
+              new URL(path, "https://example.org").searchParams.get("after") ===
+              "17"
+                ? [25]
+                : [14, 15],
+          },
     );
     await show({
       arende: "17",

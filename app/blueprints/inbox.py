@@ -340,7 +340,17 @@ def queue():
         return problem(400, "Bad Request", "order är oldest eller newest.")
     totals = query.select(*(fn.COUNT(InboxItem.id).filter(expr) for expr in modes.values())).tuples().get()
     oldest = (InboxItem.received_at, InboxItem.id)
-    next_untaken = list(query.select(InboxItem.id).where(modes["nya"]).order_by(*oldest).limit(2).scalars())
+    untaken = query.select(InboxItem.id).where(modes["nya"]).order_by(*oldest)
+    if "after" in args:
+        after = args.get("after", type=int)
+        if after is None or after < 1:
+            return problem(400, "Bad Request", "after ska vara ett positivt ärende-id.")
+        received = InboxItem.select(InboxItem.received_at).where(InboxItem.id == after).scalar()
+        if received is not None:
+            untaken = untaken.where(
+                (InboxItem.received_at > received) | ((InboxItem.received_at == received) & (InboxItem.id > after))
+            )
+    next_untaken = list(untaken.limit(1 if "after" in args else 2).scalars())
     if args.get("mine") in ("1", "true"):
         query = query.where(InboxItem.assigned_to == current_user.id)
     if args.get("untaken") in ("1", "true"):

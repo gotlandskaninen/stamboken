@@ -54,6 +54,7 @@ export default async function InkorgPage({
     api.set("herd_prefix", filters.get("herd")!);
     api.delete("herd");
   }
+  if (selected !== null) api.set("after", String(selected));
   api.set("limit", "50");
 
   let data: QueueList;
