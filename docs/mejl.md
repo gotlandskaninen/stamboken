@@ -264,7 +264,7 @@ igen. Är köparen raderad när mejlet ska gå blir det `cancelled`.
 - **`kopare.information`** berättar vad föreningen sparar om köparen och
   varför, och till vilket datum namn och postadress sparas (namn och ort för
   en köpare utan postadress): radens `purge_at` som svenskt datum. E-post och
-  telefon sägs vara sparade med köparens ja, postadressen inte (#111). Mejlet har [raderingslänken](#raderingslänken). Har kaninen
+  telefon sägs vara sparade med köparens ja, postadressen inte (#111). Mejlet har [raderingslänken](#raderingslänken). Är köparen fortfarande kaninens innehavare och har kaninen
   ett digitalt intyg ligger det som PDF, hämtat när mejlet går, på samma sätt
   som när intyget laddas ner; annars går mejlet utan bilaga och utan meningen
   om den. Går intyget inte att hämta räknas det som ett tillfälligt fel och

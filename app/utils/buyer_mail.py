@@ -14,11 +14,13 @@ from peewee import fn
 from utils import settings
 from utils.database import (
     DB_PROXY,
+    HOLDER_CHANGING_KINDS,
     BuyerContact,
     DigitalCertificateV2,
     HerdTracking,
     Individual,
     MailMessage,
+    ht_order_desc,
     lock_individuals,
 )
 from utils.mail import address_hash, enqueue_mail, link_token, mail_kind, verify_link
@@ -111,7 +113,20 @@ def _information_mail(params, attempt=1):
         return None
     note = None
     try:
-        pdf = _certificate_pdf(rabbit)
+        with DB_PROXY.atomic():
+            lock_individuals([rabbit.id])  # a resale cannot replace the certificate between check and fetch
+            holder = (
+                HerdTracking.select(HerdTracking.holder_contact)
+                .where(
+                    HerdTracking.individual == rabbit.id,
+                    HerdTracking.voided_at.is_null(True),
+                    HerdTracking.kind.in_(HOLDER_CHANGING_KINDS),
+                )
+                .order_by(*ht_order_desc())
+                .limit(1)
+                .scalar()
+            )
+            pdf = _certificate_pdf(rabbit) if holder == contact.id else None
     except Exception:  # pylint: disable=broad-except  # S3, disk or PDF: the queue retries, then the notice matters more
         if attempt < ATTACHMENT_GIVE_UP:
             raise

@@ -245,6 +245,18 @@ class TestInformationSent(BuyerMailTest):
         self.assertIn("Du kan också skriva till dataskydd@gotlandskaninen.se.\n\nHälsningar\n", body)
         self.assertEqual(self.mails()[0].status, "sent")
 
+    def test_only_the_current_buyer_gets_the_certificate_after_a_resale(self):
+        buyer = {**WITH_EMAIL, "name": "Testköpare Två", "email": "andra@example.org"}
+        record_herd_tracking(self.rabbit, self.gx1, on(214), "TRANSFER", self.manager, buyer=buyer)
+        with mock.patch.object(buyer_mail, "_certificate_pdf", return_value=PDF) as fetch_pdf:
+            first, second = self.send()
+        self.assertEqual((first["To"], second["To"]), (EMAIL, buyer["email"]))
+        self.assertEqual(list(first.iter_attachments()), [])
+        self.assertNotIn("bilaga", first.get_body(("plain",)).get_content())
+        (attachment,) = second.iter_attachments()
+        self.assertEqual(attachment.get_content(), PDF)
+        fetch_pdf.assert_called_once()
+
     def test_without_a_digital_certificate_no_attachment_and_no_word_of_one(self):
         (msg,) = self.send()
         body = msg.get_body(("plain",)).get_content()
