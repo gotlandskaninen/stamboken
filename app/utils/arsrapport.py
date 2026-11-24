@@ -2842,12 +2842,18 @@ def apply_diff(
     if keep_sales:
         remove = _without_sale(remove)
     ops, note = frozenset(report_ops(report)), reason or REPORT_UNDO_REASON
+    previous_buyer = None
     for c in sorted(remove, key=lambda e: order(e, last), reverse=True):
         if c.kind in ROW_KINDS:
             op = uuid.uuid4()
-            void_herd_tracking(
-                c.ref, user, note, op, typed=bool(reason), report_ops=ops, keep_buyer_until=keep_buyer_until
-            )
+            keep_until = keep_buyer_until
+            if c.kind == "transfer" and transfer and transfer.buyer and c.value == (transfer.herd,):
+                contact = HerdTracking.get_by_id(c.ref).holder_contact
+                if contact:
+                    # The sale writer compares the typed fields under lock and reuses an unchanged recipient.
+                    previous_buyer, keep_until = contact.id, contact.purge_at
+                    transfer = replace(transfer, buyer_contact_id=contact.id)
+            void_herd_tracking(c.ref, user, note, op, typed=bool(reason), report_ops=ops, keep_buyer_until=keep_until)
             if grant.inbox_grant is not None:  # void_herd_tracking takes no grant, so its trace is left here
                 grant.inbox_grant.trace(op)
         elif c.kind == "death":
@@ -2882,7 +2888,10 @@ def apply_diff(
                 }
             )
         add = [e for e in add if e.kind not in MEASUREMENTS]
-    return added + _write(user, rabbit_id, add, herd, report, transfer, grant, last)
+    added += _write(user, rabbit_id, add, herd, report, transfer, grant, last)
+    if previous_buyer is not None:
+        drop_kept_buyers([previous_buyer], user)  # only if the replacement did not reuse it
+    return added
 
 
 def _cannot(refusals, detail="Rapporten kan inte skickas."):

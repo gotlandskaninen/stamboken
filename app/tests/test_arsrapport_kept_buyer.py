@@ -7,6 +7,7 @@ isort:skip_file
 """
 
 import json
+import re
 import threading
 import time
 from datetime import date, datetime, timedelta
@@ -237,6 +238,27 @@ class KeptBuyerTest(ArsrapportTest):
             self.assertEqual([(row.id, row.recipient_id) for row in buyer_mails()], original)
             mail.send_pending()
         self.assertEqual(len(relay.sent), 2)
+
+    def test_edit_after_delivery_preserves_the_contact_and_its_first_erase_link(self):
+        buyer = {**BUYER, "email": "kopare@example.org"}
+        sale = self.sald(self.a, "utanfor", 2025, 10, 10, kopare=buyer)
+        relay = FakeRelay()
+        with (
+            mock.patch.multiple(settings.mail, mode="allowlist", allowlist=[buyer["email"]]),
+            mock.patch.object(mail.smtplib, "SMTP", relay),
+        ):
+            self.ok(self.body(sale, self.kvar(self.b, vikt=2.8)))
+            contact_id = sales(self.a, active=True)[0].holder_contact_id
+            mail.send_pending()
+            (notice,) = [msg for msg, _, to in relay.sent if buyer["email"] in to]
+            token = re.search(r"/kopare/ta-bort#(\S+)", notice.get_body(("plain",)).get_content()).group(1)
+            self.ok(self.body(sale, self.kvar(self.b, vikt=3.1), revision=1))
+            mail.send_pending()
+        self.assertEqual(sales(self.a, active=True)[0].holder_contact_id, contact_id)
+        self.assertEqual(db.MailMessage.select().where(db.MailMessage.kind == "kopare.information").count(), 1)
+        self.assertEqual([msg for msg, _, to in relay.sent if buyer["email"] in to], [notice])
+        self.assertEqual(buyer_mail.erase_by_link(token), "removed")
+        self.assertFalse(db.BuyerContact.select().exists())
 
     def assert_erased_buyer_stays_removed(self, typed, blank, day, original=SOLD_ON):
         response = self.skicka(typed)
