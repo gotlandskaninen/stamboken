@@ -35,7 +35,8 @@ def _invalid():
 
 
 def _answer(response):
-    response = make_response(response)  # nosemgrep: make-response-with-unknown-content -- `response` is this module's own jsonify or problem() reply
+    # nosemgrep: make-response-with-unknown-content -- `response` is this module's own jsonify or problem() reply
+    response = make_response(response)
     response.headers["Cache-Control"] = "no-store"
     return response
 
@@ -66,8 +67,13 @@ def touch(now: datetime) -> None:
 
 
 @rapport_link_bp.errorhandler(429)
-def rate_limited(exc):
-    return problem(429, "För många anrop", f"Högst {exc.description}.", type="rate-limit-exceeded")
+def rate_limited(_exc):
+    return problem(
+        429,
+        "För många anrop",
+        "Du har öppnat länken för många gånger på kort tid. Vänta en minut och försök igen.",
+        type="rate-limit-exceeded",
+    )
 
 
 # [Next.js] The exchange: the page reads the token after # in the link and posts it here. A valid link starts a code

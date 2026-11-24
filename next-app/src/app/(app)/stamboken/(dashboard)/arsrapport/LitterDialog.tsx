@@ -16,6 +16,7 @@ import CloseIcon from "@mui/icons-material/Close";
 import type { ActionResult } from "../inkorg/actions";
 import type { Father, Litter, LitterBody } from "./lib";
 import { fmtDate } from "./lib";
+import { reportError } from "./reportError";
 import styles from "./arsrapport.module.css";
 
 type Saved = { id: number; litters: Litter[] };
@@ -29,9 +30,10 @@ const SIX_WEEKS_HINT =
   "Lämna tomt om kullen är yngre än 6 veckor, så räknar vi alla som levande tills du ändrar.";
 const FETCH_FAILED = "Det gick inte att nå servern. Försök igen.";
 
-// A picker's list from its action: null while loading, "fel" when it could not be fetched (retry sets null again).
-function useList(load: () => Promise<ActionResult<Father[]>>) {
-  const [list, setList] = React.useState<Father[] | "fel" | null>(null);
+function useList(load: () => Promise<ActionResult<Father[]>>, what: string) {
+  const [list, setList] = React.useState<
+    Father[] | { error: React.ReactNode } | null
+  >(null);
   const loader = React.useRef(load);
   React.useEffect(() => {
     loader.current = load;
@@ -42,15 +44,18 @@ function useList(load: () => Promise<ActionResult<Father[]>>) {
     loader
       .current()
       .then((r) => {
-        if (!cancelled) setList(r.ok ? r.data : "fel");
+        if (!cancelled)
+          setList(
+            r.ok ? r.data : { error: reportError(what, "hämtas", r.problem) },
+          );
       })
       .catch(() => {
-        if (!cancelled) setList("fel");
+        if (!cancelled) setList({ error: FETCH_FAILED });
       });
     return () => {
       cancelled = true;
     };
-  }, [list]);
+  }, [list, what]);
   return [list, () => setList(null)] as const;
 }
 
@@ -88,14 +93,16 @@ function Body({
   const [size6w, setSize6w] = React.useState("");
   const [tried, setTried] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<React.ReactNode>(null);
   const [same, setSame] = React.useState<number | null>(null); // samma_kull: the existing litter
   const [saved, setSaved] = React.useState(false);
-  const [mothers, retryMothers] = useList(() =>
-    loadMothers().then((r) => (r.ok ? { ...r, data: r.data.honor } : r)),
+  const [mothers, retryMothers] = useList(
+    () => loadMothers().then((r) => (r.ok ? { ...r, data: r.data.honor } : r)),
+    "Honorna",
   );
-  const [fathers, retryFathers] = useList(() =>
-    loadFathers().then((r) => (r.ok ? { ...r, data: r.data.hanar } : r)),
+  const [fathers, retryFathers] = useList(
+    () => loadFathers().then((r) => (r.ok ? { ...r, data: r.data.hanar } : r)),
+    "Hanarna",
   );
 
   const born6 = size6w.trim() === "" ? null : toInt(size6w);
@@ -121,7 +128,6 @@ function Body({
     setSame(null);
     setSaved(true);
   };
-  const fail = (detail: string) => setError(detail);
 
   const save = async () => {
     setTried(true);
@@ -138,7 +144,7 @@ function Body({
         litter_size6w: born6,
       });
     } catch {
-      return fail(FETCH_FAILED); // what was typed stays
+      return setError(FETCH_FAILED); // what was typed stays
     } finally {
       setBusy(false);
     }
@@ -146,7 +152,7 @@ function Body({
     const p = res.problem;
     if (p.status === 409 && p.extensions?.code === "samma_kull")
       return setSame(Number(p.extensions.breeding_id));
-    fail(p.detail ?? "Kullen kunde inte sparas. Försök igen.");
+    setError(reportError("Kullen", "sparas", p));
   };
 
   const changeExisting = async () => {
@@ -160,13 +166,13 @@ function Body({
         litter_size6w: born6,
       });
     } catch {
-      return fail(FETCH_FAILED); // the question stays, so "Ja, ändra den" can be tried again
+      return setError(FETCH_FAILED); // the question stays, so "Ja, ändra den befintliga kullen" can be tried again
     } finally {
       setBusy(false);
     }
     if (res.ok) return done(res.data);
     setSame(null);
-    fail(res.problem.detail ?? "Kullen kunde inte ändras. Försök igen.");
+    setError(reportError("Kullen", "ändras", res.problem));
   };
 
   const existing = same !== null ? litters.find((l) => l.id === same) : null;
@@ -227,9 +233,9 @@ function Body({
                 ))}
               </select>
             </label>
-            {mothers === "fel" && (
+            {mothers && !Array.isArray(mothers) && (
               <p className={styles.errorText} role="alert">
-                Det gick inte att hämta honorna.{" "}
+                {mothers.error}{" "}
                 <button
                   type="button"
                   className="sb-btn sb-btn-secondary sb-btn-sm"
@@ -250,9 +256,9 @@ function Body({
               noOptionsText="Ingen hane matchar"
               renderInput={(params) => <TextField {...params} label="Far" />}
             />
-            {fathers === "fel" && (
+            {fathers && !Array.isArray(fathers) && (
               <p className={styles.errorText} role="alert">
-                Det gick inte att hämta hanarna.{" "}
+                {fathers.error}{" "}
                 <button
                   type="button"
                   className="sb-btn sb-btn-secondary sb-btn-sm"
@@ -345,7 +351,7 @@ function Body({
               disabled={busy}
               onClick={changeExisting}
             >
-              Ja, ändra den
+              Ja, ändra den befintliga kullen
             </button>
           </>
         ) : (
@@ -392,7 +398,7 @@ function ConfirmBody({
 }: ConfirmProps & { litter: Litter }) {
   const [count, setCount] = React.useState(String(litter.litter_size6w ?? ""));
   const [busy, setBusy] = React.useState(false);
-  const [error, setError] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<React.ReactNode>(null);
   const n = toInt(count);
   const bad =
     n === null || (litter.litter_size !== null && n > litter.litter_size);
@@ -413,7 +419,7 @@ function ConfirmBody({
     if (res.ok) {
       onSaved(res.data.litters);
       onClose();
-    } else setError(res.problem.detail ?? "Antalet kunde inte sparas.");
+    } else setError(reportError("Antalet", "sparas", res.problem));
   };
 
   return (

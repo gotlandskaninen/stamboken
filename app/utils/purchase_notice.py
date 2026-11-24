@@ -50,6 +50,7 @@ NOT_IN_STAMBOKEN = (  # S7: the dialog then sends the photos (send_photos)
     "Kaninen finns inte i Stamboken än. Skicka foto av intyget, och av överlåtelsebeviset om du har det. "
     "Genbanksansvarig registrerar kaninen och för över den till dig."
 )
+BEVIS_FROM_YEAR = 2027
 PHOTO_TYPES = ("bevis", "intyg")  # what a notice's photo shows: the transfer proof, or the rabbit's certificate
 REGISTERED = "Köpet är registrerat"
 MAX_PHOTOS = 2  # S7: the certificate, and the transfer proof if the buyer has it
@@ -140,6 +141,14 @@ def _seller(herd, year, from_herd, date):
     return seller
 
 
+def _check_photo_type(doc_type, year):
+    if year < BEVIS_FROM_YEAR:
+        if doc_type != "intyg":
+            raise ArsrapportError(400, "Ladda upp ett foto av intyget.", field="doc_type")
+    elif doc_type not in PHOTO_TYPES:
+        raise ArsrapportError(400, "Välj om fotot visar överlåtelsebeviset eller intyget.", field="doc_type")
+
+
 def report_purchase(
     herd, round_, access, user, *, number, from_herd, date, photo_document_id=None, doc_type=None, photos=()
 ) -> InboxItem:
@@ -159,10 +168,16 @@ def report_purchase(
     year = round_.report_year
     individual = _in_genebank(number.strip().upper(), herd.genebank_id) if isinstance(number, str) else None
     if individual is None:
-        raise ArsrapportError(422, NOT_IN_STAMBOKEN, code="inte_i_stamboken", field="number")
+        detail = (
+            "Kaninen finns inte i Stamboken än. Skicka foto av intyget. "
+            "Genbanksansvarig registrerar kaninen och för över den till dig."
+            if year < BEVIS_FROM_YEAR
+            else NOT_IN_STAMBOKEN
+        )
+        raise ArsrapportError(422, detail, code="inte_i_stamboken", field="number")
     seller = _seller(herd, year, from_herd, date)
-    if photo_document_id is not None and doc_type not in PHOTO_TYPES:
-        raise ArsrapportError(400, "Välj om fotot visar överlåtelsebeviset eller intyget.", field="doc_type")
+    if photo_document_id is not None:
+        _check_photo_type(doc_type, year)
     by_link = access.code is not None
     with DB_PROXY.atomic():
         # The round row first, as Dra tillbaka takes it: an end_date moved meanwhile is read here, not the one before
@@ -227,7 +242,7 @@ def sent(item):
     return item.kind == "upload" and item.ref_data is not None
 
 
-def _photo_list(documents):
+def _photo_list(documents, year):
     """The body's [{id, doc_type}]: one or two distinct photos, each a certificate ("intyg") or a proof ("bevis")."""
     if (
         not isinstance(documents, list)
@@ -235,9 +250,10 @@ def _photo_list(documents):
         or not all(isinstance(d, dict) and type(d.get("id")) is int for d in documents)  # True is an int too
         or len({d["id"] for d in documents}) != len(documents)
     ):
-        raise ArsrapportError(400, PHOTO_REQUIRED, field="photo")
-    if any(d.get("doc_type") not in PHOTO_TYPES for d in documents):
-        raise ArsrapportError(400, "Välj om fotot visar överlåtelsebeviset eller intyget.", field="doc_type")
+        detail = "Ladda upp ett foto av intyget." if year < BEVIS_FROM_YEAR else PHOTO_REQUIRED
+        raise ArsrapportError(400, detail, field="photo")
+    for document in documents:
+        _check_photo_type(document.get("doc_type"), year)
     return {d["id"]: d["doc_type"] for d in documents}
 
 
@@ -259,7 +275,7 @@ def send_photos(herd, round_, access, user, *, number, from_herd, date, document
     if _in_genebank(number, herd.genebank_id) is not None:  # a rabbit Stamboken has is a notice
         raise ArsrapportError(409, f"{number} finns i Stamboken. Anmäl köpet i stället.", field="number")
     seller = _seller(herd, year, from_herd, date)
-    types = _photo_list(documents)
+    types = _photo_list(documents, year)
     by_link = access.code is not None
     canonical = [*actor_key(user), herd.id, year, number, seller, date.isoformat(), sorted(types.items())]
     request = hashlib.sha256(json.dumps(canonical).encode()).hexdigest()

@@ -32,7 +32,7 @@ const HERD = /^[A-Z]{1,3}[0-9]{1,6}$/;
 
 const refused = (detail: string): ActionResult<never> => ({
   ok: false,
-  problem: { status: 400, title: "Ogiltig begäran", detail },
+  problem: { status: 400, title: "Fel i adressen", detail },
 });
 
 function path(herd: string, year: number, tail: string) {
@@ -47,7 +47,10 @@ async function call<T>(
   body?: unknown,
   timeout?: number,
 ): Promise<ActionResult<T>> {
-  if (url === null) return refused("Ogiltig besättning eller år.");
+  if (url === null)
+    return refused(
+      "Besättningen eller året i adressen stämmer inte. Öppna rapporten från länken i mejlet eller från Min besättning.",
+    );
   try {
     const data = await fetchApi<T>(url, {
       method,
@@ -169,7 +172,11 @@ export async function getGenebankHerds(
   );
   return res.ok
     ? { success: true as const, herds: res.data.herds }
-    : { success: false as const, error: res.problem.detail };
+    : {
+        success: false as const,
+        error: res.problem.detail,
+        status: res.problem.status,
+      };
 }
 
 // "Kullar under Y": as the logged-in page's actions, without `env` and `post`.

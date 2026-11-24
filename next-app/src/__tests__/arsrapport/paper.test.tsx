@@ -701,14 +701,21 @@ describe("ReportForm on paper", () => {
   });
 
   it("does not archive when a page cannot be dismissed", async () => {
-    const p = paperProps({ archive: vi.fn(() => fail(409)) as never });
+    const p = paperProps({
+      archive: vi.fn().mockResolvedValue({
+        ok: false,
+        problem: {
+          status: 409,
+          title: "Konflikt",
+          detail: "Sidan är redan arkiverad.",
+        },
+      }),
+    });
     renderPaper(reported(), actions(), p);
     fireEvent.click(
       screen.getByRole("button", { name: "Arkivera blanketten" }),
     );
-    expect(
-      await screen.findByText(/Det gick inte att arkivera blanketten/),
-    ).toBeTruthy();
+    expect(await screen.findByText("Sidan är redan arkiverad.")).toBeTruthy();
     expect(p.leave).not.toHaveBeenCalled();
   });
 

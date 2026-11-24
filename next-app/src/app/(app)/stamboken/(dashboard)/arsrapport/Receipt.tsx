@@ -48,7 +48,7 @@ export function Receipt({
   hasDraft: boolean;
   busy: boolean;
   onChange: () => void;
-  onWithdraw: (reason?: string) => Promise<string | null>;
+  onWithdraw: (reason?: string) => Promise<React.ReactNode>;
   focusOnMount?: boolean; // right after a Skicka: show the receipt and read it out
   // the view has been fetched again since the receipt came: it alone says what waits
   refreshed?: boolean;
@@ -57,7 +57,7 @@ export function Receipt({
   const editor = view.access === "manager" || view.access === "admin";
   const [asking, setAsking] = React.useState(false);
   const [reason, setReason] = React.useState("");
-  const [error, setError] = React.useState<string | null>(null);
+  const [error, setError] = React.useState<React.ReactNode>(null);
   const headRef = React.useRef<HTMLHeadingElement>(null);
   React.useEffect(() => {
     if (!focusOnMount) return;

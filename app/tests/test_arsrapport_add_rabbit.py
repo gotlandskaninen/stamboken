@@ -194,10 +194,15 @@ class TestPhoto(AddRabbitTest):
             first_name="Test", last_name="Skötare", membership=self.h.membership, role="skotare", user=caretaker
         )
         db.HerdAccessGrant.create(member=person, herd=self.h, granted_by=self.admin)
+        db.User.update(fullname="Mio Test").where(db.User.id == caretaker.id).execute()
         self.login("skotare")
         self.assertEqual(self.api("GET", REPORT).get_json()["access"], "caretaker")
         response = self.kit(self.photo_item())
         self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        (row,) = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.ny_kanin")
+        self.assertEqual(mail.MAIL_KINDS[row.kind].build(row.params)["namn"], "Mio Test")
+        db.User.update(fullname=None).where(db.User.id == caretaker.id).execute()
+        self.assertEqual(mail.MAIL_KINDS[row.kind].build(row.params)["namn"], "En skötare")
         self.login("owner")
         with mock.patch("blueprints.individual_v2_create._can_register_in_herd", return_value=False):
             refused = self.upload_photo()
@@ -225,7 +230,8 @@ class TestUploadLimit(AddRabbitTest):
         self.assertEqual((refused.status_code, refused.mimetype), (429, "application/problem+json"))
         detail = refused.get_json()["detail"]
         found = re.fullmatch(
-            r"Du har laddat upp många foton den senaste timmen\. Fortsätt efter kl\. (\d\d)\.(\d\d)\. "
+            r"Du har laddat upp 60 foton den senaste timmen\. Det är gränsen, ett skydd mot missbruk\. "
+            r"Du kan fortsätta efter kl\. (\d\d)\.(\d\d)\. "
             r"Det du skrivit är sparat\.",
             detail,
         )
@@ -263,34 +269,43 @@ class TestRegister(AddRabbitTest):
         self.assertEqual(item.ref_id, kit.id)
         (document,) = item.documents
         self.assertEqual(document.individual_id, kit.id)
+        self.assertFalse(db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.ny_kanin").exists())
         saved = item.events.where(db.InboxEvent.kind == "sparad").get()
         self.assertEqual((saved.user_id, saved.detail["individual"]), (None, "G9001-2511"))
 
-    def test_each_rabbit_added_through_the_report_gets_a_receipt(self):
-        """Spec 5.8 (Opus L2): the rabbit's own receipt to the herd's main member; a refused registration has none."""
-        self.open_link()
+    def test_main_member_receives_a_named_receipt_for_a_managers_rabbit(self):
+        db.User.update(fullname="Maja Test").where(db.User.id == self.manager.id).execute()
+        self.login("man")
         item_id = self.photo_item()
         self.assertEqual(self.kit(item_id, paper_number="G9001-2521").status_code, 409)  # nothing written, no mail
         self.assertFalse(db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.ny_kanin").exists())
         kit_id = self.kit(item_id).get_json()["id"]
         (row,) = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.ny_kanin")
         self.assertEqual(
-            (row.recipient_kind, row.recipient_id, row.params, (row.ref_type, row.ref_id), row.priority),
-            ("member", inbox.herd_holder(self.h.id).id, {"individual_id": kit_id}, ("individual", kit_id), 0),
+            (
+                row.recipient_kind,
+                row.recipient_id,
+                row.params["individual_id"],
+                (row.ref_type, row.ref_id),
+                row.priority,
+            ),
+            ("member", inbox.herd_holder(self.h.id).id, kit_id, ("individual", kit_id), 0),
         )
         self.assertEqual(row.dedupe_key, f"arsrapport.ny_kanin:{kit_id}")
         subject, body = mail.render("arsrapport.ny_kanin", mail.MAIL_KINDS["arsrapport.ny_kanin"].build(row.params))
-        self.assertEqual(subject, "G9001-2511 är registrerad i G9001")
+        self.assertEqual(subject, "Maja Test har lagt till G9001-2511 i G9001")
         self.assertIn(
-            "Kaninen G9001-2511 är registrerad i Stamboken för besättning G9001. Den lades till i årsrapporten från "
-            "ett foto av intyget. Den finns kvar även om du drar tillbaka rapporten.",
+            "Maja Test har lagt till kaninen G9001-2511 i besättning G9001 i årsrapporten. "
+            "Den finns kvar även om du drar tillbaka rapporten.",
             body,
         )
+        self.assertIn("Stämmer det inte? Kontakta genbanksansvarig genom att svara på det här mejlet.", body)
         self.assertFalse(db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.ny_kull").exists())
         db.Individual.update(voided=True).where(db.Individual.id == kit_id).execute()
         self.assertIsNone(mail.MAIL_KINDS["arsrapport.ny_kanin"].build(row.params))  # an unpromoted rabbit: cancelled
 
     def test_owner_registers_with_own_right(self):
+        db.Member.update(user=self.owner).where(db.Member.id == self.code.member_id).execute()
         self.login("owner")
         response = self.kit(self.photo_item())
         self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
@@ -298,6 +313,7 @@ class TestRegister(AddRabbitTest):
             db.HerdTracking.kind == "BIRTH", db.HerdTracking.individual == response.get_json()["id"]
         )
         self.assertEqual((birth.signature_id, birth.access_code_id), (self.owner.id, None))
+        self.assertFalse(db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.ny_kanin").exists())
 
     def test_code_cannot_register_into_owners_other_herd(self):
         """L1: an owner of G9001 logged in, and G9002's link in the same session: the link writes in G9002 only."""

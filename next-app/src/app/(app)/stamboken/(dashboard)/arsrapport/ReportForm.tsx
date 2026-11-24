@@ -63,6 +63,7 @@ import {
   AddRabbitPrompt,
 } from "./AddRabbit";
 import { uploadPhoto } from "./rabbitActions";
+import { reportError } from "./reportError";
 import styles from "./arsrapport.module.css";
 
 export type ReportActions = Pick<
@@ -132,6 +133,7 @@ type SaveState =
   | "loggedout"
   | "conflict"
   | "closed";
+type FormRefusal = Refusal & { error?: React.ReactNode };
 type Problem = {
   status: number;
   detail: string;
@@ -332,7 +334,7 @@ export function ReportForm({
     enteredFrom(view.rabbits, startFrom(view, isPaper)),
   );
   const [archiving, setArchiving] = React.useState(false);
-  const [archiveError, setArchiveError] = React.useState<string | null>(null);
+  const [archiveError, setArchiveError] = React.useState<React.ReactNode>(null);
   const [mode, setMode] = React.useState<"form" | "receipt">(
     view.report && !isPaper ? "receipt" : "form",
   );
@@ -343,7 +345,7 @@ export function ReportForm({
     view.draft ? fmtTime(view.draft.updated_at) : null,
   );
   const [phase, setPhase] = React.useState<Phase>("idle");
-  const [refusals, setRefusals] = React.useState<Refusal[] | null>(null);
+  const [refusals, setRefusals] = React.useState<FormRefusal[] | null>(null);
   // counts failed Skicka attempts: the error box takes focus then, never when
   // an edit clears some of its errors
   const [failTick, setFailTick] = React.useState(0);
@@ -841,7 +843,7 @@ export function ReportForm({
   const soldRabbit = rabbits.find((r) => r.id === soldFor);
 
   // ---- Skicka -------------------------------------------------------------
-  const showRefusals = (rs: Refusal[]) => {
+  const showRefusals = (rs: FormRefusal[]) => {
     setRefusals(rs);
     setFailTick((t) => t + 1);
   };
@@ -874,7 +876,15 @@ export function ReportForm({
       // Someone changed or sent the report: show the current one.
       setSaveState("conflict");
       reload();
-    } else fail(p.detail || NET_TEXT);
+    } else
+      showRefusals([
+        {
+          individual_id: null,
+          code: "fel",
+          message: p.detail,
+          error: reportError("Rapporten", "skickas", p),
+        },
+      ]);
     setPhase("idle");
   };
 
@@ -950,11 +960,6 @@ export function ReportForm({
       actionsRef.current.dryRun(herd.herd, year, body, env, post),
     );
     if (!dry.ok) {
-      if (dry.problem.status === 408 || dry.problem.status === 502) {
-        fail(NET_TEXT);
-        submitOver();
-        return setPhase("idle");
-      }
       return handle(dry.problem);
     }
     if (!dry.data.ok) {
@@ -965,7 +970,7 @@ export function ReportForm({
     await send(body);
   };
 
-  const withdraw = async (reason?: string): Promise<string | null> => {
+  const withdraw = async (reason?: string): Promise<React.ReactNode> => {
     if (!link && readModeCookieClient() !== env) return ENV_TEXT;
     setWithdrawing(true);
     const res = await safe(
@@ -1004,7 +1009,7 @@ export function ReportForm({
     if (res.problem.status === 409) return `${CONFLICT_TEXT}. Ladda om sidan.`;
     if (Array.isArray(ext.refusals))
       return refusalText((ext.refusals as Refusal[])[0]);
-    return res.problem.status === 502 ? NET_TEXT : res.problem.detail;
+    return reportError("Rapporten", "dras tillbaka", res.problem);
   };
 
   const startChange = () => {
@@ -1184,14 +1189,14 @@ export function ReportForm({
   const archive = async () => {
     setArchiveError(null);
     setArchiving(true);
-    let failed = false;
+    let error: React.ReactNode = null;
     for (const id of paper!.documentIds) {
       const res = await safe(paper!.archive(id));
-      if (!res.ok) failed = true;
+      if (!res.ok)
+        error ??= reportError("Blanketten", "arkiveras", res.problem);
     }
     setArchiving(false);
-    if (failed)
-      setArchiveError("Det gick inte att arkivera blanketten. Försök igen.");
+    if (error) setArchiveError(error);
     else paper!.leave(`Blanketten för ${herd.herd} är arkiverad.`);
   };
   if (isPaper && (paper!.intygPending || gate)) {
@@ -1478,7 +1483,7 @@ export function ReportForm({
                             {refusalText(r)}
                           </a>
                         ) : (
-                          refusalText(r)
+                          (r.error ?? refusalText(r))
                         )}
                       </li>
                     ))}
