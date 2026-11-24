@@ -19,6 +19,7 @@ gotlandskaninen.se/stamboken/verifiera/<uuid> → Publik verifiering av digitalt
 gotlandskaninen.se/medlem/       → Medlemsregister (inloggning krävs)
 gotlandskaninen.se/ansok         → Publik medlemsansökan
 gotlandskaninen.se/integritetspolicy → Hur föreningen behandlar personuppgifter (kort adress: /dataskydd)
+gotlandskaninen.se/kopare/ta-bort → Publik: köparens länk för att ta bort sina uppgifter
 gotlandskaninen.se/admin         → Payload CMS admin
 gotlandskaninen.se/api/          → Flask-API (via nginx)
 gotlandskaninen.se/api-test/     → Flask-API mot demodatabasen (via nginx)

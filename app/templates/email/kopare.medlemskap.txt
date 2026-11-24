@@ -1,0 +1,12 @@
+{% block subject %}Välkommen att bli medlem i Föreningen Gotlandskaninen{% endblock %}
+
+{% block body %}
+Hej {{ buyer }},
+
+när du köpte {{ rabbit }} sa du att vi får höra av oss om medlemskap. Som medlem får du tidningen Koharen, kan ha en egen genbanksbesättning och hjälper till att bevara gotlands- och mellerudskaninen. Läs mer och ansök på gotlandskaninen.se/ansok.
+
+Vi sparar ditt ja och din kontaktuppgift för det här i högst 12 månader. Vill du inte bli kontaktad igen räcker det att svara på det här mejlet eller skriva till dataskydd@gotlandskaninen.se.
+
+Hälsningar
+Föreningen Gotlandskaninen
+{% endblock %}

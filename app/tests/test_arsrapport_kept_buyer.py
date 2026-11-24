@@ -7,6 +7,7 @@ isort:skip_file
 """
 
 import json
+import re
 import threading
 import time
 from datetime import date, datetime, timedelta
@@ -15,6 +16,7 @@ from unittest import mock
 import utils.arsrapport as arsrapport
 import utils.arsrapport_invite as arsrapport_invite
 import utils.buyer_contact as buyer_contact
+import utils.buyer_mail as buyer_mail
 import utils.database as db
 import utils.herd_tracking as herd_tracking
 import utils.individual_commands as individual_commands
@@ -30,6 +32,7 @@ from utils.report_code import CodeActor
 from tests.arsrapport_fixtures import ArsrapportTest
 from tests.database_test import _USE_POSTGRES
 from tests.test_arsrapport_pdf import text_of
+from tests.test_mail_queue import FakeRelay
 
 DAY0 = date(2026, 1, 10)
 STOCKHOLM = arsrapport.STOCKHOLM
@@ -175,6 +178,88 @@ class KeptBuyerTest(ArsrapportTest):
         for text in (json.dumps(view), json.dumps(receipt), text_of(receipt_pdf(report, submission)), mailed):
             self.assertFalse([value for value in BUYER_TEXTS if value in text], text[:200])
 
+    def test_submission_holds_both_address_locks_before_the_first_sale(self):
+        create = db.BuyerContact.create
+        locks = []
+
+        def create_buyer(**fields):
+            locks.append(
+                db.DB_PROXY.execute_sql(
+                    "SELECT count(*) FROM pg_locks WHERE pid = pg_backend_pid() AND granted "
+                    "AND locktype = 'advisory' AND classid = %s",
+                    (buyer_mail.BUYER_ADDRESS_LOCK,),
+                ).fetchone()[0]
+            )
+            return create(**fields)
+
+        with mock.patch.object(db.BuyerContact, "create", side_effect=create_buyer):
+            self.ok(
+                self.body(
+                    self.sald(self.a, "utanfor", 2025, 10, 10, kopare={**BUYER, "email": "z@example.org"}),
+                    self.sald(self.b, "utanfor", 2025, 10, 10, kopare={**BUYER, "email": "a@example.org"}),
+                )
+            )
+        self.assertEqual(locks, [2, 2])
+
+    def test_withdraw_stops_buyer_mail_and_resubmit_sends_each_kind_once(self):
+        buyer = {**BUYER, "email": "kopare@example.org", "membership_optin": True}
+        self.ok(self.body(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=buyer), self.kvar(self.b, vikt=2.8)))
+
+        def buyer_mails():
+            return (
+                db.MailMessage.select()
+                .where(db.MailMessage.recipient_kind == "buyer_contact")
+                .order_by(db.MailMessage.id)
+            )
+
+        self.assertEqual([m.kind for m in buyer_mails()], ["kopare.information", "kopare.medlemskap"])
+        relay = FakeRelay()
+        with (
+            mock.patch.multiple(settings.mail, mode="allowlist", allowlist=[buyer["email"]]),
+            mock.patch.object(mail.smtplib, "SMTP", relay),
+            mock.patch.object(buyer_mail, "datetime", wraps=datetime) as clock,
+        ):
+            clock.now.return_value = arsrapport.now()
+            self.withdrawn(1)
+            # A withdrawal made before the fix can still have a queued row. The sender must check the sale too.
+            db.MailMessage.update(status="queued", last_error=None).where(
+                db.MailMessage.kind == "kopare.medlemskap"
+            ).execute()
+            mail.send_pending()
+            self.assertEqual(relay.sent, [])
+            self.assertEqual([m.status for m in buyer_mails()], ["cancelled", "cancelled"])
+            self.ok(self.resent())
+            mail.send_pending()
+            self.assertEqual([m.status for m in buyer_mails()], ["sent", "sent"])
+            original = [(row.id, row.recipient_id) for row in buyer_mails()]
+            self.withdrawn(2)
+            mail.send_pending()
+            self.ok(self.resent(kopare=buyer, kopare_id=None))
+            self.assertEqual([(row.id, row.recipient_id) for row in buyer_mails()], original)
+            mail.send_pending()
+        self.assertEqual(len(relay.sent), 2)
+
+    def test_edit_after_delivery_preserves_the_contact_and_its_first_erase_link(self):
+        buyer = {**BUYER, "email": "kopare@example.org"}
+        sale = self.sald(self.a, "utanfor", 2025, 10, 10, kopare=buyer)
+        relay = FakeRelay()
+        with (
+            mock.patch.multiple(settings.mail, mode="allowlist", allowlist=[buyer["email"]]),
+            mock.patch.object(mail.smtplib, "SMTP", relay),
+        ):
+            self.ok(self.body(sale, self.kvar(self.b, vikt=2.8)))
+            contact_id = sales(self.a, active=True)[0].holder_contact_id
+            mail.send_pending()
+            (notice,) = [msg for msg, _, to in relay.sent if buyer["email"] in to]
+            token = re.search(r"/kopare/ta-bort#(\S+)", notice.get_body(("plain",)).get_content()).group(1)
+            self.ok(self.body(sale, self.kvar(self.b, vikt=3.1), revision=1))
+            mail.send_pending()
+        self.assertEqual(sales(self.a, active=True)[0].holder_contact_id, contact_id)
+        self.assertEqual(db.MailMessage.select().where(db.MailMessage.kind == "kopare.information").count(), 1)
+        self.assertEqual([msg for msg, _, to in relay.sent if buyer["email"] in to], [notice])
+        self.assertEqual(buyer_mail.erase_by_link(token), "removed")
+        self.assertFalse(db.BuyerContact.select().exists())
+
     def assert_erased_buyer_stays_removed(self, typed, blank, day, original=SOLD_ON):
         response = self.skicka(typed)
         self.assertEqual(response.status_code, 422, response.get_data(as_text=True))
@@ -246,6 +331,12 @@ class KeptBuyerTest(ArsrapportTest):
     def test_buyer_erased_while_kept_stays_removed(self):
         kept, _ = self.sold_and_withdrawn()
         buyer_contact.erase_buyer_contact(kept.id, self.admin)
+        self.assert_erased_buyer_stays_removed(self.resent(kopare=OTHER), self.resent(), SOLD_ON)
+
+    def test_buyer_erased_by_link_while_kept_stays_removed(self):
+        kept, _ = self.sold_and_withdrawn()
+        token = mail.link_token(buyer_mail.ERASE_PURPOSE, kept.id)
+        self.assertEqual(buyer_mail.erase_by_link(token), "removed")
         self.assert_erased_buyer_stays_removed(self.resent(kopare=OTHER), self.resent(), SOLD_ON)
 
     def test_date_change_preserves_buyer_removed(self):
@@ -496,6 +587,15 @@ class KeptBuyerTest(ArsrapportTest):
         self.withdrawn(1)
         self.assertEqual(contacts(), {})
         self.assertNotIn("kopare_id", json.dumps(self.draft()))
+
+    def test_resubmit_corrects_spelling_at_the_same_address(self):
+        buyer = {**BUYER, "email": "kopare@example.org", "name": "Testköpre"}
+        self.ok(self.body(self.sald(self.a, "utanfor", 2025, 10, 10, kopare=buyer), self.kvar(self.b, vikt=2.8)))
+        self.withdrawn(1)
+        self.ok(self.resent(kopare={**buyer, "name": "Testköpare"}, kopare_id=None))
+        (sale,) = sales(self.a, active=True)
+        self.assertEqual((sale.holder_contact.name, sale.holder_contact.email), ("Testköpare", buyer["email"]))
+        self.assertEqual(list(contacts()), [sale.holder_contact_id])
 
     def test_new_buyer_at_skicka_deletes_the_kept_one(self):  # "eller skriv en ny köpare"
         contact, _ = self.sold_and_withdrawn()

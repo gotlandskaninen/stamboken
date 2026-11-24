@@ -2008,6 +2008,41 @@ class TestDatabaseMigration(DatabaseTest):
         # A new account has not chosen yet
         self.assertIsNone(db.User.get_by_id(da.register_user("ny", "pass").id).name_on_check_page)
 
+    def test_replay_lets_a_notice_point_at_a_rabbit(self):
+        """An older database gets notice.individual_id, as a fresh bootstrap."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+
+        def shape():
+            columns = {(c.name, c.null) for c in db.DATABASE.get_columns("notice")}
+            keys = {(k.column, k.dest_table, k.dest_column) for k in db.DATABASE.get_foreign_keys("notice")}
+            indexes = {(i.name, tuple(i.columns), i.unique) for i in db.DATABASE.get_indexes("notice")}
+            buyer_columns = {(c.name, c.null) for c in db.DATABASE.get_columns("buyer_contact")}
+            return columns, keys, indexes, buyer_columns
+
+        fresh = shape()
+        version = self._migration_version("notice.individual")
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= version).execute()
+        if db.SchemaHistory.get_or_none(db.SchemaHistory.version == version - 1) is None:
+            db.SchemaHistory.insert(  # pylint: disable=E1120
+                version=version - 1, comment="test seed", applied=datetime.now()
+            ).execute()
+        db.DATABASE.execute_sql("ALTER TABLE notice DROP COLUMN individual_id")
+        db.DATABASE.execute_sql(
+            "ALTER TABLE buyer_contact DROP COLUMN erased_email_hash, DROP COLUMN email_review_pending"
+        )
+
+        db.check_migrations()
+
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(shape(), fresh)
+        self.assertIn(("individual_id", True), fresh[0])
+        self.assertIn(("individual_id", "individual", "individual_id"), fresh[1])
+        self.assertIn(("notice_individual_id", ("individual_id",), False), fresh[2])
+        self.assertIn(("erased_email_hash", True), fresh[3])
+        self.assertIn(("email_review_pending", False), fresh[3])
+
     @staticmethod
     def _migration_version(marker):
         """The version the migration whose source names `marker` stamps: survives renumbering and later migrations."""

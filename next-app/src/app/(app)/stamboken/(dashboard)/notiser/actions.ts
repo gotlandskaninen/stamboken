@@ -34,3 +34,19 @@ export async function setMailNotices(
     throw e;
   }
 }
+
+export async function reviewBuyerEmail(
+  id: number,
+  review: { confirm: true } | { name: string; email: string },
+) {
+  try {
+    await fetchApi(`/v2/buyer-contacts/${id}/review-email`, {
+      method: "POST",
+      body: JSON.stringify(review),
+    });
+    return { ok: true } as const;
+  } catch (e) {
+    if (e instanceof ApiError) return { ok: false, error: e.detail } as const;
+    throw e;
+  }
+}

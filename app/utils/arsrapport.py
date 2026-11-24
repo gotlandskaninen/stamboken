@@ -18,11 +18,13 @@ from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 from flask import current_app
-from peewee import JOIN, IntegrityError, fn
+from peewee import JOIN, IntegrityError, OperationalError, fn
 
 import utils.inbox as inbox
 import utils.report_code as report_code
+from utils import settings
 from utils.arsrapport_statistik import SEXES, Kanin, innehav, statistik
+from utils.buyer_mail import lock_buyer_addresses
 from utils.data_access import MAX_GESTATION_DAYS
 from utils.database import (
     DB_PROXY,
@@ -75,6 +77,7 @@ from utils.herd_tracking import (
     HerdTrackingError,
     HerdTrackingInvalid,
     QueueChanged,
+    _buyer_name_key,
     _reject_buyer_name,
     buyer_contact_fields,
     buyer_items,
@@ -101,7 +104,7 @@ from utils.individual_commands import (
 )
 from utils.individual_policy import Role
 from utils.login_code import AddressTaken, login_address_taken
-from utils.mail import Recipient, enqueue_mail, mail_kind, recipient_kind
+from utils.mail import Recipient, address_hash, enqueue_mail, mail_kind, recipient_kind
 from utils.matrikel import (
     AddressValidationError,
     is_anonymized,
@@ -133,6 +136,7 @@ class ArsrapportError(Exception):
         404: "Hittades inte",
         409: "Konflikt",
         422: "Kan inte sparas",
+        503: "Försök igen",
     }
 
     def __init__(self, status, detail, **extra):
@@ -410,6 +414,53 @@ def without_reason(sub):
     one too, and a reason that is never stored never carries one.
     """
     return replace(sub, reason=None) if sub.reason else sub
+
+
+SALE_LOCK_TIMEOUT = "5s"
+
+
+def _proposal_contacts(addresses):
+    hashes = {address_hash(email): email for email in addresses} if settings.mail.link_secret else {}
+    email = fn.lower(fn.trim(BuyerContact.email))
+    contacts = BuyerContact.select(
+        BuyerContact.id, BuyerContact.name, BuyerContact.email, BuyerContact.erased_email_hash
+    ).where(~BuyerContact.email_review_pending, email.in_(addresses) | BuyerContact.erased_email_hash.in_(list(hashes)))
+    return {
+        str(c.id): (_buyer_name_key(c.name), c.email.strip().lower() if c.email else hashes[c.erased_email_hash])
+        for c in contacts
+    }
+
+
+def lock_sale_buyers(buyers, *, proposal):
+    """Lock the addresses after the rabbits. Return the rabbits whose proposed buyer was erased while waiting."""
+    keys = {
+        rabbit: (_buyer_name_key(buyer["name"]), buyer["email"].strip().lower())
+        for rabbit, buyer in buyers.items()
+        if buyer.get("email")
+    }
+    if not keys:
+        return set()
+    addresses = sorted({email for _, email in keys.values()})
+    before = _proposal_contacts(addresses) if proposal else {}
+    previous = DB_PROXY.execute_sql("SHOW lock_timeout").fetchone()[0]
+    DB_PROXY.execute_sql("SELECT set_config('lock_timeout', %s, true)", (SALE_LOCK_TIMEOUT,))
+    try:
+        lock_buyer_addresses(addresses, proposal=proposal)
+    except OperationalError as exc:
+        if getattr(exc.__context__, "pgcode", None) == "55P03":
+            raise ArsrapportError(503, "Rapporten kunde inte sparas just nu. Försök igen.") from exc
+        raise
+    DB_PROXY.execute_sql("SELECT set_config('lock_timeout', %s, true)", (previous,))
+    if not before:
+        return set()
+    deletions = AuditLog.select(AuditLog.record_id).where(
+        AuditLog.table_name == "buyer_contact",
+        AuditLog.operation == "DELETE",
+        AuditLog.record_id.in_(list(before)),
+        AuditLog.new_data["action"].in_(("invandning", "radering")),
+    )
+    erased = {before[row.record_id] for row in deletions}
+    return {rabbit for rabbit, key in keys.items() if key in erased}
 
 
 def lock_report(round_, herd):
@@ -1919,7 +1970,9 @@ def _register_refusals(individual_id, remove, add, ops, admin=False, transfer=No
         if transfer.herd in OUTSIDE_GENEBANK_HERDS:
             if kopare is not None:
                 try:
-                    buyer_contact_fields(kopare, address_required=address_required and not transfer.address_optional)
+                    buyer_contact_fields(
+                        kopare, transfer.date, address_required=address_required and not transfer.address_optional
+                    )
                 except HerdTrackingInvalid as exc:
                     refusals.append(_refusal(individual_id, "kopare", str(exc)))
             elif transfer.buyer_contact_id is None and not transfer.buyer_removed:
@@ -1942,7 +1995,7 @@ def _removed_buyers(herd, round_, rabbits, current_ops):
     deleted = AuditLog.select(AuditLog.record_id).where(
         AuditLog.table_name == BuyerContact._meta.table_name,
         AuditLog.operation == "DELETE",
-        AuditLog.new_data["action"].in_(("radering", "gallring_fem_ar", "gallring_dod")),
+        AuditLog.new_data["action"].in_(("radering", "invandning", "gallring_fem_ar", "gallring_dod")),
     )
     history = AuditLog.select(AuditLog.transaction_id).where(
         AuditLog.table_name == HerdTracking._meta.table_name, AuditLog.record_id == HerdTracking.id.cast("text")
@@ -2026,8 +2079,10 @@ def _kept_contact(herd, round_, entry, claim, sale):
     only when that report is a voided one of the same herd and round, one of its operations wrote a TRANSFER of this
     rabbit holding the buyer, and no active row holds it now.
     """
-    kopare_id = entry.sald["kopare_id"]
-    if kopare_id is None or claim is None or claim["kopare_id"] != kopare_id or not _is_int(claim["fran_rapport"]):
+    if claim is None:
+        return None
+    kopare_id = claim["kopare_id"] if entry.sald["kopare"] is not None else entry.sald["kopare_id"]
+    if kopare_id is None or claim["kopare_id"] != kopare_id or not _is_int(claim["fran_rapport"]):
         return None
     report = YearlyHerdReport.get_or_none(
         (YearlyHerdReport.id == claim["fran_rapport"])
@@ -2062,7 +2117,8 @@ def _report_transfer(herd, round_, entry, current_effects, sale, claim, removed,
     registered = next((e for e in current_effects if e == sale), None)
     if registered is None:
         # a paper form is entered as written: its buyer may lack the address (Jonas 2026-11-23)
-        return TransferIndividual(target, day, buyer=buyer, address_optional=paper)
+        kept = _kept_contact(herd, round_, entry, claim, sale)
+        return TransferIndividual(target, day, buyer=buyer, buyer_contact_id=kept, address_optional=paper)
     contact = (
         BuyerContact.select(BuyerContact.name, BuyerContact.town, BuyerContact.postal_address)
         .join(HerdTracking, on=(HerdTracking.holder_contact == BuyerContact.id))
@@ -2700,7 +2756,7 @@ def submitted_body(sub: Submission) -> dict:
     return body
 
 
-def _lock_items(ids, form_id=None, report=None, kept=(), notices=()):
+def _lock_items(ids, form_id=None, report=None, kept=(), notices=(), reports=()):
     """
     The queue's items that may show the buyers of the rabbits' sales (buyer_items), the paper form's own item, the
     kontroll items of `report`'s pending sale proposals (K4) and the purchase `notices` an approval settles (Task 5),
@@ -2714,9 +2770,10 @@ def _lock_items(ids, form_id=None, report=None, kept=(), notices=()):
         (HerdTracking.individual.in_(ids) & ht_not_voided()) | HerdTracking.holder_contact.in_(sorted(kept))
     )
     proposed = set()
-    if report is not None:  # the report's lock keeps this set as read
+    report_ids = [report.id] if report is not None else reports
+    if report_ids:  # the reports' locks keep this set as read
         query = SaleProposal.select(SaleProposal.inbox_item_id).where(
-            SaleProposal.report == report.id,
+            SaleProposal.report.in_(report_ids),
             SaleProposal.state == "foreslagen",
             SaleProposal.inbox_item_id.is_null(False),
         )
@@ -2830,12 +2887,18 @@ def apply_diff(
     if keep_sales:
         remove = _without_sale(remove)
     ops, note = frozenset(report_ops(report)), reason or REPORT_UNDO_REASON
+    previous_buyer = None
     for c in sorted(remove, key=lambda e: order(e, last), reverse=True):
         if c.kind in ROW_KINDS:
             op = uuid.uuid4()
-            void_herd_tracking(
-                c.ref, user, note, op, typed=bool(reason), report_ops=ops, keep_buyer_until=keep_buyer_until
-            )
+            keep_until = keep_buyer_until
+            if c.kind == "transfer" and transfer and transfer.buyer and c.value == (transfer.herd,):
+                contact = HerdTracking.get_by_id(c.ref).holder_contact
+                if contact:
+                    # The sale writer compares the typed fields under lock and reuses an unchanged recipient.
+                    previous_buyer, keep_until = contact.id, contact.purge_at
+                    transfer = replace(transfer, buyer_contact_id=contact.id)
+            void_herd_tracking(c.ref, user, note, op, typed=bool(reason), report_ops=ops, keep_buyer_until=keep_until)
             if grant.inbox_grant is not None:  # void_herd_tracking takes no grant, so its trace is left here
                 grant.inbox_grant.trace(op)
         elif c.kind == "death":
@@ -2870,7 +2933,10 @@ def apply_diff(
                 }
             )
         add = [e for e in add if e.kind not in MEASUREMENTS]
-    return added + _write(user, rabbit_id, add, herd, report, transfer, grant, last)
+    added += _write(user, rabbit_id, add, herd, report, transfer, grant, last)
+    if previous_buyer is not None:
+        drop_kept_buyers([previous_buyer], user)  # only if the replacement did not reuse it
+    return added
 
 
 def _cannot(refusals, detail="Rapporten kan inte skickas."):
@@ -2964,6 +3030,7 @@ def _propose(report, submission, proposed):
             buyer=transfer.buyer,
             sale_date=date.fromisoformat(transfer.date),
             buyer_removed=transfer.buyer_removed,
+            locks_held=True,
         )
     named = {rabbit: p.id for rabbit, p in _proposals(report).items() if p.state == "foreslagen"}
     sales = [(int(key), entry["sald"]) for key, entry in submission.data["rabbits"].items() if entry.get("sald")]
@@ -3020,6 +3087,9 @@ def submit(herd, round_, access, user, sub, *, now=None) -> dict:
         refusals, _ = check(herd, round_, access, report, sub, on=on, check_email=False, transfers=transfers)
         if refusals:
             raise _cannot(refusals)
+        buyers = {rabbit: t.buyer for rabbit, t in transfers.items() if t.buyer}
+        for rabbit in lock_sale_buyers(buyers, proposal=not access.can_sell):
+            transfers[rabbit] = replace(transfers[rabbit], buyer=None, buyer_removed=True)
         grant = ReportGrant(
             inbox.InboxGrant(item, user, pages[0]) if paper else None, code=access.code, report=report, herd=herd
         )

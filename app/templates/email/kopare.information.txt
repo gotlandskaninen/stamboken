@@ -1,0 +1,19 @@
+{% block subject %}Din kanin {% if name %}{{ name }} ({{ number }}){% else %}{{ number }}{% endif %} är registrerad hos Föreningen Gotlandskaninen{% endblock %}
+
+{% block body %}
+Hej {{ buyer }},
+
+du har köpt kaninen {% if name %}{{ name }}, {% endif %}{{ number }}. Säljaren har registrerat köpet i Stamboken, föreningens register över genbankens kaniner.{% if certificate %} Kaninens genbanksintyg ligger som bilaga.{% endif %}
+
+Föreningen Gotlandskaninen sparar ditt namn och din {% if address %}postadress{% else %}ort{% endif %} till och med {{ until }}. Då vet vi var genbankens kaniner finns, till exempel om det blir smitta eller om en kanin behöver köpas tillbaka till genbanken (berättigat intresse). Uppgifterna kommer från säljaren.{% if consent %} Din e-postadress, och telefon om du har lämnat den, sparar vi bara för att du har sagt ja till det, och bara tills kaninen byter ägare igen.{% if membership %} E-postadress och telefon kan vi ändå spara för att höra av oss om medlemskap, i högst 12 månader från ditt ja.{% endif %} Ditt ja kan du ta tillbaka när du vill.{% elif membership %} Din e-postadress, och telefon om du har lämnat den, sparar vi bara för att du har sagt ja till att vi hör av oss om medlemskap, och i högst 12 månader.{% else %} Tiden för din medlemsinbjudan har gått ut. Vi använder e-postadressen för att skicka den här informationen och tar sedan bort den vid nästa gallring.{% endif %}
+
+Vi sparar också ett krypterat avtryck av e-postadressen, inte själva adressen, så länge köpet finns i registret. Det använder vi för att kunna ta bort alla dina uppgifter när du ber om det.
+
+Uppgifterna ses av genbanksansvarig och genbankshjälpare för rasen, föreningens systemansvarig och leverantörerna som driver Stamboken och tar säkerhetskopior. De kan lämnas till ansvarig myndighet vid smittskydd. Du har rätt att få veta vad vi har om dig, och att få uppgifterna rättade, raderade eller begränsade. Du kan klaga hos Integritetsskyddsmyndigheten.
+
+Vill du inte finnas med i registret, eller är det inte du som har köpt kaninen? Klicka här så tar vi bort alla dina uppgifter, även namn och {% if address %}postadress{% else %}ort{% endif %}: {{ base_url }}/kopare/ta-bort#{{ token }}
+Du kan också skriva till dataskydd@gotlandskaninen.se.
+
+Hälsningar
+Föreningen Gotlandskaninen
+{% endblock %}

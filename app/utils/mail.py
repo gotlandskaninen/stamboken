@@ -11,6 +11,7 @@ import base64
 import contextlib
 import hashlib
 import hmac
+import inspect
 import json
 import logging
 import os
@@ -35,6 +36,8 @@ import utils.tyck_till as tyck_till
 from utils.database import (
     DB_PROXY,
     BuyerContact,
+    BuyerInvitation,
+    HerdTracking,
     MailAttempt,
     MailMessage,
     MailSender,
@@ -69,12 +72,15 @@ RETRY_DELAYS = (
 RETENTION = timedelta(days=396)
 MAIL_NO_LONGER_RELEVANT = "mejlet är inte längre aktuellt"
 NO_ADDRESS = "mottagaren saknar e-post"
+SALE_WITHDRAWN = "försäljningen är ångrad"
 
 MailKind = namedtuple("MailKind", "priority category build login_address", defaults=[None])
 Recipient = namedtuple("Recipient", "address label")
 
 # kind -> MailKind; build(params) returns the template variables (plus an optional "attachments" list of
-# (filename, mime type, bytes)), or None when the mail is no longer relevant, which cancels it, or raises Later.
+# (filename, mime type, bytes)), returns None to cancel, or raises Later to postpone delivery. A builder that
+# declares an `attempt` keyword (1 on the first try) is told which attempt this is. A "sent_note" among the variables
+# is kept in last_error when the mail is sent.
 MAIL_KINDS = {}
 # recipient_kind -> resolve(recipient_id) returning a Recipient, or None.
 RECIPIENT_KINDS = {}
@@ -226,6 +232,11 @@ def message_id(row_id):
 def address_hash(address):
     """HMAC, not a plain hash, which could be looked up against known addresses."""
     return _mac(f"addr:{_normalize(address) or ''}").hexdigest()
+
+
+def is_address(raw):
+    """Whether the queue can send to `raw` as it stands: one address, nothing else in the field."""
+    return _normalize(raw) is not None
 
 
 def _delivery_hash(row, address):
@@ -447,12 +458,19 @@ def _claim(now):
     return row
 
 
-def _renew(row, login_address, address):
+def _renew(row, login_address, address, buyer_certificate):
     """
     Restarts the claim's clock just before the mail goes, so the row cannot be reclaimed until long after
     SEND_DEADLINE. False when another sender has taken the row since (this one was slow) or the recipient has
     been erased (forget_recipient): it must not send.
     """
+    if buyer_certificate:
+        from utils.buyer_mail import lock_certificate_holder  # pylint: disable=import-outside-toplevel
+
+        # The sale writer locks the rabbit before the mail row. Keep that order here through send_message.
+        if not lock_certificate_holder(row.params):
+            _finish(row, _utcnow(), status="queued")  # rebuild both the notice text and its attachments
+            return False
     renewed = MailMessage.update(claimed_at=_utcnow()).where(
         (MailMessage.id == row.id) & (MailMessage.claim_token == row.claim_token)
     )
@@ -566,6 +584,8 @@ def _send_one(row, relay, now):
     mode = settings.mail.mode
     login_address = kind.login_address if row.recipient_kind in ("member", "member_previous_address") else None
     try:
+        if row.recipient_kind == "buyer_contact" and cancel_withdrawn_buyer_mails([row.recipient_id]):
+            return True
         if login_address is not None:
             address = _normalize(login_address(row.params))
             if address is None:
@@ -575,10 +595,12 @@ def _send_one(row, relay, now):
             address = _normalize(recipient.address) if recipient else None
         if address is None:
             return _finish(row, now, status="cancelled", last_error=NO_ADDRESS)
-        variables = kind.build(row.params)
+        extra = {"attempt": row.attempts + 1} if "attempt" in inspect.signature(kind.build).parameters else {}
+        variables = kind.build(row.params, **extra)
         if variables is None:
             return _finish(row, now, status="cancelled", last_error=MAIL_NO_LONGER_RELEVANT)
         attachments = variables.pop("attachments", [])
+        note = variables.pop("sent_note", None)
         reply_to = variables.pop("reply_to", None)
         subject, body = render(row.kind, variables)
         msg = None if mode == "log" else _message(row, address, subject, body, attachments, reply_to)
@@ -593,14 +615,32 @@ def _send_one(row, relay, now):
         return _failed(row, now, "temporary", None, detail)
 
     if mode == "log":
-        logger.info("Mail %s (%s) to %s %s logged, not sent", row.id, row.kind, row.recipient_kind, row.recipient_id)
-        if os.environ.get("FLASK_ENV") != "production" and row.kind != "tyck_till.inskick":  # free text and address
-            logger.info("Mail %s:\n%s\n\n%s", row.id, mask_tokens(subject), mask_tokens(body))
-        return _finish(row, now, status="logged")
+        if row.kind.startswith("kopare."):
+            logger.info("Mail %s (%s) logged", row.id, row.kind)
+        else:
+            logger.info(
+                "Mail %s (%s) to %s %s logged, not sent", row.id, row.kind, row.recipient_kind, row.recipient_id
+            )
+            if os.environ.get("FLASK_ENV") != "production" and row.kind != "tyck_till.inskick":
+                logger.info("Mail %s:\n%s\n\n%s", row.id, mask_tokens(subject), mask_tokens(body))
+        return _finish(row, now, status="logged", last_error=note)
     if mode == "allowlist" and not _allowed(address):
         return _finish(row, now, status="blocked", last_error="spärrat: adressen finns inte i MAIL_ALLOWLIST")
+    # For buyer mail, keep _renew's row lock through the SMTP handoff and its outcome.
+    # forget_recipient then either cancels before the handoff or waits until it is over.
+    with DB_PROXY.atomic() if row.kind.startswith("kopare.") else contextlib.nullcontext():
+        if row.kind == "kopare.medlemskap":
+            key = address_hash(address)
+            DB_PROXY.execute_sql("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"buyer_invitation:{key}",))
+            if BuyerInvitation.select().where(BuyerInvitation.email_hash == key).exists():
+                return _finish(row, now, status="cancelled", last_error=MAIL_NO_LONGER_RELEVANT)
+        return _deliver(row, relay, now, msg, address, note, login_address)
+
+
+def _deliver(row, relay, now, msg, address, note, login_address):
     try:
-        relay.send(msg, address, lambda: _renew(row, login_address, address))
+        buyer_certificate = row.kind == "kopare.information" and msg.is_multipart()
+        relay.send(msg, address, lambda: _renew(row, login_address, address, buyer_certificate))
     except _ClaimLost:
         logger.warning("Mail %s was reclaimed by another sender or lost its recipient; it is not sent", row.id)
         return True
@@ -619,6 +659,8 @@ def _send_one(row, relay, now):
         relay.refused = 0
         return _failed(row, now, "temporary", None, _describe(exc))
     relay.refused = 0
+    if row.kind == "kopare.medlemskap":
+        BuyerInvitation.create(email_hash=address_hash(address), created_at=row.created_at)
     return _finish(
         row,
         now,
@@ -627,7 +669,7 @@ def _send_one(row, relay, now):
         sent_at=now,
         attempts=row.attempts + 1,
         address_hash=_delivery_hash(row, address),
-        last_error=None,
+        last_error=note,
     )
 
 
@@ -711,6 +753,37 @@ def record_bounce(message_id_header, diagnostic):
     return True
 
 
+def cancel_withdrawn_buyer_mails(contact_ids):
+    """A kept buyer gets no mail until a sale holds it again. Also covers mail queued before withdrawal cancelled it."""
+    with DB_PROXY.atomic():
+        # Resubmission locks the contact before relinking the sale and resuming its mail.
+        contacts = BuyerContact.select(BuyerContact.id).where(BuyerContact.id.in_(contact_ids))
+        ids = [c.id for c in contacts.order_by(BuyerContact.id).for_update()]
+        # A correction can carry the sale's buyer onto its replacement row.
+        active = HerdTracking.select(HerdTracking.holder_contact).where(
+            HerdTracking.holder_contact.in_(ids), HerdTracking.voided_at.is_null()
+        )
+        return (
+            MailMessage.update(status="cancelled", last_error=SALE_WITHDRAWN, claim_token=None, claimed_at=None)
+            .where(
+                MailMessage.recipient_kind == "buyer_contact",
+                MailMessage.recipient_id.in_(ids),
+                MailMessage.recipient_id.not_in(active),
+                MailMessage.status.in_(("queued", "sending")),
+            )
+            .execute()
+        )
+
+
+def resume_buyer_mails(contact_id):
+    MailMessage.update(status="queued", next_attempt_at=_utcnow(), last_error=None).where(
+        MailMessage.recipient_kind == "buyer_contact",
+        MailMessage.recipient_id == contact_id,
+        MailMessage.status == "cancelled",
+        MailMessage.last_error == SALE_WITHDRAWN,
+    ).execute()
+
+
 def forget_recipient(kind, recipient_id):
     """
     Called by the jobs that delete a recipient source: no trace of the address stays in the queue, and mail not
@@ -727,7 +800,10 @@ def forget_recipient(kind, recipient_id):
 
 def purge_old_mail(now):
     """Deletes rows older than 13 months; their attempts follow (ON DELETE CASCADE)."""
-    return MailMessage.delete().where(MailMessage.created_at < now - RETENTION).execute()
+    with DB_PROXY.atomic():
+        cutoff = now - RETENTION
+        BuyerInvitation.delete().where(BuyerInvitation.created_at < cutoff).execute()
+        return MailMessage.delete().where(MailMessage.created_at < cutoff).execute()
 
 
 # --- Status views ---
