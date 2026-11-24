@@ -1,4 +1,5 @@
-{% macro rad(cells, widths) %}{% for c in cells %}{{ ("%-" ~ widths[loop.index0] ~ "s")|format(c|string) }}{% if not loop.last %}  {% endif %}{% endfor %}{% endmacro %}
+{% macro cell(value) %}{{ (value|string).splitlines()|join(" ") }}{% endmacro %}
+{% macro rad(cells, widths) %}{% for c in cells %}{{ ("%-" ~ widths[loop.index0] ~ "s")|format(cell(c)) }}{% if not loop.last %}  {% endif %}{% endfor %}{% endmacro %}
 {% macro rubrik(text) %}
 {{ text }}
 {{ "-" * (text|length) }}{% endmacro %}
@@ -12,11 +13,11 @@ Så här står det i Stamboken. Utdraget skickas inte in. Rätta i rapporten, i 
 {% endfor %}{% else %}Inga kaniner.
 {% endif %}
 {{ rubrik("Sålda under " ~ year) }}
-{% for s in sold %}{{ s.number }}  {{ s.date }}
+{% for s in sold %}{{ rad([s.number, s.date], [0, 0]) }}
 {% else %}Inga försäljningar under {{ year }} i Stamboken.
 {% endfor %}
 {{ rubrik("Döda under " ~ year) }}
-{% for d in dead %}{{ d.number }}  {{ d.date }}
+{% for d in dead %}{{ rad([d.number, d.date], [0, 0]) }}
 {% else %}Inga döda.
 {% endfor %}
 {{ rubrik("Kullar under " ~ year) }}
@@ -35,8 +36,8 @@ Så här står det i Stamboken. Utdraget skickas inte in. Rätta i rapporten, i 
 {% endfor %}{% else %}Inga kaniner.
 {% endif %}
 {{ rubrik("Hälsa") }}
-{{ health }}
-{% for d in diseases %}- {{ d }}
+{{ health|indent(2, first=true, blank=true) }}
+{% for d in diseases %}- {{ d|indent(2, blank=true) }}
 {% endfor %}{% if defects %}Defekter
-{% for d in defects %}- {{ d.number }}: {{ d.text }}
+{% for d in defects %}{% set prefix = "- " ~ cell(d.number) ~ ": " %}{{ prefix }}{{ (d.text or "")|indent(prefix|length, blank=true) }}
 {% endfor %}{% endif %}{% endif %}

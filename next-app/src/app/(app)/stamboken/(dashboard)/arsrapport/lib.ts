@@ -239,7 +239,7 @@ export interface ReportView {
     received_at: string;
     report_date: string;
     on_time: boolean;
-    submitted: (Partial<DraftData> & { reason?: string | null }) | null;
+    submitted: (Partial<DraftData> & { received_on?: string }) | null;
     can_change: boolean;
     can_withdraw: boolean;
     withdraw_until: string | null;

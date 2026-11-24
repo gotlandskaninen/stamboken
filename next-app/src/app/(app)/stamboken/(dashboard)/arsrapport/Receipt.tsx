@@ -36,6 +36,7 @@ function summaryOf(view: ReportView): Summary {
 export function Receipt({
   view,
   receipt,
+  receivedOn,
   hasDraft,
   busy,
   onChange,
@@ -45,6 +46,7 @@ export function Receipt({
 }: {
   view: ReportView;
   receipt: ReceiptData | null;
+  receivedOn?: string;
   hasDraft: boolean;
   busy: boolean;
   onChange: () => void;
@@ -74,7 +76,11 @@ export function Receipt({
       ? !!receipt.summary.vantar
       : view.forslag.some((p) => p.state === "foreslagen");
   const at = report?.received_at ?? receipt?.created_at ?? "";
-  const when = `${fmtDate(at)} kl. ${fmtTime(at)}`;
+  const source = receipt && !refreshed ? receipt.source : report?.source;
+  const when =
+    source === "paper"
+      ? fmtDate(receivedOn ?? report?.submitted?.received_on ?? at)
+      : `${fmtDate(at)} kl. ${fmtTime(at)}`;
   const changed =
     report &&
     report.report_date.slice(0, 10) !== report.received_at.slice(0, 10)

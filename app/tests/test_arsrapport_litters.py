@@ -443,6 +443,24 @@ class TestKitsAndMoves(LitterApiTest):
 
 
 class TestAddedReceipt(LitterApiTest):
+    def test_shared_link_names_the_logged_in_account_only(self):
+        db.Member.update(user=self.owner).where(db.Member.id == self.member.id).execute()
+        self.open_link()
+        self.assertEqual(self.litter().status_code, 201)
+        messages = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.ny_kull")
+        self.assertFalse(messages.exists())
+
+        db.User.update(google_name="Lo Test").where(db.User.id == self.helper.id).execute()
+        self.login("hjalp")
+        self.open_link()
+        self.assertEqual(self.api("GET", REPORT).get_json()["source"], "link")
+        response = self.litter(mother=self.doe2)
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        (row,) = messages
+        self.assertEqual((row.recipient_id, row.ref_id), (self.member.id, response.get_json()["id"]))
+        subject, _ = mail.render(row.kind, mail.MAIL_KINDS[row.kind].build(row.params))
+        self.assertEqual(subject, "Lo Test har lagt till en kull i G9001")
+
     def test_link_and_main_member_get_no_litter_receipt(self):
         self.open_link()
         self.assertEqual(self.litter().status_code, 201)

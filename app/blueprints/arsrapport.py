@@ -368,7 +368,8 @@ def withdraw(herd, year):
 @report_actor_required
 def add_litter(herd, year):
     herd, round_, access = _report_target(herd, year)
-    return jsonify(arsrapport.add_litter(herd, round_, access, _actor(access), _submission_body())), 201
+    litter = arsrapport.add_litter(herd, round_, access, _actor(access), _submission_body(), account=current_user)
+    return jsonify(litter), 201
 
 
 # [Next.js] A litter's counts, confirmed (the 6-week count) or changed; the dialog's "Ja, ändra den" after samma_kull.
@@ -648,7 +649,7 @@ def add_rabbit(herd, year):
 
         def bind(individual):  # in the registration's transaction: the photo, the rabbit and its receipt together
             inbox.bind_report_photo(item, document, None if access.code else actor, individual)
-            arsrapport.mail_added(herd, access, actor, "individual", individual.id)
+            arsrapport.mail_added(herd, access, current_user, "individual", individual.id)
             created.append(individual)
 
         return register_individual_as(actor, herd, form, bind)

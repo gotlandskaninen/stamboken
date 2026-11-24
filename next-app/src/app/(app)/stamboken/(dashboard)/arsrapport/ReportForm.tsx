@@ -1140,6 +1140,7 @@ export function ReportForm({
         <Receipt
           view={{ ...view, report: null }}
           receipt={receipt}
+          receivedOn={receivedOn}
           hasDraft={false}
           busy={false}
           onChange={startChange}

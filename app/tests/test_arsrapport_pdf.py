@@ -25,6 +25,21 @@ def text_of(pdf: bytes) -> str:
         return " ".join(page.get_text() for page in doc)
 
 
+def test_text_keeps_multiline_values_inside_their_fields():
+    extract = render_text({"mode": "utdrag", "rabbits": [{"number": "G1-1", "name": "Lilla\r\nMy"}]})
+    assert next(line for line in extract.splitlines() if "G1-1" in line).endswith("Lilla My")
+    receipt = render_text(
+        {
+            "mode": "kvittens",
+            "health": "Hälsosvar\nrad två",
+            "diseases": ["Snuva\rrad två"],
+            "defects": [{"number": "G1-1", "text": "Sned tand\nrad två"}],
+        }
+    )
+    assert "  Hälsosvar\n  rad två\n- Snuva\n  rad två" in receipt
+    assert "- G1-1: Sned tand\n        rad två" in receipt
+
+
 class PdfTest(ArsrapportTest):
     def setUp(self):
         super().setUp()

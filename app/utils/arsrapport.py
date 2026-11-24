@@ -3613,13 +3613,13 @@ def _litter_write(herd, round_, access, user, write):
             raise _litter_refused(exc) from exc
 
 
-def add_litter(herd, round_, access, user, body):
+def add_litter(herd, round_, access, actor, body, *, account):
     """POST kull: a litter without a certificate in the herd; the new litter's id and the year's litters."""
     fields = _litter_body(body, new=True)
 
     def write(grant):
         litter = register_litter(
-            user,
+            actor,
             fields["mother_id"],
             fields["father_id"],
             fields["birth_date"],
@@ -3629,10 +3629,10 @@ def add_litter(herd, round_, access, user, body):
             year=round_.report_year,
             grant=grant,
         )
-        mail_added(herd, access, user, "breeding", litter.id)
+        mail_added(herd, access, account, "breeding", litter.id)
         return litter
 
-    litter = _litter_write(herd, round_, access, user, write)
+    litter = _litter_write(herd, round_, access, actor, write)
     return {"id": litter.id, "litters": report_litters(herd, round_.report_year)}
 
 
@@ -3647,14 +3647,16 @@ ADDED_ROLES = {
 }
 
 
-def mail_added(herd, access, user, ref_type, ref_id):
+def mail_added(herd, access, account, ref_type, ref_id):
     """Tell the main member when someone else added a litter or a rabbit."""
-    if access.code is not None:
+    if not account.is_authenticated:
         return
     # A legacy owner grant can belong to someone other than the main member.
     role = "caretaker" if access.role == "owner" else access.role
-    params = {f"{ref_type}_id": ref_id, "actor_id": user.id, role: True}
-    _mail(ADDED_KINDS[ref_type], herd, user, params, (ref_type, ref_id), other_actor_only=True)
+    if access.role == "code":  # admins and this genebank's managers use their own access
+        role = "helper" if herd.genebank_id in (account.is_helper or ()) else "caretaker"
+    params = {f"{ref_type}_id": ref_id, "actor_id": account.id, role: True}
+    _mail(ADDED_KINDS[ref_type], herd, account, params, (ref_type, ref_id), other_actor_only=True)
 
 
 def _added_by(params, ref_type):
