@@ -1297,10 +1297,31 @@ class TestDatabaseMigration(DatabaseTest):
         herd = db.Herd.get_by_id(linked.id)
         self.assertEqual((herd.contact_pending, herd.mobile_phone), ([], "070-999 99 99"))
 
+    def test_replay_49_to_50_leaves_a_paused_membership_uncompared(self):
+        """O4: the reads show nothing of a membership that is not active, so the replay compares none of its herds:
+        contact_pending stays NULL and the own columns stay. set_membership_status compares them when it is active."""
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("trigger requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        membership = db.Membership.create(member_number=4748, membership_status="inactive", address="Byvägen 1")
+        db.Member.create(
+            membership=membership, first_name="Per", last_name="Prov", role="huvudmedlem", email="per@example.invalid"
+        )
+        own = {"name": "Per Prov", "email": "per@example.invalid", "physical_address": "Byvägen 1||"}
+        gb = db.Genebank.create(name="Replay50p")
+        herd = db.Herd.create(genebank=gb, herd="R50P", membership=membership, **own)
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= 50).execute()
+
+        db.check_migrations()
+
+        herd = db.Herd.get_by_id(herd.id)
+        self.assertEqual((herd.contact_member_id, herd.contact_pending), (None, None))
+        self.assertEqual({c: getattr(herd, c) for c in own}, own)
+
     def test_replay_49_to_50_clears_erased_households(self):
         """FC1: a herd linked to a household whose persons are all erased loses every own contact row, the fixed
         phone and the website too, as on_household_erased does; the rows start hidden and the herd is compared.
-        A household whose persons only ended is compared as usual: the farm's own rows stay."""
+        A household whose persons only ended is inactive, so it is left uncompared: the farm's own rows stay."""
         if not isinstance(db.DATABASE, db.PostgresqlDatabase):
             self.skipTest("trigger requires PostgreSQL")
         self.addCleanup(db.check_migrations)
@@ -1333,7 +1354,7 @@ class TestDatabaseMigration(DatabaseTest):
         ended = db.Herd.get_by_id(herds["ended"].id)
         self.assertEqual({c: getattr(ended, c) for c in own}, own)
         self.assertEqual({c: getattr(ended, c) for c in shown}, shown)
-        self.assertEqual(ended.contact_pending, ["name"])  # fritext: nobody on the membership is active
+        self.assertIsNone(ended.contact_pending)  # not active: left uncompared
 
     def test_replay_49_to_50_waits_for_a_locked_membership_row(self):
         """FC3: the migration takes membership in EXCLUSIVE mode, so it waits for a transaction that holds a

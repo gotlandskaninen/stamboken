@@ -38,7 +38,13 @@ from utils.database import (
     Membership,
     User,
 )
-from utils.herd_contact import on_household_erased, on_person_anonymizing, on_person_leaving, snapshot_before_leaving
+from utils.herd_contact import (
+    on_household_erased,
+    on_membership_active,
+    on_person_anonymizing,
+    on_person_leaving,
+    snapshot_before_leaving,
+)
 from utils.inbox_purge import erase_person_from_inbox, remove_originals
 from utils.login_code import AddressTaken, lock_addresses, reserve_holder, reserve_login_address, void
 from utils.mail import cancel_member_added, enqueue_mail, forget_recipient, queue_member_added
@@ -790,7 +796,8 @@ def set_membership_status(membership, new_status, actor):
 
     Call inside the caller's transaction with the membership row locked FOR UPDATE. Raises
     TransitionRefused (nothing written) when the table has none, e.g. for a retired membership.
-    Sets the attribute only: the caller saves it with the rest of its columns.
+    Sets the attribute: the caller saves it with the rest of its columns. A membership that becomes active has its
+    status written at once, and its herds linked meanwhile are compared with the register (#117).
     """
     new_status = Status(new_status).value
     has_main = (
@@ -806,7 +813,11 @@ def set_membership_status(membership, new_status, actor):
         # Nested {"before": {field: ...}, "after": {...}} shape, like the other membership mutations.
         {"before": {"membership_status": membership.membership_status}, "after": {"membership_status": new_status}},
     )
+    activated = new_status == Status.ACTIVE and membership.membership_status != Status.ACTIVE
     membership.membership_status = new_status
+    if activated:
+        Membership.update(membership_status=new_status).where(Membership.id == membership.id).execute()
+        on_membership_active(membership.id)
 
 
 def create_membership(data, actor):

@@ -4382,7 +4382,8 @@ def _add_herd_contact_member_fk():
 
 
 def _compare_linked_herds():
-    """#117, Överflyttning: herds linked before the comparison existed are compared once (contact_pending NULL).
+    """#117, Överflyttning: herds linked before the comparison existed are compared once (contact_pending NULL), if
+    their membership is active; the others stay uncompared and read their own columns until it is.
     Version 50's columns only, read and written by name, so a replay works after later migrations add columns.
     membership and member are locked by the LOCKs and herd by the ALTER in migrate_49_to_50, so the register
     cannot change while the herds are compared."""
@@ -4404,7 +4405,11 @@ def _compare_linked_herds():
         Herd.membership,
         *(getattr(Herd, c) for c in columns),
         *(getattr(Herd, f"{c}_privacy") for c in columns),
-    ).where(Herd.membership.is_null(False), Herd.contact_pending.is_null(True))
+    ).where(
+        Herd.contact_pending.is_null(True),
+        # a membership that is not active is compared when it becomes active (on_membership_active)
+        Herd.membership.in_(Membership.select(Membership.id).where(Membership.membership_status == "active")),
+    )
     for herd in rows:
         changes, _ = compare_with_register(herd)
         Herd.update(**changes).where(Herd.id == herd.id, Herd.contact_pending.is_null(True)).execute()

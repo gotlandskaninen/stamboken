@@ -116,8 +116,7 @@ def _compared(herd, persons):
     }
     rows = {}
     for field in CONTACT_FIELDS:
-        # a contact person's name is hers: a name column kept while the membership was paused is not an own name
-        own = None if field == "name" and person else getattr(herd, field)
+        own = getattr(herd, field)
         # a contact outside the register has no person to fetch e-mail and mobile from: those rows are own
         if own or (mode == "fritext" and field in ("email", "mobile_phone")):
             other = fetched[field]
@@ -170,18 +169,18 @@ def is_matrikel_reader(user: User | None, herd: Herd) -> bool:
     return herd.id in matrikel_reader_herd_ids(user, [herd])
 
 
-def active_persons(herd: Herd, *, any_status: bool = False) -> list[Member]:
-    """The active persons on the herd's active membership, main member first. `any_status`: of a membership in any
-    status, as herd_contacts."""
+def active_persons(herd: Herd) -> list[Member]:
+    """The active persons on the herd's active membership, main member first."""
     if herd.membership_id is None:
         return []
-    where = [Member.membership == herd.membership_id, Member.end_date.is_null(True)]
-    if not any_status:
-        where.append(Membership.membership_status == "active")
     return list(
         Member.select(Member.id, Member.user, Member.first_name, Member.last_name, Member.role)
         .join(Membership)
-        .where(*where)
+        .where(
+            Member.membership == herd.membership_id,
+            Member.end_date.is_null(True),
+            Membership.membership_status == "active",
+        )
         .order_by(Member.role != "huvudmedlem", Member.id)
     )
 
@@ -203,7 +202,7 @@ def may_choose_contact(user: User, herd: Herd, persons: Sequence[Member]) -> boo
 def contact_field(user: User, herd: Herd, contact: HerdContact, *, reader: bool, private_access: bool) -> dict | None:
     """The `contact` object of a herd response: whole for a matrikel reader, a smaller one for others with
     private access (no mode, person, fetched values or their privacy), none for anyone else."""
-    privacy = {f: getattr(herd, f"{f}_privacy") or "private" for f in CONTACT_FIELDS}  # NULL counts as private
+    privacy = {f: _privacy(herd, f) for f in CONTACT_FIELDS}
     if not reader:
         if not private_access:
             return None
@@ -278,9 +277,9 @@ def compare_with_register(herd: Herd) -> tuple[dict, dict[str, str]]:
     its id, membership, contact columns and their privacy, so the migration can pass a row with those alone.
 
     Returns the columns to write and the case per row: "lika", "olika", "bara_besattningen", "bara_matrikeln" or
-    "bada_tomma", and for the name "person" or "fritext" when the name is filled in."""
-    # step 1 chooses among the persons of a paused membership too, so the contact is set once it is active again
-    persons = active_persons(herd, any_status=True)
+    "bada_tomma", and for the name "person" or "fritext" when the name is filled in. Only for an active membership:
+    the reads show nothing of another, so link_herd leaves its herds uncompared until on_membership_active."""
+    persons = active_persons(herd)
     main = next((p for p in persons if p.role == "huvudmedlem"), None)
     name = herd.name if normalize("name", herd.name) else None
     same = [p for p in persons if normalize("name", f"{p.first_name} {p.last_name}") == normalize("name", name)]
@@ -291,11 +290,10 @@ def compare_with_register(herd: Herd) -> tuple[dict, dict[str, str]]:
         contact, name, cases = same[0], None, {"name": "person"}
     else:
         contact, cases = None, {"name": "fritext"}
-    # step 2: each row against what the read gives afterwards, without the herd's own values; a paused membership
-    # gives nothing, so its own rows stay own
+    # step 2: each row against what the read gives afterwards, without the herd's own values
     contact_id = contact.id if contact is not None else None
     probe = Herd(id=herd.id, membership=herd.membership_id, contact_member=contact_id, name=name, contact_pending=[])
-    fetched = herd_contacts([probe])[probe.id].rows
+    fetched = herd_contact(probe).rows
     for field in CONTACT_FIELDS[1:]:
         own, register = normalize(field, getattr(herd, field)), normalize(field, fetched[field].value)
         if own is None:
@@ -308,11 +306,8 @@ def compare_with_register(herd: Herd) -> tuple[dict, dict[str, str]]:
     if contact_id is not None:
         changes["contact_member"] = contact_id
     for field in CONTACT_FIELDS:
-        own = getattr(herd, field)
-        # emptied only if blank or the same value can still be read afterwards: a paused membership's name cannot
-        readable = normalize(field, fetched[field].value)
-        if own and cases[field] != "fritext" and normalize(field, own) in (None, readable):
-            changes[field] = None
+        if cases[field] not in ("fritext", "olika", "bara_besattningen") and getattr(herd, field):
+            changes[field] = None  # a copy of the register's value, or blank
         # decision 4: a row that was empty starts hidden, so a value added later is not shown before anyone chose
         privacy = f"{field}_privacy"
         if cases[field] in ("bara_matrikeln", "bada_tomma") and (getattr(herd, privacy) or "private") != "private":
@@ -320,21 +315,32 @@ def compare_with_register(herd: Herd) -> tuple[dict, dict[str, str]]:
     return changes, cases
 
 
-def link_herd(herd_id: int, membership_id: int, herd_code: str | None = None) -> dict[str, str]:
+def link_herd(herd_id: int, membership_id: int, herd_code: str | None = None) -> dict[str, str] | None:
     """Spec, Livscykel: the one function that sets Herd.membership. Links a herd without membership and compares
-    its contact with the register (compare_with_register); returns the case per row. A herd already linked, to
-    this membership or another, is left as it is: {} (a move is #153). So is one whose code is no longer
-    `herd_code`, the G/M code the caller found it by (renumbered meanwhile). Locks the membership and then the
-    herd, re-reads the herd under the locks and writes only the columns that change."""
+    its contact with the register (compare_with_register); returns the case per row. A membership that is not
+    active is linked uncompared, {}: the herd reads its own columns until on_membership_active. A herd already
+    linked, to this membership or another, is left as it is: None (a move is #153). So is one whose code is no
+    longer `herd_code`, the G/M code the caller found it by (renumbered meanwhile). Locks the membership and then
+    the herd, re-reads the herd under the locks and writes only the columns that change."""
     with DB_PROXY.atomic():
-        Membership.select(Membership.id).where(Membership.id == membership_id).for_update().get()
+        membership = Membership.select(Membership.membership_status).where(Membership.id == membership_id)
+        status = membership.for_update().get().membership_status
         herd = Herd.select().where(Herd.id == herd_id).for_update().get()
         if herd.membership_id is not None or herd_code not in (None, herd.herd):
-            return {}
+            return None
         herd.membership = membership_id
-        changes, cases = compare_with_register(herd)
+        changes, cases = compare_with_register(herd) if status == "active" else ({}, {})
         Herd.update(membership=membership_id, **changes).where(Herd.id == herd_id).execute()
     return cases
+
+
+def on_membership_active(membership_id: int) -> None:
+    """Spec, Överflyttning: the membership has become active (its status written, its row locked by the caller).
+    Its herds linked while it was not active are compared now, when the reads show the register. Locks the herds."""
+    for herd in _household_herds(membership_id):
+        if herd.contact_pending is None:
+            changes, _ = compare_with_register(herd)
+            Herd.update(**changes).where(Herd.id == herd.id).execute()
 
 
 def _keeps_choice(field: str, before: str | None, after: str | None, contact_changed: bool) -> bool:
@@ -449,10 +455,8 @@ def check_place_shown(herd: Herd, fields, shown, *, with_privacy=True) -> None:
             or seen.get("privacy") not in (None, *PRIVACY_LEVELS)
         ):
             raise ValueError(f"place_shown.{field} krävs: värdet och synligheten som formuläret visade.")
-        # as the read applies it: NULL, and an unknown stored value ("Public "), is private
-        stored_privacy = PRIVACY_LEVELS[_rank(getattr(herd, f"{field}_privacy"))]
         if normalize(field, seen["value"]) != normalize(field, getattr(herd, field)) or (
-            "privacy" in seen and (seen["privacy"] or "private") != stored_privacy
+            "privacy" in seen and (seen["privacy"] or "private") != _privacy(herd, field)
         ):
             raise ContactConflict(STALE)
 
@@ -460,6 +464,11 @@ def check_place_shown(herd: Herd, fields, shown, *, with_privacy=True) -> None:
 def _rank(level):
     """public < authenticated < private; NULL, and an unknown stored value, counts as private."""
     return PRIVACY_LEVELS.index(level) if level in PRIVACY_LEVELS else len(PRIVACY_LEVELS) - 1
+
+
+def _privacy(herd: Herd, field: str) -> str:
+    """The row's privacy as the read applies it: NULL, and an unknown stored value ("Public "), is private."""
+    return PRIVACY_LEVELS[_rank(getattr(herd, f"{field}_privacy"))]
 
 
 def legacy_contact_form(herd: Herd, form: dict, user: User) -> dict:
@@ -620,7 +629,7 @@ def apply_contact_patch(herd_id: int, patch: dict, user: User) -> None:
         for field, row in rows.items():
             now, seen = current.rows[field], row["shown"]
             # as this user's read reports the row (contact_field); a non-reader's form shows own rows only
-            expected = (now.source, _given(now.value), getattr(herd, f"{field}_privacy") or "private")
+            expected = (now.source, _given(now.value), _privacy(herd, field))
             got = (seen.get("source"), _given(seen.get("value")), seen.get("privacy"))
             if field in switching or row.get("answer"):  # decided against the register's value: it counts
                 alternative = None if field == "name" and current.mode == "fritext" and not chooses else now.alternative

@@ -646,7 +646,7 @@ def _link_flag_herds(nr: int, group: list[dict], membership, dry_run: bool, repo
             report["herd_links"] += 1
             continue
         cases = link_herd(herd.id, membership.id, herd_code=code)
-        if not cases:  # linked or renumbered by someone else since the read above
+        if cases is None:  # linked or renumbered by someone else since the read above
             report["herd_warnings"].append(f"herd {code} changed or linked meanwhile — not linked")
             continue
         report["herd_links"] += 1
