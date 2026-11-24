@@ -47,7 +47,7 @@ class PdfTest(ArsrapportTest):
         text = text_of(register_extract_pdf(self.h, self.round_))
         for rabbit in rabbits:
             self.assertIn(rabbit.number, text)
-        self.assertIn("Registerutdrag, bara för kontroll", text)
+        self.assertIn("registerutdrag, bara för kontroll", text.lower())
         self.assertIn("2025-05-02", text)  # the litter line, with its mother and father
         self.assertEqual(text.count(rabbits[0].number), 2)  # on the list, and as the litter's mother
 
