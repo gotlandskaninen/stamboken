@@ -387,11 +387,11 @@ class InviteTest(ArsrapportTest):
         row = self.mails()[0]
         self.assertEqual((row.recipient_kind, row.recipient_id), ("member", self.member.id))
 
-        def render_pdf(_herd, _round):
+        def render_pdf(_context):
             self.at(new.email_login_from)
             return b"%PDF"
 
-        with mock.patch.object(invite, "register_extract_pdf", side_effect=render_pdf):
+        with mock.patch.object(invite, "render_pdf", side_effect=render_pdf):
             self.assertEqual(self.delivered_to(row), [new.email])
 
     def test_previous_address_purge_preserves_queued_links(self):
@@ -432,10 +432,10 @@ class InviteTest(ArsrapportTest):
 
         def render_pdf(herd, round_):
             invite.new_link(herd, round_, self.manager, now=NOW)
-            return b"%PDF"
 
         relay = FakeRelay()
-        with mock.patch.object(invite, "register_extract_pdf", side_effect=render_pdf):
+        real = invite.extract_context
+        with mock.patch.object(invite, "extract_context", side_effect=lambda h, r: (render_pdf(h, r), real(h, r))[1]):
             self.send_all(relay)
         ((msg, _, (address,)),) = relay.sent
         (link,) = self.mails("arsrapport.ny_lank")
@@ -451,9 +451,9 @@ class InviteTest(ArsrapportTest):
         def render_pdf(herd, _round):
             if herd.id == self.h.id:
                 db.Herd.update(membership=self.h2.membership_id).where(db.Herd.id == herd.id).execute()
-            return b"%PDF"
 
-        with mock.patch.object(invite, "register_extract_pdf", side_effect=render_pdf):
+        real = invite.extract_context
+        with mock.patch.object(invite, "extract_context", side_effect=lambda h, r: (render_pdf(h, r), real(h, r))[1]):
             self.assertEqual(self.delivered_to(row), [])
         self.assertEqual(db.MailMessage.get_by_id(row.id).status, "cancelled")
 

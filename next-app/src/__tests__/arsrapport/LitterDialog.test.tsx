@@ -148,7 +148,9 @@ describe("LitterDialog", () => {
     ).toBeTruthy();
     expect(screen.queryByRole("button", { name: /Nej/ })).toBeNull();
     expect(screen.getByRole("button", { name: "Avbryt" })).toBeTruthy();
-    fireEvent.click(screen.getByRole("button", { name: "Ja, ändra den" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ja, ändra den befintliga kullen" }),
+    );
     await waitFor(() => expect(p.change).toHaveBeenCalled());
     expect(p.change).toHaveBeenCalledWith(7, {
       litter_size: 5,
@@ -157,6 +159,66 @@ describe("LitterDialog", () => {
     expect(
       await screen.findByText(/Kullen är registrerad i Stamboken nu/),
     ).toBeTruthy();
+  });
+
+  it.each(["", "HTTP 503 Service Unavailable"])(
+    "offers Tyck till with the error code when the server gives no reason (%s)",
+    async (detail) => {
+      setup({
+        add: vi.fn().mockResolvedValue({
+          ok: false,
+          problem: { status: 503, title: "Service Unavailable", detail },
+        }),
+      });
+      await fill("4");
+      fireEvent.click(screen.getByRole("button", { name: "Spara kullen" }));
+      expect((await screen.findByRole("alert")).textContent).toBe(
+        "Kullen kunde inte sparas på grund av ett fel hos oss. Det du skrev finns kvar. Försök igen om en stund, eller rapportera felet via Tyck till (felkod 503).",
+      );
+      expect(
+        (screen.getByLabelText("Levande vid 6 veckor") as HTMLInputElement)
+          .value,
+      ).toBe("4");
+      Object.defineProperty(HTMLDialogElement.prototype, "showModal", {
+        configurable: true,
+        value: function (this: HTMLDialogElement) {
+          this.open = true;
+        },
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Tyck till" }));
+      expect(
+        await screen.findByRole("dialog", { name: "Tyck till om Stamboken" }),
+      ).toBeTruthy();
+    },
+  );
+
+  it("also reports an unexplained failure when changing the existing litter", async () => {
+    setup({
+      add: vi.fn().mockResolvedValue({
+        ok: false,
+        problem: {
+          status: 409,
+          extensions: { code: "samma_kull", breeding_id: 7 },
+        },
+      }),
+      change: vi
+        .fn()
+        .mockResolvedValue({ ok: false, problem: { status: 500 } }),
+    });
+    await fill("3");
+    fireEvent.click(screen.getByRole("button", { name: "Spara kullen" }));
+    fireEvent.click(
+      await screen.findByRole("button", {
+        name: "Ja, ändra den befintliga kullen",
+      }),
+    );
+    await screen.findByRole("button", { name: "Tyck till" });
+    expect(screen.getByRole("alert").textContent).toBe(
+      "Kullen kunde inte ändras på grund av ett fel hos oss. Det du skrev finns kvar. Försök igen om en stund, eller rapportera felet via Tyck till (felkod 500).",
+    );
+    expect(
+      (screen.getByLabelText("Levande vid 6 veckor") as HTMLInputElement).value,
+    ).toBe("3");
   });
 
   it("shows another refusal and keeps what was typed", async () => {
@@ -283,11 +345,13 @@ describe("a network failure", () => {
     await fill("4");
     fireEvent.click(screen.getByRole("button", { name: "Spara kullen" }));
     fireEvent.click(
-      await screen.findByRole("button", { name: "Ja, ändra den" }),
+      await screen.findByRole("button", {
+        name: "Ja, ändra den befintliga kullen",
+      }),
     );
     expect(await screen.findByText(FALLBACK)).toBeTruthy();
     const again = screen.getByRole("button", {
-      name: "Ja, ändra den",
+      name: "Ja, ändra den befintliga kullen",
     }) as HTMLButtonElement;
     expect(again.disabled).toBe(false);
     expect(p.onSaved).not.toHaveBeenCalled();

@@ -6,6 +6,8 @@ import { newOperationId } from "@/lib/herdTracking";
 import type { Mode } from "@/lib/mode";
 import type { InboxDetail } from "../inkorg/lib";
 
+export const BEVIS_FROM_YEAR = 2027;
+
 export type Val = "kvar" | "dod" | "sald" | "ej_angiven";
 export type Hull = "low" | "normal" | "high";
 export type Membership = "kvar_utan_genbank" | "avsluta_medlemskap";
@@ -237,7 +239,7 @@ export interface ReportView {
     received_at: string;
     report_date: string;
     on_time: boolean;
-    submitted: (Partial<DraftData> & { reason?: string | null }) | null;
+    submitted: (Partial<DraftData> & { received_on?: string }) | null;
     can_change: boolean;
     can_withdraw: boolean;
     withdraw_until: string | null;

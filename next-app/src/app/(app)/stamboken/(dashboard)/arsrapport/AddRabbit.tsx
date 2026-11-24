@@ -30,6 +30,7 @@ import {
   type Registered,
 } from "./rabbitActions";
 import { useLeaveWarning } from "./useLeaveWarning";
+import { reportError } from "./reportError";
 import styles from "./arsrapport.module.css";
 
 export const ADD_FROM_CERTIFICATE =
@@ -40,14 +41,16 @@ export const MAX_BYTES = 10 * 1024 * 1024; // the server's limit, checked before
 export const PHOTO_FIRST = "Ladda upp fotot av intyget först.";
 const PHOTO_SENDING = "Fotot laddas upp. Spara när det är klart.";
 const INTRO: Record<Parent, string> = {
-  mother: "Modern till ungen. När hon är sparad visas ungens uppgifter igen.",
-  father: "Fadern till ungen. När han är sparad visas ungens uppgifter igen.",
+  mother:
+    "Du lägger nu till modern från hennes intyg. När du har sparat henne kommer du tillbaka till ungen.",
+  father:
+    "Du lägger nu till fadern från hans intyg. När du har sparat honom kommer du tillbaka till ungen.",
 };
 
 type Photo = {
   status: "tom" | "skickar" | "klar" | "fel";
   item_id?: number;
-  error?: string;
+  error?: React.ReactNode;
 };
 // One rabbit's form, by its own id. The kit is first; a parent added from its form (`of`: the kit's id) lies above
 // it until saved or cancelled.
@@ -57,6 +60,7 @@ type Draft = {
   rex?: boolean;
   where: Where | null;
   photo: Photo;
+  saveError?: React.ReactNode;
   parent?: Parent;
   of?: number;
   file?: File; // the downscaled photo, for "Försök igen"; in memory only
@@ -287,7 +291,10 @@ export function AddRabbitDialog({
         const res = await uploadPhoto(herd, year, data, env);
         photo = res.ok
           ? { status: "klar", item_id: res.data.item_id }
-          : { status: "fel", error: res.problem.detail };
+          : {
+              status: "fel",
+              error: reportError("Fotot", "laddas upp", res.problem),
+            };
       } catch {
         photo = { status: "fel", error: "Uppladdningen avbröts. Försök igen." };
       }
@@ -318,6 +325,7 @@ export function AddRabbitDialog({
     payload: Record<string, unknown>,
   ): Promise<SaveResult> => {
     const draft = top;
+    updateDraft(draft.id, (d) => ({ ...d, saveError: null }));
     committing.current = true;
     let res;
     try {
@@ -341,12 +349,21 @@ export function AddRabbitDialog({
     }
     if (!res.ok && res.problem.extensions?.field === "photo") {
       // gone (purged a day after it came in) or not this session's: chosen again, at the photo field
-      const photo: Photo = { status: "fel", error: res.problem.detail };
+      const photo: Photo = {
+        status: "fel",
+        error: reportError("Fotot", "laddas upp", res.problem),
+      };
       updateDraft(draft.id, (d) => ({ ...d, photo }));
       setPhotoFocus((n) => n + 1);
       return { ok: false, problem: null };
     }
-    if (!res.ok) return res;
+    if (!res.ok) {
+      const error = reportError("Kaninen", "sparas", res.problem);
+      if (typeof error === "string" || res.problem.title === "number_conflict")
+        return res;
+      updateDraft(draft.id, (d) => ({ ...d, saveError: error }));
+      return { ok: false, problem: null };
+    }
     registered.current.push([res.data, draft.where]);
     if (draft.parent) {
       // the parent is in: back to the kit's form, with the parent's number as Stamboken gave it
@@ -446,7 +463,7 @@ export function AddRabbitDialog({
               className="sb-btn sb-btn-secondary sb-btn-sm"
               onClick={() => send(top.id, top.file!, begin(top.id))}
             >
-              Försök igen
+              Ladda upp fotot igen
             </button>
           )}
         </p>
@@ -525,6 +542,11 @@ export function AddRabbitDialog({
         ) : (
           <>
             {top.parent && <p className={styles.meta}>{INTRO[top.parent]}</p>}
+            {top.saveError && (
+              <p className={styles.errorText} role="alert">
+                {top.saveError}
+              </p>
+            )}
             <RegisterFromCertificate
               key={top.id}
               mode="ny_kanin"
@@ -549,7 +571,7 @@ export function AddRabbitDialog({
               canSave
               beforeSubmit={photoReady}
               submitLabel="Spara"
-              conflictHint="Stämmer pappret? Kontakta genbanksansvarig."
+              conflictHint="Numret finns redan i Stamboken för en annan kanin. Kontrollera att du har skrivit av det rätt. Stämmer det med intyget, kontakta genbanksansvarig, så reder vi ut det."
               photo={photo}
               where={top.where}
               onWhere={(where) => {

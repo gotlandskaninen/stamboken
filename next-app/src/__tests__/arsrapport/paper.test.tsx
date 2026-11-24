@@ -562,6 +562,31 @@ describe("ReportForm on paper", () => {
     expect(refresh).not.toHaveBeenCalled();
   });
 
+  it("shows only the arrival day on the receipt after a paper submission", async () => {
+    const a = actions();
+    a.submitReport.mockResolvedValueOnce({
+      ok: true,
+      data: {
+        ...receipt,
+        created_at: "2027-01-15T11:00:00Z",
+        matrikel: ["telefon"],
+      },
+    });
+    renderPaper(paperView({ rabbits: [] }), a);
+    fireEvent.change(screen.getByLabelText("Mottagen"), {
+      target: { value: "2027-01-12" },
+    });
+    fireEvent.change(screen.getByLabelText("Telefon"), {
+      target: { value: "070-1234567" },
+    });
+    fireEvent.click(sendButton());
+    expect(
+      await screen.findByRole("heading", {
+        name: "Klart. Årsrapporten för G9001 kom in 12 januari 2027.",
+      }),
+    ).toBeTruthy();
+  });
+
   it("warns when the typed account ends like the stored one, and shows no stored value but its end", () => {
     renderPaper();
     fireEvent.change(screen.getByLabelText("Kontonummer"), {
@@ -701,14 +726,21 @@ describe("ReportForm on paper", () => {
   });
 
   it("does not archive when a page cannot be dismissed", async () => {
-    const p = paperProps({ archive: vi.fn(() => fail(409)) as never });
+    const p = paperProps({
+      archive: vi.fn().mockResolvedValue({
+        ok: false,
+        problem: {
+          status: 409,
+          title: "Konflikt",
+          detail: "Sidan är redan arkiverad.",
+        },
+      }),
+    });
     renderPaper(reported(), actions(), p);
     fireEvent.click(
       screen.getByRole("button", { name: "Arkivera blanketten" }),
     );
-    expect(
-      await screen.findByText(/Det gick inte att arkivera blanketten/),
-    ).toBeTruthy();
+    expect(await screen.findByText("Sidan är redan arkiverad.")).toBeTruthy();
     expect(p.leave).not.toHaveBeenCalled();
   });
 

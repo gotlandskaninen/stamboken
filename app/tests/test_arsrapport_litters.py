@@ -141,6 +141,7 @@ class TestAddLitter(LitterApiTest):
         document.doc_type = "arsblankett"
         document.save()
         inbox.take(item, self.helper, over=False)
+        db.User.update(google_name="Lo Test").where(db.User.id == self.helper.id).execute()
         self.login("hjalp")
         self.assertEqual(self.litter().status_code, 403)  # not through the item: the helper has no right of her own
         response = self.client.post(
@@ -157,6 +158,10 @@ class TestAddLitter(LitterApiTest):
         self.assertEqual(self.litters(), 1)
         command = db.IndividualCommand.get(db.IndividualCommand.command == "RegisterLitter")
         self.assertEqual(command.actor_id, self.helper.id)
+        (row,) = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.ny_kull")
+        self.assertEqual(mail.MAIL_KINDS[row.kind].build(row.params)["namn"], "Lo Test")
+        db.User.update(google_name=None, fullname=None).where(db.User.id == self.helper.id).execute()
+        self.assertEqual(mail.MAIL_KINDS[row.kind].build(row.params)["namn"], "En genbankshjälpare")
         self.assertTrue(
             db.InboxOperation.select().where(db.InboxOperation.operation_id == command.operation_id).exists()
         )
@@ -210,7 +215,9 @@ class TestSameLitter(LitterApiTest):
         self.assertTrue(db.Breeding.get_by_id(first).litter_size6w_preliminary)
         below = self.api("PATCH", f"{REPORT}/kull/{first}", litter_size6w=0)
         self.assertEqual(below.status_code, 422)
-        self.assertNotEqual(below.get_json()["detail"], "Kontakta genbanksansvarig för att ändra en kull med intyg.")  # the floor: the kit alive
+        self.assertNotEqual(
+            below.get_json()["detail"], "Kontakta genbanksansvarig för att ändra en kull med intyg."
+        )  # the floor: the kit alive
         done = self.api("PATCH", f"{REPORT}/kull/{first}", litter_size6w=3)
         self.assertEqual(done.status_code, 200, done.get_data(as_text=True))
         self.assertFalse(db.Breeding.get_by_id(first).litter_size6w_preliminary)
@@ -436,28 +443,72 @@ class TestKitsAndMoves(LitterApiTest):
 
 
 class TestAddedReceipt(LitterApiTest):
-    def test_each_litter_added_through_the_report_gets_a_receipt(self):
-        """Spec 5.8 (Opus L2): one receipt per litter added, by a link or an account; none for a changed count."""
+    def test_shared_link_names_the_logged_in_account_only(self):
+        db.Member.update(user=self.owner).where(db.Member.id == self.member.id).execute()
         self.open_link()
+        self.assertEqual(self.litter().status_code, 201)
+        messages = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.ny_kull")
+        self.assertFalse(messages.exists())
+
+        db.User.update(google_name="Lo Test").where(db.User.id == self.helper.id).execute()
+        self.login("hjalp")
+        self.open_link()
+        self.assertEqual(self.api("GET", REPORT).get_json()["source"], "link")
+        response = self.litter(mother=self.doe2)
+        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
+        (row,) = messages
+        self.assertEqual((row.recipient_id, row.ref_id), (self.member.id, response.get_json()["id"]))
+        subject, _ = mail.render(row.kind, mail.MAIL_KINDS[row.kind].build(row.params))
+        self.assertEqual(subject, "Lo Test har lagt till en kull i G9001")
+
+    def test_link_and_main_member_get_no_litter_receipt(self):
+        self.open_link()
+        self.assertEqual(self.litter().status_code, 201)
+        # Even with a higher-priority manager role, this account is the recipient.
+        db.Member.update(user=self.manager).where(db.Member.id == self.member.id).execute()
+        self.login("man")
+        self.assertEqual(self.litter(born="2025-08-20").status_code, 201)
+        self.assertFalse(db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.ny_kull").exists())
+
+    def test_one_receipt_per_litter_added_by_another_account(self):
+        db.User.update(google_name=None, fullname=None).where(db.User.id == self.manager.id).execute()
+        self.login("man")
         first = self.litter().get_json()["id"]
         (row,) = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.ny_kull")
         self.assertEqual(
-            (row.recipient_kind, row.recipient_id, row.params, (row.ref_type, row.ref_id), row.priority),
-            ("member", self.member.id, {"breeding_id": first}, ("breeding", first), 0),
+            (row.recipient_kind, row.recipient_id, row.params["breeding_id"], (row.ref_type, row.ref_id), row.priority),
+            ("member", self.member.id, first, ("breeding", first), 0),
         )
         self.assertEqual(row.dedupe_key, f"arsrapport.ny_kull:{first}")
         subject, body = mail.render("arsrapport.ny_kull", mail.MAIL_KINDS["arsrapport.ny_kull"].build(row.params))
-        self.assertEqual(subject, "En kull är registrerad i G9001")
+        self.assertEqual(subject, "Genbanksansvarig har lagt till en kull i G9001")
         self.assertIn(
-            f"Kullen efter {self.doe.number} född {BORN} är registrerad i Stamboken för besättning G9001. Den lades "
-            "till i årsrapporten. Den finns kvar även om du drar tillbaka rapporten.",
+            f"Genbanksansvarig har lagt till kullen efter {self.doe.number}, född {BORN}, "
+            "i besättning G9001 i årsrapporten. Den finns kvar även om du drar tillbaka rapporten.",
             body,
         )
+        self.assertIn("Stämmer det inte? Kontakta genbanksansvarig genom att svara på det här mejlet.", body)
         self.assertEqual(self.api("PATCH", f"{REPORT}/kull/{first}", litter_size6w=3).status_code, 200)
-        self.login("owner")
+        self.login("admin")
         second = self.litter(born="2025-08-20").get_json()["id"]
         rows = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.ny_kull").order_by(db.MailMessage.id)
         self.assertEqual([row.params["breeding_id"] for row in rows], [first, second])
+        db.User.update(fullname=None, google_name=None).where(db.User.id == self.admin.id).execute()
+        self.assertEqual(mail.MAIL_KINDS[rows[1].kind].build(rows[1].params)["namn"], "Stambokens administratör")
+
+    def test_older_queued_receipts_use_the_recorded_actor(self):
+        db.User.update(fullname="Lo Test").where(db.User.id == self.manager.id).execute()
+        self.login("man")
+        first = self.litter().get_json()["id"]
+        (row,) = db.MailMessage.select().where(db.MailMessage.kind == "arsrapport.ny_kull")
+        row.params = {"breeding_id": first}
+        row.save(only=[db.MailMessage.params])
+        build = mail.MAIL_KINDS[row.kind].build
+        self.assertEqual(build(row.params)["namn"], "Lo Test")
+        db.Member.update(user=self.manager).where(db.Member.id == self.member.id).execute()
+        self.assertIsNone(build(row.params))
+        db.MailMessage.update(created_by=None).where(db.MailMessage.id == row.id).execute()
+        self.assertIsNone(build(row.params))
 
     def test_a_refused_litter_gets_no_receipt(self):
         self.login("owner")

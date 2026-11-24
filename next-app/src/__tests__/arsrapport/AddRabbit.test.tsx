@@ -194,7 +194,9 @@ describe("the photo", () => {
       await screen.findByText(/Det gick inte att nå servern/),
     ).toBeInTheDocument();
     sparaAsksForPhoto(null); // the upload's error is already there
-    fireEvent.click(screen.getByRole("button", { name: "Försök igen" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Ladda upp fotot igen" }),
+    );
     expect(await screen.findByText("Fotot är uppladdat.")).toBeInTheDocument();
     expect(upload).toHaveBeenCalledTimes(2);
     expect(upload.mock.calls[1][2].get("file")).toBe(
@@ -231,12 +233,14 @@ describe("the photo", () => {
     expect(screen.getAllByText(gone)).toHaveLength(1); // at the photo, not again under the form
     expect(screen.queryByText("Fotot är uppladdat.")).toBeNull();
     expect(document.activeElement).toBe(input("Ta foto av intyget"));
-    expect(screen.getByRole("button", { name: "Försök igen" })).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Ladda upp fotot igen" }),
+    ).toBeTruthy();
   });
 
   it("a refusal shows the server's words, the rate limit's too", async () => {
     const limit =
-      "Du har laddat upp många foton den senaste timmen. Fortsätt efter kl. 15.40. Det du skrivit är sparat.";
+      "Du har laddat upp 60 foton den senaste timmen. Det är gränsen, ett skydd mot missbruk. Du kan fortsätta efter kl. 15.40. Det du skrivit är sparat.";
     upload.mockResolvedValueOnce({
       ok: false,
       problem: { status: 429, title: "För många foton", detail: limit },
@@ -888,7 +892,7 @@ describe("a missing parent", () => {
     // the mother's own form: her number and sex from the kit's
     expect(
       screen.getByText(
-        "Modern till ungen. När hon är sparad visas ungens uppgifter igen.",
+        "Du lägger nu till modern från hennes intyg. När du har sparat henne kommer du tillbaka till ungen.",
       ),
     ).toBeInTheDocument();
     expect(input(/^Individnummer på pappret/)).toHaveValue("G9001-2411");
