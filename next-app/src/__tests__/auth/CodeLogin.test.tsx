@@ -106,17 +106,19 @@ it("shows the full rules and requires an explicit agreement to the displayed ver
     </CreateAccount>,
   );
   expect(screen.getByText("Hela regeltexten")).toBeVisible();
-  expect(screen.getByRole("link", { name: /personuppgifter/ })).toHaveAttribute(
-    "href",
-    "/dataskydd",
+  const privacyLink = screen.getByRole("link", { name: "Integritetspolicyn" });
+  expect(privacyLink).toHaveAttribute("href", "/dataskydd");
+  expect(privacyLink.closest("p")).toHaveTextContent(
+    "Så behandlar föreningen dina uppgifter: Integritetspolicyn",
   );
+  expect(privacyLink.closest("label")).toBeNull();
+  const checkbox = screen.getByRole("checkbox", {
+    name: "Jag har läst reglerna och följer dem.",
+  });
+  expect(checkbox).not.toBeChecked();
   const submit = screen.getByRole("button", { name: "Skapa mitt konto" });
   expect(submit).toBeDisabled();
-  fireEvent.click(
-    screen.getByRole("checkbox", {
-      name: "Jag har läst reglerna och följer dem.",
-    }),
-  );
+  fireEvent.click(checkbox);
   fireEvent.click(submit);
   await screen.findByText(/Ditt konto kopieras dit i natt/);
   expect(actions.createMemberAccount).toHaveBeenCalledWith(

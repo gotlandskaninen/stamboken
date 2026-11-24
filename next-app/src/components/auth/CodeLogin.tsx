@@ -212,10 +212,7 @@ export function CreateAccount({
   return (
     <main className={styles.page}>
       <h1>{t("codeLogin.create")}</h1>
-      <p>
-        {t("codeLogin.accountPurpose")}{" "}
-        <Link href="/dataskydd">{t("codeLogin.privacy")}</Link>
-      </p>
+      <p>{t("codeLogin.accountPurpose")}</p>
       {rules ? (
         <>
           {children}
@@ -263,6 +260,10 @@ export function CreateAccount({
       ) : (
         <p role="alert">{t("codeLogin.rulesMissing")}</p>
       )}
+      <p>
+        {t("codeLogin.privacyIntro")}{" "}
+        <Link href="/dataskydd">{t("codeLogin.privacy")}</Link>
+      </p>
       <p>
         <Link href="/auth/sign-in">{t("codeLogin.back")}</Link>
       </p>
