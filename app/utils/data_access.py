@@ -971,6 +971,10 @@ def update_user(form, user_uuid=None):
     if not user.is_admin and target_user.is_admin and target_user.id != user.id:
         return {"status": "error", "message": "forbidden"}
 
+    # No taking an erased account's pseudonym (not_erased()), which would lock the account as if erased
+    if any(is_pseudonym(form.get(field)) for field in ("email", "username")):
+        return {"status": "error", "message": "email already in use"}
+
     # No taking an address another account holds: it is the password-login key
     # (stop-gap; CMS identity keys on google_email, never on this field).
     if (
@@ -4110,6 +4114,8 @@ def edit_admin_user(u_id, fields):
     """
     if User.get_or_none(User.id == u_id) is None:
         raise ValueError("user-not-found")
+    if is_pseudonym(fields.get("email")):
+        raise ValidationError("reserved-address", "Adressen är reserverad för konton som har tömts.")
     # Only the edited columns, never a stale is_active/_privileges, and never on an account an erasure emptied.
     values = {getattr(User, f): fields[f] for f in ("fullname", "email") if f in fields}
     if values and not User.update(values).where((User.id == u_id) & not_erased()).execute():
@@ -4492,6 +4498,11 @@ PII_KEYS = [
 ]
 
 
+def is_pseudonym(value):
+    """The form of erase_account's e-mail and purge_user_audit_pii's author, which no account may take."""
+    return isinstance(value, str) and re.fullmatch(r"raderad-\d+", value.strip(), re.IGNORECASE) is not None
+
+
 def not_erased():
     """A WHERE term: the account is not one erase_account emptied (its e-mail is the pseudonym)."""
     return User.email != fn.CONCAT("raderad-", User.id)
@@ -4588,6 +4599,7 @@ def purge_user_audit_pii(user_id: int, username: str, email: str) -> int:
                 (str(user_id),),
             )
         }
+        candidates = list((earlier | {username, email}) - {None})
         shared = {
             row[0]
             for row in DATABASE.execute_sql(
@@ -4600,7 +4612,7 @@ def purge_user_audit_pii(user_id: int, username: str, email: str) -> int:
                                     (new_data->>'username'), (new_data->>'email')) AS before(v)
                 WHERE table_name = 'hbuser' AND record_id <> %s AND v = ANY(%s::text[])
                 """,
-                (user_id, list(earlier), str(user_id), list(earlier)),
+                (user_id, candidates, str(user_id), candidates),
             )
         }
         names = sorted((earlier | {username, email}) - shared - {None})

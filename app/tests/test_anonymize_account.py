@@ -377,7 +377,7 @@ class TestAnonymizeEmptiesTheAccount(DatabaseTest):
 
         def get_then_erase(user_id):
             row = real_get(user_id)
-            if user_id == user.id:
+            if user_id == user.id and not matrikel.is_anonymized(db.Member.get_by_id(person.id)):  # update_user's read
                 matrikel.anonymize_person(person, self.admin)
             return row
 
@@ -402,20 +402,32 @@ class TestAnonymizeEmptiesTheAccount(DatabaseTest):
 
     def test_an_upload_after_the_erasure_leaves_no_file(self):
         user = self._account("x")
+        person = self._person(db.Membership.create(member_number=430), user)
         client = APP.test_client(use_cookies=True)
         client.post("/api/login", json={"username": "anvandarex", "password": "losen"})
-        matrikel.anonymize_person(self._person(db.Membership.create(member_number=430), user), self.admin)
-        client.patch(
-            "/api/profile",
-            data={"profile_picture": (io.BytesIO(b"jpeg"), "ny.jpg")},
-            content_type="multipart/form-data",
-        )
+        real_fetch = da.fetch_user_info
+
+        def erase_then_fetch(uid):  # the session passed login_required; the erasure commits before the view's read
+            if any(f.function == "user_profile" for f in inspect.stack(0)):
+                matrikel.anonymize_person(person, self.admin)
+            return real_fetch(uid)
+
+        with mock.patch.object(da, "fetch_user_info", side_effect=erase_then_fetch):
+            resp = client.patch(
+                "/api/profile",
+                data={"profile_picture": (io.BytesIO(b"jpeg"), "ny.jpg")},
+                content_type="multipart/form-data",
+            )
+        self.assertEqual(resp.status_code, 404, resp.get_json())
         self.assertEqual(os.listdir(os.path.join(self.uploads.name, "profiler")), [])
 
     def test_no_password_reset_and_no_activation_after_the_erasure(self):
         user = self._account("w")
         matrikel.anonymize_person(self._person(db.Membership.create(member_number=450), user), self.admin)
-        self.assertFalse(da.change_password(self.admin, user.id, {"newpassword": "nytt-losen"}))
+        self.assertFalse(
+            da.change_password(self.admin, user.id, {"password": "nytt-losen", "newpassword": "nytt-losen"})
+        )
+        self.assertFalse(db.Authenticators.select().where(db.Authenticators.user == user.id).exists())
         with self.assertRaises(da.ValidationError):
             da.set_account_active(user.id, True, actor_user_id=self.admin.id)
         self._assert_emptied(user, "w")
@@ -428,7 +440,8 @@ class TestAnonymizeEmptiesTheAccount(DatabaseTest):
         def reset_when_locked():
             try:
                 self.assertTrue(locked.wait(10))
-                results.append(da.change_password(self.admin, user.id, {"newpassword": "nytt-losen"}))
+                form = {"password": "nytt-losen", "newpassword": "nytt-losen"}  # as the admin reset sends it
+                results.append(da.change_password(self.admin, user.id, form))
             finally:
                 db.DB_PROXY.close()
 
@@ -478,9 +491,27 @@ class TestAnonymizeEmptiesTheAccount(DatabaseTest):
             raise OSError("disk full")
 
         with mock.patch("werkzeug.datastructures.FileStorage.save", write_then_fail):
-            client.patch(
+            resp = client.patch(
                 "/api/profile",
                 data={"profile_picture": (io.BytesIO(b"jpeg"), "ny.jpg")},
                 content_type="multipart/form-data",
             )
+        self.assertEqual(resp.get_json(), {"status": "error", "message": "Failed to upload image"})
         self.assertEqual(sorted(os.listdir(os.path.join(self.uploads.name, "profiler"))), ["profily.jpg"])
+
+    def test_no_account_may_take_the_pseudonym(self):
+        user = self._account("z")
+        for field in ("email", "username"):
+            with self.subTest(field=field):
+                form = {
+                    "id": user.id,
+                    "email": "kontoz@example.invalid",
+                    "validated": True,
+                    field: f"Raderad-{user.id}",
+                }
+                self.assertEqual(
+                    da.update_user(form, self.admin.uuid), {"status": "error", "message": "email already in use"}
+                )
+        with self.assertRaises(da.ValidationError):
+            da.edit_admin_user(user.id, {"email": "raderad-1"})
+        self.assertEqual(db.User.get_by_id(user.id).email, "kontoz@example.invalid")
