@@ -1001,7 +1001,17 @@ class TestAddressListExport(MatrikelApiTest):
 
     def test_not_cached(self):
         self.login("matrikel")
-        self.assertEqual(self.client.get("/api/v2/members/address-list").headers["Cache-Control"], "no-store")
+        for url in ("/api/v2/members/address-list", "/api/v2/members/export"):
+            with self.subTest(url=url):
+                self.assertEqual(self.client.get(url).headers["Cache-Control"], "no-store")
+
+    def test_refused_on_the_demo_without_an_audit_row(self):
+        self.login("matrikel")
+        with patch.object(members_routes.settings.service, "demo_instance", True):
+            for url in ("/api/v2/members/address-list", "/api/v2/members/export"):
+                with self.subTest(url=url):
+                    self.assertEqual(self.client.get(url).status_code, 403)
+        self.assertFalse(db.AuditLog.select().where(db.AuditLog.operation == "READ").exists())
 
     def test_escapes_formula_injection(self):
         db.Member.update(first_name="=HYPERLINK()").where(db.Member.email == "bo@example.com").execute()

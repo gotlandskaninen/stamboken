@@ -672,6 +672,8 @@ INVOICE_HEADER = (
 @json_login_required
 @matrikel_admin_required
 def export_members():
+    if settings.service.demo_instance:
+        return problem(403, "Inte i testmiljön", DEMO_EXPORT_REFUSED)
     # Matrikel/mailing-list export in the MATR paper layout, so the matrikel
     # keeper keeps the spreadsheet format he already works in — and the file
     # round-trips straight back through `flask members import`
@@ -767,7 +769,10 @@ def export_members():
     return Response(
         buf.getvalue(),
         mimetype="text/csv; charset=utf-8",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",  # a cached copy would skip the audit row
+        },
     )
 
 
@@ -828,6 +833,10 @@ def log_member_export(action, **details):
     )
 
 
+# The demo is a nightly copy of production: an export there would carry real members
+# while its audit row is gone at the next sync.
+DEMO_EXPORT_REFUSED = "Exporten går bara att göra i den riktiga Stamboken, där varje uttag loggas."
+
 ADDRESS_LIST_HEADER = ["Nr", "Namn Efternamn", "Adress", "Postadress", "Betala nu"]
 
 
@@ -851,6 +860,8 @@ def fee_unpaid(payment_note, year):
 @json_login_required
 @matrikel_admin_required
 def export_address_list():
+    if settings.service.demo_instance:
+        return problem(403, "Inte i testmiljön", DEMO_EXPORT_REFUSED)
     fee_reminder = request.args.get("fee_reminder") == "1"  # only for the year's first two issues
     year = date.today().year
     rows = []

@@ -301,4 +301,4 @@ CSV-fil som går att öppna i Excel.
 
 Filerna innehåller personuppgifter. Spara dem inte där andra kommer åt dem, och
 ta bort dem när du inte behöver dem längre. Varje uttag av MATR och adresslistan
-loggas med vem som tog ut den och när.
+loggas med vem som tog ut den och när. I testmiljön går de två inte att ta ut.
