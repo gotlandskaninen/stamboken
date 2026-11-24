@@ -286,6 +286,7 @@ def _create(inskick_id, folder, fields):
                     fields["device"],
                     len(images),
                     ref,
+                    fields["pekat"],
                 ),
                 tt.labels(fields["kind"]),
                 deadline,

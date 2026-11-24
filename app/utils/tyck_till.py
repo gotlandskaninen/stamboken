@@ -77,14 +77,47 @@ def issue_title(kind, visibility, text):
     return f"Tyck till: {line}" if line else "Tyck till"
 
 
-def issue_body(kind, visibility, text, path, version, device, images, ref):
+# What is left of a code once the browser has glued an element's text together or cut it at 50 characters: a UUID
+# with or without hyphens, or the start of one, and a link token right after a label.
+_CODE_FRAGMENT = re.compile(r"[0-9a-fA-F]{8}(?:-?[0-9a-fA-F]){4,}|\d{1,19}\.[A-Za-z0-9_-]{8,}")
+
+
+# An address shown as text, for example a contact link on Min besättning, even when its owner keeps it private.
+_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+
+
+def pointed(pekat):
+    """What the member pointed at, on one line, without link codes, UUIDs or e-mail addresses (mail and issue)."""
+    return " ".join(_EMAIL.sub("[e-post]", _CODE_FRAGMENT.sub("[kod]", mask_codes(pekat))).split())
+
+
+# A public issue names only the kind of element: any text on a page, a heading or a button too, may hold a name
+# (Jonas 2026-11-24, choice C). The private issue and the mail keep the whole text.
+_KINDS = ("knappen", "rubriken", "fältet", "länken", "raden", "bilden", "rutan", "texten")
+
+
+def public_pointed(pekat):
+    kind = pointed(pekat).split(" ", 1)[0]
+    return kind if kind in _KINDS else ""
+
+
+def _longest_backticks(text):
+    return max((len(run) for run in re.findall(r"`+", text)), default=0)
+
+
+def issue_body(kind, visibility, text, path, version, device, images, ref, pekat=""):
     # The fence is one backtick longer than the longest run in the text, so the text cannot end it.
-    longest = max((len(run) for run in re.findall(r"`+", text)), default=0)
-    fence = "`" * max(3, longest + 1)
+    fence = "`" * max(3, _longest_backticks(text) + 1)
     lines = [
         f"{fence}\n{text.strip()}\n{fence}",
         "",
         f"Sida: {generic_path(path)}",
+    ]
+    if element := pointed(pekat) if visibility == "privat" else public_pointed(pekat):
+        # Inline code as the fence above: mentions, links and HTML in the element's text stay text.
+        ticks = "`" * (_longest_backticks(element) + 1)
+        lines.append(f"Pekade på: {ticks} {element} {ticks}")
+    lines += [
         f"Version: {clean_version(version)}",
         f"Enhet: {device if device in ('mobil', 'dator') else UNKNOWN_VERSION}",
     ]

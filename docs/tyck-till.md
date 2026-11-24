@@ -53,9 +53,14 @@ och bilderna som bilagor. `Reply-To` är adressen medlemmen vill ha svar till.
 
 ## Vad som hamnar var
 
-Fritext, typ, generell sida, version och enhet går till issuen. Konto-id, namn,
-e-post, vad man pekade på och bilder går bara till mejlet, aldrig till GitHub.
-Fritexten ligger i ett kodblock i issuen, så att `@namn` inte pingar någon.
+Fritext, typ, generell sida, vad man pekade på, version och enhet går till
+issuen. Konto-id, namn, e-post och bilder går bara till mejlet, aldrig till
+GitHub. Fritexten ligger i ett kodblock och det man pekade på i en kodrad, så att
+`@namn` inte pingar någon. Det man pekade på är elementets text, utan länkkoder,
+UUID och e-postadresser, och ett fält beskrivs med sin etikett. En publik issue
+får bara elementets typ ("knappen", "rubriken", "raden"), eftersom all text på en
+sida, också en rubrik eller en knapp, kan innehålla ett namn. Den privata issuen
+och mejlet får hela texten.
 
 ## Gallring
 
