@@ -93,6 +93,20 @@ class TestRequest(MyEmailTest):
         self.assertEqual(resp.get_json()["title"], "Ogiltig e-postadress")
         self.assertFalse(db.LoginCode.select().exists())  # none of the day's five spent
 
+    def test_friexemplar_refuses_free_and_taken_addresses_alike(self):
+        ms_id = self.person.membership_id
+        db.Membership.update(membership_status="friexemplar").where(db.Membership.id == ms_id).execute()
+        _mk_person(_mk_membership(number=9), "Bo", "Other", NEW)
+        for address in (NEW, "ledig@example.org"):
+            resp = self.patch_contact({"email": address, "phone": "0701"})
+            self.assertEqual(resp.status_code, 200, resp.data)
+            data = resp.get_json()
+            self.assertFalse(data["email_code_sent"])
+            self.assertEqual(data["email_refused"], "E-postadressen för ett friexemplar kan bara bytas i matrikeln.")
+        self.assertEqual((self.email(), db.Member.get_by_id(self.person.id).phone), ("a@example.org", "0701"))
+        self.assertFalse(db.LoginCode.select().exists())
+        self.assertEqual(self.code_mails(), [])
+
     def test_no_code_without_link_secret_or_in_production_in_log_mode(self):
         with mock.patch.object(settings.mail, "link_secret", ""):
             self.assertEqual(self.patch_contact({"email": NEW}).status_code, 503)

@@ -684,6 +684,13 @@ def _same(a, b):
     return (a or "").strip().lower() == (b or "").strip().lower()
 
 
+def _expire_previous_addresses(member_ids):
+    now = datetime.now(timezone.utc)
+    MemberPreviousAddress.update(login_until=now, purge_at=now + PREVIOUS_KEPT).where(
+        MemberPreviousAddress.member.in_(member_ids), MemberPreviousAddress.login_until > now
+    ).execute()
+
+
 def set_member_email(person, address, actor, *, by):
     """
     THE writer of an existing person's Member.email. For a person who holds a login address (a main member, or a
@@ -705,14 +712,15 @@ def set_member_email(person, address, actor, *, by):
     address = (address or "").strip() or None
     with DB_PROXY.atomic():
         person, user = _lock_for_detach(person.id)  # membership → user → person
+        friexemplar = person.membership.membership_status == Status.FRIEXEMPLAR
+        if friexemplar and person.email != address:
+            _expire_previous_addresses([person.id])
         if _same(person.email, address):
             if person.email != address:  # the same address, spelled otherwise
                 Member.update(email=address).where(Member.id == person.id).execute()
             return Member.get_by_id(person.id)
         holder = (
-            person.end_date is None
-            and (person.role == "huvudmedlem" or person.user_id is not None)
-            and person.membership.membership_status != Status.FRIEXEMPLAR
+            not friexemplar and person.end_date is None and (person.role == "huvudmedlem" or person.user_id is not None)
         )
         told, login_from = [], None
         if holder:
@@ -814,6 +822,8 @@ def set_membership_status(membership, new_status, actor):
     next_state(state_of(membership.membership_status, has_main), Event.SET_STATUS, new_status)
     if membership.membership_status == Status.FRIEXEMPLAR and new_status != Status.FRIEXEMPLAR:
         reserve_on_leaving_friexemplar(membership.id)
+    elif new_status == Status.FRIEXEMPLAR and membership.membership_status != Status.FRIEXEMPLAR:
+        _expire_previous_addresses(Member.select(Member.id).where(Member.membership == membership))
     write_matrikel_audit(
         actor,
         "membership_status_changed",
