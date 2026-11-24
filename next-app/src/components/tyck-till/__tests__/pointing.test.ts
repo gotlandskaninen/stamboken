@@ -12,7 +12,7 @@ vi.mock("html-to-image", () => ({
   toCanvas: (...a: unknown[]) => toCanvas(...a),
 }));
 
-import { captureAround, describe, shrink } from "../pointing";
+import { captureAround, describe, pickable, shrink } from "../pointing";
 
 function html(markup: string): HTMLElement {
   document.body.innerHTML = markup;
@@ -63,6 +63,35 @@ suite("describe", () => {
       "<div class='card'><h2>Kullen</h2><p>Född<br>2026-11-02</p></div>",
     );
     expect(describe(card)).toBe("rutan ”Kullen Född 2026-11-02”");
+  });
+
+  it("takes a whole stat cell for a tap on its value or label, not the strip", () => {
+    document.body.innerHTML =
+      "<div class='strip'>" +
+      "<div class='cell'><div class='v'>7</div><div class='sb-stat-label'>Aktiva kaniner</div></div>" +
+      "<div class='cell'><div>3</div><div class='sb-stat-label'>Avelsdjur</div></div></div>";
+    const q = (sel: string) => document.querySelector(sel)!;
+    expect(describe(pickable(q(".v")))).toBe("texten ”Aktiva kaniner: 7”");
+    expect(describe(pickable(q(".sb-stat-label")))).toBe(
+      "texten ”Aktiva kaniner: 7”",
+    );
+    expect(describe(q(".strip"))).toBe("texten ”7 Aktiva kaniner 3 Avelsdjur”");
+  });
+
+  it("parts text before a nested block in a cell", () => {
+    document.body.innerHTML =
+      "<table><tbody><tr><td>Inloggning<div>login_handler</div></td><td>10 anrop per timme</td></tr></tbody></table>";
+    expect(describe(document.querySelector("tr")!)).toBe(
+      "raden ”Inloggning login_handler 10 anrop per timme”",
+    );
+  });
+
+  it("leaves hidden parts of a field label out", () => {
+    document.body.innerHTML =
+      "<label for='f'>Kod <span data-tyck-till='dolj'>DOLD</span></label><input id='f' value='x'>" +
+      "<label for='g' data-tyck-till='dolj'>DOLD</label><input id='g' placeholder='Sök' value='y'>";
+    expect(describe(document.getElementById("f")!)).toBe("fältet ”Kod”");
+    expect(describe(document.getElementById("g")!)).toBe("fältet ”Sök”");
   });
 
   it("cuts long text at 50 characters", () => {
