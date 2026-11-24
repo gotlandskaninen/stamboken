@@ -361,12 +361,13 @@ export default function IntegritetspolicyPage() {
               nattliga gallring.
             </p>
             <p>
-              När du skapar ditt konto med engångskod sparar vi när du godkände
-              kontoreglerna och en kopia av den text du godkände. Föreningens
-              systemansvarig ser hela användarlistan. Genbanksansvariga kan se
-              alla användare utom dem som är systemansvariga. De som sköter
-              medlemsregistret kan söka efter aktiva konton med användarnamn
-              eller e-postadress för att koppla ett konto till en medlem.
+              När du skapar ditt konto med engångskod sparar vi när du godkände{" "}
+              <a href="/kontoregler">kontoreglerna</a> och en kopia av den text
+              du godkände. Föreningens systemansvarig ser hela användarlistan.
+              Genbanksansvariga kan se alla användare utom dem som är
+              systemansvariga. De som sköter medlemsregistret kan söka efter
+              aktiva konton med användarnamn eller e-postadress för att koppla
+              ett konto till en medlem.
             </p>
             <p>
               Kontot behövs för att du ska kunna använda Stamboken Online och
