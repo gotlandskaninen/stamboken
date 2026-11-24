@@ -83,7 +83,7 @@ const SHOTS: Shot[] = [
     name: "besattningsuppgifter",
     role: "owner",
     path: "/stamboken/min-besattning",
-    actions: ["click:Redigera", "scroll:Besättningsuppgifter"],
+    actions: ["click:Redigera", "scroll:Kontakt för besättningen"],
   },
   {
     name: "individ",

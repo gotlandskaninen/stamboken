@@ -68,8 +68,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # the intake queue (42) and its retention (43) + buyer_contact (44) +
 # matrikel_audit rows without a user, written by the nightly anonymization (45) +
 # the coat column individual.rex (46) + hbuser.name_on_check_page and digitalcertificatev2.issued_as (47) +
-# one account per Google identity (48) + one-time codes and members' previous addresses (49).
-CURRENT_SCHEMA_VERSION = 49
+# one account per Google identity (48) + one-time codes and members' previous addresses (49) +
+# the herd's contact from the member register, herd.contact_member and herd.contact_pending (50).
+CURRENT_SCHEMA_VERSION = 50
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -221,10 +222,15 @@ class Genebank(BaseModel):
         if self.id not in user.accessible_genebanks:
             return None
 
-        herds = []
-        for herd in Herd.select().where(Herd.genebank == self):
-            herds += [herd.filtered_dict(user)]
-        return herds
+        from utils.herd_contact import (  # pylint: disable=import-outside-toplevel
+            herd_contacts,
+            matrikel_reader_herd_ids,
+        )
+
+        rows = list(Herd.select().where(Herd.genebank == self))
+        contacts = herd_contacts(rows)
+        readers = matrikel_reader_herd_ids(user, rows)
+        return [h.filtered_dict(user, contact=contacts[h.id], reader=h.id in readers, with_contact=False) for h in rows]
 
 
 # The optional billing address, the same columns on Membership and
@@ -371,6 +377,18 @@ class Herd(BaseModel):
     bank_account_number_privacy = CharField(15, null=True, default="private")
     bank_name = TextField(null=True)
     bank_name_privacy = CharField(15, null=True, default="private")
+    # Contact from the member register (#117). contact_member is the person whose details the herd shows;
+    # its FK constraint is added after both tables exist (see init and migrate_49_to_50).
+    contact_member = DeferredForeignKey("Member", null=True, on_delete="SET NULL")
+    # NULL: not compared with the register yet. A list: compared, holding the rows waiting for an answer.
+    contact_pending = BinaryJSONField(null=True)
+
+    def as_dict(self):
+        """The row as a dict, without the contact plumbing (contact_member, contact_pending)."""
+        data = super().as_dict()
+        data.pop("contact_member", None)
+        data.pop("contact_pending", None)
+        return data
 
     def short_info(self):
         """
@@ -385,10 +403,18 @@ class Herd(BaseModel):
             "is_active": self.is_active,
         }
 
-    def filtered_dict(self, user=None):
+    def filtered_dict(self, user=None, *, contact=None, reader=None, with_contact=True):
         """
         Returns the model data filtered by the access level of the given `user`.
+
+        The contact rows are the resolved ones (#117). `contact` and `reader` can be given when the caller
+        has them for many herds at once; `with_contact` adds the `contact` field to the answer.
         """
+        from utils.herd_contact import (  # pylint: disable=import-outside-toplevel
+            contact_field,
+            herd_contact,
+            is_matrikel_reader,
+        )
 
         access_level = "public"
         effective = None  # the user's herd ids, fetched at most once
@@ -424,8 +450,22 @@ class Herd(BaseModel):
         # legacy herd response (ADR-0006: don't perturb legacy contracts).
         data.pop("membership", None)
 
+        contact = contact or herd_contact(self)
+        reader = is_matrikel_reader(user, self) if reader is None else reader
         raw = data
         data = remove_fields_by_privacy(raw, access_level)
+        # fetched rows: the register's value in the same field, seen by a matrikel reader at "private" and
+        # by anyone else at most at "authenticated" (decision 11); own rows are filtered as above
+        derived = {f: r.value for f, r in contact.rows.items() if r.source != "egen"}
+        if derived:
+            levels = list(PRIVACY_LEVELS)
+            level = "private" if reader else min(access_level, "authenticated", key=levels.index)
+            shown = remove_fields_by_privacy({**raw, **derived}, level)
+            for field, value in derived.items():
+                if field in shown:
+                    data[field] = value
+                else:
+                    data.pop(field, None)
         # Bank details: whole for admin, matrikel_admin (who has no genebank role, so only these
         # fields are added, not the other private ones) and the herd's own users. The genebank
         # manager (private level, but none of those) sees the last two digits of the account.
@@ -435,6 +475,10 @@ class Herd(BaseModel):
             data.update({f: raw[f] for f in ("bank_account_number", "bank_name") if f in raw})
         elif "bank_account_number" in data:
             data["bank_account_number"] = account_end(data["bank_account_number"])
+        if with_contact and user:
+            field = contact_field(user, self, contact, reader=reader, private_access=access_level == "private")
+            if field:
+                data["contact"] = field
         return data
 
     class Meta:  # pylint: disable=too-few-public-methods
@@ -444,6 +488,9 @@ class Herd(BaseModel):
 
         indexes = ((("herd", "genebank"), True),)
 
+
+# The herd's own contact values: kept out of audit snapshots, so the register can retire them (#117).
+HERD_CONTACT_COLUMNS = ("name", "email", "mobile_phone", "wire_phone", "physical_address", "www")
 
 PRIVACY_LEVELS = ("public", "authenticated", "private")
 
@@ -2501,6 +2548,8 @@ def init():
         # pylint: disable=protected-access
         Breeding._schema.create_foreign_key(Breeding.mother)
         Breeding._schema.create_foreign_key(Breeding.father)
+    if not isinstance(DATABASE, SqliteDatabase):
+        _add_herd_contact_member_fk()  # every init: an interrupted first one may have died before member existed
 
     # Stamp the bootstrap version — but ONLY on a database this call created
     # from nothing. Stamping an existing (possibly partially migrated) database
@@ -3087,7 +3136,7 @@ AUDITED_TABLES = {
     "individual": ("individual_id", [], ["updated_at"]),
     "breeding": ("breeding_id", [], ["updated_at"]),
     "bunny": ("bunny_id", [], ["updated_at"]),  # from develop (22→23 roster)
-    "herd": ("herd_id", [], []),
+    "herd": ("herd_id", list(HERD_CONTACT_COLUMNS), []),
     "weight": ("weight_id", [], []),
     "bodyfat": ("bodyfat_id", [], []),
     "individualdisease": ("individual_disease_id", [], []),
@@ -4311,6 +4360,94 @@ def migrate_48_to_49():
         ).execute()
 
 
+def _add_herd_contact_member_fk():
+    """herd.contact_member_id -> member, added once both tables exist (a deferred FK is not in CREATE TABLE).
+    Safe on every init(): does nothing while the column or the member table is missing or the constraint exists."""
+    DATABASE.execute_sql(
+        """
+        DO $$ BEGIN
+            IF to_regclass('member') IS NOT NULL
+               AND EXISTS (SELECT 1 FROM information_schema.columns
+                           WHERE table_schema = current_schema() AND table_name = 'herd'
+                             AND column_name = 'contact_member_id')
+               AND NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'herd_contact_member_id_fkey'
+                               AND conrelid = 'herd'::regclass) THEN
+                ALTER TABLE herd ADD CONSTRAINT herd_contact_member_id_fkey
+                    FOREIGN KEY (contact_member_id) REFERENCES member (member_id) ON DELETE SET NULL;
+            END IF;
+        EXCEPTION WHEN duplicate_object THEN NULL;
+        END $$;
+        """
+    )
+
+
+def _compare_linked_herds():
+    """#117, Överflyttning: herds linked before the comparison existed are compared once (contact_pending NULL), if
+    their membership is active; the others stay uncompared and read their own columns until it is.
+    Version 50's columns only, read and written by name, so a replay works after later migrations add columns.
+    membership and member are locked by the LOCKs and herd by the ALTER in migrate_49_to_50, so the register
+    cannot change while the herds are compared."""
+    from utils.herd_contact import compare_with_register  # pylint: disable=import-outside-toplevel
+
+    # A household erased before the comparison existed: what on_household_erased does, since the nightly job
+    # skips erased persons. Erased is matrikel.is_anonymized, the name pair anonymize_person writes.
+    cleared = ", ".join(f'"{c}" = NULL, "{c}_privacy" = \'private\'' for c in HERD_CONTACT_COLUMNS)
+    DATABASE.execute_sql(
+        f"""UPDATE herd SET {cleared}, contact_member_id = NULL, contact_pending = '[]'
+            WHERE membership_id IS NOT NULL AND contact_pending IS NULL
+              AND EXISTS (SELECT 1 FROM member m WHERE m.membership_id = herd.membership_id)
+              AND NOT EXISTS (SELECT 1 FROM member m WHERE m.membership_id = herd.membership_id
+                              AND NOT (m.first_name = 'Borttagen' AND m.last_name = 'person'))"""
+    )
+    columns = ("name", "email", "mobile_phone", "physical_address")
+    rows = Herd.select(
+        Herd.id,
+        Herd.membership,
+        *(getattr(Herd, c) for c in columns),
+        *(getattr(Herd, f"{c}_privacy") for c in columns),
+    ).where(
+        Herd.contact_pending.is_null(True),
+        # a membership that is not active is compared when it becomes active (on_membership_active)
+        Herd.membership.in_(Membership.select(Membership.id).where(Membership.membership_status == "active")),
+    )
+    for herd in rows:
+        changes, _ = compare_with_register(herd)
+        Herd.update(**changes).where(Herd.id == herd.id, Herd.contact_pending.is_null(True)).execute()
+
+
+def migrate_49_to_50():
+    """#117: herd.contact_member and herd.contact_pending; herd contact values leave the audit history.
+    The columns are added in raw SQL (no audit rows). The contact columns become snapshot_excluded, and the
+    values already in audit_log are removed with the purge_user_audit_pii mechanism (rule lifted, same transaction).
+    Then the herds already linked are compared with the register, with the new triggers in place."""
+    with DATABASE.atomic():
+        if not isinstance(DATABASE, SqliteDatabase):
+            # membership first (order membership, member, herd). EXCLUSIVE waits for a transaction holding a
+            # membership row FOR UPDATE: retire_membership then writes member and membership, which SHARE deadlocks
+            DATABASE.execute_sql("LOCK TABLE membership IN EXCLUSIVE MODE")
+            # Take member's lock first: ALTER herd then ADD FOREIGN KEY on member, in that order, could
+            # deadlock with a matrikel import that inserts a member and then reads herd.
+            DATABASE.execute_sql("LOCK TABLE member IN SHARE ROW EXCLUSIVE MODE")
+        DATABASE.execute_sql('ALTER TABLE herd ADD COLUMN IF NOT EXISTS "contact_member_id" INTEGER')
+        DATABASE.execute_sql('ALTER TABLE herd ADD COLUMN IF NOT EXISTS "contact_pending" JSONB')
+        if not isinstance(DATABASE, SqliteDatabase):
+            _add_herd_contact_member_fk()
+            _create_audit_table_and_triggers()  # re-runnable; picks up the new snapshot_excluded list
+            DATABASE.execute_sql("DROP RULE IF EXISTS audit_log_no_update ON audit_log")
+            DATABASE.execute_sql(
+                "UPDATE audit_log SET old_data = old_data - %s::text[], new_data = new_data - %s::text[]"
+                " WHERE table_name = 'herd'",
+                (list(HERD_CONTACT_COLUMNS), list(HERD_CONTACT_COLUMNS)),
+            )
+            DATABASE.execute_sql(AUDIT_LOG_NO_UPDATE_RULE)
+            _compare_linked_herds()
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=50,
+            comment="herd.contact_member, herd.contact_pending; herd contact values out of audit_log",
+            applied=datetime.now(),
+        ).execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4797,6 +4934,7 @@ MIGRATIONS = {
     (46, 47): migrate_46_to_47,  # the attester's name on the certificate check page
     (47, 48): migrate_47_to_48,  # unique Google identity
     (48, 49): migrate_48_to_49,  # one-time codes, previous addresses
+    (49, 50): migrate_49_to_50,  # herd contact from the matrikel
 }
 
 

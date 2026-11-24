@@ -509,18 +509,42 @@ Från kaninens sida kommer du hit med **Fler åtgärder** → **Provpara**.
 
 ### Uppdatera besättningsuppgifter
 
-Kontaktuppgifterna på Min besättning ser andra uppfödare. Du väljer själv vad som visas.
+På **Min besättning**, fliken **Översikt**, finns två kort: **Din besättning** och
+**Kontakt för besättningen**. Andra uppfödare ser det du väljer att visa. För varje
+uppgift väljer du **Endast genbanksansvarig** eller **Inloggade besättningar**.
 
-1. Öppna **Min besättning**, fliken **Översikt**, och klicka **Redigera** vid
-   **Besättningsuppgifter**.
-2. Fyll i **Kontaktperson**, **E-post**, **Mobil**, **Fast telefon**, **Hemsida**
-   och **Adress**.
-3. Välj för varje uppgift vem som ser den: **Endast genbanksansvarig** eller
-   **Inloggade besättningar**.
-4. Klicka **Klar**. Bekräftelsen "Kontaktinformation sparad" visas.
+**Din besättning** gäller platsen där kaninerna finns.
 
-Ändringar här når inte föreningens medlemsmatrikel. Har du flyttat eller bytt e-post
-ändrar du det också under [Min profil](#min-profil) eller meddelar kassören.
+1. Klicka **Redigera** vid **Din besättning**.
+2. Fyll i **Besättningens namn**, **Ort**, **Hemsida** och **Fast telefon**, och välj
+   vem som ser orten, hemsidan och den fasta telefonen.
+3. Klicka **Spara**. Bekräftelsen "Besättningsuppgifter sparade" visas.
+
+**Kontakt för besättningen** visar kontaktpersonen och kontaktens **E-post**, **Mobil**
+och **Adress**. De hämtas från medlemskapet, så en rättelse där gäller överallt. En rad
+kan i stället ha en egen uppgift som bara gäller besättningen.
+
+1. Klicka **Redigera** vid **Kontakt för besättningen**.
+2. Välj **Kontaktperson** bland personerna i medlemskapet, eller **Annan kontakt, som
+   inte finns i matrikeln**. Bara huvudmedlemmen, genbanksansvarig och admin byter
+   kontaktperson.
+3. Välj för en rad **Från medlemskapet** eller **Egen**. En egen uppgift skriver du i
+   fältet.
+4. Välj vem som ser varje uppgift och klicka **Spara**. Bekräftelsen "Kontaktuppgifter
+   sparade" visas.
+
+**Stämmer det?** Den frågan ställer kortet när en egen uppgift skiljer sig från
+medlemskapets eller inte går att jämföra med den. Klicka **Ja, behåll** om uppgiften
+stämmer för besättningen. Skiljer den sig från medlemskapets kan du i stället klicka
+**Använd medlemskapets**.
+
+En egen uppgift rättar du på kortet. En uppgift från medlemskapet rättar du där den
+finns: är kontaktpersonen huvudmedlem ändrar hen e-post och mobil under
+[Min profil](#min-profil), annars rättar matrikeladministratören dem. Adressen gäller hela
+hushållet och ändras av huvudmedlemmen.
+
+Har uppgifterna ändrats sedan du öppnade kortet sparas ingenting. Kortet läses om, och
+du kontrollerar och sparar igen.
 
 ![Besättningsuppgifter](besattningsuppgifter-mobil.png)
 
@@ -585,7 +609,10 @@ under rubriken. Sidan har fyra flikar.
   parningar som gått mer än 35 dagar utan födsel (märke **Parning**).
 - **Snabbåtgärder** – **+ Registrera kull**, **Ny parning**, **Skapa genbanksintyg**
   (inte klar än) och **Registrera ny kanin** (leder till kullistan).
-- **Besättningsuppgifter** – kontaktuppgifter med knappen **Redigera**.
+- **Din besättning** – namn, ort, hemsida och fast telefon. **Kontakt för besättningen**
+  – kontaktperson, e-post, mobil och adress, hämtade från medlemskapet eller egna för
+  besättningen. Båda har knappen **Redigera**, se
+  [Uppdatera besättningsuppgifter](#uppdatera-besättningsuppgifter).
 
 ![Min besättning, översikt](min-besattning-oversikt-desktop.png)
 

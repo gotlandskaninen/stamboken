@@ -490,30 +490,6 @@
   gap: 10px;
 }
 
-/* Contact card (lines 226-229) */
-.mb-contact {
-  margin: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-.mb-contact-row dt {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--sb-ink-3);
-  margin-bottom: 2px;
-}
-.mb-contact-row dd {
-  margin: 0;
-  font-size: 15px;
-}
-.mb-privacy-toggle {
-  display: flex;
-  gap: 6px;
-  margin-top: 8px;
-  flex-wrap: wrap;
-}
-
 /* Pedigree (lines 232-249) */
 .mb-ped {
   display: grid;

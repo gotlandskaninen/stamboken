@@ -3,6 +3,7 @@
 import React from "react";
 import type { Individual } from "@/redux/api/apiSlice";
 import type { SbIconName } from "@/components/shell/SbIcon";
+import PrivacyBadge from "@/components/herd-contact/PrivacyBadge";
 import styles from "./min-besattning.module.css";
 
 export type TabValue = "overview" | "individuals" | "breeding" | "pedigree";
@@ -118,11 +119,13 @@ export function MbSex({ sex }: { sex?: string | null }) {
    surfaces/min-besattning-ui.jsx lines 109-121) */
 export function MbCard({
   title,
+  sub,
   action,
   children,
   pad = true,
 }: {
   title?: string;
+  sub?: string;
   action?: React.ReactNode;
   children: React.ReactNode;
   pad?: boolean;
@@ -131,9 +134,19 @@ export function MbCard({
     <section className={`sb-card ${styles["mb-section-card"]}`}>
       {(title || action) && (
         <header className={styles["mb-card-head"]}>
-          <h2 className="sb-h6" style={{ margin: 0 }}>
-            {title}
-          </h2>
+          <div>
+            <h2 className="sb-h6" style={{ margin: 0 }}>
+              {title}
+            </h2>
+            {sub && (
+              <p
+                className="sb-meta"
+                style={{ margin: "4px 0 0", maxWidth: "60ch" }}
+              >
+                {sub}
+              </p>
+            )}
+          </div>
           {action}
         </header>
       )}
@@ -236,23 +249,7 @@ export function MbGestationBar({ breeding }: { breeding: BreedingRecord }) {
   );
 }
 
-/* Per-field privacy badge, handoff README:
-   authenticated = mossa "◉ Inloggade besättningar",
-   private = neutral "🔒 Endast genbanksansvarig" */
-export const MB_PRIVACY_LABEL: Record<string, string> = {
-  authenticated: "Inloggade besättningar",
-  private: "Endast genbanksansvarig",
-};
-
+/* Per-field privacy badge: users = "Inloggade besättningar", shield = "Endast genbanksansvarig" */
 export function MbPrivacy({ level }: { level: string }) {
-  const authed = level === "authenticated";
-  return (
-    <span
-      className={`sb-badge${authed ? " sb-badge-mossa" : ""}`}
-      title="Vem ser uppgiften"
-    >
-      {authed ? "◉" : "🔒"}{" "}
-      {MB_PRIVACY_LABEL[authed ? "authenticated" : "private"]}
-    </span>
-  );
+  return <PrivacyBadge level={level} />;
 }
