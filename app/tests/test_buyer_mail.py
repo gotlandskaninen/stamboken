@@ -371,17 +371,11 @@ class TestInformationSent(BuyerMailTest):
                     self.assertNotIn(sentence, body)
 
     def test_names_from_the_seller_stay_on_one_line(self):
-        link = "https://phish.example.org/x"
-        db.Individual.update(name=f"Stjärna\n{link}\r\n  igen").where(db.Individual.id == self.rabbit.id).execute()
-        db.BuyerContact.update(name=f"Zelda\n\n{link}\tEfternamn").where(
-            db.BuyerContact.id == self.contact_id
-        ).execute()
+        db.Individual.update(name="Stjärna\r\n  igen").where(db.Individual.id == self.rabbit.id).execute()
+        db.BuyerContact.update(name="Test\n\nKöpare").where(db.BuyerContact.id == self.contact_id).execute()
         subject, body = self.text()
-        self.assertEqual(
-            subject, f"Din kanin Stjärna {link} igen (G1-2111) är registrerad hos Föreningen Gotlandskaninen"
-        )
-        self.assertIn(f"Hej Zelda {link} Efternamn,\n\ndu har köpt kaninen Stjärna {link} igen, G1-2111.", body)
-        self.assertNotIn(f"\n{link}", body)
+        self.assertEqual(subject, "Din kanin Stjärna igen (G1-2111) är registrerad hos Föreningen Gotlandskaninen")
+        self.assertIn("Hej Test Köpare,\n\ndu har köpt kaninen Stjärna igen, G1-2111.", body)
 
     def test_not_sent_once_the_buyer_is_erased(self):
         buyer_contact.erase_buyer_contact(self.contact_id, self.admin)
@@ -432,13 +426,17 @@ class TestMembership(BuyerMailTest):
         self.assertTrue(body.startswith(f"Hej {NAME},\n\nnär du köpte Stjärna sa du att"), body)
         self.assertIn("Läs mer och ansök på gotlandskaninen.se/ansok.\n\nVi sparar ditt ja", body)
 
-    def test_names_from_the_seller_stay_on_one_line(self):
-        link = "https://phish.example.org/x"
-        contact_id = self._sale({**WITH_EMAIL, "membership_optin": True}).holder_contact_id
-        db.Individual.update(name=f"Stjärna\n{link}").where(db.Individual.id == self.rabbit.id).execute()
-        db.BuyerContact.update(name=f"Zelda\n{link}").where(db.BuyerContact.id == contact_id).execute()
-        body = self.text("kopare.medlemskap")[1]
-        self.assertTrue(body.startswith(f"Hej Zelda {link},\n\nnär du köpte Stjärna {link} sa du"), body)
+    def test_both_mails_use_only_the_number_for_a_name_with_a_link_or_contact(self):
+        self._sale({**WITH_EMAIL, "membership_optin": True})
+        for detail in ("https://example.org/x", "www.example.org", "example.org", "test@example.org", "070-000 00 00"):
+            with self.subTest(detail=detail):
+                db.Individual.update(name=f"Stjärna\n{detail}").where(db.Individual.id == self.rabbit.id).execute()
+                subject, notice = self.text()
+                _, invitation = self.text("kopare.medlemskap")
+                self.assertEqual(subject, "Din kanin G1-2111 är registrerad hos Föreningen Gotlandskaninen")
+                self.assertIn("du har köpt kaninen G1-2111. Säljaren", notice)
+                self.assertIn("när du köpte G1-2111 sa du", invitation)
+                self.assertNotIn("Stjärna", notice + invitation)
 
     def test_not_sent_once_the_yes_is_gone(self):
         contact_id = self._sale({**WITH_EMAIL, "membership_optin": True}).holder_contact_id

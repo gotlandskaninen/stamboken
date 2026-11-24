@@ -521,12 +521,14 @@ _URL = re.compile(r"(?i:[a-z][a-z0-9+.-]*://|www\.)|\b[\w-]+\.[a-z]{2,}\b")
 _LINK = re.compile(r"(?i:[a-z][a-z0-9+.-]*://|www\.)")
 
 
-def reject_contact_details(text):
+def reject_contact_details(text, *, links=False):
     """No buyer identity in free text: it lives forever in audit_log."""
     if not text:
         return
-    if _EMAIL.search(text) or any(
-        len(re.sub(r"\D", "", m.group(0))) >= _PHONE_MIN_DIGITS for m in _PHONE.finditer(text)
+    if (
+        (links and _URL.search(text))
+        or _EMAIL.search(text)
+        or any(len(re.sub(r"\D", "", m.group(0))) >= _PHONE_MIN_DIGITS for m in _PHONE.finditer(text))
     ):
         raise HerdTrackingInvalid(BUYER_PRIVACY_HELP)
 
@@ -1230,10 +1232,8 @@ def buyer_contact_fields(buyer, sale_date, address_required=False):
         raise HerdTrackingInvalid("Ange en e-postadress till köparen, bara adressen och bara en.")
     for key in ("name", "town"):  # the name goes into a mail from the association: never a link or a contact
         message = f"{BUYER_TEXT_FIELDS[key]} får inte innehålla en länk, en e-postadress eller ett telefonnummer."
-        if _URL.search(fields[key]):
-            raise HerdTrackingInvalid(message)
         try:
-            reject_contact_details(fields[key])
+            reject_contact_details(fields[key], links=True)
         except HerdTrackingInvalid:
             raise HerdTrackingInvalid(message) from None
     address = fields["postal_address"] or ""

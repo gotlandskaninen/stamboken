@@ -75,6 +75,20 @@ def _one_line(value):
     return " ".join((value or "").split())
 
 
+def _rabbit_name(rabbit):
+    from utils.herd_tracking import (  # pylint: disable=import-outside-toplevel
+        HerdTrackingInvalid,
+        reject_contact_details,
+    )
+
+    name = _one_line(rabbit.name)
+    try:
+        reject_contact_details(name, links=True)
+    except HerdTrackingInvalid:
+        return ""
+    return name
+
+
 def _swedish_date(moment):
     day = moment.astimezone(_STOCKHOLM)
     return f"{day.day} {_MONTHS[day.month - 1]} {day.year}"
@@ -144,7 +158,7 @@ def _information_mail(params, attempt=1):
         pdf, note = None, "skickat utan bilaga: intyget kunde inte hämtas"
     return {
         "buyer": _one_line(contact.name),
-        "name": _one_line(rabbit.name),
+        "name": _rabbit_name(rabbit),
         "number": rabbit.number,
         "until": _swedish_date(contact.purge_at),
         "address": bool(contact.postal_address),  # kept with the name since #111; an older buyer has only a town
@@ -174,7 +188,7 @@ def _membership_mail(params):
         )
         if MailMessage.select().where(gone).exists():
             return None
-    return {"buyer": _one_line(contact.name), "rabbit": _one_line(rabbit.name) or rabbit.number}
+    return {"buyer": _one_line(contact.name), "rabbit": _rabbit_name(rabbit) or rabbit.number}
 
 
 def _same_buyer(contact_id):
