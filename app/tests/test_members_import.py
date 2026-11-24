@@ -265,14 +265,14 @@ class TestMembersImport(DatabaseTest):
         self.assertEqual(result.exit_code, 0, result.output)
         self.assertEqual(db.Member.select().count(), 0)
 
-    def test_unknown_blank_number_rows_still_fail(self):
+    def test_blank_number_rows_fail_even_for_a_known_organization(self):
         org = db.Membership.create(organization_name="Testklubben")
         db.Member.create(membership=org, first_name="", last_name="", email="info@example.invalid")
         rows = _row(name="Testklubben", epost="info@example.invalid") + _row(name="Okänd Mottagare")
         result = self._run_import(HEADER + rows, ["--counts-only"])
         self.assertNotEqual(result.exit_code, 0)
+        self.assertIn("row 2: nr-saknas", result.output)
         self.assertIn("row 3: nr-saknas", result.output)
-        self.assertNotIn("row 2: nr-saknas", result.output)
 
     def test_merge_adopts_numberless_membership_and_sets_number(self):
         existing = db.Membership.create(membership_status="active")

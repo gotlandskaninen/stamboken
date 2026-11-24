@@ -753,13 +753,6 @@ class TestStatsAndExport(MatrikelApiTest):
         _mk_person(named, "Alex", "af Test", role="familjemedlem")
         unnamed = _mk_membership(status="friexemplar", organization_name="Testbiblioteket")
         _mk_person(unnamed, "", "", email="bibliotek@example.invalid")
-        numberless = _mk_membership(organization_name="Testklubben")
-        _mk_person(numberless, "", "", phone="080-00")
-        _mk_person(numberless, "Bo", "Test", role="familjemedlem")
-        _mk_person(numberless, "Kim", "Test", role="familjemedlem")
-        same_name = _mk_membership(organization_name="Bo Test")
-        _mk_person(same_name, "", "")
-        _mk_person(same_name, "Ann", "Test", role="familjemedlem")
         ended = _mk_membership(number=14, organization_name="Utan aktiv huvudmedlem")
         _mk_person(ended, "Avslutad", "Kontakt", end_date=date.today())
         _mk_person(ended, "Annan", "Person", role="familjemedlem")
@@ -773,11 +766,6 @@ class TestStatsAndExport(MatrikelApiTest):
             [
                 ("Biblioteket Visby", ""),
                 ("Testbiblioteket", ""),
-                ("Testklubben", ""),
-                ("Bo Test", ""),
-                ("Kim Test", ""),
-                ("Bo Test", ""),
-                ("Ann Test", ""),
                 ("Ada A", ""),
                 ("Alf A", ""),
                 (" =Testföreningen", "c/o Tora Test"),
@@ -785,7 +773,6 @@ class TestStatsAndExport(MatrikelApiTest):
             ],
         )
         self.assertEqual(header[-1], "c/o")
-        self.assertEqual([r[2] for r in rows if r[3] in ("Testklubben", "Bo Test")], ["", "", ""])
         self.assertNotIn(named.organization_number, response.get_data(as_text=True))
 
         def snapshot():
@@ -801,7 +788,6 @@ class TestStatsAndExport(MatrikelApiTest):
                 f.write(response.data)
             result = APP.test_cli_runner().invoke(args=["members", "import", path])
         self.assertEqual(result.exit_code, 0, result.output)
-        self.assertIn("Blank-Nr organization rows skipped: 5", result.output)
         self.assertEqual(snapshot(), before)
 
     def test_export_friexemplar_first_with_nr_zero(self):

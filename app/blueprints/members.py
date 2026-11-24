@@ -736,8 +736,8 @@ def export_members():
         elif ms.membership_status == "friexemplar":
             nr = "0"  # the paper file's friexemplar marker
         else:
-            # A numberless active membership keeps a blank Nr. Import can
-            # recognize a known organization; Nr 0 means friexemplar.
+            # Active membership without a number — a data anomaly; leave the
+            # cell empty so it stands out instead of masquerading as Nr 0.
             nr = ""
 
         invoice = ms.invoice_address

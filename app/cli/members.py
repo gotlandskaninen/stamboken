@@ -30,11 +30,6 @@ Rules (Member Model v2 design spec):
   subsequent rows = familjemedlem.
 - Nr = 0 rows become friexemplar memberships, one per distinct name;
   identical duplicate rows collapse into one membership with a note.
-- A blank Nr is accepted only for a recognized active, numberless organization
-  and its existing person rows. These rows are skipped. The c/o column is never imported.
-- A blank Nr can acknowledge an existing active numberless organization
-  and its family rows from the mailing-list export. Those rows are never
-  written. Any other blank Nr is an error. The export's c/o is ignored.
 - G/M flags link herd G<Nr>/M<Nr> to the membership; a missing herd only
   logs a warning (the membership is still created).
 - Merge policy: (1) member_number match means already imported, skip;
@@ -152,9 +147,6 @@ def import_cmd(csv_path: str, dry_run: bool, counts_only: bool) -> None:
 
 def _import(rows: list[dict], errors: list[tuple[str, str]], dry_run: bool) -> dict:
     """Write the groups (unless dry_run) and return the report."""
-    matched_numberless = 0
-    if any(row["nr"] is None for row in rows):
-        rows, matched_numberless = _skip_numberless_organizations(rows, errors)
     groups, friexemplar_groups = _group_rows(rows)
 
     report = {
@@ -162,7 +154,6 @@ def _import(rows: list[dict], errors: list[tuple[str, str]], dry_run: bool) -> d
         "persons_created": 0,
         "friexemplar_created": 0,
         "matched_existing": 0,
-        "numberless_org_rows": matched_numberless,
         "merges": [],  # (nr, membership_id, main name)
         "collapses": [],  # (name, row count) — identical duplicate rows
         "conflicts": [],  # (name, row count) — same name, differing fields
@@ -316,10 +307,7 @@ def _read_rows(csv_path: str) -> tuple[list[dict], list[tuple[str, str]], list[t
             if not values.get("namn_efternamn") and not any(v for k, v in values.items() if k != "nr"):
                 continue
             try:
-                row = _parse_row(raw, layout)
-                if row["nr"] is None:
-                    row["line"] = start_line
-                rows.append(row)
+                rows.append(_parse_row(raw, layout))
             except ValueError as e:
                 code = e.code if isinstance(e, _RowError) else "ogiltig-rad"
                 errors.append((f"row {reader.line_num}: {e}", f"row {start_line}: {code}"))
@@ -344,15 +332,8 @@ def _parse_row(raw: dict[str, str], layout: str) -> dict:
         raise _RowError("namn-saknas", "kolumnen 'Namn Efternamn' saknas eller är tom")
 
     nr_raw = row.get("nr", "")
-    if not nr_raw:
-        # A blank Nr can only acknowledge a known organization from our own
-        # export. No other data on the row will ever be imported.
-        return {
-            "nr": None,
-            "name": name,
-            "email": (row.get("e_postadress") or "").lower(),
-            "phone": row.get("telefonnr"),
-        }
+    if nr_raw == "":
+        raise _RowError("nr-saknas", "kolumnen 'Nr' saknas eller är tom")
     try:
         nr = int(nr_raw)
     except ValueError as exc:
@@ -418,48 +399,6 @@ def _group_rows(rows: list[dict]) -> tuple[dict[int, list[dict]], dict[str, list
         else:
             friexemplar.setdefault(row["name"].lower(), []).append(row)
     return groups, friexemplar
-
-
-def _skip_numberless_organizations(rows: list[dict], errors: list[tuple[str, str]]) -> tuple[list[dict], int]:
-    """Recognize existing blank-Nr organization rows without creating or updating anything."""
-    organizations = Membership.select().where(
-        Membership.organization_name.is_null(False),
-        Membership.membership_status == Status.ACTIVE,
-        Membership.member_number.is_null(True),
-    )
-    contacts = {}
-    for ms in organizations.prefetch(Member.select().where(Member.end_date.is_null(True))):
-        main, family = None, set()
-        for person in ms.persons:
-            name = ms.organization_name if person.role == "huvudmedlem" else f"{person.first_name} {person.last_name}"
-            contact = (_name_key(name), (person.email or "").strip().lower(), (person.phone or "").strip())
-            if person.role == "huvudmedlem":
-                main = contact
-            else:
-                family.add(contact)
-        if main is not None:
-            contacts.setdefault(main, set()).update(family)
-
-    numbered, matched = [], 0
-    family = set()
-    for row in rows:
-        if row["nr"] is not None:
-            numbered.append(row)
-        else:
-            contact = (row["name"].lower(), row["email"] or "", row["phone"] or "")
-            if contact in contacts:
-                # An organization may have the same name and contact details as
-                # a person in the preceding household. Both groups remain possible.
-                family = family | contacts[contact] if contact in family else contacts[contact]
-                matched += 1
-                continue
-            if contact in family:
-                matched += 1
-                continue
-            line = row["line"]
-            errors.append((f"row {line}: kolumnen 'Nr' saknas eller är tom", f"row {line}: nr-saknas"))
-        family = set()
-    return numbered, matched
 
 
 def _first_value(group: list[dict], key: str):
@@ -966,11 +905,6 @@ def _count_lines(report: dict) -> list[str]:
         f"Herd links: {report['herd_links']}, "
         f"Errors: {len(report['errors'])}",
         f"Herd warnings: {len(report['herd_warnings'])}",
-        *(
-            [f"Blank-Nr organization rows skipped: {report['numberless_org_rows']}"]
-            if report["numberless_org_rows"]
-            else []
-        ),
         *(f"Contact {field} {case}: {n}" for (field, case), n in sorted(report["contact_cases"].items())),
     ]
 
