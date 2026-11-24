@@ -120,6 +120,26 @@ def resolve_access_rules():
 
 service.access_rules = resolve_access_rules()
 
+# Development and tests only: lifts the rules that keep an account with a role on the association's Google login
+# (data_access.ROLE_LEVELS), so the seed's password accounts can hold roles.
+service.allow_role_password_login = os.environ.get("ALLOW_ROLE_PASSWORD_LOGIN", "false").lower() == "true"
+
+
+def refuse_role_password_login_in_production():
+    """Fail-safe at startup: production and the demo (both FLASK_ENV=production) keep every role behind Google."""
+    if (
+        os.environ.get("FLASK_ENV") == "production"
+        and os.environ.get("ALLOW_ROLE_PASSWORD_LOGIN", "").lower() == "true"
+    ):
+        raise RuntimeError("ALLOW_ROLE_PASSWORD_LOGIN=true is refused when FLASK_ENV=production.")
+
+
+def refuse_missing_google_client_id_in_production():
+    """Fail-safe at startup: without the audience, /api/auth/google would accept a Google token of any OAuth app,
+    and Google is the only way to a role."""
+    if os.environ.get("FLASK_ENV") == "production" and not os.environ.get("GOOGLE_CLIENT_ID"):
+        raise RuntimeError("GOOGLE_CLIENT_ID must be set when FLASK_ENV=production (the Google token's audience).")
+
 
 def refuse_auto_validate_outside_demo():
     """Fail-safe at startup: auto-validation lets any domain Google account in,
@@ -190,6 +210,16 @@ inbox = Namespace()  # pylint: disable=C0103
 inbox.original_months = int(os.environ.get("INLASNING_ORIGINAL_MANADER") or 12)
 if inbox.original_months < 1:
     raise RuntimeError(f"INLASNING_ORIGINAL_MANADER={inbox.original_months} is not a number of months, 1 or more.")
+
+tyck_till = Namespace()  # pylint: disable=C0103
+# "Tyck till" (docs/tyck-till.md): `app` creates the issues with the GitHub app, `logg` (the default in development
+# and CI) is a fake that succeeds. Production sets `app`, and without the app's key and ids the endpoint answers 503.
+tyck_till.github = (os.environ.get("TYCK_TILL_GITHUB") or "logg").strip().lower()
+tyck_till.app_id = os.environ.get("GITHUB_APP_ID", "")
+tyck_till.installation_id = os.environ.get("GITHUB_APP_INSTALLATION_ID", "")
+tyck_till.key_path = Path(os.environ.get("GITHUB_APP_KEY") or "/config/github_app_key.pem")
+tyck_till.project_id = os.environ.get("TYCK_TILL_PROJEKT") or "PVT_kwDOFJznr84Bq3Yo"
+tyck_till.recipient = os.environ.get("TYCK_TILL_MOTTAGARE") or "admin@gotlandskaninen.se"
 
 s3.bucket = os.environ.get("S3_BUCKET", "test")
 s3.endpoint = os.environ.get("S3_ENDPOINT", None)

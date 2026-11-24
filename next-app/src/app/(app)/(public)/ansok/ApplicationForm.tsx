@@ -7,7 +7,9 @@ import {
   Button,
   Checkbox,
   FormControlLabel,
+  Link,
   TextField,
+  Typography,
 } from "@mui/material";
 import { formatPostalCode, isValidPostalCode } from "@/lib/postal";
 import { MEMBERSHIP_PAYMENT } from "@/components/public/MembershipSteps";
@@ -70,6 +72,9 @@ export function ApplicationForm() {
       }}
       sx={{ display: "flex", flexDirection: "column", gap: 2 }}
     >
+      <Typography variant="body2" color="text.secondary">
+        Fält märkta med * måste fyllas i.
+      </Typography>
       <TextField
         required
         label="Förnamn"
@@ -213,7 +218,27 @@ export function ApplicationForm() {
             }
           />
         }
-        label="Jag godkänner att mina personuppgifter behandlas enligt GDPR"
+        label={
+          <>
+            Jag har läst hur föreningen behandlar mina personuppgifter i{" "}
+            {/* New tab: following the link must not discard a filled-in form. */}
+            <Link
+              href="/integritetspolicy"
+              target="_blank"
+              rel="noopener"
+              sx={{
+                "@media (pointer: coarse)": {
+                  display: "inline-block",
+                  minHeight: 44,
+                  lineHeight: "44px",
+                },
+              }}
+            >
+              integritetspolicyn
+            </Link>{" "}
+            (öppnas i ny flik).
+          </>
+        }
       />
       {error ? <Alert severity="error">{error}</Alert> : null}
       <Button

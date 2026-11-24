@@ -29,10 +29,11 @@ const VERIFIED = {
   individual_number: "G1",
   genebank: "Gotlandskanin",
   digital_certificate: 1,
-  issued_by: "x",
   issued_at: "2026-01-01T00:00:00",
   is_current: true,
   replaced_by_date: null,
+  attested_by: "Uppfödaren",
+  transferred: ["2026-03"],
 };
 
 // Who is calling: an anonymous visitor, a visitor with a stale sb_mode=demo
@@ -113,6 +114,10 @@ describe.each(Object.entries(CALLERS))(
       const html = renderToStaticMarkup(page);
       expect(html).toContain(VERIFIED.individual_number);
       expect(html).not.toContain("hittades inte");
+      // Stamboken #6: no name unless the breeder chose it, a sale as month and year
+      expect(html).toContain("Uppfödaren");
+      expect(html).toContain("mars 2026");
+      expect(html).toContain("Såld");
     });
   },
 );

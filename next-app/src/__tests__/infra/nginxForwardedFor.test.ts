@@ -45,11 +45,24 @@ describe("nginx forwarding headers for next-app", () => {
     expect(files).toContain("production/herdbook-production.conf");
   });
 
-  describe.each(files)("%s", (file) => {
-    const locations = nextAppLocations(
-      fs.readFileSync(path.join(NGINX_DIR, file), "utf8"),
-    );
+  // A file with no such location (upstreams, a redirect-only vhost) has
+  // nothing to check, and an empty suite fails.
+  const proxying = files
+    .map((file) => ({
+      file,
+      locations: nextAppLocations(
+        fs.readFileSync(path.join(NGINX_DIR, file), "utf8"),
+      ),
+    }))
+    .filter(({ locations }) => locations.length > 0);
 
+  it("covers the public host", () => {
+    expect(proxying.map(({ file }) => file)).toContain(
+      "production/gotlandskaninen.conf",
+    );
+  });
+
+  describe.each(proxying)("$file", ({ locations }) => {
     it.each(locations.map((l) => [l.header, l.body]))(
       "%s sets X-Real-IP and X-Forwarded-For",
       (_header, body) => {

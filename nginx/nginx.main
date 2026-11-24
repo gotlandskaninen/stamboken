@@ -33,6 +33,9 @@ http {
     access_log  /var/log/nginx/access.log  access_json;
 
     sendfile        on;
+
+    # For every vhost in every environment. Older versions are broken.
+    ssl_protocols TLSv1.2 TLSv1.3;
     keepalive_timeout  65;
 
     include /etc/nginx/conf.d/*.conf;

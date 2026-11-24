@@ -6,6 +6,7 @@ and require app/certs/key.pem + app/certs/ca.pem in the test container.
 """
 
 import unittest
+import uuid
 from contextlib import contextmanager
 from datetime import date, datetime
 from unittest.mock import patch
@@ -14,6 +15,7 @@ import blueprints.certificates as certificates
 import utils.database as db
 import utils.settings as settings
 from moto import mock_aws
+from utils.cert_service_v2 import ATTESTER_NAME_MISSING
 
 from tests.database_test import _USE_POSTGRES
 from tests.ht_helpers import ht_row
@@ -41,6 +43,8 @@ class CertV2Mixin:
             except Exception:
                 pass
         super().setUp()
+        # The issuing user attests in her own name, so she needs one .
+        db.User.update(fullname="Test Namn").where(db.User.id == self.owner.id).execute()
         # Patch S3 endpoint to None so moto intercepts boto3 calls
         self._s3_endpoint_patcher = patch.object(settings.s3, "endpoint", None)
         self._s3_endpoint_patcher.start()
@@ -56,6 +60,13 @@ class CertV2Mixin:
             except Exception:
                 pass
         super().tearDown()
+
+    def _request(self, user, method, url, body=None):
+        with self.app as context:
+            context.get("/api/logout")  # a login while logged in keeps the previous user's session
+            login = context.post("/api/login", json={"username": user.email, "password": "pass"})
+            self.assertEqual(login.status_code, 200, user.email)
+            return getattr(context, method)(url, json=body or {})
 
     def _start_mock_aws(self):
         """Start mock_aws and register cleanup."""
@@ -81,7 +92,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             response = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
@@ -105,7 +116,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             # First issue
             context.post(
@@ -133,7 +144,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             with patch.object(
                 cert_service._generator,
@@ -164,7 +175,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             with (
                 patch.object(cert_service.cert_settings, "demo_watermark", True),
@@ -190,7 +201,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             with patch.object(
                 cert_service._generator,
@@ -212,7 +223,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             response = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
@@ -244,7 +255,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             with patch("utils.cert_service_v2.upload_certificate_v2", side_effect=_S3Down("S3 down")):
                 try:
@@ -274,7 +285,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             response = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
@@ -304,22 +315,32 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
                 is_current=True,
             )
 
-    def test_manager_can_issue(self):
-        """Genebank manager can issue certificates for individuals in their genebank."""
+    def test_admin_and_manager_cannot_issue_or_update(self):
+        """Only people with access to the origin herd attest; admin and the genebank manager get 403."""
         self._start_mock_aws()
         individual = self.individuals[3]
+        db.User.update(fullname="Test Namn").where(db.User.id == self.manager.id).execute()
 
-        with self.app as context:
-            context.post(
-                "/api/login",
-                json={"username": self.manager.email, "password": "pass"},
-            )
-            response = context.post(
-                f"/api/v2/certificates/issue/{individual.number}",
-                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
-            )
-            # Manager should succeed if individual is in their genebank
-            self.assertIn(response.status_code, [201, 403])
+        for user in (self.admin, self.manager):
+            with self.subTest(user=user.email):
+                response = self._request(user, "post", f"/api/v2/certificates/issue/{individual.number}")
+                self.assertEqual(response.status_code, 403, response.get_data(as_text=True))
+                response = self._request(user, "patch", f"/api/v2/certificates/update/{individual.number}")
+                self.assertEqual(response.status_code, 403, response.get_data(as_text=True))
+        self.assertIsNone(db.Individual.get_by_id(individual.id).digital_certificate)
+
+    def test_issue_without_a_name_returns_400(self):
+        """The issuer stands on the certificate in her own name: no fullname, no issue or update."""
+        self._start_mock_aws()
+        individual = self.individuals[3]
+        db.User.update(fullname=None).where(db.User.id == self.owner.id).execute()
+
+        for method, route in (("post", "issue"), ("patch", "update")):
+            with self.subTest(route=route):
+                response = self._request(self.owner, method, f"/api/v2/certificates/{route}/{individual.number}")
+                self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+                self.assertEqual(response.get_json()["detail"], ATTESTER_NAME_MISSING)
+        self.assertIsNone(db.Individual.get_by_id(individual.id).digital_certificate)
 
     def test_signing_guard_returns_503(self):
         """Signing failure returns 503 Service Unavailable."""
@@ -329,7 +350,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             from utils.certificates_v2 import SigningUnavailableError
 
@@ -356,7 +377,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
         # Raising keeps the base behaviour observable: reaching generate_and_store would answer 503.
         with patch("blueprints.certificates.generate_and_store", side_effect=SigningUnavailableError) as generate:
             with self.app as context:
-                context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
+                context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
                 response = context.post(
                     f"/api/v2/certificates/issue/{individual.number}",
                     json={"color_id": 1, "litter_size": 0, "litter_size6w": 0},
@@ -376,7 +397,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
         individual = self.individuals[3]  # G1-2112, born and held in G1
         body = {"color_id": 1, "origin_herd": {"herd": "G2"}}
         with self.app as context:
-            context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
+            context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
             response = context.post(f"/api/v2/certificates/issue/{individual.number}", json=body)
         stored = db.Individual.get_by_id(individual.id)
         self.assertEqual((stored.origin_herd.herd, stored.current_herd.herd), ("G1", "G1"), "the issue moved it")
@@ -410,7 +431,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
         self._start_mock_aws()
         _, rabbit = self._full_roster_litter()
         with self.app as context:
-            context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
+            context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
             response = context.post(f"/api/v2/certificates/issue/{rabbit.number}", json={"color_id": 1})
         self.assertIsNone(
             db.Individual.get_by_id(rabbit.id).digital_certificate,
@@ -438,7 +459,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
             origin_herd=self.herds[0], breeding=litter, number="G1-2511", color=self.colors[0]
         )
         with self.app as context:
-            context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
+            context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
             missing = context.post(f"/api/v2/certificates/issue/{rabbit.number}", json={"color_id": 1})
         self.assertIsNone(
             db.Individual.get_by_id(rabbit.id).digital_certificate,
@@ -451,7 +472,11 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
         db.Bunny.create(breeding=litter, slot_order=1, fate="registered", individual=rabbit)
         db.Bunny.create(breeding=litter, slot_order=2)
         db.Bunny.create(breeding=litter, slot_order=3)
-        # The breeder after a sale issues without edit rights: the other (non-editor) path.
+        # The owner with edit rights (rabbit still in G1) first, then as the breeder after a sale (no edit rights).
+        responses = {}
+        with self.app as context:
+            context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
+            responses["editor"] = context.post(f"/api/v2/certificates/issue/{rabbit.number}", json={"color_id": 1})
         ht_row(
             "TRANSFER",
             from_herd=self.herds[0],
@@ -460,11 +485,9 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
             individual=rabbit,
             herd_tracking_date=datetime.now(),
         )
-        responses = {}
-        for path, user, body in (("editor", self.admin, {"color_id": 1}), ("breeder", self.owner, {})):
-            with self.app as context:
-                context.post("/api/login", json={"username": user.email, "password": "pass"})
-                responses[path] = context.post(f"/api/v2/certificates/issue/{rabbit.number}", json=body)
+        with self.app as context:
+            context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
+            responses["breeder"] = context.post(f"/api/v2/certificates/issue/{rabbit.number}", json={})
         self.assertIsNone(
             db.Individual.get_by_id(rabbit.id).digital_certificate,
             "3 kits alive in the roster but litter_size6w=2, and a certificate was issued",
@@ -482,7 +505,7 @@ class TestCertificateV2Issue(CertV2Mixin, FlaskTest):
         self._start_mock_aws()
         paper, _ = self._full_roster_litter()  # G1-2511: paper certificate, the litter's only slot
         with self.app as context:
-            context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
+            context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
             converted = context.patch(f"/api/v2/certificates/update/{paper.number}", json={})
             reissued = context.patch(f"/api/v2/certificates/update/{paper.number}", json={"name": "Ny"})
         self.assertEqual((converted.status_code, reissued.status_code), (200, 200), converted.get_json())
@@ -499,7 +522,7 @@ class TestCertificateV2Update(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             # First issue to get a v1 cert
             context.post(
@@ -525,7 +548,7 @@ class TestCertificateV2Update(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             response = context.patch(
                 f"/api/v2/certificates/update/{individual.number}",
@@ -592,7 +615,7 @@ class TestCertificateV2Update(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             # Issue
             issue_resp = context.post(
@@ -623,7 +646,7 @@ class TestCertificateV2Update(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             issue_resp = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
@@ -637,6 +660,21 @@ class TestCertificateV2Update(CertV2Mixin, FlaskTest):
             )
             new_issued_at = update_resp.get_json()["issued_at"]
 
+            new_token = update_resp.get_json()["verification_token"]
+
+        # The issuing person shows her name and the rabbit is sold (stamboken #6)
+        db.User.update(fullname="Ada Uppfödare", name_on_check_page=True).where(db.User.id == self.owner.id).execute()
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[1],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 3, 15),
+        )
+        current = self.app.get(f"/api/v2/certificates/verify/{new_token}").get_json()
+        self.assertEqual((current["attested_by"], current["transferred"]), ("Ada Uppfödare", ["2026-03"]))
+
         # Public endpoint — no auth
         response = self.app.get(f"/api/v2/certificates/verify/{old_token}")
         self.assertEqual(response.status_code, 200)
@@ -644,6 +682,9 @@ class TestCertificateV2Update(CertV2Mixin, FlaskTest):
         self.assertTrue(data["verified"])
         self.assertFalse(data["is_current"])
         self.assertEqual(data["replaced_by_date"], new_issued_at)
+        # An old QR code tells neither the name nor later sales
+        self.assertEqual(data["attested_by"], "Uppfödaren")  # the role, not the name; the breeder issued it (#141)
+        self.assertEqual(data["transferred"], [])
 
 
 class TestCertificateV2Download(CertV2Mixin, FlaskTest):
@@ -657,7 +698,7 @@ class TestCertificateV2Download(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             # Issue first
             context.post(
@@ -681,7 +722,7 @@ class TestCertificateV2Download(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
@@ -714,7 +755,7 @@ class TestCertificateV2Download(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
@@ -745,7 +786,7 @@ class TestCertificateV2Download(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             # Upload a fake cert to S3 without creating a v2 row
             from utils.cert_acess import upload_certificate
@@ -769,7 +810,7 @@ class TestCertificateV2Download(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             from utils.cert_acess import upload_certificate
 
@@ -789,7 +830,7 @@ class TestCertificateV2Preview(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             response = context.get(f"/api/v2/certificates/preview/{individual.number}")
             self.assertEqual(response.status_code, 200)
@@ -829,8 +870,11 @@ class TestCertificateV2Preview(CertV2Mixin, FlaskTest):
                 return f"unhandled {type(exc).__name__}: {exc}"
 
         v2 = self.parents[1]  # G2-1711: a founder, litter without parents
+        # add_role saves the stale in-memory user, so the name goes in after it.
+        self.owner.add_role("owner", self.herds[1].id)  # origin herd of the founder
+        db.User.update(fullname="Test Namn").where(db.User.id == self.owner.id).execute()
         with self.app as context:
-            context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
+            context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
             observed = {
                 "v2_issue": status(lambda: context.post(f"/api/v2/certificates/issue/{v2.number}", json={})),
             }
@@ -853,7 +897,7 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             issue_resp = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
@@ -866,8 +910,276 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
             data = verify_resp.get_json()
             self.assertTrue(data["verified"])
             self.assertEqual(data["individual_number"], individual.number)
-            # Verify no email is exposed in public endpoint
-            self.assertNotIn("@", data.get("issued_by", ""))
+            # No person on the public page: neither the issuing user's name nor an email
+            self.assertNotIn("issued_by", data)
+            self.assertNotIn("@", str(data))
+
+    def test_verify_attester_and_transfers(self):
+        """Stamboken #6: the issuer's name only by her own choice, each change of holder as month and year only."""
+        self._start_mock_aws()
+        individual = self.individuals[3]  # born in herds[0]
+        with self.app as context:
+            context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
+            token = context.post(
+                f"/api/v2/certificates/issue/{individual.number}",
+                json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
+            ).get_json()["verification_token"]
+
+        db.User.update(fullname="Olle Ägare").where(db.User.id == self.owner.id).execute()
+        data = self.app.get(f"/api/v2/certificates/verify/{token}").get_json()
+        self.assertEqual(data["attested_by"], "Uppfödaren")
+        self.assertEqual(data["transferred"], [])
+
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[1],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 3, 15),
+        )
+        ht_row(
+            "CORRECTION",
+            from_herd=self.herds[1],
+            herd=self.herds[0],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 6, 9),
+        )
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[1],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 8, 20),
+            voided_at=datetime.now(),
+            voided_by_user=self.manager,
+            voided_reason="fel kanin",
+            voided_operation_id=uuid.uuid4(),
+        )
+        ht_row(
+            "ATTESTATION",
+            herd=self.herds[0],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 9, 1),
+        )
+        ht_row(  # migrated history without a receiving herd, no sale
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=None,
+            signature=self.admin,
+            individual=individual,
+            herd_tracking_date=date(2026, 9, 15),
+        )
+        ht_row(  # an admin's register fix into the other genebank, no sale
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[2],
+            signature=self.admin,
+            individual=individual,
+            herd_tracking_date=date(2026, 10, 1),
+        )
+        owner = self.app.application.test_client(use_cookies=True)
+        login = owner.post("/api/login", json={"username": self.owner.email, "password": "pass"})
+        self.assertEqual(login.status_code, 200)
+        url = "/api/v2/certificates/check-page-name"
+        self.assertEqual(owner.get(url).get_json(), {"show": None})  # a new account has not chosen yet
+        self.assertEqual(owner.put(url, json={"show": "true"}).status_code, 400)
+        account_audits = db.AuditLog.select().where(db.AuditLog.table_name == "hbuser").count()
+        self.assertEqual(owner.put(url, json={"show": True}).get_json(), {"show": True})
+        # her choice writes no audit row (it would copy her name and e-mail)
+        self.assertEqual(db.AuditLog.select().where(db.AuditLog.table_name == "hbuser").count(), account_audits)
+
+        data = self.app.get(f"/api/v2/certificates/verify/{token}").get_json()
+        self.assertEqual(data["attested_by"], "Olle Ägare")
+        # the corrected history's changes of holder; no voided row, no move between genebanks
+        self.assertEqual(data["transferred"], ["2026-03", "2026-06"])
+        self.assertNotIn("Gotlandsherd1", str(data))  # never the herd name
+        self.assertNotIn("2026-03-15", str(data))
+        with patch.object(settings.service, "demo_instance", True):  # a day-old copy: no name, no sales
+            demo = self.app.get(f"/api/v2/certificates/verify/{token}").get_json()
+        self.assertEqual((demo["attested_by"], demo["transferred"]), ("Uppfödaren", []))
+
+        self.assertEqual(owner.put(url, json={"show": False}).get_json(), {"show": False})
+        self.assertEqual(self.app.get(f"/api/v2/certificates/verify/{token}").get_json()["attested_by"], "Uppfödaren")
+
+    def test_attester_role_without_a_name(self):
+        """Without her choice: the role she issued in, stored on the certificate, not her roles at the scan."""
+        from utils.cert_service_v2 import issuer_role
+
+        individual = self.individuals[3]  # born in herds[0]
+        for user, role in ((self.owner, "breeder"), (self.admin, "admin"), (self.manager, "manager")):
+            with self.subTest(user=user.email):
+                self.assertEqual(issuer_role(user, individual), role)
+        cert = db.DigitalCertificateV2.create(
+            individual=individual, issued_by=self.manager, issued_as="manager", file_path="x", checksum="0" * 64
+        )
+        self.assertEqual(
+            certificates._attested_by(cert, may_name=True), "Föreningen Gotlandskaninen (genbanksansvarig)"
+        )
+        self.manager.remove_role("manager", self.genebanks[0].id)  # she steps down; the certificate keeps its role
+        cert = db.DigitalCertificateV2.get_by_id(cert.id)
+        self.assertEqual(
+            certificates._attested_by(cert, may_name=True), "Föreningen Gotlandskaninen (genbanksansvarig)"
+        )
+        db.DigitalCertificateV2.update(issued_as=None).where(db.DigitalCertificateV2.id == cert.id).execute()
+        cert = db.DigitalCertificateV2.get_by_id(cert.id)
+        self.assertEqual(certificates._attested_by(cert, may_name=True), "Uppfödaren")  # an older row, fixed text
+        db.User.get_by_id(self.manager.id).add_role("admin", None)  # the issuer becomes admin
+        cert = db.DigitalCertificateV2.get_by_id(cert.id)
+        self.assertEqual(certificates._attested_by(cert, may_name=True), "Uppfödaren")  # roles today do not matter
+        db.User.update(fullname="Maja Ansvarig", name_on_check_page=True, is_active=False).where(
+            db.User.id == self.manager.id
+        ).execute()
+        cert = db.DigitalCertificateV2.get_by_id(cert.id)
+        self.assertEqual(certificates._attested_by(cert, may_name=True), "Uppfödaren")  # a deactivated account
+        db.User.update(fullname="  ", is_active=True).where(db.User.id == self.manager.id).execute()
+        cert = db.DigitalCertificateV2.get_by_id(cert.id)
+        self.assertEqual(certificates._attested_by(cert, may_name=True), "Uppfödaren")  # no blank name
+
+    def test_check_page_name_reaches_production_without_production_access(self):
+        """She can always read and withdraw her choice, also once her production access is gone."""
+        rules = patch.object(settings.service, "access_rules", "enforce")  # as in production
+        rules.start()
+        self.addCleanup(rules.stop)
+        db.User.update(name_on_check_page=True, v2_prod_access=False).where(db.User.id == self.owner.id).execute()
+        client = self.app.application.test_client(use_cookies=True)
+        self.assertEqual(
+            client.post("/api/login", json={"username": self.owner.email, "password": "pass"}).status_code, 200
+        )
+        self.assertEqual(client.get("/api/v2/certificates/check-page-name").get_json(), {"show": True})
+        self.assertEqual(
+            client.put("/api/v2/certificates/check-page-name", json={"show": False}).get_json(), {"show": False}
+        )
+        self.assertFalse(db.User.get_by_id(self.owner.id).name_on_check_page)
+        self.assertEqual(client.get("/api/v2/individual/G1-2112").status_code, 403)  # the gate is really on
+
+    def test_sale_months_on_migrated_history(self):
+        """Migrated rows lack from_herd: a row without a herd, and a return to the same herd, are no sale."""
+        from utils.herd_tracking import sale_months
+
+        individual = self.individuals[3]  # born in herds[0]
+        for day, herd in (
+            (date(2026, 2, 1), None),
+            (date(2026, 3, 1), self.herds[0]),
+            (date(2026, 4, 1), self.herds[1]),
+        ):
+            ht_row("TRANSFER", herd=herd, signature=self.manager, individual=individual, herd_tracking_date=day)
+        self.assertEqual(sale_months(individual), ["2026-04"])
+
+    def test_sale_months_counts_a_resale_within_gx1(self):
+        """ADR-0016: a resale to a new buyer within GX1 is a sale, also once the buyer is erased (stamboken #6)."""
+        from utils.herd_tracking import sale_months
+
+        gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1")
+        individual = self.individuals[3]  # born in herds[0]
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=gx1,
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 3, 1),
+        )
+        ht_row(  # the resale; its buyer is erased (buyer_removed)
+            "TRANSFER",
+            from_herd=gx1,
+            herd=gx1,
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 4, 1),
+            buyer_removed=True,
+        )
+        ht_row(  # a later row repeating GX1 without any buyer (migrated): no sale
+            "TRANSFER",
+            herd=gx1,
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=date(2026, 5, 1),
+        )
+        self.assertEqual(sale_months(individual), ["2026-03", "2026-04"])
+
+    def test_sale_months_resale_after_an_earlier_sale_entered_later(self):
+        """An earlier sale into GX1 entered afterwards: the later row's stored sender is stale, its buyer is not."""
+        from utils.herd_tracking import sale_months
+
+        gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1")
+        individual = self.individuals[3]  # born in herds[0]
+        for day in (date(2026, 4, 1), date(2026, 3, 1)):  # April first, then March by a correction
+            ht_row(
+                "TRANSFER" if day.month == 4 else "CORRECTION",
+                from_herd=self.herds[0],
+                herd=gx1,
+                signature=self.manager,
+                individual=individual,
+                herd_tracking_date=day,
+                buyer_removed=True,
+            )
+        self.assertEqual(sale_months(individual), ["2026-03", "2026-04"])
+
+    def test_sale_months_walks_the_holder_past_a_voided_row(self):
+        """A later row's stored from_herd can name a voided row's herd: the active history decides."""
+        from utils.herd_tracking import sale_months
+
+        m4 = db.Herd.create(genebank=self.genebanks[1], herd="M4")
+        individual = self.individuals[3]  # born in herds[0] (G1)
+        ht_row(  # G1 -> M3, struck out later
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[2],
+            signature=self.admin,
+            individual=individual,
+            herd_tracking_date=date(2026, 2, 1),
+            voided_at=datetime.now(),
+            voided_by_user=self.admin,
+            voided_reason="fel genbank",
+            voided_operation_id=uuid.uuid4(),
+        )
+        ht_row(  # stored sender M3, but the active history goes G1 -> G2: a change within the genebank
+            "CORRECTION",
+            from_herd=self.herds[2],
+            herd=self.herds[1],
+            signature=self.admin,
+            individual=individual,
+            herd_tracking_date=date(2026, 3, 1),
+        )
+        ht_row(  # stored sender M3 again, but G2 -> M4 crosses genebanks: no sale
+            "TRANSFER",
+            from_herd=self.herds[2],
+            herd=m4,
+            signature=self.admin,
+            individual=individual,
+            herd_tracking_date=date(2026, 4, 1),
+        )
+        self.assertEqual(sale_months(individual), ["2026-03"])
+
+    def test_sale_months_follows_the_corrected_history(self):
+        """Date fixes, a fix of a fix and a joint fix: the months the corrected history changes holder, once each."""
+        from utils.herd_tracking import correct_herd_tracking, record_herd_tracking, sale_months
+
+        gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1")
+        individual = self.individuals[3]  # born in herds[0]
+        sale = record_herd_tracking(individual, self.herds[1], date(2026, 2, 1), "TRANSFER", self.manager)
+        second = record_herd_tracking(individual, gx1, date(2026, 3, 1), "TRANSFER", self.manager)
+        self.assertEqual(sale_months(individual), ["2026-02", "2026-03"])
+
+        def fix(row, day):
+            (written,) = correct_herd_tracking(
+                individual,
+                self.manager,
+                None,
+                [row.id],
+                [{"kind": "CORRECTION", "date": day, "herd": row.herd.herd}],
+                "Fel datum",
+            )
+            return written
+
+        fixed = fix(second, date(2026, 5, 1))
+        fix(fixed, date(2026, 4, 1))  # a fix of the fix
+        fix(sale, date(2026, 1, 15))
+        self.assertEqual(sale_months(individual), ["2026-01", "2026-04"])
 
     def test_verify_post_with_pdf(self):
         """POST verify with actual PDF bytes checks checksum + signature."""
@@ -877,7 +1189,7 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             issue_resp = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
@@ -904,7 +1216,7 @@ class TestCertificateV2Verify(CertV2Mixin, FlaskTest):
         with self.app as context:
             context.post(
                 "/api/login",
-                json={"username": self.admin.email, "password": "pass"},
+                json={"username": self.owner.email, "password": "pass"},
             )
             issue_resp = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
@@ -1013,6 +1325,7 @@ class TestCertificateV2Authorization(CertV2Mixin, FlaskTest):
         membership = db.Membership.create(member_number=6, membership_status="active")
         db.Herd.update(membership=membership).where(db.Herd.id == self.herds[0].id).execute()
         user = da.register_user("sune@ex.se", "pass", username="sune")
+        db.User.update(fullname="Sune S").where(db.User.id == user.id).execute()
         caretaker = db.Member.create(
             membership=membership, first_name="Sune", last_name="S", email="sune@ex.se", role="skotare", user=user
         )
@@ -1034,29 +1347,19 @@ class TestCertificateV2Authorization(CertV2Mixin, FlaskTest):
             self.assertEqual((stored.current_herd.herd, stored.digital_certificate), ("G1", None))
         self.assertEqual(db.DigitalCertificateV2.select().count(), 0)
 
-    def test_genebank_change_via_certificate_issue_is_an_admin_correction(self):
-        """The issue route merges a herd change like PATCH: into another genebank only by an admin, with a reason."""
+    def test_genebank_change_via_certificate_issue_is_refused_to_everyone(self):
+        """A herd change into another genebank is an admin correction, and admin cannot issue: nobody gets it here."""
         self._start_mock_aws()
         import utils.database as db
 
         individual = self.individuals[3]  # G1-2112: born in G1, uncertified
-        body = {"herd": "M3", "selling_date": "2021-06-01", "litter_size": 2, "litter_size6w": 2}
-        with self.app as context:
-            context.post("/api/login", json={"username": self.manager.email, "password": "pass"})
-            denied = context.post(f"/api/v2/certificates/issue/{individual.number}", json={**body, "reason": "Fel"})
-            context.get("/api/logout")
-            context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
-            no_reason = context.post(f"/api/v2/certificates/issue/{individual.number}", json=dict(body))
-            self.assertEqual(denied.status_code, 403, denied.get_data(as_text=True))
-            self.assertEqual(no_reason.status_code, 400, no_reason.get_data(as_text=True))
-            self.assertEqual(db.DigitalCertificateV2.select().count(), 0)
-            self.assertEqual(db.Individual.get_by_id(individual.id).current_herd.herd, "G1")
-            response = context.post(f"/api/v2/certificates/issue/{individual.number}", json={**body, "reason": "Fel"})
-        self.assertEqual(response.status_code, 201, response.get_data(as_text=True))
-        stored = db.Individual.get_by_id(individual.id)
-        self.assertEqual((stored.current_herd.herd, stored.digital_certificate), ("M3", 100000))
-        transfer = db.HerdTracking.get(db.HerdTracking.individual == individual, db.HerdTracking.kind == "TRANSFER")
-        self.assertEqual(transfer.notes, "Fel")
+        body = {"herd": "M3", "selling_date": "2021-06-01", "litter_size": 2, "litter_size6w": 2, "reason": "Fel"}
+        for user in (self.owner, self.manager, self.admin):
+            with self.subTest(user=user.email):
+                response = self._request(user, "post", f"/api/v2/certificates/issue/{individual.number}", dict(body))
+                self.assertEqual(response.status_code, 403, response.get_data(as_text=True))
+        self.assertEqual(db.DigitalCertificateV2.select().count(), 0)
+        self.assertEqual(db.Individual.get_by_id(individual.id).current_herd.herd, "G1")
 
     def test_a_sale_outside_via_certificate_issue_needs_a_buyer_the_route_cannot_take(self):
         """The certificate form has no buyer fields, so a sale to GX1 through it is refused (ADR-0016)."""
@@ -1067,7 +1370,7 @@ class TestCertificateV2Authorization(CertV2Mixin, FlaskTest):
         individual = self.individuals[3]  # G1-2112: born in G1, uncertified
         body = {"herd": "GX1", "selling_date": "2021-06-01", "litter_size": 2, "litter_size6w": 2}
         with self.app as context:
-            context.post("/api/login", json={"username": self.manager.email, "password": "pass"})
+            context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
             response = context.post(f"/api/v2/certificates/issue/{individual.number}", json=dict(body))
         self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
         self.assertIn("köparens namn och ort", response.get_json()["detail"])
@@ -1105,10 +1408,10 @@ class TestCertificateV2ViewAuthorization(CertV2Mixin, FlaskTest):
             self.assertEqual(login.status_code, 200, user.email)
             return context.get(url).status_code
 
-    def _issue_as_admin(self, individual):
+    def _issue_as_breeder(self, individual):
         self._start_mock_aws()
         with self.app as context:
-            context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
+            context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
             response = context.post(
                 f"/api/v2/certificates/issue/{individual.number}",
                 json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
@@ -1118,7 +1421,7 @@ class TestCertificateV2ViewAuthorization(CertV2Mixin, FlaskTest):
     def test_viewer_cannot_download_or_preview(self):
         """A viewer role on the genebank reads the register but not the certificate."""
         individual = self.individuals[3]
-        self._issue_as_admin(individual)
+        self._issue_as_breeder(individual)
         self.assertEqual(self._status(self.viewer, f"/api/v2/certificates/{individual.number}"), 403)
         self.assertEqual(self._status(self.viewer, f"/api/v2/certificates/preview/{individual.number}"), 403)
 
@@ -1137,7 +1440,7 @@ class TestCertificateV2ViewAuthorization(CertV2Mixin, FlaskTest):
         import utils.data_access as da
 
         individual = self.individuals[3]
-        self._issue_as_admin(individual)
+        self._issue_as_breeder(individual)
         buyer = da.register_user("buyer", "pass")
         buyer.add_role("owner", self.herds[1].id)
         ht_row(
@@ -1151,6 +1454,160 @@ class TestCertificateV2ViewAuthorization(CertV2Mixin, FlaskTest):
         self.assertEqual(db.Individual.get(db.Individual.id == individual.id).current_herd.id, self.herds[1].id)
         self.assertEqual(self._status(buyer, f"/api/v2/certificates/{individual.number}"), 200)
         self.assertEqual(self._status(self.owner, f"/api/v2/certificates/{individual.number}"), 200)
+
+    def _rabbit_page(self, user, number):
+        """GET /api/v2/individual/<number> as `user`: what the rabbit page is told."""
+        with self.app as context:
+            context.get("/api/logout")
+            context.post("/api/login", json={"username": user.email, "password": "pass"})
+            response = context.get(f"/api/v2/individual/{number}")
+            self.assertEqual(response.status_code, 200, user.email)
+            return response.get_json()
+
+    def _as_breeder(self, method, url, **kwargs):
+        """Issue or re-issue as the origin herd's owner: the breeder may, whoever else may too (#141)."""
+        self._start_mock_aws()
+        with self.app as context:
+            context.get("/api/logout")
+            context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
+            response = getattr(context, method)(url, **kwargs)
+            self.assertIn(response.status_code, (200, 201), response.get_json())
+
+    def test_rabbit_page_flag_matches_the_download(self):
+        """The page shows the button exactly when the download answers: before and after a sale, for every role."""
+        import utils.data_access as da
+
+        individual = self.individuals[3]  # bred in herds[0] (self.owner), genebank[0]
+        self._as_breeder(
+            "post",
+            f"/api/v2/certificates/issue/{individual.number}",
+            json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
+        )
+        buyer = da.register_user("buyer", "pass")
+        buyer.add_role("owner", self.herds[1].id)
+        users = (self.owner, buyer, self.manager, self.admin, self.viewer)
+
+        def check(expected):
+            for user in users:
+                with self.subTest(user=user.email, expected=expected[user.email]):
+                    flag = self._rabbit_page(user, individual.number)["can_view_certificate"]
+                    status = self._status(user, f"/api/v2/certificates/{individual.number}")
+                    self.assertIs(flag, expected[user.email])
+                    self.assertEqual(status, 200 if flag else 403)
+
+        check({"owner": True, "buyer": False, "man": True, "admin": True, "spec": False})
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[1],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=datetime.now(),
+        )
+        check({"owner": True, "buyer": True, "man": True, "admin": True, "spec": False})
+
+    def test_rabbit_page_links_the_current_certificate_for_everyone(self):
+        """The verification link goes to all who may see the rabbit, and follows a re-issue."""
+        individual = self.individuals[3]
+        self._as_breeder(
+            "post",
+            f"/api/v2/certificates/issue/{individual.number}",
+            json={"color_id": 1, "litter_size": 5, "litter_size6w": 4},
+        )
+        self._as_breeder("patch", f"/api/v2/certificates/update/{individual.number}", json={"name": "Ny"})
+        current = db.DigitalCertificateV2.get(
+            (db.DigitalCertificateV2.individual == individual) & (db.DigitalCertificateV2.is_current == True)  # noqa: E712
+        )
+        for user in (self.viewer, self.owner):
+            with self.subTest(user=user.email):
+                self.assertEqual(
+                    self._rabbit_page(user, individual.number)["current_certificate"],
+                    {"verification_token": str(current.verification_token), "issued_at": current.issued_at.isoformat()},
+                )
+
+    def test_rabbit_page_has_no_verification_link_without_a_v2_certificate(self):
+        """A v1 certificate has no verification page; the owner still gets the button (the v1 PDF)."""
+        individual = self.individuals[3]
+        db.Individual.update(digital_certificate=4711).where(db.Individual.id == individual.id).execute()
+        data = self._rabbit_page(self.owner, individual.number)
+        self.assertIsNone(data["current_certificate"])
+        self.assertTrue(data["can_view_certificate"])
+
+    def test_a_role_on_gx1_does_not_open_certificates_sold_outside(self):
+        """GX1 holds every rabbit sold outside the genebank: an owner role there reads none of their certificates."""
+        import utils.data_access as da
+
+        individual = self.individuals[3]
+        self._issue_as_breeder(individual)
+        gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        gx_owner = da.register_user("gxowner", "pass")
+        gx_owner.add_role("owner", gx1.id)
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=gx1,
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=datetime.now(),
+        )
+        self.assertEqual(db.Individual.get(db.Individual.id == individual.id).current_herd.id, gx1.id)
+        for url in (f"/api/v2/certificates/{individual.number}", f"/api/v2/certificates/preview/{individual.number}"):
+            self.assertEqual(self._status(gx_owner, url), 403, url)
+        self.assertEqual(self._status(self.owner, f"/api/v2/certificates/{individual.number}"), 200)
+
+    def test_gx1_as_origin_gives_no_right(self):
+        """A rabbit imported into GX1/MX1 is no rabbit of a GX1 role holder: no issue, no view."""
+        from types import SimpleNamespace
+        from unittest import mock
+
+        gx1 = db.Herd.create(genebank=self.genebanks[0], herd="GX1", herd_name="Utanför genbanken")
+        imported = SimpleNamespace(origin_herd=gx1, current_herd=gx1)
+        user = db.User.get_by_id(self.owner.id)
+        with mock.patch.object(db.User, "effective_herd_ids", return_value={gx1.id, self.herds[0].id}):
+            self.assertFalse(user.can_issue_certificate(imported))
+            self.assertFalse(user.can_view_certificate(imported))
+            self.assertTrue(user.owns_herd_of(self.herds[0]))
+
+    def test_nameless_breeder_gets_no_preview_without_a_name(self):
+        """With no signed PDF to fall back on, a nameless herd member is told to get a name, not shown a blank."""
+        individual = self.individuals[3]  # uncertified, born in self.owner's herd
+        db.User.update(fullname=None).where(db.User.id == self.owner.id).execute()
+        with self.app as context:
+            context.get("/api/logout")
+            context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
+            response = context.get(f"/api/v2/certificates/preview/{individual.number}")
+        self.assertEqual(response.status_code, 400, response.get_data(as_text=True))
+        self.assertEqual(response.get_json()["detail"], ATTESTER_NAME_MISSING)
+
+    def test_buyer_preview_is_the_signed_certificate(self):
+        """Only someone who may issue the next version gets a rendered preview naming her; the buyer gets the PDF."""
+        from unittest import mock
+
+        import utils.data_access as da
+        from utils.cert_service_v2 import _generator
+
+        individual = self.individuals[3]
+        db.User.update(fullname="Utfärdande Person").where(db.User.id == self.admin.id).execute()
+        self._issue_as_breeder(individual)
+        buyer = da.register_user("buyer", "pass")
+        buyer.add_role("owner", self.herds[1].id)
+        ht_row(
+            "TRANSFER",
+            from_herd=self.herds[0],
+            herd=self.herds[1],
+            signature=self.manager,
+            individual=individual,
+            herd_tracking_date=datetime.now(),
+        )
+        # The buyer, the manager and admin get the signed certificate as issued, so nothing changed since appears
+        # under the issuer's name; also when older code cleared the rabbit's number but the v2 row is current
+        db.Individual.update(digital_certificate=None).where(db.Individual.id == individual.id).execute()
+        nameless = da.register_user("skotare", "pass")
+        nameless.add_role("owner", self.herds[0].id)  # herd access, but no name: may not issue, so no rendered preview
+        for viewer in (buyer, self.manager, self.admin, nameless):
+            with mock.patch.object(_generator, "generate_pedigree") as render:
+                self.assertEqual(self._status(viewer, f"/api/v2/certificates/preview/{individual.number}"), 200)
+            render.assert_not_called()
 
 
 class TestCertificateLockOrder(CertV2Mixin, FlaskTest):
@@ -1169,7 +1626,7 @@ class TestCertificateLockOrder(CertV2Mixin, FlaskTest):
             return original(sql, params, *args, **kwargs)
 
         with self.app as context:
-            context.post("/api/login", json={"username": self.admin.email, "password": "pass"})
+            context.post("/api/login", json={"username": self.owner.email, "password": "pass"})
             with mock.patch.object(db.DATABASE, "execute_sql", side_effect=capture):
                 response = getattr(context, method)(url, json=payload)
         return response, statements
@@ -1251,11 +1708,6 @@ class TestCertificateIssueOnTheLockedRow(CertV2Mixin, FlaskTest):
             yield
         self.assertTrue(ran, "normalize_color was never reached")
 
-    def _request(self, user, method, url):
-        with self.app as context:
-            context.post("/api/login", json={"username": user.email, "password": "pass"})
-            return getattr(context, method)(url, json={})
-
     def _result(self, response, individual_id):
         stored = db.Individual.get_by_id(individual_id)
         body = response.get_json()
@@ -1283,7 +1735,7 @@ class TestCertificateIssueOnTheLockedRow(CertV2Mixin, FlaskTest):
         or the number read before the lock becomes a rename back."""
         individual = self.individuals[3]
         with self._committed_before_the_lock(individual.id, number="G1-2119"):
-            response = self._request(self.manager, "post", f"/api/v2/certificates/issue/{individual.number}")
+            response = self._request(self.owner, "post", f"/api/v2/certificates/issue/{individual.number}")
         self.assertEqual(self._result(response, individual.id), (201, "G1-2119", "G1-2119", None))
 
     def test_breeder_authority_is_decided_on_the_locked_row(self):
@@ -1357,6 +1809,6 @@ class TestCertificateIssueOnTheLockedRow(CertV2Mixin, FlaskTest):
             patch.object(number_assets, "lock_number", side_effect=lock),
             patch.object(cert_service_v2, "upload_certificate", side_effect=upload),
         ):
-            response = self._request(self.manager, "post", f"/api/v2/certificates/issue/{individual.number}")
+            response = self._request(self.owner, "post", f"/api/v2/certificates/issue/{individual.number}")
         self.assertEqual(response.status_code, 201, response.get_json())
         self.assertEqual(events[-2:], [("lock", individual.number, True), ("upload", individual.number)])

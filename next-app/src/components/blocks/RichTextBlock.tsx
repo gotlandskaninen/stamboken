@@ -78,11 +78,13 @@ export function RichTextBlockComponent({ content, first = false }: Props) {
                 fontSize: { xs: "1.1rem", md: "1.2rem" },
                 color: "text.secondary",
               },
-              "& p": {
+              "& p, & li": {
                 mb: 2,
                 lineHeight: 1.7,
                 fontSize: { xs: "1rem", md: "1.05rem" },
               },
+              "& ul": { mt: 0, mb: 2, pl: 5 },
+              "& li": { mb: 1 },
               "& > :last-child": { mb: 0 },
               "& a": { color: "primary.main" },
             }}

@@ -6,7 +6,7 @@ Hej!
 
 Tack för din ansökan om medlemskap i Föreningen Gotlandskaninen. Vi har tagit emot den.
 
-Har du inte betalat årsavgiften än? Den är 200 kr och betalas till Plusgiro 35 03 44-8 eller Swish 123 095 70 50. Ange namn och adress.
+Har du inte betalat medlemsavgiften än? Den är 200 kr och betalas till Plusgiro 35 03 44-8 eller Swish 123 095 70 50. Ange namn och adress.
 
 Vi behandlar ansökan när avgiften har kommit in. Du får besked när den är klar.
 {% endblock %}

@@ -107,9 +107,10 @@ class TestDataAccess(DatabaseTest):
         password = "pass"
 
         da.register_user(email, password)
-        self.assertIsNone(da.authenticate_user(email, f"!{password}!"))
-        user = da.authenticate_user(email, password)
+        self.assertEqual(da.authenticate_user(email, f"!{password}!"), (None, None))
+        user, generation = da.authenticate_user(email, password)
         self.assertEqual(user.email, email)
+        self.assertEqual(generation, da.account_generation(user.uuid))
 
     def test_fetch_user_info(self):
         """

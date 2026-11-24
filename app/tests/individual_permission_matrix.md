@@ -4,7 +4,7 @@ Genererad av `python -m utils.individual_policy` ur `POLICY` i `app/utils/indivi
 
 ## EditDescription
 
-Fält: `name`, `sex`, `color`, `color_note`, `eye_color`, `claw_color`, `belly_color`, `hair_notes`, `notes`, `foot_ring`, `castration_date`, `is_active`, `has_photo`
+Fält: `name`, `sex`, `color`, `color_note`, `eye_color`, `claw_color`, `belly_color`, `hair_notes`, `rex`, `notes`, `foot_ring`, `castration_date`, `is_active`, `has_photo`
 
 | Roll | ocertifierad | certifierad | ocertifierad, GX1/MX1 | certifierad, GX1/MX1 |
 |---|---|---|---|---|

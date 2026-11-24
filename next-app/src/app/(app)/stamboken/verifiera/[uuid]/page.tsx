@@ -1,6 +1,7 @@
 import Link from "next/link";
 
 import { fetchApi } from "@/lib/api";
+import { TyckTillLink } from "@/components/tyck-till/TyckTillDialog.client";
 
 interface VerificationResponse {
   verified: boolean;
@@ -10,14 +11,38 @@ interface VerificationResponse {
   genebank: string;
   // null once a paper certificate has replaced the digital one, or the number was lost (ADR-0019)
   digital_certificate: number | null;
-  issued_by: string;
   issued_at: string;
   is_current: boolean;
   replaced_by_date: string | null;
+  // The issuer's full name when she chose it, else her role (stamboken #6)
+  attested_by: string;
+  // "YYYY-MM" per change of holder: never the day, never a name (ADR-0016)
+  transferred: string[];
 }
 
 function svDate(iso: string): string {
   return new Date(iso).toLocaleDateString("sv-SE");
+}
+
+const MONTHS = [
+  "januari",
+  "februari",
+  "mars",
+  "april",
+  "maj",
+  "juni",
+  "juli",
+  "augusti",
+  "september",
+  "oktober",
+  "november",
+  "december",
+];
+
+/* "2026-03" -> "mars 2026", without Date: a timezone must not move the month. */
+function svMonth(yearMonth: string): string {
+  const [year, month] = yearMonth.split("-");
+  return `${MONTHS[Number(month) - 1]} ${year}`;
 }
 
 export default async function VerifieraPage({
@@ -68,7 +93,7 @@ export default async function VerifieraPage({
         </main>
         <footer className="vf-foot">
           Ett äkta digitalt intyg har alltid en QR-kod som leder till
-          gotlandskaninen.se.
+          gotlandskaninen.se. <TyckTillLink />
         </footer>
       </>
     );
@@ -141,8 +166,11 @@ export default async function VerifieraPage({
         <footer className="vf-foot">
           {replaced
             ? "Be säljaren om den senaste versionen av intyget."
-            : "Be säljaren om kaninens gällande intyg."}
-          <span className="tok">token {uuid}</span>
+            : "Be säljaren om kaninens gällande intyg."}{" "}
+          <TyckTillLink />
+          <span className="tok" data-tyck-till="dolj">
+            token {uuid}
+          </span>
         </footer>
       </>
     );
@@ -172,13 +200,19 @@ export default async function VerifieraPage({
             <span className="v">{data.digital_certificate}</span>
           </div>
           <div className="frow">
-            <span className="l">Utfärdat av</span>
-            <span className="v">{data.issued_by}</span>
-          </div>
-          <div className="frow">
             <span className="l">Datum</span>
             <span className="v">{svDate(data.issued_at)}</span>
           </div>
+          <div className="frow">
+            <span className="l">Intygas av</span>
+            <span className="v">{data.attested_by}</span>
+          </div>
+          {(data.transferred ?? []).map((month, i) => (
+            <div className="frow" key={i}>
+              <span className="l">Såld</span>
+              <span className="v">{svMonth(month)}</span>
+            </div>
+          ))}
         </div>
         <div className="actions">
           <Link
@@ -193,8 +227,11 @@ export default async function VerifieraPage({
         </div>
       </main>
       <footer className="vf-foot">
-        Verifieringen gäller detta intygs äkthet vid skanningstillfället.
-        <span className="tok">token {uuid}</span>
+        Verifieringen gäller detta intygs äkthet vid skanningstillfället.{" "}
+        <TyckTillLink />
+        <span className="tok" data-tyck-till="dolj">
+          token {uuid}
+        </span>
       </footer>
     </>
   );

@@ -101,6 +101,7 @@ class TestEndpoints(FlaskTest):
                 "use_google_picture": test_user.use_google_picture,
                 # frontend_data derives this: admins are implicitly promoted
                 "v2_prod_access": test_user.v2_prod_access or test_user.is_admin,
+                "auth_method": "losenord",
             }
             with self.app as context:
                 # Unauthenticated users get an error response
@@ -519,7 +520,7 @@ class TestEndpoints(FlaskTest):
 
     def _post_oauth_location(self, return_to):
         """Location of the redirect that ends /api/login/google when `return_to` was saved before OAuth."""
-        user = mock.Mock(validated=True, uuid="u-1", username="x", email="x@example.com", id=1)
+        user = mock.Mock(validated=True, uuid="0" * 31 + "1", username="x", email="x@example.com", id=1)
         client = APP.test_client()
         with client.session_transaction(base_url=self.OAUTH_SITE) as sess:
             sess["return_to_after_oauth"] = return_to
@@ -931,6 +932,18 @@ class TestPaginatedIndividuals(FlaskTest):
             item = data["items"][0]
             self.assertEqual(item["herd"], self.herds[0].herd)
 
+    def test_lista_filter_rex(self):
+        db.Individual.update(rex=True).where(db.Individual.id == self.individuals[0].id).execute()
+        with self.app as ctx:
+            self._login(ctx, self.admin)
+            both = ctx.get("/api/individuals?per_page=200").get_json()
+            only = ctx.get("/api/individuals?per_page=200&rex=TRUE").get_json()
+            other = ctx.get("/api/individuals?per_page=200&rex=nej").get_json()
+        self.assertEqual([i["number"] for i in only["items"]], [self.individuals[0].number])
+        self.assertEqual(only["total_count"], 1)
+        self.assertGreater(both["total_count"], 1)
+        self.assertEqual(other["total_count"], both["total_count"])
+
     def test_pagination_page_and_total(self):
         with self.app as ctx:
             self._login(ctx, self.admin)
@@ -1116,6 +1129,22 @@ class TestPaginatedIndividuals(FlaskTest):
             data = resp.get_json()
             dates = [i["birth_date"] or "" for i in data["items"]]
             self.assertEqual(dates, sorted(dates))
+
+    def test_sort_by_birth_date_desc_puts_missing_dates_last(self):
+        """Newest first (the list's default); rabbits without a birth date last."""
+        for idx, birth in enumerate([datetime(2022, 2, 1), datetime(2023, 2, 1), None]):
+            breeding = db.Breeding.create(birth_date=birth, breeding_herd_id=self.herds[0])
+            db.Individual.create(
+                origin_herd=self.herds[0],
+                breeding=breeding,
+                number=f"G1-ND{idx}",
+            )
+
+        with self.app as ctx:
+            self._login(ctx, self.admin)
+            resp = ctx.get("/api/individuals?sort=birth_date&order=desc&search=G1-ND")
+            numbers = [i["number"] for i in resp.get_json()["items"]]
+            self.assertEqual(numbers, ["G1-ND1", "G1-ND0", "G1-ND2"])
 
     def test_access_control_viewer_sees_own_genebank_only(self):
         with self.app as ctx:

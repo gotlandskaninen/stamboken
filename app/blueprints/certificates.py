@@ -10,10 +10,13 @@ import os
 
 import utils.data_access as da
 import utils.database as db
+import utils.settings as settings
 from flask import Blueprint, jsonify, request, session
 from peewee import DoesNotExist
 from utils.cert_service_v2 import (
+    ATTESTER_NAME_MISSING,
     CERTIFICATE_V2_FIELDS,
+    attester_name,
     certificate_form,
     certificate_update,
     check_first_certificate_quota,
@@ -27,6 +30,7 @@ from utils.certificates_v2 import (
     compute_checksum,
     verify_pdf_signature,
 )
+from utils.herd_tracking import sale_months
 from utils.individual_commands import assign_certificate_number
 from utils.individual_number_v2 import RosterAliveExceeds6w
 
@@ -117,6 +121,8 @@ def issue_certificate(i_number):
 
     if not user.can_issue_certificate(individual):
         return problem(403, "Forbidden", "Du har inte behörighet att utfärda intyg för denna kanin")
+    if not attester_name(user):
+        return problem(400, "Bad Request", ATTESTER_NAME_MISSING)
 
     if individual.digital_certificate is not None:
         return problem(400, "Bad Request", "Certifikat finns redan — använd update-endpointen")
@@ -204,6 +210,8 @@ def update_certificate(i_number):
 
     if not user.can_issue_certificate(individual):
         return problem(403, "Forbidden", "Du har inte behörighet att uppdatera intyg för denna kanin")
+    if not attester_name(user):
+        return problem(400, "Bad Request", ATTESTER_NAME_MISSING)
 
     if individual.digital_certificate is None and not individual.certificate:
         return problem(400, "Bad Request", "Inget certifikat att uppdatera — utfärda ett nytt först")
@@ -344,7 +352,27 @@ def preview_certificate(i_number):
 
     from utils.cert_service_v2 import _generator, build_cert_data, compute_doc_hash_stub
 
+    # A preview names its viewer as attester, which is only true for someone who may issue the next version. A buyer
+    # or manager who only views gets the signed certificate as issued; data changed since would otherwise appear
+    # under the issuer's name (Codex on #7). Without any certificate the preview has no attester.
+    # Herd access, not can_issue_certificate: admin and the genebank manager still issue until #141, but have not
+    # seen the rabbit, so they too get the signed PDF.
+    viewer = da.fetch_user_info(user_id)
+    # By id: a herd code is unique only within its genebank.
+    in_herd = viewer.owns_herd_of(individual.origin_herd)
+    may_issue = in_herd and bool(attester_name(viewer))
+    has_current = (
+        db.DigitalCertificateV2.select()
+        .where((db.DigitalCertificateV2.individual == individual) & (db.DigitalCertificateV2.is_current == True))  # noqa: E712
+        .exists()
+    )
+    if not may_issue and (has_current or individual.digital_certificate is not None):
+        return download_certificate(i_number)
+    if in_herd and not may_issue:  # she would be the attester of the next version, but has no name yet
+        return problem(400, "attester_name_missing", ATTESTER_NAME_MISSING)
     cert_data = build_cert_data(individual, ind_dict, user_id)
+    if not may_issue:
+        cert_data["fullname"] = ""
     cert_data["digital_certificate"] = individual.digital_certificate or "PREVIEW"
     cert_data["replaces_date"] = ""
     cert_data["doc_hash_stub"] = compute_doc_hash_stub(cert_data)
@@ -379,6 +407,10 @@ def verify_certificate_get(token):
         )
         replaced_by_date = newest.issued_at.isoformat() if newest else None
 
+    # An old QR code tells nothing about later sales. The demo API answers the same QR codes from a copy up to a
+    # day old, which can hold a choice withdrawn since: no name there either.
+    current = cert.is_current and not settings.service.demo_instance
+
     return jsonify(
         {
             "verified": True,
@@ -387,12 +419,49 @@ def verify_certificate_get(token):
             "individual_number": individual.number,
             "genebank": individual.origin_herd.genebank.name if individual.origin_herd else "",
             "digital_certificate": individual.digital_certificate,
-            "issued_by": cert.issued_by.fullname or "Uppfödare",
+            "attested_by": _attested_by(cert, may_name=current),
+            # Public page (ADR-0016): month and year of each change of holder, never the day or the herd.
+            "transferred": sale_months(individual) if current else [],
             "issued_at": cert.issued_at.isoformat(),
             "is_current": cert.is_current,
             "replaced_by_date": replaced_by_date,
         }
     )
+
+
+ROLE_LABELS = {
+    "breeder": "Uppfödaren",
+    "admin": "Föreningen Gotlandskaninen (administratör)",
+    "manager": "Föreningen Gotlandskaninen (genbanksansvarig)",
+}
+
+
+def _attested_by(cert, may_name):
+    """
+    "Intygas av" on the public check page (stamboken #6, Jonas 2026-11-23): the person who issued the certificate,
+    by her full name only when she chose it; otherwise the role she issued in. A row from before issued_as existed
+    says "Uppfödaren": a role judged at the scan could change under an unchanged certificate.
+    """
+    user = cert.issued_by
+    if may_name and user.is_active and user.name_on_check_page is True and (user.fullname or "").strip():
+        return user.fullname.strip()
+    return ROLE_LABELS.get(cert.issued_as, ROLE_LABELS["breeder"])
+
+
+@certificates_bp.route("/v2/certificates/check-page-name", methods=["GET", "PUT"])  # [Next.js]
+@json_login_required
+def check_page_name():
+    """The signed-in person's own choice to show her name as "Intygas av" on the check page (stamboken #6); `show` is
+    null until she has chosen."""
+    user = da.fetch_user_info(session.get("user_id"))
+    if request.method == "PUT":
+        show = (request.get_json(silent=True) or {}).get("show")
+        if not isinstance(show, bool):
+            return problem(400, "Bad Request", "show måste vara true eller false")
+        db.User.update(name_on_check_page=show).where(db.User.id == user.id).execute()
+        logger.info(f"User:{user.id} set name_on_check_page={show}")
+        user = db.User.get_by_id(user.id)
+    return jsonify({"show": user.name_on_check_page})
 
 
 @certificates_bp.route("/v2/certificates/verify/<token>", methods=["POST"])  # [Next.js]

@@ -202,6 +202,11 @@ har ett medlemsnummer och kan omfatta en huvudmedlem, familjemedlemmar och sköt
 Besättningsnumret är medlemsnumret med rasens bokstav framför.\
 Kod: `Membership`, `member_number`, `Member` · Legacy-manual: "medlemsregistret" · Legacy: "medlemsmatrikeln" · Nytt UI: "Matrikel", "Medlemsmatrikel", "Medlemsnummer"
 
+**Medlemsavgift**\
+Avgiften för ett års medlemskap i Föreningen Gotlandskaninen. Samma avgift har också kallats
+årsavgift; skriv medlemsavgift, som inte går att blanda ihop med årsrapporten.\
+Kod: – · Nytt UI: "Medlemsavgiften", "Betala medlemsavgiften"
+
 **Oregistrerad unge**\
 Gamla manualen: en unge som ännu inte fått ett intyg. I nya Stamboken är det en rad i kullistan
 som inte registrerats än; den har bara ett preliminärt individnummer.\
@@ -223,6 +228,12 @@ Att räkna ut, innan du parar, vilken inavelskoefficient en tänkt avkomma skull
 gemensamma förfäder föräldrarna har. Är en förälder inte registrerad väljer du dess mor och far i
 stället. Nya Stamboken kan jämföra flera hanar mot samma hona.\
 Kod: `testbreed` · Legacy-manual: "Provparning", "provpara" · Legacy: "Provparning" · Nytt UI: samma, "Provpara"
+
+**Päls (normal, rex)**\
+Kaninens päls är antingen normal eller rex, ett val med två alternativ, inte en kryssruta. Normal är
+standardvärdet. "Hårlag" är det äldre fritextfältet (`hair_notes`) och används inte för valet
+Normal eller Rex; "rexpäls" används inte i gränssnittet.\
+Kod: `rex` (boolean) · Legacy-manual: – · Legacy: fritext i hårlag · Nytt UI: "Päls", "Normal", "Rex"
 
 **Registrera / registrerad kanin**\
 En registrerad kanin är inskriven i stamboken med intyg, pappersintyg eller digitalt intyg, och har
@@ -407,6 +418,7 @@ Projektägaren beslutade 2026-10-30:
 12. **Brokig**, inte scheck, om vita kaniner med färgade fläckar, som i färgatlasen och färgnamnen
     (beslutat 2026-11-12).
 13. Beslutat 2026-11-12: **Besättning** om en enskild uppfödares kaniner, aldrig genbank. **Genbank** är hela rasens bevarade population, och föreningen har två. **Genbanksbesättning** får användas som förtydligande. Orden följer handlingsplanen och FAO, se posterna Besättning och Genbank.
+14. **Medlemsavgift**, inte årsavgift, om avgiften för ett års medlemskap (beslutat 2026-11-18).
 
 ## Öppna frågor
 

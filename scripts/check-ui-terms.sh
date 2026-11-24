@@ -21,6 +21,7 @@
 #   Fritext om döden               Dödsorsak — inte "Dödsnotering" eller "Dödsanteckning"
 #   Okänt kön                      Okänt (kön är ett t-ord); Okänd bara om ett en-ord (okänd mor, okänd kanin)
 #   Registrerad kanin              inskriven i stamboken med intyg (papper eller digitalt) och därmed individnummer
+#   Avgiften för medlemskapet      Medlemsavgift — inte "Årsavgift"
 #
 # Söker i next-app/messages/sv.json och next-app/src/**/*.{ts,tsx} (utom tester). Ord inne i
 # kodidentifierare (camelCase, snake_case) räknas inte. FORBIDDEN skiljer inte på versal och
@@ -32,7 +33,7 @@ cd "$(dirname "$0")/.."
 
 FORBIDDEN='genbanksnummer|kaninnummer|certifikat|överlåt|byter hem|bekräfta flytt|sälj / flytta|genbanksmanager'
 FORBIDDEN+='|kullar & parningar|besättningshistoria|rapportera som död|dödsnotering|dödsanteckning'
-FORBIDDEN+='|försäljningsdatum|köpdatum|lista över individer'
+FORBIDDEN+='|försäljningsdatum|köpdatum|lista över individer|årsavgift'
 # Versal mitt i menyvalet, och Moder/Fader som hel etikett: i en sträng eller JSX-text
 # ("Moder", >Moder<) eller ensam på raden, så att moderId och "Moder Jord" inte träffas.
 CASED="Min Besättning|Alla Kaniner|(^[[:space:]]*|[\"'>])(Moder|Fader)([\"'<]|[[:space:]]*$)"

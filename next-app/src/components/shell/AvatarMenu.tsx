@@ -18,6 +18,7 @@ import {
 } from "@mui/material";
 import AccountCircleIcon from "@mui/icons-material/AccountCircle";
 import { useUser } from "@/lib/user-context";
+import { TyckTillDialog } from "@/components/tyck-till/TyckTillDialog.client";
 import {
   hasAnyVisible,
   isMemberAdmin,
@@ -31,6 +32,7 @@ import { useAppDispatch } from "@/hooks/useAppDispatch";
 export function AvatarMenu({ unread = 0 }: { unread?: number }) {
   const [anchor, setAnchor] = React.useState<null | HTMLElement>(null);
   const [modeDialogOpen, setModeDialogOpen] = React.useState(false);
+  const [tyckTillOpen, setTyckTillOpen] = React.useState(false);
   const router = useRouter();
   const dispatch = useAppDispatch();
   const user = useUser();
@@ -158,6 +160,14 @@ export function AvatarMenu({ unread = 0 }: { unread?: number }) {
         >
           Manual
         </MenuItem>
+        <MenuItem
+          onClick={() => {
+            closeMenu();
+            setTyckTillOpen(true);
+          }}
+        >
+          Tyck till
+        </MenuItem>
         {user && hasAnyVisible(user) && (
           <MenuItem
             onClick={() => {
@@ -219,6 +229,10 @@ export function AvatarMenu({ unread = 0 }: { unread?: number }) {
         <Divider />
         <MenuItem onClick={handleSignOut}>Logga ut</MenuItem>
       </Menu>
+      <TyckTillDialog
+        open={tyckTillOpen}
+        onClose={() => setTyckTillOpen(false)}
+      />
       <Dialog
         open={modeDialogOpen}
         onClose={() => setModeDialogOpen(false)}

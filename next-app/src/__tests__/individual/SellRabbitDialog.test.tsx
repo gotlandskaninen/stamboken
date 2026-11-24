@@ -162,10 +162,15 @@ describe("SellRabbitDialog", () => {
 
     it("shows the address always, e-mail and phone only after a yes", async () => {
       await chooseOutside();
+      const labels: [string, RegExp][] = [
+        ["Postadress", /^Postadress/],
+        ["E-post", /^E-post/],
+        ["Telefon", /^Telefon/],
+      ];
       const shown = () =>
-        ["Postadress", "E-post", "Telefon"].filter(
-          (label) => screen.queryByLabelText(new RegExp(`^${label}`)) !== null,
-        );
+        labels
+          .filter(([, label]) => screen.queryByLabelText(label) !== null)
+          .map(([name]) => name);
       expect(shown()).toEqual(["Postadress"]);
       fireEvent.click(screen.getByRole("checkbox", { name: OPTIN }));
       expect(shown()).toEqual(["Postadress", "E-post", "Telefon"]);

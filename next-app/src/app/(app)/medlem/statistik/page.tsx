@@ -4,6 +4,7 @@ import { Masthead } from "@/components/shell/Masthead";
 import ds from "@/styles/ds-admin.module.css";
 import styles from "../medlem.module.css";
 import { ExportButtons } from "../matrikel/ExportButtons";
+import { GuideLink } from "../guide/GuideLink";
 
 export const dynamic = "force-dynamic";
 
@@ -38,7 +39,14 @@ export default async function StatisticsPage() {
         eyebrow="Matrikel"
         title="Styrelsestatistik"
         meta="Medlemskap, personer och friexemplar"
-        actions={canExport ? <ExportButtons /> : undefined}
+        actions={
+          canExport ? (
+            <>
+              <GuideLink />
+              <ExportButtons />
+            </>
+          ) : undefined
+        }
       />
       <div className={styles.container}>
         <div className={`sb-card ${ds["ad-status-strip"]}`}>

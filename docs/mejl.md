@@ -103,7 +103,8 @@ mejlet går då till den adress som är aktuell just då.
 mejl, 2 för massutskick. **Kategori:** `T` (transaktion) eller `N` (notis).
 
 **Bilagor:** byggfunktionen kan returnera nyckeln `attachments` med en lista
-av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas.
+av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas. Nyckeln
+`reply_to` sätter `Reply-To` till en annan adress än avsändarens.
 
 **Försök och notering:** en byggfunktion som tar nyckelordet `attempt` får
 veta vilket försök det är (1 vid första), de andra får det inte. Ett fel i
@@ -128,15 +129,102 @@ eller, i läget `log`, loggats.
   `cancelled`. Huvudmedlemmen väljer adressen, så mejlet får inte bli ett sätt
   att överösa någon: ett medlemskap ger högst tio om dagen, och en adress får
   högst tre om dagen, räknat på mejl som har gått när nästa ska skickas.
+- `konto.kod` (prioritet 0) har en engångskod. Hittills finns bara texten för
+  en ny adress (`purpose = ny_adress`): mottagaren har bett om att byta
+  e-postadress, och mejlet har koden men ingen länk. En rad för inloggning
+  stoppas tills inloggningssidan finns.
+- `kontakt.epost_besked` (prioritet 0) går till adressen som byts ut när en
+  inloggningsadress byts, och under en väntan också till den första tidigare
+  adressen: att adressen är bytt och av vem (medlemmen själv, matrikelansvarig
+  eller någon annan). Den som inte känner igen bytet svarar på mejlet, som
+  hamnar i brevlådan som inläsningskön läser. Ingen adress står i mejlet.
+
+## Engångskoder och inloggningsadresser
+
+Koden finns i `app/utils/login_code.py` och `set_member_email` i
+`app/utils/matrikel.py`.
+
+- **Koden** är åtta siffror, en sträng med inledande nollor, och visas som
+  `4827 1953`. Raden i `login_code` har ett slumptal; koden är
+  HMAC-SHA256(`LINK_SECRET`, `"code:<värdnamn>:<rad-id>:<slumptal>"`) modulo
+  10^8 och lagras aldrig. Inmatningen bortser från mellanslag och bindestreck.
+- **Tio minuter, en gång, tre försök.** Försöket räknas upp i samma `UPDATE`
+  som kontrollerar gränsen och sparas för sig, före jämförelsen. Koden
+  förbrukas med en enda `UPDATE`, så av två samtidiga lyckas högst en, och
+  försöket räknas då tillbaka.
+- **Webbläsaren:** raden sparar en hash av en hemlighet som bara webbläsaren som
+  bad om koden har. Vid byte av adress ligger hemligheten i sessionen
+  (`login_request`). En ny begäran om en ny adress byter den och gör alla
+  medlemmens tidigare oanvända koder för en ny adress ogiltiga, oavsett
+  webbläsare; för inloggning gör en annans begäran aldrig medlemmens kod
+  ogiltig. Utloggning och **Avbryt**
+  (`DELETE /api/v2/members/me/contact/kod`) gör sessionens väntande kod
+  ogiltig. Bytet görs bara om sessionen fortfarande gäller när kontots rad är
+  låst. Den nya adressen prövas med samma kontroll som sändaren använder, så
+  en adress som inget mejl kan gå till får samma fel som en ogiltig adress och
+  kostar ingen kod. Demon vägrar bytet ("E-postadressen kan inte bytas i
+  testmiljön.") och sparar resten, eftersom kontots märke aldrig byts där.
+- **Gränser:** fem koder per person och dygn, 120 koder i timmen sammanlagt,
+  och efter 50 felaktiga koder på en timme tas inga koder emot eller skickas
+  förrän de har åldrats ut. Felen räknas på rader skapade den senaste timmen
+  och tio minuter till, så ett fel räknas minst en timme. Statusvyn visar då
+  `kodinloggning_stangd`.
+- **Utan `LINK_SECRET`, och i produktion med `MAIL_MODE=log`,** vägrar
+  koderna (503). I läget `log` utanför produktion står koden i loggen.
+- **Gallring:** en kod som har gått ut tappar den nya adressen inom en minut
+  (`login_code_expire`), och raderna raderas efter ett dygn i nattjobbet
+  kl. 03:30, i samma transaktion som mejlkön glömmer vart deras mejl gick.
+  Demokopian får inga rader ur `login_code` eller `member_previous_address`.
+- **En adress, en person.** En adress som kan ta emot en kod hör till en
+  person: `Member.email` och en tidigare adress som fortfarande gäller, för en
+  person som inte är avslutad och är huvudmedlem eller har ett konto.
+  `reserve_login_address` kontrollerar det under ett lås på adressen i varje
+  skrivning som kan skapa en sådan adress (ändrad adress, nytt medlemskap, ny
+  huvudmedlem, byte av huvudmedlem, koppling av konto, godkänd ansökan och
+  importen). Blir en person innehavare igen (koppling av konto, byte av
+  huvudmedlem) reserveras också hennes tidigare adresser som fortfarande
+  gäller, med låsen i en fast ordning. Matrikelansvarig och den som godkänner en
+  ansökan får 409
+  "Adressen används redan av en annan medlem"; medlemmen själv får aldrig det
+  beskedet. Två personer med samma adress räknas i nattjobbet och visas i
+  statusvyn som `adresskrock`. En tom sträng är ingen adress.
+- **Sju dagar.** All skrivning av en befintlig persons `Member.email` går
+  genom `set_member_email`, utom anonymiseringen, som tömmer adressen själv och
+  raderar personens tidigare adresser och kodrader. Byter medlemmen själv
+  adress (efter en kod till den nya) gäller den gamla för inloggning i sju
+  dagar till och den nya genast. Byte gjort av någon annan (gamla adressen sju
+  dagar till, den nya först efter dem) finns i funktionen men har ingen
+  anropare än; det kommer senare, med blankettvägen. Matrikelansvarigs byte
+  gäller genast, och den gamla slutar gälla. Under en väntan ligger den första
+  tidigare adressen fast: ett nytt byte startar om klockan, med låset på den
+  gamla adressen, men gör aldrig adressen däremellan giltig; den får en rad som
+  aldrig gäller för inloggning, så att beskedet har en mottagare. Ett byte
+  tillbaka avslutar väntan. Varje byte gör personens oanvända koder ogiltiga
+  och avslutar kontots sessioner. Raderna i `member_previous_address` raderas
+  två dygn efter att adressen slutat gälla, och vid anonymisering.
+
+## Mejltypen om Tyck till
+
+`tyck_till.inskick` går till föreningens funktionsadress (mottagartypen
+`tyck_till`, adressen ur `TYCK_TILL_MOTTAGARE`) när någon har skickat en
+synpunkt med knappen "Tyck till" ([tyck-till.md](tyck-till.md)). Raden
+har bara heltal (inskickets UUID som `UUID.int`, issuens nummer, vilket repo och
+om issuen hamnade på tavlan). Texten, sidan, bilderna och kontaktuppgifterna
+läses ur inskickets mapp när mejlet byggs, och finns mappen inte längre blir
+mejlet `cancelled`. Bilderna är bilagor, och `Reply-To` är den adress medlemmen
+vill ha svar till.
 
 ## Mottagare
 
 `recipient_kind` säger var adressen finns. Inbyggda: `member`
 (`Member.email`), `user` (`hbuser.email`), `application` (ansökan om
 medlemskap), `inbox_sender` (avsändaren av en mejlad post i
-inläsningskön, [inkorg-gmail.md](inkorg-gmail.md)) och `buyer_contact`
+inläsningskön, [inkorg-gmail.md](inkorg-gmail.md)), `buyer_contact`
 (köparen utanför föreningen, `BuyerContact.email`, i statusvyn
-`Köpare <id>`). En ny sort registreras med
+`Köpare <id>`), `login_code` (adressen en
+kod går till, ingen när koden är använd, ogiltig eller för gammal),
+`member_previous_address` (en tidigare adress) och `tyck_till`
+(funktionsadressen för Tyck till, alltid samma). En ny sort registreras med
 `@recipient_kind("<namn>")` och en funktion som tar id:t och returnerar
 `Recipient(address, label)` eller `None`. `label` är det statusvyn visar, ett
 namn, aldrig adressen. Saknas mottagaren, adressen eller
@@ -301,7 +389,8 @@ genbank):
 - `GET /messages`: listan med filter (`status`, `kind`, `genebank_id`,
   `herd_id`, `from`, `to`, `limit`, `offset`) och larmen: reläet tar inte
   emot, kön står still (`last_run_at` äldre än 5 minuter), läget är `log` i
-  produktion (ingen demo; raderna blir `logged` för gott), senaste lyckade
-  utskick.
+  produktion (ingen demo; raderna blir `logged` för gott), kodinloggningen är
+  stängd (`kodinloggning_stangd`), en inloggningsadress hör till fler än en
+  person (`adresskrock`), senaste lyckade utskick.
 - `POST /messages/<id>/retry`: `failed`, `bounced` eller `logged` tillbaka till kön.
 - `POST /messages/<id>/cancel`: stoppar ett köat mejl.

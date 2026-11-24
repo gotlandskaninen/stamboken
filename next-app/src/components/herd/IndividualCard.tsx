@@ -26,6 +26,8 @@ interface IndividualCardProps {
   actions?: React.ReactNode;
   /** Genetics summary (band + F), a Server Component element under Suspense */
   geneticsSlot?: React.ReactNode;
+  /** The digital certificate's actions under the badges (detail page only) */
+  certificateSlot?: React.ReactNode;
   /** Optional photo upload overlay rendered over CardMedia (owners only) */
   onPhotoUpload?: React.ReactNode;
 }
@@ -220,6 +222,7 @@ export function IndividualCard({
   onClick,
   actions,
   geneticsSlot,
+  certificateSlot,
   onPhotoUpload,
 }: IndividualCardProps) {
   const cacheBuster = individual.updated_at
@@ -481,6 +484,8 @@ export function IndividualCard({
             <React.Fragment key="genetics">{geneticsSlot}</React.Fragment>
           )}
         </Box>
+
+        {certificateSlot}
 
         {/* Parent info (compact) */}
         {(individual.mother || individual.father) && (

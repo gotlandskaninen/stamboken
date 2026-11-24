@@ -40,9 +40,9 @@ const MELLERUD = { label: "Mellerudskanin", href: "/mellerudskanin" };
 const NEXT_STEPS: Record<string, NextStepsContent> = {
   foreningen: {
     ...JOIN,
-    more: [GENBANK, { label: "Styrelse och kontakt", href: "/styrelsen" }],
+    more: [GENBANK, { label: "Kontakt och styrelse", href: "/kontakt" }],
   },
-  styrelsen: {
+  kontakt: {
     ...JOIN,
     more: [{ label: "Om föreningen", href: "/foreningen" }],
   },
@@ -92,7 +92,7 @@ const NEXT_STEPS: Record<string, NextStepsContent> = {
         label: "Mejla kassören om medlemskap",
         href: "mailto:info@gotlandskaninen.se",
       },
-      { label: "Styrelse och kontakt", href: "/styrelsen" },
+      { label: "Kontakt och styrelse", href: "/kontakt" },
     ],
   },
 };

@@ -22,9 +22,11 @@ import {
 } from "@mui/material";
 import CloseIcon from "@mui/icons-material/Close";
 import { useTranslation } from "react-i18next";
+import { CheckPageNameHint } from "@/components/herd/CheckPageNameHint";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useMode } from "@/lib/mode-context";
+import { CoatChoice } from "@/components/herd/CoatChoice";
 import { ColorPicker, colorsFor } from "@/components/herd/ColorPicker";
 import {
   promoteBunny,
@@ -126,6 +128,7 @@ export function BunnyPromoteDialog({
   const [clawColor, setClawColor] = useState("");
   const [bellyColor, setBellyColor] = useState("");
   const [hairNotes, setHairNotes] = useState("");
+  const [rex, setRex] = useState(false);
   // A rabbit is only registered with a certificate; the roster issues the PDF
   const [certificateType, setCertificateType] = useState<"paper" | "digital">(
     "digital",
@@ -229,6 +232,8 @@ export function BunnyPromoteDialog({
         return t("addRabbit.errorLitterSize6wRequired");
       case "roster_alive_exceeds_6w":
       case "litter_size6w_above_born":
+      case "digital_certificate_forbidden":
+      case "attester_name_missing":
         return raw; // the API's sentence (with the counts; the roster offers the fix)
       default:
         return t("litterRoster.promoteError");
@@ -252,6 +257,7 @@ export function BunnyPromoteDialog({
       claw_color: clawColor || undefined,
       belly_color: bellyColor || undefined,
       hair_notes: hairNotes || undefined,
+      rex,
     });
 
     setNumberConflict(result.success ? null : (result.numberCheck ?? null));
@@ -339,6 +345,7 @@ export function BunnyPromoteDialog({
     setClawColor("");
     setBellyColor("");
     setHairNotes("");
+    setRex(false);
     setCertificateType("digital");
     setPaperCertificate("");
     setPaperNumber("");
@@ -601,6 +608,9 @@ export function BunnyPromoteDialog({
                 fullWidth
               />
 
+              {/* Coat: Normal or Rex */}
+              <CoatChoice rex={rex} onChange={setRex} />
+
               {/* Hair notes */}
               <TextField
                 label={t("addRabbit.hairNotes")}
@@ -631,6 +641,15 @@ export function BunnyPromoteDialog({
                   </MenuItem>
                 </Select>
               </FormControl>
+              {certificateType === "digital" && (
+                <Typography
+                  variant="caption"
+                  sx={{ color: "text.secondary", mt: -1, ml: 1.5 }}
+                >
+                  {t("addRabbit.certificateAttester")}
+                </Typography>
+              )}
+              {certificateType === "digital" && <CheckPageNameHint />}
 
               {/* Paper certificate number */}
               {certificateType === "paper" && (

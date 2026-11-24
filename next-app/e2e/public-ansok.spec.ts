@@ -13,7 +13,7 @@ test("anonymous user submits a membership application", async ({ page }) => {
   // Clicking the next field blurs postnummer, which is what formats it.
   await page.getByLabel(/Postort/i).click();
   await page.getByLabel(/Postort/i).fill("Visby");
-  await page.getByLabel(/GDPR/i).check();
+  await page.getByLabel(/personuppgifter/i).check();
 
   await expect(page.getByLabel(/Postnummer/i)).toHaveValue("623 55");
   await page.getByRole("button", { name: /Skicka ansökan/i }).click();
@@ -21,4 +21,18 @@ test("anonymous user submits a membership application", async ({ page }) => {
   await expect(page.getByText(/Tack för din ansökan/i)).toBeVisible({
     timeout: 10_000,
   });
+});
+
+// The applicant confirms having read the policy, so it must open without a login.
+test("the privacy policy opens for an anonymous visitor", async ({ page }) => {
+  await page.goto("/ansok");
+  await expect(
+    page.getByRole("link", { name: /integritetspolicyn/i }),
+  ).toHaveAttribute("href", "/integritetspolicy");
+
+  await page.goto("/integritetspolicy");
+  await expect(page).toHaveURL(/\/integritetspolicy$/);
+  await expect(
+    page.getByRole("heading", { level: 1, name: "Integritetspolicy" }),
+  ).toBeVisible();
 });

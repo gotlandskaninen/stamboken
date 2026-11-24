@@ -29,6 +29,8 @@ services:
       # Match CI (memory://): don't inherit Redis db 3 from base compose —
       # xdist worker gw1 owns db 3 and its flushdb would hit limiter keys
       - RATELIMIT_STORAGE_URL=memory://
+      # The fixtures give roles to accounts that sign in with a password.
+      - ALLOW_ROLE_PASSWORD_LOGIN=true
     volumes:
       # test_access_rules.py checks LEGACY_HOSTS against the nginx configs.
       - ./nginx:/nginx:ro

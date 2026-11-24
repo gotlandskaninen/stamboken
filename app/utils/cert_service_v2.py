@@ -38,10 +38,19 @@ _ATLAS = {(id_, code, name) for id_, code, name, _ in ATLAS_FARGER}
 # individual belongs to. The reason text mentions the specific genebank for
 # traceability, but the contact info is the association's single address.
 _ASSOCIATION_CONTACT = "admin@gotlandskaninen.se"
-_GENEBANK_TO_BREED = {
+_GENEBANK_TO_BREED = {  # the short names, and the full ones that `flask seed create` gives the genebanks
     "Gotland": "Gotlandskanin",
     "Mellerud": "Mellerudskanin",
+    "Gotlandskanin": "Gotlandskanin",
+    "Mellerudskanin": "Mellerudskanin",
 }
+
+
+def _breed_for(individual):
+    genebank_name = ""
+    if individual.origin_herd and individual.origin_herd.genebank:
+        genebank_name = individual.origin_herd.genebank.name or ""
+    return _GENEBANK_TO_BREED.get(genebank_name, "genbankskanin")
 
 
 def _signature_metadata_for(individual):
@@ -51,10 +60,7 @@ def _signature_metadata_for(individual):
     so contact_info is constant. The reason is parameterised with the breed
     name of the individual's origin genebank for traceability.
     """
-    genebank_name = ""
-    if individual.origin_herd and individual.origin_herd.genebank:
-        genebank_name = individual.origin_herd.genebank.name or ""
-    breed = _GENEBANK_TO_BREED.get(genebank_name, "genbankskanin")
+    breed = _breed_for(individual)
     reason = f"Signerat av Föreningen Gotlandskaninen för {breed}"
     if cert_settings.demo_watermark:
         reason = f"DEMO – EJ GILTIGT INTYG. {reason}"
@@ -72,9 +78,18 @@ def build_cert_data(individual, ind_data, user_id):
     raw_color_note = ind_data.get("color_note") or ""
 
     cert_data = get_certificate_data(ind_data, user_id)
+    # The person who issues attests personally: "fullname" stays the issuing user's from get_certificate_data, not
+    # the herd holder's, so a family member or caretaker signs in her own name (Jonas 2026-11-23). The herd is the
+    # origin herd, not the one the rabbit is in now, which after a sale is the buyer's or GX1/MX1.
+    breeder = individual.origin_herd
+    cert_data["herd"] = breeder.herd if breeder else ""
     cert_data["notes"] = raw_notes
     cert_data["color_note"] = raw_color_note
     cert_data["foot_ring"] = ind_data.get("foot_ring") or ""
+    # None until the rex column exists (colour atlas PR 2); then the certificate prints Päls: Normal or Rex
+    cert_data["rex"] = getattr(individual, "rex", None)
+    cert_data["microchip"] = individual.microchip or ""
+    cert_data["breed"] = _breed_for(individual).capitalize()
     # The colour's id is its atlas number; the template skips the chip when empty.
     # Print the number only when id and name are the atlas's: another genebank's colour, or a database
     # seeded before the ids were fixed, would print a wrong number. shortcut: a colour outside the atlas
@@ -101,7 +116,35 @@ def compute_doc_hash_stub(cert_data):
     return compute_checksum(canonical.encode("utf-8"))[:8].upper()
 
 
-def generate_and_store(individual, user, ind_data, user_id):
+# The person who issues attests in her own name, so an account without one cannot issue (#141).
+ATTESTER_NAME_MISSING = (
+    "Ditt konto saknar namn, och den som utfärdar står som intygare på intyget. "
+    "Mejla stamboken@gotlandskaninen.se så lägger vi in det, och försök sedan igen."
+)
+
+
+def attester_name(user):
+    """The issuing user's name as it goes on the certificate, or "" when the account has none."""
+    return ((user.fullname if user else None) or "").strip()
+
+
+def issuer_role(user, individual):
+    """
+    The role `user` issues the rabbit's certificate in, for "Intygas av" on the check page (stamboken #6, Jonas
+    2026-11-23): anyone with access to the origin herd (family, caretaker) is the breeder; else an admin or the
+    genebank's manager issues for the association.
+    """
+    herd = individual.origin_herd
+    if herd and herd.id in user.effective_herd_ids():  # by id: a herd code is unique only within a genebank
+        return "breeder"
+    if user.is_admin:
+        return "admin"
+    if herd and herd.genebank_id in (user.is_manager or []):
+        return "manager"
+    return "breeder"
+
+
+def generate_and_store(individual, user, ind_data, user_id, replaces_v1=False):
     """Generate, sign, and store a v2 certificate.
 
     Order of operations (Fix 2 — failure-safe ordering):
@@ -138,6 +181,8 @@ def generate_and_store(individual, user, ind_data, user_id):
         .first()
     )
     cert_data["replaces_date"] = prev.issued_at.date().isoformat() if prev else ""
+    # Reissue of a v1 certificate (a PDF without a v2 row): v1 kept no issue date, so the line names the number.
+    cert_data["replaces_v1"] = bool(replaces_v1 and not prev)
     cert_data["doc_hash_stub"] = compute_doc_hash_stub(cert_data)
 
     # Step 1: Generate + sign PDF (no DB/S3 side effects yet)
@@ -174,6 +219,7 @@ def generate_and_store(individual, user, ind_data, user_id):
             verification_token=token,
             certificate_type="pedigree",
             issued_by=user,
+            issued_as=issuer_role(user, individual),
             file_path=file_path,
             checksum=sha,
         )

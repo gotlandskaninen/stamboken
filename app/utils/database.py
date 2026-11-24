@@ -65,8 +65,11 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # Individual.microchip (36) + billing address on membership and member_application (37) +
 # retiring the PDF rows of digital certificates that a paper certificate replaced (38) +
 # audit_log IP retention index (39) + herd bank privacy reset (40) + the mail queue (41) +
-# the intake queue (42) and its retention (43) + buyer_contact (44) + notice.individual (45).
-CURRENT_SCHEMA_VERSION = 45
+# the intake queue (42) and its retention (43) + buyer_contact (44) +
+# matrikel_audit rows without a user, written by the nightly anonymization (45) +
+# the coat column individual.rex (46) + hbuser.name_on_check_page and digitalcertificatev2.issued_as (47) +
+# one account per Google identity (48) + one-time codes and members' previous addresses (49) + notice.individual (50).
+CURRENT_SCHEMA_VERSION = 50
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -773,6 +776,7 @@ class Individual(BaseModel):
     claw_color = TextField(null=True)
     belly_color = TextField(null=True)
     hair_notes = TextField(null=True)
+    rex = BooleanField(default=False, constraints=[SQL("DEFAULT false")])  # the coat: rex, else normal
     is_active = BooleanField(null=True, default=True)
     has_photo = BooleanField(null=True, default=False)
     butchered = BooleanField(null=True, default=False)
@@ -1154,6 +1158,10 @@ class User(BaseModel, UserMixin):
     # login_user() natively refuses inactive users. Normal audited column —
     # flag flips MUST produce audit rows, so NOT change_detection_excluded.
     is_active = BooleanField(default=True)
+    # The person's own choice to show her full name as "Intygas av" on the public certificate check page
+    # (stamboken #6). NULL = not chosen yet (every new account), shown as not chosen. Only she sets it, through its
+    # own endpoint; anonymisation switches it off.
+    name_on_check_page = BooleanField(null=True)
 
     def update_last_active(self):
         self.last_active = datetime.now()
@@ -1218,7 +1226,7 @@ class User(BaseModel, UserMixin):
             role["herd"] = target_id
         privs += [role]
         self.privileges = privs
-        self.save()
+        self.save(only=[User._privileges])
 
     def has_role(self, level, target_id=None):
         """
@@ -1267,7 +1275,7 @@ class User(BaseModel, UserMixin):
                     continue
             new_privs += [role]
         self.privileges = new_privs
-        self.save()
+        self.save(only=[User._privileges])
 
     @property
     def is_admin(self):
@@ -1563,28 +1571,28 @@ class User(BaseModel, UserMixin):
 
         return False
 
+    def owns_herd_of(self, herd):
+        """Access to `herd` as one rabbit's own herd: by id (a herd code is unique only within its genebank), and
+        never GX1/MX1, which hold every rabbit sold or imported from outside the genebank."""
+        return herd is not None and herd.herd not in OUTSIDE_GENEBANK_HERDS and herd.id in self.effective_herd_ids()
+
     def can_issue_certificate(self, individual):
         """Check if user can issue/update certificates for this individual.
 
-        Uses origin_herd (breeder), not current_herd. The breeder retains
-        certificate authority even after the rabbit moves to a new herd.
+        The person who issues attests in her own name that the data match the rabbit, so only those with access to
+        the origin herd (breeder) may: owner, main member, family or caretaker. Not the genebank manager or admin,
+        who have not seen the rabbit (Jonas 2026-11-23, #141). Uses origin_herd, not current_herd: the breeder keeps
+        the right after the rabbit moves to a new herd.
         """
-        if self.is_admin:
-            return True
-        if self.is_owner and individual.origin_herd.herd in self.is_owner:
-            return True
-        if self.is_manager and individual.origin_herd.genebank_id in self.is_manager:
-            return True
-        return False
+        return self.owns_herd_of(individual.origin_herd)
 
     def can_view_certificate(self, individual):
         """Who may download or preview the certificate (ADR-0016): the
         current owner, the breeder (origin herd), the genebank's manager
         and admin. A viewer role on the genebank is not enough."""
-        if self.can_issue_certificate(individual):
+        if self.is_admin or (self.is_manager and individual.origin_herd.genebank_id in self.is_manager):
             return True
-        herd = individual.current_herd
-        return bool(herd and self.is_owner and herd.herd in self.is_owner)
+        return self.owns_herd_of(individual.origin_herd) or self.owns_herd_of(individual.current_herd)
 
     class Meta:  # pylint: disable=too-few-public-methods
         """
@@ -1884,6 +1892,13 @@ class Authenticators(BaseModel):
     auth_data = TextField(null=True)
 
 
+# A Google identity is its "sub", stored as is. Two accounts linking one at once each lock only their own row.
+GOOGLE_IDENTITY_INDEX_SQL = (
+    'CREATE UNIQUE INDEX IF NOT EXISTS "idx_authenticators_google" ON "authenticators" (auth_data) '
+    "WHERE auth = 'google'"
+)
+
+
 class SchemaHistory(BaseModel):
     """
     Contains schema migration history for the database.
@@ -1943,6 +1958,8 @@ class DigitalCertificateV2(BaseModel):
     verification_token = UUIDField(unique=True, default=uuid.uuid4)
     certificate_type = CharField(default="pedigree")
     issued_by = ForeignKeyField(User)
+    # The role she issued in (stamboken #6): "breeder", "admin" or "manager". NULL on rows issued before it existed.
+    issued_as = CharField(max_length=20, null=True)
     issued_at = DateTimeField(default=datetime.now)
     file_path = CharField()
     checksum = CharField(64)
@@ -2024,6 +2041,8 @@ class Member(BaseModel):
     # Workspace account provisioning. The auto-link helper matches
     # User.email == Member.workspace_email — never against contact email.
     workspace_email = CharField(max_length=255, null=True)
+    # When `email` starts to count for login (utils.matrikel.set_member_email); NULL: at once.
+    email_login_from = TimestampTZField(null=True)
     membership = ForeignKeyField(Membership, null=False, backref="persons")
     role = CharField(max_length=20, default="huvudmedlem")
     end_date = DateField(null=True)
@@ -2117,7 +2136,7 @@ class MatrikelAudit(BaseModel):
     """
 
     id = AutoField(primary_key=True, column_name="matrikel_audit_id")
-    actor = ForeignKeyField(User, null=False, backref="matrikel_actions")
+    actor = ForeignKeyField(User, null=True, backref="matrikel_actions")  # NULL: the nightly anonymization (#70)
     action = CharField(max_length=50, null=False)
     membership = ForeignKeyField(Membership, null=False, backref="audit_entries")
     payload = BinaryJSONField(default=dict)
@@ -2212,6 +2231,41 @@ class MailSender(BaseModel):
 
     class Meta:
         table_name = "mail_sender"
+
+
+class LoginCode(BaseModel):
+    """One one-time code by mail (utils.login_code). It holds a nonce, never the code, which is computed from it."""
+
+    id = AutoField()
+    member = ForeignKeyField(Member, on_delete="CASCADE")
+    user = ForeignKeyField(User, null=True, on_delete="CASCADE")  # the person's account when the code was made
+    purpose = TextField(constraints=[Check("purpose IN ('login', 'ny_adress')")])
+    address_hash = TextField()  # where the code went
+    new_address = TextField(null=True)  # ny_adress only, until the code is used or has expired
+    nonce = TextField()
+    browser_hash = TextField()
+    created_at = TimestampTZField(default=_utcnow)
+    failed = SmallIntegerField(default=0)
+    used_at = TimestampTZField(null=True)  # used, or voided by an address change
+
+    class Meta:
+        table_name = "login_code"
+        indexes = ((("browser_hash",), False), (("created_at",), False))
+
+
+class MemberPreviousAddress(BaseModel):
+    """An address a person had (utils.matrikel.set_member_email), and how long it still counts for login."""
+
+    id = AutoField()
+    member = ForeignKeyField(Member, on_delete="CASCADE")
+    address = TextField()
+    login_until = TimestampTZField(null=True)  # NULL: not a login address at all
+    purge_at = TimestampTZField()
+    changed_by = ForeignKeyField(User, null=True, on_delete="SET NULL", column_name="changed_by")
+
+    class Meta:
+        table_name = "member_previous_address"
+        indexes = ((("purge_at",), False),)
 
 
 # The intake queue (docs/inkorg.md). None of these tables is audited: inbox_event is the history, and audit
@@ -2413,6 +2467,8 @@ MODELS = [
     MailMessage,
     MailAttempt,
     MailSender,
+    LoginCode,
+    MemberPreviousAddress,
     *INBOX_MODELS,
 ]
 
@@ -2481,6 +2537,9 @@ def init():
 
     # Unique litter_number index for fresh databases (migration won't run)
     _create_breeding_litter_number_index()
+
+    # Same for the unique Google identity (migrate_43_to_44)
+    DATABASE.execute_sql(GOOGLE_IDENTITY_INDEX_SQL)
 
     # 999.5: herd_tracking CHECKs, partial indexes, created_at default (migration won't run)
     _create_herd_tracking_guards()
@@ -3037,7 +3096,9 @@ AUDITED_TABLES = {
     "color": ("color_id", [], []),
     # password_hash was dropped in schema v6 but stays snapshot-excluded as
     # belt-and-suspenders for any pre-v6 audit rows.
-    "hbuser": ("user_id", ["password_hash"], ["last_active"]),
+    # name_on_check_page (stamboken #6): a change of only her check page choice writes no audit row, which would copy
+    # the account's name and e-mail, also when anonymisation switches it off. The app log records her own choices.
+    "hbuser": ("user_id", ["password_hash"], ["last_active", "name_on_check_page"]),
     # New in Phase 17:
     "genebank": ("genebank_id", [], []),  # name edits need a trail
     "authenticators": ("auth_id", ["auth_data"], []),
@@ -4105,6 +4166,153 @@ def migrate_43_to_44():
 
 
 def migrate_44_to_45():
+    """Issue #70: matrikel_audit rows written by the nightly anonymization have no user as actor."""
+    with DATABASE.atomic():
+        # DROP NOT NULL is idempotent; SQLite builds the table from the model, which already allows NULL.
+        if not isinstance(DATABASE, SqliteDatabase) and "matrikel_audit" in DATABASE.get_tables():
+            DATABASE.execute_sql('ALTER TABLE "matrikel_audit" ALTER COLUMN "actor_id" DROP NOT NULL')
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=45, comment="matrikel_audit.actor may be NULL", applied=datetime.now()
+        ).execute()
+
+
+_REX_MENTION = "rex"  # unanchored: "ickerex" and "dvärgrex" are candidates too, and fail the shape below
+# Reads individual.hair_notes, color_note and (for the "normal" check only) notes; nothing else.
+# A field that contains rex anywhere is clean only if it is colour words from a closed vocabulary followed by rex or
+# rexpäls(ad|ade|en) as the last token, and it has none of the doubts below: carriers, negations, relatives,
+# questions. A "normal" in hair_notes, color_note or notes blocks the row, and so does a hair_notes that is
+# exactly an explicit no ("nej", "ej", "inga avvikelser", "inga", "-", "normal"), even when rex is only in
+# color_note. Everything else is deliberately left rex = false for manual review. Those rows stay findable
+# afterwards by a read-only query (rex false and the text mentions rex), so the migration logs counts only, never ids.
+_REX_WORDS = (
+    r"sv[aä]rt|sv[aä]rta|bl[åa]|bl[åa]tt|bl[åa]a|brun|bruna|brunt|gul|gula|gult|vit|vita|vitt|gr[åa]|gr[åa]tt|gr[åa]a"
+    r"|r[öo]d|r[öo]da|r[öo]tt|tegel(r[öo]d)?|choklad(brun)?|japan|siames|agouti|havanna|madagaskar|orange|lila"
+    r"|chinchilla|harlekin|tricolor|albino|hermelin|dalmatiner|vildf[äa]rgad|ja"
+)
+# Words are joined by whitespace, "/", "," or "."; a "-" only joins one colour word directly to rex.
+_REX_SHAPE = r"^\s*((" + _REX_WORDS + r")[\s/,.]+)*((" + _REX_WORDS + r")-)?rex(-?päls(ad|ade|en)?)?[.\s]*$"
+_REX_NO = r"^\s*(nej|ej|inga avvikelser|inga|-|normal)\s*$"
+_REX_DOUBT = (
+    r"b[äÄ]r",
+    r"anlag",
+    r"inslag",
+    r"\msplit",
+    r"\m(ej|inte|inget|ingen|icke|utan|nej|ev|kanske|negativ|testad|känt|efter|syskon|kullsyskon|far|mor|dotter|son)\M",
+    r"f[öÖ]r[äÄ]ld",
+    r"fader|moder",
+    r"hane|hona",
+    r"rex(fri|mor|far)",
+    r"\?",
+    r"mamma|pappa|bror|syster|mormor|farfar|morfar|moster|faster|avkomma|kull|syskon|dotter",
+    r"eventuellt|troligen|m[öÖ]jligen|os[äÄ]ker|oklart|ok[äÄ]nt|\mkan\M|inga|aldrig|\mnot\M|\mnon\M",
+    r"fri\M|fr[åÅ]n|tecken|halv|\x25|\mgen|linje|korsning|hetero|negativ|\mliknande",
+    r"\m(far|mor)|sakna|\mno\M",
+)
+
+
+def _rex_sql(template, fields=("hair_notes", "color_note")):
+    """One condition over the fields, each judged on its own: template with FIELD."""
+    return " OR ".join(template.replace("FIELD", f"normalize(coalesce({f}, ''), NFC)") for f in fields)
+
+
+_REX_MENTIONED = _rex_sql("FIELD ~* '" + _REX_MENTION + "'")
+_REX_DOUBTFUL = (  # a field with rex in it that is not clean, a "normal" in any field, or an explicit no in hair_notes
+    "("
+    + _rex_sql(
+        "(FIELD ~* '"
+        + _REX_MENTION
+        + "' AND (FIELD !~* '"
+        + _REX_SHAPE
+        + "' OR FIELD ~* '"
+        + "|".join(_REX_DOUBT)
+        + "'))"
+    )
+    + ") OR ("
+    + _rex_sql("FIELD ~* 'normal'", ("hair_notes", "color_note", "notes"))
+    + ") OR ("
+    + _rex_sql("FIELD ~* '" + _REX_NO + "'", ("hair_notes",))
+    + ")"
+)
+
+
+def migrate_45_to_46():
+    """individual.rex: the coat, rex or normal. Rabbits whose notes say rex get true; the notes are not touched.
+    The column is added in raw SQL (no audit rows); the UPDATE is audited, so the rows it set can be found.
+    Only the run that creates the column sets rex from text; a replay must not undo later corrections."""
+    with DATABASE.atomic():
+        created = "rex" not in {c.name for c in DATABASE.get_columns("individual")}
+        DATABASE.execute_sql("ALTER TABLE individual ADD COLUMN IF NOT EXISTS rex BOOLEAN NOT NULL DEFAULT false")
+        if created:
+            excluded = DATABASE.execute_sql(
+                f"SELECT count(*) FROM individual WHERE ({_REX_MENTIONED}) AND ({_REX_DOUBTFUL})"
+            ).fetchone()[0]
+            done = DATABASE.execute_sql(
+                f"UPDATE individual SET rex = true WHERE ({_REX_MENTIONED}) AND NOT ({_REX_DOUBTFUL})"
+            ).rowcount
+            note = f"set from free text on {done}, {excluded} excluded"
+        else:
+            note = "column existed, free text not read"
+        logger.info(f"rex: {note}")
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=46,
+            comment=f"individual.rex; {note}",
+            applied=datetime.now(),
+        ).execute()
+
+
+def migrate_46_to_47():
+    """A person's choice to show her name as "Intygas av" on the public certificate check page (stamboken #6),
+    and the role a certificate was issued in (NULL on older rows). Accounts that exist now keep showing their name,
+    as the check page did before (Jonas 2026-11-23), until they change it; a new account starts as not chosen (NULL)."""
+    with DATABASE.atomic():
+        if "name_on_check_page" not in {c.name for c in DATABASE.get_columns("hbuser")}:
+            # The default fills the existing rows without firing the audit row trigger (no per-user audit copy);
+            # dropping it leaves NULL for every account created afterwards.
+            DATABASE.execute_sql("ALTER TABLE hbuser ADD COLUMN name_on_check_page BOOLEAN DEFAULT true")
+            DATABASE.execute_sql("ALTER TABLE hbuser ALTER COLUMN name_on_check_page DROP DEFAULT")
+            # Re-attach the audit triggers with name_on_check_page excluded from change detection (AUDITED_TABLES),
+            # so the update below and every later change of only the choice write no audit row. Idempotent.
+            _create_audit_table_and_triggers()
+            # Accounts whose person was anonymised already: off, as anonymize_person sets it from now on. Only when
+            # the column is new: a replay must not undo a choice made since.
+            if "matrikel_audit" in DATABASE.get_tables():
+                DATABASE.execute_sql(
+                    "UPDATE hbuser SET name_on_check_page = false WHERE name_on_check_page AND user_id IN ("
+                    " SELECT (payload->>'user_id')::int FROM matrikel_audit"
+                    " WHERE action = 'person_user_unlinked' AND payload->>'source' = 'anonymize')"
+                )
+        if "digitalcertificatev2" in DATABASE.get_tables():
+            DATABASE.execute_sql("ALTER TABLE digitalcertificatev2 ADD COLUMN IF NOT EXISTS issued_as VARCHAR(20)")
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=47,
+            comment="hbuser.name_on_check_page, digitalcertificatev2.issued_as",
+            applied=datetime.now(),
+        ).execute()
+
+
+def migrate_47_to_48():
+    """One account per Google identity. Where two accounts hold one, creating the index fails: the schema stays at 47
+    and the API does not start (nor the demo API on its copy). Count before deploying and fix the data while the old
+    release still runs (README, "Sessions")."""
+    with DATABASE.atomic():
+        DATABASE.execute_sql(GOOGLE_IDENTITY_INDEX_SQL)
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=48, comment="authenticators: unique Google identity", applied=datetime.now()
+        ).execute()
+
+
+def migrate_48_to_49():
+    """One-time codes by mail, members' previous addresses and when a member's address starts to count for login.
+    Not audited: the rows hold addresses, and both tables are purged."""
+    with DATABASE.atomic():
+        DATABASE.execute_sql("ALTER TABLE member ADD COLUMN IF NOT EXISTS email_login_from TIMESTAMPTZ")
+        DATABASE.create_tables([LoginCode, MemberPreviousAddress], safe=True)
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=49, comment="login_code, member_previous_address, member.email_login_from", applied=datetime.now()
+        ).execute()
+
+
+def migrate_49_to_50():
     """A notice can point at a rabbit instead of an intake item (a buyer erased their own data)."""
     with DATABASE.atomic():
         DATABASE.execute_sql(
@@ -4114,7 +4322,7 @@ def migrate_44_to_45():
         # The index a fresh bootstrap gives the foreign key: the cascade looks the notices up by rabbit.
         DATABASE.execute_sql("CREATE INDEX IF NOT EXISTS notice_individual_id ON notice (individual_id)")
         SchemaHistory.insert(  # pylint: disable=E1120
-            version=45, comment="notice.individual", applied=datetime.now()
+            version=50, comment="notice.individual", applied=datetime.now()
         ).execute()
 
 
@@ -4599,7 +4807,12 @@ MIGRATIONS = {
     (41, 42): migrate_41_to_42,  # intake queue
     (42, 43): migrate_42_to_43,  # intake queue retention
     (43, 44): migrate_43_to_44,  # buyer contact
-    (44, 45): migrate_44_to_45,  # notice.individual
+    (44, 45): migrate_44_to_45,  # matrikel_audit actor NULL for the nightly job
+    (45, 46): migrate_45_to_46,  # individual.rex
+    (46, 47): migrate_46_to_47,  # the attester's name on the certificate check page
+    (47, 48): migrate_47_to_48,  # unique Google identity
+    (48, 49): migrate_48_to_49,  # one-time codes, previous addresses
+    (49, 50): migrate_49_to_50,  # notice.individual
 }
 
 

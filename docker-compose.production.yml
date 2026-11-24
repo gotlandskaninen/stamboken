@@ -75,6 +75,14 @@ services:
   redis:
     image: redis:7-alpine
     restart: always
+    # AOF: a logout or a revoked session survives a crash, but for about its last second
+    # (appendfsync everysec); a snapshot alone can be minutes old.
+    # Whenever this replaces a Redis that runs without AOF (the first deploy, and again after a
+    # rollback): run `redis-cli config set appendonly yes` in the running container, wait until
+    # `info persistence` shows aof_enabled:1, no rewrite in progress or scheduled and
+    # aof_last_bgrewrite_status:ok, and deploy at once. Otherwise Redis 7 ignores the snapshot:
+    # with no AOF file it comes up empty, and with an old one it loads that, however old.
+    command: ["redis-server", "--appendonly", "yes"]
     volumes:
       - redis_data:/data
     healthcheck:
@@ -100,6 +108,11 @@ services:
       - REDIS_URL=redis://redis:6379/0
       - SESSION_REDIS_URL=redis://redis:6379/2
       - RATELIMIT_STORAGE_URL=redis://redis:6379/3
+      # Tyck till makes real GitHub issues; a missing key in /config then answers 503, never the fake.
+      - TYCK_TILL_GITHUB=app
+      # The organisation's app "Stamboken Tyck till" and its installation (not secrets; the key is in /config).
+      - GITHUB_APP_ID=5893013
+      - GITHUB_APP_INSTALLATION_ID=185130434
     volumes:
       - type: bind
         source: ./config
@@ -153,6 +166,9 @@ services:
       # Own limiter counters (db 3 is `api`'s): demo attempts must not spend
       # production's login budget.
       - RATELIMIT_STORAGE_URL=redis://redis:6379/4
+      - TYCK_TILL_GITHUB=app
+      - GITHUB_APP_ID=5893013
+      - GITHUB_APP_INSTALLATION_ID=185130434
       # Demo instance: stamp v2 certificates "DEMO – EJ GILTIGT INTYG".
       - CERT_DEMO_WATERMARK=true
       # Pin signing to the throwaway committed dev cert (baked into the image).
@@ -248,6 +264,8 @@ services:
       - ./nginx/nginx.main:/etc/nginx/nginx.conf:ro
       - ./nginx/production/herdbook-production.conf:/etc/nginx/user_conf.d/herdbook.conf:ro
       - ./nginx/production/stamboken-legacy.conf:/etc/nginx/user_conf.d/stamboken-legacy.conf:ro
+      - ./nginx/production/gotlandskaninen.conf:/etc/nginx/user_conf.d/gotlandskaninen.conf:ro
+      - ./nginx/production/gotlandskaninen-www.conf:/etc/nginx/user_conf.d/gotlandskaninen-www.conf:ro
       - ./nginx/legacy-frontend-prod:/etc/nginx/legacy-frontend-prod:ro
       - ./nginx/legacy-frontend-test:/etc/nginx/legacy-frontend-test:ro
       - ./letsencrypt:/etc/letsencrypt

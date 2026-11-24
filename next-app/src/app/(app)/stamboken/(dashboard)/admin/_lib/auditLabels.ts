@@ -117,6 +117,7 @@ export const FIELD_LABELS: Record<string, string> = {
   claw_color: "Klofärg",
   belly_color: "Bukfärg",
   hair_notes: "Pälsanteckningar",
+  rex: "Päls",
   has_photo: "Har foto",
   butchered: "Slaktad",
   castration_date: "Kastreringsdatum",

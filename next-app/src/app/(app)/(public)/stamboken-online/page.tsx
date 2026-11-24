@@ -1,8 +1,8 @@
 import { Box, Link, Typography } from "@mui/material";
 import { LinkButton } from "@/components/public/LinkButton";
 import { PageHeader } from "@/components/public/PageHeader";
-import GoogleOneTap from "@/components/GoogleOneTap";
 import { WipBanner } from "@/components/public/WipBanner.client";
+import { TyckTillLink } from "@/components/tyck-till/TyckTillDialog.client";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "Stamboken Online" };
@@ -10,8 +10,6 @@ export const metadata: Metadata = { title: "Stamboken Online" };
 export default function StambokenOnlinePage() {
   return (
     <>
-      {/* App-entry page: surface Google One Tap so members can sign in fast. */}
-      <GoogleOneTap />
       {/* Beta notice belongs to the Stamboken entry + app, not the association site. */}
       <WipBanner />
       <PageHeader
@@ -35,12 +33,11 @@ export default function StambokenOnlinePage() {
         >
           <Typography sx={{ fontSize: "17px", lineHeight: 1.65 }}>
             Stamboken Online är vårt digitala register för de två svenska
-            lantraskaninerna. Uppfödarna lägger själva in sina individer, kullar
-            och härstamningar, och varje kanin som får ett genbanksintyg
-            utfärdat hamnar i föreningens centrala register – ett för
-            gotlandskanin, ett för mellerudskanin. Uppfödare kan också göra en
-            provparning i registret för att se hur nära släkt två tänkta
-            avelsdjur är innan de paras.
+            lantraskaninerna. Varje ras har en egen stambok. Där registreras
+            alla kaniner som har genbanksintyg, både när uppfödaren lägger in
+            dem här och när genbanksansvarig får uppgifterna på papper.
+            Uppfödare kan också göra en provparning i registret för att se hur
+            nära släkt två tänkta avelsdjur är innan de paras.
           </Typography>
           <Box sx={{ mt: 8, display: "flex", gap: 3, flexWrap: "wrap" }}>
             <LinkButton href="/stamboken/min-besattning" variant="contained">
@@ -53,6 +50,9 @@ export default function StambokenOnlinePage() {
               Manual
             </LinkButton>
           </Box>
+          <Typography sx={{ mt: 3, fontSize: "15px" }}>
+            Kommer du inte in? <TyckTillLink />
+          </Typography>
           <Typography
             sx={{
               mt: 4,

@@ -1,7 +1,10 @@
+import { TyckTillLink } from "@/components/tyck-till/TyckTillDialog.client";
 import { EUFundingBadge } from "@/components/public/EUFundingBadge";
+import { appVersion } from "@/lib/appVersion";
 import styles from "./shell.module.css";
 
 export function ShellFooter() {
+  const version = appVersion();
   return (
     <footer className={styles.footer}>
       <div className={styles.footerInner}>
@@ -15,7 +18,8 @@ export function ShellFooter() {
         </div>
         <span>
           © 2026 Föreningen Gotlandskaninen ·{" "}
-          <a href="https://github.com/gotlandskaninen/stamboken">Källkod</a>
+          <a href="https://github.com/gotlandskaninen/stamboken">Källkod</a> ·{" "}
+          <a href={version.href}>Version {version.label}</a> · <TyckTillLink />
         </span>
       </div>
     </footer>

@@ -22,9 +22,15 @@ vi.mock("@/contexts/NotificationContext", () => ({
 }));
 vi.mock("@/app/(app)/stamboken/(dashboard)/profil/actions", () => ({
   updateContact: vi.fn(),
+  verifyEmailCode: vi.fn(),
+  cancelEmailCode: vi.fn(),
 }));
 
-import { updateContact } from "@/app/(app)/stamboken/(dashboard)/profil/actions";
+import {
+  cancelEmailCode,
+  updateContact,
+  verifyEmailCode,
+} from "@/app/(app)/stamboken/(dashboard)/profil/actions";
 import { KontaktClient } from "@/app/(app)/stamboken/(dashboard)/profil/KontaktClient";
 
 const initial = {
@@ -81,7 +87,7 @@ describe("KontaktClient", () => {
   });
 
   it("saves all five fields and confirms with a snackbar", async () => {
-    vi.mocked(updateContact).mockResolvedValue({ ok: true });
+    vi.mocked(updateContact).mockResolvedValue({ ok: true, codeSent: false });
     renderIt();
     fireEvent.change(screen.getByLabelText("Postort"), {
       target: { value: "Lärbro" },
@@ -98,7 +104,7 @@ describe("KontaktClient", () => {
   });
 
   it("omits an empty e-mail from the patch so a member without one can save", async () => {
-    vi.mocked(updateContact).mockResolvedValue({ ok: true });
+    vi.mocked(updateContact).mockResolvedValue({ ok: true, codeSent: false });
     render(
       <ThemeProvider theme={stambokenTheme}>
         <KontaktClient initial={{ ...initial, email: "" }} />
@@ -122,6 +128,132 @@ describe("KontaktClient", () => {
       postal_code: "621 45",
       city: initial.city,
     });
+  });
+
+  it("asks for the code a new address got, and says to sign in again once it is changed", async () => {
+    vi.mocked(updateContact).mockResolvedValue({ ok: true, codeSent: true });
+    vi.mocked(verifyEmailCode).mockResolvedValue({ ok: true });
+    renderIt();
+    expect(screen.queryByLabelText("Kod")).toBeNull();
+    fireEvent.change(screen.getByLabelText("E-post"), {
+      target: { value: "ny@example.org" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    const input = (await screen.findByLabelText("Kod")) as HTMLInputElement;
+    // type=number would drop leading zeros; the phone gets digits and may offer the code
+    expect(input.type).toBe("text");
+    expect(input.getAttribute("inputmode")).toBe("numeric");
+    expect(input.getAttribute("autocomplete")).toBe("one-time-code");
+    fireEvent.change(input, { target: { value: "0482 7195" } });
+    fireEvent.click(screen.getByRole("button", { name: "Byt adress" }));
+    await waitFor(() =>
+      expect(screen.getByRole("status").textContent).toContain(
+        "Nu är adressen bytt",
+      ),
+    );
+    expect(verifyEmailCode).toHaveBeenCalledWith("0482 7195");
+    expect(
+      screen.getByRole("link", { name: "Logga in" }).getAttribute("href"),
+    ).toBe("/auth/sign-in?return_to=/stamboken/profil");
+  });
+
+  it("keeps the code step and shows the error on a wrong code", async () => {
+    vi.mocked(updateContact).mockResolvedValue({ ok: true, codeSent: true });
+    vi.mocked(verifyEmailCode).mockResolvedValue({
+      ok: false,
+      error: "Koden stämmer inte eller har gått ut.",
+    });
+    renderIt();
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    fireEvent.change(await screen.findByLabelText("Kod"), {
+      target: { value: "12345678" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Byt adress" }));
+    await waitFor(() =>
+      expect(showSnackbar).toHaveBeenCalledWith(
+        "Koden stämmer inte eller har gått ut.",
+        "error",
+      ),
+    );
+    expect(screen.getByLabelText("Kod")).toBeDefined();
+    expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it("shows where the code went, locks the e-mail and lets the request be cancelled", async () => {
+    vi.mocked(updateContact).mockResolvedValue({ ok: true, codeSent: true });
+    renderIt();
+    const email = screen.getByLabelText("E-post") as HTMLInputElement;
+    fireEvent.change(email, { target: { value: "ny@example.org" } });
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    await screen.findByLabelText("Kod");
+    expect(screen.getByText(/ny@example\.org/)).toBeDefined();
+    expect(email.disabled).toBe(true);
+    vi.mocked(cancelEmailCode).mockResolvedValue({ ok: true });
+    fireEvent.click(screen.getByRole("button", { name: "Avbryt" }));
+    await waitFor(() => expect(cancelEmailCode).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByLabelText("Kod")).toBeNull());
+    expect(email.disabled).toBe(false);
+    expect(email.value).toBe(initial.email);
+  });
+
+  it("locks the e-mail as the request goes and shows the address it went to", async () => {
+    let answer: (value: { ok: true; codeSent: boolean }) => void = () => {};
+    vi.mocked(updateContact).mockReturnValue(
+      new Promise((resolve) => {
+        answer = resolve;
+      }),
+    );
+    renderIt();
+    const email = screen.getByLabelText("E-post") as HTMLInputElement;
+    fireEvent.change(email, { target: { value: "ny@example.org" } });
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    await waitFor(() => expect(updateContact).toHaveBeenCalled());
+    expect(email.disabled).toBe(true);
+    fireEvent.change(email, { target: { value: "annan@example.org" } });
+    answer({ ok: true, codeSent: true });
+    await screen.findByLabelText("Kod");
+    expect(screen.getByText(/ny@example\.org/)).toBeDefined();
+    expect(screen.queryByText(/annan@example\.org/)).toBeNull();
+  });
+
+  it("saves the other fields while a code waits without asking for another code", async () => {
+    vi.mocked(updateContact).mockResolvedValue({ ok: true, codeSent: true });
+    renderIt();
+    fireEvent.change(screen.getByLabelText("E-post"), {
+      target: { value: "ny@example.org" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    await screen.findByLabelText("Kod");
+    vi.mocked(updateContact).mockResolvedValue({ ok: true, codeSent: false });
+    fireEvent.change(screen.getByLabelText("Telefon"), {
+      target: { value: "070-7654321" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    await waitFor(() => expect(updateContact).toHaveBeenCalledTimes(2));
+    const second = vi.mocked(updateContact).mock.calls[1][0];
+    expect(second.phone).toBe("070-7654321");
+    expect("email" in second).toBe(false);
+    expect(screen.getByLabelText("Kod")).toBeDefined();
+  });
+
+  it("says when the test environment refuses a new address", async () => {
+    vi.mocked(updateContact).mockResolvedValue({
+      ok: true,
+      codeSent: false,
+      emailRefused: "E-postadressen kan inte bytas i testmiljön.",
+    });
+    renderIt();
+    fireEvent.change(screen.getByLabelText("E-post"), {
+      target: { value: "ny@example.org" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Spara" }));
+    await waitFor(() =>
+      expect(showSnackbar).toHaveBeenCalledWith(
+        "E-postadressen kan inte bytas i testmiljön.",
+        "warning",
+      ),
+    );
+    expect(screen.queryByLabelText("Kod")).toBeNull();
   });
 
   it("locks every field and explains why when readOnly", () => {

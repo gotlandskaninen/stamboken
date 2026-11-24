@@ -17,6 +17,7 @@ from peewee import IntegrityError, fn
 # Note: try_auto_link_member is NOT imported here. Auto-link only
 # happens in the OAuth callback (app/herdbook.py), never at approve time.
 from utils.database import BILLING_FIELDS, DB_PROXY, Genebank, Member, MemberApplication
+from utils.login_code import AddressTaken, reserve_login_address
 from utils.mail import enqueue_mail, queue_application_mails
 from utils.matrikel import (
     AddressValidationError,
@@ -139,8 +140,8 @@ def create_application():
     if body.get("gdpr_consent") is not True:
         return problem(
             400,
-            "GDPR-samtycke krävs",
-            "Du måste samtycka till behandling av personuppgifter för att ansöka.",
+            "Bekräftelse saknas",
+            "Du måste bekräfta att du har läst integritetspolicyn för att ansöka.",
         )
 
     # Membership is in the association, not a gene bank (Member Model v2).
@@ -298,6 +299,7 @@ def approve_application(app_id: int):
                 phone=a.phone,
                 gdpr_consented_at=a.gdpr_consented_at,
             )
+            reserve_login_address(member.email, member.id)
             a.status = "approved"
             a.reviewed_by = current_user
             a.reviewed_at = datetime.now()
@@ -329,6 +331,9 @@ def approve_application(app_id: int):
         # Defensive: unique member_number index — cannot fire while all
         # numbers come from the serialized counter, but a 409 beats a 500.
         return problem(409, "Medlemsnummer upptaget", "Numret är redan tilldelat — försök igen.")
+    except AddressTaken:
+        # Rolled back, the member number with it. The reviewer sees the matrikel anyway; the applicant never sees this.
+        return problem(409, AddressTaken.title, "En annan medlem kan redan logga in med e-postadressen i ansökan")
 
     body = _application_to_dict(a)
     body["duplicate_contact_email"] = duplicate_contact_email

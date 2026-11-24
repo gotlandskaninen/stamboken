@@ -18,6 +18,7 @@ gotlandskaninen.se/stamboken/    → Stamboken (inloggning krävs)
 gotlandskaninen.se/stamboken/verifiera/<uuid> → Publik verifiering av digitalt intyg (QR)
 gotlandskaninen.se/medlem/       → Medlemsregister (inloggning krävs)
 gotlandskaninen.se/ansok         → Publik medlemsansökan
+gotlandskaninen.se/integritetspolicy → Hur föreningen behandlar personuppgifter (kort adress: /dataskydd)
 gotlandskaninen.se/kopare/ta-bort → Publik: köparens länk för att ta bort sina uppgifter
 gotlandskaninen.se/admin         → Payload CMS admin
 gotlandskaninen.se/api/          → Flask-API (via nginx)
@@ -61,6 +62,10 @@ läggs till med `gh project item-add`
 - Legacy och Next.js delar API: ändra aldrig returformat eller statuskoder på
   befintliga endpoints, ny funktionalitet = ny endpoint
   ([ADR-0006](docs/adr/0006-api-compatibility-during-migration.md)).
+- Gamla appen stängs en funktion i taget, och först när nya Stamboken kan göra
+  samma sak: den stängda skrivvägen svarar 410 i routen med en text, läsvägarna
+  behåller formatet, och gamla appen visar en banner
+  ([ADR-0020](docs/adr/0020-gamla-appen-stangs-en-funktion-i-taget.md)).
 - Behörighet avgörs i Flask per endpoint mot resursen anropet rör;
   `@manager_required` är en grov gate, per-genbank-endpoints anropar även
   `check_genebank_access` ([ADR-0014](docs/adr/0014-authorization-model.md)).
