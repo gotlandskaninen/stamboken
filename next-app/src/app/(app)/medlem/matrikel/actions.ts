@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { fetchApi } from "@/lib/api";
 import type { MembershipStatus } from "@/lib/membershipStatus";
-import type { BillingAddress } from "./types";
+import type { BillingAddress, Organization } from "./types";
 
 export type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -11,7 +11,7 @@ export type AddPersonResult =
   | { ok: true; duplicateContactEmail: boolean }
   | { ok: false; error: string };
 
-export type MembershipPatch = Partial<BillingAddress> & {
+export type MembershipPatch = Partial<BillingAddress & Organization> & {
   membership_status?: MembershipStatus;
   member_number?: number;
   address?: string | null;
@@ -29,7 +29,7 @@ export type PersonInput = {
   role?: string;
 };
 
-export type MembershipCreateInput = {
+export type MembershipCreateInput = Partial<Organization> & {
   first_name: string;
   last_name: string;
   email?: string | null;

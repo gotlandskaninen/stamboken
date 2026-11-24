@@ -177,9 +177,9 @@ class TestBillingAddressExport(BillingTestBase):
     def test_matrikel_export_has_invoice_columns(self):
         self.login()
         header, *rows = _csv_rows(self.client.get("/api/v2/members/export"))
-        invoice_columns = header[-6:]
+        invoices = slice(header.index("Fakturamottagare"), header.index("Fakturareferens") + 1)
         self.assertEqual(
-            invoice_columns,
+            header[invoices],
             [
                 "Fakturamottagare",
                 "Fakturaadress",
@@ -191,7 +191,7 @@ class TestBillingAddressExport(BillingTestBase):
         )
         by_name = {r[header.index("Namn Efternamn")]: r for r in rows}
         self.assertEqual(
-            by_name["Maja Huvudsson"][-6:],
+            by_name["Maja Huvudsson"][invoices],
             [
                 "Djurparken i Exempelby",
                 "Box 99",
@@ -202,9 +202,9 @@ class TestBillingAddressExport(BillingTestBase):
             ],
         )
         # Membership-level cells only on the main row.
-        self.assertEqual(by_name["Frank Huvudsson"][-6:], [""] * 6)
+        self.assertEqual(by_name["Frank Huvudsson"][invoices], [""] * 6)
         # Without a billing address the invoice goes to the postal address.
-        self.assertEqual(by_name["Bo Bengtsson"][-6:], ["", "Byvägen 2", "234 56", "Lillby", "", ""])
+        self.assertEqual(by_name["Bo Bengtsson"][invoices], ["", "Byvägen 2", "234 56", "Lillby", "", ""])
 
     def test_published_matrikel_never_has_the_billing_address(self):
         """The Koharen export is published: the billing address must not reach it, whatever the consent."""

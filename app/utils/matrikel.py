@@ -50,6 +50,7 @@ from utils.login_code import (
 )
 from utils.mail import cancel_member_added, enqueue_mail, forget_recipient, queue_member_added
 from utils.membership_lifecycle import Event, Status, next_state, state_of
+from utils.organization import parse_organization_fields
 from utils.postal import (  # noqa: F401 — public helpers
     format_postal_address,
     normalize_postal_code,
@@ -62,9 +63,18 @@ logger = logging.getLogger(__name__)
 # never the key — action, actor and ids stay reconstructable.
 PII_PAYLOAD_KEYS = frozenset({"first_name", "last_name", "email", "phone", "workspace_email", "notes"})
 REDACTED_VALUE = "[borttagen]"
-# What clearing a household's address also removes from audit history.
-# postal_address is the pre-v29 spelling of the same data, still present in old payloads.
-HOUSEHOLD_PII_KEYS = frozenset({"address", "postal_code", "city", "postal_address", "notes", *BILLING_FIELDS})
+# Clear these membership fields on the row and in its audit history together.
+HOUSEHOLD_PII_FIELDS = (
+    "address",
+    "postal_code",
+    "city",
+    "notes",
+    "organization_name",
+    "organization_number",
+    *BILLING_FIELDS,
+)
+# postal_address is the pre-v29 spelling, still present in old payloads.
+HOUSEHOLD_PII_KEYS = frozenset((*HOUSEHOLD_PII_FIELDS, "postal_address"))
 
 # The placeholder names anonymize_person() writes (the name columns are NOT
 # NULL, so erasure needs a value). They are also the only marker an anonymized
@@ -81,6 +91,15 @@ def is_anonymized(person) -> bool:
     Not the same as ended: soft-deleted (`end_date`) persons stay editable.
     """
     return person.first_name == ANONYMIZED_FIRST_NAME and person.last_name == ANONYMIZED_LAST_NAME
+
+
+def membership_recipient(membership: Membership) -> tuple[str, str | None]:
+    """Postal recipient and optional c/o line for the active main contact."""
+    main = next((p for p in membership.persons if p.role == "huvudmedlem" and p.end_date is None), None)
+    name = f"{main.first_name} {main.last_name}".strip() if main else ""
+    if membership.organization_name:
+        return membership.organization_name, f"c/o {name}" if name else None
+    return name, None
 
 
 class AddressValidationError(ValueError):
@@ -262,11 +281,10 @@ def redact_person_from_audits(member: Member) -> int:
 
 
 def redact_household_from_audits(membership: Membership) -> int:
-    """Redact the household address and notes from `membership`'s audit payloads.
+    """Redact the household's identifying fields from its audit payloads.
 
-    A membership PATCH audits before/after values of address, postal_code, city,
-    the billing address and notes under "membership_updated" with no person_id, so
-    redact_person_from_audits() never reaches them. Idempotent.
+    A membership PATCH records the before/after values under "membership_updated"
+    with no person_id, so redact_person_from_audits() never reaches them. Idempotent.
     """
     touched = 0
     rows = MatrikelAudit.select().where(
@@ -284,10 +302,23 @@ def redact_household_from_audits(membership: Membership) -> int:
 VALID_PERSON_ROLES = ("huvudmedlem", "familjemedlem", "skotare")
 
 
+class PersonNameRequired(ValueError):
+    def __init__(self):
+        super().__init__("Både förnamn och efternamn krävs")
+
+
+def _new_person_names(data, *, optional):
+    first = (data.get("first_name") or "").strip()
+    last = (data.get("last_name") or "").strip()
+    if not optional and not (first and last):
+        raise PersonNameRequired
+    return {"first_name": first, "last_name": last}
+
+
 def add_person(membership, data, actor):
     """Create a person row under `membership` and audit it.
 
-    `data` keys: first_name, last_name (required), email, phone, role
+    `data` keys: first_name, last_name (optional for an organization's contact), email, phone, role
     (defaults to familjemedlem). Raises ValueError on unknown role. A second
     active huvudmedlem raises IntegrityError from the partial unique index —
     callers translate that to a 409. A main member's address is reserved for her (reserve_login_address): AddressTaken.
@@ -306,8 +337,7 @@ def add_person(membership, data, actor):
             raise ValueError("Kan inte lägga till personer i ett inaktivt medlemskap")
         person = Member.create(
             membership=membership,
-            first_name=data["first_name"],
-            last_name=data["last_name"],
+            **_new_person_names(data, optional=locked.organization_name and role == "huvudmedlem"),
             email=data.get("email") or None,
             phone=data.get("phone") or None,
             role=role,
@@ -383,7 +413,7 @@ def swap_main_member(membership, new_main, actor):
     the old main member who keeps an account.
     """
     with DB_PROXY.atomic():
-        Membership.select().where(Membership.id == membership.id).for_update().get()
+        membership = Membership.select().where(Membership.id == membership.id).for_update().get()
         new_main = Member.get_by_id(new_main.id)  # re-read under the lock
         if new_main.membership_id != membership.id:
             raise ValueError("Personen tillhör inte medlemskapet")
@@ -401,6 +431,8 @@ def swap_main_member(membership, new_main, actor):
             .first()
         )
         if current is not None:
+            if membership.organization_name and not (current.first_name and current.last_name):
+                raise ValueError("Ange kontaktpersonens för- och efternamn innan personen blir familjemedlem")
             current.role = "familjemedlem"
             current.save()
         new_main.role = "huvudmedlem"
@@ -513,12 +545,10 @@ def anonymize_person(member, actor, deferred_originals=None):
         if not erased_before and all(map(is_anonymized, Member.select().where(Member.membership == membership))):
             on_household_erased(membership.id)
         if not Member.select().where(Member.membership == membership, Member.end_date.is_null(True)).exists():
-            # Last active person gone: the household address, the billing
-            # address and the free-text notes were theirs, on the row and in the
-            # audit history. payment_note stays — accounting history survives.
-            Membership.update(
-                address=None, postal_code=None, city=None, notes=None, **dict.fromkeys(BILLING_FIELDS), updated_at=now
-            ).where(Membership.id == membership.id).execute()
+            # Last active person gone: erase household details. payment_note stays for accounting.
+            Membership.update(**dict.fromkeys(HOUSEHOLD_PII_FIELDS), updated_at=now).where(
+                Membership.id == membership.id
+            ).execute()
             redact_household_from_audits(membership)
         application_ids = [
             row.id
@@ -841,7 +871,8 @@ def create_membership(data, actor):
     """Create a membership with its initial huvudmedlem in one transaction.
 
     Admin/matrikel_admin may create memberships
-    directly (not only via application approval or CSV import). `data` keys: first_name, last_name (required), email,
+    directly (not only via application approval or CSV import). `data` keys: organization_name,
+    organization_number, first_name, last_name (optional for an organization's contact), email,
     phone, membership_status (default 'active'), address, postal_code, city,
     payment_note, notes, allocate (bool — allocate a member_number). The
     address is always structured here: the endpoint resolves the legacy
@@ -851,11 +882,14 @@ def create_membership(data, actor):
     another person holds the main member's address for login.
     """
     status = data.get("membership_status") or "active"
+    organization = parse_organization_fields(data)
+    names = _new_person_names(data, optional=organization.get("organization_name"))
     with DB_PROXY.atomic():
         number = allocate_member_number() if data.get("allocate") else None
         membership = new_membership(
             status,
             member_number=number,
+            **organization,
             address=data.get("address") or None,
             postal_code=data.get("postal_code") or None,
             city=data.get("city") or None,
@@ -865,8 +899,7 @@ def create_membership(data, actor):
         main = Member.create(
             membership=membership,
             role="huvudmedlem",
-            first_name=data["first_name"],
-            last_name=data["last_name"],
+            **names,
             email=data.get("email") or None,
             phone=data.get("phone") or None,
         )

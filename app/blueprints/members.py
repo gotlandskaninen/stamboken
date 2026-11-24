@@ -35,6 +35,7 @@ from utils.mail import _normalize, enqueue_mail
 from utils.matrikel import (
     AddressValidationError,
     is_anonymized,
+    membership_recipient,
     parse_postal_fields,
     set_member_email,
     set_membership_status,
@@ -47,6 +48,7 @@ from blueprints.common import (
     json_login_required,
     matrikel_admin_required,
     matrikel_read_required,
+    membership_organization_fields,
     problem,
 )
 
@@ -84,6 +86,7 @@ def _membership_to_dict(ms: Membership, persons: list[Member] | None = None) -> 
     return {
         "id": ms.id,
         "member_number": ms.member_number,
+        **membership_organization_fields(ms, account_details=True),
         "membership_status": ms.membership_status,
         "address": ms.address,
         "postal_code": ms.postal_code,
@@ -136,7 +139,7 @@ def list_members():
         person_match = Member.select(Member.membership).where(
             (Member.first_name**like) | (Member.last_name**like) | (Member.email**like)
         )
-        match = Membership.id.in_(person_match)
+        match = Membership.id.in_(person_match) | (Membership.organization_name**like)
         # A purely numeric search also matches on member number. ASCII-only:
         # isdigit() alone accepts characters int() rejects (e.g. "²"), and the
         # length cap bounds the value to int4 before conversion.
@@ -315,6 +318,7 @@ def _me_response(m: Member) -> dict:
     data["membership"] = {
         "id": ms.id,
         "member_number": ms.member_number,
+        **membership_organization_fields(ms, account_details=False),
         "membership_status": ms.membership_status,
         "address": ms.address,
         "postal_code": ms.postal_code,
@@ -684,7 +688,7 @@ def export_members():
     # this CSV's only consumers are the matrikel keeper and our own
     # importer, which accepts both layouts.
     #
-    # The Faktura* columns at the end are Membership.invoice_address: the
+    # The Faktura* columns are Membership.invoice_address: the
     # address the fee invoice goes to, which is the postal address unless the
     # membership has a billing address. The importer ignores them.
     q = Membership.select().where(Membership.membership_status.in_(("active", "friexemplar")))
@@ -706,22 +710,22 @@ def export_members():
             "Bet senast",
             "Noteringar",
             *INVOICE_HEADER,
+            "c/o",
         ]
     )
 
     # MATR file order: friexemplar/number-less memberships first, then
     # ascending member number.
-    for ms in q.order_by(Membership.member_number.asc(nulls="FIRST"), Membership.id):
-        # One row per ACTIVE person, huvudmedlem first.
-        persons = sorted(
-            Member.select().where(Member.membership == ms, Member.end_date.is_null(True)),
-            key=lambda p: (p.role != "huvudmedlem", p.id),
-        )
-        if not persons:
-            # Nobody left to mail (every person ended/anonymized), and a
-            # nameless row is rejected by the importer's "Namn Efternamn"
-            # check — skip the membership entirely.
+    q = q.order_by(Membership.member_number.asc(nulls="FIRST"), Membership.id)
+    active_persons = (
+        Member.select().where(Member.end_date.is_null(True)).order_by(Member.role != "huvudmedlem", Member.id)
+    )
+    for ms in q.prefetch(active_persons):
+        persons = ms.persons
+        if not persons or (ms.organization_name and persons[0].role != "huvudmedlem"):
+            # A family member cannot stand in for the organization's contact.
             continue
+        recipient, care_of = membership_recipient(ms)
 
         herd_codes = [h.herd or "" for h in Herd.select().where(Herd.membership == ms)]
         g_flag = "G" if any(code.startswith("G") for code in herd_codes) else ""
@@ -732,8 +736,8 @@ def export_members():
         elif ms.membership_status == "friexemplar":
             nr = "0"  # the paper file's friexemplar marker
         else:
-            # Active membership without a number — a data anomaly; leave the
-            # cell empty so it stands out instead of masquerading as Nr 0.
+            # A numberless active membership keeps a blank Nr. Import can
+            # recognize a known organization; Nr 0 means friexemplar.
             nr = ""
 
         invoice = ms.invoice_address
@@ -741,6 +745,7 @@ def export_members():
 
         for index, person in enumerate(persons):
             main_row = index == 0
+            name = recipient if main_row and recipient else f"{person.first_name} {person.last_name}".strip()
             writer.writerow(
                 [
                     # Membership-level cells only on the main row; the Nr is
@@ -749,7 +754,7 @@ def export_members():
                     g_flag if main_row else "",
                     m_flag if main_row else "",
                     nr,
-                    csv_safe(f"{person.first_name} {person.last_name}".strip()),
+                    csv_safe(name),
                     csv_safe(ms.address) if main_row else "",
                     csv_safe(ms.postal_code) if main_row else "",
                     csv_safe(ms.city) if main_row else "",
@@ -758,6 +763,7 @@ def export_members():
                     csv_safe(ms.payment_note) if main_row else "",
                     csv_safe(ms.notes) if main_row else "",
                     *(invoice_cells if main_row else [""] * len(INVOICE_KEYS)),
+                    csv_safe(care_of) if main_row else "",
                 ]
             )
 
@@ -783,23 +789,21 @@ def export_koharen():
     writer.writerow(KOHAREN_HEADER)
     q = Membership.select().where(Membership.membership_status == "active")
     for ms in q.order_by(Membership.member_number.asc(nulls="LAST"), Membership.id):
-        persons = sorted(
-            Member.select().where(Member.membership == ms, Member.end_date.is_null(True)),
-            key=lambda p: (p.role != "huvudmedlem", p.id),
-        )
-        if not persons:
-            continue
+        persons = Member.select().where(Member.membership == ms, Member.end_date.is_null(True))
+        if ms.organization_name:
+            persons = persons.where(Member.role == "huvudmedlem")
         # {} = never answered: blank PII + "ej angivet" so the keeper
         # can fall back to the yearly-report answer by hand. No automatic seeding.
         answered = consent_answered(ms)
         consent = effective_consent(ms) if answered else {key: False for key in CONSENT_KEYS}
         samtycke = "angivet" if answered else "ej angivet"
         nr = str(ms.member_number) if ms.member_number is not None else ""
-        for person in persons:
+        for person in persons.order_by(Member.role != "huvudmedlem", Member.id):
+            name = ms.organization_name or f"{person.first_name} {person.last_name}".strip()
             writer.writerow(
                 [
                     nr,
-                    csv_safe(f"{person.first_name} {person.last_name}".strip()) if consent["name"] else "",
+                    csv_safe(name) if consent["name"] else "",
                     csv_safe(person.phone) if consent["phone"] else "",
                     csv_safe(person.email) if consent["email"] else "",
                     csv_safe(ms.address) if consent["address"] else "",

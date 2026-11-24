@@ -15,6 +15,12 @@ import { retireMembership, updateMembership } from "../actions";
 import type { MembershipPatch } from "../actions";
 import { BILLING_KEYS, hasBillingAddress } from "../types";
 import type { BillingAddress, MembershipDetail } from "../types";
+import {
+  OrganizationFields,
+  organizationForm,
+  organizationIsValid,
+  organizationValues,
+} from "../OrganizationFields";
 import ds from "@/styles/ds-admin.module.css";
 import styles from "../../medlem.module.css";
 
@@ -33,6 +39,9 @@ export function MembershipFormCard({
   const { addNotification } = useNotifications();
 
   const [status, setStatus] = useState(membership.membership_status);
+  const [organization, setOrganization] = useState(() =>
+    organizationForm(membership),
+  );
   const [memberNumber, setMemberNumber] = useState(
     membership.member_number?.toString() ?? "",
   );
@@ -54,6 +63,14 @@ export function MembershipFormCard({
   const [retired, setRetired] = useState(false);
   const inactive = membership.membership_status === "inactive";
   const active = membership.persons.filter((p) => p.end_date === null);
+  const needsContactName =
+    Boolean(membership.organization_name) &&
+    !organization.enabled &&
+    active.some(
+      (p) =>
+        p.role === "huvudmedlem" &&
+        (!p.first_name.trim() || !p.last_name.trim()),
+    );
   // Avsluta has nothing left to do once no person is active. Inaktiv *with*
   // active persons (set through the select) can still be ended.
   const ended = retired || (inactive && active.length === 0);
@@ -106,6 +123,17 @@ export function MembershipFormCard({
       payment_note: paymentNote || null,
       notes: notes || null,
     };
+    const values = organizationValues(organization);
+    if (values.organization_name !== membership.organization_name) {
+      patch.organization_name = values.organization_name;
+    }
+    if (
+      values.organization_number !== undefined &&
+      (values.organization_number !== membership.organization_number ||
+        patch.organization_name === null)
+    ) {
+      patch.organization_number = values.organization_number;
+    }
     if (parsedNumber !== null && parsedNumber !== membership.member_number) {
       patch.member_number = parsedNumber;
     }
@@ -174,6 +202,13 @@ export function MembershipFormCard({
           <p className={ds["ad-field-hint"]}>
             Ändringar auditloggas; ett nummer över märket höjer räknaren.
           </p>
+          <OrganizationFields form={organization} onChange={setOrganization} />
+          {needsContactName && (
+            <p className={ds["ad-field-error"]}>
+              Ange kontaktpersonens förnamn och efternamn under Personer innan
+              du sparar ett personligt medlemskap.
+            </p>
+          )}
           <div>
             <label className="sb-label" htmlFor="ms-address">
               Gatuadress
@@ -387,7 +422,14 @@ export function MembershipFormCard({
               type="button"
               className="sb-btn"
               onClick={saveMembership}
-              disabled={pending || !postalOk || !billingPostalOk || !numberOk}
+              disabled={
+                pending ||
+                !postalOk ||
+                !billingPostalOk ||
+                !numberOk ||
+                !organizationIsValid(organization) ||
+                needsContactName
+              }
             >
               {pending ? "Sparar..." : "Spara"}
             </button>

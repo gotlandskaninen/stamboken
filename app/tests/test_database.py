@@ -1183,8 +1183,44 @@ class TestDatabaseMigration(DatabaseTest):
 
         db.check_migrations()
 
-        self.assertEqual(self._max_schema_version(), 50)
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
         self.assertTrue({"contact_member_id", "contact_pending"} <= {c.name for c in db.DATABASE.get_columns("herd")})
+
+    def test_replay_adds_nullable_membership_organization_fields(self):
+        if not isinstance(db.DATABASE, db.PostgresqlDatabase):
+            self.skipTest("column introspection requires PostgreSQL")
+        self.addCleanup(db.check_migrations)
+        membership = db.Membership.create(member_number=5101, address="Testgatan 1")
+        row = db.Membership.select().where(db.Membership.id == membership.id).dicts()
+        before = row.get()
+        version = self._migration_version("membership.organization_name")
+        db.SchemaHistory.delete().where(db.SchemaHistory.version >= version).execute()
+        db.SchemaHistory.get_or_create(
+            version=version - 1, defaults={"comment": "test seed", "applied": datetime.now()}
+        )
+        db.DATABASE.execute_sql("ALTER TABLE membership DROP COLUMN organization_name, DROP COLUMN organization_number")
+
+        db.check_migrations()
+
+        columns = db.DATABASE.execute_sql(
+            "SELECT column_name, data_type, character_maximum_length, is_nullable, column_default "
+            "FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = 'membership' "
+            "AND column_name IN ('organization_name', 'organization_number') ORDER BY column_name"
+        ).fetchall()
+        self.assertEqual(
+            columns,
+            [
+                ("organization_name", "character varying", 200, "YES", None),
+                ("organization_number", "character varying", 11, "YES", None),
+            ],
+        )
+        self.assertEqual(self._max_schema_version(), db.CURRENT_SCHEMA_VERSION)
+        self.assertEqual(row.get(), before)
+        self.assertEqual((before["organization_name"], before["organization_number"]), (None, None))
+
+        db.Membership.update(organization_name="Testföreningen").where(db.Membership.id == membership.id).execute()
+        db.MIGRATIONS[version - 1, version]()
+        self.assertEqual(row.get(), {**before, "organization_name": "Testföreningen"})
 
     def test_replay_49_to_50_keeps_contact_values_out_of_audit(self):
         """After the migration an UPDATE of herd.email is listed in changed_fields without its value."""
@@ -1267,8 +1303,12 @@ class TestDatabaseMigration(DatabaseTest):
         unlinked = db.Herd.create(genebank=gb, herd="R47E", name="Anna Exempel", email="anna@example.invalid")
 
         def replay():
-            """Replay 49 -> 50 with a herd field that only a later migration adds to the table."""
+            """Replay 49 -> 50 with fields on both ORM models that do not exist in version 49."""
             db.SchemaHistory.delete().where(db.SchemaHistory.version >= 50).execute()
+            db.SchemaHistory.get_or_create(version=49, defaults={"comment": "test seed", "applied": datetime.now()})
+            db.DATABASE.execute_sql(
+                "ALTER TABLE membership DROP COLUMN organization_name, DROP COLUMN organization_number"
+            )
             db.Herd._meta.add_field("added_later", peewee.TextField(null=True))  # pylint: disable=protected-access
             try:
                 db.check_migrations()

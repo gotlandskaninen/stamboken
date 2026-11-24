@@ -69,8 +69,9 @@ class ReconnectPostgresqlDatabase(ReconnectMixin, PostgresqlDatabase):
 # matrikel_audit rows without a user, written by the nightly anonymization (45) +
 # the coat column individual.rex (46) + hbuser.name_on_check_page and digitalcertificatev2.issued_as (47) +
 # one account per Google identity (48) + one-time codes and members' previous addresses (49) +
-# the herd's contact from the member register, herd.contact_member and herd.contact_pending (50).
-CURRENT_SCHEMA_VERSION = 50
+# the herd's contact from the member register, herd.contact_member and herd.contact_pending (50) +
+# organization name and number on membership (51).
+CURRENT_SCHEMA_VERSION = 51
 # classid half of the two-int advisory lock that serializes migration replays
 # across processes (each gunicorn worker imports the app and calls
 # check_migrations). The objid half is hashtext(current_database()) — advisory
@@ -258,6 +259,8 @@ class Membership(BaseModel):
     member_number = IntegerField(null=True)
     # CHECK-constrained: active | inactive | pending | friexemplar
     membership_status = CharField(max_length=20, default="active")
+    organization_name = CharField(max_length=200, null=True)
+    organization_number = CharField(max_length=11, null=True)
     address = TextField(null=True)
     # Structured postal address. The paper matrikel's single
     # "Postadress" column is derived — see the postal_address property.
@@ -4448,6 +4451,19 @@ def migrate_49_to_50():
         ).execute()
 
 
+# Renumber to 53→54 if the parallel migrations land first (docs/db-migrations.md).
+def migrate_50_to_51():
+    """Optional legal entity on a membership. Existing memberships keep NULL for both fields."""
+    with DATABASE.atomic():
+        existing = {c.name for c in DATABASE.get_columns("membership")}
+        for field in (Membership.organization_name, Membership.organization_number):
+            if field.name not in existing:
+                migrate(DATABASE_MIGRATOR.add_column("membership", field.name, field))
+        SchemaHistory.insert(  # pylint: disable=E1120
+            version=51, comment="membership.organization_name and organization_number", applied=datetime.now()
+        ).on_conflict_ignore().execute()
+
+
 def migrate_21_to_22():
     """Add litter_number to Breeding table and backfill from minted numbers."""
     with DATABASE.atomic():
@@ -4935,6 +4951,7 @@ MIGRATIONS = {
     (47, 48): migrate_47_to_48,  # unique Google identity
     (48, 49): migrate_48_to_49,  # one-time codes, previous addresses
     (49, 50): migrate_49_to_50,  # herd contact from the matrikel
+    (50, 51): migrate_50_to_51,  # legal entity on membership
 }
 
 

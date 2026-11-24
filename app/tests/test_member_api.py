@@ -691,6 +691,7 @@ MATR_HEADER = [
     "Fakturapostort",
     "E-post för faktura",
     "Fakturareferens",
+    "c/o",
 ]
 
 
@@ -743,6 +744,65 @@ class TestStatsAndExport(MatrikelApiTest):
         self.login("matrikel")
         _, header, _ = self._export_rows()
         self.assertEqual(header, MATR_HEADER)
+
+    def test_org_matr_reimport_preserves_memberships_and_people(self):
+        named = _mk_membership(number=12, organization_name="=Testföreningen", organization_number="552222-0002")
+        db.Herd.create(herd="G13", genebank=self.genebanks[0], membership=named)
+        db.Herd.create(herd="G12", genebank=self.genebanks[0])
+        _mk_person(named, "Tora", "Test", email="tora@example.invalid")
+        _mk_person(named, "Alex", "af Test", role="familjemedlem")
+        unnamed = _mk_membership(status="friexemplar", organization_name="Testbiblioteket")
+        _mk_person(unnamed, "", "", email="bibliotek@example.invalid")
+        numberless = _mk_membership(organization_name="Testklubben")
+        _mk_person(numberless, "", "", phone="080-00")
+        _mk_person(numberless, "Bo", "Test", role="familjemedlem")
+        _mk_person(numberless, "Kim", "Test", role="familjemedlem")
+        same_name = _mk_membership(organization_name="Bo Test")
+        _mk_person(same_name, "", "")
+        _mk_person(same_name, "Ann", "Test", role="familjemedlem")
+        ended = _mk_membership(number=14, organization_name="Utan aktiv huvudmedlem")
+        _mk_person(ended, "Avslutad", "Kontakt", end_date=date.today())
+        _mk_person(ended, "Annan", "Person", role="familjemedlem")
+        with db.DB_PROXY.atomic():
+            matrikel.raise_counter_to(14)
+
+        self.login("matrikel")
+        response, header, rows = self._export_rows()
+        self.assertEqual(
+            [(r[3], r[-1]) for r in rows],
+            [
+                ("Biblioteket Visby", ""),
+                ("Testbiblioteket", ""),
+                ("Testklubben", ""),
+                ("Bo Test", ""),
+                ("Kim Test", ""),
+                ("Bo Test", ""),
+                ("Ann Test", ""),
+                ("Ada A", ""),
+                ("Alf A", ""),
+                (" =Testföreningen", "c/o Tora Test"),
+                ("Alex af Test", ""),
+            ],
+        )
+        self.assertEqual(header[-1], "c/o")
+        self.assertEqual([r[2] for r in rows if r[3] in ("Testklubben", "Bo Test")], ["", "", ""])
+        self.assertNotIn(named.organization_number, response.get_data(as_text=True))
+
+        def snapshot():
+            return [
+                list(model.select().order_by(model._meta.primary_key).dicts())
+                for model in (db.Membership, db.Member, db.MemberNumberCounter, db.Herd)
+            ]
+
+        before = snapshot()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "export.csv")
+            with open(path, "wb") as f:
+                f.write(response.data)
+            result = APP.test_cli_runner().invoke(args=["members", "import", path])
+        self.assertEqual(result.exit_code, 0, result.output)
+        self.assertIn("Blank-Nr organization rows skipped: 5", result.output)
+        self.assertEqual(snapshot(), before)
 
     def test_export_friexemplar_first_with_nr_zero(self):
         """friexemplar rows lead the file (as in the paper matrikel), carry
@@ -904,6 +964,25 @@ class TestKoharenExport(MatrikelApiTest):
 
     def test_per_key_blanking(self):
         self.assertEqual(self._rows()[3], ["7", "Bo Bengtsson", "", "bo@example.com", "", "", "", "angivet"])
+
+    def test_organization_lists_only_main_contact_fields_with_consent(self):
+        for membership in (self.full, self.partial, self.opted_out, self.unset):
+            membership.organization_name = f"Testförening {membership.member_number}"
+            membership.organization_number = "552222-0002"
+            membership.save()
+        _mk_person(self.full, "Gammal", "Kontakt", end_date=date.today())
+        # A family member cannot replace a missing active main contact.
+        no_main = _mk_membership(number=11, organization_name="Utan huvudmedlem", publication_consent={"name": True})
+        _mk_person(no_main, "Familje", "Medlem", role="familjemedlem")
+        self.assertEqual(
+            self._rows()[1:],
+            [
+                ["6", "Testförening 6", "070-1", "anna@example.com", "Gatan 1", "623 55", "Visby", "angivet"],
+                ["7", "Testförening 7", "", "bo@example.com", "", "", "", "angivet"],
+                ["8", "", "", "", "", "", "", "angivet"],
+                ["9", "", "", "", "", "", "", "ej angivet"],
+            ],
+        )
 
     def test_explicit_opt_out_keeps_nr_and_samtycke(self):
         self.assertEqual(self._rows()[4], ["8", "", "", "", "", "", "", "angivet"])

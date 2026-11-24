@@ -28,7 +28,13 @@ YOUNG = date(2025, 12, 1)  # less than 12 calendar months before NOW
 
 def _membership(number, status="inactive"):
     return db.Membership.create(
-        member_number=number, membership_status=status, address="Exempelvägen 1", postal_code="12345", city="Exempelby"
+        member_number=number,
+        membership_status=status,
+        address="Exempelvägen 1",
+        postal_code="12345",
+        city="Exempelby",
+        organization_name="Testföreningen",
+        organization_number="552222-0002",
     )
 
 
@@ -48,8 +54,9 @@ def _erased(person):
     return matrikel.is_anonymized(db.Member.get_by_id(person.id))
 
 
-def _address(membership):
-    return db.Membership.get_by_id(membership.id).address
+def _address_and_organization(membership):
+    row = db.Membership.get_by_id(membership.id)
+    return row.address, row.organization_name, row.organization_number
 
 
 @unittest.skipUnless(_USE_POSTGRES, "interval arithmetic requires PostgreSQL")
@@ -63,7 +70,7 @@ class TestAnonymizeEndedPersons(DatabaseTest):
 
         self.assertTrue(_erased(main) and _erased(family))
         self.assertIsNone(db.Member.get_by_id(main.id).user_id)
-        self.assertIsNone(_address(ended))
+        self.assertEqual(_address_and_organization(ended), (None, None, None))
         audit = db.MatrikelAudit.select().where(db.MatrikelAudit.action == "person_anonymized")
         self.assertEqual([row.actor_id for row in audit], [None, None])
         # A second night changes nothing.
@@ -80,7 +87,7 @@ class TestAnonymizeEndedPersons(DatabaseTest):
         main = _person(ended, YOUNG, role="huvudmedlem")
         self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, 0, []))
         self.assertFalse(_erased(family) or _erased(main))
-        self.assertEqual(_address(ended), "Exempelvägen 1")
+        self.assertEqual(_address_and_organization(ended), ("Exempelvägen 1", "Testföreningen", "552222-0002"))
 
     def test_exactly_12_calendar_months_across_a_leap_day(self):
         # 12 months before 2028-03-01 is 2027-03-01; 365 days would be 2027-03-02, as 2028 has a February 29.
@@ -164,6 +171,9 @@ class TestAnonymizeEndedPersons(DatabaseTest):
         self.assertFalse(_erased(main) or _erased(recent) or _erased(held))
         membership = db.Membership.get_by_id(active.id)
         self.assertEqual((membership.membership_status, membership.address), ("active", "Exempelvägen 1"))
+        self.assertEqual(
+            (membership.organization_name, membership.organization_number), ("Testföreningen", "552222-0002")
+        )
 
     def test_only_the_own_application_is_scrubbed_for_a_member_who_came_back(self):
         old = _person(_membership(111), OLD, role="huvudmedlem")
@@ -206,7 +216,7 @@ class TestAnonymizeEndedPersons(DatabaseTest):
         with mock.patch.object(matrikel, "_memberships_with_ended_persons", side_effect=candidates_then_retire):
             self.assertEqual(matrikel.anonymize_ended_persons(NOW), (0, 0, []))
         self.assertFalse(_erased(family) or _erased(main))
-        self.assertEqual(_address(active), "Exempelvägen 1")
+        self.assertEqual(_address_and_organization(active), ("Exempelvägen 1", "Testföreningen", "552222-0002"))
 
     def test_a_role_granted_while_the_job_decides_holds_the_membership(self):
         ended = _membership(113)

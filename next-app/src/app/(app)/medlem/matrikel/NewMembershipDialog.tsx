@@ -21,9 +21,19 @@ import {
 } from "@/lib/membershipStatus";
 import { formatPostalCode, isValidPostalCode } from "@/lib/postal";
 import { createMembership } from "./actions";
+import {
+  OrganizationFields,
+  organizationForm,
+  organizationIsValid,
+  organizationValues,
+} from "./OrganizationFields";
 import styles from "../medlem.module.css";
 
 const EMPTY_CREATE_FORM = {
+  organization: organizationForm({
+    organization_name: null,
+    organization_number: null,
+  }),
   first_name: "",
   last_name: "",
   email: "",
@@ -76,12 +86,16 @@ export function NewMembershipDialog({
   const [form, setForm] = useState(EMPTY_CREATE_FORM);
   const [pending, startTransition] = useTransition();
   const postalOk = isValidPostalCode(form.postal_code);
+  const namesOk =
+    form.organization.enabled ||
+    (form.first_name.trim() && form.last_name.trim());
 
   const submit = () => {
     startTransition(async () => {
       const result = await createMembership({
-        first_name: form.first_name,
-        last_name: form.last_name,
+        ...(form.organization.enabled && organizationValues(form.organization)),
+        first_name: form.first_name.trim(),
+        last_name: form.last_name.trim(),
         email: form.email || null,
         phone: form.phone || null,
         address: form.address || null,
@@ -116,15 +130,25 @@ export function NewMembershipDialog({
       <DialogTitle>Nytt medlemskap</DialogTitle>
       <DialogContent>
         <div className={styles.dialogBody}>
+          <OrganizationFields
+            form={form.organization}
+            onChange={(organization) => setForm({ ...form, organization })}
+          />
           <TextField
-            label="Förnamn"
-            required
+            label={
+              form.organization.enabled ? "Kontaktpersonens förnamn" : "Förnamn"
+            }
+            required={!form.organization.enabled}
             value={form.first_name}
             onChange={(e) => setForm({ ...form, first_name: e.target.value })}
           />
           <TextField
-            label="Efternamn"
-            required
+            label={
+              form.organization.enabled
+                ? "Kontaktpersonens efternamn"
+                : "Efternamn"
+            }
+            required={!form.organization.enabled}
             value={form.last_name}
             onChange={(e) => setForm({ ...form, last_name: e.target.value })}
           />
@@ -208,7 +232,12 @@ export function NewMembershipDialog({
         <button
           type="button"
           className="sb-btn"
-          disabled={pending || !form.first_name || !form.last_name || !postalOk}
+          disabled={
+            pending ||
+            !namesOk ||
+            !organizationIsValid(form.organization) ||
+            !postalOk
+          }
           onClick={submit}
         >
           {pending ? "Skapar..." : "Skapa"}

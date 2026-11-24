@@ -30,10 +30,15 @@ Rules (Member Model v2 design spec):
   subsequent rows = familjemedlem.
 - Nr = 0 rows become friexemplar memberships, one per distinct name;
   identical duplicate rows collapse into one membership with a note.
+- A blank Nr is accepted only for a recognized active, numberless organization
+  and its existing person rows. These rows are skipped. The c/o column is never imported.
+- A blank Nr can acknowledge an existing active numberless organization
+  and its family rows from the mailing-list export. Those rows are never
+  written. Any other blank Nr is an error. The export's c/o is ignored.
 - G/M flags link herd G<Nr>/M<Nr> to the membership; a missing herd only
   logs a warning (the membership is still created).
 - Merge policy: (1) member_number match means already imported, skip;
-  (2) main-person name + contact email against active number-less
+  (2) recipient or main-person name + contact email against active number-less
   memberships means the CSV row adopts that membership and sets its number.
 - Both merge paths re-read the membership FOR UPDATE inside the group's
   transaction and UPDATE only the importer-owned fields they changed:
@@ -147,6 +152,9 @@ def import_cmd(csv_path: str, dry_run: bool, counts_only: bool) -> None:
 
 def _import(rows: list[dict], errors: list[tuple[str, str]], dry_run: bool) -> dict:
     """Write the groups (unless dry_run) and return the report."""
+    matched_numberless = 0
+    if any(row["nr"] is None for row in rows):
+        rows, matched_numberless = _skip_numberless_organizations(rows, errors)
     groups, friexemplar_groups = _group_rows(rows)
 
     report = {
@@ -154,6 +162,7 @@ def _import(rows: list[dict], errors: list[tuple[str, str]], dry_run: bool) -> d
         "persons_created": 0,
         "friexemplar_created": 0,
         "matched_existing": 0,
+        "numberless_org_rows": matched_numberless,
         "merges": [],  # (nr, membership_id, main name)
         "collapses": [],  # (name, row count) — identical duplicate rows
         "conflicts": [],  # (name, row count) — same name, differing fields
@@ -307,7 +316,10 @@ def _read_rows(csv_path: str) -> tuple[list[dict], list[tuple[str, str]], list[t
             if not values.get("namn_efternamn") and not any(v for k, v in values.items() if k != "nr"):
                 continue
             try:
-                rows.append(_parse_row(raw, layout))
+                row = _parse_row(raw, layout)
+                if row["nr"] is None:
+                    row["line"] = start_line
+                rows.append(row)
             except ValueError as e:
                 code = e.code if isinstance(e, _RowError) else "ogiltig-rad"
                 errors.append((f"row {reader.line_num}: {e}", f"row {start_line}: {code}"))
@@ -332,8 +344,15 @@ def _parse_row(raw: dict[str, str], layout: str) -> dict:
         raise _RowError("namn-saknas", "kolumnen 'Namn Efternamn' saknas eller är tom")
 
     nr_raw = row.get("nr", "")
-    if nr_raw == "":
-        raise _RowError("nr-saknas", "kolumnen 'Nr' saknas eller är tom")
+    if not nr_raw:
+        # A blank Nr can only acknowledge a known organization from our own
+        # export. No other data on the row will ever be imported.
+        return {
+            "nr": None,
+            "name": name,
+            "email": (row.get("e_postadress") or "").lower(),
+            "phone": row.get("telefonnr"),
+        }
     try:
         nr = int(nr_raw)
     except ValueError as exc:
@@ -401,6 +420,48 @@ def _group_rows(rows: list[dict]) -> tuple[dict[int, list[dict]], dict[str, list
     return groups, friexemplar
 
 
+def _skip_numberless_organizations(rows: list[dict], errors: list[tuple[str, str]]) -> tuple[list[dict], int]:
+    """Recognize existing blank-Nr organization rows without creating or updating anything."""
+    organizations = Membership.select().where(
+        Membership.organization_name.is_null(False),
+        Membership.membership_status == Status.ACTIVE,
+        Membership.member_number.is_null(True),
+    )
+    contacts = {}
+    for ms in organizations.prefetch(Member.select().where(Member.end_date.is_null(True))):
+        main, family = None, set()
+        for person in ms.persons:
+            name = ms.organization_name if person.role == "huvudmedlem" else f"{person.first_name} {person.last_name}"
+            contact = (_name_key(name), (person.email or "").strip().lower(), (person.phone or "").strip())
+            if person.role == "huvudmedlem":
+                main = contact
+            else:
+                family.add(contact)
+        if main is not None:
+            contacts.setdefault(main, set()).update(family)
+
+    numbered, matched = [], 0
+    family = set()
+    for row in rows:
+        if row["nr"] is not None:
+            numbered.append(row)
+        else:
+            contact = (row["name"].lower(), row["email"] or "", row["phone"] or "")
+            if contact in contacts:
+                # An organization may have the same name and contact details as
+                # a person in the preceding household. Both groups remain possible.
+                family = family | contacts[contact] if contact in family else contacts[contact]
+                matched += 1
+                continue
+            if contact in family:
+                matched += 1
+                continue
+            line = row["line"]
+            errors.append((f"row {line}: kolumnen 'Nr' saknas eller är tom", f"row {line}: nr-saknas"))
+        family = set()
+    return numbered, matched
+
+
 def _first_value(group: list[dict], key: str):
     """First non-empty value for a membership field across the group's rows."""
     for row in group:
@@ -410,7 +471,7 @@ def _first_value(group: list[dict], key: str):
 
 
 def _find_adoptable_membership(main: dict):
-    """Merge rule 2: main-person name + contact email against active number-less memberships."""
+    """Merge rule 2: recipient name + main contact email on an active numberless membership."""
     if not main["email"]:
         return None
     candidates = (
@@ -425,14 +486,24 @@ def _find_adoptable_membership(main: dict):
         )
     )
     for person in candidates:
-        if _main_person_matches(person, main):
+        if _main_person_matches(person, person.membership, main["name"].lower()):
             return person.membership
     return None
 
 
-def _main_person_matches(person, main: dict) -> bool:
-    existing_name = " ".join(f"{person.first_name} {person.last_name}".split()).lower()
-    return existing_name == main["name"].lower()
+def _name_key(name: str) -> str:
+    return " ".join(name.split()).lower()
+
+
+def _main_person_matches(person: Member, membership: Membership, name_key: str) -> bool:
+    """Accept a current MATR recipient name or the personal name in older files."""
+    if (
+        person.role == "huvudmedlem"
+        and membership.organization_name
+        and _name_key(membership.organization_name) == name_key
+    ):
+        return True
+    return _name_key(f"{person.first_name} {person.last_name}") == name_key
 
 
 def _still_adoptable(row: Membership, main: dict) -> bool:
@@ -454,7 +525,7 @@ def _still_adoptable(row: Membership, main: dict) -> bool:
         Member.end_date.is_null(True),
         fn.LOWER(Member.email) == main["email"],
     )
-    return any(_main_person_matches(person, main) for person in mains)
+    return any(_main_person_matches(person, row, main["name"].lower()) for person in mains)
 
 
 def _manual_review_reason(membership) -> str | None:
@@ -616,6 +687,10 @@ def _fill_empty_fields(membership, fields: dict) -> None:
 def _ensure_main_person(membership, main: dict) -> None:
     """Reconciliation: create the huvudmedlem if a prior interrupted run left
     the membership without one; a matching active huvudmedlem is left as is."""
+    if membership.organization_name:
+        # The name in this cell belongs to the organization. The export-only c/o
+        # column cannot be used to restore a missing contact either.
+        return
     has_main = (
         Member.select()
         .where(
@@ -651,16 +726,15 @@ def _add_family_members(membership, rows: list[dict], dry_run: bool, report: dic
     """
     for row in rows:
         if membership is not None:
-            exists = (
-                Member.select()
-                .where(
-                    Member.membership == membership,
-                    Member.end_date.is_null(True),
+            people = Member.select().where(Member.membership == membership, Member.end_date.is_null(True))
+            if membership.organization_name:
+                # A single MATR name cell cannot reconstruct compound surnames.
+                exists = any(_name_key(f"{p.first_name} {p.last_name}") == row["name"].lower() for p in people)
+            else:
+                exists = people.where(
                     fn.LOWER(Member.first_name) == row["first_name"].lower(),
                     fn.LOWER(Member.last_name) == row["last_name"].lower(),
-                )
-                .exists()
-            )
+                ).exists()
             if exists:
                 continue
         report["persons_created"] += 1
@@ -685,6 +759,11 @@ def _link_flag_herds(nr: int, group: list[dict], membership, dry_run: bool, repo
     for key, prefix in (("g", "G"), ("m", "M")):
         if not any(row[key] for row in group):
             continue
+        if membership is not None and membership.organization_name:
+            # The exported flag says only that the organization has a herd
+            # with this prefix. Its herd need not share its member number.
+            if Herd.select().where(Herd.membership == membership, fn.SUBSTR(Herd.herd, 1, 1) == prefix).exists():
+                continue
         code = f"{prefix}{nr}"
         genebanks = _flag_genebank_ids(prefix)
         matches = (
@@ -755,9 +834,7 @@ def _import_friexemplar_group(name_key: str, group: list[dict], dry_run: bool, r
             | ((Membership.membership_status == "inactive") & Membership.member_number.is_null(True))
         )
     )
-    matches = [
-        person for person in existing if " ".join(f"{person.first_name} {person.last_name}".split()).lower() == name_key
-    ]
+    matches = [person for person in existing if _main_person_matches(person, person.membership, name_key)]
     if matches:
         if any(p.end_date is None and p.membership.membership_status == "friexemplar" for p in matches):
             report["matched_existing"] += 1
@@ -889,6 +966,11 @@ def _count_lines(report: dict) -> list[str]:
         f"Herd links: {report['herd_links']}, "
         f"Errors: {len(report['errors'])}",
         f"Herd warnings: {len(report['herd_warnings'])}",
+        *(
+            [f"Blank-Nr organization rows skipped: {report['numberless_org_rows']}"]
+            if report["numberless_org_rows"]
+            else []
+        ),
         *(f"Contact {field} {case}: {n}" for (field, case), n in sorted(report["contact_cases"].items())),
     ]
 
