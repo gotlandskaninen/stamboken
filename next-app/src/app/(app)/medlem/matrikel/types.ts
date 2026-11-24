@@ -56,6 +56,45 @@ export type MembershipHerd = {
   herd_name: string | null;
 };
 
+export type HerdCandidate = MembershipHerd & {
+  is_active: boolean;
+  link: "ingen" | "detta" | "annat";
+  unavailable_reason: string | null;
+  member_number: number | null;
+};
+
+export type HerdAccount = { id: number; username: string | null };
+
+export type HerdLinkPreview = {
+  herd: MembershipHerd & {
+    is_active: boolean;
+    genebank_id: number;
+    genebank_name: string;
+  };
+  membership: Pick<
+    MembershipDetail,
+    "id" | "member_number" | "membership_status"
+  >;
+  new_access:
+    | (HerdAccount & { already_edits: boolean; already_manages: boolean })
+    | null;
+  inactive_main_account: HerdAccount | null;
+  new_readers: HerdAccount[];
+  grant_holders: HerdAccount[];
+  legacy_owners: (HerdAccount & {
+    in_membership: boolean;
+    gains_household_grants: boolean;
+  })[];
+  contact_rows:
+    | { field: string; label: string; case: string; effect: string }[]
+    | null;
+};
+
+export type HerdLinkConfirmation = {
+  preview: HerdLinkPreview;
+  confirm_token: string;
+};
+
 /** Optional invoice destination; all null means the postal address. */
 export type BillingAddress = {
   billing_name: string | null;
