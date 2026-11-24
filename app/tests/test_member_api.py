@@ -918,3 +918,97 @@ class TestKoharenExport(MatrikelApiTest):
     def test_formula_injection_guarded(self):
         db.Member.update(first_name="=HYPERLINK()").where(db.Member.email == "anna@example.com").execute()
         self.assertTrue(self._rows()[1][1].startswith(" ="))
+
+
+class TestAddressListExport(MatrikelApiTest):
+    """The printer's mailing list for Koharen (#186): one row per household, nothing else from the register."""
+
+    def setUp(self):
+        super().setUp()
+        last_year = str(date.today().year - 1)[-2:]
+        this_year = str(date.today().year)[-2:]
+        self.paid = _mk_membership(
+            number=1, address="Adagatan 3", postal_code="623 55", city="Visby", payment_note=this_year
+        )
+        _mk_person(self.paid, "Ada", "A", "ada@example.com", phone="070-1111111")
+        _mk_person(self.paid, "Alf", "A", "alf@example.com", role="familjemedlem")
+        self.unpaid = _mk_membership(
+            number=2, address="Bogatan 1", postal_code="123 45", city="Stad", payment_note=last_year, notes="anteckning"
+        )
+        _mk_person(self.unpaid, "Bo", "B", "bo@example.com")
+        self.free = _mk_membership(
+            status="friexemplar", address="Biblioteksgatan 1", postal_code="621 24", city="Visby", payment_note="gratis"
+        )
+        _mk_person(self.free, "", "Biblioteket i Visby")
+        self.abroad = _mk_membership(number=3, address="Storgata 1", city="0150 Oslo Norge", payment_note=last_year)
+        _mk_person(self.abroad, "Olav", "O")
+        ms = _mk_membership(number=4, status="inactive", address="Cegatan 1", postal_code="111 11", city="Stad")
+        _mk_person(ms, "Ce", "C")
+        ms = _mk_membership(number=5, status="pending", address="Degatan 1", postal_code="111 11", city="Stad")
+        _mk_person(ms, "De", "D")
+        ms = _mk_membership(number=6)  # no address: the printer cannot send it
+        _mk_person(ms, "Eva", "E")
+
+    def _rows(self, query=""):
+        resp = self.client.get(f"/api/v2/members/address-list{query}")
+        self.assertEqual(resp.status_code, 200, resp.data)
+        return list(_csv_lib.reader(_io.StringIO(resp.data.decode("utf-8-sig"))))
+
+    def test_requires_matrikel_admin(self):
+        self.login("man")
+        self.assertEqual(self.client.get("/api/v2/members/address-list").status_code, 403)
+
+    def test_one_row_per_household_sorted_by_postal_code(self):
+        self.login("matrikel")
+        header, *rows = self._rows()
+        self.assertEqual(header, ["Nr", "Namn Efternamn", "Adress", "Postadress", "Betala nu"])
+        self.assertEqual(
+            rows,
+            [
+                ["2", "Bo B", "Bogatan 1", "123 45 Stad", ""],
+                ["0", "Biblioteket i Visby", "Biblioteksgatan 1", "621 24 Visby", ""],
+                ["1", "Ada A", "Adagatan 3", "623 55 Visby", ""],
+                ["3", "Olav O", "Storgata 1", "0150 Oslo Norge", ""],
+            ],
+        )
+
+    def test_fee_reminder_marks_last_years_payers(self):
+        self.login("matrikel")
+        _, *rows = self._rows("?fee_reminder=1")
+        self.assertEqual({r[0]: r[4] for r in rows}, {"2": "Betala nu", "0": "", "1": "", "3": "Betala nu"})
+
+    def test_fee_unpaid(self):
+        year = 2026
+        for note, expected in (
+            ("25", True),
+            ("2024", True),
+            (" 25 ", True),
+            ("26", False),
+            ("27", False),
+            ("2026", False),
+            ("gratis", False),
+            ("", False),
+            (None, False),
+            ("1", False),
+        ):
+            with self.subTest(note=note):
+                self.assertEqual(members_routes.fee_unpaid(note, year), expected)
+
+    def test_escapes_formula_injection(self):
+        db.Member.update(first_name="=HYPERLINK()").where(db.Member.email == "bo@example.com").execute()
+        self.login("matrikel")
+        self.assertEqual(self._rows()[1][1], " =HYPERLINK() B")
+
+    def test_each_export_is_audited_without_values(self):
+        self.login("matrikel")
+        self._rows("?fee_reminder=1")
+        self.assertEqual(self.client.get("/api/v2/members/export").status_code, 200)
+        logged = list(
+            db.AuditLog.select()
+            .where(db.AuditLog.table_name == "membership", db.AuditLog.operation == "READ")
+            .order_by(db.AuditLog.id)
+        )
+        self.assertEqual(
+            [(r.new_data, r.changed_by) for r in logged],
+            [({"action": "address-list", "rows": 4, "fee_reminder": True}, "matrikel"), ({"action": "matr"}, "matrikel")],
+        )

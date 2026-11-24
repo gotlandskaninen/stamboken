@@ -276,7 +276,7 @@ medlemskap som är nya i år. Friexemplar ingår inte i de andra talen.
 
 ## Exportera
 
-Knapparna finns överst i **Matrikel** och på **Statistik**. Båda laddar ner en
+Knapparna finns överst i **Matrikel** och på **Statistik**. Alla laddar ner en
 CSV-fil som går att öppna i Excel.
 
 - **Exportera MATR** ger aktiva medlemskap och friexemplar med samma kolumner
@@ -284,8 +284,13 @@ CSV-fil som går att öppna i Excel.
   och anteckningar på huvudmedlemmens rad och fakturaadressen sist.
   Friexemplar utan medlemsnummer får nummer 0, men ett friexemplar som har
   fått ett nummer står med det numret. Filen har ingen kolumn för status, så
-  kontrollera status i matrikeln innan du följer upp avgifter. Använd filen som
-  adresslista för Koharen och för avgiftsuppföljning.
+  kontrollera status i matrikeln innan du följer upp avgifter. Använd filen för
+  avgiftsuppföljning. Den finns kvar under en övergångstid.
+- **Exportera adresslista** ger listan till tryckeriet för Koharen: en rad per
+  hushåll med medlemsnummer, huvudmedlemmens namn, adress och postadress,
+  sorterad på postnummer. Aktiva medlemskap och friexemplar ingår, men inte de
+  som saknar adress. Kryssa i **Med Betala nu** till årets två första nummer.
+  Då står "Betala nu" hos dem vars senast betalda år är före i år.
 - **Exportera Koharen** ger personerna i aktiva medlemskap, med bara de
   uppgifter hushållet har sagt ja till att publicera: namn, telefon, e-post och
   adress. Valet gäller hela hushållet och görs av huvudmedlemmen under
@@ -294,4 +299,5 @@ CSV-fil som går att öppna i Excel.
   underlaget till medlemsförteckningen i Koharen.
 
 Filerna innehåller personuppgifter. Spara dem inte där andra kommer åt dem, och
-ta bort dem när du inte behöver dem längre.
+ta bort dem när du inte behöver dem längre. Varje uttag av MATR och adresslistan
+loggas med vem som tog ut den och när.

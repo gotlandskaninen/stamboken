@@ -1,7 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import { readModeCookieClient } from "@/lib/mode";
-import { koharenExportUrl, memberExportUrl } from "../statistik/exportUrl";
+import {
+  addressListUrl,
+  koharenExportUrl,
+  memberExportUrl,
+} from "../statistik/exportUrl";
 
 // Two call sites: the matrikel page and the statistik Masthead. On the
 // matrikel page the buttons live inside the filter `<form method="get">`,
@@ -14,6 +19,7 @@ export function ExportButtons() {
   const download = (url: string) => {
     window.location.href = url;
   };
+  const [feeReminder, setFeeReminder] = useState(false);
 
   return (
     <>
@@ -45,6 +51,30 @@ export function ExportButtons() {
       >
         Exportera Koharen
       </button>
+      <button
+        type="button"
+        className="sb-btn sb-btn-secondary sb-btn-sm"
+        onClick={() =>
+          download(
+            addressListUrl(
+              readModeCookieClient(),
+              process.env.NEXT_PUBLIC_API_TEST_URL,
+              feeReminder,
+            ),
+          )
+        }
+      >
+        Exportera adresslista
+      </button>
+      {/* No name: inside the matrikel filter form it must not join the query. */}
+      <label>
+        <input
+          type="checkbox"
+          checked={feeReminder}
+          onChange={(e) => setFeeReminder(e.target.checked)}
+        />{" "}
+        Med Betala nu
+      </label>
     </>
   );
 }
