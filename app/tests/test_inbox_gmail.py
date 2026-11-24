@@ -404,6 +404,16 @@ class TestSorting(GmailTest):
 JPEG = "image/jpeg"
 
 
+def inline_png(data, filename="gmail_images20261124_132239.png"):
+    msg = message(body="Se bilden.")
+    msg.add_alternative('<p>Se bilden.</p><img src="cid:bild@example.org">', subtype="html")
+    html = msg.get_body(preferencelist=("html",))
+    html.add_related(
+        data, maintype="image", subtype="png", cid="<bild@example.org>", disposition="inline", filename=filename
+    )
+    return msg
+
+
 class TestItemsFromMail(GmailTest):
     def documents(self, item):
         return list(item.documents.order_by(db.InboxDocument.id))
@@ -483,6 +493,32 @@ class TestItemsFromMail(GmailTest):
             detail["not_saved_reasons"],
             [{"name": name, "reason": f"Bilden har en sida under {side} pixlar."} for name in detail["not_saved"]],
         )
+
+    def test_gmail_related_png_becomes_a_document(self):
+        size = (600, 800)
+        rgb = photo(size)
+        rgba = rgb.convert("RGBA")
+        rgba.putalpha(128)
+        exif = Image.Exif()
+        exif[0x0112] = 6  # rotate 90 degrees clockwise
+        broken_exif = b"XX" + exif.tobytes()[8:]  # invalid TIFF byte order, orientation tag still present
+        for variant, msg, expected_size in (
+            ("RGBA", inline_png(encoded(rgba, "PNG")), size),
+            ("palette", inline_png(encoded(rgb.convert("P"), "PNG", transparency=0)), size),
+            ("EXIF", inline_png(encoded(rgb, "PNG", exif=exif)), (800, 600)),
+            ("broken EXIF", inline_png(encoded(rgb, "PNG", exif=broken_exif)), size),
+            ("no filename", inline_png(encoded(rgb, "PNG"), filename=None), size),
+        ):
+            with self.subTest(variant):
+                gmail_id = self.fake.deliver(msg)
+                self.read()
+                item = db.InboxItem.get(db.InboxItem.gmail_message_id == gmail_id)
+                self.assertEqual(item.message, "Se bilden.")
+                self.assertNotIn("not_saved", item.events.get().detail)
+                (document,) = self.documents(item)
+                with Image.open(self.stored(document)) as image:
+                    self.assertEqual((image.format, image.mode, image.size), ("JPEG", "RGB", expected_size))
+                    self.assertFalse(image.getexif())
 
     def test_exif_is_gone_and_an_inline_photo_counts(self):
         exif = Image.Exif()
