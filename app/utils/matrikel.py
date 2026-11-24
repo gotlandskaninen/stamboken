@@ -1322,7 +1322,10 @@ def link_member_user(person_id, user_id, *, actor, mode, confirmed_herd_ids=None
         if mode == "matrikel_epost" and (
             person.role != "huvudmedlem" or person.membership.membership_status == "inactive"
         ):
-            raise LinkError("Medlemskapet är inte aktivt", "Bara en aktiv huvudmedlem kan skapa ett konto")
+            raise LinkError(
+                "Kontot kan inte skapas",
+                "Bara huvudmedlemmen i ett aktivt eller väntande medlemskap kan skapa ett konto.",
+            )
         if (
             conveyed_ids
             and mode != "matrikel_epost"

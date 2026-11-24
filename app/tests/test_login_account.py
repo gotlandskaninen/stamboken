@@ -180,6 +180,17 @@ class TestLoginAccount(MatrikelApiTest):
         self.assertIsNone(db.LoginCode.get_by_id(row.id).used_at)
         self.assertEqual(self.client.get("/api/user").status_code, 401)
 
+    def test_pending_membership_allows_its_main_member_to_create_an_account(self):
+        db.Membership.update(membership_status="pending").where(db.Membership.id == self.member.membership_id).execute()
+        family = _mk_person(self.member.membership, "Test", "Family", role="familjemedlem")
+        with self.assertRaises(matrikel.LinkError) as refused:
+            matrikel.link_member_user(family.id, self.viewer.id, actor=self.viewer, mode="matrikel_epost")
+        self.assertEqual(
+            refused.exception.detail, "Bara huvudmedlemmen i ett aktivt eller väntande medlemskap kan skapa ett konto."
+        )
+        self.pending()
+        self.assertEqual(self.create().status_code, 200)
+
     def test_production_access_when_enabled(self):
         self.pending()
         with mock.patch.dict(os.environ, SJALVSKAPAT_KONTO_PROD="true"):
