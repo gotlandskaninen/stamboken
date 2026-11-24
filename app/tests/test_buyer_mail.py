@@ -698,14 +698,39 @@ class TestMembership(BuyerMailTest):
         self.assertEqual(buyer_contact.purge_membership_optin(now), 1)
         self.assertIsNone(self._contact(sale.holder_contact_id).email)
 
-    def test_a_queued_mail_cannot_use_an_optin_that_expires_before_sending(self):
+    def test_membership_expires_while_the_first_notice_waits_for_address_review(self):
+        record_herd_tracking(self.individuals[1], self.gx1, SALE_DATE, "TRANSFER", self.manager, buyer=WITH_EMAIL)
+        self.send()
+        buyer = {**BUYER, "name": "Testköpare B", "email": EMAIL, "membership_optin": True}
+        sale = self._sale(buyer)
+        contact = sale.holder_contact
+        expires = contact.membership_optin_at + db.MEMBERSHIP_OPTIN_FOR
+        self.assertLess(contact.created_at, expires)
+        self.assertTrue(contact.email_review_pending)
+        with mock.patch.object(buyer_mail, "datetime", wraps=datetime) as clock:
+            clock.now.return_value = expires + timedelta(days=1)
+            buyer_contact.purge_membership_optin(clock.now())
+            self.assertEqual(self._contact(contact.id).email, EMAIL)
+            self.assertEqual(self.send(), [])
+            buyer_contact.review_buyer_email(contact.id, {"confirm": True}, self.manager)
+            (notice,) = self.send()
+            body = notice.get_body(("plain",)).get_content()
+            token = re.search(r"/kopare/ta-bort#(\S+)", body).group(1)
+            self.assertEqual(mail.verify_link(ERASE_PURPOSE, token), contact.id)
+            self.assertIn("Tiden för din medlemsinbjudan har gått ut.", body)
+            self.assertEqual(self.mails("kopare.medlemskap")[0].status, "cancelled")
+            self.assertEqual(buyer_contact.purge_membership_optin(clock.now()), 1)
+            self.assertIsNone(self._contact(contact.id).email)
+
+    def test_only_the_first_notice_goes_if_the_optin_expires_before_sending(self):
         sale = self._sale({**BUYER, "email": EMAIL, "membership_optin": True})
         self.assertIn("Välkommen", self.text("kopare.medlemskap")[0])
         expires = sale.holder_contact.membership_optin_at + timedelta(days=365)
         with mock.patch.object(buyer_mail, "datetime") as clock:
             clock.now.return_value = expires
-            self.assertEqual(self.send(), [])
-        self.assertEqual([row.status for row in self.mails()], ["cancelled", "cancelled"])
+            (notice,) = self.send()
+            self.assertIn("/kopare/ta-bort#", notice.get_body(("plain",)).get_content())
+        self.assertEqual([row.status for row in self.mails()], ["sent", "cancelled"])
 
     def test_log_mode_without_a_link_secret_builds_the_welcome(self):
         contact_id = self._sale({**WITH_EMAIL, "membership_optin": True}).holder_contact_id

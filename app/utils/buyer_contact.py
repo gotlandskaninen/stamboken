@@ -361,11 +361,10 @@ def purge_membership_optin(now):
         .sql()
     )
     optin = BuyerContact.membership_optin_at
-    # Only an already expired yes on entry needs the address for its first notice. The phone can go immediately.
+    # The first notice needs the address while under review or awaiting delivery. The phone can go immediately.
     keep_for_notice = (
         only_for_membership
         & BuyerContact.email.is_null(False)
-        & (optin <= BuyerContact.created_at - MEMBERSHIP_OPTIN_FOR)
         & (BuyerContact.email_review_pending | BuyerContact.id.in_(SQL(f"({sql})", params)))
     )
     changes = {

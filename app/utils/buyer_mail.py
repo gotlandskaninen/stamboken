@@ -177,14 +177,9 @@ def _information_mail(params, attempt=1):
     """
     contact = BuyerContact.get_or_none(BuyerContact.id == params["buyer_contact_id"])
     rabbit = Individual.get_or_none(Individual.id == params["individual_id"])
-    if contact is None or rabbit is None:
+    if contact is None or rabbit is None or not contact.email or contact.email_review_pending:
         return None
     membership = _membership_current(contact)
-    if not membership and contact.contact_consent_at is None:
-        # A late registration still owes the buyer information about the name and address just recorded.
-        optin = contact.membership_optin_at
-        if optin is None or optin > contact.created_at - MEMBERSHIP_OPTIN_FOR:
-            return None
     note = None
     try:
         with DB_PROXY.atomic():
