@@ -128,7 +128,8 @@ av `(filnamn, mime-typ, bytes)`. Bilagan byggs när mejlet skickas. Nyckeln
   som är `bounced` köas inte igen: en rapport om försenad leverans räknas
   också som studs. För en studsad rad skickar "Försök igen" i statusvyn
   mejlet till personens adress nu. Har personen lämnat medlemskapet eller
-  blivit huvudmedlem när mejlet ska gå blir det `cancelled`. Huvudmedlemmen väljer adressen, så
+  någon gång varit huvudmedlem när mejlet ska gå blir det `cancelled`. En
+  rad som väntar i kön gallras inte. Huvudmedlemmen väljer adressen, så
   mejlet får inte bli ett sätt att överösa någon. Ett medlemskaps mejl sprids
   över dygnen när de köas, så att högst tio ska gå samma dygn. Ett mejl som
   gränsen per adress har skjutit upp kan hamna på ett dygn som redan har tio. En adress får högst tre om

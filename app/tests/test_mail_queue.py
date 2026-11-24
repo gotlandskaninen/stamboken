@@ -855,7 +855,9 @@ class TestPrivacy(MailTest):
 
     def test_purge_takes_rows_older_than_396_days(self):
         old, edge, fresh = self.queue("old@example.org"), self.queue("edge@example.org"), self.queue()
-        db.MailMessage.update(created_at=self.now - timedelta(days=397)).where(db.MailMessage.id == old).execute()
+        db.MailMessage.update(created_at=self.now - timedelta(days=397), status="sent").where(
+            db.MailMessage.id == old
+        ).execute()
         db.MailMessage.update(created_at=self.now - timedelta(days=395)).where(db.MailMessage.id == edge).execute()
         db.MailAttempt.create(message=old, at=self.now, source="smtp", result="sent")
         self.assertEqual(mail.purge_old_mail(self.now), 1)

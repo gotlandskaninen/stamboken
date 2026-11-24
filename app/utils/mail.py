@@ -38,6 +38,7 @@ from utils.database import (
     MailAttempt,
     MailMessage,
     MailSender,
+    MatrikelAudit,
     Member,
     MemberApplication,
     MemberPreviousAddress,
@@ -693,8 +694,9 @@ def forget_recipient(kind, recipient_id):
 
 
 def purge_old_mail(now):
-    """Deletes rows older than 13 months; their attempts follow (ON DELETE CASCADE)."""
-    return MailMessage.delete().where(MailMessage.created_at < now - RETENTION).execute()
+    """Deletes rows older than 13 months, but never one still to go; their attempts follow (ON DELETE CASCADE)."""
+    old = (MailMessage.created_at < now - RETENTION) & MailMessage.status.not_in(("queued", "sending"))
+    return MailMessage.delete().where(old).execute()
 
 
 # --- Status views ---
@@ -834,11 +836,24 @@ def _application_approved(params):
 _ADDED_AS = {"familjemedlem": "familjemedlem", "skotare": "skötare"}
 
 
+def was_main_member(person):
+    """She was made main member of her membership at some point (swap_main_member): she put people in herself."""
+    return (
+        MatrikelAudit.select()
+        .where(
+            (MatrikelAudit.membership == person.membership_id)
+            & (MatrikelAudit.action == "main_member_changed")
+            & (MatrikelAudit.payload["new_person_id"] == str(person.id))
+        )
+        .exists()
+    )
+
+
 @mail_kind("medlemskap.tillagd", priority=1, category="T")
 def _member_added(params):
     """To a person someone else put into a membership (GDPR art. 14); none once the person has left it."""
     person = Member.get_or_none((Member.id == params["member_id"]) & Member.end_date.is_null(True))
-    if person is None or person.role not in _ADDED_AS:  # left, or made main member since the mail was queued
+    if person is None or person.role not in _ADDED_AS or was_main_member(person):  # left, or main member
         return None
     # The limit per address is kept here, on the address the mail goes to now and on mails that have gone: it
     # holds across memberships and after an address was changed. Over it, the mail waits until the oldest of

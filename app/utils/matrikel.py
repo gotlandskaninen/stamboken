@@ -48,7 +48,7 @@ from utils.login_code import (
     reserve_on_leaving_friexemplar,
     void,
 )
-from utils.mail import cancel_member_added, enqueue_mail, forget_recipient, queue_member_added
+from utils.mail import cancel_member_added, enqueue_mail, forget_recipient, queue_member_added, was_main_member
 from utils.membership_lifecycle import Event, Status, next_state, state_of
 from utils.postal import (  # noqa: F401 — public helpers
     format_postal_address,
@@ -754,16 +754,13 @@ def set_member_email(person, address, actor, *, by):
 
 def _added_by_another(person):
     """add_person put her in as family member or keeper, and she was never main member: not the register import."""
-    audit = MatrikelAudit.select().where(MatrikelAudit.membership == person.membership_id)
-    added = audit.where(
-        (MatrikelAudit.action == "person_added")
+    added = MatrikelAudit.select().where(
+        (MatrikelAudit.membership == person.membership_id)
+        & (MatrikelAudit.action == "person_added")
         & (MatrikelAudit.payload["person_id"] == str(person.id))
         & MatrikelAudit.payload["role"].in_(("familjemedlem", "skotare"))
     )
-    main = audit.where(
-        (MatrikelAudit.action == "main_member_changed") & (MatrikelAudit.payload["new_person_id"] == str(person.id))
-    )
-    return added.exists() and not main.exists()
+    return added.exists() and not was_main_member(person)
 
 
 def _keep_previous(person, address, actor, by, now):

@@ -453,6 +453,26 @@ class TestMemberAdded(MailTest):
         self.queue("kvitto@example.org")
         self.assertEqual(self.sent_to(), ["kvitto@example.org"])
 
+    def test_a_retry_in_the_status_view_never_writes_to_a_former_main_member(self):
+        person = self.add()
+        self.sent_to()
+        db.MailMessage.update(status="bounced").execute()  # as record_bounce leaves it
+        head = db.Member.get(db.Member.first_name == "Huvud")
+        matrikel.swap_main_member(self.membership, db.Member.get_by_id(person.id), self.actor)
+        matrikel.swap_main_member(self.membership, db.Member.get_by_id(head.id), self.actor)
+        db.MailMessage.update(status="queued", attempts=0).execute()  # "Försök igen"
+        self.assertEqual((self.sent_to(), self.mails()[0].status), ([], "cancelled"))
+
+    def test_a_notice_queued_again_is_not_purged_before_it_goes(self):
+        person = self.add(email="fel@example.org")
+        refusal = smtplib.SMTPRecipientsRefused({"fel@example.org": (550, b"5.1.1 no such user")})
+        self.sent_to(replies=[refusal])
+        db.MailMessage.update(created_at=self.now - mail.RETENTION - timedelta(days=1)).execute()
+        matrikel.set_member_email(person, "ratt@example.org", self.actor, by="matrikel")
+        self.assertEqual(mail.purge_old_mail(self.now), 0)
+        self.assertEqual(self.sent_to(), ["ratt@example.org"])
+        self.assertEqual(mail.purge_old_mail(self.now), 1)  # gone once it went
+
     def test_a_notice_stopped_by_hand_stays_stopped(self):
         person = self.add()
         db.MailMessage.update(status="cancelled", last_error="stoppat i statusvyn").execute()  # as "Stoppa" does
